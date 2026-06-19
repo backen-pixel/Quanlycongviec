@@ -407,11 +407,18 @@ function resolvePreloadedPipelinesList(pipelinesAllRef, narrowedPipelines, compa
   return null;
 }
 
-function applyCrmPipelinesFromApi(allPipelines, companyId, pipelinesAllRef, setPipelines) {
+function applyCrmPipelinesFromApi(allPipelines, companyId, pipelinesAllRef, setPipelines, setPipelinesAll) {
   const all = Array.isArray(allPipelines) ? allPipelines : [];
   if (pipelinesAllRef) pipelinesAllRef.current = all;
+  if (setPipelinesAll) setPipelinesAll(all);
   setPipelines(narrowPipelinesToDefaultForCompany(all, companyId || null));
   return all;
+}
+
+/** Số hiển thị trên tab Lead/Deal — ưu tiên total API. */
+function formatCrmPipelineTabCount(total, fallbackLen) {
+  const n = typeof total === 'number' ? total : (fallbackLen > 0 ? fallbackLen : null);
+  return n != null ? n.toLocaleString('vi-VN') : null;
 }
 
 /** Query flags — backend trả select nhẹ + bỏ enrich nặng cho Kanban. */
@@ -766,6 +773,7 @@ export default function CRMDashboard() {
   const [leadTypes, setLeadTypes] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [pipelines, setPipelines] = useState([]);
+  const [pipelinesAll, setPipelinesAll] = useState([]);
   const [allLeads, setAllLeads] = useState([]);
   const [allDeals, setAllDeals] = useState([]);
   const allDealsRef = useRef(allDeals);
@@ -1236,12 +1244,16 @@ export default function CRMDashboard() {
           }
           if (Array.isArray(m.pipelinesAll) && m.pipelinesAll.length) {
             pipelinesAllRef.current = m.pipelinesAll;
+            setPipelinesAll(m.pipelinesAll);
             if (pipelines.length === 0) {
               setPipelines(narrowPipelinesToDefaultForCompany(m.pipelinesAll, filterCompany || ''));
             }
           } else if (Array.isArray(m.pipelines) && m.pipelines.length && pipelines.length === 0) {
             setPipelines(m.pipelines);
-            if (m.pipelines.length > 1) pipelinesAllRef.current = m.pipelines;
+            if (m.pipelines.length > 1) {
+              pipelinesAllRef.current = m.pipelines;
+              setPipelinesAll(m.pipelines);
+            }
           }
           if (Array.isArray(m.sources) && m.sources.length && sources.length === 0) {
             setSources(m.sources);
@@ -1719,6 +1731,8 @@ export default function CRMDashboard() {
     startTransition(() => {
       setAllLeads([]);
       setAllDeals([]);
+      setStagesLead([]);
+      setStagesDeal([]);
       setLoadMoreState({
         leadOffset: 0,
         dealOffset: 0,
@@ -2078,15 +2092,31 @@ export default function CRMDashboard() {
 
   const companyHasNoPipeline = useMemo(() => {
     if (!dashboardScopeCompanyId) return false;
-    const list = pipelines || [];
+    if (firstLoading || syncing) return false;
+    if (stagesLead.length > 0 || stagesDeal.length > 0) return false;
+    if (allLeads.length > 0 || allDeals.length > 0) return false;
+    const list = pipelinesAll.length ? pipelinesAll : (pipelines || []);
     return !list.some((p) => String(p.company_id || '') === String(dashboardScopeCompanyId));
-  }, [dashboardScopeCompanyId, pipelines]);
+  }, [
+    dashboardScopeCompanyId,
+    pipelines,
+    pipelinesAll,
+    stagesLead.length,
+    stagesDeal.length,
+    allLeads.length,
+    allDeals.length,
+    firstLoading,
+    syncing,
+  ]);
+
+  const crmMainContentLoading = firstLoading || syncing;
 
   const showNoPipelineMainViews = useMemo(
     () =>
+      !crmMainContentLoading &&
       companyHasNoPipeline &&
       (viewMode === 'kanban' || viewMode === 'list' || viewMode === 'planner' || viewMode === 'deadline' || viewMode === 'comments'),
-    [companyHasNoPipeline, viewMode],
+    [crmMainContentLoading, companyHasNoPipeline, viewMode],
   );
 
   const buildStagesParams = useCallback((type) => {
@@ -2354,7 +2384,11 @@ export default function CRMDashboard() {
               loading: false,
             });
           });
-          if (!isStale()) setFirstLoading(false);
+          if (!isStale()) {
+            setFirstLoading(false);
+            setSyncing(false);
+            setLastSyncAt(new Date());
+          }
           runDeferredCrmEnrichment(activeType, activeMerged, boot.dashboard);
           scheduleInactivePipelineLoad();
           void (async () => {
@@ -2384,6 +2418,7 @@ export default function CRMDashboard() {
                 resolvedCompanyId || null,
                 pipelinesAllRef,
                 setPipelines,
+                setPipelinesAll,
               );
               const sourcesValue = sourcesRes.data?.sources || (Array.isArray(sourcesRes.data) ? sourcesRes.data : []);
               const leadTypesValue = Array.isArray(leadTypesRes.data) ? leadTypesRes.data : [];
@@ -2428,6 +2463,7 @@ export default function CRMDashboard() {
         resolvedCompanyId || null,
         pipelinesAllRef,
         setPipelines,
+        setPipelinesAll,
       );
       const pipelinesValue = narrowPipelinesToDefaultForCompany(pipelinesAll, resolvedCompanyId || null);
 
@@ -2478,7 +2514,11 @@ export default function CRMDashboard() {
         if (activeType === 'lead') setStagesLead(stagesActiveValue);
         else setStagesDeal(stagesActiveValue);
       });
-      if (!isStale()) setFirstLoading(false);
+      if (!isStale()) {
+        setFirstLoading(false);
+        setSyncing(false);
+        setLastSyncAt(new Date());
+      }
       runDeferredCrmEnrichment(activeType, activeMerged, dashActiveRes.data);
       scheduleInactivePipelineLoad();
       void (async () => {
@@ -2596,7 +2636,7 @@ export default function CRMDashboard() {
       /* ignore */
     }
     if (!isStale()) {
-      if (silent) setSyncing(false);
+      setSyncing(false);
       setLastSyncAt(new Date());
       setFirstLoading(false);
     }
@@ -2969,6 +3009,9 @@ export default function CRMDashboard() {
     const t = loadMoreState.leadTotal;
     return typeof t === 'number' ? t : leads.length;
   }, [kpiUsesClientOnlyFilters, leads.length, loadMoreState.leadTotal]);
+
+  const leadTabCountLabel = formatCrmPipelineTabCount(loadMoreState.leadTotal, allLeads.length);
+  const dealTabCountLabel = formatCrmPipelineTabCount(loadMoreState.dealTotal, allDeals.length);
 
   const explicitExpectedKvStages = useMemo(
     () => hasExplicitExpectedRevenueStage(stagesDeal),
@@ -3941,10 +3984,10 @@ export default function CRMDashboard() {
           <h1 className={`font-bold text-gray-900 ${compactLeadUi ? 'text-xl sm:text-2xl' : 'text-3xl'}`}>
             {pipelineType === 'lead' ? '💼 Quản lý Leads' : '🎯 Quản lý Deals'}
           </h1>
-          {firstLoading ? (
+          {firstLoading || syncing ? (
             <div className={`flex items-center gap-1.5 text-blue-600 ${compactLeadUi ? 'text-[10px] mt-0.5' : 'text-xs mt-1'}`}>
               <span className={`inline-block rounded-full bg-blue-500 animate-pulse ${compactLeadUi ? 'h-1.5 w-1.5' : 'h-2 w-2'}`} />
-              <span className="font-medium">Đang tải dữ liệu…</span>
+              <span className="font-medium">Đang tải dữ liệu CRM…</span>
             </div>
           ) : lastSyncAt && (
             <div className={`flex items-center gap-1.5 text-gray-500 ${compactLeadUi ? 'text-[10px] mt-0.5' : 'text-xs mt-1'}`} title="Tự cập nhật realtime qua Socket.IO + đồng bộ ngầm mỗi 15s">
@@ -3969,9 +4012,8 @@ export default function CRMDashboard() {
         </div>
       </div>
 
-      {/* Banner "Đang tải dữ liệu" — chỉ hiện khi đang load LẦN ĐẦU (chưa có dữ liệu).
-          Tránh trắng màn khi user vừa vào dashboard mà API trả về chậm. */}
-      {firstLoading && (
+      {/* Banner đang tải — lần đầu hoặc đổi bộ lọc / công ty (không nhầm với «chưa có pipeline»). */}
+      {crmMainContentLoading && (
         <div className="flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 shadow-sm">
           <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-100">
             <span className="inline-block h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" aria-hidden />
@@ -3992,13 +4034,15 @@ export default function CRMDashboard() {
             onClick={() => switchTab('lead')}
             className={`rounded-full font-medium transition-all duration-200 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs min-w-[5.5rem] ${pipelineType === 'lead' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
           >
-            💼 Leads {pinnedTab === 'lead' && <Pin className="h-3.5 w-3.5 text-amber-500 rotate-45" />}
+            💼 Leads{leadTabCountLabel != null ? ` (${leadTabCountLabel})` : ''}{' '}
+            {pinnedTab === 'lead' && <Pin className="h-3.5 w-3.5 text-amber-500 rotate-45" />}
           </button>
           <button
             onClick={() => switchTab('deal')}
             className={`rounded-full font-medium transition-all duration-200 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs min-w-[5.5rem] ${pipelineType === 'deal' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
           >
-            🎯 Deals {pinnedTab === 'deal' && <Pin className="h-3.5 w-3.5 text-amber-500 rotate-45" />}
+            🎯 Deals{dealTabCountLabel != null ? ` (${dealTabCountLabel})` : ''}{' '}
+            {pinnedTab === 'deal' && <Pin className="h-3.5 w-3.5 text-amber-500 rotate-45" />}
           </button>
         </div>
         <button
@@ -4764,7 +4808,23 @@ export default function CRMDashboard() {
         ))}
       </div>
 
-      {showNoPipelineMainViews ? (
+      {crmMainContentLoading ? (
+        <div
+          data-tour="crm-loading"
+          className="rounded-xl border border-blue-200 bg-blue-50/90 px-6 py-10 sm:px-10 sm:py-12 text-center shadow-sm"
+        >
+          <span className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-blue-100 mb-4">
+            <span className="inline-block h-7 w-7 border-[3px] border-blue-500 border-t-transparent rounded-full animate-spin" aria-hidden />
+          </span>
+          <h2 className="text-lg sm:text-xl font-bold text-blue-950 mb-2">Đang tải dữ liệu CRM…</h2>
+          {scopedCompanyName && (
+            <p className="text-sm font-medium text-blue-900/85 mb-3">{scopedCompanyName}</p>
+          )}
+          <p className="text-sm text-blue-900/90 max-w-lg mx-auto leading-relaxed">
+            Đang đồng bộ {pipelineType === 'lead' ? 'leads' : 'deals'}, cột pipeline và bộ lọc. Kanban sẽ hiển thị ngay khi tải xong.
+          </p>
+        </div>
+      ) : showNoPipelineMainViews ? (
         <div
           data-tour="crm-no-pipeline"
           className="rounded-xl border border-amber-200 bg-amber-50/90 px-6 py-10 sm:px-10 sm:py-12 text-center shadow-sm"
@@ -4888,7 +4948,7 @@ export default function CRMDashboard() {
               scrollLoad={kanbanScrollLoad}
             />
             {/* Chú thích màu sắc thẻ Kanban — chỉ hiện sau khi load xong dữ liệu */}
-            {!firstLoading && (
+            {!crmMainContentLoading && (
               <div className="flex flex-wrap items-center gap-3 px-3 py-2 border-t border-gray-100 bg-white text-[11px] text-gray-600">
                 <span className="font-semibold text-gray-500 mr-1">Chú thích badge hạn:</span>
                 <span className="inline-flex items-center gap-1.5">

@@ -120,13 +120,9 @@ export default function DownloadAppPage() {
             </div>
           ) : !info?.available ? (
             <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-4 text-sm text-amber-800">
-              <p className="font-semibold">
-                {info?.version
-                  ? `Bản v${info.version}${info.versionCode != null ? ` (code ${info.versionCode})` : ''} chưa sẵn sàng tải`
-                  : 'Chưa có bản APK trên server'}
-              </p>
+              <p className="font-semibold">Chưa có bản APK trên server</p>
               <p className="mt-1 text-amber-700">
-                File APK chưa có trên server hoặc đang được deploy. Admin kiểm tra trang <strong>Cập nhật App</strong> hoặc thử lại sau vài phút.
+                Admin cần upload bản phát hành tại trang <strong>Cập nhật App</strong> và bật trạng thái active.
               </p>
             </div>
           ) : (

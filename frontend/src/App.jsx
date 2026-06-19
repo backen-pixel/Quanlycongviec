@@ -2,7 +2,6 @@ import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'rea
 import { Suspense, Component, useEffect } from 'react';
 import { AuthProvider, useAuth } from './lib/auth';
 import { lazyWithRetry, clearChunkReloadFlag, isChunkLoadErrorMessage } from './lib/lazyWithRetry';
-import DriveTransferPanel from './components/drive/DriveTransferPanel';
 
 class ErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null, errorInfo: null }; }
@@ -321,7 +320,6 @@ export default function App() {
         <CallProvider>
         <ThemeProvider>
         <CallOverlay />
-        <DriveTransferPanel />
         
         <Routes>
           <Route path="/login" element={<Login />} />
