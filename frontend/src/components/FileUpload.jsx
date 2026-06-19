@@ -43,9 +43,19 @@ export function FileUploadButton({ onFilesUploaded, multiple = true, compact = f
         headers: { 'Content-Type': 'multipart/form-data' }
       });
 
-      onFilesUploaded?.(data.files || []);
+      const all = data.files || [];
+      const uploaded = all.filter((f) => f?.file_url && !String(f.file_url).startsWith('data:'));
+      const failed = all.filter((f) => f?.error || !f?.file_url || String(f.file_url).startsWith('data:'));
+      if (!uploaded.length) {
+        throw new Error(failed[0]?.error || data.error || 'Upload không trả về URL file hợp lệ');
+      }
+      if (failed.length) {
+        console.warn('Upload partial failure:', failed);
+      }
+      onFilesUploaded?.(uploaded);
     } catch (err) {
       console.error('Upload error:', err);
+      alert(err?.response?.data?.error || err?.message || 'Không upload được file');
     }
     setUploading(false);
     if (inputRef.current) inputRef.current.value = '';

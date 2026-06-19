@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
+const { sanitizeStorageFilename, isInvalidStorageKeyError } = require('../helpers/storageFilename');
 
 const MB = 1024 * 1024;
 /** Giới hạn file gửi lên server (multer). Supabase Storage có giới hạn riêng — Dashboard → Storage. Mặc định 1024MB; env MAX_UPLOAD_VIDEO_MB (MB), tối đa 5120. */
@@ -92,12 +93,58 @@ function diskUploadSingle(req, res, next) {
 
 const BUCKET = 'attachments';
 
-// Sanitize filename: giữ tiếng Việt, bỏ ký tự đặc biệt nguy hiểm
+function uploadFileFailure(originalName, size, mimetype, message, code) {
+  return {
+    file_name: originalName,
+    file_url: null,
+    file_size: size,
+    mime_type: mimetype,
+    storage_path: null,
+    error: message || 'Lỗi tải lên Storage',
+    ...(code ? { code } : {}),
+  };
+}
+
+async function uploadBufferToStorage(buffer, { originalName, mimetype, size, entityType, entityId }) {
+  const ext = path.extname(originalName).toLowerCase() || '';
+  const safeName = sanitizeStorageFilename(path.basename(originalName, path.extname(originalName)));
+  const timestamp = Date.now();
+  const folder = entityId ? `${entityType || 'general'}/${entityId}` : (entityType || 'general');
+  let storagePath = `${folder}/${timestamp}_${safeName}${ext}`;
+
+  let uploadError;
+  ({ error: uploadError } = await supabase.storage
+    .from(BUCKET)
+    .upload(storagePath, buffer, { contentType: mimetype, upsert: false }));
+
+  if (uploadError && isInvalidStorageKeyError(uploadError)) {
+    storagePath = `${folder}/${timestamp}_file${ext || '.bin'}`;
+    ({ error: uploadError } = await supabase.storage
+      .from(BUCKET)
+      .upload(storagePath, buffer, { contentType: mimetype, upsert: false }));
+  }
+
+  if (uploadError) {
+    console.error('Storage upload error:', uploadError);
+    if (isStorageSizeLimitError(uploadError)) {
+      return uploadFileFailure(originalName, size, mimetype, uploadError.message, 'STORAGE_SIZE_LIMIT');
+    }
+    return uploadFileFailure(originalName, size, mimetype, uploadError.message || 'Lỗi tải lên Storage');
+  }
+
+  const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(storagePath);
+  return {
+    file_name: originalName,
+    file_url: urlData.publicUrl,
+    file_size: size,
+    mime_type: mimetype,
+    storage_path: storagePath,
+  };
+}
+
+// Sanitize filename: giữ tiếng Việt cho hiển thị — object key dùng sanitizeStorageFilename (ASCII)
 function sanitizeFilename(name) {
-  return name
-    .replace(/[<>:"/\\|?*]/g, '') // Bỏ ký tự không hợp lệ
-    .replace(/\s+/g, '_')         // Spaces → underscore
-    .trim();
+  return sanitizeStorageFilename(name);
 }
 
 // Fix multer Latin-1 encoding → UTF-8
@@ -118,47 +165,14 @@ function fixFilename(file) {
 // entity_type: 'lead', 'deal', 'messenger', 'task', 'general'
 // entity_id: lead_id, customer_id, etc. → làm thư mục
 async function uploadOneFile(file, entityType, entityId) {
-  fixFilename(file); // Fix encoding tiếng Việt
-  const ext = path.extname(file.originalname);
-  const safeName = sanitizeFilename(path.basename(file.originalname, ext));
-  const timestamp = Date.now();
-  
-  // Phân thư mục: entity_type/entity_id/timestamp_filename.ext
-  // VD: lead/abc-123/1711936800_Bao_gia_tu_bep.pdf
-  const folder = entityId ? `${entityType || 'general'}/${entityId}` : (entityType || 'general');
-  const storagePath = `${folder}/${timestamp}_${safeName}${ext}`;
-
-  const { data: uploadData, error: uploadError } = await supabase.storage
-    .from(BUCKET)
-    .upload(storagePath, file.buffer, {
-      contentType: file.mimetype,
-      upsert: false,
-    });
-
-  if (uploadError) {
-    console.error('Storage upload error:', uploadError);
-    if (isStorageSizeLimitError(uploadError)) {
-      throw Object.assign(new Error(uploadError.message), { code: 'STORAGE_SIZE_LIMIT' });
-    }
-    // Fallback: base64 data URL
-    const base64 = file.buffer.toString('base64');
-    return {
-      file_name: file.originalname,
-      file_url: `data:${file.mimetype};base64,${base64}`,
-      file_size: file.size,
-      mime_type: file.mimetype,
-      storage_path: null,
-    };
-  }
-
-  const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(storagePath);
-  return {
-    file_name: file.originalname,
-    file_url: urlData.publicUrl,
-    file_size: file.size,
-    mime_type: file.mimetype,
-    storage_path: storagePath,
-  };
+  fixFilename(file);
+  return uploadBufferToStorage(file.buffer, {
+    originalName: file.originalname,
+    mimetype: file.mimetype,
+    size: file.size,
+    entityType,
+    entityId,
+  });
 }
 
 // Upload 1 file từ disk (stream) → Supabase Storage — NHANH cho video lớn
@@ -171,21 +185,25 @@ async function uploadOneFileFromDisk(filePath, originalName, mimetype, fileSize,
     if (utf8Name && !utf8Name.includes('�') && utf8Name !== originalName) fixedName = utf8Name;
   } catch (e) {}
 
-  const ext = path.extname(fixedName);
-  const safeName = sanitizeFilename(path.basename(fixedName, ext));
+  const ext = path.extname(fixedName).toLowerCase() || '';
+  const safeName = sanitizeStorageFilename(path.basename(fixedName, path.extname(fixedName)));
   const timestamp = Date.now();
   const folder = entityId ? `${entityType || 'general'}/${entityId}` : (entityType || 'general');
-  const storagePath = `${folder}/${timestamp}_${safeName}${ext}`;
+  let storagePath = `${folder}/${timestamp}_${safeName}${ext}`;
 
-  // Stream read từ disk → upload Supabase
   const fileStream = fs.createReadStream(filePath);
-  const { error: uploadError } = await supabase.storage
-    .from(BUCKET)
-    .upload(storagePath, fileStream, {
-      contentType: mimetype,
-      duplex: 'half',
-      upsert: false,
-    });
+  const tryUpload = async (objectPath, body) => {
+    const { error } = await supabase.storage
+      .from(BUCKET)
+      .upload(objectPath, body, { contentType: mimetype, upsert: false, ...(body.readable ? { duplex: 'half' } : {}) });
+    return error;
+  };
+
+  let uploadError = await tryUpload(storagePath, fileStream);
+  if (uploadError && isInvalidStorageKeyError(uploadError)) {
+    storagePath = `${folder}/${timestamp}_file${ext || '.bin'}`;
+    uploadError = await tryUpload(storagePath, fs.createReadStream(filePath));
+  }
 
   if (!uploadError) {
     fs.unlink(filePath, () => {});
@@ -202,49 +220,24 @@ async function uploadOneFileFromDisk(filePath, originalName, mimetype, fileSize,
   console.error('Storage stream upload error:', uploadError);
   if (isStorageSizeLimitError(uploadError)) {
     fs.unlink(filePath, () => {});
-    return {
-      file_name: fixedName,
-      file_url: null,
-      file_size: fileSize,
-      mime_type: mimetype,
-      storage_path: null,
-      error: uploadError.message,
-      code: 'STORAGE_SIZE_LIMIT',
-    };
+    return uploadFileFailure(fixedName, fileSize, mimetype, uploadError.message, 'STORAGE_SIZE_LIMIT');
   }
 
   // Fallback: đọc buffer rồi upload lại (một số lỗi stream)
   try {
     const buffer = fs.readFileSync(filePath);
-    const { error: retryErr } = await supabase.storage.from(BUCKET).upload(storagePath, buffer, { contentType: mimetype, upsert: false });
     fs.unlink(filePath, () => {});
-    if (retryErr) {
-      if (isStorageSizeLimitError(retryErr)) {
-        return {
-          file_name: fixedName,
-          file_url: null,
-          file_size: fileSize,
-          mime_type: mimetype,
-          storage_path: null,
-          error: retryErr.message,
-          code: 'STORAGE_SIZE_LIMIT',
-        };
-      }
-      return { file_name: fixedName, file_url: null, file_size: fileSize, mime_type: mimetype, storage_path: null, error: uploadError.message };
-    }
+    return uploadBufferToStorage(buffer, {
+      originalName: fixedName,
+      mimetype,
+      size: fileSize,
+      entityType,
+      entityId,
+    });
   } catch (e2) {
     fs.unlink(filePath, () => {});
-    return { file_name: fixedName, file_url: null, file_size: fileSize, mime_type: mimetype, storage_path: null, error: uploadError.message };
+    return uploadFileFailure(fixedName, fileSize, mimetype, uploadError.message || e2.message);
   }
-
-  const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(storagePath);
-  return {
-    file_name: fixedName,
-    file_url: urlData.publicUrl,
-    file_size: fileSize,
-    mime_type: mimetype,
-    storage_path: storagePath,
-  };
 }
 
 // ═══ STREAM UPLOAD — Video/file lớn (disk → Supabase) ═══
@@ -284,6 +277,12 @@ r.post('/single', memoryUploadSingle, async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Không có file' });
     const result = await uploadOneFile(req.file, req.body.entity_type || 'messenger', req.body.entity_id);
+    if (result.error || !result.file_url || String(result.file_url).startsWith('data:')) {
+      const mapped = result.code === 'STORAGE_SIZE_LIMIT' || isStorageSizeLimitError(result.error)
+        ? mapUploadFailure(result.error)
+        : { status: 500, error: result.error || 'Upload thất bại' };
+      return res.status(mapped.status).json({ error: mapped.error });
+    }
     res.status(201).json(result);
   } catch (e) {
     console.error('Upload single error:', e);
@@ -364,15 +363,24 @@ r.post('/', uploadFlexible, async (req, res) => {
 
     if (!req.files?.length) return res.status(400).json({ error: 'Không có file' });
 
-    // Upload TẤT CẢ files song song — truyền entity_id cho thư mục
     const results = await Promise.all(
       req.files.map(file => uploadOneFile(file, entity_type, entity_id))
     );
 
+    const ok = results.filter((a) => a.file_url && !String(a.file_url).startsWith('data:'));
+    const failed = results.filter((a) => a.error || !a.file_url || String(a.file_url).startsWith('data:'));
+
+    if (!ok.length) {
+      return res.status(500).json({
+        error: failed[0]?.error || 'Upload thất bại — không lưu được lên Storage',
+        files: results,
+      });
+    }
+
     // Save to DB song song nếu có entity_id
     if (entity_id) {
       await Promise.all(
-        results.filter(a => a.file_url).map(attachment =>
+        ok.map(attachment =>
           supabase.from('file_attachments').insert({
             entity_type: entity_type || 'task',
             entity_id,
@@ -383,7 +391,7 @@ r.post('/', uploadFlexible, async (req, res) => {
       );
     }
 
-    res.status(201).json({ files: results });
+    res.status(201).json({ files: results, uploaded: ok, failed });
   } catch (e) {
     console.error('Upload error:', e);
     res.status(500).json({ error: e.message || 'Lỗi upload' });

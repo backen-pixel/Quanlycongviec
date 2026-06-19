@@ -110,6 +110,7 @@ export function CrmCommentMentionComposer({
 
   const handleSubmit = () => {
     const trimmed = String(value || '').trim();
+    if (posting || !(canSubmit ?? trimmed)) return;
     const fromText = resolveMentionIdsFromContent(trimmed, members, { excludeUserId: meId });
     const fromPicks = [...pickedIdsRef.current].filter((id) => String(id) !== String(meId));
     const mentionIds = [...new Set([...fromText, ...fromPicks])];

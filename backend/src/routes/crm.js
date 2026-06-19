@@ -16136,6 +16136,14 @@ function crmLeadCommentAttachmentsColumnMissing(error) {
 }
 
 /** Chuẩn hóa đính kèm bình luận lead — nhận {url|file_url, name|file_name, type|mime_type, size|file_size}. */
+function isAllowedLeadCommentAttachmentUrl(url) {
+  if (!url) return false;
+  if (url.startsWith('data:')) return false;
+  if (url.startsWith('/uploads/')) return true;
+  if (/^https?:\/\//i.test(url)) return true;
+  return false;
+}
+
 function normalizeCrmLeadCommentAttachments(raw) {
   if (raw == null) return [];
   const arr = Array.isArray(raw) ? raw : [];
@@ -16144,7 +16152,7 @@ function normalizeCrmLeadCommentAttachments(raw) {
     if (!a || typeof a !== 'object') continue;
     const url = typeof a.url === 'string' ? a.url.trim()
       : (typeof a.file_url === 'string' ? a.file_url.trim() : '');
-    if (!url || !url.startsWith('/uploads/')) continue;
+    if (!isAllowedLeadCommentAttachmentUrl(url)) continue;
     out.push({
       url: url.slice(0, 600),
       name: String(a.name != null ? a.name : (a.file_name != null ? a.file_name : '')).slice(0, 400),
@@ -16251,7 +16259,11 @@ r.post('/leads/:id/comments', async (req, res) => {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
     const leadId = String(req.params.id || '').trim();
     const body = String(req.body?.body || '').trim();
-    const attachments = normalizeCrmLeadCommentAttachments(req.body?.attachments);
+    const attachmentsRaw = req.body?.attachments;
+    const attachments = normalizeCrmLeadCommentAttachments(attachmentsRaw);
+    if (Array.isArray(attachmentsRaw) && attachmentsRaw.length && !attachments.length) {
+      return res.status(400).json({ error: 'File đính kèm không hợp lệ hoặc URL không được hỗ trợ' });
+    }
     if (!body && !attachments.length) return res.status(400).json({ error: 'Nội dung hoặc đính kèm bắt buộc' });
 
     let parentId = null;
@@ -16280,12 +16292,9 @@ r.post('/leads/:id/comments', async (req, res) => {
       .select('id, lead_id, user_id, parent_id, body, attachments, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
       .single();
     if (error && crmLeadCommentAttachmentsColumnMissing(error)) {
-      delete insertRow.attachments;
-      ({ data, error } = await supabase
-        .from('crm_lead_comments')
-        .insert(insertRow)
-        .select('id, lead_id, user_id, parent_id, body, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
-        .single());
+      return res.status(500).json({
+        error: 'Cột attachments chưa có. Chạy migration database/362_crm_lead_comments_attachments.sql trên Supabase.',
+      });
     }
     if (error) {
       if (commentsTableMissing(error)) {
