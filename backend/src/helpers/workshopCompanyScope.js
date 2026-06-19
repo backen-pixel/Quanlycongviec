@@ -1,4 +1,5 @@
 const { isSystemAdmin } = require('./adminRole');
+const { canCrossWorkshopProductionViewerUseCompanyQuery } = require('./dealParticipantProduction');
 
 /** Chuẩn hóa UUID công ty cho query pipeline (chuỗi rỗng → null). */
 function normalizeWorkshopCompanyId(companyId) {
@@ -23,6 +24,9 @@ function effectiveWorkshopCompanyId(req, queryCompanyId) {
       : '';
   if (isSystemAdmin(req.user)) {
     return q || null;
+  }
+  if (canCrossWorkshopProductionViewerUseCompanyQuery(req.user, q)) {
+    return q;
   }
   return userCid || null;
 }

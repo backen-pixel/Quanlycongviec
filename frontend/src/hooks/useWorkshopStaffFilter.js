@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import api from '../lib/api';
 import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
+import { isCrossWorkshopProductionViewer } from '../lib/crossWorkshopProduction';
 
 function coerceFilterStr(value) {
   if (typeof value === 'string') return value;
@@ -58,6 +59,7 @@ export function useWorkshopStaffFilter({
   persisted = null,
 }) {
   const isCompanyScopedAdmin = isCrmCompanyAdmin(user);
+  const crossWorkshopViewer = isCrossWorkshopProductionViewer(user);
   const userCompanyId = user?.company_id ? String(user.company_id) : '';
 
   const [filterRegion, setFilterRegion] = useState(() => coerceFilterStr(persisted?.filterRegion));
@@ -70,10 +72,11 @@ export function useWorkshopStaffFilter({
 
   const dashboardScopeCompanyId = useMemo(() => {
     if (isCompanyScopedAdmin && userCompanyId) return userCompanyId;
+    if (crossWorkshopViewer && filterCompany) return String(filterCompany);
     if (!isAdmin && userCompanyId) return userCompanyId;
     if (isAdmin && filterCompany) return String(filterCompany);
     return '';
-  }, [isCompanyScopedAdmin, isAdmin, userCompanyId, filterCompany]);
+  }, [isCompanyScopedAdmin, crossWorkshopViewer, isAdmin, userCompanyId, filterCompany]);
 
   const crmCompanyIdsCsv = useMemo(
     () => (companies || []).map((c) => String(c.id)).filter(Boolean).join(','),
@@ -213,7 +216,7 @@ export function useWorkshopStaffFilter({
     (filterRegion ? 1 : 0)
     + (filterPersonId ? 1 : 0)
     + (coerceFilterStr(filterPersonName).trim() ? 1 : 0)
-    + (isAdmin && !isCompanyScopedAdmin && filterCompany ? 1 : 0);
+    + ((isAdmin || crossWorkshopViewer) && !isCompanyScopedAdmin && filterCompany ? 1 : 0);
 
   return {
     isCompanyScopedAdmin,

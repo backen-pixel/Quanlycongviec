@@ -2,6 +2,11 @@ const { supabase } = require('../config/supabase');
 const {
   resolveProductionHandoverResponsibleUserId,
 } = require('./productionHandoverSettings');
+const {
+  ensureDealProductionAutoParticipants,
+  ensureProjectProductionAutoParticipants,
+  getDealCompanyAutoParticipantUserIds,
+} = require('./dealParticipantProduction');
 
 /** Users thuộc công ty SX (users.company_id hoặc qua departments). */
 async function loadUsersForProductionCompany(companyId) {
@@ -170,7 +175,10 @@ async function applyWorkshopTypeDefaultStaffToProject(projectId, companyId, work
     primaryUserId = fb ? String(fb) : null;
   }
 
-  if (!userIds.length) return null;
+  if (!userIds.length) {
+    await ensureProjectProductionAutoParticipants(projectId);
+    return null;
+  }
 
   const primaryId = primaryUserId && userIds.includes(String(primaryUserId))
     ? String(primaryUserId)
@@ -232,6 +240,7 @@ async function applyWorkshopTypeDefaultStaffToProject(projectId, companyId, work
   }
 
   await syncLeadMembersForProject(projectId, userIds, primaryId, { previousUserIds });
+  await ensureProjectProductionAutoParticipants(projectId);
 
   return primaryId;
 }
@@ -299,7 +308,10 @@ async function ensureLeadMembersFromProjectStaff(leadId) {
     }
   }
 
-  if (!userIds.length) return { synced: 0 };
+  if (!userIds.length) {
+    await ensureDealProductionAutoParticipants({ dealId: leadId, dealCompanyId: null });
+    return { synced: 0 };
+  }
 
   const { data: existing } = await supabase
     .from('lead_members')
@@ -307,13 +319,18 @@ async function ensureLeadMembersFromProjectStaff(leadId) {
     .eq('lead_id', leadId);
   const existingIds = new Set((existing || []).map((r) => String(r.user_id)));
   const missing = userIds.filter((uid) => !existingIds.has(String(uid)));
-  if (!missing.length) return { synced: 0 };
+  if (!missing.length) {
+    await ensureDealProductionAutoParticipants({ dealId: leadId, dealCompanyId: null });
+    return { synced: 0 };
+  }
 
-  return syncProductionStaffToLeadMembers({
+  const r = await syncProductionStaffToLeadMembers({
     dealId: leadId,
     userIds,
     primaryUserId,
   });
+  await ensureDealProductionAutoParticipants({ dealId: leadId, dealCompanyId: null });
+  return r;
 }
 
 /** Đồng bộ lead_members cho mọi deal gắn project. */
@@ -327,19 +344,25 @@ async function syncLeadMembersForProject(projectId, userIds, primaryUserId, opts
 
   const { data: deals } = await supabase
     .from('crm_leads')
-    .select('id')
+    .select('id, company_id')
     .eq('project_id', projectId)
     .eq('type', 'deal');
   let total = 0;
   for (const deal of deals || []) {
+    const protectedIds = new Set(
+      (await getDealCompanyAutoParticipantUserIds(deal.company_id)).map(String),
+    );
     if (staleUserIds.length) {
-      const { error: delErr } = await supabase
-        .from('lead_members')
-        .delete()
-        .eq('lead_id', deal.id)
-        .in('user_id', staleUserIds);
-      if (delErr) {
-        console.warn('[productionWorkshopTypeStaff] lead_members cleanup:', delErr.message);
+      const staleToRemove = staleUserIds.filter((uid) => !protectedIds.has(String(uid)));
+      if (staleToRemove.length) {
+        const { error: delErr } = await supabase
+          .from('lead_members')
+          .delete()
+          .eq('lead_id', deal.id)
+          .in('user_id', staleToRemove);
+        if (delErr) {
+          console.warn('[productionWorkshopTypeStaff] lead_members cleanup:', delErr.message);
+        }
       }
     }
     const r = await syncProductionStaffToLeadMembers({
@@ -349,6 +372,11 @@ async function syncLeadMembersForProject(projectId, userIds, primaryUserId, opts
       addedBy: opts.addedBy || null,
     });
     total += r.synced || 0;
+    await ensureDealProductionAutoParticipants({
+      dealId: deal.id,
+      dealCompanyId: deal.company_id,
+      addedBy: opts.addedBy || null,
+    });
   }
   return { synced: total };
 }

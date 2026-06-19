@@ -4,6 +4,11 @@ import api from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
+import {
+  canPickWorkshopCompany,
+  isCrossWorkshopProductionViewer,
+  workshopCompaniesForCrossViewer,
+} from '../lib/crossWorkshopProduction';
 import { formatVND, formatDate } from '../lib/utils';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
 import {
@@ -173,6 +178,7 @@ export default function ProductionDashboard() {
   const P0 = useMemo(() => readSxDashPersisted(), []);
   const { user } = useAuth();
   const isAdmin = isAdminLike(user);
+  const crossWorkshopViewer = isCrossWorkshopProductionViewer(user);
 
   const [kpis, setKpis] = useState(null);
   const [projects, setProjects] = useState([]);
@@ -277,6 +283,14 @@ export default function ProductionDashboard() {
     staffFilterActiveCount,
   } = staffFilter;
 
+  const canPickCompany = canPickWorkshopCompany(user, isAdmin, isCompanyScopedAdmin);
+  const workshopCompanyPickerList = useMemo(() => {
+    if (crossWorkshopViewer && !isAdmin) {
+      return workshopCompaniesForCrossViewer(companies, user);
+    }
+    return companies;
+  }, [companies, crossWorkshopViewer, isAdmin, user]);
+
   const deferredPersonName = useDeferredValue(filterPersonName);
 
   const handleStaffFilterCompanyChange = useCallback((companyId) => {
@@ -286,8 +300,9 @@ export default function ProductionDashboard() {
 
   const companyParam = useMemo(() => {
     if (isAdmin) return filterCompany || undefined;
+    if (crossWorkshopViewer) return filterCompany || user?.company_id || undefined;
     return user?.company_id ? String(user.company_id) : undefined;
-  }, [isAdmin, filterCompany, user?.company_id]);
+  }, [isAdmin, crossWorkshopViewer, filterCompany, user?.company_id]);
   const companyForTypes = companyParam || (user?.company_id ? String(user.company_id) : '');
 
   const load = useCallback(async (opts = {}) => {
@@ -1482,10 +1497,10 @@ export default function ProductionDashboard() {
             )}
           </div>
 
-          {/* Công ty — chip ngang, luôn hiện tất cả, tô màu công ty đang chọn */}
-          {isAdmin && !isCompanyScopedAdmin && companies.length > 0 && (
+          {/* Công ty — chip ngang; kế toán cross-viewer: VPT + Metalla + Hucabi */}
+          {canPickCompany && !isCompanyScopedAdmin && workshopCompanyPickerList.length > 0 && (
             <div className="flex items-center gap-1.5 overflow-x-auto max-w-full shrink-0 pb-0.5 scrollbar-thin scrollbar-thumb-gray-200">
-              {[{ id: '', name: 'Tất cả' }, ...companies].map((c) => {
+              {(isAdmin ? [{ id: '', name: 'Tất cả' }, ...workshopCompanyPickerList] : workshopCompanyPickerList).map((c) => {
                 const active = filterCompany === c.id;
                 return (
                   <button
