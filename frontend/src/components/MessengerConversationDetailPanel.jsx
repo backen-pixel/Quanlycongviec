@@ -263,9 +263,9 @@ export default function MessengerConversationDetailPanel({
 
   return (
     <>
-    <aside className="flex w-[320px] shrink-0 flex-col border-l border-slate-200 bg-slate-100/80 min-h-0 h-full overflow-hidden">
+    <aside className="flex w-[320px] shrink-0 flex-col border-l border-slate-200 bg-slate-100/80 min-h-0 h-full overflow-y-auto [scrollbar-width:thin]">
       {/* Header gradient */}
-      <div className="relative shrink-0 px-4 pt-8 pb-5 bg-gradient-to-br from-rose-500 via-fuchsia-600 to-indigo-700 text-white text-center">
+      <div className="relative px-4 pt-8 pb-5 bg-gradient-to-br from-rose-500 via-fuchsia-600 to-indigo-700 text-white text-center">
         <div className="relative mx-auto w-[88px] h-[88px] rounded-full p-[3px] bg-white/95 shadow-lg mb-3">
           <DetailAvatar
             src={avatarSrc || groupDetail?.avatar || selected?.avatar}
@@ -357,7 +357,7 @@ export default function MessengerConversationDetailPanel({
       </div>
 
       {/* Quick actions */}
-      <div className="grid grid-cols-3 gap-1 px-3 py-3 bg-white border-b border-slate-100 shrink-0">
+      <div className="grid grid-cols-3 gap-1 px-3 py-3 bg-white border-b border-slate-100">
         {!isDirect ? (
           <QuickAction icon={Plus} label="Thêm" onClick={onAddMember} disabled={!canManageGroup} />
         ) : (
@@ -371,8 +371,7 @@ export default function MessengerConversationDetailPanel({
         <QuickAction icon={Bell} label="Thông báo" onClick={() => onNotifyToggle(!notifyOn)} />
       </div>
 
-      {/* Tabbed card + settings — vùng cuộn chính */}
-      <div className="flex-1 min-h-0 overflow-y-auto mx-3 my-3 space-y-3 [scrollbar-width:thin]">
+      <div className="mx-3 my-3 space-y-3 pb-3">
       {!isDirect ? (
         <div
           ref={membersSectionRef}
@@ -401,7 +400,7 @@ export default function MessengerConversationDetailPanel({
 
           {membersExpanded ? (
             <>
-              <ul className="overflow-y-auto p-2 text-xs max-h-[min(36vh,320px)] space-y-0.5">
+              <ul className="p-2 text-xs space-y-0.5">
                 {groupMembers.map((m) => {
                   const u = m.user || {};
                   const isCreator = groupDetail?.created_by && String(groupDetail.created_by) === String(m.user_id);
@@ -521,7 +520,7 @@ export default function MessengerConversationDetailPanel({
           ))}
         </div>
 
-        <div className="overflow-y-auto p-2 text-xs min-h-[160px] max-h-[min(42vh,360px)]">
+        <div className="p-2 text-xs">
           {(rightSection === 'media' || rightSection === 'members') && (
             <div className="space-y-2">
               <div className="grid grid-cols-3 gap-1.5">
