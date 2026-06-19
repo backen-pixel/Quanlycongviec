@@ -37,6 +37,20 @@ function deptUnreadKey(uid) {
   return `${DEPT_UNREAD_KEY_PREFIX}${uid}`;
 }
 
+/** Server là nguồn đúng khi unread=0 — tránh giữ số stale từ localStorage. */
+function mergeGroupUnreadFromApi(prev, apiList) {
+  const next = {};
+  if (!Array.isArray(apiList)) return next;
+  for (const g of apiList) {
+    if (!g?.id) continue;
+    const serverN = Number(g?.unread_count) || 0;
+    if (serverN <= 0) continue;
+    const localN = Number(prev?.[g.id]) || 0;
+    next[g.id] = Math.max(serverN, localN);
+  }
+  return next;
+}
+
 export function MessengerDockProvider({ children }) {
   const { user, socket } = useAuth();
   const uid = user?.userId || user?.id;
@@ -105,25 +119,9 @@ export function MessengerDockProvider({ children }) {
       setUnreadByGroupId({});
       return;
     }
-    try {
-      const raw = localStorage.getItem(messengerUnreadGroupKey(uid));
-      if (!raw) {
-        setUnreadByGroupId({});
-        unreadGroupHydratedRef.current = true;
-        return;
-      }
-      const p = JSON.parse(raw);
-      const next = {};
-      if (p && typeof p === 'object') {
-        Object.entries(p).forEach(([k, v]) => {
-          const n = Number(v);
-          if (!Number.isNaN(n) && n > 0) next[k] = n;
-        });
-      }
-      setUnreadByGroupId(next);
-    } catch {
-      setUnreadByGroupId({});
-    }
+    // Không khôi phục từ localStorage — tránh badge ảo (nhóm đã rời / đã đọc trên server).
+    // unread lấy từ API hydrate + socket realtime.
+    setUnreadByGroupId({});
     unreadGroupHydratedRef.current = true;
   }, [uid]);
 
@@ -216,18 +214,7 @@ export function MessengerDockProvider({ children }) {
       try {
         const { data } = await api.get('/messenger/groups');
         if (cancelled || !Array.isArray(data)) return;
-        setUnreadByGroupId((prev) => {
-          const next = { ...prev };
-          for (const g of data) {
-            if (!g?.id) continue;
-            const serverN = Number(g?.unread_count) || 0;
-            const localN = Number(prev[g.id]) || 0;
-            const merged = Math.max(serverN, localN);
-            if (merged > 0) next[g.id] = merged;
-            else delete next[g.id];
-          }
-          return next;
-        });
+        setUnreadByGroupId((prev) => mergeGroupUnreadFromApi(prev, data));
       } catch {
         /* ignore */
       }
@@ -263,19 +250,7 @@ export function MessengerDockProvider({ children }) {
 
   /** Gộp unread_count từ GET /messenger/groups với số đang giữ local (realtime). */
   const syncUnreadFromGroups = useCallback((apiList) => {
-    if (!Array.isArray(apiList)) return;
-    setUnreadByGroupId((prev) => {
-      const next = { ...prev };
-      for (const g of apiList) {
-        if (!g?.id) continue;
-        const serverN = Number(g?.unread_count) || 0;
-        const localN = Number(prev[g.id]) || 0;
-        const merged = Math.max(serverN, localN);
-        if (merged > 0) next[g.id] = merged;
-        else delete next[g.id];
-      }
-      return next;
-    });
+    setUnreadByGroupId((prev) => mergeGroupUnreadFromApi(prev, apiList));
   }, []);
 
   const markDeptRead = useCallback((deptId) => {
