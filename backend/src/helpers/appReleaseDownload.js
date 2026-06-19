@@ -86,18 +86,6 @@ function downloadUrlForRelease(release, publicBase) {
     || null;
 }
 
-/** APK có thể tải được (file local, Storage hoặc external_url hợp lệ). */
-function isReleaseApkAvailable(release, appKey) {
-  if (!release || release.update_type !== 'apk') return false;
-  const ext = String(release.external_url || '').trim();
-  if (ext && /^https?:\/\//i.test(ext) && !/\/uploads\/app-releases\//i.test(ext)) return true;
-  if (release.storage_path) return true;
-  if (resolveLocalApkPath(release, appKey)) return true;
-  const remote = String(release.file_url || '').trim();
-  if (remote && /^https?:\/\//i.test(remote) && !/\/uploads\/app-releases\//i.test(remote)) return true;
-  return false;
-}
-
 module.exports = {
   apkFilenameForRelease,
   resolveLocalApkPath,
@@ -105,5 +93,4 @@ module.exports = {
   statFileSizeSafe,
   buildPublicDownloadUrl,
   downloadUrlForRelease,
-  isReleaseApkAvailable,
 };

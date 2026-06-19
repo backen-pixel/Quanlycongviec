@@ -26,6 +26,7 @@ import { useNotifications } from '../context/NotificationContext';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import {
   fetchCompanies,
+  assignProjectWorkshopType,
   fetchProductionBoard,
   fetchProductionProject,
   fetchProjectCommentIndex,
@@ -178,6 +179,7 @@ export default function KanbanScreen() {
   const [colPickerOpen, setColPickerOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(CARD_PAGE_SIZE);
   const [moveModalProject, setMoveModalProject] = useState<ProductionProject | null>(null);
+  const [classifyModalProject, setClassifyModalProject] = useState<ProductionProject | null>(null);
   const [commentProject, setCommentProject] = useState<ProductionProject | null>(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [commentIndex, setCommentIndex] = useState<Record<string, CommentIndexEntry>>({});
@@ -419,6 +421,11 @@ export default function KanbanScreen() {
     [workTypes],
   );
 
+  const classifyWorkTypeOptions = useMemo(
+    () => workTypes.map((t) => ({ id: t.id, label: t.name })),
+    [workTypes],
+  );
+
   // selectedCompanyLabel — không cần vì công ty hiện dạng chips ngang
   const selectedWorkTypeLabel = workTypeOptions.find((o) => o.id === filterWorkTypeId)?.label || 'Phân loại';
 
@@ -461,6 +468,7 @@ export default function KanbanScreen() {
   );
 
   const activeStage: KanbanStage | undefined = displayStages[activeIndex];
+  const isOrphanColumn = activeStage?.id === ORPHAN_COL_ID;
   const canPrev = activeIndex > 0;
   const canNext = activeIndex < displayStages.length - 1;
   const accent = stageColor(activeStage?.color, activeIndex);
@@ -573,6 +581,31 @@ export default function KanbanScreen() {
       }
     },
     [stages, showToast, user?.company_id],
+  );
+
+  const assignWorkType = useCallback(
+    async (project: ProductionProject, typeId: string) => {
+      const type = workTypes.find((w) => String(w.id) === String(typeId));
+      if (!type) return;
+      setMovingId(project.id);
+      try {
+        await assignProjectWorkshopType(project.id, typeId);
+        setBoard((prev) => ({
+          ...prev,
+          projects: prev.projects.map((p) =>
+            p.id === project.id
+              ? { ...p, workshop_type_id: typeId, workshop_type_name: type.name }
+              : p,
+          ),
+        }));
+        showToast(`Đã gắn phân loại «${type.name}» cho ${project.code}`, 'success');
+      } catch (e) {
+        showToast(formatApiError(e), 'error');
+      } finally {
+        setMovingId(null);
+      }
+    },
+    [workTypes, showToast],
   );
 
   const statPills = useMemo(() => {
@@ -1090,18 +1123,39 @@ export default function KanbanScreen() {
                       </View>
                     ) : null}
                   </TapHighlight>
-                  <TapHighlight
-                    style={[styles.cardActionBtn, styles.cardActionBtnPrimary]}
-                    onPress={() => setMoveModalProject(item)}
-                    disabled={isMoving}
-                    accessibilityLabel="Chuyển cột"
-                  >
-                    {isMoving ? (
-                      <ActivityIndicator size="small" color={colors.white} />
-                    ) : (
-                      <Ionicons name="swap-horizontal" size={18} color={colors.white} />
-                    )}
-                  </TapHighlight>
+                  {isOrphanColumn ? (
+                    <TapHighlight
+                      style={[styles.cardActionBtn, styles.cardActionBtnClassify]}
+                      onPress={() => {
+                        if (!classifyWorkTypeOptions.length) {
+                          showToast('Chưa cấu hình phân loại cho công ty này', 'error');
+                          return;
+                        }
+                        setClassifyModalProject(item);
+                      }}
+                      disabled={isMoving}
+                      accessibilityLabel="Phân loại"
+                    >
+                      {isMoving ? (
+                        <ActivityIndicator size="small" color={colors.white} />
+                      ) : (
+                        <Ionicons name="layers-outline" size={18} color={colors.white} />
+                      )}
+                    </TapHighlight>
+                  ) : (
+                    <TapHighlight
+                      style={[styles.cardActionBtn, styles.cardActionBtnPrimary]}
+                      onPress={() => setMoveModalProject(item)}
+                      disabled={isMoving}
+                      accessibilityLabel="Chuyển cột"
+                    >
+                      {isMoving ? (
+                        <ActivityIndicator size="small" color={colors.white} />
+                      ) : (
+                        <Ionicons name="swap-horizontal" size={18} color={colors.white} />
+                      )}
+                    </TapHighlight>
+                  )}
                 </View>
               </View>
             </View>
@@ -1118,6 +1172,18 @@ export default function KanbanScreen() {
           setMoveModalProject(null);
         }}
         onClose={() => setMoveModalProject(null)}
+      />
+
+      <FilterPickerModal
+        visible={!!classifyModalProject}
+        title="Gắn phân loại"
+        options={classifyWorkTypeOptions}
+        selectedId={classifyModalProject?.workshop_type_id || ''}
+        onSelect={(id) => {
+          if (classifyModalProject && id) void assignWorkType(classifyModalProject, id);
+          setClassifyModalProject(null);
+        }}
+        onClose={() => setClassifyModalProject(null)}
       />
 
       <ProjectCommentModal
@@ -1394,6 +1460,9 @@ function createKanbanStyles(c: AppColors) {
   },
   cardActionBtnPrimary: {
     backgroundColor: c.primary, borderColor: c.primaryDark,
+  },
+  cardActionBtnClassify: {
+    backgroundColor: '#0D9488', borderColor: '#0F766E',
   },
   actionBadge: {
     position: 'absolute', top: -4, right: -4,

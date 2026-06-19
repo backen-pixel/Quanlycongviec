@@ -237,6 +237,19 @@ export async function moveProjectToStage(
   };
 }
 
+/** Gắn phân loại xưởng cho dự án — khớp web PUT /projects/:id { workshop_type_id }. */
+export async function assignProjectWorkshopType(
+  projectId: string,
+  workshopTypeId: string,
+): Promise<ProductionProject> {
+  const { data } = await api.put<{ project?: Record<string, unknown> }>(
+    `/projects/${projectId}`,
+    { workshop_type_id: workshopTypeId },
+  );
+  const raw = (data?.project ?? data) as Record<string, unknown>;
+  return mapProjectRow(raw);
+}
+
 export type CreateDealInput = {
   title: string;
   estimatedValue?: number | null;
