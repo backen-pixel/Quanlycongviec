@@ -628,15 +628,16 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
 
   useLeadCommentSocket(leadId, handleLeadCommentEvent);
 
-  const submit = async ({ mention_user_ids } = {}) => {
+  const submit = useCallback(async ({ mention_user_ids, attachmentList } = {}) => {
     const v = body.trim();
-    if (!v && !pendingFiles.length) return;
+    const files = attachmentList ?? pendingFiles;
+    if (!v && !files.length) return;
     setPosting(true);
     try {
       const payload = { body: v };
       if (replyTo?.id != null) payload.parent_id = replyTo.id;
       if (mention_user_ids?.length) payload.mention_user_ids = mention_user_ids;
-      if (pendingFiles.length) payload.attachments = pendingFiles;
+      if (files.length) payload.attachments = files;
       const r = await api.post(`/crm/leads/${leadId}/comments`, payload);
       const row = r.data || {};
       setComments((prev) => {
@@ -652,7 +653,17 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
     } finally {
       setPosting(false);
     }
-  };
+  }, [body, pendingFiles, leadId, replyTo, onCountChange]);
+
+  const handleFilesUploaded = useCallback((files) => {
+    const uploaded = (files || []).filter((f) => f?.file_url || f?.url);
+    if (!uploaded.length) return;
+    if (!body.trim()) {
+      void submit({ attachmentList: uploaded });
+      return;
+    }
+    setPendingFiles((prev) => [...prev, ...uploaded]);
+  }, [body, submit]);
 
   const saveEdit = async () => {
     const v = editingBody.trim();
@@ -722,7 +733,7 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
       enableMentions
       enableAttachments
       pendingFiles={pendingFiles}
-      onFilesUploaded={(files) => setPendingFiles((prev) => [...prev, ...(files || [])])}
+      onFilesUploaded={handleFilesUploaded}
       onRemovePendingFile={(i) => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))}
       canSubmit={Boolean(body.trim() || pendingFiles.length)}
       renderBody={(text) => renderCrmCommentBody(text, members)}
@@ -835,14 +846,15 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
 
   useProjectCommentSocket(projectId, handleProjectCommentEvent, applyReadReceipt);
 
-  const submit = async () => {
+  const submit = useCallback(async (attachmentList) => {
     const v = body.trim();
-    if (!v && !pendingFiles.length) return;
+    const files = attachmentList ?? pendingFiles;
+    if (!v && !files.length) return;
     setPosting(true);
     try {
       const payload = { content: v };
       if (replyTo?.id != null) payload.parent_id = replyTo.id;
-      if (pendingFiles.length) payload.attachments = pendingFiles;
+      if (files.length) payload.attachments = files;
       const r = await api.post(`/projects/${projectId}/comments`, payload);
       const row = r.data?.comment || r.data;
       if (row?.id) {
@@ -860,7 +872,17 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
     } finally {
       setPosting(false);
     }
-  };
+  }, [body, pendingFiles, projectId, replyTo, onCountChange, load]);
+
+  const handleFilesUploaded = useCallback((files) => {
+    const uploaded = (files || []).filter((f) => f?.file_url || f?.url);
+    if (!uploaded.length) return;
+    if (!body.trim()) {
+      void submit(uploaded);
+      return;
+    }
+    setPendingFiles((prev) => [...prev, ...uploaded]);
+  }, [body, submit]);
 
   const saveEdit = async () => {
     const v = editingBody.trim();
@@ -927,7 +949,7 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
       onReaction={pickReaction}
       enableAttachments
       pendingFiles={pendingFiles}
-      onFilesUploaded={(files) => setPendingFiles((prev) => [...prev, ...(files || [])])}
+      onFilesUploaded={handleFilesUploaded}
       onRemovePendingFile={(i) => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))}
       canSubmit={Boolean(body.trim() || pendingFiles.length)}
       readReceipts={readReceipts}
