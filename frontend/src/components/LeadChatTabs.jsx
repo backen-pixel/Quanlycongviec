@@ -44,6 +44,7 @@ import {
   CHAT_DRIVE_REMIND_HINT,
   formatFileSize,
 } from '../lib/messengerUploadLimits';
+import { handleChatImagePaste } from '../lib/chatClipboard';
 import {
   groupMessengerReactions,
   isMessengerMessageRecalled,
@@ -1591,6 +1592,7 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
               value={text}
               rows={1}
               onChange={(e) => setText(e.target.value)}
+              onPaste={(e) => handleChatImagePaste(e, handlePickedFiles)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
@@ -3086,6 +3088,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                 if (e.target.value.trim()) emitTyping();
                 else emitStopTyping();
               }}
+              onPaste={(e) => handleChatImagePaste(e, handlePickedFiles)}
               onBlur={() => {
                 emitStopTyping();
                 setTimeout(() => setMentionOpen(false), 200);

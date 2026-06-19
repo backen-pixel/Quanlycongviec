@@ -67,12 +67,52 @@ export async function copyTextToClipboard(text) {
   await navigator.clipboard.writeText(t);
 }
 
+async function loadImageBlobViaCanvas(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Không tạo được ảnh'));
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+        canvas.toBlob(
+          (blob) => (blob ? resolve(blob) : reject(new Error('Không tạo được ảnh'))),
+          'image/png',
+        );
+      } catch (err) {
+        reject(err);
+      }
+    };
+    img.onerror = () => reject(new Error('Không tải được ảnh'));
+    img.src = url;
+  });
+}
+
+async function fetchMessengerImageBlob(url) {
+  // /uploads trả ACAO * — không dùng credentials: 'include' (trình duyệt chặn kết hợp này).
+  const res = await fetch(url, { mode: 'cors', credentials: 'omit' });
+  if (!res.ok) throw new Error('Không tải được ảnh');
+  const blob = await res.blob();
+  if (blob.size > 0) return blob;
+  throw new Error('Ảnh rỗng');
+}
+
 export async function copyImageToClipboard(url) {
   const full = resolveMediaUrl(url);
   if (!full) throw new Error('URL ảnh không hợp lệ');
-  const res = await fetch(full, { credentials: 'include' });
-  if (!res.ok) throw new Error('Không tải được ảnh');
-  const blob = await res.blob();
+  let blob;
+  try {
+    blob = await fetchMessengerImageBlob(full);
+  } catch {
+    blob = await loadImageBlobViaCanvas(full);
+  }
   if (!navigator.clipboard?.write || !window.ClipboardItem) {
     await navigator.clipboard.writeText(full);
     return 'url';
