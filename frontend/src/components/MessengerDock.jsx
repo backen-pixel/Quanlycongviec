@@ -13,6 +13,12 @@ import { usePresence } from '../shared/context/PresenceContext';
 import {
   formatChatHeaderPresenceLabel,
 } from '../lib/userPresenceDisplay';
+import {
+  buildMessengerMessagePreview,
+  normalizeMessengerPreviewText,
+  pickNewestMessengerPreview,
+} from '../lib/messengerPreview';
+import { isMessengerCallLogMessage } from '../lib/messengerCallLog';
 import { useRelativeTimeTick } from '../hooks/useRelativeTimeTick';
 import MessengerQuickChatDock, { QUICK_CHAT_DOCK_W, QUICK_CHAT_PANEL_W } from './MessengerQuickChatDock';
 
@@ -143,6 +149,7 @@ function bubbleGradientFor(name) {
 
 export default function MessengerDock() {
   const { user, socket } = useAuth();
+  const uid = user?.userId || user?.id;
   const {
     windows,
     closeWindow,
@@ -216,6 +223,66 @@ export default function MessengerDock() {
   }, [user, loadDockData]);
 
   useEffect(() => {
+    if (!uid) return undefined;
+    let reloadT;
+    const onGroupActivity = (e) => {
+      const {
+        groupId,
+        created_at,
+        content,
+        attachments,
+        message_type,
+        is_self,
+        sender_name,
+        user_id,
+        recalled_at,
+        is_recalled,
+      } = e.detail || {};
+      if (!groupId || !created_at) return;
+      const body = buildMessengerMessagePreview(
+        {
+          content,
+          attachments,
+          message_type,
+          user_id,
+          recalled_at,
+          is_recalled: !!(recalled_at || is_recalled),
+        },
+        { forUserId: uid, maxLen: 80 },
+      );
+      const isCallLog = isMessengerCallLogMessage({ content, message_type, attachments });
+      const prefix = isCallLog ? '' : is_self ? 'Bạn: ' : sender_name ? `${sender_name}: ` : '';
+      const livePreview = body ? normalizeMessengerPreviewText(isCallLog ? body : `${prefix}${body}`) : '';
+      setGroups((prev) => {
+        const idx = prev.findIndex((g) => String(g.id) === String(groupId));
+        if (idx === -1) return prev;
+        return prev.map((g) => {
+          if (String(g.id) !== String(groupId)) return g;
+          const nextTs = new Date(created_at).getTime();
+          const curTs = new Date(g.last_message_at || g.created_at || 0).getTime();
+          if (nextTs < curTs) return g;
+          const { preview, lastMessageAt } = pickNewestMessengerPreview([
+            { preview: livePreview, at: created_at },
+            { preview: g.last_message, at: g.last_message_at || g.created_at },
+          ]);
+          return {
+            ...g,
+            last_message: preview || g.last_message,
+            last_message_at: lastMessageAt || created_at,
+          };
+        });
+      });
+      clearTimeout(reloadT);
+      reloadT = setTimeout(() => void loadDockData(), 800);
+    };
+    window.addEventListener('messenger:group-chat-activity', onGroupActivity);
+    return () => {
+      clearTimeout(reloadT);
+      window.removeEventListener('messenger:group-chat-activity', onGroupActivity);
+    };
+  }, [uid, loadDockData]);
+
+  useEffect(() => {
     if (!dockExpanded) return;
     void loadDockData();
   }, [dockExpanded, loadDockData]);
@@ -285,8 +352,6 @@ export default function MessengerDock() {
     }
     return m;
   }, [groups]);
-
-  const uid = user?.userId || user?.id;
 
   const groupPeerById = useMemo(() => {
     const m = new Map();
@@ -400,6 +465,7 @@ export default function MessengerDock() {
         pinned: pinSet.has(String(g.id)),
         department: g.is_direct ? null : 'Nhóm chat nội bộ',
         lastMessageAt: g.last_message_at || g.created_at || null,
+        lastPreview: normalizeMessengerPreviewText(g.last_message) || '',
         rawGroup: { ...g, pinned: pinSet.has(String(g.id)) },
       });
     }

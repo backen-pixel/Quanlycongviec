@@ -78,6 +78,34 @@ export function previewFromMessengerMessages(messages, { forUserId, maxLen = 80 
   return null;
 }
 
+/**
+ * Chọn preview + thời điểm mới nhất từ nhiều nguồn (API, localStorage, state).
+ * Tránh ghi đè preview realtime bằng dữ liệu RPC cũ.
+ */
+export function pickNewestMessengerPreview(sources = []) {
+  const rows = (sources || [])
+    .map((s, order) => ({
+      preview: normalizeMessengerPreviewText(s?.preview, { forUserId: s?.forUserId }),
+      ts: s?.at ? new Date(s.at).getTime() : 0,
+      at: s?.at || null,
+      order,
+    }))
+    .filter((s) => s.preview || s.ts > 0);
+
+  if (!rows.length) return { preview: '', lastMessageAt: null };
+
+  rows.sort((a, b) => {
+    if (b.ts !== a.ts) return b.ts - a.ts;
+    return b.order - a.order;
+  });
+  const newest = rows[0];
+  const newestWithText = rows.find((s) => s.preview);
+  return {
+    preview: newest.preview || newestWithText?.preview || '',
+    lastMessageAt: newest.at || newestWithText?.at || null,
+  };
+}
+
 /** Chuẩn hóa preview từ API / localStorage (đã là chuỗi). */
 export function normalizeMessengerPreviewText(text, { forUserId } = {}) {
   let raw = String(text ?? '').trim();
