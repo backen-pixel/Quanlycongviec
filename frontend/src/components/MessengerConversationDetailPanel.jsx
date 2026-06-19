@@ -27,7 +27,7 @@ import {
 import { resolveMediaUrl, BROKEN_MEDIA_PLACEHOLDER } from '../lib/mediaUrl';
 import { publicFileUrl } from '../lib/publicFileUrl';
 import { displayMessengerFilename, downloadMessengerFile } from '../lib/messengerMessageActions';
-import { senderNameColor } from '../lib/messengerSenderColors';
+import GroupSenderName from './GroupSenderName';
 import UploadFileLightbox, { collectUploadLightboxItems, findUploadLightboxIndex } from './UploadFileLightbox';
 import {
   formatChatHeaderPresenceLabel,
@@ -485,9 +485,12 @@ export default function MessengerConversationDetailPanel({
                       <div className="min-w-0 flex-1">
                         <p className="text-[13px] font-semibold text-slate-900 truncate flex items-center gap-1">
                           {!isDirect ? (
-                            <span style={{ color: senderNameColor(m.user_id, u.full_name || u.email) }}>
-                              {u.full_name || 'Người dùng'}
-                            </span>
+                            <GroupSenderName
+                              userId={m.user_id}
+                              name={u.full_name || u.email || 'Người dùng'}
+                              isGroupChat
+                              className="text-[13px]"
+                            />
                           ) : (
                             u.full_name || 'Người dùng'
                           )}
