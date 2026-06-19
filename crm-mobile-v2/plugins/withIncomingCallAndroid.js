@@ -13,6 +13,8 @@ const OVERLAY_FILES = [
   'overlay/OverlayChatPanel.kt',
   'overlay/OverlayChatTheme.kt',
   'overlay/BubbleChatApi.kt',
+  'overlay/BubbleMediaBridge.kt',
+  'overlay/BubbleMediaPickerActivity.kt',
   'overlay/FloatingBubbleBridge.kt',
   'overlay/FloatingBubbleModule.kt',
   'overlay/FloatingBubbleOverlayPackage.kt',
@@ -52,6 +54,7 @@ const RES_FILES = [
   'res/drawable/call_decor_circle.xml',
   'res/drawable/call_pulse_ring.xml',
   'res/values/ids.xml',
+  'res/xml/bubble_file_paths.xml',
 ];
 
 const APP_FILES = ['MainActivity.kt', 'MainApplication.kt'];
@@ -188,6 +191,36 @@ function withIncomingCallManifest(config) {
     if (!app.receiver.some((r) => r.$?.['android:name'] === '.call.IncomingCallActionReceiver')) {
       app.receiver.push({
         $: { 'android:name': '.call.IncomingCallActionReceiver', 'android:exported': 'false' },
+      });
+    }
+
+    if (!app.activity.some((a) => a.$?.['android:name'] === '.overlay.BubbleMediaPickerActivity')) {
+      app.activity.push({
+        $: {
+          'android:name': '.overlay.BubbleMediaPickerActivity',
+          'android:exported': 'false',
+          'android:theme': '@android:style/Theme.Translucent.NoTitleBar',
+          'android:excludeFromRecents': 'true',
+          'android:taskAffinity': 'vn.tubeppro.crmobilev2.bubblepicker',
+        },
+      });
+    }
+
+    app.provider = app.provider || [];
+    if (!app.provider.some((p) => String(p.$?.['android:authorities'] || '').includes('bubblefileprovider'))) {
+      app.provider.push({
+        $: {
+          'android:name': 'androidx.core.content.FileProvider',
+          'android:authorities': '${applicationId}.bubblefileprovider',
+          'android:exported': 'false',
+          'android:grantUriPermissions': 'true',
+        },
+        'meta-data': [{
+          $: {
+            'android:name': 'android.support.FILE_PROVIDER_PATHS',
+            'android:resource': '@xml/bubble_file_paths',
+          },
+        }],
       });
     }
 

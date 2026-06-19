@@ -30,9 +30,16 @@ const { attachCrmProductionTaskStatsToProjects } = require('../helpers/crmProduc
 const { applyProductionCompanyScopeFilter, getExecutorProjectIdsForCompany } = require('../helpers/crossCompanyWorkspace');
 const {
   userNeedsParticipantOnlyProductionScopeForWorkshop,
+  userNeedsParticipantOnlyProductionScope,
+  isCrossWorkshopProductionViewer,
+  isMetallaOrHucabiCompanyIdSync,
+  applyCrossWorkshopVptProductionFilter,
+  resolveVptCompanyId,
   getLeadMemberProjectIdsForUser,
   userCanAccessProductionProjectAsParticipant,
   userCanAccessCrossWorkshopProductionProject,
+  ensureVptExternalCompanyCatalogForWorkshop,
+  applyWorkshopProjectVisibilityScope,
 } = require('../helpers/dealParticipantProduction');
 const {
   templateItemAssigneePatch,
@@ -49,16 +56,9 @@ const {
 } = require('../helpers/projectOrderFulfillment');
 const { assertSxKanbanAdvanceAllowed } = require('../helpers/workshopStageAdvanceGate');
 
-/** Kế toán VPT: chỉ dự án SX gắn deal trong lead_members (trừ Metalla/Hucabi). */
-async function applyParticipantOnlyProductionScope(query, user, workshopCompanyId = null) {
-  if (!(await userNeedsParticipantOnlyProductionScopeForWorkshop(user, workshopCompanyId))) {
-    return { query, memberProjectIds: null };
-  }
-  const memberProjectIds = await getLeadMemberProjectIdsForUser(user?.userId);
-  if (!memberProjectIds.length) {
-    return { query: query.in('id', ['00000000-0000-0000-0000-000000000000']), memberProjectIds: [] };
-  }
-  return { query: query.in('id', memberProjectIds), memberProjectIds };
+/** Kế toán: phạm vi công ty + xưởng đối tác; lọc xưởng qua sx_workshop_company_id. */
+async function applyParticipantOnlyProductionScope(query, user, workshopCompanyId = null, sxWorkshopCompanyId = null) {
+  return applyWorkshopProjectVisibilityScope(query, user, workshopCompanyId, sxWorkshopCompanyId);
 }
 
 const { notifyMultiple: notifyMultipleShared, createNotification: createNotif } = require('../helpers/notifications');
@@ -884,10 +884,31 @@ r.get('/external-companies', requirePermission('projects', 'view'), async (req, 
     const companyId = effectiveWorkshopCompanyId(req, req.query.company_id);
     if (!companyId) return res.status(400).json({ error: 'Thiếu company_id' });
     const { listProductionExternalCompanies } = require('../helpers/productionExternalCompanies');
+    const { ensureVptExternalCompanyCatalogForWorkshop } = require('../helpers/dealParticipantProduction');
+    await ensureVptExternalCompanyCatalogForWorkshop(companyId, req.user?.userId);
     const items = await listProductionExternalCompanies(companyId);
     res.json({ items });
   } catch (e) {
     console.error('[production/external-companies GET]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Công ty CRM — chủ deal khi tạo đơn tại xưởng đối tác (HCB/Metalla). */
+r.get('/client-companies', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const companyId = effectiveWorkshopCompanyId(req, req.query.company_id || req.query.workshop_company_id);
+    if (!companyId) return res.status(400).json({ error: 'Thiếu company_id' });
+    const { listProductionClientCompanies } = require('../helpers/productionClientCompanies');
+    const { ensureVptExternalCompanyCatalogForWorkshop } = require('../helpers/dealParticipantProduction');
+    const { isMetallaOrHucabiCompanyIdSync } = require('../helpers/dealParticipantProduction');
+    if (isMetallaOrHucabiCompanyIdSync(companyId)) {
+      await ensureVptExternalCompanyCatalogForWorkshop(companyId, req.user?.userId);
+    }
+    const items = await listProductionClientCompanies(companyId);
+    res.json({ items });
+  } catch (e) {
+    console.error('[production/client-companies GET]', e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -938,6 +959,8 @@ r.post('/workshop-intake', requirePermission('projects', 'create'), async (req, 
       estimatedValue: b.estimated_value,
       description: b.description,
       externalCompanyName: b.external_company_name,
+      externalCompanyId: b.external_company_id || null,
+      externalCatalogId: b.external_catalog_id || null,
     });
 
     if (!result.ok) {
@@ -955,6 +978,7 @@ r.post('/workshop-intake', requirePermission('projects', 'create'), async (req, 
       tasks_created: result.tasks_created,
       deal_id: result.deal_id,
       deal_code: result.deal_code,
+      company_id: companyId,
       workshop_type_id: result.workshop_type_id || null,
     });
   } catch (e) {
@@ -966,8 +990,9 @@ r.post('/workshop-intake', requirePermission('projects', 'create'), async (req, 
 // ─── GET /production/dashboard ──
 r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 30, scope: 'user', tags: ['production'] }), async (req, res) => {
   try {
-    const { division_id, company_id: companyIdQuery, workshop_type_id } = req.query;
+    const { division_id, company_id: companyIdQuery, workshop_type_id, sx_workshop_company_id: sxWorkshopCoQ } = req.query;
     const company_id = effectiveWorkshopCompanyId(req, companyIdQuery);
+    const sx_workshop_company_id = sxWorkshopCoQ && String(sxWorkshopCoQ).trim() ? String(sxWorkshopCoQ).trim() : null;
     const scopePartnerIds = company_id ? await getExecutorProjectIdsForCompany(company_id) : [];
     const { ids: stageIds } = await getWorkshopStageMap();
     const wonIds = await getWonDealProjectIds();
@@ -1014,7 +1039,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
     if (division_id) query = query.eq('division_id', division_id);
     if (company_id) query = applyProductionCompanyScopeFilter(query, company_id, scopePartnerIds);
     query = applyWorkshopTypeFilter(query);
-    ({ query } = await applyParticipantOnlyProductionScope(query, req.user, company_id));
+    ({ query } = await applyParticipantOnlyProductionScope(query, req.user, company_id, sx_workshop_company_id));
 
     let projects = [];
     let { data, error } = await query.order('created_at', { ascending: false });
@@ -1029,7 +1054,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
       if (division_id) q2 = q2.eq('division_id', division_id);
       if (company_id) q2 = applyProductionCompanyScopeFilter(q2, company_id, scopePartnerIds);
       q2 = applyWorkshopTypeFilter(q2);
-      ({ query: q2 } = await applyParticipantOnlyProductionScope(q2, req.user, company_id));
+      ({ query: q2 } = await applyParticipantOnlyProductionScope(q2, req.user, company_id, sx_workshop_company_id));
       ({ data, error } = await q2.order('created_at', { ascending: false }));
     }
     // Bước 2: nếu vẫn lỗi do cột workshop_type_id chưa tồn tại trên bảng projects → fallback hoàn toàn
@@ -1037,7 +1062,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
       let q3 = runQuery('no_col');
       if (division_id) q3 = q3.eq('division_id', division_id);
       if (company_id) q3 = applyProductionCompanyScopeFilter(q3, company_id, scopePartnerIds);
-      ({ query: q3 } = await applyParticipantOnlyProductionScope(q3, req.user, company_id));
+      ({ query: q3 } = await applyParticipantOnlyProductionScope(q3, req.user, company_id, sx_workshop_company_id));
       // Không thể filter theo workshop_type_id khi DB chưa có cột — bỏ filter này
       ({ data, error } = await q3.order('created_at', { ascending: false }));
     }
@@ -1064,7 +1089,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
       if (division_id) qDl = qDl.eq('division_id', division_id);
       if (company_id) qDl = applyProductionCompanyScopeFilter(qDl, company_id, scopePartnerIds);
       qDl = applyWorkshopTypeFilter(qDl);
-      ({ query: qDl } = await applyParticipantOnlyProductionScope(qDl, req.user, company_id));
+      ({ query: qDl } = await applyParticipantOnlyProductionScope(qDl, req.user, company_id, sx_workshop_company_id));
       ({ data, error } = await qDl.order('created_at', { ascending: false }));
     }
     if (error) throw error;
@@ -1141,8 +1166,10 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
   try {
     const {
       search, priority, page = 1, limit = 100, division_id, company_id: companyIdQuery, stage_slug, sx_intake, workshop_type_id,
+      sx_workshop_company_id: sxWorkshopCoQ,
     } = req.query;
     const company_id = effectiveWorkshopCompanyId(req, companyIdQuery);
+    const sx_workshop_company_id = sxWorkshopCoQ && String(sxWorkshopCoQ).trim() ? String(sxWorkshopCoQ).trim() : null;
     const scopePartnerIds = company_id ? await getExecutorProjectIdsForCompany(company_id) : [];
     const parsedPage = Math.max(parseInt(page) || 1, 1);
     const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 500);
@@ -1192,7 +1219,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     const wantsUnclassified = String(workshop_type_id || '').toLowerCase() === 'none';
     if (wantsUnclassified) query = query.is('workshop_type_id', null);
     else if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
-    ({ query } = await applyParticipantOnlyProductionScope(query, req.user, company_id));
+    ({ query } = await applyParticipantOnlyProductionScope(query, req.user, company_id, sx_workshop_company_id));
 
     if (search) {
       const searchPattern = `%${search}%`;
@@ -1257,7 +1284,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       if (company_id) fallbackQuery = applyProductionCompanyScopeFilter(fallbackQuery, company_id, scopePartnerIds);
       if (wantsUnclassified) fallbackQuery = fallbackQuery.is('workshop_type_id', null);
       else if (workshop_type_id) fallbackQuery = fallbackQuery.eq('workshop_type_id', workshop_type_id);
-      ({ query: fallbackQuery } = await applyParticipantOnlyProductionScope(fallbackQuery, req.user, company_id));
+      ({ query: fallbackQuery } = await applyParticipantOnlyProductionScope(fallbackQuery, req.user, company_id, sx_workshop_company_id));
       fallbackQuery = fallbackQuery.order('deadline', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }).range(offset, offset + parsedLimit - 1);
       ({ data: projects, error, count } = await fallbackQuery);
     }
@@ -1300,7 +1327,7 @@ const MIGRATION_76_COLS = 'production_deadline, production_note,';
 /** Columns added in migration 300 — ngày đặt / giao hàng trên dự án SX */
 const MIGRATION_300_COLS = 'order_date, delivery_date,';
 /** Embed CRM deals — migration 301 thêm external_company_name */
-const CRM_DEALS_PROJECT_EMBED = 'crm_deals:crm_leads(id, type, region_id, created_at, external_company_name, crm_region:company_regions(id, name, code))';
+const CRM_DEALS_PROJECT_EMBED = 'crm_deals:crm_leads(id, type, region_id, created_at, external_company_name, external_company_id, crm_region:company_regions(id, name, code))';
 const CRM_DEALS_PROJECT_EMBED_LEGACY = 'crm_deals:crm_leads(id, type, region_id, created_at, crm_region:company_regions(id, name, code))';
 function isExternalCompanyNameMissingError(err) {
   const m = String(err?.message || '');
@@ -1550,13 +1577,18 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       if (!okParticipant) {
         return res.status(403).json({ error: 'Chỉ xem sản xuất các deal bạn tham gia' });
       }
+    } else if (isCrossWorkshopProductionViewer(req.user) && isMetallaOrHucabiCompanyIdSync(project.company_id)) {
+      const crossOk = await userCanAccessCrossWorkshopProductionProject(req.user, project.id);
+      if (!crossOk) {
+        return res.status(403).json({ error: 'Dự án không thuộc deal Vạn Phú Thành tại xưởng này' });
+      }
     }
 
     const viewerCompanyId = req.user?.company_id || null;
     const ownerCompanyId = project.company_id || null;
     let isPartnerProjectView = false;
     if (viewerCompanyId && ownerCompanyId && String(viewerCompanyId) !== String(ownerCompanyId)) {
-      const crossOk = await userCanAccessCrossWorkshopProductionProject(req.user, ownerCompanyId);
+      const crossOk = await userCanAccessCrossWorkshopProductionProject(req.user, project.id);
       if (!crossOk) {
         const partnerIds = await getExecutorProjectIdsForCompany(viewerCompanyId);
         if (!partnerIds.includes(project.id)) {

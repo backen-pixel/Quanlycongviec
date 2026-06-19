@@ -49,6 +49,47 @@ export function publicFileUrl(pathOrUrl) {
   return s;
 }
 
+/** Đường dẫn /uploads/... cùng origin (Vite proxy dev → backend). */
+export function sameOriginUploadPath(pathOrUrl) {
+  const s = String(pathOrUrl || '').trim();
+  if (!s) return '';
+  if (s.startsWith('/uploads/')) return s;
+  if (/^https?:\/\//i.test(s)) {
+    try {
+      const u = new URL(s);
+      if (u.pathname.startsWith('/uploads/')) return u.pathname;
+    } catch {
+      /* ignore */
+    }
+  }
+  return '';
+}
+
+/** Tải file upload về ArrayBuffer — ưu tiên same-origin /uploads (tránh CORS). */
+export async function fetchUploadArrayBuffer(pathOrUrl) {
+  const candidates = [];
+  const local = typeof window !== 'undefined' ? sameOriginUploadPath(pathOrUrl) : '';
+  if (local) candidates.push(local);
+  const absolute = publicFileUrl(pathOrUrl);
+  if (absolute) candidates.push(absolute);
+  const urls = [...new Set(candidates.filter(Boolean))];
+
+  let lastErr = null;
+  for (const href of urls) {
+    try {
+      const res = await fetch(href, { credentials: 'omit', cache: 'no-store' });
+      if (res.ok) return res.arrayBuffer();
+      lastErr = new Error(`Không tải được file (HTTP ${res.status})`);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  if (lastErr?.message === 'Failed to fetch') {
+    throw new Error('Không tải được file — kiểm tra kết nối hoặc thử «Tab mới» / «Tải».');
+  }
+  throw lastErr || new Error('Không tải được file');
+}
+
 /**
  * Chrome thường chặn tab mới (about:blank#blocked) với href data:/blob: + target=_blank.
  * Với URL thường vẫn mở tab mới.

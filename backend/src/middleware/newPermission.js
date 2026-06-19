@@ -12,6 +12,7 @@ const {
   isLogisticsAdmin,
 } = require('../helpers/adminRole');
 const { isDealParticipantProductionViewer, isCrossWorkshopProductionViewer } = require('../helpers/dealParticipantProduction');
+const { isAccountingUser } = require('../helpers/accountingScope');
 
 const WORKSHOP_MODULE_RESOURCES = new Set(['projects', 'workflows', 'templates', 'reports', 'customers', 'ecosystem']);
 
@@ -30,7 +31,7 @@ async function checkPermission(userId, resource, action, ecosystemUnitId = null,
     if (WORKSHOP_MODULE_RESOURCES.has(resKey)) {
       if (isProductionStaff(user) || isProductionAdmin(user) || isLogisticsAdmin(user)) return true;
       if (resKey === 'projects' && action === 'view'
-        && (isDealParticipantProductionViewer(user) || isCrossWorkshopProductionViewer(user))) return true;
+        && (isDealParticipantProductionViewer(user) || isCrossWorkshopProductionViewer(user) || isAccountingUser(user))) return true;
     }
 
     const { data, error } = await supabase.rpc('user_has_permission', {

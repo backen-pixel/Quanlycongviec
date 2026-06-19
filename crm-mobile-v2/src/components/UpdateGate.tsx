@@ -26,6 +26,8 @@ import {
   shouldSuppressUpdateModal,
   type UpdateCheckResult,
 } from '../lib/appUpdate';
+import { hasPendingBubbleChat } from '../lib/bubbleChatPending';
+import { isOnBubbleChatRoute } from '../navigation/navigationRef';
 import { Radii, useColors, type ThemeColors } from '../theme';
 
 const CHECK_INTERVAL_MS = 30 * 60 * 1000;
@@ -51,6 +53,9 @@ export default function UpdateGate() {
 
   const runCheck = useCallback(async (opts: { allowModal?: boolean } = {}) => {
     if (checkingRef.current) return;
+    // Ưu tiên mở chat overlay — không chặn bằng modal cập nhật.
+    if (hasPendingBubbleChat()) return;
+    if (isOnBubbleChatRoute()) return;
     checkingRef.current = true;
     try {
       const successMsg = await consumeUpdateSuccessMessage();
@@ -116,15 +121,17 @@ export default function UpdateGate() {
       void runCheck({ allowModal: false });
     }, CHECK_INTERVAL_MS);
 
-    const sub = AppState.addEventListener('change', (state) => {
+    const appSub = AppState.addEventListener('change', (state) => {
       if (state !== 'active') return;
+      if (hasPendingBubbleChat()) return;
+      if (isOnBubbleChatRoute()) return;
       if (Date.now() - lastCheckAt.current < FOREGROUND_DEBOUNCE_MS) return;
       void runCheck({ allowModal: false });
     });
 
     return () => {
       clearInterval(interval);
-      sub.remove();
+      appSub.remove();
     };
   }, [runCheck]);
 

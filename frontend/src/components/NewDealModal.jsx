@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { User, X, Loader2 } from 'lucide-react';
 import api from '../lib/api';
 import { isAdminLike } from '../lib/adminRole';
+import { isMetallaOrHucabiCompanyId } from '../lib/crossWorkshopProduction';
 
 /**
  * Modal tạo deal — dùng chung CRM và Sản xuất.
@@ -18,10 +19,20 @@ export default function NewDealModal({
   workTypes = [],
   defaultWorkshopTypeId = '',
   defaultRegionId = '',
+  allowProductionCompanyPick = false,
+  productionCompanyOptions = [],
+  defaultExternalCompanyName = '',
 }) {
   const isProduction = variant === 'production';
   const ringClass = isProduction ? 'focus:ring-blue-400' : 'focus:ring-purple-400';
   const isAdmin = isAdminLike(currentUser);
+  const canPickCompany = isAdmin || (isProduction && allowProductionCompanyPick);
+  const companySelectOptions = useMemo(() => {
+    if (isProduction && allowProductionCompanyPick && productionCompanyOptions?.length) {
+      return productionCompanyOptions;
+    }
+    return companies || [];
+  }, [isProduction, allowProductionCompanyPick, productionCompanyOptions, companies]);
   const [formData, setFormData] = useState({
     title: '',
     customer_name: '',
@@ -49,6 +60,13 @@ export default function NewDealModal({
   const [modalWorkTypes, setModalWorkTypes] = useState([]);
   const [externalCompanies, setExternalCompanies] = useState([]);
   const [externalCompanyPick, setExternalCompanyPick] = useState('');
+  const [clientCompanies, setClientCompanies] = useState([]);
+  const [clientCompanyPick, setClientCompanyPick] = useState('');
+
+  const requiresClientCompany = useMemo(() => {
+    if (!isProduction || !formData.company_id) return false;
+    return isMetallaOrHucabiCompanyId(formData.company_id, companies);
+  }, [isProduction, formData.company_id, companies]);
 
   const visibleLeadTypes = useMemo(() => {
     const cid = String(formData.company_id || '');
@@ -85,6 +103,42 @@ export default function NewDealModal({
     if (!isProduction) return undefined;
     const cid = String(formData.company_id || '').trim();
     if (!cid) {
+      setClientCompanies([]);
+      setClientCompanyPick('');
+      return undefined;
+    }
+    let cancelled = false;
+    api.get('/production/client-companies', { params: { company_id: cid } })
+      .then((r) => {
+        if (cancelled) return;
+        const list = Array.isArray(r.data?.items) ? r.data.items : [];
+        setClientCompanies(list);
+      })
+      .catch(() => { if (!cancelled) setClientCompanies([]); });
+    return () => { cancelled = true; };
+  }, [isProduction, formData.company_id]);
+
+  useEffect(() => {
+    if (!isProduction || !requiresClientCompany) return;
+    if (clientCompanyPick) return;
+    const needle = String(defaultExternalCompanyName || '').trim().toLowerCase();
+    if (!needle || !clientCompanies.length) return;
+    const hit = clientCompanies.find((c) => {
+      if (c.client_company_id) {
+        const sn = String(c.short_name || '').toLowerCase();
+        const name = String(c.name || '').toLowerCase();
+        return sn === needle || name.includes('vạn phú') || name.includes('vpt') || sn.includes('vpt');
+      }
+      const name = String(c.name || '').toLowerCase();
+      return name === needle || name.includes('vạn phú') || name.includes('vpt');
+    });
+    if (hit) setClientCompanyPick(String(hit.id));
+  }, [isProduction, requiresClientCompany, defaultExternalCompanyName, clientCompanies, clientCompanyPick]);
+
+  useEffect(() => {
+    if (!isProduction) return undefined;
+    const cid = String(formData.company_id || '').trim();
+    if (!cid) {
       setExternalCompanies([]);
       setExternalCompanyPick('');
       return undefined;
@@ -98,6 +152,17 @@ export default function NewDealModal({
       .catch(() => { if (!cancelled) setExternalCompanies([]); });
     return () => { cancelled = true; };
   }, [isProduction, formData.company_id]);
+
+  useEffect(() => {
+    if (!isProduction || !defaultExternalCompanyName || externalCompanyPick) return;
+    const needle = String(defaultExternalCompanyName).trim().toLowerCase();
+    if (!needle || !externalCompanies.length) return;
+    const hit = externalCompanies.find((c) => {
+      const name = String(c.name || '').trim().toLowerCase();
+      return name === needle || name.includes('vạn phú') || name.includes('vpt');
+    });
+    if (hit) setExternalCompanyPick(String(hit.id));
+  }, [isProduction, defaultExternalCompanyName, externalCompanies, externalCompanyPick]);
 
   useEffect(() => {
     if (isProduction) return undefined;
@@ -167,12 +232,19 @@ export default function NewDealModal({
   }, [modalRegions, currentUser?.crm_region_ids, formData.region_id]);
 
   useEffect(() => {
-    if (isAdmin) return;
+    if (isAdmin || allowProductionCompanyPick) return;
     const cid = (currentUser?.company_id ? String(currentUser.company_id) : '') || (defaultCompanyId ? String(defaultCompanyId) : '');
     if (cid && String(formData.company_id || '') !== String(cid)) {
       setFormData((prev) => ({ ...prev, company_id: cid }));
     }
-  }, [isAdmin, defaultCompanyId, currentUser?.company_id]);
+  }, [isAdmin, allowProductionCompanyPick, defaultCompanyId, currentUser?.company_id, formData.company_id]);
+
+  useEffect(() => {
+    if (!defaultCompanyId) return;
+    if (allowProductionCompanyPick && !formData.company_id) {
+      setFormData((prev) => ({ ...prev, company_id: String(defaultCompanyId) }));
+    }
+  }, [defaultCompanyId, allowProductionCompanyPick, formData.company_id]);
 
   useEffect(() => {
     if (!formData.lead_type_id) return;
@@ -198,12 +270,29 @@ export default function NewDealModal({
     if (!ok) setFormData((prev) => ({ ...prev, region_id: '' }));
   }, [modalRegions, formData.region_id]);
 
+  const resolvedClientCompany = useMemo(() => {
+    if (!clientCompanyPick) return null;
+    return clientCompanies.find((c) => String(c.id) === String(clientCompanyPick)) || null;
+  }, [clientCompanyPick, clientCompanies]);
+
   const resolvedExternalCompanyName = useMemo(() => {
+    if (isProduction && resolvedClientCompany) {
+      return resolvedClientCompany.short_name || resolvedClientCompany.name || '';
+    }
     if (!isProduction || !externalCompanyPick) return '';
     if (externalCompanyPick === '__new__') return String(formData.external_company_name || '').trim();
     const hit = externalCompanies.find((x) => String(x.id) === String(externalCompanyPick));
     return hit?.name?.trim() || '';
-  }, [isProduction, externalCompanyPick, externalCompanies, formData.external_company_name]);
+  }, [isProduction, resolvedClientCompany, externalCompanyPick, externalCompanies, formData.external_company_name]);
+
+  const clientCompanySubmit = useMemo(() => {
+    if (!resolvedClientCompany) return null;
+    return {
+      external_company_id: resolvedClientCompany.client_company_id || null,
+      external_catalog_id: resolvedClientCompany.external_catalog_id || null,
+      external_company_name: resolvedClientCompany.short_name || resolvedClientCompany.name || null,
+    };
+  }, [resolvedClientCompany]);
 
   const resolvedReferrerName = useMemo(() => {
     if (isProduction || !referrerPick) return '';
@@ -224,7 +313,10 @@ export default function NewDealModal({
     if (isProduction) {
       if (!visibleWorkTypes.length) return alert('Công ty chưa cấu hình phân loại xưởng');
       if (!formData.workshop_type_id) return alert('Chọn phân loại xưởng');
-      if (externalCompanyPick === '__new__' && !formData.external_company_name?.trim()) {
+      if (requiresClientCompany && !clientCompanyPick) {
+        return alert('Chọn công ty chủ deal (công ty đặt hàng từ CRM)');
+      }
+      if (!requiresClientCompany && externalCompanyPick === '__new__' && !formData.external_company_name?.trim()) {
         return alert('Nhập tên công ty bên ngoài hoặc chọn «Không chọn»');
       }
     }
@@ -244,7 +336,9 @@ export default function NewDealModal({
           install_address: formData.install_address || null,
           estimated_value: parseFloat(formData.estimated_value) || 0,
           description: formData.description || null,
-          external_company_name: resolvedExternalCompanyName || null,
+          external_company_name: clientCompanySubmit?.external_company_name || resolvedExternalCompanyName || null,
+          external_company_id: clientCompanySubmit?.external_company_id || null,
+          external_catalog_id: clientCompanySubmit?.external_catalog_id || null,
         });
         const payload = {
           ...data,
@@ -359,11 +453,12 @@ export default function NewDealModal({
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
                     🏢 {isProduction ? 'Công ty SX' : 'Công ty'} <span className="text-red-500">*</span>
                   </label>
-                  {isAdmin ? (
+                  {canPickCompany ? (
                     <select
                       value={formData.company_id}
                       onChange={(e) => {
                         setExternalCompanyPick('');
+                        setClientCompanyPick('');
                         setFormData((prev) => ({
                           ...prev,
                           company_id: e.target.value,
@@ -378,7 +473,7 @@ export default function NewDealModal({
                       className={`w-full px-3 py-2 border rounded-lg focus:ring-2 ${ringClass} text-sm ${!formData.company_id ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
                     >
                       <option value="">-- Chọn --</option>
-                      {(companies || []).map((c) => (
+                      {companySelectOptions.map((c) => (
                         <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
                       ))}
                     </select>
@@ -460,10 +555,40 @@ export default function NewDealModal({
                 </div>
               </div>
 
-              {isProduction && formData.company_id && (
+              {isProduction && formData.company_id && requiresClientCompany && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">
+                    🏢 Công ty chủ deal (CRM) <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    required
+                    value={clientCompanyPick}
+                    onChange={(e) => setClientCompanyPick(e.target.value)}
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 ${ringClass} text-sm ${
+                      !clientCompanyPick ? 'border-red-300 bg-red-50' : 'border-gray-200'
+                    }`}
+                  >
+                    <option value="">-- Chọn công ty đặt hàng --</option>
+                    {clientCompanies.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.short_name || c.name}
+                        {c.source === 'external' && c.name !== (c.short_name || '') ? ` (${c.name})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[10px] text-gray-400">
+                    Gồm công ty CRM đã liên kết và danh mục công ty ngoài (VPT → Vạn Phú Thành CRM)
+                  </p>
+                </div>
+              )}
+
+              {isProduction && formData.company_id && !requiresClientCompany && (
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
                     🏢 Công ty bên ngoài / đơn vị đối tác
+                    {allowProductionCompanyPick && defaultExternalCompanyName ? (
+                      <span className="ml-1 font-normal text-indigo-600">(mặc định: {defaultExternalCompanyName})</span>
+                    ) : null}
                   </label>
                   <select
                     value={externalCompanyPick}

@@ -36,7 +36,11 @@ export default function RootNavigator() {
       <Stack.Screen
         name="BubbleChat"
         component={BubbleChatScreen}
-        options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
+        options={{
+          presentation: 'transparentModal',
+          animation: 'none',
+          contentStyle: { backgroundColor: 'transparent' },
+        }}
       />
       <Stack.Screen
         name="MessengerForward"

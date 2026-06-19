@@ -8,6 +8,13 @@ import {
   canPickWorkshopCompany,
   isCrossWorkshopProductionViewer,
   workshopCompaniesForCrossViewer,
+  sxWorkshopFilterCompanies,
+  isVptCompanyChip,
+  productionCreateCompanyOptions,
+  isDealParticipantProductionViewer,
+  findVptCompany,
+  isMetallaOrHucabiCompanyId,
+  isAccountingUser,
 } from '../lib/crossWorkshopProduction';
 import { formatVND, formatDate } from '../lib/utils';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
@@ -201,6 +208,7 @@ export default function ProductionDashboard() {
   const sortMenuRef = useRef(null);
   const [companies, setCompanies] = useState([]);
   const [filterCompany, setFilterCompany] = useState(() => P0?.filterCompany ?? '');
+  const [filterSxWorkshopCompany, setFilterSxWorkshopCompany] = useState(() => P0?.filterSxWorkshopCompany ?? '');
   const [timePreset, setTimePreset] = useState(() => P0?.timePreset ?? '');
   const [customFrom, setCustomFrom] = useState(() => P0?.customFrom ?? '');
   const [customTo, setCustomTo] = useState(() => P0?.customTo ?? '');
@@ -296,6 +304,7 @@ export default function ProductionDashboard() {
   const handleStaffFilterCompanyChange = useCallback((companyId) => {
     onStaffFilterCompanyChange(companyId);
     setFilterWorkTypeId('');
+    setFilterSxWorkshopCompany('');
   }, [onStaffFilterCompanyChange]);
 
   const companyParam = useMemo(() => {
@@ -303,17 +312,56 @@ export default function ProductionDashboard() {
     if (crossWorkshopViewer) return filterCompany || user?.company_id || undefined;
     return user?.company_id ? String(user.company_id) : undefined;
   }, [isAdmin, crossWorkshopViewer, filterCompany, user?.company_id]);
-  const companyForTypes = companyParam || (user?.company_id ? String(user.company_id) : '');
+
+  const showVptSxWorkshopFilter = useMemo(() => {
+    const cid = companyParam || filterCompany || user?.company_id || '';
+    return isVptCompanyChip(cid, companies, user);
+  }, [companyParam, filterCompany, companies, user]);
+
+  const sxWorkshopFilterOptions = useMemo(
+    () => sxWorkshopFilterCompanies(companies, user),
+    [companies, user],
+  );
+
+  const companyForTypes = useMemo(() => {
+    const base = companyParam || (user?.company_id ? String(user.company_id) : '');
+    if (showVptSxWorkshopFilter && filterSxWorkshopCompany) {
+      return String(filterSxWorkshopCompany);
+    }
+    return base;
+  }, [companyParam, user?.company_id, showVptSxWorkshopFilter, filterSxWorkshopCompany]);
+
+  const productionCreateCompanyIdDefault = useMemo(() => {
+    if (isAdmin) {
+      return filterCompany || dashboardScopeCompanyId || user?.company_id || '';
+    }
+    const chip = filterCompany || user?.company_id || '';
+    if (isMetallaOrHucabiCompanyId(chip, companies)) return String(chip);
+    if (filterSxWorkshopCompany) return String(filterSxWorkshopCompany);
+    const opts = productionCreateCompanyOptions(companies);
+    return opts[0]?.id ? String(opts[0].id) : (dashboardScopeCompanyId || user?.company_id || '');
+  }, [isAdmin, filterCompany, dashboardScopeCompanyId, user?.company_id, filterSxWorkshopCompany, companies]);
+
+  const vptExternalCompanyLabel = useMemo(() => {
+    const vpt = findVptCompany(companies);
+    return vpt?.short_name || vpt?.name || 'VPT';
+  }, [companies]);
+
+  const canPickProductionCreateCompany = crossWorkshopViewer || isDealParticipantProductionViewer(user) || isAccountingUser(user);
 
   const load = useCallback(async (opts = {}) => {
     const silent = !!opts.silent;
     const bustCache = !!opts.bustCache;
     const fetchCompanyId = opts.companyId || companyParam;
+    const fetchSxWorkshopId = opts.sxWorkshopCompanyId !== undefined
+      ? opts.sxWorkshopCompanyId
+      : (showVptSxWorkshopFilter && filterSxWorkshopCompany ? filterSxWorkshopCompany : undefined);
     if (silent) setSyncing(true);
     else setLoading(true);
     try {
       const dashQ = {
         ...(fetchCompanyId ? { company_id: fetchCompanyId } : {}),
+        ...(fetchSxWorkshopId ? { sx_workshop_company_id: fetchSxWorkshopId } : {}),
       };
       const cacheHeaders = bustCache ? { headers: { 'x-no-cache': '1' } } : {};
       const maxRecords = kanbanLoadKey === 'all' ? 5000
@@ -326,6 +374,7 @@ export default function ProductionDashboard() {
         api.get('/production/dashboard', { params: dashQ, ...cacheHeaders }).catch(() => ({ data: { kpis: {}, pipeline: [] } })),
         fetchWorkshopProjectPages(api, '/production/projects', {
           companyId: fetchCompanyId,
+          sxWorkshopCompanyId: fetchSxWorkshopId,
           maxRecords,
           pageSize: 500,
           bustCache,
@@ -344,7 +393,7 @@ export default function ProductionDashboard() {
       setLoading(false);
       setFirstLoaded(true);
     }
-  }, [companyParam, kanbanLoadKey]);
+  }, [companyParam, kanbanLoadKey, showVptSxWorkshopFilter, filterSxWorkshopCompany]);
 
   const handleNewDealCreated = useCallback(async (created) => {
     const projectId = created?.project_id;
@@ -354,15 +403,38 @@ export default function ProductionDashboard() {
     if (isAdmin && createdCompanyId && createdCompanyId !== String(filterCompany || '')) {
       setFilterCompany(createdCompanyId);
     }
+    if (canPickProductionCreateCompany && createdCompanyId) {
+      const onVptChip = isVptCompanyChip(filterCompany || user?.company_id || '', companies, user);
+      if (onVptChip && isMetallaOrHucabiCompanyId(createdCompanyId, companies)) {
+        setFilterSxWorkshopCompany(createdCompanyId);
+      } else if (!onVptChip && createdCompanyId !== String(filterCompany || '')) {
+        setFilterCompany(createdCompanyId);
+      }
+    }
     if (wktId && wktId !== String(filterWorkTypeId || '')) {
       setFilterWorkTypeId(wktId);
     }
+
+    const reloadCompanyId = (() => {
+      if (canPickProductionCreateCompany && isVptCompanyChip(filterCompany || user?.company_id || '', companies, user)) {
+        return filterCompany || user?.company_id || companyParam;
+      }
+      return createdCompanyId || companyParam;
+    })();
+    const reloadSxWorkshopId = (() => {
+      if (canPickProductionCreateCompany && isMetallaOrHucabiCompanyId(createdCompanyId, companies)
+        && isVptCompanyChip(filterCompany || user?.company_id || '', companies, user)) {
+        return createdCompanyId;
+      }
+      return showVptSxWorkshopFilter && filterSxWorkshopCompany ? filterSxWorkshopCompany : undefined;
+    })();
 
     try {
       await load({
         silent: true,
         bustCache: true,
-        companyId: createdCompanyId || companyParam,
+        companyId: reloadCompanyId,
+        sxWorkshopCompanyId: reloadSxWorkshopId,
       });
     } catch (e) {
       console.error(e);
@@ -400,7 +472,7 @@ export default function ProductionDashboard() {
       };
       return [optimistic, ...prev];
     });
-  }, [load, pipeline, workTypes, companyParam, isAdmin, filterCompany, filterWorkTypeId]);
+  }, [load, pipeline, workTypes, companyParam, isAdmin, filterCompany, filterWorkTypeId, canPickProductionCreateCompany, companies, user, showVptSxWorkshopFilter, filterSxWorkshopCompany]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -445,14 +517,14 @@ export default function ProductionDashboard() {
   useEffect(() => {
     try {
       localStorage.setItem(LS_SX, JSON.stringify({
-        filterCompany, timePreset, customFrom, customTo, showCustomDate, kanbanLoadKey,
+        filterCompany, filterSxWorkshopCompany, timePreset, customFrom, customTo, showCustomDate, kanbanLoadKey,
         filterPersonId, filterPersonName, filterRegion, filterPhone, filterWorkTypeId,
         searchQuery, priorityFilter, stageFilter, viewMode, sortBy,
         showOrphanColumn,
       }));
     } catch { /* ignore */ }
   }, [
-    filterCompany, timePreset, customFrom, customTo, showCustomDate, kanbanLoadKey, filterPersonId, filterPersonName,
+    filterCompany, filterSxWorkshopCompany, timePreset, customFrom, customTo, showCustomDate, kanbanLoadKey, filterPersonId, filterPersonName,
     filterRegion, filterPhone, filterWorkTypeId, searchQuery, priorityFilter, stageFilter, viewMode, sortBy,
     showOrphanColumn,
   ]);
@@ -1524,6 +1596,34 @@ export default function ProductionDashboard() {
             </div>
           )}
 
+          {showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto max-w-full shrink-0 pb-0.5 scrollbar-thin scrollbar-thumb-gray-200">
+              <span className="text-[11px] font-semibold text-gray-500 shrink-0">SX tại:</span>
+              {[{ id: '', name: 'Tất cả' }, ...sxWorkshopFilterOptions].map((c) => {
+                const active = filterSxWorkshopCompany === c.id;
+                return (
+                  <button
+                    key={c.id || 'all-sx'}
+                    type="button"
+                    onClick={() => {
+                      if (active) return;
+                      setFilterSxWorkshopCompany(c.id);
+                      setFilterWorkTypeId('');
+                    }}
+                    className={`shrink-0 h-8 px-2.5 rounded-full text-[11px] font-semibold border transition-all cursor-pointer whitespace-nowrap ${
+                      active
+                        ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm'
+                        : 'bg-white border-gray-200 text-gray-600 hover:border-indigo-300 hover:text-indigo-700 hover:bg-indigo-50'
+                    }`}
+                  >
+                    {active && <span className="mr-1">✓</span>}
+                    {c.id === '' ? 'Tất cả' : (c.short_name || c.name)}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {/* Active filter chips — inline, có nút × để bỏ */}
           {priorityFilter && (
             <span className="inline-flex items-center gap-1.5 h-9 pl-3 pr-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg text-sm font-medium">
@@ -2196,10 +2296,13 @@ export default function ProductionDashboard() {
           companies={companies}
           workTypes={workTypes}
           defaultWorkshopTypeId={filterWorkTypeId && filterWorkTypeId !== 'none' ? filterWorkTypeId : ''}
-          defaultCompanyId={
-            isAdmin
-              ? (filterCompany || dashboardScopeCompanyId || user?.company_id || '')
-              : (dashboardScopeCompanyId || user?.company_id || '')
+          defaultCompanyId={productionCreateCompanyIdDefault}
+          allowProductionCompanyPick={canPickProductionCreateCompany}
+          productionCompanyOptions={productionCreateCompanyOptions(companies)}
+          defaultExternalCompanyName={
+            canPickProductionCreateCompany && isMetallaOrHucabiCompanyId(productionCreateCompanyIdDefault, companies)
+              ? vptExternalCompanyLabel
+              : ''
           }
           defaultRegionId={filterRegion && filterRegion !== '__none__' ? filterRegion : ''}
           currentUser={user}

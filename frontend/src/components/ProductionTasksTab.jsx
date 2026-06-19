@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import api from '../lib/api';
 import { formatDate } from '../lib/utils';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
+import { FilePreviewOpenLink } from '../context/FilePreviewContext';
 import { AttachmentFileIcon, inferAttachmentDocType } from '../lib/attachmentFileIcon';
 import {
   Plus, CheckCircle2, Circle, Clock, User, Trash2, ChevronDown, ChevronRight,
@@ -751,8 +752,15 @@ export default function ProductionTasksTab({
                           <AttachmentFileIcon att={att} className="h-4 w-4 mt-0.5" />
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-medium text-gray-800 truncate">{att.file_name || att.original_name || 'File'}</p>
-                            {att.file_url && !img && attOpen && (
-                              <a {...attOpen} className="text-[10px] text-blue-600 hover:underline">{att.file_name || 'Mở file'}</a>
+                            {att.file_url && !img && (
+                              <FilePreviewOpenLink
+                                fileUrl={att.file_url}
+                                fileName={att.file_name || att.name}
+                                mimeType={att.mime_type}
+                                className="text-[10px] text-blue-600 hover:underline cursor-pointer"
+                              >
+                                {att.file_name || 'Xem file'}
+                              </FilePreviewOpenLink>
                             )}
                             <span className="text-[9px] text-gray-400 ml-1">{att.uploader?.full_name}</span>
                           </div>

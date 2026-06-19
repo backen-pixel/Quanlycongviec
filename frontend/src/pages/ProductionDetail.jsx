@@ -16,6 +16,7 @@ import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
 import { publicFileUrl as pubUrl, getFileOpenAnchorProps, getFileDownloadAnchorProps } from '../lib/publicFileUrl';
+import { FilePreviewOpenLink } from '../context/FilePreviewContext';
 import UploadFileLightbox, {
   collectUploadLightboxItems,
   findUploadLightboxIndex,
@@ -670,7 +671,6 @@ function TaskFileRow({ file, onOpenImage }) {
   const rawRef = file.file_url || '';
   const href = rawRef ? pubUrl(rawRef) : '';
   const isImage = href && isUploadImageFile(file.mime_type, file.file_name || rawRef);
-  const openProps = href && !isImage ? getFileOpenAnchorProps(rawRef, { fileName: file.file_name }) : null;
   const downloadProps = href ? getFileDownloadAnchorProps(rawRef, { fileName: file.file_name || 'tai-lieu' }) : null;
 
   const openImage = () => {
@@ -689,8 +689,15 @@ function TaskFileRow({ file, onOpenImage }) {
           <div className="shrink-0 flex items-center gap-2">
             {isImage ? (
               <button type="button" onClick={openImage} className="text-[10px] text-blue-600 hover:underline cursor-pointer">Mở</button>
-            ) : openProps ? (
-              <a {...openProps} className="text-[10px] text-blue-600 hover:underline">Mở</a>
+            ) : href ? (
+              <FilePreviewOpenLink
+                fileUrl={rawRef}
+                fileName={file.file_name}
+                mimeType={file.mime_type}
+                className="text-[10px] text-blue-600 hover:underline cursor-pointer"
+              >
+                Xem
+              </FilePreviewOpenLink>
             ) : null}
             {downloadProps && (
               <a {...downloadProps} className="text-[10px] text-emerald-600 hover:underline">Tải</a>
@@ -727,7 +734,6 @@ function DocRow({
     : (fileName || doc.name || 'Tài liệu');
   const rawFileRef = doc.file_url || doc.file_path || '';
   const fileHref = rawFileRef ? pubUrl(rawFileRef) : '';
-  const fileOpenProps = fileHref ? getFileOpenAnchorProps(rawFileRef, { fileName: fileName || displayTitle }) : null;
   const fileDownloadProps = fileHref
     ? getFileDownloadAnchorProps(rawFileRef, { fileName: fileName || displayTitle || 'tai-lieu' })
     : null;
@@ -809,7 +815,7 @@ function DocRow({
               )}
             </div>
           </div>
-          {isFile && (fileOpenProps || fileDownloadProps) && (
+          {isFile && (fileHref || fileDownloadProps) && (
             <div
               className={`flex items-center gap-2 shrink-0 ${nested ? 'px-1' : 'px-2'}`}
               onClick={(e) => e.stopPropagation()}
@@ -822,8 +828,15 @@ function DocRow({
                   >
                     Mở
                   </button>
-                ) : fileOpenProps ? (
-                  <a {...fileOpenProps} className={`hover:underline ${nested ? 'text-[10px]' : 'text-xs'} text-blue-600`}>Mở</a>
+                ) : fileHref ? (
+                  <FilePreviewOpenLink
+                    fileUrl={rawFileRef}
+                    fileName={fileName || displayTitle}
+                    mimeType={mime}
+                    className={`hover:underline ${nested ? 'text-[10px]' : 'text-xs'} text-blue-600 cursor-pointer`}
+                  >
+                    Xem
+                  </FilePreviewOpenLink>
                 ) : null}
               {fileDownloadProps && (
                 <a {...fileDownloadProps} className={`hover:underline ${nested ? 'text-[10px]' : 'text-xs'} text-emerald-600`}>Tải</a>

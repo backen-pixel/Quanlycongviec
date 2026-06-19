@@ -13,7 +13,7 @@ async function listProductionExternalCompanies(productionCompanyId) {
   if (!coId) return [];
   const { data, error } = await supabase
     .from('production_external_companies')
-    .select('id, name')
+    .select('id, name, linked_company_id')
     .eq('production_company_id', coId)
     .eq('is_active', true)
     .order('name');
@@ -30,10 +30,27 @@ async function listProductionExternalCompanies(productionCompanyId) {
  * Lưu (hoặc kích hoạt lại) công ty bên ngoài — idempotent theo tên.
  * @returns {Promise<{ id: string, name: string, created: boolean } | null>}
  */
-async function upsertProductionExternalCompany({ productionCompanyId, name, userId }) {
+async function upsertProductionExternalCompany({ productionCompanyId, name, userId, linkedCompanyId = null }) {
   const coId = String(productionCompanyId || '').trim();
   const nameTrim = normalizeExternalCompanyName(name);
   if (!coId || !nameTrim) return null;
+  const linkedId = linkedCompanyId ? String(linkedCompanyId).trim() : null;
+
+  if (linkedId) {
+    const { data: byLink } = await supabase
+      .from('production_external_companies')
+      .select('id, name, is_active, linked_company_id')
+      .eq('production_company_id', coId)
+      .eq('linked_company_id', linkedId)
+      .limit(1)
+      .maybeSingle();
+    if (byLink?.id) {
+      if (byLink.is_active === false) {
+        await supabase.from('production_external_companies').update({ is_active: true, name: nameTrim }).eq('id', byLink.id);
+      }
+      return { id: byLink.id, name: byLink.name || nameTrim, linked_company_id: linkedId, created: false };
+    }
+  }
 
   const { data: existing } = await supabase
     .from('production_external_companies')
@@ -58,6 +75,7 @@ async function upsertProductionExternalCompany({ productionCompanyId, name, user
     .insert({
       production_company_id: coId,
       name: nameTrim,
+      linked_company_id: linkedId,
       created_by: userId || null,
       is_active: true,
     })

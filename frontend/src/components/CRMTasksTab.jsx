@@ -21,6 +21,7 @@ import ExcelQuotationImport from './ExcelQuotationImport';
 import CrmArtifactShareModal from './CrmArtifactShareModal';
 import { shareModuleLabels } from '../lib/documentShareScope';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
+import { FilePreviewOpenLink } from '../context/FilePreviewContext';
 import UploadFileLightbox, {
   collectUploadLightboxItems,
   findUploadLightboxIndex,
@@ -2405,7 +2406,7 @@ export default function CRMTasksTab({
                 className="h-full w-full object-cover"
               />
             </button>
-            {showActions && taskId && att.id && renderAttachmentActionButtons(taskId, att, checklistId)}
+            {showActions && taskId && att.id && renderAttachmentActionButtons(taskId, att, checklistId, { lightboxAtts: atts })}
           </div>
         ))}
       </div>
@@ -2423,9 +2424,9 @@ export default function CRMTasksTab({
           <div className="space-y-1">
             {nonImages.slice(0, 4).map((att) => (
               <div key={att.id} className="flex items-center gap-1.5 text-[10px] text-gray-800 bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5 max-w-full">
-                <AttachmentFileIcon att={att} className="h-3.5 w-3.5" />
+                <AttachmentFileIcon att={att} className="h-3.5 w-3.5 shrink-0" />
                 <span className="truncate flex-1 min-w-0">{att.name || att.file_name || 'File'}</span>
-                {taskId && att.id && renderAttachmentActionButtons(taskId, att, checklistId)}
+                {taskId && att.id && renderAttachmentActionButtons(taskId, att, checklistId, { lightboxAtts: files })}
               </div>
             ))}
           </div>
@@ -2434,8 +2435,29 @@ export default function CRMTasksTab({
     );
   };
 
-  const renderAttachmentActionButtons = (taskId, att, checklistId = null) => (
+  const renderAttachmentActionButtons = (taskId, att, checklistId = null, { lightboxAtts = null } = {}) => (
     <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+      {att.file_url && (
+        isImageAtt(att) ? (
+          <button
+            type="button"
+            onClick={() => openAttLightbox(lightboxAtts || [att], att.file_url)}
+            className="text-[10px] font-medium text-emerald-700 hover:text-emerald-900 px-1.5 py-0.5 rounded hover:bg-emerald-50 cursor-pointer"
+            title="Xem ảnh"
+          >
+            Xem
+          </button>
+        ) : (
+          <FilePreviewOpenLink
+            fileUrl={att.file_url}
+            fileName={att.file_name || att.name}
+            mimeType={att.mime_type}
+            className="text-[10px] font-medium text-emerald-700 hover:text-emerald-900 px-1.5 py-0.5 rounded hover:bg-emerald-50 cursor-pointer"
+          >
+            Xem
+          </FilePreviewOpenLink>
+        )
+      )}
       <button
         type="button"
         onClick={() => replaceAttachmentFile(taskId, att.id, checklistId)}
@@ -2461,7 +2483,6 @@ export default function CRMTasksTab({
     return (
       <div className="space-y-1.5 mt-2">
         {fileAtts.map((att) => {
-          const attOpen = att.file_url ? getFileOpenAnchorProps(att.file_url, { fileName: att.file_name }) : null;
           const img = isImageAtt(att);
           return (
             <div key={att.id} className="py-1.5 px-2 rounded bg-white border">
@@ -2472,20 +2493,21 @@ export default function CRMTasksTab({
                   {att.notes && (
                     <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{att.notes}</p>
                   )}
-                  {att.file_url && !img && attOpen && (
-                    <a {...attOpen} className="text-[10px] text-blue-600 hover:underline">{att.file_name || 'Mở file'}</a>
-                  )}
                 </div>
-                {renderAttachmentActionButtons(taskId, att, checklistId)}
+                {renderAttachmentActionButtons(taskId, att, checklistId, { lightboxAtts: fileAtts })}
               </div>
-              {img && attOpen && (
-                <a {...attOpen} className="block mt-1.5 ml-5">
+              {img && att.file_url && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); openAttLightbox(fileAtts, att.file_url); }}
+                  className="block mt-1.5 ml-5 text-left"
+                >
                   <img
                     src={publicFileUrl(att.file_url)}
                     alt={att.file_name || att.name || ''}
-                    className="max-h-80 max-w-full rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity"
+                    className="max-h-80 max-w-full rounded-lg border border-gray-200 object-contain cursor-zoom-in hover:opacity-90 transition-opacity"
                   />
-                </a>
+                </button>
               )}
               {att.file_url && (att.mime_type?.startsWith('video/') || att.doc_type === 'video') && (
                 <div className="mt-1.5 ml-5">
@@ -3385,8 +3407,8 @@ export default function CRMTasksTab({
               {atts.length > 0 && (
                 <div className="space-y-1.5">
                   {atts.filter((att) => att.file_url).map((att) => {
-                    const attOpen = att.file_url ? getFileOpenAnchorProps(att.file_url, { fileName: att.file_name }) : null;
                     const img = isImageAtt(att);
+                    const fileAtts = atts.filter((a) => a.file_url);
                     return (
                       <div key={att.id} className="py-1.5 px-2 rounded bg-white border">
                         <div className="flex items-start gap-2">
@@ -3399,10 +3421,7 @@ export default function CRMTasksTab({
                               )}
                             </div>
                             {att.notes && <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{att.notes}</p>}
-                            {att.file_url && !img && attOpen && (
-                              <a {...attOpen} className="text-[10px] text-blue-600 hover:underline">{att.file_name || 'Mở file'}</a>
-                            )}
-                            <span className="text-[9px] text-gray-400 ml-1">{att.creator?.full_name}</span>
+                            <span className="text-[9px] text-gray-400">{att.creator?.full_name}</span>
                           </div>
                           <div className="flex flex-col items-end gap-1 shrink-0">
                             <div className="flex items-center gap-0.5">
@@ -3413,14 +3432,18 @@ export default function CRMTasksTab({
                                 {att.shared_to_project ? <Share2 className="h-2.5 w-2.5" /> : <Lock className="h-2.5 w-2.5" />}
                               </button>
                             </div>
-                            {renderAttachmentActionButtons(task.id, att)}
+                            {renderAttachmentActionButtons(task.id, att, null, { lightboxAtts: fileAtts })}
                           </div>
                         </div>
-                        {img && attOpen && (
-                          <a {...attOpen} className="block mt-1.5 ml-5">
+                        {img && att.file_url && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); openAttLightbox(fileAtts, att.file_url); }}
+                            className="block mt-1.5 ml-5 text-left"
+                          >
                             <img src={publicFileUrl(att.file_url)} alt={att.file_name || att.name || ''}
-                              className="max-h-80 max-w-full rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity" />
-                          </a>
+                              className="max-h-80 max-w-full rounded-lg border border-gray-200 object-contain cursor-zoom-in hover:opacity-90 transition-opacity" />
+                          </button>
                         )}
                         {att.file_url && (att.mime_type?.startsWith('video/') || att.doc_type === 'video') && (
                           <div className="mt-1.5 ml-5">

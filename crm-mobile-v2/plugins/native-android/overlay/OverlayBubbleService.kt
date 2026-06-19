@@ -455,15 +455,81 @@ class OverlayBubbleService : Service() {
     saveBadgeToPrefs()
     updateBadge()
     removePeek()
+    closeChatPanel()
+    snapBubbleForChatPanel()
+    bubbleRoot?.visibility = View.VISIBLE
+    showNativeChatPanel()
+  }
+
+  /** Panel overlay native — không mở MainActivity, chat nổi trên app khác. */
+  private fun showNativeChatPanel() {
     val wm = windowManager ?: return
-    if (chatPanel == null) {
-      chatPanel = OverlayChatPanel(this, wm) {
+    val topReserve = snapBubbleForChatPanel()
+    chatPanel = OverlayChatPanel(
+      this,
+      wm,
+      onClosed = {
         chatPanel = null
         bubbleRoot?.visibility = View.VISIBLE
-      }
+      },
+      onExpand = { gid, title -> openBubbleChatInApp(gid, title) },
+    )
+    chatPanel?.show(bubbleGroupId, bubbleTitle, topReserve)
+  }
+
+  private fun stashPendingBubbleChat(groupId: String, title: String) {
+    try {
+      val obj = org.json.JSONObject()
+      obj.put("threadId", groupId)
+      obj.put("title", title.ifBlank { "Chat" })
+      obj.put("ts", System.currentTimeMillis())
+      prefs().edit().putString(PREF_PENDING_BUBBLE_CHAT, obj.toString()).apply()
+    } catch (_: Exception) { }
+  }
+
+  private fun openBubbleChatInApp(groupId: String = bubbleGroupId, title: String = bubbleTitle) {
+    if (groupId.isBlank()) return
+    closeChatPanel()
+    stashPendingBubbleChat(groupId, title)
+    FloatingBubbleBridge.emitPanelOpened(groupId, title, fullApp = true)
+    val intent = Intent(this, MainActivity::class.java).apply {
+      addFlags(
+        Intent.FLAG_ACTIVITY_NEW_TASK
+          or Intent.FLAG_ACTIVITY_SINGLE_TOP
+          or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+          or Intent.FLAG_ACTIVITY_NO_ANIMATION,
+      )
+      putExtra("bubble_chat", true)
+      putExtra("group_id", groupId)
+      putExtra("title", title)
     }
-    bubbleRoot?.visibility = View.GONE
-    chatPanel?.show(bubbleGroupId, bubbleTitle)
+    startActivity(intent)
+  }
+
+  /** Đưa bubble lên mép trên — panel chat chiếm phần còn lại, không chừa khoảng trống lớn. */
+  private fun snapBubbleForChatPanel(): Int {
+    val lp = layoutParams ?: return statusBarHeight() + dp(58) + dp(10)
+    val root = bubbleRoot ?: return statusBarHeight() + dp(58) + dp(10)
+    val dm = resources.displayMetrics
+    lp.x = dm.widthPixels - lp.width - dp(12)
+    lp.y = statusBarHeight() + dp(8)
+    try {
+      windowManager?.updateViewLayout(root, lp)
+      bringBubbleToFront(root, lp)
+    } catch (_: Exception) { }
+    return lp.y + lp.height + dp(6)
+  }
+
+  private fun bringBubbleToFront(root: View, lp: WindowManager.LayoutParams) {
+    try {
+      windowManager?.removeView(root)
+      windowManager?.addView(root, lp)
+    } catch (_: Exception) { }
+  }
+
+  private fun statusBarHeight(): Int {
+    val resId = resources.getIdentifier("status_bar_height", "dimen", "android")
+    return if (resId > 0) resources.getDimensionPixelSize(resId) else dp(24)
   }
 
   private fun closeChatPanel() {
@@ -710,6 +776,7 @@ class OverlayBubbleService : Service() {
 
   companion object {
     const val PREF_NAME = "sx_bubble_prefs"
+    const val PREF_PENDING_BUBBLE_CHAT = "pending_bubble_chat_json"
     const val PREF_PENDING_GROUP = "pending_group_id"
     const val PREF_PENDING_TITLE = "pending_group_title"
     const val PREF_BUBBLE_DISMISSED = "bubble_dismissed"

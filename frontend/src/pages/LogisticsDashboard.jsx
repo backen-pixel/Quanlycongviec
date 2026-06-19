@@ -3,6 +3,11 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
+import {
+  canPickWorkshopCompany,
+  isCrossWorkshopProductionViewer,
+  workshopCompaniesForCrossViewer,
+} from '../lib/crossWorkshopProduction';
 import { getSocket } from '../lib/socket';
 import { formatVND, formatDate } from '../lib/utils';
 import {
@@ -54,6 +59,7 @@ export default function LogisticsDashboard() {
   const P0 = useMemo(() => readVcDashPersisted(), []);
   const { user } = useAuth();
   const isAdmin = isAdminLike(user);
+  const crossWorkshopViewer = isCrossWorkshopProductionViewer(user);
 
   const [kpis, setKpis] = useState(null);
   const [projects, setProjects] = useState([]);
@@ -134,9 +140,18 @@ export default function LogisticsDashboard() {
 
   const companyParam = useMemo(() => {
     if (isAdmin) return filterCompany || undefined;
+    if (crossWorkshopViewer) return filterCompany || user?.company_id || undefined;
     return user?.company_id ? String(user.company_id) : undefined;
-  }, [isAdmin, filterCompany, user?.company_id]);
+  }, [isAdmin, crossWorkshopViewer, filterCompany, user?.company_id]);
   const companyForTypes = companyParam || (user?.company_id ? String(user.company_id) : '');
+
+  const canPickCompany = canPickWorkshopCompany(user, isAdmin, isCompanyScopedAdmin);
+  const workshopCompanyPickerList = useMemo(() => {
+    if (crossWorkshopViewer && !isAdmin) {
+      return workshopCompaniesForCrossViewer(companies, user);
+    }
+    return companies;
+  }, [companies, crossWorkshopViewer, isAdmin, user]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -544,6 +559,33 @@ export default function LogisticsDashboard() {
           />
         </div>
       </div>
+
+      {/* Công ty — chip ngang; kế toán: VPT + HCB + Metalla */}
+      {canPickCompany && !isCompanyScopedAdmin && workshopCompanyPickerList.length > 0 && (
+        <div className="flex items-center gap-1.5 overflow-x-auto max-w-full shrink-0 pb-0.5 scrollbar-thin scrollbar-thumb-gray-200">
+          {(isAdmin ? [{ id: '', name: 'Tất cả' }, ...workshopCompanyPickerList] : workshopCompanyPickerList).map((c) => {
+            const active = filterCompany === c.id;
+            return (
+              <button
+                key={c.id || 'all'}
+                type="button"
+                onClick={() => {
+                  if (active) return;
+                  handleStaffFilterCompanyChange(c.id);
+                }}
+                className={`shrink-0 h-9 px-3 rounded-full text-xs font-semibold border transition-all cursor-pointer whitespace-nowrap ${
+                  active
+                    ? 'bg-orange-600 border-orange-600 text-white shadow-sm'
+                    : 'bg-white border-gray-200 text-gray-600 hover:border-orange-300 hover:text-orange-700 hover:bg-orange-50'
+                }`}
+              >
+                {active && <span className="mr-1">✓</span>}
+                {c.id === '' ? 'Tất cả' : (c.short_name || c.name)}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Bộ lọc gọn: khi đóng chỉ còn 1 hàng */}
       <div className="space-y-2">

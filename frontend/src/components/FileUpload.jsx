@@ -26,6 +26,27 @@ function formatSize(bytes) {
   return (bytes / 1048576).toFixed(1) + 'MB';
 }
 
+/** Upload danh sách File (chọn file hoặc dán clipboard) — trả metadata file_url. */
+export async function uploadFilesBatch(files) {
+  const list = Array.from(files || []).filter(Boolean).slice(0, 20);
+  if (!list.length) return [];
+  const formData = new FormData();
+  for (const f of list) formData.append('files', f);
+  const { data } = await api.post('/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  const all = data.files || [];
+  const uploaded = all.filter((f) => f?.file_url && !String(f.file_url).startsWith('data:'));
+  const failed = all.filter((f) => f?.error || !f?.file_url || String(f.file_url).startsWith('data:'));
+  if (!uploaded.length) {
+    throw new Error(failed[0]?.error || data.error || 'Upload không trả về URL file hợp lệ');
+  }
+  if (failed.length) {
+    console.warn('Upload partial failure:', failed);
+  }
+  return uploaded;
+}
+
 export function FileUploadButton({ onFilesUploaded, multiple = true, compact = false }) {
   const [uploading, setUploading] = useState(false);
   const inputRef = useRef(null);
@@ -36,22 +57,7 @@ export function FileUploadButton({ onFilesUploaded, multiple = true, compact = f
 
     setUploading(true);
     try {
-      const formData = new FormData();
-      for (const f of files) formData.append('files', f);
-
-      const { data } = await api.post('/upload', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-
-      const all = data.files || [];
-      const uploaded = all.filter((f) => f?.file_url && !String(f.file_url).startsWith('data:'));
-      const failed = all.filter((f) => f?.error || !f?.file_url || String(f.file_url).startsWith('data:'));
-      if (!uploaded.length) {
-        throw new Error(failed[0]?.error || data.error || 'Upload không trả về URL file hợp lệ');
-      }
-      if (failed.length) {
-        console.warn('Upload partial failure:', failed);
-      }
+      const uploaded = await uploadFilesBatch(files);
       onFilesUploaded?.(uploaded);
     } catch (err) {
       console.error('Upload error:', err);

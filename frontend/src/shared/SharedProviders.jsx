@@ -1,6 +1,7 @@
 import { ModuleAccessProvider } from './context/ModuleAccessContext';
 import { UnreadBadgesProvider } from './context/UnreadBadgesContext';
 import { PresenceProvider } from './context/PresenceContext';
+import { FilePreviewProvider } from '../context/FilePreviewContext';
 
 /** Provider dùng chung cho toàn app (sau AuthProvider, trong BrowserRouter). */
 export default function SharedProviders({ children }) {
@@ -8,7 +9,9 @@ export default function SharedProviders({ children }) {
     <ModuleAccessProvider>
       <PresenceProvider>
         <UnreadBadgesProvider>
-          {children}
+          <FilePreviewProvider>
+            {children}
+          </FilePreviewProvider>
         </UnreadBadgesProvider>
       </PresenceProvider>
     </ModuleAccessProvider>

@@ -11,19 +11,27 @@ import com.facebook.react.defaults.DefaultReactActivityDelegate
 
 import expo.modules.ReactActivityDelegateWrapper
 import vn.tubeppro.crmobilev2.call.IncomingCallActivity
+import vn.tubeppro.crmobilev2.overlay.FloatingBubbleBridge
 
 class MainActivity : ReactActivity() {
   private var lockScreenCallBoot = false
   private var lockScreenCallBootHandled = false
+  private var bubbleChatOverlayBoot = false
 
   override fun onCreate(savedInstanceState: Bundle?) {
     lockScreenCallBoot = isLockScreenCallBootIntent(intent)
-    if (lockScreenCallBoot) {
-      setTheme(R.style.Theme_MainCallBoot)
-    } else {
-      setTheme(R.style.AppTheme)
+    bubbleChatOverlayBoot = isBubbleChatIntent(intent) && !lockScreenCallBoot
+    when {
+      lockScreenCallBoot -> setTheme(R.style.Theme_MainCallBoot)
+      bubbleChatOverlayBoot -> setTheme(R.style.Theme_BubbleChatOverlay)
+      else -> setTheme(R.style.AppTheme)
     }
     super.onCreate(null)
+    if (bubbleChatOverlayBoot) {
+      applyBubbleOverlayWindow()
+      overridePendingTransition(0, 0)
+    }
+    stashBubbleChatIntent(intent)
     stashIncomingCallIntent(intent)
     if (lockScreenCallBoot) {
       scheduleLockScreenCallBootUi()
@@ -38,6 +46,12 @@ class MainActivity : ReactActivity() {
       lockScreenCallBoot = true
       lockScreenCallBootHandled = false
     }
+    if (isBubbleChatIntent(intent)) {
+      bubbleChatOverlayBoot = true
+      applyBubbleOverlayWindow()
+      overridePendingTransition(0, 0)
+    }
+    stashBubbleChatIntent(intent)
     stashIncomingCallIntent(intent)
     if (lockBoot) {
       scheduleLockScreenCallBootUi()
@@ -94,6 +108,38 @@ class MainActivity : ReactActivity() {
     if (intent == null) return false
     return intent.getBooleanExtra("lock_screen_call", false)
       && intent.getStringExtra("call_action")?.trim() == "accept"
+  }
+
+  private fun isBubbleChatIntent(intent: android.content.Intent?): Boolean {
+    if (intent == null) return false
+    return intent.getBooleanExtra("bubble_chat", false)
+  }
+
+  private fun applyBubbleOverlayWindow() {
+    window.setBackgroundDrawableResource(android.R.color.transparent)
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+      window.statusBarColor = android.graphics.Color.TRANSPARENT
+      window.navigationBarColor = android.graphics.Color.TRANSPARENT
+    }
+  }
+
+  private fun stashBubbleChatIntent(intent: android.content.Intent?) {
+    if (intent?.getBooleanExtra("bubble_chat", false) != true) return
+    val groupId = intent.getStringExtra("group_id")?.trim().orEmpty()
+    if (groupId.isBlank()) return
+    val title = intent.getStringExtra("title")?.trim().orEmpty()
+    try {
+      val obj = org.json.JSONObject()
+      obj.put("threadId", groupId)
+      obj.put("title", title.ifBlank { "Chat" })
+      obj.put("ts", System.currentTimeMillis())
+      getSharedPreferences(vn.tubeppro.crmobilev2.overlay.OverlayBubbleService.PREF_NAME, MODE_PRIVATE)
+        .edit()
+        .putString(vn.tubeppro.crmobilev2.overlay.OverlayBubbleService.PREF_PENDING_BUBBLE_CHAT, obj.toString())
+        .apply()
+    } catch (_: Exception) { }
+    intent.removeExtra("bubble_chat")
+    FloatingBubbleBridge.emitPanelOpened(groupId, title.ifBlank { "Chat" }, fullApp = true)
   }
 
   private fun stashIncomingCallIntent(intent: android.content.Intent?) {
@@ -155,6 +201,11 @@ class MainActivity : ReactActivity() {
   }
 
   override fun invokeDefaultOnBackPressed() {
+      if (bubbleChatOverlayBoot) {
+        moveTaskToBack(true)
+        overridePendingTransition(0, 0)
+        return
+      }
       if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.R) {
           if (!moveTaskToBack(false)) {
               super.invokeDefaultOnBackPressed()
