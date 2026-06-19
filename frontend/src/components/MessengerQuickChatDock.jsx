@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import {
@@ -43,8 +43,10 @@ const DOCK_VIEWPORT_RIGHT = 16;
 const COMPACT_ITEM_PAD = 6;
 /** Trễ trước khi hiện thẻ hover avatar (ms) */
 const HOVER_CARD_SHOW_MS = 480;
+/** Trễ trước khi ẩn thẻ hover avatar (ms) */
+const HOVER_CARD_HIDE_MS = 360;
 /** Trễ trước khi thanh dock chìm lại sau khi rời chuột (ms) */
-const DOCK_SINK_DELAY_MS = 220;
+const DOCK_SINK_DELAY_MS = 420;
 
 function avatarUrl(publicFileUrl, av) {
   if (!av || typeof av !== 'string') return null;
@@ -118,7 +120,7 @@ function DockAvatar({
   );
 }
 
-function UserHoverCard({ item, presence, anchorRect, publicFileUrl }) {
+function UserHoverCard({ item, presence, anchorRect, publicFileUrl, onTogglePin }) {
   if (!item || !anchorRect) return null;
   const cardW = 248;
   const top = Math.max(12, Math.min(anchorRect.top + anchorRect.height / 2 - 60, window.innerHeight - 140));
@@ -135,7 +137,7 @@ function UserHoverCard({ item, presence, anchorRect, publicFileUrl }) {
       style={{ top, left: Math.max(12, left), width: cardW }}
     >
       <div
-        className="rounded-2xl border border-[#E5E7EB] bg-white/95 backdrop-blur-xl p-3.5"
+        className="rounded-2xl border border-[#E5E7EB] bg-white/95 backdrop-blur-xl p-3.5 pointer-events-auto"
         style={{ boxShadow: DOCK_SHADOW }}
       >
         <div className="flex items-start gap-3">
@@ -169,6 +171,20 @@ function UserHoverCard({ item, presence, anchorRect, publicFileUrl }) {
               <p className="text-[11px] text-slate-400 mt-0.5">
                 {formatLastActiveShort(presence?.last_ping_at)}
               </p>
+            ) : null}
+            {item.groupId && onTogglePin ? (
+              <button
+                type="button"
+                onClick={(e) => onTogglePin(item, e)}
+                className={`mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-lg border transition ${
+                  item.pinned
+                    ? 'border-[#F59E0B] bg-[#F59E0B]/10 text-[#B45309]'
+                    : 'border-slate-200 bg-white text-slate-600 hover:border-[#F59E0B] hover:text-[#B45309]'
+                }`}
+              >
+                <Pin className={`h-3 w-3 ${item.pinned ? 'fill-current' : ''}`} />
+                {item.pinned ? 'Bỏ ghim thanh chat' : 'Ghim lên thanh chat'}
+              </button>
             ) : null}
           </div>
         </div>
@@ -262,6 +278,7 @@ export default function MessengerQuickChatDock({
   const [hoverItem, setHoverItem] = useState(null);
   const [hoverRect, setHoverRect] = useState(null);
   const hoverTimer = useRef(null);
+  const hideHoverTimer = useRef(null);
   const leaveTimer = useRef(null);
   const stripScrollRef = useRef(null);
   const [stripScrollFade, setStripScrollFade] = useState({ top: false, bottom: false });
@@ -287,8 +304,22 @@ export default function MessengerQuickChatDock({
   const compactWidth = avatarsCollapsed ? QUICK_CHAT_DOCK_MINI_W : QUICK_CHAT_DOCK_W;
   const compactOuterWidth = compactWidth + COMPACT_ITEM_PAD * 2;
 
-  const compactItems = items.slice(0, MAX_COMPACT_AVATARS);
-  const overflowCount = Math.max(0, items.length - MAX_COMPACT_AVATARS);
+  /** Hội thoại ghim — luôn nổi ngoài thanh chìm */
+  const pinnedStripItems = useMemo(
+    () => items.filter((i) => i.pinned && i.groupId),
+    [items],
+  );
+
+  /** Avatar thường trong thanh cuộn (tối đa 8, không gồm mục đã ghim) */
+  const regularStripItems = useMemo(() => {
+    const rest = items.filter((i) => !i.pinned || !i.groupId);
+    return rest.slice(0, MAX_COMPACT_AVATARS);
+  }, [items]);
+
+  const overflowCount = useMemo(() => {
+    const rest = items.filter((i) => !i.pinned || !i.groupId);
+    return Math.max(0, rest.length - MAX_COMPACT_AVATARS);
+  }, [items]);
 
   const handleDockEnter = useCallback(() => {
     clearTimeout(leaveTimer.current);
@@ -302,6 +333,13 @@ export default function MessengerQuickChatDock({
       if (!expanded) setRaised(false);
     }, DOCK_SINK_DELAY_MS);
   }, [expanded, dockPinned]);
+
+  /** Avatar ghim tự mở chat — không cần nâng thanh chìm khi hover/click */
+  const handlePinnedStripEnter = useCallback(() => {
+    if (dockPinned || expanded) return;
+    clearTimeout(leaveTimer.current);
+    setRaised(false);
+  }, [dockPinned, expanded]);
 
   const toggleDockPinned = useCallback(() => {
     setDockPinned((v) => {
@@ -329,6 +367,7 @@ export default function MessengerQuickChatDock({
   }, []);
 
   const showHover = useCallback((item, el) => {
+    clearTimeout(hideHoverTimer.current);
     clearTimeout(hoverTimer.current);
     hoverTimer.current = setTimeout(() => {
       if (el) setHoverRect(el.getBoundingClientRect());
@@ -338,8 +377,11 @@ export default function MessengerQuickChatDock({
 
   const hideHover = useCallback(() => {
     clearTimeout(hoverTimer.current);
-    setHoverItem(null);
-    setHoverRect(null);
+    clearTimeout(hideHoverTimer.current);
+    hideHoverTimer.current = setTimeout(() => {
+      setHoverItem(null);
+      setHoverRect(null);
+    }, HOVER_CARD_HIDE_MS);
   }, []);
 
   useEffect(() => {
@@ -348,44 +390,70 @@ export default function MessengerQuickChatDock({
 
   useEffect(() => {
     updateStripScrollFade();
-  }, [compactItems.length, avatarsCollapsed, dockActive, updateStripScrollFade]);
+  }, [regularStripItems.length, avatarsCollapsed, dockActive, updateStripScrollFade]);
 
   useEffect(
     () => () => {
       clearTimeout(leaveTimer.current);
       clearTimeout(hoverTimer.current);
+      clearTimeout(hideHoverTimer.current);
     },
     [],
   );
 
-  const renderCompactButton = (item) => {
+  const renderCompactButton = (item, { pinnedStrip = false } = {}) => {
     const presence = item.peerId ? getUserPresence(presenceByUser, item.peerId) : null;
     const isActive = activeKeys.has(item.key);
     const isGroup = item.kind === 'group' || item.kind === 'window';
+    const canPinConversation = !!item.groupId && !!onTogglePin;
+    const pinnedIconRing =
+      item.pinned && !isActive
+        ? 'ring-2 ring-[#F59E0B] ring-offset-1 ring-offset-white shadow-[0_0_0_1px_rgba(245,158,11,0.25)]'
+        : 'ring-2 ring-white';
+
+    const handleClick = () => {
+      if (pinnedStrip && !expanded && !dockPinned) {
+        clearTimeout(leaveTimer.current);
+        setRaised(false);
+      }
+      hideHover();
+      onItemClick(item);
+    };
 
     return (
       <div
         key={item.key}
-        className="relative shrink-0 overflow-visible"
+        className="relative shrink-0 overflow-visible group/dock-item"
         style={{ padding: COMPACT_ITEM_PAD }}
       >
         <button
           type="button"
-          onClick={() => onItemClick(item)}
-          onContextMenu={item.pinned != null ? (e) => onTogglePin?.(item, e) : undefined}
-          onMouseEnter={(e) => showHover(item, e.currentTarget)}
-          onMouseLeave={hideHover}
+          onClick={handleClick}
+          onContextMenu={
+            canPinConversation
+              ? (e) => {
+                  e.preventDefault();
+                  onTogglePin(item, e);
+                }
+              : undefined
+          }
+          onMouseEnter={pinnedStrip ? undefined : (e) => showHover(item, e.currentTarget)}
+          onMouseLeave={pinnedStrip ? undefined : hideHover}
           className="relative block transition-transform duration-300 ease-out hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] rounded-2xl overflow-visible"
           title={
             item.lastPreview
-              ? `${item.title} — ${item.lastPreview}`
-              : item.title
+              ? `${item.title}${item.pinned ? ' (đã ghim)' : ''} — ${item.lastPreview}`
+              : item.pinned
+                ? `${item.title} (đã ghim trên thanh chat)`
+                : item.title
           }
         >
           {item.kind === 'department' ? (
             <span
-              className={`w-10 h-10 rounded-2xl flex items-center justify-center text-white shadow-sm ring-2 ring-white ${
-                isActive ? 'ring-[#2563EB] shadow-[0_0_0_3px_rgba(37,99,235,0.2)]' : ''
+              className={`w-10 h-10 rounded-2xl flex items-center justify-center text-white shadow-sm ${
+                isActive
+                  ? 'ring-2 ring-[#2563EB] shadow-[0_0_0_3px_rgba(37,99,235,0.2)]'
+                  : pinnedIconRing
               }`}
               style={{ background: item.color ? `linear-gradient(135deg, ${item.color}, ${item.color}cc)` : gradientFor(item.title) }}
             >
@@ -393,8 +461,8 @@ export default function MessengerQuickChatDock({
             </span>
           ) : isGroup && !item.avatar && item.kind === 'group' ? (
             <span
-              className={`w-10 h-10 rounded-2xl flex items-center justify-center text-white shadow-sm ring-2 ring-white ${
-                isActive ? 'ring-[#2563EB]' : ''
+              className={`w-10 h-10 rounded-2xl flex items-center justify-center text-white shadow-sm ${
+                isActive ? 'ring-2 ring-[#2563EB]' : pinnedIconRing
               }`}
               style={{ background: gradientFor(item.title) }}
             >
@@ -405,6 +473,7 @@ export default function MessengerQuickChatDock({
               src={item.avatar}
               name={item.title}
               active={isActive}
+              ringClass={item.pinned && !isActive ? pinnedIconRing : ''}
               publicFileUrl={publicFileUrl}
             >
               {item.peerId ? (
@@ -421,13 +490,27 @@ export default function MessengerQuickChatDock({
               ) : null}
             </DockAvatar>
           )}
-          {item.pinned ? (
-            <span className="absolute top-0 left-0 z-10 h-3.5 w-3.5 rounded-full bg-[#F59E0B] flex items-center justify-center ring-1 ring-white shadow">
-              <Pin className="h-2 w-2 text-white fill-white" />
-            </span>
-          ) : null}
           <UnreadBadge count={item.unread} prominent={item.unread > 0} pulseRing={item.unread > 0} />
         </button>
+        {canPinConversation && !item.pinned ? (
+          <button
+            type="button"
+            onClick={(e) => onTogglePin(item, e)}
+            className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 z-20 h-[18px] w-[18px] rounded-full border border-slate-200 bg-white text-slate-400 flex items-center justify-center shadow-sm transition-all opacity-0 scale-90 group-hover/dock-item:opacity-100 group-hover/dock-item:scale-100 hover:border-[#F59E0B] hover:text-[#F59E0B]"
+            title="Ghim người này lên thanh chat nhanh"
+          >
+            <Pin className="h-2.5 w-2.5" />
+          </button>
+        ) : canPinConversation && item.pinned ? (
+          <button
+            type="button"
+            onClick={(e) => onTogglePin(item, e)}
+            className="absolute -top-0.5 -left-0.5 z-20 h-3.5 w-3.5 rounded-full bg-[#F59E0B] flex items-center justify-center ring-1 ring-white shadow-sm hover:bg-[#D97706] transition-colors"
+            title="Bỏ ghim khỏi thanh chat nhanh"
+          >
+            <Pin className="h-2 w-2 text-white fill-white" />
+          </button>
+        ) : null}
       </div>
     );
   };
@@ -442,6 +525,7 @@ export default function MessengerQuickChatDock({
           presence={hoverPresence}
           anchorRect={hoverRect}
           publicFileUrl={publicFileUrl}
+          onTogglePin={onTogglePin}
         />
       ) : null}
 
@@ -449,7 +533,6 @@ export default function MessengerQuickChatDock({
         ref={dockRef}
         className="fixed top-1/2 -translate-y-1/2 z-[120] flex flex-row-reverse items-stretch gap-3 font-[Inter,system-ui,sans-serif] overflow-visible"
         style={{ right: DOCK_VIEWPORT_RIGHT }}
-        onMouseEnter={handleDockEnter}
         onMouseLeave={handleDockLeave}
       >
         {/* Expanded panel — luôn hiển thị đầy đủ khi mở */}
@@ -681,21 +764,33 @@ export default function MessengerQuickChatDock({
           </div>
         ) : null}
 
-        {/* Compact dock — chìm khi không hover; thu gọn được */}
-        <div
-          className={`relative shrink-0 flex flex-col items-center rounded-[24px] border py-3 gap-2 transition-all duration-500 ease-out overflow-visible ${
-            dockActive
-              ? `opacity-100 border-[#E5E7EB] bg-white px-2.5${dockPinned ? ' ring-2 ring-[#F59E0B]/35 shadow-[0_0_0_1px_rgba(245,158,11,0.15)]' : ''}`
-              : totalUnread > 0
-                ? 'opacity-95 border-[#FECACA] bg-white shadow-[0_0_0_2px_rgba(239,68,68,0.25)] px-2.5'
-                : 'opacity-[0.42] border-transparent bg-white/75 backdrop-blur-sm px-2'
-          }`}
-          style={{
-            width: compactOuterWidth,
-            boxShadow: dockActive ? DOCK_SHADOW : totalUnread > 0 ? '0 8px 28px rgba(239,68,68,0.22)' : DOCK_SHADOW_SUNK,
-            transform: dockActive ? 'translateX(0)' : `translateX(${Math.max(0, compactOuterWidth - SUNK_PEEK_PX)}px)`,
-          }}
-        >
+        {/* Compact dock — chìm khi không hover; avatar ghim nằm ngoài, luôn hiện */}
+        <div className="flex flex-col items-center gap-1.5 shrink-0 overflow-visible">
+          {pinnedStripItems.length > 0 ? (
+            <div
+              className="flex flex-col items-center gap-1 shrink-0 py-0.5"
+              aria-label="Chat đã ghim"
+              onMouseEnter={handlePinnedStripEnter}
+            >
+              {pinnedStripItems.map((item) => renderCompactButton(item, { pinnedStrip: true }))}
+            </div>
+          ) : null}
+
+          <div
+            onMouseEnter={handleDockEnter}
+            className={`relative shrink-0 flex flex-col items-center rounded-[24px] border py-3 gap-2 transition-all duration-[650ms] ease-out overflow-visible ${
+              dockActive
+                ? 'opacity-100 border-[#E5E7EB] bg-white px-2.5'
+                : totalUnread > 0
+                  ? 'opacity-95 border-[#FECACA] bg-white shadow-[0_0_0_2px_rgba(239,68,68,0.25)] px-2.5'
+                  : 'opacity-[0.42] border-transparent bg-white/75 backdrop-blur-sm px-2'
+            }`}
+            style={{
+              width: compactOuterWidth,
+              boxShadow: dockActive ? DOCK_SHADOW : totalUnread > 0 ? '0 8px 28px rgba(239,68,68,0.22)' : DOCK_SHADOW_SUNK,
+              transform: dockActive ? 'translateX(0)' : `translateX(${Math.max(0, compactOuterWidth - SUNK_PEEK_PX)}px)`,
+            }}
+          >
           <button
             type="button"
             onClick={onToggleExpanded}
@@ -730,7 +825,7 @@ export default function MessengerQuickChatDock({
                   ? 'text-[#F59E0B] bg-[#F59E0B]/12 hover:bg-[#F59E0B]/20'
                   : 'text-slate-400 hover:text-[#2563EB] hover:bg-[#2563EB]/5'
               } ${dockActive ? 'opacity-100' : 'opacity-70'}`}
-              title={dockPinned ? 'Bỏ ghim — thanh chat có thể tự chìm' : 'Ghim thanh chat — luôn hiển thị đầy đủ'}
+              title={dockPinned ? 'Bỏ ghim cố định thanh chat' : 'Ghim cố định thanh chat — không tự chìm'}
             >
               <Pin className={`h-3.5 w-3.5 ${dockPinned ? 'fill-[#F59E0B]' : ''}`} />
             </button>
@@ -761,7 +856,7 @@ export default function MessengerQuickChatDock({
                 <div
                   ref={stripScrollRef}
                   onScroll={updateStripScrollFade}
-                  className={`flex flex-col items-center gap-1 w-full h-full py-1 transition-opacity duration-500 ease-out ${DOCK_STRIP_SCROLL_CLS} ${
+                  className={`flex flex-col items-center gap-1 w-full h-full py-1 transition-opacity duration-[650ms] ease-out ${DOCK_STRIP_SCROLL_CLS} ${
                     dockActive ? 'opacity-100' : 'opacity-80'
                   }`}
                 >
@@ -769,7 +864,7 @@ export default function MessengerQuickChatDock({
                     <Loader2 className="h-5 w-5 animate-spin text-slate-400 my-2 shrink-0" />
                   ) : null}
 
-                  {compactItems.map(renderCompactButton)}
+                  {regularStripItems.map(renderCompactButton)}
 
                   {overflowCount > 0 ? (
                     <button
@@ -813,6 +908,7 @@ export default function MessengerQuickChatDock({
               aria-hidden
             />
           ) : null}
+          </div>
         </div>
       </div>
     </>
