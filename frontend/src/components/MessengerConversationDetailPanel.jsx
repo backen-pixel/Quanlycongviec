@@ -27,6 +27,7 @@ import {
 import { resolveMediaUrl, BROKEN_MEDIA_PLACEHOLDER } from '../lib/mediaUrl';
 import { publicFileUrl } from '../lib/publicFileUrl';
 import { displayMessengerFilename, downloadMessengerFile } from '../lib/messengerMessageActions';
+import { senderNameColor } from '../lib/messengerSenderColors';
 import UploadFileLightbox, { collectUploadLightboxItems, findUploadLightboxIndex } from './UploadFileLightbox';
 import {
   formatChatHeaderPresenceLabel,
@@ -483,7 +484,13 @@ export default function MessengerConversationDetailPanel({
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="text-[13px] font-semibold text-slate-900 truncate flex items-center gap-1">
-                          {u.full_name || 'Người dùng'}
+                          {!isDirect ? (
+                            <span style={{ color: senderNameColor(m.user_id, u.full_name || u.email) }}>
+                              {u.full_name || 'Người dùng'}
+                            </span>
+                          ) : (
+                            u.full_name || 'Người dùng'
+                          )}
                           {isMe && <span className="text-[10px] font-normal text-slate-400">(bạn)</span>}
                           {isLeader && <Crown className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
                           {isDeputy && !isLeader && <Shield className="h-3.5 w-3.5 text-indigo-500 shrink-0" />}

@@ -28,6 +28,7 @@ import DriveChatAttachmentCard from './drive/DriveChatAttachmentCard';
 import { driveShareToLeadChat, driveShareToMessengerChat } from '../lib/drive';
 import UploadFileLightbox, { collectUploadLightboxItems, findUploadLightboxIndex } from './UploadFileLightbox';
 import { buildMessengerMessagePreview } from '../lib/messengerPreview';
+import { groupSenderNameProps } from '../lib/messengerSenderColors';
 import {
   callLogDisplayText,
   formatCallLogLine,
@@ -610,9 +611,10 @@ function previewOfMessage(parent) {
  * Khối trích dẫn tin nhắn được trả lời — hiển thị bên trong bong bóng chat của
  * tin nhắn con. Click để cuộn về tin gốc trong khung message list.
  */
-function ReplyQuoteInBubble({ parent, isMe, onJump }) {
+function ReplyQuoteInBubble({ parent, isMe, onJump, isGroupChat = false }) {
   if (!parent) return null;
   const author = parent.user?.full_name || parent.user?.email || 'Thành viên';
+  const authorNameProps = groupSenderNameProps(parent.user_id, author, { isGroupChat });
   return (
     <button
       type="button"
@@ -623,7 +625,10 @@ function ReplyQuoteInBubble({ parent, isMe, onJump }) {
           : 'bg-slate-100 border-blue-400 hover:bg-slate-200 text-slate-700'
       }`}
     >
-      <p className={`text-[10px] font-semibold truncate ${isMe ? 'text-blue-100' : 'text-blue-700'}`}>
+      <p
+        className={`text-[10px] font-semibold truncate ${isMe ? 'text-blue-100' : authorNameProps.className || 'text-blue-700'}`}
+        style={!isMe ? authorNameProps.style : undefined}
+      >
         ↩ {author}
       </p>
       <p className={`text-[11px] truncate ${isMe ? 'text-blue-50/90' : 'text-slate-600'}`}>
@@ -634,14 +639,20 @@ function ReplyQuoteInBubble({ parent, isMe, onJump }) {
 }
 
 /** Thanh preview phía trên ô nhập khi đang trả lời 1 tin. */
-function ReplyComposerBar({ replyTo, onCancel }) {
+function ReplyComposerBar({ replyTo, onCancel, isGroupChat = false }) {
   if (!replyTo) return null;
   const author = replyTo.user?.full_name || replyTo.user?.email || 'Thành viên';
+  const authorNameProps = groupSenderNameProps(replyTo.user_id, author, { isGroupChat });
   return (
     <div className="mb-2 flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5">
       <CornerDownRight className="h-3.5 w-3.5 mt-0.5 text-blue-600 shrink-0" />
       <div className="flex-1 min-w-0">
-        <p className="text-[10px] font-semibold text-blue-700">Đang trả lời {author}</p>
+        <p className="text-[10px] font-semibold text-blue-700">
+          Đang trả lời{' '}
+          <span className={authorNameProps.className} style={authorNameProps.style}>
+            {author}
+          </span>
+        </p>
         <p className="text-[11px] text-slate-700 truncate">{previewOfMessage(replyTo)}</p>
       </div>
       <button
@@ -2746,7 +2757,8 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           const isCallLog = isMessengerCallLogMessage(m);
           const selectable = !m.is_system && m.message_type !== 'system' && !isCallLog && !isMessengerMessageRecalled(m);
           const isBot = !!m.user?.is_bot;
-          const mentionedIds = !groupMeta?.is_direct
+          const isGroupChat = !groupMeta?.is_direct;
+          const mentionedIds = !isGroupChat
             ? [
                 ...(Array.isArray(m.mention_user_ids) ? m.mention_user_ids : []),
                 ...resolveMentionIdsFromContent(m.content || '', groupMeta?.members || [], { excludeUserId: uid }),
@@ -2756,6 +2768,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           if (isCallLog && !isBot) {
             const sysText = callLogDisplayText(m, uid);
             const callActorName = m.user?.full_name || m.user?.email || 'Thành viên';
+            const callNameProps = groupSenderNameProps(m.user_id, callActorName, { isGroupChat });
             const callOnCallerSide = isMe;
             return (
               <div
@@ -2769,7 +2782,12 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                 )}
                 <div className={`max-w-[78%] min-w-0 ${callOnCallerSide ? 'text-right' : 'text-left'}`}>
                   {!callOnCallerSide && (
-                    <p className="text-[10px] font-semibold mb-0.5 px-1 text-violet-600 truncate">{callActorName}</p>
+                    <p
+                      className={`text-[10px] font-semibold mb-0.5 px-1 truncate ${callNameProps.className || 'text-violet-600'}`}
+                      style={callNameProps.style}
+                    >
+                      {callActorName}
+                    </p>
                   )}
                   <span
                     className={`inline-flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-2xl border max-w-full leading-snug ${
@@ -2799,6 +2817,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
             );
           }
           const senderName = m.user?.full_name || m.user?.email || 'Thành viên';
+          const senderNameProps = groupSenderNameProps(m.user_id, senderName, { isBot, isGroupChat });
           const parent = m.reply_to_message || m.reply || null;
           const isHighlight = String(highlightId || '') === String(m.id);
 
@@ -2817,11 +2836,14 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           const bareMediaBlock = (align) => (
             <>
               {!isMe && (
-                <p className={`text-[10px] font-semibold mb-1 px-1 ${isBot ? 'text-indigo-600' : 'text-violet-600'}`}>
+                <p
+                  className={`text-[10px] font-semibold mb-1 px-1 ${senderNameProps.className || 'text-violet-600'}`}
+                  style={senderNameProps.style}
+                >
                   {senderName}
                 </p>
               )}
-              {parent ? <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} /> : null}
+              {parent ? <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} isGroupChat={isGroupChat} /> : null}
               <div
                 className={`flex flex-col gap-1.5 max-w-full min-w-0 overflow-hidden ${
                   align === 'end' ? 'items-end' : 'items-start'
@@ -2901,7 +2923,10 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                       {isSticker ? (
                         <>
                           {!isMe && (
-                            <p className={`text-[10px] font-semibold mb-1 px-1 ${isBot ? 'text-indigo-600' : 'text-violet-600'}`}>
+                            <p
+                              className={`text-[10px] font-semibold mb-1 px-1 ${senderNameProps.className || 'text-violet-600'}`}
+                              style={senderNameProps.style}
+                            >
                               {senderName}
                             </p>
                           )}
@@ -2922,11 +2947,14 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                           }`}
                         >
                           {!isMe && (
-                            <p className={`text-[10px] font-semibold mb-0.5 ${isBot ? 'text-indigo-600' : 'text-violet-600'}`}>
+                            <p
+                              className={`text-[10px] font-semibold mb-0.5 ${senderNameProps.className || 'text-violet-600'}`}
+                              style={senderNameProps.style}
+                            >
                               {senderName}
                             </p>
                           )}
-                          {parent && <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} />}
+                          {parent && <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} isGroupChat={isGroupChat} />}
                           <div className="text-[13.5px] leading-relaxed whitespace-pre-wrap break-words">
                             {renderMessengerTextContent(m.content, isMe, uid)}
                           </div>
@@ -2960,7 +2988,10 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                       {isSticker ? (
                         <>
                           {!isMe && (
-                            <p className={`text-[10px] font-semibold mb-1 px-1 ${isBot ? 'text-indigo-600' : 'text-violet-600'}`}>
+                            <p
+                              className={`text-[10px] font-semibold mb-1 px-1 ${senderNameProps.className || 'text-violet-600'}`}
+                              style={senderNameProps.style}
+                            >
                               {senderName}
                             </p>
                           )}
@@ -2981,7 +3012,10 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                           }`}
                         >
                           {!isMe && (
-                            <p className={`text-[10px] font-semibold mb-0.5 flex items-center gap-1 ${isBot ? 'text-indigo-600' : 'text-violet-600'}`}>
+                            <p
+                              className={`text-[10px] font-semibold mb-0.5 flex items-center gap-1 ${senderNameProps.className || 'text-violet-600'}`}
+                              style={senderNameProps.style}
+                            >
                               {senderName}
                               {isBot && (
                                 <span className="px-1.5 py-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-[8px] font-bold">
@@ -2995,7 +3029,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                               Bạn được nhắc (@)
                             </p>
                           )}
-                          {parent && <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} />}
+                          {parent && <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} isGroupChat={isGroupChat} />}
                           <div className="text-[13.5px] leading-relaxed whitespace-pre-wrap break-words">
                             {renderMessengerTextContent(m.content, isMe, uid)}
                           </div>
@@ -3111,7 +3145,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
       ) : null}
 
       <div className={`${compact ? 'px-2.5 pt-1.5 pb-2' : hubLayout ? 'px-4 pt-3 pb-4' : 'px-3 pt-2 pb-3'} border-t border-slate-200/80 ${hubLayout ? 'bg-white' : 'bg-white/85 backdrop-blur-xl rounded-b-xl'} shrink-0 relative`}>
-        <ReplyComposerBar replyTo={replyTo} onCancel={() => setReplyTo(null)} />
+        <ReplyComposerBar replyTo={replyTo} onCancel={() => setReplyTo(null)} isGroupChat={!groupMeta?.is_direct} />
 
         {/* Quick reply chips — phản hồi 1 chạm */}
         {!text.trim() && !replyTo && !hasPending && (
