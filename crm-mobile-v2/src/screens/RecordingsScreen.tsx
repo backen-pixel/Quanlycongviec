@@ -2,7 +2,6 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Audio } from 'expo-av';
-import { LinearGradient } from 'expo-linear-gradient';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -19,7 +18,9 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Chip from '../components/Chip';
+import FilterGridPanel from '../components/FilterGridPanel';
+import RecordingsFilterSheet from '../components/RecordingsFilterSheet';
+import RecordingsSearchFieldBar from '../components/RecordingsSearchFieldBar';
 import VoiceRecorderToolbar from '../components/VoiceRecorderToolbar';
 import { formatApiError } from '../api/client';
 import {
@@ -31,8 +32,18 @@ import {
   type RecordingItem,
 } from '../api/recordings';
 import { currentUserId, useAuth } from '../context/AuthContext';
+import {
+  countRecordingFilters,
+  DEFAULT_RECORDING_FILTERS,
+  filterRecordingItems,
+  linkFilterLabel,
+  recordingFilterCounts,
+  recordingSearchPlaceholder,
+  type RecordingFilters,
+  type RecordingLinkFilter,
+} from '../lib/recordingsFilters';
 import type { RootStackParamList } from '../navigation/types';
-import { Radii, useColors, type ThemeColors } from '../theme';
+import { PAGE_HPAD, Radii, Spacing, useColors, type ThemeColors } from '../theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -97,7 +108,7 @@ function PlayerBar({ rec }: { rec: RecordingItem }) {
   return (
     <View style={styles.player}>
       <Pressable style={[styles.playBtn, !rec.playUrl && { opacity: 0.4 }]} onPress={() => void toggle()}>
-        <Ionicons name={playing ? 'pause' : 'play'} size={16} color="#fff" />
+        <Ionicons name={playing ? 'pause' : 'play'} size={15} color={Colors.blue} />
       </Pressable>
       <View style={styles.track}>
         <Animated.View style={[styles.trackFill, { width }]} />
@@ -131,58 +142,32 @@ const RecCard = React.memo(function RecCard({
   const canDelete = !!(myId && rec.userId && rec.userId === myId);
   const canBootstrap = true;
   const canRelink = !!rec.phoneNumber && (!rec.leadId || !rec.customerId);
+
   return (
     <View style={styles.card}>
-      <Text style={styles.cardTitle}>{rec.title}</Text>
-      <View style={styles.metaRow}>
-        <Ionicons name="time-outline" size={12} color={Colors.textFaint} />
-        <Text style={styles.metaTxt}>{rec.timeLabel} · {rec.dateLabel}</Text>
-      </View>
-      <View style={styles.metaRow}>
-        <Ionicons name="person-outline" size={12} color={Colors.textFaint} />
-        <Text style={styles.metaTxt}>{rec.ownerName}</Text>
-        {rec.phone !== '—' ? (
-          <>
-            <Ionicons name="call-outline" size={12} color={Colors.blue} style={{ marginLeft: 8 }} />
-            <Text style={[styles.metaTxt, { color: Colors.blue }]}>{rec.phone}</Text>
-          </>
-        ) : null}
-        <Text style={styles.device}>· {rec.device}</Text>
-      </View>
-
-      {!rec.linked ? (
-        <View style={styles.warn}>
-          <Ionicons name="warning-outline" size={14} color={Colors.amber} />
-          <Text style={styles.warnTxt}>Chưa ghép CRM — thử «Quét gắn Lead» hoặc «Tạo KH + Lead/Deal»</Text>
-        </View>
-      ) : (
-        <View style={styles.linked}>
-          <Ionicons name="checkmark-circle" size={14} color={Colors.green} />
-          <Text style={styles.linkedTxt}>
-            Đã ghép: {rec.customerName || 'KH'}
-            {rec.leadCode ? ` · ${rec.leadType === 'deal' ? 'Deal' : 'Lead'} ${rec.leadCode}` : ''}
-          </Text>
-        </View>
-      )}
-
-      {rec.notes ? <Text style={styles.notes}>{rec.notes}</Text> : null}
-
+      <Text style={styles.cardTitle} numberOfLines={2}>{rec.title}</Text>
+      <Text style={styles.cardMeta}>{rec.timeLabel} · {rec.dateLabel} · {rec.ownerName}</Text>
+      {rec.phone !== '—' ? <Text style={styles.cardMeta}>{rec.phone}</Text> : null}
+      <Text style={[styles.statusTxt, !rec.linked && styles.statusTxtMuted]} numberOfLines={2}>
+        {rec.linked
+          ? `Đã ghép · ${rec.customerName || 'KH'}${rec.leadCode ? ` · ${rec.leadCode}` : ''}`
+          : 'Chưa ghép CRM'}
+      </Text>
+      {rec.notes ? <Text style={styles.notes} numberOfLines={2}>{rec.notes}</Text> : null}
       <PlayerBar rec={rec} />
-
       <View style={styles.actions}>
         {canRelink ? (
           <ActionBtn
-            icon="scan"
-            label={busyId === rec.id ? '…' : 'Quét gắn Lead'}
+            icon="scan-outline"
+            label={busyId === rec.id ? '…' : 'Quét gắn'}
             onPress={() => onRelink(rec)}
             disabled={busyId === rec.id}
           />
         ) : null}
         {canBootstrap ? (
           <ActionBtn
-            icon="add-circle"
-            label={rec.leadId ? 'Tạo thêm Lead/Deal' : rec.customerId ? 'Tạo Lead/Deal' : 'Tạo KH + Lead'}
-            wide
+            icon="add-circle-outline"
+            label={rec.leadId ? 'Thêm Lead' : rec.customerId ? 'Tạo Lead' : 'Tạo KH'}
             onPress={() => onBootstrap(rec)}
             disabled={busyId === rec.id}
           />
@@ -205,14 +190,12 @@ function ActionBtn({
   icon,
   label,
   danger,
-  wide,
   onPress,
   disabled,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   danger?: boolean;
-  wide?: boolean;
   onPress?: () => void;
   disabled?: boolean;
 }) {
@@ -222,14 +205,13 @@ function ActionBtn({
     <Pressable
       style={[
         styles.actionBtn,
-        wide && { flexBasis: '100%' },
-        danger && { backgroundColor: Colors.redSoft, borderColor: 'rgba(239,68,68,0.4)' },
+        danger && styles.actionBtnDanger,
         disabled && { opacity: 0.5 },
       ]}
       onPress={onPress}
       disabled={disabled}
     >
-      <Ionicons name={icon} size={14} color={danger ? Colors.red : Colors.text} />
+      <Ionicons name={icon} size={14} color={danger ? Colors.red : Colors.textMuted} />
       <Text style={[styles.actionTxt, danger && { color: Colors.red }]}>{label}</Text>
     </Pressable>
   );
@@ -242,11 +224,15 @@ export default function RecordingsScreen() {
   const navigation = useNavigation<Nav>();
   const { user } = useAuth();
   const myId = currentUserId(user);
+
   const [list, setList] = useState<RecordingItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
-  const [filter, setFilter] = useState<'all' | 'unlinked' | 'linked'>('all');
+  const [filters, setFilters] = useState<RecordingFilters>(DEFAULT_RECORDING_FILTERS);
+  const [searchDraft, setSearchDraft] = useState('');
+  const [search, setSearch] = useState('');
+  const [filterOpen, setFilterOpen] = useState(false);
   const [batchBusy, setBatchBusy] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [bootstrapRec, setBootstrapRec] = useState<RecordingItem | null>(null);
@@ -254,6 +240,11 @@ export default function RecordingsScreen() {
   const [bootstrapPhone, setBootstrapPhone] = useState('');
   const [bootstrapType, setBootstrapType] = useState<'lead' | 'deal'>('lead');
   const [bootstrapBusy, setBootstrapBusy] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchDraft.trim()), 350);
+    return () => clearTimeout(t);
+  }, [searchDraft]);
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -275,13 +266,10 @@ export default function RecordingsScreen() {
     }, [load]),
   );
 
-  const shown = useMemo(
-    () =>
-      list.filter((r) =>
-        filter === 'all' ? true : filter === 'linked' ? r.linked : !r.linked,
-      ),
-    [list, filter],
-  );
+  const counts = useMemo(() => recordingFilterCounts(list), [list]);
+  const shown = useMemo(() => filterRecordingItems(list, filters, search), [list, filters, search]);
+  const filterBadge = countRecordingFilters(filters, search);
+  const filterActive = filterBadge > 0 || !!search;
 
   const handleBatchRelink = async () => {
     setBatchBusy(true);
@@ -378,50 +366,124 @@ export default function RecordingsScreen() {
     }
   };
 
-  const ListHeader = (
-    <View>
-      <LinearGradient
-        colors={['#6D28D9', '#7C3AED', '#4F46E5']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={[styles.hero, { paddingTop: insets.top + 14 }]}
-      >
-        <View style={styles.heroTop}>
-          <View style={styles.heroTitleRow}>
-            <Ionicons name="mic" size={20} color="#fff" />
-            <Text style={styles.heroTitle}>Lịch ghi âm</Text>
+  const setLinkFilter = (link: RecordingLinkFilter) => {
+    setFilters((p) => ({ ...p, link }));
+  };
+
+  const clearFilters = () => {
+    setSearchDraft('');
+    setSearch('');
+    setFilters(DEFAULT_RECORDING_FILTERS);
+  };
+
+  return (
+    <View style={[styles.root, { paddingTop: insets.top }]}>
+      <View style={styles.fixedTop}>
+        <View style={styles.header}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.h1}>Lịch ghi âm</Text>
+            <View style={styles.syncRow}>
+              <View style={styles.syncDot} />
+              <Text style={styles.syncTxt}>{list.length} bản ghi · hiển thị {shown.length}</Text>
+            </View>
           </View>
-          <Pressable style={styles.heroLink} onPress={() => navigation.navigate('VoiceLocalRecordings')}>
-            <Ionicons name="phone-portrait-outline" size={16} color="#fff" />
-            <Text style={styles.heroLinkTxt}>Trên máy</Text>
+          <Pressable style={styles.iconBtn} onPress={() => navigation.navigate('VoiceLocalRecordings')} hitSlop={8}>
+            <Ionicons name="phone-portrait-outline" size={20} color={Colors.text} />
+          </Pressable>
+          <Pressable style={styles.iconBtn} onPress={() => void load(true)} hitSlop={8}>
+            <Ionicons name="refresh-outline" size={20} color={Colors.text} />
           </Pressable>
         </View>
-        <Text style={styles.heroSub}>{list.length} bản ghi đã đồng bộ</Text>
-      </LinearGradient>
 
-      <View style={{ paddingHorizontal: 14 }}>
         <VoiceRecorderToolbar onUploaded={() => void load(true)} disabled={loading} />
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
-          <Chip label="Tất cả" icon="albums" active={filter === 'all'} accent={Colors.purple} onPress={() => setFilter('all')} />
-          <Chip label="Chưa gắn" icon="alert-circle" active={filter === 'unlinked'} accent={Colors.amber} onPress={() => setFilter('unlinked')} />
-          <Chip label="Đã gắn" icon="link" active={filter === 'linked'} accent={Colors.green} onPress={() => setFilter('linked')} />
-        </ScrollView>
-
-        <View style={styles.syncBar}>
-          <View style={styles.syncLeft}>
-            <Ionicons name="cloud-done" size={15} color={Colors.green} />
-            <Text style={styles.syncTxt}>Đã đồng bộ {shown.length}/{list.length}</Text>
+        <View style={styles.searchRow}>
+          <View style={styles.searchBox}>
+            <Ionicons name="search-outline" size={17} color={Colors.textFaint} />
+            <TextInput
+              value={searchDraft}
+              onChangeText={setSearchDraft}
+              placeholder={recordingSearchPlaceholder(filters.searchField)}
+              placeholderTextColor={Colors.textFaint}
+              style={styles.searchInput}
+              returnKeyType="search"
+              keyboardType={filters.searchField === 'phone' ? 'phone-pad' : 'default'}
+            />
+            {searchDraft ? (
+              <Pressable onPress={() => setSearchDraft('')} hitSlop={8}>
+                <Ionicons name="close-circle" size={17} color={Colors.textFaint} />
+              </Pressable>
+            ) : null}
           </View>
           <Pressable
-            style={[styles.batchBtn, batchBusy && { opacity: 0.6 }]}
-            onPress={() => void handleBatchRelink()}
-            disabled={batchBusy}
+            style={[styles.filterBtn, filterBadge > 0 && styles.filterBtnActive]}
+            onPress={() => setFilterOpen(true)}
+            hitSlop={4}
           >
-            <Ionicons name="layers-outline" size={14} color={Colors.blue} />
-            <Text style={styles.batchTxt}>{batchBusy ? 'Đang quét…' : 'Quét hàng loạt'}</Text>
+            <Ionicons name="options-outline" size={20} color={filterBadge > 0 ? Colors.blue : Colors.text} />
+            {filterBadge > 0 ? (
+              <View style={styles.filterBadge}>
+                <Text style={styles.filterBadgeTxt}>{filterBadge}</Text>
+              </View>
+            ) : null}
           </Pressable>
         </View>
+
+        <RecordingsSearchFieldBar
+          value={filters.searchField}
+          onChange={(searchField) => setFilters((p) => ({ ...p, searchField }))}
+        />
+
+        <FilterGridPanel
+          value={filters.link}
+          onChange={setLinkFilter}
+          pagePadding={PAGE_HPAD}
+          cells={[
+            { type: 'filter', id: 'all', label: 'Tất cả', icon: 'albums-outline', count: counts.all },
+            { type: 'filter', id: 'unlinked', label: 'Chưa gắn', icon: 'alert-circle-outline', count: counts.unlinked },
+            { type: 'filter', id: 'linked', label: 'Đã gắn', icon: 'link-outline', count: counts.linked },
+            {
+              type: 'action',
+              label: batchBusy ? 'Đang quét…' : 'Quét hàng loạt',
+              icon: 'layers-outline',
+              onPress: () => void handleBatchRelink(),
+              disabled: batchBusy,
+            },
+          ]}
+        />
+
+        <View style={styles.metaRow}>
+          <Text style={styles.metaTxt}>
+            {counts.all} bản ghi · {shown.length} đang hiển thị
+          </Text>
+          <Text style={styles.metaHint}>{linkFilterLabel(filters.link)}</Text>
+        </View>
+
+        {filterActive ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.activeChipScroll}
+            contentContainerStyle={styles.activeChipContent}
+            nestedScrollEnabled
+          >
+            {filters.link !== 'all' ? (
+              <Pressable style={styles.activeChip} onPress={() => setLinkFilter('all')}>
+                <Text style={styles.activeChipTxt}>{linkFilterLabel(filters.link)}</Text>
+                <Ionicons name="close" size={13} color={Colors.textMuted} />
+              </Pressable>
+            ) : null}
+            {search ? (
+              <Pressable style={styles.activeChip} onPress={() => { setSearchDraft(''); setSearch(''); }}>
+                <Text style={styles.activeChipTxt}>«{search}»</Text>
+                <Ionicons name="close" size={13} color={Colors.textMuted} />
+              </Pressable>
+            ) : null}
+            <Pressable style={styles.activeChipClear} onPress={clearFilters}>
+              <Text style={styles.activeChipClearTxt}>Xóa lọc</Text>
+            </Pressable>
+          </ScrollView>
+        ) : null}
 
         {error ? (
           <View style={styles.stateBox}>
@@ -432,15 +494,12 @@ export default function RecordingsScreen() {
             </Pressable>
           </View>
         ) : loading ? (
-          <ActivityIndicator color={Colors.purple} style={{ marginTop: 30 }} />
+          <ActivityIndicator color={Colors.blue} style={{ marginVertical: 20 }} />
         ) : null}
       </View>
-    </View>
-  );
 
-  return (
-    <View style={styles.root}>
       <FlatList
+        style={styles.listFlex}
         data={shown}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
@@ -453,20 +512,34 @@ export default function RecordingsScreen() {
             onBootstrap={openBootstrap}
           />
         )}
-        ListHeaderComponent={ListHeader}
         ListEmptyComponent={
-          !error && !loading ? <Text style={styles.emptyTxt}>Chưa có bản ghi nào.</Text> : null
+          !error && !loading ? (
+            <View style={styles.emptyBox}>
+              <Ionicons name="mic-outline" size={38} color={Colors.textFaint} />
+              <Text style={styles.emptyTxt}>
+                {filterActive ? 'Không có bản ghi phù hợp bộ lọc.' : 'Chưa có bản ghi nào.'}
+              </Text>
+            </View>
+          ) : null
         }
-        contentContainerStyle={styles.listContent}
-        ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+        contentContainerStyle={[styles.listContent, { paddingBottom: 100 + insets.bottom }]}
+        ItemSeparatorComponent={() => <View style={{ height: Spacing.sm }} />}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={Colors.purple} />
+          <RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={Colors.blue} />
         }
         removeClippedSubviews
         maxToRenderPerBatch={8}
         windowSize={8}
         initialNumToRender={8}
         showsVerticalScrollIndicator={false}
+      />
+
+      <RecordingsFilterSheet
+        visible={filterOpen}
+        filters={filters}
+        counts={counts}
+        onApply={setFilters}
+        onClose={() => setFilterOpen(false)}
       />
 
       <Modal visible={!!bootstrapRec} transparent animationType="fade" onRequestClose={() => setBootstrapRec(null)}>
@@ -538,47 +611,94 @@ export default function RecordingsScreen() {
 
 const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },
-  listContent: { paddingHorizontal: 14, paddingBottom: 120 },
-  hero: {
-    paddingHorizontal: 18,
-    paddingBottom: 18,
-    borderBottomLeftRadius: 22,
-    borderBottomRightRadius: 22,
+  fixedTop: { paddingHorizontal: PAGE_HPAD, gap: Spacing.sm, paddingBottom: Spacing.sm },
+  listFlex: { flex: 1 },
+  listContent: { paddingHorizontal: PAGE_HPAD, paddingTop: 4 },
+  header: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm, marginTop: Spacing.sm },
+  h1: { color: Colors.text, fontSize: 22, fontWeight: '900' },
+  syncRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
+  syncDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: Colors.green },
+  syncTxt: { color: Colors.textFaint, fontSize: 12 },
+  iconBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  heroTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  heroTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  heroLink: {
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  searchBox: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    paddingHorizontal: 10,
-    height: 32,
-    borderRadius: Radii.pill,
+    gap: Spacing.sm,
+    height: 46,
+    paddingHorizontal: 12,
+    backgroundColor: Colors.card,
+    borderRadius: Radii.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
-  heroLinkTxt: { color: '#fff', fontSize: 12, fontWeight: '800' },
-  heroTitle: { color: '#fff', fontSize: 20, fontWeight: '900' },
-  heroSub: { color: 'rgba(255,255,255,0.85)', fontSize: 12, marginTop: 8, fontWeight: '600' },
-  chips: { gap: 8, paddingTop: 14 },
-  syncBar: {
+  searchInput: { flex: 1, color: Colors.text, fontSize: 14, paddingVertical: 0 },
+  filterBtn: {
+    width: 46,
+    height: 46,
+    borderRadius: Radii.md,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterBtnActive: { borderColor: Colors.blue, backgroundColor: Colors.blueSoft },
+  filterBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    backgroundColor: Colors.blue,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterBadgeTxt: { color: Colors.white, fontSize: 10, fontWeight: '900' },
+  metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 14,
-    marginBottom: 6,
+    gap: Spacing.sm,
   },
-  syncLeft: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  syncTxt: { color: Colors.text, fontSize: 13, fontWeight: '700' },
-  batchBtn: {
+  metaTxt: { flex: 1, color: Colors.textFaint, fontSize: 11, fontWeight: '600' },
+  metaHint: { color: Colors.blue, fontSize: 11, fontWeight: '800' },
+  activeChipScroll: { maxHeight: 34 },
+  activeChipContent: { alignItems: 'center', paddingRight: 4 },
+  activeChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: Colors.blueSoft,
-    paddingHorizontal: 12,
-    height: 34,
+    gap: 5,
+    paddingHorizontal: 10,
+    height: 30,
     borderRadius: Radii.pill,
+    backgroundColor: Colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginRight: 8,
   },
-  batchTxt: { color: Colors.blue, fontSize: 12, fontWeight: '800' },
+  activeChipTxt: { color: Colors.textMuted, fontSize: 12, fontWeight: '700', maxWidth: 140 },
+  activeChipClear: {
+    paddingHorizontal: 10,
+    height: 30,
+    borderRadius: Radii.pill,
+    backgroundColor: Colors.redSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  activeChipClearTxt: { color: Colors.red, fontSize: 12, fontWeight: '800' },
   card: {
     backgroundColor: Colors.card,
     borderRadius: Radii.lg,
@@ -587,66 +707,47 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     padding: 14,
   },
   cardTitle: { color: Colors.text, fontSize: 15, fontWeight: '800' },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6 },
-  metaTxt: { color: Colors.textMuted, fontSize: 12 },
-  device: { color: Colors.textFaint, fontSize: 12, marginLeft: 6 },
-  notes: { color: Colors.textMuted, fontSize: 12, marginTop: 8, lineHeight: 17 },
-  warn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    backgroundColor: Colors.amberSoft,
-    borderRadius: Radii.sm,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    marginTop: 10,
-  },
-  warnTxt: { color: '#FCD34D', fontSize: 11.5, flex: 1, fontWeight: '600' },
-  linked: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    backgroundColor: Colors.greenSoft,
-    borderRadius: Radii.sm,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    marginTop: 10,
-  },
-  linkedTxt: { color: Colors.green, fontSize: 12, fontWeight: '700', flex: 1 },
-  player: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12 },
+  cardMeta: { color: Colors.textMuted, fontSize: 12, marginTop: 4 },
+  notes: { color: Colors.textFaint, fontSize: 12, marginTop: 6, lineHeight: 16 },
+  statusTxt: { color: Colors.textMuted, fontSize: 12, fontWeight: '600', marginTop: 6 },
+  statusTxtMuted: { color: Colors.textFaint },
+  player: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 },
   playBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: Colors.purple,
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: Colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: Colors.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
   track: {
     flex: 1,
-    height: 5,
-    borderRadius: 3,
+    height: 4,
+    borderRadius: 2,
     backgroundColor: Colors.surfaceSoft,
     overflow: 'hidden',
   },
-  trackFill: { height: 5, borderRadius: 3, backgroundColor: Colors.purple },
-  time: { color: Colors.textFaint, fontSize: 11, fontWeight: '700', minWidth: 64, textAlign: 'right' },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+  trackFill: { height: 4, borderRadius: 2, backgroundColor: Colors.blue },
+  time: { color: Colors.textFaint, fontSize: 11, fontWeight: '700', minWidth: 58, textAlign: 'right' },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginTop: 10 },
   actionBtn: {
     flexGrow: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    height: 38,
+    height: 36,
     paddingHorizontal: 10,
     backgroundColor: Colors.surfaceSoft,
     borderRadius: Radii.sm,
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  actionTxt: { color: Colors.text, fontSize: 12, fontWeight: '700' },
-  stateBox: { alignItems: 'center', paddingHorizontal: 32, marginTop: 30, gap: 10 },
+  actionBtnDanger: { backgroundColor: Colors.redSoft, borderColor: 'rgba(239,68,68,0.35)' },
+  actionTxt: { color: Colors.textMuted, fontSize: 12, fontWeight: '700' },
+  stateBox: { alignItems: 'center', paddingVertical: 16, gap: 10 },
   stateTxt: { color: Colors.textMuted, fontSize: 13, textAlign: 'center' },
   retryBtn: {
     paddingHorizontal: 18,
@@ -657,7 +758,8 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     justifyContent: 'center',
   },
   retryTxt: { color: Colors.blue, fontWeight: '800', fontSize: 13 },
-  emptyTxt: { color: Colors.textFaint, fontSize: 14, textAlign: 'center', marginTop: 30 },
+  emptyBox: { alignItems: 'center', paddingTop: 40, gap: 10 },
+  emptyTxt: { color: Colors.textFaint, fontSize: 14, textAlign: 'center' },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
@@ -683,7 +785,7 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     fontSize: 15,
     backgroundColor: Colors.surfaceSoft,
   },
-  typeRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  typeRow: { flexDirection: 'row', gap: Spacing.sm, marginTop: 12 },
   typeBtn: {
     flex: 1,
     height: 38,
@@ -694,9 +796,9 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: Colors.surfaceSoft,
   },
-  typeBtnActive: { backgroundColor: Colors.purple, borderColor: Colors.purple },
+  typeBtnActive: { backgroundColor: Colors.blue, borderColor: Colors.blue },
   typeBtnTxt: { color: Colors.textMuted, fontWeight: '800', fontSize: 13 },
-  typeBtnTxtActive: { color: '#fff' },
+  typeBtnTxtActive: { color: Colors.white },
   modalActions: { flexDirection: 'row', gap: 10, marginTop: 16 },
   modalCancel: {
     flex: 1,
@@ -713,7 +815,7 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     borderRadius: Radii.pill,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: Colors.purple,
+    backgroundColor: Colors.blue,
   },
-  modalOkTxt: { color: '#fff', fontWeight: '800' },
+  modalOkTxt: { color: Colors.white, fontWeight: '800' },
 });

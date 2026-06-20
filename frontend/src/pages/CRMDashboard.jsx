@@ -677,6 +677,42 @@ function dealIsWonStage(item, stagesDeal) {
   return wonStages.some((s) => String(s.id) === sid);
 }
 
+/** Slug mặc định = giai đoạn trước ký HĐ — khớp classifyDealStageForStaffReport (backend). */
+const CRM_DEAL_PRE_CONTRACT_SLUGS = new Set([
+  'designing',
+  'quoted',
+  'negotiating',
+  'waiting_deposit',
+]);
+
+/**
+ * Phân loại cột Deal cho ô KPI dashboard — `deal_report_bucket` ghi đè; is_lost luôn ưu tiên.
+ * @returns {'lost'|'project_completed'|'implementation'|'pre_contract'}
+ */
+function classifyDealStageForDashboardKpi(st) {
+  if (!st) return 'pre_contract';
+  const slug = st.canonical_slug || null;
+  if (st.is_lost || slug === 'lost') return 'lost';
+
+  const bucket = st.deal_report_bucket || null;
+  if (bucket === 'lost') return 'lost';
+  if (bucket === 'completed') return 'project_completed';
+  if (bucket === 'implementation') return 'implementation';
+  if (bucket === 'pre_contract') return 'pre_contract';
+
+  if (slug === 'completed') return 'project_completed';
+  if (slug && CRM_DEAL_PRE_CONTRACT_SLUGS.has(slug)) return 'pre_contract';
+  if (!slug && !st.is_won) return 'pre_contract';
+  return 'implementation';
+}
+
+/** Bucket KPI một deal: hoàn thành DT (tick pipeline) → dự án hoàn thành; còn lại theo bucket/slug. */
+function dealDashboardKpiBucket(item, stagesDeal) {
+  if (dealIsRevenueCompletedStage(item, stagesDeal)) return 'project_completed';
+  const st = resolveDealStageForKpi(item, stagesDeal);
+  return classifyDealStageForDashboardKpi(st);
+}
+
 /** Deal trên pipeline đang mở — không tính cột Thắng / Thua / Hoàn thành DT. */
 function dealCountsTowardPipelineEstimate(item, stagesDeal) {
   const st = resolveDealStageForKpi(item, stagesDeal);
@@ -3003,7 +3039,6 @@ export default function CRMDashboard() {
   );
 
   const leadActiveCount = useMemo(() => leads.filter(isActiveCrmPipelineItem).length, [leads]);
-  const dealNegotiatingCount = useMemo(() => deals.filter(isActiveCrmPipelineItem).length, [deals]);
 
   /**
    * KPI "Tổng" dùng `total` từ API khi đủ bản ghi (tránh hiển thị 1000 trong khi DB có 5000).
@@ -3027,15 +3062,22 @@ export default function CRMDashboard() {
     return typeof t === 'number' ? t : leads.length;
   }, [kpiUsesClientOnlyFilters, leads.length, loadMoreState.leadTotal]);
 
-  const leadTabCountLabel = formatCrmPipelineTabCount(loadMoreState.leadTotal, allLeads.length);
-  const dealTabCountLabel = formatCrmPipelineTabCount(loadMoreState.dealTotal, allDeals.length);
+  const dealKpiTotalCount = useMemo(() => {
+    if (kpiUsesClientOnlyFilters) return deals.length;
+    const t = loadMoreState.dealTotal;
+    return typeof t === 'number' ? t : deals.length;
+  }, [kpiUsesClientOnlyFilters, deals.length, loadMoreState.dealTotal]);
+
+  /** Tab Lead/Deal — cùng logic «Tổng» KPI (API total hoặc sau lọc client trên bản ghi đã tải). */
+  const leadTabCountLabel = formatCrmPipelineTabCount(leadKpiTotalCount, leads.length);
+  const dealTabCountLabel = formatCrmPipelineTabCount(dealKpiTotalCount, deals.length);
 
   const explicitExpectedKvStages = useMemo(
     () => hasExplicitExpectedRevenueStage(stagesDeal),
     [stagesDeal],
   );
 
-  /** KPI Deal (tổng / đàm phán / thắng / doanh thu thắng / đã DT hoàn thành / KPI sổ cái) — cùng bộ lọc Kanban, không dùng kpis API thuần server. */
+  /** KPI Deal — cùng bộ lọc Kanban; phân loại deal/dự án theo pipeline setup. */
   const dealKpisFromFilters = useMemo(() => {
     const won = deals.filter((d) => dealIsWonStage(d, stagesDeal));
     const wonValue = won.reduce((s, l) => s + (Number(l.estimated_value) || 0), 0);
@@ -3050,13 +3092,25 @@ export default function CRMDashboard() {
       (s, d) => s + dealWeightedValue(d, stagesDeal),
       0,
     );
-    const totalHeadline = kpiUsesClientOnlyFilters
-      ? deals.length
-      : typeof loadMoreState.dealTotal === 'number'
-        ? loadMoreState.dealTotal
-        : deals.length;
+
+    let deal_processing = 0;
+    let deal_lost = 0;
+    let project_active = 0;
+    let project_completed = 0;
+    for (const d of deals) {
+      const bucket = dealDashboardKpiBucket(d, stagesDeal);
+      if (bucket === 'pre_contract') deal_processing += 1;
+      else if (bucket === 'lost') deal_lost += 1;
+      else if (bucket === 'implementation') project_active += 1;
+      else if (bucket === 'project_completed') project_completed += 1;
+    }
+
     return {
-      total_deals: totalHeadline,
+      total_deals: dealKpiTotalCount,
+      deal_processing,
+      deal_lost,
+      project_active,
+      project_completed,
       won_deals: won.length,
       won_value: wonValue,
       completed_revenue_deals: revenueCompleted.length,
@@ -3064,12 +3118,7 @@ export default function CRMDashboard() {
       pipeline_estimated_value,
       expected_value,
     };
-  }, [
-    deals,
-    stagesDeal,
-    kpiUsesClientOnlyFilters,
-    loadMoreState.dealTotal,
-  ]);
+  }, [deals, stagesDeal, dealKpiTotalCount]);
 
   const ledgerMapLead = dataLead?.ledger_net_by_lead || {};
   const ledgerMapDeal = dataDeal?.ledger_net_by_lead || {};
@@ -4760,8 +4809,10 @@ export default function CRMDashboard() {
             <DealCountSummaryKpiCard
               className="min-[520px]:col-span-2 xl:col-span-2"
               total={dealKpisFromFilters.total_deals}
-              negotiating={dealNegotiatingCount}
-              won={dealKpisFromFilters.won_deals}
+              dealProcessing={dealKpisFromFilters.deal_processing}
+              dealLost={dealKpisFromFilters.deal_lost}
+              projectActive={dealKpisFromFilters.project_active}
+              projectCompleted={dealKpisFromFilters.project_completed}
               filterNote={kpiUsesClientOnlyFilters ? 'Sau lọc (trên bản ghi đã tải)' : undefined}
             />
             <KPICard
@@ -5702,34 +5753,62 @@ export default function CRMDashboard() {
   );
 }
 
-/** Tổng Deal + Đang đàm phán + Thắng — một ô lớn, 3 cột đều nhau (font đồng cỡ với các KPICard khác). */
-function DealCountSummaryKpiCard({ total, negotiating, won, filterNote, className = '' }) {
-  const items = [
-    { label: 'Tổng Deal', value: total, numClass: 'text-cyan-700' },
-    { label: 'Đàm phán', value: negotiating, numClass: 'text-blue-700' },
-    { label: 'Thắng', value: won, numClass: 'text-emerald-700' },
+/** Deal + Dự án — hai hàng gọn: Deal (tổng / xử lý / hủy) · Dự án (đang làm / hoàn thành). */
+function DealCountSummaryKpiCard({
+  total,
+  dealProcessing,
+  dealLost,
+  projectActive,
+  projectCompleted,
+  filterNote,
+  className = '',
+}) {
+  const dealItems = [
+    { label: 'Tổng', value: total, numClass: 'text-cyan-700' },
+    { label: 'Đang xử lý', value: dealProcessing, numClass: 'text-blue-700' },
+    { label: 'Hủy', value: dealLost, numClass: 'text-red-600' },
   ];
+  const projectItems = [
+    { label: 'Đang làm', value: projectActive, numClass: 'text-indigo-700' },
+    { label: 'Hoàn thành', value: projectCompleted, numClass: 'text-emerald-700' },
+  ];
+
+  const cell = (it) => (
+    <div key={it.label} className="flex flex-col items-center justify-center text-center min-w-0 px-1">
+      <p
+        className="text-[9px] font-semibold text-gray-500 uppercase tracking-wide leading-tight truncate max-w-full"
+        title={it.label}
+      >
+        {it.label}
+      </p>
+      <p className={`mt-0.5 text-base md:text-lg font-bold tabular-nums leading-tight ${it.numClass}`}>
+        {Number(it.value ?? 0).toLocaleString('vi-VN')}
+      </p>
+    </div>
+  );
+
   return (
     <div
       className={`h-full min-w-0 flex flex-col rounded-lg border border-gray-200 bg-white shadow-sm px-2 py-2 ${className}`}
     >
       {filterNote ? (
-        <p className="text-[9px] text-amber-800/90 leading-tight mb-1 text-center shrink-0 truncate" title={filterNote}>{filterNote}</p>
+        <p className="text-[9px] text-amber-800/90 leading-tight mb-1 text-center shrink-0 truncate" title={filterNote}>
+          {filterNote}
+        </p>
       ) : null}
-      <div className="flex-1 grid grid-cols-3 divide-x divide-gray-200 items-center">
-        {items.map((it) => (
-          <div
-            key={it.label}
-            className="flex flex-col items-center justify-center text-center min-w-0 px-1"
-          >
-            <p className="text-[9px] font-semibold text-gray-500 uppercase tracking-wide leading-tight truncate max-w-full" title={it.label}>
-              {it.label}
-            </p>
-            <p className={`mt-0.5 text-base md:text-lg font-bold tabular-nums leading-tight ${it.numClass}`}>
-              {Number(it.value ?? 0).toLocaleString('vi-VN')}
-            </p>
-          </div>
-        ))}
+      <div className="flex-1 flex flex-col gap-1 min-h-0">
+        <div>
+          <p className="text-[8px] font-bold text-gray-400 uppercase tracking-wider text-center leading-none mb-1">
+            Deal
+          </p>
+          <div className="grid grid-cols-3 divide-x divide-gray-200 items-center">{dealItems.map(cell)}</div>
+        </div>
+        <div className="border-t border-gray-100 pt-1">
+          <p className="text-[8px] font-bold text-gray-400 uppercase tracking-wider text-center leading-none mb-1">
+            Dự án
+          </p>
+          <div className="grid grid-cols-2 divide-x divide-gray-200 items-center">{projectItems.map(cell)}</div>
+        </div>
       </div>
     </div>
   );
