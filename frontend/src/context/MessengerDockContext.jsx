@@ -73,6 +73,8 @@ export function MessengerDockProvider({ children }) {
   const [myDepartmentIds, setMyDepartmentIds] = useState([]);
   /** Cache metadata phòng ban (name, color) để bật bong bóng với tiêu đề đúng */
   const [deptMetaMap, setDeptMetaMap] = useState({});
+  /** Nhóm chat ghim trên thanh nhanh + danh sách hub — đồng bộ qua API /messenger/pins */
+  const [pinnedGroupIds, setPinnedGroupIds] = useState([]);
   const unreadLeadHydratedRef = useRef(false);
   const unreadGroupHydratedRef = useRef(false);
   const unreadDeptHydratedRef = useRef(false);
@@ -661,6 +663,60 @@ export function MessengerDockProvider({ children }) {
     };
   }, [socket, uid, markLeadRead, markGroupRead, markDeptRead, deptMetaMap]);
 
+  useEffect(() => {
+    if (!uid) {
+      setPinnedGroupIds([]);
+      return undefined;
+    }
+    let cancelled = false;
+    const loadPins = async () => {
+      try {
+        const { data } = await api.get('/messenger/pins');
+        if (cancelled) return;
+        setPinnedGroupIds(Array.isArray(data?.group_ids) ? data.group_ids : []);
+      } catch {
+        if (!cancelled) setPinnedGroupIds([]);
+      }
+    };
+    void loadPins();
+    return () => {
+      cancelled = true;
+    };
+  }, [uid]);
+
+  const syncPinnedGroupIds = useCallback((ids) => {
+    setPinnedGroupIds(Array.isArray(ids) ? ids : []);
+  }, []);
+
+  const setMessengerGroupPin = useCallback(async (groupId, pinned, e) => {
+    e?.stopPropagation?.();
+    e?.preventDefault?.();
+    if (!groupId) return !!pinned;
+    const id = String(groupId);
+    const currentlyPinned = pinnedGroupIds.some((x) => String(x) === id);
+    const nextPinned = !!pinned;
+    if (currentlyPinned === nextPinned) return nextPinned;
+    try {
+      await api.put(`/messenger/pins/${groupId}`, { pinned: nextPinned });
+      setPinnedGroupIds((prev) => {
+        if (nextPinned) return prev.some((x) => String(x) === id) ? prev : [...prev, groupId];
+        return prev.filter((x) => String(x) !== id);
+      });
+      window.dispatchEvent(
+        new CustomEvent('messenger:pin-changed', { detail: { groupId, pinned: nextPinned } }),
+      );
+      return nextPinned;
+    } catch (err) {
+      alert(err.response?.data?.error || err.message || 'Không ghim được hội thoại');
+      return currentlyPinned;
+    }
+  }, [pinnedGroupIds]);
+
+  const toggleMessengerGroupPin = useCallback(
+    async (groupId, currentlyPinned, e) => setMessengerGroupPin(groupId, !currentlyPinned, e),
+    [setMessengerGroupPin],
+  );
+
   const value = useMemo(
     () => ({
       windows,
@@ -682,6 +738,10 @@ export function MessengerDockProvider({ children }) {
       registerDepartmentChatPresence,
       syncHubThreadLeadIds,
       syncHubMessengerGroupIds,
+      pinnedGroupIds,
+      syncPinnedGroupIds,
+      setMessengerGroupPin,
+      toggleMessengerGroupPin,
     }),
     [
       windows,
@@ -703,6 +763,10 @@ export function MessengerDockProvider({ children }) {
       registerDepartmentChatPresence,
       syncHubThreadLeadIds,
       syncHubMessengerGroupIds,
+      pinnedGroupIds,
+      syncPinnedGroupIds,
+      setMessengerGroupPin,
+      toggleMessengerGroupPin,
     ],
   );
 

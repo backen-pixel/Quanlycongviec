@@ -37,6 +37,8 @@ const DOCK_STRIP_SCROLL_CLS =
   'overflow-y-auto overscroll-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden';
 /** Phần lộ ra mép phải khi thanh đang chìm */
 const SUNK_PEEK_PX = 24;
+/** Phần lộ ra khi chìm — avatar ghim (giữ nguyên icon, không bị khuất) */
+const PINNED_SUNK_PEEK_PX = 52;
 /** Khoảng cách mép phải viewport — chừa chỗ cho badge */
 const DOCK_VIEWPORT_RIGHT = 16;
 /** Padding trong mỗi ô avatar (badge/status không bị cắt) */
@@ -120,7 +122,7 @@ function DockAvatar({
   );
 }
 
-function UserHoverCard({ item, presence, anchorRect, publicFileUrl, onTogglePin }) {
+function UserHoverCard({ item, presence, anchorRect, publicFileUrl, onTogglePin, onPreviewEnter, onPreviewLeave }) {
   if (!item || !anchorRect) return null;
   const cardW = 248;
   const top = Math.max(12, Math.min(anchorRect.top + anchorRect.height / 2 - 60, window.innerHeight - 140));
@@ -133,12 +135,14 @@ function UserHoverCard({ item, presence, anchorRect, publicFileUrl, onTogglePin 
 
   return createPortal(
     <div
-      className="fixed z-[130] pointer-events-none transition-opacity duration-300 ease-out opacity-100"
-      style={{ top, left: Math.max(12, left), width: cardW }}
+      className="fixed z-[130] pointer-events-auto pr-3"
+      style={{ top, left: Math.max(12, left), width: cardW + 12 }}
+      onMouseEnter={onPreviewEnter}
+      onMouseLeave={onPreviewLeave}
     >
       <div
-        className="rounded-2xl border border-[#E5E7EB] bg-white/95 backdrop-blur-xl p-3.5 pointer-events-auto"
-        style={{ boxShadow: DOCK_SHADOW }}
+        className="rounded-2xl border border-[#E5E7EB] bg-white/95 backdrop-blur-xl p-3.5"
+        style={{ boxShadow: DOCK_SHADOW, width: cardW }}
       >
         <div className="flex items-start gap-3">
           <DockAvatar
@@ -277,6 +281,7 @@ export default function MessengerQuickChatDock({
   });
   const [hoverItem, setHoverItem] = useState(null);
   const [hoverRect, setHoverRect] = useState(null);
+  const [previewEngaged, setPreviewEngaged] = useState(false);
   const hoverTimer = useRef(null);
   const hideHoverTimer = useRef(null);
   const leaveTimer = useRef(null);
@@ -303,6 +308,8 @@ export default function MessengerQuickChatDock({
   }, [dockPinned]);
   const compactWidth = avatarsCollapsed ? QUICK_CHAT_DOCK_MINI_W : QUICK_CHAT_DOCK_W;
   const compactOuterWidth = compactWidth + COMPACT_ITEM_PAD * 2;
+  const pinnedSinkX = dockActive ? 0 : Math.max(0, compactOuterWidth - PINNED_SUNK_PEEK_PX);
+  const mainExtraSinkX = dockActive ? 0 : Math.max(0, compactOuterWidth - SUNK_PEEK_PX - pinnedSinkX);
 
   /** Hội thoại ghim — luôn nổi ngoài thanh chìm */
   const pinnedStripItems = useMemo(
@@ -327,19 +334,19 @@ export default function MessengerQuickChatDock({
   }, []);
 
   const handleDockLeave = useCallback(() => {
-    if (dockPinned) return;
+    if (dockPinned || previewEngaged) return;
     clearTimeout(leaveTimer.current);
     leaveTimer.current = setTimeout(() => {
       if (!expanded) setRaised(false);
     }, DOCK_SINK_DELAY_MS);
-  }, [expanded, dockPinned]);
+  }, [expanded, dockPinned, previewEngaged]);
 
-  /** Avatar ghim tự mở chat — không cần nâng thanh chìm khi hover/click */
+  /** Avatar ghim tự mở chat — không nâng thanh chìm; vẫn cho preview hover */
   const handlePinnedStripEnter = useCallback(() => {
-    if (dockPinned || expanded) return;
+    if (dockPinned || expanded || previewEngaged) return;
     clearTimeout(leaveTimer.current);
     setRaised(false);
-  }, [dockPinned, expanded]);
+  }, [dockPinned, expanded, previewEngaged]);
 
   const toggleDockPinned = useCallback(() => {
     setDockPinned((v) => {
@@ -366,12 +373,17 @@ export default function MessengerQuickChatDock({
     });
   }, []);
 
-  const showHover = useCallback((item, el) => {
+  const showHover = useCallback((item, el, { pinnedStrip = false } = {}) => {
     clearTimeout(hideHoverTimer.current);
     clearTimeout(hoverTimer.current);
     hoverTimer.current = setTimeout(() => {
       if (el) setHoverRect(el.getBoundingClientRect());
       setHoverItem(item);
+      setPreviewEngaged(true);
+      if (!pinnedStrip) {
+        clearTimeout(leaveTimer.current);
+        setRaised(true);
+      }
     }, HOVER_CARD_SHOW_MS);
   }, []);
 
@@ -381,12 +393,29 @@ export default function MessengerQuickChatDock({
     hideHoverTimer.current = setTimeout(() => {
       setHoverItem(null);
       setHoverRect(null);
+      setPreviewEngaged(false);
+      if (!dockPinned && !expanded) {
+        clearTimeout(leaveTimer.current);
+        leaveTimer.current = setTimeout(() => setRaised(false), DOCK_SINK_DELAY_MS);
+      }
     }, HOVER_CARD_HIDE_MS);
+  }, [dockPinned, expanded]);
+
+  const keepPreviewOpen = useCallback(() => {
+    clearTimeout(hideHoverTimer.current);
+    clearTimeout(leaveTimer.current);
+    setPreviewEngaged(true);
   }, []);
 
   useEffect(() => {
     if (expanded) setRaised(true);
   }, [expanded]);
+
+  useEffect(() => {
+    if (!hoverItem?.key) return;
+    const fresh = items.find((i) => i.key === hoverItem.key);
+    if (fresh && fresh.pinned !== hoverItem.pinned) setHoverItem(fresh);
+  }, [items, hoverItem]);
 
   useEffect(() => {
     updateStripScrollFade();
@@ -437,8 +466,8 @@ export default function MessengerQuickChatDock({
                 }
               : undefined
           }
-          onMouseEnter={pinnedStrip ? undefined : (e) => showHover(item, e.currentTarget)}
-          onMouseLeave={pinnedStrip ? undefined : hideHover}
+          onMouseEnter={(e) => showHover(item, e.currentTarget, { pinnedStrip })}
+          onMouseLeave={hideHover}
           className="relative block transition-transform duration-300 ease-out hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] rounded-2xl overflow-visible"
           title={
             item.lastPreview
@@ -519,13 +548,15 @@ export default function MessengerQuickChatDock({
 
   return (
     <>
-      {hoverItem && dockActive ? (
+      {hoverItem ? (
         <UserHoverCard
           item={hoverItem}
           presence={hoverPresence}
           anchorRect={hoverRect}
           publicFileUrl={publicFileUrl}
           onTogglePin={onTogglePin}
+          onPreviewEnter={keepPreviewOpen}
+          onPreviewLeave={hideHover}
         />
       ) : null}
 
@@ -764,8 +795,11 @@ export default function MessengerQuickChatDock({
           </div>
         ) : null}
 
-        {/* Compact dock — chìm khi không hover; avatar ghim nằm ngoài, luôn hiện */}
-        <div className="flex flex-col items-center gap-1.5 shrink-0 overflow-visible">
+        {/* Compact dock — chìm khi không hover; avatar ghim trượt cùng nhưng vẫn lộ ra */}
+        <div
+          className="flex flex-col items-center gap-1.5 shrink-0 overflow-visible transition-transform duration-[650ms] ease-out"
+          style={{ transform: `translateX(${pinnedSinkX}px)` }}
+        >
           {pinnedStripItems.length > 0 ? (
             <div
               className="flex flex-col items-center gap-1 shrink-0 py-0.5"
@@ -778,7 +812,7 @@ export default function MessengerQuickChatDock({
 
           <div
             onMouseEnter={handleDockEnter}
-            className={`relative shrink-0 flex flex-col items-center rounded-[24px] border py-3 gap-2 transition-all duration-[650ms] ease-out overflow-visible ${
+            className={`relative shrink-0 flex flex-col items-center rounded-[24px] border py-3 gap-2 transition-transform duration-[650ms] ease-out overflow-visible ${
               dockActive
                 ? 'opacity-100 border-[#E5E7EB] bg-white px-2.5'
                 : totalUnread > 0
@@ -788,7 +822,7 @@ export default function MessengerQuickChatDock({
             style={{
               width: compactOuterWidth,
               boxShadow: dockActive ? DOCK_SHADOW : totalUnread > 0 ? '0 8px 28px rgba(239,68,68,0.22)' : DOCK_SHADOW_SUNK,
-              transform: dockActive ? 'translateX(0)' : `translateX(${Math.max(0, compactOuterWidth - SUNK_PEEK_PX)}px)`,
+              transform: `translateX(${mainExtraSinkX}px)`,
             }}
           >
           <button

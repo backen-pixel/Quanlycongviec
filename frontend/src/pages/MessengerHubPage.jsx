@@ -209,7 +209,7 @@ function buildMessengerThreads(apiList, lsMessengerRows, pinnedGroupIds, prevByG
 export default function MessengerHubPage() {
   const { user, socket } = useAuth();
   const uid = user?.userId || user?.id;
-  const { markGroupRead, syncHubThreadLeadIds, syncHubMessengerGroupIds, syncUnreadFromGroups, unreadByGroupId } =
+  const { markGroupRead, syncHubThreadLeadIds, syncHubMessengerGroupIds, syncUnreadFromGroups, unreadByGroupId, pinnedGroupIds, syncPinnedGroupIds, setMessengerGroupPin, toggleMessengerGroupPin } =
     useMessengerDock();
   const { startCall, startGroupCall, joinGroupCall, status: callStatus, callId: currentCallId } = useCall();
   /** Modal chọn thành viên trước khi bắt đầu cuộc gọi nhóm. */
@@ -263,6 +263,16 @@ export default function MessengerHubPage() {
   const [busyAvatar, setBusyAvatar] = useState(false);      // đang upload avatar nhóm
   const groupAvatarInputRef = useRef(null);
 
+  const pinSet = useMemo(() => new Set(pinnedGroupIds.map(String)), [pinnedGroupIds]);
+
+  const threadsWithPin = useMemo(
+    () =>
+      threads.map((t) =>
+        t.kind === 'messenger' && t.groupId ? { ...t, pinned: pinSet.has(String(t.groupId)) } : t,
+      ),
+    [threads, pinSet],
+  );
+
   useRelativeTimeTick();
 
   const reloadMessengerThreads = useCallback(() => {
@@ -280,6 +290,7 @@ export default function MessengerHubPage() {
     ])
       .then(([{ data: apiList }, { data: pinPayload }]) => {
         const pinnedIds = pinPayload?.group_ids || [];
+        syncPinnedGroupIds(pinnedIds);
         syncUnreadFromGroups(apiList);
         setThreads((prev) => {
           const prevByGid = new Map(
@@ -296,7 +307,7 @@ export default function MessengerHubPage() {
           return buildMessengerThreads([], lsMessenger, [], prevByGid);
         }),
       );
-  }, [uid, syncUnreadFromGroups]);
+  }, [uid, syncUnreadFromGroups, syncPinnedGroupIds]);
 
   useEffect(() => {
     if (!uid) return;
@@ -596,8 +607,8 @@ export default function MessengerHubPage() {
   }, [messages, selectedGroupId, uid]);
 
   const selected = useMemo(
-    () => threads.find((t) => t.kind === 'messenger' && t.groupId === selectedGroupId) || null,
-    [threads, selectedGroupId],
+    () => threadsWithPin.find((t) => t.kind === 'messenger' && t.groupId === selectedGroupId) || null,
+    [threadsWithPin, selectedGroupId],
   );
 
   /* ── Load group detail + members khi đổi group đang xem ── */
@@ -777,7 +788,7 @@ export default function MessengerHubPage() {
 
   const filteredThreads = useMemo(() => {
     const f = threadFilter.trim().toLowerCase();
-    let list = threads;
+    let list = threadsWithPin;
     if (listTab === 'pinned') list = list.filter((t) => t.pinned);
     else if (listTab === 'unread') list = list.filter((t) => (t.groupId ? (unreadByGroupId[t.groupId] || 0) > 0 : false));
     if (f) {
@@ -796,7 +807,7 @@ export default function MessengerHubPage() {
       if (!a.pinned && b.pinned) return 1;
       return byActivity(a, b);
     });
-  }, [threads, listTab, threadFilter, unreadByGroupId]);
+  }, [threadsWithPin, listTab, threadFilter, unreadByGroupId]);
 
   const mediaBundle = useMemo(() => {
     if (!selectedGroupId) return collectMediaAndFiles([]);
@@ -851,16 +862,9 @@ export default function MessengerHubPage() {
 
   const setPinnedForSelected = async (nextPinned) => {
     if (!selected?.groupId) return;
-    try {
-      await api.put(`/messenger/pins/${selected.groupId}`, { pinned: nextPinned });
-      setThreads((prev) =>
-        prev.map((row) =>
-          row.kind === 'messenger' && row.groupId === selected.groupId ? { ...row, pinned: nextPinned } : row,
-        ),
-      );
-    } catch (err) {
-      alert(err.response?.data?.error || err.message || 'Không cập nhật được ghim');
-    }
+    const currentlyPinned = pinSet.has(String(selected.groupId));
+    if (currentlyPinned === nextPinned) return;
+    await setMessengerGroupPin(selected.groupId, nextPinned);
   };
 
   const openDetailPanel = (section) => {
@@ -898,17 +902,7 @@ export default function MessengerHubPage() {
   const togglePin = async (t, e) => {
     e.stopPropagation();
     if (!t.groupId) return;
-    const next = !t.pinned;
-    try {
-      await api.put(`/messenger/pins/${t.groupId}`, { pinned: next });
-      setThreads((prev) =>
-        prev.map((row) =>
-          row.kind === 'messenger' && row.groupId === t.groupId ? { ...row, pinned: next } : row,
-        ),
-      );
-    } catch (err) {
-      alert(err.response?.data?.error || err.message || 'Không cập nhật được ghim');
-    }
+    await toggleMessengerGroupPin(t.groupId, pinSet.has(String(t.groupId)), e);
   };
 
   /* ── Member management actions ── */
