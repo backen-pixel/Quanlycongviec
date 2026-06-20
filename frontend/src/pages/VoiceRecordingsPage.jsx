@@ -4,7 +4,7 @@ import { useAuth } from '../lib/auth';
 import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
 import { isAdminLike, normalizeRole, hasCompanyId } from '../lib/adminRole';
 import { resolveDefaultCrmAdminCompanyId } from '../lib/crmCompanyFilter';
-import { Mic, Upload, RefreshCw, Square, Circle, ScanLine, Calendar as CalendarIcon, Search, SlidersHorizontal, ChevronLeft, ChevronRight, UserPlus } from 'lucide-react';
+import { Upload, RefreshCw, Square, Circle, ScanLine, Calendar as CalendarIcon, Search, SlidersHorizontal, ChevronLeft, ChevronRight, UserPlus, Mic, AudioLines } from 'lucide-react';
 import VoiceCalendarPanel from '../components/VoiceCalendarPanel';
 import VoiceRecordingCard from '../components/voice/VoiceRecordingCard';
 
@@ -84,8 +84,6 @@ export default function VoiceRecordingsPage() {
   /** Công ty NV — admin hệ thống chọn; admin công ty / NV tự khóa theo company_id. */
   const [filterCompanyId, setFilterCompanyId] = useState('');
   const [userCompanyId, setUserCompanyId] = useState('');
-  /** Công ty Lead/Deal — lọc thêm (admin hệ thống). */
-  const [filterLeadCompanyId, setFilterLeadCompanyId] = useState('');
   const [staffUsers, setStaffUsers] = useState([]);
   const [filterCompanies, setFilterCompanies] = useState([]);
 
@@ -160,9 +158,6 @@ export default function VoiceRecordingsPage() {
       if (listTab === 'linked') params.linked_only = '1';
       if (companyViewer && filterUserId) params.user_id = filterUserId;
       if (voiceScopeCompanyId) params.company_id = voiceScopeCompanyId;
-      if (isAdmin && !isCompanyScopedAdmin && filterLeadCompanyId) {
-        params.lead_company_id = filterLeadCompanyId;
-      }
       const { data } = await api.get('/voice-recordings', { params });
       setList(data.recordings || []);
     } catch (e) {
@@ -212,7 +207,7 @@ export default function VoiceRecordingsPage() {
 
   useEffect(() => {
     void load();
-  }, [listTab, filterUserId, filterCompanyId, filterLeadCompanyId, companyViewer, listPhoneFilter, voiceScopeCompanyId]);
+  }, [listTab, filterUserId, filterCompanyId, companyViewer, listPhoneFilter, voiceScopeCompanyId]);
 
   /** Lọc client-side theo ngày đã chọn trong calendar — không cần gọi lại API */
   const filteredList = useMemo(() => {
@@ -248,7 +243,16 @@ export default function VoiceRecordingsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [listTab, searchQuery, calendarDate, filterUserId, filterCompanyId, filterLeadCompanyId, listPhoneFilter, voiceScopeCompanyId, pageSize]);
+  }, [listTab, searchQuery, calendarDate, filterUserId, filterCompanyId, listPhoneFilter, voiceScopeCompanyId, pageSize]);
+
+  useEffect(() => {
+    if (!showCalendar) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setShowCalendar(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showCalendar]);
 
   useEffect(() => {
     if (!attachRecording) return;
@@ -579,46 +583,6 @@ export default function VoiceRecordingsPage() {
   return (
     <div className="min-h-full bg-white">
       <div className="max-w-[1280px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6">
-        {/* Header */}
-        <header className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 rounded-[20px] bg-white border border-slate-200/70 shadow-[0_8px_30px_rgba(15,23,42,0.04)] px-5 py-5">
-          <div>
-            <h1 className="text-2xl sm:text-[28px] font-bold text-slate-900 flex items-center gap-3 tracking-tight">
-              <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-600 to-violet-500 text-white shadow-lg shadow-violet-500/30">
-                <Mic className="h-5 w-5" />
-              </span>
-              Cuộc gọi &amp; Ghi âm
-            </h1>
-            <p className="text-sm text-slate-500 mt-2 max-w-xl">
-              Quản lý và nghe lại các cuộc gọi đã ghi âm — đồng bộ từ mobile và tải lên từ web.
-            </p>
-            {isAdmin && !isCompanyScopedAdmin ? (
-              <p className="text-xs text-violet-700 mt-2 rounded-xl bg-violet-50 border border-violet-100 px-3 py-2 max-w-xl">
-                Admin hệ thống: chọn công ty NV để lọc ghi âm. Có thể lọc thêm công ty Lead/Deal.
-              </p>
-            ) : isCompanyScopedAdmin ? (
-              <p className="text-xs text-indigo-700 mt-2 rounded-xl bg-indigo-50 border border-indigo-100 px-3 py-2 max-w-xl">
-                Admin công ty: chỉ ghi âm do NV công ty bạn upload.
-              </p>
-            ) : companyViewer && userCompanyId ? (
-              <p className="text-xs text-blue-700 mt-2 rounded-xl bg-blue-50 border border-blue-100 px-3 py-2 max-w-xl">
-                Hiển thị ghi âm nhân viên thuộc công ty bạn — lọc theo NV nếu cần.
-              </p>
-            ) : null}
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowCalendar((v) => !v)}
-            className={`shrink-0 h-10 px-4 rounded-xl text-sm font-semibold inline-flex items-center gap-2 transition-all ${
-              showCalendar
-                ? 'bg-gradient-to-r from-violet-600 to-violet-500 text-white shadow-md shadow-violet-500/25'
-                : 'border border-violet-200 text-violet-700 bg-white hover:bg-violet-50'
-            }`}
-          >
-            <CalendarIcon size={16} />
-            Lịch ghi âm
-          </button>
-        </header>
-
         {scanMessage && (
           <div className="rounded-[20px] border border-emerald-200 bg-emerald-50/80 text-emerald-900 text-sm px-4 py-3">
             {scanMessage}
@@ -641,79 +605,130 @@ export default function VoiceRecordingsPage() {
           </div>
         )}
 
-        {/* Upload card */}
-        <section className="rounded-[20px] border border-slate-200/70 bg-white shadow-[0_8px_30px_rgba(15,23,42,0.04)] p-5 sm:p-6 space-y-4">
-          <h2 className="text-base font-semibold text-slate-900">Tải lên / ghi từ web</h2>
-          <div className="flex flex-wrap gap-2">
+        {/* Upload card — compact hero strip */}
+        <section className="relative overflow-hidden rounded-2xl border border-violet-200/70 bg-gradient-to-r from-violet-50 via-white to-fuchsia-50/70 shadow-[0_8px_32px_rgba(124,58,237,0.12)] ring-1 ring-violet-100/80">
+          <div className="pointer-events-none absolute -right-8 top-1/2 h-24 w-24 -translate-y-1/2 rounded-full bg-violet-400/12 blur-2xl" />
+
+          <div className="relative p-3.5 sm:p-4 space-y-2.5">
             <input ref={fileRef} type="file" accept="audio/*,.m4a,.mp3,.wav,.webm,.ogg,.amr" className="hidden" onChange={onPickFile} />
-            <button
-              type="button"
-              disabled={uploading}
-              onClick={() => fileRef.current?.click()}
-              className="h-10 px-4 rounded-xl bg-gradient-to-r from-violet-600 via-violet-500 to-purple-500 text-white text-sm font-semibold hover:brightness-105 disabled:opacity-50 inline-flex items-center gap-2 shadow-md shadow-violet-500/25"
-            >
-              <Upload className="h-4 w-4" />
-              Chọn file ghi âm
-            </button>
-            {!recording ? (
-              <button
-                type="button"
-                disabled={uploading}
-                onClick={() => void startMic()}
-                className="h-10 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 text-sm font-medium hover:bg-slate-50 disabled:opacity-50 inline-flex items-center gap-2"
-              >
-                <Circle className="h-4 w-4 text-red-500 fill-red-500" />
-                Ghi từ micro
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={stopMic}
-                className="h-10 px-4 rounded-xl bg-red-500 text-white text-sm font-semibold hover:bg-red-600 inline-flex items-center gap-2"
-              >
-                <Square className="h-4 w-4" />
-                Dừng &amp; tải lên
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => void load()}
-              disabled={loading}
-              className="h-10 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 text-sm font-medium hover:bg-slate-50 inline-flex items-center gap-2"
-            >
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-              Làm mới
-            </button>
-            <button
-              type="button"
-              onClick={() => void runScanPhonesFromMetadata()}
-              disabled={loading || relinking || scanMetaBusy || relinkingRowId != null}
-              className="h-10 px-4 rounded-xl border border-amber-200 bg-amber-50/80 text-amber-900 text-sm font-medium hover:bg-amber-100 disabled:opacity-50 inline-flex items-center gap-2"
-            >
-              <ScanLine className={`h-4 w-4 ${scanMetaBusy ? 'animate-pulse' : ''}`} />
-              {scanMetaBusy ? 'Đang quét…' : 'Quét SĐT từ tên ghi âm'}
-            </button>
-          </div>
 
-          <div
-            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={onDropFiles}
-            className={`rounded-2xl border-2 border-dashed px-4 py-8 text-center transition-colors ${
-              dragOver ? 'border-violet-400 bg-violet-50/50' : 'border-slate-200 bg-slate-50/40'
-            }`}
-          >
-            <p className="text-sm text-slate-600">
-              Kéo thả file <span className="font-medium">.m4a, .mp3, .wav</span> vào đây hoặc chọn file từ máy tính
-            </p>
-            <p className="text-xs text-slate-400 mt-1">Tối đa 100MB · hỗ trợ webm, ogg, amr</p>
-          </div>
+            <div className="flex flex-col lg:flex-row lg:items-stretch gap-2.5">
+              <div className="flex items-center gap-2.5 shrink-0 lg:w-[148px] lg:border-r lg:border-violet-100/80 lg:pr-3">
+                <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-fuchsia-600 text-white shadow-md shadow-violet-500/30">
+                  <AudioLines className="h-4 w-4" />
+                </span>
+                <div className="min-w-0">
+                  <h2 className="text-sm font-bold text-slate-900 leading-tight">Tải lên &amp; ghi âm</h2>
+                  {recording && (
+                    <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] font-semibold text-red-600">
+                      <Mic className="h-3 w-3 animate-pulse" />
+                      Đang ghi…
+                    </span>
+                  )}
+                </div>
+              </div>
 
-          <details className="group rounded-2xl border border-slate-100 bg-slate-50/50">
-            <summary className="cursor-pointer list-none px-4 py-3 text-sm text-violet-800 hover:bg-violet-50/50 rounded-2xl [&::-webkit-details-marker]:hidden">
-              Tuỳ chọn kèm file (SĐT, thời gian cuộc gọi, …)
-            </summary>
-            <div className="px-4 pb-4 pt-1 grid gap-3 sm:grid-cols-2 border-t border-slate-100">
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => !uploading && fileRef.current?.click()}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileRef.current?.click(); } }}
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={onDropFiles}
+                className={`group flex flex-1 cursor-pointer items-center gap-3 rounded-xl border-2 border-dashed px-3 py-2.5 transition-all ${
+                  dragOver
+                    ? 'border-violet-500 bg-violet-100/70 shadow-inner'
+                    : 'border-violet-300/55 bg-white/75 hover:border-violet-400 hover:bg-white'
+                } ${uploading ? 'pointer-events-none opacity-60' : ''}`}
+              >
+                <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors ${
+                  dragOver ? 'bg-violet-600 text-white' : 'bg-violet-100 text-violet-600 group-hover:bg-violet-200/80'
+                }`}>
+                  <Upload className="h-4 w-4" />
+                </span>
+                <div className="min-w-0 text-left">
+                  <p className="text-xs font-semibold text-slate-800 truncate">
+                    {dragOver ? 'Thả file để tải lên' : 'Kéo thả hoặc bấm chọn file audio'}
+                  </p>
+                  <p className="text-[10px] text-slate-500 truncate">
+                    <span className="text-violet-700 font-medium">.m4a · .mp3 · .wav</span>
+                    <span className="hidden sm:inline"> · webm, ogg, amr · tối đa 100MB</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5 lg:max-w-[420px] lg:justify-end">
+                <button
+                  type="button"
+                  disabled={uploading}
+                  onClick={() => fileRef.current?.click()}
+                  className="h-9 px-3 rounded-lg bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white text-xs font-semibold hover:brightness-105 disabled:opacity-50 inline-flex items-center gap-1.5 shadow-md shadow-violet-500/20"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  Chọn file
+                </button>
+                {!recording ? (
+                  <button
+                    type="button"
+                    disabled={uploading}
+                    onClick={() => void startMic()}
+                    className="h-9 px-3 rounded-lg border border-red-200/80 bg-white/90 text-slate-800 text-xs font-medium hover:bg-red-50 disabled:opacity-50 inline-flex items-center gap-1.5"
+                  >
+                    <Circle className="h-3.5 w-3.5 text-red-500 fill-red-500" />
+                    Ghi micro
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={stopMic}
+                    className="h-9 px-3 rounded-lg bg-red-500 text-white text-xs font-semibold hover:bg-red-600 inline-flex items-center gap-1.5 animate-pulse"
+                  >
+                    <Square className="h-3.5 w-3.5" />
+                    Dừng
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void load()}
+                  disabled={loading}
+                  title="Làm mới"
+                  className="h-9 w-9 rounded-lg border border-slate-200/80 bg-white/80 text-slate-600 hover:bg-white inline-flex items-center justify-center"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void runScanPhonesFromMetadata()}
+                  disabled={loading || relinking || scanMetaBusy || relinkingRowId != null}
+                  title="Quét SĐT từ tên file"
+                  className="h-9 px-2.5 rounded-lg border border-amber-200/80 bg-amber-50/90 text-amber-900 text-xs font-medium hover:bg-amber-100 disabled:opacity-50 inline-flex items-center gap-1"
+                >
+                  <ScanLine className={`h-3.5 w-3.5 ${scanMetaBusy ? 'animate-pulse' : ''}`} />
+                  <span className="hidden sm:inline">{scanMetaBusy ? 'Quét…' : 'Quét SĐT'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCalendar((v) => !v)}
+                  title="Lịch ghi âm"
+                  className={`h-9 px-2.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1 transition-all ${
+                    showCalendar
+                      ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-md shadow-violet-500/25'
+                      : 'border border-violet-200/80 bg-white/80 text-violet-700 hover:bg-violet-50'
+                  }`}
+                >
+                  <CalendarIcon size={14} />
+                  <span className="hidden sm:inline">Lịch</span>
+                </button>
+              </div>
+            </div>
+
+            <details className="group rounded-lg border border-violet-100/60 bg-white/50">
+              <summary className="cursor-pointer list-none px-3 py-1.5 text-[11px] font-medium text-violet-800 hover:bg-violet-50/60 rounded-lg [&::-webkit-details-marker]:hidden inline-flex items-center gap-1">
+                <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" />
+                Tuỳ chọn kèm file (SĐT, thời gian cuộc gọi, …)
+              </summary>
+              <div className="px-3 pb-3 pt-1 grid gap-2 sm:grid-cols-2 border-t border-violet-100/60">
               <div className="sm:col-span-2">
                 <label className="text-xs font-medium text-slate-500">Số điện thoại</label>
                 <input
@@ -781,136 +796,138 @@ export default function VoiceRecordingsPage() {
               </div>
             </div>
           </details>
+          </div>
         </section>
 
         {showCalendar && (
-          <VoiceCalendarPanel
-            recordings={list}
-            selectedDate={calendarDate}
-            onSelectDate={(d) => setCalendarDate(d || '')}
-            selectedPhone={listPhoneFilter}
-            onSelectPhone={(p) => setListPhoneFilter(p || '')}
-          />
+          <div
+            className="fixed inset-0 z-50 flex items-start justify-center bg-black/45 p-4 pt-[6vh] overflow-y-auto"
+            onClick={() => setShowCalendar(false)}
+            role="presentation"
+          >
+            <div
+              className="w-full max-w-2xl animate-in fade-in zoom-in-95 duration-200"
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Lịch ghi âm"
+            >
+              <VoiceCalendarPanel
+                recordings={list}
+                selectedDate={calendarDate}
+                onSelectDate={(d) => setCalendarDate(d || '')}
+                selectedPhone={listPhoneFilter}
+                onSelectPhone={(p) => setListPhoneFilter(p || '')}
+                onClose={() => setShowCalendar(false)}
+              />
+            </div>
+          </div>
         )}
 
         {/* Filters + grid */}
-        <section className="rounded-[20px] border border-slate-200/70 bg-white shadow-[0_8px_30px_rgba(15,23,42,0.04)] p-5 sm:p-6">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-5">
-            <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={() => setListTab('all')} className={`h-9 px-4 rounded-full text-sm font-semibold transition-all ${pillClass(listTab === 'all', 'violet')}`}>
-                Tất cả ({listTab === 'all' ? filteredList.length : searchedList.length})
-              </button>
-              <button type="button" onClick={() => setListTab('unassigned')} className={`h-9 px-4 rounded-full text-sm font-semibold transition-all inline-flex items-center gap-1.5 ${pillClass(listTab === 'unassigned', 'amber')}`}>
-                Chưa gắn Lead/Deal
-              </button>
-              <button type="button" onClick={() => setListTab('linked')} className={`h-9 px-4 rounded-full text-sm font-semibold transition-all ${pillClass(listTab === 'linked', 'emerald')}`}>
-                Đã gắn Lead/Deal
-              </button>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative flex-1 min-w-[200px] max-w-sm">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                <input
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Tìm kiếm ghi âm…"
-                  className="w-full h-10 pl-9 pr-3 rounded-full border border-slate-200 bg-slate-50/50 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/25 focus:border-violet-400"
-                />
+        <section className="rounded-[20px] border border-slate-200/70 bg-white shadow-[0_8px_30px_rgba(15,23,42,0.04)] p-4 sm:p-5">
+          <div className="flex flex-col gap-3 mb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="flex flex-wrap gap-1.5">
+                <button type="button" onClick={() => setListTab('all')} className={`h-8 px-3.5 rounded-full text-xs font-semibold transition-all ${pillClass(listTab === 'all', 'violet')}`}>
+                  Tất cả ({listTab === 'all' ? filteredList.length : searchedList.length})
+                </button>
+                <button type="button" onClick={() => setListTab('unassigned')} className={`h-8 px-3.5 rounded-full text-xs font-semibold transition-all ${pillClass(listTab === 'unassigned', 'amber')}`}>
+                  Chưa gắn
+                </button>
+                <button type="button" onClick={() => setListTab('linked')} className={`h-8 px-3.5 rounded-full text-xs font-semibold transition-all ${pillClass(listTab === 'linked', 'emerald')}`}>
+                  Đã gắn
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowFilters((v) => !v)}
-                className={`h-10 px-4 rounded-full border text-sm font-medium inline-flex items-center gap-2 ${
-                  showFilters ? 'border-violet-300 bg-violet-50 text-violet-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <SlidersHorizontal size={16} />
-                Bộ lọc
-              </button>
-            </div>
-          </div>
-
-          {calendarDate && (
-            <div className="mb-4 inline-flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded-full bg-violet-50 text-violet-800 border border-violet-200">
-              <CalendarIcon className="h-3.5 w-3.5" />
-              {calendarDate.split('-').reverse().join('/')}
-              <button type="button" onClick={() => setCalendarDate('')} className="text-violet-600 hover:text-violet-900">×</button>
-            </div>
-          )}
-
-          {showFilters && (
-            <div className="mb-5 rounded-2xl border border-slate-100 bg-slate-50/60 p-4 flex flex-wrap gap-3 items-end">
-              {isAdmin && !isCompanyScopedAdmin && filterCompanies.length > 0 ? (
-                <>
-                  <div>
-                    <label htmlFor="voice-filter-company" className="text-xs text-slate-500">Công ty NV</label>
-                    <select
-                      id="voice-filter-company"
-                      value={filterCompanyId}
-                      onChange={(e) => { setFilterCompanyId(e.target.value); setFilterUserId(''); }}
-                      className="mt-1 h-10 px-3 border border-slate-200 rounded-xl text-sm bg-white min-w-[180px]"
-                    >
-                      <option value="">Tất cả công ty</option>
-                      {filterCompanies.map((c) => (
-                        <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label htmlFor="voice-filter-lead-company" className="text-xs text-slate-500">Công ty Lead/Deal</label>
-                    <select
-                      id="voice-filter-lead-company"
-                      value={filterLeadCompanyId}
-                      onChange={(e) => setFilterLeadCompanyId(e.target.value)}
-                      className="mt-1 h-10 px-3 border border-slate-200 rounded-xl text-sm bg-white min-w-[180px]"
-                    >
-                      <option value="">Tất cả</option>
-                      {filterCompanies.map((c) => (
-                        <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                </>
-              ) : null}
-              {companyViewer ? (
-                <div>
-                  <label htmlFor="voice-filter-user" className="text-xs text-slate-500">Lọc theo NV</label>
-                  <select
-                    id="voice-filter-user"
-                    value={filterUserId}
-                    onChange={(e) => setFilterUserId(e.target.value)}
-                    className="mt-1 h-10 px-3 border border-slate-200 rounded-xl text-sm bg-white min-w-[200px]"
-                  >
-                    <option value="">Tất cả nhân viên</option>
-                    {staffUsers.map((u) => (
-                      <option key={u.id} value={u.id}>{u.full_name || u.email || u.id}</option>
-                    ))}
-                  </select>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative flex-1 min-w-[180px] sm:max-w-xs">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                  <input
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Tìm kiếm ghi âm…"
+                    className="w-full h-9 pl-8 pr-3 rounded-full border border-slate-200 bg-slate-50/50 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/25 focus:border-violet-400"
+                  />
                 </div>
-              ) : null}
-              <div>
-                <label className="text-xs text-slate-500">Số điện thoại</label>
-                <input
-                  value={listPhoneFilter}
-                  onChange={(e) => setListPhoneFilter(e.target.value)}
-                  placeholder="Lọc theo SĐT…"
-                  className="mt-1 h-10 px-3 border border-slate-200 rounded-xl text-sm w-44 bg-white"
-                />
+                <button
+                  type="button"
+                  onClick={() => setShowFilters((v) => !v)}
+                  className={`h-9 px-3 rounded-full border text-xs font-medium inline-flex items-center gap-1.5 shrink-0 ${
+                    showFilters ? 'border-violet-300 bg-violet-50 text-violet-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <SlidersHorizontal size={14} />
+                  Bộ lọc
+                </button>
               </div>
-              <button type="button" onClick={() => void load()} disabled={loading} className="h-10 px-4 rounded-xl bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 disabled:opacity-50">
-                Áp dụng
-              </button>
-              <button
-                type="button"
-                onClick={() => void runAutoRelinkScan()}
-                disabled={loading || relinking || scanMetaBusy}
-                className="h-10 px-4 rounded-xl border border-violet-200 text-violet-700 text-sm hover:bg-violet-50 inline-flex items-center gap-1.5"
-              >
-                <RefreshCw className={`h-4 w-4 ${relinking ? 'animate-spin' : ''}`} />
-                Quét ghép CRM
-              </button>
             </div>
-          )}
+
+            {(calendarDate || showFilters) && (
+              <div className="flex flex-wrap items-end gap-2 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2.5">
+                {calendarDate && (
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-violet-50 text-violet-800 border border-violet-200 shrink-0">
+                    <CalendarIcon className="h-3 w-3" />
+                    {calendarDate.split('-').reverse().join('/')}
+                    <button type="button" onClick={() => setCalendarDate('')} className="text-violet-600 hover:text-violet-900 leading-none">×</button>
+                  </span>
+                )}
+                {showFilters && (
+                  <>
+                    {isAdmin && !isCompanyScopedAdmin && filterCompanies.length > 0 ? (
+                      <label className="flex flex-col gap-0.5 min-w-[140px] flex-1 max-w-[200px]">
+                        <span className="text-[10px] font-medium text-slate-500">Công ty NV</span>
+                        <select
+                          id="voice-filter-company"
+                          value={filterCompanyId}
+                          onChange={(e) => { setFilterCompanyId(e.target.value); setFilterUserId(''); }}
+                          className="h-8 px-2.5 border border-slate-200 rounded-lg text-xs bg-white"
+                        >
+                          <option value="">Tất cả công ty</option>
+                          {filterCompanies.map((c) => (
+                            <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                    {companyViewer ? (
+                      <label className="flex flex-col gap-0.5 min-w-[140px] flex-1 max-w-[200px]">
+                        <span className="text-[10px] font-medium text-slate-500">Nhân viên</span>
+                        <select
+                          id="voice-filter-user"
+                          value={filterUserId}
+                          onChange={(e) => setFilterUserId(e.target.value)}
+                          className="h-8 px-2.5 border border-slate-200 rounded-lg text-xs bg-white"
+                        >
+                          <option value="">Tất cả NV</option>
+                          {staffUsers.map((u) => (
+                            <option key={u.id} value={u.id}>{u.full_name || u.email || u.id}</option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                    <label className="flex flex-col gap-0.5 min-w-[120px] flex-1 max-w-[160px]">
+                      <span className="text-[10px] font-medium text-slate-500">Số điện thoại</span>
+                      <input
+                        value={listPhoneFilter}
+                        onChange={(e) => setListPhoneFilter(e.target.value)}
+                        placeholder="Lọc SĐT…"
+                        className="h-8 px-2.5 border border-slate-200 rounded-lg text-xs bg-white"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void runAutoRelinkScan()}
+                      disabled={loading || relinking || scanMetaBusy}
+                      className="h-8 px-3 rounded-lg border border-violet-200 text-violet-700 text-xs font-medium hover:bg-violet-50 inline-flex items-center gap-1.5 shrink-0 ml-auto"
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 ${relinking ? 'animate-spin' : ''}`} />
+                      Quét ghép CRM
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
 
           {loading ? (
             <div className="py-16 text-center text-sm text-slate-500">Đang tải…</div>

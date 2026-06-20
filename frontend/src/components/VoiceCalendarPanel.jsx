@@ -58,8 +58,9 @@ export default function VoiceCalendarPanel({
   onSelectDate,
   selectedPhone = '',
   onSelectPhone,
+  onClose,
 }) {
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(!onClose);
   const [monthCursor, setMonthCursor] = useState(() => {
     if (selectedDate) {
       const d = new Date(selectedDate);
@@ -141,12 +142,26 @@ export default function VoiceCalendarPanel({
           </div>
           <button
             type="button"
-            onClick={() => setCollapsed((c) => !c)}
+            onClick={() => (onClose ? onClose() : setCollapsed((c) => !c))}
             className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/15 backdrop-blur-md border border-white/30 text-white text-xs font-semibold hover:bg-white/25 transition-colors cursor-pointer"
-            title={collapsed ? 'Mở rộng' : 'Thu gọn'}
+            title={onClose ? 'Đóng' : collapsed ? 'Mở rộng' : 'Thu gọn'}
           >
-            {collapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-            {collapsed ? 'Mở rộng' : 'Thu gọn'}
+            {onClose ? (
+              <>
+                <X className="h-4 w-4" />
+                Đóng
+              </>
+            ) : collapsed ? (
+              <>
+                <ChevronDown className="h-4 w-4" />
+                Mở rộng
+              </>
+            ) : (
+              <>
+                <ChevronUp className="h-4 w-4" />
+                Thu gọn
+              </>
+            )}
           </button>
         </div>
       </div>
