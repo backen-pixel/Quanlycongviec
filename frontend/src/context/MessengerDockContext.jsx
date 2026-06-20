@@ -32,12 +32,11 @@ function winKeyDept(deptId) {
   return `d:${deptId}`;
 }
 
-/** Chỉ một bong bóng chat mở rộng — tránh sổ ngang hết màn hình. */
-function withSingleExpanded(windows, focusedKey) {
-  return windows.map((x) => ({
-    ...x,
-    minimized: x.windowKey !== focusedKey,
-  }));
+/** Đưa cửa sổ vừa mở lên đầu danh sách — hiển thị sát thanh chat nhanh (index 0). */
+function focusWindowInList(windows, windowKey) {
+  const hit = windows.find((x) => x.windowKey === windowKey);
+  if (!hit) return windows;
+  return [hit, ...windows.filter((x) => x.windowKey !== windowKey)];
 }
 
 const DEPT_UNREAD_KEY_PREFIX = 'messenger:dept-unread:';
@@ -358,7 +357,7 @@ export function MessengerDockProvider({ children }) {
             },
           ];
         }
-        return withSingleExpanded(next, wk);
+        return focusWindowInList(next, wk);
       });
     },
     [markLeadRead],
@@ -409,7 +408,7 @@ export function MessengerDockProvider({ children }) {
             },
           ];
         }
-        return withSingleExpanded(next, wk);
+        return focusWindowInList(next, wk);
       });
     },
     [markGroupRead],
@@ -455,7 +454,7 @@ export function MessengerDockProvider({ children }) {
             },
           ];
         }
-        return withSingleExpanded(next, wk);
+        return focusWindowInList(next, wk);
       });
     },
     [markDeptRead, deptMetaMap],
@@ -474,14 +473,13 @@ export function MessengerDockProvider({ children }) {
           const next = w.map((x) =>
             x.windowKey === windowKey ? { ...x, minimized: false } : x,
           );
-          const expanded = withSingleExpanded(next, windowKey);
-          const focused = expanded.find((x) => x.windowKey === windowKey);
+          const focused = next.find((x) => x.windowKey === windowKey);
           if (focused && !focused.minimized) {
             if (focused.chatType === 'messenger_group' && focused.groupId) markGroupRead(focused.groupId);
             else if (focused.chatType === 'department' && focused.deptId) markDeptRead(focused.deptId);
             else if (focused.leadId) markLeadRead(focused.leadId);
           }
-          return expanded;
+          return focusWindowInList(next, windowKey);
         }
         return w.map((x) => (x.windowKey === windowKey ? { ...x, minimized: true } : x));
       });
