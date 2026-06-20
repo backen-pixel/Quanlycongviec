@@ -16,7 +16,10 @@ import {
 
 // ── Roots ──
 export const driveListRoots = () => api.get('/drive/roots').then((r) => r.data);
-export const driveEnsurePersonalRoot = () => api.post('/drive/roots/ensure-personal').then((r) => r.data);
+export const driveEnsurePersonalRoot = (moduleKey) =>
+  api.post('/drive/roots/ensure-personal', null, {
+    params: moduleKey ? { module: moduleKey } : {},
+  }).then((r) => r.data);
 export const driveEnsureCompanyRoot = (company_id) =>
   api.post('/drive/roots/ensure-company', company_id ? { company_id } : {}).then((r) => r.data);
 export const driveEnsureSharedCompany = (company_id, module_key = 'other') =>
@@ -32,8 +35,11 @@ export const driveHealth = () => api.get('/drive/health').then((r) => r.data);
 export const driveOrgTree = (moduleKey) =>
   api.get('/drive/org-tree', { params: moduleKey ? { module: moduleKey } : {} }).then((r) => r.data);
 export const driveModules = () => api.get('/drive/modules').then((r) => r.data);
-export const driveEnsureUserDrive = (user_id) =>
-  api.post('/drive/org/ensure-user-drive', { user_id }).then((r) => r.data);
+export const driveEnsureUserDrive = (user_id, moduleKey) =>
+  api.post('/drive/org/ensure-user-drive', {
+    user_id,
+    ...(moduleKey ? { module: moduleKey } : {}),
+  }).then((r) => r.data);
 export const driveSetUserModule = (userId, module) =>
   api.patch(`/drive/admin/user-module/${userId}`, { module }).then((r) => r.data);
 export const driveSetDeptCategory = (departmentId, category) =>
@@ -326,19 +332,32 @@ export const driveFormatBytes = (n) => {
   return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
 };
 
-export const driveIconForMime = (mime) => {
-  if (!mime) return 'file';
-  if (mime.includes('google-apps.document')) return 'word';
-  if (mime.includes('google-apps.spreadsheet')) return 'excel';
-  if (mime.includes('google-apps.presentation')) return 'powerpoint';
-  if (mime.startsWith('image/')) return 'image';
-  if (mime.startsWith('video/')) return 'video';
-  if (mime.startsWith('audio/')) return 'audio';
-  if (mime.includes('pdf')) return 'pdf';
-  if (mime.includes('word') || mime.includes('officedocument.wordprocessing')) return 'word';
-  if (mime.includes('sheet') || mime.includes('excel') || mime.includes('officedocument.spreadsheet')) return 'excel';
-  if (mime.includes('presentation') || mime.includes('powerpoint')) return 'powerpoint';
-  if (mime.includes('zip') || mime.includes('rar') || mime.includes('compressed')) return 'archive';
-  if (mime.startsWith('text/') || mime.includes('json') || mime.includes('xml')) return 'text';
+export const driveFileExtension = (name) => {
+  const m = String(name || '').match(/\.([a-z0-9]+)$/i);
+  return m ? m[1].toLowerCase() : '';
+};
+
+export const driveIconForMime = (mime, name) => {
+  const ext = driveFileExtension(name);
+  if (['doc', 'docx', 'rtf', 'odt'].includes(ext)) return 'word';
+  if (['xls', 'xlsx', 'csv', 'ods'].includes(ext)) return 'excel';
+  if (['ppt', 'pptx', 'odp'].includes(ext)) return 'powerpoint';
+  if (ext === 'pdf') return 'pdf';
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'archive';
+
+  const m = String(mime || '').toLowerCase();
+  if (!m) return 'file';
+  if (m.includes('google-apps.document')) return 'word';
+  if (m.includes('google-apps.spreadsheet')) return 'excel';
+  if (m.includes('google-apps.presentation')) return 'powerpoint';
+  if (m.startsWith('image/')) return 'image';
+  if (m.startsWith('video/')) return 'video';
+  if (m.startsWith('audio/')) return 'audio';
+  if (m.includes('pdf')) return 'pdf';
+  if (m.includes('word') || m.includes('officedocument.wordprocessing')) return 'word';
+  if (m.includes('sheet') || m.includes('excel') || m.includes('officedocument.spreadsheet')) return 'excel';
+  if (m.includes('presentation') || m.includes('powerpoint')) return 'powerpoint';
+  if (m.includes('zip') || m.includes('rar') || m.includes('compressed')) return 'archive';
+  if (m.startsWith('text/') || m.includes('json') || m.includes('xml')) return 'text';
   return 'file';
 };

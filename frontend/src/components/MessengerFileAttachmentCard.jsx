@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Download, Check, Loader2 } from 'lucide-react';
 import { resolveMediaUrl } from '../lib/mediaUrl';
 import { displayMessengerFilename, downloadMessengerFile } from '../lib/messengerMessageActions';
+import DriveFileTypeBadge from './drive/DriveFileTypeBadge';
 
 function formatFileSize(bytes) {
   const n = Number(bytes);
@@ -11,47 +12,14 @@ function formatFileSize(bytes) {
   return `${(n / 1048576).toFixed(2)} MB`;
 }
 
-function fileExtension(name, mime = '') {
-  const m = String(name || '').match(/\.([a-z0-9]+)$/i);
-  if (m) return m[1].toLowerCase();
-  const ml = String(mime || '').toLowerCase();
-  if (ml.includes('word') || ml.includes('document')) return 'docx';
-  if (ml.includes('sheet') || ml.includes('excel')) return 'xlsx';
-  if (ml.includes('pdf')) return 'pdf';
-  if (ml.includes('presentation') || ml.includes('powerpoint')) return 'pptx';
-  if (ml.includes('zip') || ml.includes('compressed')) return 'zip';
-  return '';
-}
-
-/**
- * Thẻ file đính kèm kiểu Zalo — icon, tên, dung lượng, tải xuống.
- */
+/** @deprecated alias — dùng DriveFileTypeBadge trực tiếp nếu có thể */
 export function FileTypeBadge({ name, mime, compact = false }) {
-  const ext = fileExtension(name, mime);
-  const cfg = useMemo(() => {
-    if (['doc', 'docx'].includes(ext)) return { bg: 'bg-[#2B579A]', letter: 'W', fold: 'bg-[#1e3d6d]' };
-    if (['xls', 'xlsx', 'csv'].includes(ext)) return { bg: 'bg-[#217346]', letter: 'X', fold: 'bg-[#185c37]' };
-    if (ext === 'pdf') return { bg: 'bg-[#E74C3C]', letter: 'P', fold: 'bg-[#c0392b]' };
-    if (['ppt', 'pptx'].includes(ext)) return { bg: 'bg-[#D24726]', letter: 'P', fold: 'bg-[#b33d1f]' };
-    if (['zip', 'rar', '7z'].includes(ext)) return { bg: 'bg-amber-500', letter: 'Z', fold: 'bg-amber-600' };
-    return { bg: 'bg-slate-500', letter: 'F', fold: 'bg-slate-600' };
-  }, [ext]);
-
   return (
-    <div
-      className={`relative shrink-0 rounded-md ${cfg.bg} shadow-sm flex items-center justify-center overflow-hidden ${
-        compact ? 'w-9 h-9' : 'w-11 h-11'
-      }`}
-      aria-hidden
-    >
-      <span
-        className={`absolute top-0 right-0 w-3.5 h-3.5 ${cfg.fold}`}
-        style={{ clipPath: 'polygon(100% 0, 0 0, 100% 100%)' }}
-      />
-      <span className={`text-white font-bold leading-none select-none ${compact ? 'text-base' : 'text-lg'}`}>
-        {cfg.letter}
-      </span>
-    </div>
+    <DriveFileTypeBadge
+      name={name}
+      mime={mime}
+      size={compact ? 36 : 44}
+    />
   );
 }
 

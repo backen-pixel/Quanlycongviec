@@ -213,7 +213,7 @@ export default function DrivePage() {
         // Nếu user chưa có Drive cá nhân và đã cấu hình → ensure ngay.
         if (h?.configured && !list.some((x) => x.scope === 'user')) {
           try {
-            const ep = await driveEnsurePersonalRoot();
+            const ep = await driveEnsurePersonalRoot(lockedModule || scopeModuleKey || undefined);
             list = [ep.root, ...list];
           } catch (_) {}
         }
@@ -636,8 +636,9 @@ export default function DrivePage() {
   }, []);
 
   const isTrashView = view === 'trash';
+  const myUserId = user?.id || user?.userId || null;
   const showRoots = useMemo(() => ({
-    personal: roots.filter((r) => r.scope === 'user'),
+    personal: roots.filter((r) => r.scope === 'user' && (!myUserId || r.owner_id === myUserId)),
     moduleShared: roots.filter((r) =>
       r.scope === 'shared'
       && ['shared_company', 'shared_region'].includes(r.shared_kind)
@@ -646,7 +647,7 @@ export default function DrivePage() {
     otherShared: roots.filter((r) =>
       r.scope === 'shared' && !['shared_company', 'shared_region'].includes(r.shared_kind)
     ),
-  }), [roots, scopeModuleKey]);
+  }), [roots, scopeModuleKey, myUserId]);
 
   const displayFolders = searchResults?.folders ?? folders;
   const displayFiles = searchResults?.files ?? files;
@@ -791,7 +792,7 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
                 type="button"
                 onClick={async () => {
                   try {
-                    const r = await driveEnsurePersonalRoot();
+                    const r = await driveEnsurePersonalRoot(lockedModule || scopeModuleKey || undefined);
                     setRoots([r.root, ...roots]);
                     await openRoot(r.root);
                   } catch (e) { alert(e?.response?.data?.error || e?.message); }
@@ -811,6 +812,11 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
                 moduleLayout
               />
             ))}
+            {!lockedModule && (
+              <p className="px-2.5 pt-2 mt-1 mb-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.08em] border-t border-slate-100">
+                Theo công ty
+              </p>
+            )}
             <OrgTreeNav
               activeRootId={activeRoot?.id}
               onOpenRoot={openRoot}
@@ -820,6 +826,7 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
               myModuleKey={myModuleKey}
               scopeModuleKey={scopeModuleKey}
               lockModule={lockedModule}
+              companyFirst={!lockedModule}
               moduleLayout
             />
           </SidebarSection>
@@ -1260,7 +1267,7 @@ function DriveFolderListBlock({ folders, starredIds, isTrashView, onOpenFolder, 
               className={`group grid ${DRIVE_FILE_LIST_GRID} gap-2 px-3 py-2 items-center hover:bg-slate-50 cursor-pointer`}
             >
               <div className="flex items-center gap-2.5 min-w-0">
-                <FolderIcon size={18} className="text-amber-500 shrink-0" fill="currentColor" />
+                <FolderIcon size={18} className="text-yellow-500 shrink-0" fill="currentColor" />
                 <span className="text-sm text-slate-800 truncate font-medium" title={f.name}>{f.name}</span>
                 {isStarred && <Star size={12} className="text-amber-400 fill-amber-400 shrink-0" />}
                 {f.trashed_at && <span className="text-[10px] text-red-500 shrink-0">đã xoá</span>}
@@ -1333,8 +1340,8 @@ function DriveFolderGridBlock({
             >
               <div className="flex items-start gap-3">
                 <div className="relative shrink-0">
-                  <div className={`flex items-center justify-center rounded-xl ${moduleLayout ? 'h-11 w-11 bg-indigo-50' : ''}`}>
-                    <FolderIcon size={moduleLayout ? 24 : 18} className={moduleLayout ? 'text-indigo-600' : 'text-amber-500'} fill="currentColor" />
+                  <div className={`flex items-center justify-center rounded-xl ${moduleLayout ? 'h-11 w-11 bg-yellow-50' : ''}`}>
+                    <FolderIcon size={moduleLayout ? 24 : 18} className="text-yellow-500" fill="currentColor" />
                   </div>
                   {moduleLayout && (
                     <span className="absolute -top-1 -right-1 rounded-md bg-slate-100 border border-slate-200 px-1 py-px text-[9px] font-medium text-slate-500 whitespace-nowrap">
@@ -1379,9 +1386,9 @@ function DriveFolderContentEmpty({ moduleLayout, onUpload, hasFolders }) {
   }
   return (
     <div className={`${hasFolders ? 'mt-1' : 'mt-0'} rounded-2xl border border-dashed border-slate-200 bg-white py-14 px-6 text-center shadow-sm`}>
-      <div className="mx-auto mb-5 flex h-28 w-28 items-center justify-center rounded-[1.25rem] bg-gradient-to-br from-indigo-50 via-blue-50 to-violet-50 border border-indigo-100/80">
+      <div className="mx-auto mb-5 flex h-28 w-28 items-center justify-center rounded-[1.25rem] bg-gradient-to-br from-yellow-50 via-amber-50 to-orange-50 border border-yellow-100/80">
         <div className="relative">
-          <FolderOpen size={46} className="text-indigo-500" strokeWidth={1.4} />
+          <FolderOpen size={46} className="text-yellow-500" strokeWidth={1.4} />
           <FileText size={16} className="absolute -top-2 -right-3 text-indigo-300 rotate-12" />
           <FileText size={14} className="absolute -bottom-1 -left-3 text-violet-300 -rotate-12" />
         </div>
@@ -1401,10 +1408,72 @@ function DriveFolderContentEmpty({ moduleLayout, onUpload, hasFolders }) {
   );
 }
 
+/** Gộp công ty từ nhiều module — dùng cho Drive lưu trữ (sidebar theo công ty). */
+function mergeCompaniesFromModules(modules) {
+  const map = new Map();
+  for (const mod of modules || []) {
+    for (const co of mod.companies || []) {
+      let merged = map.get(co.id);
+      if (!merged) {
+        merged = { id: co.id, name: co.name, sharedRoots: [], regions: [] };
+        map.set(co.id, merged);
+      }
+      if (co.shared_root_id && !merged.sharedRoots.some((s) => s.moduleKey === mod.key)) {
+        merged.sharedRoots.push({ moduleKey: mod.key, rootId: co.shared_root_id });
+      }
+      for (const rg of co.regions || []) {
+        const rgKey = rg.id || 'none';
+        let mrg = merged.regions.find((r) => (r.id || 'none') === rgKey);
+        if (!mrg) {
+          mrg = { id: rg.id, name: rg.name, sharedRoots: [], categories: [] };
+          merged.regions.push(mrg);
+        }
+        if (rg.id && rg.shared_root_id && !mrg.sharedRoots.some((s) => s.moduleKey === mod.key)) {
+          mrg.sharedRoots.push({ moduleKey: mod.key, rootId: rg.shared_root_id });
+        }
+        for (const cat of rg.categories || []) {
+          let mcat = mrg.categories.find((c) => c.name === cat.name);
+          if (!mcat) {
+            mcat = { name: cat.name, departments: [] };
+            mrg.categories.push(mcat);
+          }
+          for (const dept of cat.departments || []) {
+            const deptKey = dept.id || dept.name;
+            let mdept = mcat.departments.find((d) => (d.id || d.name) === deptKey);
+            if (!mdept) {
+              mdept = { id: dept.id, name: dept.name, employees: [] };
+              mcat.departments.push(mdept);
+            }
+            const seen = new Set(mdept.employees.map((e) => e.id));
+            for (const u of dept.employees || []) {
+              if (!u?.id || seen.has(u.id)) continue;
+              seen.add(u.id);
+              mdept.employees.push(u);
+            }
+          }
+        }
+      }
+    }
+  }
+  for (const co of map.values()) {
+    for (const rg of co.regions) {
+      for (const cat of rg.categories) {
+        for (const dept of cat.departments) {
+          dept.employees.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'vi'));
+        }
+        cat.departments.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'vi'));
+      }
+      rg.categories.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'vi'));
+    }
+    co.regions.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'vi'));
+  }
+  return Array.from(map.values()).sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'vi'));
+}
+
 /**
  * Cây Drive — Công ty → Khu vực → Loại → Phòng ban → Nhân viên (+ Drive chung công ty/khu vực).
  */
-function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, isSystemAdmin = false, myModuleKey, scopeModuleKey, lockModule, moduleLayout = false }) {
+function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, isSystemAdmin = false, myModuleKey, scopeModuleKey, lockModule, companyFirst = false, moduleLayout = false }) {
   const [tree, setTree] = useState(null);
   const [myModule, setMyModule] = useState(scopeModuleKey || myModuleKey || 'other');
   const [moduleFilter, setModuleFilter] = useState(() => {
@@ -1440,7 +1509,25 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, isSystemA
       const initDepartments = new Set();
       const focusKey = lockModule || r.filter_module || scopeModuleKey || myModuleKey;
       const focusMod = modules.find((m) => m.key === focusKey) || modules[0];
-      if (focusMod) {
+      if (companyFirst) {
+        const merged = mergeCompaniesFromModules(modules);
+        const co = merged[0];
+        if (co) {
+          initCompanies.add(`storage:${co.id}`);
+          const rg = co.regions?.[0];
+          if (rg) {
+            initRegions.add(`storage:${co.id}:${rg.id || 'none'}`);
+            const cat = rg.categories?.[0];
+            if (cat) {
+              initCategories.add(`storage:${co.id}:${rg.id || 'none'}:${cat.name}`);
+              const dept = cat.departments?.[0];
+              if (dept) {
+                initDepartments.add(`storage:${co.id}:${rg.id || 'none'}:${cat.name}:${dept.id || dept.name}`);
+              }
+            }
+          }
+        }
+      } else if (focusMod) {
         initModules.add(focusMod.key);
         const co = focusMod.companies?.[0];
         if (co) {
@@ -1472,7 +1559,7 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, isSystemA
     } finally {
       setLoading(false);
     }
-  }, [isAdmin, isSystemAdmin, myModuleKey, scopeModuleKey, lockModule, refreshRoots]);
+  }, [isAdmin, isSystemAdmin, myModuleKey, scopeModuleKey, lockModule, companyFirst, refreshRoots]);
 
   useEffect(() => {
     if (lockModule && !isSystemAdmin) setModuleFilter(lockModule);
@@ -1499,7 +1586,7 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, isSystemA
     try {
       let rootId = userNode.drive_root_id;
       if (!rootId) {
-        const r = await driveEnsureUserDrive(userNode.id);
+        const r = await driveEnsureUserDrive(userNode.id, lockModule || scopeModuleKey || myModuleKey || undefined);
         rootId = r?.root?.id;
         userNode.drive_root_id = rootId;
       }
@@ -1563,6 +1650,158 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, isSystemA
     ? 'bg-indigo-50/80 text-indigo-800 font-medium'
     : 'bg-amber-50 text-amber-800 font-medium';
 
+  function countCompanyEmployees(co) {
+    return (co.regions || []).reduce((acc, rg) => acc + countRegionEmployees(rg), 0);
+  }
+
+  function renderMergedCompanyTree(companies) {
+    return (companies || []).map((co) => {
+      const coKey = `storage:${co.id}`;
+      const coOpen = expanded.companies.has(coKey);
+      const coCount = countCompanyEmployees(co);
+      return (
+        <div key={coKey}>
+          <button
+            type="button"
+            onClick={() => toggle('companies', coKey)}
+            className={`flex items-center gap-1 w-full text-left px-1.5 py-1 rounded-lg hover:bg-slate-50 ${moduleLayout ? 'py-1.5' : 'py-0.5'}`}
+          >
+            {coOpen ? <ChevronDown size={moduleLayout ? 13 : 11} /> : <ChevronRight size={moduleLayout ? 13 : 11} />}
+            <Building2 size={moduleLayout ? 13 : 11} className="text-emerald-600 shrink-0" />
+            <span className={`${moduleLayout ? 'text-[13px] font-semibold' : 'text-[12px]'} text-slate-800 truncate`}>{co.name}</span>
+            <span className="ml-auto text-[10px] text-slate-400 shrink-0">{coCount}</span>
+          </button>
+          {coOpen && (
+            <div className="ml-3 border-l border-slate-100 pl-1.5 mt-0.5 space-y-0.5">
+              {(co.sharedRoots || []).map((sr) => (
+                <button
+                  key={`${co.id}-shared-${sr.moduleKey}`}
+                  type="button"
+                  onClick={() => openSharedCompany(co.id, sr.moduleKey, sr.rootId)}
+                  className={`w-full flex items-center gap-1.5 px-1.5 py-1 rounded-lg text-left text-[12px] ${
+                    activeRootId === sr.rootId && sr.rootId
+                      ? activeSharedCompanyCls
+                      : (moduleLayout ? 'text-indigo-700 hover:bg-indigo-50/60' : 'text-emerald-700 hover:bg-emerald-50')
+                  }`}
+                  title={`Drive chung công ty — ${moduleScopeLabel(sr.moduleKey)}`}
+                >
+                  <Globe size={11} className="text-emerald-500 shrink-0" />
+                  <span className="truncate">
+                    Chung công ty{(co.sharedRoots?.length || 0) > 1 ? ` · ${moduleScopeLabel(sr.moduleKey)}` : ''}
+                  </span>
+                </button>
+              ))}
+              {(co.regions || []).map((rg) => {
+                const rgKey = `${coKey}:${rg.id || 'none'}`;
+                const rgOpen = expanded.regions.has(rgKey);
+                const rgCount = countRegionEmployees(rg);
+                return (
+                  <div key={rgKey}>
+                    <button
+                      type="button"
+                      onClick={() => toggle('regions', rgKey)}
+                      className="flex items-center gap-1 w-full text-left px-1 py-0.5 rounded hover:bg-slate-50"
+                    >
+                      {rgOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                      <MapPin size={11} className="text-amber-600 shrink-0" />
+                      <span className="text-[12px] text-slate-700 truncate">{rg.name}</span>
+                      <span className="ml-auto text-[9px] text-slate-400">{rgCount}</span>
+                    </button>
+                    {rgOpen && (
+                      <div className="ml-3 border-l border-slate-100 pl-1 mt-0.5 space-y-0.5">
+                        {(rg.sharedRoots || []).map((sr) => (
+                          <button
+                            key={`${rgKey}-shared-${sr.moduleKey}`}
+                            type="button"
+                            onClick={() => openSharedRegion(rg.id, sr.moduleKey, sr.rootId)}
+                            className={`w-full flex items-center gap-1.5 px-1.5 py-0.5 rounded text-left text-[12px] ${
+                              activeRootId === sr.rootId && sr.rootId
+                                ? activeSharedRegionCls
+                                : (moduleLayout ? 'text-indigo-600 hover:bg-indigo-50/60' : 'text-amber-700 hover:bg-amber-50')
+                            }`}
+                          >
+                            <FolderIcon size={11} className="text-yellow-500 shrink-0" fill="currentColor" />
+                            <span className="truncate">
+                              Chung khu vực{(rg.sharedRoots?.length || 0) > 1 ? ` · ${moduleScopeLabel(sr.moduleKey)}` : ''}
+                            </span>
+                          </button>
+                        ))}
+                        {(rg.categories || []).map((cat) => {
+                          const catKey = `${rgKey}:${cat.name}`;
+                          const catOpen = expanded.categories.has(catKey);
+                          const catCount = (cat.departments || []).reduce((a, d) => a + (d.employees?.length || 0), 0);
+                          return (
+                            <div key={catKey}>
+                              <button
+                                type="button"
+                                onClick={() => toggle('categories', catKey)}
+                                className="flex items-center gap-1 w-full text-left px-1 py-0.5 rounded hover:bg-slate-50"
+                              >
+                                {catOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                                <Tag size={10} className="text-violet-500 shrink-0" />
+                                <span className="text-[11px] text-slate-700 truncate">{cat.name}</span>
+                                <span className="ml-auto text-[9px] text-slate-400">{catCount}</span>
+                              </button>
+                              {catOpen && (
+                                <div className="ml-3 border-l border-slate-100 pl-1 mt-0.5 space-y-0.5">
+                                  {(cat.departments || []).map((dept) => {
+                                    const deptKey = `${catKey}:${dept.id || dept.name}`;
+                                    const deptOpen = expanded.departments.has(deptKey);
+                                    return (
+                                      <div key={deptKey}>
+                                        <button
+                                          type="button"
+                                          onClick={() => toggle('departments', deptKey)}
+                                          className="flex items-center gap-1 w-full text-left px-1 py-0.5 rounded hover:bg-slate-50"
+                                        >
+                                          {deptOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                                          <Briefcase size={10} className="text-slate-500 shrink-0" />
+                                          <span className="text-[11px] text-slate-700 truncate">{dept.name}</span>
+                                          <span className="ml-auto text-[9px] text-slate-400">{(dept.employees || []).length}</span>
+                                        </button>
+                                        {deptOpen && (
+                                          <div className="ml-3 border-l border-slate-100 pl-1 mt-0.5 space-y-0.5">
+                                            {(dept.employees || []).map((u) => (
+                                              <button
+                                                key={u.id}
+                                                type="button"
+                                                onClick={() => openUserDrive(u)}
+                                                className={`w-full flex items-center gap-1.5 px-1.5 py-0.5 rounded-lg text-left text-[12px] truncate ${
+                                                  activeRootId && activeRootId === u.drive_root_id
+                                                    ? activeLeafCls
+                                                    : 'text-slate-600 hover:bg-slate-50'
+                                                }`}
+                                              >
+                                                {u.avatar ? (
+                                                  <img src={u.avatar} alt="" className="w-4 h-4 rounded-full shrink-0" />
+                                                ) : (
+                                                  <UserIcon size={11} className={moduleLayout ? 'text-indigo-500 shrink-0' : 'text-blue-600 shrink-0'} />
+                                                )}
+                                                <span className="truncate">{u.name}</span>
+                                              </button>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    });
+  }
+
   function renderCompanyTree(mod) {
     return (mod.companies || []).map((co) => {
       const coKey = `${mod.key}:${co.id}`;
@@ -1623,7 +1862,7 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, isSystemA
                                 : (moduleLayout ? 'text-indigo-600 hover:bg-indigo-50/60' : 'text-amber-700 hover:bg-amber-50')
                             }`}
                           >
-                            <FolderIcon size={11} className="text-amber-500 shrink-0" fill="currentColor" />
+                            <FolderIcon size={11} className="text-yellow-500 shrink-0" fill="currentColor" />
                             <span className="truncate">Chung khu vực</span>
                           </button>
                         )}
@@ -1703,16 +1942,23 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, isSystemA
     });
   }
 
-  const showModuleLevel = isSystemAdmin || !(moduleLayout && lockModule);
+  const moduleFilteredTree = (() => {
+    if (moduleFilter) return (tree || []).filter((m) => m.key === moduleFilter);
+    return tree || [];
+  })();
+  const mergedCompanies = companyFirst ? mergeCompaniesFromModules(moduleFilteredTree) : [];
+  const showModuleLevel = !companyFirst && (isSystemAdmin || !(moduleLayout && lockModule));
   const displayTree = (isSystemAdmin && moduleFilter)
-    ? (tree || []).filter((m) => m.key === moduleFilter)
+    ? moduleFilteredTree
     : (tree || []);
 
   return (
     <div className="space-y-1 text-sm">
-      {isSystemAdmin && (
+      {(isSystemAdmin || (companyFirst && isAdmin)) && (
         <>
-          <p className="px-1 text-[10px] text-indigo-600 mb-1 font-medium">Admin hệ thống — tất cả công ty</p>
+          {isSystemAdmin && (
+            <p className="px-1 text-[10px] text-indigo-600 mb-1 font-medium">Admin hệ thống — tất cả công ty</p>
+          )}
           <select
             value={moduleFilter}
             onChange={(e) => setModuleFilter(e.target.value)}
@@ -1723,21 +1969,15 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, isSystemA
           </select>
         </>
       )}
-      {isAdmin && !isSystemAdmin && !lockModule && (
-        <select
-          value={moduleFilter}
-          onChange={(e) => setModuleFilter(e.target.value)}
-          className="w-full mb-1 px-2 py-1 text-[11px] border rounded-lg bg-white"
-        >
-          <option value="">Tất cả module</option>
-          {tree.map((m) => <option key={m.key} value={m.key}>{m.name}</option>)}
-        </select>
-      )}
-      {(lockModule || !isAdmin) && !isSystemAdmin && !moduleLayout && (
+      {(lockModule || !isAdmin) && !isSystemAdmin && !moduleLayout && !companyFirst && (
         <p className="px-1 text-[10px] text-slate-400 mb-1">Module: {moduleScopeLabel(lockModule || tree[0]?.key || myModule)}</p>
       )}
 
-      {showModuleLevel ? displayTree.map((mod) => {
+      {companyFirst ? (
+        <div className="space-y-0.5">
+          {renderMergedCompanyTree(mergedCompanies)}
+        </div>
+      ) : showModuleLevel ? displayTree.map((mod) => {
         const modOpen = expanded.modules.has(mod.key);
         return (
           <div key={mod.key}>

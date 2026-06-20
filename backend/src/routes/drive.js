@@ -75,6 +75,7 @@ const driveOrgPath = require('../helpers/driveOrgPath');
 const driveEntityFolder = require('../helpers/driveEntityFolder');
 const { logDriveActivity } = require('../helpers/driveActivity');
 const { isAdminLike, isSystemAdmin } = require('../helpers/adminRole');
+const { ensureUserDriveModuleAssigned } = require('../helpers/driveModuleDefaults');
 
 const r = Router();
 
@@ -225,10 +226,12 @@ async function canAdminAccessDepartment(req, departmentId) {
 async function getUserDriveModule(userId) {
   if (!userId) return 'other';
   try {
-    const { data } = await supabase.from('users').select('drive_module').eq('id', userId).maybeSingle();
+    const { data } = await supabase.from('users').select('drive_module, role').eq('id', userId).maybeSingle();
     if (data?.drive_module) return String(data.drive_module).toLowerCase();
+    const { inferDriveModuleFromRole } = require('../helpers/driveModuleDefaults');
+    return inferDriveModuleFromRole(data?.role) || 'crm';
   } catch (_) {}
-  return 'other';
+  return 'crm';
 }
 
 /** Tìm hoặc tạo bản ghi drive_roots cho folder shared (module/công ty/khu vực). */
@@ -354,6 +357,8 @@ r.post('/roots/ensure-personal', async (req, res) => {
   if (!requireGdrive(req, res)) return;
   try {
     const userId = req.user.userId || req.user.id;
+    const contextModule = req.query.module || req.body?.module || null;
+    await ensureUserDriveModuleAssigned(userId, { contextModule });
     const existing = await supabase
       .from('drive_roots')
       .select('*')
@@ -1754,6 +1759,9 @@ r.post('/org/ensure-user-drive', async (req, res) => {
     if (!(await canAdminAccessUser(req, user_id))) {
       return res.status(403).json({ error: 'Chỉ được mở Drive nhân viên trong công ty của bạn' });
     }
+
+    const contextModule = req.body?.module || req.query?.module || null;
+    await ensureUserDriveModuleAssigned(user_id, { contextModule });
 
     const existing = await supabase
       .from('drive_roots')
