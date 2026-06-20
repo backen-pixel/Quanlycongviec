@@ -1449,7 +1449,7 @@ r.get('/org-tree', async (req, res) => {
     let companyQ = supabase.from('companies').select('id,name').order('name');
     if (!systemAdmin && meCompanyId) companyQ = companyQ.eq('id', meCompanyId);
     let { data: companies = [] } = await companyQ;
-    if (filterModule) {
+    if (filterModule && !systemAdmin) {
       companies = await driveOrgPath.filterCompaniesForDriveModule(companies, filterModule);
     }
     if (!companies.length) return res.json({ my_module: myModuleKey, modules: [], filter_module: filterModule || null });
@@ -1488,8 +1488,8 @@ r.get('/org-tree', async (req, res) => {
       sharedRoots = sharedRootsRes.data || [];
     }
 
-    // Lọc user theo module khi cần
-    if (filterModule) {
+    // Lọc user theo module khi cần (admin hệ thống thấy mọi nhân viên)
+    if (filterModule && !systemAdmin) {
       users = users.filter((u) => (u.drive_module || 'other').toLowerCase() === filterModule);
     }
 
@@ -1575,7 +1575,7 @@ r.get('/org-tree', async (req, res) => {
       }
 
       for (const [moduleKey, modUsers] of byModule.entries()) {
-        if (filterModule && moduleKey !== filterModule) continue;
+        if (filterModule && !systemAdmin && moduleKey !== filterModule) continue;
         const moduleName = driveOrgPath.moduleLabel(moduleKey);
         const mod = ensureBranch(moduleKey, moduleName);
 
