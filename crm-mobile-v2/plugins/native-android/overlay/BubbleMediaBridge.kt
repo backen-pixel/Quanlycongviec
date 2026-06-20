@@ -34,23 +34,22 @@ object BubbleMediaBridge {
     callback = onResult
     suspendedPanelForPick = suspendPanel
     if (suspendPanel) activePanel?.prepareForExternalPicker()
-    val i = Intent(ctx, BubbleMediaPickerActivity::class.java).apply {
-      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-      putExtra(EXTRA_MODE, mode)
+    val launch = {
+      val i = Intent(ctx, BubbleMediaPickerActivity::class.java).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        putExtra(EXTRA_MODE, mode)
+      }
+      ctx.startActivity(i)
     }
-    ctx.startActivity(i)
+    if (suspendPanel) handler.postDelayed({ launch() }, 120) else launch()
   }
 
   internal fun deliver(files: List<BubbleChatApi.PendingFile>) {
-    handler.post {
-      finishPick(files)
-    }
+    handler.post { finishPick(files) }
   }
 
   internal fun cancel() {
-    handler.post {
-      finishPick(emptyList())
-    }
+    handler.post { finishPick(emptyList()) }
   }
 
   private fun finishPick(files: List<BubbleChatApi.PendingFile>) {
@@ -59,24 +58,29 @@ object BubbleMediaBridge {
     val cb = callback
     suspendedPanelForPick = false
     callback = null
-    if (shouldResume) panel?.resumeAfterExternalPicker()
-    cb?.invoke(files)
+
+    fun deliverToPanel() {
+      cb?.invoke(files)
+      if (files.isNotEmpty()) panel?.onPickerFilesDelivered()
+    }
+
+    if (shouldResume && panel != null) {
+      panel.resumeAfterExternalPicker { deliverToPanel() }
+    } else {
+      deliverToPanel()
+    }
   }
 
-  /** Fallback khi Activity picker đóng — đảm bảo panel overlay được gắn lại. */
+  /** Fallback khi Activity picker đóng mà panel vẫn ẩn. */
   internal fun ensurePanelResumedAfterPicker() {
     handler.post {
-      if (!suspendedPanelForPick) {
-        activePanel?.let { panel ->
-          if (panel.isAlive() && !panel.isVisibleOnScreen()) {
-            panel.resumeAfterExternalPicker()
-          }
-        }
-        return@post
+      val panel = activePanel ?: return@post
+      if (suspendedPanelForPick) {
+        suspendedPanelForPick = false
+        panel.resumeAfterExternalPicker(null)
+      } else if (panel.isAlive() && !panel.isVisibleOnScreen()) {
+        panel.resumeAfterExternalPicker(null)
       }
-      suspendedPanelForPick = false
-      activePanel?.resumeAfterExternalPicker()
     }
-    handler.postDelayed({ activePanel?.resumeAfterExternalPicker() }, 200)
   }
 }

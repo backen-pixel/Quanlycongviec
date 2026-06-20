@@ -30,4 +30,18 @@ object FloatingBubbleBridge {
         .emit("BubblePanelOpened", map)
     } catch (_: Exception) { }
   }
+
+  fun emitStartCall(groupId: String, title: String, media: String) {
+    if (groupId.isBlank()) return
+    try {
+      val ctx = reactContext ?: return
+      if (!ctx.hasActiveReactInstance()) return
+      val map = Arguments.createMap()
+      map.putString("groupId", groupId)
+      map.putString("title", title.ifBlank { "Chat" })
+      map.putString("media", if (media == "video") "video" else "audio")
+      ctx.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+        .emit("BubbleStartCall", map)
+    } catch (_: Exception) { }
+  }
 }

@@ -66,6 +66,7 @@ const MENU_GROUPS = [
       { to: '/departments', icon: Building, label: 'Phòng ban' },
       { to: '/teams', icon: Users, label: 'Team' },
       { to: '/users', icon: Users, label: 'Nhân viên' },
+      { to: '/permissions', icon: Shield, label: 'Phân quyền' },
       { to: '/ecosystem-levels', icon: Layers, label: 'Cấp bậc HST' },
     ]
   },
@@ -75,7 +76,6 @@ const MENU_GROUPS = [
     emoji: '⚙️',
     adminOnly: true,
     items: [
-      { to: '/permissions', icon: Shield, label: 'Phân quyền' },
       { to: '/workflow-settings', icon: Settings, label: 'Quy trình & KH' },
       { to: '/approval-rules', icon: Settings, label: 'Quy tắc duyệt' },
       { to: '/settings/pdf', icon: Settings, label: 'Thông tin PDF' },
@@ -149,6 +149,7 @@ const CRM_MENU_BOTTOM_GROUPS = [
       { to: '/crm/kpi/scorecard', icon: ClipboardCheck, label: 'Scorecard KPI tháng', executiveOnly: true },
       { to: '/crm/kpi/settings', icon: Settings, label: 'Cấu hình KPI Tủ bếp', executiveOnly: true },
       { to: '/crm/reports', icon: BarChart3, label: 'Báo cáo', adminOnly: true },
+      { to: '/crm/reports/org-overview', icon: Building2, label: 'BC theo tổ chức', executiveOnly: true },
       { to: '/crm/reports/staff-lead-deal', icon: Users, label: 'BC Lead/Deal theo NV', executiveOnly: true },
       { to: '/crm/admin/sla-watchlist', icon: Timer, label: 'SLA Lead/Deal (quản trị)', executiveOnly: true },
       { to: '/crm/settings/deal-stage-report', icon: LayoutGrid, label: 'Phân loại cột BC Deal', executiveOnly: true },

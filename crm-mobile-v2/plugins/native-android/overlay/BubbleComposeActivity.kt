@@ -272,7 +272,7 @@ class BubbleComposeActivity : Activity() {
         }
       })
     }
-    addOpt("🖼 Thư viện ảnh", BubbleMediaBridge.MODE_GALLERY)
+    addOpt("🖼 Thư viện ảnh (nhiều)", BubbleMediaBridge.MODE_GALLERY)
     addOpt("🎬 Thư viện video", BubbleMediaBridge.MODE_VIDEO)
     addOpt("📎 Tệp tin", BubbleMediaBridge.MODE_FILE)
     addOpt("📷 Chụp ảnh", BubbleMediaBridge.MODE_CAMERA)
@@ -295,8 +295,7 @@ class BubbleComposeActivity : Activity() {
     }
     pendingStrip?.visibility = View.VISIBLE
     pendingFiles.forEachIndexed { idx, f ->
-      val isImage = f.mime.startsWith("image/", ignoreCase = true)
-      if (isImage) {
+      if (f.isImage()) {
         val frame = FrameLayout(this).apply {
           layoutParams = LinearLayout.LayoutParams(dp(76), dp(76)).also { it.marginEnd = dp(8) }
           background = OverlayChatTheme.roundedRect(c.inputBg, 10, ::dp, c.border)
@@ -307,7 +306,10 @@ class BubbleComposeActivity : Activity() {
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT,
           )
-          try { setImageURI(f.uri) } catch (_: Exception) { }
+          try {
+            val bmp = android.graphics.BitmapFactory.decodeFile(f.cachePath)
+            if (bmp != null) setImageBitmap(bmp)
+          } catch (_: Exception) { }
         })
         frame.addView(TextView(this).apply {
           text = "✕"

@@ -32,6 +32,7 @@ class MainActivity : ReactActivity() {
       overridePendingTransition(0, 0)
     }
     stashBubbleChatIntent(intent)
+    stashOutboundCallIntent(intent)
     stashIncomingCallIntent(intent)
     if (lockScreenCallBoot) {
       scheduleLockScreenCallBootUi()
@@ -52,6 +53,7 @@ class MainActivity : ReactActivity() {
       overridePendingTransition(0, 0)
     }
     stashBubbleChatIntent(intent)
+    stashOutboundCallIntent(intent)
     stashIncomingCallIntent(intent)
     if (lockBoot) {
       scheduleLockScreenCallBootUi()
@@ -140,6 +142,27 @@ class MainActivity : ReactActivity() {
     } catch (_: Exception) { }
     intent.removeExtra("bubble_chat")
     FloatingBubbleBridge.emitPanelOpened(groupId, title.ifBlank { "Chat" }, fullApp = true)
+  }
+
+  private fun stashOutboundCallIntent(intent: android.content.Intent?) {
+    if (intent?.getBooleanExtra("outbound_call", false) != true) return
+    val groupId = intent.getStringExtra("group_id")?.trim().orEmpty()
+    if (groupId.isBlank()) return
+    val title = intent.getStringExtra("title")?.trim().orEmpty()
+    val media = intent.getStringExtra("call_media")?.trim().orEmpty().ifBlank { "audio" }
+    try {
+      val obj = org.json.JSONObject()
+      obj.put("groupId", groupId)
+      obj.put("title", title.ifBlank { "Chat" })
+      obj.put("media", if (media == "video") "video" else "audio")
+      obj.put("ts", System.currentTimeMillis())
+      getSharedPreferences(vn.tubeppro.crmobilev2.overlay.OverlayBubbleService.PREF_NAME, MODE_PRIVATE)
+        .edit()
+        .putString(vn.tubeppro.crmobilev2.overlay.OverlayBubbleService.PREF_PENDING_OUTBOUND_CALL, obj.toString())
+        .apply()
+    } catch (_: Exception) { }
+    intent.removeExtra("outbound_call")
+    FloatingBubbleBridge.emitStartCall(groupId, title.ifBlank { "Chat" }, media)
   }
 
   private fun stashIncomingCallIntent(intent: android.content.Intent?) {

@@ -38,6 +38,7 @@ class OverlayChatPanel(
   private val windowManager: WindowManager,
   private val onClosed: () -> Unit,
   private val onExpand: (groupId: String, title: String) -> Unit = { _, _ -> },
+  private val onStartCall: (groupId: String, title: String, media: String) -> Unit = { _, _, _ -> },
 ) {
   private val handler = Handler(Looper.getMainLooper())
   private var panelRoot: FrameLayout? = null
@@ -61,6 +62,7 @@ class OverlayChatPanel(
   private var avatarView: TextView? = null
   private var composerWrap: LinearLayout? = null
   private var popupLayer: FrameLayout? = null
+  private var scrimView: View? = null
   private var panelParams: WindowManager.LayoutParams? = null
   private var groupId = ""
   private var title = ""
@@ -70,8 +72,12 @@ class OverlayChatPanel(
   private var basePanelHeight = 0
   private var panelTopReserve = 0
   private var keyboardLiftPx = 0
+  private var keyboardPollRunnable: Runnable? = null
+  private var pickerBackupParams: WindowManager.LayoutParams? = null
   private var suspendedForPicker = false
   private var suspendedForCompose = false
+  private var loadSeq = 0
+  private var reloadRunnable: Runnable? = null
 
   private val quickReactions = arrayOf("👍", "❤️", "😂", "😮", "😢", "🙏")
 
@@ -104,42 +110,52 @@ class OverlayChatPanel(
     BubbleComposeBridge.registerPanel(this)
   }
 
-  /** Ẩn overlay hoàn toàn khi mở picker hệ thống (Google Photos, camera…). */
+  /** Ẩn panel tạm (không removeView) để picker không bị che. */
   fun prepareForExternalPicker() {
     if (suspendedForPicker || suspendedForCompose) return
     hidePopups()
-    hideKeyboard()
-    val root = panelRoot ?: return
-    try {
-      windowManager.removeView(root)
-      suspendedForPicker = true
-    } catch (_: Exception) { }
+    dismissComposerFocus()
+    panelRoot?.visibility = View.GONE
+    suspendedForPicker = true
   }
 
   fun suspendForExternalPicker() = prepareForExternalPicker()
 
-  fun resumeAfterExternalPicker() {
+  fun resumeAfterExternalPicker(onReady: (() -> Unit)? = null) {
     val wasSuspended = suspendedForPicker
     suspendedForPicker = false
     if (!wasSuspended) {
       ensurePanelAttached()
+      onReady?.invoke()
       return
     }
     if (suspendedForCompose || BubbleComposeBridge.isComposeOpen()) return
-    restorePanelAfterPicker()
+    restorePanelAfterPicker(onReady)
   }
 
-  private fun restorePanelAfterPicker() {
-    fun attempt() {
-      if (suspendedForPicker || suspendedForCompose) return
-      panelRoot?.visibility = View.VISIBLE
-      ensurePanelAttached(force = true)
-      applyKeyboardLift()
+  fun onPickerFilesDelivered() {
+    handler.post {
+      refreshPendingStrip()
+      updateSendButton()
       scrollView?.post { scrollView?.fullScroll(View.FOCUS_DOWN) }
     }
-    attempt()
-    handler.postDelayed({ attempt() }, 120)
-    handler.postDelayed({ attempt() }, 350)
+  }
+
+  private fun restorePanelAfterPicker(onReady: (() -> Unit)? = null) {
+    fun attempt(runCallback: Boolean) {
+      if (suspendedForPicker || suspendedForCompose) return
+      pickerBackupParams = null
+      panelRoot?.visibility = View.VISIBLE
+      ensurePanelAttached(force = true)
+      applyPanelTop(panelTopReserve)
+      applyHeader()
+      refreshPendingStrip()
+      updateSendButton()
+      scrollView?.post { scrollView?.fullScroll(View.FOCUS_DOWN) }
+      if (runCallback) onReady?.invoke()
+    }
+    attempt(false)
+    handler.postDelayed({ attempt(true) }, 80)
   }
 
   /** Ẩn overlay khi mở Activity soạn tin (bàn phím adjustResize). */
@@ -195,6 +211,8 @@ class OverlayChatPanel(
       panelRoot?.viewTreeObserver?.removeOnGlobalLayoutListener(listener)
     }
     keyboardListener = null
+    stopKeyboardPolling()
+    pickerBackupParams = null
     panelRoot?.let {
       try { windowManager.removeView(it) } catch (_: Exception) { }
     }
@@ -210,6 +228,7 @@ class OverlayChatPanel(
     statusView = null
     composerWrap = null
     popupLayer = null
+    scrimView = null
     replyToId = null
     replyToSender = null
     replyToText = null
@@ -219,6 +238,14 @@ class OverlayChatPanel(
     suspendedForCompose = false
     messages.clear()
     onClosed()
+  }
+
+  fun currentGroupId(): String = groupId
+
+  fun reloadMessages() {
+    reloadRunnable?.let { handler.removeCallbacks(it) }
+    reloadRunnable = Runnable { loadConversationAsync() }
+    handler.postDelayed(reloadRunnable!!, 320)
   }
 
   fun seedMessages(json: String) {
@@ -234,21 +261,49 @@ class OverlayChatPanel(
     }
   }
 
-  fun appendIncoming(sender: String, text: String) {
+  fun appendIncoming(sender: String, text: String, messageId: String? = null) {
     if (!isAlive()) return
     handler.post {
-      messages.add(
-        BubbleChatApi.ChatMessage(
-          id = "local-${System.currentTimeMillis()}",
-          userId = "",
-          sender = sender.ifBlank { "Tin nhắn" },
-          text = text.ifBlank { "…" },
-          isMine = false,
-        ),
+      val body = normalizeMsgText(text)
+      if (body.isBlank()) return@post
+      val candidate = BubbleChatApi.ChatMessage(
+        id = messageId?.takeIf { it.isNotBlank() } ?: "local-${System.currentTimeMillis()}",
+        userId = "",
+        sender = sender.ifBlank { "Tin nhắn" },
+        text = body,
+        isMine = false,
       )
+      if (messages.any { isNearDuplicate(it, candidate) }) return@post
+      messages.add(candidate)
       if (messages.size > 80) messages.removeAt(0)
       if (isVisibleOnScreen()) renderMessages()
     }
+  }
+
+  private fun normalizeMsgText(text: String): String {
+    return BubbleChatApi.cleanDisplayText(text).replace(Regex("\\s+"), " ").trim()
+  }
+
+  private fun attachmentSignature(msg: BubbleChatApi.ChatMessage): String {
+    return msg.allAttachments().joinToString("|") { it.url }
+  }
+
+  private fun isNearDuplicate(a: BubbleChatApi.ChatMessage, b: BubbleChatApi.ChatMessage): Boolean {
+    if (a.id.isNotBlank() && a.id == b.id) return true
+    if (attachmentSignature(a) != attachmentSignature(b)) return false
+    if (normalizeMsgText(a.text) != normalizeMsgText(b.text)) return false
+    if (a.isMine != b.isMine) return false
+    if (a.isMine) {
+      if (a.createdAtMs > 0L && b.createdAtMs > 0L) {
+        return kotlin.math.abs(a.createdAtMs - b.createdAtMs) < 120_000L
+      }
+      return true
+    }
+    if (a.sender.trim() != b.sender.trim()) return false
+    if (a.createdAtMs > 0L && b.createdAtMs > 0L) {
+      return kotlin.math.abs(a.createdAtMs - b.createdAtMs) < 60_000L
+    }
+    return true
   }
 
   private fun buildPanel(topReservePx: Int) {
@@ -259,22 +314,33 @@ class OverlayChatPanel(
     val panelH = (dm.heightPixels - topReserve).coerceAtLeast((dm.heightPixels * 0.55f).toInt())
 
     val root = FrameLayout(context)
+
+    val scrim = View(context).apply {
+      setBackgroundColor(Color.argb(110, 0, 0, 0))
+      layoutParams = FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT,
+        FrameLayout.LayoutParams.MATCH_PARENT,
+      )
+      setOnClickListener { hide() }
+    }
+    scrimView = scrim
+    root.addView(scrim)
+
     val sheetBg = OverlayChatTheme.roundedRect(c.bgElevated, 18, ::dp, c.border)
     sheetBg.cornerRadii = floatArrayOf(
       dp(18).toFloat(), dp(18).toFloat(),
       dp(18).toFloat(), dp(18).toFloat(),
       0f, 0f, 0f, 0f,
     )
-    root.background = sheetBg
-    root.elevation = dp(16).toFloat()
-    root.isFocusable = true
-    root.isFocusableInTouchMode = true
 
     val column = LinearLayout(context).apply {
       orientation = LinearLayout.VERTICAL
+      background = sheetBg
+      elevation = dp(16).toFloat()
       layoutParams = FrameLayout.LayoutParams(
         FrameLayout.LayoutParams.MATCH_PARENT,
-        FrameLayout.LayoutParams.MATCH_PARENT,
+        panelH,
+        Gravity.BOTTOM,
       )
     }
     columnRoot = column
@@ -289,28 +355,32 @@ class OverlayChatPanel(
         FrameLayout.LayoutParams.MATCH_PARENT,
       )
       visibility = View.GONE
+      elevation = dp(24).toFloat()
+      isClickable = true
     }
     popupLayer = popup
+    column.addView(popup)
 
     root.addView(column)
-    root.addView(popup)
+
+    panelRoot = root
+    root.isFocusable = true
+    root.isFocusableInTouchMode = true
 
     val params = WindowManager.LayoutParams(
       panelW,
-      panelH,
+      WindowManager.LayoutParams.MATCH_PARENT,
       overlayType(),
       WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
         WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
       android.graphics.PixelFormat.TRANSLUCENT,
     )
-    params.gravity = Gravity.BOTTOM
-    // Không dùng ADJUST_RESIZE — tự đẩy panel lên bằng params.y (tránh panel bị co mất composer).
+    params.gravity = Gravity.TOP or Gravity.START
     params.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
 
-    panelTopReserve = resolveTopReserve(topReservePx)
+    panelTopReserve = topReserve
     basePanelHeight = panelH
     windowManager.addView(root, params)
-    panelRoot = root
     panelParams = params
     installKeyboardWatcher(root)
   }
@@ -440,20 +510,20 @@ class OverlayChatPanel(
         showKeyboard()
       }
       setOnFocusChangeListener { _, hasFocus ->
-        if (hasFocus) {
-          if (keyboardLiftPx <= 0) {
-            keyboardLiftPx = (context.resources.displayMetrics.heightPixels * 0.36f).toInt()
-            applyKeyboardLift()
-          }
-        } else if (!inputView?.text.isNullOrEmpty()) {
-          // giữ lift nếu vẫn có nội dung — tránh nhảy layout
-        } else {
+        if (hasFocus && !sending) {
+          setSoftInputVisible(true)
+          startKeyboardPolling()
+          refreshKeyboardLift()
+        } else if (!hasFocus) {
+          stopKeyboardPolling()
+          setSoftInputVisible(false)
           handler.postDelayed({
             if (inputView?.hasFocus() != true) {
               keyboardLiftPx = 0
               applyKeyboardLift()
+              forceHideKeyboard()
             }
-          }, 120)
+          }, 180)
         }
       }
     }
@@ -520,6 +590,27 @@ class OverlayChatPanel(
     }
     body.addView(titleView)
     body.addView(subtitleView)
+    fun headerBtn(icon: String, onClick: () -> Unit): TextView {
+      return TextView(context).apply {
+        text = icon
+        gravity = Gravity.CENTER
+        setTextColor(c.textMuted)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+        background = OverlayChatTheme.iconButtonBg(c, ::dp)
+        layoutParams = LinearLayout.LayoutParams(dp(38), dp(38)).also { it.marginStart = dp(4) }
+        setOnClickListener { onClick() }
+      }
+    }
+    val callAudio = headerBtn("📞") {
+      val gid = groupId
+      val t = title
+      if (gid.isNotBlank()) onStartCall(gid, t, "audio")
+    }
+    val callVideo = headerBtn("📹") {
+      val gid = groupId
+      val t = title
+      if (gid.isNotBlank()) onStartCall(gid, t, "video")
+    }
     val expand = TextView(context).apply {
       text = "⛶"
       gravity = Gravity.CENTER
@@ -537,6 +628,8 @@ class OverlayChatPanel(
     bar.addView(back)
     bar.addView(avatarView)
     bar.addView(body)
+    bar.addView(callAudio)
+    bar.addView(callVideo)
     bar.addView(expand)
     return LinearLayout(context).apply {
       orientation = LinearLayout.VERTICAL
@@ -603,11 +696,21 @@ class OverlayChatPanel(
 
   private fun showAttachSheet() {
     hidePopups()
+    dismissComposerFocus()
     val popup = popupLayer ?: return
     val c = colors()
     popup.removeAllViews()
     popup.visibility = View.VISIBLE
-    popup.setOnClickListener { hidePopups() }
+
+    val dim = View(context).apply {
+      setBackgroundColor(Color.argb(50, 0, 0, 0))
+      layoutParams = FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT,
+        FrameLayout.LayoutParams.MATCH_PARENT,
+      )
+      setOnClickListener { hidePopups() }
+    }
+    popup.addView(dim)
 
     val sheet = LinearLayout(context).apply {
       orientation = LinearLayout.VERTICAL
@@ -632,18 +735,23 @@ class OverlayChatPanel(
         }
       })
     }
-    addOpt("🖼 Thư viện ảnh", BubbleMediaBridge.MODE_GALLERY)
+    addOpt("🖼 Thư viện ảnh (nhiều)", BubbleMediaBridge.MODE_GALLERY)
     addOpt("🎬 Thư viện video", BubbleMediaBridge.MODE_VIDEO)
     addOpt("📎 Tệp tin", BubbleMediaBridge.MODE_FILE)
     addOpt("📷 Chụp ảnh", BubbleMediaBridge.MODE_CAMERA)
     addOpt("🎥 Quay video", BubbleMediaBridge.MODE_RECORD)
 
+    val composerH = composerWrap?.height?.takeIf { it > 0 } ?: dp(92)
     val lp = FrameLayout.LayoutParams(
       FrameLayout.LayoutParams.MATCH_PARENT,
       FrameLayout.LayoutParams.WRAP_CONTENT,
       Gravity.BOTTOM,
     )
+    lp.bottomMargin = composerH + dp(6)
+    lp.marginStart = dp(10)
+    lp.marginEnd = dp(10)
     popup.addView(sheet, lp)
+    popup.bringToFront()
   }
 
   private fun refreshPendingStrip() {
@@ -657,8 +765,7 @@ class OverlayChatPanel(
     }
     pendingStrip?.visibility = View.VISIBLE
     pendingFiles.forEachIndexed { idx, f ->
-      val isImage = f.mime.startsWith("image/", ignoreCase = true)
-      if (isImage) {
+      if (f.isImage()) {
         val frame = FrameLayout(context).apply {
           layoutParams = LinearLayout.LayoutParams(dp(76), dp(76)).also { it.marginEnd = dp(8) }
           background = OverlayChatTheme.roundedRect(c.inputBg, 10, ::dp, c.border)
@@ -669,7 +776,10 @@ class OverlayChatPanel(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT,
           )
-          try { setImageURI(f.uri) } catch (_: Exception) { }
+          try {
+            val bmp = BitmapFactory.decodeFile(f.cachePath)
+            if (bmp != null) setImageBitmap(bmp)
+          } catch (_: Exception) { }
         })
         frame.addView(TextView(context).apply {
           text = "✕"
@@ -733,13 +843,13 @@ class OverlayChatPanel(
 
     sending = true
     updateSendButton()
-    hideKeyboard()
+    dismissComposerFocus()
 
     val gid = groupId
     val rid = replyToId
     Thread {
       val ok = if (files.isNotEmpty()) {
-        BubbleChatApi.uploadWithFiles(context, gid, files, text, rid)
+        BubbleChatApi.uploadWithFiles(context, gid, files, text.ifBlank { null }, rid)
       } else {
         BubbleChatApi.sendMessage(context, gid, text, rid)
       }
@@ -751,7 +861,8 @@ class OverlayChatPanel(
           refreshPendingStrip()
           clearReplyTo()
           updateSendButton()
-          loadConversationAsync()
+          dismissComposerFocus()
+          reloadMessages()
         } else {
           updateSendButton()
           inputView?.error = "Gửi thất bại"
@@ -760,49 +871,129 @@ class OverlayChatPanel(
     }.start()
   }
 
+  /** Đóng bàn phím và bỏ focus ô nhập sau khi gửi xong. */
+  private fun dismissComposerFocus() {
+    stopKeyboardPolling()
+    keyboardLiftPx = 0
+    applyKeyboardLift()
+    setSoftInputVisible(false)
+    forceHideKeyboard()
+    inputView?.clearFocus()
+    panelRoot?.requestFocus()
+    handler.postDelayed({ forceHideKeyboard() }, 60)
+    handler.postDelayed({ forceHideKeyboard() }, 180)
+  }
+
+  private fun setSoftInputVisible(visible: Boolean) {
+    val params = panelParams ?: return
+    val root = panelRoot ?: return
+    params.softInputMode = if (visible) {
+      WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE or
+        WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
+    } else {
+      WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN or
+        WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
+    }
+    try {
+      windowManager.updateViewLayout(root, params)
+    } catch (_: Exception) { }
+  }
+
+  private fun forceHideKeyboard() {
+    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+    inputView?.windowToken?.let { imm?.hideSoftInputFromWindow(it, 0) }
+    panelRoot?.windowToken?.let { imm?.hideSoftInputFromWindow(it, 0) }
+    try {
+      imm?.hideSoftInputFromWindow(null, 0)
+    } catch (_: Exception) { }
+  }
+
   private fun showKeyboard() {
     val input = inputView ?: return
     input.requestFocus()
     val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
     imm?.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+    startKeyboardPolling()
+    handler.postDelayed({ refreshKeyboardLift() }, 80)
+    handler.postDelayed({ refreshKeyboardLift() }, 220)
+    handler.postDelayed({ refreshKeyboardLift() }, 450)
   }
 
   private fun hideKeyboard() {
-    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-    inputView?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
-    keyboardLiftPx = 0
-    applyKeyboardLift()
+    dismissComposerFocus()
   }
 
-  /** Đẩy panel lên trên bàn phím — giữ composer luôn nhìn thấy, không thu nhỏ overlay. */
+  private fun startKeyboardPolling() {
+    if (keyboardPollRunnable != null) return
+    keyboardPollRunnable = object : Runnable {
+      override fun run() {
+        if (inputView?.hasFocus() == true) {
+          refreshKeyboardLift()
+          handler.postDelayed(this, 120)
+        } else {
+          keyboardPollRunnable = null
+        }
+      }
+    }
+    handler.post(keyboardPollRunnable!!)
+  }
+
+  private fun stopKeyboardPolling() {
+    keyboardPollRunnable?.let { handler.removeCallbacks(it) }
+    keyboardPollRunnable = null
+  }
+
+  /** Ước lượng chiều cao bàn phím — overlay không luôn nhận WindowInsets. */
+  private fun refreshKeyboardLift() {
+    val input = inputView ?: return
+    if (!input.hasFocus()) return
+    val dm = context.resources.displayMetrics
+    val screenH = dm.heightPixels
+    val rect = Rect()
+    panelRoot?.getWindowVisibleDisplayFrame(rect)
+    val visibleBottom = if (rect.bottom > 0) rect.bottom else screenH
+    val frameKb = (screenH - visibleBottom).coerceAtLeast(0)
+
+    val loc = IntArray(2)
+    input.getLocationOnScreen(loc)
+    val inputBottom = loc[1] + input.height + dp(16)
+    val overlap = (inputBottom - visibleBottom).coerceAtLeast(0)
+
+    val estimated = when {
+      frameKb > screenH * 0.12 -> frameKb
+      overlap > dp(8) -> overlap + dp(72)
+      else -> (screenH * 0.36f).toInt()
+    }
+    keyboardLiftPx = estimated.coerceIn(0, (screenH * 0.55f).toInt())
+    applyKeyboardLift()
+    scrollView?.post { scrollView?.fullScroll(View.FOCUS_DOWN) }
+  }
+
+  /** Đẩy sheet chat lên trên bàn phím. */
   private fun applyKeyboardLift() {
-    val root = panelRoot ?: return
-    val params = panelParams ?: return
+    val column = columnRoot ?: return
     if (suspendedForPicker || suspendedForCompose) return
+    val lp = column.layoutParams as? FrameLayout.LayoutParams ?: return
 
     val dm = context.resources.displayMetrics
     val screenH = dm.heightPixels
     val lift = keyboardLiftPx.coerceAtLeast(0)
-    val availH = (screenH - lift - panelTopReserve).coerceAtLeast(dp(240))
+    val composerMin = dp(120)
+    val availH = (screenH - lift - panelTopReserve).coerceAtLeast(composerMin + dp(80))
     val targetH = basePanelHeight.coerceAtMost(availH)
-    val changed = params.y != lift || params.height != targetH
-    if (!changed) return
-    params.y = lift
-    params.height = targetH
-    try { windowManager.updateViewLayout(root, params) } catch (_: Exception) { }
+    if (lp.height == targetH && lp.bottomMargin == lift) return
+    lp.height = targetH
+    lp.gravity = Gravity.BOTTOM
+    lp.bottomMargin = lift
+    column.layoutParams = lp
+    composerWrap?.post { composerWrap?.requestLayout() }
     scrollView?.post { scrollView?.fullScroll(View.FOCUS_DOWN) }
   }
 
   private fun installKeyboardWatcher(root: FrameLayout) {
-    val dm = context.resources.displayMetrics
     keyboardListener = ViewTreeObserver.OnGlobalLayoutListener {
       if (suspendedForPicker || suspendedForCompose) return@OnGlobalLayoutListener
-      val rect = Rect()
-      root.getWindowVisibleDisplayFrame(rect)
-      val screenH = dm.heightPixels
-      val keyboardH = (screenH - rect.bottom).coerceAtLeast(0)
-      keyboardLiftPx = if (keyboardH > screenH * 0.12) keyboardH else 0
-      applyKeyboardLift()
+      if (inputView?.hasFocus() == true) refreshKeyboardLift()
     }
     root.viewTreeObserver.addOnGlobalLayoutListener(keyboardListener)
   }
@@ -851,14 +1042,16 @@ class OverlayChatPanel(
     card.addView(reactRow)
 
     val loc = IntArray(2)
-    anchor.getLocationInWindow(loc)
+    val popupLoc = IntArray(2)
+    anchor.getLocationOnScreen(loc)
+    popup.getLocationOnScreen(popupLoc)
     val lp = FrameLayout.LayoutParams(
       FrameLayout.LayoutParams.WRAP_CONTENT,
       FrameLayout.LayoutParams.WRAP_CONTENT,
     )
     lp.gravity = Gravity.TOP or Gravity.START
-    lp.topMargin = (loc[1] - dp(80)).coerceAtLeast(dp(60))
-    lp.marginStart = dp(20)
+    lp.topMargin = (loc[1] - popupLoc[1] - dp(80)).coerceAtLeast(dp(12))
+    lp.marginStart = (loc[0] - popupLoc[0]).coerceAtLeast(dp(12))
     popup.addView(card, lp)
   }
 
@@ -895,12 +1088,13 @@ class OverlayChatPanel(
     val c = colors()
     val maxBubbleW = (panelRoot?.width?.takeIf { it > 0 } ?: context.resources.displayMetrics.widthPixels) * 0.78f
     wrap.removeAllViews()
-    var lastSenderId: String? = null
+    var lastSenderKey: String? = null
     for (msg in messages) {
-      val showAvatar = isGroupChat && !msg.isMine && msg.userId != lastSenderId
-      val showSenderName = isGroupChat && !msg.isMine && msg.userId != lastSenderId
+      val senderKey = senderKey(msg)
+      val showAvatar = shouldShowMessageAvatars() && !msg.isMine && senderKey != lastSenderKey
+      val showSenderName = shouldShowMessageAvatars() && !msg.isMine && senderKey != lastSenderKey
       wrap.addView(buildMessageRow(msg, c, maxBubbleW.toInt(), showAvatar, showSenderName))
-      if (!msg.isMine) lastSenderId = msg.userId else lastSenderId = null
+      if (!msg.isMine) lastSenderKey = senderKey else lastSenderKey = null
     }
     scrollView?.post { scrollView?.fullScroll(View.FOCUS_DOWN) }
   }
@@ -930,7 +1124,7 @@ class OverlayChatPanel(
           it.topMargin = dp(18)
         }
       })
-    } else if (isGroupChat && !msg.isMine) {
+    } else if (shouldShowMessageAvatars() && !msg.isMine) {
       row.addView(View(context).apply {
         layoutParams = LinearLayout.LayoutParams(dp(42), 1)
       })
@@ -990,21 +1184,11 @@ class OverlayChatPanel(
       bubbleCol.addView(quote)
     }
 
-    val isImage = msg.messageType.contains("image", true) ||
-      (msg.attachmentUrl != null && msg.text.contains("Hình ảnh"))
-    if (isImage && !msg.attachmentUrl.isNullOrBlank()) {
-      val img = ImageView(context).apply {
-        adjustViewBounds = true
-        maxWidth = maxBubbleW
-        layoutParams = LinearLayout.LayoutParams(maxBubbleW, LinearLayout.LayoutParams.WRAP_CONTENT)
-      }
-      bubbleCol.addView(img)
-      loadImageAsync(msg.attachmentUrl!!, img)
-      if (msg.text.isNotBlank() && !msg.text.contains("Hình ảnh")) {
-        bubbleCol.addView(textView(msg.text, msg.isMine, c, maxBubbleW))
-      }
-    } else {
-      bubbleCol.addView(textView(msg.text, msg.isMine, c, maxBubbleW))
+    appendMediaToBubble(bubbleCol, msg, c, maxBubbleW)
+
+    val caption = mediaCaption(msg)
+    if (caption.isNotBlank()) {
+      bubbleCol.addView(textView(caption, msg.isMine, c, maxBubbleW))
     }
 
     if (msg.createdAtMs > 0L) {
@@ -1054,6 +1238,144 @@ class OverlayChatPanel(
     return row
   }
 
+  private fun senderKey(msg: BubbleChatApi.ChatMessage): String {
+    return msg.userId.ifBlank { msg.sender }.trim().ifBlank { msg.sender }
+  }
+
+  /** Hiện avatar/tên khi có ≥2 người tham gia chat (kể cả mình). */
+  private fun shouldShowMessageAvatars(): Boolean {
+    if (isDirect) return false
+    val senders = messages.map { senderKey(it) }.distinct()
+    return senders.size >= 2
+  }
+
+  private fun isPlaceholderMediaText(text: String): Boolean {
+    val t = text.trim()
+    if (t.isBlank() || t.equals("null", ignoreCase = true)) return true
+    return t.startsWith("📷") || t.startsWith("🎬") || t.startsWith("📎") ||
+      t.startsWith("🖼") || t.contains("Hình ảnh", true) || t.contains("Video", true) ||
+      t.contains("đính kèm", true) || t.contains("Tệp", true)
+  }
+
+  /** Chỉ hiện caption khi tin có đính kèm và content không phải placeholder. */
+  private fun mediaCaption(msg: BubbleChatApi.ChatMessage): String {
+    if (msg.allAttachments().isEmpty()) return ""
+    val text = msg.text.trim()
+    if (text.isBlank() || isPlaceholderMediaText(text)) return ""
+    return text
+  }
+
+  private fun appendMediaToBubble(
+    bubbleCol: LinearLayout,
+    msg: BubbleChatApi.ChatMessage,
+    c: OverlayChatTheme.Palette,
+    maxBubbleW: Int,
+  ) {
+    val atts = msg.allAttachments()
+    if (atts.isEmpty()) {
+      if (msg.text.isNotBlank()) {
+        bubbleCol.addView(textView(msg.text, msg.isMine, c, maxBubbleW))
+      }
+      return
+    }
+    for ((idx, att) in atts.withIndex()) {
+      appendSingleAttachment(bubbleCol, att, msg, c, maxBubbleW, idx < atts.lastIndex)
+    }
+  }
+
+  private fun appendSingleAttachment(
+    bubbleCol: LinearLayout,
+    att: BubbleChatApi.MediaAttachment,
+    msg: BubbleChatApi.ChatMessage,
+    c: OverlayChatTheme.Palette,
+    maxBubbleW: Int,
+    addGap: Boolean,
+  ) {
+    val url = att.url
+    if (url.isBlank()) return
+    val mime = att.mime?.lowercase().orEmpty()
+    val name = att.name?.lowercase().orEmpty()
+    val isImage = mime.startsWith("image/") ||
+      Regex("\\.(jpe?g|png|gif|webp|bmp|heic|avif)(\\?|$)", RegexOption.IGNORE_CASE)
+        .containsMatchIn(url) ||
+      Regex("\\.(jpe?g|png|gif|webp|bmp|heic|avif)(\\?|$)", RegexOption.IGNORE_CASE)
+        .containsMatchIn(name)
+    val isVideo = mime.startsWith("video/") ||
+      Regex("\\.(mp4|mov|webm|mkv|avi)(\\?|$)", RegexOption.IGNORE_CASE).containsMatchIn(url) ||
+      Regex("\\.(mp4|mov|webm|mkv|avi)(\\?|$)", RegexOption.IGNORE_CASE).containsMatchIn(name)
+
+    when {
+      isImage -> {
+        val img = ImageView(context).apply {
+          adjustViewBounds = true
+          maxWidth = maxBubbleW
+          minimumHeight = dp(120)
+          scaleType = ImageView.ScaleType.CENTER_CROP
+          layoutParams = LinearLayout.LayoutParams(maxBubbleW, dp(180)).also {
+            if (addGap) it.bottomMargin = dp(4)
+          }
+        }
+        bubbleCol.addView(img)
+        loadImageAsync(url, img)
+      }
+      isVideo -> {
+        val frame = FrameLayout(context).apply {
+          background = OverlayChatTheme.roundedRect(c.inputBg, 10, ::dp, c.border)
+          layoutParams = LinearLayout.LayoutParams(maxBubbleW, dp(160)).also {
+            if (addGap) it.bottomMargin = dp(4)
+          }
+        }
+        val thumb = ImageView(context).apply {
+          scaleType = ImageView.ScaleType.CENTER_CROP
+          layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT,
+          )
+        }
+        frame.addView(thumb)
+        frame.addView(TextView(context).apply {
+          text = "▶"
+          gravity = Gravity.CENTER
+          setTextColor(Color.WHITE)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
+          setShadowLayer(6f, 0f, 2f, Color.argb(180, 0, 0, 0))
+          layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT,
+          )
+        })
+        frame.addView(TextView(context).apply {
+          text = att.name?.take(28) ?: msg.attachmentName?.take(28) ?: "Video"
+          setTextColor(Color.WHITE)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+          setPadding(dp(8), 0, dp(8), dp(6))
+          layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM,
+          )
+        })
+        bubbleCol.addView(frame)
+        loadImageAsync(url, thumb)
+      }
+      else -> {
+        val name = att.name?.take(40) ?: msg.attachmentName?.take(40) ?: "Tệp đính kèm"
+        bubbleCol.addView(TextView(context).apply {
+          text = "📎 $name"
+          setTextColor(if (msg.isMine) Color.WHITE else c.text)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+          setPadding(dp(4), dp(4), dp(4), dp(4))
+          layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+          ).also {
+            if (addGap) it.bottomMargin = dp(4)
+          }
+        })
+      }
+    }
+  }
+
   private fun textView(text: String, mine: Boolean, c: OverlayChatTheme.Palette, maxW: Int): TextView {
     return TextView(context).apply {
       this.text = text
@@ -1068,15 +1390,24 @@ class OverlayChatPanel(
     val full = absoluteMediaUrl(url)
     Thread {
       try {
-        val conn = URL(full).openConnection()
+        val conn = URL(full).openConnection() as java.net.HttpURLConnection
         conn.connectTimeout = 8000
         conn.readTimeout = 8000
-        val bmp = conn.getInputStream().use { BitmapFactory.decodeStream(it) }
+        authHeader()?.let { conn.setRequestProperty("Authorization", it) }
+        val code = conn.responseCode
+        if (code !in 200..299) return@Thread
+        val bmp = conn.inputStream.use { BitmapFactory.decodeStream(it) }
         handler.post {
           if (bmp != null) target.setImageBitmap(bmp)
         }
       } catch (_: Exception) { }
     }.start()
+  }
+
+  private fun authHeader(): String? {
+    val token = context.getSharedPreferences(OverlayBubbleService.PREF_NAME, Context.MODE_PRIVATE)
+      .getString("auth_token", null)?.trim().orEmpty()
+    return if (token.isBlank()) null else "Bearer $token"
   }
 
   private fun absoluteMediaUrl(raw: String): String {
@@ -1087,27 +1418,44 @@ class OverlayChatPanel(
   }
 
   private fun applyPanelTop(topReservePx: Int) {
-    val root = panelRoot ?: return
-    val params = panelParams ?: return
+    val column = columnRoot ?: return
     val dm = context.resources.displayMetrics
     panelTopReserve = resolveTopReserve(topReservePx)
     val panelH = (dm.heightPixels - panelTopReserve).coerceAtLeast((dm.heightPixels * 0.55f).toInt())
     basePanelHeight = panelH
     keyboardLiftPx = 0
-    params.y = 0
-    params.height = panelH
-    try { windowManager.updateViewLayout(root, params) } catch (_: Exception) { }
+    val lp = column.layoutParams as? FrameLayout.LayoutParams ?: return
+    lp.height = panelH
+    lp.bottomMargin = 0
+    lp.gravity = Gravity.BOTTOM
+    column.layoutParams = lp
+  }
+
+  private fun dedupeMessages(rows: List<BubbleChatApi.ChatMessage>): List<BubbleChatApi.ChatMessage> {
+    val out = ArrayList<BubbleChatApi.ChatMessage>(rows.size)
+    for (m in rows) {
+      if (out.any { isNearDuplicate(it, m) }) continue
+      out.add(m)
+    }
+    return out.filterNot { local ->
+      local.id.startsWith("local-") &&
+        out.any { !it.id.startsWith("local-") && isNearDuplicate(local, it) }
+    }
   }
 
   private fun loadConversationAsync() {
-    statusView?.visibility = View.VISIBLE
-    statusView?.text = "Đang tải tin nhắn…"
+    val seq = ++loadSeq
     val gid = groupId
+    val hadMessages = messages.isNotEmpty()
+    if (!hadMessages) {
+      statusView?.visibility = View.VISIBLE
+      statusView?.text = "Đang tải tin nhắn…"
+    }
     Thread {
       val meta = BubbleChatApi.fetchGroupMeta(context, gid)
       val rows = BubbleChatApi.fetchMessages(context, gid)
       handler.post {
-        if (gid != groupId || panelRoot == null) return@post
+        if (seq != loadSeq || gid != groupId || panelRoot == null) return@post
         if (meta != null) {
           title = meta.name.ifBlank { title }
           isDirect = meta.isDirect
@@ -1121,7 +1469,7 @@ class OverlayChatPanel(
           statusView?.visibility = View.GONE
         }
         messages.clear()
-        messages.addAll(rows)
+        messages.addAll(dedupeMessages(rows))
         renderMessages()
       }
     }.start()

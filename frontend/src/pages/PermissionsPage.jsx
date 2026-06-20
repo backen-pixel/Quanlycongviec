@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Shield, Plus, Check, X, Save, Settings, Building2 } from 'lucide-react';
+import { Shield, Plus, Check, X, Save, Settings, Building2, Users } from 'lucide-react';
 import api from '../lib/api';
 import EcosystemPermissionsTab from '../components/EcosystemPermissionsTab';
+import UserPermissionsTab from '../components/UserPermissionsTab';
+import RolePermissionsTab from '../components/RolePermissionsTab';
 
 // Vietnamese labels for resources
 const RESOURCE_LABELS = {
@@ -58,21 +60,15 @@ const PERMISSION_DESCRIPTIONS = {
 };
 
 export default function PermissionsPage() {
-  const [activeTab, setActiveTab] = useState('roles'); // 'roles' | 'ecosystem'
+  const [activeTab, setActiveTab] = useState('users'); // 'users' | 'roles' | 'ecosystem'
   const [roles, setRoles] = useState([]);
-  const [permissions, setPermissions] = useState({ permissions: [], grouped: {} });
-  const [selectedRole, setSelectedRole] = useState(null);
-  const [rolePermissions, setRolePermissions] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [showCreateRole, setShowCreateRole] = useState(false);
-  
-  // For ecosystem tab
   const [users, setUsers] = useState([]);
 
   useEffect(() => {
     load();
-    loadAllUsers(); // For ecosystem tab
+    loadAllUsers();
   }, []);
 
   const loadAllUsers = async () => {
@@ -87,101 +83,12 @@ export default function PermissionsPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [rolesRes, permsRes] = await Promise.all([
-        api.get('/permissions/roles'),
-        api.get('/permissions/permissions'),
-      ]);
-      setRoles(rolesRes.data.roles || []);
-      setPermissions(permsRes.data);
+      const { data } = await api.get('/permissions/roles');
+      setRoles(data.roles || []);
     } catch (e) {
       console.error('Load permissions error:', e);
     }
     setLoading(false);
-  };
-
-  const loadEcosystemData = async () => {
-    try {
-      const [deptRes, compRes, divRes] = await Promise.all([
-        api.get('/users/departments'),
-        api.get('/ecosystem/units?level=2'), // Companies
-        api.get('/ecosystem/units?level=1'), // Divisions
-      ]);
-      
-      setDepartments(deptRes.data.departments || []);
-      
-      // Companies from ecosystem
-      const companyUnits = compRes.data.units || [];
-      setCompanies(companyUnits.map(u => ({
-        id: u.company_id,
-        name: u.name,
-        division_unit_id: u.parent_id,
-        unit_id: u.id,
-      })).filter(c => c.id));
-      
-      setDivisions(divRes.data.units || []);
-    } catch (e) {
-      console.error('Load ecosystem data error:', e);
-    }
-  };
-
-  const loadUsers = async () => {
-    setLoadingUsers(true);
-    try {
-      const params = {};
-      
-      if (filterDivision) {
-        params.ecosystem_unit_id = filterDivision;
-      } else if (filterCompany) {
-        params.company_id = filterCompany;
-      }
-      
-      if (filterDept) {
-        params.department_id = filterDept;
-      }
-      
-      const { data } = await api.get('/users', { params });
-      setUsers(data.users || []);
-    } catch (e) {
-      console.error('Load users error:', e);
-    }
-    setLoadingUsers(false);
-  };
-
-  const loadRolePermissions = async (roleId) => {
-    try {
-      const { data } = await api.get(`/permissions/roles/${roleId}`);
-      setRolePermissions(data.role.permissions || []);
-      setSelectedRole(data.role);
-    } catch (e) {
-      console.error('Load role permissions error:', e);
-    }
-  };
-
-  const togglePermission = (permissionId) => {
-    setRolePermissions(prev => {
-      const exists = prev.find(p => p.id === permissionId);
-      if (exists) {
-        return prev.filter(p => p.id !== permissionId);
-      } else {
-        const perm = permissions.permissions.find(p => p.id === permissionId);
-        return [...prev, perm];
-      }
-    });
-  };
-
-  const saveRolePermissions = async () => {
-    if (!selectedRole) return;
-    setSaving(true);
-    try {
-      await api.put(`/permissions/roles/${selectedRole.id}/permissions`, {
-        permission_ids: rolePermissions.map(p => p.id),
-      });
-      alert('✅ Đã lưu phân quyền');
-      await load();
-    } catch (e) {
-      alert('Lỗi: ' + (e.response?.data?.error || e.message));
-    }
-    setSaving(false);
   };
 
   if (loading) {
@@ -201,7 +108,7 @@ export default function PermissionsPage() {
             <Shield className="h-5 w-5 text-purple-600" /> Phân Quyền Hệ Thống
           </h1>
           <p className="text-xs text-gray-500 mt-0.5">
-            Quản lý vai trò, quyền hạn và phân quyền phân cấp hệ sinh thái
+            Bật/tắt quyền theo module — phân quyền một hoặc nhiều nhân viên cùng lúc
           </p>
         </div>
         {activeTab === 'roles' && (
@@ -217,6 +124,17 @@ export default function PermissionsPage() {
       {/* Tabs */}
       <div className="flex gap-2 border-b">
         <button
+          onClick={() => setActiveTab('users')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'users'
+              ? 'border-purple-600 text-purple-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Users className="h-4 w-4 inline mr-2" />
+          Phân quyền nhân viên
+        </button>
+        <button
           onClick={() => setActiveTab('roles')}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
             activeTab === 'roles'
@@ -225,7 +143,7 @@ export default function PermissionsPage() {
           }`}
         >
           <Settings className="h-4 w-4 inline mr-2" />
-          Vai trò & Quyền hạn
+          Vai trò mẫu
         </button>
         <button
           onClick={() => setActiveTab('ecosystem')}
@@ -236,22 +154,15 @@ export default function PermissionsPage() {
           }`}
         >
           <Building2 className="h-4 w-4 inline mr-2" />
-          Phân quyền chi tiết
+          Phân quyền chi tiết (HST)
         </button>
       </div>
 
       {/* Tab Content */}
-      {activeTab === 'roles' ? (
-        <RolesTab
-          roles={roles}
-          permissions={permissions}
-          selectedRole={selectedRole}
-          rolePermissions={rolePermissions}
-          saving={saving}
-          onSelectRole={loadRolePermissions}
-          onTogglePermission={togglePermission}
-          onSave={saveRolePermissions}
-        />
+      {activeTab === 'users' ? (
+        <UserPermissionsTab users={users} roles={roles} />
+      ) : activeTab === 'roles' ? (
+        <RolePermissionsTab roles={roles} />
       ) : (
         <EcosystemPermissionsTab users={users} />
       )}

@@ -11,6 +11,7 @@ import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import CreateMenuSheet from './src/components/CreateMenuSheet';
 import BubbleChatOverlayLauncher from './src/components/BubbleChatOverlayLauncher';
+import BubbleOutboundCallHandler from './src/components/BubbleOutboundCallHandler';
 import SystemBubbleSync from './src/components/SystemBubbleSync';
 import PermissionBootstrap from './src/components/PermissionBootstrap';
 import VoiceSyncRunner from './src/components/VoiceSyncRunner';
@@ -135,6 +136,7 @@ function Gate() {
               <PermissionBootstrap />
               <SystemBubbleSync />
               <BubbleChatOverlayLauncher />
+              <BubbleOutboundCallHandler />
               <VoiceSyncRunner />
             </View>
             </FileActionsProvider>
