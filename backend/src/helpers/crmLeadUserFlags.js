@@ -119,8 +119,45 @@ async function setLeadFlag(userId, leadId, patch) {
   return data;
 }
 
+function resolvePrimaryCrmLeadIdFromProject(project) {
+  const deals = Array.isArray(project?.crm_deals) ? project.crm_deals : [];
+  const deal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0];
+  return deal?.id ? String(deal.id) : null;
+}
+
+/** Gắn cờ ghim/tương tác per-user từ deal CRM liên kết project SX. */
+async function attachLeadUserFlagsToProjects(projects, userId) {
+  if (!Array.isArray(projects) || projects.length === 0) return projects;
+  if (!userId) {
+    return projects.map((p) => ({
+      ...p,
+      crm_lead_id: resolvePrimaryCrmLeadIdFromProject(p),
+      is_pinned: false,
+      pinned_at: null,
+      is_interacted: false,
+      interacted_at: null,
+    }));
+  }
+  const leadIds = projects.map(resolvePrimaryCrmLeadIdFromProject).filter(Boolean);
+  const flags = await fetchFlagsByLeadIds(userId, leadIds);
+  return projects.map((p) => {
+    const leadId = resolvePrimaryCrmLeadIdFromProject(p);
+    const f = leadId ? flags.get(String(leadId)) : null;
+    return {
+      ...p,
+      crm_lead_id: leadId,
+      is_pinned: f?.is_pinned ?? false,
+      pinned_at: f?.pinned_at ?? null,
+      is_interacted: f?.is_interacted ?? false,
+      interacted_at: f?.interacted_at ?? null,
+    };
+  });
+}
+
 module.exports = {
   fetchFlagsByLeadIds,
   attachLeadUserFlagsForList,
+  attachLeadUserFlagsToProjects,
+  resolvePrimaryCrmLeadIdFromProject,
   setLeadFlag,
 };

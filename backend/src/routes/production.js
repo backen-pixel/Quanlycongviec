@@ -27,6 +27,7 @@ const {
   getDbIntakeStageId,
 } = require('../helpers/workshopKanban');
 const { attachCrmProductionTaskStatsToProjects } = require('../helpers/crmProductionTaskStats');
+const { attachLeadUserFlagsToProjects } = require('../helpers/crmLeadUserFlags');
 const { applyProductionCompanyScopeFilter, getExecutorProjectIdsForCompany } = require('../helpers/crossCompanyWorkspace');
 const {
   userNeedsParticipantOnlyProductionScopeForWorkshop,
@@ -1307,12 +1308,13 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       is_production_overdue: Boolean(project.production_deadline && new Date(project.production_deadline) < new Date() && project.status !== 'completed'),
     }));
     const enhanced = await attachCrmProductionTaskStatsToProjects(workflowProjects);
+    const withUserFlags = await attachLeadUserFlagsToProjects(enhanced, req.user?.userId);
 
     res.json({
-      projects: enhanced,
-      total: count || enhanced.length,
+      projects: withUserFlags,
+      total: count || withUserFlags.length,
       page: parsedPage,
-      totalPages: Math.ceil((count || enhanced.length) / parsedLimit),
+      totalPages: Math.ceil((count || withUserFlags.length) / parsedLimit),
       won_deal_project_ids: wonIds,
     });
   } catch (e) {

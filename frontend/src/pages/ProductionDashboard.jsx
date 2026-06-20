@@ -160,6 +160,24 @@ const SX_SORT_OPTIONS_VISIBLE = HIDE_PRODUCTION_DEAL_VALUES
   ? SX_SORT_OPTIONS.filter((o) => o.id !== 'value_desc' && o.id !== 'value_asc')
   : SX_SORT_OPTIONS;
 
+function resolveSxProjectLeadId(project) {
+  if (project?.crm_lead_id) return String(project.crm_lead_id);
+  const deals = Array.isArray(project?.crm_deals) ? project.crm_deals : [];
+  const deal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0];
+  return deal?.id ? String(deal.id) : null;
+}
+
+function prioritizePinnedProjects(items) {
+  if (!Array.isArray(items) || items.length < 2) return items || [];
+  const pinned = [];
+  const rest = [];
+  for (const it of items) {
+    if (it?.is_pinned) pinned.push(it);
+    else rest.push(it);
+  }
+  return pinned.length ? pinned.concat(rest) : items;
+}
+
 function sortProjectsBy(items, sortBy) {
   if (!Array.isArray(items) || items.length === 0) return items || [];
   const cloned = [...items];
@@ -767,6 +785,9 @@ export default function ProductionDashboard() {
         ];
 
     const sortSxItems = (a, b) => {
+      const aPin = !!a?.is_pinned;
+      const bPin = !!b?.is_pinned;
+      if (aPin !== bPin) return aPin ? -1 : 1;
       const aFromCrm = !!a?.sx_intake;
       const bFromCrm = !!b?.sx_intake;
       if (aFromCrm !== bFromCrm) return aFromCrm ? -1 : 1;
@@ -850,7 +871,7 @@ export default function ProductionDashboard() {
   const filteredKanbanPipeline = useMemo(() => {
     const result = kanbanPipeline.map((stage) => ({
       ...stage,
-      items: sortProjectsBy(
+      items: prioritizePinnedProjects(sortProjectsBy(
         stage.items.filter((project) => {
           if (searchQuery) {
             const q = searchQuery.toLowerCase();
@@ -866,7 +887,7 @@ export default function ProductionDashboard() {
           return true;
         }),
         sortBy,
-      ),
+      )),
     }));
     filteredKanbanPipelineRef.current = result;
     return result;
@@ -1060,6 +1081,32 @@ export default function ProductionDashboard() {
       column_sla_overdue: columnSlaOverdue,
     };
   }, [scopeProjects, kpis, pipeline]);
+
+  const togglePinFlag = useCallback(async (item, next) => {
+    const leadId = resolveSxProjectLeadId(item);
+    if (!leadId || !item?.id) {
+      alert('Không tìm thấy deal CRM liên kết — không thể ghim thẻ này.');
+      return;
+    }
+    const projectId = item.id;
+    const patch = {
+      is_pinned: !!next,
+      pinned_at: next ? new Date().toISOString() : null,
+      crm_lead_id: leadId,
+    };
+    setProjects((prev) => prev.map((p) => (String(p.id) === String(projectId) ? { ...p, ...patch } : p)));
+    try {
+      if (next) await api.post(`/crm/leads/${leadId}/pin`);
+      else await api.delete(`/crm/leads/${leadId}/pin`);
+    } catch (e) {
+      setProjects((prev) => prev.map((p) => (
+        String(p.id) === String(projectId)
+          ? { ...p, is_pinned: !next, pinned_at: next ? null : p.pinned_at }
+          : p
+      )));
+      alert(e.response?.data?.error || 'Không ghim được thẻ');
+    }
+  }, []);
 
   const executeStageMove = useCallback(async (projectId, targetCol, { deadlineIso, reason } = {}) => {
     const current = projects.find((p) => String(p.id) === String(projectId));
@@ -2019,6 +2066,7 @@ export default function ProductionDashboard() {
               }
             }}
             onOpenDeadline={openDeadlineFromCard}
+            onTogglePin={togglePinFlag}
             remeasureToken={showAdvFilter ? 'adv-on' : 'adv-off'} />
         )}
 
@@ -2350,7 +2398,7 @@ function KPICard({ accent = 'bg-blue-500', label, value, descriptor, valueTone }
 }
 
 // ── KANBAN STAGE CARD — header tối giản (dot + tên + count + total) ────────
-function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline }) {
+function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline, onTogglePin }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const stageColor = stage.color || '#94a3b8';
   const totalValue = items.reduce((sum, p) => sum + (Number(p.production_value) || 0), 0);
@@ -2453,7 +2501,8 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
             <KanbanCard key={item.id} item={item} stage={stage} calculateDays={calculateDays}
               isSelected={selectedIds?.has(item.id)} onToggleSelect={onToggleSelect}
               onHandoverVC={onHandoverVC} onOpenKanbanComment={onOpenKanbanComment}
-              workTypes={workTypes} onSetWorkType={onSetWorkType} onOpenDeadline={onOpenDeadline} />
+              workTypes={workTypes} onSetWorkType={onSetWorkType} onOpenDeadline={onOpenDeadline}
+              onTogglePin={onTogglePin} />
           ))
         )}
       </div>
@@ -2462,16 +2511,10 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
 }
 
 // ── KANBAN ITEM CARD (y hệt CRM KanbanCard) ─────────────────────────────────
-function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline }) {
+function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline, onTogglePin }) {
   const navigate = useNavigate();
   const [handingOver, setHandingOver] = useState(false);
-  const [localPinned, setLocalPinned] = useState(!!item.is_pinned);
-  const [localInteracted, setLocalInteracted] = useState(!!item.is_interacted);
-
-  useEffect(() => {
-    setLocalPinned(!!item.is_pinned);
-    setLocalInteracted(!!item.is_interacted);
-  }, [item.is_pinned, item.is_interacted]);
+  const sxLeadId = resolveSxProjectLeadId(item);
 
   const handleDragStart = (e) => {
     if (e.target.closest?.('[data-workshop-bulk-checkbox]')) {
@@ -2902,17 +2945,19 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
             <Clock className="h-3.5 w-3.5" strokeWidth={2.2} />
           </button>
         )}
-        <button
-          type="button"
-          data-sx-quick-btn
-          title={localPinned ? 'Bỏ ghim' : 'Ghim'}
-          onClick={(e) => { e.stopPropagation(); setLocalPinned((v) => !v); }}
-          className={`h-5 w-5 inline-flex items-center justify-center rounded hover:bg-amber-50 cursor-pointer ${
-            localPinned ? 'text-amber-600' : 'text-gray-400 hover:text-amber-600'
-          }`}
-        >
-          <Pin className={`h-3 w-3 ${localPinned ? 'rotate-45 fill-amber-500' : ''}`} />
-        </button>
+        {typeof onTogglePin === 'function' && sxLeadId && (
+          <button
+            type="button"
+            data-sx-quick-btn
+            title={item.is_pinned ? 'Bỏ ghim' : 'Ghim'}
+            onClick={(e) => { e.stopPropagation(); onTogglePin(item, !item.is_pinned); }}
+            className={`h-5 w-5 inline-flex items-center justify-center rounded hover:bg-amber-50 cursor-pointer ${
+              item.is_pinned ? 'text-amber-600' : 'text-gray-400 hover:text-amber-600'
+            }`}
+          >
+            <Pin className={`h-3 w-3 ${item.is_pinned ? 'rotate-45 fill-amber-500' : ''}`} />
+          </button>
+        )}
       </div>
 
       {/* SLA cảnh báo (chỉ khi quá hạn / sắp) — đặt cuối */}
@@ -2954,7 +2999,7 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
 }
 
 // ── KANBAN VIEW CONTAINER (y hệt CRM KanbanView) ─────────────────────────────
-function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline, remeasureToken }) {
+function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline, onTogglePin, remeasureToken }) {
   return (
     <WorkshopPipelineKanbanScroll
       cardSelector="[data-sx-kanban-card]"
@@ -2977,6 +3022,7 @@ function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggl
             workTypes={workTypes}
             onSetWorkType={onSetWorkType}
             onOpenDeadline={onOpenDeadline}
+            onTogglePin={onTogglePin}
           />
         ))}
       </div>
