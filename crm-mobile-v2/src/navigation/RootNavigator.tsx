@@ -17,6 +17,8 @@ import TasksScreen from '../screens/TasksScreen';
 import AccountScreen from '../screens/AccountScreen';
 import DevicesScreen from '../screens/DevicesScreen';
 import QrScanScreen from '../screens/QrScanScreen';
+import EmployeeReportScreen from '../screens/EmployeeReportScreen';
+import EmployeeReportDetailScreen from '../screens/EmployeeReportDetailScreen';
 import ProductsScreen from '../screens/ProductsScreen';
 import QuotationsScreen from '../screens/QuotationsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
@@ -67,6 +69,8 @@ export default function RootNavigator() {
       <Stack.Screen name="Account" component={AccountScreen} />
       <Stack.Screen name="Devices" component={DevicesScreen} />
       <Stack.Screen name="QrScan" component={QrScanScreen} />
+      <Stack.Screen name="EmployeeReport" component={EmployeeReportScreen} />
+      <Stack.Screen name="EmployeeReportDetail" component={EmployeeReportDetailScreen} />
     </Stack.Navigator>
   );
 }
