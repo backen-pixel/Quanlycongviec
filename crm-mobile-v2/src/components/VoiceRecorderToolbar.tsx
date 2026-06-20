@@ -4,7 +4,6 @@ import * as DocumentPicker from 'expo-document-picker';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
-  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -12,6 +11,7 @@ import {
 } from 'react-native';
 import { formatApiError } from '../api/client';
 import { uploadRecording } from '../api/recordings';
+import ActionGrid2x2 from './ActionGrid2x2';
 import { guessAudioMimeFromFileName } from '../lib/guessAudioMime';
 import {
   ensureMicOnlyAsync,
@@ -20,7 +20,7 @@ import {
   requestVoicePermissionsQuick,
   showVoicePermissionDialogThenRequest,
 } from '../lib/voicePermissions';
-import { Radii, useColors, type ThemeColors } from '../theme';
+import { PAGE_HPAD, Radii, useColors, type ThemeColors } from '../theme';
 
 const NOTES_MAX = 2000;
 
@@ -217,177 +217,112 @@ export default function VoiceRecorderToolbar({ onUploaded, disabled }: Props) {
 
   return (
     <View style={styles.wrap}>
-      <View style={styles.permCard}>
-        <Text style={styles.permTitle}>Quyền ghi âm</Text>
-        <Text style={styles.permStatus}>{micStatus || '…'}</Text>
-        <View style={styles.permRow}>
-          <Pressable
-            style={styles.permQuick}
-            onPress={() => void requestVoicePermissionsQuick().then(refreshMicLabel)}
-          >
-            <Text style={styles.permQuickTxt}>Cấp quyền nhanh</Text>
-          </Pressable>
-          <Pressable
-            style={styles.permSync}
-            onPress={() => void showVoicePermissionDialogThenRequest().then(refreshMicLabel)}
-          >
-            <Text style={styles.permSyncTxt}>Như Voice Sync</Text>
-          </Pressable>
+      <View style={styles.card}>
+        <View style={styles.cardHead}>
+          <Text style={styles.cardTitle}>Ghi âm mới</Text>
+          <Text style={styles.permStatus} numberOfLines={1}>{micStatus || '…'}</Text>
         </View>
-      </View>
 
-      <View style={styles.shareTip}>
-        <Ionicons name="share-outline" size={14} color={Colors.purple} />
-        <Text style={styles.shareTipTxt}>
+        <ActionGrid2x2
+          pagePadding={PAGE_HPAD + 12}
+          items={[
+            {
+              key: 'perm-quick',
+              label: 'Cấp quyền nhanh',
+              icon: 'mic-outline',
+              onPress: () => void requestVoicePermissionsQuick().then(refreshMicLabel),
+            },
+            {
+              key: 'perm-sync',
+              label: 'Như Voice Sync',
+              icon: 'settings-outline',
+              onPress: () => void showVoicePermissionDialogThenRequest().then(refreshMicLabel),
+            },
+            {
+              key: 'record',
+              label: recording
+                ? uploading
+                  ? 'Đang tải…'
+                  : 'Dừng & gửi'
+                : uploading
+                  ? 'Đang tải…'
+                  : 'Bắt đầu ghi',
+              icon: recording ? 'stop' : 'mic-outline',
+              onPress: () => void (recording ? stopAndUpload() : startRecord()),
+              disabled: busy && !recording,
+              active: recording,
+            },
+            {
+              key: 'pick',
+              label: 'File máy',
+              icon: 'folder-open-outline',
+              onPress: () => void pickRecordingFromDevice(),
+              disabled: busy || recording,
+            },
+          ]}
+        />
+
+        <Text style={styles.shareTip}>
           Google Phone: Gần đây → bản ghi → Chia sẻ → CRM Mobile
         </Text>
+
+        <TextInput
+          style={styles.noteInput}
+          placeholder="Ghi chú kèm file (tùy chọn)…"
+          placeholderTextColor={Colors.textFaint}
+          value={noteDraft}
+          onChangeText={(t) => setNoteDraft(t.slice(0, NOTES_MAX))}
+          multiline
+          maxLength={NOTES_MAX}
+          textAlignVertical="top"
+          editable={!recording && !busy}
+        />
+        <Text style={styles.noteCount}>{noteDraft.length}/{NOTES_MAX}</Text>
+
+        {recording ? <Text style={styles.live}>Đang ghi…</Text> : null}
+        {okBanner ? <Text style={styles.okBanner}>{okBanner}</Text> : null}
       </View>
-
-      <Text style={styles.label}>Ghi chú kèm file (tùy chọn)</Text>
-      <TextInput
-        style={styles.noteInput}
-        placeholder="Ví dụ: Tư vấn báo giá tủ bếp…"
-        placeholderTextColor={Colors.textFaint}
-        value={noteDraft}
-        onChangeText={(t) => setNoteDraft(t.slice(0, NOTES_MAX))}
-        multiline
-        maxLength={NOTES_MAX}
-        textAlignVertical="top"
-        editable={!recording && !busy}
-      />
-      <Text style={styles.noteCount}>
-        {noteDraft.length}/{NOTES_MAX}
-      </Text>
-
-      <View style={styles.row}>
-        {!recording ? (
-          <Pressable
-            style={[styles.recBtn, busy && styles.btnOff]}
-            onPress={() => void startRecord()}
-            disabled={busy}
-          >
-            <Ionicons name="mic" size={16} color="#fff" />
-            <Text style={styles.recBtnTxt}>{uploading ? 'Đang tải…' : 'Bắt đầu ghi'}</Text>
-          </Pressable>
-        ) : (
-          <Pressable style={styles.stopBtn} onPress={() => void stopAndUpload()} disabled={uploading}>
-            <Ionicons name="stop" size={16} color="#fff" />
-            <Text style={styles.stopBtnTxt}>{uploading ? 'Đang tải…' : 'Dừng & gửi'}</Text>
-          </Pressable>
-        )}
-        <Pressable
-          style={[styles.pickBtn, (busy || recording) && styles.btnOff]}
-          onPress={() => void pickRecordingFromDevice()}
-          disabled={busy || recording}
-        >
-          <Ionicons name="folder-open-outline" size={16} color={Colors.blue} />
-          <Text style={styles.pickBtnTxt}>File máy</Text>
-        </Pressable>
-      </View>
-
-      {recording ? <Text style={styles.live}>Đang ghi…</Text> : null}
-      {okBanner ? <Text style={styles.okBanner}>{okBanner}</Text> : null}
     </View>
   );
 }
 
 const makeStyles = (Colors: ThemeColors) =>
   StyleSheet.create({
-    wrap: { marginTop: 4, marginBottom: 8 },
-    permCard: {
-      backgroundColor: Colors.surfaceSoft,
+    wrap: { width: '100%' },
+    card: {
+      backgroundColor: Colors.card,
       borderRadius: Radii.lg,
       borderWidth: 1,
       borderColor: Colors.border,
-      padding: 14,
-      marginBottom: 12,
+      padding: 12,
     },
-    permTitle: { color: Colors.text, fontSize: 14, fontWeight: '800' },
-    permStatus: { color: Colors.purple, fontSize: 12, marginTop: 6, fontWeight: '700' },
-    permRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
-    permQuick: {
-      flex: 1,
-      height: 38,
-      borderRadius: Radii.sm,
-      backgroundColor: Colors.purple,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    permQuickTxt: { color: '#fff', fontWeight: '800', fontSize: 12 },
-    permSync: {
-      flex: 1,
-      height: 38,
-      borderRadius: Radii.sm,
-      backgroundColor: Colors.card,
-      borderWidth: 1,
-      borderColor: Colors.border,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    permSyncTxt: { color: Colors.text, fontWeight: '700', fontSize: 12 },
-    shareTip: {
+    cardHead: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 6,
+      justifyContent: 'space-between',
+      gap: 8,
       marginBottom: 10,
-      paddingVertical: 8,
-      paddingHorizontal: 10,
-      borderRadius: Radii.sm,
-      backgroundColor: Colors.purple + '14',
     },
-    shareTipTxt: { flex: 1, color: Colors.textMuted, fontSize: 11, fontWeight: '600', lineHeight: 15 },
-    label: { color: Colors.textMuted, fontSize: 12, fontWeight: '700', marginBottom: 6 },
+    cardTitle: { color: Colors.text, fontSize: 14, fontWeight: '800' },
+    permStatus: { color: Colors.textFaint, fontSize: 11, fontWeight: '600', flex: 1, textAlign: 'right' },
+    shareTip: { color: Colors.textFaint, fontSize: 11, lineHeight: 15, marginTop: 10 },
     noteInput: {
-      minHeight: 68,
+      marginTop: 10,
+      minHeight: 52,
       borderWidth: 1,
       borderColor: Colors.border,
       borderRadius: Radii.md,
       padding: 12,
       fontSize: 14,
       color: Colors.text,
-      backgroundColor: Colors.card,
+      backgroundColor: Colors.surfaceSoft,
     },
     noteCount: {
       fontSize: 11,
       color: Colors.textFaint,
       alignSelf: 'flex-end',
-      marginBottom: 10,
       marginTop: 4,
     },
-    row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-    recBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      backgroundColor: Colors.purple,
-      paddingVertical: 12,
-      paddingHorizontal: 14,
-      borderRadius: Radii.md,
-    },
-    stopBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      backgroundColor: Colors.red,
-      paddingVertical: 12,
-      paddingHorizontal: 14,
-      borderRadius: Radii.md,
-    },
-    pickBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      paddingVertical: 12,
-      paddingHorizontal: 14,
-      borderRadius: Radii.md,
-      borderWidth: 1,
-      borderColor: 'rgba(47,107,255,0.35)',
-      backgroundColor: Colors.blueSoft,
-    },
-    recBtnTxt: { color: '#fff', fontWeight: '800', fontSize: 14 },
-    stopBtnTxt: { color: '#fff', fontWeight: '800', fontSize: 14 },
-    pickBtnTxt: { color: Colors.blue, fontWeight: '800', fontSize: 14 },
-    btnOff: { opacity: 0.5 },
-    live: { color: Colors.red, fontWeight: '700', fontSize: 13, marginTop: 8 },
-    okBanner: { color: Colors.green, fontWeight: '600', fontSize: 12, marginTop: 8, lineHeight: 17 },
+    live: { color: Colors.textMuted, fontWeight: '600', fontSize: 12, marginTop: 8 },
+    okBanner: { color: Colors.textMuted, fontSize: 12, marginTop: 8, lineHeight: 17 },
   });

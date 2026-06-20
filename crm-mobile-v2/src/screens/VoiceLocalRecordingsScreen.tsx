@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -17,7 +17,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../api/client';
-import Chip from '../components/Chip';
+import ActionGrid2x2 from '../components/ActionGrid2x2';
+import FilterGridPanel from '../components/FilterGridPanel';
 import {
   ensureVoiceBackgroundSyncPermissions,
   isLocallyMarkedUploaded,
@@ -28,7 +29,7 @@ import {
   type LocalCallRecording,
 } from '../lib/voiceBackgroundSync';
 import type { RootStackParamList } from '../navigation/types';
-import { Radii, useColors, type ThemeColors } from '../theme';
+import { PAGE_HPAD, Radii, Spacing, useColors, type ThemeColors } from '../theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -40,20 +41,6 @@ type Row = LocalCallRecording & {
 };
 type StatusFilter = 'all' | Status;
 type RangeFilter = 'all' | '7d' | '30d' | '90d';
-
-const RANGE_LABEL: Record<RangeFilter, string> = {
-  all: 'Tất cả',
-  '7d': '7 ngày',
-  '30d': '30 ngày',
-  '90d': '90 ngày',
-};
-
-const STATUS_LABEL: Record<StatusFilter, string> = {
-  all: 'Tất cả',
-  synced: 'Đã đồng bộ',
-  deleted_on_server: 'Đã xóa server',
-  pending: 'Chưa đồng bộ',
-};
 
 function formatBytes(b: number): string {
   if (!b || b < 1024) return `${b || 0} B`;
@@ -74,6 +61,12 @@ function rangeToSinceMs(r: RangeFilter): number {
   return Date.now() - days * 24 * 60 * 60 * 1000;
 }
 
+function statusLabel(status: Status): string {
+  if (status === 'synced') return 'Đã đồng bộ';
+  if (status === 'pending') return 'Chưa đồng bộ';
+  return 'Đã xóa server';
+}
+
 export default function VoiceLocalRecordingsScreen() {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
@@ -85,7 +78,13 @@ export default function VoiceLocalRecordingsScreen() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [rangeFilter, setRangeFilter] = useState<RangeFilter>('30d');
+  const [searchDraft, setSearchDraft] = useState('');
   const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchDraft.trim()), 350);
+    return () => clearTimeout(t);
+  }, [searchDraft]);
 
   const load = useCallback(async () => {
     if (Platform.OS !== 'android') {
@@ -116,7 +115,7 @@ export default function VoiceLocalRecordingsScreen() {
         existing = data?.existing || [];
         tombstoned = data?.tombstoned || [];
       } catch {
-        /* offline — hiển thị local */
+        /* offline */
       }
 
       const serverByName = new Map<string, (typeof existing)[0]>();
@@ -163,7 +162,7 @@ export default function VoiceLocalRecordingsScreen() {
   );
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = search.toLowerCase();
     return rows.filter((r) => {
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
       if (q) {
@@ -175,10 +174,12 @@ export default function VoiceLocalRecordingsScreen() {
   }, [rows, statusFilter, search]);
 
   const counts = useMemo(() => {
-    const c = { synced: 0, deleted_on_server: 0, pending: 0 };
+    const c = { all: rows.length, synced: 0, deleted_on_server: 0, pending: 0 };
     for (const r of rows) c[r.status] += 1;
     return c;
   }, [rows]);
+
+  const filterActive = statusFilter !== 'all' || rangeFilter !== '30d' || !!search;
 
   const handleSyncNow = async () => {
     setLoading(true);
@@ -229,204 +230,272 @@ export default function VoiceLocalRecordingsScreen() {
 
   if (Platform.OS !== 'android') {
     return (
-      <View style={[styles.root, { paddingTop: insets.top + 20, paddingHorizontal: 20 }]}>
+      <View style={[styles.root, { paddingTop: insets.top + 20, paddingHorizontal: PAGE_HPAD }]}>
         <Text style={styles.banner}>Tính năng này chỉ có trên Android.</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.root}>
-      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-        <Pressable style={styles.backBtn} onPress={() => navigation.goBack()}>
-          <Ionicons name="chevron-back" size={22} color={Colors.text} />
-        </Pressable>
-        <Text style={styles.h1}>Ghi âm trên máy</Text>
-        <Text style={styles.banner}>
-          App tự động quét file ghi cuộc gọi và đẩy lên hệ thống (kể cả khi đóng app). Bấm «Đồng bộ ngay» nếu muốn gửi liền.
-        </Text>
-      </View>
-
-      <View style={styles.statsRow}>
-        <View style={[styles.stat, { backgroundColor: Colors.greenSoft }]}>
-          <Text style={[styles.statNum, { color: Colors.green }]}>{counts.synced}</Text>
-          <Text style={styles.statLbl}>Đã đồng bộ</Text>
-        </View>
-        <View style={[styles.stat, { backgroundColor: Colors.amberSoft }]}>
-          <Text style={[styles.statNum, { color: Colors.amber }]}>{counts.deleted_on_server}</Text>
-          <Text style={styles.statLbl}>Đã xóa server</Text>
-        </View>
-        <View style={[styles.stat, { backgroundColor: Colors.blueSoft }]}>
-          <Text style={[styles.statNum, { color: Colors.blue }]}>{counts.pending}</Text>
-          <Text style={styles.statLbl}>Chưa đồng bộ</Text>
-        </View>
-      </View>
-
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
-        {(['all', '7d', '30d', '90d'] as RangeFilter[]).map((k) => (
-          <Chip key={k} label={RANGE_LABEL[k]} active={rangeFilter === k} onPress={() => setRangeFilter(k)} />
-        ))}
-      </ScrollView>
-
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
-        {(['all', 'pending', 'deleted_on_server', 'synced'] as StatusFilter[]).map((k) => (
-          <Chip key={k} label={STATUS_LABEL[k]} active={statusFilter === k} onPress={() => setStatusFilter(k)} />
-        ))}
-      </ScrollView>
-
-      <View style={styles.searchRow}>
-        <TextInput
-          style={styles.search}
-          placeholder="Tìm SĐT hoặc tên file…"
-          placeholderTextColor={Colors.textFaint}
-          value={search}
-          onChangeText={setSearch}
-          autoCapitalize="none"
-        />
-        <Pressable style={[styles.syncBtn, loading && { opacity: 0.6 }]} onPress={() => void handleSyncNow()} disabled={loading}>
-          <Ionicons name="cloud-upload-outline" size={16} color="#fff" />
-          <Text style={styles.syncBtnTxt}>Đồng bộ ngay</Text>
-        </Pressable>
-      </View>
-
-      {err ? <Text style={styles.err}>{err}</Text> : null}
-
-      <FlatList
-        data={filtered}
-        keyExtractor={(r) => `${r.id}-${r.name}`}
-        contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 120 }}
-        refreshControl={<RefreshControl refreshing={loading && rows.length > 0} onRefresh={() => void load()} tintColor={Colors.purple} />}
-        ListEmptyComponent={
-          loading ? (
-            <ActivityIndicator color={Colors.purple} style={{ marginTop: 40 }} />
-          ) : (
-            <Text style={styles.empty}>Không có bản ghi phù hợp.</Text>
-          )
-        }
-        renderItem={({ item: r }) => (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle} numberOfLines={2}>{r.name}</Text>
-            <Text style={styles.meta}>{formatDateTime(r.dateAddedMs)} · {formatBytes(r.size)}</Text>
-            {r.phoneHint ? <Text style={styles.phone}>📞 {r.phoneHint}</Text> : null}
-            <View style={[styles.badge, badgeStyle(r.status, Colors)]}>
-              <Text style={[styles.badgeTxt, { color: badgeColor(r.status, Colors) }]}>
-                {r.status === 'synced' ? '✓ Đã đồng bộ' : r.status === 'pending' ? '↑ Chưa đồng bộ' : '⚠ Đã xóa khỏi server'}
+    <View style={[styles.root, { paddingTop: insets.top }]}>
+      <View style={styles.fixedTop}>
+        <View style={styles.header}>
+          <Pressable style={styles.backBtn} onPress={() => navigation.goBack()} hitSlop={8}>
+            <Ionicons name="chevron-back" size={24} color={Colors.text} />
+          </Pressable>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.h1}>Ghi âm trên máy</Text>
+            <View style={styles.syncRow}>
+              <View style={styles.syncDot} />
+              <Text style={styles.syncTxt}>
+                {rows.length} file · hiển thị {filtered.length}
               </Text>
             </View>
-            <View style={styles.actions}>
-              {(r.status === 'pending' || r.status === 'deleted_on_server') && (
-                <Pressable
-                  style={[styles.actionPrimary, busyId === r.id && { opacity: 0.5 }]}
-                  disabled={busyId === r.id}
-                  onPress={() => void handleUpload(r)}
-                >
-                  <Text style={styles.actionPrimaryTxt}>{busyId === r.id ? '…' : r.status === 'pending' ? 'Tải lên' : 'Tải lại'}</Text>
-                </Pressable>
-              )}
-              {r.status === 'deleted_on_server' && (
-                <Pressable style={styles.actionMuted} onPress={() => handleSkip(r)}>
-                  <Text style={styles.actionMutedTxt}>Bỏ qua</Text>
-                </Pressable>
-              )}
-            </View>
           </View>
-        )}
+          <Pressable style={styles.iconBtn} onPress={() => void load()} hitSlop={8}>
+            <Ionicons name="refresh-outline" size={20} color={Colors.text} />
+          </Pressable>
+        </View>
+
+        <View style={styles.searchBox}>
+          <Ionicons name="search-outline" size={17} color={Colors.textFaint} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Tìm SĐT hoặc tên file…"
+            placeholderTextColor={Colors.textFaint}
+            value={searchDraft}
+            onChangeText={setSearchDraft}
+            autoCapitalize="none"
+          />
+          {searchDraft ? (
+            <Pressable onPress={() => setSearchDraft('')} hitSlop={8}>
+              <Ionicons name="close-circle" size={17} color={Colors.textFaint} />
+            </Pressable>
+          ) : null}
+        </View>
+
+        <Text style={styles.gridLabel}>Khoảng thời gian</Text>
+        <FilterGridPanel
+          value={rangeFilter}
+          onChange={setRangeFilter}
+          pagePadding={PAGE_HPAD}
+          cells={[
+            { type: 'filter', id: 'all', label: 'Tất cả' },
+            { type: 'filter', id: '7d', label: '7 ngày' },
+            { type: 'filter', id: '30d', label: '30 ngày' },
+            { type: 'filter', id: '90d', label: '90 ngày' },
+          ]}
+        />
+
+        <Text style={styles.gridLabel}>Trạng thái</Text>
+        <FilterGridPanel
+          value={statusFilter}
+          onChange={setStatusFilter}
+          pagePadding={PAGE_HPAD}
+          cells={[
+            { type: 'filter', id: 'all', label: 'Tất cả', icon: 'albums-outline', count: counts.all },
+            { type: 'filter', id: 'pending', label: 'Chưa đồng bộ', icon: 'cloud-upload-outline', count: counts.pending },
+            { type: 'filter', id: 'synced', label: 'Đã đồng bộ', icon: 'checkmark-circle-outline', count: counts.synced },
+            { type: 'filter', id: 'deleted_on_server', label: 'Đã xóa server', icon: 'trash-outline', count: counts.deleted_on_server },
+          ]}
+        />
+
+        <Pressable
+          style={[styles.syncFullBtn, loading && { opacity: 0.6 }]}
+          onPress={() => void handleSyncNow()}
+          disabled={loading}
+        >
+          <Ionicons name="cloud-upload-outline" size={18} color={Colors.textMuted} />
+          <Text style={styles.syncFullTxt}>{loading ? 'Đang quét…' : 'Đồng bộ ngay'}</Text>
+        </Pressable>
+
+        {filterActive ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.activeChipContent}>
+            {rangeFilter !== '30d' ? (
+              <Pressable style={styles.activeChip} onPress={() => setRangeFilter('30d')}>
+                <Text style={styles.activeChipTxt}>
+                  {rangeFilter === 'all' ? 'Tất cả thời gian' : rangeFilter === '7d' ? '7 ngày' : '90 ngày'}
+                </Text>
+                <Ionicons name="close" size={13} color={Colors.textMuted} />
+              </Pressable>
+            ) : null}
+            {statusFilter !== 'all' ? (
+              <Pressable style={styles.activeChip} onPress={() => setStatusFilter('all')}>
+                <Text style={styles.activeChipTxt}>{statusLabel(statusFilter as Status)}</Text>
+                <Ionicons name="close" size={13} color={Colors.textMuted} />
+              </Pressable>
+            ) : null}
+            {search ? (
+              <Pressable style={styles.activeChip} onPress={() => setSearchDraft('')}>
+                <Text style={styles.activeChipTxt}>«{search}»</Text>
+                <Ionicons name="close" size={13} color={Colors.textMuted} />
+              </Pressable>
+            ) : null}
+            <Pressable
+              style={styles.activeChipClear}
+              onPress={() => {
+                setSearchDraft('');
+                setStatusFilter('all');
+                setRangeFilter('30d');
+              }}
+            >
+              <Text style={styles.activeChipClearTxt}>Xóa lọc</Text>
+            </Pressable>
+          </ScrollView>
+        ) : null}
+
+        {err ? <Text style={styles.err}>{err}</Text> : null}
+      </View>
+
+      <FlatList
+        style={styles.listFlex}
+        data={filtered}
+        keyExtractor={(r) => `${r.id}-${r.name}`}
+        contentContainerStyle={[styles.listContent, { paddingBottom: 100 + insets.bottom }]}
+        refreshControl={
+          <RefreshControl
+            refreshing={loading && rows.length > 0}
+            onRefresh={() => void load()}
+            tintColor={Colors.blue}
+          />
+        }
+        ListEmptyComponent={
+          loading ? (
+            <ActivityIndicator color={Colors.blue} style={{ marginTop: 40 }} />
+          ) : (
+            <View style={styles.emptyBox}>
+              <Ionicons name="file-tray-outline" size={38} color={Colors.textFaint} />
+              <Text style={styles.empty}>{filterActive ? 'Không có file phù hợp bộ lọc.' : 'Không có bản ghi phù hợp.'}</Text>
+            </View>
+          )
+        }
+        renderItem={({ item: r }) => {
+          const actions = [];
+          if (r.status === 'pending' || r.status === 'deleted_on_server') {
+            actions.push({
+              key: 'upload',
+              label: busyId === r.id ? '…' : r.status === 'pending' ? 'Tải lên' : 'Tải lại',
+              icon: 'cloud-upload-outline' as const,
+              onPress: () => void handleUpload(r),
+              disabled: busyId === r.id,
+            });
+          }
+          if (r.status === 'deleted_on_server') {
+            actions.push({
+              key: 'skip',
+              label: 'Bỏ qua',
+              icon: 'close-circle-outline' as const,
+              onPress: () => handleSkip(r),
+            });
+          }
+          return (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle} numberOfLines={2}>{r.name}</Text>
+              <Text style={styles.meta}>{formatDateTime(r.dateAddedMs)} · {formatBytes(r.size)}</Text>
+              {r.phoneHint ? <Text style={styles.meta}>{r.phoneHint}</Text> : null}
+              <Text style={styles.statusBadge}>{statusLabel(r.status)}</Text>
+              {actions.length ? (
+                <View style={{ marginTop: Spacing.sm }}>
+                  <ActionGrid2x2 pagePadding={PAGE_HPAD + 14} items={actions} />
+                </View>
+              ) : null}
+            </View>
+          );
+        }}
+        ItemSeparatorComponent={() => <View style={{ height: Spacing.sm }} />}
       />
     </View>
   );
 }
 
-function badgeStyle(status: Status, Colors: ThemeColors) {
-  if (status === 'synced') return { backgroundColor: Colors.greenSoft, borderColor: 'rgba(34,197,94,0.35)' };
-  if (status === 'pending') return { backgroundColor: Colors.blueSoft, borderColor: 'rgba(47,107,255,0.35)' };
-  return { backgroundColor: Colors.amberSoft, borderColor: 'rgba(245,158,11,0.35)' };
-}
-
-function badgeColor(status: Status, Colors: ThemeColors) {
-  if (status === 'synced') return Colors.green;
-  if (status === 'pending') return Colors.blue;
-  return Colors.amber;
-}
-
 const makeStyles = (Colors: ThemeColors) =>
   StyleSheet.create({
     root: { flex: 1, backgroundColor: Colors.bg },
-    header: { paddingHorizontal: 16, paddingBottom: 8 },
-    backBtn: {
-      width: 36,
-      height: 36,
-      borderRadius: 18,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: Colors.surfaceSoft,
-      marginBottom: 8,
-    },
+    fixedTop: { paddingHorizontal: PAGE_HPAD, gap: Spacing.sm, paddingBottom: Spacing.sm },
+    listFlex: { flex: 1 },
+    listContent: { paddingHorizontal: PAGE_HPAD, paddingTop: 4 },
+    header: { flexDirection: 'row', alignItems: 'flex-start', gap: 4, marginTop: Spacing.sm },
+    backBtn: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', marginTop: 2 },
     h1: { color: Colors.text, fontSize: 22, fontWeight: '900' },
-    banner: { color: Colors.textMuted, fontSize: 12, lineHeight: 17, marginTop: 8 },
-    statsRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 14, marginTop: 10 },
-    stat: { flex: 1, borderRadius: Radii.md, paddingVertical: 10, alignItems: 'center' },
-    statNum: { fontSize: 18, fontWeight: '900' },
-    statLbl: { color: Colors.textMuted, fontSize: 10, fontWeight: '700', marginTop: 2, textAlign: 'center' },
-    chips: { gap: 8, paddingHorizontal: 14, paddingTop: 10 },
-    searchRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 14, marginTop: 10 },
-    search: {
-      flex: 1,
+    syncRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
+    syncDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: Colors.green },
+    syncTxt: { color: Colors.textFaint, fontSize: 12 },
+    iconBtn: {
+      width: 38,
+      height: 38,
+      borderRadius: 10,
+      backgroundColor: Colors.card,
       borderWidth: 1,
       borderColor: Colors.border,
-      borderRadius: Radii.md,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-      color: Colors.text,
-      backgroundColor: Colors.card,
-      fontSize: 14,
-    },
-    syncBtn: {
-      flexDirection: 'row',
       alignItems: 'center',
-      gap: 6,
-      backgroundColor: Colors.purple,
-      paddingHorizontal: 14,
-      borderRadius: Radii.md,
       justifyContent: 'center',
     },
-    syncBtnTxt: { color: '#fff', fontWeight: '800', fontSize: 12 },
-    err: { color: Colors.red, marginHorizontal: 14, marginTop: 8, fontSize: 12 },
-    empty: { color: Colors.textFaint, textAlign: 'center', marginTop: 40 },
+    banner: { color: Colors.textMuted, fontSize: 12 },
+    searchBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: Spacing.sm,
+      height: 46,
+      paddingHorizontal: 12,
+      backgroundColor: Colors.card,
+      borderRadius: Radii.md,
+      borderWidth: 1,
+      borderColor: Colors.border,
+    },
+    searchInput: { flex: 1, color: Colors.text, fontSize: 14, paddingVertical: 0 },
+    gridLabel: {
+      color: Colors.textFaint,
+      fontSize: 11,
+      fontWeight: '800',
+      textTransform: 'uppercase',
+      letterSpacing: 0.4,
+    },
+    syncFullBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: Spacing.sm,
+      height: 44,
+      borderRadius: Radii.md,
+      backgroundColor: Colors.card,
+      borderWidth: 1,
+      borderColor: Colors.border,
+    },
+    syncFullTxt: { color: Colors.textMuted, fontSize: 13, fontWeight: '700' },
+    activeChipContent: { alignItems: 'center', paddingRight: 4 },
+    activeChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 10,
+      height: 30,
+      borderRadius: Radii.pill,
+      backgroundColor: Colors.surfaceSoft,
+      borderWidth: 1,
+      borderColor: Colors.border,
+      marginRight: 8,
+    },
+    activeChipTxt: { color: Colors.textMuted, fontSize: 12, fontWeight: '700' },
+    activeChipClear: {
+      paddingHorizontal: 10,
+      height: 30,
+      borderRadius: Radii.pill,
+      backgroundColor: Colors.redSoft,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    activeChipClearTxt: { color: Colors.red, fontSize: 12, fontWeight: '800' },
+    err: { color: Colors.red, fontSize: 12 },
+    emptyBox: { alignItems: 'center', paddingTop: 40, gap: 10 },
+    empty: { color: Colors.textFaint, textAlign: 'center', fontSize: 14 },
     card: {
       backgroundColor: Colors.card,
       borderRadius: Radii.lg,
       borderWidth: 1,
       borderColor: Colors.border,
       padding: 14,
-      marginTop: 10,
     },
     cardTitle: { color: Colors.text, fontSize: 14, fontWeight: '800' },
     meta: { color: Colors.textMuted, fontSize: 12, marginTop: 4 },
-    phone: { color: Colors.text, fontSize: 13, marginTop: 4 },
-    badge: {
-      alignSelf: 'flex-start',
-      marginTop: 8,
-      paddingVertical: 4,
-      paddingHorizontal: 10,
-      borderRadius: Radii.pill,
-      borderWidth: 1,
-    },
-    badgeTxt: { fontSize: 11, fontWeight: '800' },
-    actions: { flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' },
-    actionPrimary: {
-      paddingVertical: 8,
-      paddingHorizontal: 14,
-      borderRadius: Radii.sm,
-      backgroundColor: Colors.blue,
-    },
-    actionPrimaryTxt: { color: '#fff', fontWeight: '800', fontSize: 13 },
-    actionMuted: {
-      paddingVertical: 8,
-      paddingHorizontal: 14,
-      borderRadius: Radii.sm,
-      backgroundColor: Colors.surfaceSoft,
-      borderWidth: 1,
-      borderColor: Colors.border,
-    },
-    actionMutedTxt: { color: Colors.textMuted, fontWeight: '700', fontSize: 13 },
+    statusBadge: { color: Colors.textFaint, fontSize: 11, fontWeight: '700', marginTop: 8 },
   });

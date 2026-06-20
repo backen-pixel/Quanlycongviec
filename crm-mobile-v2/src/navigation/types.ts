@@ -68,5 +68,7 @@ export type RootStackParamList = {
     dateFrom: string;
     dateTo: string;
     typeView?: 'all' | 'lead' | 'deal';
+    companyId?: string;
+    regionId?: string;
   };
 };

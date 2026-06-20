@@ -44,7 +44,7 @@ function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] 
         { icon: 'calendar', label: 'Sự kiện', color: Colors.cyan, action: 'events' },
         { icon: 'cloud-upload', label: 'Drive lưu trữ', color: Colors.purple, action: 'drive' },
         { icon: 'notifications', label: 'Thông báo', color: Colors.red, action: 'notifications' },
-        { icon: 'stats-chart', label: 'BC nhân viên', color: Colors.green, action: 'employee-report' },
+        { icon: 'stats-chart', label: 'Báo cáo CRM', color: Colors.green, action: 'employee-report' },
       ],
     },
     {

@@ -10,6 +10,7 @@ export type EmployeeReportRow = {
   deal_count?: number;
   won_deal_count?: number;
   lost_deal_count?: number;
+  lost_lead_count?: number;
   won_value?: number;
   expected_value?: number;
   weighted_value?: number;
@@ -43,6 +44,15 @@ export type EmployeePipelineDetail = {
   date_to: string;
   summary?: Record<string, number | null>;
   pipelines: EmployeePipelineRow[];
+  timeline?: EmployeeTimelineRow[];
+};
+
+export type EmployeeTimelineRow = {
+  date: string;
+  lead_count?: number;
+  deal_count?: number;
+  lead_value?: number;
+  deal_value?: number;
 };
 
 export type EmployeeReportQuery = {
@@ -52,6 +62,78 @@ export type EmployeeReportQuery = {
   company_id?: string;
   region_id?: string;
 };
+
+export type OrgReportRow = EmployeeReportRow & {
+  company_id?: string | null;
+  company_name?: string | null;
+  region_id?: string | null;
+  region_name?: string | null;
+  region_code?: string | null;
+  open_count?: number;
+  completed_deal_count?: number;
+  pipeline_value?: number;
+};
+
+export type ReportTimelineRow = {
+  date: string;
+  lead_count?: number;
+  deal_count?: number;
+  won_value?: number;
+  pipeline_value?: number;
+};
+
+export type ReportPipelineFunnelRow = {
+  stage_id?: string;
+  name?: string;
+  color?: string;
+  icon?: string;
+  count?: number;
+  lead_count?: number;
+  deal_count?: number;
+  value?: number;
+};
+
+export type OrgOverviewReport = {
+  date_from: string;
+  date_to: string;
+  summary: OrgReportRow;
+  timeline: ReportTimelineRow[];
+  pipeline_funnel: ReportPipelineFunnelRow[];
+  by_company: OrgReportRow[];
+  by_region: OrgReportRow[];
+  by_employee: EmployeeReportRow[];
+};
+
+export async function fetchOrgOverviewReport(params: EmployeeReportQuery): Promise<OrgOverviewReport> {
+  const { data } = await api.get<{
+    date_from: string;
+    date_to: string;
+    summary?: OrgReportRow;
+    timeline?: ReportTimelineRow[];
+    pipeline_funnel?: ReportPipelineFunnelRow[];
+    by_company?: OrgReportRow[];
+    by_region?: OrgReportRow[];
+    by_employee?: EmployeeReportRow[];
+  }>('/crm/reports/org-overview', {
+    params: {
+      date_from: params.date_from,
+      date_to: params.date_to,
+      ...(params.type && params.type !== 'all' ? { type: params.type } : {}),
+      ...(params.company_id ? { company_id: params.company_id } : {}),
+      ...(params.region_id ? { region_id: params.region_id } : {}),
+    },
+  });
+  return {
+    date_from: data.date_from,
+    date_to: data.date_to,
+    summary: data.summary ?? { user_id: null, full_name: 'Tổng' },
+    timeline: data.timeline || [],
+    pipeline_funnel: data.pipeline_funnel || [],
+    by_company: data.by_company || [],
+    by_region: data.by_region || [],
+    by_employee: (data.by_employee || []).filter((r) => r.user_id),
+  };
+}
 
 export async function fetchEmployeeReportRows(params: EmployeeReportQuery): Promise<{
   date_from: string;

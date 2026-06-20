@@ -163,6 +163,9 @@ export const Spacing = {
   xxl: 28,
 } as const;
 
+/** Padding ngang chuẩn màn hình CRM (khớp CrmHub). */
+export const PAGE_HPAD = 14;
+
 /** Gradient cam cháy đa sắc cho nút Tạo mới. */
 export const CreateGradient = ['#FBBF24', '#F97316', '#EA580C', '#DB2777'] as const;
 
