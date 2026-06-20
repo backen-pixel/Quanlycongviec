@@ -11,7 +11,7 @@ import {
   FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical,
   Zap, CheckCircle2, TrendingUp, TrendingDown, AlertTriangle, Building2, Rocket, Pin,
   Clock, List, LayoutGrid, GitMerge, UserCheck, Trash2, CheckSquare, BarChart3,
-  MessageSquare, MinusSquare,
+  MessageSquare, MinusSquare, Settings,
 } from 'lucide-react';
 import { ListView, PlannerView, DeadlineView, CommentsView } from '../components/CRMViews';
 import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
@@ -356,6 +356,9 @@ const TIME_PRESETS = [
 ];
 
 const KANBAN_LOAD_OPTIONS = ['500', '1000', '2000', 'all'];
+const KANBAN_COLUMN_SCROLL_MODES = ['unified', 'per-column'];
+const KANBAN_DEFAULT_COLUMN_SCROLL_MODE = 'unified';
+const LS_CRM_KANBAN_COLUMN_SCROLL = 'crm_kanban_column_scroll_mode';
 /** Mỗi lần tải Kanban (trang đầu + cuộn) — 500 thẻ/lần. */
 const KANBAN_PAGE_SIZE = 500;
 /** Mặc định trần auto-load khi cuộn (chọn «Tải tất cả» để vượt trần). */
@@ -939,6 +942,20 @@ export default function CRMDashboard() {
     const s = localStorage.getItem('crm_kanban_load_limit');
     return KANBAN_LOAD_OPTIONS.includes(s) ? s : KANBAN_DEFAULT_LOAD_LIMIT;
   });
+  /** Kanban: `unified` = cuộn dọc chung; `per-column` = mỗi cột cuộn riêng */
+  const [kanbanColumnScrollMode, setKanbanColumnScrollMode] = useState(() => {
+    const fromP = P?.kanbanColumnScrollMode;
+    if (fromP && KANBAN_COLUMN_SCROLL_MODES.includes(fromP)) return fromP;
+    try {
+      const s = localStorage.getItem(LS_CRM_KANBAN_COLUMN_SCROLL);
+      if (s && KANBAN_COLUMN_SCROLL_MODES.includes(s)) return s;
+    } catch {
+      // ignore
+    }
+    return KANBAN_DEFAULT_COLUMN_SCROLL_MODE;
+  });
+  const [showKanbanSettings, setShowKanbanSettings] = useState(false);
+  const kanbanSettingsRef = useRef(null);
 
   /** Tổng số lead/deal theo SĐT từ API (limit=1, chỉ đọc `total`) — không phụ thuộc mức tải Kanban; theo NV + ngày trên server */
   const [pipelinePhoneTotals, setPipelinePhoneTotals] = useState({ lead: null, deal: null });
@@ -3282,6 +3299,7 @@ export default function CRMDashboard() {
     showCustomDate,
     viewMode,
     kanbanLoadLimit,
+    kanbanColumnScrollMode,
     showOrphanDealColumn,
   }), [
     filterCompany,
@@ -3305,8 +3323,20 @@ export default function CRMDashboard() {
     showCustomDate,
     viewMode,
     kanbanLoadLimit,
+    kanbanColumnScrollMode,
     showOrphanDealColumn,
   ]);
+
+  useEffect(() => {
+    if (!showKanbanSettings) return undefined;
+    const onDocClick = (e) => {
+      if (kanbanSettingsRef.current && !kanbanSettingsRef.current.contains(e.target)) {
+        setShowKanbanSettings(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [showKanbanSettings]);
 
   const persistPipelineUi = useCallback(() => {
     saveCrmPipelineSnapshot(buildPipelineUiSnapshot());
@@ -4806,6 +4836,62 @@ export default function CRMDashboard() {
             <v.icon className="h-3.5 w-3.5" />{v.label}
           </button>
         ))}
+        {viewMode === 'kanban' && (
+          <div className="relative ml-auto" ref={kanbanSettingsRef}>
+            <button
+              type="button"
+              onClick={() => setShowKanbanSettings((v) => !v)}
+              className={`h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer transition-colors border ${
+                showKanbanSettings || kanbanColumnScrollMode === 'per-column'
+                  ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+              }`}
+              title="Cài đặt hiển thị Kanban"
+            >
+              <Settings className="h-3.5 w-3.5" />
+              Cài đặt Kanban
+            </button>
+            {showKanbanSettings && (
+              <div className="absolute right-0 top-full mt-1.5 z-40 w-[min(100vw-1.5rem,18rem)] rounded-xl border border-gray-200 bg-white p-3 shadow-lg">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2.5">Cuộn cột Kanban</p>
+                <div className="space-y-2">
+                  <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-transparent px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-indigo-200 has-[:checked]:bg-indigo-50/60">
+                    <input
+                      type="radio"
+                      name="kanban-column-scroll"
+                      className="mt-0.5 shrink-0"
+                      checked={kanbanColumnScrollMode === 'unified'}
+                      onChange={() => {
+                        setKanbanColumnScrollMode('unified');
+                        try { localStorage.setItem(LS_CRM_KANBAN_COLUMN_SCROLL, 'unified'); } catch { /* ignore */ }
+                      }}
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-xs font-semibold text-gray-800">Cuộn chung tất cả cột</span>
+                      <span className="block text-[11px] text-gray-500 leading-snug mt-0.5">Kéo một lần, mọi cột cuộn cùng chiều dọc (mặc định).</span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-transparent px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-indigo-200 has-[:checked]:bg-indigo-50/60">
+                    <input
+                      type="radio"
+                      name="kanban-column-scroll"
+                      className="mt-0.5 shrink-0"
+                      checked={kanbanColumnScrollMode === 'per-column'}
+                      onChange={() => {
+                        setKanbanColumnScrollMode('per-column');
+                        try { localStorage.setItem(LS_CRM_KANBAN_COLUMN_SCROLL, 'per-column'); } catch { /* ignore */ }
+                      }}
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-xs font-semibold text-gray-800">Cuộn riêng từng cột</span>
+                      <span className="block text-[11px] text-gray-500 leading-snug mt-0.5">Mỗi cột có thanh cuộn dọc riêng; cuộn ngang giữa các cột.</span>
+                    </span>
+                  </label>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {crmMainContentLoading ? (
@@ -4946,6 +5032,7 @@ export default function CRMDashboard() {
               explicitExpectedKv={explicitExpectedKvStages}
               onLoadMore={handleLoadMore}
               scrollLoad={kanbanScrollLoad}
+              columnScrollMode={kanbanColumnScrollMode}
             />
             {/* Chú thích màu sắc thẻ Kanban — chỉ hiện sau khi load xong dữ liệu */}
             {!crmMainContentLoading && (
@@ -4974,7 +5061,11 @@ export default function CRMDashboard() {
                       <> / <span className="font-semibold text-indigo-600">{kanbanScrollLoad.total.toLocaleString()}</span></>
                     )}
                     {' '}{pipelineType === 'lead' ? 'lead' : 'deal'}
-                    <span className="text-gray-400"> · cuộn xuống để tải thêm</span>
+                    <span className="text-gray-400">
+                      {kanbanColumnScrollMode === 'per-column'
+                        ? ' · cuộn trong cột để tải thêm'
+                        : ' · cuộn xuống để tải thêm'}
+                    </span>
                   </span>
                   {kanbanScrollLoad.loading && (
                     <span className="inline-flex items-center gap-1.5 text-xs text-indigo-600">
@@ -6164,6 +6255,9 @@ const KanbanStageCard = memo(function KanbanStageCard({
   onToggleInteracted,
   onOpenDeadline,
   explicitExpectedKv,
+  columnScrollMode = 'unified',
+  columnScrollMaxH,
+  onColumnScrollNearEnd,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
@@ -6184,6 +6278,15 @@ const KanbanStageCard = memo(function KanbanStageCard({
 
   const isVirtualColumn = !!stage?.__virtual;
   const totalInColumn = items?.length || 0;
+  const perColumnScroll = columnScrollMode === 'per-column';
+
+  const handleCardsScroll = (e) => {
+    if (!perColumnScroll || !onColumnScrollNearEnd) return;
+    const el = e.currentTarget;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 140) {
+      onColumnScrollNearEnd();
+    }
+  };
 
   const handleColumnDragOver = (e) => {
     if (isVirtualColumn) return;
@@ -6215,10 +6318,11 @@ const KanbanStageCard = memo(function KanbanStageCard({
       onDrop={handleColumnDrop}
       className={`flex flex-col flex-shrink-0 rounded-lg transition-all duration-200 ${
         compact ? 'w-[15rem] max-[380px]:w-[13.5rem]' : 'w-[17rem] max-[420px]:w-[15rem]'
-      } ${isOverColumn ? 'ring-2 ring-blue-500 ring-dashed' : ''}`}
+      } ${perColumnScroll ? 'h-full self-stretch' : ''} ${isOverColumn ? 'ring-2 ring-blue-500 ring-dashed' : ''}`}
+      style={perColumnScroll && columnScrollMaxH ? { height: columnScrollMaxH, maxHeight: columnScrollMaxH } : undefined}
     >
-      {/* Sticky header: thanh màu + tên cột — luôn dính trên cùng khi kéo Kanban */}
-      <div className="sticky top-0 z-20 overflow-hidden rounded-t-lg">
+      {/* Sticky header khi cuộn chung; cố định trên khi cuộn riêng từng cột */}
+      <div className={`${perColumnScroll ? 'shrink-0' : 'sticky top-0'} z-20 overflow-hidden rounded-t-lg`}>
         <div
           className="h-1.5 w-full"
           style={{ backgroundColor: stageColor }}
@@ -6282,14 +6386,16 @@ const KanbanStageCard = memo(function KanbanStageCard({
         </div>
       </div>
 
-      {/* Cards Container — cột tự cao theo nội dung; cuộn dọc đồng bộ ở container Kanban cha.
-          flex-1 để khung cột vẫn trải dài tới đáy ngay cả khi không còn thẻ. */}
+      {/* Cards Container — cuộn dọc đồng bộ ở container cha, hoặc overflow riêng từng cột */}
       <div
         ref={containerRef}
-        className={`flex-1 border border-white/30 border-t-0 rounded-b-lg transition-all ${
+        onScroll={perColumnScroll ? handleCardsScroll : undefined}
+        className={`border border-white/30 border-t-0 rounded-b-lg transition-all ${
           compact ? 'p-2 space-y-2' : 'p-3 space-y-3'
-        } ${isOverColumn ? 'bg-blue-50/60' : ''}`}
-        style={{ minHeight: compact ? '160px' : '180px' }}
+        } ${perColumnScroll ? 'flex-1 min-h-0 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]' : 'flex-1'} ${
+          isOverColumn ? 'bg-blue-50/60' : ''
+        }`}
+        style={perColumnScroll ? undefined : { minHeight: compact ? '160px' : '180px' }}
       >
         {totalInColumn === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-400">
@@ -6853,6 +6959,7 @@ function KanbanView({
   explicitExpectedKv,
   onLoadMore,
   scrollLoad,
+  columnScrollMode = 'unified',
 }) {
   const kanbanHScrollRef = useRef(null);
   const kanbanWrapRef = useRef(null);
@@ -6863,6 +6970,7 @@ function KanbanView({
   const lastPointerRef = useRef({ x: 0, y: 0 });
   const [isDraggingCard, setIsDraggingCard] = useState(false);
   const [scrollMaxH, setScrollMaxH] = useState('70vh');
+  const perColumnScroll = columnScrollMode === 'per-column';
 
   const tryLoadMore = useCallback(() => {
     if (loadMoreCooldownRef.current || !scrollLoad?.hasMore || scrollLoad?.loading || !onLoadMore) return;
@@ -6874,6 +6982,7 @@ function KanbanView({
   }, [scrollLoad?.hasMore, scrollLoad?.loading, onLoadMore]);
 
   useEffect(() => {
+    if (perColumnScroll) return undefined;
     const root = kanbanHScrollRef.current;
     const sentinel = kanbanLoadSentinelRef.current;
     if (!root || !sentinel || !scrollLoad?.hasMore) return undefined;
@@ -6885,7 +6994,7 @@ function KanbanView({
     );
     obs.observe(sentinel);
     return () => obs.disconnect();
-  }, [scrollLoad?.hasMore, scrollLoad?.loading, tryLoadMore]);
+  }, [perColumnScroll, scrollLoad?.hasMore, scrollLoad?.loading, tryLoadMore]);
 
   // Chiều cao Kanban cố định ~3 card mỗi cột (~720px). Không phụ thuộc viewport
   // để bố cục đồng nhất trên mọi màn hình; phần còn lại scroll trong cột.
@@ -6906,7 +7015,7 @@ function KanbanView({
       clearTimeout(t);
       window.removeEventListener('resize', measure);
     };
-  }, [remeasureToken]);
+  }, [remeasureToken, columnScrollMode]);
 
   useEffect(() => {
     const isOurCard = (e) => {
@@ -7054,10 +7163,15 @@ function KanbanView({
 
       <div
         ref={kanbanHScrollRef}
-        className="overflow-auto overscroll-y-contain pb-4 [scrollbar-gutter:stable] [overflow-anchor:none]"
-        style={{ maxHeight: scrollMaxH, WebkitOverflowScrolling: 'touch' }}
+        className={`overscroll-y-contain pb-4 [scrollbar-gutter:stable] [overflow-anchor:none] ${
+          perColumnScroll ? 'overflow-x-auto overflow-y-hidden' : 'overflow-auto'
+        }`}
+        style={{
+          ...(perColumnScroll ? { height: scrollMaxH } : { maxHeight: scrollMaxH }),
+          WebkitOverflowScrolling: 'touch',
+        }}
       >
-        <div className={`flex min-w-max items-stretch ${compact ? 'gap-2' : 'gap-3'}`}>
+        <div className={`flex min-w-max items-stretch ${compact ? 'gap-2' : 'gap-3'} ${perColumnScroll ? 'h-full' : ''}`}>
           {pipeline.map((stage) => (
             <KanbanStageCard
               key={stage.id}
@@ -7077,6 +7191,9 @@ function KanbanView({
               onToggleInteracted={onToggleInteracted}
               onOpenDeadline={onOpenDeadline}
               explicitExpectedKv={explicitExpectedKv}
+              columnScrollMode={columnScrollMode}
+              columnScrollMaxH={scrollMaxH}
+              onColumnScrollNearEnd={perColumnScroll ? tryLoadMore : undefined}
             />
           ))}
           {scrollLoad?.hasMore && (
