@@ -13,7 +13,7 @@ import {
   ChevronRight, ChevronDown, Home, Users, Clock, Download, Pencil, Move, Link2, MoreHorizontal,
   Loader2, Building2, User as UserIcon, Globe, Plus, X, FolderOpen, Eye, AlertCircle,
   Network, MapPin, LayoutGrid, List as ListIcon, Folder as FolderIcon,
-  FilePlus, FileText, Table2, Tag, Briefcase, PanelLeftClose, PanelLeftOpen, FolderInput,
+  FilePlus, FileText, Table2, Tag, Briefcase, PanelLeftClose, PanelLeftOpen, FolderInput, Info,
 } from 'lucide-react';
 import {
   driveListRoots, driveEnsurePersonalRoot, driveCreateSharedRoot,
@@ -56,6 +56,56 @@ function moduleScopeLabel(key) {
   if (k === 'vc') return 'Vận chuyển';
   if (k === 'mkt') return 'Marketing';
   return 'Khác';
+}
+
+function fmtDriveRelativeTime(iso) {
+  if (!iso) return '—';
+  try {
+    const ms = Date.now() - new Date(iso).getTime();
+    if (Number.isNaN(ms)) return '—';
+    if (ms < 60_000) return 'vừa xong';
+    const mins = Math.floor(ms / 60_000);
+    if (mins < 60) return `${mins} phút trước`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours} giờ trước`;
+    const days = Math.floor(hours / 24);
+    if (days < 30) return `${days} ngày trước`;
+    return fmtDriveDate(iso);
+  } catch {
+    return '—';
+  }
+}
+
+function flattenOrgEmployees(modules) {
+  const seen = new Set();
+  const out = [];
+  for (const mod of modules || []) {
+    for (const co of mod.companies || []) {
+      for (const rg of co.regions || []) {
+        for (const cat of rg.categories || []) {
+          for (const dept of cat.departments || []) {
+            for (const u of dept.employees || []) {
+              if (!u?.id || seen.has(u.id)) continue;
+              seen.add(u.id);
+              out.push(u);
+            }
+          }
+        }
+      }
+    }
+  }
+  return out.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'vi'));
+}
+
+function sortDriveFolders(folders, sortKey) {
+  const arr = [...(folders || [])];
+  if (sortKey === 'name_desc') {
+    return arr.sort((a, b) => String(b.name || '').localeCompare(String(a.name || ''), 'vi'));
+  }
+  if (sortKey === 'updated_desc') {
+    return arr.sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
+  }
+  return arr.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'vi'));
 }
 
 export default function DrivePage() {
@@ -106,10 +156,15 @@ export default function DrivePage() {
   const [viewMode, setViewMode] = useState(() => {
     try { return localStorage.getItem('drive.viewMode') || 'grid'; } catch (_) { return 'grid'; }
   });
+  const [folderSort, setFolderSort] = useState(() => {
+    try { return localStorage.getItem('drive.folderSort') || 'name_asc'; } catch (_) { return 'name_asc'; }
+  });
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     try { return localStorage.getItem('drive.sidebarOpen') !== '0'; } catch (_) { return true; }
   });
   const searchTimer = useRef(null);
+  const searchInputRef = useRef(null);
+  const useModuleDriveLayout = !!lockedModule;
 
   useEffect(() => {
     try { localStorage.setItem('drive.sidebarOpen', sidebarOpen ? '1' : '0'); } catch (_) {}
@@ -118,6 +173,21 @@ export default function DrivePage() {
   useEffect(() => {
     try { localStorage.setItem('drive.viewMode', viewMode); } catch (_) {}
   }, [viewMode]);
+
+  useEffect(() => {
+    try { localStorage.setItem('drive.folderSort', folderSort); } catch (_) {}
+  }, [folderSort]);
+
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if ((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === 'k') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
@@ -600,6 +670,17 @@ export default function DrivePage() {
 
   const displayFolders = searchResults?.folders ?? folders;
   const displayFiles = searchResults?.files ?? files;
+  const sortedDisplayFolders = useMemo(
+    () => sortDriveFolders(displayFolders, folderSort),
+    [displayFolders, folderSort],
+  );
+  const showFolderContentEmpty = !loading
+    && !searchResults
+    && !isTrashView
+    && !view
+    && !activeFolder
+    && displayFiles.length === 0
+    && !!activeRoot;
 
   const renderFileActions = useCallback((f) => (
     <>
@@ -679,28 +760,30 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
   }
 
   return (
-    <div className="h-[calc(100vh-3.5rem)] flex bg-slate-50">
-      {/* Sidebar trái */}
+    <div className={`h-[calc(100vh-3.5rem)] flex ${useModuleDriveLayout ? 'bg-[#f4f6f8]' : 'bg-slate-50'}`}>
       {sidebarOpen && (
-      <aside className="w-64 shrink-0 border-r bg-white flex flex-col">
-        <div className="p-4 flex items-start justify-between gap-2">
+      <aside className={`${useModuleDriveLayout ? 'w-[17.5rem]' : 'w-64'} shrink-0 border-r border-slate-200/80 bg-white flex flex-col`}>
+        <div className="px-4 py-3.5 flex items-start justify-between gap-2 border-b border-slate-100">
           <div className="min-w-0">
-          <h1 className="text-base font-bold text-slate-800 flex items-center gap-2">
-            <HardDrive size={20} className="text-blue-600 shrink-0" /> Drive
-            {lockedModule && (
-              <span className="text-xs font-semibold text-violet-700 bg-violet-50 border border-violet-100 px-2 py-0.5 rounded-full">
-                {moduleScopeLabel(lockedModule)}
+            <h1 className="text-[15px] font-bold text-slate-900 flex items-center gap-2">
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 shrink-0">
+                <HardDrive size={18} />
               </span>
+              Drive
+              {lockedModule && (
+                <span className="text-[10px] font-bold text-violet-700 bg-violet-50 border border-violet-200 px-2 py-0.5 rounded-md uppercase tracking-wide">
+                  {moduleScopeLabel(lockedModule)}
+                </span>
+              )}
+            </h1>
+            {lockedModule && (
+              <p className="text-[11px] text-slate-500 mt-2 leading-snug pl-10">Chỉ công ty thuộc khối {moduleScopeLabel(lockedModule)}</p>
             )}
-          </h1>
-          {lockedModule && (
-            <p className="text-[11px] text-slate-500 mt-1">Chỉ công ty thuộc khối {moduleScopeLabel(lockedModule)}</p>
-          )}
           </div>
           <button
             type="button"
             onClick={() => setSidebarOpen(false)}
-            className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700 shrink-0"
+            className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 shrink-0"
             title="Thu gọn sidebar"
             aria-label="Thu gọn sidebar Drive"
           >
@@ -708,146 +791,116 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
           </button>
         </div>
 
-        <div className="px-3 space-y-1 overflow-auto flex-1">
-          <SidebarSection title="Quick views">
-            <SidebarLink icon={Clock} label="Gần đây" active={view === 'recent'} onClick={() => openView('recent')} />
-            <SidebarLink icon={Star} label="Đã gắn dấu" active={view === 'starred'} onClick={() => openView('starred')} />
-            <SidebarLink icon={Users} label="Được chia sẻ" active={view === 'shared'} onClick={() => openView('shared')} />
-            <SidebarLink icon={Trash2} label="Thùng rác" active={view === 'trash'} onClick={() => openView('trash')} />
+        <div className="px-2.5 py-3 overflow-auto flex-1">
+          <SidebarSection title={useModuleDriveLayout ? 'Truy cập nhanh' : 'Quick views'}>
+            <SidebarLink icon={Clock} label="Gần đây" active={view === 'recent'} onClick={() => openView('recent')} moduleLayout={useModuleDriveLayout} />
+            <SidebarLink icon={Users} label={useModuleDriveLayout ? 'Được chia sẻ với tôi' : 'Được chia sẻ'} active={view === 'shared'} onClick={() => openView('shared')} moduleLayout={useModuleDriveLayout} />
+            <SidebarLink icon={Star} label={useModuleDriveLayout ? 'Đã gắn dấu sao' : 'Đã gắn dấu'} active={view === 'starred'} onClick={() => openView('starred')} moduleLayout={useModuleDriveLayout} />
+            <SidebarLink icon={Trash2} label="Thùng rác" active={view === 'trash'} onClick={() => openView('trash')} moduleLayout={useModuleDriveLayout} />
           </SidebarSection>
 
-          <SidebarSection title="Drive của tôi">
-            {showRoots.personal.length === 0 && (
-              <button onClick={async () => {
-                try { const r = await driveEnsurePersonalRoot(); setRoots([r.root, ...roots]); await openRoot(r.root); }
-                catch (e) { alert(e?.response?.data?.error || e?.message); }
-              }} className="text-xs text-blue-600 hover:underline px-2">
-                + Tạo Drive cá nhân
-              </button>
-            )}
-            {showRoots.personal.map((r) => (
-              <SidebarLink key={r.id} icon={UserIcon} label={r.name} active={activeRoot?.id === r.id && !view} onClick={() => openRoot(r)} />
-            ))}
-          </SidebarSection>
-
-          {showRoots.moduleShared.length > 0 && (
-            <SidebarSection title="Drive chung module">
-              {showRoots.moduleShared.map((r) => (
-                <SidebarLink
-                  key={r.id}
-                  icon={Globe}
-                  label={r.shared_kind === 'shared_company' ? `Chung công ty · ${r.name}` : r.name}
-                  active={activeRoot?.id === r.id && !view}
-                  onClick={() => openRoot(r)}
-                />
-              ))}
+          {useModuleDriveLayout ? (
+            <SidebarSection title="Drive của tôi">
+              <DriveOrgEmployeeSidebar
+                activeRootId={activeRoot?.id}
+                lockModule={lockedModule}
+                scopeModuleKey={scopeModuleKey}
+                myModuleKey={myModuleKey}
+                onOpenRoot={openRoot}
+                refreshRoots={refreshRootsList}
+              />
             </SidebarSection>
+          ) : (
+            <>
+              <SidebarSection title="Drive của tôi">
+                {showRoots.personal.length === 0 && (
+                  <button onClick={async () => {
+                    try { const r = await driveEnsurePersonalRoot(); setRoots([r.root, ...roots]); await openRoot(r.root); }
+                    catch (e) { alert(e?.response?.data?.error || e?.message); }
+                  }} className="text-xs text-blue-600 hover:underline px-2">
+                    + Tạo Drive cá nhân
+                  </button>
+                )}
+                {showRoots.personal.map((r) => (
+                  <SidebarLink key={r.id} icon={UserIcon} label={r.name} active={activeRoot?.id === r.id && !view} onClick={() => openRoot(r)} />
+                ))}
+              </SidebarSection>
+              {showRoots.moduleShared.length > 0 && (
+                <SidebarSection title="Drive chung module">
+                  {showRoots.moduleShared.map((r) => (
+                    <SidebarLink key={r.id} icon={Globe} label={r.shared_kind === 'shared_company' ? `Chung công ty · ${r.name}` : r.name} active={activeRoot?.id === r.id && !view} onClick={() => openRoot(r)} />
+                  ))}
+                </SidebarSection>
+              )}
+              {isAdmin && showRoots.otherShared.length > 0 && (
+                <SidebarSection title={
+                  <span className="flex items-center justify-between">
+                    <span>Drive chung khác</span>
+                    <button onClick={handleCreateSharedDrive} className="text-blue-600 hover:underline text-[10px]">+ Tạo</button>
+                  </span>
+                }>
+                  {showRoots.otherShared.map((r) => (
+                    <SidebarLink key={r.id} icon={Globe} label={r.name} active={activeRoot?.id === r.id && !view} onClick={() => openRoot(r)} />
+                  ))}
+                </SidebarSection>
+              )}
+              <SidebarSection title={
+                <span className="flex items-center gap-1.5">
+                  <Network size={11} className="text-slate-400" />
+                  <span>Drive theo module</span>
+                </span>
+              }>
+                <OrgTreeNav activeRootId={activeRoot?.id} onOpenRoot={openRoot} refreshRoots={refreshRootsList} isAdmin={isAdmin} myModuleKey={myModuleKey} scopeModuleKey={scopeModuleKey} lockModule={lockedModule} />
+              </SidebarSection>
+            </>
           )}
-
-          {isAdmin && showRoots.otherShared.length > 0 && (
-            <SidebarSection title={
-              <span className="flex items-center justify-between">
-                <span>Drive chung khác</span>
-                <button onClick={handleCreateSharedDrive} className="text-blue-600 hover:underline text-[10px]">+ Tạo</button>
-              </span>
-            }>
-              {showRoots.otherShared.map((r) => (
-                <SidebarLink key={r.id} icon={Globe} label={r.name} active={activeRoot?.id === r.id && !view} onClick={() => openRoot(r)} />
-              ))}
-            </SidebarSection>
-          )}
-
-          <SidebarSection title={
-            <span className="flex items-center gap-1.5">
-              <Network size={11} className="text-slate-400" />
-              <span>Drive theo module</span>
-            </span>
-          }>
-            <OrgTreeNav
-              activeRootId={activeRoot?.id}
-              onOpenRoot={openRoot}
-              refreshRoots={refreshRootsList}
-              isAdmin={isAdmin}
-              myModuleKey={myModuleKey}
-              scopeModuleKey={scopeModuleKey}
-              lockModule={lockedModule}
-            />
-          </SidebarSection>
         </div>
       </aside>
       )}
 
-      {/* Main */}
-      <main className="flex-1 flex flex-col overflow-hidden min-w-0">
-        {/* Toolbar */}
-        <div className="h-14 border-b bg-white px-4 flex items-center gap-3">
+      <main className="flex-1 flex flex-col overflow-hidden min-w-0 bg-white">
+        <div className={`shrink-0 border-b border-slate-200/80 bg-white px-4 flex items-center gap-3 ${useModuleDriveLayout ? 'h-[3.25rem]' : 'h-14'}`}>
           {!sidebarOpen && (
-            <button
-              type="button"
-              onClick={() => setSidebarOpen(true)}
-              className="p-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 shrink-0"
-              title="Mở sidebar Drive"
-              aria-label="Mở sidebar Drive"
-            >
+            <button type="button" onClick={() => setSidebarOpen(true)} className="p-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 shrink-0" title="Mở sidebar Drive" aria-label="Mở sidebar Drive">
               <PanelLeftOpen size={18} />
             </button>
           )}
-          <div className="flex-1 min-w-0" />
-
-          {/* Search */}
-          <div className="relative">
-            <Search size={14} className="absolute left-2.5 top-2.5 text-slate-400" />
+          <div className="relative flex-1 max-w-xl min-w-[12rem]">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
             <input
+              ref={searchInputRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Tìm trong Drive..."
-              className="pl-8 pr-3 py-1.5 w-56 text-sm border rounded-lg focus:outline-none focus:border-blue-400"
+              className={`w-full pl-9 pr-14 py-2 text-sm border rounded-xl focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 ${
+                useModuleDriveLayout ? 'bg-slate-50 border-slate-200' : 'border-slate-200 bg-white'
+              }`}
             />
+            <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 hidden sm:inline-flex items-center rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-400">⌘K</kbd>
           </div>
-
-          {/* View toggle: List ↔ Grid */}
-          <div className="flex items-center border rounded-lg overflow-hidden">
-            <button
-              onClick={() => setViewMode('list')}
-              title="Dạng danh sách"
-              className={`h-9 w-9 flex items-center justify-center transition ${viewMode === 'list' ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-50'}`}
-            >
-              <ListIcon size={16} />
-            </button>
-            <button
-              onClick={() => setViewMode('grid')}
-              title="Dạng lớn"
-              className={`h-9 w-9 flex items-center justify-center transition ${viewMode === 'grid' ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-50'}`}
-            >
-              <LayoutGrid size={16} />
-            </button>
-          </div>
-
-          {/* Action buttons - chỉ hiện khi đang ở root/folder, không phải view tổng hợp */}
-          {(activeRoot || activeFolder) && !isTrashView && (
-            <>
-              <button
-                onClick={() => setCreatingFolder(true)}
-                className="h-9 px-3 border rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-slate-50"
-              >
-                <FolderPlus size={16} /> Thư mục
+          <div className="flex items-center gap-2 ml-auto shrink-0">
+            <div className={`flex items-center rounded-xl overflow-hidden border ${useModuleDriveLayout ? 'border-slate-200 bg-slate-50' : 'border-slate-200'}`}>
+              <button onClick={() => setViewMode('list')} title="Dạng danh sách" className={`h-9 w-9 flex items-center justify-center transition ${viewMode === 'list' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:bg-white/70'}`}>
+                <ListIcon size={16} />
               </button>
-              <button
-                onClick={() => setShowUpload((s) => !s)}
-                className="h-9 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5"
-              >
-                <Upload size={16} /> Tải lên
+              <button onClick={() => setViewMode('grid')} title="Dạng lưới" className={`h-9 w-9 flex items-center justify-center transition ${viewMode === 'grid' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:bg-white/70'}`}>
+                <LayoutGrid size={16} />
               </button>
-              <div className="relative" ref={createMenuRef}>
-                <button
-                  onClick={() => setShowCreateMenu((s) => !s)}
-                  disabled={!!creatingGoogle}
-                  className="h-9 px-3 border rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-slate-50 disabled:opacity-60"
-                >
-                  {creatingGoogle ? <Loader2 size={16} className="animate-spin" /> : <FilePlus size={16} />}
-                  Tạo mới
-                  <ChevronDown size={14} className="text-slate-400" />
+            </div>
+            {(activeRoot || activeFolder) && !isTrashView && (
+              <>
+                <button onClick={() => setCreatingFolder(true)} className="h-9 px-3 border border-slate-200 rounded-xl text-sm font-medium flex items-center gap-1.5 hover:bg-slate-50 bg-white">
+                  <Plus size={16} /> Thư mục
                 </button>
+                <button onClick={() => setShowUpload((s) => !s)} className="h-9 px-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-medium flex items-center gap-1.5 shadow-sm">
+                  <Upload size={16} /> Tải lên
+                </button>
+                <div className="relative" ref={createMenuRef}>
+                  <button onClick={() => setShowCreateMenu((s) => !s)} disabled={!!creatingGoogle} className="h-9 px-3 border border-slate-200 rounded-xl text-sm font-medium flex items-center gap-1.5 hover:bg-slate-50 bg-white disabled:opacity-60">
+                    {creatingGoogle ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} className="text-slate-500" />}
+                    Tạo mới
+                    <ChevronDown size={14} className="text-slate-400" />
+                  </button>
                 {showCreateMenu && (
                   <div className="absolute right-0 top-full mt-1 z-30 min-w-[200px] bg-white border rounded-lg shadow-lg py-1 text-sm">
                     <button
@@ -869,12 +922,16 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
               </div>
             </>
           )}
+          </div>
         </div>
 
-        <DriveLocationBar items={breadcrumb} onNavigate={handleLocationNav} />
+        <DriveLocationBar
+          items={breadcrumb}
+          onNavigate={handleLocationNav}
+          className={useModuleDriveLayout ? 'bg-white border-slate-200/80 px-5 py-2.5' : ''}
+        />
 
-        {/* Body */}
-        <div className="flex-1 overflow-auto p-4">
+        <div className={`flex-1 overflow-auto ${useModuleDriveLayout ? 'px-5 py-4 bg-[#f4f6f8]' : 'p-4'}`}>
           {/* Upload dropzone */}
           {showUpload && (activeRoot || activeFolder) && (
             <div className="mb-4">
@@ -985,9 +1042,9 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
                   selectedIds={selectedIds}
                   onSelectionChange={setSelectedIds}
                 >
-                  {displayFolders.length > 0 && (
+                  {sortedDisplayFolders.length > 0 && (
                     <DriveFolderListBlock
-                      folders={displayFolders}
+                      folders={sortedDisplayFolders}
                       starredIds={starredIds}
                       isTrashView={isTrashView}
                       onOpenFolder={(id) => openFolder(id)}
@@ -1016,9 +1073,12 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
                   selectedIds={selectedIds}
                   onSelectionChange={setSelectedIds}
                 >
-                  {displayFolders.length > 0 && (
+                  {sortedDisplayFolders.length > 0 && (
                     <DriveFolderGridBlock
-                      folders={displayFolders}
+                      folders={sortedDisplayFolders}
+                      folderSort={folderSort}
+                      onFolderSortChange={setFolderSort}
+                      moduleLayout={useModuleDriveLayout}
                       starredIds={starredIds}
                       isTrashView={isTrashView}
                       onOpenFolder={(id) => openFolder(id)}
@@ -1026,9 +1086,12 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
                       onContextMenu={(e, item, type) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, item, type }); }}
                     />
                   )}
+                  {showFolderContentEmpty && (
+                    <DriveFolderContentEmpty moduleLayout={useModuleDriveLayout} onUpload={() => setShowUpload(true)} hasFolders={sortedDisplayFolders.length > 0} />
+                  )}
                   {displayFiles.length > 0 && (
-                    <section className={displayFolders.length > 0 ? 'mt-2' : ''}>
-                      {displayFolders.length > 0 && (
+                    <section className={sortedDisplayFolders.length > 0 ? 'mt-4' : ''}>
+                      {sortedDisplayFolders.length > 0 && (
                         <h3 className="text-xs font-semibold text-slate-500 uppercase mb-2">File</h3>
                       )}
                       <DriveFilesGridView
@@ -1059,7 +1122,7 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
                 </div>
               )}
 
-              {displayFolders.length === 0 && displayFiles.length === 0 && (
+              {displayFolders.length === 0 && displayFiles.length === 0 && !showFolderContentEmpty && (
                 <div className="text-center py-20 text-slate-400">
                   <FolderOpen className="mx-auto mb-3" size={48} />
                   <p>{searchResults ? 'Không tìm thấy kết quả' : 'Chưa có file/folder nào'}</p>
@@ -1158,22 +1221,24 @@ const viewLabels = { recent: 'Gần đây', starred: 'Đã gắn dấu', shared:
 
 function SidebarSection({ title, children }) {
   return (
-    <div className="mb-4">
-      <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-wide px-2 mb-1">{title}</h3>
+    <div className="mb-5">
+      <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.08em] px-2.5 mb-2">{title}</h3>
       <div className="space-y-0.5">{children}</div>
     </div>
   );
 }
 
-function SidebarLink({ icon: Icon, label, active, onClick }) {
+function SidebarLink({ icon: Icon, label, active, onClick, moduleLayout }) {
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-left transition ${
-        active ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-600 hover:bg-slate-50'
+      className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-[13px] text-left transition ${
+        active
+          ? (moduleLayout ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'bg-blue-50 text-blue-700 font-medium')
+          : 'text-slate-600 hover:bg-slate-50'
       }`}
     >
-      <Icon size={15} />
+      <Icon size={15} className={active ? (moduleLayout ? 'text-indigo-600' : 'text-blue-600') : 'text-slate-400'} />
       <span className="truncate">{label}</span>
     </button>
   );
@@ -1244,14 +1309,37 @@ function DriveFolderListBlock({ folders, starredIds, isTrashView, onOpenFolder, 
 }
 
 /**
- * Khối thư mục — dạng grid.
+ * Khối thư mục — dạng grid (mockup Drive CRM).
  */
-function DriveFolderGridBlock({ folders, starredIds, isTrashView, onOpenFolder, onShare, onContextMenu }) {
+function DriveFolderGridBlock({
+  folders, starredIds, isTrashView, onOpenFolder, onShare, onContextMenu,
+  folderSort, onFolderSortChange, moduleLayout,
+}) {
   if (!folders.length) return null;
+
   return (
-    <section className="mb-6">
-      <h3 className="text-xs font-semibold text-slate-500 uppercase mb-2">Thư mục</h3>
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
+    <section className="mb-2">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <h3 className="text-sm font-semibold text-slate-900">Thư mục</h3>
+        {moduleLayout && onFolderSortChange && (
+          <div className="flex items-center gap-2">
+            <select
+              value={folderSort || 'name_asc'}
+              onChange={(e) => onFolderSortChange(e.target.value)}
+              className="h-8 px-2.5 pr-7 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg bg-white cursor-pointer focus:outline-none focus:border-indigo-400"
+              aria-label="Sắp xếp thư mục"
+            >
+              <option value="name_asc">Tên (A - Z)</option>
+              <option value="name_desc">Tên (Z - A)</option>
+              <option value="updated_desc">Cập nhật mới nhất</option>
+            </select>
+            <button type="button" title="Sắp xếp thư mục" className="h-8 w-8 inline-flex items-center justify-center rounded-full border border-slate-200 bg-white text-slate-400 hover:text-slate-600">
+              <Info size={14} />
+            </button>
+          </div>
+        )}
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
         {folders.map((f) => {
           const isStarred = starredIds.has('folder:' + f.id);
           return (
@@ -1259,28 +1347,154 @@ function DriveFolderGridBlock({ folders, starredIds, isTrashView, onOpenFolder, 
               key={f.id}
               onDoubleClick={() => !isTrashView && onOpenFolder(f.id)}
               onContextMenu={(e) => onContextMenu(e, f, 'folder')}
-              className="group bg-slate-50 hover:bg-blue-50 border rounded-lg px-3 py-2.5 cursor-pointer flex items-center gap-2"
+              className={`group relative bg-white border rounded-2xl px-4 py-3.5 cursor-pointer transition-all hover:shadow-md ${
+                moduleLayout ? 'border-slate-200/90 shadow-sm min-h-[7.5rem]' : 'border-slate-200 hover:bg-blue-50/40'
+              }`}
             >
-              <FolderIcon size={18} className="text-amber-500 shrink-0" fill="currentColor" />
-              <p className="text-sm font-medium text-slate-800 truncate flex-1" title={f.name}>{f.name}</p>
-              {isStarred && <Star size={12} className="text-amber-400 fill-amber-400 shrink-0" />}
-              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 shrink-0">
-                <button
-                  onClick={(e) => { e.stopPropagation(); onShare?.(f, 'folder'); }}
-                  className="p-1 hover:bg-white text-blue-600 rounded" title="Chia sẻ (Xem / Sửa)">
-                  <Share2 size={13} />
-                </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); onContextMenu(e, f, 'folder'); }}
-                  className="p-1 hover:bg-white rounded">
-                  <MoreHorizontal size={14} className="text-slate-400" />
-                </button>
+              <div className="flex items-start gap-3">
+                <div className="relative shrink-0">
+                  <div className={`flex items-center justify-center rounded-xl ${moduleLayout ? 'h-11 w-11 bg-indigo-50' : ''}`}>
+                    <FolderIcon size={moduleLayout ? 24 : 18} className={moduleLayout ? 'text-indigo-600' : 'text-amber-500'} fill="currentColor" />
+                  </div>
+                  {moduleLayout && (
+                    <span className="absolute -top-1 -right-1 rounded-md bg-slate-100 border border-slate-200 px-1 py-px text-[9px] font-medium text-slate-500 whitespace-nowrap">
+                      — mục
+                    </span>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1 pt-0.5">
+                  <div className="flex items-start gap-1 min-w-0 pr-6">
+                    <p className="text-sm font-semibold text-slate-900 truncate flex-1" title={f.name}>{f.name}</p>
+                    {isStarred && <Star size={12} className="text-amber-400 fill-amber-400 shrink-0 mt-0.5" />}
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1.5">
+                    Cập nhật {fmtDriveRelativeTime(f.updated_at || f.created_at)}
+                  </p>
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onContextMenu(e, f, 'folder'); }}
+                className={`absolute bottom-3 right-3 p-1.5 rounded-lg hover:bg-slate-100 ${moduleLayout ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                title="Tùy chọn"
+              >
+                <MoreHorizontal size={16} className="text-slate-400" />
+              </button>
             </div>
           );
         })}
       </div>
     </section>
+  );
+}
+
+function DriveFolderContentEmpty({ moduleLayout, onUpload, hasFolders }) {
+  if (!moduleLayout) {
+    return (
+      <div className="text-center py-16 text-slate-400">
+        <FolderOpen className="mx-auto mb-3" size={44} />
+        <p className="text-sm">Chọn thư mục để xem nội dung</p>
+      </div>
+    );
+  }
+  return (
+    <div className={`${hasFolders ? 'mt-1' : 'mt-0'} rounded-2xl border border-dashed border-slate-200 bg-white py-14 px-6 text-center shadow-sm`}>
+      <div className="mx-auto mb-5 flex h-28 w-28 items-center justify-center rounded-[1.25rem] bg-gradient-to-br from-indigo-50 via-blue-50 to-violet-50 border border-indigo-100/80">
+        <div className="relative">
+          <FolderOpen size={46} className="text-indigo-500" strokeWidth={1.4} />
+          <FileText size={16} className="absolute -top-2 -right-3 text-indigo-300 rotate-12" />
+          <FileText size={14} className="absolute -bottom-1 -left-3 text-violet-300 -rotate-12" />
+        </div>
+      </div>
+      <h4 className="text-base font-semibold text-slate-900">Chọn thư mục để xem nội dung</h4>
+      <p className="text-sm text-slate-500 mt-1.5 max-w-md mx-auto">
+        Hoặc tải lên tệp để bắt đầu lưu trữ dữ liệu của bạn
+      </p>
+      <button
+        type="button"
+        onClick={onUpload}
+        className="mt-5 h-10 px-5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-medium inline-flex items-center gap-2 shadow-sm"
+      >
+        <Upload size={16} /> Tải tệp lên
+      </button>
+    </div>
+  );
+}
+
+function DriveOrgEmployeeSidebar({ activeRootId, lockModule, scopeModuleKey, myModuleKey, onOpenRoot, refreshRoots }) {
+  const [employees, setEmployees] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const loadEmployees = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const effectiveMod = lockModule || scopeModuleKey || myModuleKey || undefined;
+      const r = await driveOrgTree(effectiveMod || undefined);
+      setEmployees(flattenOrgEmployees(r.modules || []));
+    } catch (e) {
+      setError(e?.response?.data?.error || e?.message || 'Không tải được danh sách nhân viên');
+    } finally {
+      setLoading(false);
+    }
+  }, [lockModule, scopeModuleKey, myModuleKey]);
+
+  useEffect(() => { loadEmployees(); }, [loadEmployees]);
+
+  async function openRootById(rootId) {
+    if (!rootId) return;
+    const latest = await refreshRoots();
+    const root = (latest || []).find((x) => x.id === rootId);
+    if (root) onOpenRoot(root);
+  }
+
+  async function openUserDrive(userNode) {
+    try {
+      let rootId = userNode.drive_root_id;
+      if (!rootId) {
+        const r = await driveEnsureUserDrive(userNode.id);
+        rootId = r?.root?.id;
+      }
+      await openRootById(rootId);
+    } catch (e) {
+      alert(e?.response?.data?.error || e?.message || 'Không mở được Drive nhân viên');
+    }
+  }
+
+  if (loading) {
+    return <div className="px-2.5 py-2 text-[11px] text-slate-400 flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> Đang tải…</div>;
+  }
+  if (error) {
+    return <p className="px-2.5 py-1 text-[11px] text-rose-500">{error}</p>;
+  }
+  if (!employees.length) {
+    return <p className="px-2.5 py-1 text-[11px] text-slate-400">Chưa có nhân viên trong module này.</p>;
+  }
+
+  return (
+    <div className="space-y-0.5">
+      {employees.map((u) => {
+        const active = activeRootId && activeRootId === u.drive_root_id;
+        return (
+          <button
+            key={u.id}
+            type="button"
+            onClick={() => openUserDrive(u)}
+            className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-[13px] text-left transition truncate ${
+              active ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            {u.avatar ? (
+              <img src={u.avatar} alt="" className="w-5 h-5 rounded-full shrink-0 object-cover" />
+            ) : (
+              <UserIcon size={15} className={active ? 'text-indigo-600 shrink-0' : 'text-slate-400 shrink-0'} />
+            )}
+            <span className="truncate">{u.name}</span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
