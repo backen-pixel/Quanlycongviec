@@ -216,12 +216,14 @@ export default function MessengerDock() {
     openMessengerGroupChat,
     openLeadChat,
     openDepartmentChat,
+    pinnedGroupIds,
+    syncPinnedGroupIds,
+    toggleMessengerGroupPin,
   } = useMessengerDock();
   const [dockExpanded, setDockExpanded] = useState(false);
   const [panelSearch, setPanelSearch] = useState('');
   const [onlineOnly, setOnlineOnly] = useState(false);
   const [groups, setGroups] = useState([]);
-  const [pinnedGroupIds, setPinnedGroupIds] = useState([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [staffRows, setStaffRows] = useState([]);
   const [staffLoading, setStaffLoading] = useState(false);
@@ -257,14 +259,14 @@ export default function MessengerDock() {
         api.get('/messenger/pins').catch(() => ({ data: { group_ids: [] } })),
       ]);
       setGroups((prev) => mergeApiGroupsWithPreviewCache(apiList, uid, prev));
-      setPinnedGroupIds(Array.isArray(pinPayload?.group_ids) ? pinPayload.group_ids : []);
+      syncPinnedGroupIds(Array.isArray(pinPayload?.group_ids) ? pinPayload.group_ids : []);
     } catch {
       setGroups((prev) => (prev.length ? prev : []));
-      setPinnedGroupIds([]);
+      syncPinnedGroupIds([]);
     } finally {
       setGroupsLoading(false);
     }
-  }, [uid]);
+  }, [uid, syncPinnedGroupIds]);
 
   const toggleDockExpanded = useCallback(() => {
     setDockExpanded((v) => {
@@ -392,23 +394,12 @@ export default function MessengerDock() {
     }));
   }, [groups, pinnedGroupIds]);
 
-  const toggleGroupPin = useCallback(async (groupId, currentlyPinned, e) => {
-    e?.stopPropagation?.();
-    e?.preventDefault?.();
-    const next = !currentlyPinned;
-    try {
-      await api.put(`/messenger/pins/${groupId}`, { pinned: next });
-      setPinnedGroupIds((prev) => {
-        const id = String(groupId);
-        if (next) return prev.some((x) => String(x) === id) ? prev : [...prev, groupId];
-        return prev.filter((x) => String(x) !== id);
-      });
-    } catch (err) {
-      alert(err.response?.data?.error || 'Không ghim được hội thoại');
-    }
-  }, []);
-
   const pinnedGroupIdSet = useMemo(() => new Set(pinnedGroupIds.map(String)), [pinnedGroupIds]);
+
+  const toggleGroupPin = useCallback(
+    (groupId, currentlyPinned, e) => toggleMessengerGroupPin(groupId, currentlyPinned, e),
+    [toggleMessengerGroupPin],
+  );
 
   const groupAvatarById = useMemo(() => {
     const m = new Map();
