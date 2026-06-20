@@ -12,7 +12,7 @@ import {
   HardDrive, FolderPlus, Upload, Star, StarOff, Search, Trash2, RotateCcw, Share2,
   ChevronRight, ChevronDown, Home, Users, Clock, Download, Pencil, Move, Link2, MoreHorizontal,
   Loader2, Building2, User as UserIcon, Globe, Plus, X, FolderOpen, Eye, AlertCircle,
-  Network, MapPin, LayoutGrid, List as ListIcon, Folder as FolderIcon,
+  MapPin, LayoutGrid, List as ListIcon, Folder as FolderIcon,
   FilePlus, FileText, Table2, Tag, Briefcase, PanelLeftClose, PanelLeftOpen, FolderInput, Info,
 } from 'lucide-react';
 import {
@@ -145,7 +145,6 @@ export default function DrivePage() {
   });
   const searchTimer = useRef(null);
   const searchInputRef = useRef(null);
-  const useModuleDriveLayout = !!lockedModule;
 
   useEffect(() => {
     try { localStorage.setItem('drive.sidebarOpen', sidebarOpen ? '1' : '0'); } catch (_) {}
@@ -741,9 +740,9 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
   }
 
   return (
-    <div className={`h-[calc(100vh-3.5rem)] flex ${useModuleDriveLayout ? 'bg-[#f4f6f8]' : 'bg-slate-50'}`}>
+    <div className="h-[calc(100vh-3.5rem)] flex bg-[#f4f6f8]">
       {sidebarOpen && (
-      <aside className={`${useModuleDriveLayout ? 'w-[17.5rem]' : 'w-64'} shrink-0 border-r border-slate-200/80 bg-white flex flex-col`}>
+      <aside className="w-[17.5rem] shrink-0 border-r border-slate-200/80 bg-white flex flex-col">
         <div className="px-4 py-3.5 flex items-start justify-between gap-2 border-b border-slate-100">
           <div className="min-w-0">
             <h1 className="text-[15px] font-bold text-slate-900 flex items-center gap-2">
@@ -751,14 +750,20 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
                 <HardDrive size={18} />
               </span>
               Drive
-              {lockedModule && (
+              {lockedModule ? (
                 <span className="text-[10px] font-bold text-violet-700 bg-violet-50 border border-violet-200 px-2 py-0.5 rounded-md uppercase tracking-wide">
                   {moduleScopeLabel(lockedModule)}
                 </span>
+              ) : (
+                <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-md uppercase tracking-wide">
+                  Lưu trữ
+                </span>
               )}
             </h1>
-            {lockedModule && (
+            {lockedModule ? (
               <p className="text-[11px] text-slate-500 mt-2 leading-snug pl-10">Chỉ công ty thuộc khối {moduleScopeLabel(lockedModule)}</p>
+            ) : (
+              <p className="text-[11px] text-slate-500 mt-2 leading-snug pl-10">Tất cả module và công ty</p>
             )}
           </div>
           <button
@@ -773,85 +778,70 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
         </div>
 
         <div className="px-2.5 py-3 overflow-auto flex-1">
-          <SidebarSection title={useModuleDriveLayout ? 'Truy cập nhanh' : 'Quick views'}>
-            <SidebarLink icon={Clock} label="Gần đây" active={view === 'recent'} onClick={() => openView('recent')} moduleLayout={useModuleDriveLayout} />
-            <SidebarLink icon={Users} label={useModuleDriveLayout ? 'Được chia sẻ với tôi' : 'Được chia sẻ'} active={view === 'shared'} onClick={() => openView('shared')} moduleLayout={useModuleDriveLayout} />
-            <SidebarLink icon={Star} label={useModuleDriveLayout ? 'Đã gắn dấu sao' : 'Đã gắn dấu'} active={view === 'starred'} onClick={() => openView('starred')} moduleLayout={useModuleDriveLayout} />
-            <SidebarLink icon={Trash2} label="Thùng rác" active={view === 'trash'} onClick={() => openView('trash')} moduleLayout={useModuleDriveLayout} />
+          <SidebarSection title="Truy cập nhanh">
+            <SidebarLink icon={Clock} label="Gần đây" active={view === 'recent'} onClick={() => openView('recent')} moduleLayout />
+            <SidebarLink icon={Users} label="Được chia sẻ với tôi" active={view === 'shared'} onClick={() => openView('shared')} moduleLayout />
+            <SidebarLink icon={Star} label="Đã gắn dấu sao" active={view === 'starred'} onClick={() => openView('starred')} moduleLayout />
+            <SidebarLink icon={Trash2} label="Thùng rác" active={view === 'trash'} onClick={() => openView('trash')} moduleLayout />
           </SidebarSection>
 
-          {useModuleDriveLayout ? (
-            <SidebarSection title="Drive của tôi">
-              <OrgTreeNav
-                activeRootId={activeRoot?.id}
-                onOpenRoot={openRoot}
-                refreshRoots={refreshRootsList}
-                isAdmin={isAdmin}
-                isSystemAdmin={systemAdmin}
-                myModuleKey={myModuleKey}
-                scopeModuleKey={scopeModuleKey}
-                lockModule={lockedModule}
+          <SidebarSection title="Drive của tôi">
+            {showRoots.personal.length === 0 && !lockedModule && (
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const r = await driveEnsurePersonalRoot();
+                    setRoots([r.root, ...roots]);
+                    await openRoot(r.root);
+                  } catch (e) { alert(e?.response?.data?.error || e?.message); }
+                }}
+                className="text-xs text-indigo-600 hover:underline px-2.5 mb-1"
+              >
+                + Tạo Drive cá nhân
+              </button>
+            )}
+            {showRoots.personal.map((r) => (
+              <SidebarLink
+                key={r.id}
+                icon={UserIcon}
+                label={r.name}
+                active={activeRoot?.id === r.id && !view}
+                onClick={() => openRoot(r)}
                 moduleLayout
               />
+            ))}
+            <OrgTreeNav
+              activeRootId={activeRoot?.id}
+              onOpenRoot={openRoot}
+              refreshRoots={refreshRootsList}
+              isAdmin={isAdmin}
+              isSystemAdmin={systemAdmin}
+              myModuleKey={myModuleKey}
+              scopeModuleKey={scopeModuleKey}
+              lockModule={lockedModule}
+              moduleLayout
+            />
+          </SidebarSection>
+
+          {isAdmin && showRoots.otherShared.length > 0 && (
+            <SidebarSection title={
+              <span className="flex items-center justify-between">
+                <span>Drive chung khác</span>
+                <button type="button" onClick={handleCreateSharedDrive} className="text-indigo-600 hover:underline text-[10px]">+ Tạo</button>
+              </span>
+            }>
+              {showRoots.otherShared.map((r) => (
+                <SidebarLink key={r.id} icon={Globe} label={r.name} active={activeRoot?.id === r.id && !view} onClick={() => openRoot(r)} moduleLayout />
+              ))}
             </SidebarSection>
-          ) : (
-            <>
-              <SidebarSection title="Drive của tôi">
-                {showRoots.personal.length === 0 && (
-                  <button onClick={async () => {
-                    try { const r = await driveEnsurePersonalRoot(); setRoots([r.root, ...roots]); await openRoot(r.root); }
-                    catch (e) { alert(e?.response?.data?.error || e?.message); }
-                  }} className="text-xs text-blue-600 hover:underline px-2">
-                    + Tạo Drive cá nhân
-                  </button>
-                )}
-                {showRoots.personal.map((r) => (
-                  <SidebarLink key={r.id} icon={UserIcon} label={r.name} active={activeRoot?.id === r.id && !view} onClick={() => openRoot(r)} />
-                ))}
-                {showRoots.moduleShared.length > 0 && (
-                  <div className="mt-2 pt-2 border-t border-slate-100 space-y-0.5">
-                    {showRoots.moduleShared.map((r) => (
-                      <SidebarLink key={r.id} icon={Globe} label={r.shared_kind === 'shared_company' ? `Chung công ty · ${r.name}` : r.name} active={activeRoot?.id === r.id && !view} onClick={() => openRoot(r)} />
-                    ))}
-                  </div>
-                )}
-                <div className="mt-3 pt-3 border-t border-slate-100">
-                  <p className="px-2.5 mb-2 text-[10px] font-bold text-slate-400 uppercase tracking-[0.08em] flex items-center gap-1.5">
-                    <Network size={11} />
-                    Theo công ty
-                  </p>
-                  <OrgTreeNav
-                    activeRootId={activeRoot?.id}
-                    onOpenRoot={openRoot}
-                    refreshRoots={refreshRootsList}
-                    isAdmin={isAdmin}
-                    isSystemAdmin={systemAdmin}
-                    myModuleKey={myModuleKey}
-                    scopeModuleKey={scopeModuleKey}
-                    lockModule={lockedModule}
-                  />
-                </div>
-              </SidebarSection>
-              {isAdmin && showRoots.otherShared.length > 0 && (
-                <SidebarSection title={
-                  <span className="flex items-center justify-between">
-                    <span>Drive chung khác</span>
-                    <button onClick={handleCreateSharedDrive} className="text-blue-600 hover:underline text-[10px]">+ Tạo</button>
-                  </span>
-                }>
-                  {showRoots.otherShared.map((r) => (
-                    <SidebarLink key={r.id} icon={Globe} label={r.name} active={activeRoot?.id === r.id && !view} onClick={() => openRoot(r)} />
-                  ))}
-                </SidebarSection>
-              )}
-            </>
           )}
         </div>
       </aside>
       )}
 
       <main className="flex-1 flex flex-col overflow-hidden min-w-0 bg-white">
-        <div className={`shrink-0 border-b border-slate-200/80 bg-white px-4 flex items-center gap-3 ${useModuleDriveLayout ? 'h-[3.25rem]' : 'h-14'}`}>
+        <div className="shrink-0 border-b border-slate-200/80 bg-white px-4 flex items-center gap-3 h-[3.25rem]">
           {!sidebarOpen && (
             <button type="button" onClick={() => setSidebarOpen(true)} className="p-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 shrink-0" title="Mở sidebar Drive" aria-label="Mở sidebar Drive">
               <PanelLeftOpen size={18} />
@@ -864,14 +854,12 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Tìm trong Drive..."
-              className={`w-full pl-9 pr-14 py-2 text-sm border rounded-xl focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 ${
-                useModuleDriveLayout ? 'bg-slate-50 border-slate-200' : 'border-slate-200 bg-white'
-              }`}
+              className="w-full pl-9 pr-14 py-2 text-sm border rounded-xl focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 bg-slate-50 border-slate-200"
             />
             <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 hidden sm:inline-flex items-center rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-400">⌘K</kbd>
           </div>
           <div className="flex items-center gap-2 ml-auto shrink-0">
-            <div className={`flex items-center rounded-xl overflow-hidden border ${useModuleDriveLayout ? 'border-slate-200 bg-slate-50' : 'border-slate-200'}`}>
+            <div className="flex items-center rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
               <button onClick={() => setViewMode('list')} title="Dạng danh sách" className={`h-9 w-9 flex items-center justify-center transition ${viewMode === 'list' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:bg-white/70'}`}>
                 <ListIcon size={16} />
               </button>
@@ -920,10 +908,10 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
         <DriveLocationBar
           items={breadcrumb}
           onNavigate={handleLocationNav}
-          className={useModuleDriveLayout ? 'bg-white border-slate-200/80 px-5 py-2.5' : ''}
+          className="bg-white border-slate-200/80 px-5 py-2.5"
         />
 
-        <div className={`flex-1 overflow-auto ${useModuleDriveLayout ? 'px-5 py-4 bg-[#f4f6f8]' : 'p-4'}`}>
+        <div className="flex-1 overflow-auto px-5 py-4 bg-[#f4f6f8]">
           {/* Upload dropzone */}
           {showUpload && (activeRoot || activeFolder) && (
             <div className="mb-4">
@@ -946,9 +934,9 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
                 onChange={(e) => setNewFolderName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') handleCreateFolder(); if (e.key === 'Escape') { setCreatingFolder(false); setNewFolderName(''); } }}
                 placeholder="Tên thư mục mới"
-                className="flex-1 px-2 py-1 border rounded text-sm focus:outline-none focus:border-blue-400"
+                className="flex-1 px-2 py-1 border rounded-lg text-sm focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
               />
-              <button onClick={handleCreateFolder} className="h-7 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs">Tạo</button>
+              <button onClick={handleCreateFolder} className="h-7 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs">Tạo</button>
               <button onClick={() => { setCreatingFolder(false); setNewFolderName(''); }} className="h-7 px-2 text-slate-500 hover:text-slate-700"><X size={14} /></button>
             </div>
           )}
@@ -1070,7 +1058,7 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
                       folders={sortedDisplayFolders}
                       folderSort={folderSort}
                       onFolderSortChange={setFolderSort}
-                      moduleLayout={useModuleDriveLayout}
+                      moduleLayout
                       starredIds={starredIds}
                       isTrashView={isTrashView}
                       onOpenFolder={(id) => openFolder(id)}
@@ -1079,7 +1067,7 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
                     />
                   )}
                   {showFolderContentEmpty && (
-                    <DriveFolderContentEmpty moduleLayout={useModuleDriveLayout} onUpload={() => setShowUpload(true)} hasFolders={sortedDisplayFolders.length > 0} />
+                    <DriveFolderContentEmpty moduleLayout onUpload={() => setShowUpload(true)} hasFolders={sortedDisplayFolders.length > 0} />
                   )}
                   {displayFiles.length > 0 && (
                     <section className={sortedDisplayFolders.length > 0 ? 'mt-4' : ''}>
