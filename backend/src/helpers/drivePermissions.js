@@ -14,7 +14,7 @@
  */
 
 const { supabase } = require('../config/supabase');
-const { isAdminLike } = require('./adminRole');
+const { isAdminLike, isSystemAdmin } = require('./adminRole');
 
 const ROLE_ORDER = { viewer: 1, commenter: 2, editor: 3, owner: 4 };
 
@@ -76,6 +76,18 @@ async function resolveUserPrincipals(user) {
   out.dept_ids = Array.from(new Set(out.dept_ids));
   out.region_ids = Array.from(new Set(out.region_ids));
   return out;
+}
+
+/** Root Drive thuộc phạm vi 1 công ty (user / company / shared). */
+async function rootBelongsToCompany(root, companyId) {
+  if (!root || !companyId) return false;
+  if (root.scope === 'company') return root.owner_id === companyId;
+  if (root.scope === 'shared') return root.company_id === companyId;
+  if (root.scope === 'user' && root.owner_id) {
+    const { data: u } = await supabase.from('users').select('company_id').eq('id', root.owner_id).maybeSingle();
+    return u?.company_id === companyId;
+  }
+  return false;
 }
 
 /**
@@ -198,11 +210,18 @@ async function defaultRoleOnRoot(root, principals, user) {
  */
 async function effectiveRole({ user, targetType, targetId }) {
   if (!user) return null;
-  if (isAdminLike(user)) return 'owner';
+  if (isSystemAdmin(user)) return 'owner';
 
   const principals = await resolveUserPrincipals(user);
   const { chain, rootId } = await loadAncestors({ targetType, targetId });
   if (!chain.length) return null;
+
+  // Admin gắn công ty: toàn quyền owner trong phạm vi công ty, không vượt sang công ty khác.
+  if (isAdminLike(user) && principals.company_id && rootId) {
+    const { data: root } = await supabase.from('drive_roots').select('*').eq('id', rootId).maybeSingle();
+    if (root && (await rootBelongsToCompany(root, principals.company_id))) return 'owner';
+    return null;
+  }
 
   // ACL trên chain
   const aclRole = await aclRoleForChain(chain, principals);
@@ -231,7 +250,7 @@ async function canAccess({ user, targetType, targetId, requiredRole = 'viewer' }
  */
 async function filterAccessibleIds({ user, targetType, targetIds, requiredRole = 'viewer' }) {
   if (!Array.isArray(targetIds) || targetIds.length === 0) return [];
-  if (isAdminLike(user)) return targetIds.slice();
+  if (isSystemAdmin(user)) return targetIds.slice();
   const out = [];
   // Đơn giản hoá: chạy tuần tự nhưng có cache root (effectiveRole tự cache).
   // Có thể tối ưu sau bằng 1 SQL bulk.
@@ -312,10 +331,28 @@ async function listAccessibleRoots(user) {
     for (const r of rs || []) if (!accessible.has(r.id)) accessible.set(r.id, r);
   }
 
-  // Admin: thấy mọi root.
-  if (isAdminLike(user)) {
+  // Admin hệ thống: thấy mọi root. Admin công ty: chỉ root thuộc công ty mình.
+  if (isSystemAdmin(user)) {
     const { data: all } = await supabase.from('drive_roots').select('*').limit(500);
     for (const r of all || []) if (!accessible.has(r.id)) accessible.set(r.id, r);
+  } else if (isAdminLike(user) && principals.company_id) {
+    const cid = principals.company_id;
+    const [{ data: companyRoots }, { data: sharedRoots }, { data: companyUsers }] = await Promise.all([
+      supabase.from('drive_roots').select('*').eq('scope', 'company').eq('owner_id', cid),
+      supabase.from('drive_roots').select('*').eq('scope', 'shared').eq('company_id', cid),
+      supabase.from('users').select('id').eq('company_id', cid),
+    ]);
+    for (const r of companyRoots || []) accessible.set(r.id, r);
+    for (const r of sharedRoots || []) accessible.set(r.id, r);
+    const userIds = (companyUsers || []).map((u) => u.id);
+    if (userIds.length) {
+      const { data: userRoots } = await supabase
+        .from('drive_roots')
+        .select('*')
+        .eq('scope', 'user')
+        .in('owner_id', userIds);
+      for (const r of userRoots || []) accessible.set(r.id, r);
+    }
   }
 
   return Array.from(accessible.values());
@@ -326,6 +363,7 @@ module.exports = {
   roleAtLeast,
   maxRole,
   resolveUserPrincipals,
+  rootBelongsToCompany,
   effectiveRole,
   canAccess,
   filterAccessibleIds,

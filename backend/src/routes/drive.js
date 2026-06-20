@@ -74,7 +74,7 @@ const driveAcl = require('../helpers/drivePermissions');
 const driveOrgPath = require('../helpers/driveOrgPath');
 const driveEntityFolder = require('../helpers/driveEntityFolder');
 const { logDriveActivity } = require('../helpers/driveActivity');
-const { isAdminLike } = require('../helpers/adminRole');
+const { isAdminLike, isSystemAdmin } = require('../helpers/adminRole');
 
 const r = Router();
 
@@ -194,6 +194,32 @@ function isUuid(v) {
 
 async function getOwnerCompanyId(req) {
   return req.user?.company_id || null;
+}
+
+/** Admin công ty chỉ thao tác trong công ty mình; admin hệ thống (không company_id) toàn quyền. */
+function canAdminAccessCompany(req, companyId) {
+  if (!isAdminLike(req.user)) return false;
+  if (isSystemAdmin(req.user)) return true;
+  const myCompanyId = req.user?.company_id || null;
+  return !!myCompanyId && companyId === myCompanyId;
+}
+
+async function canAdminAccessUser(req, userId) {
+  if (!isAdminLike(req.user)) return false;
+  if (isSystemAdmin(req.user)) return true;
+  const myCompanyId = await getOwnerCompanyId(req);
+  if (!myCompanyId) return false;
+  const { data: u } = await supabase.from('users').select('company_id').eq('id', userId).maybeSingle();
+  return u?.company_id === myCompanyId;
+}
+
+async function canAdminAccessDepartment(req, departmentId) {
+  if (!isAdminLike(req.user)) return false;
+  if (isSystemAdmin(req.user)) return true;
+  const myCompanyId = await getOwnerCompanyId(req);
+  if (!myCompanyId) return false;
+  const { data: d } = await supabase.from('departments').select('company_id').eq('id', departmentId).maybeSingle();
+  return d?.company_id === myCompanyId;
 }
 
 async function getUserDriveModule(userId) {
@@ -412,8 +438,8 @@ r.post('/roots/reset-personal', async (req, res) => {
   try {
     const targetUserId = (req.body?.user_id && isUuid(req.body.user_id)) ? req.body.user_id : (req.user.userId || req.user.id);
     const me = req.user.userId || req.user.id;
-    if (targetUserId !== me && !isAdminLike(req.user)) {
-      return res.status(403).json({ error: 'Chỉ admin được reset Drive của người khác' });
+    if (targetUserId !== me && !(await canAdminAccessUser(req, targetUserId))) {
+      return res.status(403).json({ error: 'Chỉ admin được reset Drive của người khác trong phạm vi công ty' });
     }
     const { data: root } = await supabase
       .from('drive_roots')
@@ -447,8 +473,7 @@ r.post('/roots/ensure-company', async (req, res) => {
     let companyId;
     if (bodyCompanyId) {
       if (!isUuid(bodyCompanyId)) return res.status(400).json({ error: 'company_id không hợp lệ' });
-      const myCompanyId = await getOwnerCompanyId(req);
-      if (bodyCompanyId !== myCompanyId && !isAdminLike(req.user)) {
+      if (!canAdminAccessCompany(req, bodyCompanyId)) {
         return res.status(403).json({ error: 'Chỉ admin được tạo Drive cho công ty khác' });
       }
       companyId = bodyCompanyId;
@@ -1271,8 +1296,7 @@ r.post('/roots/ensure-shared-company', async (req, res) => {
   try {
     const { company_id, module_key = 'other', editor_user_ids = [], editor_role_ids = [] } = req.body || {};
     if (!isUuid(company_id)) return res.status(400).json({ error: 'company_id không hợp lệ' });
-    const myCompanyId = await getOwnerCompanyId(req);
-    if (company_id !== myCompanyId && !isAdminLike(req.user)) {
+    if (!canAdminAccessCompany(req, company_id)) {
       return res.status(403).json({ error: 'Chỉ admin được tạo Drive chung cho công ty khác' });
     }
 
@@ -1336,10 +1360,9 @@ r.post('/roots/ensure-shared-region', async (req, res) => {
     const { region_id, module_key = 'other', editor_user_ids = [], editor_role_ids = [] } = req.body || {};
     if (!isUuid(region_id)) return res.status(400).json({ error: 'region_id không hợp lệ' });
 
-    const myCompanyId = await getOwnerCompanyId(req);
     const region = await driveOrgPath.getRegionInfo(region_id);
     if (!region) return res.status(404).json({ error: 'Khu vực không tồn tại' });
-    if (region.company_id !== myCompanyId && !isAdminLike(req.user)) {
+    if (!canAdminAccessCompany(req, region.company_id)) {
       return res.status(403).json({ error: 'Chỉ admin được tạo Drive khu vực thuộc công ty khác' });
     }
 
@@ -1415,16 +1438,16 @@ r.post('/roots/ensure-shared-region', async (req, res) => {
  */
 r.get('/org-tree', async (req, res) => {
   try {
-    const isAdmin = isAdminLike(req.user);
+    const systemAdmin = isSystemAdmin(req.user);
     const meCompanyId = await getOwnerCompanyId(req);
     const myModuleKey = await getUserDriveModule(req.user.userId || req.user.id);
     const queryModule = req.query.module ? String(req.query.module).toLowerCase() : null;
     const filterModule = queryModule
       ? queryModule
-      : (isAdmin ? null : myModuleKey);
+      : (systemAdmin ? null : myModuleKey);
 
     let companyQ = supabase.from('companies').select('id,name').order('name');
-    if (!isAdmin && meCompanyId) companyQ = companyQ.eq('id', meCompanyId);
+    if (!systemAdmin && meCompanyId) companyQ = companyQ.eq('id', meCompanyId);
     let { data: companies = [] } = await companyQ;
     if (filterModule) {
       companies = await driveOrgPath.filterCompaniesForDriveModule(companies, filterModule);
@@ -1655,6 +1678,9 @@ r.patch('/admin/user-module/:userId', async (req, res) => {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Cần quyền admin' });
     const { userId } = req.params;
     if (!isUuid(userId)) return res.status(400).json({ error: 'userId không hợp lệ' });
+    if (!(await canAdminAccessUser(req, userId))) {
+      return res.status(403).json({ error: 'Chỉ được gán module Drive cho nhân viên trong công ty của bạn' });
+    }
     const mod = String(req.body?.module || '').trim().toLowerCase();
     const VALID = ['crm', 'sx', 'vc', 'mkt', 'other'];
     if (mod && !VALID.includes(mod)) return res.status(400).json({ error: 'module không hợp lệ. Hợp lệ: ' + VALID.join(', ') });
@@ -1688,6 +1714,9 @@ r.patch('/admin/dept-category/:departmentId', async (req, res) => {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Cần quyền admin' });
     const { departmentId } = req.params;
     if (!isUuid(departmentId)) return res.status(400).json({ error: 'departmentId không hợp lệ' });
+    if (!(await canAdminAccessDepartment(req, departmentId))) {
+      return res.status(403).json({ error: 'Chỉ được gán loại Drive cho phòng ban trong công ty của bạn' });
+    }
     const cat = String(req.body?.category || '').trim();
     const { error } = await supabase
       .from('departments')
@@ -1722,6 +1751,9 @@ r.post('/org/ensure-user-drive', async (req, res) => {
     const { user_id } = req.body || {};
     if (!isUuid(user_id)) return res.status(400).json({ error: 'user_id không hợp lệ' });
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Cần quyền admin' });
+    if (!(await canAdminAccessUser(req, user_id))) {
+      return res.status(403).json({ error: 'Chỉ được mở Drive nhân viên trong công ty của bạn' });
+    }
 
     const existing = await supabase
       .from('drive_roots')
@@ -2062,7 +2094,7 @@ r.delete('/files/:id/forever', async (req, res) => {
   try {
     const file = await loadFile(req.params.id);
     if (!file) return res.status(404).json({ error: 'File không tồn tại' });
-    if (!isAdminLike(req.user)) {
+    if (!isSystemAdmin(req.user)) {
       const access = await driveAcl.canAccess({ user: req.user, targetType: 'file', targetId: file.id, requiredRole: 'owner' });
       if (!access.ok) return res.status(403).json({ error: 'Chỉ owner/admin được xoá vĩnh viễn' });
     }
@@ -2080,7 +2112,7 @@ r.delete('/folders/:id/forever', async (req, res) => {
   try {
     const folder = await loadFolder(req.params.id);
     if (!folder) return res.status(404).json({ error: 'Folder không tồn tại' });
-    if (!isAdminLike(req.user)) {
+    if (!isSystemAdmin(req.user)) {
       const access = await driveAcl.canAccess({ user: req.user, targetType: 'folder', targetId: folder.id, requiredRole: 'owner' });
       if (!access.ok) return res.status(403).json({ error: 'Chỉ owner/admin được xoá vĩnh viễn' });
     }
