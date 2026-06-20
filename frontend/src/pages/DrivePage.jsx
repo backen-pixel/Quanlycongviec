@@ -76,27 +76,6 @@ function fmtDriveRelativeTime(iso) {
   }
 }
 
-function flattenOrgEmployees(modules) {
-  const seen = new Set();
-  const out = [];
-  for (const mod of modules || []) {
-    for (const co of mod.companies || []) {
-      for (const rg of co.regions || []) {
-        for (const cat of rg.categories || []) {
-          for (const dept of cat.departments || []) {
-            for (const u of dept.employees || []) {
-              if (!u?.id || seen.has(u.id)) continue;
-              seen.add(u.id);
-              out.push(u);
-            }
-          }
-        }
-      }
-    }
-  }
-  return out.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'vi'));
-}
-
 function sortDriveFolders(folders, sortKey) {
   const arr = [...(folders || [])];
   if (sortKey === 'name_desc') {
@@ -801,13 +780,15 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
 
           {useModuleDriveLayout ? (
             <SidebarSection title="Drive của tôi">
-              <DriveOrgEmployeeSidebar
+              <OrgTreeNav
                 activeRootId={activeRoot?.id}
-                lockModule={lockedModule}
-                scopeModuleKey={scopeModuleKey}
-                myModuleKey={myModuleKey}
                 onOpenRoot={openRoot}
                 refreshRoots={refreshRootsList}
+                isAdmin={isAdmin}
+                myModuleKey={myModuleKey}
+                scopeModuleKey={scopeModuleKey}
+                lockModule={lockedModule}
+                moduleLayout
               />
             </SidebarSection>
           ) : (
@@ -824,14 +805,29 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
                 {showRoots.personal.map((r) => (
                   <SidebarLink key={r.id} icon={UserIcon} label={r.name} active={activeRoot?.id === r.id && !view} onClick={() => openRoot(r)} />
                 ))}
+                {showRoots.moduleShared.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-slate-100 space-y-0.5">
+                    {showRoots.moduleShared.map((r) => (
+                      <SidebarLink key={r.id} icon={Globe} label={r.shared_kind === 'shared_company' ? `Chung công ty · ${r.name}` : r.name} active={activeRoot?.id === r.id && !view} onClick={() => openRoot(r)} />
+                    ))}
+                  </div>
+                )}
+                <div className="mt-3 pt-3 border-t border-slate-100">
+                  <p className="px-2.5 mb-2 text-[10px] font-bold text-slate-400 uppercase tracking-[0.08em] flex items-center gap-1.5">
+                    <Network size={11} />
+                    Theo công ty
+                  </p>
+                  <OrgTreeNav
+                    activeRootId={activeRoot?.id}
+                    onOpenRoot={openRoot}
+                    refreshRoots={refreshRootsList}
+                    isAdmin={isAdmin}
+                    myModuleKey={myModuleKey}
+                    scopeModuleKey={scopeModuleKey}
+                    lockModule={lockedModule}
+                  />
+                </div>
               </SidebarSection>
-              {showRoots.moduleShared.length > 0 && (
-                <SidebarSection title="Drive chung module">
-                  {showRoots.moduleShared.map((r) => (
-                    <SidebarLink key={r.id} icon={Globe} label={r.shared_kind === 'shared_company' ? `Chung công ty · ${r.name}` : r.name} active={activeRoot?.id === r.id && !view} onClick={() => openRoot(r)} />
-                  ))}
-                </SidebarSection>
-              )}
               {isAdmin && showRoots.otherShared.length > 0 && (
                 <SidebarSection title={
                   <span className="flex items-center justify-between">
@@ -844,14 +840,6 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
                   ))}
                 </SidebarSection>
               )}
-              <SidebarSection title={
-                <span className="flex items-center gap-1.5">
-                  <Network size={11} className="text-slate-400" />
-                  <span>Drive theo module</span>
-                </span>
-              }>
-                <OrgTreeNav activeRootId={activeRoot?.id} onOpenRoot={openRoot} refreshRoots={refreshRootsList} isAdmin={isAdmin} myModuleKey={myModuleKey} scopeModuleKey={scopeModuleKey} lockModule={lockedModule} />
-              </SidebarSection>
             </>
           )}
         </div>
@@ -1421,87 +1409,10 @@ function DriveFolderContentEmpty({ moduleLayout, onUpload, hasFolders }) {
   );
 }
 
-function DriveOrgEmployeeSidebar({ activeRootId, lockModule, scopeModuleKey, myModuleKey, onOpenRoot, refreshRoots }) {
-  const [employees, setEmployees] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  const loadEmployees = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const effectiveMod = lockModule || scopeModuleKey || myModuleKey || undefined;
-      const r = await driveOrgTree(effectiveMod || undefined);
-      setEmployees(flattenOrgEmployees(r.modules || []));
-    } catch (e) {
-      setError(e?.response?.data?.error || e?.message || 'Không tải được danh sách nhân viên');
-    } finally {
-      setLoading(false);
-    }
-  }, [lockModule, scopeModuleKey, myModuleKey]);
-
-  useEffect(() => { loadEmployees(); }, [loadEmployees]);
-
-  async function openRootById(rootId) {
-    if (!rootId) return;
-    const latest = await refreshRoots();
-    const root = (latest || []).find((x) => x.id === rootId);
-    if (root) onOpenRoot(root);
-  }
-
-  async function openUserDrive(userNode) {
-    try {
-      let rootId = userNode.drive_root_id;
-      if (!rootId) {
-        const r = await driveEnsureUserDrive(userNode.id);
-        rootId = r?.root?.id;
-      }
-      await openRootById(rootId);
-    } catch (e) {
-      alert(e?.response?.data?.error || e?.message || 'Không mở được Drive nhân viên');
-    }
-  }
-
-  if (loading) {
-    return <div className="px-2.5 py-2 text-[11px] text-slate-400 flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> Đang tải…</div>;
-  }
-  if (error) {
-    return <p className="px-2.5 py-1 text-[11px] text-rose-500">{error}</p>;
-  }
-  if (!employees.length) {
-    return <p className="px-2.5 py-1 text-[11px] text-slate-400">Chưa có nhân viên trong module này.</p>;
-  }
-
-  return (
-    <div className="space-y-0.5">
-      {employees.map((u) => {
-        const active = activeRootId && activeRootId === u.drive_root_id;
-        return (
-          <button
-            key={u.id}
-            type="button"
-            onClick={() => openUserDrive(u)}
-            className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-[13px] text-left transition truncate ${
-              active ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-slate-600 hover:bg-slate-50'
-            }`}
-          >
-            {u.avatar ? (
-              <img src={u.avatar} alt="" className="w-5 h-5 rounded-full shrink-0 object-cover" />
-            ) : (
-              <UserIcon size={15} className={active ? 'text-indigo-600 shrink-0' : 'text-slate-400 shrink-0'} />
-            )}
-            <span className="truncate">{u.name}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 /**
- * Cây Drive — Module → Công ty → Khu vực → Loại → Phòng ban → Nhân viên (không có folder nhãn trung gian).
+ * Cây Drive — Công ty → Khu vực → Loại → Phòng ban → Nhân viên (+ Drive chung công ty/khu vực).
  */
-function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, myModuleKey, scopeModuleKey, lockModule }) {
+function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, myModuleKey, scopeModuleKey, lockModule, moduleLayout = false }) {
   const [tree, setTree] = useState(null);
   const [myModule, setMyModule] = useState(scopeModuleKey || myModuleKey || 'other');
   const [moduleFilter, setModuleFilter] = useState(lockModule || (isAdmin ? '' : (scopeModuleKey || myModuleKey || 'other')));
@@ -1642,8 +1553,160 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, myModuleK
     return <p className="px-2 py-1 text-[11px] text-rose-500">{error}</p>;
   }
   if (!tree || tree.length === 0) {
-    return <p className="px-2 py-1 text-[11px] text-slate-400">Chưa có dữ liệu module.</p>;
+    return <p className="px-2 py-1 text-[11px] text-slate-400">Chưa có dữ liệu công ty.</p>;
   }
+
+  const activeLeafCls = moduleLayout
+    ? 'bg-indigo-50 text-indigo-700 font-semibold'
+    : 'bg-blue-50 text-blue-700 font-medium';
+  const activeSharedCompanyCls = moduleLayout
+    ? 'bg-indigo-50 text-indigo-800 font-semibold'
+    : 'bg-emerald-50 text-emerald-800 font-medium';
+  const activeSharedRegionCls = moduleLayout
+    ? 'bg-indigo-50/80 text-indigo-800 font-medium'
+    : 'bg-amber-50 text-amber-800 font-medium';
+
+  function renderCompanyTree(mod) {
+    return (mod.companies || []).map((co) => {
+      const coKey = `${mod.key}:${co.id}`;
+      const coOpen = expanded.companies.has(coKey);
+      return (
+        <div key={coKey}>
+          <button
+            type="button"
+            onClick={() => toggle('companies', coKey)}
+            className={`flex items-center gap-1 w-full text-left px-1.5 py-1 rounded-lg hover:bg-slate-50 ${
+              moduleLayout ? 'py-1.5' : 'py-0.5'
+            }`}
+          >
+            {coOpen ? <ChevronDown size={moduleLayout ? 13 : 11} /> : <ChevronRight size={moduleLayout ? 13 : 11} />}
+            <Building2 size={moduleLayout ? 13 : 11} className="text-emerald-600 shrink-0" />
+            <span className={`${moduleLayout ? 'text-[13px] font-semibold' : 'text-[12px]'} text-slate-800 truncate`}>{co.name}</span>
+          </button>
+          {coOpen && (
+            <div className="ml-3 border-l border-slate-100 pl-1.5 mt-0.5 space-y-0.5">
+              <button
+                type="button"
+                onClick={() => openSharedCompany(co.id, mod.key, co.shared_root_id)}
+                className={`w-full flex items-center gap-1.5 px-1.5 py-1 rounded-lg text-left text-[12px] ${
+                  activeRootId === co.shared_root_id && co.shared_root_id
+                    ? activeSharedCompanyCls
+                    : (moduleLayout ? 'text-indigo-700 hover:bg-indigo-50/60' : 'text-emerald-700 hover:bg-emerald-50')
+                }`}
+                title={`Drive chung công ty — ${mod.name}`}
+              >
+                <Globe size={11} className="text-emerald-500 shrink-0" />
+                <span className="truncate">Chung công ty</span>
+              </button>
+              {(co.regions || []).map((rg) => {
+                const rgKey = `${coKey}:${rg.id || 'none'}`;
+                const rgOpen = expanded.regions.has(rgKey);
+                const rgCount = countRegionEmployees(rg);
+                return (
+                  <div key={rgKey}>
+                    <button
+                      type="button"
+                      onClick={() => toggle('regions', rgKey)}
+                      className="flex items-center gap-1 w-full text-left px-1 py-0.5 rounded hover:bg-slate-50"
+                    >
+                      {rgOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                      <MapPin size={11} className="text-amber-600 shrink-0" />
+                      <span className="text-[12px] text-slate-700 truncate">{rg.name}</span>
+                      <span className="ml-auto text-[9px] text-slate-400">{rgCount}</span>
+                    </button>
+                    {rgOpen && (
+                      <div className="ml-3 border-l border-slate-100 pl-1 mt-0.5 space-y-0.5">
+                        {rg.id && (
+                          <button
+                            type="button"
+                            onClick={() => openSharedRegion(rg.id, mod.key, rg.shared_root_id)}
+                            className={`w-full flex items-center gap-1.5 px-1.5 py-0.5 rounded text-left text-[12px] ${
+                              activeRootId === rg.shared_root_id && rg.shared_root_id
+                                ? activeSharedRegionCls
+                                : (moduleLayout ? 'text-indigo-600 hover:bg-indigo-50/60' : 'text-amber-700 hover:bg-amber-50')
+                            }`}
+                          >
+                            <FolderIcon size={11} className="text-amber-500 shrink-0" fill="currentColor" />
+                            <span className="truncate">Chung khu vực</span>
+                          </button>
+                        )}
+                        {(rg.categories || []).map((cat) => {
+                          const catKey = `${rgKey}:${cat.name}`;
+                          const catOpen = expanded.categories.has(catKey);
+                          const catCount = (cat.departments || []).reduce((a, d) => a + (d.employees?.length || 0), 0);
+                          return (
+                            <div key={catKey}>
+                              <button
+                                type="button"
+                                onClick={() => toggle('categories', catKey)}
+                                className="flex items-center gap-1 w-full text-left px-1 py-0.5 rounded hover:bg-slate-50"
+                              >
+                                {catOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                                <Tag size={10} className="text-violet-500 shrink-0" />
+                                <span className="text-[11px] text-slate-700 truncate">{cat.name}</span>
+                                <span className="ml-auto text-[9px] text-slate-400">{catCount}</span>
+                              </button>
+                              {catOpen && (
+                                <div className="ml-3 border-l border-slate-100 pl-1 mt-0.5 space-y-0.5">
+                                  {(cat.departments || []).map((dept) => {
+                                    const deptKey = `${catKey}:${dept.id || dept.name}`;
+                                    const deptOpen = expanded.departments.has(deptKey);
+                                    return (
+                                      <div key={deptKey}>
+                                        <button
+                                          type="button"
+                                          onClick={() => toggle('departments', deptKey)}
+                                          className="flex items-center gap-1 w-full text-left px-1 py-0.5 rounded hover:bg-slate-50"
+                                        >
+                                          {deptOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                                          <Briefcase size={10} className="text-slate-500 shrink-0" />
+                                          <span className="text-[11px] text-slate-700 truncate">{dept.name}</span>
+                                          <span className="ml-auto text-[9px] text-slate-400">{(dept.employees || []).length}</span>
+                                        </button>
+                                        {deptOpen && (
+                                          <div className="ml-3 border-l border-slate-100 pl-1 mt-0.5 space-y-0.5">
+                                            {(dept.employees || []).map((u) => (
+                                              <button
+                                                key={u.id}
+                                                type="button"
+                                                onClick={() => openUserDrive(u)}
+                                                className={`w-full flex items-center gap-1.5 px-1.5 py-0.5 rounded-lg text-left text-[12px] truncate ${
+                                                  activeRootId && activeRootId === u.drive_root_id
+                                                    ? activeLeafCls
+                                                    : 'text-slate-600 hover:bg-slate-50'
+                                                }`}
+                                              >
+                                                {u.avatar ? (
+                                                  <img src={u.avatar} alt="" className="w-4 h-4 rounded-full shrink-0" />
+                                                ) : (
+                                                  <UserIcon size={11} className={moduleLayout ? 'text-indigo-500 shrink-0' : 'text-blue-600 shrink-0'} />
+                                                )}
+                                                <span className="truncate">{u.name}</span>
+                                              </button>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    });
+  }
+
+  const showModuleLevel = !(moduleLayout && lockModule);
 
   return (
     <div className="space-y-1 text-sm">
@@ -1657,15 +1720,16 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, myModuleK
           {tree.map((m) => <option key={m.key} value={m.key}>{m.name}</option>)}
         </select>
       )}
-      {(lockModule || !isAdmin) && (
+      {(lockModule || !isAdmin) && !moduleLayout && (
         <p className="px-1 text-[10px] text-slate-400 mb-1">Module: {moduleScopeLabel(lockModule || tree[0]?.key || myModule)}</p>
       )}
 
-      {tree.map((mod) => {
+      {showModuleLevel ? tree.map((mod) => {
         const modOpen = expanded.modules.has(mod.key);
         return (
           <div key={mod.key}>
             <button
+              type="button"
               onClick={() => toggle('modules', mod.key)}
               className="flex items-center gap-1 w-full text-left px-1 py-1 rounded hover:bg-slate-50"
             >
@@ -1676,139 +1740,16 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, myModuleK
             </button>
             {modOpen && (
               <div className="ml-3 border-l border-slate-100 pl-1 mt-0.5 space-y-0.5">
-                {(mod.companies || []).map((co) => {
-                  const coKey = `${mod.key}:${co.id}`;
-                  const coOpen = expanded.companies.has(coKey);
-                  return (
-                    <div key={coKey}>
-                      <button
-                        onClick={() => toggle('companies', coKey)}
-                        className="flex items-center gap-1 w-full text-left px-1 py-0.5 rounded hover:bg-slate-50"
-                      >
-                        {coOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                        <Building2 size={11} className="text-emerald-600 shrink-0" />
-                        <span className="text-[12px] text-slate-700 truncate">{co.name}</span>
-                      </button>
-                      {coOpen && (
-                        <div className="ml-3 border-l border-slate-100 pl-1 mt-0.5 space-y-0.5">
-                          <button
-                            onClick={() => openSharedCompany(co.id, mod.key, co.shared_root_id)}
-                            className={`w-full flex items-center gap-1.5 px-1.5 py-0.5 rounded text-left text-[12px] ${
-                              activeRootId === co.shared_root_id && co.shared_root_id
-                                ? 'bg-emerald-50 text-emerald-800 font-medium'
-                                : 'text-emerald-700 hover:bg-emerald-50'
-                            }`}
-                            title={`Drive chung công ty — ${mod.name}`}
-                          >
-                            <Globe size={11} className="text-emerald-500 shrink-0" />
-                            <span className="truncate">Chung công ty</span>
-                          </button>
-                          {(co.regions || []).map((rg) => {
-                            const rgKey = `${coKey}:${rg.id || 'none'}`;
-                            const rgOpen = expanded.regions.has(rgKey);
-                            const rgCount = countRegionEmployees(rg);
-                            return (
-                              <div key={rgKey}>
-                                <button
-                                  onClick={() => toggle('regions', rgKey)}
-                                  className="flex items-center gap-1 w-full text-left px-1 py-0.5 rounded hover:bg-slate-50"
-                                >
-                                  {rgOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                                  <MapPin size={11} className="text-amber-600 shrink-0" />
-                                  <span className="text-[12px] text-slate-700 truncate">{rg.name}</span>
-                                  <span className="ml-auto text-[9px] text-slate-400">{rgCount}</span>
-                                </button>
-                                {rgOpen && (
-                                  <div className="ml-3 border-l border-slate-100 pl-1 mt-0.5 space-y-0.5">
-                                    {rg.id && (
-                                      <button
-                                        onClick={() => openSharedRegion(rg.id, mod.key, rg.shared_root_id)}
-                                        className={`w-full flex items-center gap-1.5 px-1.5 py-0.5 rounded text-left text-[12px] ${
-                                          activeRootId === rg.shared_root_id && rg.shared_root_id
-                                            ? 'bg-amber-50 text-amber-800 font-medium'
-                                            : 'text-amber-700 hover:bg-amber-50'
-                                        }`}
-                                      >
-                                        <FolderIcon size={11} className="text-amber-500 shrink-0" fill="currentColor" />
-                                        <span className="truncate">Chung khu vực</span>
-                                      </button>
-                                    )}
-                                    {(rg.categories || []).map((cat) => {
-                                      const catKey = `${rgKey}:${cat.name}`;
-                                      const catOpen = expanded.categories.has(catKey);
-                                      const catCount = (cat.departments || []).reduce((a, d) => a + (d.employees?.length || 0), 0);
-                                      return (
-                                        <div key={catKey}>
-                                          <button
-                                            onClick={() => toggle('categories', catKey)}
-                                            className="flex items-center gap-1 w-full text-left px-1 py-0.5 rounded hover:bg-slate-50"
-                                          >
-                                            {catOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-                                            <Tag size={10} className="text-violet-500 shrink-0" />
-                                            <span className="text-[11px] text-slate-700 truncate">{cat.name}</span>
-                                            <span className="ml-auto text-[9px] text-slate-400">{catCount}</span>
-                                          </button>
-                                          {catOpen && (
-                                            <div className="ml-3 border-l border-slate-100 pl-1 mt-0.5 space-y-0.5">
-                                              {(cat.departments || []).map((dept) => {
-                                                const deptKey = `${catKey}:${dept.id || dept.name}`;
-                                                const deptOpen = expanded.departments.has(deptKey);
-                                                return (
-                                                  <div key={deptKey}>
-                                                    <button
-                                                      onClick={() => toggle('departments', deptKey)}
-                                                      className="flex items-center gap-1 w-full text-left px-1 py-0.5 rounded hover:bg-slate-50"
-                                                    >
-                                                      {deptOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-                                                      <Briefcase size={10} className="text-slate-500 shrink-0" />
-                                                      <span className="text-[11px] text-slate-700 truncate">{dept.name}</span>
-                                                      <span className="ml-auto text-[9px] text-slate-400">{(dept.employees || []).length}</span>
-                                                    </button>
-                                                    {deptOpen && (
-                                                      <div className="ml-3 border-l border-slate-100 pl-1 mt-0.5 space-y-0.5">
-                                                        {(dept.employees || []).map((u) => (
-                                                          <button
-                                                            key={u.id}
-                                                            onClick={() => openUserDrive(u)}
-                                                            className={`w-full flex items-center gap-1.5 px-1.5 py-0.5 rounded text-left text-[12px] truncate ${
-                                                              activeRootId && activeRootId === u.drive_root_id
-                                                                ? 'bg-blue-50 text-blue-700 font-medium'
-                                                                : 'text-slate-600 hover:bg-slate-50'
-                                                            }`}
-                                                          >
-                                                            {u.avatar ? (
-                                                              <img src={u.avatar} alt="" className="w-4 h-4 rounded-full shrink-0" />
-                                                            ) : (
-                                                              <UserIcon size={11} className="text-blue-600 shrink-0" />
-                                                            )}
-                                                            <span className="truncate">{u.name}</span>
-                                                          </button>
-                                                        ))}
-                                                      </div>
-                                                    )}
-                                                  </div>
-                                                );
-                                              })}
-                                            </div>
-                                          )}
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                {renderCompanyTree(mod)}
               </div>
             )}
           </div>
         );
-      })}
+      }) : (
+        <div className="space-y-0.5">
+          {tree.flatMap((mod) => renderCompanyTree(mod))}
+        </div>
+      )}
     </div>
   );
 }
