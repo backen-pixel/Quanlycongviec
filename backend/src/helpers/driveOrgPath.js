@@ -259,7 +259,9 @@ async function ensureCompanyOrgPath(companyId) {
 /**
  * Path Drive cá nhân: <Module>/<Cty>/<KV>/<Loại>/<PB>/<NV>/
  */
-async function ensureUserOrgPath(userId) {
+async function ensureUserOrgPath(userId, options = {}) {
+  const { ensureUserDriveModuleAssigned } = require('./driveModuleDefaults');
+  await ensureUserDriveModuleAssigned(userId, { contextModule: options.contextModule });
   const info = await getUserOrgInfo(userId);
   if (!info) throw new Error('User không tồn tại');
 

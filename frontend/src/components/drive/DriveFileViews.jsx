@@ -170,7 +170,7 @@ function VideoFramePoster({ file, className, size, onFailed }) {
   if (!poster) {
     return (
       <div className="flex items-center justify-center w-full h-full min-h-[52px]">
-        <DriveFileIcon mime={file?.mime_type} size={size} />
+        <DriveFileIcon mime={file?.mime_type} name={file?.name} size={size} />
       </div>
     );
   }
@@ -258,7 +258,7 @@ export function DriveFileThumbnail({
   };
 
   if (!canTryThumb || (failed && !useVideoPoster)) {
-    return <DriveFileIcon mime={file?.mime_type} size={size} />;
+    return <DriveFileIcon mime={file?.mime_type} name={file?.name} size={size} />;
   }
 
   if (useVideoPoster && isVid) {
@@ -494,7 +494,7 @@ export function DriveFileListRow({
         </div>
       )}
       <div className="flex items-center gap-2.5 min-w-0">
-        <DriveFileIcon mime={file.mime_type} size={18} />
+        <DriveFileIcon mime={file.mime_type} name={file.name} size={18} />
         <span className={`text-sm truncate ${quickOpen ? 'text-blue-700 hover:underline' : 'text-slate-800'}`} title={file.name}>
           {file.name}
         </span>
@@ -622,7 +622,7 @@ export function DriveFilesGridView({
               </div>
             )}
             <div className="px-3 pt-2.5 pb-1.5 flex items-center gap-1.5 min-w-0">
-              <DriveFileIcon mime={f.mime_type} size={16} className="shrink-0" />
+              <DriveFileIcon mime={f.mime_type} name={f.name} size={16} className="shrink-0" />
               <p
                 className={`text-[13px] font-medium truncate min-w-0 flex-1 ${quickOpen ? 'text-blue-700' : 'text-slate-800'}`}
                 title={f.name}
@@ -660,7 +660,7 @@ export function DriveFilesGridView({
                   )}
                 </>
               ) : (
-                <DriveFileIcon mime={f.mime_type} size={52} />
+                <DriveFileIcon mime={f.mime_type} name={f.name} size={52} />
               )}
             </div>
             <div className="px-3 pb-1 flex items-center gap-1.5 min-w-0">

@@ -5,6 +5,7 @@ const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { normalizeRegionIdList, assertRegionBelongsToCompany } = require('../helpers/crmRegionScope');
 const { syncUserOrgToEcosystem } = require('../helpers/ecosystemSync');
+const { inferDriveModuleForNewUser, normalizeDriveModule } = require('../helpers/driveModuleDefaults');
 const { recordUserPing, getPresenceForUserIds, listUsersWithActivity, ONLINE_THRESHOLD_MS } = require('../helpers/userPresence');
 const { getCurrentLocationForUser } = require('../helpers/userCurrentLocation');
 const { parseScopeFromQuery } = require('../helpers/scopeQueryParams');
@@ -679,6 +680,7 @@ r.post('/', async (req, res) => {
     }
     // Optional fields (need migration 06)
     applyOptionalUserFields(b, insertObj);
+    insertObj.drive_module = inferDriveModuleForNewUser({ role: insertObj.role, drive_module: b.drive_module });
 
     if (b.crm_region_ids !== undefined && ['admin', 'manager'].includes(req.user.role)) {
       let targetCo = null;
@@ -765,13 +767,18 @@ r.put('/:id', async (req, res) => {
     const targetId = req.params.id;
     const { data: beforeOrg } = await supabase
       .from('users')
-      .select('department_id, team_id')
+      .select('department_id, team_id, drive_module')
       .eq('id', targetId)
       .maybeSingle();
     const update = { updated_at: new Date().toISOString() };
     ['full_name', 'phone', 'role', 'is_active'].forEach((f) => {
       if (b[f] !== undefined) update[f] = b[f];
     });
+    if (b.drive_module !== undefined) {
+      update.drive_module = normalizeDriveModule(b.drive_module) || null;
+    } else if (b.role !== undefined && !beforeOrg?.drive_module) {
+      update.drive_module = inferDriveModuleForNewUser({ role: b.role });
+    }
     if (b.department_id !== undefined) update.department_id = b.department_id || null;
     if (b.team_id !== undefined) update.team_id = b.team_id || null;
     applyOptionalUserFields(b, update);
