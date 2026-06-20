@@ -408,6 +408,54 @@ export function uploaderName(file) {
   return '—';
 }
 
+export function folderCreatorName(folder) {
+  const c = folder?.creator;
+  if (c?.full_name) return c.full_name;
+  if (c?.email) return c.email;
+  return '—';
+}
+
+function CreatorAvatar({ user, sizeClass, iconSize }) {
+  if (user?.avatar) {
+    return <img src={user.avatar} alt="" className={`${sizeClass} rounded-full shrink-0 object-cover`} />;
+  }
+  return (
+    <span className={`${sizeClass} rounded-full bg-slate-200 shrink-0 flex items-center justify-center`}>
+      <UserIcon size={iconSize} className="text-slate-500" />
+    </span>
+  );
+}
+
+/** Avatar người tạo — gắn góc icon thư mục. */
+export function FolderCreatorAvatarBadge({ folder, className = '' }) {
+  const c = folder?.creator;
+  if (!c) return null;
+  const name = folderCreatorName(folder);
+  return (
+    <span
+      className={`absolute -bottom-0.5 -right-0.5 ring-2 ring-white rounded-full shadow-sm ${className}`}
+      title={`Người tạo: ${name}`}
+    >
+      <CreatorAvatar user={c} sizeClass="w-5 h-5" iconSize={10} />
+    </span>
+  );
+}
+
+/** Ô hiển thị người tạo thư mục (avatar + tên). */
+export function FolderCreatorCell({ folder, compact = false }) {
+  const c = folder?.creator;
+  if (!c) return <span className="text-xs text-slate-400">—</span>;
+  const name = folderCreatorName(folder);
+  const size = compact ? 'w-4 h-4' : 'w-5 h-5';
+  const text = compact ? 'text-[11px]' : 'text-xs';
+  return (
+    <div className="flex items-center gap-1.5 min-w-0" title={`Người tạo: ${name}`}>
+      <CreatorAvatar user={c} sizeClass={size} iconSize={compact ? 9 : 11} />
+      <span className={`${text} text-slate-600 truncate`}>{name}</span>
+    </div>
+  );
+}
+
 /** Ô hiển thị người tải lên (avatar + tên) */
 export function UploaderCell({ file, compact = false }) {
   const u = file?.uploader;

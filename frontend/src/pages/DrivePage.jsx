@@ -27,7 +27,7 @@ import {
   driveCreateGoogleFile,
 } from '../lib/drive';
 import DriveLocationBar, { enrichDriveBreadcrumb } from '../components/drive/DriveLocationBar';
-import { DRIVE_FILE_LIST_GRID, fmtDriveDate, filterImageFiles, DriveFilesListView, DriveFilesGridView, DriveFileMoreMenu, driveSelectId } from '../components/drive/DriveFileViews';
+import { DRIVE_FILE_LIST_GRID, fmtDriveDate, filterImageFiles, DriveFilesListView, DriveFilesGridView, DriveFileMoreMenu, driveSelectId, FolderCreatorCell, FolderCreatorAvatarBadge } from '../components/drive/DriveFileViews';
 import DriveFolderPickerModal from '../components/drive/DriveFolderPickerModal';
 import DriveMarqueeSelectArea from '../components/drive/DriveMarqueeSelectArea';
 import UploadDropzone from '../components/drive/UploadDropzone';
@@ -663,6 +663,8 @@ export default function DrivePage() {
     && displayFiles.length === 0
     && !!activeRoot;
 
+  const showFolderCreator = isAdmin || systemAdmin;
+
   const renderFileActions = useCallback((f) => (
     <>
       {!isTrashView && (
@@ -1034,6 +1036,7 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
                       folders={sortedDisplayFolders}
                       starredIds={starredIds}
                       isTrashView={isTrashView}
+                      showFolderCreator={showFolderCreator}
                       onOpenFolder={(id) => openFolder(id)}
                       onShare={(item, type) => setShareItem({ ...item, target_type: type })}
                       onContextMenu={(e, item, type) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, item, type }); }}
@@ -1066,6 +1069,7 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
                       folderSort={folderSort}
                       onFolderSortChange={setFolderSort}
                       moduleLayout
+                      showFolderCreator={showFolderCreator}
                       starredIds={starredIds}
                       isTrashView={isTrashView}
                       onOpenFolder={(id) => openFolder(id)}
@@ -1245,13 +1249,13 @@ function MenuBtn({ icon: Icon, label, onClick, danger }) {
 /**
  * Khối thư mục — dạng danh sách (không nằm trong vùng marquee chọn file).
  */
-function DriveFolderListBlock({ folders, starredIds, isTrashView, onOpenFolder, onShare, onContextMenu }) {
+function DriveFolderListBlock({ folders, starredIds, isTrashView, onOpenFolder, onShare, onContextMenu, showFolderCreator = false }) {
   if (!folders.length) return null;
   return (
     <div className="bg-white border rounded-lg overflow-hidden mb-3">
       <div className={`grid ${DRIVE_FILE_LIST_GRID} gap-2 px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase border-b bg-slate-50`}>
         <div>Thư mục</div>
-        <div />
+        <div>{showFolderCreator ? 'Người tạo' : ''}</div>
         <div />
         <div />
         <div />
@@ -1267,12 +1271,17 @@ function DriveFolderListBlock({ folders, starredIds, isTrashView, onOpenFolder, 
               className={`group grid ${DRIVE_FILE_LIST_GRID} gap-2 px-3 py-2 items-center hover:bg-slate-50 cursor-pointer`}
             >
               <div className="flex items-center gap-2.5 min-w-0">
-                <FolderIcon size={18} className="text-yellow-500 shrink-0" fill="currentColor" />
+                <div className="relative shrink-0">
+                  <FolderIcon size={18} className="text-yellow-500" fill="currentColor" />
+                  {showFolderCreator && <FolderCreatorAvatarBadge folder={f} />}
+                </div>
                 <span className="text-sm text-slate-800 truncate font-medium" title={f.name}>{f.name}</span>
                 {isStarred && <Star size={12} className="text-amber-400 fill-amber-400 shrink-0" />}
                 {f.trashed_at && <span className="text-[10px] text-red-500 shrink-0">đã xoá</span>}
               </div>
-              <div className="text-xs text-slate-400">—</div>
+              <div className="min-w-0">
+                {showFolderCreator ? <FolderCreatorCell folder={f} compact /> : null}
+              </div>
               <div className="text-xs text-slate-500">{fmtDriveDate(f.updated_at || f.created_at)}</div>
               <div className="text-right text-xs text-slate-500">—</div>
               <div className="flex items-center gap-0.5 justify-self-end opacity-0 group-hover:opacity-100">
@@ -1300,7 +1309,7 @@ function DriveFolderListBlock({ folders, starredIds, isTrashView, onOpenFolder, 
  */
 function DriveFolderGridBlock({
   folders, starredIds, isTrashView, onOpenFolder, onShare, onContextMenu,
-  folderSort, onFolderSortChange, moduleLayout,
+  folderSort, onFolderSortChange, moduleLayout, showFolderCreator = false,
 }) {
   if (!folders.length) return null;
 
@@ -1343,6 +1352,7 @@ function DriveFolderGridBlock({
                   <div className={`flex items-center justify-center rounded-xl ${moduleLayout ? 'h-11 w-11 bg-yellow-50' : ''}`}>
                     <FolderIcon size={moduleLayout ? 24 : 18} className="text-yellow-500" fill="currentColor" />
                   </div>
+                  {showFolderCreator && <FolderCreatorAvatarBadge folder={f} className="-bottom-1 -right-1" />}
                   {moduleLayout && (
                     <span className="absolute -top-1 -right-1 rounded-md bg-slate-100 border border-slate-200 px-1 py-px text-[9px] font-medium text-slate-500 whitespace-nowrap">
                       — mục
@@ -1357,6 +1367,11 @@ function DriveFolderGridBlock({
                   <p className="text-[11px] text-slate-400 mt-1.5">
                     Cập nhật {fmtDriveRelativeTime(f.updated_at || f.created_at)}
                   </p>
+                  {showFolderCreator && f.creator && (
+                    <div className="mt-2">
+                      <FolderCreatorCell folder={f} compact />
+                    </div>
+                  )}
                 </div>
               </div>
               <button
