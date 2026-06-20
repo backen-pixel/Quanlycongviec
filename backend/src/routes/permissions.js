@@ -1,7 +1,23 @@
 const express = require('express');
 const { supabase } = require('../config/supabase');
+const { auth } = require('../middleware/auth');
+const { isAdminLike } = require('../helpers/adminRole');
 const { responseCache, invalidateTags } = require('../middleware/responseCache');
+const { buildCatalogFromPermissions } = require('../helpers/permissionCatalog');
+const {
+  getEffectivePermissions,
+  applyUserPermissionOverrides,
+} = require('../helpers/effectivePermissions');
 const r = express.Router();
+
+r.use(auth);
+
+function requirePermissionsAdmin(req, res, next) {
+  if (!isAdminLike(req.user)) {
+    return res.status(403).json({ error: 'Chỉ quản trị viên mới truy cập phân quyền' });
+  }
+  next();
+}
 
 r.use((req, res, next) => {
   if (req.method === 'GET') return next();
@@ -14,9 +30,27 @@ r.use((req, res, next) => {
 });
 
 // ═══════════════════════════════════════════════
+// CATALOG — module tabs + permission labels (UI phân quyền NV)
+// ═══════════════════════════════════════════════
+r.get('/catalog', requirePermissionsAdmin, responseCache({ ttl: 300, scope: 'global', tags: ['permissions'] }), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('permissions')
+      .select('id, resource, action, description')
+      .eq('is_active', true)
+      .order('resource', { ascending: true })
+      .order('action', { ascending: true });
+    if (error) throw error;
+    res.json(buildCatalogFromPermissions(data || []));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════
 // PERMISSIONS - Get all available permissions
 // ═══════════════════════════════════════════════
-r.get('/permissions', responseCache({ ttl: 300, scope: 'global', tags: ['permissions'] }), async (req, res) => {
+r.get('/permissions', requirePermissionsAdmin, responseCache({ ttl: 300, scope: 'global', tags: ['permissions'] }), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('permissions')
@@ -46,7 +80,7 @@ r.get('/permissions', responseCache({ ttl: 300, scope: 'global', tags: ['permiss
 // ═══════════════════════════════════════════════
 
 // Get all roles with permission counts
-r.get('/roles', responseCache({ ttl: 300, scope: 'global', tags: ['permissions'] }), async (req, res) => {
+r.get('/roles', requirePermissionsAdmin, responseCache({ ttl: 300, scope: 'global', tags: ['permissions'] }), async (req, res) => {
   try {
     const { data: roles, error } = await supabase
       .from('roles')
@@ -65,7 +99,7 @@ r.get('/roles', responseCache({ ttl: 300, scope: 'global', tags: ['permissions']
 });
 
 // Get role with full permissions
-r.get('/roles/:id', async (req, res) => {
+r.get('/roles/:id', requirePermissionsAdmin, async (req, res) => {
   try {
     const { data: role, error: roleErr } = await supabase
       .from('roles')
@@ -90,7 +124,7 @@ r.get('/roles/:id', async (req, res) => {
 });
 
 // Create role
-r.post('/roles', async (req, res) => {
+r.post('/roles', requirePermissionsAdmin, async (req, res) => {
   try {
     const { name, description } = req.body;
     if (!name) return res.status(400).json({ error: 'Role name required' });
@@ -109,7 +143,7 @@ r.post('/roles', async (req, res) => {
 });
 
 // Update role
-r.put('/roles/:id', async (req, res) => {
+r.put('/roles/:id', requirePermissionsAdmin, async (req, res) => {
   try {
     const { name, description } = req.body;
     const { data, error } = await supabase
@@ -128,7 +162,7 @@ r.put('/roles/:id', async (req, res) => {
 });
 
 // Delete role
-r.delete('/roles/:id', async (req, res) => {
+r.delete('/roles/:id', requirePermissionsAdmin, async (req, res) => {
   try {
     const { error } = await supabase
       .from('roles')
@@ -148,7 +182,7 @@ r.delete('/roles/:id', async (req, res) => {
 // ═══════════════════════════════════════════════
 
 // Get all permissions for a specific role
-r.get('/roles/:roleId/permissions', async (req, res) => {
+r.get('/roles/:roleId/permissions', requirePermissionsAdmin, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('role_permissions')
@@ -179,7 +213,7 @@ r.get('/roles/:roleId/permissions', async (req, res) => {
 });
 
 // Set permissions for a role (replace all)
-r.put('/roles/:roleId/permissions', async (req, res) => {
+r.put('/roles/:roleId/permissions', requirePermissionsAdmin, async (req, res) => {
   try {
     const { permission_ids } = req.body; // Array of permission IDs
     
@@ -213,8 +247,120 @@ r.put('/roles/:roleId/permissions', async (req, res) => {
 // USER ROLES - Assign roles to users
 // ═══════════════════════════════════════════════
 
+// Effective permissions for a user (role + overrides)
+r.get('/users/:userId/effective', requirePermissionsAdmin, async (req, res) => {
+  try {
+    const ecosystemUnitId = req.query.ecosystem_unit_id || null;
+    const data = await getEffectivePermissions(req.params.userId, ecosystemUnitId);
+    res.json(data);
+  } catch (e) {
+    console.error('Get effective permissions error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Bulk effective permissions for multiple users
+r.post('/users/effective/bulk', requirePermissionsAdmin, async (req, res) => {
+  try {
+    const { user_ids: userIds, ecosystem_unit_id: ecosystemUnitId } = req.body;
+    if (!Array.isArray(userIds) || !userIds.length) {
+      return res.status(400).json({ error: 'Thiếu mảng user_ids' });
+    }
+    const uniqueIds = [...new Set(userIds.filter(Boolean))];
+    const entries = await Promise.all(
+      uniqueIds.map(async (userId) => {
+        const data = await getEffectivePermissions(userId, ecosystemUnitId || null);
+        return [userId, data];
+      }),
+    );
+    res.json({ users: Object.fromEntries(entries) });
+  } catch (e) {
+    console.error('Bulk effective permissions error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Bulk save overrides for many users (same changes applied to each)
+r.put('/users/bulk-overrides', requirePermissionsAdmin, async (req, res) => {
+  try {
+    const { user_ids: userIds, ecosystem_unit_id: ecosystemUnitId, changes } = req.body;
+    if (!Array.isArray(userIds) || !userIds.length) {
+      return res.status(400).json({ error: 'Thiếu mảng user_ids' });
+    }
+    if (!Array.isArray(changes)) {
+      return res.status(400).json({ error: 'Thiếu mảng changes' });
+    }
+    const uniqueIds = [...new Set(userIds.filter(Boolean))];
+    const perUser = [];
+    let totalUpserted = 0;
+    let totalCleared = 0;
+    const errors = [];
+
+    for (const userId of uniqueIds) {
+      const results = await applyUserPermissionOverrides(
+        userId,
+        ecosystemUnitId || null,
+        changes,
+        req.user?.userId || null,
+      );
+      totalUpserted += results.upserted;
+      totalCleared += results.cleared;
+      if (results.errors.length) {
+        errors.push({ user_id: userId, errors: results.errors });
+      }
+      perUser.push({ user_id: userId, ...results });
+    }
+
+    if (errors.length) {
+      return res.status(207).json({
+        ok: false,
+        users_processed: uniqueIds.length,
+        upserted: totalUpserted,
+        cleared: totalCleared,
+        per_user: perUser,
+        errors,
+      });
+    }
+
+    res.json({
+      ok: true,
+      users_processed: uniqueIds.length,
+      upserted: totalUpserted,
+      cleared: totalCleared,
+      per_user: perUser,
+    });
+  } catch (e) {
+    console.error('Bulk save overrides error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Bulk save user permission overrides (single user)
+r.put('/users/:userId/overrides', requirePermissionsAdmin, async (req, res) => {
+  try {
+    const { ecosystem_unit_id: ecosystemUnitId, changes } = req.body;
+    if (!Array.isArray(changes)) {
+      return res.status(400).json({ error: 'Thiếu mảng changes' });
+    }
+    const results = await applyUserPermissionOverrides(
+      req.params.userId,
+      ecosystemUnitId || null,
+      changes,
+      req.user?.userId || null,
+    );
+    if (results.errors.length) {
+      return res.status(207).json({ ok: false, ...results });
+    }
+    const effective = await getEffectivePermissions(req.params.userId, ecosystemUnitId || null);
+    res.json({ ok: true, ...results, effective });
+  } catch (e) {
+    console.error('Save overrides error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Get user's roles
-r.get('/users/:userId/roles', async (req, res) => {
+r.get('/users/:userId/roles', requirePermissionsAdmin, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('user_roles')
@@ -252,7 +398,7 @@ async function findExistingUserRole(userId, roleId, ecosystemUnitId) {
 }
 
 // Assign role to user
-r.post('/users/:userId/roles', async (req, res) => {
+r.post('/users/:userId/roles', requirePermissionsAdmin, async (req, res) => {
   try {
     const { role_id, ecosystem_unit_id, granted_by } = req.body;
     if (!role_id) return res.status(400).json({ error: 'Thiếu role_id' });
@@ -303,7 +449,7 @@ r.post('/users/:userId/roles', async (req, res) => {
 });
 
 // Remove role from user
-r.delete('/user-roles/:id', async (req, res) => {
+r.delete('/user-roles/:id', requirePermissionsAdmin, async (req, res) => {
   try {
     const { error } = await supabase
       .from('user_roles')
@@ -321,7 +467,7 @@ r.delete('/user-roles/:id', async (req, res) => {
 // CHECK PERMISSION - Utility endpoint
 // ═══════════════════════════════════════════════
 
-r.post('/check-permission', async (req, res) => {
+r.post('/check-permission', requirePermissionsAdmin, async (req, res) => {
   try {
     const { user_id, resource, action, ecosystem_unit_id } = req.body;
     
@@ -346,7 +492,7 @@ module.exports = r;
 // ═══════════════════════════════════════════════
 
 // Get permissions for an ecosystem unit (all users in that unit)
-r.get('/ecosystem-units/:unitId/permissions', async (req, res) => {
+r.get('/ecosystem-units/:unitId/permissions', requirePermissionsAdmin, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('user_permissions')
@@ -365,7 +511,7 @@ r.get('/ecosystem-units/:unitId/permissions', async (req, res) => {
 });
 
 // Grant/revoke custom permission for user in specific unit
-r.post('/users/custom-permission', async (req, res) => {
+r.post('/users/custom-permission', requirePermissionsAdmin, async (req, res) => {
   try {
     const { user_id, permission_id, ecosystem_unit_id, granted, position_role } = req.body;
     
@@ -378,7 +524,7 @@ r.post('/users/custom-permission', async (req, res) => {
         ecosystem_unit_id,
         granted: granted !== undefined ? granted : true,
         position_role: position_role || null, // NEW: Save position role (director/manager/employee...)
-        granted_by: null, // TODO: get from req.user
+        granted_by: req.user?.userId || null,
         granted_at: new Date().toISOString(),
       }, {
         onConflict: 'user_id,permission_id,ecosystem_unit_id'

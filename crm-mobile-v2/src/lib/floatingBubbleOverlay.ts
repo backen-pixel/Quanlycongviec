@@ -17,6 +17,14 @@ export const Overlay = NativeModules.FloatingBubbleOverlay as
       stopOverlay?: () => Promise<boolean>;
       setBadgeCount?: (n: number) => void;
       showConvBubble?: (groupId: string, title: string, avatarLetter: string) => void;
+      showConvBubbleRich?: (
+        groupId: string,
+        title: string,
+        avatarLetter: string,
+        avatarUrl: string,
+        senderName: string,
+        preview: string,
+      ) => void;
       showConvBubbleWithAvatar?: (
         groupId: string,
         title: string,
@@ -44,6 +52,8 @@ export const Overlay = NativeModules.FloatingBubbleOverlay as
       appendPanelMessage?: (groupId: string, sender: string, message: string) => void;
       consumePendingChat?: () => Promise<{ threadId?: string; title?: string } | null>;
       peekPendingBubbleChat?: () => { threadId?: string; title?: string } | null;
+      peekPendingOutboundCall?: () => { groupId?: string; title?: string; media?: string } | null;
+      consumePendingOutboundCall?: () => Promise<{ groupId?: string; title?: string; media?: string } | null>;
       minimizeApp?: () => void;
       openChatPanel?: (groupId: string, title: string) => void;
       closeChatPanel?: () => void;
@@ -75,9 +85,15 @@ function pushBubble(
   title: string,
   letter: string,
   avatarUrl: string,
+  senderName?: string,
+  preview?: string,
 ) {
   if (!Overlay) return;
-  if (avatarUrl && Overlay.showConvBubbleWithAvatar) {
+  const sender = senderName?.trim() || '';
+  const body = preview?.trim() || '';
+  if (Overlay.showConvBubbleRich) {
+    Overlay.showConvBubbleRich(groupId, title, letter, avatarUrl, sender, body);
+  } else if (avatarUrl && Overlay.showConvBubbleWithAvatar) {
     Overlay.showConvBubbleWithAvatar(groupId, title, letter, avatarUrl);
   } else {
     Overlay.showConvBubble?.(groupId, title, letter);
@@ -118,7 +134,7 @@ export async function showChatBubbleForMessage(
   if (!can) return;
 
   await Overlay.startOverlay?.().catch(() => false);
-  pushBubble(groupId, title, letter, avatarUrl);
+  pushBubble(groupId, title, letter, avatarUrl, sender, message);
 
   if (isActive) {
     try {

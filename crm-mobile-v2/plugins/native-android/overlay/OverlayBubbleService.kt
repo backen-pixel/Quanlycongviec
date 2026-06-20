@@ -39,17 +39,17 @@ import java.net.URL
 class OverlayBubbleService : Service() {
   private var windowManager: WindowManager? = null
   private var bubbleRoot: FrameLayout? = null
+  private var stackHost: FrameLayout? = null
   private var peekRoot: LinearLayout? = null
+  private var convPickerRoot: FrameLayout? = null
   private var badgeView: TextView? = null
-  private var letterView: TextView? = null
-  private var avatarView: ImageView? = null
-  private var avatarClipHost: FrameLayout? = null
   private var layoutParams: WindowManager.LayoutParams? = null
   private var badgeCount = 0
   private var bubbleLetter = "?"
   private var bubbleTitle = "Chat"
   private var bubbleGroupId = ""
   private var bubbleAvatarUrl = ""
+  private val convStack = LinkedHashMap<String, ConvBubble>()
   private var callOverlayCallId = ""
   private var chatPanel: OverlayChatPanel? = null
   private val handler = Handler(Looper.getMainLooper())
@@ -80,27 +80,40 @@ class OverlayBubbleService : Service() {
         return START_STICKY
       }
       ACTION_SHOW_BUBBLE -> {
-        bubbleGroupId = intent.getStringExtra(EXTRA_GROUP_ID).orEmpty()
-        bubbleTitle = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "Chat" }
-        bubbleLetter = intent.getStringExtra(EXTRA_LETTER).orEmpty().ifBlank { "?" }
-        bubbleAvatarUrl = intent.getStringExtra(EXTRA_AVATAR_URL).orEmpty()
-        if (intent.getBooleanExtra(EXTRA_INCREMENT_BADGE, false)) {
-          incrementBadgeCount()
-        }
+        val gid = intent.getStringExtra(EXTRA_GROUP_ID).orEmpty()
+        val title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "Chat" }
+        val letter = intent.getStringExtra(EXTRA_LETTER).orEmpty().ifBlank { "?" }
+        val avatarUrl = intent.getStringExtra(EXTRA_AVATAR_URL).orEmpty()
+        val sender = intent.getStringExtra(EXTRA_SENDER).orEmpty()
+        val preview = intent.getStringExtra(EXTRA_MESSAGE).orEmpty()
+        val increment = intent.getBooleanExtra(EXTRA_INCREMENT_BADGE, false)
+        upsertConversation(gid, title, letter, avatarUrl, sender, preview, increment)
+        if (increment) incrementBadgeCount()
         prefs().edit().remove(PREF_BUBBLE_DISMISSED).apply()
         ensureOverlay()
-        updateBubbleContent()
+        rebuildStackUi()
         return START_STICKY
       }
       ACTION_SHOW_PEEK -> {
         val sender = intent.getStringExtra(EXTRA_SENDER).orEmpty()
         val message = intent.getStringExtra(EXTRA_MESSAGE).orEmpty()
         val gid = intent.getStringExtra(EXTRA_GROUP_ID).orEmpty()
-        if (gid.isNotBlank()) bubbleGroupId = gid
+        if (gid.isNotBlank()) {
+          upsertConversation(
+            gid,
+            bubbleTitle.ifBlank { sender.ifBlank { "Chat" } },
+            bubbleLetter.ifBlank { sender.firstOrNull()?.uppercaseChar()?.toString() ?: "?" },
+            bubbleAvatarUrl,
+            sender,
+            message,
+            increment = false,
+          )
+        }
         if (intent.getBooleanExtra(EXTRA_INCREMENT_BADGE, true)) {
           incrementBadgeCount()
         }
         if (bubbleRoot == null) ensureOverlay()
+        rebuildStackUi()
         showPeek(sender, message)
         return START_STICKY
       }
@@ -150,13 +163,50 @@ class OverlayBubbleService : Service() {
         val gid = intent.getStringExtra(EXTRA_GROUP_ID).orEmpty()
         val sender = intent.getStringExtra(EXTRA_SENDER).orEmpty()
         val message = intent.getStringExtra(EXTRA_MESSAGE).orEmpty()
-        if (gid.isNotBlank() && gid == bubbleGroupId && chatPanel?.isAlive() == true) {
-          chatPanel?.appendIncoming(sender, message)
+        val messageId = intent.getStringExtra(EXTRA_MESSAGE_ID).orEmpty().ifBlank { null }
+        val panel = chatPanel
+        if (gid.isNotBlank() && panel?.isAlive() == true && panel.currentGroupId() == gid) {
+          panel.reloadMessages()
         }
         return START_STICKY
       }
       else -> return START_STICKY
     }
+  }
+
+  private data class ConvBubble(
+    val groupId: String,
+    var title: String,
+    var lastSender: String,
+    var lastPreview: String,
+    var letter: String,
+    var avatarUrl: String,
+  )
+
+  private fun upsertConversation(
+    groupId: String,
+    title: String,
+    letter: String,
+    avatarUrl: String,
+    lastSender: String,
+    lastPreview: String,
+    increment: Boolean,
+  ) {
+    if (groupId.isBlank()) return
+    val prev = convStack.remove(groupId)
+    val conv = ConvBubble(
+      groupId = groupId,
+      title = title.ifBlank { prev?.title ?: "Chat" },
+      lastSender = lastSender.ifBlank { prev?.lastSender ?: "" },
+      lastPreview = lastPreview.ifBlank { prev?.lastPreview ?: "" },
+      letter = letter.ifBlank { prev?.letter ?: "?" },
+      avatarUrl = avatarUrl.ifBlank { prev?.avatarUrl ?: "" },
+    )
+    convStack[groupId] = conv
+    bubbleGroupId = groupId
+    bubbleTitle = conv.title
+    bubbleLetter = conv.letter
+    bubbleAvatarUrl = conv.avatarUrl
   }
 
   private fun ensureOverlay() {
@@ -170,7 +220,7 @@ class OverlayBubbleService : Service() {
     loadBadgeFromPrefs()
     windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
     val dm = resources.displayMetrics
-    val bubbleSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 58f, dm).toInt()
+    val bubbleSize = dp(58)
     val params = WindowManager.LayoutParams(
       bubbleSize,
       bubbleSize,
@@ -187,57 +237,13 @@ class OverlayBubbleService : Service() {
     val root = FrameLayout(this)
     root.id = R.id.sx_bubble_root
 
-    val outer = FrameLayout(this)
-    val outerBg = GradientDrawable()
-    outerBg.shape = GradientDrawable.OVAL
-    outerBg.setColor(Color.WHITE)
-    outerBg.setStroke(dp(3), Color.parseColor("#6C5CE7"))
-    outer.background = outerBg
-    outer.layoutParams = FrameLayout.LayoutParams(
+    val host = FrameLayout(this)
+    host.layoutParams = FrameLayout.LayoutParams(
       FrameLayout.LayoutParams.MATCH_PARENT,
       FrameLayout.LayoutParams.MATCH_PARENT,
     )
-
-    val innerSize = bubbleSize - dp(6)
-    val clipHost = FrameLayout(this)
-    avatarClipHost = clipHost
-    val clipLp = FrameLayout.LayoutParams(innerSize, innerSize)
-    clipLp.gravity = Gravity.CENTER
-    clipHost.layoutParams = clipLp
-    clipHost.clipToOutline = true
-    clipHost.outlineProvider = object : ViewOutlineProvider() {
-      override fun getOutline(view: View, outline: Outline) {
-        outline.setOval(0, 0, view.width, view.height)
-      }
-    }
-    val hostBg = GradientDrawable()
-    hostBg.shape = GradientDrawable.OVAL
-    hostBg.setColor(colorFromName(bubbleTitle.ifBlank { bubbleLetter }))
-    clipHost.background = hostBg
-
-    val letter = TextView(this)
-    letter.gravity = Gravity.CENTER
-    letter.setTextColor(Color.WHITE)
-    letter.setTypeface(letter.typeface, Typeface.BOLD)
-    letter.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-    letter.layoutParams = FrameLayout.LayoutParams(
-      FrameLayout.LayoutParams.MATCH_PARENT,
-      FrameLayout.LayoutParams.MATCH_PARENT,
-    )
-    letterView = letter
-
-    val avatar = ImageView(this)
-    avatar.scaleType = ImageView.ScaleType.CENTER_CROP
-    avatar.visibility = View.GONE
-    avatar.layoutParams = FrameLayout.LayoutParams(
-      FrameLayout.LayoutParams.MATCH_PARENT,
-      FrameLayout.LayoutParams.MATCH_PARENT,
-    )
-    avatarView = avatar
-
-    clipHost.addView(letter)
-    clipHost.addView(avatar)
-    outer.addView(clipHost)
+    stackHost = host
+    root.addView(host)
 
     val badge = TextView(this)
     badge.gravity = Gravity.CENTER
@@ -263,17 +269,297 @@ class OverlayBubbleService : Service() {
     badgeLp.marginEnd = -dp(2)
     badge.layoutParams = badgeLp
     badgeView = badge
-
-    outer.addView(badge)
-    root.addView(outer)
+    root.addView(badge)
 
     attachDrag(root, params)
-    root.setOnClickListener { openPendingChat() }
+    root.setOnClickListener { onBubbleStackTapped() }
 
     windowManager?.addView(root, params)
     bubbleRoot = root
-    updateBubbleContent()
+    rebuildStackUi()
     updateBadge()
+  }
+
+  private fun onBubbleStackTapped() {
+    hideConvPicker()
+    if (convStack.size <= 1) {
+      openPendingChat()
+    } else {
+      showConvPicker()
+    }
+  }
+
+  private fun rebuildStackUi() {
+    val host = stackHost ?: return
+    host.removeAllViews()
+    val convs = convStack.values.toList()
+    if (convs.isEmpty()) {
+      if (bubbleGroupId.isNotBlank()) {
+        convStack[bubbleGroupId] = ConvBubble(
+          bubbleGroupId,
+          bubbleTitle,
+          "",
+          "",
+          bubbleLetter,
+          bubbleAvatarUrl,
+        )
+        return rebuildStackUi()
+      }
+      return
+    }
+
+    val bubbleSize = dp(52)
+    val offset = dp(10)
+    val count = convs.size
+    val showPlus = count > 3
+    val visible = if (count <= 3) convs else convs.takeLast(2)
+    val layers = visible.size + if (showPlus) 1 else 0
+    val stackW = bubbleSize + offset * (layers - 1).coerceAtLeast(0)
+    val stackH = stackW
+
+    host.layoutParams = FrameLayout.LayoutParams(stackW, stackH)
+    layoutParams?.let { lp ->
+      lp.width = stackW + dp(6)
+      lp.height = stackH + dp(6)
+      bubbleRoot?.let { root ->
+        try {
+          windowManager?.updateViewLayout(root, lp)
+        } catch (_: Exception) { }
+      }
+    }
+
+    visible.forEachIndexed { index, conv ->
+      val bubble = buildMiniBubble(conv, bubbleSize)
+      bubble.translationX = (offset * index).toFloat()
+      bubble.translationY = (offset * index).toFloat()
+      bubble.elevation = (index + 1) * dp(2).toFloat()
+      host.addView(
+        bubble,
+        FrameLayout.LayoutParams(bubbleSize, bubbleSize),
+      )
+    }
+
+    if (showPlus) {
+      val extra = count - 2
+      val plus = buildPlusBubble(extra.coerceAtMost(99), bubbleSize)
+      plus.translationX = (offset * visible.size).toFloat()
+      plus.translationY = (offset * visible.size).toFloat()
+      plus.elevation = (visible.size + 1) * dp(2).toFloat()
+      host.addView(
+        plus,
+        FrameLayout.LayoutParams(bubbleSize, bubbleSize),
+      )
+    }
+
+    val active = convs.lastOrNull()
+    if (active != null) {
+      bubbleGroupId = active.groupId
+      bubbleTitle = active.title
+      bubbleLetter = active.letter
+      bubbleAvatarUrl = active.avatarUrl
+    }
+  }
+
+  private fun buildMiniBubble(conv: ConvBubble, size: Int): FrameLayout {
+    val outer = FrameLayout(this)
+    val outerBg = GradientDrawable()
+    outerBg.shape = GradientDrawable.OVAL
+    outerBg.setColor(Color.WHITE)
+    outerBg.setStroke(dp(2), Color.parseColor("#6C5CE7"))
+    outer.background = outerBg
+
+    val innerSize = size - dp(5)
+    val clipHost = FrameLayout(this)
+    val clipLp = FrameLayout.LayoutParams(innerSize, innerSize)
+    clipLp.gravity = Gravity.CENTER
+    clipHost.layoutParams = clipLp
+    clipHost.clipToOutline = true
+    clipHost.outlineProvider = object : ViewOutlineProvider() {
+      override fun getOutline(view: View, outline: Outline) {
+        outline.setOval(0, 0, view.width, view.height)
+      }
+    }
+    val hostBg = GradientDrawable()
+    hostBg.shape = GradientDrawable.OVAL
+    hostBg.setColor(colorFromName(conv.lastSender.ifBlank { conv.title }.ifBlank { conv.letter }))
+    clipHost.background = hostBg
+
+    val letter = TextView(this)
+    letter.gravity = Gravity.CENTER
+    letter.setTextColor(Color.WHITE)
+    letter.setTypeface(letter.typeface, Typeface.BOLD)
+    letter.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+    letter.text = (conv.lastSender.ifBlank { conv.letter }).take(2).uppercase()
+    letter.layoutParams = FrameLayout.LayoutParams(
+      FrameLayout.LayoutParams.MATCH_PARENT,
+      FrameLayout.LayoutParams.MATCH_PARENT,
+    )
+
+    val avatar = ImageView(this)
+    avatar.scaleType = ImageView.ScaleType.CENTER_CROP
+    avatar.visibility = View.GONE
+    avatar.layoutParams = FrameLayout.LayoutParams(
+      FrameLayout.LayoutParams.MATCH_PARENT,
+      FrameLayout.LayoutParams.MATCH_PARENT,
+    )
+
+    clipHost.addView(letter)
+    clipHost.addView(avatar)
+    outer.addView(clipHost)
+    loadAvatarInto(conv.avatarUrl, avatar, letter, clipHost, conv.title, conv.letter)
+    return outer
+  }
+
+  private fun buildPlusBubble(extraCount: Int, size: Int): FrameLayout {
+    val outer = FrameLayout(this)
+    val bg = GradientDrawable()
+    bg.shape = GradientDrawable.OVAL
+    bg.setColor(Color.parseColor("#334155"))
+    bg.setStroke(dp(2), Color.WHITE)
+    outer.background = bg
+    outer.addView(TextView(this).apply {
+      text = if (extraCount > 99) "+99" else "+$extraCount"
+      gravity = Gravity.CENTER
+      setTextColor(Color.WHITE)
+      setTypeface(typeface, Typeface.BOLD)
+      setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+      layoutParams = FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT,
+        FrameLayout.LayoutParams.MATCH_PARENT,
+      )
+    })
+    return outer
+  }
+
+  private fun showConvPicker() {
+    hideConvPicker()
+    if (!Settings.canDrawOverlays(this)) return
+    val wm = windowManager ?: return
+    val lp = layoutParams ?: return
+    val dm = resources.displayMetrics
+    val convs = convStack.values.toList().asReversed()
+
+    val root = FrameLayout(this)
+
+    val scrim = View(this)
+    scrim.setBackgroundColor(Color.argb(90, 0, 0, 0))
+    scrim.layoutParams = FrameLayout.LayoutParams(
+      FrameLayout.LayoutParams.MATCH_PARENT,
+      FrameLayout.LayoutParams.MATCH_PARENT,
+    )
+    scrim.setOnClickListener { hideConvPicker() }
+    root.addView(scrim)
+
+    val menu = LinearLayout(this)
+    menu.orientation = LinearLayout.VERTICAL
+    val menuBg = GradientDrawable()
+    menuBg.cornerRadius = dp(14).toFloat()
+    menuBg.setColor(Color.parseColor("#F8FAFC"))
+    menuBg.setStroke(dp(1), Color.parseColor("#336C5CE7"))
+    menu.background = menuBg
+    menu.elevation = dp(10).toFloat()
+    menu.setPadding(dp(6), dp(6), dp(6), dp(6))
+
+    val titleTv = TextView(this)
+    titleTv.text = "Chọn cuộc trò chuyện"
+    titleTv.setTextColor(Color.parseColor("#64748B"))
+    titleTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+    titleTv.setPadding(dp(10), dp(6), dp(10), dp(4))
+    menu.addView(titleTv)
+
+    for (conv in convs) {
+      val row = LinearLayout(this)
+      row.orientation = LinearLayout.HORIZONTAL
+      row.gravity = Gravity.CENTER_VERTICAL
+      row.setPadding(dp(8), dp(8), dp(8), dp(8))
+      row.isClickable = true
+      row.background = GradientDrawable().apply {
+        cornerRadius = dp(10).toFloat()
+        setColor(Color.WHITE)
+      }
+      val mini = buildMiniBubble(conv, dp(40))
+      mini.isClickable = false
+      mini.isFocusable = false
+      row.addView(mini, LinearLayout.LayoutParams(dp(40), dp(40)))
+      val textCol = LinearLayout(this)
+      textCol.orientation = LinearLayout.VERTICAL
+      textCol.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+      val nameTv = TextView(this)
+      val displayName = conv.lastSender.ifBlank { conv.title }.ifBlank { "Chat" }
+      nameTv.text = displayName
+      nameTv.setTextColor(Color.parseColor("#0F172A"))
+      nameTv.setTypeface(nameTv.typeface, Typeface.BOLD)
+      nameTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+      nameTv.maxLines = 1
+      textCol.addView(nameTv)
+      if (conv.title.isNotBlank() && conv.lastSender.isNotBlank() && conv.title != conv.lastSender) {
+        textCol.addView(TextView(this).apply {
+          text = conv.title
+          setTextColor(Color.parseColor("#64748B"))
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+          maxLines = 1
+        })
+      }
+      if (conv.lastPreview.isNotBlank()) {
+        textCol.addView(TextView(this).apply {
+          text = conv.lastPreview.take(60)
+          setTextColor(Color.parseColor("#94A3B8"))
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+          maxLines = 1
+        })
+      }
+      row.addView(textCol)
+      row.setOnClickListener {
+        selectConversation(conv.groupId)
+        hideConvPicker()
+        openPendingChat()
+      }
+      val rowLp = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT,
+        LinearLayout.LayoutParams.WRAP_CONTENT,
+      )
+      rowLp.bottomMargin = dp(6)
+      menu.addView(row, rowLp)
+    }
+
+    val menuW = dp(260)
+    val menuLp = FrameLayout.LayoutParams(
+      menuW,
+      FrameLayout.LayoutParams.WRAP_CONTENT,
+      Gravity.TOP or Gravity.START,
+    )
+    menuLp.topMargin = lp.y + lp.height + dp(8)
+    menuLp.leftMargin = (lp.x + lp.width - menuW).coerceIn(dp(8), dm.widthPixels - menuW - dp(8))
+    root.addView(menu, menuLp)
+
+    val pickerParams = WindowManager.LayoutParams(
+      WindowManager.LayoutParams.MATCH_PARENT,
+      WindowManager.LayoutParams.MATCH_PARENT,
+      overlayType(),
+      WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+      PixelFormat.TRANSLUCENT,
+    )
+    pickerParams.gravity = Gravity.TOP or Gravity.START
+    wm.addView(root, pickerParams)
+    convPickerRoot = root
+  }
+
+  private fun hideConvPicker() {
+    convPickerRoot?.let {
+      try {
+        windowManager?.removeView(it)
+      } catch (_: Exception) { }
+    }
+    convPickerRoot = null
+  }
+
+  private fun selectConversation(groupId: String) {
+    val conv = convStack[groupId] ?: return
+    bubbleGroupId = conv.groupId
+    bubbleTitle = conv.title
+    bubbleLetter = conv.letter
+    bubbleAvatarUrl = conv.avatarUrl
   }
 
   private fun attachDrag(root: FrameLayout, params: WindowManager.LayoutParams) {
@@ -451,6 +737,7 @@ class OverlayBubbleService : Service() {
 
   private fun openChatPanel() {
     if (bubbleGroupId.isBlank()) return
+    hideConvPicker()
     badgeCount = 0
     saveBadgeToPrefs()
     updateBadge()
@@ -473,6 +760,7 @@ class OverlayBubbleService : Service() {
         bubbleRoot?.visibility = View.VISIBLE
       },
       onExpand = { gid, title -> openBubbleChatInApp(gid, title) },
+      onStartCall = { gid, title, media -> openOutboundCallInApp(gid, title, media) },
     )
     chatPanel?.show(bubbleGroupId, bubbleTitle, topReserve)
   }
@@ -485,6 +773,37 @@ class OverlayBubbleService : Service() {
       obj.put("ts", System.currentTimeMillis())
       prefs().edit().putString(PREF_PENDING_BUBBLE_CHAT, obj.toString()).apply()
     } catch (_: Exception) { }
+  }
+
+  private fun stashPendingOutboundCall(groupId: String, title: String, media: String) {
+    try {
+      val obj = org.json.JSONObject()
+      obj.put("groupId", groupId)
+      obj.put("title", title.ifBlank { "Chat" })
+      obj.put("media", if (media == "video") "video" else "audio")
+      obj.put("ts", System.currentTimeMillis())
+      prefs().edit().putString(PREF_PENDING_OUTBOUND_CALL, obj.toString()).apply()
+    } catch (_: Exception) { }
+  }
+
+  private fun openOutboundCallInApp(groupId: String, title: String, media: String) {
+    if (groupId.isBlank()) return
+    closeChatPanel()
+    stashPendingOutboundCall(groupId, title, media)
+    FloatingBubbleBridge.emitStartCall(groupId, title, media)
+    val intent = Intent(this, MainActivity::class.java).apply {
+      addFlags(
+        Intent.FLAG_ACTIVITY_NEW_TASK
+          or Intent.FLAG_ACTIVITY_SINGLE_TOP
+          or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+          or Intent.FLAG_ACTIVITY_NO_ANIMATION,
+      )
+      putExtra("outbound_call", true)
+      putExtra("group_id", groupId)
+      putExtra("title", title)
+      putExtra("call_media", media)
+    }
+    startActivity(intent)
   }
 
   private fun openBubbleChatInApp(groupId: String = bubbleGroupId, title: String = bubbleTitle) {
@@ -621,31 +940,22 @@ class OverlayBubbleService : Service() {
     peekRoot = null
   }
 
-  private fun updateBubbleContent() {
-    letterView?.text = bubbleLetter.take(2).uppercase()
-    val host = avatarClipHost
-    if (host != null) {
-      (host.background as? GradientDrawable)?.setColor(
-        colorFromName(bubbleTitle.ifBlank { bubbleLetter }),
-      ) ?: run {
-        val bg = GradientDrawable()
-        bg.shape = GradientDrawable.OVAL
-        bg.setColor(colorFromName(bubbleTitle.ifBlank { bubbleLetter }))
-        host.background = bg
-      }
-    }
-    loadAvatarImage(bubbleAvatarUrl)
-  }
-
-  private fun loadAvatarImage(url: String) {
-    val imageView = avatarView ?: return
-    val letter = letterView ?: return
-    val host = avatarClipHost ?: return
+  private fun loadAvatarInto(
+    url: String,
+    imageView: ImageView,
+    letter: TextView,
+    host: FrameLayout,
+    title: String,
+    letterText: String,
+  ) {
     if (url.isBlank()) {
       imageView.setImageDrawable(null)
       imageView.visibility = View.GONE
       letter.visibility = View.VISIBLE
       host.visibility = View.VISIBLE
+      (host.background as? GradientDrawable)?.setColor(
+        colorFromName(title.ifBlank { letterText }),
+      )
       return
     }
     Thread {
@@ -707,17 +1017,17 @@ class OverlayBubbleService : Service() {
   private fun removeOverlay() {
     closeChatPanel()
     removePeek()
+    hideConvPicker()
     bubbleRoot?.let {
       try {
         windowManager?.removeView(it)
       } catch (_: Exception) { }
     }
     bubbleRoot = null
-    avatarView = null
-    letterView = null
-    avatarClipHost = null
+    stackHost = null
     badgeView = null
     layoutParams = null
+    convStack.clear()
   }
 
   private fun startAsForeground() {
@@ -777,6 +1087,7 @@ class OverlayBubbleService : Service() {
   companion object {
     const val PREF_NAME = "sx_bubble_prefs"
     const val PREF_PENDING_BUBBLE_CHAT = "pending_bubble_chat_json"
+    const val PREF_PENDING_OUTBOUND_CALL = "pending_outbound_call_json"
     const val PREF_PENDING_GROUP = "pending_group_id"
     const val PREF_PENDING_TITLE = "pending_group_title"
     const val PREF_BUBBLE_DISMISSED = "bubble_dismissed"
@@ -803,6 +1114,7 @@ class OverlayBubbleService : Service() {
     const val EXTRA_AVATAR_URL = "avatar_url"
     const val EXTRA_SENDER = "sender"
     const val EXTRA_MESSAGE = "message"
+    const val EXTRA_MESSAGE_ID = "message_id"
     const val EXTRA_INCREMENT_BADGE = "increment_badge"
     const val EXTRA_CALL_ID = "call_id"
     const val EXTRA_CALL_FROM = "call_from"

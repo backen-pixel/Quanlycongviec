@@ -64,6 +64,15 @@ export const formatVND = (n) => {
   return `${new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(Math.round(num))}đ`;
 };
 
+/** Điểm ròng sổ cái CRM KPI — khớp CRM Dashboard. */
+export const formatKpiLedgerNet = (v) => {
+  if (v == null || v === '') return '—';
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '—';
+  if (n === 0) return '0';
+  return n > 0 ? `+${n}` : String(n);
+};
+
 export const formatDate = (d) => {
   if (!d) return '';
   return new Date(d).toLocaleDateString('vi-VN');

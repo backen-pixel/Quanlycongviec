@@ -116,6 +116,7 @@ const CrmBlockedPhonesPage = lazyWithRetry(() => import('./pages/CrmBlockedPhone
 const LeadDetail = lazyWithRetry(() => import('./pages/LeadDetail'));
 const CRMReports = lazyWithRetry(() => import('./pages/CRMReports'));
 const CrmStaffLeadDealReport = lazyWithRetry(() => import('./pages/CrmStaffLeadDealReport'));
+const CrmOrgOverviewReport = lazyWithRetry(() => import('./pages/CrmOrgOverviewReport'));
 const CrmSlaWatchlistPage = lazyWithRetry(() => import('./pages/CrmSlaWatchlistPage'));
 const CrmDealStageReportSettingsPage = lazyWithRetry(() => import('./pages/CrmDealStageReportSettingsPage'));
 const CrmDeadlineSettingsPage = lazyWithRetry(() => import('./pages/CrmDeadlineSettingsPage'));
@@ -397,6 +398,7 @@ export default function App() {
             <Route path="/crm/invoices/:id/edit" element={<InvoiceForm />} />
             <Route path="/crm/invoices/:id" element={<InvoiceDetail />} />
             <Route path="/crm/reports" element={<RequireCrmElevated><CRMReports /></RequireCrmElevated>} />
+            <Route path="/crm/reports/org-overview" element={<RequireExecutive><CrmOrgOverviewReport /></RequireExecutive>} />
             <Route path="/crm/reports/staff-lead-deal" element={<RequireExecutive><CrmStaffLeadDealReport /></RequireExecutive>} />
             <Route path="/crm/admin/sla-watchlist" element={<RequireExecutive><CrmSlaWatchlistPage /></RequireExecutive>} />
             <Route path="/crm/settings/deal-stage-report" element={<RequireExecutive><CrmDealStageReportSettingsPage /></RequireExecutive>} />

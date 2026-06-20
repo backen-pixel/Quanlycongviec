@@ -80,6 +80,12 @@ const sections: Section[] = [
         emoji: '📉',
         onPress: (n) => n.navigate('CrmEmbeddedWeb', { path: '/crm/reports', title: 'Báo cáo' }),
       },
+      {
+        key: 'rep_org',
+        title: 'BC theo tổ chức',
+        emoji: '🏢',
+        onPress: (n) => n.navigate('CrmEmbeddedWeb', { path: '/crm/reports/org-overview', title: 'BC tổ chức' }),
+      },
     ],
   },
   {

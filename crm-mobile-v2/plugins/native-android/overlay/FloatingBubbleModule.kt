@@ -178,9 +178,24 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
 
   @ReactMethod
 
+  fun showConvBubbleRich(
+    groupId: String,
+    title: String,
+    avatarLetter: String,
+    avatarUrl: String,
+    senderName: String,
+    preview: String,
+  ) {
+    sendShowBubble(groupId, title, avatarLetter, avatarUrl, senderName, preview)
+  }
+
+
+
+  @ReactMethod
+
   fun showConvBubbleWithAvatar(groupId: String, title: String, avatarLetter: String, avatarUrl: String) {
 
-    sendShowBubble(groupId, title, avatarLetter, avatarUrl)
+    sendShowBubble(groupId, title, avatarLetter, avatarUrl, "", "")
 
   }
 
@@ -224,7 +239,7 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
 
   ) {
 
-    sendShowBubble(bubbleKey, title, avatarLetter, avatarUrl)
+    sendShowBubble(bubbleKey, title, avatarLetter, avatarUrl, senderName, message)
 
     dispatchAppendMessage(bubbleKey, senderName, message)
 
@@ -299,6 +314,11 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
     return readPendingBubbleChatMap(removeAfterRead = false)
   }
 
+  @ReactMethod(isBlockingSynchronousMethod = true)
+  fun peekPendingOutboundCall(): com.facebook.react.bridge.WritableMap? {
+    return readPendingOutboundCallMap(removeAfterRead = false)
+  }
+
   @ReactMethod
   fun consumePendingChat(promise: Promise) {
     try {
@@ -334,6 +354,46 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
     map.putString("title", obj.optString("title", ""))
     if (removeAfterRead) {
       prefs.edit().remove(OverlayBubbleService.PREF_PENDING_BUBBLE_CHAT).apply()
+    }
+    return map
+  }
+
+  @ReactMethod
+  fun consumePendingOutboundCall(promise: Promise) {
+    try {
+      val map = readPendingOutboundCallMap(removeAfterRead = true)
+      promise.resolve(map)
+    } catch (_: Exception) {
+      promise.resolve(null)
+    }
+  }
+
+  private fun readPendingOutboundCallMap(removeAfterRead: Boolean): com.facebook.react.bridge.WritableMap? {
+    val prefs = reactContext.getSharedPreferences(
+      OverlayBubbleService.PREF_NAME,
+      android.content.Context.MODE_PRIVATE,
+    )
+    val raw = prefs.getString(OverlayBubbleService.PREF_PENDING_OUTBOUND_CALL, null)?.trim()
+    if (raw.isNullOrBlank()) return null
+    val obj = try {
+      org.json.JSONObject(raw)
+    } catch (_: Exception) {
+      if (removeAfterRead) prefs.edit().remove(OverlayBubbleService.PREF_PENDING_OUTBOUND_CALL).apply()
+      return null
+    }
+    val ts = obj.optLong("ts", 0L)
+    if (ts > 0L && System.currentTimeMillis() - ts > 120_000L) {
+      prefs.edit().remove(OverlayBubbleService.PREF_PENDING_OUTBOUND_CALL).apply()
+      return null
+    }
+    val groupId = obj.optString("groupId", "").trim()
+    if (groupId.isBlank()) return null
+    val map = com.facebook.react.bridge.Arguments.createMap()
+    map.putString("groupId", groupId)
+    map.putString("title", obj.optString("title", ""))
+    map.putString("media", obj.optString("media", "audio"))
+    if (removeAfterRead) {
+      prefs.edit().remove(OverlayBubbleService.PREF_PENDING_OUTBOUND_CALL).apply()
     }
     return map
   }
@@ -496,8 +556,8 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
 
 
   @ReactMethod
-  fun appendPanelMessage(groupId: String, sender: String, message: String) {
-    dispatchAppendMessage(groupId, sender, message)
+  fun appendPanelMessage(groupId: String, sender: String, message: String, messageId: String?) {
+    dispatchAppendMessage(groupId, sender, message, messageId)
   }
 
   @ReactMethod fun postChatNotification(
@@ -524,7 +584,14 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
 
 
 
-  private fun sendShowBubble(groupId: String, title: String, letter: String, avatarUrl: String) {
+  private fun sendShowBubble(
+    groupId: String,
+    title: String,
+    letter: String,
+    avatarUrl: String,
+    sender: String = "",
+    preview: String = "",
+  ) {
 
     if (groupId.isBlank()) return
 
@@ -539,6 +606,10 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
       putExtra(OverlayBubbleService.EXTRA_LETTER, letter.ifBlank { "?" })
 
       putExtra(OverlayBubbleService.EXTRA_AVATAR_URL, avatarUrl)
+
+      putExtra(OverlayBubbleService.EXTRA_SENDER, sender)
+
+      putExtra(OverlayBubbleService.EXTRA_MESSAGE, preview)
 
     }
 
@@ -574,24 +645,23 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
 
 
 
-  private fun dispatchAppendMessage(groupId: String, sender: String, message: String) {
-
+  private fun dispatchAppendMessage(
+    groupId: String,
+    sender: String,
+    message: String,
+    messageId: String? = null,
+  ) {
     if (groupId.isBlank()) return
-
     val i = Intent(reactContext, OverlayBubbleService::class.java).apply {
-
       action = OverlayBubbleService.ACTION_APPEND_MESSAGE
-
       putExtra(OverlayBubbleService.EXTRA_GROUP_ID, groupId)
-
       putExtra(OverlayBubbleService.EXTRA_SENDER, sender)
-
       putExtra(OverlayBubbleService.EXTRA_MESSAGE, message)
-
+      if (!messageId.isNullOrBlank()) {
+        putExtra(OverlayBubbleService.EXTRA_MESSAGE_ID, messageId)
+      }
     }
-
     reactContext.startService(i)
-
   }
 
 }

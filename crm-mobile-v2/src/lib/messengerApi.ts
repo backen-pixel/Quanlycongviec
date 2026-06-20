@@ -185,6 +185,8 @@ export async function fetchMessengerGroupDetail(groupId: string): Promise<{
   id: string;
   name: string;
   avatar?: string | null;
+  isDirect?: boolean;
+  peerId?: string | null;
   members: MessengerGroupMember[];
 }> {
   const { data } = await api.get<Record<string, unknown>>(`/messenger/groups/${groupId}`, {
@@ -203,8 +205,12 @@ export async function fetchMessengerGroupDetail(groupId: string): Promise<{
   }).filter((m) => m.id);
   return {
     id: String(data.id || groupId),
-    name: String(data.name || 'Nhóm chat'),
-    avatar: data.avatar != null ? String(data.avatar) : null,
+    name: String(data.display_name || data.name || 'Nhóm chat'),
+    avatar: resolveMediaUrl(
+      (data.peer_avatar as string) || (data.avatar as string) || null,
+    ),
+    isDirect: Boolean(data.is_direct),
+    peerId: data.peer_id != null ? String(data.peer_id) : null,
     members,
   };
 }

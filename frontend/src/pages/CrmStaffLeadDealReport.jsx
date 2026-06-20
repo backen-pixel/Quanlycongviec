@@ -79,6 +79,7 @@ export default function CrmStaffLeadDealReport() {
   const [dateFrom, setDateFrom] = useState(() => defaultMonthRange().from);
   const [dateTo, setDateTo] = useState(() => defaultMonthRange().to);
   const [filter, setFilter] = useState({ companyId: '', departmentId: '', q: '' });
+  const [regionId, setRegionId] = useState('');
   /** 'all' | 'lead' | 'deal' — phân loại xem báo cáo */
   const [typeView, setTypeView] = useState('all');
   const [rows, setRows] = useState([]);
@@ -93,6 +94,30 @@ export default function CrmStaffLeadDealReport() {
   const [pdfLoading, setPdfLoading] = useState(false);
   const [detailPdfLoading, setDetailPdfLoading] = useState(false);
   const [rangePickerOpen, setRangePickerOpen] = useState(false);
+  const [companyRegions, setCompanyRegions] = useState([]);
+
+  useEffect(() => {
+    if (!filter.companyId) {
+      setCompanyRegions([]);
+      return undefined;
+    }
+    let cancel = false;
+    api
+      .get('/crm/company-regions', { params: { company_id: filter.companyId, for_module: 'crm' } })
+      .then((r) => {
+        if (!cancel) setCompanyRegions(Array.isArray(r.data) ? r.data : []);
+      })
+      .catch(() => {
+        if (!cancel) setCompanyRegions([]);
+      });
+    return () => { cancel = true; };
+  }, [filter.companyId]);
+
+  useEffect(() => {
+    if (!regionId) return;
+    const ok = companyRegions.some((reg) => String(reg.id) === String(regionId));
+    if (!ok) setRegionId('');
+  }, [companyRegions, regionId]);
 
   const reportQueryParams = useMemo(
     () => ({
@@ -100,10 +125,11 @@ export default function CrmStaffLeadDealReport() {
       date_to: dateTo,
       ...(typeView !== 'all' ? { type: typeView } : {}),
       ...(filter.companyId ? { company_id: filter.companyId } : {}),
+      ...(regionId ? { region_id: regionId } : {}),
       ...(filter.departmentId ? { department_id: filter.departmentId } : {}),
       ...(filter.q?.trim() ? { q: filter.q.trim() } : {}),
     }),
-    [dateFrom, dateTo, typeView, filter.companyId, filter.departmentId, filter.q],
+    [dateFrom, dateTo, typeView, filter.companyId, filter.departmentId, filter.q, regionId],
   );
 
   const downloadMainPdf = async () => {
@@ -336,6 +362,7 @@ export default function CrmStaffLeadDealReport() {
         date_from: reportQueryParams.date_from,
         date_to: reportQueryParams.date_to,
         ...(reportQueryParams.company_id ? { company_id: reportQueryParams.company_id } : {}),
+        ...(reportQueryParams.region_id ? { region_id: reportQueryParams.region_id } : {}),
         ...(typeView !== 'all' ? { type: typeView } : {}),
       };
       const { data } = await api.get(`/crm/reports/staff-lead-deal/${row.user_id}/pipelines`, { params });
@@ -531,6 +558,20 @@ export default function CrmStaffLeadDealReport() {
           </div>
         </div>
         <KpiUserFilter value={filter} onChange={setFilter} />
+        <label className="block max-w-xs">
+          <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Khu vực</span>
+          <select
+            value={regionId}
+            onChange={(e) => setRegionId(e.target.value)}
+            disabled={!filter.companyId}
+            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm disabled:opacity-50"
+          >
+            <option value="">Tất cả khu vực</option>
+            {companyRegions.map((r) => (
+              <option key={r.id} value={r.id}>{r.name}{r.code ? ` (${r.code})` : ''}</option>
+            ))}
+          </select>
+        </label>
         <button
           type="button"
           onClick={load}

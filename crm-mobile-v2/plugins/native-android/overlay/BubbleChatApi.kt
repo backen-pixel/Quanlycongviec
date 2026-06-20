@@ -1,10 +1,11 @@
 package vn.tubeppro.crmobilev2.overlay
 
 import android.content.Context
-import android.net.Uri
+import android.webkit.MimeTypeMap
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.File
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
@@ -16,6 +17,12 @@ import java.util.Locale
 object BubbleChatApi {
   data class ReactionGroup(val emoji: String, val count: Int, val mine: Boolean)
 
+  data class MediaAttachment(
+    val url: String,
+    val mime: String? = null,
+    val name: String? = null,
+  )
+
   data class ChatMessage(
     val id: String,
     val userId: String,
@@ -25,13 +32,66 @@ object BubbleChatApi {
     val createdAtMs: Long = 0L,
     val messageType: String = "text",
     val attachmentUrl: String? = null,
+    val attachmentMime: String? = null,
+    val attachmentName: String? = null,
+    val attachments: List<MediaAttachment> = emptyList(),
     val replyToId: String? = null,
     val replySender: String? = null,
     val replyPreview: String? = null,
     val reactions: List<ReactionGroup> = emptyList(),
-  )
+  ) {
+    fun allAttachments(): List<MediaAttachment> {
+      if (attachments.isNotEmpty()) return attachments
+      val url = attachmentUrl?.trim().orEmpty()
+      if (url.isBlank()) return emptyList()
+      return listOf(MediaAttachment(url, attachmentMime, attachmentName))
+    }
+  }
 
-  data class PendingFile(val uri: Uri, val name: String, val mime: String)
+  data class PendingFile(
+    val cachePath: String,
+    val name: String,
+    val mime: String,
+  ) {
+    fun readBytes(): ByteArray? {
+      val file = File(cachePath)
+      if (!file.exists() || file.length() <= 0L) return null
+      return try {
+        file.readBytes()
+      } catch (_: Exception) {
+        null
+      }
+    }
+
+    fun normalizedMime(): String = normalizeMime(mime, name)
+
+    fun isImage(): Boolean = normalizedMime().startsWith("image/")
+
+    fun isVideo(): Boolean = normalizedMime().startsWith("video/")
+  }
+
+  fun normalizeMime(mime: String, name: String): String {
+    val m = mime.trim().lowercase()
+    if (m.startsWith("image/") || m.startsWith("video/") || m.startsWith("audio/")) return m
+    val ext = name.substringAfterLast('.', "").lowercase()
+    val fromExt = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
+    if (!fromExt.isNullOrBlank()) return fromExt
+    return when (ext) {
+      "jpg", "jpeg" -> "image/jpeg"
+      "png" -> "image/png"
+      "gif" -> "image/gif"
+      "webp" -> "image/webp"
+      "heic", "heif" -> "image/heic"
+      "mp4" -> "video/mp4"
+      "mov" -> "video/quicktime"
+      "webm" -> "video/webm"
+      else -> if (m.isBlank()) "application/octet-stream" else m
+    }
+  }
+
+  fun pendingFileFromCache(file: File, name: String, mime: String): PendingFile {
+    return PendingFile(file.absolutePath, name, normalizeMime(mime, name))
+  }
 
   data class GroupMeta(
     val name: String,
@@ -75,12 +135,25 @@ object BubbleChatApi {
     }
   }
 
+  private fun cleanApiString(raw: String?): String? {
+    val t = raw?.trim().orEmpty()
+    if (t.isBlank() || t.equals("null", ignoreCase = true) || t.equals("undefined", ignoreCase = true)) {
+      return null
+    }
+    return t
+  }
+
+  fun cleanDisplayText(raw: String?): String {
+    return cleanApiString(raw) ?: ""
+  }
+
   fun sendMessage(ctx: Context, groupId: String, content: String, replyTo: String? = null): Boolean {
-    if (groupId.isBlank() || content.isBlank()) return false
+    if (groupId.isBlank()) return false
+    val body = cleanApiString(content) ?: return false
     val base = apiBase(ctx)
     val auth = authHeader(ctx) ?: return false
     return try {
-      val payload = JSONObject().put("content", content)
+      val payload = JSONObject().put("content", body)
       if (!replyTo.isNullOrBlank()) payload.put("reply_to", replyTo)
       val conn = openJson("$base/messenger/groups/$groupId/chat", auth, "POST")
       conn.doOutput = true
@@ -143,25 +216,24 @@ object BubbleChatApi {
           out.write(value.toByteArray())
           out.write("\r\n".toByteArray())
         }
-        field("content", content?.trim().orEmpty())
-        if (!replyTo.isNullOrBlank()) field("reply_to", replyTo)
-      val cr = ctx.contentResolver
-      var uploadedCount = 0
-      for ((idx, f) in files.withIndex()) {
-        val bytes = cr.openInputStream(f.uri)?.use { it.readBytes() } ?: continue
-        if (bytes.isEmpty()) continue
-        uploadedCount++
-        val safeName = f.name.ifBlank { "file_$idx" }
-        val mime = f.mime.ifBlank { "application/octet-stream" }
-        out.write("--$boundary\r\n".toByteArray())
-        out.write(
-          "Content-Disposition: form-data; name=\"files\"; filename=\"$safeName\"\r\n".toByteArray(),
-        )
-        out.write("Content-Type: $mime\r\n\r\n".toByteArray())
-        out.write(bytes)
-        out.write("\r\n".toByteArray())
-      }
-      if (uploadedCount == 0) return false
+        cleanApiString(content)?.let { field("content", it) }
+        cleanApiString(replyTo)?.let { field("reply_to", it) }
+        var uploadedCount = 0
+        for ((idx, f) in files.withIndex()) {
+          val bytes = f.readBytes() ?: continue
+          if (bytes.isEmpty()) continue
+          uploadedCount++
+          val safeName = f.name.ifBlank { "file_$idx" }
+          val mime = f.normalizedMime()
+          out.write("--$boundary\r\n".toByteArray())
+          out.write(
+            "Content-Disposition: form-data; name=\"files\"; filename=\"$safeName\"\r\n".toByteArray(),
+          )
+          out.write("Content-Type: $mime\r\n\r\n".toByteArray())
+          out.write(bytes)
+          out.write("\r\n".toByteArray())
+        }
+        if (uploadedCount == 0) return false
         out.write("--$boundary--\r\n".toByteArray())
       }
       val ok = conn.responseCode in 200..299
@@ -213,8 +285,13 @@ object BubbleChatApi {
       o.has("sender") -> o.optString("sender", "Người dùng")
       else -> o.optJSONObject("user")?.optString("full_name", "Người dùng") ?: "Người dùng"
     }
-    val msgType = o.optString("message_type", o.optString("messageType", "text"))
-    val attachmentUrl = resolveAttachmentUrl(o)
+    val msgTypeRaw = o.optString("message_type", o.optString("messageType", "text"))
+    val attachments = resolveAttachments(o)
+    val primary = attachments.firstOrNull()
+    val attachmentUrl = primary?.url
+    val attachmentMime = primary?.mime
+    val attachmentName = primary?.name
+    val msgType = inferMessageType(msgTypeRaw, attachmentMime, attachmentUrl, attachmentName, attachments)
     val replyParent = o.optJSONObject("reply_to_message")
     val replyToId = o.optString("reply_to", "").trim().ifBlank { null }
     val replySender = replyParent?.let { senderName(it) }
@@ -230,6 +307,9 @@ object BubbleChatApi {
         ?: parseIsoTime(o.optString("created_at", "")),
       messageType = msgType,
       attachmentUrl = attachmentUrl,
+      attachmentMime = attachmentMime,
+      attachmentName = attachmentName,
+      attachments = attachments,
       replyToId = replyToId,
       replySender = replySender,
       replyPreview = replyPreview,
@@ -251,16 +331,73 @@ object BubbleChatApi {
     return map.map { ReactionGroup(it.key, it.value.first, it.value.second) }
   }
 
-  private fun resolveAttachmentUrl(o: JSONObject): String? {
-    val direct = o.optString("attachment_url", "").trim()
-    if (direct.isNotBlank()) return direct
+  private fun resolveAttachments(o: JSONObject): List<MediaAttachment> {
+    val out = ArrayList<MediaAttachment>()
     val att = o.optJSONArray("attachments")
     if (att != null && att.length() > 0) {
-      val u = att.optJSONObject(0)?.optString("url", "")?.trim()
-      if (!u.isNullOrBlank()) return u
+      for (i in 0 until att.length()) {
+        val item = att.optJSONObject(i) ?: continue
+        val url = cleanApiString(item.optString("url", "")) ?: continue
+        out.add(
+          MediaAttachment(
+            url,
+            cleanApiString(item.optString("type", item.optString("mime", ""))),
+            cleanApiString(item.optString("name", "")),
+          ),
+        )
+      }
+      if (out.isNotEmpty()) return out
     }
-    return null
+    val directUrl = cleanApiString(o.optString("attachment_url", ""))
+    if (directUrl != null) {
+      out.add(
+        MediaAttachment(
+          directUrl,
+          cleanApiString(o.optString("attachment_mime", "")),
+          cleanApiString(o.optString("attachment_name", "")),
+        ),
+      )
+    }
+    return out
   }
+
+  private fun inferMessageType(
+    raw: String,
+    mime: String?,
+    url: String?,
+    name: String?,
+    attachments: List<MediaAttachment> = emptyList(),
+  ): String {
+    if (raw.isNotBlank() && !raw.equals("text", ignoreCase = true)) return raw
+    if (attachments.size > 1) {
+      val types = attachments.map { inferSingleAttachmentType(it.mime, it.url, it.name) }
+      if (types.all { it == "image" }) return "image"
+      if (types.all { it == "video" }) return "video"
+      return types.firstOrNull { it != "text" } ?: "file"
+    }
+    return inferSingleAttachmentType(mime, url, name).let { t ->
+      if (t != "text") t else raw.ifBlank { "text" }
+    }
+  }
+
+  private fun inferSingleAttachmentType(mime: String?, url: String?, name: String?): String {
+    val m = mime?.lowercase().orEmpty()
+    val n = name?.lowercase().orEmpty()
+    val u = url?.lowercase().orEmpty()
+    return when {
+      m.startsWith("image/") || IMAGE_EXT.matches(u) || IMAGE_EXT.matches(n) -> "image"
+      m.startsWith("video/") || VIDEO_EXT.matches(u) || VIDEO_EXT.matches(n) -> "video"
+      m.startsWith("audio/") -> "audio"
+      !u.isBlank() -> "file"
+      else -> "text"
+    }
+  }
+
+  private val IMAGE_EXT = Regex("\\.(jpe?g|png|gif|webp|bmp|heic|avif)(\\?|$)", RegexOption.IGNORE_CASE)
+  private val VIDEO_EXT = Regex("\\.(mp4|mov|webm|mkv|avi)(\\?|$)", RegexOption.IGNORE_CASE)
+
+  /** @deprecated dùng resolveAttachments */
+  private fun resolveAttachmentUrl(o: JSONObject): String? = resolveAttachments(o).firstOrNull()?.url
 
   private fun senderName(o: JSONObject): String {
     return when {
@@ -271,14 +408,14 @@ object BubbleChatApi {
 
   private fun previewText(o: JSONObject): String {
     val type = o.optString("message_type", o.optString("messageType", ""))
-    val content = o.optString("content", o.optString("text", "")).trim()
+    val content = cleanApiString(o.optString("content", o.optString("text", ""))) ?: ""
     return when {
       content.isNotBlank() -> content
       type.contains("image", true) -> "📷 Hình ảnh"
       type.contains("video", true) -> "🎬 Video"
       type.contains("file", true) || type.contains("document", true) -> "📎 Tệp đính kèm"
       type.contains("sticker", true) -> "Sticker"
-      o.optString("attachment_url", "").isNotBlank() -> "📎 Đính kèm"
+      cleanApiString(o.optString("attachment_url", "")) != null -> "📎 Tệp đính kèm"
       else -> ""
     }
   }
