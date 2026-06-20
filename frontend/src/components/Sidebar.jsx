@@ -333,6 +333,32 @@ const CALC_MENU_GROUPS = [
   },
 ];
 
+// KẾ TOÁN menu structure
+const KETOAN_MENU_GROUPS = [
+  {
+    id: 'ketoan-overview',
+    moduleKey: 'accounting',
+    title: '1. Tổng quan',
+    emoji: '🧾',
+    items: [
+      { to: '/ketoan/dashboard', icon: LayoutDashboard, label: 'Tổng hợp deal SX', end: true },
+      { to: '/crm/quotations', icon: FileText, label: 'Báo giá' },
+      { to: '/crm/orders', icon: ShoppingCart, label: 'Đơn hàng' },
+      { to: '/crm/invoices', icon: Receipt, label: 'Hóa đơn' },
+    ],
+  },
+  {
+    id: 'ketoan-cross',
+    moduleKey: 'accounting',
+    title: '2. Theo dõi SX',
+    emoji: '🏭',
+    items: [
+      { to: '/sx/dashboard', icon: Factory, label: 'Kanban Sản xuất' },
+      { to: '/vc/dashboard', icon: LayoutDashboard, label: 'Kanban Vận chuyển' },
+    ],
+  },
+];
+
 // LOGISTICS (VẬN CHUYỂN & LẮP ĐẶT) menu structure
 const VC_MENU_GROUPS = [
   {
@@ -370,6 +396,7 @@ function resolveGroupModuleContext(group) {
   if (group.moduleKey === 'crm' || String(group.id || '').startsWith('crm')) return 'crm';
   if (group.moduleKey === 'production' || String(group.id || '').startsWith('sx')) return 'sx';
   if (group.moduleKey === 'logistics' || String(group.id || '').startsWith('vc')) return 'vc';
+  if (group.moduleKey === 'accounting' || String(group.id || '').startsWith('ketoan')) return 'ketoan';
   if (group.moduleKey === 'tinhtoan' || String(group.id || '').startsWith('calc')) return 'calc';
   if (String(group.id || '').startsWith('knowledge')) return 'knowledge';
   return 'work';
@@ -542,19 +569,22 @@ export default function Sidebar() {
   const isKnowledge = location.pathname.startsWith('/knowledge') || activeModule === 'knowledge';
   const isCalc = !isKnowledge && (location.pathname.startsWith('/calc') || activeModule === 'calc');
   const isCRM = !isKnowledge && !isCalc && isCrmSidebarActive(location.pathname, activeModule, crmOnly);
-  const isSX = !isKnowledge && !isCalc && (location.pathname.startsWith('/sx') || activeModule === 'sx');
-  const isVC = !isKnowledge && !isCalc && (location.pathname.startsWith('/vc') || activeModule === 'vc');
+  const isKetoan = !isKnowledge && !isCalc && (location.pathname.startsWith('/ketoan') || activeModule === 'ketoan');
+  const isSX = !isKnowledge && !isCalc && !isKetoan && (location.pathname.startsWith('/sx') || activeModule === 'sx');
+  const isVC = !isKnowledge && !isCalc && !isKetoan && (location.pathname.startsWith('/vc') || activeModule === 'vc');
   const activeMenuGroups = isKnowledge
     ? KNOWLEDGE_MENU_GROUPS
     : isCalc
       ? CALC_MENU_GROUPS
-      : isVC
-        ? VC_MENU_GROUPS
-        : isSX
-          ? SX_MENU_GROUPS
-          : isCRM
-            ? null
-            : MENU_GROUPS;
+      : isKetoan
+        ? KETOAN_MENU_GROUPS
+        : isVC
+          ? VC_MENU_GROUPS
+          : isSX
+            ? SX_MENU_GROUPS
+            : isCRM
+              ? null
+              : MENU_GROUPS;
 
   const pinModule = (path) => {
     localStorage.setItem('pinned_module', path);
@@ -590,7 +620,7 @@ export default function Sidebar() {
             <div className="flex-1 p-5 space-y-3">
               {/* Công việc — ẩn với nhân viên chỉ CRM */}
               {!crmOnly && (
-              <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${!isCRM && !isSX && !isVC ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200 hover:border-blue-400 hover:bg-blue-50'}`}>
+              <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${!isCRM && !isSX && !isVC && !isKetoan && !isCalc && !isKnowledge ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200 hover:border-blue-400 hover:bg-blue-50'}`}>
                 <button onClick={() => { setShowAppSwitcher(false); navigate('/dashboard'); }}
                   className="flex items-center gap-4 flex-1 cursor-pointer">
                   <div className="w-12 h-12 rounded-xl bg-blue-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
@@ -602,7 +632,7 @@ export default function Sidebar() {
                   </div>
                 </button>
                 <div className="flex flex-col items-center gap-1 ml-auto">
-                  {!isCRM && !isSX && !isVC && <span className="text-[10px] px-2 py-0.5 bg-blue-600 text-white rounded-full font-bold">Đang dùng</span>}
+                  {!isCRM && !isSX && !isVC && !isKetoan && !isCalc && !isKnowledge && <span className="text-[10px] px-2 py-0.5 bg-blue-600 text-white rounded-full font-bold">Đang dùng</span>}
                   <button onClick={(e) => { e.stopPropagation(); pinModule('/dashboard'); }}
                     title={pinnedModule === '/dashboard' ? 'Đã ghim — bấm để bỏ ghim' : 'Ghim — đăng nhập vào thẳng module này'}
                     className={`p-1.5 rounded-lg cursor-pointer transition-all ${pinnedModule === '/dashboard' ? 'bg-amber-100 text-amber-600 hover:bg-amber-200' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
@@ -676,6 +706,29 @@ export default function Sidebar() {
                     title={pinnedModule === '/vc' ? 'Đã ghim — bấm để bỏ ghim' : 'Ghim — đăng nhập vào thẳng module này'}
                     className={`p-1.5 rounded-lg cursor-pointer transition-all ${pinnedModule === '/vc' ? 'bg-amber-100 text-amber-600 hover:bg-amber-200' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
                     <Pin className={`h-4 w-4 ${pinnedModule === '/vc' ? 'rotate-45' : ''}`} />
+                  </button>
+                </div>
+              </div>
+              )}
+              {/* Kế toán */}
+              {canAccessModule('accounting') && (
+              <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${isKetoan ? 'bg-indigo-50 border-indigo-200' : 'bg-gray-50 border-gray-200 hover:border-indigo-400 hover:bg-indigo-50'}`}>
+                <button onClick={() => { setShowAppSwitcher(false); navigate('/ketoan'); }}
+                  className="flex items-center gap-4 flex-1 cursor-pointer">
+                  <div className="w-12 h-12 rounded-xl bg-indigo-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                    <Receipt className="h-6 w-6 text-white" />
+                  </div>
+                  <div className="text-left">
+                    <h3 className="text-sm font-bold text-gray-900">Kế toán</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Tổng hợp deal SX theo xưởng xử lý</p>
+                  </div>
+                </button>
+                <div className="flex flex-col items-center gap-1 ml-auto">
+                  {isKetoan && <span className="text-[10px] px-2 py-0.5 bg-indigo-600 text-white rounded-full font-bold">Đang dùng</span>}
+                  <button onClick={(e) => { e.stopPropagation(); pinModule('/ketoan'); }}
+                    title={pinnedModule === '/ketoan' ? 'Đã ghim — bấm để bỏ ghim' : 'Ghim — đăng nhập vào thẳng module này'}
+                    className={`p-1.5 rounded-lg cursor-pointer transition-all ${pinnedModule === '/ketoan' ? 'bg-amber-100 text-amber-600 hover:bg-amber-200' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
+                    <Pin className={`h-4 w-4 ${pinnedModule === '/ketoan' ? 'rotate-45' : ''}`} />
                   </button>
                 </div>
               </div>
@@ -758,6 +811,7 @@ export default function Sidebar() {
             { key: 'crm', mod: 'crm', label: 'CRM', emoji: '💼', path: '/crm', color: 'bg-emerald-500/35 hover:bg-emerald-500/55 ring-emerald-300/40', dot: 'bg-emerald-500/70' },
             { key: 'sx', mod: 'production', label: 'Xưởng SX', emoji: '🏭', path: '/sx', color: 'bg-orange-500/35 hover:bg-orange-500/55 ring-orange-300/40', dot: 'bg-orange-500/70' },
             { key: 'vc', mod: 'logistics', label: 'Vận chuyển', emoji: '🚚', path: '/vc', color: 'bg-amber-500/35 hover:bg-amber-500/55 ring-amber-300/40', dot: 'bg-amber-500/70' },
+            { key: 'ketoan', mod: 'accounting', label: 'Kế toán', emoji: '🧾', path: '/ketoan', color: 'bg-indigo-500/35 hover:bg-indigo-500/55 ring-indigo-300/40', dot: 'bg-indigo-500/70' },
             { key: 'calc', mod: 'tinhtoan', label: 'Tính toán', emoji: '🧮', path: '/calc', color: 'bg-indigo-500/35 hover:bg-indigo-500/55 ring-indigo-300/40', dot: 'bg-indigo-500/70' },
             { key: 'knowledge', mod: null, label: 'Kiến thức', emoji: '🎓', path: '/knowledge', color: 'bg-violet-500/35 hover:bg-violet-500/55 ring-violet-300/40', dot: 'bg-violet-500/70' },
           ].filter((m) => {
@@ -765,7 +819,7 @@ export default function Sidebar() {
             return !m.mod || canAccessModule(m.mod);
           });
           if (!modList.length) return null;
-          const activeKey = isKnowledge ? 'knowledge' : isCalc ? 'calc' : isVC ? 'vc' : isSX ? 'sx' : isCRM ? 'crm' : 'work';
+          const activeKey = isKnowledge ? 'knowledge' : isCalc ? 'calc' : isKetoan ? 'ketoan' : isVC ? 'vc' : isSX ? 'sx' : isCRM ? 'crm' : 'work';
           let curIdx = modList.findIndex((m) => m.key === activeKey);
           if (curIdx < 0) curIdx = 0;
           const cur = modList[curIdx];

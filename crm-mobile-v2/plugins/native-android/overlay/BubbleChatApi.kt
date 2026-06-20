@@ -145,19 +145,23 @@ object BubbleChatApi {
         }
         field("content", content?.trim().orEmpty())
         if (!replyTo.isNullOrBlank()) field("reply_to", replyTo)
-        val cr = ctx.contentResolver
-        for ((idx, f) in files.withIndex()) {
-          val bytes = cr.openInputStream(f.uri)?.use { it.readBytes() } ?: continue
-          val safeName = f.name.ifBlank { "file_$idx" }
-          val mime = f.mime.ifBlank { "application/octet-stream" }
-          out.write("--$boundary\r\n".toByteArray())
-          out.write(
-            "Content-Disposition: form-data; name=\"files\"; filename=\"$safeName\"\r\n".toByteArray(),
-          )
-          out.write("Content-Type: $mime\r\n\r\n".toByteArray())
-          out.write(bytes)
-          out.write("\r\n".toByteArray())
-        }
+      val cr = ctx.contentResolver
+      var uploadedCount = 0
+      for ((idx, f) in files.withIndex()) {
+        val bytes = cr.openInputStream(f.uri)?.use { it.readBytes() } ?: continue
+        if (bytes.isEmpty()) continue
+        uploadedCount++
+        val safeName = f.name.ifBlank { "file_$idx" }
+        val mime = f.mime.ifBlank { "application/octet-stream" }
+        out.write("--$boundary\r\n".toByteArray())
+        out.write(
+          "Content-Disposition: form-data; name=\"files\"; filename=\"$safeName\"\r\n".toByteArray(),
+        )
+        out.write("Content-Type: $mime\r\n\r\n".toByteArray())
+        out.write(bytes)
+        out.write("\r\n".toByteArray())
+      }
+      if (uploadedCount == 0) return false
         out.write("--$boundary--\r\n".toByteArray())
       }
       val ok = conn.responseCode in 200..299

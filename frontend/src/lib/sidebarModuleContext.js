@@ -52,7 +52,7 @@ export function appendDriveModuleQuery(path, moduleKey) {
 }
 
 export function isWorkPrimaryPath(pathname) {
-  if (pathname.startsWith('/crm') || pathname.startsWith('/sx') || pathname.startsWith('/vc')) return false;
+  if (pathname.startsWith('/crm') || pathname.startsWith('/sx') || pathname.startsWith('/vc') || pathname.startsWith('/ketoan')) return false;
   return (
     pathname === '/' ||
     pathname.startsWith('/dashboard') ||
@@ -86,6 +86,7 @@ export function resolveModuleFromPathname(pathname) {
   }
   if (pathname.startsWith('/sx')) return 'sx';
   if (pathname.startsWith('/vc')) return 'vc';
+  if (pathname.startsWith('/ketoan')) return 'ketoan';
   if (pathname.startsWith('/calc')) return 'calc';
   if (pathname.startsWith('/knowledge')) return 'knowledge';
   if (isWorkPrimaryPath(pathname)) return 'work';
@@ -95,7 +96,7 @@ export function resolveModuleFromPathname(pathname) {
 export function readStoredModule() {
   try {
     const v = sessionStorage.getItem(STORAGE_KEY);
-    if (v === 'crm' || v === 'work' || v === 'sx' || v === 'vc' || v === 'calc' || v === 'knowledge') return v;
+    if (v === 'crm' || v === 'work' || v === 'sx' || v === 'vc' || v === 'calc' || v === 'knowledge' || v === 'ketoan') return v;
   } catch { /* ignore */ }
   return null;
 }

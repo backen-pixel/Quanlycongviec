@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import java.io.File
@@ -12,13 +13,10 @@ import java.io.File
 /** Activity trong suốt — chọn ảnh/video/file hoặc chụp/quay. */
 class BubbleMediaPickerActivity : Activity() {
   private var cameraUri: Uri? = null
+  private var cameraFile: File? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-    window.setLayout(
-      android.view.WindowManager.LayoutParams.MATCH_PARENT,
-      android.view.WindowManager.LayoutParams.MATCH_PARENT,
-    )
     when (intent.getStringExtra(BubbleMediaBridge.EXTRA_MODE)) {
       BubbleMediaBridge.MODE_GALLERY -> pickContent("image/*", false)
       BubbleMediaBridge.MODE_VIDEO -> pickContent("video/*", false)
@@ -41,6 +39,7 @@ class BubbleMediaPickerActivity : Activity() {
 
   private fun takePhoto() {
     val file = File(cacheDir, "bubble_cam_${System.currentTimeMillis()}.jpg")
+    cameraFile = file
     val uri = FileProvider.getUriForFile(this, "${packageName}.bubblefileprovider", file)
     cameraUri = uri
     val i = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
@@ -67,8 +66,9 @@ class BubbleMediaPickerActivity : Activity() {
     when (requestCode) {
       REQ_PICK -> deliverFromPick(data)
       REQ_CAMERA -> {
-        val uri = cameraUri
-        if (uri != null) {
+        val file = cameraFile
+        if (file != null && file.exists() && file.length() > 0L) {
+          val uri = FileProvider.getUriForFile(this, "${packageName}.bubblefileprovider", file)
           deliver(listOf(BubbleChatApi.PendingFile(uri, "photo.jpg", "image/jpeg")))
         } else finishCancel()
       }
@@ -76,7 +76,8 @@ class BubbleMediaPickerActivity : Activity() {
         val uri = data?.data
         if (uri != null) {
           val name = queryName(uri) ?: "video.mp4"
-          deliver(listOf(BubbleChatApi.PendingFile(uri, name, mimeOf(uri, "video/mp4"))))
+          val mime = mimeOf(uri, "video/mp4")
+          deliver(listOf(copyToCache(uri, name, mime)))
         } else finishCancel()
       }
       else -> finishCancel()
@@ -85,27 +86,49 @@ class BubbleMediaPickerActivity : Activity() {
 
   private fun deliverFromPick(data: Intent?) {
     val out = ArrayList<BubbleChatApi.PendingFile>()
-    val clip = data?.clipData
-    if (clip != null) {
-      for (i in 0 until clip.itemCount) {
-        val uri = clip.getItemAt(i).uri ?: continue
-        out.add(fileOf(uri))
+    try {
+      val clip = data?.clipData
+      if (clip != null) {
+        for (i in 0 until clip.itemCount) {
+          val uri = clip.getItemAt(i).uri ?: continue
+          out.add(fileOf(uri))
+        }
+      } else {
+        val uri = data?.data
+        if (uri != null) out.add(fileOf(uri))
       }
-    } else {
-      val uri = data?.data
-      if (uri != null) out.add(fileOf(uri))
+    } catch (_: Exception) {
+      finishCancel()
+      return
     }
     if (out.isEmpty()) finishCancel() else deliver(out)
   }
 
   private fun fileOf(uri: Uri): BubbleChatApi.PendingFile {
     val name = queryName(uri) ?: "file_${System.currentTimeMillis()}"
-    return BubbleChatApi.PendingFile(uri, name, mimeOf(uri, "application/octet-stream"))
+    val mime = mimeOf(uri, "application/octet-stream")
+    return copyToCache(uri, name, mime)
+  }
+
+  /** Copy sang cache app — tránh mất quyền đọc URI sau khi Activity đóng. */
+  private fun copyToCache(uri: Uri, name: String, mime: String): BubbleChatApi.PendingFile {
+    val ext = name.substringAfterLast('.', "").ifBlank {
+      MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "bin"
+    }
+    val dest = File(cacheDir, "bubble_pick_${System.currentTimeMillis()}.$ext")
+    contentResolver.openInputStream(uri)?.use { input ->
+      dest.outputStream().use { output -> input.copyTo(output) }
+    } ?: throw IllegalStateException("Không đọc được file đã chọn")
+    if (!dest.exists() || dest.length() <= 0L) {
+      throw IllegalStateException("File đã chọn rỗng")
+    }
+    val cachedUri = FileProvider.getUriForFile(this, "${packageName}.bubblefileprovider", dest)
+    return BubbleChatApi.PendingFile(cachedUri, name, mime)
   }
 
   private fun queryName(uri: Uri): String? {
     return try {
-      contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+      contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
         ?.use { c ->
           if (c.moveToFirst()) c.getString(0) else null
         }
@@ -130,6 +153,11 @@ class BubbleMediaPickerActivity : Activity() {
   private fun finishCancel() {
     BubbleMediaBridge.cancel()
     finish()
+  }
+
+  override fun onDestroy() {
+    BubbleMediaBridge.ensurePanelResumedAfterPicker()
+    super.onDestroy()
   }
 
   companion object {

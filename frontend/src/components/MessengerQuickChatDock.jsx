@@ -27,6 +27,7 @@ export const QUICK_CHAT_DOCK_MINI_W = 56;
 /** Chiều rộng thực tế trên màn hình (gồm padding badge) */
 export const QUICK_CHAT_DOCK_VISUAL_W = QUICK_CHAT_DOCK_W + 12;
 export const QUICK_CHAT_PANEL_W = 320;
+export const QUICK_CHAT_DOCK_PANEL_W = QUICK_CHAT_PANEL_W;
 const MAX_COMPACT_AVATARS = 8;
 const DOCK_SHADOW = '0 12px 40px rgba(15, 23, 42, 0.12)';
 const DOCK_SHADOW_SUNK = '0 4px 16px rgba(15, 23, 42, 0.06)';

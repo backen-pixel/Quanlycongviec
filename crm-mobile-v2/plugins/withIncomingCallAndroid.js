@@ -13,6 +13,8 @@ const OVERLAY_FILES = [
   'overlay/OverlayChatPanel.kt',
   'overlay/OverlayChatTheme.kt',
   'overlay/BubbleChatApi.kt',
+  'overlay/BubbleComposeBridge.kt',
+  'overlay/BubbleComposeActivity.kt',
   'overlay/BubbleMediaBridge.kt',
   'overlay/BubbleMediaPickerActivity.kt',
   'overlay/FloatingBubbleBridge.kt',
@@ -191,6 +193,20 @@ function withIncomingCallManifest(config) {
     if (!app.receiver.some((r) => r.$?.['android:name'] === '.call.IncomingCallActionReceiver')) {
       app.receiver.push({
         $: { 'android:name': '.call.IncomingCallActionReceiver', 'android:exported': 'false' },
+      });
+    }
+
+    if (!app.activity.some((a) => a.$?.['android:name'] === '.overlay.BubbleComposeActivity')) {
+      app.activity.push({
+        $: {
+          'android:name': '.overlay.BubbleComposeActivity',
+          'android:exported': 'false',
+          'android:launchMode': 'singleTop',
+          'android:theme': '@style/Theme.BubbleCompose',
+          'android:windowSoftInputMode': 'adjustResize',
+          'android:excludeFromRecents': 'true',
+          'android:taskAffinity': 'vn.tubeppro.crmobilev2.bubblecompose',
+        },
       });
     }
 

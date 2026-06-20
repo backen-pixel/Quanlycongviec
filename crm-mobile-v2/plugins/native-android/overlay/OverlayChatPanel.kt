@@ -9,13 +9,14 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.text.format.DateFormat
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewTreeObserver
-import android.view.WindowInsets
 import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -44,40 +45,44 @@ class OverlayChatPanel(
   private var messagesWrap: LinearLayout? = null
   private var scrollView: ScrollView? = null
   private var inputView: EditText? = null
+  private var sendButton: TextView? = null
+  private var replyBar: LinearLayout? = null
+  private var pendingStrip: HorizontalScrollView? = null
+  private var pendingRow: LinearLayout? = null
+  private var replyToId: String? = null
+  private var replyToSender: String? = null
+  private var replyToText: String? = null
+  private val pendingFiles = ArrayList<BubbleChatApi.PendingFile>()
+  private var sending = false
+  private var keyboardListener: ViewTreeObserver.OnGlobalLayoutListener? = null
   private var statusView: TextView? = null
   private var titleView: TextView? = null
   private var subtitleView: TextView? = null
   private var avatarView: TextView? = null
   private var composerWrap: LinearLayout? = null
-  private var replyBar: LinearLayout? = null
-  private var replyLabel: TextView? = null
-  private var replyText: TextView? = null
-  private var pendingStrip: HorizontalScrollView? = null
-  private var pendingRow: LinearLayout? = null
-  private var emojiPanel: LinearLayout? = null
   private var popupLayer: FrameLayout? = null
-  private var sheetFrame: FrameLayout? = null
   private var panelParams: WindowManager.LayoutParams? = null
-  private var keyboardListener: ViewTreeObserver.OnGlobalLayoutListener? = null
-  private var panelBaseHeight = 0
-  private var keyboardLiftPx = 0
-  private var topReservePxStored = 0
   private var groupId = ""
   private var title = ""
   private var isDirect = true
   private var isGroupChat = false
-  private var replyTo: BubbleChatApi.ChatMessage? = null
-  private var emojiOpen = false
-  private val pendingFiles = ArrayList<BubbleChatApi.PendingFile>()
   private val messages = ArrayList<BubbleChatApi.ChatMessage>()
+  private var basePanelHeight = 0
+  private var panelTopReserve = 0
+  private var keyboardLiftPx = 0
+  private var suspendedForPicker = false
+  private var suspendedForCompose = false
 
   private val quickReactions = arrayOf("👍", "❤️", "😂", "😮", "😢", "🙏")
-  private val pickerEmojis = arrayOf(
-    "😀", "😂", "😍", "😢", "😡", "👍", "👎", "❤️", "🔥", "🎉",
-    "🙏", "👏", "😮", "🤔", "😎", "🥰", "😭", "💯", "✅", "❌",
-  )
 
-  fun isShowing(): Boolean = panelRoot != null
+  /** Panel còn tồn tại (kể cả đang ẩn tạm cho compose/picker). */
+  fun isAlive(): Boolean = panelRoot != null
+
+  /** Panel đang gắn WindowManager và nhìn thấy được. */
+  fun isVisibleOnScreen(): Boolean = isAlive() && !suspendedForPicker && !suspendedForCompose
+
+  /** @deprecated dùng isVisibleOnScreen — giữ cho Service cũ nếu cần. */
+  fun isShowing(): Boolean = isVisibleOnScreen()
 
   fun show(groupId: String, title: String, topReservePx: Int = 0) {
     if (groupId.isBlank()) return
@@ -87,17 +92,109 @@ class OverlayChatPanel(
       applyPanelTop(topReservePx)
       applyHeader()
       loadConversationAsync()
+      BubbleMediaBridge.registerPanel(this)
+      BubbleComposeBridge.registerPanel(this)
+      ensurePanelAttached(force = true)
       return
     }
     buildPanel(topReservePx)
     loadConversationAsync()
     BubbleChatApi.markRead(context, groupId)
+    BubbleMediaBridge.registerPanel(this)
+    BubbleComposeBridge.registerPanel(this)
+  }
+
+  /** Ẩn overlay hoàn toàn khi mở picker hệ thống (Google Photos, camera…). */
+  fun prepareForExternalPicker() {
+    if (suspendedForPicker || suspendedForCompose) return
+    hidePopups()
+    hideKeyboard()
+    val root = panelRoot ?: return
+    try {
+      windowManager.removeView(root)
+      suspendedForPicker = true
+    } catch (_: Exception) { }
+  }
+
+  fun suspendForExternalPicker() = prepareForExternalPicker()
+
+  fun resumeAfterExternalPicker() {
+    val wasSuspended = suspendedForPicker
+    suspendedForPicker = false
+    if (!wasSuspended) {
+      ensurePanelAttached()
+      return
+    }
+    if (suspendedForCompose || BubbleComposeBridge.isComposeOpen()) return
+    restorePanelAfterPicker()
+  }
+
+  private fun restorePanelAfterPicker() {
+    fun attempt() {
+      if (suspendedForPicker || suspendedForCompose) return
+      panelRoot?.visibility = View.VISIBLE
+      ensurePanelAttached(force = true)
+      applyKeyboardLift()
+      scrollView?.post { scrollView?.fullScroll(View.FOCUS_DOWN) }
+    }
+    attempt()
+    handler.postDelayed({ attempt() }, 120)
+    handler.postDelayed({ attempt() }, 350)
+  }
+
+  /** Ẩn overlay khi mở Activity soạn tin (bàn phím adjustResize). */
+  fun suspendForCompose() {
+    if (suspendedForCompose || suspendedForPicker) return
+    hidePopups()
+    val root = panelRoot ?: return
+    try {
+      windowManager.removeView(root)
+      suspendedForCompose = true
+    } catch (_: Exception) { }
+  }
+
+  fun resumeAfterCompose(refresh: Boolean) {
+    val wasSuspended = suspendedForCompose
+    suspendedForCompose = false
+    if (!wasSuspended) return
+    if (!suspendedForPicker) {
+      ensurePanelAttached(force = true)
+      if (refresh) {
+        loadConversationAsync()
+      } else if (messages.isNotEmpty()) {
+        renderMessages()
+      }
+      scrollView?.post { scrollView?.fullScroll(View.FOCUS_DOWN) }
+    }
+  }
+
+  /** Gắn lại panel nếu bị orphan sau picker/compose. */
+  private fun ensurePanelAttached(force: Boolean = false) {
+    val root = panelRoot ?: return
+    val params = panelParams ?: return
+    if (suspendedForPicker || suspendedForCompose) return
+    if (!force && root.isAttachedToWindow) return
+    try {
+      if (root.isAttachedToWindow) {
+        windowManager.updateViewLayout(root, params)
+      } else {
+        windowManager.addView(root, params)
+      }
+    } catch (_: Exception) {
+      try { windowManager.addView(root, params) } catch (_: Exception) { }
+    }
   }
 
   fun hide() {
     hidePopups()
     hideKeyboard()
-    detachKeyboardListener()
+    BubbleComposeBridge.dismissComposeIfOpen()
+    BubbleMediaBridge.registerPanel(null)
+    BubbleComposeBridge.registerPanel(null)
+    keyboardListener?.let { listener ->
+      panelRoot?.viewTreeObserver?.removeOnGlobalLayoutListener(listener)
+    }
+    keyboardListener = null
     panelRoot?.let {
       try { windowManager.removeView(it) } catch (_: Exception) { }
     }
@@ -106,24 +203,26 @@ class OverlayChatPanel(
     messagesWrap = null
     scrollView = null
     inputView = null
-    statusView = null
-    composerWrap = null
+    sendButton = null
     replyBar = null
     pendingStrip = null
     pendingRow = null
-    emojiPanel = null
+    statusView = null
+    composerWrap = null
     popupLayer = null
-    sheetFrame = null
-    keyboardLiftPx = 0
-    BubbleMediaBridge.clearVisibilityHook()
-    replyTo = null
+    replyToId = null
+    replyToSender = null
+    replyToText = null
     pendingFiles.clear()
+    sending = false
+    suspendedForPicker = false
+    suspendedForCompose = false
     messages.clear()
     onClosed()
   }
 
   fun seedMessages(json: String) {
-    if (!isShowing()) return
+    if (!isAlive()) return
     val myId = myUserId()
     val parsed = BubbleChatApi.parseMessagesFromSeed(json, myId)
     if (parsed.isEmpty()) return
@@ -131,12 +230,12 @@ class OverlayChatPanel(
       messages.clear()
       messages.addAll(parsed)
       isGroupChat = !isDirect && parsed.map { it.userId }.distinct().size > 1
-      renderMessages()
+      if (isVisibleOnScreen()) renderMessages()
     }
   }
 
   fun appendIncoming(sender: String, text: String) {
-    if (!isShowing()) return
+    if (!isAlive()) return
     handler.post {
       messages.add(
         BubbleChatApi.ChatMessage(
@@ -148,39 +247,28 @@ class OverlayChatPanel(
         ),
       )
       if (messages.size > 80) messages.removeAt(0)
-      renderMessages()
+      if (isVisibleOnScreen()) renderMessages()
     }
   }
 
   private fun buildPanel(topReservePx: Int) {
     val c = colors()
     val dm = context.resources.displayMetrics
-    topReservePxStored = topReservePx
+    val panelW = dm.widthPixels
     val topReserve = resolveTopReserve(topReservePx)
-    panelBaseHeight = (dm.heightPixels - topReserve).coerceAtLeast((dm.heightPixels * 0.55f).toInt())
+    val panelH = (dm.heightPixels - topReserve).coerceAtLeast((dm.heightPixels * 0.55f).toInt())
 
-    // Cửa sổ full màn hình — nhận inset bàn phím, sheet chat nằm ở đáy.
-    val outer = FrameLayout(context).apply {
-      isFocusable = true
-      isFocusableInTouchMode = true
-    }
-
+    val root = FrameLayout(context)
     val sheetBg = OverlayChatTheme.roundedRect(c.bgElevated, 18, ::dp, c.border)
     sheetBg.cornerRadii = floatArrayOf(
       dp(18).toFloat(), dp(18).toFloat(),
       dp(18).toFloat(), dp(18).toFloat(),
       0f, 0f, 0f, 0f,
     )
-    val sheet = FrameLayout(context).apply {
-      background = sheetBg
-      elevation = dp(16).toFloat()
-      layoutParams = FrameLayout.LayoutParams(
-        FrameLayout.LayoutParams.MATCH_PARENT,
-        panelBaseHeight,
-        Gravity.BOTTOM,
-      )
-    }
-    sheetFrame = sheet
+    root.background = sheetBg
+    root.elevation = dp(16).toFloat()
+    root.isFocusable = true
+    root.isFocusableInTouchMode = true
 
     val column = LinearLayout(context).apply {
       orientation = LinearLayout.VERTICAL
@@ -194,7 +282,6 @@ class OverlayChatPanel(
     column.addView(buildHeader(c))
     column.addView(buildMessagesArea(c))
     column.addView(buildComposer(c))
-    sheet.addView(column)
 
     val popup = FrameLayout(context).apply {
       layoutParams = FrameLayout.LayoutParams(
@@ -205,39 +292,27 @@ class OverlayChatPanel(
     }
     popupLayer = popup
 
-    outer.addView(sheet)
-    outer.addView(popup)
+    root.addView(column)
+    root.addView(popup)
 
     val params = WindowManager.LayoutParams(
-      WindowManager.LayoutParams.MATCH_PARENT,
-      WindowManager.LayoutParams.MATCH_PARENT,
+      panelW,
+      panelH,
       overlayType(),
       WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-        WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM,
+        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
       android.graphics.PixelFormat.TRANSLUCENT,
     )
-    params.gravity = Gravity.TOP or Gravity.START
-    params.softInputMode =
-      WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
-        WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN
+    params.gravity = Gravity.BOTTOM
+    // Không dùng ADJUST_RESIZE — tự đẩy panel lên bằng params.y (tránh panel bị co mất composer).
+    params.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
 
-    windowManager.addView(outer, params)
-    panelRoot = outer
+    panelTopReserve = resolveTopReserve(topReservePx)
+    basePanelHeight = panelH
+    windowManager.addView(root, params)
+    panelRoot = root
     panelParams = params
-    attachKeyboardHandler(outer)
-    BubbleMediaBridge.registerVisibilityHook { visible ->
-      handler.post { panelRoot?.visibility = if (visible) View.VISIBLE else View.GONE }
-    }
-    inputView?.setOnFocusChangeListener { _, hasFocus ->
-      if (hasFocus) {
-        setEmojiOpen(false)
-        showKeyboard()
-        scrollView?.postDelayed({ scrollView?.fullScroll(View.FOCUS_DOWN) }, 150)
-      }
-    }
-    inputView?.setOnClickListener { showKeyboard() }
+    installKeyboardWatcher(root)
   }
 
   private fun buildComposer(c: OverlayChatTheme.Palette): View {
@@ -260,30 +335,30 @@ class OverlayChatPanel(
       visibility = View.GONE
     }
     replyBar = reply
-    replyLabel = TextView(context).apply {
-      text = "Trả lời"
+    reply.addView(TextView(context).apply {
+      id = View.generateViewId()
+      tag = "reply_label"
       setTextColor(c.accent)
       setTypeface(typeface, Typeface.BOLD)
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-    }
-    replyText = TextView(context).apply {
+    })
+    reply.addView(TextView(context).apply {
+      id = View.generateViewId()
+      tag = "reply_text"
       setTextColor(c.textMuted)
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
       maxLines = 2
       layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).also {
         it.marginStart = dp(8)
       }
-    }
-    val replyClose = TextView(context).apply {
+    })
+    reply.addView(TextView(context).apply {
       text = "✕"
       setTextColor(c.textFaint)
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
       setPadding(dp(8), dp(4), dp(4), dp(4))
-      setOnClickListener { setReplyTo(null) }
-    }
-    reply.addView(replyLabel)
-    reply.addView(replyText)
-    reply.addView(replyClose)
+      setOnClickListener { clearReplyTo() }
+    })
     wrap.addView(reply)
 
     val pendingScroll = HorizontalScrollView(context).apply {
@@ -298,38 +373,13 @@ class OverlayChatPanel(
     pendingScroll.addView(pendingRow)
     wrap.addView(pendingScroll)
 
-    val emoji = LinearLayout(context).apply {
-      orientation = LinearLayout.VERTICAL
-      setBackgroundColor(c.bgElevated)
-      setPadding(dp(8), dp(6), dp(8), dp(6))
-      visibility = View.GONE
-    }
-    emojiPanel = emoji
-    val emojiGrid = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
-    var row: LinearLayout? = null
-    pickerEmojis.forEachIndexed { idx, em ->
-      if (idx % 5 == 0) {
-        row = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-        emojiGrid.addView(row)
-      }
-      row?.addView(TextView(context).apply {
-        text = em
-        gravity = Gravity.CENTER
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
-        layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f)
-        setOnClickListener { insertEmoji(em) }
-      })
-    }
-    emoji.addView(emojiGrid)
-    wrap.addView(emoji)
-
     val bar = LinearLayout(context).apply {
       orientation = LinearLayout.HORIZONTAL
       gravity = Gravity.BOTTOM
       setPadding(dp(12), dp(10), dp(12), dp(12))
     }
 
-    val plus = TextView(context).apply {
+    bar.addView(TextView(context).apply {
       text = "+"
       gravity = Gravity.CENTER
       setTextColor(c.accent)
@@ -338,7 +388,7 @@ class OverlayChatPanel(
       background = OverlayChatTheme.plusButtonBg(c, ::dp)
       layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)).also { it.bottomMargin = dp(4) }
       setOnClickListener { showAttachSheet() }
-    }
+    })
 
     val inputWrap = LinearLayout(context).apply {
       orientation = LinearLayout.HORIZONTAL
@@ -360,36 +410,69 @@ class OverlayChatPanel(
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
       maxLines = 4
       background = null
+      isFocusable = true
+      isFocusableInTouchMode = true
+      isClickable = true
       setPadding(0, dp(11), 0, dp(11))
-      layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+      layoutParams = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT,
+        LinearLayout.LayoutParams.WRAP_CONTENT,
+      )
+      inputType = InputType.TYPE_CLASS_TEXT or
+        InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or
+        InputType.TYPE_TEXT_FLAG_MULTI_LINE
+      imeOptions = EditorInfo.IME_ACTION_SEND
+      setOnEditorActionListener { _, actionId, _ ->
+        if (actionId == EditorInfo.IME_ACTION_SEND) {
+          sendDraft()
+          true
+        } else false
+      }
+      addTextChangedListener(object : android.text.TextWatcher {
+        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+          updateSendButton()
+        }
+        override fun afterTextChanged(s: android.text.Editable?) {}
+      })
+      setOnClickListener {
+        requestFocus()
+        showKeyboard()
+      }
+      setOnFocusChangeListener { _, hasFocus ->
+        if (hasFocus) {
+          if (keyboardLiftPx <= 0) {
+            keyboardLiftPx = (context.resources.displayMetrics.heightPixels * 0.36f).toInt()
+            applyKeyboardLift()
+          }
+        } else if (!inputView?.text.isNullOrEmpty()) {
+          // giữ lift nếu vẫn có nội dung — tránh nhảy layout
+        } else {
+          handler.postDelayed({
+            if (inputView?.hasFocus() != true) {
+              keyboardLiftPx = 0
+              applyKeyboardLift()
+            }
+          }, 120)
+        }
+      }
     }
-
-    val emojiBtn = TextView(context).apply {
-      text = "☺"
-      gravity = Gravity.CENTER
-      setTextColor(c.textFaint)
-      setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
-      layoutParams = LinearLayout.LayoutParams(dp(36), dp(44))
-      setOnClickListener { setEmojiOpen(!emojiOpen) }
-    }
-
     inputWrap.addView(inputView)
-    inputWrap.addView(emojiBtn)
+    bar.addView(inputWrap)
 
-    val send = TextView(context).apply {
+    sendButton = TextView(context).apply {
       text = "➤"
       gravity = Gravity.CENTER
       setTextColor(Color.WHITE)
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
       background = OverlayChatTheme.sendButtonBg(c, ::dp)
       layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
-      setOnClickListener { sendCurrentDraft() }
+      setOnClickListener { sendDraft() }
     }
+    bar.addView(sendButton)
 
-    bar.addView(plus)
-    bar.addView(inputWrap)
-    bar.addView(send)
     wrap.addView(bar)
+    updateSendButton()
     return wrap
   }
 
@@ -496,44 +579,29 @@ class OverlayChatPanel(
   }
 
   private fun setReplyTo(msg: BubbleChatApi.ChatMessage?) {
-    replyTo = msg
+    if (msg == null) return
+    replyToId = msg.id.ifBlank { null }
+    replyToSender = msg.sender.ifBlank { null }
+    replyToText = msg.text.ifBlank { "…" }
     val c = colors()
-    if (msg == null) {
-      replyBar?.visibility = View.GONE
-      return
-    }
     replyBar?.visibility = View.VISIBLE
-    replyLabel?.text = "Trả lời ${msg.sender}"
-    replyText?.text = msg.text
-    inputView?.requestFocus()
-    showKeyboard()
-  }
-
-  private fun setEmojiOpen(open: Boolean) {
-    emojiOpen = open
-    emojiPanel?.visibility = if (open) View.VISIBLE else View.GONE
-    if (open) {
-      hideKeyboard()
-      val emojiLift = dp(200)
-      sheetFrame?.translationY = -emojiLift.toFloat()
-    } else if (keyboardLiftPx <= 0) {
-      sheetFrame?.translationY = 0f
-    } else {
-      sheetFrame?.translationY = -keyboardLiftPx.toFloat()
+    (replyBar?.findViewWithTag("reply_label") as? TextView)?.text =
+      if (!replyToSender.isNullOrBlank()) "Trả lời $replyToSender" else "Trả lời"
+    (replyBar?.findViewWithTag("reply_text") as? TextView)?.text = replyToText
+    inputView?.post {
+      inputView?.requestFocus()
+      showKeyboard()
     }
   }
 
-  private fun insertEmoji(emoji: String) {
-    val input = inputView ?: return
-    val start = input.selectionStart.coerceAtLeast(0)
-    val end = input.selectionEnd.coerceAtLeast(0)
-    input.text.replace(start.coerceAtMost(end), end.coerceAtLeast(start), emoji)
-    input.setSelection(start + emoji.length)
+  private fun clearReplyTo() {
+    replyToId = null
+    replyToSender = null
+    replyToText = null
+    replyBar?.visibility = View.GONE
   }
 
   private fun showAttachSheet() {
-    hideKeyboard()
-    setEmojiOpen(false)
     hidePopups()
     val popup = popupLayer ?: return
     val c = colors()
@@ -545,16 +613,8 @@ class OverlayChatPanel(
       orientation = LinearLayout.VERTICAL
       background = OverlayChatTheme.roundedRect(c.bgElevated, 16, ::dp, c.border)
       setPadding(dp(12), dp(12), dp(12), dp(16))
-      layoutParams = FrameLayout.LayoutParams(
-        FrameLayout.LayoutParams.MATCH_PARENT,
-        FrameLayout.LayoutParams.WRAP_CONTENT,
-        Gravity.BOTTOM,
-      ).also {
-        it.bottomMargin = panelBaseHeight + keyboardLiftPx + dp(8)
-      }
-      setOnClickListener { /* chặn đóng khi bấm trong sheet */ }
+      elevation = dp(8).toFloat()
     }
-
     fun addOpt(label: String, mode: String) {
       sheet.addView(TextView(context).apply {
         text = label
@@ -563,7 +623,7 @@ class OverlayChatPanel(
         setPadding(dp(14), dp(14), dp(14), dp(14))
         setOnClickListener {
           hidePopups()
-          BubbleMediaBridge.pick(context, mode) { files ->
+          BubbleMediaBridge.pick(context, mode, suspendPanel = true) { files ->
             if (files.isNotEmpty()) {
               pendingFiles.addAll(files)
               refreshPendingStrip()
@@ -572,18 +632,18 @@ class OverlayChatPanel(
         }
       })
     }
-
     addOpt("🖼 Thư viện ảnh", BubbleMediaBridge.MODE_GALLERY)
     addOpt("🎬 Thư viện video", BubbleMediaBridge.MODE_VIDEO)
     addOpt("📎 Tệp tin", BubbleMediaBridge.MODE_FILE)
     addOpt("📷 Chụp ảnh", BubbleMediaBridge.MODE_CAMERA)
     addOpt("🎥 Quay video", BubbleMediaBridge.MODE_RECORD)
-    popup.addView(sheet)
-  }
 
-  private fun hidePopups() {
-    popupLayer?.visibility = View.GONE
-    popupLayer?.removeAllViews()
+    val lp = FrameLayout.LayoutParams(
+      FrameLayout.LayoutParams.MATCH_PARENT,
+      FrameLayout.LayoutParams.WRAP_CONTENT,
+      Gravity.BOTTOM,
+    )
+    popup.addView(sheet, lp)
   }
 
   private fun refreshPendingStrip() {
@@ -592,28 +652,164 @@ class OverlayChatPanel(
     row.removeAllViews()
     if (pendingFiles.isEmpty()) {
       pendingStrip?.visibility = View.GONE
+      updateSendButton()
       return
     }
     pendingStrip?.visibility = View.VISIBLE
     pendingFiles.forEachIndexed { idx, f ->
-      val chip = TextView(context).apply {
-        text = f.name.take(18)
-        setTextColor(c.text)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-        setPadding(dp(10), dp(6), dp(10), dp(6))
-        background = OverlayChatTheme.roundedRect(c.inputBg, 8, ::dp, c.border)
-        layoutParams = LinearLayout.LayoutParams(
-          LinearLayout.LayoutParams.WRAP_CONTENT,
-          LinearLayout.LayoutParams.WRAP_CONTENT,
-        ).also { it.marginEnd = dp(8) }
-        setOnLongClickListener {
-          pendingFiles.removeAt(idx)
+      val isImage = f.mime.startsWith("image/", ignoreCase = true)
+      if (isImage) {
+        val frame = FrameLayout(context).apply {
+          layoutParams = LinearLayout.LayoutParams(dp(76), dp(76)).also { it.marginEnd = dp(8) }
+          background = OverlayChatTheme.roundedRect(c.inputBg, 10, ::dp, c.border)
+        }
+        frame.addView(ImageView(context).apply {
+          scaleType = ImageView.ScaleType.CENTER_CROP
+          layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT,
+          )
+          try { setImageURI(f.uri) } catch (_: Exception) { }
+        })
+        frame.addView(TextView(context).apply {
+          text = "✕"
+          gravity = Gravity.CENTER
+          setTextColor(Color.WHITE)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+          setBackgroundColor(Color.argb(160, 0, 0, 0))
+          layoutParams = FrameLayout.LayoutParams(dp(22), dp(22), Gravity.TOP or Gravity.END)
+          setOnClickListener {
+            if (idx < pendingFiles.size) {
+              pendingFiles.removeAt(idx)
+              refreshPendingStrip()
+            }
+          }
+        })
+        row.addView(frame)
+      } else {
+        row.addView(TextView(context).apply {
+          text = "📎 ${f.name.take(16)}"
+          setTextColor(c.text)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+          setPadding(dp(10), dp(6), dp(10), dp(6))
+          background = OverlayChatTheme.roundedRect(c.inputBg, 8, ::dp, c.border)
+          layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+          ).also { it.marginEnd = dp(8) }
+          setOnClickListener {
+            if (idx < pendingFiles.size) {
+              pendingFiles.removeAt(idx)
+              refreshPendingStrip()
+            }
+          }
+        })
+      }
+    }
+    updateSendButton()
+  }
+
+  private fun updateSendButton() {
+    val c = colors()
+    val canSend = !sending && (
+      pendingFiles.isNotEmpty() || inputView?.text?.toString()?.trim()?.isNotEmpty() == true
+      )
+    sendButton?.apply {
+      alpha = if (canSend) 1f else 0.45f
+      isEnabled = canSend
+      background = if (canSend) {
+        OverlayChatTheme.sendButtonBg(c, ::dp)
+      } else {
+        OverlayChatTheme.roundedRect(c.inputBg, 24, ::dp, c.border)
+      }
+    }
+  }
+
+  private fun sendDraft() {
+    if (sending || groupId.isBlank()) return
+    val text = inputView?.text?.toString()?.trim().orEmpty()
+    val files = pendingFiles.toList()
+    if (text.isBlank() && files.isEmpty()) return
+
+    sending = true
+    updateSendButton()
+    hideKeyboard()
+
+    val gid = groupId
+    val rid = replyToId
+    Thread {
+      val ok = if (files.isNotEmpty()) {
+        BubbleChatApi.uploadWithFiles(context, gid, files, text, rid)
+      } else {
+        BubbleChatApi.sendMessage(context, gid, text, rid)
+      }
+      handler.post {
+        sending = false
+        if (ok && gid == groupId) {
+          inputView?.text = null
+          pendingFiles.clear()
           refreshPendingStrip()
-          true
+          clearReplyTo()
+          updateSendButton()
+          loadConversationAsync()
+        } else {
+          updateSendButton()
+          inputView?.error = "Gửi thất bại"
         }
       }
-      row.addView(chip)
+    }.start()
+  }
+
+  private fun showKeyboard() {
+    val input = inputView ?: return
+    input.requestFocus()
+    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+    imm?.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+  }
+
+  private fun hideKeyboard() {
+    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+    inputView?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
+    keyboardLiftPx = 0
+    applyKeyboardLift()
+  }
+
+  /** Đẩy panel lên trên bàn phím — giữ composer luôn nhìn thấy, không thu nhỏ overlay. */
+  private fun applyKeyboardLift() {
+    val root = panelRoot ?: return
+    val params = panelParams ?: return
+    if (suspendedForPicker || suspendedForCompose) return
+
+    val dm = context.resources.displayMetrics
+    val screenH = dm.heightPixels
+    val lift = keyboardLiftPx.coerceAtLeast(0)
+    val availH = (screenH - lift - panelTopReserve).coerceAtLeast(dp(240))
+    val targetH = basePanelHeight.coerceAtMost(availH)
+    val changed = params.y != lift || params.height != targetH
+    if (!changed) return
+    params.y = lift
+    params.height = targetH
+    try { windowManager.updateViewLayout(root, params) } catch (_: Exception) { }
+    scrollView?.post { scrollView?.fullScroll(View.FOCUS_DOWN) }
+  }
+
+  private fun installKeyboardWatcher(root: FrameLayout) {
+    val dm = context.resources.displayMetrics
+    keyboardListener = ViewTreeObserver.OnGlobalLayoutListener {
+      if (suspendedForPicker || suspendedForCompose) return@OnGlobalLayoutListener
+      val rect = Rect()
+      root.getWindowVisibleDisplayFrame(rect)
+      val screenH = dm.heightPixels
+      val keyboardH = (screenH - rect.bottom).coerceAtLeast(0)
+      keyboardLiftPx = if (keyboardH > screenH * 0.12) keyboardH else 0
+      applyKeyboardLift()
     }
+    root.viewTreeObserver.addOnGlobalLayoutListener(keyboardListener)
+  }
+
+  private fun hidePopups() {
+    popupLayer?.visibility = View.GONE
+    popupLayer?.removeAllViews()
   }
 
   private fun showMessageActions(msg: BubbleChatApi.ChatMessage, anchor: View) {
@@ -890,38 +1086,17 @@ class OverlayChatPanel(
     return "$origin/${raw.trimStart('/')}"
   }
 
-  private fun sendCurrentDraft() {
-    val text = inputView?.text?.toString()?.trim().orEmpty()
-    val files = pendingFiles.toList()
-    if ((text.isBlank() && files.isEmpty()) || groupId.isBlank()) return
-
-    val gid = groupId
-    val replyId = replyTo?.id
-    inputView?.setText("")
-    setReplyTo(null)
-    pendingFiles.clear()
-    refreshPendingStrip()
-    hideKeyboard()
-
-    statusView?.visibility = View.VISIBLE
-    statusView?.text = if (files.isNotEmpty()) "Đang gửi…" else ""
-
-    Thread {
-      val ok = if (files.isNotEmpty()) {
-        BubbleChatApi.uploadWithFiles(context, gid, files, text, replyId)
-      } else {
-        BubbleChatApi.sendMessage(context, gid, text, replyId)
-      }
-      handler.post {
-        if (!ok && gid == groupId) {
-          statusView?.visibility = View.VISIBLE
-          statusView?.text = "Gửi thất bại — thử lại"
-        } else if (ok && gid == groupId) {
-          statusView?.visibility = View.GONE
-          loadConversationAsync()
-        }
-      }
-    }.start()
+  private fun applyPanelTop(topReservePx: Int) {
+    val root = panelRoot ?: return
+    val params = panelParams ?: return
+    val dm = context.resources.displayMetrics
+    panelTopReserve = resolveTopReserve(topReservePx)
+    val panelH = (dm.heightPixels - panelTopReserve).coerceAtLeast((dm.heightPixels * 0.55f).toInt())
+    basePanelHeight = panelH
+    keyboardLiftPx = 0
+    params.y = 0
+    params.height = panelH
+    try { windowManager.updateViewLayout(root, params) } catch (_: Exception) { }
   }
 
   private fun loadConversationAsync() {
@@ -962,87 +1137,11 @@ class OverlayChatPanel(
     }
   }
 
-  private fun applyPanelTop(topReservePx: Int) {
-    topReservePxStored = topReservePx
-    val dm = context.resources.displayMetrics
-    val topReserve = resolveTopReserve(topReservePx)
-    panelBaseHeight = (dm.heightPixels - topReserve).coerceAtLeast((dm.heightPixels * 0.55f).toInt())
-    val sheet = sheetFrame ?: return
-    val lp = sheet.layoutParams as? FrameLayout.LayoutParams ?: return
-    if (lp.height != panelBaseHeight) {
-      lp.height = panelBaseHeight
-      sheet.layoutParams = lp
-    }
-  }
-
   private fun resolveTopReserve(topReservePx: Int): Int {
     val dm = context.resources.displayMetrics
     val minStrip = statusBarHeight() + dp(58) + dp(10)
     val fromBubble = if (topReservePx > 0) topReservePx else minStrip
     return fromBubble.coerceIn(minStrip, (dm.heightPixels * 0.22f).toInt())
-  }
-
-  private fun attachKeyboardHandler(outer: FrameLayout) {
-    detachKeyboardListener()
-    var lastKeyboard = -1
-
-    fun applyKeyboardOffset(keyboardH: Int) {
-      val lift = keyboardH.coerceAtLeast(0)
-      if (lift == lastKeyboard) return
-      lastKeyboard = lift
-      keyboardLiftPx = lift
-      sheetFrame?.translationY = -lift.toFloat()
-      if (lift > 0) {
-        scrollView?.post { scrollView?.fullScroll(View.FOCUS_DOWN) }
-      }
-    }
-
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-      outer.setOnApplyWindowInsetsListener { _, insets ->
-        val ime = insets.getInsets(WindowInsets.Type.ime()).bottom
-        val visible = insets.isVisible(WindowInsets.Type.ime())
-        applyKeyboardOffset(if (visible) ime else 0)
-        insets
-      }
-    }
-
-    val listener = ViewTreeObserver.OnGlobalLayoutListener {
-      val rect = Rect()
-      outer.getWindowVisibleDisplayFrame(rect)
-      val screenH = context.resources.displayMetrics.heightPixels
-      val keyboardH = (screenH - rect.bottom).coerceAtLeast(0)
-      if (keyboardH > dp(80)) {
-        applyKeyboardOffset(keyboardH)
-      } else if (lastKeyboard > 0) {
-        applyKeyboardOffset(0)
-      }
-    }
-    keyboardListener = listener
-    outer.viewTreeObserver.addOnGlobalLayoutListener(listener)
-  }
-
-  private fun detachKeyboardListener() {
-    val root = panelRoot
-    val listener = keyboardListener
-    if (root != null && listener != null) {
-      root.viewTreeObserver.removeOnGlobalLayoutListener(listener)
-    }
-    keyboardListener = null
-  }
-
-  private fun showKeyboard() {
-    val input = inputView ?: return
-    input.requestFocus()
-    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-    imm?.showSoftInput(input, InputMethodManager.SHOW_FORCED)
-    panelRoot?.postDelayed({
-      scrollView?.fullScroll(View.FOCUS_DOWN)
-    }, 200)
-  }
-
-  private fun hideKeyboard() {
-    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-    inputView?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
   }
 
   private fun statusBarHeight(): Int {
