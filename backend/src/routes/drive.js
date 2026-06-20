@@ -555,7 +555,8 @@ async function listChildrenForRootOrFolder({ rootId, folderId, includeTrashed = 
 
   const [foldersRes, filesRes] = await Promise.all([folderQ, fileQ]);
   const files = await enrichFilesWithUploaders(filesRes.data || []);
-  return { folders: foldersRes.data || [], files };
+  const folders = await enrichFoldersWithCreators(foldersRes.data || []);
+  return { folders, files };
 }
 
 /** Gắn thông tin user (full_name, email, avatar) vào mảng file qua uploaded_by. */
@@ -574,6 +575,43 @@ async function enrichFilesWithUploaders(files) {
     ...f,
     uploader: f.uploaded_by ? (usersById.get(f.uploaded_by) || { id: f.uploaded_by, full_name: null, email: null, avatar: null }) : null,
   }));
+}
+
+/** Gắn người tạo folder (created_by); fallback owner Drive cá nhân nếu thiếu created_by. */
+async function enrichFoldersWithCreators(folders) {
+  if (!Array.isArray(folders) || !folders.length) return folders || [];
+  const userIds = new Set(folders.map((f) => f.created_by).filter(Boolean));
+  const rootIds = [...new Set(folders.filter((f) => !f.created_by && f.root_id).map((f) => f.root_id))];
+  const rootOwnerByRootId = new Map();
+  if (rootIds.length) {
+    const { data: roots } = await supabase
+      .from('drive_roots')
+      .select('id, owner_id, scope')
+      .in('id', rootIds);
+    for (const r of roots || []) {
+      if (r.scope === 'user' && r.owner_id) {
+        rootOwnerByRootId.set(r.id, r.owner_id);
+        userIds.add(r.owner_id);
+      }
+    }
+  }
+  const usersById = new Map();
+  if (userIds.size) {
+    const { data: users } = await supabase
+      .from('users')
+      .select('id,full_name,email,avatar')
+      .in('id', [...userIds]);
+    for (const u of users || []) usersById.set(u.id, u);
+  }
+  return folders.map((f) => {
+    const creatorId = f.created_by || rootOwnerByRootId.get(f.root_id) || null;
+    return {
+      ...f,
+      creator: creatorId
+        ? (usersById.get(creatorId) || { id: creatorId, full_name: null, email: null, avatar: null })
+        : null,
+    };
+  });
 }
 
 r.get('/folders/:id/children', async (req, res) => {
@@ -1927,7 +1965,7 @@ r.get('/shared-with-me', async (req, res) => {
       fileIds.length ? supabase.from('drive_files').select('*').in('id', fileIds).is('trashed_at', null) : Promise.resolve({ data: [] }),
       folderIds.length ? supabase.from('drive_folders').select('*').in('id', folderIds).is('trashed_at', null) : Promise.resolve({ data: [] }),
     ]);
-    res.json({ files: await enrichFilesWithUploaders(filesRes.data || []), folders: foldersRes.data || [] });
+    res.json({ files: await enrichFilesWithUploaders(filesRes.data || []), folders: await enrichFoldersWithCreators(foldersRes.data || []) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1958,7 +1996,7 @@ r.get('/search', async (req, res) => {
     if (q) folderQ.ilike('name', `%${q}%`);
 
     const [files, folders] = await Promise.all([fileQ, folderQ]);
-    res.json({ files: await enrichFilesWithUploaders(files.data || []), folders: folders.data || [] });
+    res.json({ files: await enrichFilesWithUploaders(files.data || []), folders: await enrichFoldersWithCreators(folders.data || []) });
   } catch (e) {
     console.error('search error:', e);
     res.status(500).json({ error: e.message });
@@ -2008,7 +2046,7 @@ r.get('/starred', async (req, res) => {
       fileIds.length ? supabase.from('drive_files').select('*').in('id', fileIds).is('trashed_at', null) : Promise.resolve({ data: [] }),
       folderIds.length ? supabase.from('drive_folders').select('*').in('id', folderIds).is('trashed_at', null) : Promise.resolve({ data: [] }),
     ]);
-    res.json({ files: await enrichFilesWithUploaders(filesRes.data || []), folders: foldersRes.data || [] });
+    res.json({ files: await enrichFilesWithUploaders(filesRes.data || []), folders: await enrichFoldersWithCreators(foldersRes.data || []) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -2059,7 +2097,7 @@ r.get('/trash', async (req, res) => {
       supabase.from('drive_files').select('*').in('root_id', ids).not('trashed_at', 'is', null).order('trashed_at', { ascending: false }).limit(500),
       supabase.from('drive_folders').select('*').in('root_id', ids).not('trashed_at', 'is', null).order('trashed_at', { ascending: false }).limit(500),
     ]);
-    res.json({ files: await enrichFilesWithUploaders(filesRes.data || []), folders: foldersRes.data || [] });
+    res.json({ files: await enrichFilesWithUploaders(filesRes.data || []), folders: await enrichFoldersWithCreators(foldersRes.data || []) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
