@@ -1,4 +1,4 @@
-/** Khớp backend STAFF_LEAD_DEAL_REPORT_ROLES */
+/** Khớp web RequireExecutive + backend STAFF_LEAD_DEAL_REPORT_ROLES */
 const REPORT_ROLES = new Set([
   'admin',
   'manager',
@@ -7,6 +7,8 @@ const REPORT_ROLES = new Set([
   'superadmin',
   'super_admin',
   'region_admin',
+  'sales_admin',
+  'crm_production_admin',
 ]);
 
 export function canViewEmployeeReport(role?: string | null): boolean {

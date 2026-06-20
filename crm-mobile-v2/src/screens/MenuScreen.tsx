@@ -9,7 +9,6 @@ import NotificationBadge from '../components/NotificationBadge';
 import { warmCrmHubPipelines } from '../api/crm';
 import { useAuth } from '../context/AuthContext';
 import { useUnreadNotificationCount } from '../hooks/useUnreadNotificationCount';
-import { canViewEmployeeReport } from '../lib/employeeReportAccess';
 import { currentVersionName } from '../lib/appUpdate';
 import { Radii, useColors, type ThemeColors } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
@@ -25,7 +24,7 @@ type Item = {
   action?: 'logout' | 'drive' | 'settings' | 'notifications' | 'events' | 'quotations' | 'orders' | 'products' | 'customers' | 'tasks' | 'account' | 'devices' | 'qr-scan' | 'employee-report';
 };
 
-function buildSections(Colors: ThemeColors, canReport: boolean): { title: string; items: Item[] }[] {
+function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] {
   return [
     {
       title: 'Bán hàng',
@@ -45,7 +44,7 @@ function buildSections(Colors: ThemeColors, canReport: boolean): { title: string
         { icon: 'calendar', label: 'Sự kiện', color: Colors.cyan, action: 'events' },
         { icon: 'cloud-upload', label: 'Drive lưu trữ', color: Colors.purple, action: 'drive' },
         { icon: 'notifications', label: 'Thông báo', color: Colors.red, action: 'notifications' },
-        { icon: 'stats-chart', label: 'BC nhân viên', color: Colors.green, action: canReport ? 'employee-report' : undefined },
+        { icon: 'stats-chart', label: 'BC nhân viên', color: Colors.green, action: 'employee-report' },
       ],
     },
     {
@@ -68,11 +67,10 @@ function isInteractive(it: Item): boolean {
 export default function MenuScreen() {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
-  const canReport = canViewEmployeeReport(user?.role);
-  const SECTIONS = useMemo(() => buildSections(Colors, canReport), [Colors, canReport]);
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
   const { user, logout, refreshProfile } = useAuth();
+  const SECTIONS = useMemo(() => buildSections(Colors), [Colors]);
   const displayName = user?.full_name || user?.fullName || user?.email || 'Người dùng';
   const unreadNotifCount = useUnreadNotificationCount();
 
