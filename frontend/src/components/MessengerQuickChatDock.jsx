@@ -48,7 +48,12 @@ const HOVER_CARD_SHOW_MS = 480;
 /** Trễ trước khi ẩn thẻ hover avatar (ms) */
 const HOVER_CARD_HIDE_MS = 360;
 /** Trễ trước khi thanh dock chìm lại sau khi rời chuột (ms) */
-const DOCK_SINK_DELAY_MS = 420;
+const DOCK_SINK_DELAY_MS = 340;
+/** Thời lượng trượt / mờ thanh dock (ms) */
+const DOCK_MOTION_MS = 520;
+const DOCK_MOTION_EASE = 'cubic-bezier(0.33, 1, 0.68, 1)';
+const DOCK_MOTION_CLS =
+  'motion-reduce:transition-none transition-[transform,opacity,box-shadow,border-color,background-color] duration-[520ms] ease-[cubic-bezier(0.33,1,0.68,1)] will-change-[transform,opacity]';
 
 function avatarUrl(publicFileUrl, av) {
   if (!av || typeof av !== 'string') return null;
@@ -341,11 +346,13 @@ export default function MessengerQuickChatDock({
     }, DOCK_SINK_DELAY_MS);
   }, [expanded, dockPinned, previewEngaged]);
 
-  /** Avatar ghim tự mở chat — không nâng thanh chìm; vẫn cho preview hover */
+  /** Avatar ghim — huỷ timer chìm; chỉ chìm thanh chính sau trễ ngắn khi không preview */
   const handlePinnedStripEnter = useCallback(() => {
-    if (dockPinned || expanded || previewEngaged) return;
     clearTimeout(leaveTimer.current);
-    setRaised(false);
+    if (dockPinned || expanded || previewEngaged) return;
+    leaveTimer.current = setTimeout(() => {
+      if (!expanded && !previewEngaged) setRaised(false);
+    }, DOCK_SINK_DELAY_MS);
   }, [dockPinned, expanded, previewEngaged]);
 
   const toggleDockPinned = useCallback(() => {
@@ -429,6 +436,9 @@ export default function MessengerQuickChatDock({
     },
     [],
   );
+
+  const compactPanelOpacity = dockActive ? 1 : totalUnread > 0 ? 0.94 : 0.58;
+  const compactControlOpacity = dockActive ? 1 : 0.78;
 
   const renderCompactButton = (item, { pinnedStrip = false } = {}) => {
     const presence = item.peerId ? getUserPresence(presenceByUser, item.peerId) : null;
@@ -797,7 +807,7 @@ export default function MessengerQuickChatDock({
 
         {/* Compact dock — chìm khi không hover; avatar ghim trượt cùng nhưng vẫn lộ ra */}
         <div
-          className="flex flex-col items-center gap-1.5 shrink-0 overflow-visible transition-transform duration-[650ms] ease-out"
+          className={`flex flex-col items-center gap-1.5 shrink-0 overflow-visible ${DOCK_MOTION_CLS}`}
           style={{ transform: `translateX(${pinnedSinkX}px)` }}
         >
           {pinnedStripItems.length > 0 ? (
@@ -812,23 +822,26 @@ export default function MessengerQuickChatDock({
 
           <div
             onMouseEnter={handleDockEnter}
-            className={`relative shrink-0 flex flex-col items-center rounded-[24px] border py-3 gap-2 transition-transform duration-[650ms] ease-out overflow-visible ${
+            className={`relative shrink-0 flex flex-col items-center rounded-[24px] border py-3 gap-2 overflow-visible ${DOCK_MOTION_CLS} ${
               dockActive
-                ? 'opacity-100 border-[#E5E7EB] bg-white px-2.5'
+                ? 'border-[#E5E7EB] bg-white px-2.5'
                 : totalUnread > 0
-                  ? 'opacity-95 border-[#FECACA] bg-white shadow-[0_0_0_2px_rgba(239,68,68,0.25)] px-2.5'
-                  : 'opacity-[0.42] border-transparent bg-white/75 backdrop-blur-sm px-2'
+                  ? 'border-[#FECACA] bg-white shadow-[0_0_0_2px_rgba(239,68,68,0.25)] px-2.5'
+                  : 'border-transparent bg-white/75 backdrop-blur-sm px-2'
             }`}
             style={{
               width: compactOuterWidth,
+              opacity: compactPanelOpacity,
               boxShadow: dockActive ? DOCK_SHADOW : totalUnread > 0 ? '0 8px 28px rgba(239,68,68,0.22)' : DOCK_SHADOW_SUNK,
               transform: `translateX(${mainExtraSinkX}px)`,
+              transitionDuration: `${DOCK_MOTION_MS}ms`,
+              transitionTimingFunction: DOCK_MOTION_EASE,
             }}
           >
           <button
             type="button"
             onClick={onToggleExpanded}
-            className={`relative w-11 h-11 rounded-2xl flex items-center justify-center transition-all duration-200 shrink-0 overflow-visible ${
+            className={`relative w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 overflow-visible ${DOCK_MOTION_CLS} ${
               expanded
                 ? 'bg-gradient-to-br from-[#2563EB] to-[#7C3AED] text-white shadow-md scale-95'
                 : totalUnread > 0 && !dockActive
@@ -850,15 +863,15 @@ export default function MessengerQuickChatDock({
             ) : null}
           </button>
 
-          <div className="flex flex-col items-center gap-0.5 shrink-0">
+          <div className="flex flex-col items-center gap-0.5 shrink-0" style={{ opacity: compactControlOpacity }}>
             <button
               type="button"
               onClick={toggleDockPinned}
-              className={`w-8 h-7 rounded-lg flex items-center justify-center transition shrink-0 ${
+              className={`w-8 h-7 rounded-lg flex items-center justify-center ${DOCK_MOTION_CLS} ${
                 dockPinned
                   ? 'text-[#F59E0B] bg-[#F59E0B]/12 hover:bg-[#F59E0B]/20'
                   : 'text-slate-400 hover:text-[#2563EB] hover:bg-[#2563EB]/5'
-              } ${dockActive ? 'opacity-100' : 'opacity-70'}`}
+              }`}
               title={dockPinned ? 'Bỏ ghim cố định thanh chat' : 'Ghim cố định thanh chat — không tự chìm'}
             >
               <Pin className={`h-3.5 w-3.5 ${dockPinned ? 'fill-[#F59E0B]' : ''}`} />
@@ -867,9 +880,7 @@ export default function MessengerQuickChatDock({
             <button
               type="button"
               onClick={toggleAvatarsCollapsed}
-              className={`w-8 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-[#2563EB] hover:bg-[#2563EB]/5 transition shrink-0 ${
-                dockActive ? 'opacity-100' : 'opacity-70'
-              }`}
+              className={`w-8 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-[#2563EB] hover:bg-[#2563EB]/5 ${DOCK_MOTION_CLS}`}
               title={avatarsCollapsed ? 'Mở rộng thanh avatar' : 'Thu gọn — chỉ giữ nút chat'}
             >
               {avatarsCollapsed ? (
@@ -882,17 +893,13 @@ export default function MessengerQuickChatDock({
 
           {!avatarsCollapsed ? (
             <>
-              <div className={`w-8 border-t shrink-0 transition-colors ${dockActive ? 'border-[#E5E7EB]' : 'border-slate-200/60'}`} />
+              <div className={`w-8 border-t shrink-0 ${DOCK_MOTION_CLS} ${dockActive ? 'border-[#E5E7EB]' : 'border-slate-200/60'}`} />
 
-              <div
-                className={`relative w-full min-h-0 flex-1 ${dockActive ? 'max-h-[min(380px,46vh)]' : 'max-h-[min(280px,36vh)]'}`}
-              >
+              <div className="relative w-full min-h-0 flex-1 max-h-[min(340px,42vh)]">
                 <div
                   ref={stripScrollRef}
                   onScroll={updateStripScrollFade}
-                  className={`flex flex-col items-center gap-1 w-full h-full py-1 transition-opacity duration-[650ms] ease-out ${DOCK_STRIP_SCROLL_CLS} ${
-                    dockActive ? 'opacity-100' : 'opacity-80'
-                  }`}
+                  className={`flex flex-col items-center gap-1 w-full h-full py-1 ${DOCK_STRIP_SCROLL_CLS}`}
                 >
                   {groupsLoading && items.length === 0 ? (
                     <Loader2 className="h-5 w-5 animate-spin text-slate-400 my-2 shrink-0" />
@@ -933,12 +940,12 @@ export default function MessengerQuickChatDock({
 
           {!dockActive && !expanded && totalUnread > 0 ? (
             <span
-              className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-10 rounded-full bg-gradient-to-b from-[#EF4444] to-[#DC2626] shadow-[0_0_8px_rgba(239,68,68,0.6)] animate-pulse"
+              className={`absolute left-0 top-1/2 -translate-y-1/2 w-1 h-10 rounded-full bg-gradient-to-b from-[#EF4444] to-[#DC2626] shadow-[0_0_8px_rgba(239,68,68,0.6)] animate-pulse ${DOCK_MOTION_CLS}`}
               aria-hidden
             />
           ) : !dockActive && !expanded ? (
             <span
-              className="absolute left-1 top-1/2 -translate-y-1/2 w-0.5 h-8 rounded-full bg-[#2563EB]/30"
+              className={`absolute left-1 top-1/2 -translate-y-1/2 w-0.5 h-8 rounded-full bg-[#2563EB]/30 ${DOCK_MOTION_CLS}`}
               aria-hidden
             />
           ) : null}

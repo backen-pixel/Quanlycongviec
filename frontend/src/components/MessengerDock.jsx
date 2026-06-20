@@ -50,25 +50,28 @@ function useViewportSize() {
   return size;
 }
 
-/** Bubble chat — bên trái dock cố định */
+/** Bubble chat — xếp ngang trái dock; nhiều cửa sổ cùng lúc, xuống hàng khi thiếu chỗ */
 function computeBubbleLayout(index, viewport, panelExpanded) {
   const margin = VIEWPORT_MARGIN;
   const dockOffset = DOCK_FIXED_RIGHT + QUICK_CHAT_DOCK_VISUAL_W + (panelExpanded ? QUICK_CHAT_PANEL_W + DOCK_PANEL_GAP : 0);
   const bubbleH = Math.min(BUBBLE_MAX_H, viewport.h - margin * 2);
+  const slotW = BUBBLE_W + BUBBLE_GAP;
 
-  let right = dockOffset + BUBBLE_GAP + index * (BUBBLE_W + BUBBLE_GAP);
-  const leftEdge = viewport.w - right - BUBBLE_W;
-  if (leftEdge < margin) {
-    right = viewport.w - BUBBLE_W - margin;
-  }
+  const maxRight = viewport.w - margin - BUBBLE_W;
+  const availableW = Math.max(slotW, maxRight - dockOffset - BUBBLE_GAP);
+  const cols = Math.max(1, Math.floor(availableW / slotW));
+  const col = index % cols;
+  const row = Math.floor(index / cols);
 
-  let bottom = margin;
+  const right = dockOffset + BUBBLE_GAP + col * slotW;
+  const rowLift = Math.min(72, Math.max(28, Math.floor(bubbleH * 0.12)));
+  let bottom = margin + row * rowLift;
   const bubbleTop = viewport.h - bottom - bubbleH;
   if (bubbleTop < margin) {
     bottom = Math.max(margin, viewport.h - bubbleH - margin);
   }
 
-  return { right, bottom, height: bubbleH };
+  return { right, bottom, height: bubbleH, zIndex: Z_BUBBLE + index };
 }
 
 /** Thứ tự trên thanh compact: ghim → có tin mới/chưa đọc → gần đây nhất */
@@ -467,7 +470,26 @@ export default function MessengerDock() {
       return;
     }
     if (item.rawWindow) {
-      toggleMinimize(item.rawWindow.windowKey);
+      const w = item.rawWindow;
+      if (w.chatType === 'messenger_group' && w.groupId) {
+        openMessengerGroupChat(
+          {
+            id: w.groupId,
+            name: w.title,
+            is_direct: !!w.isDirect,
+            peer_id: w.peerUserId || null,
+            peer_avatar: w.avatar || null,
+            avatar: w.avatar || null,
+          },
+          { markRead: !w.minimized },
+        );
+      } else if (w.chatType === 'department' && w.deptId) {
+        openDepartmentChat({ id: w.deptId, name: w.title, color: w.color });
+      } else if (w.chatType === 'lead' && w.leadId) {
+        openLeadChat({ id: w.leadId, title: w.title, code: w.code, type: w.type });
+      } else if (w.minimized) {
+        toggleMinimize(w.windowKey);
+      }
     }
   };
 
@@ -622,7 +644,7 @@ export default function MessengerDock() {
           key={w.windowKey}
           className="fixed flex flex-col rounded-2xl border border-white/40 bg-white/95 backdrop-blur-xl shadow-2xl overflow-hidden ring-1 ring-black/5 transition-all"
           style={{
-            zIndex: Z_BUBBLE,
+            zIndex: bubbleLayout.zIndex,
             width: BUBBLE_W,
             height: bubbleLayout.height,
             right: bubbleLayout.right,
