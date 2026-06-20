@@ -150,7 +150,7 @@ class OverlayBubbleService : Service() {
         val gid = intent.getStringExtra(EXTRA_GROUP_ID).orEmpty()
         val sender = intent.getStringExtra(EXTRA_SENDER).orEmpty()
         val message = intent.getStringExtra(EXTRA_MESSAGE).orEmpty()
-        if (gid.isNotBlank() && gid == bubbleGroupId && chatPanel?.isShowing() == true) {
+        if (gid.isNotBlank() && gid == bubbleGroupId && chatPanel?.isAlive() == true) {
           chatPanel?.appendIncoming(sender, message)
         }
         return START_STICKY

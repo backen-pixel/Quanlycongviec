@@ -79,13 +79,47 @@ export function isUpToDate(res: UpdateCheckResult): boolean {
   const latestCode = res.latestVersionCode ?? null;
   const latestVer = res.latestVersion ?? null;
 
+  if (res.needsUpdate === false) return true;
+  if (!res.updateAvailable && res.needsUpdate !== true) return true;
+
   // Ưu tiên đọc phiên bản trên máy — không tin server nếu local đã >= latest.
   if (localVer && latestVer && compareVersionNames(localVer, latestVer) >= 0) return true;
   if (localCode != null && latestCode != null && localCode >= latestCode) return true;
 
-  if (res.needsUpdate === false) return true;
-  if (!res.updateAvailable && res.needsUpdate !== true) return true;
   return false;
+}
+
+/** Xóa flag pending/dismissed khi máy đã cài >= bản đang chờ. */
+export async function reconcileUpdateStorage(): Promise<boolean> {
+  try {
+    const localCode = currentVersionCode();
+    const localVer = currentVersionName();
+    const [pendingCodeRaw, pendingVer] = await Promise.all([
+      AsyncStorage.getItem(UPDATE_PENDING_CODE_KEY),
+      AsyncStorage.getItem(UPDATE_PENDING_VERSION_KEY),
+    ]);
+    if (!pendingCodeRaw && !pendingVer) return false;
+
+    const pendingCode = pendingCodeRaw ? Number(pendingCodeRaw) : null;
+    const okByCode =
+      pendingCode != null &&
+      Number.isFinite(pendingCode) &&
+      localCode != null &&
+      Number.isFinite(localCode) &&
+      localCode >= pendingCode;
+    const okByVersion =
+      !!pendingVer &&
+      !!localVer &&
+      (pendingVer === localVer || compareVersionNames(localVer, pendingVer) >= 0);
+
+    if (okByCode || okByVersion) {
+      await clearDismissedUpdate();
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 export async function dismissUpdateForRelease(res: UpdateCheckResult): Promise<void> {

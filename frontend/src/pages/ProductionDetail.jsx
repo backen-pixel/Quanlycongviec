@@ -551,7 +551,7 @@ function buildCrmSharedDocSections(docs, taskMetaMap, stageSlugLabelMap = {}) {
 
 /** Khối tài liệu CRM — mỗi file một dòng, nhóm theo giai đoạn → nhiệm vụ */
 function CrmSharedDocumentsPanel({
-  docs, workshopModule, crmLeadId, dealLabel, onVisibilitySaved, taskMetaMap = {}, stageSlugLabelMap = {}, onOpenImage,
+  docs, workshopModule, crmLeadId, dealLabel, onVisibilitySaved, onDeleteDocument, taskMetaMap = {}, stageSlugLabelMap = {}, onOpenImage,
 }) {
   const { taskSections, manualDocs } = useMemo(
     () => buildCrmSharedDocSections(docs, taskMetaMap, stageSlugLabelMap),
@@ -623,6 +623,7 @@ function CrmSharedDocumentsPanel({
                                   nested
                                   workshopModule={workshopModule}
                                   onVisibilitySaved={onVisibilitySaved}
+                                  onDelete={onDeleteDocument ? () => onDeleteDocument(doc) : undefined}
                                   stageSlugLabelMap={stageSlugLabelMap}
                                   taskMetaMap={taskMetaMap}
                                   onOpenImage={onOpenImage}
@@ -653,6 +654,7 @@ function CrmSharedDocumentsPanel({
                   crmPresentation
                   workshopModule={workshopModule}
                   onVisibilitySaved={onVisibilitySaved}
+                  onDelete={onDeleteDocument ? () => onDeleteDocument(doc) : undefined}
                   stageSlugLabelMap={stageSlugLabelMap}
                   taskMetaMap={taskMetaMap}
                   onOpenImage={onOpenImage}
@@ -857,7 +859,14 @@ function DocRow({
             </button>
           )}
           {onDelete && (
-            <button type="button" onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-1 hover:bg-red-100 text-red-500 rounded ml-1 cursor-pointer"><Trash2 className="h-3.5 w-3.5" /></button>
+            <button
+              type="button"
+              title="Xóa tài liệu"
+              onClick={(e) => { e.stopPropagation(); onDelete(); }}
+              className="p-1 hover:bg-red-100 text-red-500 rounded ml-1 cursor-pointer"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
           )}
         </div>
       </div>
@@ -2001,11 +2010,37 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   };
 
   const deleteProjectDocument = async (docId) => {
+    if (!docId) return;
+    if (!confirm('Xóa tài liệu này?')) return;
+    const projectId = project?.id || id;
+    if (!projectId) return;
+    try {
+      await api.delete(`/projects/${projectId}/documents/${docId}`);
+      await loadProjectDocs(projectId);
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi xóa tài liệu');
+    }
+  };
+
+  const deleteCrmDocument = async (doc) => {
+    const docId = doc?.id;
+    if (!docId) return;
+    const leadId = doc.lead_id || project?.crmDeals?.[0]?.id || fallbackDealIdForTasks;
+    if (!leadId) {
+      alert('Không xác định được deal CRM của tài liệu');
+      return;
+    }
     if (!confirm('Xóa tài liệu này?')) return;
     try {
-      await api.delete(`/projects/${project.id}/documents/${docId}`);
-      await loadProjectDocs(project.id);
-    } catch (e) { alert('Lỗi xóa tài liệu'); }
+      await api.delete(`/crm/leads/${leadId}/documents/${docId}`);
+      await refreshProjectSilently();
+      try {
+        const { data: docs } = await api.get(`/crm/leads/${leadId}/documents`);
+        setCrmDealDocs(Array.isArray(docs) ? docs : []);
+      } catch (_) { /* giữ danh sách cũ */ }
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi xóa tài liệu');
+    }
   };
 
   const uploadDocument = async () => {
@@ -2586,6 +2621,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     taskMetaMap={crmTaskMetaMap}
                     stageSlugLabelMap={crmStageSlugLabelMap}
                     onVisibilitySaved={refreshProjectSilently}
+                    onDeleteDocument={deleteCrmDocument}
                     onOpenImage={openDocImage}
                   />
 

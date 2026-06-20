@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   checkForUpdate,
   clearDismissedUpdate,
+  reconcileUpdateStorage,
   consumeUpdateSuccessMessage,
   dismissUpdateForRelease,
   downloadApkToCache,
@@ -58,6 +59,7 @@ export default function UpdateGate() {
     if (isOnBubbleChatRoute()) return;
     checkingRef.current = true;
     try {
+      await reconcileUpdateStorage();
       const successMsg = await consumeUpdateSuccessMessage();
       if (successMsg) {
         setToast(successMsg);
@@ -97,6 +99,14 @@ export default function UpdateGate() {
       }
 
       if (suppressed) {
+        if (isUpToDate(res)) {
+          await clearDismissedUpdate();
+          setInfo(null);
+          setVisible(false);
+          setBannerVisible(false);
+          setReadyUri(null);
+          return;
+        }
         setVisible(false);
         setBannerVisible(true);
         return;

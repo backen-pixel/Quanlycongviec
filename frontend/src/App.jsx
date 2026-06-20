@@ -175,6 +175,8 @@ const CalcSetupPage = lazyWithRetry(() => import('./pages/calc/CalcSetupPage'));
 const CalcRunPage = lazyWithRetry(() => import('./pages/calc/CalcRunPage'));
 const CalcImport3DPage = lazyWithRetry(() => import('./pages/calc/CalcImport3DPage'));
 const CalcHistoryPage = lazyWithRetry(() => import('./pages/calc/CalcHistoryPage'));
+const AccountingDashboard = lazyWithRetry(() => import('./pages/AccountingDashboard'));
+const AccountingLayout = lazyWithRetry(() => import('./layouts/AccountingLayout'));
 
 import { Settings } from 'lucide-react';
 
@@ -454,6 +456,10 @@ export default function App() {
             <Route path="/calc/run" element={<CalcRunPage />} />
             <Route path="/calc/import-3d" element={<CalcImport3DPage />} />
             <Route path="/calc/history" element={<CalcHistoryPage />} />
+            <Route path="/ketoan" element={<AccountingLayout />}>
+              <Route index element={<Navigate to="dashboard" replace />} />
+              <Route path="dashboard" element={<AccountingDashboard />} />
+            </Route>
             <Route path="/ecosystem-permissions" element={<EcosystemPermissionsPage />} />
             <Route path="/guide" element={<GuidePage />} />
             <Route path="/knowledge" element={<KnowledgeLibraryPage />} />

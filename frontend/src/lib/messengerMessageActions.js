@@ -195,6 +195,17 @@ async function fetchMessengerImageBlob(url) {
   throw new Error('Ảnh rỗng');
 }
 
+/** Clipboard API thường chỉ chấp nhận image/png khi ghi — chuyển JPEG/WebP/… sang PNG. */
+async function blobToPngBlob(blob) {
+  if (blob.type === 'image/png') return blob;
+  const objUrl = URL.createObjectURL(blob);
+  try {
+    return await loadImageBlobViaCanvas(objUrl);
+  } finally {
+    URL.revokeObjectURL(objUrl);
+  }
+}
+
 export async function copyImageToClipboard(url) {
   const full = resolveMediaUrl(url);
   if (!full) throw new Error('URL ảnh không hợp lệ');
@@ -208,9 +219,14 @@ export async function copyImageToClipboard(url) {
     await navigator.clipboard.writeText(full);
     return 'url';
   }
-  const type = blob.type && blob.type.startsWith('image/') ? blob.type : 'image/png';
-  await navigator.clipboard.write([new ClipboardItem({ [type]: blob })]);
-  return 'image';
+  try {
+    const pngBlob = await blobToPngBlob(blob);
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })]);
+    return 'image';
+  } catch {
+    await navigator.clipboard.writeText(full);
+    return 'url';
+  }
 }
 
 export function downloadMessengerFile(url, name) {

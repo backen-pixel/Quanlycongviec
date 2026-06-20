@@ -256,6 +256,7 @@ app.use('/api/zalo', zaloRouter);
 // Inject io reference for realtime fb_message events
 app.use('/api/production', require('./routes/production'));
 app.use('/api/logistics', require('./routes/logistics'));
+app.use('/api/accounting', require('./routes/accounting'));
 app.use('/api/workshop', require('./routes/workshopTypes'));
 app.use('/api/workshop-teams', require('./routes/workshopTeams'));
 app.use('/api/settings', require('./routes/settings'));
