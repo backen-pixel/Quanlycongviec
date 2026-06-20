@@ -59,4 +59,14 @@ export type RootStackParamList = {
   Account: undefined;
   Devices: undefined;
   QrScan: undefined;
+  EmployeeReport: undefined;
+  EmployeeReportDetail: {
+    userId: string;
+    fullName: string;
+    avatar?: string | null;
+    departmentName?: string | null;
+    dateFrom: string;
+    dateTo: string;
+    typeView?: 'all' | 'lead' | 'deal';
+  };
 };
