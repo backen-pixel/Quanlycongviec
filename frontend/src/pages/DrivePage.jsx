@@ -34,6 +34,7 @@ import UploadDropzone from '../components/drive/UploadDropzone';
 import PreviewModal from '../components/drive/PreviewModal';
 import ShareModal from '../components/drive/ShareModal';
 import { useAuth } from '../lib/auth';
+import { isSystemAdmin } from '../lib/adminRole';
 import { appendDriveModuleQuery, resolveModuleFromDriveQuery, storeModule } from '../lib/sidebarModuleContext';
 
 function scopeIcon(scope) {
@@ -96,6 +97,7 @@ export default function DrivePage() {
   const myModuleKey = (user?.drive_module || 'other').toLowerCase();
   const scopeModuleKey = lockedModule || myModuleKey;
   const isAdmin = ['admin', 'sales_admin', 'manager'].includes(user?.role);
+  const systemAdmin = isSystemAdmin(user);
   const view = params.view || null; // recent|starred|shared|trash
   const rootIdParam = params.rootId || null;
   const folderIdParam = params.folderId || null;
@@ -785,6 +787,7 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
                 onOpenRoot={openRoot}
                 refreshRoots={refreshRootsList}
                 isAdmin={isAdmin}
+                isSystemAdmin={systemAdmin}
                 myModuleKey={myModuleKey}
                 scopeModuleKey={scopeModuleKey}
                 lockModule={lockedModule}
@@ -822,6 +825,7 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
                     onOpenRoot={openRoot}
                     refreshRoots={refreshRootsList}
                     isAdmin={isAdmin}
+                    isSystemAdmin={systemAdmin}
                     myModuleKey={myModuleKey}
                     scopeModuleKey={scopeModuleKey}
                     lockModule={lockedModule}
@@ -1412,10 +1416,13 @@ function DriveFolderContentEmpty({ moduleLayout, onUpload, hasFolders }) {
 /**
  * Cây Drive — Công ty → Khu vực → Loại → Phòng ban → Nhân viên (+ Drive chung công ty/khu vực).
  */
-function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, myModuleKey, scopeModuleKey, lockModule, moduleLayout = false }) {
+function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, isSystemAdmin = false, myModuleKey, scopeModuleKey, lockModule, moduleLayout = false }) {
   const [tree, setTree] = useState(null);
   const [myModule, setMyModule] = useState(scopeModuleKey || myModuleKey || 'other');
-  const [moduleFilter, setModuleFilter] = useState(lockModule || (isAdmin ? '' : (scopeModuleKey || myModuleKey || 'other')));
+  const [moduleFilter, setModuleFilter] = useState(() => {
+    if (isSystemAdmin) return '';
+    return lockModule || (isAdmin ? '' : (scopeModuleKey || myModuleKey || 'other'));
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [expanded, setExpanded] = useState({
@@ -1430,7 +1437,9 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, myModuleK
     setLoading(true);
     setError(null);
     try {
-      const effectiveMod = lockModule || modKey || scopeModuleKey || myModuleKey || undefined;
+      const effectiveMod = isSystemAdmin
+        ? undefined
+        : (lockModule || modKey || scopeModuleKey || myModuleKey || undefined);
       const r = await driveOrgTree(effectiveMod || undefined);
       const modules = r.modules || [];
       setMyModule(r.my_module || scopeModuleKey || myModuleKey || 'other');
@@ -1475,11 +1484,11 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, myModuleK
     } finally {
       setLoading(false);
     }
-  }, [isAdmin, myModuleKey, scopeModuleKey, lockModule, refreshRoots]);
+  }, [isAdmin, isSystemAdmin, myModuleKey, scopeModuleKey, lockModule, refreshRoots]);
 
   useEffect(() => {
-    if (lockModule) setModuleFilter(lockModule);
-  }, [lockModule]);
+    if (lockModule && !isSystemAdmin) setModuleFilter(lockModule);
+  }, [lockModule, isSystemAdmin]);
 
   useEffect(() => { loadTree(moduleFilter); }, [loadTree, moduleFilter]);
 
@@ -1706,11 +1715,27 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, myModuleK
     });
   }
 
-  const showModuleLevel = !(moduleLayout && lockModule);
+  const showModuleLevel = isSystemAdmin || !(moduleLayout && lockModule);
+  const displayTree = (isSystemAdmin && moduleFilter)
+    ? (tree || []).filter((m) => m.key === moduleFilter)
+    : (tree || []);
 
   return (
     <div className="space-y-1 text-sm">
-      {isAdmin && !lockModule && (
+      {isSystemAdmin && (
+        <>
+          <p className="px-1 text-[10px] text-indigo-600 mb-1 font-medium">Admin hệ thống — tất cả công ty</p>
+          <select
+            value={moduleFilter}
+            onChange={(e) => setModuleFilter(e.target.value)}
+            className="w-full mb-1 px-2 py-1 text-[11px] border rounded-lg bg-white"
+          >
+            <option value="">Tất cả module</option>
+            {tree.map((m) => <option key={m.key} value={m.key}>{m.name}</option>)}
+          </select>
+        </>
+      )}
+      {isAdmin && !isSystemAdmin && !lockModule && (
         <select
           value={moduleFilter}
           onChange={(e) => setModuleFilter(e.target.value)}
@@ -1720,11 +1745,11 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, myModuleK
           {tree.map((m) => <option key={m.key} value={m.key}>{m.name}</option>)}
         </select>
       )}
-      {(lockModule || !isAdmin) && !moduleLayout && (
+      {(lockModule || !isAdmin) && !isSystemAdmin && !moduleLayout && (
         <p className="px-1 text-[10px] text-slate-400 mb-1">Module: {moduleScopeLabel(lockModule || tree[0]?.key || myModule)}</p>
       )}
 
-      {showModuleLevel ? tree.map((mod) => {
+      {showModuleLevel ? displayTree.map((mod) => {
         const modOpen = expanded.modules.has(mod.key);
         return (
           <div key={mod.key}>
@@ -1747,7 +1772,7 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, myModuleK
         );
       }) : (
         <div className="space-y-0.5">
-          {tree.flatMap((mod) => renderCompanyTree(mod))}
+          {displayTree.flatMap((mod) => renderCompanyTree(mod))}
         </div>
       )}
     </div>
