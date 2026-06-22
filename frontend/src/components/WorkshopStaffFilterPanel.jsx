@@ -26,6 +26,7 @@ export default function WorkshopStaffFilterPanel({
   ringFocusClass = 'focus:ring-blue-500',
   hidePersonSelect = false,
   hidePersonName = false,
+  hideCompanySelect = false,
 }) {
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50/90 p-3 space-y-3">
@@ -33,7 +34,7 @@ export default function WorkshopStaffFilterPanel({
         Lọc nhân viên (công ty → khu vực → NV)
       </div>
       <div className="flex flex-wrap items-end gap-3">
-        {isAdmin && !isCompanyScopedAdmin && companies.length > 0 && (
+        {isAdmin && !isCompanyScopedAdmin && !hideCompanySelect && companies.length > 0 && (
           <div className="flex flex-col gap-0.5 min-w-[10rem]">
             <label className="text-[10px] text-slate-600 font-semibold">
               <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-slate-600 text-white text-[9px] mr-1">1</span>

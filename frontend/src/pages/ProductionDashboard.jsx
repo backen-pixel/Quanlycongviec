@@ -342,6 +342,21 @@ export default function ProductionDashboard() {
     return workshopCompaniesForCrossViewer(companies, user);
   }, [companies, user, workshopOptionsForDeal, dealCompanyParam]);
 
+  const selectedWorkshopLabel = useMemo(() => {
+    if (!filterCompany) return '';
+    const c = workshopCompanyPickerList.find((x) => String(x.id) === String(filterCompany))
+      || companies.find((x) => String(x.id) === String(filterCompany));
+    return c?.short_name || c?.name || '';
+  }, [filterCompany, workshopCompanyPickerList, companies]);
+
+  const selectedDealCompanyLabel = useMemo(() => {
+    const id = filterDealCompany || (showDealCompanyFilter && user?.company_id ? String(user.company_id) : '');
+    if (!id) return '';
+    const c = dealCompanyPickerList.find((x) => String(x.id) === String(id))
+      || companies.find((x) => String(x.id) === String(id));
+    return c?.short_name || c?.name || '';
+  }, [filterDealCompany, showDealCompanyFilter, user?.company_id, dealCompanyPickerList, companies]);
+
   const deferredPersonName = useDeferredValue(filterPersonName);
 
   const handleStaffFilterCompanyChange = useCallback((companyId) => {
@@ -923,6 +938,8 @@ export default function ProductionDashboard() {
     [filteredKanbanPipeline],
   );
 
+  const filteredCardCount = allVisibleProjectIds.length;
+
   const refreshProjectCommentsIndex = useCallback(async (ids = allVisibleProjectIds) => {
     const uniqIds = [...new Set((ids || []).map((x) => String(x || '').trim()).filter(Boolean))];
     if (!uniqIds.length) {
@@ -1488,11 +1505,18 @@ export default function ProductionDashboard() {
   const advFilterCount =
     staffFilterActiveCount + (filterPhone ? 1 : 0)
     + (filterWorkTypeId ? 1 : 0)
-    + (String(searchQuery || '').trim() ? 1 : 0) + (priorityFilter ? 1 : 0) + (stageFilter ? 1 : 0);
+    + (String(searchQuery || '').trim() ? 1 : 0) + (priorityFilter ? 1 : 0) + (stageFilter ? 1 : 0)
+    + (hasTimeFilter ? 1 : 0)
+    + (canPickCompany && filterCompany ? 1 : 0)
+    + (isSystemAdmin(user) && filterDealCompany ? 1 : 0)
+    + (viewMode === 'kanban' && showOrphanColumn ? 1 : 0);
 
   const hasActiveFilter = !!(
     searchQuery || priorityFilter || stageFilter || hasTimeFilter
     || filterPhone || filterWorkTypeId || staffFilterActiveCount
+    || (canPickCompany && filterCompany)
+    || (isSystemAdmin(user) && filterDealCompany)
+    || (viewMode === 'kanban' && showOrphanColumn)
   );
 
   const clearAllFilters = useCallback(() => {
@@ -1502,8 +1526,10 @@ export default function ProductionDashboard() {
     handleTimePresetChange('');
     setFilterPhone('');
     setFilterWorkTypeId('');
+    setShowOrphanColumn(false);
+    if (isSystemAdmin(user)) setFilterDealCompany('');
     resetStaffFilters();
-  }, [resetStaffFilters, handleTimePresetChange]);
+  }, [resetStaffFilters, handleTimePresetChange, user]);
 
   // Lần đầu chưa có data → spinner toàn vùng. Reload sau đó dùng overlay nhẹ
   // (xem block <main className="relative"> ở dưới) để toolbar/KPI vẫn hiển thị.
@@ -1621,207 +1647,20 @@ export default function ProductionDashboard() {
         );
       })()}
 
-      {/* Toolbar 1 dòng: Search + Chip filter inline + Thời gian + Bộ lọc (luôn hiển thị) */}
+      {/* Bộ lọc gọn — khi đóng chỉ 1 hàng + tóm tắt phạm vi */}
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
-          {/* Search */}
-          <div className="relative flex-1 min-w-[18rem] max-w-2xl">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Tìm theo mã TB, tên khách, số điện thoại..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full h-9 pl-9 pr-8 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-            {searchQuery && (
-              <button type="button" onClick={() => setSearchQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer" title="Xóa tìm kiếm">
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-
-          {/* Bộ lọc 1: xưởng / công ty thực hiện sản xuất */}
-          {canPickCompany && workshopCompanyPickerList.length > 0 && (
-            <div className="flex items-center gap-1.5 overflow-x-auto max-w-full shrink-0 pb-0.5 scrollbar-thin scrollbar-thumb-gray-200">
-              <span className="text-[11px] font-semibold text-gray-500 shrink-0">Xưởng SX:</span>
-              {(isSystemAdmin(user) ? [{ id: '', name: 'Tất cả' }, ...workshopCompanyPickerList] : workshopCompanyPickerList).map((c) => {
-                const active = filterCompany === c.id;
-                return (
-                  <button
-                    key={c.id || 'all'}
-                    type="button"
-                    onClick={() => {
-                      if (active) return;
-                      handleStaffFilterCompanyChange(c.id);
-                    }}
-                    className={`shrink-0 h-9 px-3 rounded-full text-xs font-semibold border transition-all cursor-pointer whitespace-nowrap ${
-                      active
-                        ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
-                        : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50'
-                    }`}
-                  >
-                    {active && <span className="mr-1">✓</span>}
-                    {c.id === '' ? 'Tất cả' : (c.short_name || c.name)}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Bộ lọc 2: công ty CRM chủ deal */}
-          {showDealCompanyFilter && dealCompanyPickerList.length > 0 && (
-            <div className="flex items-center gap-1.5 overflow-x-auto max-w-full shrink-0 pb-0.5 scrollbar-thin scrollbar-thumb-gray-200">
-              <span className="text-[11px] font-semibold text-gray-500 shrink-0">Deal công ty:</span>
-              {(isSystemAdmin(user) ? [{ id: '', name: 'Tất cả' }, ...dealCompanyPickerList] : dealCompanyPickerList).map((c) => {
-                const active = c.id === ''
-                  ? !filterDealCompany
-                  : String(filterDealCompany || user?.company_id || '') === String(c.id);
-                const locked = !isSystemAdmin(user) && dealCompanyPickerList.length === 1;
-                return (
-                  <button
-                    key={c.id || 'all-deal'}
-                    type="button"
-                    disabled={locked && active}
-                    onClick={() => {
-                      if (active || locked) return;
-                      setFilterDealCompany(c.id);
-                      setFilterWorkTypeId('');
-                    }}
-                    className={`shrink-0 h-8 px-2.5 rounded-full text-[11px] font-semibold border transition-all whitespace-nowrap ${
-                      locked ? 'cursor-default' : 'cursor-pointer'
-                    } ${
-                      active
-                        ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm'
-                        : 'bg-white border-gray-200 text-gray-600 hover:border-indigo-300 hover:text-indigo-700 hover:bg-indigo-50'
-                    }`}
-                  >
-                    {active && <span className="mr-1">✓</span>}
-                    {c.id === '' ? 'Tất cả' : (c.short_name || c.name)}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Active filter chips — inline, có nút × để bỏ */}
-          {priorityFilter && (
-            <span className="inline-flex items-center gap-1.5 h-9 pl-3 pr-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg text-sm font-medium">
-              Ưu tiên: {priorityFilter === 'high' ? 'Cao' : priorityFilter === 'medium' ? 'TB' : 'Thấp'}
-              <button type="button" onClick={() => setPriorityFilter('')} className="p-1 rounded hover:bg-amber-100 cursor-pointer">
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </span>
-          )}
-          {stageFilter && (() => {
-            const st = pipeline.find((s) => String(s.id) === String(stageFilter));
-            if (!st) return null;
-            return (
-              <span className="inline-flex items-center gap-1.5 h-9 pl-3 pr-1.5 bg-violet-50 border border-violet-200 text-violet-700 rounded-lg text-sm font-medium">
-                {st.icon || '•'} {st.name}
-                <button type="button" onClick={() => setStageFilter('')} className="p-1 rounded hover:bg-violet-100 cursor-pointer">
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </span>
-            );
-          })()}
-
-          {/* Phân loại — luôn hiển thị trên toolbar (không cần mở Bộ lọc) */}
-          {companyForTypes && (
-            <div
-              className={`inline-flex items-center gap-1 h-9 px-2 rounded-lg border shrink-0 ${
-                filterWorkTypeId === 'none'
-                  ? 'border-amber-300 bg-amber-50'
-                  : filterWorkTypeId
-                    ? 'border-teal-300 bg-teal-50'
-                    : 'border-gray-200 bg-white'
-              }`}
-              title="Phân loại dự án xưởng"
-            >
-              <Layers className={`h-3.5 w-3.5 shrink-0 ${
-                filterWorkTypeId === 'none' ? 'text-amber-600'
-                : filterWorkTypeId ? 'text-teal-700' : 'text-gray-500'
-              }`} />
-              <select
-                value={filterWorkTypeId}
-                onChange={(e) => setFilterWorkTypeId(e.target.value)}
-                className={`h-8 text-sm bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[12rem] font-medium ${
-                  filterWorkTypeId === 'none' ? 'text-amber-700'
-                  : filterWorkTypeId ? 'text-teal-800' : 'text-gray-700'
-                }`}
-              >
-                <option value="">{workTypes.length === 0 ? 'Chưa cấu hình loại' : 'Phân loại: Tất cả'}</option>
-                <option value="none">⚠️ Chưa phân loại</option>
-                {workTypes.map((wt) => (
-                  <option key={wt.id} value={wt.id}>{wt.name}</option>
-                ))}
-              </select>
-              {filterWorkTypeId && (
-                <button
-                  type="button"
-                  onClick={() => setFilterWorkTypeId('')}
-                  className="p-1 rounded hover:bg-white/70 cursor-pointer"
-                  title="Bỏ lọc phân loại"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Cột ảo «Chưa phân loại» — ẩn khi đang lọc riêng «Chưa phân loại» */}
-          {viewMode === 'kanban' && filterWorkTypeId !== 'none' && (
-            <label
-              className={`inline-flex items-center gap-1.5 h-9 px-2.5 border rounded-lg text-xs cursor-pointer transition-colors shrink-0 ${
-                showOrphanColumn
-                  ? 'bg-slate-100 border-slate-400 text-slate-800'
-                  : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-              }`}
-              title="Hiện cột ảo ở đầu Kanban — gom các project chưa được gán phân loại (workshop type)."
-            >
-              <input
-                type="checkbox"
-                checked={showOrphanColumn}
-                onChange={(e) => setShowOrphanColumn(e.target.checked)}
-                className="h-3.5 w-3.5 cursor-pointer accent-slate-600"
-              />
-              <span>📦 Chưa phân loại</span>
-            </label>
-          )}
-
-          {/* Thời gian — giống CRM dashboard */}
-          <div className="relative shrink-0">
-            <select
-              value={timePreset}
-              onChange={(e) => handleTimePresetChange(e.target.value)}
-              className={`h-10 px-3 pl-9 rounded-xl text-sm font-medium cursor-pointer transition-all border appearance-none pr-8 ${
-                timePreset
-                  ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
-                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
-              }`}
-              style={{ minWidth: '160px' }}
-              title="Lọc theo thời gian tạo dự án"
-            >
-              {WS_TIME_PRESETS.map((o) => (
-                <option key={o.key || 'all'} value={o.key}>{o.label}</option>
-              ))}
-            </select>
-            <Clock className={`absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 pointer-events-none ${timePreset ? 'text-purple-500' : 'text-gray-400'}`} />
-          </div>
-
-          {/* Bộ lọc */}
           <button
             type="button"
             onClick={() => setShowAdvFilter((s) => !s)}
             className={`h-9 px-3 rounded-lg border text-sm font-medium inline-flex items-center gap-1.5 shrink-0 cursor-pointer ${
               showAdvFilter || advFilterCount
                 ? 'border-blue-300 bg-blue-50 text-blue-700'
-                : 'border-gray-200 bg-white hover:bg-gray-50'
+                : 'border-gray-200 bg-white hover:bg-gray-50 text-gray-900'
             }`}
-            style={(showAdvFilter || advFilterCount) ? undefined : { color: '#000000' }}
           >
             <Filter className="h-3.5 w-3.5" />
-            Bộ lọc
+            Bộ lọc và tìm kiếm
             {advFilterCount > 0 && (
               <span className="text-[10px] font-bold bg-blue-600 text-white rounded-full min-w-[1.1rem] px-1 text-center">
                 {advFilterCount}
@@ -1829,40 +1668,45 @@ export default function ProductionDashboard() {
             )}
           </button>
 
-          {hasActiveFilter && (
+          {!showAdvFilter && hasActiveFilter && (
             <button
               type="button"
               onClick={clearAllFilters}
-              className="h-9 px-2.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50 cursor-pointer inline-flex items-center gap-1"
-              title="Xóa toàn bộ bộ lọc"
+              className="h-9 px-3 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 cursor-pointer inline-flex items-center gap-1.5"
             >
-              <X className="h-3.5 w-3.5" /> Xóa lọc
+              <X className="h-3.5 w-3.5" /> Xóa bộ lọc
             </button>
           )}
-        </div>
 
-        {showCustomDate && (
-          <div className="flex flex-wrap items-center gap-3 bg-purple-50 border border-purple-200 rounded-xl p-3 shadow-sm">
-            <span className="text-xs font-bold text-purple-600 uppercase flex items-center gap-1.5">
-              <Calendar className="h-3.5 w-3.5" /> Khoảng thời gian:
+          {!showAdvFilter && (selectedWorkshopLabel || selectedDealCompanyLabel) && (
+            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+              {selectedWorkshopLabel && (
+                <span className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-800 text-xs font-medium max-w-[14rem] truncate" title="Xưởng sản xuất">
+                  <Factory className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{selectedWorkshopLabel}</span>
+                </span>
+              )}
+              {selectedDealCompanyLabel && (
+                <span className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-800 text-xs font-medium max-w-[14rem] truncate" title="Deal CRM thuộc công ty">
+                  <Building2 className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{selectedDealCompanyLabel}</span>
+                </span>
+              )}
+            </div>
+          )}
+
+          {!showAdvFilter && hasTimeFilter && timeFilterLabel && (
+            <span className="inline-flex items-center gap-1 h-8 px-2.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-lg text-xs font-medium">
+              <Clock className="h-3 w-3 shrink-0" />
+              {timeFilterLabel}
             </span>
-            <button
-              type="button"
-              onClick={() => setShowDateRangePicker(true)}
-              className="h-9 px-3 bg-white border border-purple-200 rounded-lg text-sm hover:bg-purple-50 cursor-pointer"
-              title="Chọn khoảng ngày"
-            >
-              {customFrom && customTo ? `${customFrom} → ${customTo}` : 'Chọn ngày bắt đầu/kết thúc'}
-            </button>
-            <button
-              type="button"
-              onClick={() => handleTimePresetChange('')}
-              className="h-9 px-3 bg-white text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-lg text-sm transition cursor-pointer border border-gray-200"
-            >
-              Hủy
-            </button>
-          </div>
-        )}
+          )}
+
+          <span className="text-[11px] text-gray-500 ml-auto shrink-0">
+            Tải: <strong>{projects.length}</strong>
+            {' · '}<strong className="text-blue-700">{filteredCardCount}</strong> thẻ sau lọc
+          </span>
+        </div>
 
         <DateRangePickerPopover
           open={showDateRangePicker}
@@ -1876,23 +1720,120 @@ export default function ProductionDashboard() {
           onClose={() => setShowDateRangePicker(false)}
         />
 
-        {timePreset && timePreset !== 'custom' && timeFilterLabel && (
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-100 text-purple-700 rounded-lg text-xs font-medium border border-purple-200">
-              <Clock className="h-3 w-3" />
-              {timeFilterLabel}
-              <button type="button" onClick={() => handleTimePresetChange('')} className="ml-1 hover:text-purple-900 cursor-pointer" title="Bỏ lọc thời gian">
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          </div>
-        )}
-
         {showAdvFilter && (
           <div className="space-y-3 p-3 rounded-xl border border-dashed border-gray-200 bg-gray-50/80">
-            <div className="flex flex-wrap items-end gap-2">
-              <div>
-                <p className="text-[10px] font-semibold text-gray-500 mb-0.5">Sắp xếp</p>
+            {/* Phạm vi xưởng & deal CRM */}
+            {(canPickCompany && workshopCompanyPickerList.length > 0 || showDealCompanyFilter) && (
+              <div className="rounded-lg border border-blue-100 bg-blue-50/40 p-3 space-y-3">
+                <p className="text-[11px] font-bold text-blue-900 uppercase tracking-wide">
+                  Phạm vi xưởng & deal CRM
+                </p>
+                <p className="text-[10px] text-blue-800/80 leading-snug">
+                  <strong>Xưởng SX</strong> — nơi đơn được sản xuất (HCB, Metalla…).
+                  <strong className="ml-1">Công ty CRM</strong> — deal thuộc công ty nào (VPT, Phúc Đạt…).
+                </p>
+                <div className="flex flex-wrap items-end gap-3">
+                  {canPickCompany && workshopCompanyPickerList.length > 0 && (
+                    <div className="flex flex-col gap-0.5 min-w-[11rem]">
+                      <label className="text-[10px] font-semibold text-blue-900 flex items-center gap-1">
+                        <Factory className="h-3 w-3" /> Xưởng sản xuất
+                      </label>
+                      <select
+                        value={filterCompany}
+                        onChange={(e) => handleStaffFilterCompanyChange(e.target.value)}
+                        className="h-9 w-full min-w-[11rem] max-w-[16rem] px-2 bg-white border border-blue-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
+                      >
+                        {isSystemAdmin(user) && <option value="">Tất cả xưởng</option>}
+                        {workshopCompanyPickerList.map((c) => (
+                          <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {showDealCompanyFilter && dealCompanyPickerList.length > 0 && (
+                    <div className="flex flex-col gap-0.5 min-w-[11rem]">
+                      <label className="text-[10px] font-semibold text-indigo-900 flex items-center gap-1">
+                        <Building2 className="h-3 w-3" /> Công ty CRM (deal)
+                      </label>
+                      {isSystemAdmin(user) ? (
+                        <select
+                          value={filterDealCompany}
+                          onChange={(e) => {
+                            setFilterDealCompany(e.target.value);
+                            setFilterWorkTypeId('');
+                          }}
+                          className="h-9 w-full min-w-[11rem] max-w-[16rem] px-2 bg-white border border-indigo-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer"
+                        >
+                          <option value="">Tất cả công ty deal</option>
+                          {dealCompanyPickerList.map((c) => (
+                            <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="h-9 inline-flex items-center px-2.5 bg-white border border-indigo-200 rounded-lg text-sm text-indigo-900 font-medium max-w-[16rem] truncate">
+                          {selectedDealCompanyLabel || '—'}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Tìm kiếm */}
+            <div className="relative w-full max-w-xl">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Tìm theo mã TB, tên khách, SĐT, ghi chú..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full h-9 pl-9 pr-8 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+              {searchQuery && (
+                <button type="button" onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer">
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Thời gian & hiển thị */}
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[10px] font-semibold text-gray-500">Thời gian tạo</label>
+                <div className="inline-flex items-center gap-0.5 rounded-lg border border-gray-200 bg-white px-1.5 h-9">
+                  <Clock className="h-3.5 w-3.5 text-gray-400 ml-0.5 shrink-0" />
+                  <select
+                    value={timePreset}
+                    onChange={(e) => handleTimePresetChange(e.target.value)}
+                    className="h-8 pr-1 text-xs sm:text-sm bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[9rem]"
+                  >
+                    {WS_TIME_PRESETS.map((o) => (
+                      <option key={o.key || 'all'} value={o.key}>{o.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              {timePreset === 'custom' && (
+                <div className="flex items-center gap-1 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setShowDateRangePicker(true)}
+                    className="h-9 px-3 bg-white border border-purple-200 rounded-lg text-xs hover:bg-purple-50 cursor-pointer"
+                  >
+                    {customFrom && customTo ? `${customFrom} → ${customTo}` : 'Chọn khoảng ngày'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleTimePresetChange('')}
+                    className="h-9 px-2 text-gray-500 hover:text-gray-700 text-xs cursor-pointer"
+                  >
+                    Bỏ
+                  </button>
+                </div>
+              )}
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[10px] font-semibold text-gray-500">Sắp xếp</label>
                 <div className="relative" ref={sortMenuRef}>
                   <button
                     type="button"
@@ -1922,8 +1863,8 @@ export default function ProductionDashboard() {
                   )}
                 </div>
               </div>
-              <div>
-                <p className="text-[10px] font-semibold text-gray-500 mb-0.5">Tải tối đa</p>
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[10px] font-semibold text-gray-500">Tải tối đa</label>
                 <select
                   value={kanbanLoadKey}
                   onChange={(e) => setKanbanLoadKey(e.target.value)}
@@ -1935,6 +1876,24 @@ export default function ProductionDashboard() {
                   ))}
                 </select>
               </div>
+              {viewMode === 'kanban' && filterWorkTypeId !== 'none' && (
+                <label
+                  className={`inline-flex items-center gap-1.5 h-9 px-2.5 border rounded-lg text-xs cursor-pointer self-end ${
+                    showOrphanColumn
+                      ? 'bg-slate-100 border-slate-400 text-slate-800'
+                      : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                  }`}
+                  title="Hiện cột ảo gom project chưa gán phân loại"
+                >
+                  <input
+                    type="checkbox"
+                    checked={showOrphanColumn}
+                    onChange={(e) => setShowOrphanColumn(e.target.checked)}
+                    className="h-3.5 w-3.5 cursor-pointer accent-slate-600"
+                  />
+                  Cột «Chưa phân loại»
+                </label>
+              )}
             </div>
 
             <WorkshopStaffFilterPanel
@@ -1959,68 +1918,83 @@ export default function ProductionDashboard() {
               employeeFilterListByRegion={employeeFilterListByRegion}
               companyEmployees={companyEmployees}
               ringFocusClass="focus:ring-blue-500"
+              hideCompanySelect={canPickCompany && workshopCompanyPickerList.length > 0}
             />
 
-            <div className="flex flex-wrap items-end gap-2">
-              <div className="flex flex-col gap-0.5 min-w-[10rem]">
-                <label className="text-[10px] text-gray-500 font-medium">Giai đoạn</label>
-                <select
-                  value={stageFilter}
-                  onChange={(e) => setStageFilter(e.target.value)}
-                  className="h-8 w-40 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
-                >
-                  <option value="">Tất cả giai đoạn</option>
-                  {pipeline.map((stage) => (
-                    <option key={stage.id} value={stage.id}>{stage.icon || '•'} {stage.name}</option>
-                  ))}
-                </select>
-              </div>
-              {companyForTypes && (
-                <div className="flex flex-col gap-0.5">
-                  <label className="text-[10px] text-gray-500 font-medium">Phân loại</label>
-                  <div className="inline-flex items-center gap-1 h-8 px-2 bg-gray-50 border border-gray-200 rounded-lg">
-                    <Layers className="h-3.5 w-3.5 text-slate-500 shrink-0" />
-                    <select
-                      value={filterWorkTypeId}
-                      onChange={(e) => setFilterWorkTypeId(e.target.value)}
-                      className="h-7 text-xs bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[11rem]"
-                    >
-                      <option value="">{workTypes.length === 0 ? 'Chưa cấu hình' : 'Tất cả loại'}</option>
-                      <option value="none">⚠️ Chưa phân loại</option>
-                      {workTypes.map((wt) => (
-                        <option key={wt.id} value={wt.id}>{wt.name}</option>
-                      ))}
-                    </select>
-                  </div>
+            <div className="rounded-lg border border-slate-200 bg-white/80 p-3 space-y-2">
+              <p className="text-[11px] font-bold text-slate-600 uppercase tracking-wide">Lọc chi tiết thẻ</p>
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="flex flex-col gap-0.5 min-w-[10rem]">
+                  <label className="text-[10px] text-gray-500 font-medium">Giai đoạn pipeline</label>
+                  <select
+                    value={stageFilter}
+                    onChange={(e) => setStageFilter(e.target.value)}
+                    className="h-9 w-44 px-2 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
+                  >
+                    <option value="">Tất cả giai đoạn</option>
+                    {pipeline.map((stage) => (
+                      <option key={stage.id} value={stage.id}>{stage.icon || '•'} {stage.name}</option>
+                    ))}
+                  </select>
                 </div>
-              )}
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] text-gray-500 font-medium">Ưu tiên</label>
-                <select
-                  value={priorityFilter}
-                  onChange={(e) => setPriorityFilter(e.target.value)}
-                  className="h-8 w-28 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
-                >
-                  <option value="">Tất cả</option>
-                  <option value="high">Cao</option>
-                  <option value="medium">Trung bình</option>
-                  <option value="low">Thấp</option>
-                </select>
-              </div>
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] text-gray-500 font-medium">SĐT</label>
-                <select
-                  value={filterPhone}
-                  onChange={(e) => setFilterPhone(e.target.value)}
-                  className="h-8 w-36 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
-                >
-                  <option value="">Không lọc</option>
-                  <option value="has">Có SĐT</option>
-                  <option value="no">Chưa có SĐT</option>
-                </select>
+                {companyForTypes && (
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[10px] text-gray-500 font-medium">Phân loại xưởng</label>
+                    <div className="inline-flex items-center gap-1 h-9 px-2 bg-white border border-gray-200 rounded-lg">
+                      <Layers className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+                      <select
+                        value={filterWorkTypeId}
+                        onChange={(e) => setFilterWorkTypeId(e.target.value)}
+                        className="h-8 text-xs bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[12rem]"
+                      >
+                        <option value="">{workTypes.length === 0 ? 'Chưa cấu hình' : 'Tất cả loại'}</option>
+                        <option value="none">⚠️ Chưa phân loại</option>
+                        {workTypes.map((wt) => (
+                          <option key={wt.id} value={wt.id}>{wt.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[10px] text-gray-500 font-medium">Ưu tiên</label>
+                  <select
+                    value={priorityFilter}
+                    onChange={(e) => setPriorityFilter(e.target.value)}
+                    className="h-9 w-32 px-2 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
+                  >
+                    <option value="">Tất cả</option>
+                    <option value="high">Cao</option>
+                    <option value="medium">Trung bình</option>
+                    <option value="low">Thấp</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[10px] text-gray-500 font-medium">Số điện thoại</label>
+                  <select
+                    value={filterPhone}
+                    onChange={(e) => setFilterPhone(e.target.value)}
+                    className="h-9 w-36 px-2 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
+                  >
+                    <option value="">Không lọc</option>
+                    <option value="has">Có SĐT</option>
+                    <option value="no">Chưa có SĐT</option>
+                  </select>
+                </div>
               </div>
             </div>
 
+            {hasActiveFilter && (
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={clearAllFilters}
+                  className="h-9 px-3 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-white cursor-pointer inline-flex items-center gap-1.5 bg-white"
+                >
+                  <X className="h-3.5 w-3.5" /> Xóa toàn bộ bộ lọc
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
