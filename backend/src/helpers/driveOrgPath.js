@@ -21,6 +21,7 @@ const SEG_COMPANY_BUCKET = 'Chung công ty';
 const SEG_COMPANY_SHARED = '_Tài liệu chung công ty';
 const SEG_SHARED_COMPANY = '_Tài liệu chung công ty';
 const SEG_SHARED_REGION = '_Tài liệu chung khu vực';
+const SEG_COMPANY_IMAGES = '_Kho ảnh chung';
 
 /** @deprecated Chỉ dùng để nhận diện folder cũ khi migrate */
 const LEGACY_SEG_REGIONS = 'Khu vực';
@@ -483,6 +484,37 @@ async function ensureSharedCompanyPath({ companyId, moduleKey }) {
   };
 }
 
+/**
+ * Kho ảnh chung công ty — 1 folder / công ty để upload hình (Facebook, marketing…).
+ * Path: <Module>/<Công ty>/_Kho ảnh chung/
+ */
+async function ensureCompanyImagesPath({ companyId, moduleKey = 'crm' }) {
+  if (!companyId) throw new Error('companyId bắt buộc');
+  const rootId = gdrive.getRootFolderId();
+  const company = await getCompanyInfo(companyId);
+  const companyName = sanitizeSegment(company?.name, FALLBACK.company);
+  const mKey = (moduleKey || 'crm').toLowerCase();
+  const mName = moduleLabel(mKey);
+
+  const moduleFolder = await gdrive.createFolder({ parentId: rootId, name: mName });
+  const companyFolder = await gdrive.createFolder({ parentId: moduleFolder.id, name: companyName });
+  const imagesFolder = await gdrive.createFolder({ parentId: companyFolder.id, name: SEG_COMPANY_IMAGES });
+
+  return {
+    google_folder_id: imagesFolder.id,
+    name: `${mName} · ${companyName} — Kho ảnh chung`,
+    module_key: mKey,
+    module_name: mName,
+    company_id: companyId,
+    company_name: companyName,
+    segments: [
+      { kind: 'module', name: mName, google_folder_id: moduleFolder.id },
+      { kind: 'company', name: companyName, google_folder_id: companyFolder.id },
+      { kind: 'company_images', name: SEG_COMPANY_IMAGES, google_folder_id: imagesFolder.id },
+    ],
+  };
+}
+
 async function ensureSharedRegionPath({ regionId, moduleKey }) {
   const region = await getRegionInfo(regionId);
   if (!region) throw new Error('Khu vực không tồn tại');
@@ -618,6 +650,7 @@ module.exports = {
   ensureEntityOrgPath,
   ensureSharedCompanyPath,
   ensureSharedRegionPath,
+  ensureCompanyImagesPath,
   lookupEntity,
   buildEntityFolderName,
   entityModuleKey,
@@ -633,6 +666,7 @@ module.exports = {
   SEG_COMPANY_SHARED,
   SEG_SHARED_COMPANY,
   SEG_SHARED_REGION,
+  SEG_COMPANY_IMAGES,
   LEGACY_SEG_REGIONS,
   LEGACY_SEG_DEPARTMENTS,
   LEGACY_SEG_EMPLOYEES,

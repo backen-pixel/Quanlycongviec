@@ -7,7 +7,7 @@ import {
   MessageCircle, Users, FileText, MessageSquare, Settings, Send, Search, ExternalLink,
   Link2, Plus, ChevronRight, Bell, Image, Paperclip, RefreshCw, ToggleLeft, ToggleRight,
   X, Trash2, Edit3, UserPlus, Phone, Mail, MoreHorizontal, Check, Copy, Save, Eye, EyeOff,
-  Mic, MicOff, File, Camera, Smile, ArrowLeft, BarChart3, StickyNote, Activity,
+  Mic, MicOff, File, Camera, Smile, ArrowLeft, BarChart3, StickyNote, Activity, Images,
 } from 'lucide-react';
 import AutoToolPanel from '../components/AutoToolPanel';
 import BatchActionsBar from '../components/BatchActionsBar';
@@ -16,6 +16,8 @@ import CrmAppChannelPrefsBanner from '../components/CrmAppChannelPrefsBanner';
 import AutoToolPanelInline from '../components/AutoToolPanel';
 import FacebookPageTokenReminderBanner, { FacebookPageTokenReminderRow } from '../components/FacebookPageTokenReminderBanner';
 import { computeFacebookPageTokenReminder, FB_PAGE_TOKEN_REMINDER_DAYS } from '../lib/facebookPageTokenReminder';
+import FacebookImageSetsSettings from '../components/facebook/FacebookImageSetsSettings';
+import FacebookImageSetPicker from '../components/facebook/FacebookImageSetPicker';
 
 const API = import.meta.env.VITE_API_URL || '';
 const hdr = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' });
@@ -255,7 +257,7 @@ export default function FacebookPage() {
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {tab === 'inbox' && <InboxTab pageStats={stats?.page_stats} fbCompanyQs={fbCompanyQs} />}
+        {tab === 'inbox' && <InboxTab pageStats={stats?.page_stats} fbCompanyQs={fbCompanyQs} companyId={effectiveCompanyFilter || loginCompanyId || null} />}
         {tab === 'contacts' && <ContactsTab fbCompanyQs={fbCompanyQs} companyId={effectiveCompanyFilter} isAdmin={isAdmin} />}
         {tab === 'analytics' && <AnalyticsTab fbCompanyQs={fbCompanyQs} />}
         {tab === 'lead-ads' && <LeadAdsTab />}
@@ -308,7 +310,7 @@ function PageSelector({ value, onChange, pages, pageStats }) {
   );
 }
 
-function InboxTab({ pageStats, fbCompanyQs = '' }) {
+function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
   const { socket } = useAuth();
   const [searchParams] = useSearchParams();
   const [contacts, setContacts] = useState([]);
@@ -332,6 +334,8 @@ function InboxTab({ pageStats, fbCompanyQs = '' }) {
   const imageInputRef = useRef(null);
   const cannedToggleRef = useRef(null);
   const cannedSidebarRef = useRef(null);
+  const imageSetToggleRef = useRef(null);
+  const imageSetSidebarRef = useRef(null);
   const [cannedReplies, setCannedReplies] = useState([]);
   const [cannedListLoading, setCannedListLoading] = useState(true);
   const [cannedSaving, setCannedSaving] = useState(false);
@@ -340,6 +344,7 @@ function InboxTab({ pageStats, fbCompanyQs = '' }) {
   const [cannedDraftTitle, setCannedDraftTitle] = useState('');
   const [cannedDraftBody, setCannedDraftBody] = useState('');
   const [cannedEditingId, setCannedEditingId] = useState(null);
+  const [imageSetOpen, setImageSetOpen] = useState(false);
   selectedRef.current = selected;
 
   const loadCannedFromServer = useCallback(async () => {
@@ -1164,6 +1169,26 @@ function InboxTab({ pageStats, fbCompanyQs = '' }) {
                   </div>
                 </aside>
               )}
+
+              {imageSetOpen && selected && (
+                <div ref={imageSetSidebarRef} className="shrink-0 min-h-0 flex">
+                  <FacebookImageSetPicker
+                    open
+                    onClose={() => setImageSetOpen(false)}
+                    contactId={selected.id}
+                    companyId={companyId}
+                    companyQs={fbCompanyQs}
+                    disabled={uploading || recording}
+                    onMessagesSent={(msgs) => {
+                      setMessages((prev) => [
+                        ...prev,
+                        ...msgs.map((m) => ({ ...m, contact: selected })),
+                      ]);
+                      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+                    }}
+                  />
+                </div>
+              )}
             </div>
 
             {/* ── Input bar ── */}
@@ -1206,7 +1231,7 @@ function InboxTab({ pageStats, fbCompanyQs = '' }) {
                 <div className="relative shrink-0" ref={cannedToggleRef}>
                   <button
                     type="button"
-                    onClick={() => setCannedOpen((o) => !o)}
+                    onClick={() => { setImageSetOpen(false); setCannedOpen((o) => !o); }}
                     disabled={recording}
                     className={`p-2.5 rounded-xl cursor-pointer transition disabled:opacity-40 ${
                       cannedOpen ? 'text-amber-700 bg-amber-100 ring-2 ring-amber-300/60' : 'text-gray-400 hover:text-amber-600 hover:bg-amber-50'
@@ -1214,6 +1239,21 @@ function InboxTab({ pageStats, fbCompanyQs = '' }) {
                     title="Tin soạn sẵn — lưu server, chèn vào ô nhập"
                   >
                     <StickyNote size={20} />
+                  </button>
+                </div>
+
+                {/* Bộ ảnh Drive — gửi hàng loạt */}
+                <div className="relative shrink-0" ref={imageSetToggleRef}>
+                  <button
+                    type="button"
+                    onClick={() => { setCannedOpen(false); setImageSetOpen((o) => !o); }}
+                    disabled={recording || !selected}
+                    className={`p-2.5 rounded-xl cursor-pointer transition disabled:opacity-40 ${
+                      imageSetOpen ? 'text-blue-700 bg-blue-100 ring-2 ring-blue-300/60' : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'
+                    }`}
+                    title="Gửi bộ ảnh từ Drive"
+                  >
+                    <Images size={20} />
                   </button>
                 </div>
 
@@ -4139,6 +4179,8 @@ function RescanPhonesSchedulePanel() {
 function WebhookLogsTab() { return null; }
 
 function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
+  const { user } = useAuth();
+  const showImageSetsAdmin = isAdminLike(user) && !isCrmSocialInboxUser(user);
   const [pages, setPages] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [stages, setStages] = useState([]);
@@ -4750,6 +4792,8 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
           </div>
         </div>
       )}
+
+      {showImageSetsAdmin && <FacebookImageSetsSettings />}
 
       {pageDeleteTarget && (
         <div

@@ -1,6 +1,12 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
+import { getSocket } from '../lib/socket';
+import {
+  buildDashboardCacheKey,
+  getDashboardCache,
+  saveDashboardCache,
+} from '../lib/dashboardCache';
 import {
   FolderKanban, CheckSquare, Users, DollarSign, TrendingUp, TrendingDown,
   AlertTriangle, Clock, ArrowRight, Activity, Bell, Building2,
@@ -8,6 +14,33 @@ import {
 } from 'lucide-react';
 import { formatVND, getInitials, avatarColor, STATUS_LABELS, STATUS_COLORS, PRIORITY_LABELS, PRIORITY_COLORS, formatDate } from '../lib/utils';
 import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
+
+const EMPTY_OVERVIEW = {
+  projects: { total: 0, active: 0, completed: 0, new_7d: 0, overdue: 0 },
+  tasks: { total: 0, completed: 0, completion_rate: 0, overdue: 0, blocked: 0 },
+  customers: { total: 0, new_7d: 0, vip: 0, return_rate: 0 },
+  revenue: { total: 0, growth_pct: 0, avg_project_value: 0, this_month: 0, last_month: 0 },
+};
+
+const EMPTY_ALERTS = {
+  overdue_projects: 0,
+  overdue_tasks: 0,
+  pending_approvals: 0,
+  unassigned_high_priority: 0,
+  resource_overload: 0,
+};
+
+function hydrateFromCache(cacheKey, setters) {
+  const cached = getDashboardCache(cacheKey);
+  if (!cached?.data) return { hit: false, veryFresh: false };
+  const c = cached.data;
+  if (c.overview !== undefined) setters.setOverview(c.overview);
+  if (Array.isArray(c.workload)) setters.setWorkload(c.workload);
+  if (c.alerts !== undefined) setters.setAlerts(c.alerts);
+  if (Array.isArray(c.activities)) setters.setActivities(c.activities);
+  if (c.divisionData !== undefined) setters.setDivisionData(c.divisionData);
+  return { hit: true, veryFresh: !!cached.isVeryFresh };
+}
 
 export default function DashboardNew() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -18,74 +51,267 @@ export default function DashboardNew() {
   const [activities, setActivities] = useState([]);
   const [divisionData, setDivisionData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [divLoading, setDivLoading] = useState(false);
+  const [firstLoaded, setFirstLoaded] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSyncAt, setLastSyncAt] = useState(null);
   const [divDateFrom, setDivDateFrom] = useState('');
   const [divDateTo, setDivDateTo] = useState('');
   const [divCompanyId, setDivCompanyId] = useState('');
 
   const selectedDiv = searchParams.get('khoi');
+  const loadSeqRef = useRef(0);
+  const loadMainRef = useRef(null);
+  const loadDivisionRef = useRef(null);
+  const lastHydratedKeyRef = useRef('');
+  const hasShownDataRef = useRef(false);
+
+  const cacheKey = useMemo(
+    () => buildDashboardCacheKey({
+      selectedDiv: selectedDiv || '',
+      dateFrom: divDateFrom,
+      dateTo: divDateTo,
+      companyId: divCompanyId,
+    }),
+    [selectedDiv, divDateFrom, divDateTo, divCompanyId],
+  );
+
+  const cacheSetters = useMemo(
+    () => ({ setOverview, setWorkload, setAlerts, setActivities, setDivisionData }),
+    [],
+  );
 
   useEffect(() => {
     api.get('/dashboard/divisions').then(r => setDivisions(r.data.divisions || [])).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    if (selectedDiv) loadDivisionDashboard(selectedDiv);
-    else loadMainDashboard();
-  }, [selectedDiv]);
+  const loadMainDashboard = useCallback(async (opts = {}) => {
+    const silent = !!opts.silent;
+    const seq = ++loadSeqRef.current;
+    const isStale = () => seq !== loadSeqRef.current;
 
-  const loadMainDashboard = async () => {
-    setLoading(true); setDivisionData(null);
+    if (silent) setSyncing(true);
+    else if (!hasShownDataRef.current) setLoading(true);
+
     try {
       const [o, w, a, act] = await Promise.race([
-        Promise.all([api.get('/dashboard/overview'), api.get('/dashboard/workload'), api.get('/dashboard/alerts'), api.get('/dashboard/activity?limit=10')]),
+        Promise.all([
+          api.get('/dashboard/overview'),
+          api.get('/dashboard/workload'),
+          api.get('/dashboard/alerts'),
+          api.get('/dashboard/activity?limit=10'),
+        ]),
         new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 10000)),
       ]);
-      setOverview(o.data); setWorkload(w.data.divisions || []); setAlerts(a.data); setActivities(act.data.activities || []);
-    } catch {
-      if (!overview) setOverview({ projects:{total:0,active:0,completed:0,new_7d:0,overdue:0}, tasks:{total:0,completed:0,completion_rate:0,overdue:0,blocked:0}, customers:{total:0,new_7d:0,vip:0,return_rate:0}, revenue:{total:0,growth_pct:0,avg_project_value:0,this_month:0,last_month:0} });
-      setWorkload([]); setAlerts({overdue_projects:0,overdue_tasks:0,pending_approvals:0,unassigned_high_priority:0,resource_overload:0}); setActivities([]);
-    }
-    setLoading(false);
-  };
+      if (isStale()) return;
 
-  const loadDivisionDashboard = async (divId, from, to, companyId) => {
-    setDivLoading(true);
+      const nextOverview = o.data;
+      const nextWorkload = w.data.divisions || [];
+      const nextAlerts = a.data;
+      const nextActivities = act.data.activities || [];
+
+      setOverview(nextOverview);
+      setWorkload(nextWorkload);
+      setAlerts(nextAlerts);
+      setActivities(nextActivities);
+      setDivisionData(null);
+      setLastSyncAt(new Date());
+      setFirstLoaded(true);
+      hasShownDataRef.current = true;
+
+      saveDashboardCache(
+        buildDashboardCacheKey({ selectedDiv: '' }),
+        { overview: nextOverview, workload: nextWorkload, alerts: nextAlerts, activities: nextActivities },
+      );
+    } catch {
+      if (isStale()) return;
+      setOverview((prev) => prev || EMPTY_OVERVIEW);
+      setWorkload((prev) => (prev?.length ? prev : []));
+      setAlerts((prev) => prev || EMPTY_ALERTS);
+      setActivities((prev) => (prev?.length ? prev : []));
+      setFirstLoaded(true);
+      hasShownDataRef.current = true;
+    } finally {
+      if (!isStale()) {
+        setLoading(false);
+        setSyncing(false);
+      }
+    }
+  }, []);
+
+  const loadDivisionDashboard = useCallback(async (divId, from, to, companyId, opts = {}) => {
+    const silent = !!opts.silent;
+    const seq = ++loadSeqRef.current;
+    const isStale = () => seq !== loadSeqRef.current;
+
+    if (silent) setSyncing(true);
+    else if (!hasShownDataRef.current) setLoading(true);
+
     try {
       const params = {};
       if (from) params.from = from;
       if (to) params.to = to;
       if (companyId) params.company_id = companyId;
       const { data } = await api.get(`/dashboard/division/${divId}`, { params });
+      if (isStale()) return;
+
       setDivisionData(data);
-    } catch { setDivisionData(null); }
-    setDivLoading(false);
-  };
+      setLastSyncAt(new Date());
+      setFirstLoaded(true);
+      hasShownDataRef.current = true;
+
+      saveDashboardCache(
+        buildDashboardCacheKey({
+          selectedDiv: divId,
+          dateFrom: from || '',
+          dateTo: to || '',
+          companyId: companyId || '',
+        }),
+        { divisionData: data },
+      );
+    } catch {
+      if (isStale()) return;
+      setDivisionData((prev) => (prev?.division?.id === divId ? prev : null));
+      setFirstLoaded(true);
+      hasShownDataRef.current = true;
+    } finally {
+      if (!isStale()) {
+        setLoading(false);
+        setSyncing(false);
+      }
+    }
+  }, []);
+
+  loadMainRef.current = loadMainDashboard;
+  loadDivisionRef.current = loadDivisionDashboard;
+
+  useEffect(() => {
+    let veryFresh = false;
+    if (cacheKey !== lastHydratedKeyRef.current) {
+      const { hit, veryFresh: vf } = hydrateFromCache(cacheKey, cacheSetters);
+      veryFresh = vf;
+      lastHydratedKeyRef.current = cacheKey;
+      if (hit) {
+        setFirstLoaded(true);
+        setLoading(false);
+        hasShownDataRef.current = true;
+      } else if (selectedDiv) {
+        setDivisionData((prev) => (prev?.division?.id === selectedDiv ? prev : null));
+      } else {
+        setDivisionData(null);
+      }
+    }
+
+    if (veryFresh) return undefined;
+
+    const silent = hasShownDataRef.current;
+    const timer = setTimeout(() => {
+      if (selectedDiv) {
+        void loadDivisionDashboard(selectedDiv, divDateFrom, divDateTo, divCompanyId, { silent });
+      } else {
+        void loadMainDashboard({ silent });
+      }
+    }, 80);
+
+    return () => clearTimeout(timer);
+  }, [
+    cacheKey,
+    selectedDiv,
+    divDateFrom,
+    divDateTo,
+    divCompanyId,
+    cacheSetters,
+    loadMainDashboard,
+    loadDivisionDashboard,
+  ]);
+
+  /** Realtime: socket + poll ngầm — không bật spinner toàn trang */
+  useEffect(() => {
+    const socket = getSocket();
+    let debounceTimer = null;
+    const scheduleSilent = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        if (selectedDiv) {
+          void loadDivisionRef.current?.(selectedDiv, divDateFrom, divDateTo, divCompanyId, { silent: true });
+        } else {
+          void loadMainRef.current?.({ silent: true });
+        }
+      }, 800);
+    };
+
+    const events = ['project:stage_changed', 'task:updated', 'crm:dashboard_changed', 'approval:updated'];
+    if (socket) events.forEach((ev) => socket.on(ev, scheduleSilent));
+
+    const POLL_MS = 30_000;
+    let intervalId = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      scheduleSilent();
+    }, POLL_MS);
+
+    const onVis = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') scheduleSilent();
+    };
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVis);
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      if (socket) events.forEach((ev) => socket.off(ev, scheduleSilent));
+      clearInterval(intervalId);
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [selectedDiv, divDateFrom, divDateTo, divCompanyId]);
 
   const handleTabChange = (divId) => {
     divId ? setSearchParams({ khoi: divId }) : setSearchParams({});
-    setDivDateFrom(''); setDivDateTo(''); setDivCompanyId('');
+    setDivDateFrom('');
+    setDivDateTo('');
+    setDivCompanyId('');
   };
 
-  const handleDivDateFilter = () => { if (selectedDiv) loadDivisionDashboard(selectedDiv, divDateFrom, divDateTo, divCompanyId); };
-  const clearDivDateFilter = () => { setDivDateFrom(''); setDivDateTo(''); if (selectedDiv) loadDivisionDashboard(selectedDiv, '', '', divCompanyId); };
+  const handleDivDateFilter = () => {
+    if (selectedDiv) loadDivisionDashboard(selectedDiv, divDateFrom, divDateTo, divCompanyId, { silent: hasShownDataRef.current });
+  };
+  const clearDivDateFilter = () => {
+    setDivDateFrom('');
+    setDivDateTo('');
+    if (selectedDiv) loadDivisionDashboard(selectedDiv, '', '', divCompanyId, { silent: hasShownDataRef.current });
+  };
   const handleCompanyFilter = (companyId) => {
     setDivCompanyId(companyId);
-    if (selectedDiv) loadDivisionDashboard(selectedDiv, divDateFrom, divDateTo, companyId);
+    if (selectedDiv) loadDivisionDashboard(selectedDiv, divDateFrom, divDateTo, companyId, { silent: hasShownDataRef.current });
   };
 
-  const isLoading = selectedDiv ? divLoading : loading;
-  if (isLoading && !overview && !divisionData) return (
-    <div className="flex items-center justify-center h-screen">
-      <div className="text-center"><div className="animate-spin h-12 w-12 border-4 border-blue-600 border-t-transparent rounded-full mx-auto mb-4"></div><p className="text-gray-500">Đang tải...</p></div>
-    </div>
-  );
+  if (!firstLoaded && loading && !overview && !divisionData) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <div className="animate-spin h-12 w-12 border-4 border-blue-600 border-t-transparent rounded-full mx-auto mb-4" />
+          <p className="text-gray-500">Đang tải...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const showMain = !selectedDiv && overview;
+  const showDivision = selectedDiv && divisionData;
 
   return (
     <div className="min-h-screen p-4 sm:p-6 lg:p-8">
       <div className="mb-6">
         <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
-          <h1 className="text-3xl font-bold" style={{ color: '#000000' }}>📊 Dashboard</h1>
+          <div className="flex items-center gap-3 flex-wrap">
+            <h1 className="text-3xl font-bold" style={{ color: '#000000' }}>📊 Dashboard</h1>
+            {firstLoaded && (
+              <span className="inline-flex items-center gap-1.5 text-xs text-gray-500">
+                <span className={`inline-block rounded-full h-1.5 w-1.5 ${syncing ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500'}`} />
+                {syncing
+                  ? 'Đang đồng bộ…'
+                  : lastSyncAt
+                    ? `Cập nhật ${lastSyncAt.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}`
+                    : 'Đã tải'}
+              </span>
+            )}
+          </div>
           {!selectedDiv && <AssignedTasksToolbarButton />}
         </div>
         <div data-tour="division-tabs" className="flex items-center gap-3">
@@ -108,9 +334,23 @@ export default function DashboardNew() {
           {selectedDiv && <span className="text-xs text-gray-400">|</span>}
         </div>
       </div>
-      {isLoading ? <div className="flex items-center justify-center h-64"><div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full"></div></div>
-      : selectedDiv && divisionData ? <DivisionDashboardContent data={divisionData} dateFrom={divDateFrom} dateTo={divDateTo} setDateFrom={setDivDateFrom} setDateTo={setDivDateTo} onFilter={handleDivDateFilter} onClear={clearDivDateFilter} selectedCompany={divCompanyId} onCompanyChange={handleCompanyFilter} />
-      : overview ? <MainDashboardContent overview={overview} workload={workload} alerts={alerts} activities={activities} /> : null}
+      {showDivision
+        ? (
+          <DivisionDashboardContent
+            data={divisionData}
+            dateFrom={divDateFrom}
+            dateTo={divDateTo}
+            setDateFrom={setDivDateFrom}
+            setDateTo={setDivDateTo}
+            onFilter={handleDivDateFilter}
+            onClear={clearDivDateFilter}
+            selectedCompany={divCompanyId}
+            onCompanyChange={handleCompanyFilter}
+          />
+        )
+        : showMain
+          ? <MainDashboardContent overview={overview} workload={workload} alerts={alerts} activities={activities} />
+          : null}
     </div>
   );
 }
@@ -123,7 +363,6 @@ function MainDashboardContent({ overview, workload, alerts, activities }) {
       <KPICard title="Khách Hàng" value={overview.customers.total} subtitle={`${overview.customers.vip} VIP`} trend={overview.customers.new_7d} trendLabel="mới (7 ngày)" icon={Users} color="bg-purple-600" bgColor="bg-purple-50" />
       <KPICard title="Doanh Thu" value={formatVND(overview.revenue.total)} subtitle={`TB: ${formatVND(overview.revenue.avg_project_value)}`} trend={overview.revenue.growth_pct} trendLabel="% tăng trưởng" icon={DollarSign} color="bg-amber-600" bgColor="bg-amber-50" />
     </div>
-    {/* CRM Stats */}
     {overview.crm && (
       <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-3 mb-8">
         <h3 className="text-sm font-bold flex items-center gap-2" style={{ color: '#000000' }}>
@@ -164,9 +403,6 @@ function MainDashboardContent({ overview, workload, alerts, activities }) {
   </>);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// DIVISION DASHBOARD
-// ═══════════════════════════════════════════════════════════════════════════
 function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDateTo, onFilter, onClear, selectedCompany, onCompanyChange }) {
   const { division, stats, upcoming, active, completed, companies_detail, companies_list, task_detail } = data;
   const [taskFilter, setTaskFilter] = useState({ search: '', assignee: 'all', stage: 'all', status: 'all' });
@@ -202,7 +438,6 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
 
   return (
     <div className="space-y-6">
-      {/* Header + Date */}
       <div className="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-2xl p-6 text-white shadow-xl">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-4">
@@ -232,7 +467,6 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
         </div>
       </div>
 
-      {/* Company Filter */}
       {(companies_list || []).length > 0 && (
         <div data-tour="company-filter" className="flex items-center gap-3 flex-wrap">
           <Building2 className="h-4 w-4 text-gray-500" />
@@ -252,7 +486,6 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
         </div>
       )}
 
-      {/* KPIs */}
       <div data-tour="kpi-cards" className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <KPICard title="Sắp Tới" value={stats.upcoming} subtitle="dự án chờ đến khối" icon={Clock} color="bg-amber-600" bgColor="bg-amber-50" />
         <KPICard title="Đang Thực Hiện" value={stats.active} subtitle={`${stats.total_tasks} nhiệm vụ`} icon={FolderKanban} color="bg-blue-600" bgColor="bg-blue-50" />
@@ -260,7 +493,6 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
         <KPICard title="Trễ Hạn" value={stats.overdue || 0} subtitle={`${stats.overdue_tasks} NV quá hạn`} trendNegative icon={AlertTriangle} color="bg-red-600" bgColor="bg-red-50" />
       </div>
 
-      {/* CRM Revenue per Khối */}
       {data?.crm && (data.crm.total_orders > 0 || data.crm.total_paid > 0) && (
         <div className="bg-white rounded-xl border p-5">
           <h3 className="text-sm font-bold mb-3 flex items-center gap-2" style={{ color: '#000000' }}><DollarSign className="h-4 w-4 text-emerald-600" />Doanh thu Khối</h3>
@@ -273,7 +505,6 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
         </div>
       )}
 
-      {/* Task Detail */}
       {task_detail?.length > 0 && (
         <div data-tour="task-detail" className="bg-white rounded-xl border border-gray-200 p-6">
           <h3 className="text-lg font-bold flex items-center gap-2 mb-5" style={{ color: '#000000' }}><CheckSquare className="h-5 w-5 text-blue-600" />Chi Tiết Nhiệm Vụ Theo Quy Trình</h3>
@@ -320,7 +551,6 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
                 {expandedStage === td.stage && (
                   <div className="p-4 space-y-3 max-h-[500px] overflow-y-auto">
                     {(() => {
-                      // Group tasks by project
                       const byProject = {};
                       td.tasks.forEach(t => {
                         const key = t.project_id;
@@ -345,14 +575,12 @@ function DivisionDashboardContent({ data, dateFrom, dateTo, setDateFrom, setDate
                                 {overdue > 0 && <span className="text-[10px] px-1.5 py-0.5 bg-red-100 text-red-700 rounded-full font-bold">{overdue} trễ</span>}
                               </div>
                             </div>
-                            {/* Progress bar */}
                             <div className="flex items-center gap-2 mb-3">
                               <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
                                 <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
                               </div>
                               <span className="text-xs font-medium text-gray-500 w-8 text-right">{pct}%</span>
                             </div>
-                            {/* Task list compact */}
                             <div className="space-y-1">
                               {proj.tasks.map(t => {
                                 const isDone = t.status === 'done';

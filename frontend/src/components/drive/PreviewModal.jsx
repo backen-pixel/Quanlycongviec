@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Download, ExternalLink, Loader2, Pencil, ChevronLeft, ChevronRight } from 'lucide-react';
-import { driveFormatBytes, driveFetchFileBlobUrl, driveFetchPreviewBlobUrl, driveFileStreamUrl } from '../../lib/drive';
+import { driveFormatBytes, driveFetchFileBlobUrl, driveFetchPreviewBlobUrl, driveFileStreamUrl, driveFileThumbnailUrl } from '../../lib/drive';
 import { filterImageFiles, isImageMime, isGoogleWorkspaceFile, isPdfFile, isVideoFile, LARGE_VIDEO_BYTES } from './DriveFileViews';
 
 function portal(node) {
@@ -88,30 +88,32 @@ export default function PreviewModal({ item, onClose, onDownload, galleryFiles }
     };
   }, [onClose, hasGallery, goPrev, goNext]);
 
+  const [imgFallback, setImgFallback] = useState(0);
+
   useEffect(() => {
     if (!isImage || !currentItem?.id) return undefined;
-    let blobUrl = null;
-    let cancelled = false;
-    setContentLoading(true);
+    setImgFallback(0);
+    setImgSrc(driveFileStreamUrl(currentItem.id));
+    setContentLoading(false);
+    return undefined;
+  }, [currentItem?.id, isImage]);
+
+  const handleImageError = useCallback(() => {
+    if (!currentItem?.id) return;
+    if (imgFallback === 0) {
+      setImgFallback(1);
+      setImgSrc(driveFileThumbnailUrl(currentItem.id));
+      return;
+    }
+    if (imgFallback === 1) {
+      setImgFallback(2);
+      driveFetchFileBlobUrl(currentItem.id)
+        .then((url) => setImgSrc(url))
+        .catch(() => setImgSrc(null));
+      return;
+    }
     setImgSrc(null);
-
-    (async () => {
-      try {
-        blobUrl = await driveFetchFileBlobUrl(currentItem.id);
-        if (!cancelled) setImgSrc(blobUrl);
-      } catch (_) {
-        const thumb = currentItem.thumbnail_url || preview.thumbnail_url;
-        if (!cancelled) setImgSrc(thumb || null);
-      } finally {
-        if (!cancelled) setContentLoading(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
-    };
-  }, [currentItem?.id, currentItem?.thumbnail_url, isImage, preview.thumbnail_url]);
+  }, [currentItem?.id, imgFallback]);
 
   useEffect(() => {
     if (isImage || !usePdfExport || !currentItem?.id) return undefined;
@@ -225,6 +227,7 @@ export default function PreviewModal({ item, onClose, onDownload, galleryFiles }
               alt={currentItem.name}
               className="max-w-[100vw] max-h-[100dvh] w-auto h-auto object-contain select-none cursor-default"
               onClick={(e) => e.stopPropagation()}
+              onError={handleImageError}
               draggable={false}
             />
           ) : (

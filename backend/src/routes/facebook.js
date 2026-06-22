@@ -38,6 +38,21 @@ const {
   shouldBumpFacebookPageSettingsUpdatedAt,
   computeFacebookPageTokenReminder,
 } = require('../helpers/facebookPageTokenReminder');
+const {
+  listImageSets,
+  listAllImageSetsAdmin,
+  getImageSet,
+  createImageSet,
+  updateImageSet,
+  deleteImageSet,
+  listFolderImages,
+  enrichSetWithImageCount,
+  buildImageSendSources,
+  getDriveFolderImagesPreview,
+  sendFolderImagesToContact,
+  publishDriveImageForMessenger,
+  MAX_IMAGES_PER_SEND,
+} = require('../helpers/facebookDriveImageSets');
 
 function parseMaxContactsLinkCleanup(raw) {
   const n = parseInt(raw, 10);
@@ -8663,6 +8678,209 @@ r.post('/tools/link-only-phones/execute', authMiddleware, async (req, res) => {
     res.json(out);
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Bộ ảnh gửi Messenger (nguồn Drive) ─────────────────────────────────────
+
+function resolveImageSetCompanyFilter(scope) {
+  if (!scope || scope.mode === 'all') return null;
+  return scope.companyId || null;
+}
+
+function resolveImageSendCompanyId(req, scope) {
+  const fromScope = resolveImageSetCompanyFilter(scope);
+  if (fromScope) return fromScope;
+  return req.user?.company_id || null;
+}
+
+r.get('/image-send-sources', authMiddleware, async (req, res) => {
+  try {
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
+    const companyId = resolveImageSendCompanyId(req, scope);
+    const sources = await buildImageSendSources(req.user, companyId);
+    res.json(sources);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+r.get('/drive-folder-images', authMiddleware, async (req, res) => {
+  try {
+    const folderId = String(req.query.folder_id || '').trim() || null;
+    const rootId = String(req.query.root_id || '').trim() || null;
+    const syncGoogle = !['0', 'false', 'no'].includes(String(req.query.sync || '').toLowerCase());
+    if (!folderId && !rootId) return res.status(400).json({ error: 'Cần folder_id hoặc root_id' });
+    const preview = await getDriveFolderImagesPreview(req.user, { folderId, rootId, syncGoogle });
+    res.json(preview);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+r.get('/image-sets', authMiddleware, async (req, res) => {
+  try {
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
+    const companyId = resolveImageSetCompanyFilter(scope);
+    const rows = await listImageSets(companyId);
+    const items = await Promise.all(rows.map((row) => enrichSetWithImageCount(req.user, row)));
+    res.json({ items });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+r.get('/image-sets/admin', authMiddleware, async (req, res) => {
+  try {
+    if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Chỉ admin cấu hình bộ ảnh' });
+    const rows = await listAllImageSetsAdmin();
+    const items = await Promise.all(rows.map((row) => enrichSetWithImageCount(req.user, row)));
+    res.json({ items });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+r.get('/image-sets/:id/images', authMiddleware, async (req, res) => {
+  try {
+    const set = await getImageSet(req.params.id);
+    if (!set || !set.is_active) return res.status(404).json({ error: 'Không tìm thấy bộ ảnh' });
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
+    const companyId = resolveImageSetCompanyFilter(scope);
+    if (companyId && set.company_id && String(set.company_id) !== String(companyId)) {
+      return res.status(403).json({ error: 'Bộ ảnh không thuộc phạm vi công ty' });
+    }
+    const images = await listFolderImages(req.user, set.drive_folder_id, MAX_IMAGES_PER_SEND);
+    res.json({ set, images });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+r.post('/image-sets', authMiddleware, async (req, res) => {
+  try {
+    if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Chỉ admin cấu hình bộ ảnh' });
+    const row = await createImageSet(req.user, req.body || {});
+    const enriched = await enrichSetWithImageCount(req.user, row);
+    res.json(enriched);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+r.put('/image-sets/:id', authMiddleware, async (req, res) => {
+  try {
+    if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Chỉ admin cấu hình bộ ảnh' });
+    if (req.body?.drive_folder_id) {
+      const driveAcl = require('../helpers/drivePermissions');
+      const access = await driveAcl.canAccess({
+        user: req.user,
+        targetType: 'folder',
+        targetId: req.body.drive_folder_id,
+        requiredRole: 'viewer',
+      });
+      if (!access.ok) return res.status(403).json({ error: 'Không có quyền thư mục Drive đã chọn' });
+    }
+    const row = await updateImageSet(req.params.id, req.body || {});
+    const enriched = await enrichSetWithImageCount(req.user, row);
+    res.json(enriched);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+r.delete('/image-sets/:id', authMiddleware, async (req, res) => {
+  try {
+    if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Chỉ admin cấu hình bộ ảnh' });
+    await deleteImageSet(req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+r.post('/contacts/:contactId/send-image-set', authMiddleware, async (req, res) => {
+  try {
+    const setId = String(req.body?.set_id || '').trim();
+    if (!setId) return res.status(400).json({ error: 'Cần set_id' });
+
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
+
+    const { data: contact } = await supabase.from('facebook_contacts')
+      .select('*').eq('id', req.params.contactId).single();
+    if (!contact) return res.status(404).json({ error: 'Contact not found' });
+    if (!contactAllowedByFacebookScope(scope, contact)) {
+      return res.status(403).json({ error: 'Không có quyền gửi tin nhắn Facebook từ Page này' });
+    }
+
+    const set = await getImageSet(setId);
+    if (!set || !set.is_active) return res.status(404).json({ error: 'Không tìm thấy bộ ảnh' });
+    const companyId = resolveImageSetCompanyFilter(scope);
+    if (companyId && set.company_id && String(set.company_id) !== String(companyId)) {
+      return res.status(403).json({ error: 'Bộ ảnh không thuộc phạm vi công ty' });
+    }
+
+    const result = await sendFolderImagesToContact({
+      user: req.user,
+      contact,
+      folderId: set.drive_folder_id,
+      label: set.name,
+      imageSetId: set.id,
+      sendMessengerAttachment,
+      ioRef: r._ioRef,
+    });
+
+    res.json({
+      ...result,
+      set: { id: set.id, name: set.name },
+    });
+  } catch (e) {
+    const status = e.status || 500;
+    res.status(status).json({ error: e.message, failed: e.failed });
+  }
+});
+
+r.post('/contacts/:contactId/send-drive-folder', authMiddleware, async (req, res) => {
+  try {
+    const folderId = String(req.body?.folder_id || '').trim() || null;
+    const rootId = String(req.body?.root_id || '').trim() || null;
+    const label = String(req.body?.label || 'Drive').trim() || 'Drive';
+    const fileIds = Array.isArray(req.body?.file_ids)
+      ? req.body.file_ids.map((x) => String(x || '').trim()).filter(Boolean)
+      : null;
+    if (!folderId && !rootId && !fileIds?.length) {
+      return res.status(400).json({ error: 'Cần folder_id, root_id hoặc file_ids' });
+    }
+
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
+
+    const { data: contact } = await supabase.from('facebook_contacts')
+      .select('*').eq('id', req.params.contactId).single();
+    if (!contact) return res.status(404).json({ error: 'Contact not found' });
+    if (!contactAllowedByFacebookScope(scope, contact)) {
+      return res.status(403).json({ error: 'Không có quyền gửi tin nhắn Facebook từ Page này' });
+    }
+
+    const result = await sendFolderImagesToContact({
+      user: req.user,
+      contact,
+      folderId,
+      rootId,
+      label,
+      fileIds,
+      sendMessengerAttachment,
+      ioRef: r._ioRef,
+    });
+
+    res.json(result);
+  } catch (e) {
+    const status = e.status || 500;
+    res.status(status).json({ error: e.message, failed: e.failed });
   }
 });
 

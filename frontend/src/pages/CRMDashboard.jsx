@@ -11,7 +11,7 @@ import {
   FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical,
   Zap, CheckCircle2, TrendingUp, TrendingDown, AlertTriangle, Building2, Rocket, Pin,
   Clock, List, LayoutGrid, GitMerge, UserCheck, Trash2, CheckSquare, BarChart3,
-  MessageSquare, MinusSquare, Settings,
+  MessageSquare, MinusSquare, Settings, Pencil,
 } from 'lucide-react';
 import { ListView, PlannerView, DeadlineView, CommentsView } from '../components/CRMViews';
 import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
@@ -3925,6 +3925,26 @@ export default function CRMDashboard() {
     });
   }, []);
 
+  const saveEstimatedValueFromCard = useCallback(async (item, value) => {
+    if (!item?.id) return;
+    const id = item.id;
+    const num = Math.max(0, Number(value) || 0);
+    const prev = Number(item.estimated_value) || 0;
+    if (num === prev) return;
+    const patch = { estimated_value: num };
+    const updater = (arr) => arr.map((x) => (String(x.id) === String(id) ? { ...x, ...patch } : x));
+    setAllLeads(updater);
+    setAllDeals(updater);
+    try {
+      await api.put(`/crm/leads/${id}`, { estimated_value: num });
+    } catch (e) {
+      const rollback = (arr) => arr.map((x) => (String(x.id) === String(id) ? { ...x, estimated_value: prev } : x));
+      setAllLeads(rollback);
+      setAllDeals(rollback);
+      alert(e.response?.data?.error || 'Lỗi cập nhật giá trị');
+    }
+  }, []);
+
   /** Lưu deadline: kèm chuyển cột hoặc chỉ sửa deadline trên thẻ. */
   const confirmDeadlineMove = async ({ deadlineIso, reason }) => {
     const ctx = deadlineCtx;
@@ -5109,6 +5129,7 @@ export default function CRMDashboard() {
               onTogglePin={togglePinFlag}
               onToggleInteracted={toggleInteractedFlag}
               onOpenDeadline={openDeadlineFromCard}
+              onSaveEstimatedValue={saveEstimatedValueFromCard}
               remeasureToken={showAdvSearch ? 1 : 0}
               explicitExpectedKv={explicitExpectedKvStages}
               onLoadMore={handleLoadMore}
@@ -6363,6 +6384,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
   onTogglePin,
   onToggleInteracted,
   onOpenDeadline,
+  onSaveEstimatedValue,
   explicitExpectedKv,
   columnScrollMode = 'unified',
   columnScrollMaxH,
@@ -6534,6 +6556,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
                 onTogglePin={onTogglePin}
                 onToggleInteracted={onToggleInteracted}
                 onOpenDeadline={onOpenDeadline}
+                onSaveEstimatedValue={onSaveEstimatedValue}
               />
             </div>
           ))
@@ -6544,8 +6567,12 @@ const KanbanStageCard = memo(function KanbanStageCard({
 });
 
 // Kanban Item Card - MISA style (redesign: header gọn, value lớn, footer phụ trách + actions)
-const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline }) {
+const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline, onSaveEstimatedValue }) {
   const navigate = useNavigate();
+  const [editingValue, setEditingValue] = useState(false);
+  const [valueDraft, setValueDraft] = useState('');
+  const [valueSaving, setValueSaving] = useState(false);
+  const valueInputRef = useRef(null);
   const dealDragLocked = isDealCrmKanbanDragLocked(item, pipelineType);
   const openLeadDetail = () => {
     persistCrmPipelineUiNow();
@@ -6562,7 +6589,8 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
     if (
       e.target.closest?.('[data-kanban-select-zone]') ||
       e.target.closest?.('[data-kanban-comment-btn]') ||
-      e.target.closest?.('[data-kanban-flag-btn]')
+      e.target.closest?.('[data-kanban-flag-btn]') ||
+      e.target.closest?.('[data-kanban-value-zone]')
     ) {
       e.preventDefault();
       return;
@@ -6630,6 +6658,32 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
   const dealExpectedOnCard = isDealCard && (Number(item.estimated_value) || 0) > 0
     ? dealWeightedValue(item, [stage])
     : 0;
+  const cardEstimatedValue = Number(item.estimated_value) || 0;
+  const hasCardValue = cardEstimatedValue > 0;
+  const canEditValue = typeof onSaveEstimatedValue === 'function';
+
+  const startEditValue = (ev) => {
+    ev?.stopPropagation?.();
+    if (!canEditValue || valueSaving) return;
+    setValueDraft(hasCardValue ? String(cardEstimatedValue) : '');
+    setEditingValue(true);
+    setTimeout(() => valueInputRef.current?.focus(), 0);
+  };
+
+  const commitValueEdit = async () => {
+    if (!editingValue) return;
+    setEditingValue(false);
+    if (!canEditValue) return;
+    const raw = String(valueDraft || '').replace(/[^\d.]/g, '');
+    const num = raw ? Math.max(0, parseFloat(raw) || 0) : 0;
+    if (num === cardEstimatedValue) return;
+    setValueSaving(true);
+    try {
+      await onSaveEstimatedValue(item, num);
+    } finally {
+      setValueSaving(false);
+    }
+  };
 
   // Badge SX/VC (giữ logic cũ, gói thành biến)
   const sxVcBadge = (() => {
@@ -6721,14 +6775,15 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
           || ev.target.closest?.('[data-kanban-comment-btn]')
           || ev.target.closest?.('[data-kanban-deadline-btn]')
           || ev.target.closest?.('[data-kanban-select-zone]')
+          || ev.target.closest?.('[data-kanban-value-zone]')
         ) {
           return;
         }
         openLeadDetail();
       }}
-      className={`relative overflow-hidden rounded-lg border border-gray-200 !bg-white transition-[box-shadow,transform] duration-150 group/card hover:-translate-y-0.5 hover:shadow-md ${
+      className={`relative overflow-hidden rounded-lg border border-gray-200 !bg-white transition-[box-shadow,transform,z-index] duration-150 group/card hover:-translate-y-0.5 hover:shadow-md ${
         dealDragLocked ? 'cursor-default' : 'cursor-pointer'
-      } ${selectedForMerge ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
+      } ${stage?.is_lost && item.lost_reason ? 'hover:z-20' : ''} ${selectedForMerge ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
       style={{ borderTop: `3px solid ${stageColor}` }}
     >
       {typeof item.kpi_ledger_month_net === 'number' && !stage?.is_lost && (
@@ -6809,30 +6864,75 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
           </span>
         )}
 
-        {/* 3. Giá trị tiền (lớn, xanh) + % xác suất (deal) */}
-        {(item.estimated_value > 0 || (isDealCard && dealPct != null)) && (
-          <div className="flex items-center justify-between gap-2 min-w-0">
-            {item.estimated_value > 0 ? (
-              <p className={`font-bold tabular-nums leading-none text-emerald-600 min-w-0 truncate ${compact ? 'text-[15px]' : 'text-[16px]'}`}>
-                {formatVND(item.estimated_value)}
-              </p>
+        {/* 3. Giá trị tiền (lớn, xanh) — nhập/sửa trực tiếp trên thẻ */}
+        <div
+          data-kanban-value-zone
+          className="flex items-center justify-between gap-2 min-w-0"
+          onClick={(ev) => ev.stopPropagation()}
+        >
+          <div className="flex items-center gap-1 min-w-0 flex-1">
+            {editingValue ? (
+              <input
+                ref={valueInputRef}
+                type="text"
+                inputMode="numeric"
+                value={valueDraft}
+                disabled={valueSaving}
+                onChange={(e) => setValueDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); commitValueEdit(); }
+                  if (e.key === 'Escape') { e.preventDefault(); setEditingValue(false); }
+                }}
+                onBlur={() => { commitValueEdit(); }}
+                placeholder="Giá trị (VNĐ)"
+                className={`min-w-0 flex-1 rounded-md border border-emerald-300 bg-white px-2 py-1 font-mono tabular-nums text-emerald-700 outline-none focus:ring-2 focus:ring-emerald-400/60 ${
+                  compact ? 'text-[12px]' : 'text-[13px]'
+                }`}
+              />
+            ) : hasCardValue ? (
+              <>
+                <p className={`font-bold tabular-nums leading-none text-emerald-600 min-w-0 truncate ${compact ? 'text-[15px]' : 'text-[16px]'}`}>
+                  {formatVND(cardEstimatedValue)}
+                </p>
+                {canEditValue && (
+                  <button
+                    type="button"
+                    onClick={startEditValue}
+                    disabled={valueSaving}
+                    className="shrink-0 flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors cursor-pointer disabled:opacity-40"
+                    title="Sửa giá trị"
+                  >
+                    <Pencil className="h-3.5 w-3.5" strokeWidth={2.2} />
+                  </button>
+                )}
+              </>
+            ) : canEditValue ? (
+              <button
+                type="button"
+                onClick={startEditValue}
+                disabled={valueSaving}
+                className={`inline-flex items-center gap-1 rounded-md border border-dashed border-emerald-300 bg-emerald-50/60 px-2 py-1 font-medium text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer disabled:opacity-40 ${
+                  compact ? 'text-[11px]' : 'text-[12px]'
+                }`}
+                title="Nhập giá trị thẻ"
+              >
+                <Pencil className="h-3 w-3" strokeWidth={2.2} />
+                Nhập giá trị
+              </button>
             ) : (
               <span className="text-[11px] text-slate-400 italic">Chưa định giá</span>
             )}
-            {isDealCard && dealPct != null && (
-              <span
-                className="shrink-0 inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-bold tabular-nums text-violet-700"
-                title={`Xác suất chốt ${dealPct}%${dealExpectedOnCard > 0 ? ` · Giá trị kỳ vọng ${formatVND(dealExpectedOnCard)}` : ''}`}
-              >
-                {dealPct}%
-              </span>
-            )}
           </div>
-        )}
-        {item.estimated_value <= 0 && !isDealCard && !slaBadge && (
-          <span className="text-[11px] text-slate-400 italic">Chưa định giá</span>
-        )}
-        {isDealCard && dealExpectedOnCard > 0 && (
+          {isDealCard && dealPct != null && !editingValue && (
+            <span
+              className="shrink-0 inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-bold tabular-nums text-violet-700"
+              title={`Xác suất chốt ${dealPct}%${dealExpectedOnCard > 0 ? ` · Giá trị kỳ vọng ${formatVND(dealExpectedOnCard)}` : ''}`}
+            >
+              {dealPct}%
+            </span>
+          )}
+        </div>
+        {isDealCard && dealExpectedOnCard > 0 && !editingValue && (
           <p className="text-[10px] font-semibold tabular-nums text-violet-600 leading-none">
             KV {formatVND(dealExpectedOnCard)}
           </p>
@@ -6935,8 +7035,20 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
           );
         })()}
 
-        {/* 8. Lý do thua */}
-        {item.lost_reason && (
+        {/* 8. Lý do hủy/thua — cột is_lost: gợi ý nhỏ, ô đầy đủ khi hover */}
+        {item.lost_reason && stage?.is_lost && (
+          <>
+            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-red-600/85 group-hover/card:hidden">
+              <MessageSquare className="h-3 w-3 shrink-0" strokeWidth={2.2} />
+              Có lý do hủy
+            </span>
+            <div className="hidden group-hover/card:block rounded-md border border-red-200 bg-red-50 px-2 py-1.5 shadow-sm">
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-red-500">Lý do hủy</p>
+              <p className="text-[11px] text-red-700 leading-snug whitespace-pre-wrap">{item.lost_reason}</p>
+            </div>
+          </>
+        )}
+        {item.lost_reason && !stage?.is_lost && (
           <div className="rounded-md border border-red-100 bg-red-50 px-2 py-1">
             <p className="text-[9px] font-semibold uppercase tracking-wide text-red-500">Lý do thua</p>
             <p className="text-[11px] text-red-700 line-clamp-2 leading-snug">{item.lost_reason}</p>
@@ -7064,6 +7176,7 @@ function KanbanView({
   onTogglePin,
   onToggleInteracted,
   onOpenDeadline,
+  onSaveEstimatedValue,
   remeasureToken,
   explicitExpectedKv,
   onLoadMore,
@@ -7299,6 +7412,7 @@ function KanbanView({
               onTogglePin={onTogglePin}
               onToggleInteracted={onToggleInteracted}
               onOpenDeadline={onOpenDeadline}
+              onSaveEstimatedValue={onSaveEstimatedValue}
               explicitExpectedKv={explicitExpectedKv}
               columnScrollMode={columnScrollMode}
               columnScrollMaxH={scrollMaxH}
