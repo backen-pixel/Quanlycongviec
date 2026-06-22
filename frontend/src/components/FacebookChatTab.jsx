@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Image, Paperclip, Send, RefreshCw, ExternalLink } from 'lucide-react';
+import { Image, Paperclip, Send, RefreshCw, ExternalLink, Images } from 'lucide-react';
 import { useAuth } from '../lib/auth';
+import FacebookImageSetPicker from './facebook/FacebookImageSetPicker';
 
 const API = import.meta.env.VITE_API_URL || '';
 const hdr = () => ({
@@ -22,6 +23,7 @@ export default function FacebookChatTab({ leadId, companyId }) {
   const [syncing, setSyncing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
+  const [imageSetOpen, setImageSetOpen] = useState(false);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
@@ -387,6 +389,16 @@ export default function FacebookChatTab({ leadId, companyId }) {
           </button>
           <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => handleFileUpload(e, 'file')} />
 
+          <button
+            type="button"
+            onClick={() => setImageSetOpen(true)}
+            disabled={uploading || !contact}
+            className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg cursor-pointer transition disabled:opacity-40"
+            title="Gửi bộ ảnh từ Drive"
+          >
+            <Images size={18} />
+          </button>
+
           <input
             value={reply}
             onChange={(e) => setReply(e.target.value)}
@@ -406,6 +418,22 @@ export default function FacebookChatTab({ leadId, companyId }) {
           </button>
         </div>
       </div>
+
+      {imageSetOpen && contact && (
+        <FacebookImageSetPicker
+          open
+          variant="modal"
+          onClose={() => setImageSetOpen(false)}
+          contactId={contact.id}
+          companyId={companyId}
+          companyQs={companyQs}
+          disabled={uploading || sending || !contact}
+          onMessagesSent={(msgs) => {
+            setMessages((prev) => [...prev, ...msgs.map((m) => ({ ...m, contact }))]);
+            setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+          }}
+        />
+      )}
     </div>
   );
 }

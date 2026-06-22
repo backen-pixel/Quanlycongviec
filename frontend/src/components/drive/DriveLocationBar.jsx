@@ -9,6 +9,7 @@ export function driveScopeHomeLabel(scope, root) {
   if (scope === 'shared') {
     if (root?.shared_kind === 'shared_company') return 'Drive chung công ty';
     if (root?.shared_kind === 'shared_region') return 'Drive chung khu vực';
+    if (root?.shared_kind === 'company_images') return 'Kho ảnh chung';
     return 'Drive chung module';
   }
   return 'Drive';

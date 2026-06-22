@@ -12,7 +12,7 @@ import {
   HardDrive, FolderPlus, Upload, Star, StarOff, Search, Trash2, RotateCcw, Share2,
   ChevronRight, ChevronDown, Home, Users, Clock, Download, Pencil, Move, Link2, MoreHorizontal,
   Loader2, Building2, User as UserIcon, Globe, Plus, X, FolderOpen, Eye, AlertCircle,
-  MapPin, LayoutGrid, List as ListIcon, Folder as FolderIcon,
+  MapPin, LayoutGrid, List as ListIcon, Folder as FolderIcon, Image,
   FilePlus, FileText, Table2, Tag, Briefcase, PanelLeftClose, PanelLeftOpen, FolderInput, Info,
 } from 'lucide-react';
 import {
@@ -23,7 +23,7 @@ import {
   driveRestoreFile, driveRestoreFolder, driveDeleteFileForever, driveDeleteFolderForever,
   driveSearch, driveOpenDownload, drivePreview, driveHealth, driveFormatBytes,
   driveOrgTree, driveEnsureUserDrive,
-  driveEnsureSharedCompany, driveEnsureSharedRegion,
+  driveEnsureSharedCompany, driveEnsureSharedRegion, driveEnsureCompanyImages,
   driveCreateGoogleFile,
 } from '../lib/drive';
 import DriveLocationBar, { enrichDriveBreadcrumb } from '../components/drive/DriveLocationBar';
@@ -641,11 +641,11 @@ export default function DrivePage() {
     personal: roots.filter((r) => r.scope === 'user' && (!myUserId || r.owner_id === myUserId)),
     moduleShared: roots.filter((r) =>
       r.scope === 'shared'
-      && ['shared_company', 'shared_region'].includes(r.shared_kind)
+      && ['shared_company', 'shared_region', 'company_images'].includes(r.shared_kind)
       && (r.module_key || 'other').toLowerCase() === scopeModuleKey
     ),
     otherShared: roots.filter((r) =>
-      r.scope === 'shared' && !['shared_company', 'shared_region'].includes(r.shared_kind)
+      r.scope === 'shared' && !['shared_company', 'shared_region', 'company_images'].includes(r.shared_kind)
     ),
   }), [roots, scopeModuleKey, myUserId]);
 
@@ -1430,11 +1430,14 @@ function mergeCompaniesFromModules(modules) {
     for (const co of mod.companies || []) {
       let merged = map.get(co.id);
       if (!merged) {
-        merged = { id: co.id, name: co.name, sharedRoots: [], regions: [] };
+        merged = { id: co.id, name: co.name, sharedRoots: [], companyImagesRoots: [], regions: [] };
         map.set(co.id, merged);
       }
       if (co.shared_root_id && !merged.sharedRoots.some((s) => s.moduleKey === mod.key)) {
         merged.sharedRoots.push({ moduleKey: mod.key, rootId: co.shared_root_id });
+      }
+      if (co.company_images_root_id && !merged.companyImagesRoots.some((s) => s.moduleKey === mod.key)) {
+        merged.companyImagesRoots.push({ moduleKey: mod.key, rootId: co.company_images_root_id });
       }
       for (const rg of co.regions || []) {
         const rgKey = rg.id || 'none';
@@ -1631,6 +1634,18 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, isSystemA
     } catch (e) { alert(e?.response?.data?.error || e?.message || 'Không mở được Drive chung khu vực'); }
   }
 
+  async function openCompanyImages(companyId, moduleKey, existingRootId) {
+    try {
+      if (existingRootId) {
+        await openRootById(existingRootId);
+        return;
+      }
+      const r = await driveEnsureCompanyImages(companyId, moduleKey || 'crm');
+      await openRootById(r?.root?.id);
+      await loadTree(moduleFilter || undefined);
+    } catch (e) { alert(e?.response?.data?.error || e?.message || 'Không mở được kho ảnh chung'); }
+  }
+
   function countRegionEmployees(rg) {
     return (rg.categories || []).reduce(
       (acc, cat) => acc + (cat.departments || []).reduce((a2, d) => a2 + (d.employees?.length || 0), 0),
@@ -1664,6 +1679,9 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, isSystemA
   const activeSharedRegionCls = moduleLayout
     ? 'bg-indigo-50/80 text-indigo-800 font-medium'
     : 'bg-amber-50 text-amber-800 font-medium';
+  const activeCompanyImagesCls = moduleLayout
+    ? 'bg-blue-50 text-blue-800 font-semibold'
+    : 'bg-blue-50 text-blue-800 font-medium';
 
   function countCompanyEmployees(co) {
     return (co.regions || []).reduce((acc, rg) => acc + countRegionEmployees(rg), 0);
@@ -1703,6 +1721,27 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, isSystemA
                   <Globe size={11} className="text-emerald-500 shrink-0" />
                   <span className="truncate">
                     Chung công ty{(co.sharedRoots?.length || 0) > 1 ? ` · ${moduleScopeLabel(sr.moduleKey)}` : ''}
+                  </span>
+                </button>
+              ))}
+              {(co.companyImagesRoots?.length
+                ? co.companyImagesRoots
+                : [{ moduleKey: 'crm', rootId: null }]
+              ).map((ir) => (
+                <button
+                  key={`${co.id}-images-${ir.moduleKey}`}
+                  type="button"
+                  onClick={() => openCompanyImages(co.id, ir.moduleKey, ir.rootId)}
+                  className={`w-full flex items-center gap-1.5 px-1.5 py-1 rounded-lg text-left text-[12px] ${
+                    activeRootId === ir.rootId && ir.rootId
+                      ? activeCompanyImagesCls
+                      : 'text-blue-700 hover:bg-blue-50'
+                  }`}
+                  title={`Kho ảnh chung — ${moduleScopeLabel(ir.moduleKey)}`}
+                >
+                  <Image size={11} className="text-blue-500 shrink-0" />
+                  <span className="truncate">
+                    Kho ảnh chung{(co.companyImagesRoots?.length || 0) > 1 ? ` · ${moduleScopeLabel(ir.moduleKey)}` : ''}
                   </span>
                 </button>
               ))}
@@ -1849,6 +1888,21 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, isSystemA
                 <Globe size={11} className="text-emerald-500 shrink-0" />
                 <span className="truncate">Chung công ty</span>
               </button>
+              {(mod.key === 'crm' || co.company_images_root_id) && (
+                <button
+                  type="button"
+                  onClick={() => openCompanyImages(co.id, 'crm', co.company_images_root_id || null)}
+                  className={`w-full flex items-center gap-1.5 px-1.5 py-1 rounded-lg text-left text-[12px] ${
+                    activeRootId === co.company_images_root_id && co.company_images_root_id
+                      ? activeCompanyImagesCls
+                      : 'text-blue-700 hover:bg-blue-50'
+                  }`}
+                  title={`Kho ảnh chung — ${mod.name}`}
+                >
+                  <Image size={11} className="text-blue-500 shrink-0" />
+                  <span className="truncate">Kho ảnh chung</span>
+                </button>
+              )}
               {(co.regions || []).map((rg) => {
                 const rgKey = `${coKey}:${rg.id || 'none'}`;
                 const rgOpen = expanded.regions.has(rgKey);

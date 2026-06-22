@@ -385,6 +385,21 @@ async function listChanges(pageToken) {
   return data;
 }
 
+/** Liệt kê file/folder con trực tiếp trên Google Drive (không qua DB). */
+async function listChildren(parentId, { pageSize = 200 } = {}) {
+  if (!parentId) return [];
+  const drive = getDriveClient();
+  const { data } = await drive.files.list({
+    q: `'${parentId}' in parents and trashed = false`,
+    fields: `files(${FILE_FIELDS})`,
+    pageSize,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+    orderBy: 'name',
+  });
+  return data.files || [];
+}
+
 module.exports = {
   isConfigured,
   getAuthMode,
@@ -408,6 +423,7 @@ module.exports = {
   isGoogleNativeExportable,
   getStartPageToken,
   listChanges,
+  listChildren,
   FOLDER_MIME,
   GOOGLE_DOC_MIME,
   GOOGLE_SHEET_MIME,

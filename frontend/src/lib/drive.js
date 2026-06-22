@@ -24,6 +24,13 @@ export const driveEnsureCompanyRoot = (company_id) =>
   api.post('/drive/roots/ensure-company', company_id ? { company_id } : {}).then((r) => r.data);
 export const driveEnsureSharedCompany = (company_id, module_key = 'other') =>
   api.post('/drive/roots/ensure-shared-company', { company_id, module_key }).then((r) => r.data);
+
+/** Kho ảnh chung công ty — CRM/_Kho ảnh chung (mỗi công ty 1 Drive). */
+export const driveEnsureCompanyImages = (company_id, module_key = 'crm') =>
+  api.post('/drive/roots/ensure-company-images', { company_id, module_key }).then((r) => r.data);
+
+export const driveGetCompanyImages = (company_id, module_key = 'crm') =>
+  api.get('/drive/company-images', { params: { company_id, module_key } }).then((r) => r.data);
 export const driveEnsureSharedRegion = (region_id, module_key = 'other') =>
   api.post('/drive/roots/ensure-shared-region', { region_id, module_key }).then((r) => r.data);
 export const driveResetPersonalRoot = (user_id) =>

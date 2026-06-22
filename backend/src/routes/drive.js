@@ -8,6 +8,8 @@
  *   POST   /api/drive/roots/ensure-company         - đảm bảo Drive công ty của user (admin)
  *   POST   /api/drive/roots/ensure-shared-company  - đảm bảo Drive CHUNG công ty (auto viewer cho cty)
  *   POST   /api/drive/roots/ensure-shared-region   - đảm bảo Drive CHUNG khu vực (auto viewer cho region)
+ *   POST   /api/drive/roots/ensure-company-images  - kho ảnh chung công ty (CRM/_Kho ảnh chung)
+ *   GET    /api/drive/company-images               - lấy kho ảnh + thư mục/ảnh (query company_id)
  *   POST   /api/drive/roots/reset-personal         - xoá metadata Drive cá nhân để tạo lại theo cấu trúc mới
  *
  *   GET    /api/drive/org-tree                     - cây Module → Cty → KV → Loại → PB → NV
@@ -242,7 +244,7 @@ async function upsertSharedRootFromPath({ sp, shared_kind, company_id, region_id
     .eq('google_folder_id', sp.google_folder_id)
     .maybeSingle();
   if (existing) {
-    await supabase
+    const { data: updated, error: updErr } = await supabase
       .from('drive_roots')
       .update({
         module_key,
@@ -252,8 +254,11 @@ async function upsertSharedRootFromPath({ sp, shared_kind, company_id, region_id
         name: sp.name,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', existing.id);
-    return { root: existing, created: false };
+      .eq('id', existing.id)
+      .select()
+      .single();
+    if (updErr) throw updErr;
+    return { root: updated || existing, created: false };
   }
   const ins = await supabase
     .from('drive_roots')
@@ -1453,6 +1458,171 @@ r.post('/roots/ensure-shared-region', async (req, res) => {
   }
 });
 
+/** User được thao tác kho ảnh công ty: cùng công ty hoặc admin. */
+function canAccessCompanyImages(req, companyId) {
+  if (!companyId || !isUuid(companyId)) return false;
+  if (isSystemAdmin(req.user)) return true;
+  if (canAdminAccessCompany(req, companyId)) return true;
+  const myCid = req.user?.company_id;
+  return !!myCid && String(myCid) === String(companyId);
+}
+
+async function grantCompanyImagesAcl(rootId, companyId, grantedBy) {
+  await supabase
+    .from('drive_acl')
+    .upsert(
+      {
+        target_type: 'root',
+        target_id: rootId,
+        principal_type: 'company',
+        principal_id: companyId,
+        role: 'editor',
+        granted_by: grantedBy || null,
+      },
+      { onConflict: 'target_type,target_id,principal_type,principal_id' },
+    );
+}
+
+async function findCompanyImagesRoot(companyId) {
+  const { data } = await supabase
+    .from('drive_roots')
+    .select('*')
+    .eq('shared_kind', 'company_images')
+    .eq('company_id', companyId)
+    .maybeSingle();
+  return data || null;
+}
+
+/**
+ * Tạo/lấy kho ảnh chung công ty (CRM/_Kho ảnh chung).
+ * Body: { company_id, module_key? = 'crm' }
+ */
+r.post('/roots/ensure-company-images', async (req, res) => {
+  if (!requireGdrive(req, res)) return;
+  try {
+    const { company_id, module_key = 'crm' } = req.body || {};
+    if (!isUuid(company_id)) return res.status(400).json({ error: 'company_id không hợp lệ' });
+    if (!canAccessCompanyImages(req, company_id)) {
+      return res.status(403).json({ error: 'Không có quyền với kho ảnh công ty này' });
+    }
+
+    const modKey = String(module_key || 'crm').toLowerCase();
+    let existing = await findCompanyImagesRoot(company_id);
+    if (existing) {
+      await grantCompanyImagesAcl(existing.id, company_id, req.user.userId || null);
+      const access = await driveAcl.canAccess({ user: req.user, targetType: 'root', targetId: existing.id, requiredRole: 'viewer' });
+      const children = access.ok
+        ? await listChildrenForRootOrFolder({ rootId: existing.id })
+        : { folders: [], files: [] };
+      return res.json({
+        root: existing,
+        created: false,
+        scope: 'company_images',
+        company_id,
+        module_key: modKey,
+        children,
+        role: access.role || null,
+      });
+    }
+
+    const sp = await driveOrgPath.ensureCompanyImagesPath({ companyId: company_id, moduleKey: modKey });
+    const { root, created } = await upsertSharedRootFromPath({
+      sp,
+      shared_kind: 'company_images',
+      company_id,
+      region_id: null,
+      module_key: modKey,
+      created_by: req.user.userId || null,
+    });
+    await grantCompanyImagesAcl(root.id, company_id, req.user.userId || null);
+    await logDriveActivity({
+      user: req.user,
+      action: 'create_root',
+      targetType: 'root',
+      targetId: root.id,
+      targetName: root.name,
+      rootId: root.id,
+      meta: { kind: 'company_images', company_id, module_key: modKey },
+    });
+
+    const children = await listChildrenForRootOrFolder({ rootId: root.id });
+    res.status(created ? 201 : 200).json({
+      root,
+      created,
+      segments: sp.segments,
+      scope: 'company_images',
+      company_id,
+      module_key: modKey,
+      children,
+      role: 'editor',
+    });
+  } catch (e) {
+    console.error('ensure-company-images error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Lấy kho ảnh công ty + danh sách thư mục/ảnh (tự ensure nếu chưa có).
+ * Query: company_id, module_key?=crm
+ */
+r.get('/company-images', async (req, res) => {
+  if (!requireGdrive(req, res)) return;
+  try {
+    const company_id = String(req.query.company_id || '').trim();
+    const module_key = String(req.query.module_key || 'crm').toLowerCase();
+    if (!isUuid(company_id)) return res.status(400).json({ error: 'company_id không hợp lệ' });
+    if (!canAccessCompanyImages(req, company_id)) {
+      return res.status(403).json({ error: 'Không có quyền xem kho ảnh công ty này' });
+    }
+
+    let root = await findCompanyImagesRoot(company_id);
+    let created = false;
+    if (!root) {
+      const sp = await driveOrgPath.ensureCompanyImagesPath({ companyId: company_id, moduleKey: module_key });
+      const upserted = await upsertSharedRootFromPath({
+        sp,
+        shared_kind: 'company_images',
+        company_id,
+        region_id: null,
+        module_key,
+        created_by: req.user.userId || null,
+      });
+      root = upserted.root;
+      created = upserted.created;
+      await grantCompanyImagesAcl(root.id, company_id, req.user.userId || null);
+    } else {
+      await grantCompanyImagesAcl(root.id, company_id, req.user.userId || null);
+    }
+
+    const access = await driveAcl.canAccess({ user: req.user, targetType: 'root', targetId: root.id, requiredRole: 'viewer' });
+    if (!access.ok && !canAccessCompanyImages(req, company_id)) {
+      return res.status(403).json({ error: 'Không có quyền truy cập kho ảnh' });
+    }
+
+    const children = await listChildrenForRootOrFolder({ rootId: root.id });
+    const imageFiles = (children.files || []).filter((f) => {
+      const mime = f.mime_type || '';
+      const name = f.name || '';
+      return mime.startsWith('image/') || /\.(jpe?g|png|gif|webp|bmp|avif|heic|heif)$/i.test(name);
+    });
+
+    res.json({
+      root,
+      created,
+      company_id,
+      module_key,
+      role: access.ok ? access.role : 'editor',
+      folders: children.folders || [],
+      files: imageFiles,
+      image_count: imageFiles.length,
+    });
+  } catch (e) {
+    console.error('GET company-images error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════
 // ORG TREE — duyệt Drive theo Công ty → Khu vực → Phòng ban → Nhân viên
 // ═══════════════════════════════════════════════════════════════════
@@ -1526,7 +1696,7 @@ r.get('/org-tree', async (req, res) => {
       .from('drive_roots')
       .select('id,module_key,company_id,region_id,shared_kind')
       .eq('scope', 'shared')
-      .in('shared_kind', ['shared_company', 'shared_region']);
+      .in('shared_kind', ['shared_company', 'shared_region', 'company_images']);
     if (!sharedRootsRes.error) {
       sharedRoots = sharedRootsRes.data || [];
     }
@@ -1556,6 +1726,7 @@ r.get('/org-tree', async (req, res) => {
 
     const sharedCompanyByKey = new Map();
     const sharedRegionByKey = new Map();
+    const companyImagesByKey = new Map();
     for (const sr of sharedRoots) {
       const mk = (sr.module_key || 'other').toLowerCase();
       if (sr.shared_kind === 'shared_company' && sr.company_id) {
@@ -1563,6 +1734,31 @@ r.get('/org-tree', async (req, res) => {
       }
       if (sr.shared_kind === 'shared_region' && sr.region_id) {
         sharedRegionByKey.set(`${mk}:${sr.region_id}`, sr.id);
+      }
+      if (sr.shared_kind === 'company_images' && sr.company_id) {
+        companyImagesByKey.set(`${mk}:${sr.company_id}`, sr.id);
+      }
+    }
+
+    // Auto đảm bảo kho ảnh chung CRM cho công ty của user hiện tại
+    if (meCompanyId && gdrive.isConfigured()) {
+      const imgKey = `crm:${meCompanyId}`;
+      if (!companyImagesByKey.has(imgKey) && (!filterModule || filterModule === 'crm')) {
+        try {
+          const sp = await driveOrgPath.ensureCompanyImagesPath({ companyId: meCompanyId, moduleKey: 'crm' });
+          const { root } = await upsertSharedRootFromPath({
+            sp,
+            shared_kind: 'company_images',
+            company_id: meCompanyId,
+            region_id: null,
+            module_key: 'crm',
+            created_by: req.user.userId || null,
+          });
+          await grantCompanyImagesAcl(root.id, meCompanyId, req.user.userId || null);
+          companyImagesByKey.set(imgKey, root.id);
+        } catch (e) {
+          console.warn('org-tree auto ensure company images:', e.message);
+        }
       }
     }
 
@@ -1628,9 +1824,12 @@ r.get('/org-tree', async (req, res) => {
             id: co.id,
             name: co.name,
             shared_root_id: sharedCompanyByKey.get(`${moduleKey}:${co.id}`) || null,
+            company_images_root_id: companyImagesByKey.get(`${moduleKey}:${co.id}`) || null,
             regions: [],
           };
           mod.companies.push(compNode);
+        } else if (!compNode.company_images_root_id) {
+          compNode.company_images_root_id = companyImagesByKey.get(`${moduleKey}:${co.id}`) || null;
         }
 
         const byRegion = new Map();
@@ -1693,6 +1892,28 @@ r.get('/org-tree', async (req, res) => {
         }
         compNode.regions.sort((a, b) => a.name.localeCompare(b.name, 'vi'));
       }
+    }
+
+    // Mọi công ty có node CRM (kể cả chưa có nhân viên) — hiện Drive chung & kho ảnh
+    const crmModuleKey = 'crm';
+    if (!filterModule || filterModule === crmModuleKey) {
+      const crmMod = ensureBranch(crmModuleKey, driveOrgPath.moduleLabel(crmModuleKey));
+      for (const co of companies) {
+        let compNode = crmMod.companies.find((c) => c.id === co.id);
+        if (!compNode) {
+          compNode = {
+            id: co.id,
+            name: co.name,
+            shared_root_id: sharedCompanyByKey.get(`${crmModuleKey}:${co.id}`) || null,
+            company_images_root_id: companyImagesByKey.get(`${crmModuleKey}:${co.id}`) || null,
+            regions: [],
+          };
+          crmMod.companies.push(compNode);
+        } else if (!compNode.company_images_root_id) {
+          compNode.company_images_root_id = companyImagesByKey.get(`${crmModuleKey}:${co.id}`) || null;
+        }
+      }
+      crmMod.companies.sort((a, b) => a.name.localeCompare(b.name, 'vi'));
     }
 
     const ORDER = ['crm', 'sx', 'vc', 'mkt', 'other'];
