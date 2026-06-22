@@ -107,6 +107,14 @@ function resolveSxProjectProbability(project, stage, dealProbability) {
   return null;
 }
 
+function resolveSxProjectValue(project) {
+  const pv = Number(project?.production_value);
+  if (Number.isFinite(pv) && pv > 0) return pv;
+  const ev = Number(project?.estimated_value);
+  if (Number.isFinite(ev) && ev > 0) return ev;
+  return 0;
+}
+
 function computeSxRevenueKpis(projects, stages, dealProbByProjectId = {}) {
   const list = Array.isArray(projects) ? projects : [];
   const st = Array.isArray(stages) ? stages : [];
@@ -124,7 +132,7 @@ function computeSxRevenueKpis(projects, stages, dealProbByProjectId = {}) {
   const now = new Date();
 
   for (const p of list) {
-    const val = Number(p.production_value) || 0;
+    const val = resolveSxProjectValue(p);
     const col = stageById(st, p.sx_kanban_column_id);
     if (projectCountsAsSxWonRevenue(p, st)) wonRevenue += val;
     if (projectCountsAsSxCompletedRevenue(p, st)) completedRevenue += val;
@@ -167,6 +175,7 @@ function computeSxRevenueKpis(projects, stages, dealProbByProjectId = {}) {
 module.exports = {
   INTAKE_BUCKET,
   VC_SHIPPED_STATUSES,
+  resolveSxProjectValue,
   pickSxWonStageIds,
   pickSxCompletedStageIds,
   pickSxCollectedStageIds,
