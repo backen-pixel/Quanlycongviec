@@ -58,8 +58,6 @@ export default function NewDealModal({
   const [referrers, setReferrers] = useState([]);
   const [referrerPick, setReferrerPick] = useState('');
   const [modalWorkTypes, setModalWorkTypes] = useState([]);
-  const [externalCompanies, setExternalCompanies] = useState([]);
-  const [externalCompanyPick, setExternalCompanyPick] = useState('');
   const [clientCompanies, setClientCompanies] = useState([]);
   const [clientCompanyPick, setClientCompanyPick] = useState('');
 
@@ -136,33 +134,17 @@ export default function NewDealModal({
   }, [isProduction, requiresClientCompany, defaultExternalCompanyName, clientCompanies, clientCompanyPick]);
 
   useEffect(() => {
-    if (!isProduction) return undefined;
-    const cid = String(formData.company_id || '').trim();
-    if (!cid) {
-      setExternalCompanies([]);
-      setExternalCompanyPick('');
-      return undefined;
-    }
-    let cancelled = false;
-    api.get('/production/external-companies', { params: { company_id: cid } })
-      .then((r) => {
-        if (cancelled) return;
-        setExternalCompanies(Array.isArray(r.data?.items) ? r.data.items : []);
-      })
-      .catch(() => { if (!cancelled) setExternalCompanies([]); });
-    return () => { cancelled = true; };
-  }, [isProduction, formData.company_id]);
-
-  useEffect(() => {
-    if (!isProduction || !defaultExternalCompanyName || externalCompanyPick) return;
-    const needle = String(defaultExternalCompanyName).trim().toLowerCase();
-    if (!needle || !externalCompanies.length) return;
-    const hit = externalCompanies.find((c) => {
-      const name = String(c.name || '').trim().toLowerCase();
-      return name === needle || name.includes('vạn phú') || name.includes('vpt');
+    if (!isProduction || requiresClientCompany) return;
+    if (clientCompanyPick) return;
+    const needle = String(defaultExternalCompanyName || '').trim().toLowerCase();
+    if (!needle || !clientCompanies.length) return;
+    const hit = clientCompanies.find((c) => {
+      const name = String(c.name || '').toLowerCase();
+      const sn = String(c.short_name || '').toLowerCase();
+      return name === needle || sn === needle || name.includes('vạn phú') || name.includes('vpt');
     });
-    if (hit) setExternalCompanyPick(String(hit.id));
-  }, [isProduction, defaultExternalCompanyName, externalCompanies, externalCompanyPick]);
+    if (hit) setClientCompanyPick(String(hit.id));
+  }, [isProduction, requiresClientCompany, defaultExternalCompanyName, clientCompanies, clientCompanyPick]);
 
   useEffect(() => {
     if (isProduction) return undefined;
@@ -271,19 +253,30 @@ export default function NewDealModal({
   }, [modalRegions, formData.region_id]);
 
   const resolvedClientCompany = useMemo(() => {
-    if (!clientCompanyPick) return null;
+    if (!clientCompanyPick || clientCompanyPick === '__new__') return null;
     return clientCompanies.find((c) => String(c.id) === String(clientCompanyPick)) || null;
   }, [clientCompanyPick, clientCompanies]);
 
+  const clientCrmCompanyOptions = useMemo(
+    () => clientCompanies.filter((c) => c.client_company_id),
+    [clientCompanies],
+  );
+
+  const clientExternalCatalogOptions = useMemo(
+    () => clientCompanies.filter((c) => !c.client_company_id),
+    [clientCompanies],
+  );
+
   const resolvedExternalCompanyName = useMemo(() => {
-    if (isProduction && resolvedClientCompany) {
+    if (!isProduction) return '';
+    if (resolvedClientCompany) {
       return resolvedClientCompany.short_name || resolvedClientCompany.name || '';
     }
-    if (!isProduction || !externalCompanyPick) return '';
-    if (externalCompanyPick === '__new__') return String(formData.external_company_name || '').trim();
-    const hit = externalCompanies.find((x) => String(x.id) === String(externalCompanyPick));
-    return hit?.name?.trim() || '';
-  }, [isProduction, resolvedClientCompany, externalCompanyPick, externalCompanies, formData.external_company_name]);
+    if (clientCompanyPick === '__new__') {
+      return String(formData.external_company_name || '').trim();
+    }
+    return '';
+  }, [isProduction, resolvedClientCompany, clientCompanyPick, formData.external_company_name]);
 
   const clientCompanySubmit = useMemo(() => {
     if (!resolvedClientCompany) return null;
@@ -316,8 +309,8 @@ export default function NewDealModal({
       if (requiresClientCompany && !clientCompanyPick) {
         return alert('Chọn công ty chủ deal (công ty đặt hàng từ CRM)');
       }
-      if (!requiresClientCompany && externalCompanyPick === '__new__' && !formData.external_company_name?.trim()) {
-        return alert('Nhập tên công ty bên ngoài hoặc chọn «Không chọn»');
+      if (clientCompanyPick === '__new__' && !formData.external_company_name?.trim()) {
+        return alert('Nhập tên công ty đặt hàng');
       }
     }
 
@@ -336,9 +329,15 @@ export default function NewDealModal({
           install_address: formData.install_address || null,
           estimated_value: parseFloat(formData.estimated_value) || 0,
           description: formData.description || null,
-          external_company_name: clientCompanySubmit?.external_company_name || resolvedExternalCompanyName || null,
-          external_company_id: clientCompanySubmit?.external_company_id || null,
-          external_catalog_id: clientCompanySubmit?.external_catalog_id || null,
+          external_company_name: clientCompanyPick === '__new__'
+            ? String(formData.external_company_name || '').trim()
+            : (clientCompanySubmit?.external_company_name || resolvedExternalCompanyName || null),
+          external_company_id: clientCompanyPick === '__new__'
+            ? null
+            : (clientCompanySubmit?.external_company_id || null),
+          external_catalog_id: clientCompanyPick === '__new__'
+            ? null
+            : (clientCompanySubmit?.external_catalog_id || null),
         });
         const payload = {
           ...data,
@@ -457,7 +456,6 @@ export default function NewDealModal({
                     <select
                       value={formData.company_id}
                       onChange={(e) => {
-                        setExternalCompanyPick('');
                         setClientCompanyPick('');
                         setFormData((prev) => ({
                           ...prev,
@@ -555,57 +553,53 @@ export default function NewDealModal({
                 </div>
               </div>
 
-              {isProduction && formData.company_id && requiresClientCompany && (
+              {isProduction && formData.company_id && (
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
-                    🏢 Công ty chủ deal (CRM) <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    required
-                    value={clientCompanyPick}
-                    onChange={(e) => setClientCompanyPick(e.target.value)}
-                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 ${ringClass} text-sm ${
-                      !clientCompanyPick ? 'border-red-300 bg-red-50' : 'border-gray-200'
-                    }`}
-                  >
-                    <option value="">-- Chọn công ty đặt hàng --</option>
-                    {clientCompanies.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.short_name || c.name}
-                        {c.source === 'external' && c.name !== (c.short_name || '') ? ` (${c.name})` : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-1 text-[10px] text-gray-400">
-                    Gồm công ty CRM đã liên kết và danh mục công ty ngoài (VPT → Vạn Phú Thành CRM)
-                  </p>
-                </div>
-              )}
-
-              {isProduction && formData.company_id && !requiresClientCompany && (
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">
-                    🏢 Công ty bên ngoài / đơn vị đối tác
+                    🏢 Công ty đặt hàng
+                    {requiresClientCompany ? (
+                      <span className="text-red-500"> *</span>
+                    ) : (
+                      <span className="font-normal text-gray-500"> (tùy chọn)</span>
+                    )}
                     {allowProductionCompanyPick && defaultExternalCompanyName ? (
-                      <span className="ml-1 font-normal text-indigo-600">(mặc định: {defaultExternalCompanyName})</span>
+                      <span className="ml-1 font-normal text-indigo-600">(gợi ý: {defaultExternalCompanyName})</span>
                     ) : null}
                   </label>
                   <select
-                    value={externalCompanyPick}
+                    required={requiresClientCompany}
+                    value={clientCompanyPick}
                     onChange={(e) => {
                       const v = e.target.value;
-                      setExternalCompanyPick(v);
+                      setClientCompanyPick(v);
                       if (v !== '__new__') set('external_company_name', '');
                     }}
-                    className={`w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 ${ringClass} text-sm`}
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 ${ringClass} text-sm ${
+                      requiresClientCompany && !clientCompanyPick ? 'border-red-300 bg-red-50' : 'border-gray-200'
+                    }`}
                   >
-                    <option value="">— Không chọn —</option>
-                    {externalCompanies.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                    <option value="__new__">➕ Nhập công ty mới…</option>
+                    {!requiresClientCompany && <option value="">— Không chọn —</option>}
+                    {requiresClientCompany && <option value="">-- Chọn công ty đặt hàng --</option>}
+                    {clientCrmCompanyOptions.length > 0 && (
+                      <optgroup label="Công ty CRM">
+                        {clientCrmCompanyOptions.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.short_name || c.name}
+                            {c.source === 'workshop' ? ' · đã liên kết' : ''}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {clientExternalCatalogOptions.length > 0 && (
+                      <optgroup label="Danh mục công ty ngoài">
+                        {clientExternalCatalogOptions.map((c) => (
+                          <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    <option value="__new__">➕ Công ty khác (nhập tên mới)</option>
                   </select>
-                  {externalCompanyPick === '__new__' && (
+                  {clientCompanyPick === '__new__' && (
                     <input
                       type="text"
                       value={formData.external_company_name}
@@ -613,12 +607,13 @@ export default function NewDealModal({
                       className={`mt-2 w-full px-3 py-2 border rounded-lg focus:ring-2 ${ringClass} text-sm ${
                         !formData.external_company_name?.trim() ? 'border-amber-300 bg-amber-50' : 'border-gray-200'
                       }`}
-                      placeholder="VD: Công ty đối tác B2B"
+                      placeholder="VD: Công ty ABC, Phúc Đạt Door…"
                       autoFocus
                     />
                   )}
                   <p className="mt-1 text-[10px] text-gray-400">
-                    Tùy chọn — tên mới sẽ được lưu vào danh sách để chọn lại lần sau
+                    Danh sách gồm công ty CRM trong hệ thống và công ty đã lưu trước đó.
+                    Chọn «Công ty khác» chỉ khi cần nhập tên mới — danh sách CRM vẫn giữ nguyên.
                   </p>
                 </div>
               )}
