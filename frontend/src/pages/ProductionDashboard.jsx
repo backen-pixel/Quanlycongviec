@@ -38,6 +38,7 @@ import {
 import {
   buildSxPipelineStageMeta,
   computeSxRevenueKpis,
+  resolveSxProjectValue,
   getSxPipelineStageSlaTone,
   isSxColumnSlaOverdue,
   resolveSxHandoverColumnId,
@@ -1708,11 +1709,9 @@ export default function ProductionDashboard() {
             <KPICard
               accent="bg-amber-500"
               label="Công nợ"
-              value={HIDE_PRODUCTION_DEAL_VALUES
-                ? (scopeKpis.debt_count > 0 ? scopeKpis.debt_count : '—')
-                : ((scopeKpis.debt_count > 0 || scopeKpis.debt_revenue_value > 0)
-                  ? formatVND(scopeKpis.debt_revenue_value || 0)
-                  : '—')}
+              value={(scopeKpis.debt_count > 0 || scopeKpis.debt_revenue_value > 0)
+                ? formatVND(scopeKpis.debt_revenue_value || 0)
+                : '—'}
               descriptor={scopeKpis.debt_count > 0
                 ? `${scopeKpis.debt_count} dự án · đã công, chưa thu`
                 : 'đã công, chưa thu'}
@@ -1720,11 +1719,9 @@ export default function ProductionDashboard() {
             <KPICard
               accent="bg-emerald-600"
               label="Đã thu"
-              value={HIDE_PRODUCTION_DEAL_VALUES
-                ? (scopeKpis.collected_count > 0 ? scopeKpis.collected_count : '—')
-                : ((scopeKpis.collected_count > 0 || scopeKpis.collected_revenue_value > 0)
-                  ? formatVND(scopeKpis.collected_revenue_value || 0)
-                  : '—')}
+              value={(scopeKpis.collected_count > 0 || scopeKpis.collected_revenue_value > 0)
+                ? formatVND(scopeKpis.collected_revenue_value || 0)
+                : '—'}
               descriptor={scopeKpis.collected_count > 0
                 ? `${scopeKpis.collected_count} dự án · theo cột pipeline`
                 : 'theo cột pipeline'}
@@ -2509,7 +2506,7 @@ function KPICard({ accent = 'bg-blue-500', label, value, descriptor, valueTone }
 function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline, onTogglePin }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const stageColor = stage.color || '#94a3b8';
-  const totalValue = items.reduce((sum, p) => sum + (Number(p.production_value) || 0), 0);
+  const totalValue = items.reduce((sum, p) => sum + resolveSxProjectValue(p), 0);
 
   const handleColumnDragOver = (e) => {
     e.preventDefault();
@@ -2587,11 +2584,9 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
             </div>
           );
         })()}
-        {!HIDE_PRODUCTION_DEAL_VALUES && (
-          <p className="text-[11px] text-gray-500 tabular-nums mt-0.5">
-            {totalValue > 0 ? formatVND(totalValue) : '0đ'}
-          </p>
-        )}
+        <p className="text-[11px] text-gray-500 tabular-nums mt-0.5 font-medium">
+          {totalValue > 0 ? formatVND(totalValue) : '0đ'}
+        </p>
       </div>
 
       {/* Cards container — không viền, không nền (sạch sẽ như mockup) */}
@@ -2623,6 +2618,7 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
   const navigate = useNavigate();
   const [handingOver, setHandingOver] = useState(false);
   const sxLeadId = resolveSxProjectLeadId(item);
+  const projectValue = resolveSxProjectValue(item);
 
   const handleDragStart = (e) => {
     if (e.target.closest?.('[data-workshop-bulk-checkbox]')) {
@@ -2836,13 +2832,13 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
       )}
 
       {/* Row 3: Giá trị + Deadline cùng hàng */}
-      {((Number(item.production_value) > 0) || primaryDeadline) && (
+      {((projectValue > 0) || primaryDeadline) && (
         <div className="flex items-center justify-between gap-2 mb-1.5 min-w-0">
           {(
-            Number(item.production_value) > 0
+            projectValue > 0
               ? (
                 <p className="text-sm font-bold text-emerald-600 tabular-nums truncate">
-                  {formatVND(item.production_value)}
+                  {formatVND(projectValue)}
                 </p>
               )
               : (

@@ -98,7 +98,7 @@ const {
   mapSwitchWorkshopTypeBodyToDb,
 } = require('../helpers/productionPipelineSchema');
 const { normalizePipelineStageSlaDaysForDb } = require('../helpers/crmPipelineSla');
-const { computeSxRevenueKpis } = require('../helpers/sxPipelineRevenue');
+const { computeSxRevenueKpis, resolveSxProjectValue } = require('../helpers/sxPipelineRevenue');
 const {
   leadDocVisibleForModuleAndUser,
   isLeadDocSharedToWorkshop: isDocSharedToWorkshop,
@@ -1158,7 +1158,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
       completed: projectsWithDealProb.filter((project) => project.status === 'completed').length,
       overdue: revenueKpis.overdue,
       intake_pending: intakeCount,
-      total_value: projectsWithDealProb.reduce((sum, project) => sum + (project.production_value || 0), 0),
+      total_value: projectsWithDealProb.reduce((sum, project) => sum + resolveSxProjectValue(project), 0),
       avg_progress: projectsWithDealProb.length
         ? Math.round(projectsWithDealProb.reduce((sum, project) => sum + (project.progress || 0), 0) / projectsWithDealProb.length)
         : 0,
