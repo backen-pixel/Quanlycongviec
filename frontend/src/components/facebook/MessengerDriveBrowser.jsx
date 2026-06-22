@@ -1,7 +1,7 @@
 /**
  * Duyệt Drive trong panel Messenger — breadcrumb, chọn ảnh, xem phóng to, upload.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   ChevronRight,
@@ -14,8 +14,6 @@ import {
 } from 'lucide-react';
 import {
   driveEnsureCompanyImages,
-  driveFileStreamUrl,
-  driveFileThumbnailUrl,
   driveFolderBreadcrumb,
   driveListFolderChildren,
   driveListRootChildren,
@@ -37,7 +35,7 @@ import {
 } from '../../lib/messengerDriveCache';
 import DriveLocationBar, { enrichDriveBreadcrumb } from '../drive/DriveLocationBar';
 import PreviewModal from '../drive/PreviewModal';
-import { filterImageFiles, isImageMime } from '../drive/DriveFileViews';
+import { DriveFileThumbnail, filterImageFiles, isImageMime } from '../drive/DriveFileViews';
 
 export const FB_IMAGE_DRIVE_PANEL_ATTR = 'data-fb-image-drive-panel';
 
@@ -54,45 +52,6 @@ function rootBelongsToCompany(root, companyId) {
   if (root.scope === 'company' && String(root.owner_id) === String(companyId)) return true;
   return !root.company_id;
 }
-
-/** Thumbnail lưới — proxy thumbnail, fallback stream nếu lỗi. */
-const MessengerImageThumb = memo(function MessengerImageThumb({ file, className }) {
-  const [src, setSrc] = useState(() => driveFileThumbnailUrl(file.id));
-  const [stage, setStage] = useState(0);
-
-  useEffect(() => {
-    setStage(0);
-    setSrc(driveFileThumbnailUrl(file.id));
-  }, [file.id]);
-
-  const onError = () => {
-    if (stage === 0) {
-      setStage(1);
-      setSrc(driveFileStreamUrl(file.id));
-    } else {
-      setStage(2);
-    }
-  };
-
-  if (stage >= 2) {
-    return (
-      <div className={`flex items-center justify-center bg-gray-100 text-gray-400 ${className || ''}`}>
-        <ImageIcon className="h-5 w-5" />
-      </div>
-    );
-  }
-
-  return (
-    <img
-      src={src}
-      alt={file.name || ''}
-      className={className}
-      loading="lazy"
-      draggable={false}
-      onError={onError}
-    />
-  );
-});
 
 function mapImageRows(files) {
   return filterImageFiles(files || []).map((f) => ({
@@ -567,9 +526,10 @@ export default function MessengerDriveBrowser({
                           selected ? 'border-blue-500 ring-2 ring-blue-300/50' : 'border-gray-200'
                         }`}
                       >
-                        <MessengerImageThumb
+                        <DriveFileThumbnail
                           file={img}
                           className="w-full h-full object-cover pointer-events-none"
+                          size={52}
                         />
                         <button
                           type="button"

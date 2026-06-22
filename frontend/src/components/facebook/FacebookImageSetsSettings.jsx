@@ -10,7 +10,7 @@ import {
   fetchFacebookImageSetsAdmin,
   updateFacebookImageSet,
 } from '../../lib/facebookImageSets';
-import { driveFileThumbnailUrl } from '../../lib/drive';
+import { DriveFileThumbnail } from '../drive/DriveFileViews';
 import DriveFolderPicker from '../drive/DriveFolderPicker';
 import CompanyImagesDrivePanel from './CompanyImagesDrivePanel';
 
@@ -167,7 +167,7 @@ export default function FacebookImageSetsSettings() {
               <div className="flex gap-1 shrink-0">
                 {(row.preview_images || []).slice(0, 4).map((img) => (
                   <div key={img.id} className="w-10 h-10 rounded-md overflow-hidden bg-gray-100 border border-gray-200">
-                    <img src={driveFileThumbnailUrl(img.id)} alt="" className="w-full h-full object-cover" />
+                    <DriveFileThumbnail file={img} className="w-full h-full object-cover" size={40} />
                   </div>
                 ))}
                 {!row.preview_images?.length && (
