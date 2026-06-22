@@ -2904,6 +2904,74 @@ async function sendMessengerAttachment(pageId, psid, type, url) {
   return result;
 }
 
+/** Upload buffer thẳng lên Facebook — FB không cần tải lại từ URL public. */
+async function uploadMessengerAttachmentBuffer(pageId, accessToken, buffer, type, filename, mimetype) {
+  const form = new FormData();
+  form.append('message', JSON.stringify({
+    attachment: { type, payload: { is_reusable: true } },
+  }));
+  const blob = new Blob([buffer], { type: mimetype || 'application/octet-stream' });
+  form.append('filedata', blob, filename || 'image.jpg');
+
+  const resp = await fetch(
+    `https://graph.facebook.com/v19.0/${pageId}/message_attachments?access_token=${encodeURIComponent(accessToken)}`,
+    { method: 'POST', body: form },
+  );
+  const result = await resp.json();
+  if (result.error) {
+    console.error('[FB] Upload attachment buffer error:', result.error);
+    return { error: result.error };
+  }
+  if (!result.attachment_id) {
+    return { error: { message: 'Facebook không trả attachment_id' } };
+  }
+  return { attachment_id: result.attachment_id };
+}
+
+async function sendMessengerAttachmentById(pageId, psid, type, attachmentId, accessToken) {
+  const resp = await fetch(`https://graph.facebook.com/v19.0/${pageId}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      recipient: { id: psid },
+      message: {
+        attachment: {
+          type,
+          payload: { attachment_id: attachmentId },
+        },
+      },
+      messaging_type: 'RESPONSE',
+      access_token: accessToken,
+    }),
+  });
+  const result = await resp.json();
+  if (result.error) console.error('[FB] Send attachment_id error:', result.error);
+  return result;
+}
+
+/** Sender tái dùng page token — gửi ảnh Drive nhanh (URL cache hoặc buffer trực tiếp). */
+async function createMessengerImageSender(contact) {
+  const page = await getPageConfig(contact.page_id);
+  if (!page?.access_token) return null;
+  const pageId = contact.page_id;
+  const accessToken = page.access_token;
+
+  return {
+    pageId,
+    accessToken,
+    async sendByUrl(psid, url) {
+      return sendMessengerAttachment(pageId, psid, 'image', url);
+    },
+    async sendByBuffer(psid, buffer, { mimetype = 'image/jpeg', filename = 'image.jpg' } = {}) {
+      const uploaded = await uploadMessengerAttachmentBuffer(
+        pageId, accessToken, buffer, 'image', filename, mimetype,
+      );
+      if (uploaded?.error) return uploaded;
+      return sendMessengerAttachmentById(pageId, psid, 'image', uploaded.attachment_id, accessToken);
+    },
+  };
+}
+
 // ── WEBHOOK VERIFY (GET) ─────────────────────────────────────
 
 r.get('/webhook', async (req, res) => {
@@ -8824,13 +8892,18 @@ r.post('/contacts/:contactId/send-image-set', authMiddleware, async (req, res) =
       return res.status(403).json({ error: 'Bộ ảnh không thuộc phạm vi công ty' });
     }
 
+    const messengerImageSender = await createMessengerImageSender(contact);
+    if (!messengerImageSender) {
+      return res.status(503).json({ error: 'Không lấy được token Facebook Page' });
+    }
+
     const result = await sendFolderImagesToContact({
       user: req.user,
       contact,
       folderId: set.drive_folder_id,
       label: set.name,
       imageSetId: set.id,
-      sendMessengerAttachment,
+      messengerImageSender,
       ioRef: r._ioRef,
     });
 
@@ -8866,6 +8939,11 @@ r.post('/contacts/:contactId/send-drive-folder', authMiddleware, async (req, res
       return res.status(403).json({ error: 'Không có quyền gửi tin nhắn Facebook từ Page này' });
     }
 
+    const messengerImageSender = await createMessengerImageSender(contact);
+    if (!messengerImageSender) {
+      return res.status(503).json({ error: 'Không lấy được token Facebook Page' });
+    }
+
     const result = await sendFolderImagesToContact({
       user: req.user,
       contact,
@@ -8873,7 +8951,7 @@ r.post('/contacts/:contactId/send-drive-folder', authMiddleware, async (req, res
       rootId,
       label,
       fileIds,
-      sendMessengerAttachment,
+      messengerImageSender,
       ioRef: r._ioRef,
     });
 

@@ -10,15 +10,10 @@ const { sanitizeStorageFilename, isInvalidStorageKeyError } = require('./storage
 const BUCKET = 'attachments';
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 const MAX_IMAGES_PER_SEND = 30;
-/** Tải Drive → Storage song song; gửi FB vẫn tuần tự để tránh rate limit. */
-const PUBLISH_CONCURRENCY = 4;
-const FB_SEND_DELAY_MS = 50;
+/** Tải Drive → gửi FB pipeline song song (mỗi ảnh = 1 tin Messenger). */
+const PIPELINE_CONCURRENCY = 6;
 
 const DRIVE_FILE_SEND_SELECT = 'id, name, mime_type, size_bytes, google_file_id, folder_id, root_id, md5';
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 /** Worker pool — giới hạn số tác vụ song song. */
 async function runWithConcurrency(items, limit, worker) {
@@ -47,13 +42,31 @@ async function buildDriveMessengerUrlCache(files) {
   const cache = new Map();
   if (!want.size) return cache;
 
-  const { data } = await supabase
-    .from('facebook_messages')
-    .select('attachment_url, metadata')
-    .eq('message_type', 'image')
-    .not('attachment_url', 'is', null)
-    .order('created_at', { ascending: false })
-    .limit(800);
+  const ids = [...want];
+  let data = null;
+  try {
+    const res = await supabase
+      .from('facebook_messages')
+      .select('attachment_url, metadata')
+      .eq('message_type', 'image')
+      .not('attachment_url', 'is', null)
+      .in('metadata->>drive_file_id', ids)
+      .order('created_at', { ascending: false })
+      .limit(Math.max(ids.length * 2, 40));
+    if (!res.error) data = res.data;
+  } catch {
+    /* fallback below */
+  }
+  if (!data) {
+    const res = await supabase
+      .from('facebook_messages')
+      .select('attachment_url, metadata')
+      .eq('message_type', 'image')
+      .not('attachment_url', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(800);
+    data = res.data;
+  }
 
   for (const row of data || []) {
     const fid = row.metadata?.drive_file_id;
@@ -112,10 +125,16 @@ async function uploadBufferToMessengerStorage(buffer, { originalName, mimetype, 
   return urlData.publicUrl;
 }
 
-async function publishDriveImageFromFile(user, file, contactId, cachedUrl = null, { skipAcl = false } = {}) {
-  if (!file?.id) throw Object.assign(new Error('File không tồn tại'), { status: 404 });
-  if (!file.google_file_id) throw Object.assign(new Error('File Drive chưa có google_file_id'), { status: 400 });
+async function downloadDriveImageBuffer(file) {
+  if (!file?.google_file_id) {
+    throw Object.assign(new Error('File Drive chưa có google_file_id'), { status: 400 });
+  }
+  const { stream } = await gdrive.getDownloadStream(file.google_file_id);
+  return streamToBuffer(stream, MAX_IMAGE_BYTES);
+}
 
+async function assertDriveImageSendable(user, file, { skipAcl = false } = {}) {
+  if (!file?.id) throw Object.assign(new Error('File không tồn tại'), { status: 404 });
   if (!skipAcl) {
     const access = await driveAcl.canAccess({ user, targetType: 'file', targetId: file.id, requiredRole: 'viewer' });
     if (!access.ok) throw Object.assign(new Error('Không có quyền file Drive'), { status: 403 });
@@ -126,14 +145,17 @@ async function publishDriveImageFromFile(user, file, contactId, cachedUrl = null
   if (file.size_bytes && file.size_bytes > MAX_IMAGE_BYTES) {
     throw Object.assign(new Error('Ảnh vượt quá 25MB'), { status: 400 });
   }
+}
+
+async function publishDriveImageFromFile(user, file, contactId, cachedUrl = null, { skipAcl = false } = {}) {
+  await assertDriveImageSendable(user, file, { skipAcl });
 
   const mimetype = file.mime_type || 'image/jpeg';
   if (cachedUrl) {
     return { file_url: cachedUrl, mime_type: mimetype, name: file.name, from_cache: true };
   }
 
-  const { stream } = await gdrive.getDownloadStream(file.google_file_id);
-  const buffer = await streamToBuffer(stream, MAX_IMAGE_BYTES);
+  const buffer = await downloadDriveImageBuffer(file);
   const fileUrl = await uploadBufferToMessengerStorage(buffer, {
     originalName: file.name || 'image.jpg',
     mimetype,
@@ -563,6 +585,84 @@ async function listImagesByIds(user, fileIds, limit = MAX_IMAGES_PER_SEND) {
 /**
  * Gửi ảnh trong thư mục Drive (hoặc danh sách file đã chọn) qua Messenger.
  */
+async function processOneDriveImageSend({
+  img,
+  index,
+  user,
+  contact,
+  uid,
+  label,
+  imageSetId,
+  folderId,
+  rootId,
+  urlCache,
+  skipPerFileAcl,
+  messengerImageSender,
+  ioRef,
+}) {
+  await assertDriveImageSendable(user, img, { skipAcl: skipPerFileAcl });
+
+  const cachedUrl = urlCache.get(String(img.id)) || null;
+  const mimetype = img.mime_type || 'image/jpeg';
+  const filename = img.name || 'image.jpg';
+  let fileUrl;
+  let fromCache = false;
+  let fbResult;
+
+  if (cachedUrl) {
+    fileUrl = cachedUrl;
+    fromCache = true;
+    fbResult = await messengerImageSender.sendByUrl(contact.psid, fileUrl);
+  } else {
+    const buffer = await downloadDriveImageBuffer(img);
+    const storagePromise = uploadBufferToMessengerStorage(buffer, {
+      originalName: filename,
+      mimetype,
+      contactId: contact.id,
+    });
+    const fbPromise = messengerImageSender.sendByBuffer
+      ? messengerImageSender.sendByBuffer(contact.psid, buffer, { mimetype, filename })
+      : storagePromise.then((url) => messengerImageSender.sendByUrl(contact.psid, url));
+
+    const [url, sendRes] = await Promise.all([storagePromise, fbPromise]);
+    fileUrl = url;
+    fbResult = sendRes;
+  }
+
+  if (fbResult?.error) {
+    return {
+      index,
+      success: false,
+      name: img.name,
+      error: formatFacebookSendError(fbResult.error.message || 'Facebook API lỗi'),
+    };
+  }
+
+  const { data: saved } = await supabase.from('facebook_messages').insert({
+    contact_id: contact.id,
+    lead_id: contact.lead_id,
+    fb_message_id: fbResult?.message_id,
+    direction: 'outbound',
+    message_type: 'image',
+    content: `[image] ${label}`,
+    attachment_url: fileUrl,
+    attachment_type: 'image',
+    sent_by: uid,
+    metadata: {
+      image_set_id: imageSetId || null,
+      drive_file_id: img.id,
+      drive_file_md5: img.md5 || null,
+      drive_folder_id: folderId || null,
+      drive_root_id: rootId || null,
+      messenger_url_from_cache: fromCache,
+      messenger_fb_direct_upload: !fromCache && !!messengerImageSender.sendByBuffer,
+    },
+  }).select().single();
+
+  if (saved && ioRef) ioRef.emit('fb_message', { contact_id: contact.id, message: saved });
+  return { index, success: true, saved, name: img.name };
+}
+
 async function sendFolderImagesToContact({
   user,
   contact,
@@ -572,6 +672,7 @@ async function sendFolderImagesToContact({
   imageSetId = null,
   fileIds = null,
   sendMessengerAttachment,
+  messengerImageSender = null,
   ioRef = null,
 }) {
   let images = [];
@@ -592,63 +693,63 @@ async function sendFolderImagesToContact({
     throw Object.assign(new Error('Thư mục Drive không có ảnh nào'), { status: 400 });
   }
 
+  const sender = messengerImageSender || {
+    sendByUrl: (psid, url) => sendMessengerAttachment(contact.page_id, psid, 'image', url),
+    sendByBuffer: null,
+  };
+
   const messages = [];
   const failed = [];
   const uid = user.userId || user.id;
   const urlCache = await buildDriveMessengerUrlCache(images);
   const skipPerFileAcl = !!fileIds?.length;
 
-  const publishedResults = await runWithConcurrency(images, PUBLISH_CONCURRENCY, async (img) => {
-    const cachedUrl = urlCache.get(String(img.id)) || null;
-    const published = await publishDriveImageFromFile(user, img, contact.id, cachedUrl, { skipAcl: skipPerFileAcl });
-    return { img, published };
+  const pipelineItems = images.map((img, index) => ({ img, index }));
+  const outcomes = await runWithConcurrency(pipelineItems, PIPELINE_CONCURRENCY, async ({ img, index }) => {
+    try {
+      return await processOneDriveImageSend({
+        img,
+        index,
+        user,
+        contact,
+        uid,
+        label,
+        imageSetId,
+        folderId,
+        rootId,
+        urlCache,
+        skipPerFileAcl,
+        messengerImageSender: sender,
+        ioRef,
+      });
+    } catch (err) {
+      return {
+        index,
+        success: false,
+        name: img.name,
+        error: formatFacebookSendError(err.message || 'Lỗi gửi'),
+      };
+    }
   });
 
-  for (let i = 0; i < publishedResults.length; i++) {
-    const row = publishedResults[i];
-    const img = images[i];
-    if (!row?.ok) {
-      failed.push({ name: img?.name, error: formatFacebookSendError(row?.error?.message || 'Lỗi tải ảnh') });
+  const messageRows = [];
+  for (let i = 0; i < outcomes.length; i++) {
+    const outcome = outcomes[i];
+    const fallbackName = pipelineItems[i]?.img?.name;
+    if (!outcome?.ok) {
+      failed.push({
+        name: fallbackName,
+        error: formatFacebookSendError(outcome?.error?.message || 'Lỗi gửi'),
+      });
       continue;
     }
-
-    const { published } = row.value;
-    try {
-      const result = await sendMessengerAttachment(contact.page_id, contact.psid, 'image', published.file_url);
-      if (result?.error) {
-        failed.push({ name: img.name, error: formatFacebookSendError(result.error.message || 'Facebook API lỗi') });
-        continue;
-      }
-      const { data: saved } = await supabase.from('facebook_messages').insert({
-        contact_id: contact.id,
-        lead_id: contact.lead_id,
-        fb_message_id: result?.message_id,
-        direction: 'outbound',
-        message_type: 'image',
-        content: `[image] ${label}`,
-        attachment_url: published.file_url,
-        attachment_type: 'image',
-        sent_by: uid,
-        metadata: {
-          image_set_id: imageSetId || null,
-          drive_file_id: img.id,
-          drive_file_md5: img.md5 || null,
-          drive_folder_id: folderId || null,
-          drive_root_id: rootId || null,
-          messenger_url_from_cache: !!published.from_cache,
-        },
-      }).select().single();
-      if (saved) {
-        messages.push(saved);
-        if (ioRef) ioRef.emit('fb_message', { contact_id: contact.id, message: saved });
-      }
-      if (FB_SEND_DELAY_MS > 0 && i < publishedResults.length - 1) {
-        await sleep(FB_SEND_DELAY_MS);
-      }
-    } catch (err) {
-      failed.push({ name: img.name, error: formatFacebookSendError(err.message || 'Lỗi gửi') });
-    }
+    const r = outcome.value;
+    if (r.success && r.saved) messageRows.push({ index: r.index, saved: r.saved });
+    else failed.push({ name: r.name || fallbackName, error: r.error || 'Lỗi gửi' });
   }
+
+  messageRows.sort((a, b) => a.index - b.index);
+  messages.push(...messageRows.map((row) => row.saved));
 
   if (messages.length) {
     const preview = `Bạn: [${label}] ${messages.length} ảnh`;
