@@ -43,6 +43,10 @@ export function isCrmPipelineStageLost(stage) {
 
 /** Nguồn hạn hiển thị trên thẻ lead/deal CRM */
 export const CRM_DEADLINE_SOURCE_META = {
+  kanban: {
+    label: 'Deadline thẻ',
+    className: 'bg-rose-50 text-rose-700 border-rose-200',
+  },
   task: {
     label: 'Nhiệm vụ',
     className: 'bg-indigo-50 text-indigo-700 border-indigo-200',
@@ -82,6 +86,7 @@ export function resolveCrmLeadKanbanScheduleSource(item, stage) {
 }
 
 function fieldToDeadlineSource(field) {
+  if (field === 'kanban_deadline_at') return 'kanban';
   if (field === 'crm_next_open_task_deadline') return 'task';
   if (field === 'expected_close_date') return 'expected_close';
   return null;
@@ -146,5 +151,35 @@ export function pickDeadlineConfigValueWithSource(item, primary, fallback) {
   if (p != null) return { deadlineTs: p, source: fieldToDeadlineSource(primary) };
   const f = readTs(fallback);
   if (f != null) return { deadlineTs: f, source: fieldToDeadlineSource(fallback) };
+  return { deadlineTs: null, source: null };
+}
+
+/**
+ * View Deadline Dashboard: thống nhất thứ tự ưu tiên với thẻ Kanban.
+ * kanban_deadline_at → cấu hình primary/fallback → SLA cột.
+ */
+export function resolveCrmLeadDeadlineViewSource(item, stage, config) {
+  const st = stage || item?._stage || item?.stage;
+  if (shouldHideCrmKanbanDeadlineOnCard(item, st)) {
+    return { deadlineTs: null, source: null };
+  }
+
+  const manual = item?.kanban_deadline_at;
+  if (manual != null && manual !== '') {
+    const ts = new Date(manual).getTime();
+    if (!Number.isNaN(ts)) return { deadlineTs: ts, source: 'kanban' };
+  }
+
+  const cfg = config || {};
+  const picked = pickDeadlineConfigValueWithSource(
+    item,
+    cfg.primary_field || 'crm_next_open_task_deadline',
+    cfg.fallback_field || 'expected_close_date',
+  );
+  if (picked.deadlineTs != null) return picked;
+
+  const slaTs = getPipelineStageSlaDeadlineTs(item?.stage_entered_at, st);
+  if (slaTs != null) return { source: 'sla', deadlineTs: slaTs };
+
   return { deadlineTs: null, source: null };
 }

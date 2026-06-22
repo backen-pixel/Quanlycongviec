@@ -29,6 +29,8 @@ export type EmployeePipelineRow = {
   deal_count?: number;
   won_deal_count?: number;
   lost_deal_count?: number;
+  completed_deal_count?: number;
+  completion_rate_pct?: number | null;
   total_value?: number;
   open_deal_count?: number;
   open_value?: number;

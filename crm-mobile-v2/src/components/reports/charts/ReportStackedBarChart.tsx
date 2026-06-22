@@ -22,7 +22,7 @@ export default function ReportStackedBarChart({ data, rowHeight = 34 }: Props) {
 
   const maxTotal = useMemo(() => {
     let m = 0;
-    for (const d of data) m = Math.max(m, d.won + d.lost + d.open);
+    for (const d of data) m = Math.max(m, d.won + (d.completed || 0) + d.lost + d.open);
     return niceMax(m);
   }, [data]);
 
@@ -33,14 +33,16 @@ export default function ReportStackedBarChart({ data, rowHeight = 34 }: Props) {
       <Svg width={width} height={height}>
         {data.map((d, i) => {
           const y = pad.top + i * rowHeight;
-          const total = d.won + d.lost + d.open;
+          const total = d.won + (d.completed || 0) + d.lost + d.open;
           const scale = maxTotal > 0 ? plotW / maxTotal : 0;
           const wWon = d.won * scale;
+          const wCompleted = (d.completed || 0) * scale;
           const wLost = d.lost * scale;
           const wOpen = d.open * scale;
           let x = pad.left;
           const bars = [
             { w: wWon, color: STACK_COLORS.won },
+            { w: wCompleted, color: STACK_COLORS.completed },
             { w: wLost, color: STACK_COLORS.lost },
             { w: wOpen, color: STACK_COLORS.open },
           ];
@@ -65,13 +67,13 @@ export default function ReportStackedBarChart({ data, rowHeight = 34 }: Props) {
                 );
               })}
               <SvgText
-                x={pad.left + wWon + wLost + wOpen + 6}
+                x={pad.left + wWon + wCompleted + wLost + wOpen + 6}
                 y={y + rowHeight / 2 + 4}
                 fontSize={10}
-                fill={Colors.text}
+                fill={d.completion_rate_pct != null ? '#6d28d9' : Colors.text}
                 fontWeight="600"
               >
-                {total}
+                {d.completion_rate_pct != null ? `HT ${d.completion_rate_pct}%` : total}
               </SvgText>
             </G>
           );
@@ -79,7 +81,8 @@ export default function ReportStackedBarChart({ data, rowHeight = 34 }: Props) {
       </Svg>
 
       <View style={styles.legend}>
-        <LegendItem color={STACK_COLORS.won} label="Đã chốt" Colors={Colors} styles={styles} />
+        <LegendItem color={STACK_COLORS.won} label="Chốt" Colors={Colors} styles={styles} />
+        <LegendItem color={STACK_COLORS.completed} label="Hoàn thành" Colors={Colors} styles={styles} />
         <LegendItem color={STACK_COLORS.lost} label="Thua" Colors={Colors} styles={styles} />
         <LegendItem color={STACK_COLORS.open} label="Đang mở" Colors={Colors} styles={styles} />
       </View>

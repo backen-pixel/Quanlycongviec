@@ -934,7 +934,7 @@ async function fetchCrmLeadsForOrgReportBatched(type, {
   for (;;) {
     let q = supabase
       .from('crm_leads')
-      .select('id, stage_id, estimated_value, probability, type, assigned_to, lead_owner_id, company_id, region_id, created_at, source_id, stage_entered_at')
+      .select('id, stage_id, estimated_value, probability, type, assigned_to, lead_owner_id, company_id, region_id, created_at, source_id, stage_entered_at, first_touch_time, lead_type_id')
       .eq('type', type);
     if (company_id) {
       const { isCrmAccountingUser } = require('../helpers/crmAccessRoles');
@@ -1132,7 +1132,7 @@ async function fetchCrmLeadsForUserDetailBatched(userId, type, { company_id, dat
   for (;;) {
     let q = supabase
       .from('crm_leads')
-      .select('id, pipeline_id, stage_id, estimated_value, probability, type, created_at, stage_entered_at')
+      .select('id, pipeline_id, stage_id, estimated_value, probability, type, created_at, stage_entered_at, lead_type_id, first_touch_time')
       .eq('type', type);
     if (company_id) q = q.eq('company_id', company_id);
     if (req) q = applyCrmLeadRegionFilterToQuery(q, req);
@@ -1529,6 +1529,11 @@ function emptyStaffLeadDealAgg() {
     completed_value: 0,
     open_count: 0,
     overdue_count: 0,
+    reception_eligible_count: 0,
+    reception_overdue_count: 0,
+    first_stage_open_count: 0,
+    first_stage_on_time_count: 0,
+    first_stage_overdue_count: 0,
     kpi_ledger_net: 0,
   };
 }
@@ -1785,7 +1790,7 @@ function orgReportCompareSummary(current, previous) {
   const metrics = [
     'lead_count', 'deal_count', 'pipeline_value', 'won_deal_count', 'won_value',
     'expected_value', 'weighted_value', 'completed_deal_count', 'completed_value',
-    'overdue_count', 'kpi_ledger_net',
+    'overdue_count', 'kpi_ledger_net', 'reception_overdue_count',
   ];
   const out = {};
   for (const key of metrics) {
@@ -1909,6 +1914,104 @@ function orgReportOverdueRatePct(m) {
   return Math.round((overdue / open) * 1000) / 10;
 }
 
+function orgReportReceptionOverdueRatePct(m) {
+  const eligible = Number(m?.reception_eligible_count) || 0;
+  const overdue = Number(m?.reception_overdue_count) || 0;
+  if (!eligible) return null;
+  return Math.round((overdue / eligible) * 1000) / 10;
+}
+
+/** Cột đầu tiên (order_index nhỏ nhất) theo từng pipeline. */
+function buildFirstStageIdByPipeline(stageMap) {
+  const byPipe = {};
+  for (const st of Object.values(stageMap || {})) {
+    if (!st?.pipeline_id) continue;
+    const pid = String(st.pipeline_id);
+    const ord = Number(st.order_index);
+    const order = Number.isFinite(ord) ? ord : 999;
+    if (!byPipe[pid] || order < byPipe[pid].order) {
+      byPipe[pid] = { stageId: String(st.id), order, stage: st };
+    }
+  }
+  return byPipe;
+}
+
+function orgReportFirstStageOnTimeRatePct(m) {
+  const open = Number(m?.first_stage_open_count) || 0;
+  if (!open) return null;
+  const onTime = Number(m?.first_stage_on_time_count) || 0;
+  return Math.round((onTime / open) * 1000) / 10;
+}
+
+function orgReportFirstStageOverdueRatePct(m) {
+  const open = Number(m?.first_stage_open_count) || 0;
+  if (!open) return null;
+  const overdue = Number(m?.first_stage_overdue_count) || 0;
+  return Math.round((overdue / open) * 1000) / 10;
+}
+
+/** Lead/deal đang mở ở cột đầu pipeline — đúng hạn vs quá hạn SLA cột. */
+function orgReportBumpFirstStageMetrics(target, row, stageMap, firstStageByPipe) {
+  const st = row.stage_id ? stageMap[row.stage_id] : null;
+  if (!st || orgReportStageIsClosed(st)) return;
+  const pid = st.pipeline_id ? String(st.pipeline_id) : null;
+  if (!pid) return;
+  const first = firstStageByPipe[pid];
+  if (!first || String(st.id) !== first.stageId) return;
+  target.first_stage_open_count = (target.first_stage_open_count || 0) + 1;
+  if (orgReportIsSlaOverdue(row, st)) {
+    target.first_stage_overdue_count = (target.first_stage_overdue_count || 0) + 1;
+  } else {
+    target.first_stage_on_time_count = (target.first_stage_on_time_count || 0) + 1;
+  }
+}
+
+function orgReportAttachFirstStageRates(m) {
+  return {
+    first_stage_on_time_rate_pct: orgReportFirstStageOnTimeRatePct(m),
+    first_stage_overdue_rate_pct: orgReportFirstStageOverdueRatePct(m),
+  };
+}
+
+/** Lead quá hạn tiếp nhận: chưa cham hoặc cham muộn hơn sla_minutes (wall-clock). */
+function orgReportIsReceptionOverdue(leadRow, slaMinutes) {
+  const createdRaw = leadRow?.created_at;
+  if (!createdRaw) return false;
+  const created = new Date(createdRaw).getTime();
+  if (!Number.isFinite(created)) return false;
+  const slaMs = Math.max(1, Number(slaMinutes) || 15) * 60 * 1000;
+  const firstTouchRaw = leadRow?.first_touch_time;
+  if (firstTouchRaw) {
+    const touched = new Date(firstTouchRaw).getTime();
+    if (!Number.isFinite(touched)) return false;
+    return touched - created > slaMs;
+  }
+  return Date.now() - created > slaMs;
+}
+
+function orgReportBumpReceptionMetrics(target, leadRow, slaMinutes) {
+  if (!leadRow || leadRow.type === 'deal') return;
+  target.reception_eligible_count = (target.reception_eligible_count || 0) + 1;
+  if (orgReportIsReceptionOverdue(leadRow, slaMinutes)) {
+    target.reception_overdue_count = (target.reception_overdue_count || 0) + 1;
+  }
+}
+
+async function orgReportReceptionSlaMinutes(_companyId) {
+  const { positiveNumberParam } = require('../helpers/kpiCalcParams');
+  try {
+    const { data } = await supabase
+      .from('kpi_definitions')
+      .select('calc_params')
+      .eq('code', 'A1')
+      .maybeSingle();
+    const params = data?.calc_params && typeof data.calc_params === 'object' ? data.calc_params : {};
+    return positiveNumberParam(params, 'sla_minutes', 15);
+  } catch {
+    return 15;
+  }
+}
+
 function orgReportCancelRatePct(m) {
   const total = (Number(m?.lead_count) || 0) + (Number(m?.deal_count) || 0);
   if (!total) return null;
@@ -1916,12 +2019,15 @@ function orgReportCancelRatePct(m) {
   return Math.round((lost / total) * 1000) / 10;
 }
 
-function aggregateOrgReportRows(leadRows, dealRows, stageMap) {
+function aggregateOrgReportRows(leadRows, dealRows, stageMap, opts = {}) {
+  const { slaMinutes = 15 } = opts;
   const pipelineStagesMap = buildPipelineStagesMap(stageMap);
+  const firstStageByPipe = buildFirstStageIdByPipeline(stageMap);
   const UNASSIGNED = '__unassigned__';
   const NONE_REGION = '__none__';
   const NONE_COMPANY = '__none__';
   const NONE_SOURCE = '__none__';
+  const NONE_LEAD_TYPE = '__none_lead_type__';
 
   const summary = emptyStaffLeadDealAgg();
   const timelineMap = {};
@@ -1929,12 +2035,17 @@ function aggregateOrgReportRows(leadRows, dealRows, stageMap) {
   const regionMap = {};
   const employeeMap = {};
   const sourceMap = {};
+  const leadTypeMap = {};
   const funnelMap = {};
 
   const ensureBucket = (map, key) => {
     if (!map[key]) map[key] = emptyStaffLeadDealAgg();
     return map[key];
   };
+
+  const leadTypeKeyForRow = (row) => (
+    row.lead_type_id ? String(row.lead_type_id) : NONE_LEAD_TYPE
+  );
 
   for (const l of leadRows) {
     const v = orgReportNumEst(l.estimated_value);
@@ -1944,17 +2055,32 @@ function aggregateOrgReportRows(leadRows, dealRows, stageMap) {
     const cid = l.company_id ? String(l.company_id) : NONE_COMPANY;
     const rid = l.region_id ? String(l.region_id) : NONE_REGION;
     const sid = l.source_id ? String(l.source_id) : NONE_SOURCE;
+    const ltKey = leadTypeKeyForRow(l);
 
     orgReportBumpMetrics(summary, { value: v, isLost: !!st?.is_lost }, null);
     orgReportBumpMetrics(ensureBucket(companyMap, cid), { value: v, isLost: !!st?.is_lost }, null);
     orgReportBumpMetrics(ensureBucket(regionMap, rid), { value: v, isLost: !!st?.is_lost }, null);
     orgReportBumpMetrics(ensureBucket(employeeMap, uid), { value: v, isLost: !!st?.is_lost }, null);
     orgReportBumpMetrics(ensureBucket(sourceMap, sid), { value: v, isLost: !!st?.is_lost }, null);
+    orgReportBumpMetrics(ensureBucket(leadTypeMap, ltKey), { value: v, isLost: !!st?.is_lost }, null);
     orgReportBumpOpenOverdue(summary, l, st);
     orgReportBumpOpenOverdue(ensureBucket(companyMap, cid), l, st);
     orgReportBumpOpenOverdue(ensureBucket(regionMap, rid), l, st);
     orgReportBumpOpenOverdue(ensureBucket(employeeMap, uid), l, st);
     orgReportBumpOpenOverdue(ensureBucket(sourceMap, sid), l, st);
+    orgReportBumpOpenOverdue(ensureBucket(leadTypeMap, ltKey), l, st);
+    orgReportBumpReceptionMetrics(summary, l, slaMinutes);
+    orgReportBumpReceptionMetrics(ensureBucket(companyMap, cid), l, slaMinutes);
+    orgReportBumpReceptionMetrics(ensureBucket(regionMap, rid), l, slaMinutes);
+    orgReportBumpReceptionMetrics(ensureBucket(employeeMap, uid), l, slaMinutes);
+    orgReportBumpReceptionMetrics(ensureBucket(sourceMap, sid), l, slaMinutes);
+    orgReportBumpReceptionMetrics(ensureBucket(leadTypeMap, ltKey), l, slaMinutes);
+    orgReportBumpFirstStageMetrics(summary, l, stageMap, firstStageByPipe);
+    orgReportBumpFirstStageMetrics(ensureBucket(companyMap, cid), l, stageMap, firstStageByPipe);
+    orgReportBumpFirstStageMetrics(ensureBucket(regionMap, rid), l, stageMap, firstStageByPipe);
+    orgReportBumpFirstStageMetrics(ensureBucket(employeeMap, uid), l, stageMap, firstStageByPipe);
+    orgReportBumpFirstStageMetrics(ensureBucket(sourceMap, sid), l, stageMap, firstStageByPipe);
+    orgReportBumpFirstStageMetrics(ensureBucket(leadTypeMap, ltKey), l, stageMap, firstStageByPipe);
 
     if (l.stage_id) {
       orgReportBumpMetrics(ensureBucket(funnelMap, String(l.stage_id)), { value: v, isLost: !!st?.is_lost }, null);
@@ -1995,11 +2121,19 @@ function aggregateOrgReportRows(leadRows, dealRows, stageMap) {
     orgReportBumpMetrics(ensureBucket(regionMap, rid), null, dealPatch);
     orgReportBumpMetrics(ensureBucket(employeeMap, uid), null, dealPatch);
     orgReportBumpMetrics(ensureBucket(sourceMap, sid), null, dealPatch);
+    orgReportBumpMetrics(ensureBucket(leadTypeMap, leadTypeKeyForRow(l)), null, dealPatch);
     orgReportBumpOpenOverdue(summary, l, st);
     orgReportBumpOpenOverdue(ensureBucket(companyMap, cid), l, st);
     orgReportBumpOpenOverdue(ensureBucket(regionMap, rid), l, st);
     orgReportBumpOpenOverdue(ensureBucket(employeeMap, uid), l, st);
     orgReportBumpOpenOverdue(ensureBucket(sourceMap, sid), l, st);
+    orgReportBumpOpenOverdue(ensureBucket(leadTypeMap, leadTypeKeyForRow(l)), l, st);
+    orgReportBumpFirstStageMetrics(summary, l, stageMap, firstStageByPipe);
+    orgReportBumpFirstStageMetrics(ensureBucket(companyMap, cid), l, stageMap, firstStageByPipe);
+    orgReportBumpFirstStageMetrics(ensureBucket(regionMap, rid), l, stageMap, firstStageByPipe);
+    orgReportBumpFirstStageMetrics(ensureBucket(employeeMap, uid), l, stageMap, firstStageByPipe);
+    orgReportBumpFirstStageMetrics(ensureBucket(sourceMap, sid), l, stageMap, firstStageByPipe);
+    orgReportBumpFirstStageMetrics(ensureBucket(leadTypeMap, leadTypeKeyForRow(l)), l, stageMap, firstStageByPipe);
 
     if (l.stage_id) {
       orgReportBumpMetrics(ensureBucket(funnelMap, String(l.stage_id)), null, dealPatch);
@@ -2020,6 +2154,8 @@ function aggregateOrgReportRows(leadRows, dealRows, stageMap) {
     pipeline_value: summary.lead_pipeline_value + summary.deal_pipeline_value,
     conversion_rate: orgReportConversionRate(summary.won_deal_count, summary.deal_count),
     overdue_rate_pct: orgReportOverdueRatePct(summary),
+    reception_overdue_rate_pct: orgReportReceptionOverdueRatePct(summary),
+    ...orgReportAttachFirstStageRates(summary),
     cancel_rate_pct: orgReportCancelRatePct(summary),
   };
 
@@ -2030,11 +2166,13 @@ function aggregateOrgReportRows(leadRows, dealRows, stageMap) {
     regionMap,
     employeeMap,
     sourceMap,
+    leadTypeMap,
     funnelMap,
     UNASSIGNED,
     NONE_REGION,
     NONE_COMPANY,
     NONE_SOURCE,
+    NONE_LEAD_TYPE,
   };
 }
 
@@ -2156,12 +2294,14 @@ async function computeOrgOverviewReportData(req, res) {
       }),
     ]);
 
-    const [stageMap, prevStageMap] = await Promise.all([
+    const [stageMap, prevStageMap, receptionSlaMinutes] = await Promise.all([
       loadOrgReportStageMap(leadRows, dealRows),
       skipCompare ? Promise.resolve({}) : loadOrgReportStageMap(prevLeadRows, prevDealRows),
+      orgReportReceptionSlaMinutes(effectiveCompanyId),
     ]);
 
-    const aggregated = aggregateOrgReportRows(leadRows, dealRows, stageMap);
+    const aggOpts = { slaMinutes: receptionSlaMinutes };
+    const aggregated = aggregateOrgReportRows(leadRows, dealRows, stageMap, aggOpts);
     const {
       summary,
       timelineMap,
@@ -2169,17 +2309,19 @@ async function computeOrgOverviewReportData(req, res) {
       regionMap,
       employeeMap,
       sourceMap,
+      leadTypeMap,
       funnelMap,
       UNASSIGNED,
       NONE_REGION,
       NONE_COMPANY,
       NONE_SOURCE,
+      NONE_LEAD_TYPE,
     } = aggregated;
 
     let period_previous = null;
     let compare = null;
     if (!skipCompare) {
-      const prevAgg = aggregateOrgReportRows(prevLeadRows, prevDealRows, prevStageMap);
+      const prevAgg = aggregateOrgReportRows(prevLeadRows, prevDealRows, prevStageMap, aggOpts);
       period_previous = {
         date_from: prevFrom,
         date_to: prevTo,
@@ -2221,8 +2363,9 @@ async function computeOrgOverviewReportData(req, res) {
     const regionIds = Object.keys(regionMap).filter((k) => k !== NONE_REGION);
     const userIds = Object.keys(employeeMap).filter((k) => k !== UNASSIGNED);
     const sourceIds = Object.keys(sourceMap).filter((k) => k !== NONE_SOURCE);
+    const leadTypeIds = Object.keys(leadTypeMap).filter((k) => k !== NONE_LEAD_TYPE);
 
-    const [companiesRes, regionsRes, usersRes, sourcesRes] = await Promise.all([
+    const [companiesRes, regionsRes, usersRes, sourcesRes, leadTypesRes] = await Promise.all([
       companyIds.length
         ? supabase.from('companies').select('id, name, short_name').in('id', companyIds)
         : Promise.resolve({ data: [] }),
@@ -2235,6 +2378,9 @@ async function computeOrgOverviewReportData(req, res) {
       sourceIds.length
         ? supabase.from('crm_sources').select('id, name, icon').in('id', sourceIds)
         : Promise.resolve({ data: [] }),
+      leadTypeIds.length
+        ? supabase.from('crm_lead_types').select('id, name, applies_to, color, order_index, company_id').in('id', leadTypeIds)
+        : Promise.resolve({ data: [] }),
     ]);
 
     const coNameById = Object.fromEntries((companiesRes.data || []).map((c) => [
@@ -2244,6 +2390,7 @@ async function computeOrgOverviewReportData(req, res) {
     const regById = Object.fromEntries((regionsRes.data || []).map((r) => [String(r.id), r]));
     const userById = Object.fromEntries((usersRes.data || []).map((u) => [String(u.id), u]));
     const srcById = Object.fromEntries((sourcesRes.data || []).map((s) => [String(s.id), s]));
+    const leadTypeById = Object.fromEntries((leadTypesRes.data || []).map((t) => [String(t.id), t]));
 
     const kpiPeriodStart = orgReportKpiPeriodStart(df);
     let kpiByUser = {};
@@ -2267,6 +2414,8 @@ async function computeOrgOverviewReportData(req, res) {
         pipeline_value: m.lead_pipeline_value + m.deal_pipeline_value,
         conversion_rate: orgReportConversionRate(m.won_deal_count, m.deal_count),
         overdue_rate_pct: orgReportOverdueRatePct(m),
+        reception_overdue_rate_pct: orgReportReceptionOverdueRatePct(m),
+        ...orgReportAttachFirstStageRates(m),
         cancel_rate_pct: orgReportCancelRatePct(m),
         ...labelFn(key, m),
       }))
@@ -2318,6 +2467,19 @@ async function computeOrgOverviewReportData(req, res) {
       };
     });
 
+    const by_lead_type = finalizeRows(Object.entries(leadTypeMap), (key) => {
+      const lt = leadTypeById[key];
+      return {
+        lead_type_id: key === NONE_LEAD_TYPE ? null : key,
+        lead_type_name: key === NONE_LEAD_TYPE ? 'Chưa gán phân loại' : (lt?.name || key),
+        applies_to: lt?.applies_to || null,
+        lead_type_color: lt?.color || null,
+        order_index: lt?.order_index ?? 999,
+        company_id: lt?.company_id ? String(lt.company_id) : null,
+      };
+    }).sort((a, b) => (a.order_index ?? 999) - (b.order_index ?? 999)
+      || (b.pipeline_value || 0) - (a.pipeline_value || 0));
+
     const pipeline_funnel = Object.entries(funnelMap)
       .map(([stageId, m]) => {
         const st = stageMap[stageId];
@@ -2356,6 +2518,8 @@ async function computeOrgOverviewReportData(req, res) {
       by_region,
       by_employee,
       by_source,
+      by_lead_type,
+      reception_sla_minutes: receptionSlaMinutes,
     };
   } catch (e) {
     console.error('computeOrgOverviewReportData:', e);
@@ -2431,6 +2595,8 @@ r.get('/reports/org-overview', async (req, res) => {
       by_region: data.by_region,
       by_employee: data.by_employee,
       by_source: data.by_source,
+      by_lead_type: data.by_lead_type,
+      reception_sla_minutes: data.reception_sla_minutes ?? 15,
     });
   } catch (e) {
     console.error('GET /crm/reports/org-overview:', e);
@@ -2603,6 +2769,8 @@ async function computeStaffPipelineDetailPayload(req, res) {
           won_value: 0,
           lost_deal_count: 0,
           lost_value: 0,
+          completed_deal_count: 0,
+          completed_value: 0,
         };
       }
       return byPipe[key];
@@ -2616,9 +2784,13 @@ async function computeStaffPipelineDetailPayload(req, res) {
     }
 
     for (const l of dealRows) {
-      const b = ensure(l.pipeline_id);
-      const v = numEst(l.estimated_value);
       const st = l.stage_id ? stageMetaById[l.stage_id] : null;
+      const pipeKey = st?.pipeline_id || l.pipeline_id;
+      const b = ensure(pipeKey);
+      const v = numEst(l.estimated_value);
+      const pid = st?.pipeline_id ? String(st.pipeline_id) : (l.pipeline_id ? String(l.pipeline_id) : '__none__');
+      const stagesInPipe = pipelineStagesMap[pid] || [];
+      const ext = orgReportExtendedDealMetrics(l, st, stagesInPipe);
       b.deal_count += 1;
       b.deal_value += v;
       if (st?.is_won) {
@@ -2628,6 +2800,10 @@ async function computeStaffPipelineDetailPayload(req, res) {
       if (st?.is_lost) {
         b.lost_deal_count += 1;
         b.lost_value += v;
+      }
+      if (ext.completed_deal_count) {
+        b.completed_deal_count += 1;
+        b.completed_value += ext.completed_value;
       }
     }
 
@@ -2659,6 +2835,9 @@ async function computeStaffPipelineDetailPayload(req, res) {
         total_value: totalValue,
         open_deal_count: openDealCount,
         open_value: openValue,
+        completion_rate_pct: (b.deal_count || 0) > 0
+          ? Math.round(((b.completed_deal_count || 0) / b.deal_count) * 1000) / 10
+          : null,
       };
     });
 
@@ -2917,6 +3096,78 @@ async function computeStaffPipelineDetailPayload(req, res) {
       return String(a.stage_name || '').localeCompare(String(b.stage_name || ''));
     });
 
+    const firstStageByPipe = buildFirstStageIdByPipeline(stageMetaById);
+    const firstStageAgg = emptyStaffLeadDealAgg();
+    for (const l of leadRows) {
+      orgReportBumpFirstStageMetrics(firstStageAgg, l, stageMetaById, firstStageByPipe);
+    }
+    for (const l of dealRows) {
+      orgReportBumpFirstStageMetrics(firstStageAgg, l, stageMetaById, firstStageByPipe);
+    }
+    const firstStageNames = [...new Set(
+      Object.values(firstStageByPipe).map((x) => x.stage?.name).filter(Boolean),
+    )];
+    const first_stage_sla = {
+      open_count: firstStageAgg.first_stage_open_count,
+      on_time_count: firstStageAgg.first_stage_on_time_count,
+      overdue_count: firstStageAgg.first_stage_overdue_count,
+      on_time_rate_pct: orgReportFirstStageOnTimeRatePct(firstStageAgg),
+      overdue_rate_pct: orgReportFirstStageOverdueRatePct(firstStageAgg),
+      stage_labels: firstStageNames.slice(0, 5),
+    };
+    summary.first_stage_open_count = firstStageAgg.first_stage_open_count;
+    summary.first_stage_on_time_count = firstStageAgg.first_stage_on_time_count;
+    summary.first_stage_overdue_count = firstStageAgg.first_stage_overdue_count;
+    Object.assign(summary, orgReportAttachFirstStageRates(firstStageAgg));
+
+    const NONE_LEAD_TYPE = '__none_lead_type__';
+    const leadTypeDetailMap = {};
+    const ensureLeadTypeBucket = (key) => {
+      if (!leadTypeDetailMap[key]) {
+        leadTypeDetailMap[key] = { lead_count: 0, deal_count: 0, lead_value: 0, deal_value: 0 };
+      }
+      return leadTypeDetailMap[key];
+    };
+    for (const l of leadRows) {
+      const key = l.lead_type_id ? String(l.lead_type_id) : NONE_LEAD_TYPE;
+      const b = ensureLeadTypeBucket(key);
+      b.lead_count += 1;
+      b.lead_value += numEst(l.estimated_value);
+    }
+    for (const l of dealRows) {
+      const key = l.lead_type_id ? String(l.lead_type_id) : NONE_LEAD_TYPE;
+      const b = ensureLeadTypeBucket(key);
+      b.deal_count += 1;
+      b.deal_value += numEst(l.estimated_value);
+    }
+    const detailLeadTypeIds = Object.keys(leadTypeDetailMap).filter((k) => k !== NONE_LEAD_TYPE);
+    let detailLeadTypeById = {};
+    if (detailLeadTypeIds.length) {
+      const { data: ltRows } = await supabase
+        .from('crm_lead_types')
+        .select('id, name, applies_to, color, order_index')
+        .in('id', detailLeadTypeIds);
+      detailLeadTypeById = Object.fromEntries((ltRows || []).map((t) => [String(t.id), t]));
+    }
+    const by_lead_type = Object.entries(leadTypeDetailMap)
+      .map(([key, m]) => {
+        const lt = detailLeadTypeById[key];
+        return {
+          lead_type_id: key === NONE_LEAD_TYPE ? null : key,
+          lead_type_name: key === NONE_LEAD_TYPE ? 'Chưa gán phân loại' : (lt?.name || key),
+          applies_to: lt?.applies_to || null,
+          lead_type_color: lt?.color || null,
+          order_index: lt?.order_index ?? 999,
+          lead_count: m.lead_count,
+          deal_count: m.deal_count,
+          lead_value: m.lead_value,
+          deal_value: m.deal_value,
+          pipeline_value: m.lead_value + m.deal_value,
+        };
+      })
+      .sort((a, b) => (a.order_index ?? 999) - (b.order_index ?? 999)
+        || (b.pipeline_value || 0) - (a.pipeline_value || 0));
+
     const { data: uRow } = await supabase
       .from('users')
       .select('id, full_name, email, avatar, department:departments!users_department_id_fkey(name)')
@@ -2936,6 +3187,8 @@ async function computeStaffPipelineDetailPayload(req, res) {
       summary,
       timeline,
       stage_breakdown,
+      by_lead_type,
+      first_stage_sla,
       typeView,
     };
   } catch (e) {
@@ -2992,6 +3245,8 @@ r.get('/reports/staff-lead-deal/:userId/pipelines', async (req, res) => {
       summary: p.summary,
       timeline: p.timeline,
       stage_breakdown: p.stage_breakdown,
+      by_lead_type: p.by_lead_type,
+      first_stage_sla: p.first_stage_sla,
     });
   } catch (e) {
     console.error('GET /crm/reports/staff-lead-deal/:userId/pipelines:', e);
@@ -16693,7 +16948,7 @@ const DEFAULT_DEADLINE_BUCKETS = {
   no_deadline: { enabled: true, label: 'Không hạn' },
 };
 
-const ALLOWED_DEADLINE_FIELDS = new Set(['expected_close_date', 'crm_next_open_task_deadline']);
+const ALLOWED_DEADLINE_FIELDS = new Set(['kanban_deadline_at', 'expected_close_date', 'crm_next_open_task_deadline']);
 
 function buildDefaultDeadlineConfig(companyId) {
   return {

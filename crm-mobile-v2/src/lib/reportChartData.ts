@@ -3,6 +3,7 @@ import { formatViDateIso } from './reportFormat';
 
 export const STACK_COLORS = {
   won: '#059669',
+  completed: '#7c3aed',
   lost: '#e11d48',
   open: '#0284c7',
 } as const;
@@ -52,8 +53,10 @@ export function buildRegionBarChart(byRegion: OrgReportRow[], max = 10) {
 export type DealStackedRow = {
   name: string;
   won: number;
+  completed: number;
   lost: number;
   open: number;
+  completion_rate_pct?: number | null;
 };
 
 export function buildDealStackedRows(
@@ -72,6 +75,7 @@ export function buildDealStackedRows(
       return {
         name,
         won: r.won_deal_count || 0,
+        completed: 0,
         lost: r.lost_deal_count || 0,
         open,
       };

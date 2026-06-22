@@ -25,12 +25,13 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import {
+  buildPipelineDealStackRow,
+  PIPELINE_DEAL_STACK_COLORS,
+  PIPELINE_DEAL_STACK_ORDER,
+} from '../../lib/pipelineDealStackChart';
 
-const STACK_COLORS = {
-  'Đã chốt': '#059669',
-  Thua: '#e11d48',
-  'Đang mở': '#0284c7',
-};
+const STACK_COLORS = PIPELINE_DEAL_STACK_COLORS;
 
 function formatViDate(iso) {
   if (!iso || typeof iso !== 'string') return '—';
@@ -190,6 +191,145 @@ function pieSliceLabel({ name, value, percent }) {
   return `${name}\n${value} (${Math.round(percent * 100)}%)`;
 }
 
+export function LeadTypeBreakdownChart({ rows = [], className = '' }) {
+  const chartData = useMemo(
+    () => (rows || [])
+      .filter((r) => (r.lead_count || 0) + (r.deal_count || 0) > 0)
+      .slice(0, 12)
+      .map((r) => ({
+        name: truncLabel(r.lead_type_name, 14),
+        Lead: r.lead_count ?? 0,
+        Deal: r.deal_count ?? 0,
+        _key: r.lead_type_id || r.lead_type_name,
+      })),
+    [rows],
+  );
+
+  return (
+    <div className={`rounded-2xl border border-slate-200 bg-white p-4 shadow-sm min-w-0 overflow-hidden ${className}`}>
+      <h4 className="text-sm font-bold text-slate-800">Phân loại Lead/Deal</h4>
+      <p className="text-[11px] text-slate-500 mt-0.5">Theo loại cấu hình Pipeline</p>
+      {chartData.length > 0 ? (
+        <>
+          <ChartBox height={220}>
+            <BarChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-18} textAnchor="end" height={52} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={28} />
+              <RechartsTooltip content={({ active, payload, label }) => (
+                <ChartTooltipBox active={active} payload={payload} label={label} valueFormatter={(v) => `${v} cơ hội`} />
+              )} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar dataKey="Lead" stackId="t" fill="#6366f1" />
+              <Bar dataKey="Deal" stackId="t" fill="#0891b2" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ChartBox>
+          <ChartDataTable
+            label="bảng phân loại"
+            columns={[
+              { key: 'name', label: 'Phân loại' },
+              { key: 'Lead', label: 'Lead', align: 'right' },
+              { key: 'Deal', label: 'Deal', align: 'right' },
+              {
+                key: 'total',
+                label: 'Tổng',
+                align: 'right',
+                render: (r) => (r.Lead || 0) + (r.Deal || 0),
+              },
+            ]}
+            rows={chartData}
+          />
+        </>
+      ) : (
+        <p className="text-sm text-slate-500 py-10 text-center">Chưa có dữ liệu phân loại</p>
+      )}
+    </div>
+  );
+}
+
+export function FirstStageSlaChart({ sla, className = '' }) {
+  const pieData = useMemo(() => {
+    const onTime = sla?.on_time_count ?? 0;
+    const overdue = sla?.overdue_count ?? 0;
+    if (!onTime && !overdue) return [];
+    return [
+      { name: 'Đúng hạn', value: onTime, color: '#059669' },
+      { name: 'Quá hạn', value: overdue, color: '#e11d48' },
+    ].filter((x) => x.value > 0);
+  }, [sla]);
+
+  const open = sla?.open_count ?? 0;
+  const stageHint = sla?.stage_labels?.length
+    ? sla.stage_labels.join(', ')
+    : 'Cột order_index đầu tiên của pipeline';
+
+  return (
+    <div className={`rounded-2xl border border-slate-200 bg-white p-4 shadow-sm min-w-0 overflow-hidden ${className}`}>
+      <h4 className="text-sm font-bold text-slate-800">SLA cột đầu tiên</h4>
+      <p className="text-[11px] text-slate-500 mt-0.5 line-clamp-2" title={stageHint}>
+        Lead/deal đang mở ở cột đầu · {stageHint}
+      </p>
+      {open > 0 && pieData.length > 0 ? (
+        <>
+          <div className="flex flex-wrap gap-2 mt-2">
+            <span className="rounded-lg bg-emerald-50 border border-emerald-100 px-2 py-1 text-[11px] font-semibold text-emerald-800 tabular-nums">
+              Đúng hạn {sla?.on_time_rate_pct ?? 0}%
+            </span>
+            <span className="rounded-lg bg-rose-50 border border-rose-100 px-2 py-1 text-[11px] font-semibold text-rose-800 tabular-nums">
+              Quá hạn {sla?.overdue_rate_pct ?? 0}%
+            </span>
+            <span className="rounded-lg bg-slate-50 border border-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600 tabular-nums">
+              {open} đang ở cột 1
+            </span>
+          </div>
+          <ChartBox height={200}>
+            <PieChart>
+              <Pie
+                data={pieData}
+                cx="50%"
+                cy="50%"
+                innerRadius={42}
+                outerRadius={68}
+                dataKey="value"
+                paddingAngle={2}
+                label={pieSliceLabel}
+                labelLine={{ stroke: '#94a3b8', strokeWidth: 1 }}
+              >
+                {pieData.map((e) => (
+                  <Cell key={e.name} fill={e.color} stroke="#fff" strokeWidth={2} />
+                ))}
+              </Pie>
+              <RechartsTooltip content={({ active, payload }) => (
+                <ChartTooltipBox active={active} payload={payload} valueFormatter={(v) => `${v} cơ hội`} />
+              )} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+            </PieChart>
+          </ChartBox>
+          <ChartDataTable
+            label="bảng SLA cột đầu"
+            columns={[
+              { key: 'name', label: 'Trạng thái' },
+              { key: 'value', label: 'Số lượng', align: 'right' },
+              {
+                key: 'pct',
+                label: 'Tỷ lệ',
+                align: 'right',
+                render: (r) => {
+                  if (!open) return '—';
+                  return `${Math.round((r.value / open) * 1000) / 10}%`;
+                },
+              },
+            ]}
+            rows={pieData.map((r) => ({ ...r, _key: r.name }))}
+          />
+        </>
+      ) : (
+        <p className="text-sm text-slate-500 py-10 text-center">Không có lead/deal đang ở cột đầu pipeline</p>
+      )}
+    </div>
+  );
+}
+
 function computeCancelRatePct(summary, row) {
   if (summary?.cancel_rate_pct != null) return summary.cancel_rate_pct;
   if (row?.cancel_rate_pct != null) return row.cancel_rate_pct;
@@ -278,12 +418,29 @@ function OverdueKpiGrid({ row, summary, compact = false }) {
   return (
     <div className={`grid grid-cols-2 gap-2 ${compact ? 'mt-2' : 'mt-3'}`}>
       <MetricBlock
-        label="Quá hạn"
+        label="Quá hạn SLA"
         value={overduePct != null ? `${overdue} (${overduePct}%)` : String(overdue)}
         tone="rose"
-        title={open ? `${overdue} / ${open} lead-deal đang mở quá hạn SLA` : undefined}
+        title={open ? `${overdue} / ${open} lead-deal đang mở quá hạn SLA cột` : undefined}
       />
       <MetricBlock label="Điểm KPI" value={formatKpiLedgerNet(kpi)} tone="indigo" />
+    </div>
+  );
+}
+
+function ReceptionKpiGrid({ row, summary, slaMinutes = 15, compact = false }) {
+  const eligible = summary?.reception_eligible_count ?? row?.reception_eligible_count ?? 0;
+  const overdue = summary?.reception_overdue_count ?? row?.reception_overdue_count ?? 0;
+  const pct = summary?.reception_overdue_rate_pct ?? row?.reception_overdue_rate_pct;
+  if (!eligible) return null;
+  return (
+    <div className={`grid grid-cols-1 gap-2 ${compact ? 'mt-2' : 'mt-3'}`}>
+      <MetricBlock
+        label="QH tiếp nhận"
+        value={pct != null ? `${overdue}/${eligible} (${pct}%)` : String(overdue)}
+        tone="amber"
+        title={`Lead chưa cham hoặc cham muộn hơn ${slaMinutes} phút kể từ tạo`}
+      />
     </div>
   );
 }
@@ -304,7 +461,7 @@ function RevenueMetricsGrid({ row, summary, compact = false }) {
   );
 }
 
-function EmployeeCard({ row, onClick }) {
+function EmployeeCard({ row, onClick, receptionSlaMinutes = 15 }) {
   return (
     <button
       type="button"
@@ -324,9 +481,16 @@ function EmployeeCard({ row, onClick }) {
           <p className="font-bold text-slate-900 truncate group-hover:text-indigo-800">{row.full_name}</p>
           <p className="text-xs text-slate-500 truncate">{row.department_name || 'Nhân viên kinh doanh'}</p>
         </div>
-        <span className="shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-700 tabular-nums">
-          {row.conversion_rate ?? 0}%
-        </span>
+        <div className="shrink-0 flex flex-col items-end gap-1">
+          <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-700 tabular-nums">
+            {row.conversion_rate ?? 0}%
+          </span>
+          {row.reception_overdue_rate_pct != null && (
+            <span className="rounded-full bg-orange-50 px-2 py-0.5 text-[10px] font-bold text-orange-800 tabular-nums">
+              QH TN {row.reception_overdue_rate_pct}%
+            </span>
+          )}
+        </div>
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2">
         <MetricBlock label="Lead" value={row.lead_count ?? 0} tone="blue" />
@@ -334,11 +498,12 @@ function EmployeeCard({ row, onClick }) {
       </div>
       <RevenueMetricsGrid row={row} compact />
       <OverdueKpiGrid row={row} compact />
+      <ReceptionKpiGrid row={row} slaMinutes={receptionSlaMinutes} compact />
     </button>
   );
 }
 
-function SelectedProfileCard({ row, detail, onClose }) {
+function SelectedProfileCard({ row, detail, onClose, receptionSlaMinutes = 15 }) {
   const summary = detail?.summary;
   const displayName = row?.full_name || detail?.full_name;
 
@@ -370,6 +535,7 @@ function SelectedProfileCard({ row, detail, onClose }) {
       </div>
       <RevenueMetricsGrid row={row} summary={summary} />
       <OverdueKpiGrid row={row} summary={summary} />
+      <ReceptionKpiGrid row={row} summary={summary} slaMinutes={receptionSlaMinutes} />
       <div className="mt-3 rounded-xl bg-violet-50 border border-violet-100 px-3 py-3 text-center">
         <p className="text-[10px] font-bold uppercase text-violet-700">Tỷ lệ chốt deal</p>
         <p className="text-2xl font-extrabold text-violet-900 tabular-nums">{row?.conversion_rate ?? 0}%</p>
@@ -420,7 +586,7 @@ function EmployeeSwitcher({ employees, selectedId, onSelect }) {
   );
 }
 
-function EmployeeCharts({ detail, loading, row }) {
+function EmployeeCharts({ detail, loading, row, receptionSlaMinutes = 15 }) {
   const summary = detail?.summary;
   const pipelines = detail?.pipelines || [];
 
@@ -486,15 +652,7 @@ function EmployeeCharts({ detail, loading, row }) {
     () => pipelines
       .filter((p) => (p.deal_count || 0) > 0)
       .slice(0, 8)
-      .map((p) => {
-        const open = p.open_deal_count ?? Math.max(0, (p.deal_count || 0) - (p.won_deal_count || 0) - (p.lost_deal_count || 0));
-        return {
-          name: truncLabel(p.pipeline_name, 12),
-          'Đã chốt': p.won_deal_count || 0,
-          Thua: p.lost_deal_count || 0,
-          'Đang mở': open,
-        };
-      }),
+      .map((p) => buildPipelineDealStackRow(p, truncLabel(p.pipeline_name, 12))),
     [pipelines],
   );
 
@@ -515,7 +673,7 @@ function EmployeeCharts({ detail, loading, row }) {
         <MetricBlock label="GT thắng" value={formatVND(summary?.won_value ?? row?.won_value ?? 0)} tone="sky" />
         <MetricBlock label="GT hoàn thành" value={formatVND(summary?.completed_value ?? summary?.project_completed_value ?? row?.completed_value ?? 0)} tone="violet" />
         <MetricBlock
-          label="Quá hạn SLA"
+          label="Quá hạn SLA cột"
           value={
             (summary?.overdue_rate_pct ?? row?.overdue_rate_pct) != null
               ? `${summary?.overdue_count ?? row?.overdue_count ?? 0} (${summary?.overdue_rate_pct ?? row?.overdue_rate_pct}%)`
@@ -523,7 +681,30 @@ function EmployeeCharts({ detail, loading, row }) {
           }
           tone="rose"
         />
+        <MetricBlock
+          label="Quá hạn tiếp nhận"
+          value={
+            (summary?.reception_overdue_rate_pct ?? row?.reception_overdue_rate_pct) != null
+              ? `${summary?.reception_overdue_count ?? row?.reception_overdue_count ?? 0}/${summary?.reception_eligible_count ?? row?.reception_eligible_count ?? 0} (${summary?.reception_overdue_rate_pct ?? row?.reception_overdue_rate_pct}%)`
+              : '—'
+          }
+          tone="amber"
+          title={`SLA first touch: ${receptionSlaMinutes} phút`}
+        />
         <MetricBlock label="Điểm KPI" value={formatKpiLedgerNet(summary?.kpi_ledger_net ?? row?.kpi_ledger_net ?? 0)} tone="indigo" />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <LeadTypeBreakdownChart rows={detail?.by_lead_type || []} />
+        <FirstStageSlaChart
+          sla={detail?.first_stage_sla || (summary?.first_stage_open_count ? {
+            open_count: summary.first_stage_open_count,
+            on_time_count: summary.first_stage_on_time_count,
+            overdue_count: summary.first_stage_overdue_count,
+            on_time_rate_pct: summary.first_stage_on_time_rate_pct,
+            overdue_rate_pct: summary.first_stage_overdue_rate_pct,
+          } : null)}
+        />
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4 md:p-5 shadow-sm min-w-0 overflow-hidden">
@@ -588,8 +769,11 @@ function EmployeeCharts({ detail, loading, row }) {
             <span className="rounded-lg bg-rose-50 border border-rose-100 px-2 py-1 text-[11px] font-semibold text-rose-800 tabular-nums">
               Hủy {conversionRates.cancelPct != null ? `${conversionRates.cancelPct}%` : '—'}
             </span>
+            <span className="rounded-lg bg-orange-50 border border-orange-100 px-2 py-1 text-[11px] font-semibold text-orange-900 tabular-nums">
+              QH tiếp nhận {row?.reception_overdue_rate_pct != null ? `${row.reception_overdue_rate_pct}%` : '—'}
+            </span>
             <span className="rounded-lg bg-amber-50 border border-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-900 tabular-nums">
-              Quá hạn {conversionRates.overduePct != null ? `${conversionRates.overduePct}%` : '—'}
+              QH SLA cột {conversionRates.overduePct != null ? `${conversionRates.overduePct}%` : '—'}
             </span>
           </div>
           {conversionPie.length > 0 ? (
@@ -720,31 +904,75 @@ function EmployeeCharts({ detail, loading, row }) {
       {stackedChart.length > 0 && (
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm min-w-0 overflow-hidden">
           <h4 className="text-sm font-bold text-slate-800">Deal theo pipeline</h4>
+          <p className="text-[11px] text-slate-500 mt-0.5">Chốt / hoàn thành (tím) / thua / mở · HT% = tỉ lệ hoàn thành</p>
           <ChartBox height={Math.max(220, stackedChart.length * 40)}>
-            <BarChart data={stackedChart} layout="vertical" margin={{ left: 4, right: 16, top: 4, bottom: 4 }}>
+            <BarChart data={stackedChart} layout="vertical" margin={{ left: 4, right: 52, top: 4, bottom: 4 }}>
               <CartesianGrid strokeDasharray="3 3" horizontal={false} />
               <XAxis type="number" allowDecimals={false} tick={{ fontSize: 10 }} />
               <YAxis type="category" dataKey="name" width={84} tick={{ fontSize: 10 }} />
-              <RechartsTooltip content={({ active, payload, label }) => (
-                <ChartTooltipBox active={active} payload={payload} label={label} valueFormatter={(v) => `${v} deal`} />
-              )} />
+              <RechartsTooltip
+                content={({ active, payload, label }) => (
+                  <ChartTooltipBox
+                    active={active}
+                    payload={payload}
+                    label={label}
+                    valueFormatter={(v) => `${v} deal`}
+                  />
+                )}
+              />
               <Legend wrapperStyle={{ fontSize: 11 }} />
-              {Object.entries(STACK_COLORS).map(([key, color]) => (
-                <Bar key={key} dataKey={key} name={key} stackId="d" fill={color} />
+              {PIPELINE_DEAL_STACK_ORDER.map((key) => (
+                <Bar
+                  key={key}
+                  dataKey={key}
+                  name={key}
+                  stackId="d"
+                  fill={STACK_COLORS[key]}
+                  radius={key === 'Mở' ? [0, 0, 0, 0] : undefined}
+                >
+                  {key === 'Mở' && (
+                    <LabelList
+                      content={({ x, y, width, height, index }) => {
+                        const row = stackedChart[index];
+                        const pct = row?.completion_rate_pct;
+                        if (pct == null) return null;
+                        return (
+                          <text
+                            x={(x || 0) + (width || 0) + 6}
+                            y={(y || 0) + (height || 0) / 2}
+                            fill="#6d28d9"
+                            fontSize={10}
+                            fontWeight={600}
+                            dominantBaseline="middle"
+                          >
+                            {`HT ${pct}%`}
+                          </text>
+                        );
+                      }}
+                    />
+                  )}
+                </Bar>
               ))}
             </BarChart>
           </ChartBox>
           <ChartDataTable
             columns={[
               { key: 'name', label: 'Pipeline' },
-              { key: 'Đã chốt', label: 'Chốt', align: 'right' },
+              { key: 'Chốt', label: 'Chốt', align: 'right' },
+              { key: 'Hoàn thành', label: 'HT', align: 'right' },
               { key: 'Thua', label: 'Thua', align: 'right' },
-              { key: 'Đang mở', label: 'Mở', align: 'right' },
+              { key: 'Mở', label: 'Mở', align: 'right' },
+              {
+                key: 'completion_rate_pct',
+                label: 'Tỉ lệ HT',
+                align: 'right',
+                render: (r) => (r.completion_rate_pct != null ? `${r.completion_rate_pct}%` : '—'),
+              },
               {
                 key: 'total',
                 label: 'Tổng',
                 align: 'right',
-                render: (r) => (r['Đã chốt'] || 0) + (r.Thua || 0) + (r['Đang mở'] || 0),
+                render: (r) => (r.Chốt || 0) + (r['Hoàn thành'] || 0) + (r.Thua || 0) + (r.Mở || 0),
               },
             ]}
             rows={stackedChart.map((r, i) => ({ ...r, _key: i }))}
@@ -755,7 +983,7 @@ function EmployeeCharts({ detail, loading, row }) {
   );
 }
 
-export default function EmployeeReportPanel({ employees = [], queryParams = {}, typeView = 'all' }) {
+export default function EmployeeReportPanel({ employees = [], queryParams = {}, typeView = 'all', receptionSlaMinutes = 15 }) {
   const [selectedId, setSelectedId] = useState(null);
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -817,7 +1045,7 @@ export default function EmployeeReportPanel({ employees = [], queryParams = {}, 
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
         {selectable.map((emp) => (
-          <EmployeeCard key={emp.user_id} row={emp} onClick={() => setSelectedId(emp.user_id)} />
+          <EmployeeCard key={emp.user_id} row={emp} onClick={() => setSelectedId(emp.user_id)} receptionSlaMinutes={receptionSlaMinutes} />
         ))}
       </div>
     );
@@ -826,14 +1054,14 @@ export default function EmployeeReportPanel({ employees = [], queryParams = {}, 
   return (
     <div className="flex flex-col xl:flex-row gap-4 xl:gap-5 min-w-0 xl:items-start">
       <aside className="w-full xl:w-[280px] shrink-0 min-w-0 flex flex-col gap-3 xl:sticky xl:top-4 xl:max-h-[calc(100vh-6rem)] xl:overflow-hidden">
-        <SelectedProfileCard row={selectedRow} detail={detail} onClose={() => setSelectedId(null)} />
+        <SelectedProfileCard row={selectedRow} detail={detail} onClose={() => setSelectedId(null)} receptionSlaMinutes={receptionSlaMinutes} />
         <EmployeeSwitcher employees={selectable} selectedId={selectedId} onSelect={setSelectedId} />
       </aside>
       <main className="flex-1 min-w-0">
         {err && (
           <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{err}</div>
         )}
-        <EmployeeCharts detail={detail} loading={loading} row={selectedRow} />
+        <EmployeeCharts detail={detail} loading={loading} row={selectedRow} receptionSlaMinutes={receptionSlaMinutes} />
       </main>
     </div>
   );

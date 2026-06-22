@@ -1456,6 +1456,35 @@ export default function CRMDashboard() {
     return () => { cancelled = true; };
   }, [filterCompany, user?.company_id]);
 
+  // View Deadline: bổ sung hạn NV CRM mở nếu bootstrap bỏ qua (skip_deadline).
+  useEffect(() => {
+    if (viewMode !== 'deadline') return;
+    const rows = pipelineType === 'lead' ? allLeads : allDeals;
+    if (!rows?.length) return;
+    const needsEnrichment = rows.some((r) => r.crm_next_open_task_deadline === undefined);
+    if (!needsEnrichment) return;
+    let cancelled = false;
+    void enrichCrmKanbanRowsWithDeadlines(api, rows).then((withDl) => {
+      if (cancelled || !withDl?.length) return;
+      const patchMap = new Map(
+        withDl.map((r) => [String(r.id), r.crm_next_open_task_deadline ?? null]),
+      );
+      const apply = (prev) =>
+        dedupeCrmKanbanRows(
+          prev.map((r) => {
+            if (!patchMap.has(String(r.id))) return r;
+            return {
+              ...r,
+              crm_next_open_task_deadline: patchMap.get(String(r.id)),
+            };
+          }),
+        );
+      if (pipelineType === 'lead') setAllLeads(apply);
+      else setAllDeals((prev) => preserveCrmKanbanPipelineBadges(prev, apply(prev)));
+    });
+    return () => { cancelled = true; };
+  }, [viewMode, pipelineType, allLeads, allDeals]);
+
   // Admin: công ty đang lọc không còn trong danh sách (sau giới hạn khối theo module CRM) → bỏ lọc
   useEffect(() => {
     if (deferFilterPruneRef.current) return;
@@ -3224,7 +3253,7 @@ export default function CRMDashboard() {
 
   /**
    * Danh sách lead/deal QUÁ HẠN theo pipeline đang xem.
-   * Ưu tiên hạn NV CRM (`crm_next_open_task_deadline`); nếu không có thì xét SLA cột.
+   * Ưu tiên: deadline thẻ → hạn NV CRM mở → SLA cột.
    * Bỏ qua stage Thắng/Lost. Sắp xếp giảm dần theo thời gian quá hạn.
    */
   const overdueItems = useMemo(() => {
@@ -3239,9 +3268,10 @@ export default function CRMDashboard() {
       const stage = stageMap.get(String(it.stage_id || ''));
       if (shouldHideCrmKanbanDeadlineOnCard(it, stage)) continue;
       if (!stage || stage.is_won || stage.is_lost || stage.counts_as_completed_revenue) continue;
+      const manualTone = getCrmOpenTaskDeadlineTone(it.kanban_deadline_at);
       const taskTone = getCrmOpenTaskDeadlineTone(it.crm_next_open_task_deadline);
       const slaTone = getPipelineStageSlaTone(it.stage_entered_at, stage);
-      const tone = taskTone || slaTone;
+      const tone = manualTone || taskTone || slaTone;
       if (!tone || tone.level !== 'overdue') continue;
       out.push({
         id: it.id,
@@ -3251,7 +3281,7 @@ export default function CRMDashboard() {
         assigneeName: it.assignee?.full_name || '',
         stageName: stage.name,
         overdueMs: Math.abs(tone.remainingMs || 0),
-        source: taskTone ? 'task' : 'sla',
+        source: manualTone ? 'kanban' : (taskTone ? 'task' : 'sla'),
       });
     }
     out.sort((a, b) => b.overdueMs - a.overdueMs);
