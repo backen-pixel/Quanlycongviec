@@ -1,3 +1,4 @@
+import type { FirstStageSla, LeadTypeReportRow } from '../api/employeeReport';
 import type { EmployeeReportRow, OrgReportRow, ReportPipelineFunnelRow, ReportTimelineRow } from '../api/employeeReport';
 import { formatViDateIso } from './reportFormat';
 
@@ -98,6 +99,40 @@ export function buildDealOutcomePie(byEmployee: EmployeeReportRow[]): PieSegment
     { name: 'Thua', value: lost, color: STACK_COLORS.lost },
     { name: 'Đang mở', value: open, color: STACK_COLORS.open },
   ].filter((x) => x.value > 0);
+}
+
+export function buildLeadTypeChartData(rows: LeadTypeReportRow[], max = 12) {
+  return (rows || [])
+    .filter((r) => (r.lead_count || 0) + (r.deal_count || 0) > 0)
+    .slice(0, max)
+    .map((r) => ({
+      name: truncLabel(r.lead_type_name, 14),
+      lead: r.lead_count ?? 0,
+      deal: r.deal_count ?? 0,
+      color: r.lead_type_color || undefined,
+    }));
+}
+
+export function buildFirstStageSlaPie(sla: FirstStageSla | null | undefined): PieSegment[] {
+  const onTime = sla?.on_time_count ?? 0;
+  const overdue = sla?.overdue_count ?? 0;
+  if (!onTime && !overdue) return [];
+  return [
+    { name: 'Đúng hạn', value: onTime, color: '#059669' },
+    { name: 'Quá hạn', value: overdue, color: '#e11d48' },
+  ].filter((x) => x.value > 0);
+}
+
+export function buildFirstStageSlaFromSummary(summary: Record<string, number | null | undefined> | undefined): FirstStageSla | null {
+  const open = Number(summary?.first_stage_open_count ?? 0);
+  if (!open) return null;
+  return {
+    open_count: open,
+    on_time_count: Number(summary?.first_stage_on_time_count ?? 0),
+    overdue_count: Number(summary?.first_stage_overdue_count ?? 0),
+    on_time_rate_pct: summary?.first_stage_on_time_rate_pct ?? null,
+    overdue_rate_pct: summary?.first_stage_overdue_rate_pct ?? null,
+  };
 }
 
 export function niceMax(value: number): number {

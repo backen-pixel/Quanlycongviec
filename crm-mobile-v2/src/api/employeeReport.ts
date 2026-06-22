@@ -20,6 +20,11 @@ export type EmployeeReportRow = {
   kpi_ledger_net?: number;
   conversion_rate?: number;
   pipeline_value?: number;
+  reception_eligible_count?: number;
+  reception_overdue_count?: number;
+  reception_overdue_rate_pct?: number | null;
+  first_stage_on_time_rate_pct?: number | null;
+  first_stage_overdue_rate_pct?: number | null;
 };
 
 export type EmployeePipelineRow = {
@@ -37,6 +42,35 @@ export type EmployeePipelineRow = {
   won_value?: number;
 };
 
+export type EmployeeTimelineRow = {
+  date: string;
+  lead_count?: number;
+  deal_count?: number;
+  lead_value?: number;
+  deal_value?: number;
+};
+
+export type LeadTypeReportRow = {
+  lead_type_id?: string | null;
+  lead_type_name?: string;
+  applies_to?: string | null;
+  lead_type_color?: string | null;
+  lead_count?: number;
+  deal_count?: number;
+  lead_value?: number;
+  deal_value?: number;
+  pipeline_value?: number;
+};
+
+export type FirstStageSla = {
+  open_count?: number;
+  on_time_count?: number;
+  overdue_count?: number;
+  on_time_rate_pct?: number | null;
+  overdue_rate_pct?: number | null;
+  stage_labels?: string[];
+};
+
 export type EmployeePipelineDetail = {
   user_id: string;
   full_name: string;
@@ -47,14 +81,8 @@ export type EmployeePipelineDetail = {
   summary?: Record<string, number | null>;
   pipelines: EmployeePipelineRow[];
   timeline?: EmployeeTimelineRow[];
-};
-
-export type EmployeeTimelineRow = {
-  date: string;
-  lead_count?: number;
-  deal_count?: number;
-  lead_value?: number;
-  deal_value?: number;
+  by_lead_type?: LeadTypeReportRow[];
+  first_stage_sla?: FirstStageSla | null;
 };
 
 export type EmployeeReportQuery = {
@@ -104,6 +132,7 @@ export type OrgOverviewReport = {
   by_company: OrgReportRow[];
   by_region: OrgReportRow[];
   by_employee: EmployeeReportRow[];
+  by_lead_type: LeadTypeReportRow[];
 };
 
 export async function fetchOrgOverviewReport(params: EmployeeReportQuery): Promise<OrgOverviewReport> {
@@ -116,6 +145,7 @@ export async function fetchOrgOverviewReport(params: EmployeeReportQuery): Promi
     by_company?: OrgReportRow[];
     by_region?: OrgReportRow[];
     by_employee?: EmployeeReportRow[];
+    by_lead_type?: LeadTypeReportRow[];
   }>('/crm/reports/org-overview', {
     params: {
       date_from: params.date_from,
@@ -134,6 +164,7 @@ export async function fetchOrgOverviewReport(params: EmployeeReportQuery): Promi
     by_company: data.by_company || [],
     by_region: data.by_region || [],
     by_employee: (data.by_employee || []).filter((r) => r.user_id),
+    by_lead_type: data.by_lead_type || [],
   };
 }
 
