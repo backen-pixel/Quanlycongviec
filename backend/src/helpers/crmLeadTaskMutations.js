@@ -19,6 +19,10 @@ const {
   filterUserIdsForCrmLeadScopedNotification,
 } = require('./deadlineModuleNotifications');
 const { isExecutorColumnError } = require('./crossCompanyWorkspace');
+const {
+  clearProjectDeliveryDeadlineForCrmLead,
+  isClearsDeliveryDeadlineColumnError,
+} = require('./clearProjectDeliveryDeadline');
 
 function isQuickVerdictColumnError(err) {
   const m = String(err?.message || '').toLowerCase();
@@ -216,7 +220,7 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
   if (b.status === 'completed' || Array.isArray(b.checklist)) {
     const { data: prior, error: pErr } = await supabase
       .from('crm_tasks')
-      .select('id,status,notes,checklist,stage_slug,production_pipeline_stage_id,completion_requires_file_or_note,required_evidence_file_types,requires_quick_verdict,quick_verdict,quick_verdict_reason,completion_requires_customer_note,completion_requires_customer_contact')
+      .select('id,status,notes,checklist,stage_slug,production_pipeline_stage_id,completion_requires_file_or_note,required_evidence_file_types,requires_quick_verdict,quick_verdict,quick_verdict_reason,completion_requires_customer_note,completion_requires_customer_contact,clears_delivery_deadline_on_complete,lead_id')
       .eq('id', taskId).maybeSingle();
     if (pErr) return { error: pErr.message, status: 500 };
     priorEvidenceRow = prior;
@@ -273,7 +277,7 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
   }
 
   const { data: priorRow } = await supabase.from('crm_tasks')
-    .select('assignee_id, blocks_stage_advance')
+    .select('assignee_id, blocks_stage_advance, status, clears_delivery_deadline_on_complete, lead_id')
     .eq('id', taskId).maybeSingle();
   let priorAssigneeIds = [];
   if (Array.isArray(b.assignee_ids)) {
@@ -305,6 +309,9 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
   });
   if (isAdminLike(req.user) && b.blocks_stage_advance !== undefined) {
     update.blocks_stage_advance = !!b.blocks_stage_advance;
+  }
+  if (isAdminLike(req.user) && b.clears_delivery_deadline_on_complete !== undefined) {
+    update.clears_delivery_deadline_on_complete = !!b.clears_delivery_deadline_on_complete;
   }
   if (b.requires_quick_verdict !== undefined) {
     update.requires_quick_verdict = !!b.requires_quick_verdict;
@@ -359,7 +366,23 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
     ({ data, error } = await supabase.from('crm_tasks').update(legacy)
       .eq('id', taskId).select(CRM_TASK_SELECT).single());
   }
+  if (error && isClearsDeliveryDeadlineColumnError(error)) {
+    const { clears_delivery_deadline_on_complete: _cd, ...legacy } = update;
+    ({ data, error } = await supabase.from('crm_tasks').update(legacy)
+      .eq('id', taskId).select(CRM_TASK_SELECT).single());
+  }
   if (error) return { error: error.message, status: 500 };
+
+  if (b.status === 'completed' && priorRow && priorRow.status !== 'completed') {
+    const clearsDelivery = !!(data?.clears_delivery_deadline_on_complete ?? priorRow.clears_delivery_deadline_on_complete);
+    if (clearsDelivery) {
+      try {
+        await clearProjectDeliveryDeadlineForCrmLead(data.lead_id || priorRow.lead_id);
+      } catch (clearErr) {
+        console.warn('[crm] clear delivery deadline on task complete:', clearErr.message);
+      }
+    }
+  }
 
   let newAssigneeIds = null;
   if (Array.isArray(b.assignee_ids)) {

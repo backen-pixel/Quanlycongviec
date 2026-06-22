@@ -1154,11 +1154,16 @@ export default function CRMTasksTab({
 
   const updateTask = async (taskId, updates) => {
     const prevTasks = tasks;
+    const prevTask = prevTasks.find((t) => t.id === taskId);
     setTasks((p) => p.map((t) => (t.id === taskId ? { ...t, ...updates } : t)));
     try {
       const lid = apiLeadIdForTaskId(taskId);
       const { data } = await api.put(`/crm/leads/${lid}/tasks/${taskId}`, updates);
       setTasks((p) => p.map((t) => (t.id === taskId ? mergeChecklistIntoTaskState(t, data, updates) : t)));
+      const becameCompleted = updates.status === 'completed' && prevTask?.status !== 'completed';
+      if (shouldClearDeliveryOnTaskComplete(prevTask, becameCompleted)) {
+        await clearProjectDeliveryDeadline();
+      }
     } catch (e) {
       setTasks(prevTasks);
       alert(e.response?.data?.error || 'Lỗi');
@@ -1315,6 +1320,42 @@ export default function CRMTasksTab({
     }
   };
 
+  const clearProjectDeliveryDeadline = async () => {
+    if (!linkedProjectId) return;
+    setDateSavingKey('delivery_date');
+    try {
+      await api.put(`/projects/${linkedProjectId}`, {
+        delivery_date: null,
+        production_deadline: null,
+      });
+      const deliveryTasks = tasks.filter((t) => t.stage_slug === 'sx_giao_hang' && t.deadline);
+      if (deliveryTasks.length) {
+        await Promise.all(
+          deliveryTasks.map((t) =>
+            api.put(`/crm/leads/${apiLeadIdForTaskId(t.id)}/tasks/${t.id}`, { deadline: null }),
+          ),
+        );
+      }
+      setProjectDates((prev) => ({ ...prev, delivery_date: '' }));
+      setDateChecklist((prev) => ({ ...prev, delivery_date: false }));
+      try {
+        onArtifactsSynced?.({ artifactLeadId: leadId, projectDatesUpdated: true, projectId: linkedProjectId });
+      } catch (_) { /* ignore */ }
+      await loadLinkedProjectDates(linkedProjectId);
+      await loadTasks({ silent: true });
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi tắt deadline giao hàng');
+    } finally {
+      setDateSavingKey('');
+    }
+  };
+
+  const shouldClearDeliveryOnTaskComplete = (task, becameCompleted) => {
+    if (!becameCompleted || !isProductionScope || !linkedProjectId) return false;
+    if (!dateChecklist.delivery_date && !projectDates.delivery_date) return false;
+    return !!task?.clears_delivery_deadline_on_complete;
+  };
+
   const toggleStatus = (task) => {
     const next = task.status === 'completed' ? 'pending' : task.status === 'pending' ? 'in_progress' : 'completed';
     updateTask(task.id, { status: next });
@@ -1335,6 +1376,12 @@ export default function CRMTasksTab({
           return api.put(`/crm/leads/${lid}/tasks/${t.id}`, { status: 'completed' });
         }),
       );
+      const shouldClear =
+        isProductionScope
+        && linkedProjectId
+        && (dateChecklist.delivery_date || projectDates.delivery_date)
+        && toComplete.some((t) => t.clears_delivery_deadline_on_complete);
+      if (shouldClear) await clearProjectDeliveryDeadline();
     } catch (e) {
       setTasks(prevTasks);
       alert(e.response?.data?.error || 'Lỗi khi đánh dấu hoàn thành hàng loạt');
@@ -2953,6 +3000,14 @@ export default function CRMTasksTab({
                   title="Đã hoàn thành nhiệm vụ chặn giai đoạn"
                 >
                   <Lock className="h-2.5 w-2.5" />Đã mở khóa
+                </span>
+              )}
+              {task.clears_delivery_deadline_on_complete && isProductionScope && task.status !== 'completed' && (
+                <span
+                  className="text-[10px] text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium border border-rose-200"
+                  title="Hoàn thành nhiệm vụ này sẽ tự tắt deadline ngày giao hàng trên dự án"
+                >
+                  🚚 Tắt DL giao hàng
                 </span>
               )}
               {/* Nút Upload Excel Báo giá — hiện khi:

@@ -8704,7 +8704,15 @@ r.delete('/leads/:id/documents/:docId', async (req, res) => {
     }
     // Check if this doc was synced FROM a task attachment
     const { data: doc } = await supabase.from('lead_documents')
-      .select('source_attachment_id').eq('id', req.params.docId).single();
+      .select('source_attachment_id, source_file_attachment_id')
+      .eq('id', req.params.docId)
+      .single();
+
+    if (doc?.source_file_attachment_id) {
+      return res.status(403).json({
+        error: 'Tài liệu do xưởng chia sẻ — chỉ tắt chia sẻ tại module Sản xuất (tab Tài liệu dự án).',
+      });
+    }
     
     // Xóa task attachment liên kết (nếu có)
     if (doc?.source_attachment_id) {

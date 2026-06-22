@@ -600,10 +600,12 @@ export default function LeadDetail() {
   );
 
   /** Tài liệu lead: thủ công vs đồng bộ từ NV; tránh lặp với «File nhiệm vụ» khi cùng source_attachment_id. */
-  const { manualLeadDocs, orphanSyncedLeadDocs, documentsTabTotal } = useMemo(() => {
+  const { manualLeadDocs, orphanSyncedLeadDocs, workshopSharedDocs, documentsTabTotal } = useMemo(() => {
     const fromTask = (d) =>
       !!(d?.source_attachment_id || d?.source_crm_task_id || d?.is_from_task);
-    const manual = (documents || []).filter((d) => !fromTask(d));
+    const fromWorkshop = (d) => !!d?.source_file_attachment_id;
+    const workshop = (documents || []).filter(fromWorkshop);
+    const manual = (documents || []).filter((d) => !fromTask(d) && !fromWorkshop(d));
     const shownAttIds = new Set(
       (taskDocuments || []).map((t) => (t?.id != null ? String(t.id) : null)).filter(Boolean),
     );
@@ -612,8 +614,13 @@ export default function LeadDetail() {
       if (d.source_attachment_id != null && shownAttIds.has(String(d.source_attachment_id))) return false;
       return true;
     });
-    const total = manual.length + (taskDocuments || []).length + orphan.length;
-    return { manualLeadDocs: manual, orphanSyncedLeadDocs: orphan, documentsTabTotal: total };
+    const total = manual.length + workshop.length + (taskDocuments || []).length + orphan.length;
+    return {
+      manualLeadDocs: manual,
+      orphanSyncedLeadDocs: orphan,
+      workshopSharedDocs: workshop,
+      documentsTabTotal: total,
+    };
   }, [documents, taskDocuments]);
 
   const docImageGallery = useMemo(
@@ -622,8 +629,9 @@ export default function LeadDetail() {
       ...(taskDocuments || []),
       ...orphanSyncedLeadDocs,
       ...manualLeadDocs,
+      ...workshopSharedDocs,
     ]),
-    [documents, taskDocuments, orphanSyncedLeadDocs, manualLeadDocs],
+    [documents, taskDocuments, orphanSyncedLeadDocs, manualLeadDocs, workshopSharedDocs],
   );
 
   const openDocImage = useCallback((rawPath) => {
@@ -1922,6 +1930,22 @@ export default function LeadDetail() {
                     onOpenImage={openDocImage}
                   />
 
+                  {workshopSharedDocs.length > 0 && (
+                    <div className="mb-4 rounded-xl border-2 border-violet-200 bg-gradient-to-br from-violet-50/90 via-white to-white overflow-hidden">
+                      <div className="px-4 py-3 border-b border-violet-100">
+                        <p className="text-sm font-bold text-violet-900">🏭 Tài liệu từ Sản xuất</p>
+                        <p className="text-xs text-violet-700/85 mt-0.5">
+                          {workshopSharedDocs.length} tài liệu xưởng đã chia sẻ cho CRM
+                        </p>
+                      </div>
+                      <div className="p-4 space-y-2 max-h-96 overflow-y-auto">
+                        {workshopSharedDocs.map((doc) => (
+                          <DocumentRow key={doc.id} doc={doc} onOpenImage={openDocImage} readOnlyWorkshop />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {orphanSyncedLeadDocs.length > 0 && (
                     <div className="mb-4">
                       <p className="text-xs font-bold text-gray-500 uppercase mb-2">
@@ -2565,7 +2589,7 @@ function getFileIcon(name) {
   return map[ext] || '📄';
 }
 
-function DocumentRow({ doc, onDelete, onOpenImage }) {
+function DocumentRow({ doc, onDelete, onOpenImage, readOnlyWorkshop = false }) {
   const [expanded, setExpanded] = useState(false);
   const [showVis, setShowVis] = useState(false);
   const [companies, setCompanies] = useState([]);
@@ -2650,6 +2674,9 @@ function DocumentRow({ doc, onDelete, onOpenImage }) {
               {doc.is_from_task && (
                 <span className="text-[9px] bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded-full font-medium">📌 Từ nhiệm vụ</span>
               )}
+              {(readOnlyWorkshop || doc.source_file_attachment_id) && (
+                <span className="text-[9px] bg-violet-50 text-violet-700 px-1.5 py-0.5 rounded-full font-medium">🏭 Từ xưởng SX</span>
+              )}
               {(doc.allowed_departments?.length > 0 || doc.allowed_companies?.length > 0) && (
                 <span className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full font-medium" title="Nhãn phòng/công ty — không ẩn với team CRM trên trang này">🏷️ Nhãn PB/Cty</span>
               )}
@@ -2684,17 +2711,21 @@ function DocumentRow({ doc, onDelete, onOpenImage }) {
           )}
           {hasExtra && <ChevronDown className={`h-3 w-3 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />}
         </div>
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); openVisibility(); }}
-          className="p-1 hover:bg-slate-200 text-slate-600 rounded ml-1 cursor-pointer"
-          title="Chia sẻ xưởng & phân quyền xem"
-        >
-          ⚙️
-        </button>
-        <button onClick={onDelete} className="p-1 hover:bg-red-100 text-red-500 rounded ml-1 cursor-pointer">
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
+        {!readOnlyWorkshop && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); openVisibility(); }}
+            className="p-1 hover:bg-slate-200 text-slate-600 rounded ml-1 cursor-pointer"
+            title="Chia sẻ xưởng & phân quyền xem"
+          >
+            ⚙️
+          </button>
+        )}
+        {!readOnlyWorkshop && onDelete && (
+          <button onClick={onDelete} className="p-1 hover:bg-red-100 text-red-500 rounded ml-1 cursor-pointer">
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
       {/* Video preview — always show player */}
       {isVideo && (

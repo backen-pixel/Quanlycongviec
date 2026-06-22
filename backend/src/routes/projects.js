@@ -2813,8 +2813,55 @@ r.post('/:id/documents/bulk', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
+r.put('/:id/documents/:docId/share-crm', async (req, res) => {
+  try {
+    const { setWorkshopFileSharedToCrm } = require('../helpers/syncWorkshopFileToLeadDocument');
+    const projectId = req.params.id;
+    const docId = req.params.docId;
+
+    let { data: fileRow, error: fetchErr } = await supabase
+      .from('file_attachments')
+      .select('*')
+      .eq('id', docId)
+      .maybeSingle();
+    if (fetchErr) throw fetchErr;
+    if (!fileRow) return res.status(404).json({ error: 'Không tìm thấy tài liệu' });
+
+    if (fileRow.entity_type === 'project') {
+      if (String(fileRow.entity_id) !== String(projectId)) {
+        return res.status(404).json({ error: 'Không tìm thấy tài liệu' });
+      }
+    } else if (fileRow.entity_type === 'task') {
+      const { data: task } = await supabase
+        .from('tasks')
+        .select('project_id')
+        .eq('id', fileRow.entity_id)
+        .maybeSingle();
+      if (!task?.project_id || String(task.project_id) !== String(projectId)) {
+        return res.status(404).json({ error: 'Không tìm thấy tài liệu' });
+      }
+    } else {
+      return res.status(400).json({ error: 'Loại file không hỗ trợ chia sẻ CRM' });
+    }
+
+    const shared = req.body?.shared_to_crm !== undefined
+      ? !!req.body.shared_to_crm
+      : !fileRow.shared_to_crm;
+    const result = await setWorkshopFileSharedToCrm(fileRow, shared);
+    res.json(result);
+  } catch (e) {
+    console.error('PUT /projects/:id/documents/:docId/share-crm:', e);
+    if (e.code === 'migration_required') {
+      return res.status(503).json({ error: e.message, code: 'migration_required' });
+    }
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
 r.delete('/:id/documents/:docId', async (req, res) => {
   try {
+    const { removeLeadDocumentForWorkshopFile } = require('../helpers/syncWorkshopFileToLeadDocument');
+    await removeLeadDocumentForWorkshopFile(req.params.docId);
     await supabase.from('file_attachments').delete().eq('id', req.params.docId).eq('entity_type', 'project');
     res.json({ message: 'Đã xóa' });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }

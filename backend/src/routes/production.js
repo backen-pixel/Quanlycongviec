@@ -3388,6 +3388,7 @@ r.post('/task-templates/:tplId/items', requirePermission('projects', 'edit'), as
       default_allowed_departments: Array.isArray(b.default_allowed_departments) ? b.default_allowed_departments : null,
       executor_company_id: b.executor_company_id || null,
       blocks_stage_advance: !!b.blocks_stage_advance,
+      clears_delivery_deadline_on_complete: !!b.clears_delivery_deadline_on_complete,
       completion_requires_file_or_note: !!b.completion_requires_file_or_note
         || (Array.isArray(b.required_evidence_file_types) && b.required_evidence_file_types.length > 0),
       required_evidence_file_types: Array.isArray(b.required_evidence_file_types) ? b.required_evidence_file_types : [],
@@ -3413,7 +3414,7 @@ r.post('/task-templates/:tplId/items', requirePermission('projects', 'edit'), as
     }
     if (error && String(error.message || '').includes('blocks_stage_advance')) {
       // DB chưa apply migration 256 — bỏ cờ và retry để vẫn tạo được item.
-      const { blocks_stage_advance: _drop, ...legacy } = insertRow;
+      const { blocks_stage_advance: _drop, clears_delivery_deadline_on_complete: _cd, ...legacy } = insertRow;
       ({ data, error } = await supabase
         .from('workshop_task_template_items')
         .insert(legacy)
@@ -3439,6 +3440,7 @@ r.put('/task-templates/:tplId/items/:itemId', requirePermission('projects', 'edi
     const update = {};
     ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist',
       'default_allowed_companies', 'default_allowed_departments', 'executor_company_id', 'blocks_stage_advance',
+      'clears_delivery_deadline_on_complete',
       'completion_requires_file_or_note', 'required_evidence_file_types', 'requires_quick_verdict'].forEach((f) => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
@@ -3472,7 +3474,7 @@ r.put('/task-templates/:tplId/items/:itemId', requirePermission('projects', 'edi
       });
     }
     if (error && String(error.message || '').includes('blocks_stage_advance')) {
-      const { blocks_stage_advance: _drop, ...legacy } = update;
+      const { blocks_stage_advance: _drop, clears_delivery_deadline_on_complete: _cd, ...legacy } = update;
       ({ data, error } = await supabase
         .from('workshop_task_template_items')
         .update(legacy)
