@@ -37,8 +37,20 @@ export default function EmployeeReportCard({ row, onPress }: Props) {
             {row.department_name || 'Nhân viên kinh doanh'}
           </Text>
         </View>
-        <View style={styles.rateBadge}>
-          <Text style={styles.rateText}>{row.conversion_rate ?? 0}%</Text>
+        <View style={styles.rateCol}>
+          <View style={styles.rateBadge}>
+            <Text style={styles.rateText}>{row.conversion_rate ?? 0}%</Text>
+          </View>
+          {row.reception_overdue_rate_pct != null ? (
+            <View style={styles.rateBadgeOrange}>
+              <Text style={styles.rateTextOrange}>QH TN {row.reception_overdue_rate_pct}%</Text>
+            </View>
+          ) : null}
+          {row.first_stage_overdue_rate_pct != null ? (
+            <View style={styles.rateBadgeSky}>
+              <Text style={styles.rateTextSky}>QH c1 {row.first_stage_overdue_rate_pct}%</Text>
+            </View>
+          ) : null}
         </View>
       </View>
 
@@ -79,6 +91,7 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   headBody: { flex: 1, minWidth: 0 },
   name: { color: Colors.text, fontSize: 16, fontWeight: '800' },
   dept: { color: Colors.textMuted, fontSize: 12, marginTop: 2 },
+  rateCol: { alignItems: 'flex-end', gap: 4 },
   rateBadge: {
     backgroundColor: Colors.blueSoft,
     borderRadius: 999,
@@ -86,6 +99,20 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     paddingVertical: 4,
   },
   rateText: { color: Colors.blue, fontSize: 11, fontWeight: '800' },
+  rateBadgeOrange: {
+    backgroundColor: '#fff7ed',
+    borderRadius: 999,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  rateTextOrange: { color: '#9a3412', fontSize: 10, fontWeight: '800' },
+  rateBadgeSky: {
+    backgroundColor: '#f0f9ff',
+    borderRadius: 999,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  rateTextSky: { color: '#0c4a6e', fontSize: 10, fontWeight: '800' },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',

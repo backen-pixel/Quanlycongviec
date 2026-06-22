@@ -4,16 +4,21 @@ import type { OrgOverviewReport } from '../../api/employeeReport';
 import {
   buildDealOutcomePie,
   buildDealStackedRows,
+  buildFirstStageSlaFromSummary,
   buildFunnelChart,
+  buildLeadTypeChartData,
   buildRegionBarChart,
   buildTimelineChart,
 } from '../../lib/reportChartData';
 import ReportChartCard from './charts/ReportChartCard';
 import ReportDonutChart from './charts/ReportDonutChart';
+import ReportFirstStageSlaBlock from './charts/ReportFirstStageSlaBlock';
 import ReportHorizontalBarChart from './charts/ReportHorizontalBarChart';
+import ReportLeadTypeChart from './charts/ReportLeadTypeChart';
 import ReportStackedBarChart from './charts/ReportStackedBarChart';
 import ReportTimelineChart from './charts/ReportTimelineChart';
 import ReportVerticalBarChart from './charts/ReportVerticalBarChart';
+import ReportLeadTypeList from './ReportLeadTypeList';
 import { useColors, type ThemeColors } from '../../theme';
 
 type Props = {
@@ -31,6 +36,8 @@ export default function ReportOverviewCharts({ report }: Props) {
     () => buildDealStackedRows(report.by_employee || [], 'full_name', 8),
     [report.by_employee],
   );
+  const leadTypeChart = useMemo(() => buildLeadTypeChartData(report.by_lead_type || []), [report.by_lead_type]);
+  const firstStageSla = useMemo(() => buildFirstStageSlaFromSummary(report.summary), [report.summary]);
 
   return (
     <>
@@ -74,6 +81,25 @@ export default function ReportOverviewCharts({ report }: Props) {
         emptyText="Chưa có dữ liệu khu vực"
       >
         <ReportVerticalBarChart data={regionBars} />
+      </ReportChartCard>
+
+      <ReportChartCard
+        title="Theo phân loại Lead/Deal"
+        subtitle="Theo loại cấu hình Pipeline"
+        empty={leadTypeChart.length === 0}
+        emptyText="Chưa có lead/deal gắn phân loại trong kỳ"
+      >
+        <ReportLeadTypeChart data={leadTypeChart} />
+        <ReportLeadTypeList rows={report.by_lead_type || []} />
+      </ReportChartCard>
+
+      <ReportChartCard
+        title="SLA cột đầu tiên"
+        subtitle="Lead/deal đang mở ở cột đầu pipeline"
+        empty={!firstStageSla?.open_count}
+        emptyText="Chưa có dữ liệu SLA cột đầu"
+      >
+        <ReportFirstStageSlaBlock sla={firstStageSla} />
       </ReportChartCard>
     </>
   );
