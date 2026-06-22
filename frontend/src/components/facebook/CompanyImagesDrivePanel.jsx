@@ -6,11 +6,10 @@ import { FolderPlus, Image, Loader2, RefreshCw, Upload } from 'lucide-react';
 import {
   driveCreateFolder,
   driveEnsureCompanyImages,
-  driveFileThumbnailUrl,
   driveGetCompanyImages,
   driveUploadFile,
 } from '../../lib/drive';
-import { isImageMime } from '../drive/DriveFileViews';
+import { DriveFileThumbnail, isImageMime } from '../drive/DriveFileViews';
 
 export default function CompanyImagesDrivePanel({ companyId, companyName, onFolderCreated }) {
   const [loading, setLoading] = useState(true);
@@ -215,7 +214,7 @@ export default function CompanyImagesDrivePanel({ companyId, companyName, onFold
                 <div className="flex flex-wrap gap-1 max-h-36 overflow-y-auto">
                   {files.slice(0, 12).map((f) => (
                     <div key={f.id} className="w-10 h-10 rounded-md overflow-hidden border border-gray-100 bg-gray-50" title={f.name}>
-                      <img src={driveFileThumbnailUrl(f.id)} alt="" className="w-full h-full object-cover" />
+                      <DriveFileThumbnail file={f} className="w-full h-full object-cover" size={40} />
                     </div>
                   ))}
                   {files.length > 12 && (

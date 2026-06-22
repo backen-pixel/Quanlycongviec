@@ -10,6 +10,61 @@ const { sanitizeStorageFilename, isInvalidStorageKeyError } = require('./storage
 const BUCKET = 'attachments';
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 const MAX_IMAGES_PER_SEND = 30;
+/** Tải Drive → Storage song song; gửi FB vẫn tuần tự để tránh rate limit. */
+const PUBLISH_CONCURRENCY = 4;
+const FB_SEND_DELAY_MS = 50;
+
+const DRIVE_FILE_SEND_SELECT = 'id, name, mime_type, size_bytes, google_file_id, folder_id, root_id, md5';
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Worker pool — giới hạn số tác vụ song song. */
+async function runWithConcurrency(items, limit, worker) {
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) return [];
+  const results = new Array(list.length);
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(limit, list.length) }, async () => {
+    while (cursor < list.length) {
+      const index = cursor++;
+      try {
+        results[index] = { ok: true, value: await worker(list[index], index) };
+      } catch (error) {
+        results[index] = { ok: false, error };
+      }
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
+/** URL Messenger đã publish gần đây — tránh tải lại Drive nếu file chưa đổi. */
+async function buildDriveMessengerUrlCache(files) {
+  const want = new Set((files || []).map((f) => String(f.id)));
+  const md5ById = new Map((files || []).map((f) => [String(f.id), f.md5 || null]));
+  const cache = new Map();
+  if (!want.size) return cache;
+
+  const { data } = await supabase
+    .from('facebook_messages')
+    .select('attachment_url, metadata')
+    .eq('message_type', 'image')
+    .not('attachment_url', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(800);
+
+  for (const row of data || []) {
+    const fid = row.metadata?.drive_file_id;
+    if (!fid || !want.has(String(fid)) || cache.has(String(fid))) continue;
+    const cachedMd5 = row.metadata?.drive_file_md5 || null;
+    const currentMd5 = md5ById.get(String(fid));
+    if (currentMd5 && cachedMd5 && cachedMd5 !== currentMd5) continue;
+    cache.set(String(fid), row.attachment_url);
+  }
+  return cache;
+}
 
 function isImageMime(mime, filename) {
   if (typeof mime === 'string' && mime.startsWith('image/')) return true;
@@ -33,9 +88,9 @@ async function streamToBuffer(stream, maxBytes) {
 async function uploadBufferToMessengerStorage(buffer, { originalName, mimetype, contactId }) {
   const ext = path.extname(originalName).toLowerCase() || '.jpg';
   const safeName = sanitizeStorageFilename(path.basename(originalName, path.extname(originalName)));
-  const timestamp = Date.now();
+  const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
   const folder = contactId ? `messenger/${contactId}` : 'messenger';
-  let storagePath = `${folder}/${timestamp}_${safeName}${ext}`;
+  let storagePath = `${folder}/${stamp}_${safeName}${ext}`;
 
   let uploadError;
   ({ error: uploadError } = await supabase.storage
@@ -43,7 +98,7 @@ async function uploadBufferToMessengerStorage(buffer, { originalName, mimetype, 
     .upload(storagePath, buffer, { contentType: mimetype, upsert: false }));
 
   if (uploadError && isInvalidStorageKeyError(uploadError)) {
-    storagePath = `${folder}/${timestamp}_image${ext}`;
+    storagePath = `${folder}/${stamp}_image${ext}`;
     ({ error: uploadError } = await supabase.storage
       .from(BUCKET)
       .upload(storagePath, buffer, { contentType: mimetype, upsert: false }));
@@ -57,17 +112,14 @@ async function uploadBufferToMessengerStorage(buffer, { originalName, mimetype, 
   return urlData.publicUrl;
 }
 
-async function publishDriveImageForMessenger(user, driveFileId, contactId) {
-  const { data: file } = await supabase
-    .from('drive_files')
-    .select('id, name, mime_type, size_bytes, google_file_id, folder_id')
-    .eq('id', driveFileId)
-    .is('trashed_at', null)
-    .maybeSingle();
-  if (!file) throw Object.assign(new Error('File không tồn tại'), { status: 404 });
+async function publishDriveImageFromFile(user, file, contactId, cachedUrl = null, { skipAcl = false } = {}) {
+  if (!file?.id) throw Object.assign(new Error('File không tồn tại'), { status: 404 });
+  if (!file.google_file_id) throw Object.assign(new Error('File Drive chưa có google_file_id'), { status: 400 });
 
-  const access = await driveAcl.canAccess({ user, targetType: 'file', targetId: file.id, requiredRole: 'viewer' });
-  if (!access.ok) throw Object.assign(new Error('Không có quyền file Drive'), { status: 403 });
+  if (!skipAcl) {
+    const access = await driveAcl.canAccess({ user, targetType: 'file', targetId: file.id, requiredRole: 'viewer' });
+    if (!access.ok) throw Object.assign(new Error('Không có quyền file Drive'), { status: 403 });
+  }
   if (!isImageMime(file.mime_type, file.name)) {
     throw Object.assign(new Error('Chỉ gửi được file ảnh'), { status: 400 });
   }
@@ -75,15 +127,30 @@ async function publishDriveImageForMessenger(user, driveFileId, contactId) {
     throw Object.assign(new Error('Ảnh vượt quá 25MB'), { status: 400 });
   }
 
+  const mimetype = file.mime_type || 'image/jpeg';
+  if (cachedUrl) {
+    return { file_url: cachedUrl, mime_type: mimetype, name: file.name, from_cache: true };
+  }
+
   const { stream } = await gdrive.getDownloadStream(file.google_file_id);
   const buffer = await streamToBuffer(stream, MAX_IMAGE_BYTES);
-  const mimetype = file.mime_type || 'image/jpeg';
   const fileUrl = await uploadBufferToMessengerStorage(buffer, {
     originalName: file.name || 'image.jpg',
     mimetype,
     contactId,
   });
-  return { file_url: fileUrl, mime_type: mimetype, name: file.name };
+  return { file_url: fileUrl, mime_type: mimetype, name: file.name, from_cache: false };
+}
+
+async function publishDriveImageForMessenger(user, driveFileId, contactId) {
+  const { data: file } = await supabase
+    .from('drive_files')
+    .select(DRIVE_FILE_SEND_SELECT)
+    .eq('id', driveFileId)
+    .is('trashed_at', null)
+    .maybeSingle();
+  if (!file) throw Object.assign(new Error('File không tồn tại'), { status: 404 });
+  return publishDriveImageFromFile(user, file, contactId);
 }
 
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
@@ -201,7 +268,7 @@ async function listFolderImages(user, folderId, limit = MAX_IMAGES_PER_SEND, { s
 
   const { data: files, error } = await supabase
     .from('drive_files')
-    .select('id, name, mime_type, size_bytes, thumbnail_url, created_at')
+    .select(DRIVE_FILE_SEND_SELECT)
     .eq('folder_id', folderId)
     .is('trashed_at', null)
     .order('name', { ascending: true })
@@ -360,7 +427,7 @@ async function listRootLevelImages(user, rootId, limit = MAX_IMAGES_PER_SEND, { 
 
   const { data: files, error } = await supabase
     .from('drive_files')
-    .select('id, name, mime_type, size_bytes, thumbnail_url, created_at')
+    .select(DRIVE_FILE_SEND_SELECT)
     .eq('root_id', rootId)
     .is('folder_id', null)
     .is('trashed_at', null)
@@ -474,18 +541,19 @@ async function listImagesByIds(user, fileIds, limit = MAX_IMAGES_PER_SEND) {
   }
   const { data: files } = await supabase
     .from('drive_files')
-    .select('id, name, mime_type, size_bytes, folder_id, root_id')
+    .select(DRIVE_FILE_SEND_SELECT)
     .in('id', ids)
     .is('trashed_at', null);
   const byId = new Map((files || []).map((f) => [String(f.id), f]));
-  const images = [];
-  for (const id of ids) {
+
+  const accessResults = await Promise.all(ids.map(async (id) => {
     const file = byId.get(id);
-    if (!file || !isImageMime(file.mime_type, file.name)) continue;
+    if (!file || !isImageMime(file.mime_type, file.name)) return null;
     const access = await driveAcl.canAccess({ user, targetType: 'file', targetId: file.id, requiredRole: 'viewer' });
-    if (!access.ok) continue;
-    images.push(file);
-  }
+    return access.ok ? file : null;
+  }));
+
+  const images = accessResults.filter(Boolean);
   if (!images.length) {
     throw Object.assign(new Error('Không có ảnh hợp lệ để gửi'), { status: 400 });
   }
@@ -510,9 +578,15 @@ async function sendFolderImagesToContact({
   if (fileIds?.length) {
     images = await listImagesByIds(user, fileIds, MAX_IMAGES_PER_SEND);
   } else if (folderId) {
-    images = await listFolderImages(user, folderId, MAX_IMAGES_PER_SEND);
+    images = await listFolderImages(user, folderId, MAX_IMAGES_PER_SEND, { syncGoogle: false });
+    if (!images.length) {
+      images = await listFolderImages(user, folderId, MAX_IMAGES_PER_SEND, { syncGoogle: true });
+    }
   } else if (rootId) {
-    images = await listRootLevelImages(user, rootId, MAX_IMAGES_PER_SEND);
+    images = await listRootLevelImages(user, rootId, MAX_IMAGES_PER_SEND, { syncGoogle: false });
+    if (!images.length) {
+      images = await listRootLevelImages(user, rootId, MAX_IMAGES_PER_SEND, { syncGoogle: true });
+    }
   }
   if (!images.length) {
     throw Object.assign(new Error('Thư mục Drive không có ảnh nào'), { status: 400 });
@@ -521,15 +595,30 @@ async function sendFolderImagesToContact({
   const messages = [];
   const failed = [];
   const uid = user.userId || user.id;
+  const urlCache = await buildDriveMessengerUrlCache(images);
+  const skipPerFileAcl = !!fileIds?.length;
 
-  for (const img of images) {
+  const publishedResults = await runWithConcurrency(images, PUBLISH_CONCURRENCY, async (img) => {
+    const cachedUrl = urlCache.get(String(img.id)) || null;
+    const published = await publishDriveImageFromFile(user, img, contact.id, cachedUrl, { skipAcl: skipPerFileAcl });
+    return { img, published };
+  });
+
+  for (let i = 0; i < publishedResults.length; i++) {
+    const row = publishedResults[i];
+    const img = images[i];
+    if (!row?.ok) {
+      failed.push({ name: img?.name, error: formatFacebookSendError(row?.error?.message || 'Lỗi tải ảnh') });
+      continue;
+    }
+
+    const { published } = row.value;
     try {
-      const published = await publishDriveImageForMessenger(user, img.id, contact.id);
       const result = await sendMessengerAttachment(contact.page_id, contact.psid, 'image', published.file_url);
-        if (result?.error) {
-          failed.push({ name: img.name, error: formatFacebookSendError(result.error.message || 'Facebook API lỗi') });
-          continue;
-        }
+      if (result?.error) {
+        failed.push({ name: img.name, error: formatFacebookSendError(result.error.message || 'Facebook API lỗi') });
+        continue;
+      }
       const { data: saved } = await supabase.from('facebook_messages').insert({
         contact_id: contact.id,
         lead_id: contact.lead_id,
@@ -543,15 +632,19 @@ async function sendFolderImagesToContact({
         metadata: {
           image_set_id: imageSetId || null,
           drive_file_id: img.id,
+          drive_file_md5: img.md5 || null,
           drive_folder_id: folderId || null,
           drive_root_id: rootId || null,
+          messenger_url_from_cache: !!published.from_cache,
         },
       }).select().single();
       if (saved) {
         messages.push(saved);
         if (ioRef) ioRef.emit('fb_message', { contact_id: contact.id, message: saved });
       }
-      await new Promise((r) => setTimeout(r, 350));
+      if (FB_SEND_DELAY_MS > 0 && i < publishedResults.length - 1) {
+        await sleep(FB_SEND_DELAY_MS);
+      }
     } catch (err) {
       failed.push({ name: img.name, error: formatFacebookSendError(err.message || 'Lỗi gửi') });
     }
