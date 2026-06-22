@@ -66,6 +66,13 @@ export default function NewDealModal({
     return isMetallaOrHucabiCompanyId(formData.company_id, companies);
   }, [isProduction, formData.company_id, companies]);
 
+  const clientCompanyIdForWorkshopTypes = useMemo(() => {
+    if (!clientCompanyPick || clientCompanyPick === '__new__') return null;
+    const hit = clientCompanies.find((c) => String(c.id) === String(clientCompanyPick));
+    if (!hit?.client_company_id) return null;
+    return String(hit.client_company_id);
+  }, [clientCompanyPick, clientCompanies]);
+
   const visibleLeadTypes = useMemo(() => {
     const cid = String(formData.company_id || '');
     return (Array.isArray(leadTypes) ? leadTypes : [])
@@ -87,15 +94,21 @@ export default function NewDealModal({
       setModalWorkTypes([]);
       return undefined;
     }
+    if (requiresClientCompany && !clientCompanyIdForWorkshopTypes) {
+      setModalWorkTypes([]);
+      return undefined;
+    }
     let cancelled = false;
-    api.get('/workshop/project-types', { params: { company_id: cid, module: 'production' } })
+    const params = { company_id: cid, module: 'production' };
+    if (clientCompanyIdForWorkshopTypes) params.client_company_id = clientCompanyIdForWorkshopTypes;
+    api.get('/workshop/project-types', { params })
       .then((r) => {
         if (cancelled) return;
         setModalWorkTypes(Array.isArray(r.data) ? r.data : []);
       })
       .catch(() => { if (!cancelled) setModalWorkTypes([]); });
     return () => { cancelled = true; };
-  }, [isProduction, formData.company_id]);
+  }, [isProduction, formData.company_id, clientCompanyIdForWorkshopTypes, requiresClientCompany]);
 
   useEffect(() => {
     if (!isProduction) return undefined;
@@ -238,7 +251,7 @@ export default function NewDealModal({
     if (!formData.workshop_type_id) return;
     const ok = visibleWorkTypes.some((t) => String(t.id) === String(formData.workshop_type_id));
     if (!ok) setFormData((prev) => ({ ...prev, workshop_type_id: '' }));
-  }, [formData.company_id, visibleWorkTypes, formData.workshop_type_id]);
+  }, [formData.company_id, visibleWorkTypes, formData.workshop_type_id, clientCompanyIdForWorkshopTypes]);
 
   useEffect(() => {
     if (!formData.source_id) return;
@@ -573,6 +586,7 @@ export default function NewDealModal({
                       const v = e.target.value;
                       setClientCompanyPick(v);
                       if (v !== '__new__') set('external_company_name', '');
+                      set('workshop_type_id', '');
                     }}
                     className={`w-full px-3 py-2 border rounded-lg focus:ring-2 ${ringClass} text-sm ${
                       requiresClientCompany && !clientCompanyPick ? 'border-red-300 bg-red-50' : 'border-gray-200'
@@ -613,7 +627,7 @@ export default function NewDealModal({
                   )}
                   <p className="mt-1 text-[10px] text-gray-400">
                     Danh sách gồm công ty CRM trong hệ thống và công ty đã lưu trước đó.
-                    Chọn «Công ty khác» chỉ khi cần nhập tên mới — danh sách CRM vẫn giữ nguyên.
+                    Phân loại xưởng bên dưới chỉ hiện loại được gán cho công ty đặt hàng đã chọn.
                   </p>
                 </div>
               )}
@@ -637,7 +651,9 @@ export default function NewDealModal({
                     </select>
                   ) : (
                     <p className="px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 text-xs text-amber-800">
-                      Công ty chưa cấu hình phân loại xưởng — vào Cài đặt pipeline SX để thêm.
+                      {requiresClientCompany && !clientCompanyIdForWorkshopTypes
+                        ? 'Chọn công ty đặt hàng trước — phân loại hiện theo công ty CRM đó.'
+                        : 'Chưa có phân loại cho công ty đặt hàng này — kiểm tra cài đặt pipeline SX hoặc đơn đã tạo trước đó.'}
                     </p>
                   )}
                 </div>
