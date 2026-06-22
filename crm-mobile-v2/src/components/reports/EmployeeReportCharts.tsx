@@ -123,7 +123,7 @@ export default function EmployeeReportCharts({
       ) : null}
 
       {pipelineStacked.length > 0 ? (
-        <ReportChartCard title="Deal theo pipeline" subtitle="Chốt / thua / đang mở">
+        <ReportChartCard title="Deal theo pipeline" subtitle="Chốt / hoàn thành (tím) / thua / mở">
           <ReportStackedBarChart data={pipelineStacked} rowHeight={34} />
         </ReportChartCard>
       ) : null}

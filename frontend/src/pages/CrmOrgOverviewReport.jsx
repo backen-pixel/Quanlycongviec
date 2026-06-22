@@ -4,7 +4,7 @@ import { formatVND, formatKpiLedgerNet } from '../lib/utils';
 import { loadXlsx } from '../lib/xlsxLoader';
 import KpiUserFilter from '../components/KpiUserFilter';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
-import EmployeeReportPanel from '../components/crm/EmployeeReportPanel';
+import EmployeeReportPanel, { LeadTypeBreakdownChart, FirstStageSlaChart } from '../components/crm/EmployeeReportPanel';
 import {
   BarChart3,
   Building2,
@@ -220,12 +220,34 @@ const METRIC_COLS = [
   },
   {
     key: 'overdue_count',
-    label: 'Quá hạn',
+    label: 'Quá hạn SLA',
     align: 'right',
     render: (r) => {
       const n = r.overdue_count ?? 0;
       const pct = r.overdue_rate_pct;
       return pct != null ? `${n} (${pct}%)` : String(n);
+    },
+  },
+  {
+    key: 'reception_overdue_count',
+    label: 'QH tiếp nhận',
+    align: 'right',
+    render: (r) => {
+      const n = r.reception_overdue_count ?? 0;
+      const pct = r.reception_overdue_rate_pct;
+      const eligible = r.reception_eligible_count ?? 0;
+      if (!eligible) return '—';
+      return pct != null ? `${n}/${eligible} (${pct}%)` : String(n);
+    },
+  },
+  {
+    key: 'first_stage_on_time_rate_pct',
+    label: 'Cột 1 (đúng/QH)',
+    align: 'right',
+    render: (r) => {
+      const open = r.first_stage_open_count ?? 0;
+      if (!open) return '—';
+      return `${r.first_stage_on_time_rate_pct ?? 0}% / ${r.first_stage_overdue_rate_pct ?? 0}%`;
     },
   },
   {
@@ -351,6 +373,30 @@ export default function CrmOrgOverviewReport() {
     [data],
   );
 
+  const leadTypeBarChart = useMemo(
+    () => (data?.by_lead_type || [])
+      .filter((r) => (r.lead_count || 0) + (r.deal_count || 0) > 0)
+      .slice(0, 12)
+      .map((r) => ({
+        name: truncLabel(r.lead_type_name, 16),
+        Lead: r.lead_count ?? 0,
+        Deal: r.deal_count ?? 0,
+      })),
+    [data],
+  );
+
+  const firstStageSla = useMemo(() => {
+    const s = data?.summary;
+    if (!s?.first_stage_open_count) return null;
+    return {
+      open_count: s.first_stage_open_count,
+      on_time_count: s.first_stage_on_time_count,
+      overdue_count: s.first_stage_overdue_count,
+      on_time_rate_pct: s.first_stage_on_time_rate_pct,
+      overdue_rate_pct: s.first_stage_overdue_rate_pct,
+    };
+  }, [data]);
+
   const employeeStacked = useMemo(
     () => buildDealStackedRows(data?.by_employee, 'full_name', 12),
     [data],
@@ -416,6 +462,15 @@ export default function CrmOrgOverviewReport() {
       Deal: r.deal_count,
       Pipeline: r.pipeline_value,
       Chot: r.won_deal_count,
+      'QH tiep nhan %': r.reception_overdue_rate_pct,
+    }));
+    sheet('Phan loai', data.by_lead_type, (r) => ({
+      'Phan loai': r.lead_type_name,
+      'Ap dung': r.applies_to,
+      Lead: r.lead_count,
+      Deal: r.deal_count,
+      Pipeline: r.pipeline_value,
+      'QH tiep nhan %': r.reception_overdue_rate_pct,
     }));
     XLSX.writeFile(wb, `crm-bc-to-chuc_${dateFrom}_${dateTo}.xlsx`);
   };
@@ -622,7 +677,7 @@ export default function CrmOrgOverviewReport() {
         </div>
       ) : data ? (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3">
             <KpiCard
               label="Quá hạn SLA"
               value={summary.overdue_count ?? 0}
@@ -630,6 +685,22 @@ export default function CrmOrgOverviewReport() {
               compareKey="overdue_count"
               sub={summary.overdue_rate_pct != null ? `${summary.overdue_rate_pct}% trên ${summary.open_count ?? 0} đang mở` : `${summary.open_count ?? 0} đang mở`}
               accent="border-rose-200 bg-gradient-to-br from-rose-50 to-white"
+            />
+            <KpiCard
+              label="Quá hạn tiếp nhận"
+              value={
+                summary.reception_overdue_rate_pct != null
+                  ? `${summary.reception_overdue_rate_pct}%`
+                  : '—'
+              }
+              compare={compare}
+              compareKey="reception_overdue_count"
+              sub={
+                summary.reception_eligible_count
+                  ? `${summary.reception_overdue_count ?? 0}/${summary.reception_eligible_count} lead · SLA ${data?.reception_sla_minutes ?? 15} phút`
+                  : 'Chưa có lead trong kỳ'
+              }
+              accent="border-orange-200 bg-gradient-to-br from-orange-50 to-white"
             />
             <KpiCard
               label="Điểm KPI (tháng)"
@@ -841,6 +912,61 @@ export default function CrmOrgOverviewReport() {
                 </CollapsibleDataList>
               </Section>
 
+              <Section title="Theo phân loại Lead/Deal" subtitle="Theo loại đã cấu hình tại Pipeline → Phân loại (crm_lead_types)" className="lg:col-span-2">
+                {leadTypeBarChart.length > 0 ? (
+                  <div className="h-56">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={leadTypeBarChart}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={56} />
+                        <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                        <RechartsTooltip />
+                        <Legend wrapperStyle={{ fontSize: 11 }} />
+                        <Bar dataKey="Lead" stackId="ld" fill="#6366f1" radius={[0, 0, 0, 0]} />
+                        <Bar dataKey="Deal" stackId="ld" fill="#0891b2" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-500 py-6 text-center">Chưa có lead/deal gắn phân loại trong kỳ</p>
+                )}
+                <CollapsibleDataList label="bảng số liệu theo phân loại">
+                  <MetricTable
+                    columns={[
+                      {
+                        key: 'lead_type_name',
+                        label: 'Phân loại',
+                        bold: true,
+                        render: (r) => (
+                          <span className="inline-flex items-center gap-1.5">
+                            {r.lead_type_color && (
+                              <span
+                                className="inline-block h-2.5 w-2.5 rounded-full shrink-0"
+                                style={{ backgroundColor: r.lead_type_color }}
+                              />
+                            )}
+                            {r.lead_type_name}
+                          </span>
+                        ),
+                      },
+                      {
+                        key: 'applies_to',
+                        label: 'Áp dụng',
+                        render: (r) => {
+                          const v = r.applies_to;
+                          if (v === 'lead') return 'Lead';
+                          if (v === 'deal') return 'Deal';
+                          if (v === 'both') return 'Lead & Deal';
+                          return '—';
+                        },
+                      },
+                      ...METRIC_COLS,
+                    ]}
+                    rows={(data.by_lead_type || []).map((r) => ({ ...r, _key: r.lead_type_id || r.lead_type_name }))}
+                  />
+                </CollapsibleDataList>
+              </Section>
+
               <Section title="Theo nguồn Lead" subtitle="Hiệu quả kênh marketing" className="lg:col-span-2">
                 <CollapsibleDataList label="bảng số liệu theo nguồn">
                   <MetricTable
@@ -917,17 +1043,45 @@ export default function CrmOrgOverviewReport() {
           )}
 
           {activeTab === 'employee' && (
-            <div className="rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden">
-              <div className="px-5 pt-5 pb-3 border-b border-slate-100">
-                <h2 className="text-base font-bold text-slate-900">Nhân viên kinh doanh</h2>
-                <p className="text-xs text-slate-500 mt-0.5">Chọn thẻ nhân viên để xem biểu đồ chi tiết</p>
+            <div className="space-y-5">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                <LeadTypeBreakdownChart rows={data.by_lead_type || []} />
+                <FirstStageSlaChart sla={firstStageSla} />
               </div>
-              <div className="p-4 md:p-5 min-w-0">
-                <EmployeeReportPanel
-                  employees={data.by_employee || []}
-                  queryParams={pipelineQueryParams}
-                  typeView={typeView}
-                />
+
+              <Section title="Bảng tổng hợp nhân viên" subtitle="Lead/deal, quá hạn tiếp nhận và SLA cột đầu pipeline (lead/deal đang mở ở cột 1)">
+                {employeeStacked.length > 0 && (
+                  <DealStackedBarChart data={employeeStacked} title="Deal theo nhân viên (chốt / thua / mở)" />
+                )}
+                <CollapsibleDataList label="bảng số liệu nhân viên" defaultOpen>
+                  <MetricTable
+                    columns={[
+                      { key: 'full_name', label: 'Nhân viên', bold: true },
+                      { key: 'department_name', label: 'Phòng ban' },
+                      ...METRIC_COLS,
+                    ]}
+                    rows={(data.by_employee || [])
+                      .filter((r) => r.user_id)
+                      .map((r) => ({ ...r, _key: r.user_id }))}
+                  />
+                </CollapsibleDataList>
+              </Section>
+
+              <div className="rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-5 pt-5 pb-3 border-b border-slate-100">
+                  <h2 className="text-base font-bold text-slate-900">Chi tiết từng nhân viên</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Chọn thẻ nhân viên để xem biểu đồ pipeline · SLA tiếp nhận: {data?.reception_sla_minutes ?? 15} phút
+                  </p>
+                </div>
+                <div className="p-4 md:p-5 min-w-0">
+                  <EmployeeReportPanel
+                    employees={data.by_employee || []}
+                    queryParams={pipelineQueryParams}
+                    typeView={typeView}
+                    receptionSlaMinutes={data?.reception_sla_minutes ?? 15}
+                  />
+                </div>
               </div>
             </div>
           )}

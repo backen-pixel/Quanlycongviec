@@ -75,12 +75,20 @@ export function buildPipelineStackedRows(pipelines: EmployeePipelineRow[], max =
     .filter((p) => (p.deal_count || 0) > 0)
     .slice(0, max)
     .map((p) => {
-      const open = p.open_deal_count ?? Math.max(0, (p.deal_count || 0) - (p.won_deal_count || 0) - (p.lost_deal_count || 0));
+      const won = p.won_deal_count || 0;
+      const lost = p.lost_deal_count || 0;
+      const deal = p.deal_count || 0;
+      const ht = p.completed_deal_count ?? 0;
+      const openRaw = p.open_deal_count ?? Math.max(0, deal - won - lost);
+      const htFromWon = Math.min(ht, won);
+      const htFromOpen = Math.max(0, ht - won);
       return {
         name: truncLabel(p.pipeline_name, 12),
-        won: p.won_deal_count || 0,
-        lost: p.lost_deal_count || 0,
-        open,
+        won: Math.max(0, won - htFromWon),
+        completed: ht,
+        lost,
+        open: Math.max(0, openRaw - htFromOpen),
+        completion_rate_pct: p.completion_rate_pct ?? null,
       };
     });
 }

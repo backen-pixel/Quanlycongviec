@@ -14,12 +14,18 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  LabelList,
   Legend,
   ResponsiveContainer,
   Tooltip as RechartsTooltip,
   XAxis,
   YAxis,
 } from 'recharts';
+import {
+  buildPipelineDealStackRow,
+  PIPELINE_DEAL_STACK_COLORS,
+  PIPELINE_DEAL_STACK_ORDER,
+} from '../../lib/pipelineDealStackChart';
 
 function truncLabel(s, max = 22) {
   if (!s) return '—';
@@ -27,11 +33,7 @@ function truncLabel(s, max = 22) {
   return t.length <= max ? t : `${t.slice(0, Math.max(0, max - 1))}…`;
 }
 
-const STACK_COLORS = {
-  'Đã chốt': '#059669',
-  Thua: '#e11d48',
-  'Đang mở': '#0284c7',
-};
+const STACK_COLORS = PIPELINE_DEAL_STACK_COLORS;
 
 /**
  * Modal chi tiết pipeline theo nhân viên (dùng chung BC tổ chức + BC Lead/Deal NV).
@@ -83,17 +85,32 @@ export default function CrmStaffPipelineDetailModal({
       .filter((p) => (p.deal_count || 0) > 0)
       .sort((a, b) => (b.deal_count || 0) - (a.deal_count || 0))
       .slice(0, 10)
-      .map((p) => {
-        const open = p.open_deal_count ?? Math.max(0, (p.deal_count || 0) - (p.won_deal_count || 0) - (p.lost_deal_count || 0));
-        return {
-          name: truncLabel(p.pipeline_name, 16),
-          'Đã chốt': p.won_deal_count || 0,
-          Thua: p.lost_deal_count || 0,
-          'Đang mở': open,
-        };
-      }),
+      .map((p) => buildPipelineDealStackRow(p, truncLabel(p.pipeline_name, 16))),
     [pipelines],
   );
+
+  const pipelineTotals = useMemo(() => {
+    const t = {
+      lead_count: 0,
+      deal_count: 0,
+      total_value: 0,
+      won_deal_count: 0,
+      lost_deal_count: 0,
+      completed_deal_count: 0,
+    };
+    for (const p of pipelines) {
+      t.lead_count += p.lead_count || 0;
+      t.deal_count += p.deal_count || 0;
+      t.total_value += p.total_value || 0;
+      t.won_deal_count += p.won_deal_count || 0;
+      t.lost_deal_count += p.lost_deal_count || 0;
+      t.completed_deal_count += p.completed_deal_count || 0;
+    }
+    t.completion_rate_pct = t.deal_count > 0
+      ? Math.round((t.completed_deal_count / t.deal_count) * 1000) / 10
+      : null;
+    return t;
+  }, [pipelines]);
 
   const downloadPdf = async () => {
     if (!userId) return;
@@ -139,6 +156,8 @@ export default function CrmStaffPipelineDetailModal({
           'Chốt SL': p.won_deal_count ?? 0,
           'GT chốt': p.won_value ?? 0,
           'Thua SL': p.lost_deal_count ?? 0,
+          'HT SL': p.completed_deal_count ?? 0,
+          'Tỉ lệ HT (%)': p.completion_rate_pct ?? '',
         })),
       ),
       'Pipeline',
@@ -242,17 +261,47 @@ export default function CrmStaffPipelineDetailModal({
 
               {stackedChart.length > 0 && (
                 <div className="rounded-xl border border-slate-200 p-4">
-                  <p className="text-sm font-bold text-slate-800 mb-3">Deal theo pipeline (chốt / thua / mở)</p>
+                  <p className="text-sm font-bold text-slate-800 mb-1">Deal theo pipeline (chốt / thua / mở)</p>
+                  <p className="text-[11px] text-slate-500 mb-3">Tím = hoàn thành · HT% = tỉ lệ hoàn thành / tổng deal</p>
                   <div className="h-56">
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={stackedChart} layout="vertical" margin={{ left: 4, right: 12 }}>
+                      <BarChart data={stackedChart} layout="vertical" margin={{ left: 4, right: 52 }}>
                         <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                         <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
                         <YAxis type="category" dataKey="name" width={96} tick={{ fontSize: 10 }} />
                         <RechartsTooltip />
                         <Legend wrapperStyle={{ fontSize: 11 }} />
-                        {Object.entries(STACK_COLORS).map(([key, color]) => (
-                          <Bar key={key} dataKey={key} stackId="deal" fill={color} radius={key === 'Đang mở' ? [0, 4, 4, 0] : undefined} />
+                        {PIPELINE_DEAL_STACK_ORDER.map((key) => (
+                          <Bar
+                            key={key}
+                            dataKey={key}
+                            name={key}
+                            stackId="deal"
+                            fill={STACK_COLORS[key]}
+                            radius={key === 'Mở' ? [0, 4, 4, 0] : undefined}
+                          >
+                            {key === 'Mở' && (
+                              <LabelList
+                                content={({ x, y, width, height, index }) => {
+                                  const row = stackedChart[index];
+                                  const pct = row?.completion_rate_pct;
+                                  if (pct == null) return null;
+                                  return (
+                                    <text
+                                      x={(x || 0) + (width || 0) + 6}
+                                      y={(y || 0) + (height || 0) / 2}
+                                      fill="#6d28d9"
+                                      fontSize={10}
+                                      fontWeight={600}
+                                      dominantBaseline="middle"
+                                    >
+                                      {`HT ${pct}%`}
+                                    </text>
+                                  );
+                                }}
+                              />
+                            )}
+                          </Bar>
                         ))}
                       </BarChart>
                     </ResponsiveContainer>
@@ -270,12 +319,14 @@ export default function CrmStaffPipelineDetailModal({
                       <th className="py-2 px-2 text-right">Tổng GT</th>
                       <th className="py-2 px-2 text-right">Chốt</th>
                       <th className="py-2 px-2 text-right">Thua</th>
+                      <th className="py-2 px-2 text-right">HT</th>
+                      <th className="py-2 px-2 text-right">Tỉ lệ HT</th>
                     </tr>
                   </thead>
                   <tbody>
                     {pipelines.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="py-8 text-center text-slate-500">Chưa có dữ liệu pipeline</td>
+                        <td colSpan={8} className="py-8 text-center text-slate-500">Chưa có dữ liệu pipeline</td>
                       </tr>
                     ) : (
                       pipelines.map((p, idx) => (
@@ -286,8 +337,26 @@ export default function CrmStaffPipelineDetailModal({
                           <td className="py-2.5 px-2 text-right tabular-nums text-xs">{formatVND(p.total_value ?? 0)}</td>
                           <td className="py-2.5 px-2 text-right tabular-nums text-emerald-700">{p.won_deal_count ?? 0}</td>
                           <td className="py-2.5 px-2 text-right tabular-nums text-red-600">{p.lost_deal_count ?? 0}</td>
+                          <td className="py-2.5 px-2 text-right tabular-nums text-violet-800">{p.completed_deal_count ?? 0}</td>
+                          <td className="py-2.5 px-2 text-right tabular-nums font-semibold text-violet-900">
+                            {p.completion_rate_pct != null ? `${p.completion_rate_pct}%` : '—'}
+                          </td>
                         </tr>
                       ))
+                    )}
+                    {pipelines.length > 0 && (
+                      <tr className="border-t-2 border-teal-200 bg-teal-50/60 font-bold text-slate-900">
+                        <td className="py-2.5 px-3">Tổng</td>
+                        <td className="py-2.5 px-2 text-right tabular-nums">{pipelineTotals.lead_count}</td>
+                        <td className="py-2.5 px-2 text-right tabular-nums">{pipelineTotals.deal_count}</td>
+                        <td className="py-2.5 px-2 text-right tabular-nums text-xs">{formatVND(pipelineTotals.total_value)}</td>
+                        <td className="py-2.5 px-2 text-right tabular-nums text-emerald-800">{pipelineTotals.won_deal_count}</td>
+                        <td className="py-2.5 px-2 text-right tabular-nums text-red-700">{pipelineTotals.lost_deal_count}</td>
+                        <td className="py-2.5 px-2 text-right tabular-nums text-violet-900">{pipelineTotals.completed_deal_count}</td>
+                        <td className="py-2.5 px-2 text-right tabular-nums text-violet-950">
+                          {pipelineTotals.completion_rate_pct != null ? `${pipelineTotals.completion_rate_pct}%` : '—'}
+                        </td>
+                      </tr>
                     )}
                   </tbody>
                 </table>

@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS project_production_staff (
 );
 
 CREATE INDEX IF NOT EXISTS idx_project_production_staff_project
-  ON project_production_staff (project_id);
+  ON project_production_staff (project_id); 
 
 COMMENT ON TABLE project_production_staff IS
   'Nhiều NV sản xuất gắn 1 dự án (copy từ defaults khi intake). production_person_id = NV đầu tiên.';

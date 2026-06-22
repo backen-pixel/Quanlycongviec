@@ -12,7 +12,7 @@ import {
   isCrmPipelineStageCompletedRevenue,
   isCrmPipelineStageLost,
   isCrmPipelineStageWon,
-  pickDeadlineConfigValueWithSource,
+  resolveCrmLeadDeadlineViewSource,
 } from '../lib/crmLeadDeadlineDisplay';
 import { FbCrmAvatar, formatCrmFbRelativeTime } from './crmFbCommentUi';
 import { CrmCommentMentionComposer, renderCrmCommentBody } from './crmCommentMentionUi';
@@ -899,7 +899,7 @@ export function DeadlineView({
       let ts = null;
       let source = null;
       if (!bucket) {
-        const picked = pickDeadlineConfigValueWithSource(it, cfg.primary_field, cfg.fallback_field);
+        const picked = resolveCrmLeadDeadlineViewSource(it, it._stage, cfg);
         ts = picked.deadlineTs;
         source = picked.source;
         bucket = resolveBucket(ts, cfg.buckets);

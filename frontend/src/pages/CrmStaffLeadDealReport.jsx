@@ -31,11 +31,17 @@ import {
   Pie,
   Cell,
   Legend,
+  LabelList,
   LineChart,
   Line,
 } from 'recharts';
 import KpiUserFilter from '../components/KpiUserFilter';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
+import {
+  buildPipelineDealStackRow,
+  PIPELINE_DEAL_STACK_COLORS,
+  PIPELINE_DEAL_STACK_ORDER,
+} from '../lib/pipelineDealStackChart';
 
 function formatViDate(iso) {
   if (!iso || typeof iso !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(iso.trim())) return '—';
@@ -266,6 +272,8 @@ export default function CrmStaffLeadDealReport() {
       won_value: 0,
       lost_deal_count: 0,
       lost_value: 0,
+      completed_deal_count: 0,
+      completed_value: 0,
       total_value: 0,
     };
     for (const p of list) {
@@ -279,8 +287,13 @@ export default function CrmStaffLeadDealReport() {
       t.won_value += p.won_value || 0;
       t.lost_deal_count += p.lost_deal_count || 0;
       t.lost_value += p.lost_value || 0;
+      t.completed_deal_count += p.completed_deal_count || 0;
+      t.completed_value += p.completed_value || 0;
       t.total_value += p.total_value || 0;
     }
+    t.completion_rate_pct = t.deal_count > 0
+      ? Math.round((t.completed_deal_count / t.deal_count) * 1000) / 10
+      : null;
     return t;
   }, [detailData]);
 
@@ -335,17 +348,7 @@ export default function CrmStaffLeadDealReport() {
       .filter((p) => (p.deal_count || 0) > 0)
       .sort((a, b) => (b.deal_count || 0) - (a.deal_count || 0))
       .slice(0, 10)
-      .map((p) => {
-        const open =
-          p.open_deal_count ??
-          Math.max(0, (p.deal_count || 0) - (p.won_deal_count || 0) - (p.lost_deal_count || 0));
-        return {
-          name: truncLabel(p.pipeline_name, 16),
-          'Đã ký HĐ': p.won_deal_count || 0,
-          Thua: p.lost_deal_count || 0,
-          Khác: open,
-        };
-      });
+      .map((p) => buildPipelineDealStackRow(p, truncLabel(p.pipeline_name, 16)));
     return { bars, outcome, leadDealMix, stacked, timeline };
   }, [detailData]);
 
@@ -394,6 +397,9 @@ export default function CrmStaffLeadDealReport() {
         'Giá trị chốt': p.won_value ?? 0,
         'Deal thua (SL)': p.lost_deal_count ?? 0,
         'Giá trị thua': p.lost_value ?? 0,
+        'Deal hoàn thành (SL)': p.completed_deal_count ?? 0,
+        'Giá trị hoàn thành': p.completed_value ?? 0,
+        'Tỉ lệ hoàn thành (%)': p.completion_rate_pct ?? '',
       }));
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetData), 'Theo pipeline');
     }
@@ -1190,19 +1196,47 @@ export default function CrmStaffLeadDealReport() {
 
                     <div className="rounded-2xl border border-teal-100 bg-white p-4 shadow-sm">
                       <h3 className="text-sm font-bold text-slate-800 mb-1">Deal theo pipeline (SL)</h3>
-                      <p className="text-[11px] text-slate-500 mb-2">Top pipeline — phân bổ chốt / thua / đang mở</p>
+                      <p className="text-[11px] text-slate-500 mb-2">Chốt / hoàn thành (tím) / thua / mở · nhãn HT% = tỉ lệ hoàn thành</p>
                       <div className="h-[260px] w-full min-h-[220px]">
                         {detailCharts.stacked.length ? (
                           <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={detailCharts.stacked} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
+                            <BarChart data={detailCharts.stacked} margin={{ top: 8, right: 48, left: 0, bottom: 4 }}>
                               <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200" />
                               <XAxis dataKey="name" tick={{ fontSize: 9 }} interval={0} height={56} angle={-25} textAnchor="end" />
                               <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
                               <RechartsTooltip />
                               <Legend wrapperStyle={{ fontSize: 11 }} />
-                              <Bar dataKey="Đã ký HĐ" stackId="a" fill="#059669" radius={[0, 0, 0, 0]} />
-                              <Bar dataKey="Thua" stackId="a" fill="#e11d48" />
-                              <Bar dataKey="Khác" stackId="a" fill="#d97706" radius={[4, 4, 0, 0]} />
+                              {PIPELINE_DEAL_STACK_ORDER.map((key) => (
+                                <Bar
+                                  key={key}
+                                  dataKey={key}
+                                  stackId="a"
+                                  fill={PIPELINE_DEAL_STACK_COLORS[key]}
+                                  radius={key === 'Mở' ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+                                >
+                                  {key === 'Mở' && (
+                                    <LabelList
+                                      content={({ x, y, width, height, index }) => {
+                                        const row = detailCharts.stacked[index];
+                                        const pct = row?.completion_rate_pct;
+                                        if (pct == null) return null;
+                                        return (
+                                          <text
+                                            x={(x || 0) + (width || 0) + 6}
+                                            y={(y || 0) + (height || 0) / 2}
+                                            fill="#6d28d9"
+                                            fontSize={10}
+                                            fontWeight={600}
+                                            dominantBaseline="middle"
+                                          >
+                                            {`HT ${pct}%`}
+                                          </text>
+                                        );
+                                      }}
+                                    />
+                                  )}
+                                </Bar>
+                              ))}
                             </BarChart>
                           </ResponsiveContainer>
                         ) : (
@@ -1248,7 +1282,7 @@ export default function CrmStaffLeadDealReport() {
                   </div>
 
                   <div className="overflow-x-auto rounded-xl border border-gray-200 shadow-inner bg-white">
-                    <table className="w-full text-sm min-w-[1180px]">
+                    <table className="w-full text-sm min-w-[1320px]">
                       <thead>
                         <tr className="bg-gradient-to-r from-teal-600 to-cyan-600 text-left text-[11px] uppercase tracking-wider text-white">
                           <th className="px-3 py-2.5 font-bold">Pipeline</th>
@@ -1263,12 +1297,14 @@ export default function CrmStaffLeadDealReport() {
                           <th className="px-3 py-2.5 font-bold text-right">GT chốt</th>
                           <th className="px-3 py-2.5 font-bold text-right">Thua</th>
                           <th className="px-3 py-2.5 font-bold text-right">GT thua</th>
+                          <th className="px-3 py-2.5 font-bold text-right bg-violet-500/25">HT</th>
+                          <th className="px-3 py-2.5 font-bold text-right bg-violet-500/25">Tỉ lệ HT</th>
                         </tr>
                       </thead>
                       <tbody>
                         {detailData.pipelines.length === 0 ? (
                           <tr>
-                            <td colSpan={12} className="px-3 py-8 text-center text-gray-400">
+                            <td colSpan={14} className="px-3 py-8 text-center text-gray-400">
                               Không có lead/deal trong các pipeline (hoặc chưa gán pipeline).
                             </td>
                           </tr>
@@ -1300,6 +1336,10 @@ export default function CrmStaffLeadDealReport() {
                               <td className="px-3 py-2.5 text-right tabular-nums text-xs text-emerald-800">{formatVND(p.won_value || 0)}</td>
                               <td className="px-3 py-2.5 text-right tabular-nums text-red-700">{p.lost_deal_count ?? 0}</td>
                               <td className="px-3 py-2.5 text-right tabular-nums text-xs text-red-800">{formatVND(p.lost_value || 0)}</td>
+                              <td className="px-3 py-2.5 text-right tabular-nums text-violet-800 bg-violet-50/40">{p.completed_deal_count ?? 0}</td>
+                              <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-violet-900 bg-violet-50/30">
+                                {p.completion_rate_pct != null ? `${p.completion_rate_pct}%` : '—'}
+                              </td>
                             </tr>
                           ))
                         )}
@@ -1319,6 +1359,10 @@ export default function CrmStaffLeadDealReport() {
                             <td className="px-3 py-3 text-right tabular-nums text-xs">{formatVND(detailTotals.won_value)}</td>
                             <td className="px-3 py-3 text-right tabular-nums text-red-900">{detailTotals.lost_deal_count}</td>
                             <td className="px-3 py-3 text-right tabular-nums text-xs">{formatVND(detailTotals.lost_value)}</td>
+                            <td className="px-3 py-3 text-right tabular-nums text-violet-950 bg-violet-100/80">{detailTotals.completed_deal_count}</td>
+                            <td className="px-3 py-3 text-right tabular-nums text-violet-950 bg-violet-100/70">
+                              {detailTotals.completion_rate_pct != null ? `${detailTotals.completion_rate_pct}%` : '—'}
+                            </td>
                           </tr>
                         )}
                       </tbody>
