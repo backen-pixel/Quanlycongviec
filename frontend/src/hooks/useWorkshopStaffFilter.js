@@ -72,11 +72,17 @@ export function useWorkshopStaffFilter({
   const [companyDepts, setCompanyDepts] = useState([]);
 
   const dashboardScopeCompanyId = useMemo(() => {
-    if (dealCompanyFilter) return String(dealCompanyFilter);
+    const dealPick = String(dealCompanyFilter || '').trim();
+    const workshopPick = String(filterCompany || '').trim();
+    /** Pick công ty đặt hàng có thể là `ext:…` — không dùng làm company_id CRM. */
+    const crmDealCompanyId = dealPick && !dealPick.startsWith('ext:') ? dealPick : '';
+
+    if (crmDealCompanyId) return crmDealCompanyId;
+    if (workshopPick) return workshopPick;
     if (isCompanyScopedAdmin && userCompanyId) return userCompanyId;
-    if (crossWorkshopViewer && filterCompany) return String(filterCompany);
+    if (crossWorkshopViewer && workshopPick) return workshopPick;
     if (!isAdmin && userCompanyId) return userCompanyId;
-    if (isAdmin && filterCompany) return String(filterCompany);
+    if (isAdmin && workshopPick) return workshopPick;
     return '';
   }, [dealCompanyFilter, isCompanyScopedAdmin, crossWorkshopViewer, isAdmin, userCompanyId, filterCompany]);
 

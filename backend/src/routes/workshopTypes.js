@@ -6,6 +6,7 @@ const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/newPermission');
 const { isSystemAdmin } = require('../helpers/adminRole');
+const { filterWorkshopProjectTypesForClientCompany } = require('../helpers/workshopTypeClientScope');
 
 const r = Router();
 r.use(auth);
@@ -31,7 +32,7 @@ function matchesModule(appliesTo, module) {
 
 r.get('/project-types', requirePermission('projects', 'view'), async (req, res) => {
   try {
-    const { company_id, module, all: allParam } = req.query;
+    const { company_id, module, all: allParam, client_company_id } = req.query;
     let companyId = company_id || null;
     if (!userIsAdmin(req.user)) {
       const cid = requireUserCompanyId(req, res);
@@ -54,6 +55,12 @@ r.get('/project-types', requirePermission('projects', 'view'), async (req, res) 
     let rows = data || [];
     if (module) {
       rows = rows.filter((t) => matchesModule(t.applies_to, module));
+    }
+    const clientCoId = client_company_id != null && String(client_company_id).trim() !== ''
+      ? String(client_company_id).trim()
+      : null;
+    if (clientCoId) {
+      rows = await filterWorkshopProjectTypesForClientCompany(companyId, clientCoId, rows);
     }
     res.json(rows);
   } catch (e) {

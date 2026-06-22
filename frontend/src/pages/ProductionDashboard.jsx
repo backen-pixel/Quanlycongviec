@@ -8,7 +8,6 @@ import {
   canPickWorkshopCompany,
   isCrossWorkshopProductionViewer,
   workshopCompaniesForCrossViewer,
-  dealCompanyFilterOptions,
   shouldShowDealCompanyFilter,
   isVptCompanyChip,
   productionCreateCompanyOptions,
@@ -168,6 +167,22 @@ function resolveSxProjectLeadId(project) {
   return deal?.id ? String(deal.id) : null;
 }
 
+function projectMatchesDealCompanyExternalFilter(project, externalFilter) {
+  if (!externalFilter) return true;
+  const deals = Array.isArray(project?.crm_deals) ? project.crm_deals : [];
+  const deal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
+  if (!deal) return false;
+  if (externalFilter.catalogId && deal.external_catalog_id
+    && String(deal.external_catalog_id) === String(externalFilter.catalogId)) {
+    return true;
+  }
+  if (externalFilter.name) {
+    const dealName = String(deal.external_company_name || '').trim();
+    if (dealName && dealName === externalFilter.name) return true;
+  }
+  return false;
+}
+
 function prioritizePinnedProjects(items) {
   if (!Array.isArray(items) || items.length < 2) return items || [];
   const pinned = [];
@@ -227,6 +242,8 @@ export default function ProductionDashboard() {
   const sortMenuRef = useRef(null);
   const [companies, setCompanies] = useState([]);
   const [workshopOptionsForDeal, setWorkshopOptionsForDeal] = useState([]);
+  /** Công ty đặt hàng theo xưởng — CRM + danh mục ngoài (giống modal Tạo deal). */
+  const [clientCompaniesForDeal, setClientCompaniesForDeal] = useState([]);
   const [filterCompany, setFilterCompany] = useState(() => P0?.filterCompany ?? '');
   const [filterDealCompany, setFilterDealCompany] = useState(() => P0?.filterDealCompany ?? '');
   const [timePreset, setTimePreset] = useState(() => P0?.timePreset ?? '');
@@ -312,20 +329,55 @@ export default function ProductionDashboard() {
     staffFilterActiveCount,
   } = staffFilter;
 
-  const dealCompanyPickerList = useMemo(
-    () => dealCompanyFilterOptions(companies, user),
-    [companies, user],
-  );
   const showDealCompanyFilter = useMemo(
     () => shouldShowDealCompanyFilter(user, companies),
     [user, companies],
   );
 
+  const dealCompanyOptions = useMemo(
+    () => (clientCompaniesForDeal.length > 0 ? clientCompaniesForDeal : []),
+    [clientCompaniesForDeal],
+  );
+
+  const clientCrmDealOptions = useMemo(
+    () => dealCompanyOptions.filter((c) => c.client_company_id),
+    [dealCompanyOptions],
+  );
+  const clientExternalDealOptions = useMemo(
+    () => dealCompanyOptions.filter((c) => !c.client_company_id),
+    [dealCompanyOptions],
+  );
+
+  const resolvedDealCompanyPick = useMemo(() => {
+    if (!filterDealCompany) return null;
+    return dealCompanyOptions.find((c) => String(c.id) === String(filterDealCompany)) || null;
+  }, [filterDealCompany, dealCompanyOptions]);
+
   const dealCompanyParam = useMemo(() => {
-    if (filterDealCompany) return String(filterDealCompany);
-    if (showDealCompanyFilter && user?.company_id) return String(user.company_id);
+    if (resolvedDealCompanyPick?.client_company_id) {
+      return String(resolvedDealCompanyPick.client_company_id);
+    }
+    if (filterDealCompany && !String(filterDealCompany).startsWith('ext:')) {
+      return String(filterDealCompany);
+    }
+    if (showDealCompanyFilter && !isSystemAdmin(user) && user?.company_id) {
+      return String(user.company_id);
+    }
     return undefined;
-  }, [filterDealCompany, showDealCompanyFilter, user?.company_id]);
+  }, [resolvedDealCompanyPick, filterDealCompany, showDealCompanyFilter, user]);
+
+  const dealCompanyExternalFilter = useMemo(() => {
+    if (!resolvedDealCompanyPick || resolvedDealCompanyPick.client_company_id) return null;
+    const rawId = String(resolvedDealCompanyPick.id || '');
+    const catalogId = resolvedDealCompanyPick.external_catalog_id
+      || (rawId.startsWith('ext:') ? rawId.slice(4) : null);
+    return {
+      catalogId,
+      name: String(resolvedDealCompanyPick.short_name || resolvedDealCompanyPick.name || '').trim(),
+    };
+  }, [resolvedDealCompanyPick]);
+
+  const canPickDealCompany = isSystemAdmin(user) && showDealCompanyFilter;
 
   const canPickCompany = canPickWorkshopCompany(user, isAdmin, isCompanyScopedAdmin);
   const workshopCompanyPickerList = useMemo(() => {
@@ -342,20 +394,16 @@ export default function ProductionDashboard() {
     return workshopCompaniesForCrossViewer(companies, user);
   }, [companies, user, workshopOptionsForDeal, dealCompanyParam]);
 
-  const selectedWorkshopLabel = useMemo(() => {
-    if (!filterCompany) return '';
-    const c = workshopCompanyPickerList.find((x) => String(x.id) === String(filterCompany))
-      || companies.find((x) => String(x.id) === String(filterCompany));
-    return c?.short_name || c?.name || '';
-  }, [filterCompany, workshopCompanyPickerList, companies]);
-
   const selectedDealCompanyLabel = useMemo(() => {
-    const id = filterDealCompany || (showDealCompanyFilter && user?.company_id ? String(user.company_id) : '');
+    if (resolvedDealCompanyPick) {
+      return resolvedDealCompanyPick.short_name || resolvedDealCompanyPick.name || '';
+    }
+    const id = showDealCompanyFilter && user?.company_id ? String(user.company_id) : '';
     if (!id) return '';
-    const c = dealCompanyPickerList.find((x) => String(x.id) === String(id))
-      || companies.find((x) => String(x.id) === String(id));
+    const c = dealCompanyOptions.find((x) => String(x.id) === String(id) || String(x.client_company_id) === id)
+      || companies.find((x) => String(x.id) === id);
     return c?.short_name || c?.name || '';
-  }, [filterDealCompany, showDealCompanyFilter, user?.company_id, dealCompanyPickerList, companies]);
+  }, [resolvedDealCompanyPick, showDealCompanyFilter, user?.company_id, dealCompanyOptions, companies]);
 
   const deferredPersonName = useDeferredValue(filterPersonName);
 
@@ -376,6 +424,9 @@ export default function ProductionDashboard() {
     const opts = productionCreateCompanyOptions(companies);
     return opts[0]?.id ? String(opts[0].id) : '';
   }, [filterCompany, companies]);
+
+  /** Cùng company_id như modal Tạo deal → GET /production/client-companies */
+  const clientCompaniesWorkshopId = productionCreateCompanyIdDefault;
 
   const vptExternalCompanyLabel = useMemo(() => {
     const vpt = findVptCompany(companies);
@@ -541,6 +592,29 @@ export default function ProductionDashboard() {
   }, [dealCompanyParam]);
 
   useEffect(() => {
+    const cid = String(clientCompaniesWorkshopId || '').trim();
+    if (!cid) {
+      setClientCompaniesForDeal([]);
+      return;
+    }
+    let cancel = false;
+    api.get('/production/client-companies', { params: { company_id: cid } })
+      .then((r) => {
+        if (!cancel) setClientCompaniesForDeal(Array.isArray(r.data?.items) ? r.data.items : []);
+      })
+      .catch(() => {
+        if (!cancel) setClientCompaniesForDeal([]);
+      });
+    return () => { cancel = true; };
+  }, [clientCompaniesWorkshopId]);
+
+  useEffect(() => {
+    if (!filterDealCompany || !dealCompanyOptions.length || !isSystemAdmin(user)) return;
+    const ok = dealCompanyOptions.some((c) => String(c.id) === String(filterDealCompany));
+    if (!ok) setFilterDealCompany('');
+  }, [dealCompanyOptions, filterDealCompany, user]);
+
+  useEffect(() => {
     if (!workshopCompanyPickerList.length) return;
     if (filterCompany && workshopCompanyPickerList.some((c) => String(c.id) === String(filterCompany))) return;
     const first = workshopCompanyPickerList[0];
@@ -608,7 +682,9 @@ export default function ProductionDashboard() {
     // Xoá ngay danh sách cũ để effect chọn loại mặc định không bám nhầm loại của công ty trước.
     setWorkTypes([]);
     setWorkTypesCompanyId('');
-    api.get('/workshop/project-types', { params: { company_id: companyForTypes, module: 'production' } })
+    const typeParams = { company_id: companyForTypes, module: 'production' };
+    if (dealCompanyParam) typeParams.client_company_id = dealCompanyParam;
+    api.get('/workshop/project-types', { params: typeParams })
       .then((r) => {
         if (cancelled) return;
         setWorkTypes(Array.isArray(r.data) ? r.data : []);
@@ -620,7 +696,7 @@ export default function ProductionDashboard() {
         setWorkTypesCompanyId(companyForTypes);
       });
     return () => { cancelled = true; };
-  }, [companyForTypes]);
+  }, [companyForTypes, dealCompanyParam]);
 
   // Mặc định luôn chọn 1 phân loại hợp lệ (không để "trống/tất cả/chưa phân loại").
   useEffect(() => {
@@ -692,17 +768,24 @@ export default function ProductionDashboard() {
       if (!matchesProject(p, { personNameQ: deferredPersonName })) return false;
       if (filterPhone === 'has' && !p.customer?.phone) return false;
       if (filterPhone === 'no' && p.customer?.phone) return false;
+      const wt = p.workshop_type_id || p.workshop_type?.id;
+      const isOrphanRow = !wt;
       // Filter phân loại client-side (không reload trang khi đổi loại)
       if (filterWorkTypeId === 'none') {
-        if (p.workshop_type_id || p.workshop_type?.id) return false;
+        if (!isOrphanRow) return false;
       } else if (filterWorkTypeId) {
-        const wt = p.workshop_type_id || p.workshop_type?.id;
-        // Deal chưa phân loại vẫn hiển thị — gom vào cột «Chưa phân loại» trên Kanban
-        if (wt && String(wt) !== String(filterWorkTypeId)) return false;
+        if (isOrphanRow) {
+          // Chưa phân loại chỉ hiện khi bật cột ảo (tránh lẫn vào pipeline loại khác)
+          return showOrphanColumn;
+        }
+        if (String(wt) !== String(filterWorkTypeId)) return false;
+      }
+      if (dealCompanyExternalFilter && !projectMatchesDealCompanyExternalFilter(p, dealCompanyExternalFilter)) {
+        return false;
       }
       return true;
     });
-  }, [projects, dateFromTo, matchesProject, deferredPersonName, filterPhone, filterWorkTypeId]);
+  }, [projects, dateFromTo, matchesProject, deferredPersonName, filterPhone, filterWorkTypeId, showOrphanColumn, dealCompanyExternalFilter]);
 
   const toggleSelect = useCallback((id, e) => {
     e?.stopPropagation();
@@ -874,18 +957,24 @@ export default function ProductionDashboard() {
       return null;
     };
 
+    const resolveColumnId = (project) => {
+      const mapped = colIdFor(project);
+      if (mapped) return mapped;
+      if (intake?.id) return intake.id;
+      return sortedStages[0]?.id || null;
+    };
+
     /** Project được coi là «chưa phân loại» khi không có workshop_type_id. */
     const isOrphan = (p) => !p.workshop_type_id && !p.workshop_type?.id;
-    /** Cột ảo khi có deal chưa phân loại (checkbox hoặc tự bật nếu đang lọc 1 loại cụ thể). */
     const hasOrphans = scopeProjects.some(isOrphan);
-    const includeOrphan = hasOrphans && (showOrphanColumn || !!filterWorkTypeId);
+    const includeOrphan = hasOrphans && (showOrphanColumn || filterWorkTypeId === 'none');
 
     const baseColumns = baseStages.map((stage) => ({
       ...stage,
       items: scopeProjects
         .filter((project) => {
-          if (includeOrphan && isOrphan(project)) return false; // chuyển sang cột ảo
-          return colIdFor(project) === stage.id;
+          if (includeOrphan && isOrphan(project)) return false;
+          return resolveColumnId(project) === stage.id;
         })
         .sort(sortSxItems),
     }));
@@ -1504,11 +1593,8 @@ export default function ProductionDashboard() {
   );
   const advFilterCount =
     staffFilterActiveCount + (filterPhone ? 1 : 0)
-    + (filterWorkTypeId ? 1 : 0)
     + (String(searchQuery || '').trim() ? 1 : 0) + (priorityFilter ? 1 : 0) + (stageFilter ? 1 : 0)
     + (hasTimeFilter ? 1 : 0)
-    + (canPickCompany && filterCompany ? 1 : 0)
-    + (isSystemAdmin(user) && filterDealCompany ? 1 : 0)
     + (viewMode === 'kanban' && showOrphanColumn ? 1 : 0);
 
   const hasActiveFilter = !!(
@@ -1647,6 +1733,72 @@ export default function ProductionDashboard() {
         );
       })()}
 
+      {/* Phạm vi xưởng & công ty đặt hàng — luôn hiển thị, ngoài panel bộ lọc */}
+      {(canPickCompany && workshopCompanyPickerList.length > 0 || showDealCompanyFilter) && (
+        <div className="flex flex-wrap items-end gap-3 p-3 rounded-xl border border-blue-100 bg-blue-50/40">
+          {canPickCompany && workshopCompanyPickerList.length > 0 && (
+            <div className="flex flex-col gap-0.5 min-w-[11rem]">
+              <label className="text-[10px] font-semibold text-blue-900 flex items-center gap-1">
+                <Factory className="h-3 w-3" /> Công ty sản xuất (xưởng)
+              </label>
+              <select
+                value={filterCompany}
+                onChange={(e) => handleStaffFilterCompanyChange(e.target.value)}
+                className="h-9 w-full min-w-[11rem] max-w-[16rem] px-2 bg-white border border-blue-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
+              >
+                {isSystemAdmin(user) && <option value="">Tất cả xưởng</option>}
+                {workshopCompanyPickerList.map((c) => (
+                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {showDealCompanyFilter && (
+            <div className="flex flex-col gap-0.5 min-w-[11rem]">
+              <label className="text-[10px] font-semibold text-indigo-900 flex items-center gap-1">
+                <Building2 className="h-3 w-3" /> Công ty đặt hàng
+              </label>
+              {canPickDealCompany ? (
+                <select
+                  value={filterDealCompany}
+                  onChange={(e) => {
+                    setFilterDealCompany(e.target.value);
+                    setFilterWorkTypeId('');
+                  }}
+                  disabled={!clientCompaniesWorkshopId}
+                  className="h-9 w-full min-w-[11rem] max-w-[18rem] px-2 bg-white border border-indigo-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  <option value="">
+                    {clientCompaniesWorkshopId ? 'Tất cả công ty đặt hàng' : '-- Chọn xưởng trước --'}
+                  </option>
+                  {clientCrmDealOptions.length > 0 && (
+                    <optgroup label="Công ty CRM">
+                      {clientCrmDealOptions.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.short_name || c.name}
+                          {c.source === 'workshop' ? ' · đã liên kết' : ''}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {clientExternalDealOptions.length > 0 && (
+                    <optgroup label="Danh mục công ty ngoài">
+                      {clientExternalDealOptions.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              ) : (
+                <span className="h-9 inline-flex items-center px-2.5 bg-white border border-indigo-200 rounded-lg text-sm text-indigo-900 font-medium max-w-[18rem] truncate">
+                  {selectedDealCompanyLabel || '—'}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Bộ lọc gọn — khi đóng chỉ 1 hàng + tóm tắt phạm vi */}
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
@@ -1678,28 +1830,72 @@ export default function ProductionDashboard() {
             </button>
           )}
 
-          {!showAdvFilter && (selectedWorkshopLabel || selectedDealCompanyLabel) && (
-            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-              {selectedWorkshopLabel && (
-                <span className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-800 text-xs font-medium max-w-[14rem] truncate" title="Xưởng sản xuất">
-                  <Factory className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">{selectedWorkshopLabel}</span>
-                </span>
-              )}
-              {selectedDealCompanyLabel && (
-                <span className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-800 text-xs font-medium max-w-[14rem] truncate" title="Deal CRM thuộc công ty">
-                  <Building2 className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">{selectedDealCompanyLabel}</span>
-                </span>
-              )}
-            </div>
-          )}
-
           {!showAdvFilter && hasTimeFilter && timeFilterLabel && (
             <span className="inline-flex items-center gap-1 h-8 px-2.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-lg text-xs font-medium">
               <Clock className="h-3 w-3 shrink-0" />
               {timeFilterLabel}
             </span>
+          )}
+
+          {companyForTypes && (
+            <div
+              className={`inline-flex items-center gap-1 h-9 px-2 rounded-lg border shrink-0 ${
+                filterWorkTypeId === 'none'
+                  ? 'border-amber-300 bg-amber-50'
+                  : filterWorkTypeId
+                    ? 'border-teal-300 bg-teal-50'
+                    : 'border-gray-200 bg-white'
+              }`}
+              title="Phân loại dự án xưởng"
+            >
+              <Layers className={`h-3.5 w-3.5 shrink-0 ${
+                filterWorkTypeId === 'none' ? 'text-amber-600'
+                : filterWorkTypeId ? 'text-teal-700' : 'text-gray-500'
+              }`} />
+              <select
+                value={filterWorkTypeId}
+                onChange={(e) => setFilterWorkTypeId(e.target.value)}
+                className={`h-8 text-sm bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[12rem] font-medium ${
+                  filterWorkTypeId === 'none' ? 'text-amber-700'
+                  : filterWorkTypeId ? 'text-teal-800' : 'text-gray-700'
+                }`}
+              >
+                <option value="">{workTypes.length === 0 ? 'Chưa cấu hình loại' : 'Phân loại: Tất cả'}</option>
+                <option value="none">⚠️ Chưa phân loại</option>
+                {workTypes.map((wt) => (
+                  <option key={wt.id} value={wt.id}>{wt.name}</option>
+                ))}
+              </select>
+              {filterWorkTypeId && workTypes.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setFilterWorkTypeId(String(workTypes[0].id))}
+                  className="p-1 rounded hover:bg-white/70 cursor-pointer"
+                  title="Chọn phân loại mặc định"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          )}
+
+          {viewMode === 'kanban' && filterWorkTypeId !== 'none' && (
+            <label
+              className={`inline-flex items-center gap-1.5 h-9 px-2.5 border rounded-lg text-xs cursor-pointer shrink-0 ${
+                showOrphanColumn
+                  ? 'bg-slate-100 border-slate-400 text-slate-800'
+                  : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+              }`}
+              title="Hiện cột ảo gom project chưa gán phân loại"
+            >
+              <input
+                type="checkbox"
+                checked={showOrphanColumn}
+                onChange={(e) => setShowOrphanColumn(e.target.checked)}
+                className="h-3.5 w-3.5 cursor-pointer accent-slate-600"
+              />
+              Cột «Chưa PL»
+            </label>
           )}
 
           <span className="text-[11px] text-gray-500 ml-auto shrink-0">
@@ -1722,64 +1918,6 @@ export default function ProductionDashboard() {
 
         {showAdvFilter && (
           <div className="space-y-3 p-3 rounded-xl border border-dashed border-gray-200 bg-gray-50/80">
-            {/* Phạm vi xưởng & deal CRM */}
-            {(canPickCompany && workshopCompanyPickerList.length > 0 || showDealCompanyFilter) && (
-              <div className="rounded-lg border border-blue-100 bg-blue-50/40 p-3 space-y-3">
-                <p className="text-[11px] font-bold text-blue-900 uppercase tracking-wide">
-                  Phạm vi xưởng & deal CRM
-                </p>
-                <p className="text-[10px] text-blue-800/80 leading-snug">
-                  <strong>Xưởng SX</strong> — nơi đơn được sản xuất (HCB, Metalla…).
-                  <strong className="ml-1">Công ty CRM</strong> — deal thuộc công ty nào (VPT, Phúc Đạt…).
-                </p>
-                <div className="flex flex-wrap items-end gap-3">
-                  {canPickCompany && workshopCompanyPickerList.length > 0 && (
-                    <div className="flex flex-col gap-0.5 min-w-[11rem]">
-                      <label className="text-[10px] font-semibold text-blue-900 flex items-center gap-1">
-                        <Factory className="h-3 w-3" /> Xưởng sản xuất
-                      </label>
-                      <select
-                        value={filterCompany}
-                        onChange={(e) => handleStaffFilterCompanyChange(e.target.value)}
-                        className="h-9 w-full min-w-[11rem] max-w-[16rem] px-2 bg-white border border-blue-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
-                      >
-                        {isSystemAdmin(user) && <option value="">Tất cả xưởng</option>}
-                        {workshopCompanyPickerList.map((c) => (
-                          <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                  {showDealCompanyFilter && dealCompanyPickerList.length > 0 && (
-                    <div className="flex flex-col gap-0.5 min-w-[11rem]">
-                      <label className="text-[10px] font-semibold text-indigo-900 flex items-center gap-1">
-                        <Building2 className="h-3 w-3" /> Công ty CRM (deal)
-                      </label>
-                      {isSystemAdmin(user) ? (
-                        <select
-                          value={filterDealCompany}
-                          onChange={(e) => {
-                            setFilterDealCompany(e.target.value);
-                            setFilterWorkTypeId('');
-                          }}
-                          className="h-9 w-full min-w-[11rem] max-w-[16rem] px-2 bg-white border border-indigo-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer"
-                        >
-                          <option value="">Tất cả công ty deal</option>
-                          {dealCompanyPickerList.map((c) => (
-                            <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                          ))}
-                        </select>
-                      ) : (
-                        <span className="h-9 inline-flex items-center px-2.5 bg-white border border-indigo-200 rounded-lg text-sm text-indigo-900 font-medium max-w-[16rem] truncate">
-                          {selectedDealCompanyLabel || '—'}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
             {/* Tìm kiếm */}
             <div className="relative w-full max-w-xl">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -1876,24 +2014,6 @@ export default function ProductionDashboard() {
                   ))}
                 </select>
               </div>
-              {viewMode === 'kanban' && filterWorkTypeId !== 'none' && (
-                <label
-                  className={`inline-flex items-center gap-1.5 h-9 px-2.5 border rounded-lg text-xs cursor-pointer self-end ${
-                    showOrphanColumn
-                      ? 'bg-slate-100 border-slate-400 text-slate-800'
-                      : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-                  }`}
-                  title="Hiện cột ảo gom project chưa gán phân loại"
-                >
-                  <input
-                    type="checkbox"
-                    checked={showOrphanColumn}
-                    onChange={(e) => setShowOrphanColumn(e.target.checked)}
-                    className="h-3.5 w-3.5 cursor-pointer accent-slate-600"
-                  />
-                  Cột «Chưa phân loại»
-                </label>
-              )}
             </div>
 
             <WorkshopStaffFilterPanel
@@ -1937,25 +2057,6 @@ export default function ProductionDashboard() {
                     ))}
                   </select>
                 </div>
-                {companyForTypes && (
-                  <div className="flex flex-col gap-0.5">
-                    <label className="text-[10px] text-gray-500 font-medium">Phân loại xưởng</label>
-                    <div className="inline-flex items-center gap-1 h-9 px-2 bg-white border border-gray-200 rounded-lg">
-                      <Layers className="h-3.5 w-3.5 text-slate-500 shrink-0" />
-                      <select
-                        value={filterWorkTypeId}
-                        onChange={(e) => setFilterWorkTypeId(e.target.value)}
-                        className="h-8 text-xs bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[12rem]"
-                      >
-                        <option value="">{workTypes.length === 0 ? 'Chưa cấu hình' : 'Tất cả loại'}</option>
-                        <option value="none">⚠️ Chưa phân loại</option>
-                        {workTypes.map((wt) => (
-                          <option key={wt.id} value={wt.id}>{wt.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                )}
                 <div className="flex flex-col gap-0.5">
                   <label className="text-[10px] text-gray-500 font-medium">Ưu tiên</label>
                   <select
