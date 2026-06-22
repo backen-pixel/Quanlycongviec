@@ -1,5 +1,8 @@
 const { isSystemAdmin } = require('./adminRole');
-const { canCrossWorkshopProductionViewerUseCompanyQuery } = require('./dealParticipantProduction');
+const {
+  canCrossWorkshopProductionViewerUseCompanyQuery,
+  isMetallaOrHucabiCompanyIdSync,
+} = require('./dealParticipantProduction');
 
 /** Chuẩn hóa UUID công ty cho query pipeline (chuỗi rỗng → null). */
 function normalizeWorkshopCompanyId(companyId) {
@@ -9,9 +12,7 @@ function normalizeWorkshopCompanyId(companyId) {
 }
 
 /**
- * Phạm vi công ty cho module Xưởng (SX / VC).
- * Admin hệ thống (không gắn company_id): có thể truyền company_id query (rỗng = xem mọi công ty).
- * User thường + admin công ty + sales_admin: luôn khóa theo company_id của tài khoản.
+ * Xưởng / công ty thực hiện SX trên query `company_id` (projects.company_id).
  */
 function effectiveWorkshopCompanyId(req, queryCompanyId) {
   const q =
@@ -22,13 +23,46 @@ function effectiveWorkshopCompanyId(req, queryCompanyId) {
     req.user?.company_id != null && String(req.user.company_id).trim() !== ''
       ? String(req.user.company_id).trim()
       : '';
+
   if (isSystemAdmin(req.user)) {
     return q || null;
   }
+
   if (canCrossWorkshopProductionViewerUseCompanyQuery(req.user, q)) {
-    return q;
+    if (q) return q;
+    if (userCid && isMetallaOrHucabiCompanyIdSync(userCid)) return userCid;
+    return null;
   }
+
   return userCid || null;
 }
 
-module.exports = { effectiveWorkshopCompanyId, normalizeWorkshopCompanyId };
+/**
+ * Công ty CRM chủ deal — query `deal_company_id` (crm_leads.company_id / external_company_id).
+ * NV CRM: mặc định công ty của họ. NV xưởng (HCB/Metalla) tại xưởng mình: không lọc deal.
+ */
+function effectiveDealCompanyId(req, queryDealCompanyId, workshopCompanyId = null) {
+  const q =
+    queryDealCompanyId != null && String(queryDealCompanyId).trim() !== ''
+      ? String(queryDealCompanyId).trim()
+      : '';
+  if (isSystemAdmin(req.user)) {
+    return q || null;
+  }
+  const userCid =
+    req.user?.company_id != null && String(req.user.company_id).trim() !== ''
+      ? String(req.user.company_id).trim()
+      : '';
+  if (!userCid) return q || null;
+  const ws = workshopCompanyId != null ? String(workshopCompanyId).trim() : '';
+  if (ws && ws === userCid && isMetallaOrHucabiCompanyIdSync(userCid)) {
+    return null;
+  }
+  return userCid;
+}
+
+module.exports = {
+  effectiveWorkshopCompanyId,
+  effectiveDealCompanyId,
+  normalizeWorkshopCompanyId,
+};

@@ -1,3 +1,5 @@
+import { isSystemAdmin } from './adminRole';
+
 /** Legacy email list — ưu tiên role `accounting` (isAccountingUser). */
 export const CROSS_WORKSHOP_PRODUCTION_VIEWER_EMAILS = new Set([]);
 
@@ -7,43 +9,58 @@ export function isAccountingUser(user) {
     && String(user.company_id).trim() !== '';
 }
 
+/** NV gắn công ty CRM — chọn xưởng SX, deal lọc theo công ty họ (backend). */
 export function isCrossWorkshopProductionViewer(user) {
   if (isAccountingUser(user)) return true;
   const email = String(user?.email || '').trim().toLowerCase();
-  return CROSS_WORKSHOP_PRODUCTION_VIEWER_EMAILS.has(email);
+  if (CROSS_WORKSHOP_PRODUCTION_VIEWER_EMAILS.has(email)) return true;
+  return user?.company_id != null && String(user.company_id).trim() !== '';
 }
 
 export function isMetallaOrHucabiCompany(company) {
   if (!company) return false;
   const sn = String(company.short_name || '').trim().toUpperCase();
   const name = String(company.name || '').trim().toLowerCase();
-  return sn === 'HCB' || name.includes('metalla');
+  return sn === 'HCB' || name.includes('metalla') || name.includes('hucabi');
 }
 
-/** Công ty có thể chọn trên Kanban SX (VPT + Metalla + Hucabi). */
+/** Bộ lọc 1 — xưởng / công ty thực hiện sản xuất (HCB, Metalla…). */
+export function productionWorkshopFilterCompanies(companies) {
+  return (companies || []).filter(isMetallaOrHucabiCompany);
+}
+
+/** Bộ lọc 2 — hiện khi NV thuộc công ty CRM (không phải NV xưởng HCB/Metalla). */
+export function shouldShowDealCompanyFilter(user, companies) {
+  if (isSystemAdmin(user)) return true;
+  if (!user?.company_id) return false;
+  return !isMetallaOrHucabiCompanyId(user.company_id, companies);
+}
+
+/** Danh sách chip «Deal công ty». */
+export function dealCompanyFilterOptions(companies, user) {
+  if (isSystemAdmin(user)) return companies || [];
+  const cid = user?.company_id ? String(user.company_id) : '';
+  if (!cid) return [];
+  const own = (companies || []).find((c) => String(c.id) === cid);
+  return own ? [own] : [{ id: cid, name: cid, short_name: cid }];
+}
+
+export function isCrmCompanyProductionViewer(user) {
+  if (!user?.company_id || !String(user.company_id).trim()) return false;
+  const cid = String(user.company_id);
+  if (isAccountingUser(user)) return !isMetallaOrHucabiCompanyId(cid, []);
+  return !isMetallaOrHucabiCompany(user && { id: cid, short_name: '', name: '' });
+}
+
+/** Chip xưởng SX: NV CRM → HCB/Metalla; admin → tất cả công ty module SX. */
 export function workshopCompaniesForCrossViewer(companies, user) {
-  if (!isCrossWorkshopProductionViewer(user)) return [];
-  const cross = (companies || []).filter(isMetallaOrHucabiCompany);
-  const own = user?.company_id
-    ? (companies || []).filter((c) => String(c.id) === String(user.company_id))
-    : [];
-  const byId = new Map();
-  [...own, ...cross].forEach((c) => byId.set(String(c.id), c));
-  return [...byId.values()];
+  if (isSystemAdmin(user)) return companies || [];
+  return productionWorkshopFilterCompanies(companies);
 }
 
-/** Công ty xưởng thực hiện (HCB, Metalla, VPT) — lọc deal VPT theo nơi SX. */
+/** @deprecated — dùng productionWorkshopFilterCompanies + dealCompanyFilterOptions */
 export function sxWorkshopFilterCompanies(companies, user) {
-  if (!isCrossWorkshopProductionViewer(user) && !isDealParticipantProductionViewer(user)) return [];
-  const cross = (companies || []).filter(isMetallaOrHucabiCompany);
-  const vpt = (companies || []).filter((c) => {
-    const sn = String(c.short_name || '').trim().toUpperCase();
-    const name = String(c.name || '').trim().toLowerCase();
-    return sn === 'VPT' || name.includes('vạn phú');
-  });
-  const byId = new Map();
-  [...cross, ...vpt].forEach((c) => byId.set(String(c.id), c));
-  return [...byId.values()];
+  return productionWorkshopFilterCompanies(companies);
 }
 
 export function isDealParticipantProductionViewer(user) {
@@ -58,17 +75,19 @@ export function isCrossWorkshopProductionViewerUser(user) {
 
 export function isVptCompanyChip(companyId, companies, user) {
   if (!companyId) return false;
+  if (user?.company_id && String(companyId) === String(user.company_id)) return true;
   const vpt = (companies || []).find((c) => {
     const sn = String(c.short_name || '').trim().toUpperCase();
     const name = String(c.name || '').trim().toLowerCase();
     return sn === 'VPT' || name.includes('vạn phú');
   });
   if (vpt && String(vpt.id) === String(companyId)) return true;
-  return String(companyId) === String(user?.company_id || '');
+  return false;
 }
 
 export function canPickWorkshopCompany(user, isAdmin, isCompanyScopedAdmin) {
   if (isAdmin && !isCompanyScopedAdmin) return true;
+  if (user?.company_id) return true;
   return isCrossWorkshopProductionViewer(user);
 }
 

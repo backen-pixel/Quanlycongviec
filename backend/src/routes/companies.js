@@ -5,7 +5,6 @@ const { auth } = require('../middleware/auth');
 const { syncCompanyToEcosystem } = require('../helpers/ecosystemSync');
 const { getRestrictedDivisionIdsForModule, KNOWN_MODULE_KEYS } = require('../helpers/ecosystemModuleScope');
 const { isCrmCompanyAdminUser } = require('../helpers/crmAccessRoles');
-const { isAccountingUser } = require('../helpers/accountingScope');
 const { responseCache, invalidateTags } = require('../middleware/responseCache');
 
 const r = Router();
@@ -118,18 +117,20 @@ r.get('/', responseCache({ ttl: 120, scope: 'company', tags: ['orgtree'] }), asy
     const { data, error } = await q;
     if (error) throw error;
     let list = data || [];
-    // Kế toán: luôn gồm công ty mình (VPT thuộc khối CRM, không nằm trong for_module=production)
-    if (isAccountingUser(req.user) && req.user?.company_id && (mod === 'production' || mod === 'logistics')) {
+  // Công ty CRM của NV: luôn có trong danh sách module SX/VC (kể cả khối CRM)
+    if (req.user?.company_id && (mod === 'production' || mod === 'logistics')) {
       const ownId = String(req.user.company_id);
       if (!list.some((c) => c && String(c.id) === ownId)) {
         const { data: ownCo } = await supabase.from('companies').select('*').eq('id', ownId).maybeSingle();
         if (ownCo) list = [ownCo, ...list];
       }
     }
-    // Admin công ty: chỉ một công ty trong danh sách (khác admin hệ thống)
+    // Admin CRM theo công ty: CRM khóa 1 công ty; SX/VC vẫn hiện đủ xưởng trong khối
     if (isCrmCompanyAdminUser(req.user)) {
       const only = String(req.user.company_id).trim();
-      list = list.filter((c) => c && String(c.id) === only);
+      if (mod !== 'production' && mod !== 'logistics') {
+        list = list.filter((c) => c && String(c.id) === only);
+      }
     }
     res.json({ companies: list });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
