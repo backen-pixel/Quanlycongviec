@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue } f
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { isAdminLike } from '../lib/adminRole';
+import { isAdminLike, isSystemAdmin } from '../lib/adminRole';
 import {
   canPickWorkshopCompany,
   isCrossWorkshopProductionViewer,
@@ -139,17 +139,16 @@ export default function LogisticsDashboard() {
   }, [onStaffFilterCompanyChange]);
 
   const companyParam = useMemo(() => {
-    if (isAdmin) return filterCompany || undefined;
-    if (crossWorkshopViewer) return filterCompany || user?.company_id || undefined;
-    return user?.company_id ? String(user.company_id) : undefined;
-  }, [isAdmin, crossWorkshopViewer, filterCompany, user?.company_id]);
-  const companyForTypes = companyParam || (user?.company_id ? String(user.company_id) : '');
+    if (filterCompany) return String(filterCompany);
+    return undefined;
+  }, [filterCompany]);
+  const companyForTypes = companyParam || '';
 
   const canPickCompany = canPickWorkshopCompany(user, isAdmin, isCompanyScopedAdmin);
   const workshopCompanyPickerList = useMemo(() => {
-    if (crossWorkshopViewer && !isAdmin) {
-      return workshopCompaniesForCrossViewer(companies, user);
-    }
+    if (isSystemAdmin(user)) return companies;
+    if (user?.company_id) return workshopCompaniesForCrossViewer(companies, user);
+    if (crossWorkshopViewer && !isAdmin) return workshopCompaniesForCrossViewer(companies, user);
     return companies;
   }, [companies, crossWorkshopViewer, isAdmin, user]);
 
@@ -561,7 +560,7 @@ export default function LogisticsDashboard() {
       </div>
 
       {/* Công ty — chip ngang; kế toán: VPT + HCB + Metalla */}
-      {canPickCompany && !isCompanyScopedAdmin && workshopCompanyPickerList.length > 0 && (
+      {canPickCompany && workshopCompanyPickerList.length > 0 && (
         <div className="flex items-center gap-1.5 overflow-x-auto max-w-full shrink-0 pb-0.5 scrollbar-thin scrollbar-thumb-gray-200">
           {(isAdmin ? [{ id: '', name: 'Tất cả' }, ...workshopCompanyPickerList] : workshopCompanyPickerList).map((c) => {
             const active = filterCompany === c.id;

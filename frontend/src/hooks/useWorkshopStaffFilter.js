@@ -55,6 +55,7 @@ export function useWorkshopStaffFilter({
   companies = [],
   filterCompany,
   setFilterCompany,
+  dealCompanyFilter = '',
   forModule,
   persisted = null,
 }) {
@@ -71,12 +72,13 @@ export function useWorkshopStaffFilter({
   const [companyDepts, setCompanyDepts] = useState([]);
 
   const dashboardScopeCompanyId = useMemo(() => {
+    if (dealCompanyFilter) return String(dealCompanyFilter);
     if (isCompanyScopedAdmin && userCompanyId) return userCompanyId;
     if (crossWorkshopViewer && filterCompany) return String(filterCompany);
     if (!isAdmin && userCompanyId) return userCompanyId;
     if (isAdmin && filterCompany) return String(filterCompany);
     return '';
-  }, [isCompanyScopedAdmin, crossWorkshopViewer, isAdmin, userCompanyId, filterCompany]);
+  }, [dealCompanyFilter, isCompanyScopedAdmin, crossWorkshopViewer, isAdmin, userCompanyId, filterCompany]);
 
   const crmCompanyIdsCsv = useMemo(
     () => (companies || []).map((c) => String(c.id)).filter(Boolean).join(','),

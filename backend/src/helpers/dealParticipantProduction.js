@@ -1,5 +1,5 @@
 const { supabase } = require('../config/supabase');
-const { normalizeEmail } = require('./adminRole');
+const { isSystemAdmin: isSystemAdminUser, normalizeEmail } = require('./adminRole');
 const {
   isAccountingUser,
   getAccountingCompanyId,
@@ -16,6 +16,11 @@ const DEAL_PARTICIPANT_PRODUCTION_EMAILS = new Set([
 
 /** Legacy email — role `accounting` dùng isAccountingUser. */
 const CROSS_WORKSHOP_PRODUCTION_VIEWER_EMAILS = new Set([]);
+
+/** Email được auto-thêm tab Thành viên khi deal vào SX (ngoài role accounting). */
+const CLIENT_COMPANY_PRODUCTION_AUTO_PARTICIPANT_EMAILS = new Set([
+  'minh.phucdatdoor@gmail.com',
+]);
 
 /** UUID công ty SX — đồng bộ với DB prod (HCB, Metalla). */
 const METALLA_HUCABI_COMPANY_ID_SET = new Set([
@@ -63,19 +68,50 @@ async function isMetallaOrHucabiCompanyId(companyId) {
   return ids.includes(String(companyId));
 }
 
-function isCrossWorkshopProductionViewer(user) {
-  if (CROSS_WORKSHOP_PRODUCTION_VIEWER_EMAILS.has(normalizeEmail(user?.email))) return true;
-  return isAccountingUser(user);
+/** Công ty CRM chủ deal (users.company_id) — lọc deal, không khóa chip xưởng SX. */
+function getUserDealCompanyScopeId(user) {
+  if (isAccountingUser(user)) return getAccountingCompanyId(user);
+  if (user?.company_id != null && String(user.company_id).trim() !== '') {
+    return String(user.company_id).trim();
+  }
+  return null;
 }
 
-/** NV kế toán / cross-viewer được chọn công ty Metalla/Hucabi/VPT trên query SX. */
+/** @deprecated alias */
+function getClientCompanyProductionScopeId(user) {
+  return getUserDealCompanyScopeId(user);
+}
+
+/** NV gắn công ty CRM — chọn xưởng SX (HCB/Metalla/…) khác công ty mình. */
+function isCrossWorkshopProductionViewer(user) {
+  if (CROSS_WORKSHOP_PRODUCTION_VIEWER_EMAILS.has(normalizeEmail(user?.email))) return true;
+  if (isAccountingUser(user)) return true;
+  return getUserDealCompanyScopeId(user) != null;
+}
+
+/** NV thuộc công ty CRM (users.company_id) — xem deal công ty mình tại xưởng có deal đó. */
+function isCrmCompanyProductionViewer(user) {
+  const cid = getUserDealCompanyScopeId(user);
+  if (!cid) return false;
+  if (isMetallaOrHucabiCompanyIdSync(cid)) return false;
+  return true;
+}
+
+/** Xưởng đang xem ≠ công ty NV → chỉ deal CRM thuộc công ty họ. */
+function shouldFilterDealsByUserCompanyAtWorkshop(user, workshopCompanyId) {
+  const dealCoId = getUserDealCompanyScopeId(user);
+  if (!dealCoId || !workshopCompanyId) return false;
+  return String(workshopCompanyId) !== String(dealCoId);
+}
+
+/** NV công ty CRM: chọn chip xưởng bất kỳ (backend lọc deal theo công ty họ). */
 function canCrossWorkshopProductionViewerUseCompanyQuery(user, queryCompanyId) {
-  if (isAccountingUser(user)) {
-    const ac = getAccountingCompanyId(user);
+  const scopeCoId = getUserDealCompanyScopeId(user);
+  if (scopeCoId) {
     const q = queryCompanyId != null ? String(queryCompanyId).trim() : '';
-    if (!q || !ac) return false;
-    if (q === ac) return true;
-    return isMetallaOrHucabiCompanyIdSync(q);
+    if (!q) return true;
+    if (q === scopeCoId) return true;
+    return true;
   }
   if (!CROSS_WORKSHOP_PRODUCTION_VIEWER_EMAILS.has(normalizeEmail(user?.email))) return false;
   const q = queryCompanyId != null ? String(queryCompanyId).trim() : '';
@@ -208,18 +244,20 @@ async function userCanAccessCrossWorkshopProductionProject(user, projectId) {
     .maybeSingle();
   if (!proj?.company_id) return false;
 
-  const clientCoId = isAccountingUser(user)
-    ? getAccountingCompanyId(user)
-    : await resolveVptCompanyId();
+  let clientCoId = getUserDealCompanyScopeId(user);
+  if (!clientCoId && CROSS_WORKSHOP_PRODUCTION_VIEWER_EMAILS.has(normalizeEmail(user?.email))) {
+    clientCoId = await resolveVptCompanyId();
+  }
+
+  if (clientCoId && String(proj.company_id) === String(clientCoId)) {
+    if (!userNeedsParticipantOnlyProductionScope(user)) return true;
+    return userCanAccessProductionProjectAsParticipant(user?.userId, projectId, user);
+  }
 
   if (await isMetallaOrHucabiCompanyId(proj.company_id)) {
     if (!clientCoId) return false;
     const ids = await getAccountingClientProjectIdsAtWorkshop(proj.company_id, clientCoId);
     return ids.some((id) => String(id) === String(projectId));
-  }
-  if (clientCoId && String(proj.company_id) === String(clientCoId)) {
-    if (isAccountingUser(user)) return true;
-    return userCanAccessProductionProjectAsParticipant(user?.userId, projectId, user);
   }
   return false;
 }
@@ -236,14 +274,19 @@ async function applyCrossWorkshopVptProductionFilter(query, user, {
     return { query, memberProjectIds: null };
   }
 
-  const clientCoId = isAccountingUser(user)
-    ? getAccountingCompanyId(user)
-    : await resolveVptCompanyId();
+  let clientCoId = getUserDealCompanyScopeId(user);
+  if (!clientCoId && CROSS_WORKSHOP_PRODUCTION_VIEWER_EMAILS.has(normalizeEmail(user?.email))) {
+    clientCoId = await resolveVptCompanyId();
+  }
 
   const isPartnerWorkshop = workshopCompanyId && await isMetallaOrHucabiCompanyId(workshopCompanyId);
   const isClientWorkshopChip = clientCoId && workshopCompanyId && String(workshopCompanyId) === String(clientCoId);
+  const viewingPartnerWorkshop = isPartnerWorkshop
+    && clientCoId
+    && workshopCompanyId
+    && String(workshopCompanyId) !== String(clientCoId);
 
-  if (isPartnerWorkshop && clientCoId) {
+  if (viewingPartnerWorkshop) {
     const ids = await getAccountingClientProjectIdsAtWorkshop(workshopCompanyId, clientCoId);
     if (!ids.length) {
       return { query: query.in('id', ['00000000-0000-0000-0000-000000000000']), memberProjectIds: [] };
@@ -251,7 +294,7 @@ async function applyCrossWorkshopVptProductionFilter(query, user, {
     return { query: query.in('id', ids), memberProjectIds: ids };
   }
 
-  if (isClientWorkshopChip && isAccountingUser(user)) {
+  if (isClientWorkshopChip && clientCoId && !userNeedsParticipantOnlyProductionScope(user)) {
     let projectIds = await getAccountingScopedProjectIds(clientCoId);
     if (sxWorkshopCompanyId) {
       projectIds = await filterProjectIdsBySxWorkshopCompany(projectIds, sxWorkshopCompanyId);
@@ -337,6 +380,18 @@ async function getDealCompanyAutoParticipantUserIds(dealCompanyId, externalCompa
     .eq('is_active', true);
   if (!accErr && (accountingUsers || []).length) {
     return accountingUsers.map((u) => String(u.id));
+  }
+
+  const { data: autoUsers, error: autoErr } = await supabase
+    .from('users')
+    .select('id, email')
+    .eq('company_id', targetCo)
+    .eq('is_active', true);
+  if (!autoErr && (autoUsers || []).length) {
+    const autoIds = autoUsers
+      .filter((u) => CLIENT_COMPANY_PRODUCTION_AUTO_PARTICIPANT_EMAILS.has(normalizeEmail(u.email)))
+      .map((u) => String(u.id));
+    if (autoIds.length) return autoIds;
   }
 
   if (await isVptDealCompany(targetCo)) {
@@ -465,17 +520,38 @@ async function userCanAccessProductionProjectAsParticipant(userId, projectId, us
  * Phạm vi dự án SX / Lắp đặt — kế toán (accounting) + cross-viewer legacy.
  * HCB/Metalla: chỉ dự án có deal thuộc công ty kế toán (external_company_id).
  */
-async function applyWorkshopProjectVisibilityScope(query, user, workshopCompanyId = null, sxWorkshopCompanyId = null) {
-  if (isCrossWorkshopProductionViewer(user)) {
-    const acId = isAccountingUser(user) ? getAccountingCompanyId(user) : null;
-    const vptId = acId || await resolveVptCompanyId();
-    const isPartner = workshopCompanyId && isMetallaOrHucabiCompanyIdSync(workshopCompanyId);
-    const isOwnChip = vptId && workshopCompanyId && String(workshopCompanyId) === String(vptId);
-    if (isPartner || isOwnChip || (isOwnChip && userNeedsParticipantOnlyProductionScope(user))) {
-      return applyCrossWorkshopVptProductionFilter(query, user, {
-        workshopCompanyId,
-        sxWorkshopCompanyId,
-      });
+async function applyWorkshopProjectVisibilityScope(
+  query,
+  user,
+  workshopCompanyId = null,
+  sxWorkshopCompanyId = null,
+  dealCompanyId = null,
+) {
+  const explicitDealCo = dealCompanyId != null && String(dealCompanyId).trim() !== ''
+    ? String(dealCompanyId).trim()
+    : null;
+
+  if (explicitDealCo) {
+    let projectIds = workshopCompanyId
+      ? await getAccountingClientProjectIdsAtWorkshop(workshopCompanyId, explicitDealCo)
+      : await getAccountingScopedProjectIds(explicitDealCo);
+    if (sxWorkshopCompanyId && projectIds.length) {
+      projectIds = await filterProjectIdsBySxWorkshopCompany(projectIds, sxWorkshopCompanyId);
+    }
+    if (!projectIds.length) {
+      return { query: query.in('id', ['00000000-0000-0000-0000-000000000000']), memberProjectIds: [] };
+    }
+    return { query: query.in('id', projectIds), memberProjectIds: projectIds };
+  }
+
+  if (workshopCompanyId && (getUserDealCompanyScopeId(user) || isCrossWorkshopProductionViewer(user))) {
+    const cross = await applyCrossWorkshopVptProductionFilter(query, user, {
+      workshopCompanyId,
+      sxWorkshopCompanyId,
+    });
+    if (cross.memberProjectIds !== null) return cross;
+    if (getUserDealCompanyScopeId(user) && !shouldFilterDealsByUserCompanyAtWorkshop(user, workshopCompanyId)) {
+      return cross;
     }
   }
   if (!(await userNeedsParticipantOnlyProductionScopeForWorkshop(user, workshopCompanyId))) {
@@ -491,9 +567,41 @@ async function applyWorkshopProjectVisibilityScope(query, user, workshopCompanyI
   return { query: query.in('id', memberProjectIds), memberProjectIds };
 }
 
+/** Các xưởng (projects.company_id) có ít nhất một deal SX thuộc công ty CRM. */
+async function listWorkshopCompaniesForDealCompany(dealCompanyId) {
+  if (!dealCompanyId) return [];
+  const projectIds = await getAccountingScopedProjectIds(dealCompanyId);
+  if (!projectIds.length) return [];
+  const { data, error } = await supabase
+    .from('projects')
+    .select('company_id')
+    .in('id', projectIds);
+  if (error) {
+    console.warn('[dealParticipantProduction] listWorkshopCompaniesForDealCompany:', error.message);
+    return [];
+  }
+  const workshopIds = [...new Set((data || []).map((p) => p.company_id).filter(Boolean))];
+  if (!workshopIds.length) return [];
+  const { data: cos, error: cErr } = await supabase
+    .from('companies')
+    .select('id, name, short_name')
+    .in('id', workshopIds)
+    .order('name');
+  if (cErr) {
+    console.warn('[dealParticipantProduction] listWorkshopCompanies companies:', cErr.message);
+    return [];
+  }
+  return cos || [];
+}
+
 module.exports = {
   DEAL_PARTICIPANT_PRODUCTION_EMAILS,
+  CLIENT_COMPANY_PRODUCTION_AUTO_PARTICIPANT_EMAILS,
   CROSS_WORKSHOP_PRODUCTION_VIEWER_EMAILS,
+  getUserDealCompanyScopeId,
+  isCrmCompanyProductionViewer,
+  shouldFilterDealsByUserCompanyAtWorkshop,
+  getClientCompanyProductionScopeId,
   isDealParticipantProductionViewer,
   isCrossWorkshopProductionViewer,
   isVptCompanyCommercialDocViewer,
@@ -521,4 +629,5 @@ module.exports = {
   getDealCompanyAutoParticipantUserIds,
   ensureDealProductionAutoParticipants,
   ensureProjectProductionAutoParticipants,
+  listWorkshopCompaniesForDealCompany,
 };

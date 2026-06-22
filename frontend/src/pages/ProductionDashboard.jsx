@@ -3,12 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
-import { isAdminLike } from '../lib/adminRole';
+import { isAdminLike, isSystemAdmin } from '../lib/adminRole';
 import {
   canPickWorkshopCompany,
   isCrossWorkshopProductionViewer,
   workshopCompaniesForCrossViewer,
-  sxWorkshopFilterCompanies,
+  dealCompanyFilterOptions,
+  shouldShowDealCompanyFilter,
   isVptCompanyChip,
   productionCreateCompanyOptions,
   isDealParticipantProductionViewer,
@@ -225,8 +226,9 @@ export default function ProductionDashboard() {
   const [sortOpen, setSortOpen] = useState(false);
   const sortMenuRef = useRef(null);
   const [companies, setCompanies] = useState([]);
+  const [workshopOptionsForDeal, setWorkshopOptionsForDeal] = useState([]);
   const [filterCompany, setFilterCompany] = useState(() => P0?.filterCompany ?? '');
-  const [filterSxWorkshopCompany, setFilterSxWorkshopCompany] = useState(() => P0?.filterSxWorkshopCompany ?? '');
+  const [filterDealCompany, setFilterDealCompany] = useState(() => P0?.filterDealCompany ?? '');
   const [timePreset, setTimePreset] = useState(() => P0?.timePreset ?? '');
   const [customFrom, setCustomFrom] = useState(() => P0?.customFrom ?? '');
   const [customTo, setCustomTo] = useState(() => P0?.customTo ?? '');
@@ -282,6 +284,7 @@ export default function ProductionDashboard() {
     companies,
     filterCompany,
     setFilterCompany,
+    dealCompanyFilter: filterDealCompany,
     forModule: 'production',
     persisted: P0,
   });
@@ -309,56 +312,55 @@ export default function ProductionDashboard() {
     staffFilterActiveCount,
   } = staffFilter;
 
+  const dealCompanyPickerList = useMemo(
+    () => dealCompanyFilterOptions(companies, user),
+    [companies, user],
+  );
+  const showDealCompanyFilter = useMemo(
+    () => shouldShowDealCompanyFilter(user, companies),
+    [user, companies],
+  );
+
+  const dealCompanyParam = useMemo(() => {
+    if (filterDealCompany) return String(filterDealCompany);
+    if (showDealCompanyFilter && user?.company_id) return String(user.company_id);
+    return undefined;
+  }, [filterDealCompany, showDealCompanyFilter, user?.company_id]);
+
   const canPickCompany = canPickWorkshopCompany(user, isAdmin, isCompanyScopedAdmin);
   const workshopCompanyPickerList = useMemo(() => {
-    if (crossWorkshopViewer && !isAdmin) {
-      return workshopCompaniesForCrossViewer(companies, user);
+    if (isSystemAdmin(user) && !dealCompanyParam) return companies;
+    if (workshopOptionsForDeal.length) {
+      const ids = new Set(workshopOptionsForDeal.map((w) => String(w.id)));
+      const fromApi = (companies || []).filter((c) => ids.has(String(c.id)));
+      if (fromApi.length) return fromApi;
+      return workshopOptionsForDeal;
     }
-    return companies;
-  }, [companies, crossWorkshopViewer, isAdmin, user]);
+    if (user?.company_id && isMetallaOrHucabiCompanyId(user.company_id, companies)) {
+      return (companies || []).filter((c) => String(c.id) === String(user.company_id));
+    }
+    return workshopCompaniesForCrossViewer(companies, user);
+  }, [companies, user, workshopOptionsForDeal, dealCompanyParam]);
 
   const deferredPersonName = useDeferredValue(filterPersonName);
 
   const handleStaffFilterCompanyChange = useCallback((companyId) => {
     onStaffFilterCompanyChange(companyId);
     setFilterWorkTypeId('');
-    setFilterSxWorkshopCompany('');
   }, [onStaffFilterCompanyChange]);
 
   const companyParam = useMemo(() => {
-    if (isAdmin) return filterCompany || undefined;
-    if (crossWorkshopViewer) return filterCompany || user?.company_id || undefined;
-    return user?.company_id ? String(user.company_id) : undefined;
-  }, [isAdmin, crossWorkshopViewer, filterCompany, user?.company_id]);
+    if (filterCompany) return String(filterCompany);
+    return undefined;
+  }, [filterCompany]);
 
-  const showVptSxWorkshopFilter = useMemo(() => {
-    const cid = companyParam || filterCompany || user?.company_id || '';
-    return isVptCompanyChip(cid, companies, user);
-  }, [companyParam, filterCompany, companies, user]);
-
-  const sxWorkshopFilterOptions = useMemo(
-    () => sxWorkshopFilterCompanies(companies, user),
-    [companies, user],
-  );
-
-  const companyForTypes = useMemo(() => {
-    const base = companyParam || (user?.company_id ? String(user.company_id) : '');
-    if (showVptSxWorkshopFilter && filterSxWorkshopCompany) {
-      return String(filterSxWorkshopCompany);
-    }
-    return base;
-  }, [companyParam, user?.company_id, showVptSxWorkshopFilter, filterSxWorkshopCompany]);
+  const companyForTypes = useMemo(() => companyParam || '', [companyParam]);
 
   const productionCreateCompanyIdDefault = useMemo(() => {
-    if (isAdmin) {
-      return filterCompany || dashboardScopeCompanyId || user?.company_id || '';
-    }
-    const chip = filterCompany || user?.company_id || '';
-    if (isMetallaOrHucabiCompanyId(chip, companies)) return String(chip);
-    if (filterSxWorkshopCompany) return String(filterSxWorkshopCompany);
+    if (filterCompany && isMetallaOrHucabiCompanyId(filterCompany, companies)) return String(filterCompany);
     const opts = productionCreateCompanyOptions(companies);
-    return opts[0]?.id ? String(opts[0].id) : (dashboardScopeCompanyId || user?.company_id || '');
-  }, [isAdmin, filterCompany, dashboardScopeCompanyId, user?.company_id, filterSxWorkshopCompany, companies]);
+    return opts[0]?.id ? String(opts[0].id) : '';
+  }, [filterCompany, companies]);
 
   const vptExternalCompanyLabel = useMemo(() => {
     const vpt = findVptCompany(companies);
@@ -371,15 +373,13 @@ export default function ProductionDashboard() {
     const silent = !!opts.silent;
     const bustCache = !!opts.bustCache;
     const fetchCompanyId = opts.companyId || companyParam;
-    const fetchSxWorkshopId = opts.sxWorkshopCompanyId !== undefined
-      ? opts.sxWorkshopCompanyId
-      : (showVptSxWorkshopFilter && filterSxWorkshopCompany ? filterSxWorkshopCompany : undefined);
+    const fetchDealCompanyId = opts.dealCompanyId !== undefined ? opts.dealCompanyId : dealCompanyParam;
     if (silent) setSyncing(true);
     else setLoading(true);
     try {
       const dashQ = {
         ...(fetchCompanyId ? { company_id: fetchCompanyId } : {}),
-        ...(fetchSxWorkshopId ? { sx_workshop_company_id: fetchSxWorkshopId } : {}),
+        ...(fetchDealCompanyId ? { deal_company_id: fetchDealCompanyId } : {}),
       };
       const cacheHeaders = bustCache ? { headers: { 'x-no-cache': '1' } } : {};
       const maxRecords = kanbanLoadKey === 'all' ? 5000
@@ -392,7 +392,7 @@ export default function ProductionDashboard() {
         api.get('/production/dashboard', { params: dashQ, ...cacheHeaders }).catch(() => ({ data: { kpis: {}, pipeline: [] } })),
         fetchWorkshopProjectPages(api, '/production/projects', {
           companyId: fetchCompanyId,
-          sxWorkshopCompanyId: fetchSxWorkshopId,
+          dealCompanyId: fetchDealCompanyId,
           maxRecords,
           pageSize: 500,
           bustCache,
@@ -411,48 +411,36 @@ export default function ProductionDashboard() {
       setLoading(false);
       setFirstLoaded(true);
     }
-  }, [companyParam, kanbanLoadKey, showVptSxWorkshopFilter, filterSxWorkshopCompany]);
+  }, [companyParam, dealCompanyParam, kanbanLoadKey]);
 
   const handleNewDealCreated = useCallback(async (created) => {
     const projectId = created?.project_id;
     const wktId = created?.workshop_type_id ? String(created.workshop_type_id) : '';
     const createdCompanyId = created?.company_id ? String(created.company_id) : '';
 
-    if (isAdmin && createdCompanyId && createdCompanyId !== String(filterCompany || '')) {
+    if (isAdmin && createdCompanyId && isMetallaOrHucabiCompanyId(createdCompanyId, companies)
+      && createdCompanyId !== String(filterCompany || '')) {
       setFilterCompany(createdCompanyId);
     }
-    if (canPickProductionCreateCompany && createdCompanyId) {
-      const onVptChip = isVptCompanyChip(filterCompany || user?.company_id || '', companies, user);
-      if (onVptChip && isMetallaOrHucabiCompanyId(createdCompanyId, companies)) {
-        setFilterSxWorkshopCompany(createdCompanyId);
-      } else if (!onVptChip && createdCompanyId !== String(filterCompany || '')) {
-        setFilterCompany(createdCompanyId);
-      }
+    if (canPickProductionCreateCompany && createdCompanyId && isMetallaOrHucabiCompanyId(createdCompanyId, companies)) {
+      setFilterCompany(createdCompanyId);
     }
     if (wktId && wktId !== String(filterWorkTypeId || '')) {
       setFilterWorkTypeId(wktId);
     }
 
     const reloadCompanyId = (() => {
-      if (canPickProductionCreateCompany && isVptCompanyChip(filterCompany || user?.company_id || '', companies, user)) {
-        return filterCompany || user?.company_id || companyParam;
-      }
-      return createdCompanyId || companyParam;
+      if (isMetallaOrHucabiCompanyId(createdCompanyId, companies)) return createdCompanyId;
+      return companyParam;
     })();
-    const reloadSxWorkshopId = (() => {
-      if (canPickProductionCreateCompany && isMetallaOrHucabiCompanyId(createdCompanyId, companies)
-        && isVptCompanyChip(filterCompany || user?.company_id || '', companies, user)) {
-        return createdCompanyId;
-      }
-      return showVptSxWorkshopFilter && filterSxWorkshopCompany ? filterSxWorkshopCompany : undefined;
-    })();
+    const reloadDealCompanyId = dealCompanyParam;
 
     try {
       await load({
         silent: true,
         bustCache: true,
         companyId: reloadCompanyId,
-        sxWorkshopCompanyId: reloadSxWorkshopId,
+        dealCompanyId: reloadDealCompanyId,
       });
     } catch (e) {
       console.error(e);
@@ -490,7 +478,7 @@ export default function ProductionDashboard() {
       };
       return [optimistic, ...prev];
     });
-  }, [load, pipeline, workTypes, companyParam, isAdmin, filterCompany, filterWorkTypeId, canPickProductionCreateCompany, companies, user, showVptSxWorkshopFilter, filterSxWorkshopCompany]);
+  }, [load, pipeline, workTypes, companyParam, dealCompanyParam, filterCompany, filterWorkTypeId, companies, user]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -522,10 +510,47 @@ export default function ProductionDashboard() {
   }, [companyParam, companyForTypes, filterWorkTypeId, workTypes, workTypesCompanyId]);
 
   useEffect(() => {
+    if (!dealCompanyParam) {
+      setWorkshopOptionsForDeal([]);
+      return;
+    }
+    let cancel = false;
+    api.get('/production/workshop-options', { params: { deal_company_id: dealCompanyParam } })
+      .then((r) => {
+        if (!cancel) setWorkshopOptionsForDeal(r.data?.workshops || []);
+      })
+      .catch(() => {
+        if (!cancel) setWorkshopOptionsForDeal([]);
+      });
+    return () => { cancel = true; };
+  }, [dealCompanyParam]);
+
+  useEffect(() => {
+    if (!workshopCompanyPickerList.length) return;
+    if (filterCompany && workshopCompanyPickerList.some((c) => String(c.id) === String(filterCompany))) return;
+    const first = workshopCompanyPickerList[0];
+    if (first?.id) handleStaffFilterCompanyChange(first.id);
+  }, [workshopCompanyPickerList, filterCompany, handleStaffFilterCompanyChange]);
+
+  useEffect(() => {
     api.get('/companies', { params: { for_module: 'production' } })
       .then((r) => setCompanies(r.data?.companies || r.data || []))
       .catch(() => setCompanies([]));
   }, []);
+
+  useEffect(() => {
+    if (!showDealCompanyFilter || filterDealCompany) return;
+    if (user?.company_id) setFilterDealCompany(String(user.company_id));
+  }, [showDealCompanyFilter, filterDealCompany, user?.company_id]);
+
+  useEffect(() => {
+    if (filterCompany || !companies.length || isSystemAdmin(user)) return;
+    if (!user?.company_id) return;
+    if (dealCompanyParam) return;
+    const list = workshopCompanyPickerList;
+    if (!list.length) return;
+    handleStaffFilterCompanyChange(list[0].id);
+  }, [companies, filterCompany, user, handleStaffFilterCompanyChange, workshopCompanyPickerList, dealCompanyParam]);
 
   useEffect(() => {
     if (!isAdmin || !filterCompany || !companies?.length) return;
@@ -535,14 +560,14 @@ export default function ProductionDashboard() {
   useEffect(() => {
     try {
       localStorage.setItem(LS_SX, JSON.stringify({
-        filterCompany, filterSxWorkshopCompany, timePreset, customFrom, customTo, showCustomDate, kanbanLoadKey,
+        filterCompany, filterDealCompany, timePreset, customFrom, customTo, showCustomDate, kanbanLoadKey,
         filterPersonId, filterPersonName, filterRegion, filterPhone, filterWorkTypeId,
         searchQuery, priorityFilter, stageFilter, viewMode, sortBy,
         showOrphanColumn,
       }));
     } catch { /* ignore */ }
   }, [
-    filterCompany, filterSxWorkshopCompany, timePreset, customFrom, customTo, showCustomDate, kanbanLoadKey, filterPersonId, filterPersonName,
+    filterCompany, filterDealCompany, timePreset, customFrom, customTo, showCustomDate, kanbanLoadKey, filterPersonId, filterPersonName,
     filterRegion, filterPhone, filterWorkTypeId, searchQuery, priorityFilter, stageFilter, viewMode, sortBy,
     showOrphanColumn,
   ]);
@@ -1616,10 +1641,11 @@ export default function ProductionDashboard() {
             )}
           </div>
 
-          {/* Công ty — chip ngang; kế toán cross-viewer: VPT + Metalla + Hucabi */}
-          {canPickCompany && !isCompanyScopedAdmin && workshopCompanyPickerList.length > 0 && (
+          {/* Bộ lọc 1: xưởng / công ty thực hiện sản xuất */}
+          {canPickCompany && workshopCompanyPickerList.length > 0 && (
             <div className="flex items-center gap-1.5 overflow-x-auto max-w-full shrink-0 pb-0.5 scrollbar-thin scrollbar-thumb-gray-200">
-              {(isAdmin ? [{ id: '', name: 'Tất cả' }, ...workshopCompanyPickerList] : workshopCompanyPickerList).map((c) => {
+              <span className="text-[11px] font-semibold text-gray-500 shrink-0">Xưởng SX:</span>
+              {(isSystemAdmin(user) ? [{ id: '', name: 'Tất cả' }, ...workshopCompanyPickerList] : workshopCompanyPickerList).map((c) => {
                 const active = filterCompany === c.id;
                 return (
                   <button
@@ -1643,21 +1669,28 @@ export default function ProductionDashboard() {
             </div>
           )}
 
-          {showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0 && (
+          {/* Bộ lọc 2: công ty CRM chủ deal */}
+          {showDealCompanyFilter && dealCompanyPickerList.length > 0 && (
             <div className="flex items-center gap-1.5 overflow-x-auto max-w-full shrink-0 pb-0.5 scrollbar-thin scrollbar-thumb-gray-200">
-              <span className="text-[11px] font-semibold text-gray-500 shrink-0">SX tại:</span>
-              {[{ id: '', name: 'Tất cả' }, ...sxWorkshopFilterOptions].map((c) => {
-                const active = filterSxWorkshopCompany === c.id;
+              <span className="text-[11px] font-semibold text-gray-500 shrink-0">Deal công ty:</span>
+              {(isSystemAdmin(user) ? [{ id: '', name: 'Tất cả' }, ...dealCompanyPickerList] : dealCompanyPickerList).map((c) => {
+                const active = c.id === ''
+                  ? !filterDealCompany
+                  : String(filterDealCompany || user?.company_id || '') === String(c.id);
+                const locked = !isSystemAdmin(user) && dealCompanyPickerList.length === 1;
                 return (
                   <button
-                    key={c.id || 'all-sx'}
+                    key={c.id || 'all-deal'}
                     type="button"
+                    disabled={locked && active}
                     onClick={() => {
-                      if (active) return;
-                      setFilterSxWorkshopCompany(c.id);
+                      if (active || locked) return;
+                      setFilterDealCompany(c.id);
                       setFilterWorkTypeId('');
                     }}
-                    className={`shrink-0 h-8 px-2.5 rounded-full text-[11px] font-semibold border transition-all cursor-pointer whitespace-nowrap ${
+                    className={`shrink-0 h-8 px-2.5 rounded-full text-[11px] font-semibold border transition-all whitespace-nowrap ${
+                      locked ? 'cursor-default' : 'cursor-pointer'
+                    } ${
                       active
                         ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm'
                         : 'bg-white border-gray-200 text-gray-600 hover:border-indigo-300 hover:text-indigo-700 hover:bg-indigo-50'
