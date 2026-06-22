@@ -4,7 +4,7 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { findDefaultAdminCrmCompanyPhucDat } from '../lib/crmCompanyFilter';
-import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Globe, MapPin, Lock, Star, Paperclip, MessageSquare, User } from 'lucide-react';
+import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Globe, MapPin, Lock, Star, Paperclip, MessageSquare, User, Truck } from 'lucide-react';
 import EvidenceFileTypesPicker from '../components/EvidenceFileTypesPicker';
 import TemplateItemAssigneePicker from '../components/TemplateItemAssigneePicker';
 import { templateItemAssigneeIds, templateItemAssigneeCount } from '../lib/templateItemAssignees';
@@ -1258,7 +1258,8 @@ function TemplateCard({
   const [editingAssignee, setEditingAssignee] = useState({});
   const [itemEditForm, setItemEditForm] = useState({
     title: '', description: '', priority: 'medium', deadline_days: 0,
-    blocks_stage_advance: false, completion_requires_file_or_note: false, required_evidence_file_types: [],
+    blocks_stage_advance: false, clears_delivery_deadline_on_complete: false,
+    completion_requires_file_or_note: false, required_evidence_file_types: [],
     requires_quick_verdict: false, executor_company_id: '', default_assignee_id: '', default_assignee_ids: [],
   });
 
@@ -1287,6 +1288,7 @@ function TemplateCard({
       priority: item.priority || 'medium',
       deadline_days: item.deadline_days ?? 0,
       blocks_stage_advance: !!item.blocks_stage_advance,
+      clears_delivery_deadline_on_complete: !!item.clears_delivery_deadline_on_complete,
       completion_requires_file_or_note: !!item.completion_requires_file_or_note,
       required_evidence_file_types: normalizeEvidenceFileTypes(item.required_evidence_file_types),
       requires_quick_verdict: !!item.requires_quick_verdict,
@@ -1308,6 +1310,7 @@ function TemplateCard({
         priority: itemEditForm.priority,
         deadline_days: 0,
         blocks_stage_advance: !!itemEditForm.blocks_stage_advance,
+        clears_delivery_deadline_on_complete: !!itemEditForm.clears_delivery_deadline_on_complete,
         completion_requires_file_or_note: !!itemEditForm.completion_requires_file_or_note
           || (itemEditForm.required_evidence_file_types?.length > 0),
         required_evidence_file_types: itemEditForm.required_evidence_file_types || [],
@@ -1350,6 +1353,14 @@ function TemplateCard({
     try {
       await updateTemplateItemFields(tpl.id, item.id, {
         blocks_stage_advance: !item.blocks_stage_advance,
+      });
+    } catch { /* alert trong updateTemplateItemFields */ }
+  };
+
+  const toggleItemClearDelivery = async (item) => {
+    try {
+      await updateTemplateItemFields(tpl.id, item.id, {
+        clears_delivery_deadline_on_complete: !item.clears_delivery_deadline_on_complete,
       });
     } catch { /* alert trong updateTemplateItemFields */ }
   };
@@ -1500,6 +1511,12 @@ function TemplateCard({
                             title="Chặn chuyển giai đoạn — phải hoàn thành trước khi kéo cột Kanban SX"
                           >⛔ Chặn</span>
                         )}
+                        {item.clears_delivery_deadline_on_complete && tplArea === 'production' && (
+                          <span
+                            className="text-[9px] bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
+                            title="HT nhiệm vụ → tự tắt deadline ngày giao hàng trên dự án"
+                          >🚚 Tắt DL giao</span>
+                        )}
                         {(!!item.completion_requires_file_or_note || normalizeEvidenceFileTypes(item.required_evidence_file_types).length > 0) && (
                           <span
                             className="text-[9px] bg-violet-100 text-violet-800 px-1.5 py-0.5 rounded-full font-medium max-w-[200px] truncate"
@@ -1520,6 +1537,12 @@ function TemplateCard({
                           className={`p-1 rounded cursor-pointer shrink-0 ${item.blocks_stage_advance ? 'text-amber-600 bg-amber-50 hover:bg-amber-100' : 'text-gray-400 hover:bg-amber-50 hover:text-amber-600'}`}
                           title={item.blocks_stage_advance ? 'Đang chặn chuyển giai đoạn — bấm để tắt' : 'Bật chặn: bắt buộc hoàn thành trước khi chuyển giai đoạn SX'}>
                           <Lock className="h-3.5 w-3.5" /></button>
+                        {tplArea === 'production' && (
+                          <button type="button" onClick={() => toggleItemClearDelivery(item)}
+                            className={`p-1 rounded cursor-pointer shrink-0 ${item.clears_delivery_deadline_on_complete ? 'text-rose-600 bg-rose-50 hover:bg-rose-100' : 'text-gray-400 hover:bg-rose-50 hover:text-rose-600'}`}
+                            title={item.clears_delivery_deadline_on_complete ? 'HT nhiệm vụ sẽ tắt deadline ngày giao hàng — bấm để tắt' : 'Bật: HT nhiệm vụ tự tắt deadline ngày giao hàng'}>
+                            <Truck className="h-3.5 w-3.5" /></button>
+                        )}
                         <button type="button" onClick={() => toggleItemEvidence(item)}
                           className={`p-1 rounded cursor-pointer shrink-0 ${(item.completion_requires_file_or_note || normalizeEvidenceFileTypes(item.required_evidence_file_types).length) ? 'text-violet-600 bg-violet-50 hover:bg-violet-100' : 'text-gray-400 hover:bg-violet-50 hover:text-violet-600'}`}
                           title="Cấu hình loại file/ghi chú bắt buộc khi hoàn thành">
@@ -1627,6 +1650,17 @@ function TemplateCard({
                               />
                               ⛔ Chặn chuyển giai đoạn
                             </label>
+                            {tplArea === 'production' && (
+                              <label className="flex items-center gap-1.5 text-[11px] font-medium text-rose-700 bg-rose-50 border border-rose-200 px-2 h-8 rounded cursor-pointer select-none">
+                                <input
+                                  type="checkbox"
+                                  checked={!!itemEditForm.clears_delivery_deadline_on_complete}
+                                  onChange={e => setItemEditForm(f => ({ ...f, clears_delivery_deadline_on_complete: e.target.checked }))}
+                                  className="accent-rose-600"
+                                />
+                                <Truck className="h-3 w-3" /> HT → tắt DL giao hàng
+                              </label>
+                            )}
                             <label className="flex items-center gap-1.5 text-[11px] font-medium text-violet-700 bg-violet-50 border border-violet-200 px-2 h-8 rounded cursor-pointer select-none">
                               <input
                                 type="checkbox"

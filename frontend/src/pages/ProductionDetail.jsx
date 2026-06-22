@@ -27,6 +27,7 @@ import {
   ArrowLeft, FolderKanban, MessageSquare, Plus, X,
   FileUp, Edit2, Save, ChevronDown, Trash2, Send, Paperclip,
   AlertTriangle, CheckCircle2, Circle, Clock, Truck, Wrench, ArrowRightLeft, Loader2, Download,
+  Share2, Lock,
 } from 'lucide-react';
 import CRMTasksTab from '../components/CRMTasksTab';
 import UnifiedTaskHistoryWidget from '../components/UnifiedTaskHistoryWidget';
@@ -669,7 +670,13 @@ function CrmSharedDocumentsPanel({
 }
 
 /** File đính kèm nhiệm vụ — xem ảnh inline, không cần tải */
-function TaskFileRow({ file, onOpenImage }) {
+function TaskFileRow({ file, onOpenImage, projectId = null, enableShareToCrm = false, onShareToCrmSaved = null }) {
+  const [showCrmShare, setShowCrmShare] = useState(false);
+  const [sharedToCrm, setSharedToCrm] = useState(file.shared_to_crm === true);
+  const [savingCrmShare, setSavingCrmShare] = useState(false);
+  const isSharedToCrm = file.shared_to_crm === true;
+  const canShareCrm = enableShareToCrm && projectId && file.id && onShareToCrmSaved;
+
   const rawRef = file.file_url || '';
   const href = rawRef ? pubUrl(rawRef) : '';
   const isImage = href && isUploadImageFile(file.mime_type, file.file_name || rawRef);
@@ -679,6 +686,21 @@ function TaskFileRow({ file, onOpenImage }) {
     if (onOpenImage) onOpenImage(rawRef);
   };
 
+  const saveCrmShare = async () => {
+    if (!projectId || !file.id) return;
+    setSavingCrmShare(true);
+    try {
+      await api.put(`/projects/${projectId}/documents/${file.id}/share-crm`, {
+        shared_to_crm: !!sharedToCrm,
+      });
+      setShowCrmShare(false);
+      onShareToCrmSaved?.();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi lưu');
+    }
+    setSavingCrmShare(false);
+  };
+
   return (
     <div className="bg-gray-50 border rounded-lg overflow-hidden">
       <div className="flex items-center gap-2 px-3 py-2">
@@ -686,7 +708,22 @@ function TaskFileRow({ file, onOpenImage }) {
         <div className="flex-1 min-w-0">
           <p className="text-xs font-medium text-gray-800 truncate">{file.file_name}</p>
           {file.task?.title && <p className="text-[10px] text-purple-600 truncate">📌 {file.task.title}</p>}
+          {canShareCrm && isSharedToCrm && (
+            <span className="text-[9px] bg-violet-50 text-violet-700 px-1.5 py-0.5 rounded-full font-medium">📤 CRM</span>
+          )}
         </div>
+        {canShareCrm && (
+          <button
+            type="button"
+            onClick={() => { setSharedToCrm(isSharedToCrm); setShowCrmShare(true); }}
+            className={`shrink-0 h-7 px-2 rounded-lg text-[10px] font-semibold inline-flex items-center gap-1 cursor-pointer ${
+              isSharedToCrm ? 'bg-violet-100 text-violet-800' : 'bg-white border border-violet-200 text-violet-700'
+            }`}
+          >
+            {isSharedToCrm ? <Share2 className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+            {isSharedToCrm ? 'CRM ✓' : 'Chia sẻ CRM'}
+          </button>
+        )}
         {href && (
           <div className="shrink-0 flex items-center gap-2">
             {isImage ? (
@@ -715,19 +752,41 @@ function TaskFileRow({ file, onOpenImage }) {
           </button>
         </div>
       )}
+
+      {showCrmShare && canShareCrm && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4" onClick={() => !savingCrmShare && setShowCrmShare(false)}>
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <p className="text-sm font-semibold text-gray-900">Chia sẻ sang CRM</p>
+            <p className="text-xs text-gray-500">Bên đặt hàng (Bếp / CRM) sẽ thấy file này trên tab Tài liệu deal.</p>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="checkbox" checked={sharedToCrm} onChange={(e) => setSharedToCrm(e.target.checked)} />
+              Cho CRM xem tài liệu xưởng
+            </label>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 hover:bg-gray-50" onClick={() => setShowCrmShare(false)} disabled={savingCrmShare}>Hủy</button>
+              <button type="button" className="px-3 py-1.5 text-xs rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60" onClick={saveCrmShare} disabled={savingCrmShare}>{savingCrmShare ? '…' : 'Lưu'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 /** Row tài liệu — rich preview như CRM DocumentRow; crmVisibility = chia sẻ từ lead_documents */
 function DocRow({
-  doc, onDelete, workshopModule, onVisibilitySaved, crmPresentation = false, nested = false, stageSlugLabelMap = {}, taskMetaMap = {}, onOpenImage,
+  doc, onDelete, workshopModule, onVisibilitySaved, crmPresentation = false, nested = false,
+  stageSlugLabelMap = {}, taskMetaMap = {}, onOpenImage, workshopProjectId = null, onShareToCrmSaved = null,
+  enableShareToCrm = false,
 }) {
   const [expanded, setExpanded] = useState(false);
   const [showVis, setShowVis] = useState(false);
+  const [showCrmShare, setShowCrmShare] = useState(false);
   const [sharedToWorkshop, setSharedToWorkshop] = useState(!!doc.shared_to_workshop);
+  const [sharedToCrm, setSharedToCrm] = useState(!!doc.shared_to_crm);
   const [allowedMods, setAllowedMods] = useState(() => parseShareModules(doc.allowed_share_modules) || []);
   const [savingVis, setSavingVis] = useState(false);
+  const [savingCrmShare, setSavingCrmShare] = useState(false);
 
   const typeInfo = CRM_DOC_TYPES.find((t) => t.value === doc.doc_type) || CRM_DOC_TYPES[5];
   const fileName = doc.file_name || doc.file_path?.split('/').pop() || '';
@@ -745,6 +804,8 @@ function DocRow({
   const isVideo = isFile && (mime.startsWith('video/') || /\.(mp4|mov|webm|avi|mkv)$/i.test(fileName || doc.file_url || ''));
   const hasExtra = doc.notes || isImage || isVideo;
   const crmShareUi = typeof doc.shared_to_workshop === 'boolean' && doc.id && onVisibilitySaved;
+  const workshopCrmShareUi = enableShareToCrm && doc.id && workshopProjectId && onShareToCrmSaved;
+  const isSharedToCrm = doc.shared_to_crm === true;
   const showCrmMeta = crmPresentation || crmShareUi;
   const resolvedStageBadge = doc.crm_stage_slug || doc.crm_stage_group_label
     ? resolveCrmPipelineStageLabel(doc.crm_stage_slug || doc.crm_stage_group_label, {
@@ -778,6 +839,26 @@ function DocRow({
       alert(e.response?.data?.error || e.message || 'Lỗi lưu');
     }
     setSavingVis(false);
+  };
+
+  const openCrmShare = () => {
+    setSharedToCrm(isSharedToCrm);
+    setShowCrmShare(true);
+  };
+
+  const saveCrmShare = async () => {
+    if (!workshopProjectId) return;
+    setSavingCrmShare(true);
+    try {
+      await api.put(`/projects/${workshopProjectId}/documents/${doc.id}/share-crm`, {
+        shared_to_crm: !!sharedToCrm,
+      });
+      setShowCrmShare(false);
+      onShareToCrmSaved?.();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi lưu');
+    }
+    setSavingCrmShare(false);
   };
 
   return (
@@ -815,6 +896,9 @@ function DocRow({
               {crmShareUi && workshopModule && !visibleHere && (
                 <span className="text-[9px] bg-rose-50 text-rose-700 px-1.5 py-0.5 rounded-full font-medium">Ẩn ở module này</span>
               )}
+              {workshopCrmShareUi && isSharedToCrm && (
+                <span className="text-[9px] bg-violet-50 text-violet-700 px-1.5 py-0.5 rounded-full font-medium">📤 Đã chia sẻ CRM</span>
+              )}
             </div>
           </div>
           {isFile && (fileHref || fileDownloadProps) && (
@@ -848,6 +932,21 @@ function DocRow({
           {hasExtra && <ChevronDown className={`h-3 w-3 text-gray-400 transition-transform shrink-0 ${expanded ? 'rotate-180' : ''}`} />}
         </div>
         <div className="flex items-center shrink-0">
+          {workshopCrmShareUi && (
+            <button
+              type="button"
+              title={isSharedToCrm ? 'Đang chia sẻ CRM — click để đổi' : 'Chia sẻ sang CRM (bên đặt hàng / Bếp)'}
+              onClick={(e) => { e.stopPropagation(); openCrmShare(); }}
+              className={`ml-1 h-7 px-2 rounded-lg text-[10px] font-semibold inline-flex items-center gap-1 cursor-pointer shrink-0 ${
+                isSharedToCrm
+                  ? 'bg-violet-100 text-violet-800 hover:bg-violet-200'
+                  : 'bg-white border border-violet-200 text-violet-700 hover:bg-violet-50'
+              }`}
+            >
+              {isSharedToCrm ? <Share2 className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+              {isSharedToCrm ? 'CRM ✓' : 'Chia sẻ CRM'}
+            </button>
+          )}
           {crmShareUi && (
             <button
               type="button"
@@ -910,6 +1009,25 @@ function DocRow({
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 hover:bg-gray-50" onClick={() => setShowVis(false)} disabled={savingVis}>Hủy</button>
               <button type="button" className="px-3 py-1.5 text-xs rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60" onClick={saveVis} disabled={savingVis}>{savingVis ? '…' : 'Lưu'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCrmShare && workshopCrmShareUi && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4" onClick={() => !savingCrmShare && setShowCrmShare(false)}>
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <p className="text-sm font-semibold text-gray-900">Chia sẻ sang CRM</p>
+            <p className="text-xs text-gray-500">
+              Bên đặt hàng (Bếp / CRM) sẽ thấy tài liệu này trên tab <strong>Tài liệu</strong> của deal.
+            </p>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="checkbox" checked={sharedToCrm} onChange={(e) => setSharedToCrm(e.target.checked)} />
+              Cho CRM xem tài liệu xưởng
+            </label>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 hover:bg-gray-50" onClick={() => setShowCrmShare(false)} disabled={savingCrmShare}>Hủy</button>
+              <button type="button" className="px-3 py-1.5 text-xs rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60" onClick={saveCrmShare} disabled={savingCrmShare}>{savingCrmShare ? '…' : 'Lưu'}</button>
             </div>
           </div>
         </div>
@@ -2580,6 +2698,12 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                 <>
                   {/* Header buttons */}
                   <div className="flex items-center gap-2 mb-4 flex-wrap">
+                    {crmLeadId && (
+                      <p className="w-full text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 leading-relaxed">
+                        <strong>Tài liệu từ CRM</strong> (tím): ⚙️ chia sẻ sang xưởng SX/VC.
+                        {' '}<strong>Tài liệu xưởng</strong> / file nhiệm vụ: nút <strong className="text-violet-700">Chia sẻ CRM</strong> để bên Bếp xem trên deal.
+                      </p>
+                    )}
                     {uploadingDoc ? (
                       <span className="h-8 px-3 bg-orange-100 text-orange-700 rounded-lg text-xs font-medium flex items-center gap-1.5">
                         <span className="animate-spin h-3.5 w-3.5 border-2 border-orange-600 border-t-transparent rounded-full" /> Đang tải lên...
@@ -2628,10 +2752,25 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                   {/* Production-native documents */}
                   {projectDocs.length > 0 && (
                     <div className="mb-4">
-                      <p className="text-xs font-bold text-gray-500 uppercase mb-2">📁 Tài liệu xưởng ({projectDocs.length})</p>
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                        <p className="text-xs font-bold text-gray-500 uppercase">📁 Tài liệu xưởng ({projectDocs.length})</p>
+                        {crmLeadId && (
+                          <p className="text-[10px] text-violet-700 bg-violet-50 px-2 py-1 rounded-lg">
+                            Bấm <strong>Chia sẻ CRM</strong> để bên Bếp/CRM xem trên deal
+                          </p>
+                        )}
+                      </div>
                       <div className="space-y-2">
                         {projectDocs.map(doc => (
-                          <DocRow key={doc.id} doc={doc} onDelete={() => deleteProjectDocument(doc.id)} onOpenImage={openDocImage} />
+                          <DocRow
+                            key={doc.id}
+                            doc={doc}
+                            enableShareToCrm={!!crmLeadId}
+                            workshopProjectId={crmLeadId ? (project?.id || id) : null}
+                            onShareToCrmSaved={() => loadProjectDocs(project?.id || id)}
+                            onDelete={() => deleteProjectDocument(doc.id)}
+                            onOpenImage={openDocImage}
+                          />
                         ))}
                       </div>
                     </div>
@@ -2643,7 +2782,14 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                       <p className="text-xs font-bold text-gray-500 uppercase mb-2">📌 File đính kèm nhiệm vụ ({taskFiles.length})</p>
                       <div className="space-y-1">
                         {taskFiles.map((f) => (
-                          <TaskFileRow key={f.id} file={f} onOpenImage={openDocImage} />
+                          <TaskFileRow
+                            key={f.id}
+                            file={f}
+                            projectId={project?.id || id}
+                            enableShareToCrm={!!crmLeadId}
+                            onShareToCrmSaved={() => loadTaskFiles(project?.id || id)}
+                            onOpenImage={openDocImage}
+                          />
                         ))}
                       </div>
                     </div>

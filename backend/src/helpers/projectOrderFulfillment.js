@@ -29,7 +29,7 @@ const {
 } = require('./sxPipelineStageSlug');
 
 const SX_TEMPLATE_ITEM_COLS_FULL =
-  'id, template_id, title, description, priority, deadline_days, order_index, checklist, blocks_stage_advance, completion_requires_file_or_note, required_evidence_file_types, requires_quick_verdict, executor_company_id, default_assignee_id';
+  'id, template_id, title, description, priority, deadline_days, order_index, checklist, blocks_stage_advance, clears_delivery_deadline_on_complete, completion_requires_file_or_note, required_evidence_file_types, requires_quick_verdict, executor_company_id, default_assignee_id';
 const SX_TEMPLATE_ITEM_COLS_LEGACY =
   'id, template_id, title, description, priority, deadline_days, order_index, checklist, blocks_stage_advance, executor_company_id, default_assignee_id';
 const SX_TEMPLATE_ITEM_COLS_MIN =
@@ -576,6 +576,7 @@ async function applyProductionTemplateToFulfillmentLead({
         deadline: null,
         created_by: createdBy,
         blocks_stage_advance: !!it.blocks_stage_advance,
+        clears_delivery_deadline_on_complete: !!it.clears_delivery_deadline_on_complete,
         ...sxEvidenceFieldsFromTemplateItem(it),
         ...sxExecutorFieldsFromTemplateItem(it, mustCompanyId),
         production_pipeline_stage_id: sxStage.production_pipeline_stage_id,
@@ -603,7 +604,7 @@ async function applyProductionTemplateToFulfillmentLead({
       ({ data: insertedRows, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selCols));
     }
     if (insErr && String(insErr.message || '').includes('blocks_stage_advance')) {
-      const stripped = rowsToInsert.map(({ blocks_stage_advance: _b, production_pipeline_stage_id: _p, ...rest }) => rest);
+      const stripped = rowsToInsert.map(({ blocks_stage_advance: _b, clears_delivery_deadline_on_complete: _cd, production_pipeline_stage_id: _p, ...rest }) => rest);
       ({ data: insertedRows, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selCols));
     }
     if (insErr && isSxTemplateEvidenceColumnError(insErr)) {
@@ -832,6 +833,7 @@ async function applyProductionTemplateToFulfillmentLead({
       deadline: null,
       created_by: createdBy,
       blocks_stage_advance: !!it.blocks_stage_advance,
+      clears_delivery_deadline_on_complete: !!it.clears_delivery_deadline_on_complete,
       ...sxEvidenceFieldsFromTemplateItem(it),
       ...sxExecutorFieldsFromTemplateItem(it, targetCompanyId),
       production_pipeline_stage_id: sxStage.production_pipeline_stage_id,
@@ -859,7 +861,7 @@ async function applyProductionTemplateToFulfillmentLead({
     ({ data: insertedRowsLoose, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selColsLoose));
   }
   if (insErr && String(insErr.message || '').includes('blocks_stage_advance')) {
-    const stripped = rowsToInsertLoose.map(({ blocks_stage_advance: _b, production_pipeline_stage_id: _p, ...rest }) => rest);
+    const stripped = rowsToInsertLoose.map(({ blocks_stage_advance: _b, clears_delivery_deadline_on_complete: _cd, production_pipeline_stage_id: _p, ...rest }) => rest);
     ({ data: insertedRowsLoose, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selColsLoose));
   }
   if (insErr && isSxTemplateEvidenceColumnError(insErr)) {
@@ -1357,6 +1359,7 @@ async function applyProductionTemplatesOnPipelineEnter({
       deadline: null,
       created_by: userId,
       blocks_stage_advance: !!it.blocks_stage_advance,
+      clears_delivery_deadline_on_complete: !!it.clears_delivery_deadline_on_complete,
       ...sxEvidenceFieldsFromTemplateItem(it),
       ...sxExecutorFieldsFromTemplateItem(it, ownerCompanyId),
       production_pipeline_stage_id: pipelineStageId,
@@ -1386,7 +1389,7 @@ async function applyProductionTemplatesOnPipelineEnter({
     ({ data: insertedRowsPipe, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selColsPipe));
   }
   if (insErr && String(insErr.message || '').includes('blocks_stage_advance')) {
-    const stripped = rowsToInsertPipe.map(({ blocks_stage_advance: _b, production_pipeline_stage_id: _p, ...rest }) => rest);
+    const stripped = rowsToInsertPipe.map(({ blocks_stage_advance: _b, clears_delivery_deadline_on_complete: _cd, production_pipeline_stage_id: _p, ...rest }) => rest);
     ({ data: insertedRowsPipe, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selColsPipe));
   }
   if (insErr && isSxTemplateEvidenceColumnError(insErr)) {
