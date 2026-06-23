@@ -44,19 +44,249 @@ const STACK_COLORS = {
   'Đang mở': '#0284c7',
 };
 
+/** Chốt = thắng + sau thắng + hoàn thành (cùng một chỉ số). */
+function reportClosedWonCount(r) {
+  return r?.won_or_later_deal_count ?? r?.won_deal_count ?? 0;
+}
+
+function reportClosedWonValue(r) {
+  return r?.won_or_later_value ?? r?.won_value ?? r?.completed_value ?? 0;
+}
+
 function buildDealStackedRows(items, nameKey, max = 12) {
   return (items || [])
     .filter((r) => (r.deal_count || 0) > 0)
     .slice(0, max)
     .map((r) => {
-      const open = Math.max(0, (r.deal_count || 0) - (r.won_deal_count || 0) - (r.lost_deal_count || 0));
+      const closed = reportClosedWonCount(r);
+      const open = Math.max(0, (r.deal_count || 0) - closed - (r.lost_deal_count || 0));
       return {
         name: truncLabel(r[nameKey], 14),
-        'Đã chốt': r.won_deal_count || 0,
+        'Đã chốt': closed,
         Thua: r.lost_deal_count || 0,
         'Đang mở': open,
       };
     });
+}
+
+function buildQuoteCloseChartRows(items, nameKey, max = 10) {
+  return (items || [])
+    .filter((r) => (r.quote_deal_count || 0) > 0 || reportClosedWonCount(r) > 0 || (r.deal_count || 0) > 0)
+    .slice()
+    .sort(
+      (a, b) => reportClosedWonValue(b) - reportClosedWonValue(a)
+        || (b.quote_value || 0) - (a.quote_value || 0),
+    )
+    .slice(0, max)
+    .map((r) => ({
+      name: truncLabel(r[nameKey], 14),
+      'GT báo giá': r.quote_value || 0,
+      'GT chốt': reportClosedWonValue(r),
+      'Tổng BG': r.quote_deal_count || 0,
+      'Chốt SL': reportClosedWonCount(r),
+      'Deal': r.deal_count || 0,
+      'Tỷ lệ chốt/BG': r.quote_win_rate_pct ?? 0,
+      'Tỷ lệ chốt/tổng deal': r.conversion_rate ?? 0,
+      'Tăng trưởng': r.monthly_growth_pct,
+    }));
+}
+
+function ChartEmpty({ label = 'Chưa có dữ liệu' }) {
+  return <p className="text-sm text-slate-500 py-10 text-center">{label}</p>;
+}
+
+function QuoteCloseValueBarChart({ data, title, layout = 'vertical' }) {
+  if (!data?.length) return null;
+  const vertical = layout === 'vertical';
+  return (
+    <div className="rounded-xl border border-amber-100 bg-amber-50/20 p-4">
+      {title && <p className="text-sm font-bold text-slate-800 mb-3">{title}</p>}
+      <div className={vertical ? 'h-64' : 'h-56'}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart
+            data={data}
+            layout={vertical ? 'vertical' : 'horizontal'}
+            margin={vertical ? { left: 4, right: 16, top: 4, bottom: 4 } : { left: 8, right: 8, bottom: 48, top: 4 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" horizontal={!vertical} vertical={vertical} />
+            {vertical ? (
+              <>
+                <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => `${Math.round(v / 1e6)}M`} />
+                <YAxis type="category" dataKey="name" width={92} tick={{ fontSize: 10 }} />
+              </>
+            ) : (
+              <>
+                <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-22} textAnchor="end" height={52} />
+                <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `${Math.round(v / 1e6)}M`} />
+              </>
+            )}
+            <RechartsTooltip formatter={(v, n) => [formatVND(v), n]} />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Bar dataKey="GT báo giá" fill="#f59e0b" radius={vertical ? [0, 4, 4, 0] : [4, 4, 0, 0]} />
+            <Bar dataKey="GT chốt" fill="#059669" radius={vertical ? [0, 4, 4, 0] : [4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function QuoteCloseCountBarChart({ data, title }) {
+  if (!data?.length) return null;
+  return (
+    <div className="rounded-xl border border-emerald-100 bg-emerald-50/20 p-4">
+      {title && <p className="text-sm font-bold text-slate-800 mb-3">{title}</p>}
+      <div className="h-64">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 12 }}>
+            <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+            <XAxis type="number" tick={{ fontSize: 10 }} allowDecimals={false} />
+            <YAxis type="category" dataKey="name" width={92} tick={{ fontSize: 10 }} />
+            <RechartsTooltip formatter={(v, n) => [`${v} deal`, n]} />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Bar dataKey="Tổng BG" fill="#fb923c" radius={[0, 4, 4, 0]} />
+            <Bar dataKey="Chốt SL" fill="#10b981" radius={[0, 4, 4, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function QuoteWinRateBarChart({ data, title }) {
+  if (!data?.length) return null;
+  return (
+    <div className="rounded-xl border border-lime-100 bg-lime-50/20 p-4">
+      {title && <p className="text-sm font-bold text-slate-800 mb-3">{title}</p>}
+      <div className="h-64">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 20 }}>
+            <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+            <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 10 }} unit="%" />
+            <YAxis type="category" dataKey="name" width={92} tick={{ fontSize: 10 }} />
+            <RechartsTooltip formatter={(v) => [`${v}%`, 'Tỷ lệ chốt/BG']} />
+            <Bar dataKey="Tỷ lệ chốt/BG" fill="#84cc16" radius={[0, 4, 4, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function DealCloseRateBarChart({ data, title }) {
+  if (!data?.length) return null;
+  return (
+    <div className="rounded-xl border border-violet-100 bg-violet-50/20 p-4">
+      {title && <p className="text-sm font-bold text-slate-800 mb-3">{title}</p>}
+      <div className="h-64">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 20 }}>
+            <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+            <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 10 }} unit="%" />
+            <YAxis type="category" dataKey="name" width={92} tick={{ fontSize: 10 }} />
+            <RechartsTooltip formatter={(v) => [`${v}%`, 'Tỷ lệ chốt/tổng deal']} />
+            <Bar dataKey="Tỷ lệ chốt/tổng deal" fill="#8b5cf6" radius={[0, 4, 4, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function GrowthRateBarChart({ data, title }) {
+  if (!data?.length) return null;
+  return (
+    <div className="rounded-xl border border-indigo-100 bg-indigo-50/20 p-4">
+      {title && <p className="text-sm font-bold text-slate-800 mb-3">{title}</p>}
+      <div className="h-64">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 20 }}>
+            <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+            <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => `${v > 0 ? '+' : ''}${v}%`} />
+            <YAxis type="category" dataKey="name" width={92} tick={{ fontSize: 10 }} />
+            <RechartsTooltip formatter={(v) => [`${v > 0 ? '+' : ''}${v}%`, 'Tăng trưởng GT chốt']} />
+            <Bar dataKey="Tăng trưởng" fill="#6366f1" radius={[0, 4, 4, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function QuoteFunnelPieChart({ data, title }) {
+  if (!data?.length) return null;
+  return (
+    <div className="rounded-xl border border-orange-100 bg-orange-50/20 p-4">
+      {title && <p className="text-sm font-bold text-slate-800 mb-3">{title}</p>}
+      <div className="h-56 flex items-center justify-center">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={data}
+              cx="50%"
+              cy="50%"
+              innerRadius={44}
+              outerRadius={72}
+              paddingAngle={2}
+              dataKey="value"
+              nameKey="name"
+            >
+              {data.map((entry) => (
+                <Cell key={entry.name} fill={entry.color} stroke="#fff" strokeWidth={2} />
+              ))}
+            </Pie>
+            <RechartsTooltip formatter={(v, n) => [`${v} deal`, n]} />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function QuoteCloseChartsGrid({ rows, nameKey, entityLabel = 'đơn vị' }) {
+  const chartRows = useMemo(
+    () => buildQuoteCloseChartRows(rows, nameKey, 10),
+    [rows, nameKey],
+  );
+  const rateRows = useMemo(
+    () => chartRows.filter((r) => r['Tỷ lệ chốt/BG'] > 0),
+    [chartRows],
+  );
+  const dealCloseRateRows = useMemo(
+    () => chartRows.filter((r) => (r.Deal || 0) > 0),
+    [chartRows],
+  );
+  const growthRows = useMemo(
+    () => buildQuoteCloseChartRows(rows, nameKey, 10)
+      .filter((r) => r['Tăng trưởng'] != null)
+      .map((r) => ({ ...r, 'Tăng trưởng': Number(r['Tăng trưởng']) || 0 })),
+    [rows, nameKey],
+  );
+
+  if (!chartRows.length && !growthRows.length) {
+    return <ChartEmpty label={`Chưa có dữ liệu báo giá / chốt theo ${entityLabel}`} />;
+  }
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {chartRows.length > 0 && (
+        <>
+          <QuoteCloseValueBarChart data={chartRows} title={`GT báo giá vs GT chốt — top ${entityLabel}`} />
+          <QuoteCloseCountBarChart data={chartRows} title={`Số deal BG vs chốt — top ${entityLabel}`} />
+          {rateRows.length > 0 && (
+            <QuoteWinRateBarChart data={rateRows} title={`Tỷ lệ chốt/BG — top ${entityLabel}`} />
+          )}
+          {dealCloseRateRows.length > 0 && (
+            <DealCloseRateBarChart data={dealCloseRateRows} title={`Tỷ lệ chốt/tổng deal — top ${entityLabel}`} />
+          )}
+        </>
+      )}
+      {growthRows.length > 0 && (
+        <GrowthRateBarChart data={growthRows} title={`Tăng trưởng GT chốt vs kỳ trước — ${entityLabel}`} />
+      )}
+    </div>
+  );
 }
 
 function DealStackedBarChart({ data, title }) {
@@ -191,9 +421,61 @@ function MetricTable({ columns, rows, onRowClick, emptyLabel = 'Chưa có dữ l
   );
 }
 
+/** Cột báo giá / chốt đơn — hiển thị trên mọi bảng phân cấp */
+const QUOTE_CLOSE_COLS = [
+  { key: 'quote_deal_count', label: 'Tổng BG', align: 'right' },
+  {
+    key: 'quote_value',
+    label: 'GT báo giá',
+    align: 'right',
+    render: (r) => formatVND(r.quote_value || 0),
+  },
+  {
+    key: 'won_or_later_deal_count',
+    label: 'Chốt SL',
+    align: 'right',
+    render: (r) => reportClosedWonCount(r),
+  },
+  {
+    key: 'won_or_later_value',
+    label: 'GT chốt',
+    align: 'right',
+    render: (r) => formatVND(reportClosedWonValue(r)),
+  },
+  {
+    key: 'quote_win_rate_pct',
+    label: 'Tỷ lệ chốt/BG',
+    align: 'right',
+    render: (r) => (r.quote_win_rate_pct == null ? '—' : `${r.quote_win_rate_pct}%`),
+  },
+  {
+    key: 'monthly_growth_pct',
+    label: 'Tăng trưởng',
+    align: 'right',
+    render: (r) => {
+      if (r.monthly_growth_pct == null) return '—';
+      const n = Number(r.monthly_growth_pct) || 0;
+      return `${n > 0 ? '+' : ''}${n}%`;
+    },
+  },
+];
+
 const METRIC_COLS = [
   { key: 'lead_count', label: 'Lead', align: 'right' },
   { key: 'deal_count', label: 'Deal', align: 'right' },
+  {
+    key: 'conversion_rate',
+    label: 'Tỷ lệ chốt/tổng deal',
+    align: 'right',
+    render: (r) => `${r.conversion_rate ?? 0}%`,
+  },
+  {
+    key: 'deal_close_value_rate_pct',
+    label: 'Chốt/tổng deal (GT)',
+    align: 'right',
+    render: (r) => (r.deal_close_value_rate_pct == null ? '—' : `${r.deal_close_value_rate_pct}%`),
+  },
+  ...QUOTE_CLOSE_COLS,
   {
     key: 'expected_value',
     label: 'Dự kiến',
@@ -205,18 +487,6 @@ const METRIC_COLS = [
     label: 'Kỳ vọng',
     align: 'right',
     render: (r) => formatVND(r.weighted_value || 0),
-  },
-  {
-    key: 'won_value',
-    label: 'Thắng',
-    align: 'right',
-    render: (r) => formatVND(r.won_value || 0),
-  },
-  {
-    key: 'completed_value',
-    label: 'Hoàn thành',
-    align: 'right',
-    render: (r) => formatVND(r.completed_value || 0),
   },
   {
     key: 'overdue_count',
@@ -262,20 +532,13 @@ const METRIC_COLS = [
     align: 'right',
     render: (r) => formatVND(r.pipeline_value ?? (r.lead_pipeline_value || 0) + (r.deal_pipeline_value || 0)),
   },
-  { key: 'won_deal_count', label: 'Chốt SL', align: 'right' },
   { key: 'lost_deal_count', label: 'Thua', align: 'right' },
-  {
-    key: 'conversion_rate',
-    label: 'Tỷ lệ chốt',
-    align: 'right',
-    render: (r) => `${r.conversion_rate ?? 0}%`,
-  },
 ];
 
 export default function CrmOrgOverviewReport() {
   const [dateFrom, setDateFrom] = useState(() => defaultMonthRange().from);
   const [dateTo, setDateTo] = useState(() => defaultMonthRange().to);
-  const [filter, setFilter] = useState({ companyId: '', departmentId: '', q: '' });
+  const [filter, setFilter] = useState({ companyId: '', departmentId: '', userId: '', q: '' });
   const [regionId, setRegionId] = useState('');
   const [typeView, setTypeView] = useState('all');
   const [activeTab, setActiveTab] = useState('overview');
@@ -284,7 +547,21 @@ export default function CrmOrgOverviewReport() {
   const [err, setErr] = useState(null);
   const [rangePickerOpen, setRangePickerOpen] = useState(false);
   const [companyRegions, setCompanyRegions] = useState([]);
+  const [companyEmployees, setCompanyEmployees] = useState([]);
+  const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
+
+  const handleFilterChange = useCallback((next) => {
+    setFilter((prev) => {
+      const companyChanged = next.companyId !== undefined && next.companyId !== prev.companyId;
+      const deptChanged = next.departmentId !== undefined && next.departmentId !== prev.departmentId;
+      return {
+        ...prev,
+        ...next,
+        userId: companyChanged || deptChanged ? '' : (next.userId ?? prev.userId),
+      };
+    });
+  }, []);
 
   const reportQueryParams = useMemo(
     () => ({
@@ -294,8 +571,9 @@ export default function CrmOrgOverviewReport() {
       ...(filter.companyId ? { company_id: filter.companyId } : {}),
       ...(regionId ? { region_id: regionId } : {}),
       ...(filter.departmentId ? { department_id: filter.departmentId } : {}),
+      ...(filter.userId ? { assigned_to: filter.userId } : {}),
     }),
-    [dateFrom, dateTo, typeView, filter.companyId, filter.departmentId, regionId],
+    [dateFrom, dateTo, typeView, filter.companyId, filter.departmentId, filter.userId, regionId],
   );
 
   useEffect(() => {
@@ -314,6 +592,40 @@ export default function CrmOrgOverviewReport() {
       });
     return () => { cancel = true; };
   }, [filter.companyId]);
+
+  useEffect(() => {
+    if (!filter.companyId) {
+      setCompanyEmployees([]);
+      return undefined;
+    }
+    let cancel = false;
+    setLoadingEmployees(true);
+    api
+      .get('/users', { params: { company_id: filter.companyId } })
+      .then((r) => {
+        if (cancel) return;
+        let list = r.data?.users || r.data || [];
+        if (!Array.isArray(list)) list = [];
+        if (filter.departmentId) {
+          list = list.filter((u) => String(u.department_id) === String(filter.departmentId));
+        }
+        list.sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
+        setCompanyEmployees(list);
+      })
+      .catch(() => {
+        if (!cancel) setCompanyEmployees([]);
+      })
+      .finally(() => {
+        if (!cancel) setLoadingEmployees(false);
+      });
+    return () => { cancel = true; };
+  }, [filter.companyId, filter.departmentId]);
+
+  useEffect(() => {
+    if (!filter.userId) return;
+    const ok = companyEmployees.some((u) => String(u.id) === String(filter.userId));
+    if (!ok) setFilter((f) => ({ ...f, userId: '' }));
+  }, [companyEmployees, filter.userId]);
 
   useEffect(() => {
     if (!regionId) return;
@@ -412,9 +724,9 @@ export default function CrmOrgOverviewReport() {
     let lost = 0;
     let open = 0;
     for (const r of data?.by_employee || []) {
-      won += r.won_deal_count || 0;
+      won += reportClosedWonCount(r);
       lost += r.lost_deal_count || 0;
-      open += Math.max(0, (r.deal_count || 0) - (r.won_deal_count || 0) - (r.lost_deal_count || 0));
+      open += Math.max(0, (r.deal_count || 0) - reportClosedWonCount(r) - (r.lost_deal_count || 0));
     }
     return [
       { name: 'Đã chốt', value: won, color: '#059669' },
@@ -422,6 +734,33 @@ export default function CrmOrgOverviewReport() {
       { name: 'Đang mở', value: open, color: '#0284c7' },
     ].filter((x) => x.value > 0);
   }, [data]);
+
+  const quoteFunnelPie = useMemo(() => {
+    const quoted = summary.quote_deal_count ?? 0;
+    const closed = reportClosedWonCount(summary);
+    const pending = Math.max(0, quoted - closed);
+    return [
+      { name: 'Đã chốt', value: closed, color: '#059669' },
+      { name: 'BG chưa chốt', value: pending, color: '#f59e0b' },
+    ].filter((x) => x.value > 0);
+  }, [summary]);
+
+  const periodCompareChart = useMemo(() => {
+    const prev = periodPrevious?.summary;
+    if (!prev) return [];
+    return [
+      {
+        name: 'GT báo giá',
+        'Kỳ này': summary.quote_value ?? 0,
+        'Kỳ trước': prev.quote_value ?? 0,
+      },
+      {
+        name: 'GT chốt',
+        'Kỳ này': reportClosedWonValue(summary),
+        'Kỳ trước': reportClosedWonValue(prev),
+      },
+    ];
+  }, [summary, periodPrevious]);
 
   const exportExcel = async () => {
     if (!data) return;
@@ -434,10 +773,15 @@ export default function CrmOrgOverviewReport() {
     sheet('Tom tat', [summary], (r) => ({
       Lead: r.lead_count ?? 0,
       Deal: r.deal_count ?? 0,
-      'Pipeline': r.pipeline_value ?? 0,
-      'Chot SL': r.won_deal_count ?? 0,
-      'GT chot': r.won_value ?? 0,
-      'Ty le chot %': r.conversion_rate ?? 0,
+      Pipeline: r.pipeline_value ?? 0,
+      'Ty le chot/tong deal %': r.conversion_rate ?? 0,
+      'Ty le chot/tong deal GT %': r.deal_close_value_rate_pct ?? null,
+      'Bao gia SL': r.quote_deal_count ?? 0,
+      'GT bao gia': r.quote_value ?? 0,
+      'Chot SL': reportClosedWonCount(r),
+      'Gia tri chot': reportClosedWonValue(r),
+      'Ty le chot/BG %': r.quote_win_rate_pct ?? null,
+      'Tang truong thang %': r.monthly_growth_pct ?? null,
     }));
     sheet('Cong ty', data.by_company, (r) => ({
       'Cong ty': r.company_name,
@@ -462,6 +806,14 @@ export default function CrmOrgOverviewReport() {
       Deal: r.deal_count,
       Pipeline: r.pipeline_value,
       Chot: r.won_deal_count,
+      'Bao gia SL': r.quote_deal_count,
+      'GT bao gia': r.quote_value,
+      'Chot SL': reportClosedWonCount(r),
+      'Gia tri chot': reportClosedWonValue(r),
+      'Ty le chot/tong deal %': r.conversion_rate,
+      'Ty le chot/tong deal GT %': r.deal_close_value_rate_pct,
+      'Ty le chot/BG %': r.quote_win_rate_pct,
+      'Tang truong thang %': r.monthly_growth_pct,
       'QH tiep nhan %': r.reception_overdue_rate_pct,
     }));
     sheet('Phan loai', data.by_lead_type, (r) => ({
@@ -506,14 +858,14 @@ export default function CrmOrgOverviewReport() {
 
   const drillToCompany = (row) => {
     if (!row.company_id) return;
-    setFilter((f) => ({ ...f, companyId: String(row.company_id) }));
+    handleFilterChange({ companyId: String(row.company_id), userId: '' });
     setRegionId('');
     setActiveTab('region');
   };
 
   const drillToRegion = (row) => {
     if (row.company_id) {
-      setFilter((f) => ({ ...f, companyId: String(row.company_id) }));
+      handleFilterChange({ companyId: String(row.company_id), userId: '' });
     }
     if (row.region_id) setRegionId(String(row.region_id));
     setActiveTab('employee');
@@ -525,8 +877,9 @@ export default function CrmOrgOverviewReport() {
       date_to: dateTo,
       ...(filter.companyId ? { company_id: filter.companyId } : {}),
       ...(regionId ? { region_id: regionId } : {}),
+      ...(filter.userId ? { assigned_to: filter.userId } : {}),
     }),
-    [dateFrom, dateTo, filter.companyId, regionId],
+    [dateFrom, dateTo, filter.companyId, regionId, filter.userId],
   );
 
   return (
@@ -626,7 +979,24 @@ export default function CrmOrgOverviewReport() {
           </div>
         </div>
 
-        <KpiUserFilter value={filter} onChange={setFilter} />
+        <KpiUserFilter value={filter} onChange={handleFilterChange} />
+
+        <label className="block max-w-xs">
+          <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Nhân viên</span>
+          <select
+            value={filter.userId}
+            onChange={(e) => handleFilterChange({ userId: e.target.value })}
+            disabled={!filter.companyId || loadingEmployees}
+            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm disabled:opacity-50"
+          >
+            <option value="">{loadingEmployees ? 'Đang tải…' : 'Tất cả nhân viên'}</option>
+            {companyEmployees.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.full_name || u.email || u.id}
+              </option>
+            ))}
+          </select>
+        </label>
 
         <label className="block max-w-xs">
           <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Khu vực</span>
@@ -677,7 +1047,7 @@ export default function CrmOrgOverviewReport() {
         </div>
       ) : data ? (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
             <KpiCard
               label="Quá hạn SLA"
               value={summary.overdue_count ?? 0}
@@ -725,20 +1095,12 @@ export default function CrmOrgOverviewReport() {
               accent="border-amber-200 bg-gradient-to-br from-amber-50 to-white"
             />
             <KpiCard
-              label="GT thắng (ký HĐ)"
-              value={formatVND(summary.won_value ?? 0)}
+              label="GT chốt đơn"
+              value={formatVND(reportClosedWonValue(summary))}
               compare={compare}
-              compareKey="won_value"
-              sub={`${summary.won_deal_count ?? 0} deal`}
-              accent="border-sky-200 bg-gradient-to-br from-sky-50 to-white"
-            />
-            <KpiCard
-              label="GT hoàn thành"
-              value={formatVND(summary.completed_value ?? 0)}
-              compare={compare}
-              compareKey="completed_value"
-              sub={`${summary.completed_deal_count ?? 0} deal`}
-              accent="border-violet-200 bg-gradient-to-br from-violet-50 to-white"
+              compareKey="won_or_later_value"
+              sub={`${reportClosedWonCount(summary)} deal · thắng + sau thắng + hoàn thành`}
+              accent="border-emerald-200 bg-gradient-to-br from-emerald-50 to-white"
             />
           </div>
 
@@ -753,13 +1115,106 @@ export default function CrmOrgOverviewReport() {
               accent="border-indigo-200 bg-indigo-50"
             />
             <KpiCard
-              label="Tỷ lệ chốt"
+              label="Tỷ lệ chốt/tổng deal"
               value={`${summary.conversion_rate ?? 0}%`}
               compare={compare}
               compareKey="conversion_rate"
-              sub={`${summary.lost_deal_count ?? 0} deal thua`}
+              sub={
+                summary.deal_close_value_rate_pct != null
+                  ? `${reportClosedWonCount(summary)}/${summary.deal_count ?? 0} deal · GT ${summary.deal_close_value_rate_pct}%`
+                  : `${reportClosedWonCount(summary)}/${summary.deal_count ?? 0} deal · ${summary.lost_deal_count ?? 0} thua`
+              }
               accent="border-slate-200 bg-slate-50"
             />
+          </div>
+
+          <div className="rounded-2xl border-2 border-amber-200 bg-gradient-to-br from-amber-50/80 to-white p-4 md:p-5 space-y-3 shadow-sm">
+            <div>
+              <h2 className="text-base font-bold text-amber-950">Báo giá &amp; chốt đơn</h2>
+              <p className="text-xs text-amber-800/80 mt-0.5">
+                BG = deal ở cột Báo giá trở về sau · Chốt = thắng + sau thắng + hoàn thành (cùng một chỉ số) · Tăng trưởng so với kỳ trước
+              </p>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7 gap-3">
+            <KpiCard
+              label="Tổng báo giá"
+              value={summary.quote_deal_count ?? 0}
+              compare={compare}
+              compareKey="quote_deal_count"
+              accent="border-amber-200 bg-amber-50"
+            />
+            <KpiCard
+              label="GT báo giá"
+              value={formatVND(summary.quote_value ?? 0)}
+              compare={compare}
+              compareKey="quote_value"
+              accent="border-orange-200 bg-orange-50"
+            />
+            <KpiCard
+              label="Deal chốt"
+              value={reportClosedWonCount(summary)}
+              compare={compare}
+              compareKey="won_or_later_deal_count"
+              accent="border-emerald-200 bg-emerald-50"
+            />
+            <KpiCard
+              label="Giá trị chốt"
+              value={formatVND(reportClosedWonValue(summary))}
+              compare={compare}
+              compareKey="won_or_later_value"
+              accent="border-green-200 bg-green-50"
+            />
+            <KpiCard
+              label="Tỷ lệ chốt/BG"
+              value={summary.quote_win_rate_pct != null ? `${summary.quote_win_rate_pct}%` : '—'}
+              sub={summary.quote_close_value_rate_pct != null ? `Theo giá trị: ${summary.quote_close_value_rate_pct}%` : undefined}
+              accent="border-lime-200 bg-lime-50"
+            />
+            <KpiCard
+              label="Tỷ lệ chốt/tổng deal"
+              value={`${summary.conversion_rate ?? 0}%`}
+              sub={
+                summary.deal_close_value_rate_pct != null
+                  ? `${reportClosedWonCount(summary)}/${summary.deal_count ?? 0} deal · GT ${summary.deal_close_value_rate_pct}%`
+                  : `${reportClosedWonCount(summary)}/${summary.deal_count ?? 0} deal`
+              }
+              accent="border-violet-200 bg-violet-50"
+            />
+            <KpiCard
+              label="Tăng trưởng tháng"
+              value={compare?.won_or_later_value?.pct != null ? `${compare.won_or_later_value.pct > 0 ? '+' : ''}${compare.won_or_later_value.pct}%` : '—'}
+              sub="Giá trị chốt vs kỳ trước"
+              accent="border-indigo-200 bg-indigo-50"
+            />
+            </div>
+            {(quoteFunnelPie.length > 0 || periodCompareChart.length > 0) && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-1">
+                {quoteFunnelPie.length > 0 && (
+                  <QuoteFunnelPieChart
+                    data={quoteFunnelPie}
+                    title="Tỉ lệ chốt trong pool báo giá (toàn bộ phạm vi)"
+                  />
+                )}
+                {periodCompareChart.length > 0 && (
+                  <div className="rounded-xl border border-slate-200 bg-white p-4">
+                    <p className="text-sm font-bold text-slate-800 mb-3">So sánh kỳ này vs kỳ trước</p>
+                    <div className="h-56">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={periodCompareChart} margin={{ left: 8, right: 8, top: 4, bottom: 4 }}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                          <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `${Math.round(v / 1e6)}M`} />
+                          <RechartsTooltip formatter={(v, n) => [formatVND(v), n]} />
+                          <Legend wrapperStyle={{ fontSize: 11 }} />
+                          <Bar dataKey="Kỳ này" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="Kỳ trước" fill="#94a3b8" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -786,6 +1241,30 @@ export default function CrmOrgOverviewReport() {
 
           {activeTab === 'overview' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+              <Section
+                title="Hiệu quả báo giá & chốt — theo nhân viên"
+                className="lg:col-span-2"
+              >
+                <QuoteCloseChartsGrid
+                  rows={(data.by_employee || []).filter((r) => r.user_id)}
+                  nameKey="full_name"
+                  entityLabel="nhân viên"
+                />
+                <div className="mt-4">
+                  <MetricTable
+                  columns={[
+                    { key: 'full_name', label: 'Nhân viên', bold: true },
+                    { key: 'department_name', label: 'Phòng ban' },
+                    ...QUOTE_CLOSE_COLS,
+                  ]}
+                  rows={(data.by_employee || [])
+                    .filter((r) => r.user_id)
+                    .map((r) => ({ ...r, _key: r.user_id }))}
+                  emptyLabel="Chưa có dữ liệu nhân viên trong kỳ"
+                />
+                </div>
+              </Section>
+
               <Section title="Xu hướng theo ngày" subtitle="Lead / Deal tạo mới trong kỳ" className="lg:col-span-2">
                 {timelineChart.length > 0 ? (
                   <div className="h-64">
@@ -990,6 +1469,7 @@ export default function CrmOrgOverviewReport() {
 
           {activeTab === 'company' && (
             <Section title="Theo công ty" subtitle="Click dòng để xem khu vực">
+              <QuoteCloseChartsGrid rows={data.by_company || []} nameKey="company_name" entityLabel="công ty" />
               <CollapsibleDataList label="bảng số liệu theo công ty">
                 <MetricTable
                   columns={[
@@ -1015,6 +1495,7 @@ export default function CrmOrgOverviewReport() {
 
           {activeTab === 'region' && (
             <Section title="Theo khu vực" subtitle="Click dòng để xem nhân viên">
+              <QuoteCloseChartsGrid rows={data.by_region || []} nameKey="region_name" entityLabel="khu vực" />
               {regionStacked.length > 0 && (
                 <DealStackedBarChart data={regionStacked} title="Deal theo khu vực (chốt / thua / mở)" />
               )}
@@ -1044,6 +1525,18 @@ export default function CrmOrgOverviewReport() {
 
           {activeTab === 'employee' && (
             <div className="space-y-5">
+              <Section
+                title="Biểu đồ báo giá & chốt đơn"
+                subtitle="GT báo giá vs giá trị chốt, tỷ lệ chốt/BG và tăng trưởng theo nhân viên"
+                className="lg:col-span-2"
+              >
+                <QuoteCloseChartsGrid
+                  rows={(data.by_employee || []).filter((r) => r.user_id)}
+                  nameKey="full_name"
+                  entityLabel="nhân viên"
+                />
+              </Section>
+
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                 <LeadTypeBreakdownChart rows={data.by_lead_type || []} />
                 <FirstStageSlaChart sla={firstStageSla} />
@@ -1080,6 +1573,7 @@ export default function CrmOrgOverviewReport() {
                     queryParams={pipelineQueryParams}
                     typeView={typeView}
                     receptionSlaMinutes={data?.reception_sla_minutes ?? 15}
+                    preferRowMetrics
                   />
                 </div>
               </div>

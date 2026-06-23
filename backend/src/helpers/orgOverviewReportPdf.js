@@ -101,9 +101,10 @@ function pipeOrgOverviewReportPdf(res, opts) {
   const kpiParts = [
     `Lead: ${summary.lead_count ?? 0}${compare?.lead_count ? fmtDeltaPct(compare.lead_count.pct) : ''}`,
     `Deal: ${summary.deal_count ?? 0}${compare?.deal_count ? fmtDeltaPct(compare.deal_count.pct) : ''}`,
+    `Báo giá: ${summary.quote_deal_count ?? 0} (${fmtVnd(summary.quote_value)})`,
+    `Chốt: ${summary.won_or_later_deal_count ?? summary.won_deal_count ?? 0} (${fmtVnd(summary.won_or_later_value ?? summary.won_value ?? 0)})${compare?.won_or_later_value ? fmtDeltaPct(compare.won_or_later_value.pct) : ''}`,
     `Pipeline: ${fmtVnd(summary.pipeline_value)}${compare?.pipeline_value ? fmtDeltaPct(compare.pipeline_value.pct) : ''}`,
-    `Chốt: ${summary.won_deal_count ?? 0} (${fmtVnd(summary.won_value)})${compare?.won_value ? fmtDeltaPct(compare.won_value.pct) : ''}`,
-    `Tỷ lệ chốt: ${summary.conversion_rate ?? 0}%`,
+    `Tỷ lệ chốt/BG: ${summary.quote_win_rate_pct ?? 0}%`,
   ];
   pdf.font('VN-Bold').fontSize(9).fillColor(COLORS.accent);
   pdf.text('Tổng hợp KPI', margin, y);
@@ -194,17 +195,20 @@ function pipeOrgOverviewReportPdf(res, opts) {
   if (by_employee?.length) {
     drawSection(
       'Theo nhân viên (top 12)',
-      ['Nhân viên', 'Phòng ban', 'Lead', 'Deal', 'Pipeline', 'Chốt', 'GT chốt'],
-      [118, 88, 34, 34, 78, 34, 78],
+      ['Nhân viên', 'Phòng ban', 'Lead', 'Deal', 'BG SL', 'GT BG', 'Chốt', 'GT chốt', 'TL chốt/BG', 'Tăng trưởng'],
+      [110, 78, 30, 30, 34, 62, 34, 62, 42, 44],
       by_employee,
       (r) => [
         r.full_name || '—',
         r.department_name || '—',
         r.lead_count ?? 0,
         r.deal_count ?? 0,
-        fmtVnd(r.pipeline_value),
-        r.won_deal_count ?? 0,
-        fmtVnd(r.won_value),
+        r.quote_deal_count ?? 0,
+        fmtVnd(r.quote_value),
+        r.won_or_later_deal_count ?? r.won_deal_count ?? 0,
+        fmtVnd(r.won_or_later_value ?? r.won_value),
+        r.quote_win_rate_pct == null ? '—' : `${r.quote_win_rate_pct}%`,
+        r.monthly_growth_pct == null ? '—' : `${r.monthly_growth_pct > 0 ? '+' : ''}${r.monthly_growth_pct}%`,
       ],
     );
   }
