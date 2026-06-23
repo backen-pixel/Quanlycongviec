@@ -21,7 +21,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import FilterGridPanel from '../components/FilterGridPanel';
 import RecordingsFilterSheet from '../components/RecordingsFilterSheet';
 import RecordingsSearchFieldBar from '../components/RecordingsSearchFieldBar';
-import VoiceRecorderToolbar from '../components/VoiceRecorderToolbar';
 import { formatApiError } from '../api/client';
 import {
   bootstrapCrmFromRecording,
@@ -394,8 +393,6 @@ export default function RecordingsScreen() {
             <Ionicons name="refresh-outline" size={20} color={Colors.text} />
           </Pressable>
         </View>
-
-        <VoiceRecorderToolbar onUploaded={() => void load(true)} disabled={loading} />
 
         <View style={styles.searchRow}>
           <View style={styles.searchBox}>
