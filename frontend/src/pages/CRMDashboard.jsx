@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import { ListView, PlannerView, DeadlineView, CommentsView } from '../components/CRMViews';
 import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
+import KanbanCardQuickMove from '../components/KanbanCardQuickMove';
+import KanbanCardOptionsMenu from '../components/KanbanCardOptionsMenu';
 import { resolveCrmLeadKanbanScheduleSource } from '../lib/crmLeadDeadlineDisplay';
 import EmployeePicker from '../components/EmployeePicker';
 import NewDealModal from '../components/NewDealModal';
@@ -45,7 +47,6 @@ import {
   setStoredCrmFilterCompanyId,
 } from '../lib/crmCompanyFilter';
 import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
-import { buildKpiLedgerMonthTooltipHint } from '../lib/kpiPersonalLedgerHints';
 import { effectivePipelineStageSlaDays } from '../lib/crmPipelineSla';
 import {
   coalesceCrmDashboardChangedEvents,
@@ -146,136 +147,24 @@ function formatKpiLedgerNet(v) {
   return n > 0 ? `+${s}` : s;
 }
 
-/** Ô điểm KPI góc thẻ Kanban: hover → chi tiết cộng/trừ theo crm_kpi_ledger (cùng kỳ với dashboard). */
-function KpiKanbanLedgerBadge({ leadId, net, periodStart, compact }) {
-  const [tipOpen, setTipOpen] = useState(false);
-  const leaveTimerRef = useRef(null);
-  const loadedSlotRef = useRef('');
-  const requestSeqRef = useRef(0);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState(null);
-  const [rows, setRows] = useState(null);
-
-  const slot = `${leadId}|${String(periodStart || '').slice(0, 10)}`;
-
-  useEffect(() => {
-    loadedSlotRef.current = '';
-    requestSeqRef.current += 1;
-    setRows(null);
-    setErr(null);
-  }, [leadId, periodStart]);
-
-  useEffect(
-    () => () => {
-      if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
-    },
-    [],
-  );
-
-  const openTip = () => {
-    if (leaveTimerRef.current) {
-      clearTimeout(leaveTimerRef.current);
-      leaveTimerRef.current = null;
-    }
-    setTipOpen(true);
-    if (loadedSlotRef.current === slot) return;
-    const seq = ++requestSeqRef.current;
-    setLoading(true);
-    setErr(null);
-    const params = { period_type: 'monthly' };
-    if (periodStart) params.period_start = String(periodStart).slice(0, 10);
-    api
-      .get(`/kpi/lead-ledger/${leadId}`, { params })
-      .then(({ data }) => {
-        if (seq !== requestSeqRef.current) return;
-        loadedSlotRef.current = slot;
-        setRows(Array.isArray(data?.entries) ? data.entries : []);
-      })
-      .catch((e) => {
-        if (seq !== requestSeqRef.current) return;
-        loadedSlotRef.current = '';
-        setErr(String(e?.response?.data?.error || e?.message || 'Không tải được sổ cái'));
-        setRows(null);
-      })
-      .finally(() => {
-        if (seq === requestSeqRef.current) setLoading(false);
-      });
-  };
-
-  const closeTipSoon = () => {
-    if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
-    leaveTimerRef.current = setTimeout(() => {
-      setTipOpen(false);
-      leaveTimerRef.current = null;
-    }, 180);
-  };
-
+/** Ô điểm KPI góc thẻ Kanban — chỉ hiển thị số, không hover chi tiết. */
+function KpiKanbanLedgerBadge({ net, periodStart, reserveMergeCheckbox = false }) {
   const periodLabel = periodStart ? String(periodStart).slice(0, 7) : 'tháng hiện tại';
 
   return (
     <div
-      className="absolute top-1 right-1 z-[35] max-w-[min(calc(100vw-2rem),16rem)]"
-      onMouseEnter={openTip}
-      onMouseLeave={closeTipSoon}
+      className={`absolute top-1 z-[25] max-w-[4rem] ${
+        reserveMergeCheckbox ? 'right-8' : 'right-1.5'
+      }`}
     >
       <span
-        className={`block max-w-[4.25rem] cursor-help truncate rounded px-1 py-0.5 text-[9px] font-bold leading-tight shadow-sm ${
-          net > 0 ? 'bg-emerald-600/95 text-white' : net < 0 ? 'bg-red-600/95 text-white' : 'bg-slate-500/90 text-white'
+        className={`block max-w-[3.5rem] truncate rounded px-1 py-0.5 text-[9px] font-bold leading-tight shadow-sm ${
+          net > 0 ? 'bg-emerald-600 text-white' : net < 0 ? 'bg-red-600 text-white' : 'bg-slate-500 text-white'
         }`}
+        title={`Điểm KPI tháng (${periodLabel}): ${formatKpiLedgerNet(net)}`}
       >
         {formatKpiLedgerNet(net)}
       </span>
-      {tipOpen && (
-        <div
-          className={`absolute right-0 top-full z-[80] mt-0.5 min-w-[13rem] max-w-[min(calc(100vw-2rem),18rem)] rounded-lg border border-gray-700 bg-gray-900 p-2 text-left shadow-xl ${
-            compact ? 'text-[10px]' : 'text-[11px]'
-          } leading-snug text-white`}
-          onMouseEnter={openTip}
-          onMouseLeave={closeTipSoon}
-        >
-          <p className="mb-1.5 border-b border-white/10 pb-1 text-[10px] font-semibold uppercase tracking-wide text-white/75">
-            Sổ cái KPI · {periodLabel}
-          </p>
-          <p className="mb-1.5 text-[10px] text-white/85">
-            Ròng trên thẻ: <strong className="tabular-nums text-white">{formatKpiLedgerNet(net)}</strong>
-            <span className="text-white/55"> — tổng các dòng dưới (có thể khác nếu vừa cập nhật)</span>
-          </p>
-          {loading && <p className="text-white/70">Đang tải chi tiết…</p>}
-          {!loading && err && <p className="text-red-300">{err}</p>}
-          {!loading && !err && rows && rows.length === 0 && (
-            <p className="text-white/70">Chưa có dòng sổ cái trong kỳ này.</p>
-          )}
-          {!loading && !err && rows && rows.length > 0 && (
-            <ul className="max-h-[min(50vh,14rem)] space-y-1 overflow-y-auto pr-0.5">
-              {rows.slice(0, 40).map((r, idx) => {
-                const pts = Number(r.points || 0);
-                const code = r.source_kpi_code || r.event_type || '—';
-                const when = r.occurred_at ? formatDateTime(r.occurred_at) : '';
-                const reason = String(r.reason || '').trim();
-                return (
-                  <li key={r.id || `ledger-${idx}`} className="rounded border border-white/10 bg-white/5 px-1.5 py-1">
-                    <div className="flex items-start justify-between gap-1">
-                      <span
-                        className={`shrink-0 font-mono font-bold tabular-nums ${
-                          pts > 0 ? 'text-emerald-300' : pts < 0 ? 'text-red-300' : 'text-white/80'
-                        }`}
-                      >
-                        {formatKpiLedgerNet(pts)}
-                      </span>
-                      <span className="min-w-0 flex-1 text-right text-[10px] text-sky-200/95">{code}</span>
-                    </div>
-                    {when && <p className="text-[9px] text-white/50">{when}</p>}
-                    {reason && <p className="mt-0.5 text-[10px] text-white/85">{reason}</p>}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-          {!loading && !err && rows && rows.length > 40 && (
-            <p className="mt-1 text-[9px] text-white/55">Và {rows.length - 40} dòng khác — xem đủ trong chi tiết lead (tab Sổ cái KPI).</p>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -3586,31 +3475,6 @@ export default function CRMDashboard() {
 
   const kpis = currentData?.kpis || {};
 
-  /** Tooltip ô «Điểm KPI (tháng)»: sổ cái + gợi ý gom theo vai trò (bạn hoặc NV đang lọc) từ bảng KPI hướng dẫn. */
-  const kpiLedgerMonthCardHint = useMemo(() => {
-    const periodYm = kpis?.kpi_ledger_period_start
-      ? String(kpis.kpi_ledger_period_start).slice(0, 7)
-      : null;
-    const periodLabel = periodYm || 'tháng hiện tại (theo máy chủ)';
-    let assigneeProfile = null;
-    if (filterAssignee) {
-      const id = String(filterAssignee);
-      const u =
-        employeeFilterList.find((x) => String(x.id) === id) || users.find((x) => String(x.id) === id);
-      assigneeProfile = u
-        ? { id, full_name: u.full_name || null, email: u.email || null, role: u.role || null }
-        : { id, full_name: null, email: null, role: null };
-    }
-    return buildKpiLedgerMonthTooltipHint({
-      periodLabel,
-      viewerUser: user,
-      assigneeProfile,
-      pipelineType,
-      kpis: { ...kpis, kpi_ledger_month_net_sum: kpiLedgerMonthNetSumVisible },
-      ledgerNetByLead: pipelineType === 'lead' ? ledgerMapLead : ledgerMapDeal,
-    });
-  }, [kpis, kpiLedgerMonthNetSumVisible, filterAssignee, employeeFilterList, users, pipelineType, user, ledgerMapLead, ledgerMapDeal]);
-
   const kpiCollapsedSummary = useMemo(() => {
     const kpiPts = formatKpiLedgerNet(kpiLedgerMonthNetSumVisible);
     if (pipelineType === 'deal') {
@@ -5564,6 +5428,7 @@ export default function CRMDashboard() {
             />
             <KPICard
               compact
+              noHover
               icon={<BarChart3 className="h-3 w-3" />}
               iconBgColor="bg-indigo-100"
               iconColor="text-indigo-600"
@@ -5571,7 +5436,6 @@ export default function CRMDashboard() {
               value={formatKpiLedgerNet(kpiLedgerMonthNetSumVisible)}
               sublabel={kpis.kpi_ledger_period_start ? `Sổ cái · ${String(kpis.kpi_ledger_period_start).slice(0, 7)}` : 'Sổ cái CRM'}
               trend={null}
-              hint={kpiLedgerMonthCardHint}
             />
           </>
         ) : (
@@ -5587,30 +5451,27 @@ export default function CRMDashboard() {
             />
             <KPICard
               compact
+              noHover
               icon={<DollarSign className="h-3 w-3" />}
               iconBgColor="bg-sky-100"
               iconColor="text-sky-700"
               label="Giá trị dự kiến"
               value={formatVND(dealKpisFromFilters.pipeline_estimated_value)}
-              hint={explicitExpectedKvStages
-                ? 'Tổng giá trị dự kiến các cột đã tick «Giá trị kỳ vọng» trong Pipeline Settings'
-                : 'Tổng estimated_value — mặc định loại cột Thắng/Thua/Hoàn thành DT'}
               trend={null}
             />
             <KPICard
               compact
+              noHover
               icon={<TrendingUp className="h-3 w-3" />}
               iconBgColor="bg-violet-100"
               iconColor="text-violet-700"
               label="Giá trị kỳ vọng"
               value={formatVND(dealKpisFromFilters.expected_value)}
-              hint={explicitExpectedKvStages
-                ? 'Cùng phạm vi cột với «Giá trị dự kiến» — nhân xác suất %'
-                : 'Tổng (giá trị dự kiến × xác suất %) — mặc định loại cột Thắng/Thua/Hoàn thành DT'}
               trend={null}
             />
             <KPICard
               compact
+              noHover
               icon={<DollarSign className="h-3 w-3" />}
               iconBgColor="bg-amber-100"
               iconColor="text-amber-600"
@@ -5629,13 +5490,13 @@ export default function CRMDashboard() {
             />
             <KPICard
               compact
+              noHover
               icon={<BarChart3 className="h-3 w-3" />}
               iconBgColor="bg-indigo-100"
               iconColor="text-indigo-600"
               label="Điểm KPI (tháng)"
               value={formatKpiLedgerNet(kpiLedgerMonthNetSumVisible)}
               trend={null}
-              hint={kpiLedgerMonthCardHint}
             />
           </>
         )}
@@ -5763,6 +5624,7 @@ export default function CRMDashboard() {
               pipeline={kanbanPipelineForView}
               onMoveStage={handleMoveStage}
               pipelineType={pipelineType}
+              compact={compactLeadUi}
               mergeSelectedIds={manualMergeIds}
               onToggleMergeSelect={toggleManualMergeSelect}
               onToggleSelectAllInColumn={toggleSelectAllInColumn}
@@ -6513,15 +6375,16 @@ function DealCountSummaryKpiCard({
 }
 
 // KPI — layout ngang, kích thước ~một nửa bản trước (Lead + Deal)
-function KPICard({ icon, iconBgColor, iconColor, label, value, sublabel, trend, compact, hint }) {
+function KPICard({ icon, iconBgColor, iconColor, label, value, sublabel, trend, compact, hint, noHover }) {
   const displayValue = typeof value === 'number' ? value.toLocaleString('vi-VN') : value;
+  const showHint = !!hint && !noHover;
 
   return (
     <div
-      tabIndex={hint ? 0 : undefined}
-      className={`group relative h-full min-w-0 flex flex-col items-center justify-center text-center rounded-lg border border-violet-200/80 bg-white shadow-sm outline-none transition-all duration-200 hover:shadow-md hover:border-violet-300/80 focus-visible:ring-2 focus-visible:ring-violet-400 ${
-        hint ? 'cursor-help' : ''
-      } ${compact ? 'gap-1 px-2 py-2' : 'gap-1.5 px-2 py-2.5'}`}
+      tabIndex={showHint ? 0 : undefined}
+      className={`group relative h-full min-w-0 flex flex-col items-center justify-center text-center rounded-lg border border-violet-200/80 bg-white shadow-sm outline-none transition-all duration-200 ${
+        noHover ? '' : 'hover:shadow-md hover:border-violet-300/80'
+      } ${showHint ? 'cursor-help' : ''} ${compact ? 'gap-1 px-2 py-2' : 'gap-1.5 px-2 py-2.5'}`}
     >
       <div className={`shrink-0 rounded-md ${iconBgColor} ${iconColor} p-1`}>
         {icon}
@@ -6552,7 +6415,7 @@ function KPICard({ icon, iconBgColor, iconColor, label, value, sublabel, trend, 
           <p className={`text-emerald-600 leading-snug ${compact ? 'text-[9px]' : 'text-[10px]'}`}>↑ {trend}%</p>
         )}
       </div>
-      {hint && (
+      {showHint && (
         <div className="absolute left-0 right-0 top-full z-[70] hidden pt-1 group-hover:block group-focus-within:block">
           <div className="pointer-events-auto max-h-[min(70vh,24rem)] w-[min(calc(100vw-1.5rem),22rem)] overflow-y-auto rounded-lg border border-gray-700 bg-gray-900 p-2.5 text-[11px] leading-snug text-white shadow-xl">
             {hint}
@@ -7036,6 +6899,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
   columnScrollMode = 'unified',
   columnScrollMaxH,
   onColumnScrollNearEnd,
+  pipelineStages,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
@@ -7095,7 +6959,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
       onDragLeave={handleColumnDragLeave}
       onDrop={handleColumnDrop}
       className={`flex flex-col flex-shrink-0 rounded-lg transition-all duration-200 ${
-        compact ? 'w-[17rem] max-[380px]:w-[15.5rem]' : 'w-80 max-[420px]:w-[17rem]'
+        compact ? 'w-[15rem] max-[380px]:w-[13.5rem]' : 'w-[17rem] max-[420px]:w-[15rem]'
       } ${perColumnScroll ? 'h-full self-stretch' : ''} ${isOverColumn ? 'ring-2 ring-blue-500 ring-dashed' : ''}`}
       style={perColumnScroll && columnScrollMaxH ? { height: columnScrollMaxH, maxHeight: columnScrollMaxH } : undefined}
     >
@@ -7106,7 +6970,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
           style={{ backgroundColor: stageColor }}
         />
         <div className={`bg-white border border-gray-200 border-t-0 transition-all ${
-          compact ? 'p-2.5' : 'p-4'
+          compact ? 'p-2' : 'p-3'
         } ${isOverColumn ? 'bg-blue-50' : ''}`}>
         <div className={`flex items-start justify-between gap-2 ${compact ? 'mb-1' : 'mb-2'}`}>
           <div className="flex flex-col gap-0.5 min-w-0 flex-1">
@@ -7169,7 +7033,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
         ref={containerRef}
         onScroll={perColumnScroll ? handleCardsScroll : undefined}
         className={`border border-white/30 border-t-0 rounded-b-lg transition-all ${
-          compact ? 'p-2 space-y-2' : 'p-3 space-y-3'
+          compact ? 'p-1.5 space-y-1.5' : 'p-2.5 space-y-2'
         } ${perColumnScroll ? 'flex-1 min-h-0 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]' : 'flex-1'} ${
           isOverColumn ? 'bg-blue-50/60' : ''
         }`}
@@ -7186,12 +7050,13 @@ const KanbanStageCard = memo(function KanbanStageCard({
             <div
               key={item.id}
               className="crm-kanban-card-slot"
-              style={{ contentVisibility: 'auto', containIntrinsicSize: '0 132px' }}
+              style={{ contentVisibility: 'auto', containIntrinsicSize: '0 118px' }}
             >
               <KanbanCard
                 item={item}
                 stage={stage}
                 onMoveStage={onMoveStage}
+                pipelineStages={pipelineStages}
                 pipelineType={pipelineType}
                 mergeSelectedIds={mergeSelectedIds}
                 onToggleMergeSelect={onToggleMergeSelect}
@@ -7214,7 +7079,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
 });
 
 // Kanban Item Card - MISA style (redesign: header gọn, value lớn, footer phụ trách + actions)
-const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline, onSaveEstimatedValue }) {
+const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipelineStages, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline, onSaveEstimatedValue }) {
   const navigate = useNavigate();
   const [editingValue, setEditingValue] = useState(false);
   const [valueDraft, setValueDraft] = useState('');
@@ -7237,7 +7102,9 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
       e.target.closest?.('[data-kanban-select-zone]') ||
       e.target.closest?.('[data-kanban-comment-btn]') ||
       e.target.closest?.('[data-kanban-flag-btn]') ||
-      e.target.closest?.('[data-kanban-value-zone]')
+      e.target.closest?.('[data-kanban-options-menu]') ||
+      e.target.closest?.('[data-kanban-value-zone]') ||
+      e.target.closest?.('[data-kanban-quick-move]')
     ) {
       e.preventDefault();
       return;
@@ -7270,11 +7137,8 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
   const slaBadge = (() => {
     if (hideColumnDeadline) return null;
     if (!scheduleTone?.deadlineTs || stage?.is_won || stage?.is_lost || stage?.counts_as_completed_revenue) return null;
+    const deadlineDateLabel = formatDate(new Date(scheduleTone.deadlineTs).toISOString());
     const isOverdue = cardToneLevel === 'overdue';
-    const remainingLabel = isOverdue
-      ? formatRemainingMs(Math.abs(scheduleTone.remainingMs))
-      : formatRemainingMs(scheduleTone.remainingMs);
-    if (!remainingLabel) return null;
     const tonePalette = getCrmDeadlineUrgencyBadgeClass(cardToneLevel);
     const sourceLabel =
       scheduleSource === 'deadline' ? 'Deadline thẻ'
@@ -7287,13 +7151,13 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
           isUrgent ? 'px-2 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[10px] font-semibold'
         } ${tonePalette}`}
         title={[
-          `Hạn: ${new Date(scheduleTone.deadlineTs).toLocaleString('vi-VN')}`,
+          `Hạn: ${deadlineDateLabel}`,
           `Nguồn: ${sourceLabel}`,
-          isOverdue ? `Đã quá ${remainingLabel}` : `Còn ${remainingLabel}`,
-        ].join('\n')}
+          isOverdue ? 'Đã quá hạn' : '',
+        ].filter(Boolean).join('\n')}
       >
         <Clock className={isUrgent ? 'h-3.5 w-3.5' : 'h-3 w-3'} strokeWidth={2.6} />
-        {isOverdue ? <>Quá {remainingLabel}</> : <>Còn {remainingLabel}</>}
+        {isOverdue ? <>Quá hạn {deadlineDateLabel}</> : <>Hạn {deadlineDateLabel}</>}
       </span>
     );
   })();
@@ -7386,7 +7250,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
     return (
       <div className="flex items-center gap-1.5 rounded-md border px-1.5 py-1 text-[11px] font-medium bg-slate-50 border-slate-200 text-slate-700">
         <span>🛒</span>
-        <span className="truncate">Đặt: {new Date(od).toLocaleDateString('vi-VN')}</span>
+        <span className="truncate">Đặt: {formatDate(od)}</span>
       </div>
     );
   })();
@@ -7403,7 +7267,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
       <div className={`flex items-center gap-1.5 rounded-md border px-1.5 py-1 text-[11px] font-medium ${tone}`}>
         <span>🚚</span>
         <span className="truncate">
-          Giao: {new Date(pd).toLocaleDateString('vi-VN')}
+          Giao: {formatDate(pd)}
           {isOverdue ? ' ⚠️' : isSoon ? ' ⚡' : ''}
         </span>
       </div>
@@ -7419,10 +7283,12 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
       onClick={(ev) => {
         if (
           ev.target.closest?.('[data-kanban-flag-btn]')
+          || ev.target.closest?.('[data-kanban-options-menu]')
           || ev.target.closest?.('[data-kanban-comment-btn]')
           || ev.target.closest?.('[data-kanban-deadline-btn]')
           || ev.target.closest?.('[data-kanban-select-zone]')
           || ev.target.closest?.('[data-kanban-value-zone]')
+          || ev.target.closest?.('[data-kanban-quick-move]')
         ) {
           return;
         }
@@ -7435,10 +7301,9 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
     >
       {typeof item.kpi_ledger_month_net === 'number' && !stage?.is_lost && (
         <KpiKanbanLedgerBadge
-          leadId={item.id}
           net={item.kpi_ledger_month_net}
           periodStart={kpiLedgerPeriodStart}
-          compact={compact}
+          reserveMergeCheckbox={canMergeSelect}
         />
       )}
 
@@ -7462,14 +7327,14 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
         </button>
       )}
 
-      <div className={`${compact ? 'p-2.5' : 'p-3'} space-y-1.5`}>
+      <div className={`${compact ? 'p-2' : 'p-2.5'} space-y-1.5`}>
         {/* 1. Header: mã + ngày tạo (NỔI BẬT) + cảnh báo + badge MỚI */}
-        <div className="flex items-center gap-1.5 min-w-0 pr-6">
+        <div className={`flex items-center gap-1 min-w-0 ${canMergeSelect ? 'pr-14' : 'pr-10'}`}>
           <span className="font-mono text-[11px] font-semibold text-slate-500 truncate">{item.code}</span>
           {item.created_at && (
             <span
               className="shrink-0 inline-flex items-center gap-0.5 rounded-md border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-indigo-700"
-              title={`Tạo ${pipelineType === 'deal' ? 'deal' : 'lead'}: ${new Date(item.created_at).toLocaleString('vi-VN')}`}
+              title={`Tạo ${pipelineType === 'deal' ? 'deal' : 'lead'}: ${formatDate(item.created_at)}`}
             >
               <Calendar className="h-3 w-3" strokeWidth={2.4} />
               {formatDate(item.created_at)}
@@ -7659,10 +7524,10 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
               data-kanban-deadline-btn
               onClick={(ev) => { ev.stopPropagation(); onOpenDeadline(item); }}
               className={`inline-flex items-center gap-1 rounded-md border transition-opacity ${urgent ? 'px-2 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[10px] font-semibold'} ${tone}`}
-              title={`Deadline thẻ — bấm để sửa (${new Date(item.kanban_deadline_at).toLocaleString('vi-VN')})`}
+              title={`Deadline thẻ — bấm để sửa (${formatDate(item.kanban_deadline_at)})`}
             >
               <Clock className="h-3 w-3" strokeWidth={2.4} />
-              Deadline: {new Date(item.kanban_deadline_at).toLocaleDateString('vi-VN')}
+              Deadline: {formatDate(item.kanban_deadline_at)}
             </button>
           );
         })()}
@@ -7677,7 +7542,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
           return (
             <div className={`inline-flex items-center gap-1 rounded-md border ${urgent ? 'px-2 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[10px]'} ${tone}`}>
               <Calendar className="h-3 w-3" />
-              Deadline: {new Date(item.expected_close_date).toLocaleDateString('vi-VN')}
+              Deadline: {formatDate(item.expected_close_date)}
             </div>
           );
         })()}
@@ -7730,21 +7595,17 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
               </>
             )}
           </div>
-          <div className="flex items-center gap-1 shrink-0">
-            {!hideColumnDeadline && typeof onOpenDeadline === 'function' && (
-              <button
-                type="button"
-                data-kanban-deadline-btn
-                title={item.kanban_deadline_at ? 'Sửa deadline thẻ' : 'Đặt deadline thẻ'}
-                onClick={(ev) => { ev.stopPropagation(); onOpenDeadline(item); }}
-                className={`flex h-6 w-6 items-center justify-center rounded-full transition-colors cursor-pointer ${
-                  item.kanban_deadline_at
-                    ? 'text-rose-600 hover:bg-rose-50'
-                    : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
-                }`}
-              >
-                <Clock className="h-3.5 w-3.5" strokeWidth={2.2} />
-              </button>
+          <div className="flex items-center gap-0.5 shrink-0 rounded-full border border-indigo-100 bg-white px-1 py-0.5 shadow-sm">
+            {typeof onMoveStage === 'function' && Array.isArray(pipelineStages) && pipelineStages.length > 1 && (
+              <KanbanCardQuickMove
+                stages={pipelineStages}
+                currentStageId={stage.id}
+                onMove={(target) => onMoveStage(item.id, target.id)}
+                disabled={dealDragLocked}
+                disabledTitle="Deal đang khóa trên CRM Kanban"
+                theme="crm"
+                blockVirtualTargets
+              />
             )}
             {typeof onOpenKanbanComment === 'function' && (
               <button
@@ -7752,37 +7613,20 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
                 data-kanban-comment-btn
                 title="Bình luận nhanh"
                 onClick={(ev) => { ev.stopPropagation(); onOpenKanbanComment(item); }}
-                className="flex h-6 w-6 items-center justify-center rounded-full text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
+                className="flex h-6 w-6 items-center justify-center rounded-full text-blue-500 hover:text-blue-700 hover:bg-blue-100 transition-colors cursor-pointer"
               >
                 <MessageSquare className="h-3.5 w-3.5" strokeWidth={2.2} />
               </button>
             )}
-            {typeof onTogglePin === 'function' && (
-              <button
-                type="button"
-                data-kanban-flag-btn
-                title={item.is_pinned ? 'Bỏ ghim thẻ' : 'Ghim thẻ lên đầu'}
-                onClick={(ev) => { ev.stopPropagation(); onTogglePin(item, !item.is_pinned); }}
-                className={`flex h-6 w-6 items-center justify-center rounded-full transition-colors cursor-pointer ${
-                  item.is_pinned ? 'text-amber-600 hover:bg-amber-50' : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'
-                }`}
-              >
-                <Pin className={`h-3.5 w-3.5 ${item.is_pinned ? 'rotate-45 fill-amber-500' : ''}`} strokeWidth={2.2} />
-              </button>
-            )}
-            {typeof onToggleInteracted === 'function' && (
-              <button
-                type="button"
-                data-kanban-flag-btn
-                title={item.is_interacted ? 'Bỏ tick — hiện lại deadline trên thẻ' : 'Đã tương tác — ẩn deadline cột trên thẻ (chuyển cột vẫn hỏi deadline nếu cột bật)'}
-                onClick={(ev) => { ev.stopPropagation(); onToggleInteracted(item, !item.is_interacted); }}
-                className={`flex h-6 w-6 items-center justify-center rounded-full transition-colors cursor-pointer ${
-                  item.is_interacted ? 'text-blue-600 hover:bg-blue-50' : 'text-slate-400 hover:text-blue-600 hover:bg-blue-50'
-                }`}
-              >
-                <CheckCircle2 className={`h-3.5 w-3.5 ${item.is_interacted ? 'fill-blue-500 text-white' : ''}`} strokeWidth={2.2} />
-              </button>
-            )}
+            <KanbanCardOptionsMenu
+              item={item}
+              theme="crm"
+              hideDeadlineOption={hideColumnDeadline}
+              deadlineAt={item.kanban_deadline_at}
+              onOpenDeadline={onOpenDeadline}
+              onTogglePin={onTogglePin}
+              onToggleInteracted={onToggleInteracted}
+            />
           </div>
         </div>
       </div>
@@ -7841,6 +7685,10 @@ function KanbanView({
   const [scrollMaxH, setScrollMaxH] = useState('70vh');
   const [quickChatDockRightInset, setQuickChatDockRightInset] = useState(0);
   const perColumnScroll = columnScrollMode === 'per-column';
+  const pipelineStages = useMemo(
+    () => (pipeline || []).map(({ items, ...stage }) => stage),
+    [pipeline],
+  );
 
   const tryLoadMore = useCallback(() => {
     if (loadMoreCooldownRef.current || !scrollLoad?.hasMore || scrollLoad?.loading || !onLoadMore) return;
@@ -8003,13 +7851,14 @@ function KanbanView({
           WebkitOverflowScrolling: 'touch',
         }}
       >
-        <div className={`flex min-w-max items-stretch ${compact ? 'gap-2' : 'gap-3'} ${perColumnScroll ? 'h-full' : ''}`}>
+        <div className={`flex min-w-max items-stretch ${compact ? 'gap-1.5' : 'gap-2.5'} ${perColumnScroll ? 'h-full' : ''}`}>
           {pipeline.map((stage) => (
             <KanbanStageCard
               key={stage.id}
               stage={stage}
               items={stage.items}
               onMoveStage={onMoveStage}
+              pipelineStages={pipelineStages}
               pipelineType={pipelineType}
               mergeSelectedIds={mergeSelectedIds}
               onToggleMergeSelect={onToggleMergeSelect}

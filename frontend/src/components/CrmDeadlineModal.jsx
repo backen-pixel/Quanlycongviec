@@ -1,20 +1,26 @@
 import { useState, useEffect } from 'react';
 import { Clock, X, AlertTriangle } from 'lucide-react';
+import { formatDate } from '../lib/utils';
 
-/** Đổi Date/ISO → chuỗi cho <input type="datetime-local"> theo giờ local. */
-function toLocalInput(value) {
+/** Đổi Date/ISO → chuỗi cho <input type="date"> theo ngày local. */
+function toDateInput(value) {
   if (!value) return '';
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return '';
   const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Ngày từ input date → ISO cuối ngày (local) để so sánh hạn theo ngày. */
+function dateInputToIso(dateStr) {
+  if (!dateStr?.trim()) return null;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d, 23, 59, 59, 999).toISOString();
 }
 
 /**
- * Modal chọn/sửa deadline cho thẻ CRM.
- * - mandatory: bắt buộc chọn deadline mới (không có nút bỏ qua) — dùng khi kéo sang cột yêu cầu deadline.
- * - requireReason: bắt buộc nhập lý do — dùng khi SỬA deadline (đã có deadline cũ).
- * - allowClear: cho phép xóa deadline (đặt rỗng).
+ * Modal chọn/sửa deadline cho thẻ CRM / xưởng — chỉ chọn ngày.
  */
 export default function CrmDeadlineModal({
   open,
@@ -36,7 +42,7 @@ export default function CrmDeadlineModal({
 
   useEffect(() => {
     if (open) {
-      setValue(toLocalInput(initialDeadline));
+      setValue(toDateInput(initialDeadline));
       setReason('');
       setError('');
     }
@@ -47,7 +53,7 @@ export default function CrmDeadlineModal({
   const submit = () => {
     const hasValue = value && value.trim() !== '';
     if (!hasValue && !allowClear) {
-      setError('Vui lòng chọn ngày giờ deadline.');
+      setError('Vui lòng chọn ngày deadline.');
       return;
     }
     if (!hasValue && mandatory) {
@@ -58,14 +64,10 @@ export default function CrmDeadlineModal({
       setError('Vui lòng nhập lý do thay đổi deadline.');
       return;
     }
-    let deadlineIso = null;
-    if (hasValue) {
-      const ts = new Date(value).getTime();
-      if (Number.isNaN(ts)) {
-        setError('Deadline không hợp lệ.');
-        return;
-      }
-      deadlineIso = new Date(ts).toISOString();
+    const deadlineIso = hasValue ? dateInputToIso(value) : null;
+    if (hasValue && !deadlineIso) {
+      setError('Ngày deadline không hợp lệ.');
+      return;
     }
     onConfirm?.({ deadlineIso, reason: reason.trim() });
   };
@@ -100,16 +102,16 @@ export default function CrmDeadlineModal({
 
           {currentDeadline && (
             <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-600">
-              Deadline hiện tại: <span className="font-semibold">{new Date(currentDeadline).toLocaleString('vi-VN')}</span>
+              Deadline hiện tại: <span className="font-semibold">{formatDate(currentDeadline)}</span>
             </div>
           )}
 
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-600">
-              Deadline {mandatory && <span className="text-rose-500">*</span>}
+              Ngày deadline {mandatory && <span className="text-rose-500">*</span>}
             </label>
             <input
-              type="datetime-local"
+              type="date"
               value={value}
               onChange={(e) => { setValue(e.target.value); setError(''); }}
               className="w-full h-10 rounded-lg border border-slate-300 px-3 text-sm focus:border-rose-400 focus:ring-1 focus:ring-rose-300 outline-none"
