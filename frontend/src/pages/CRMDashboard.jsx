@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
+import { canUserDeleteCrmLeadDeal, findCrmPipelineById } from '../lib/crmPipelineDeletePermission';
 import { getSocket, connectSocket } from '../lib/socket';
 import { formatVND, formatDate, formatDateTime } from '../lib/utils';
 import {
@@ -1089,6 +1090,21 @@ export default function CRMDashboard() {
     [...allLeads, ...allDeals].forEach((x) => { m[x.id] = x; });
     return m;
   }, [allLeads, allDeals]);
+
+  const pipelinesForDeleteCheck = useMemo(
+    () => (pipelinesAll.length ? pipelinesAll : pipelines),
+    [pipelinesAll, pipelines],
+  );
+
+  const canBulkDeleteSelected = useMemo(() => {
+    if (!manualMergeIds.length) return false;
+    return manualMergeIds.every((id) => {
+      const item = itemsByIdForMerge[id];
+      if (!item) return false;
+      const pipeline = findCrmPipelineById(pipelinesForDeleteCheck, item.pipeline_id);
+      return canUserDeleteCrmLeadDeal({ pipeline, type: item.type || pipelineType, user });
+    });
+  }, [manualMergeIds, itemsByIdForMerge, pipelinesForDeleteCheck, pipelineType, user]);
 
   const togglePinTab = (tab) => {
     if (pinnedTab === tab) {
@@ -5575,15 +5591,17 @@ export default function CRMDashboard() {
                   Gán phụ trách
                 </button>
               )}
-              <button
-                type="button"
-                onClick={bulkDeleteSelected}
-                disabled={bulkDeleting}
-                className="h-9 px-4 rounded-lg bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 disabled:opacity-50 cursor-pointer shadow-sm flex items-center gap-1.5"
-              >
-                <Trash2 className="h-3.5 w-3.5 shrink-0" />
-                {bulkDeleting ? 'Đang xóa…' : `Xóa (${manualMergeIds.length})`}
-              </button>
+              {canBulkDeleteSelected && (
+                <button
+                  type="button"
+                  onClick={bulkDeleteSelected}
+                  disabled={bulkDeleting}
+                  className="h-9 px-4 rounded-lg bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 disabled:opacity-50 cursor-pointer shadow-sm flex items-center gap-1.5"
+                >
+                  <Trash2 className="h-3.5 w-3.5 shrink-0" />
+                  {bulkDeleting ? 'Đang xóa…' : `Xóa (${manualMergeIds.length})`}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setManualMergeIds([])}

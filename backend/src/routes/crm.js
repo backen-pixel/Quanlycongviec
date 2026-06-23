@@ -76,7 +76,7 @@ const {
   isCrmRegionAdminUser,
   isCrmSystemAdminUser,
 } = require('../helpers/crmAccessRoles');
-const { isAdminLike, isSystemAdmin } = require('../helpers/adminRole');
+const { isAdminLike, isSystemAdmin, isCrmModuleAdmin } = require('../helpers/adminRole');
 const {
   getCrmLeadRegionConstraint,
   applyCrmLeadRegionFilterToQuery,
@@ -257,6 +257,40 @@ function emitCrmDashboardChanged(req, payload = {}) {
 /** Gán lead/deal, bulk — admin hệ thống/công ty hoặc admin khu vực */
 function userIsCrmCompanyOrRegionAdmin(req) {
   return userIsAdmin(req.user?.role) || isCrmRegionAdminUser(req.user);
+}
+
+/** Admin CRM / khu vực bỏ qua cấu hình «nhân viên được xóa lead/deal». */
+function userCanBypassCrmDeleteRestriction(req) {
+  return isCrmModuleAdmin(req.user) || isCrmRegionAdminUser(req.user);
+}
+
+async function assertCrmEmployeeDeleteAllowed(req, res, lead) {
+  if (userCanBypassCrmDeleteRestriction(req)) return true;
+  const pipelineId = lead?.pipeline_id;
+  if (!pipelineId) return true;
+  const isDeal = String(lead?.type || '').toLowerCase() === 'deal';
+  const { data: pipeline, error } = await supabase
+    .from('crm_pipelines')
+    .select('allow_employee_delete_lead, allow_employee_delete_deal')
+    .eq('id', pipelineId)
+    .maybeSingle();
+  if (error) {
+    if (/allow_employee_delete_(lead|deal)/.test(error.message || '')) return true;
+    throw error;
+  }
+  if (!pipeline) return true;
+  const allowed = isDeal
+    ? pipeline.allow_employee_delete_deal !== false
+    : pipeline.allow_employee_delete_lead !== false;
+  if (!allowed) {
+    res.status(403).json({
+      error: isDeal
+        ? 'Công ty không cho phép nhân viên xóa Deal. Liên hệ quản trị viên.'
+        : 'Công ty không cho phép nhân viên xóa Lead. Liên hệ quản trị viên.',
+    });
+    return false;
+  }
+  return true;
 }
 
 /** Admin công ty: `admin` + `company_id` trên JWT — khác admin hệ thống (`admin` không `company_id`). */
@@ -4078,9 +4112,21 @@ r.put('/pipelines/:id', async (req, res) => {
       update.zalo_merge_template_data =
         m && typeof m === 'object' && !Array.isArray(m) ? m : {};
     }
+    if (req.body.allow_employee_delete_lead !== undefined) {
+      update.allow_employee_delete_lead = !!req.body.allow_employee_delete_lead;
+    }
+    if (req.body.allow_employee_delete_deal !== undefined) {
+      update.allow_employee_delete_deal = !!req.body.allow_employee_delete_deal;
+    }
     update.updated_at = new Date().toISOString();
-    const { data, error } = await supabase.from('crm_pipelines').update(update)
+    let { data, error } = await supabase.from('crm_pipelines').update(update)
       .eq('id', req.params.id).select('*, company:companies(id, name)').single();
+    if (error && /allow_employee_delete_(lead|deal)/.test(error.message || '')) {
+      delete update.allow_employee_delete_lead;
+      delete update.allow_employee_delete_deal;
+      ({ data, error } = await supabase.from('crm_pipelines').update(update)
+        .eq('id', req.params.id).select('*, company:companies(id, name)').single());
+    }
     if (error) throw error;
     invalidatePipelinesAndStages();
     res.json(data);
@@ -4140,19 +4186,33 @@ r.post('/pipelines/:id/copy', async (req, res) => {
 
     const { data: src, error: srcErr } = await supabase
       .from('crm_pipelines')
-      .select('id, name, description, is_active, stages:crm_pipeline_stages(*)')
+      .select('id, name, description, is_active, allow_employee_delete_lead, allow_employee_delete_deal, stages:crm_pipeline_stages(*)')
       .eq('id', sourceId)
       .single();
     if (srcErr) throw srcErr;
 
     const name = (b.name || '').trim() || `${src.name} (Copy)`;
-    const { data: created, error: insErr } = await supabase.from('crm_pipelines').insert({
+    const copyInsert = {
       name,
       company_id: targetCompanyId,
       description: src.description || null,
       is_default: !!b.set_default,
       is_active: src.is_active !== false,
-    }).select('*, company:companies(id, name)').single();
+    };
+    if (src.allow_employee_delete_lead !== undefined) {
+      copyInsert.allow_employee_delete_lead = src.allow_employee_delete_lead !== false;
+    }
+    if (src.allow_employee_delete_deal !== undefined) {
+      copyInsert.allow_employee_delete_deal = src.allow_employee_delete_deal !== false;
+    }
+    let { data: created, error: insErr } = await supabase.from('crm_pipelines').insert(copyInsert)
+      .select('*, company:companies(id, name)').single();
+    if (insErr && /allow_employee_delete_(lead|deal)/.test(insErr.message || '')) {
+      delete copyInsert.allow_employee_delete_lead;
+      delete copyInsert.allow_employee_delete_deal;
+      ({ data: created, error: insErr } = await supabase.from('crm_pipelines').insert(copyInsert)
+        .select('*, company:companies(id, name)').single());
+    }
     if (insErr) throw insErr;
 
     const stages = (src.stages || []).slice().sort((a, b2) => (a.order_index ?? 0) - (b2.order_index ?? 0));
@@ -8478,9 +8538,11 @@ r.put('/leads/:id', async (req, res) => {
 r.delete('/leads/:id', async (req, res) => {
   try {
     const { data: lead } = await supabase.from('crm_leads')
-      .select('id, title, project_id, customer_id, type, company_id')
+      .select('id, title, project_id, customer_id, type, company_id, pipeline_id')
       .eq('id', req.params.id).single();
     if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead' });
+
+    if (!(await assertCrmEmployeeDeleteAllowed(req, res, lead))) return;
 
     const deleteReason = req.body?.delete_reason || req.query.delete_reason || '';
 

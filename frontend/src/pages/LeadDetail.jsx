@@ -16,6 +16,7 @@ import UploadFileLightbox, {
 import { downloadCrmLeadDocumentsZip } from '../lib/crmDocumentsZipDownload';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
+import { canUserDeleteCrmLeadDeal } from '../lib/crmPipelineDeletePermission';
 import api from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { formatVND, formatDate } from '../lib/utils';
@@ -114,6 +115,7 @@ export default function LeadDetail() {
   const loadSeqRef = useRef(0);
   const navigate = useNavigate();
   const [lead, setLead] = useState(null);
+  const [pipelineConfig, setPipelineConfig] = useState(null);
   const [customer, setCustomer] = useState(null);
   const [activities, setActivities] = useState([]);
   const [documents, setDocuments] = useState([]);
@@ -431,12 +433,16 @@ export default function LeadDetail() {
           ? { pipeline_id: leadPipelineId }
           : (leadCompanyId ? { company_id: leadCompanyId } : {});
       const stageEnsure = leadRes?.stage_id ? { ensure_stage_id: leadRes.stage_id } : {};
-      const [stagesLeadRes, stagesDealRes] = await Promise.all([
+      const [stagesLeadRes, stagesDealRes, pipelineRes] = await Promise.all([
         api.get('/crm/pipeline-stages', { params: { type: 'lead', ...stagesParamsBase, ...stageEnsure } }).catch(() => ({ data: [] })),
         api.get('/crm/pipeline-stages', { params: { type: 'deal', ...stagesParamsBase, ...stageEnsure } }).catch(() => ({ data: [] })),
+        leadPipelineId
+          ? api.get(`/crm/pipelines/${leadPipelineId}`).catch(() => ({ data: null }))
+          : Promise.resolve({ data: null }),
       ]);
       if (seq !== loadSeqRef.current) return;
       setLead(leadRes);
+      setPipelineConfig(pipelineRes?.data || null);
       setLeadTitleDraft(leadRes?.title || '');
       setCustomer(leadRes?.customer);
       setActivities(actRes.data || []);
@@ -1191,6 +1197,12 @@ export default function LeadDetail() {
     && !currentStageObj?.is_won
     && currentStageObj?.allow_revert_to_lead === true;
 
+  const canDeleteLeadDeal = canUserDeleteCrmLeadDeal({
+    pipeline: pipelineConfig,
+    type: lead.type,
+    user,
+  });
+
   const deleteDocument = async (docId) => {
     if (!confirm('Xóa tài liệu?')) return;
     try {
@@ -1541,9 +1553,11 @@ export default function LeadDetail() {
               </Link>
             </>
           )}
-          <button onClick={deleteLead} className="h-9 px-3 text-red-500 border border-red-200 rounded-lg text-sm flex items-center gap-1.5 cursor-pointer hover:bg-red-50">
-            <Trash2 className="h-4 w-4" />
-          </button>
+          {canDeleteLeadDeal && (
+            <button onClick={deleteLead} className="h-9 px-3 text-red-500 border border-red-200 rounded-lg text-sm flex items-center gap-1.5 cursor-pointer hover:bg-red-50">
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
 
         </div>
       </div>
