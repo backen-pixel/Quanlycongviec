@@ -327,6 +327,152 @@ function GrowthRateBarChart({ data, title }) {
   );
 }
 
+function buildCombinedOutcomePie(rows) {
+  let closed = 0;
+  let bgPending = 0;
+  let lost = 0;
+  let openOther = 0;
+
+  for (const r of rows || []) {
+    const c = reportClosedWonCount(r);
+    const q = r.quote_deal_count || 0;
+    const d = r.deal_count || 0;
+    const lostDeal = r.lost_deal_count || 0;
+    const lostLead = r.lost_lead_count || 0;
+    const lead = r.lead_count || 0;
+
+    closed += c;
+    const bgP = Math.max(0, q - c);
+    bgPending += bgP;
+    lost += lostLead + lostDeal;
+    const dealOpen = Math.max(0, d - c - lostDeal);
+    const leadOpen = Math.max(0, lead - lostLead);
+    openOther += leadOpen + Math.max(0, dealOpen - bgP);
+  }
+
+  return [
+    { name: 'Đã chốt', value: closed, color: '#059669' },
+    { name: 'BG chưa chốt', value: bgPending, color: '#f59e0b' },
+    { name: 'Hủy/thua', value: lost, color: '#f43f5e' },
+    { name: 'Đang xử lý', value: openOther, color: '#94a3b8' },
+  ].filter((x) => x.value > 0);
+}
+
+function buildRatesSummary(rows) {
+  let closed = 0;
+  let deal = 0;
+  let quote = 0;
+  let closedGt = 0;
+  let quoteGt = 0;
+  let lost = 0;
+  let total = 0;
+
+  for (const r of rows || []) {
+    closed += reportClosedWonCount(r);
+    deal += r.deal_count || 0;
+    quote += r.quote_deal_count || 0;
+    closedGt += reportClosedWonValue(r);
+    quoteGt += r.quote_value || 0;
+    lost += reportCancelLostTotal(r);
+    total += reportCancelTotalCount(r);
+  }
+
+  const dealRate = deal > 0 ? Math.round((closed / deal) * 1000) / 10 : 0;
+  const bgRate = quote > 0 ? Math.round((closed / quote) * 1000) / 10 : null;
+  const gtRate = quoteGt > 0 ? Math.round((closedGt / quoteGt) * 1000) / 10 : null;
+  const cancelRate = total > 0 ? Math.round((lost / total) * 1000) / 10 : null;
+
+  return {
+    closed,
+    deal,
+    quote,
+    closedGt,
+    quoteGt,
+    lost,
+    total,
+    dealRate,
+    bgRate,
+    gtRate,
+    cancelRate,
+    dealRateLabel: pctLabel(dealRate, `${closed}/${deal}`),
+    bgRateLabel: bgRate != null ? pctLabel(bgRate, `${closed}/${quote}`) : '—',
+    gtRateLabel: gtRate != null ? pctLabel(gtRate, `${formatVNDShort(closedGt)}/${formatVNDShort(quoteGt)}`) : '—',
+    cancelRateLabel: cancelRate != null ? pctLabel(cancelRate, `${lost}/${total}`) : '—',
+  };
+}
+
+function EmployeeRatesCombinedPieChart({ rows, title, entityLabel = 'đơn vị' }) {
+  const pieData = useMemo(() => buildCombinedOutcomePie(rows), [rows]);
+  const rates = useMemo(() => buildRatesSummary(rows), [rows]);
+  const singleName = rows?.length === 1 ? (rows[0].full_name || rows[0].company_name || rows[0].region_name) : null;
+
+  if (!pieData.length) return null;
+
+  const totalPie = pieData.reduce((s, x) => s + x.value, 0);
+
+  return (
+    <div className="rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50/40 to-white p-4 md:p-5">
+      {title && <p className="text-sm font-bold text-slate-800 mb-1">{title}</p>}
+      {singleName && (
+        <p className="text-xs text-slate-500 mb-3">{singleName}</p>
+      )}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-center">
+        <div className="h-72 min-h-[280px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={pieData}
+                cx="50%"
+                cy="50%"
+                innerRadius="42%"
+                outerRadius="72%"
+                paddingAngle={2}
+                dataKey="value"
+                nameKey="name"
+                label={({ name, value, percent }) => {
+                  if (percent < 0.04) return '';
+                  return `${name}\n${value} (${Math.round(percent * 100)}%)`;
+                }}
+                labelLine={{ stroke: '#94a3b8', strokeWidth: 1 }}
+              >
+                {pieData.map((entry) => (
+                  <Cell key={entry.name} fill={entry.color} stroke="#fff" strokeWidth={2} />
+                ))}
+              </Pie>
+              <RechartsTooltip
+                formatter={(v, n) => [`${v} (${totalPie ? Math.round((v / totalPie) * 1000) / 10 : 0}%)`, n]}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className="rounded-lg border border-violet-200 bg-violet-50/80 px-3 py-2.5">
+            <p className="text-[10px] font-bold uppercase text-violet-800">Chốt/tổng deal</p>
+            <p className="mt-1 text-lg font-extrabold text-violet-950 tabular-nums">{rates.dealRateLabel}</p>
+          </div>
+          <div className="rounded-lg border border-lime-200 bg-lime-50/80 px-3 py-2.5">
+            <p className="text-[10px] font-bold uppercase text-lime-900">Chốt/BG</p>
+            <p className="mt-1 text-lg font-extrabold text-lime-950 tabular-nums">{rates.bgRateLabel}</p>
+          </div>
+          <div className="rounded-lg border border-teal-200 bg-teal-50/80 px-3 py-2.5">
+            <p className="text-[10px] font-bold uppercase text-teal-900">GT chốt / GT BG</p>
+            <p className="mt-1 text-lg font-extrabold text-teal-950 tabular-nums">{rates.gtRateLabel}</p>
+          </div>
+          <div className="rounded-lg border border-rose-200 bg-rose-50/80 px-3 py-2.5">
+            <p className="text-[10px] font-bold uppercase text-rose-900">Tỷ lệ hủy</p>
+            <p className="mt-1 text-lg font-extrabold text-rose-950 tabular-nums">{rates.cancelRateLabel}</p>
+          </div>
+        </div>
+      </div>
+      {rows?.length > 1 && (
+        <p className="mt-3 text-[11px] text-slate-500 text-center">
+          Tổng hợp {rows.length} {entityLabel} · biểu đồ phân bổ trạng thái lead/deal
+        </p>
+      )}
+    </div>
+  );
+}
+
 function QuoteFunnelPieChart({ data, title }) {
   if (!data?.length) return null;
   return (
@@ -359,26 +505,10 @@ function QuoteFunnelPieChart({ data, title }) {
   );
 }
 
-function QuoteCloseChartsGrid({ rows, nameKey, entityLabel = 'đơn vị' }) {
+function QuoteCloseChartsGrid({ rows, nameKey, entityLabel = 'đơn vị', combinedRatesPie = false }) {
   const chartRows = useMemo(
     () => buildQuoteCloseChartRows(rows, nameKey, 10),
     [rows, nameKey],
-  );
-  const rateRows = useMemo(
-    () => chartRows.filter((r) => (r['Tổng BG'] || 0) > 0),
-    [chartRows],
-  );
-  const dealCloseRateRows = useMemo(
-    () => chartRows.filter((r) => (r.Deal || 0) > 0),
-    [chartRows],
-  );
-  const valueCloseRateRows = useMemo(
-    () => chartRows.filter((r) => (r['GT báo giá'] || 0) > 0),
-    [chartRows],
-  );
-  const cancelRateRows = useMemo(
-    () => chartRows.filter((r) => (r['Tổng LD'] || 0) > 0),
-    [chartRows],
   );
   const growthRows = useMemo(
     () => buildQuoteCloseChartRows(rows, nameKey, 10)
@@ -386,26 +516,36 @@ function QuoteCloseChartsGrid({ rows, nameKey, entityLabel = 'đơn vị' }) {
       .map((r) => ({ ...r, 'Tăng trưởng': Number(r['Tăng trưởng']) || 0 })),
     [rows, nameKey],
   );
+  const hasRates = (rows || []).some((r) => reportCancelTotalCount(r) > 0
+    || (r.quote_deal_count || 0) > 0
+    || reportClosedWonCount(r) > 0);
 
-  if (!chartRows.length && !growthRows.length) {
+  if (!chartRows.length && !growthRows.length && !hasRates) {
     return <ChartEmpty label={`Chưa có dữ liệu báo giá / chốt theo ${entityLabel}`} />;
   }
 
   return (
     <div className="space-y-4">
-      {(dealCloseRateRows.length > 0 || rateRows.length > 0 || valueCloseRateRows.length > 0 || cancelRateRows.length > 0) && (
+      {combinedRatesPie && hasRates && (
+        <EmployeeRatesCombinedPieChart
+          rows={rows}
+          title={`Tỷ lệ báo giá & chốt — ${entityLabel}`}
+          entityLabel={entityLabel}
+        />
+      )}
+      {!combinedRatesPie && hasRates && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-          {dealCloseRateRows.length > 0 && (
-            <DealCloseRateBarChart data={dealCloseRateRows} title={`Tỷ lệ chốt/tổng deal — ${entityLabel}`} />
+          {chartRows.filter((r) => (r.Deal || 0) > 0).length > 0 && (
+            <DealCloseRateBarChart data={chartRows.filter((r) => (r.Deal || 0) > 0)} title={`Tỷ lệ chốt/tổng deal — ${entityLabel}`} />
           )}
-          {rateRows.length > 0 && (
-            <QuoteWinRateBarChart data={rateRows} title={`Tỷ lệ chốt/BG — ${entityLabel}`} />
+          {chartRows.filter((r) => (r['Tổng BG'] || 0) > 0).length > 0 && (
+            <QuoteWinRateBarChart data={chartRows.filter((r) => (r['Tổng BG'] || 0) > 0)} title={`Tỷ lệ chốt/BG — ${entityLabel}`} />
           )}
-          {valueCloseRateRows.length > 0 && (
-            <QuoteValueCloseRateBarChart data={valueCloseRateRows} title={`GT chốt / GT báo giá — ${entityLabel}`} />
+          {chartRows.filter((r) => (r['GT báo giá'] || 0) > 0).length > 0 && (
+            <QuoteValueCloseRateBarChart data={chartRows.filter((r) => (r['GT báo giá'] || 0) > 0)} title={`GT chốt / GT báo giá — ${entityLabel}`} />
           )}
-          {cancelRateRows.length > 0 && (
-            <CancelRateBarChart data={cancelRateRows} title={`Tỷ lệ hủy — ${entityLabel}`} />
+          {chartRows.filter((r) => (r['Tổng LD'] || 0) > 0).length > 0 && (
+            <CancelRateBarChart data={chartRows.filter((r) => (r['Tổng LD'] || 0) > 0)} title={`Tỷ lệ hủy — ${entityLabel}`} />
           )}
         </div>
       )}
@@ -1408,6 +1548,7 @@ export default function CrmOrgOverviewReport() {
                   rows={(data.by_employee || []).filter((r) => r.user_id)}
                   nameKey="full_name"
                   entityLabel="nhân viên"
+                  combinedRatesPie
                 />
                 <CollapsibleDataList label="bảng số liệu báo giá & chốt">
                   <MetricTable
@@ -1693,6 +1834,7 @@ export default function CrmOrgOverviewReport() {
                   rows={(data.by_employee || []).filter((r) => r.user_id)}
                   nameKey="full_name"
                   entityLabel="nhân viên"
+                  combinedRatesPie
                 />
               </Section>
 
