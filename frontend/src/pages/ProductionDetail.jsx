@@ -15,7 +15,7 @@ import DocumentShareModulePicker from '../components/DocumentShareModulePicker';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
-import { publicFileUrl as pubUrl, getFileOpenAnchorProps, getFileDownloadAnchorProps } from '../lib/publicFileUrl';
+import { publicFileUrl as pubUrl, downloadUploadFile } from '../lib/publicFileUrl';
 import { FilePreviewOpenLink } from '../context/FilePreviewContext';
 import UploadFileLightbox, {
   collectUploadLightboxItems,
@@ -669,6 +669,30 @@ function CrmSharedDocumentsPanel({
   );
 }
 
+function FileDownloadButton({ rawRef, fileName, className = 'hover:underline text-xs text-emerald-600 cursor-pointer' }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      className={className}
+      onClick={async (e) => {
+        e.stopPropagation();
+        if (busy) return;
+        setBusy(true);
+        try {
+          await downloadUploadFile(rawRef, fileName || 'tai-lieu');
+        } catch (err) {
+          alert(err?.message || 'Không tải được file');
+        }
+        setBusy(false);
+      }}
+    >
+      {busy ? '...' : 'Tải'}
+    </button>
+  );
+}
+
 /** File đính kèm nhiệm vụ — xem ảnh inline, không cần tải */
 function TaskFileRow({ file, onOpenImage, projectId = null, enableShareToCrm = false, onShareToCrmSaved = null }) {
   const [showCrmShare, setShowCrmShare] = useState(false);
@@ -680,7 +704,7 @@ function TaskFileRow({ file, onOpenImage, projectId = null, enableShareToCrm = f
   const rawRef = file.file_url || '';
   const href = rawRef ? pubUrl(rawRef) : '';
   const isImage = href && isUploadImageFile(file.mime_type, file.file_name || rawRef);
-  const downloadProps = href ? getFileDownloadAnchorProps(rawRef, { fileName: file.file_name || 'tai-lieu' }) : null;
+  const canDownload = !!href;
 
   const openImage = () => {
     if (onOpenImage) onOpenImage(rawRef);
@@ -738,8 +762,12 @@ function TaskFileRow({ file, onOpenImage, projectId = null, enableShareToCrm = f
                 Xem
               </FilePreviewOpenLink>
             ) : null}
-            {downloadProps && (
-              <a {...downloadProps} className="text-[10px] text-emerald-600 hover:underline">Tải</a>
+            {canDownload && (
+              <FileDownloadButton
+                rawRef={rawRef}
+                fileName={file.file_name || 'tai-lieu'}
+                className="text-[10px] text-emerald-600 hover:underline cursor-pointer"
+              />
             )}
           </div>
         )}
@@ -795,9 +823,6 @@ function DocRow({
     : (fileName || doc.name || 'Tài liệu');
   const rawFileRef = doc.file_url || doc.file_path || '';
   const fileHref = rawFileRef ? pubUrl(rawFileRef) : '';
-  const fileDownloadProps = fileHref
-    ? getFileDownloadAnchorProps(rawFileRef, { fileName: fileName || displayTitle || 'tai-lieu' })
-    : null;
   const isFile = !!fileHref;
   const mime = doc.mime_type || '';
   const isImage = isFile && isUploadImageFile(mime, fileName || doc.file_url || doc.file_path || '');
@@ -901,7 +926,7 @@ function DocRow({
               )}
             </div>
           </div>
-          {isFile && (fileHref || fileDownloadProps) && (
+          {isFile && fileHref && (
             <div
               className={`flex items-center gap-2 shrink-0 ${nested ? 'px-1' : 'px-2'}`}
               onClick={(e) => e.stopPropagation()}
@@ -924,9 +949,11 @@ function DocRow({
                     Xem
                   </FilePreviewOpenLink>
                 ) : null}
-              {fileDownloadProps && (
-                <a {...fileDownloadProps} className={`hover:underline ${nested ? 'text-[10px]' : 'text-xs'} text-emerald-600`}>Tải</a>
-              )}
+              <FileDownloadButton
+                rawRef={rawFileRef}
+                fileName={fileName || displayTitle || 'tai-lieu'}
+                className={`hover:underline ${nested ? 'text-[10px]' : 'text-xs'} text-emerald-600 cursor-pointer`}
+              />
             </div>
           )}
           {hasExtra && <ChevronDown className={`h-3 w-3 text-gray-400 transition-transform shrink-0 ${expanded ? 'rotate-180' : ''}`} />}
@@ -2150,14 +2177,14 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       return deleteProjectDocument(doc.source_file_attachment_id);
     }
 
-    const leadId = doc.lead_id || project?.crmDeals?.[0]?.id || fallbackDealIdForTasks;
-    if (!leadId) {
-      alert('Không xác định được deal CRM của tài liệu');
+    const projectId = project?.id || id;
+    if (!projectId) {
+      alert('Không xác định được dự án');
       return;
     }
     if (!confirm('Xóa tài liệu này?')) return;
     try {
-      await api.delete(`/crm/leads/${leadId}/documents/${docId}`);
+      await api.delete(`/projects/${projectId}/lead-documents/${docId}`);
       await refreshProjectSilently();
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Lỗi xóa tài liệu');

@@ -127,3 +127,26 @@ export function getFileDownloadAnchorProps(pathOrUrl, opts = {}) {
   };
 }
 
+/** Tải file về máy — blob same-origin; cross-origin fallback mở tab mới. */
+export async function downloadUploadFile(pathOrUrl, fileName = 'tai-lieu') {
+  try {
+    const buf = await fetchUploadArrayBuffer(pathOrUrl);
+    const blob = new Blob([buf]);
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(blobUrl);
+  } catch {
+    const props = getFileDownloadAnchorProps(pathOrUrl, { fileName });
+    if (props?.href) {
+      window.open(props.href, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    throw new Error('Không tải được file');
+  }
+}
+
