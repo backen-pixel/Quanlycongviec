@@ -32,6 +32,8 @@ import { ProductionListView, ProductionPlannerView, ProductionCalendarView, Prod
 import WorkshopPipelineKanbanScroll from '../components/WorkshopPipelineKanbanScroll';
 import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
 import WorkshopDashboardFilterPanel, { SX_FILTER_TABS_META } from '../components/WorkshopDashboardFilterPanel';
+import KanbanCardQuickMove from '../components/KanbanCardQuickMove';
+import KanbanCardOptionsMenu from '../components/KanbanCardOptionsMenu';
 import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
@@ -158,15 +160,14 @@ function DeadlineBadge({ date, icon = '📅', label = 'Hạn' }) {
   const u = getDeadlineUrgency(date);
   if (!u) return null;
   const cls = DEADLINE_TONE_CLASS[u.tone] || DEADLINE_TONE_CLASS.normal;
-  const remaining = formatRemainingMs(u.diffMs);
-  const dateText = new Date(date).toLocaleDateString('vi-VN');
+  const dateText = formatDate(date);
   return (
     <span
       className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${cls} ${u.pulse ? 'animate-pulse' : ''}`}
       title={`${label}: ${dateText}`}
     >
       <span aria-hidden>{icon}</span>
-      {u.tone === 'overdue' ? `Trễ ${remaining}` : `${remaining}`}
+      {dateText}
     </span>
   );
 }
@@ -2701,7 +2702,7 @@ function KPICard({ accent = 'bg-blue-500', label, value, descriptor, valueTone }
 }
 
 // ── KANBAN STAGE CARD — header tối giản (dot + tên + count + total) ────────
-function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline, onTogglePin }) {
+function KanbanStageCard({ stage, items, onMoveStage, pipelineStages, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline, onTogglePin }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const stageColor = stage.color || '#94a3b8';
   const totalValue = items.reduce((sum, p) => sum + resolveSxProjectValue(p), 0);
@@ -2726,7 +2727,7 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
       onDragOver={handleColumnDragOver}
       onDragLeave={handleColumnDragLeave}
       onDrop={handleColumnDrop}
-      className={`flex flex-col flex-shrink-0 w-72 transition-all duration-200 ${
+      className={`flex flex-col flex-shrink-0 w-[15rem] max-[400px]:w-[13.5rem] transition-all duration-200 ${
         isOverColumn ? 'ring-2 ring-blue-400 ring-dashed rounded-lg' : ''
       }`}
     >
@@ -2789,8 +2790,8 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
 
       {/* Cards container — không viền, không nền (sạch sẽ như mockup) */}
       <div
-        className={`flex-1 px-1 pt-2 pb-3 space-y-2 transition-colors ${isOverColumn ? 'bg-blue-50/60 rounded-b-lg' : ''}`}
-        style={{ minHeight: '200px' }}
+        className={`flex-1 px-1 pt-1.5 pb-2.5 space-y-1.5 transition-colors ${isOverColumn ? 'bg-blue-50/60 rounded-b-lg' : ''}`}
+        style={{ minHeight: '180px' }}
       >
         {items.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-32 text-gray-400 gap-1.5">
@@ -2799,7 +2800,8 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
           </div>
         ) : (
           items.map((item) => (
-            <KanbanCard key={item.id} item={item} stage={stage} calculateDays={calculateDays}
+            <KanbanCard key={item.id} item={item} stage={stage} onMoveStage={onMoveStage} pipelineStages={pipelineStages}
+              calculateDays={calculateDays}
               isSelected={selectedIds?.has(item.id)} onToggleSelect={onToggleSelect}
               onHandoverVC={onHandoverVC} onOpenKanbanComment={onOpenKanbanComment}
               workTypes={workTypes} onSetWorkType={onSetWorkType} onOpenDeadline={onOpenDeadline}
@@ -2812,7 +2814,7 @@ function KanbanStageCard({ stage, items, onMoveStage, calculateDays, selectedIds
 }
 
 // ── KANBAN ITEM CARD (y hệt CRM KanbanCard) ─────────────────────────────────
-function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline, onTogglePin }) {
+function KanbanCard({ item, stage, onMoveStage, pipelineStages, calculateDays, isSelected, onToggleSelect, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline, onTogglePin }) {
   const navigate = useNavigate();
   const [handingOver, setHandingOver] = useState(false);
   const sxLeadId = resolveSxProjectLeadId(item);
@@ -2827,7 +2829,7 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
       e.preventDefault();
       return;
     }
-    if (e.target.closest?.('[data-sx-quick-btn]')) {
+    if (e.target.closest?.('[data-sx-quick-btn]') || e.target.closest?.('[data-kanban-options-menu]')) {
       e.preventDefault();
       return;
     }
@@ -2906,7 +2908,7 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
         markWorkshopPipelineCardFocus(item.id, 'sx');
         navigate(`/sx/projects/${item.id}`);
       }}
-      className={`relative !bg-white rounded-lg border overflow-hidden px-3 pt-3 pb-2.5 transition-all duration-200 group hover:shadow-md ${
+      className={`relative !bg-white rounded-lg border overflow-hidden px-2.5 pt-2.5 pb-2 transition-all duration-200 group hover:shadow-md ${
         lockedInVc ? 'cursor-default' : 'cursor-pointer'
       } ${
         isSelected
@@ -2944,9 +2946,9 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
         {leadCreatedAt && (
           <span
             className="text-[10px] text-gray-500 tabular-nums shrink-0"
-            title={`Tạo lead: ${new Date(leadCreatedAt).toLocaleString('vi-VN')}`}
+            title={`Tạo lead: ${formatDate(leadCreatedAt)}`}
           >
-            {new Date(leadCreatedAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}
+            {formatDate(leadCreatedAt)}
           </span>
         )}
         {isNew && (
@@ -3003,7 +3005,7 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
               title={`Ngày đặt hàng: ${formatDate(item.order_date)}`}
             >
               <Calendar className="h-2.5 w-2.5 shrink-0" strokeWidth={2.4} />
-              Đặt: {new Date(item.order_date).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}
+              Đặt: {formatDate(item.order_date)}
             </span>
           )}
           {item.delivery_date && (() => {
@@ -3022,7 +3024,7 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
                 title={`Ngày giao hàng: ${formatDate(item.delivery_date)}`}
               >
                 <Truck className="h-2.5 w-2.5 shrink-0" strokeWidth={2.4} />
-                Giao: {dd.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}
+                Giao: {formatDate(item.delivery_date)}
               </span>
             );
           })()}
@@ -3085,10 +3087,10 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
             data-sx-kanban-deadline-btn
             onClick={(ev) => { ev.stopPropagation(); onOpenDeadline(item); }}
             className={`inline-flex items-center gap-1 rounded-md border transition-opacity mb-1.5 ${urgent ? 'px-2 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[10px] font-semibold'} ${tone}`}
-            title={`Deadline thẻ — bấm để sửa (${new Date(item.sx_kanban_deadline_at).toLocaleString('vi-VN')})`}
+            title={`Deadline thẻ — bấm để sửa (${formatDate(item.sx_kanban_deadline_at)})`}
           >
             <Clock className="h-3 w-3" strokeWidth={2.4} />
-            Deadline: {new Date(item.sx_kanban_deadline_at).toLocaleDateString('vi-VN')}
+            Deadline: {formatDate(item.sx_kanban_deadline_at)}
           </button>
         );
       })()}
@@ -3154,9 +3156,12 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
       {/* Footer: time chip + avatar + quick actions */}
       <div className="flex items-center gap-1.5 pt-1.5 border-t border-gray-100">
         {/* Time chip */}
-        <span className="inline-flex items-center gap-0.5 text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
+        <span
+          className="inline-flex items-center gap-0.5 text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded"
+          title={columnEnteredAt ? `Vào cột: ${formatDate(columnEnteredAt)}` : `Tạo: ${formatDate(item.created_at)}`}
+        >
           <Clock className="h-2.5 w-2.5" />
-          {columnEnteredAt ? formatAgeDetailed(columnEnteredAt) : calculateDays(item.created_at)}
+          {columnEnteredAt ? formatDate(columnEnteredAt) : formatDate(item.created_at)}
         </span>
         {columnSlaTone && columnSlaTone.level !== 'ok' && (
           <span
@@ -3214,6 +3219,20 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
           <span className="h-5 w-5 rounded-full bg-gray-100 text-gray-400 text-[10px] flex items-center justify-center shrink-0" title="Chưa có người phụ trách">?</span>
         )}
 
+        {/* Nhóm icon thao tác nhanh */}
+        <div className="flex items-center gap-0.5 shrink-0 rounded-full border border-teal-100 bg-white px-1 py-0.5 shadow-sm">
+        {typeof onMoveStage === 'function' && Array.isArray(pipelineStages) && pipelineStages.length > 1 && (
+          <KanbanCardQuickMove
+            stages={pipelineStages}
+            currentStageId={stage.id}
+            onMove={(target) => onMoveStage(item.id, target)}
+            disabled={lockedInVc}
+            disabledTitle="Deal đã bàn giao VC — không thể chuyển cột"
+            theme="sx"
+            blockVirtualTargets={false}
+          />
+        )}
+
         {/* Quick: bình luận nhanh (nếu có handler) hoặc mở chat */}
         <button
           type="button"
@@ -3228,44 +3247,25 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
               navigate(`/sx/projects/${item.id}?tab=comments`);
             }
           }}
-          className="h-5 w-5 inline-flex items-center justify-center rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 cursor-pointer"
+          className="h-5 w-5 inline-flex items-center justify-center rounded-full text-blue-500 hover:text-blue-700 hover:bg-blue-100 cursor-pointer"
         >
           <MessageSquare className="h-3 w-3" />
         </button>
-        {typeof onOpenDeadline === 'function' && (
-          <button
-            type="button"
-            data-sx-kanban-deadline-btn
-            title={item.sx_kanban_deadline_at ? 'Sửa deadline thẻ' : 'Đặt deadline thẻ'}
-            onClick={(ev) => { ev.stopPropagation(); onOpenDeadline(item); }}
-            className={`h-5 w-5 inline-flex items-center justify-center rounded transition-colors cursor-pointer ${
-              item.sx_kanban_deadline_at
-                ? 'text-rose-600 hover:bg-rose-50'
-                : 'text-gray-400 hover:text-rose-600 hover:bg-rose-50'
-            }`}
-          >
-            <Clock className="h-3.5 w-3.5" strokeWidth={2.2} />
-          </button>
-        )}
-        {typeof onTogglePin === 'function' && sxLeadId && (
-          <button
-            type="button"
-            data-sx-quick-btn
-            title={item.is_pinned ? 'Bỏ ghim' : 'Ghim'}
-            onClick={(e) => { e.stopPropagation(); onTogglePin(item, !item.is_pinned); }}
-            className={`h-5 w-5 inline-flex items-center justify-center rounded hover:bg-amber-50 cursor-pointer ${
-              item.is_pinned ? 'text-amber-600' : 'text-gray-400 hover:text-amber-600'
-            }`}
-          >
-            <Pin className={`h-3 w-3 ${item.is_pinned ? 'rotate-45 fill-amber-500' : ''}`} />
-          </button>
-        )}
+        <KanbanCardOptionsMenu
+          item={item}
+          theme="sx"
+          deadlineAt={item.sx_kanban_deadline_at}
+          onOpenDeadline={onOpenDeadline}
+          onTogglePin={onTogglePin}
+          pinEnabled={!!sxLeadId}
+        />
+        </div>
       </div>
 
       {/* SLA cảnh báo (chỉ khi quá hạn / sắp) — đặt cuối */}
       {slaDeadlineTs != null && slaOverdue && (
         <p className="mt-1.5 text-[10px] text-red-600 font-semibold flex items-center gap-1">
-          ⚠️ Quá SLA {formatRemainingMs(slaRemainingMs)}
+          ⚠️ Quá hạn SLA {formatDate(new Date(slaDeadlineTs).toISOString())}
         </p>
       )}
 
@@ -3302,6 +3302,11 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
 
 // ── KANBAN VIEW CONTAINER (y hệt CRM KanbanView) ─────────────────────────────
 function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline, onTogglePin, remeasureToken }) {
+  const pipelineStages = useMemo(
+    () => (pipeline || []).map(({ items, ...stage }) => stage),
+    [pipeline],
+  );
+
   return (
     <WorkshopPipelineKanbanScroll
       cardSelector="[data-sx-kanban-card]"
@@ -3315,6 +3320,7 @@ function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggl
             stage={stage}
             items={stage.items}
             onMoveStage={onMoveStage}
+            pipelineStages={pipelineStages}
             calculateDays={calculateDays}
             selectedIds={selectedIds}
             onToggleSelect={onToggleSelect}

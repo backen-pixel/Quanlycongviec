@@ -33,11 +33,6 @@ function formatDate(d) {
   return new Date(d).toLocaleDateString('vi-VN');
 }
 
-function formatDateTime(d) {
-  if (!d) return '';
-  return new Date(d).toLocaleString('vi-VN');
-}
-
 function formatKpiLedgerCell(v) {
   if (v == null || Number.isNaN(Number(v))) return '—';
   const n = Number(v);
@@ -1009,7 +1004,7 @@ export function DeadlineView({
                             </span>
                           )}
                           <p className={`text-[10px] ${isUrgent ? 'text-slate-700 font-medium' : 'text-gray-600'}`}>
-                            Hạn: {formatDateTime(new Date(it._deadlineTs).toISOString())}
+                            Hạn: {formatDate(new Date(it._deadlineTs).toISOString())}
                           </p>
                         </div>
                       );
