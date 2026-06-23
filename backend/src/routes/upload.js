@@ -399,6 +399,28 @@ r.post('/', uploadFlexible, async (req, res) => {
 });
 
 // Get files for entity
+r.get('/serve-local', async (req, res) => {
+  try {
+    const { resolveLocalUploadFile } = require('../helpers/localUploadServe');
+    const rawPath = String(req.query.path || '').trim();
+    if (!rawPath) return res.status(400).json({ error: 'Thiếu path' });
+    const resolved = resolveLocalUploadFile(rawPath);
+    if (!resolved) {
+      return res.status(404).json({
+        error: 'Không tìm thấy file trên máy chủ — có thể đã mất sau khi deploy. Hãy gửi lại file.',
+      });
+    }
+    const downloadName = String(req.query.name || '').trim() || resolved.basename;
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(downloadName)}`);
+    res.sendFile(resolved.fullPath);
+  } catch (e) {
+    console.error('GET /upload/serve-local:', e.message);
+    res.status(500).json({ error: e.message || 'Lỗi tải file' });
+  }
+});
+
 r.get('/:entity_type/:entity_id', async (req, res) => {
   try {
     const { data } = await supabase.from('file_attachments')
