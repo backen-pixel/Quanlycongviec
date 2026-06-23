@@ -410,11 +410,12 @@ function MetricBlock({ label, value, tone = 'slate', full = false, title }) {
   );
 }
 
-function OverdueKpiGrid({ row, summary, compact = false }) {
-  const overdue = summary?.overdue_count ?? row?.overdue_count ?? 0;
-  const overduePct = summary?.overdue_rate_pct ?? row?.overdue_rate_pct;
-  const kpi = summary?.kpi_ledger_net ?? row?.kpi_ledger_net ?? 0;
-  const open = summary?.open_count ?? row?.open_count ?? 0;
+function OverdueKpiGrid({ row, summary, compact = false, preferRow = false }) {
+  const src = preferRow && row ? row : (summary || row || {});
+  const overdue = src?.overdue_count ?? 0;
+  const overduePct = src?.overdue_rate_pct;
+  const kpi = src?.kpi_ledger_net ?? 0;
+  const open = src?.open_count ?? 0;
   return (
     <div className={`grid grid-cols-2 gap-2 ${compact ? 'mt-2' : 'mt-3'}`}>
       <MetricBlock
@@ -428,10 +429,11 @@ function OverdueKpiGrid({ row, summary, compact = false }) {
   );
 }
 
-function ReceptionKpiGrid({ row, summary, slaMinutes = 15, compact = false }) {
-  const eligible = summary?.reception_eligible_count ?? row?.reception_eligible_count ?? 0;
-  const overdue = summary?.reception_overdue_count ?? row?.reception_overdue_count ?? 0;
-  const pct = summary?.reception_overdue_rate_pct ?? row?.reception_overdue_rate_pct;
+function ReceptionKpiGrid({ row, summary, slaMinutes = 15, compact = false, preferRow = false }) {
+  const src = preferRow && row ? row : (summary || row || {});
+  const eligible = src?.reception_eligible_count ?? 0;
+  const overdue = src?.reception_overdue_count ?? 0;
+  const pct = src?.reception_overdue_rate_pct;
   if (!eligible) return null;
   return (
     <div className={`grid grid-cols-1 gap-2 ${compact ? 'mt-2' : 'mt-3'}`}>
@@ -445,11 +447,13 @@ function ReceptionKpiGrid({ row, summary, slaMinutes = 15, compact = false }) {
   );
 }
 
-function RevenueMetricsGrid({ row, summary, compact = false }) {
-  const expected = summary?.expected_value ?? row?.expected_value ?? 0;
-  const weighted = summary?.weighted_value ?? row?.weighted_value ?? 0;
-  const won = summary?.won_value ?? row?.won_value ?? 0;
-  const completed = summary?.completed_value ?? summary?.project_completed_value ?? row?.completed_value ?? 0;
+function RevenueMetricsGrid({ row, summary, compact = false, preferRow = false }) {
+  const src = preferRow && row ? row : (summary || row || {});
+  const closedVal = src?.won_or_later_value ?? src?.won_value ?? src?.completed_value ?? 0;
+  const expected = src?.expected_value ?? 0;
+  const weighted = src?.weighted_value ?? 0;
+  const won = closedVal;
+  const completed = closedVal;
   const fmt = compact ? formatVNDShort : formatVND;
   return (
     <div className={`grid grid-cols-2 gap-2 ${compact ? 'mt-2' : 'mt-3'}`}>
@@ -503,9 +507,10 @@ function EmployeeCard({ row, onClick, receptionSlaMinutes = 15 }) {
   );
 }
 
-function SelectedProfileCard({ row, detail, onClose, receptionSlaMinutes = 15 }) {
+function SelectedProfileCard({ row, detail, onClose, receptionSlaMinutes = 15, preferRowMetrics = false }) {
   const summary = detail?.summary;
   const displayName = row?.full_name || detail?.full_name;
+  const closedRate = row?.conversion_rate ?? summary?.conversion_rate ?? 0;
 
   return (
     <div className="rounded-2xl border border-indigo-100 bg-gradient-to-b from-indigo-50/60 to-white p-4 shadow-sm xl:shrink-0">
@@ -530,15 +535,15 @@ function SelectedProfileCard({ row, detail, onClose, receptionSlaMinutes = 15 })
         <p className="text-sm text-slate-500">{row?.department_name || detail?.department_name || '—'}</p>
       </div>
       <div className="mt-4 grid grid-cols-2 gap-2">
-        <MetricBlock label="Lead" value={row?.lead_count ?? summary?.lead_count ?? 0} tone="blue" />
-        <MetricBlock label="Deal" value={row?.deal_count ?? summary?.deal_count ?? 0} tone="cyan" />
+        <MetricBlock label="Lead" value={(preferRowMetrics ? row : (summary || row))?.lead_count ?? 0} tone="blue" />
+        <MetricBlock label="Deal" value={(preferRowMetrics ? row : (summary || row))?.deal_count ?? 0} tone="cyan" />
       </div>
-      <RevenueMetricsGrid row={row} summary={summary} />
-      <OverdueKpiGrid row={row} summary={summary} />
-      <ReceptionKpiGrid row={row} summary={summary} slaMinutes={receptionSlaMinutes} />
+      <RevenueMetricsGrid row={row} summary={summary} preferRow={preferRowMetrics} />
+      <OverdueKpiGrid row={row} summary={summary} preferRow={preferRowMetrics} />
+      <ReceptionKpiGrid row={row} summary={summary} slaMinutes={receptionSlaMinutes} preferRow={preferRowMetrics} />
       <div className="mt-3 rounded-xl bg-violet-50 border border-violet-100 px-3 py-3 text-center">
         <p className="text-[10px] font-bold uppercase text-violet-700">Tỷ lệ chốt deal</p>
-        <p className="text-2xl font-extrabold text-violet-900 tabular-nums">{row?.conversion_rate ?? 0}%</p>
+        <p className="text-2xl font-extrabold text-violet-900 tabular-nums">{closedRate}%</p>
       </div>
     </div>
   );
@@ -983,7 +988,13 @@ function EmployeeCharts({ detail, loading, row, receptionSlaMinutes = 15 }) {
   );
 }
 
-export default function EmployeeReportPanel({ employees = [], queryParams = {}, typeView = 'all', receptionSlaMinutes = 15 }) {
+export default function EmployeeReportPanel({
+  employees = [],
+  queryParams = {},
+  typeView = 'all',
+  receptionSlaMinutes = 15,
+  preferRowMetrics = false,
+}) {
   const [selectedId, setSelectedId] = useState(null);
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -1054,7 +1065,7 @@ export default function EmployeeReportPanel({ employees = [], queryParams = {}, 
   return (
     <div className="flex flex-col xl:flex-row gap-4 xl:gap-5 min-w-0 xl:items-start">
       <aside className="w-full xl:w-[280px] shrink-0 min-w-0 flex flex-col gap-3 xl:sticky xl:top-4 xl:max-h-[calc(100vh-6rem)] xl:overflow-hidden">
-        <SelectedProfileCard row={selectedRow} detail={detail} onClose={() => setSelectedId(null)} receptionSlaMinutes={receptionSlaMinutes} />
+        <SelectedProfileCard row={selectedRow} detail={detail} onClose={() => setSelectedId(null)} receptionSlaMinutes={receptionSlaMinutes} preferRowMetrics={preferRowMetrics} />
         <EmployeeSwitcher employees={selectable} selectedId={selectedId} onSelect={setSelectedId} />
       </aside>
       <main className="flex-1 min-w-0">
