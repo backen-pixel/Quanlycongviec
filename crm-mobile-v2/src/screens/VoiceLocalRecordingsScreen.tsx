@@ -103,7 +103,12 @@ export default function VoiceLocalRecordingsScreen() {
 
       const sinceMs = rangeToSinceMs(rangeFilter);
       const local = await listLocalCallRecordings({ sinceMs, limit: 200, includeAll: false });
-      const items = local.map((it) => ({ file_name: it.name, file_size: it.size }));
+      const items = local.map((it) => ({
+        file_name: it.name,
+        file_size: it.size,
+        phone_number: it.phoneHint || undefined,
+        call_started_at: it.dateAddedMs > 0 ? new Date(it.dateAddedMs).toISOString() : undefined,
+      }));
 
       let existing: { id: string; file_name: string; file_size: number | null; phone_number: string | null }[] = [];
       let tombstoned: { file_name: string; file_size: number | null }[] = [];

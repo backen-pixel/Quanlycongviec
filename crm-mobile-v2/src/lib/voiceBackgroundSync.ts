@@ -132,16 +132,43 @@ export async function listLocalCallRecordings(opts: {
   return out;
 }
 
-async function bulkExistsOnServer(items: { file_name: string; file_size?: number }[]) {
+async function bulkExistsOnServer(
+  items: {
+    file_name: string;
+    file_size?: number;
+    phone_number?: string | null;
+    call_started_at?: string | null;
+    duration_sec?: number | null;
+  }[],
+) {
   if (!items.length) return { existing: new Set<string>(), tombstoned: new Set<string>() };
   try {
     const { data } = await api.post<{
-      existing?: { file_name: string; file_size?: number | null }[];
+      existing?: {
+        file_name: string;
+        file_size?: number | null;
+        phone_number?: string | null;
+        duration_sec?: number | null;
+        call_started_at?: string | null;
+      }[];
       tombstoned?: { file_name: string; file_size?: number | null }[];
     }>('/voice-recordings/bulk-check', { items });
     const existing = new Set<string>();
     const tombstoned = new Set<string>();
+    const rowKey = (r: {
+      file_name: string;
+      file_size?: number | null;
+      phone_number?: string | null;
+      duration_sec?: number | null;
+      call_started_at?: string | null;
+    }) => {
+      const ph = (r.phone_number || '').replace(/\D/g, '').slice(-9);
+      const t = r.call_started_at ? String(Math.floor(new Date(r.call_started_at).getTime() / 60_000)) : '';
+      const d = r.duration_sec != null && r.duration_sec > 0 ? String(Math.round(r.duration_sec)) : '';
+      return `${r.file_name}|${r.file_size ?? 0}|${ph}|${t}|${d}`;
+    };
     for (const r of data?.existing || []) {
+      existing.add(rowKey(r));
       existing.add(`${r.file_name}|${r.file_size ?? 0}`);
       existing.add(r.file_name);
     }
@@ -149,9 +176,9 @@ async function bulkExistsOnServer(items: { file_name: string; file_size?: number
       tombstoned.add(`${t.file_name}|${t.file_size ?? 0}`);
       tombstoned.add(t.file_name);
     }
-    return { existing, tombstoned };
+    return { existing, tombstoned, rowKey };
   } catch {
-    return { existing: new Set<string>(), tombstoned: new Set<string>() };
+    return { existing: new Set<string>(), tombstoned: new Set<string>(), rowKey: null as null };
   }
 }
 
@@ -176,13 +203,32 @@ export async function runVoiceBackgroundSyncOnce(): Promise<{ uploaded: number; 
     const local = await listLocalCallRecordings({ sinceMs, limit: 40, includeAll: false });
     const uploadedNames = await getUploadedNames();
     const pending = local.filter((it) => !uploadedNames.has(it.name)).slice(0, 20);
-    const { existing, tombstoned } = await bulkExistsOnServer(
-      pending.map((p) => ({ file_name: p.name, file_size: p.size || undefined })),
+    const { existing, tombstoned, rowKey } = await bulkExistsOnServer(
+      pending.map((p) => ({
+        file_name: p.name,
+        file_size: p.size || undefined,
+        phone_number: p.phoneHint || undefined,
+        call_started_at: p.dateAddedMs > 0 ? new Date(p.dateAddedMs).toISOString() : undefined,
+      })),
     );
 
     for (const item of pending) {
-      const key = `${item.name}|${item.size ?? 0}`;
-      if (existing.has(key) || existing.has(item.name) || tombstoned.has(key) || tombstoned.has(item.name)) {
+      const basicKey = `${item.name}|${item.size ?? 0}`;
+      const richKey = rowKey
+        ? rowKey({
+            file_name: item.name,
+            file_size: item.size ?? 0,
+            phone_number: item.phoneHint || null,
+            call_started_at: item.dateAddedMs > 0 ? new Date(item.dateAddedMs).toISOString() : null,
+          })
+        : basicKey;
+      if (
+        existing.has(richKey)
+        || existing.has(basicKey)
+        || existing.has(item.name)
+        || tombstoned.has(basicKey)
+        || tombstoned.has(item.name)
+      ) {
         await markUploaded(item.name);
         continue;
       }

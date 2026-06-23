@@ -47,6 +47,14 @@ import {
 import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
 import { buildKpiLedgerMonthTooltipHint } from '../lib/kpiPersonalLedgerHints';
 import { effectivePipelineStageSlaDays } from '../lib/crmPipelineSla';
+import {
+  coalesceCrmDashboardChangedEvents,
+  crmRealtimePayloadInCompanyScope,
+  fetchCrmKanbanRowsByIds,
+  patchCrmKanbanRowById,
+  removeCrmKanbanRowById,
+  upsertCrmKanbanRow,
+} from '../lib/crmDashboardRealtime';
 import { sortAndDedupePipelineStages } from '../lib/crmPipelineStages';
 import {
   canDropDealOnCrmKanbanStage,
@@ -879,6 +887,8 @@ export default function CRMDashboard() {
   const [pipelinesAll, setPipelinesAll] = useState([]);
   const [allLeads, setAllLeads] = useState([]);
   const [allDeals, setAllDeals] = useState([]);
+  const allLeadsRef = useRef(allLeads);
+  allLeadsRef.current = allLeads;
   const allDealsRef = useRef(allDeals);
   allDealsRef.current = allDeals;
   const [filterCompany, setFilterCompany] = useState(() => {
@@ -1033,8 +1043,9 @@ export default function CRMDashboard() {
   const pipelinesAllRef = useRef([]);
   /** Giá trị GET /crm/live-version gần nhất — đổi → silent reload Kanban/KPI */
   const inactiveKanbanLoadSeqRef = useRef(0);
-  /** Giá trị GET /crm/live-version gần nhất — đổi → silent reload Kanban/KPI */
   const crmLiveVersionRef = useRef(null);
+  /** Lần cuối patch realtime Kanban — polling live-version bỏ qua refresh list nếu gần đây */
+  const lastCrmRealtimeAtRef = useRef(0);
   /** Số bản ghi lead/deal tải cho Kanban (API /crm/leads có phân trang; "all" = lặp offset đến hết) */
   const [kanbanLoadLimit, setKanbanLoadLimit] = useState(() => {
     const fromP = P?.kanbanLoadLimit != null ? String(P.kanbanLoadLimit) : null;
@@ -1665,21 +1676,25 @@ export default function CRMDashboard() {
   }, []);
 
   /**
-   * Realtime: backend emit 'crm:dashboard_changed' khi lead/deal thay đổi
-   * (create/update/stage/convert/bulk/merge/delete). Debounce 800ms để gom burst
-   * (vd bulk-assign 50 lead) chỉ refetch 1 lần.
+   * Realtime: backend emit 'crm:dashboard_changed' khi lead/deal thay đổi.
+   * Patch từng thẻ Kanban + KPI nhẹ — không gọi load() (tránh giật UI khi đang dùng).
    */
   useEffect(() => {
     const socket = getSocket() || connectSocket();
     if (!socket) return;
+    const pending = [];
     let timer = null;
-    const onChanged = () => {
+    const flush = () => {
+      timer = null;
+      if (!pending.length) return;
+      const batch = pending.splice(0, pending.length);
+      void applyCrmRealtimeChangesRef.current?.(batch);
+    };
+    const onChanged = (payload) => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      pending.push(payload || {});
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        timer = null;
-        loadRef.current?.({ silent: true });
-      }, 800);
+      timer = setTimeout(flush, 400);
     };
     socket.on('crm:dashboard_changed', onChanged);
     return () => {
@@ -2082,6 +2097,166 @@ export default function CRMDashboard() {
     },
     [customDateFrom, customDateTo, dashboardScopeCompanyId, filterAssignee, filterRegion],
   );
+
+  const crmRealtimeCtxRef = useRef({});
+  const applyCrmRealtimeChangesRef = useRef(null);
+  crmRealtimeCtxRef.current = {
+    user,
+    dashboardScopeCompanyId,
+    filterAssignee,
+    pipelineType,
+    refreshKanbanListAfterCreate,
+    refreshCrmDashboardSlice,
+  };
+
+  /** Cập nhật từng thẻ Kanban theo socket — không gọi load() full trang. */
+  const applyCrmRealtimeChanges = useCallback(async (rawEvents) => {
+    const events = Array.isArray(rawEvents) ? rawEvents : [rawEvents];
+    if (!events.length) return;
+    const ctx = crmRealtimeCtxRef.current;
+    const scopeCo = ctx.dashboardScopeCompanyId || '';
+    const { byLeadId, bulk } = coalesceCrmDashboardChangedEvents(events);
+
+    const removeId = (id) => {
+      const sid = String(id);
+      setAllLeads((prev) => removeCrmKanbanRowById(prev, sid));
+      setAllDeals((prev) => removeCrmKanbanRowById(prev, sid));
+    };
+
+    const applyRow = (row) => {
+      if (!row?.id) return;
+      const userKey = getCurrentUserKeyForLeadSeen(ctx.user);
+      const viewedLocal = getLocallyViewedLeadIdSet(userKey);
+      const normalized = viewedLocal.has(String(row.id))
+        ? { ...row, is_new_for_current_user: false }
+        : row;
+      const isDeal = normalized.type === 'deal';
+      if (isDeal) {
+        setAllLeads((prev) => removeCrmKanbanRowById(prev, normalized.id));
+        setAllDeals((prev) =>
+          dedupeCrmKanbanRows(
+            preserveCrmKanbanPipelineBadges(prev, upsertCrmKanbanRow(prev, normalized)),
+          ),
+        );
+      } else {
+        setAllDeals((prev) => removeCrmKanbanRowById(prev, normalized.id));
+        setAllLeads((prev) => dedupeCrmKanbanRows(upsertCrmKanbanRow(prev, normalized)));
+      }
+    };
+
+    const patchId = (id, patch) => {
+      const sid = String(id);
+      setAllLeads((prev) => dedupeCrmKanbanRows(patchCrmKanbanRowById(prev, sid, patch)));
+      setAllDeals((prev) =>
+        dedupeCrmKanbanRows(preserveCrmKanbanPipelineBadges(prev, patchCrmKanbanRowById(prev, sid, patch))),
+      );
+    };
+
+    const idsToDelete = new Set();
+    const idsToFetch = new Set();
+    let needsListRefresh = false;
+    const typesToRefreshKpi = new Set();
+
+    for (const ev of bulk) {
+      if (!crmRealtimePayloadInCompanyScope(ev, scopeCo)) continue;
+      if (ev.action === 'cleanup_duplicates') {
+        needsListRefresh = true;
+        typesToRefreshKpi.add(ctx.pipelineType === 'deal' ? 'deal' : 'lead');
+      } else if (ev.action === 'merged' || ev.action === 'merged_selected') {
+        for (const did of ev.delete_ids || []) idsToDelete.add(String(did));
+        if (ev.keep_id) idsToFetch.add(String(ev.keep_id));
+        typesToRefreshKpi.add('lead');
+        typesToRefreshKpi.add('deal');
+      } else if (ev.action === 'bulk_assigned' && ev.lead_ids?.length) {
+        for (const lid of ev.lead_ids) idsToFetch.add(String(lid));
+        if (ev.type) typesToRefreshKpi.add(ev.type);
+      }
+    }
+
+    for (const [id, ev] of byLeadId) {
+      if (!crmRealtimePayloadInCompanyScope(ev, scopeCo)) {
+        if (allLeadsRef.current.some((r) => String(r.id) === id) || allDealsRef.current.some((r) => String(r.id) === id)) {
+          removeId(id);
+        }
+        continue;
+      }
+      if (ev.action === 'deleted') {
+        idsToDelete.add(id);
+        if (ev.type) typesToRefreshKpi.add(ev.type);
+        continue;
+      }
+      if (ev.action === 'stage_changed' && ev.stage_id) {
+        patchId(id, { stage_id: ev.stage_id, stage_entered_at: new Date().toISOString() });
+      }
+      if (ev.action === 'reopened' && ev.stage_id) {
+        patchId(id, { stage_id: ev.stage_id, stage_entered_at: new Date().toISOString() });
+      }
+      idsToFetch.add(id);
+      if (ev.type) typesToRefreshKpi.add(ev.type);
+      else if (ev.action === 'converted_to_deal') {
+        typesToRefreshKpi.add('lead');
+        typesToRefreshKpi.add('deal');
+      } else if (ev.action === 'reverted_to_lead') {
+        typesToRefreshKpi.add('lead');
+        typesToRefreshKpi.add('deal');
+      }
+    }
+
+    for (const id of idsToDelete) removeId(id);
+
+    if (needsListRefresh) {
+      const t = ctx.pipelineType === 'deal' ? 'deal' : 'lead';
+      await Promise.all([
+        ctx.refreshKanbanListAfterCreate?.(t),
+        ctx.refreshCrmDashboardSlice?.(t),
+      ]);
+      setLastSyncAt(new Date());
+      return;
+    }
+
+    const fetchIds = [...idsToFetch].filter((id) => !idsToDelete.has(id));
+    let fetched = [];
+    if (fetchIds.length) {
+      fetched = await fetchCrmKanbanRowsByIds(api, fetchIds, { skipDeadline: true });
+      for (const row of fetched) applyRow(row);
+      for (const id of fetchIds) {
+        if (!fetched.some((r) => String(r.id) === String(id))) removeId(id);
+      }
+    }
+
+    const leadIds = fetched.filter((r) => r.type !== 'deal').map((r) => r.id).filter(Boolean);
+    const dealIds = fetched.filter((r) => r.type === 'deal').map((r) => r.id).filter(Boolean);
+    await Promise.all([
+      leadIds.length
+        ? fetchCrmLedgerNetByLeadIds(api, {
+            type: 'lead',
+            leadIds,
+            assigned_to: ctx.filterAssignee || undefined,
+          }).then((ledgerPayload) => {
+            if (ledgerPayload?.ledger_net_by_lead) {
+              setDataLead((prev) => mergeCrmDashWithLedger(prev, ledgerPayload));
+            }
+          })
+        : Promise.resolve(),
+      dealIds.length
+        ? fetchCrmLedgerNetByLeadIds(api, {
+            type: 'deal',
+            leadIds: dealIds,
+            assigned_to: ctx.filterAssignee || undefined,
+          }).then((ledgerPayload) => {
+            if (ledgerPayload?.ledger_net_by_lead) {
+              setDataDeal((prev) => mergeCrmDashWithLedger(prev, ledgerPayload));
+            }
+          })
+        : Promise.resolve(),
+      ...[...typesToRefreshKpi].map((t) => ctx.refreshCrmDashboardSlice?.(t)),
+    ]);
+
+    setLastSyncAt(new Date());
+    lastCrmRealtimeAtRef.current = Date.now();
+  }, []);
+
+  applyCrmRealtimeChangesRef.current = applyCrmRealtimeChanges;
 
   const refreshPipelinePhoneTotalsForType = useCallback(
     async (type) => {
@@ -4102,12 +4277,19 @@ export default function CRMDashboard() {
     }
   };
 
+  const refreshKanbanListAfterCreateRef = useRef(refreshKanbanListAfterCreate);
+  refreshKanbanListAfterCreateRef.current = refreshKanbanListAfterCreate;
+  const refreshCrmDashboardSliceRef = useRef(refreshCrmDashboardSlice);
+  refreshCrmDashboardSliceRef.current = refreshCrmDashboardSlice;
+  const pipelineTypeRef = useRef(pipelineType);
+  pipelineTypeRef.current = pipelineType;
+
   loadRef.current = load;
 
   /**
    * Đồng bộ nhẹ: mỗi 15s poll GET /crm/live-version (vài chục byte).
-   * Chỉ khi v đổi mới gọi load({ silent }). Tab ẩn: skip. Tab focus lại: chạy một tick ngay.
-   * Kết hợp socket 'crm:dashboard_changed' (effect riêng phía dưới) để cập nhật < 1s.
+   * Khi v đổi: refresh slice Kanban đang mở + KPI — không load() full trang.
+   * Kết hợp socket 'crm:dashboard_changed' (patch từng thẻ) để cập nhật < 1s.
    */
   useEffect(() => {
     const POLL_MS = 15_000;
@@ -4134,7 +4316,17 @@ export default function CRMDashboard() {
         if (v == null) return;
         if (prev != null && Number(v) <= Number(prev)) return;
         crmLiveVersionRef.current = v;
-        await loadRef.current?.({ silent: true });
+        const type = pipelineTypeRef.current === 'deal' ? 'deal' : 'lead';
+        const recentRealtime = Date.now() - lastCrmRealtimeAtRef.current < 45_000;
+        if (recentRealtime) {
+          await refreshCrmDashboardSliceRef.current?.(type);
+        } else {
+          await Promise.all([
+            refreshKanbanListAfterCreateRef.current?.(type),
+            refreshCrmDashboardSliceRef.current?.(type),
+          ]);
+        }
+        setLastSyncAt(new Date());
       } catch {
         /* ignore */
       }
