@@ -362,11 +362,8 @@ function sanitizeMessengerStorageBaseName(original, ext) {
 function writeMessengerBufferLocal(buffer, originalName) {
   fs.mkdirSync(MESSENGER_CHAT_UPLOAD, { recursive: true });
   const ext = path.extname(originalName || '') || '';
-  const base = path
-    .basename(originalName || 'file', ext)
-    .replace(/[^a-zA-Z0-9.\u00C0-\u024F\u1E00-\u1EFF\u0100-\u017F._\s-]/g, '_')
-    .slice(0, 80);
-  const fname = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}_${base}${ext}`;
+  const safeBase = sanitizeMessengerStorageBaseName(originalName, ext);
+  const fname = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}_${safeBase}${ext}`;
   const full = path.join(MESSENGER_CHAT_UPLOAD, fname);
   fs.writeFileSync(full, buffer);
   return `/uploads/messenger-chat/${fname}`;
@@ -392,6 +389,9 @@ async function storeMessengerUploadedFile(groupId, file) {
     });
     if (error) {
       console.error('[messenger] Supabase storage upload failed:', error.message);
+      if (process.env.NODE_ENV === 'production' || process.env.RENDER) {
+        throw new Error(`Không lưu được file lên Storage: ${error.message}`);
+      }
       const url = writeMessengerBufferLocal(file.buffer, original);
       return { name: original, url, type: mime, size: file.size };
     }
@@ -429,6 +429,29 @@ r.use((req, res, next) => {
   }
   req.authUserId = String(id).trim();
   next();
+});
+
+/** Tải file chat đã lưu local (/uploads/messenger-chat/...) — có auth, UTF-8 filename. */
+r.get('/files/download', async (req, res) => {
+  try {
+    const { resolveLocalUploadFile } = require('../helpers/localUploadServe');
+    const rawPath = String(req.query.path || '').trim();
+    if (!rawPath) return res.status(400).json({ error: 'Thiếu path' });
+    const resolved = resolveLocalUploadFile(rawPath);
+    if (!resolved) {
+      return res.status(404).json({
+        error: 'Không tìm thấy file trên máy chủ — có thể đã mất sau khi deploy. Hãy gửi lại file.',
+      });
+    }
+    const downloadName = fixUploadFilename(String(req.query.name || '').trim()) || resolved.basename;
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(downloadName)}`);
+    res.sendFile(resolved.fullPath);
+  } catch (e) {
+    console.error('GET /messenger/files/download:', e.message);
+    res.status(500).json({ error: e.message || 'Lỗi tải file' });
+  }
 });
 
 function mapIncomingRole(role) {

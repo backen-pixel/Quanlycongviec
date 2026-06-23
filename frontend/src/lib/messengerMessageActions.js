@@ -1,4 +1,63 @@
 import { resolveMediaUrl } from './mediaUrl';
+import { resolveApiOrigin } from './apiOrigin';
+
+const LOCAL_UPLOAD_PREFIXES = ['/uploads/messenger-chat/', '/uploads/lead-chat/'];
+
+function localUploadPathFromUrl(url) {
+  const t = String(url || '').trim();
+  if (!t) return '';
+  if (t.startsWith('/uploads/')) return t;
+  try {
+    const u = new URL(t);
+    if (u.pathname.startsWith('/uploads/')) return u.pathname;
+  } catch {
+    /* ignore */
+  }
+  return '';
+}
+
+function isLocalUploadPath(url) {
+  const p = localUploadPathFromUrl(url);
+  return LOCAL_UPLOAD_PREFIXES.some((prefix) => p.startsWith(prefix));
+}
+
+function saveBlobDownload(blob, fileName) {
+  const blobUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = blobUrl;
+  a.download = fileName;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+}
+
+async function fetchLocalUploadBlob(urlPath, fileName) {
+  const base = resolveApiOrigin() || (typeof window !== 'undefined' ? window.location.origin : '');
+  if (!base) throw new Error('Không xác định được API');
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null;
+  const qs = new URLSearchParams({ path: urlPath, name: fileName || 'download' });
+  const endpoints = [
+    `${base}/api/messenger/files/download?${qs}`,
+    `${base}/api/upload/serve-local?${qs}`,
+  ];
+  let lastErr = null;
+  for (const href of endpoints) {
+    try {
+      const res = await fetch(href, {
+        credentials: 'include',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.ok) return res.blob();
+      const body = await res.json().catch(() => ({}));
+      lastErr = new Error(body?.error || `Không tải được tệp (HTTP ${res.status})`);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('Không tải được tệp');
+}
 
 /** Ký tự Latin mở rộng (tiếng Việt có dấu, gồm Ứ ư ự …). */
 const VIETNAMESE_NAME_CHARS = 'a-zA-Z0-9.\\u00C0-\\u024F\\u1E00-\\u1EFF\\u0100-\\u017F';
@@ -229,57 +288,69 @@ export async function copyImageToClipboard(url) {
   }
 }
 
-export function downloadMessengerFile(url, name) {
+export async function downloadMessengerFile(url, name) {
+  const fileName = fixMessengerFilename(name) || 'download';
+  const localPath = localUploadPathFromUrl(url) || localUploadPathFromUrl(resolveMediaUrl(url));
+
+  if (localPath && isLocalUploadPath(localPath)) {
+    const blob = await fetchLocalUploadBlob(localPath, fileName);
+    saveBlobDownload(blob, fileName);
+    return;
+  }
+
   const full = resolveMediaUrl(url);
   if (!full) return Promise.reject(new Error('URL không hợp lệ'));
-  const fileName = fixMessengerFilename(name) || 'download';
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null;
 
-  return fetch(full, { mode: 'cors', credentials: 'omit' })
-    .then((res) => {
-      if (!res.ok) throw new Error('Không tải được tệp');
-      return res.blob();
-    })
-    .then((blob) => {
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = fileName;
-      a.rel = 'noopener';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-    })
-    .catch(() => {
-      const a = document.createElement('a');
-      a.href = full;
-      a.download = fileName;
-      a.rel = 'noopener';
-      a.target = '_blank';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+  try {
+    const res = await fetch(full, {
+      mode: 'cors',
+      credentials: 'omit',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
+    if (!res.ok) throw new Error('Không tải được tệp');
+    const blob = await res.blob();
+    saveBlobDownload(blob, fileName);
+  } catch (e) {
+    throw new Error(
+      e?.message === 'Failed to fetch'
+        ? 'Không tải được tệp — kiểm tra kết nối hoặc file đã bị xóa trên máy chủ'
+        : (e?.message || 'Không tải được tệp'),
+    );
+  }
 }
 
 /** Mở tệp trong tab mới (blob URL — tránh cross-origin chặn mở trực tiếp). */
 export async function openMessengerFile(url, name) {
-  const full = resolveMediaUrl(url);
-  if (!full) throw new Error('URL không hợp lệ');
+  const fileName = fixMessengerFilename(name) || 'download';
+  const localPath = localUploadPathFromUrl(url) || localUploadPathFromUrl(resolveMediaUrl(url));
+
   try {
-    const res = await fetch(full, { mode: 'cors', credentials: 'omit' });
-    if (!res.ok) throw new Error('fetch failed');
-    const blob = await res.blob();
+    let blob;
+    if (localPath && isLocalUploadPath(localPath)) {
+      blob = await fetchLocalUploadBlob(localPath, fileName);
+    } else {
+      const full = resolveMediaUrl(url);
+      if (!full) throw new Error('URL không hợp lệ');
+      const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null;
+      const res = await fetch(full, {
+        mode: 'cors',
+        credentials: 'omit',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error('fetch failed');
+      blob = await res.blob();
+    }
     const blobUrl = URL.createObjectURL(blob);
     const opened = window.open(blobUrl, '_blank', 'noopener,noreferrer');
     if (!opened) {
-      await downloadMessengerFile(url, name);
+      saveBlobDownload(blob, fileName);
       URL.revokeObjectURL(blobUrl);
       return;
     }
     window.setTimeout(() => URL.revokeObjectURL(blobUrl), 120000);
   } catch {
-    window.open(full, '_blank', 'noopener,noreferrer');
+    await downloadMessengerFile(url, name);
   }
 }
 

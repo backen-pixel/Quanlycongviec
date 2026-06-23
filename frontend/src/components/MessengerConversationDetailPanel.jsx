@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import { resolveMediaUrl, BROKEN_MEDIA_PLACEHOLDER } from '../lib/mediaUrl';
 import { publicFileUrl } from '../lib/publicFileUrl';
-import { displayMessengerFilename, downloadMessengerFile } from '../lib/messengerMessageActions';
+import { displayMessengerFilename, downloadMessengerFile, openMessengerFile } from '../lib/messengerMessageActions';
 import GroupSenderName from './GroupSenderName';
 import { dispatchMessengerClearHistory } from '../lib/messengerHiddenHistory';
 import UploadFileLightbox, { collectUploadLightboxItems, findUploadLightboxIndex } from './UploadFileLightbox';
@@ -141,9 +141,11 @@ function DetailPanelFileRow({ file }) {
         <FileText className="h-4 w-4 text-violet-600 shrink-0" />
         <a
           href={fileUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="flex-1 min-w-0 truncate text-sm text-slate-700 hover:text-violet-700"
+          onClick={(e) => {
+            e.preventDefault();
+            if (file?.url) void openMessengerFile(file.url, name);
+          }}
+          className="flex-1 min-w-0 truncate text-sm text-slate-700 hover:text-violet-700 cursor-pointer"
           title={name}
         >
           {name}
