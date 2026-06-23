@@ -17,6 +17,7 @@ import { formatApiError } from '../api/client';
 import CommentNotificationsModal from '../components/CommentNotificationsModal';
 import TapHighlight from '../components/TapHighlight';
 import FilterPickerModal from '../components/FilterPickerModal';
+import ProductionFilterSheet from '../components/ProductionFilterSheet';
 import MoveColumnModal from '../components/MoveColumnModal';
 import ProjectCommentModal from '../components/ProjectCommentModal';
 import Toast, { type ToastKind, type ToastState } from '../components/Toast';
@@ -26,6 +27,8 @@ import { useNotifications } from '../context/NotificationContext';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import {
   fetchCompanies,
+  fetchClientCompanies,
+  fetchWorkshopOptionsForDeal,
   assignProjectWorkshopType,
   fetchProductionBoard,
   fetchProductionProject,
@@ -37,6 +40,17 @@ import {
   type CompanyOption,
   type WorkshopTypeOption,
 } from '../lib/productionApi';
+import {
+  isMetallaOrHucabiCompanyId,
+  isSystemAdmin,
+  productionCreateCompanyOptions,
+  projectMatchesDealCompanyExternalFilter,
+  resolveDealCompanyExternalFilter,
+  resolveDealCompanyParam,
+  shouldShowDealCompanyFilter,
+  workshopCompaniesForCrossViewer,
+  type ClientCompanyOption,
+} from '../lib/productionFilters';
 import { ensureNotificationPermission } from '../lib/pushRegistration';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { useTheme } from '../context/ThemeContext';
@@ -44,6 +58,13 @@ import { type AppColors, colorWithAlpha, getTaskProgressColor, HIT_TARGET, Radii
 import type { KanbanStage, ProductionBoard, ProductionProject } from '../types';
 
 type QuickFilter = 'all' | 'mine' | 'overdue' | 'today';
+type FilterSheetTab = 'scope' | 'pipeline';
+
+function shortFilterLabel(label: string | undefined, fallback: string, max = 15): string {
+  const t = (label || fallback).trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max - 1)}…`;
+}
 
 /** Số card render ban đầu + mỗi lần tải thêm khi cuộn — giúp cột nhiều dự án mở nhanh. */
 const CARD_PAGE_SIZE = 10;
@@ -168,14 +189,21 @@ export default function KanbanScreen() {
   const [search, setSearch] = useState('');
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('all');
   const [filterCompany, setFilterCompany] = useState('');
+  const [filterDealCompany, setFilterDealCompany] = useState('');
   const [filterWorkTypeId, setFilterWorkTypeId] = useState('');
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
+  const [clientCompaniesForDeal, setClientCompaniesForDeal] = useState<ClientCompanyOption[]>([]);
+  const [workshopOptionsForDeal, setWorkshopOptionsForDeal] = useState<CompanyOption[]>([]);
   const [workTypes, setWorkTypes] = useState<WorkshopTypeOption[]>([]);
   /** Công ty mà `workTypes` hiện tại thuộc về — tránh auto-chọn nhầm loại công ty cũ. */
   const [workTypesCompanyId, setWorkTypesCompanyId] = useState('');
   // Ref cache danh sách công ty — không bao giờ bị xóa khi board reload theo filter.
   const allCompaniesRef = useRef<CompanyOption[]>([]);
   const [workTypePickerOpen, setWorkTypePickerOpen] = useState(false);
+  const [workshopPickerOpen, setWorkshopPickerOpen] = useState(false);
+  const [dealCompanyPickerOpen, setDealCompanyPickerOpen] = useState(false);
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
+  const [filterSheetTab, setFilterSheetTab] = useState<FilterSheetTab>('scope');
   const [colPickerOpen, setColPickerOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(CARD_PAGE_SIZE);
   const [moveModalProject, setMoveModalProject] = useState<ProductionProject | null>(null);
@@ -187,10 +215,56 @@ export default function KanbanScreen() {
 
   // Refs để load() luôn dùng giá trị filter mới nhất mà không cần thêm vào deps array.
   const filterCompanyRef = useRef('');
+  const filterDealCompanyRef = useRef('');
   const filterWorkTypeIdRef = useRef('');
   const isFirstMount = useRef(true);
 
-  const isSystemAdmin = user?.role === 'admin' && !user?.company_id;
+  const isAdmin = user?.role === 'admin';
+  const isSysAdmin = isSystemAdmin(user);
+  const showDealCompanyFilter = useMemo(
+    () => shouldShowDealCompanyFilter(user, companies),
+    [user, companies],
+  );
+  const canPickDealCompany = isSysAdmin && showDealCompanyFilter;
+
+  const dealCompanyParam = useMemo(
+    () => resolveDealCompanyParam({
+      filterDealCompany,
+      dealCompanyOptions: clientCompaniesForDeal,
+      showDealCompanyFilter,
+      user,
+      isAdmin: !!isAdmin,
+    }),
+    [filterDealCompany, clientCompaniesForDeal, showDealCompanyFilter, user, isAdmin],
+  );
+
+  const dealCompanyExternalFilter = useMemo(
+    () => resolveDealCompanyExternalFilter(filterDealCompany, clientCompaniesForDeal),
+    [filterDealCompany, clientCompaniesForDeal],
+  );
+
+  const clientCompaniesWorkshopId = useMemo(() => {
+    if (filterCompany && isMetallaOrHucabiCompanyId(filterCompany, companies)) {
+      return filterCompany;
+    }
+    const opts = productionCreateCompanyOptions(companies);
+    return opts[0]?.id ? String(opts[0].id) : '';
+  }, [filterCompany, companies]);
+
+  const workshopCompanyPickerList = useMemo(() => {
+    if (isAdmin && !dealCompanyParam) return companies;
+    if (workshopOptionsForDeal.length) {
+      const ids = new Set(workshopOptionsForDeal.map((w) => String(w.id)));
+      const fromApi = companies.filter((c) => ids.has(String(c.id)));
+      return fromApi.length ? fromApi : workshopOptionsForDeal;
+    }
+    if (user?.company_id && isMetallaOrHucabiCompanyId(user.company_id, companies)) {
+      return companies.filter((c) => String(c.id) === String(user.company_id));
+    }
+    return workshopCompaniesForCrossViewer(companies, user);
+  }, [companies, user, workshopOptionsForDeal, dealCompanyParam, isAdmin]);
+
+  const showWorkshopPicker = isSysAdmin || workshopCompanyPickerList.length > 1;
   const companyForTypes = filterCompany || user?.company_id || null;
 
   // Debounce ô tìm kiếm: gõ phím cập nhật `searchInput` ngay, nhưng việc lọc nặng
@@ -252,6 +326,7 @@ export default function KanbanScreen() {
     try {
       const filters: BoardFilters = {
         companyId: filterCompanyRef.current || undefined,
+        dealCompanyId: filterDealCompanyRef.current || undefined,
         workshopTypeId: filterWorkTypeIdRef.current || undefined,
       };
       const data = await fetchProductionBoard(mode === 'silent', filters);
@@ -267,6 +342,7 @@ export default function KanbanScreen() {
 
   // Đồng bộ refs với state để load() luôn dùng filter mới nhất.
   useEffect(() => { filterCompanyRef.current = filterCompany; }, [filterCompany]);
+  useEffect(() => { filterDealCompanyRef.current = dealCompanyParam || ''; }, [dealCompanyParam]);
   useEffect(() => { filterWorkTypeIdRef.current = filterWorkTypeId; }, [filterWorkTypeId]);
 
   useEffect(() => { void load('init'); }, [load]);
@@ -277,7 +353,7 @@ export default function KanbanScreen() {
     setActiveIndex(0);
     void load('init');
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterCompany, filterWorkTypeId]);
+  }, [filterCompany, filterDealCompany, dealCompanyParam, filterWorkTypeId]);
 
   useProductionRealtime({
     onRefresh: () => load('silent'),
@@ -326,11 +402,40 @@ export default function KanbanScreen() {
     void fetchCompanies()
       .then((list) => {
         setCompanies(list);
-        // Lưu vào ref để companyOptions không bị mất khi board reload theo filter.
         if (list.length > 0) allCompaniesRef.current = list;
       })
       .catch(() => setCompanies([]));
   }, []);
+
+  useEffect(() => {
+    if (!dealCompanyParam) {
+      setWorkshopOptionsForDeal([]);
+      return;
+    }
+    let cancel = false;
+    void fetchWorkshopOptionsForDeal(dealCompanyParam)
+      .then((list) => { if (!cancel) setWorkshopOptionsForDeal(list); })
+      .catch(() => { if (!cancel) setWorkshopOptionsForDeal([]); });
+    return () => { cancel = true; };
+  }, [dealCompanyParam]);
+
+  useEffect(() => {
+    const cid = String(clientCompaniesWorkshopId || '').trim();
+    if (!cid) {
+      setClientCompaniesForDeal([]);
+      return;
+    }
+    let cancel = false;
+    void fetchClientCompanies(cid)
+      .then((list) => { if (!cancel) setClientCompaniesForDeal(list); })
+      .catch(() => { if (!cancel) setClientCompaniesForDeal([]); });
+    return () => { cancel = true; };
+  }, [clientCompaniesWorkshopId]);
+
+  useEffect(() => {
+    if (!showDealCompanyFilter || filterDealCompany || isAdmin) return;
+    if (user?.company_id) setFilterDealCompany(String(user.company_id));
+  }, [showDealCompanyFilter, filterDealCompany, user?.company_id, isAdmin]);
 
   useEffect(() => {
     if (!companyForTypes) {
@@ -338,7 +443,7 @@ export default function KanbanScreen() {
       setWorkTypesCompanyId('');
       return;
     }
-    void fetchWorkshopTypes(companyForTypes)
+    void fetchWorkshopTypes(companyForTypes, dealCompanyParam || null)
       .then((list) => {
         setWorkTypes(list);
         setWorkTypesCompanyId(companyForTypes);
@@ -347,7 +452,7 @@ export default function KanbanScreen() {
         setWorkTypes([]);
         setWorkTypesCompanyId(companyForTypes);
       });
-  }, [companyForTypes]);
+  }, [companyForTypes, dealCompanyParam]);
 
   /**
    * Khi đã chọn công ty (hoặc user thuộc 1 công ty) mà chưa chọn phân loại → tự chọn loại đầu tiên.
@@ -356,7 +461,7 @@ export default function KanbanScreen() {
   useEffect(() => {
     if (workTypesCompanyId !== companyForTypes) return;
 
-    const hasCompanyContext = !!filterCompany || (!isSystemAdmin && !!user?.company_id);
+    const hasCompanyContext = !!filterCompany || (!isSysAdmin && !!user?.company_id);
     if (!hasCompanyContext) {
       if (!companyForTypes && filterWorkTypeId && filterWorkTypeId !== 'none') {
         setFilterWorkTypeId('');
@@ -383,15 +488,16 @@ export default function KanbanScreen() {
     companyForTypes,
     filterWorkTypeId,
     filterCompany,
-    isSystemAdmin,
+    isSysAdmin,
     user?.company_id,
   ]);
 
   const companyOptions = useMemo(() => {
-    // Luôn giữ danh sách đầy đủ — không thu hẹp theo board đang lọc.
-    let fromApi = allCompaniesRef.current.length
-      ? [...allCompaniesRef.current]
-      : [...companies];
+    let fromApi = workshopCompanyPickerList.length
+      ? [...workshopCompanyPickerList]
+      : allCompaniesRef.current.length
+        ? [...allCompaniesRef.current]
+        : [...companies];
     if (board.projects.length) {
       const map = new Map(fromApi.map((c) => [String(c.id), c]));
       board.projects.forEach((p) => {
@@ -401,16 +507,70 @@ export default function KanbanScreen() {
       });
       fromApi = Array.from(map.values());
     }
-    if (fromApi.length) {
+    if (fromApi.length && showWorkshopPicker) {
       if (!allCompaniesRef.current.length || fromApi.length > allCompaniesRef.current.length) {
         allCompaniesRef.current = fromApi;
       }
     }
-    return [{ id: '', label: 'Tất cả' }, ...fromApi.map((c) => ({ id: c.id, label: c.name }))];
-  }, [companies, board.projects]);
+    const base = showWorkshopPicker
+      ? [{ id: '', label: 'Tất cả xưởng' }, ...fromApi.map((c) => ({ id: c.id, label: c.name }))]
+      : fromApi.map((c) => ({ id: c.id, label: c.name }));
+    return base;
+  }, [companies, board.projects, workshopCompanyPickerList, showWorkshopPicker]);
 
-  const showCompanyChips = companyOptions.filter((o) => o.id).length > 0
-    && (isSystemAdmin || companyOptions.length > 1);
+  const dealCompanyPickerOptions = useMemo(() => {
+    if (!showDealCompanyFilter) return [];
+    const crm = clientCompaniesForDeal.filter((c) => c.client_company_id);
+    const ext = clientCompaniesForDeal.filter((c) => !c.client_company_id);
+    const opts: { id: string; label: string }[] = [];
+    if (canPickDealCompany) {
+      opts.push({ id: '', label: 'Tất cả công ty đặt hàng' });
+    }
+    crm.forEach((c) => {
+      opts.push({
+        id: c.id,
+        label: `${c.short_name || c.name}${c.source === 'workshop' ? ' · đã liên kết' : ''}`,
+      });
+    });
+    ext.forEach((c) => {
+      opts.push({ id: c.id, label: c.short_name || c.name });
+    });
+    return opts;
+  }, [showDealCompanyFilter, clientCompaniesForDeal, canPickDealCompany]);
+
+  const selectedDealCompanyLabel = useMemo(() => {
+    if (!filterDealCompany) {
+      if (canPickDealCompany) return 'Tất cả công ty đặt hàng';
+      if (showDealCompanyFilter && user?.company_id) {
+        const c = clientCompaniesForDeal.find(
+          (x) => String(x.id) === String(user.company_id)
+            || String(x.client_company_id) === String(user.company_id),
+        ) || companies.find((x) => String(x.id) === String(user.company_id));
+        return c?.name || '—';
+      }
+      return '';
+    }
+    return dealCompanyPickerOptions.find((o) => o.id === filterDealCompany)?.label || '—';
+  }, [
+    filterDealCompany,
+    dealCompanyPickerOptions,
+    canPickDealCompany,
+    showDealCompanyFilter,
+    user?.company_id,
+    clientCompaniesForDeal,
+    companies,
+  ]);
+
+  const scopeFilterCount = useMemo(() => {
+    let n = 0;
+    if (filterCompany) n += 1;
+    if (filterDealCompany && canPickDealCompany) n += 1;
+    if (filterWorkTypeId) n += 1;
+    return n;
+  }, [filterCompany, filterDealCompany, filterWorkTypeId, canPickDealCompany]);
+
+  const selectedWorkshopLabel = companyOptions.find((o) => o.id === filterCompany)?.label;
+  const showCompactFilters = showWorkshopPicker || showDealCompanyFilter || workTypes.length > 0;
 
   const workTypeOptions = useMemo(
     () => [
@@ -451,9 +611,12 @@ export default function KanbanScreen() {
       } else if (filterWorkTypeId) {
         if (String(p.workshop_type_id || '') !== String(filterWorkTypeId)) return false;
       }
+      if (dealCompanyExternalFilter && !projectMatchesDealCompanyExternalFilter(p, dealCompanyExternalFilter)) {
+        return false;
+      }
       return true;
     });
-  }, [board.projects, search, quickFilter, myId, filterWorkTypeId]);
+  }, [board.projects, search, quickFilter, myId, filterWorkTypeId, dealCompanyExternalFilter]);
 
   /** Cột ảo «Chưa phân loại» — chỉ hiện khi bộ lọc phân loại chọn «Chưa phân loại». */
   const showOrphanCol = filterWorkTypeId === 'none';
@@ -527,7 +690,16 @@ export default function KanbanScreen() {
     [displayStages, projectsByStage],
   );
   const filterActive = search.trim().length > 0 || quickFilter !== 'all'
-    || !!filterCompany || !!filterWorkTypeId;
+    || !!filterCompany || !!filterDealCompany || !!filterWorkTypeId;
+
+  const resetFilters = useCallback(() => {
+    setSearchInput('');
+    setSearch('');
+    setQuickFilter('all');
+    setFilterCompany('');
+    setFilterDealCompany('');
+    setFilterWorkTypeId('');
+  }, []);
 
   const moveCardTo = useCallback(
     async (project: ProductionProject, targetStageId: string) => {
@@ -676,9 +848,6 @@ export default function KanbanScreen() {
               </View>
             ) : null}
           </TapHighlight>
-          <TapHighlight style={styles.iconBtn} onPress={() => openMessages('calls')} hitSlop={8}>
-            <Ionicons name="call-outline" size={20} color={colors.text} />
-          </TapHighlight>
           <TapHighlight style={styles.iconBtn} onPress={() => void openNotifications()} hitSlop={8}>
             <Ionicons name="notifications-outline" size={20} color={colors.text} />
             {unreadCount > 0 ? (
@@ -770,13 +939,7 @@ export default function KanbanScreen() {
         })}
         {filterActive ? (
           <Pressable
-            onPress={() => {
-              setSearchInput('');
-              setSearch('');
-              setQuickFilter('all');
-              setFilterCompany('');
-              setFilterWorkTypeId('');
-            }}
+            onPress={resetFilters}
             style={[styles.chipClear, styles.chipGap]}
           >
             <Ionicons name="close" size={13} color={colors.textMuted} />
@@ -784,63 +947,83 @@ export default function KanbanScreen() {
         ) : null}
       </ScrollView>
 
-      {/* ── COMPANY CHIPS — luôn hiện tất cả công ty, tô màu công ty đang chọn ── */}
-      {showCompanyChips ? (
+      {/* ── COMPACT FILTER BAR — 1 hàng, đủ chức năng ── */}
+      {showCompactFilters ? (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          style={styles.companyChipScroll}
-          contentContainerStyle={styles.companyChipContent}
+          style={styles.compactFilterScroll}
+          contentContainerStyle={styles.compactFilterContent}
           nestedScrollEnabled
         >
-          {companyOptions.map((opt, idx) => {
-            const active = filterCompany === opt.id;
-            return (
-              <TapHighlight
-                key={opt.id}
-                onPress={() => {
-                  if (active) return;
-                  setFilterCompany(opt.id);
-                  setFilterWorkTypeId('');
-                }}
-                style={[
-                  styles.companyChip,
-                  active && styles.companyChipActive,
-                  idx < companyOptions.length - 1 && styles.chipGap,
-                ]}
+          {showWorkshopPicker ? (
+            <Pressable
+              style={[styles.compactPill, filterCompany ? styles.compactPillActive : null]}
+              onPress={() => setWorkshopPickerOpen(true)}
+            >
+              <Ionicons
+                name="business-outline"
+                size={13}
+                color={filterCompany ? colors.primary : colors.textMuted}
+              />
+              <Text
+                style={[styles.compactPillText, filterCompany ? styles.compactPillTextActive : null]}
+                numberOfLines={1}
               >
-                {active ? (
-                  <Ionicons name="business" size={11} color={colors.white} style={{ marginRight: 3 }} />
-                ) : null}
-                <Text
-                  style={[styles.companyChipText, active && styles.companyChipTextActive]}
-                  numberOfLines={1}
-                >
-                  {opt.label}
-                </Text>
-              </TapHighlight>
-            );
-          })}
+                {shortFilterLabel(selectedWorkshopLabel, 'Xưởng')}
+              </Text>
+              <Ionicons name="chevron-down" size={11} color={colors.textFaint} />
+            </Pressable>
+          ) : null}
+          {showDealCompanyFilter ? (
+            <Pressable
+              style={[styles.compactPill, filterDealCompany ? styles.compactPillActive : null]}
+              onPress={() => {
+                if (canPickDealCompany) setDealCompanyPickerOpen(true);
+                else {
+                  setFilterSheetTab('scope');
+                  setFilterSheetOpen(true);
+                }
+              }}
+            >
+              <Ionicons
+                name="storefront-outline"
+                size={13}
+                color={filterDealCompany ? colors.primary : colors.textMuted}
+              />
+              <Text
+                style={[styles.compactPillText, filterDealCompany ? styles.compactPillTextActive : null]}
+                numberOfLines={1}
+              >
+                {shortFilterLabel(selectedDealCompanyLabel, 'Đặt hàng')}
+              </Text>
+              <Ionicons name="chevron-down" size={11} color={colors.textFaint} />
+            </Pressable>
+          ) : null}
+          <Pressable
+            style={[styles.compactPill, filterWorkTypeId ? styles.compactPillActive : null]}
+            onPress={() => setWorkTypePickerOpen(true)}
+          >
+            <Ionicons
+              name="layers-outline"
+              size={13}
+              color={filterWorkTypeId ? colors.primary : colors.textMuted}
+            />
+            <Text
+              style={[styles.compactPillText, filterWorkTypeId ? styles.compactPillTextActive : null]}
+              numberOfLines={1}
+            >
+              {shortFilterLabel(filterWorkTypeId ? selectedWorkTypeLabel : undefined, 'Phân loại')}
+            </Text>
+            <Ionicons name="chevron-down" size={11} color={colors.textFaint} />
+          </Pressable>
+          {scopeFilterCount > 0 ? (
+            <Pressable style={styles.compactClear} onPress={resetFilters} hitSlop={6}>
+              <Ionicons name="close" size={14} color={colors.textMuted} />
+            </Pressable>
+          ) : null}
         </ScrollView>
       ) : null}
-
-      {/* ── DROPDOWN FILTER — Phân loại ── */}
-      <View style={styles.dropdownRow}>
-        <Pressable
-          style={[styles.dropdownBtn, filterWorkTypeId ? styles.dropdownBtnActive : null, styles.dropdownBtnFlex]}
-          hitSlop={4}
-          onPress={() => setWorkTypePickerOpen(true)}
-        >
-          <Ionicons name="layers-outline" size={14} color={filterWorkTypeId ? colors.primary : colors.textMuted} />
-          <Text
-            style={[styles.dropdownText, filterWorkTypeId ? styles.dropdownTextActive : null]}
-            numberOfLines={1}
-          >
-            {filterWorkTypeId ? selectedWorkTypeLabel : 'Phân loại'}
-          </Text>
-          <Ionicons name="chevron-down" size={14} color={colors.textFaint} />
-        </Pressable>
-      </View>
 
       {/* ── KPI PILLS ── */}
       <ScrollView
@@ -1212,9 +1395,61 @@ export default function KanbanScreen() {
         onOpenProject={(projectId) => void openCommentForProjectId(projectId)}
       />
 
+      <ProductionFilterSheet
+        visible={filterSheetOpen}
+        initialTab={filterSheetTab}
+        onClose={() => setFilterSheetOpen(false)}
+        onReset={() => {
+          resetFilters();
+          setFilterSheetOpen(false);
+        }}
+        showWorkshopPicker={showWorkshopPicker}
+        workshopOptions={companyOptions}
+        filterCompany={filterCompany}
+        onWorkshopChange={(id) => {
+          setFilterCompany(id);
+          setFilterWorkTypeId('');
+        }}
+        showDealCompanyPicker={showDealCompanyFilter}
+        dealCompanyOptions={dealCompanyPickerOptions}
+        filterDealCompany={filterDealCompany}
+        onDealCompanyChange={(id) => {
+          setFilterDealCompany(id);
+          setFilterWorkTypeId('');
+        }}
+        dealCompanyReadOnlyLabel={!canPickDealCompany ? selectedDealCompanyLabel : undefined}
+        workTypeOptions={workTypeOptions}
+        filterWorkTypeId={filterWorkTypeId}
+        onWorkTypeChange={setFilterWorkTypeId}
+      />
+
+      <FilterPickerModal
+        visible={workshopPickerOpen}
+        title="Công ty sản xuất"
+        options={companyOptions}
+        selectedId={filterCompany}
+        onSelect={(id) => {
+          setFilterCompany(id);
+          setFilterWorkTypeId('');
+        }}
+        onClose={() => setWorkshopPickerOpen(false)}
+      />
+
+      <FilterPickerModal
+        visible={dealCompanyPickerOpen}
+        title="Công ty đặt hàng"
+        options={dealCompanyPickerOptions}
+        selectedId={filterDealCompany}
+        onSelect={(id) => {
+          setFilterDealCompany(id);
+          setFilterWorkTypeId('');
+        }}
+        onClose={() => setDealCompanyPickerOpen(false)}
+      />
+
       <FilterPickerModal
         visible={workTypePickerOpen}
-        title="Chọn phân loại"
+        title="Phân loại pipeline"
         options={workTypeOptions}
         selectedId={filterWorkTypeId}
         onSelect={setFilterWorkTypeId}
@@ -1310,34 +1545,42 @@ function createKanbanStyles(c: AppColors) {
     alignItems: 'center', justifyContent: 'center',
   },
 
-  // Dropdowns
-  dropdownRow: {
-    flexDirection: 'row', flexShrink: 0,
-    paddingHorizontal: Spacing.lg, paddingTop: 8, paddingBottom: 4,
+  // Compact filter bar — 1 hàng pill
+  compactFilterScroll: { height: 34, flexShrink: 0, flexGrow: 0, marginBottom: 4 },
+  compactFilterContent: {
+    paddingHorizontal: Spacing.lg,
+    alignItems: 'center',
+    height: 34,
+    gap: 6,
   },
-  // Company chips — hàng ngang, 1 tap đổi công ty
-  companyChipScroll: { height: 38, flexShrink: 0, flexGrow: 0, marginBottom: 4 },
-  companyChipContent: { paddingHorizontal: Spacing.lg, alignItems: 'center', height: 38 },
-  companyChip: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 13, height: 30, borderRadius: Radii.full,
-    backgroundColor: c.card, borderWidth: 1.5, borderColor: c.border,
-    maxWidth: 150,
+  compactPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    height: 30,
+    paddingHorizontal: 10,
+    borderRadius: Radii.full,
+    backgroundColor: c.card,
+    borderWidth: 1,
+    borderColor: c.border,
+    maxWidth: 148,
   },
-  companyChipActive: { backgroundColor: c.primary, borderColor: c.primary },
-  companyChipText: { color: c.textMuted, fontSize: 12, fontWeight: '700' },
-  companyChipTextActive: { color: c.white },
-
-  // Dropdown filter row — chỉ còn Phân loại
-  dropdownBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: c.card, borderWidth: 1, borderColor: c.border,
-    borderRadius: Radii.md, paddingHorizontal: 12, height: 36, marginRight: 8,
+  compactPillActive: {
+    borderColor: colorWithAlpha(c.primary, 0.45),
+    backgroundColor: c.primarySoft,
   },
-  dropdownBtnFlex: { flex: 1 },
-  dropdownBtnActive: { borderColor: c.primary, backgroundColor: c.primarySoft },
-  dropdownText: { color: c.textMuted, fontSize: 13, fontWeight: '600', flexShrink: 1 },
-  dropdownTextActive: { color: c.primary, fontWeight: '700' },
+  compactPillText: { color: c.textMuted, fontSize: 11, fontWeight: '700', flexShrink: 1 },
+  compactPillTextActive: { color: c.primary },
+  compactClear: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: c.card,
+    borderWidth: 1,
+    borderColor: c.border,
+  },
 
   // KPI — chiều cao cố định từng ô, tránh chữ chồng
   statsScroll: { height: 58, flexShrink: 0, flexGrow: 0, marginBottom: 2 },

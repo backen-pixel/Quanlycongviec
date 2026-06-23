@@ -223,7 +223,11 @@ function scheduleWorkshopIntakeBackground({ req, dealId, projectId, userId, comp
             await notifyMultiple(req, [sid], 'project_assigned',
               '📋 Đơn xưởng mới',
               `Bạn được gán vào dự án ${projectCode} — "${dealTitle}"`,
-              'project', projectId);
+              'project', projectId, {
+                ecosystem_module_key: 'production',
+                project_id: String(projectId),
+                project_code: projectCode,
+              });
           } catch (_) { /* ignore */ }
         }
       } catch (_) { /* ignore */ }
@@ -492,6 +496,22 @@ async function createWorkshopIntakeOrder(opts) {
     projectCode: project.code,
     dealTitle: deal.title,
   });
+
+  try {
+    const { notifyWorkshopIntakeNewDeal, emitProductionBoardRealtime } = require('./workshopIntakeNotify');
+    await notifyWorkshopIntakeNewDeal({
+      req,
+      projectId,
+      projectCode: project.code,
+      projectName: project.name,
+      dealTitle: deal.title,
+      actorUserId: userId,
+    });
+    const io = req?.app?.get('io');
+    await emitProductionBoardRealtime(projectId, io, 'workshop_intake');
+  } catch (intakeNotifyErr) {
+    console.warn('[workshop-intake] notify/socket:', intakeNotifyErr.message);
+  }
 
   return {
     ok: true,

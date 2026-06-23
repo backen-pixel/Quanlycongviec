@@ -23,6 +23,10 @@ export type UpdateCheckResult = {
   size?: number | null;
   sha256?: string | null;
   releaseNotes?: string | null;
+  /** Server có bản mới hơn versionCode hiện tại */
+  needsUpdate?: boolean;
+  /** File APK đã có trên server và tải được */
+  apkReady?: boolean;
 };
 
 /** versionCode native hiện tại (Android). Trên iOS trả null. */

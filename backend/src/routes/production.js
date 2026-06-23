@@ -979,6 +979,13 @@ r.post('/workshop-intake', requirePermission('projects', 'create'), async (req, 
     }
 
     await rcInvalidateTags(['production', 'crm']);
+    try {
+      const { emitProductionBoardRealtime } = require('../helpers/workshopIntakeNotify');
+      const io = req.app.get('io');
+      await emitProductionBoardRealtime(result.project_id, io, 'workshop_intake_api');
+    } catch (emitErr) {
+      console.warn('[production/workshop-intake] emit board:', emitErr.message);
+    }
     res.status(201).json({
       project_id: result.project_id,
       project_code: result.project_code,
@@ -4264,6 +4271,26 @@ function isSxProductionCommentNotification(n) {
   return n.entity_type === 'project' && !!meta.project_id;
 }
 
+const SX_WORKSHOP_DEAL_TYPES = [
+  'workshop_new_deal',
+  'deal_created',
+  'deal_assigned',
+  'deal_won',
+  'project_assigned',
+  'project_created',
+];
+
+function isSxWorkshopDealNotification(n) {
+  if (!n) return false;
+  const type = String(n.type || '');
+  if (!SX_WORKSHOP_DEAL_TYPES.includes(type)) return false;
+  const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  if (type === 'workshop_new_deal' || type === 'project_assigned' || type === 'project_created') {
+    return n.entity_type === 'project' || !!meta.project_id;
+  }
+  return n.entity_type === 'crm_deal' || n.entity_type === 'crm_lead';
+}
+
 async function filterSxProductionCommentNotifications(rows) {
   const list = (rows || []).filter(isSxProductionCommentNotification);
   const projectIds = [
@@ -4304,6 +4331,111 @@ async function filterSxProductionCommentNotifications(rows) {
     });
 }
 
+async function enrichSxWorkshopDealNotifications(rows) {
+  const list = (rows || []).filter(isSxWorkshopDealNotification);
+  const projectIds = [
+    ...new Set(
+      list
+        .filter((n) => n.entity_type === 'project' && n.entity_id)
+        .map((n) => String(n.entity_id)),
+    ),
+  ];
+  const leadIds = [
+    ...new Set(
+      list
+        .filter((n) => n.entity_type === 'crm_deal' || n.entity_type === 'crm_lead')
+        .map((n) => String(n.entity_id))
+        .filter(Boolean),
+    ),
+  ];
+
+  const projMap = new Map();
+  if (projectIds.length) {
+    const { data: projs } = await supabase
+      .from('projects')
+      .select('id, code, name')
+      .in('id', projectIds);
+    (projs || []).forEach((p) => projMap.set(String(p.id), p));
+  }
+
+  const leadMap = new Map();
+  if (leadIds.length) {
+    const { data: leads } = await supabase
+      .from('crm_leads')
+      .select('id, title, code, project_id')
+      .in('id', leadIds);
+    (leads || []).forEach((l) => leadMap.set(String(l.id), l));
+    const extraProjectIds = (leads || [])
+      .map((l) => l.project_id)
+      .filter((id) => id && !projMap.has(String(id)));
+    if (extraProjectIds.length) {
+      const { data: projs2 } = await supabase
+        .from('projects')
+        .select('id, code, name')
+        .in('id', extraProjectIds);
+      (projs2 || []).forEach((p) => projMap.set(String(p.id), p));
+    }
+  }
+
+  return list.map((n) => {
+    const meta = { ...(n.metadata && typeof n.metadata === 'object' ? n.metadata : {}), ecosystem_module_key: 'production' };
+    if (n.entity_type === 'project') {
+      const proj = projMap.get(String(n.entity_id));
+      if (proj) {
+        meta.project_id = String(proj.id);
+        meta.project_code = meta.project_code || proj.code || null;
+        meta.project_name = meta.project_name || proj.name || null;
+      } else {
+        meta.project_id = String(n.entity_id);
+      }
+    } else {
+      const lead = leadMap.get(String(n.entity_id));
+      if (lead) {
+        meta.deal_title = lead.title || lead.code || null;
+        if (lead.project_id) {
+          meta.project_id = String(lead.project_id);
+          const proj = projMap.get(String(lead.project_id));
+          if (proj) {
+            meta.project_code = meta.project_code || proj.code || null;
+            meta.project_name = meta.project_name || proj.name || null;
+          }
+        }
+      }
+    }
+    return { ...n, metadata: meta };
+  });
+}
+
+async function fetchSxProductionNotificationsForUser(userId, { unreadOnly = false, limit = 50 } = {}) {
+  const [{ data: commentRows, error: cErr }, { data: dealRows, error: dErr }] = await Promise.all([
+    supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('type', 'comment_added')
+      .order('created_at', { ascending: false })
+      .limit(250),
+    supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .in('type', SX_WORKSHOP_DEAL_TYPES)
+      .order('created_at', { ascending: false })
+      .limit(250),
+  ]);
+  if (cErr) throw cErr;
+  if (dErr) throw dErr;
+
+  let items = [
+    ...(await filterSxProductionCommentNotifications(commentRows)),
+    ...(await enrichSxWorkshopDealNotifications(dealRows)),
+  ];
+  items.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+  if (unreadOnly) items = items.filter((n) => !n.is_read);
+  const unreadCount = items.filter((n) => !n.is_read).length;
+  return { notifications: items.slice(0, limit), unread_count: unreadCount };
+}
+
 // ─── Xưởng SX: thông báo bình luận ───
 r.get('/notifications/comments', requirePermission('projects', 'view'), async (req, res) => {
   try {
@@ -4311,20 +4443,11 @@ r.get('/notifications/comments', requirePermission('projects', 'view'), async (r
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
     const lim = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 100);
     const unreadOnly = String(req.query.unread || '') === 'true';
-
-    const { data, error } = await supabase
-      .from('notifications')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('type', 'comment_added')
-      .order('created_at', { ascending: false })
-      .limit(250);
-    if (error) throw error;
-
-    let items = await filterSxProductionCommentNotifications(data);
-    if (unreadOnly) items = items.filter((n) => !n.is_read);
-    const unreadCount = items.filter((n) => !n.is_read).length;
-    res.json({ notifications: items.slice(0, lim), unread_count: unreadCount });
+    const { notifications, unread_count } = await fetchSxProductionNotificationsForUser(userId, {
+      unreadOnly,
+      limit: lim,
+    });
+    res.json({ notifications, unread_count });
   } catch (e) {
     console.error('GET /production/notifications/comments:', e);
     res.status(500).json({ error: e.message || 'Lỗi tải thông báo' });
@@ -4335,17 +4458,8 @@ r.get('/notifications/comments/unread-count', requirePermission('projects', 'vie
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-    const { data, error } = await supabase
-      .from('notifications')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('type', 'comment_added')
-      .eq('is_read', false)
-      .order('created_at', { ascending: false })
-      .limit(250);
-    if (error) throw error;
-    const items = await filterSxProductionCommentNotifications(data);
-    res.json({ unread_count: items.length });
+    const { unread_count } = await fetchSxProductionNotificationsForUser(userId, { limit: 1 });
+    res.json({ unread_count });
   } catch (e) {
     console.error('GET /production/notifications/comments/unread-count:', e);
     res.status(500).json({ error: e.message || 'Lỗi' });
@@ -4356,16 +4470,8 @@ r.put('/notifications/comments/read-all', requirePermission('projects', 'view'),
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-    const { data, error } = await supabase
-      .from('notifications')
-      .select('id, type, entity_type, metadata, is_read')
-      .eq('user_id', userId)
-      .eq('type', 'comment_added')
-      .eq('is_read', false)
-      .limit(500);
-    if (error) throw error;
-    const items = await filterSxProductionCommentNotifications(data);
-    const ids = items.map((n) => n.id).filter(Boolean);
+    const { notifications } = await fetchSxProductionNotificationsForUser(userId, { unreadOnly: true, limit: 500 });
+    const ids = notifications.map((n) => n.id).filter(Boolean);
     if (ids.length) {
       const { error: upErr } = await supabase
         .from('notifications')

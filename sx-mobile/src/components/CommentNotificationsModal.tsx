@@ -23,6 +23,10 @@ import {
   mergeCommentNotificationLists,
   notificationDismissKey,
   notificationProjectId,
+  notificationCategoryLabel,
+  notificationIconName,
+  notificationActionLabel,
+  isWorkshopDealNotification,
   type SxCommentNotification,
 } from '../lib/notificationApi';
 import { ensureNotificationPermission } from '../lib/pushRegistration';
@@ -172,6 +176,7 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
           justifyContent: 'center',
         },
         iconWrapUnread: { backgroundColor: colors.primarySoft },
+        iconWrapDeal: { backgroundColor: '#E0F2FE' },
         cardBody: { flex: 1, minWidth: 0 },
         metaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
         catText: { color: colors.textMuted, fontSize: 11, fontWeight: '700' },
@@ -356,7 +361,6 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
   const openItem = useCallback(
     async (item: SxCommentNotification) => {
       const pid = notificationProjectId(item);
-      if (!pid) return;
       if (!item.is_read) {
         try {
           await markNotificationReadForItem(item);
@@ -367,7 +371,7 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
         }
       }
       onClose();
-      onOpenProject(pid);
+      if (pid) onOpenProject(pid);
     },
     [onClose, onOpenProject, adjustUnreadCount],
   );
@@ -440,7 +444,7 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
             {!items.length ? (
               <View style={styles.emptyWrap}>
                 <Ionicons name="notifications-off-outline" size={40} color={colors.textFaint} />
-                <Text style={styles.emptyText}>Chưa có thông báo bình luận</Text>
+                <Text style={styles.emptyText}>Chưa có thông báo</Text>
               </View>
             ) : (
               groups.map((g) => (
@@ -450,6 +454,11 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
                     const code = item.metadata?.project_code;
                     const preview = item.metadata?.comment_preview;
                     const author = item.metadata?.author_name;
+                    const dealTitle = item.metadata?.deal_title;
+                    const isDeal = isWorkshopDealNotification(item);
+                    const iconName = notificationIconName(item);
+                    const catLabel = notificationCategoryLabel(item);
+                    const actionLabel = notificationActionLabel(item);
                     return (
                       <TapHighlight
                         key={item.id}
@@ -458,25 +467,31 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
                       >
                         <View style={styles.cardTop}>
                           <View style={{ position: 'relative' }}>
-                            <View style={[styles.iconWrap, !item.is_read && styles.iconWrapUnread]}>
-                              <Ionicons name="chatbubble-ellipses" size={20} color={colors.primary} />
+                            <View style={[styles.iconWrap, !item.is_read && styles.iconWrapUnread, isDeal && styles.iconWrapDeal]}>
+                              <Ionicons name={iconName} size={20} color={isDeal ? '#0EA5E9' : colors.primary} />
                             </View>
                             {!item.is_read ? <View style={styles.unreadDot} /> : null}
                           </View>
                           <View style={styles.cardBody}>
                             <View style={styles.metaRow}>
-                              <Text style={styles.catText}>Bình luận{code ? ` · ${code}` : ''}</Text>
+                              <Text style={styles.catText}>
+                                {catLabel}{code ? ` · ${code}` : dealTitle ? ` · ${dealTitle}` : ''}
+                              </Text>
                               <Text style={styles.timeText}>{timeAgo(item.created_at)}</Text>
                             </View>
                             <Text style={[styles.notifTitle, !item.is_read && styles.notifTitleUnread]} numberOfLines={2}>
-                              {author ? `${author}${code ? ` · ${code}` : ''}` : item.title.replace(/^💬\s*/, '')}
+                              {isDeal
+                                ? item.title.replace(/^[^\s]+\s*/, '').trim() || item.title
+                                : author
+                                  ? `${author}${code ? ` · ${code}` : ''}`
+                                  : item.title.replace(/^💬\s*/, '')}
                             </Text>
                             {!item.is_read ? (
                               <View style={styles.unreadBadge}>
                                 <Text style={styles.unreadBadgeText}>CHƯA ĐỌC</Text>
                               </View>
                             ) : null}
-                            {preview ? (
+                            {preview && !isDeal ? (
                               <View style={styles.previewBox}>
                                 <Text style={styles.previewText} numberOfLines={3}>
                                   "{preview}"
@@ -492,7 +507,7 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
                                 style={styles.primaryBtn}
                                 onPress={() => void openItem(item)}
                               >
-                                <Text style={styles.primaryBtnText}>Xem bình luận</Text>
+                                <Text style={styles.primaryBtnText}>{actionLabel}</Text>
                               </TapHighlight>
                             </View>
                           </View>

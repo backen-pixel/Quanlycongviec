@@ -142,6 +142,14 @@ export default function UpdateFromServerScreen() {
         return;
       }
 
+      if (apk.needsUpdate && apk.apkReady === false && apk.latestVersion) {
+        Alert.alert(
+          `Bản ${apk.latestVersion} trên hệ thống`,
+          'Bản cập nhật đã được đăng ký trên web nhưng file APK chưa sẵn sàng trên máy chủ. Vui lòng thử lại sau hoặc liên hệ quản trị.',
+        );
+        return;
+      }
+
       await loadServerInfo();
       Alert.alert('Đã kiểm tra', 'App đang ở phiên bản mới nhất.');
     } finally {

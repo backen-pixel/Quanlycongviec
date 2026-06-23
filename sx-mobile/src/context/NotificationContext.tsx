@@ -222,7 +222,12 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const upsertLive = useCallback((n: SxCommentNotification) => {
     setLiveNotifications((prev) => {
       const pid = notificationProjectId(n);
-      const rest = prev.filter((x) => x.id !== n.id && (!pid || notificationProjectId(x) !== pid));
+      const isComment = n.type === 'comment_added';
+      const rest = prev.filter((x) => {
+        if (x.id === n.id) return false;
+        if (isComment && pid && x.type === 'comment_added' && notificationProjectId(x) === pid) return false;
+        return true;
+      });
       return [n, ...rest].slice(0, 80);
     });
   }, []);
@@ -381,7 +386,44 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         });
         return;
       }
-      if (n?.type !== 'comment_added') return;
+      if (n?.type !== 'comment_added') {
+        const dealTypes = new Set([
+          'workshop_new_deal',
+          'deal_created',
+          'deal_assigned',
+          'deal_won',
+          'project_assigned',
+          'project_created',
+        ]);
+        if (dealTypes.has(String(n?.type || ''))) {
+          const enriched = enrichNotificationPreview({
+            id: String(n.id || `srv:${Date.now()}`),
+            type: String(n.type || 'workshop_new_deal'),
+            title: String(n.title || 'Deal xưởng'),
+            message: String(n.message || ''),
+            entity_type: n.entity_type,
+            entity_id: n.entity_id,
+            is_read: false,
+            created_at: String(n.created_at || new Date().toISOString()),
+            metadata: { ...(n.metadata || {}), ecosystem_module_key: 'production' },
+          });
+          setUnreadCount((c) => c + 1);
+          emitComment(enriched);
+          emitSync({
+            type: 'project:board_changed',
+            payload: {
+              project_id:
+                (n.metadata as Record<string, unknown> | undefined)?.project_id != null
+                  ? String((n.metadata as Record<string, unknown>).project_id)
+                  : n.entity_type === 'project' && n.entity_id
+                    ? String(n.entity_id)
+                    : null,
+              reason: 'notification',
+            },
+          });
+        }
+        return;
+      }
       const eco = n.metadata?.ecosystem_module_key;
       if (eco && eco !== 'production') return;
       const enriched = enrichNotificationPreview({
@@ -516,6 +558,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     s.on('approval:updated', onBoardChanged);
     s.on('crm:badge_updated', onBoardChanged);
     s.on('notify:badge', onBoardChanged);
+    s.on('crm:dashboard_changed', onBoardChanged);
+    s.on('production:board_changed', onBoardChanged);
     s.on('logistics:project_trashed', onBoardChanged);
     s.on('logistics:project_restored', onBoardChanged);
     s.on('logistics:project_purged', onBoardChanged);
@@ -545,6 +589,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       s.off('approval:updated', onBoardChanged);
       s.off('crm:badge_updated', onBoardChanged);
       s.off('notify:badge', onBoardChanged);
+      s.off('crm:dashboard_changed', onBoardChanged);
+      s.off('production:board_changed', onBoardChanged);
       s.off('logistics:project_trashed', onBoardChanged);
       s.off('logistics:project_restored', onBoardChanged);
       s.off('logistics:project_purged', onBoardChanged);
