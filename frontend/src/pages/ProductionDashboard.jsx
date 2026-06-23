@@ -411,7 +411,9 @@ export default function ProductionDashboard() {
 
   const canPickCompany = canPickWorkshopCompany(user, isAdmin, isCompanyScopedAdmin);
   const workshopCompanyPickerList = useMemo(() => {
-    if (isSystemAdmin(user) && !dealCompanyParam) return companies;
+    if ((isSystemAdmin(user) || (isAdmin && !isCompanyScopedAdmin)) && !dealCompanyParam) {
+      return companies;
+    }
     if (workshopOptionsForDeal.length) {
       const ids = new Set(workshopOptionsForDeal.map((w) => String(w.id)));
       const fromApi = (companies || []).filter((c) => ids.has(String(c.id)));
@@ -422,7 +424,7 @@ export default function ProductionDashboard() {
       return (companies || []).filter((c) => String(c.id) === String(user.company_id));
     }
     return workshopCompaniesForCrossViewer(companies, user);
-  }, [companies, user, workshopOptionsForDeal, dealCompanyParam]);
+  }, [companies, user, workshopOptionsForDeal, dealCompanyParam, isAdmin, isCompanyScopedAdmin]);
 
   const selectedDealCompanyLabel = useMemo(() => {
     if (resolvedDealCompanyPick) {
@@ -1760,7 +1762,7 @@ export default function ProductionDashboard() {
       const name = companies.find((c) => String(c.id) === String(filterCompany))?.short_name
         || companies.find((c) => String(c.id) === String(filterCompany))?.name
         || filterCompany;
-      push('company', `Công ty: ${name}`, () => handleStaffFilterCompanyChange(''));
+      push('company', `Xưởng: ${name}`, () => handleStaffFilterCompanyChange(''));
     }
     if (filterDealCompany && showDealCompanyFilter) {
       const name = selectedDealCompanyLabel
@@ -1842,13 +1844,15 @@ export default function ProductionDashboard() {
 
   const sxFilterTabCounts = useMemo(() => ({
     employee: staffFilterActiveCount
-      + (filterDealCompany && showDealCompanyFilter ? 1 : 0),
+      + (filterDealCompany && showDealCompanyFilter ? 1 : 0)
+      + (filterSxWorkshopCompany && showVptSxWorkshopFilter ? 1 : 0),
     pipeline: (stageFilter ? 1 : 0) + (filterWorkTypeId ? 1 : 0) + (priorityFilter ? 1 : 0)
-      + (filterPhone ? 1 : 0) + (showOrphanColumn ? 1 : 0) + (filterSxWorkshopCompany ? 1 : 0),
+      + (filterPhone ? 1 : 0) + (showOrphanColumn ? 1 : 0),
     display: (timePreset ? 1 : 0) + (sortBy !== 'newest' ? 1 : 0) + (kanbanLoadKey !== '500' ? 1 : 0),
   }), [
     staffFilterActiveCount, filterDealCompany, showDealCompanyFilter,
-    stageFilter, filterWorkTypeId, filterSxWorkshopCompany,
+    filterSxWorkshopCompany, showVptSxWorkshopFilter,
+    stageFilter, filterWorkTypeId,
     priorityFilter, filterPhone, showOrphanColumn,
     timePreset, sortBy, kanbanLoadKey,
   ]);
@@ -2035,6 +2039,32 @@ export default function ProductionDashboard() {
             </div>
           </div>
 
+          {canPickCompany && !isCompanyScopedAdmin && workshopCompanyPickerList.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto max-w-full shrink-0 pb-0.5 scrollbar-thin scrollbar-thumb-violet-200">
+              {(isAdmin ? [{ id: '', name: 'Tất cả' }, ...workshopCompanyPickerList] : workshopCompanyPickerList).map((c) => {
+                const active = filterCompany === c.id;
+                return (
+                  <button
+                    key={c.id || 'all'}
+                    type="button"
+                    onClick={() => {
+                      if (active) return;
+                      handleStaffFilterCompanyChange(c.id);
+                    }}
+                    className={`shrink-0 h-9 px-3 rounded-full text-xs font-semibold border transition-all cursor-pointer whitespace-nowrap ${
+                      active
+                        ? 'bg-violet-600 border-violet-600 text-white shadow-sm'
+                        : 'bg-white border-violet-200 text-slate-600 hover:border-violet-400 hover:text-violet-700 hover:bg-violet-50'
+                    }`}
+                  >
+                    {active && <span className="mr-1">✓</span>}
+                    {c.id === '' ? 'Tất cả xưởng' : (c.short_name || c.name)}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0 && (
             <div className="flex items-center gap-1.5 overflow-x-auto max-w-full shrink-0 pb-0.5 scrollbar-thin scrollbar-thumb-violet-200">
               <span className="text-[11px] font-semibold text-violet-700/80 shrink-0">SX tại:</span>
@@ -2220,7 +2250,7 @@ export default function ProductionDashboard() {
             companyEmployees={companyEmployees}
             canPickCompany={canPickCompany}
             workshopCompanyPickerList={workshopCompanyPickerList}
-            showAllWorkshopOption={isSystemAdmin(user)}
+            showAllWorkshopOption={isAdmin && !isCompanyScopedAdmin}
             showDealCompanyFilter={showDealCompanyFilter}
             canPickDealCompany={canPickDealCompany}
             filterDealCompany={filterDealCompany}
