@@ -15742,6 +15742,13 @@ r.post('/deals/:id/auto-create-project', async (req, res) => {
       }
       return res.status(result.statusCode || 500).json({ error: result.error });
     }
+    try {
+      const { emitProductionBoardRealtime } = require('../helpers/workshopIntakeNotify');
+      const io = req.app.get('io');
+      await emitProductionBoardRealtime(result.project_id, io, 'auto_create_api');
+    } catch (emitErr) {
+      console.warn('[auto-project] emit board:', emitErr.message);
+    }
     res.status(201).json({
       project_id: result.project_id,
       project_code: result.project_code,

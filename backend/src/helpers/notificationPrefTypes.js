@@ -69,6 +69,7 @@ function preferenceKeyForNotificationType(type, entityType, metadata = null) {
     const mapped = NOTIFICATION_TYPE_PREF_MAP[type];
     if (mapped) return mapped;
     if (type === 'comment_added') return 'comment_added';
+    if (type === 'workshop_new_deal') return 'deal_new';
     return null;
   }
 

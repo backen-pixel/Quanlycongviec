@@ -45,6 +45,13 @@ export type ProductionProject = {
   workshop_type_name?: string | null;
   region_id?: string | null;
   region_name?: string | null;
+  /** Deal CRM gắn dự án — dùng lọc công ty đặt hàng ngoài (ext:). */
+  crm_deals?: Array<{
+    id?: string;
+    type?: string;
+    external_company_name?: string | null;
+    external_catalog_id?: string | null;
+  }>;
 };
 
 /** Cột Planner cá nhân (sx_user_planner_columns). */

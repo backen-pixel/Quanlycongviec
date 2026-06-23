@@ -1,5 +1,4 @@
-# Build APK release (Xưởng SX mobile)
-# Yêu cầu: JDK 17+, Android SDK (ANDROID_HOME)
+# Build APK release (Xưởng SX mobile) — đồng bộ crm-mobile-v2 (arm64-only, sync version)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
@@ -21,6 +20,37 @@ if (-not (Test-Path 'android\gradlew.bat')) {
   Write-Host '>> expo prebuild (android)...'
   npx expo prebuild --platform android --no-install
 }
+
+function Sync-AndroidVersionFromAppJson {
+  $appJson = Get-Content app.json -Raw | ConvertFrom-Json
+  $version = $appJson.expo.version
+  if (-not $version) { $version = '1.0.0' }
+  $versionCode = $appJson.expo.android.versionCode
+  $gradle = Join-Path $root 'android\app\build.gradle'
+  if (-not (Test-Path $gradle)) { return }
+  $content = Get-Content $gradle -Raw
+  $content = $content -replace 'versionCode\s+\d+', "versionCode $versionCode"
+  $content = $content -replace 'versionName\s+"[^"]*"', "versionName `"$version`""
+  Set-Content -Path $gradle -Value $content -NoNewline
+  Write-Host ">> Synced native version from app.json: $version (code $versionCode)"
+}
+
+Sync-AndroidVersionFromAppJson
+
+function Set-Arm64OnlyApk {
+  $gp = Join-Path $root 'android\gradle.properties'
+  if (-not (Test-Path $gp)) { return }
+  $content = Get-Content $gp -Raw
+  if ($content -match 'reactNativeArchitectures=arm64-v8a(\r?\n|$)') {
+    Write-Host '>> ABI: arm64-v8a only (already set)'
+    return
+  }
+  $content = $content -replace 'reactNativeArchitectures=.*', 'reactNativeArchitectures=arm64-v8a'
+  Set-Content -Path $gp -Value $content -NoNewline
+  Write-Host '>> ABI: arm64-v8a only (giảm kích thước APK cho upload server)'
+}
+
+Set-Arm64OnlyApk
 
 Write-Host '>> gradlew assembleRelease...'
 Set-Location android

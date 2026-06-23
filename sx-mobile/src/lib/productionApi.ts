@@ -46,6 +46,12 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
     workshop_type_name: workshopType.name ?? null,
     region_id: (dealWithRegion?.region_id as string) ?? crmRegion.id ?? null,
     region_name: crmRegion.name ?? null,
+    crm_deals: crmDeals.map((d) => ({
+      id: d.id != null ? String(d.id) : undefined,
+      type: d.type != null ? String(d.type) : undefined,
+      external_company_name: d.external_company_name != null ? String(d.external_company_name) : null,
+      external_catalog_id: d.external_catalog_id != null ? String(d.external_catalog_id) : null,
+    })),
   };
 }
 
@@ -102,9 +108,11 @@ export function resolveColumnId(
 }
 
 export type BoardFilters = {
-  /** Lọc theo công ty (company_id). Truyền '' hoặc undefined để lấy tất cả. */
+  /** Lọc theo công ty xưởng SX (company_id). */
   companyId?: string;
-  /** Lọc theo phân loại (workshop_type_id). 'none' = chưa phân loại, '' = tất cả. */
+  /** Lọc theo công ty đặt hàng CRM (deal_company_id). */
+  dealCompanyId?: string;
+  /** Lọc theo phân loại (workshop_type_id). Chỉ dùng cho pipeline-stages; project lọc client-side. */
   workshopTypeId?: string;
 };
 
@@ -123,6 +131,7 @@ async function fetchAllProjects(noCache = false, filters: BoardFilters = {}): Pr
     const params: Record<string, unknown> = { page, limit: PROJECTS_PAGE_LIMIT };
     if (noCache) params._t = Date.now();
     if (filters.companyId) params.company_id = filters.companyId;
+    if (filters.dealCompanyId) params.deal_company_id = filters.dealCompanyId;
     return params;
   };
   const getPage = async (page: number) => {
@@ -171,6 +180,12 @@ export async function fetchProductionBoard(noCache = false, filters: BoardFilter
   const dashParams: Record<string, unknown> = {};
   if (noCache) dashParams._t = Date.now();
   if (filters.companyId) dashParams.company_id = filters.companyId;
+  if (filters.dealCompanyId) dashParams.deal_company_id = filters.dealCompanyId;
+
+  const projectFilters: BoardFilters = {
+    companyId: filters.companyId,
+    dealCompanyId: filters.dealCompanyId,
+  };
 
   const [stageRes, projects, kpis] = await Promise.all([
     api
@@ -179,7 +194,7 @@ export async function fetchProductionBoard(noCache = false, filters: BoardFilter
       })
       .then((r) => (Array.isArray(r.data) ? r.data : []))
       .catch(() => [] as Array<Record<string, unknown>>),
-    fetchAllProjects(noCache, { companyId: filters.companyId }),
+    fetchAllProjects(noCache, projectFilters),
     api
       .get<{ kpis?: ProductionDashboard }>('/production/dashboard', {
         params: Object.keys(dashParams).length ? dashParams : undefined,
@@ -434,16 +449,62 @@ export async function toggleProjectCommentReaction(
   return data || { summary: [], mine: null };
 }
 
-export async function fetchWorkshopTypes(companyId?: string | null): Promise<WorkshopTypeOption[]> {
+export async function fetchWorkshopTypes(
+  companyId?: string | null,
+  clientCompanyId?: string | null,
+): Promise<WorkshopTypeOption[]> {
   if (!companyId) return [];
-  const { data } = await api.get<unknown>('/workshop/project-types', {
-    params: { company_id: companyId, module: 'production' },
-  });
+  const params: Record<string, string> = { company_id: companyId, module: 'production' };
+  if (clientCompanyId) params.client_company_id = clientCompanyId;
+  const { data } = await api.get<unknown>('/workshop/project-types', { params });
   const list = Array.isArray(data) ? data : [];
   return list.map((t) => {
     const row = t as Record<string, unknown>;
     return { id: String(row.id || ''), name: String(row.name || row.id || '') };
   }).filter((t) => t.id);
+}
+
+export type ClientCompanyOption = {
+  id: string;
+  name: string;
+  short_name?: string | null;
+  client_company_id?: string | null;
+  external_catalog_id?: string | null;
+  source?: string;
+};
+
+/** Công ty đặt hàng (CRM + danh mục ngoài) — GET /production/client-companies */
+export async function fetchClientCompanies(workshopCompanyId: string): Promise<ClientCompanyOption[]> {
+  const { data } = await api.get<{ items?: unknown[] }>('/production/client-companies', {
+    params: { company_id: workshopCompanyId },
+  });
+  const list = Array.isArray(data?.items) ? data.items : [];
+  return list.map((c) => {
+    const row = c as Record<string, unknown>;
+    return {
+      id: String(row.id || ''),
+      name: String(row.name || row.short_name || row.id || ''),
+      short_name: row.short_name != null ? String(row.short_name) : null,
+      client_company_id: row.client_company_id != null ? String(row.client_company_id) : null,
+      external_catalog_id: row.external_catalog_id != null ? String(row.external_catalog_id) : null,
+      source: row.source != null ? String(row.source) : undefined,
+    };
+  }).filter((c) => c.id);
+}
+
+/** Xưởng thực hiện khi đã chọn công ty đặt hàng — GET /production/workshop-options */
+export async function fetchWorkshopOptionsForDeal(dealCompanyId: string): Promise<CompanyOption[]> {
+  const { data } = await api.get<{ workshops?: unknown[] }>('/production/workshop-options', {
+    params: { deal_company_id: dealCompanyId },
+  });
+  const list = Array.isArray(data?.workshops) ? data.workshops : [];
+  return list.map((c) => {
+    const row = c as Record<string, unknown>;
+    return {
+      id: String(row.id || ''),
+      name: String(row.short_name || row.name || row.id || ''),
+    };
+  }).filter((c) => c.id);
 }
 
 export type ExternalCompanyOption = { id: string; name: string };

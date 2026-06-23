@@ -2,7 +2,10 @@
  * Phát hành APK sx-mobile lên chức năng "Cập nhật app" (production).
  *
  *   node scripts/publish-sx-mobile.js
- *   SKIP_UPLOAD=1 node scripts/publish-sx-mobile.js
+ *   SKIP_UPLOAD=1 node scripts/publish-sx-mobile.js   # chỉ metadata DB
+ *
+ * Sau publish, tự upload APK lên disk production (Render).
+ * Nếu Render lỗi → thử Supabase Storage (upload-sx-mobile-apk-storage.js).
  */
 const fs = require('fs');
 const path = require('path');
@@ -13,8 +16,8 @@ const { supabase } = require('../src/config/supabase');
 const { buildStandardApkFilename } = require('../src/helpers/appReleaseFilename');
 
 const APP_KEY = 'sx-mobile';
-const VERSION = process.env.PUB_VERSION || '1.0.56';
-const VERSION_CODE = parseInt(process.env.PUB_CODE || '59', 10);
+const VERSION = process.env.PUB_VERSION || '1.0.58';
+const VERSION_CODE = parseInt(process.env.PUB_CODE || '61', 10);
 const PUBLIC_HOST = (process.env.PUB_HOST || 'https://tubep-backend.onrender.com').replace(/\/$/, '');
 const FILE_NAME = buildStandardApkFilename(APP_KEY, VERSION, VERSION_CODE, { release: true });
 const APK = path.resolve(__dirname, `../uploads/app-releases/sx-mobile/${FILE_NAME}`);
@@ -22,6 +25,21 @@ const FILE_URL = `${PUBLIC_HOST}/uploads/app-releases/sx-mobile/${FILE_NAME}`;
 const RELEASE_NOTES =
   process.env.PUB_NOTES
   || 'Chia sẻ ảnh/PDF từ app khác vào chat nội bộ (Share → Quản lý sản xuất).';
+
+async function uploadApkToStorage() {
+  console.log('\n>> Fallback: upload Supabase Storage…');
+  const script = path.join(__dirname, 'upload-sx-mobile-apk-storage.js');
+  const r = spawnSync(
+    process.execPath,
+    [script],
+    {
+      stdio: 'inherit',
+      cwd: path.join(__dirname, '..'),
+      env: { ...process.env, PUB_VERSION: VERSION, PUB_CODE: String(VERSION_CODE) },
+    },
+  );
+  return r.status === 0;
+}
 
 async function uploadApkToProduction(releaseId) {
   if (process.env.SKIP_UPLOAD === '1' || process.env.SKIP_UPLOAD === 'true') {
@@ -45,9 +63,14 @@ async function uploadApkToProduction(releaseId) {
     ],
     { stdio: 'inherit', cwd: path.join(__dirname, '..'), env: process.env },
   );
-  if (r.status !== 0) {
-    console.warn('\n⚠ Upload production thất bại — chạy thủ công:');
+  if (r.status === 0) return;
+
+  console.warn('\n⚠ Upload Render thất bại — thử Supabase Storage…');
+  const ok = await uploadApkToStorage();
+  if (!ok) {
+    console.warn('\n⚠ Upload thất bại — chạy thủ công:');
     console.warn(`  node scripts/upload-apk-to-production.js --release ${releaseId} --file ${APK}`);
+    console.warn(`  PUB_VERSION=${VERSION} PUB_CODE=${VERSION_CODE} node scripts/upload-sx-mobile-apk-storage.js`);
   }
 }
 

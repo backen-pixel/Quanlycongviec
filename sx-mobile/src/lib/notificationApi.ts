@@ -25,10 +25,40 @@ export type SxCommentNotification = {
     project_name?: string | null;
     comment_preview?: string | null;
     author_name?: string | null;
+    deal_title?: string | null;
     nav_tab?: string;
     ecosystem_module_key?: string;
   } | null;
 };
+
+const WORKSHOP_DEAL_TYPES = new Set([
+  'workshop_new_deal',
+  'deal_created',
+  'deal_assigned',
+  'deal_won',
+  'project_assigned',
+  'project_created',
+]);
+
+export function isWorkshopDealNotification(n: Pick<SxCommentNotification, 'type'>): boolean {
+  return WORKSHOP_DEAL_TYPES.has(String(n.type || ''));
+}
+
+export function notificationCategoryLabel(n: SxCommentNotification): string {
+  if (isWorkshopDealNotification(n)) return 'Deal xưởng';
+  return 'Bình luận';
+}
+
+export function notificationIconName(n: SxCommentNotification): 'chatbubble-ellipses' | 'briefcase-outline' {
+  return isWorkshopDealNotification(n) ? 'briefcase-outline' : 'chatbubble-ellipses';
+}
+
+export function notificationActionLabel(n: SxCommentNotification): string {
+  if (isWorkshopDealNotification(n)) {
+    return notificationProjectId(n) ? 'Xem dự án' : 'Đóng';
+  }
+  return 'Xem bình luận';
+}
 
 export function trimCommentPreview(text: string, max = 120): string {
   const t = String(text || '').trim().replace(/\s+/g, ' ');
@@ -303,11 +333,12 @@ export async function markAllCommentNotificationsRead(): Promise<number> {
 }
 
 export function notificationProjectId(n: SxCommentNotification): string | null {
-  const pid = n.metadata?.project_id || n.entity_id;
-  return pid ? String(pid) : null;
+  if (n.metadata?.project_id) return String(n.metadata.project_id);
+  if (n.entity_type === 'project' && n.entity_id) return String(n.entity_id);
+  return null;
 }
 
-/** Gộp nhiều nguồn (socket, API, cache) — giữ bản mới nhất theo dự án. */
+/** Gộp nhiều nguồn (socket, API, cache) — bình luận theo dự án, deal theo id. */
 export function mergeCommentNotificationLists(
   ...lists: SxCommentNotification[][]
 ): SxCommentNotification[] {
@@ -316,7 +347,7 @@ export function mergeCommentNotificationLists(
     for (const raw of list) {
       const n = enrichNotificationPreview(raw);
       const pid = notificationProjectId(n);
-      const key = pid ? `pid:${pid}` : n.id;
+      const key = n.type === 'comment_added' && pid ? `comment:${pid}` : `id:${n.id}`;
       const prev = byKey.get(key);
       if (!prev || String(n.created_at).localeCompare(String(prev.created_at)) >= 0) {
         byKey.set(key, n);

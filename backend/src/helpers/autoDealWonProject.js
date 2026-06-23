@@ -305,7 +305,12 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
       await notifyMultiple(req, adminIds, 'project_created',
         '📋 Dự án mới từ Deal',
         `Dự án ${project.code} — "${deal.title}" (${allCreatedTasks.length + workshopTemplateTaskCount} nhiệm vụ)`,
-        'project', projectId);
+        'project', projectId, {
+          ecosystem_module_key: 'production',
+          project_id: String(projectId),
+          project_code: project.code,
+          project_name: project.name,
+        });
     }
   } catch (_) {}
 
@@ -329,7 +334,12 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
         await notifyMultiple(req, [sid], 'project_assigned',
           '📋 Dự án SX mới',
           `Bạn được gán vào dự án ${project.code} — "${deal.title}"`,
-          'project', projectId);
+          'project', projectId, {
+            ecosystem_module_key: 'production',
+            project_id: String(projectId),
+            project_code: project.code,
+            project_name: project.name,
+          });
       } catch (_) {}
     }
   } catch (staffErr) {
@@ -337,6 +347,22 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
   }
 
   // NOTE: Không tự tạo Đơn 1/2/... từ deal thắng. Đơn hàng chỉ tạo thủ công tại tab Đơn hàng.
+
+  try {
+    const { notifyWorkshopIntakeNewDeal, emitProductionBoardRealtime } = require('./workshopIntakeNotify');
+    await notifyWorkshopIntakeNewDeal({
+      req,
+      projectId,
+      projectCode: project.code,
+      projectName: project.name,
+      dealTitle: deal.title,
+      actorUserId: userId,
+    });
+    const io = req.app?.get('io');
+    await emitProductionBoardRealtime(projectId, io, 'auto_create');
+  } catch (intakeNotifyErr) {
+    console.warn('[auto-project] intake notify/socket:', intakeNotifyErr.message);
+  }
 
   console.log(`[auto-project] Deal ${dealId} → Project ${project.code} (${allCreatedTasks.length + workshopTemplateTaskCount} tasks)`);
 
