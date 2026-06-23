@@ -2135,6 +2135,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     try {
       await api.delete(`/projects/${projectId}/documents/${docId}`);
       await loadProjectDocs(projectId);
+      await refreshProjectSilently();
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Lỗi xóa tài liệu');
     }
@@ -2143,6 +2144,12 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const deleteCrmDocument = async (doc) => {
     const docId = doc?.id;
     if (!docId) return;
+
+    // Tài liệu mirror từ xưởng — xóa file gốc (backend cũng xử lý qua CRM route)
+    if (doc.source_file_attachment_id) {
+      return deleteProjectDocument(doc.source_file_attachment_id);
+    }
+
     const leadId = doc.lead_id || project?.crmDeals?.[0]?.id || fallbackDealIdForTasks;
     if (!leadId) {
       alert('Không xác định được deal CRM của tài liệu');
@@ -2152,10 +2159,6 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     try {
       await api.delete(`/crm/leads/${leadId}/documents/${docId}`);
       await refreshProjectSilently();
-      try {
-        const { data: docs } = await api.get(`/crm/leads/${leadId}/documents`);
-        setCrmDealDocs(Array.isArray(docs) ? docs : []);
-      } catch (_) { /* giữ danh sách cũ */ }
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Lỗi xóa tài liệu');
     }
