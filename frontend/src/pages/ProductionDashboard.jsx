@@ -390,11 +390,11 @@ export default function ProductionDashboard() {
     if (filterDealCompany && !String(filterDealCompany).startsWith('ext:')) {
       return String(filterDealCompany);
     }
-    if (showDealCompanyFilter && !isSystemAdmin(user) && user?.company_id) {
+    if (showDealCompanyFilter && !isAdmin && !isSystemAdmin(user) && user?.company_id) {
       return String(user.company_id);
     }
     return undefined;
-  }, [resolvedDealCompanyPick, filterDealCompany, showDealCompanyFilter, user]);
+  }, [resolvedDealCompanyPick, filterDealCompany, showDealCompanyFilter, user, isAdmin]);
 
   const dealCompanyExternalFilter = useMemo(() => {
     if (!resolvedDealCompanyPick || resolvedDealCompanyPick.client_company_id) return null;
@@ -411,7 +411,8 @@ export default function ProductionDashboard() {
 
   const canPickCompany = canPickWorkshopCompany(user, isAdmin, isCompanyScopedAdmin);
   const workshopCompanyPickerList = useMemo(() => {
-    if ((isSystemAdmin(user) || (isAdmin && !isCompanyScopedAdmin)) && !dealCompanyParam) {
+    // Admin (kể cả admin gắn công ty): đủ xưởng module SX — khớp backend GET /companies?for_module=production
+    if (isAdmin && !dealCompanyParam) {
       return companies;
     }
     if (workshopOptionsForDeal.length) {
@@ -424,7 +425,7 @@ export default function ProductionDashboard() {
       return (companies || []).filter((c) => String(c.id) === String(user.company_id));
     }
     return workshopCompaniesForCrossViewer(companies, user);
-  }, [companies, user, workshopOptionsForDeal, dealCompanyParam, isAdmin, isCompanyScopedAdmin]);
+  }, [companies, user, workshopOptionsForDeal, dealCompanyParam, isAdmin]);
 
   const selectedDealCompanyLabel = useMemo(() => {
     if (resolvedDealCompanyPick) {
@@ -698,11 +699,11 @@ export default function ProductionDashboard() {
   }, [dealCompanyOptions, filterDealCompany, user]);
 
   useEffect(() => {
-    if (!workshopCompanyPickerList.length) return;
+    if (!workshopCompanyPickerList.length || isAdmin) return;
     if (filterCompany && workshopCompanyPickerList.some((c) => String(c.id) === String(filterCompany))) return;
     const first = workshopCompanyPickerList[0];
     if (first?.id) handleStaffFilterCompanyChange(first.id);
-  }, [workshopCompanyPickerList, filterCompany, handleStaffFilterCompanyChange]);
+  }, [workshopCompanyPickerList, filterCompany, handleStaffFilterCompanyChange, isAdmin]);
 
   useEffect(() => {
     api.get('/companies', { params: { for_module: 'production' } })
@@ -711,9 +712,9 @@ export default function ProductionDashboard() {
   }, []);
 
   useEffect(() => {
-    if (!showDealCompanyFilter || filterDealCompany) return;
+    if (!showDealCompanyFilter || filterDealCompany || isAdmin) return;
     if (user?.company_id) setFilterDealCompany(String(user.company_id));
-  }, [showDealCompanyFilter, filterDealCompany, user?.company_id]);
+  }, [showDealCompanyFilter, filterDealCompany, user?.company_id, isAdmin]);
 
   useEffect(() => {
     if (filterCompany || !companies.length || isSystemAdmin(user)) return;
@@ -2039,7 +2040,7 @@ export default function ProductionDashboard() {
             </div>
           </div>
 
-          {canPickCompany && !isCompanyScopedAdmin && workshopCompanyPickerList.length > 0 && (
+          {canPickCompany && workshopCompanyPickerList.length > 0 && (
             <div className="flex items-center gap-1.5 overflow-x-auto max-w-full shrink-0 pb-0.5 scrollbar-thin scrollbar-thumb-violet-200">
               {(isAdmin ? [{ id: '', name: 'Tất cả' }, ...workshopCompanyPickerList] : workshopCompanyPickerList).map((c) => {
                 const active = filterCompany === c.id;
@@ -2250,7 +2251,7 @@ export default function ProductionDashboard() {
             companyEmployees={companyEmployees}
             canPickCompany={canPickCompany}
             workshopCompanyPickerList={workshopCompanyPickerList}
-            showAllWorkshopOption={isAdmin && !isCompanyScopedAdmin}
+            showAllWorkshopOption={isAdmin}
             showDealCompanyFilter={showDealCompanyFilter}
             canPickDealCompany={canPickDealCompany}
             filterDealCompany={filterDealCompany}
