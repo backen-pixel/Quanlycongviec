@@ -27,6 +27,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  LabelList,
   Legend,
   Line,
   LineChart,
@@ -53,6 +54,14 @@ function reportClosedWonValue(r) {
   return r?.won_or_later_value ?? r?.won_value ?? r?.completed_value ?? 0;
 }
 
+function reportCancelLostTotal(r) {
+  return (r?.lost_lead_count ?? 0) + (r?.lost_deal_count ?? 0);
+}
+
+function reportCancelTotalCount(r) {
+  return (r?.lead_count ?? 0) + (r?.deal_count ?? 0);
+}
+
 function buildDealStackedRows(items, nameKey, max = 12) {
   return (items || [])
     .filter((r) => (r.deal_count || 0) > 0)
@@ -69,26 +78,62 @@ function buildDealStackedRows(items, nameKey, max = 12) {
     });
 }
 
+function formatVNDShort(n) {
+  const num = Number(n);
+  if (!Number.isFinite(num) || num === 0) return '0';
+  if (Math.abs(num) >= 1e9) return `${(num / 1e9).toFixed(1)} tỷ`;
+  if (Math.abs(num) >= 1e6) return `${Math.round(num / 1e6)} tr`;
+  if (Math.abs(num) >= 1e3) return `${Math.round(num / 1e3)} k`;
+  return String(Math.round(num));
+}
+
+function pctLabel(value, detail) {
+  const v = Number(value);
+  if (!Number.isFinite(v)) return '—';
+  return detail ? `${v}% (${detail})` : `${v}%`;
+}
+
 function buildQuoteCloseChartRows(items, nameKey, max = 10) {
   return (items || [])
-    .filter((r) => (r.quote_deal_count || 0) > 0 || reportClosedWonCount(r) > 0 || (r.deal_count || 0) > 0)
+    .filter((r) => reportCancelTotalCount(r) > 0
+      || (r.quote_deal_count || 0) > 0
+      || reportClosedWonCount(r) > 0)
     .slice()
     .sort(
       (a, b) => reportClosedWonValue(b) - reportClosedWonValue(a)
         || (b.quote_value || 0) - (a.quote_value || 0),
     )
     .slice(0, max)
-    .map((r) => ({
-      name: truncLabel(r[nameKey], 14),
-      'GT báo giá': r.quote_value || 0,
-      'GT chốt': reportClosedWonValue(r),
-      'Tổng BG': r.quote_deal_count || 0,
-      'Chốt SL': reportClosedWonCount(r),
-      'Deal': r.deal_count || 0,
-      'Tỷ lệ chốt/BG': r.quote_win_rate_pct ?? 0,
-      'Tỷ lệ chốt/tổng deal': r.conversion_rate ?? 0,
-      'Tăng trưởng': r.monthly_growth_pct,
-    }));
+    .map((r) => {
+      const closedSl = reportClosedWonCount(r);
+      const quoteSl = r.quote_deal_count || 0;
+      const dealSl = r.deal_count || 0;
+      const quoteGt = r.quote_value || 0;
+      const closedGt = reportClosedWonValue(r);
+      const lostTotal = reportCancelLostTotal(r);
+      const totalLd = reportCancelTotalCount(r);
+      return {
+        name: truncLabel(r[nameKey], 14),
+        'GT báo giá': quoteGt,
+        'GT chốt': closedGt,
+        'Tổng BG': quoteSl,
+        'Chốt SL': closedSl,
+        Deal: dealSl,
+        Lead: r.lead_count || 0,
+        'Tổng LD': totalLd,
+        'Tỷ lệ chốt/BG': r.quote_win_rate_pct ?? 0,
+        'Tỷ lệ chốt/tổng deal': r.conversion_rate ?? 0,
+        'GT chốt/BG': r.quote_close_value_rate_pct ?? 0,
+        'Tỷ lệ hủy': r.cancel_rate_pct ?? 0,
+        'Tăng trưởng': r.monthly_growth_pct,
+        _bgRateLabel: pctLabel(r.quote_win_rate_pct ?? 0, `${closedSl}/${quoteSl}`),
+        _dealRateLabel: pctLabel(r.conversion_rate ?? 0, `${closedSl}/${dealSl}`),
+        _gtRateLabel: pctLabel(r.quote_close_value_rate_pct ?? 0, `${formatVNDShort(closedGt)}/${formatVNDShort(quoteGt)}`),
+        _cancelRateLabel: pctLabel(r.cancel_rate_pct ?? 0, `${lostTotal}/${totalLd}`),
+        _gtBaoGiaLabel: formatVNDShort(quoteGt),
+        _gtChotLabel: formatVNDShort(closedGt),
+      };
+    });
 }
 
 function ChartEmpty({ label = 'Chưa có dữ liệu' }) {
@@ -101,12 +146,12 @@ function QuoteCloseValueBarChart({ data, title, layout = 'vertical' }) {
   return (
     <div className="rounded-xl border border-amber-100 bg-amber-50/20 p-4">
       {title && <p className="text-sm font-bold text-slate-800 mb-3">{title}</p>}
-      <div className={vertical ? 'h-64' : 'h-56'}>
+      <div className={vertical ? 'h-72' : 'h-56'}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={data}
             layout={vertical ? 'vertical' : 'horizontal'}
-            margin={vertical ? { left: 4, right: 16, top: 4, bottom: 4 } : { left: 8, right: 8, bottom: 48, top: 4 }}
+            margin={vertical ? { left: 4, right: 72, top: 4, bottom: 4 } : { left: 8, right: 8, bottom: 48, top: 4 }}
           >
             <CartesianGrid strokeDasharray="3 3" horizontal={!vertical} vertical={vertical} />
             {vertical ? (
@@ -121,9 +166,12 @@ function QuoteCloseValueBarChart({ data, title, layout = 'vertical' }) {
               </>
             )}
             <RechartsTooltip formatter={(v, n) => [formatVND(v), n]} />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
-            <Bar dataKey="GT báo giá" fill="#f59e0b" radius={vertical ? [0, 4, 4, 0] : [4, 4, 0, 0]} />
-            <Bar dataKey="GT chốt" fill="#059669" radius={vertical ? [0, 4, 4, 0] : [4, 4, 0, 0]} />
+            <Bar dataKey="GT báo giá" fill="#f59e0b" radius={vertical ? [0, 4, 4, 0] : [4, 4, 0, 0]}>
+              <LabelList dataKey="_gtBaoGiaLabel" position="right" style={{ fontSize: 10, fill: '#92400e' }} />
+            </Bar>
+            <Bar dataKey="GT chốt" fill="#059669" radius={vertical ? [0, 4, 4, 0] : [4, 4, 0, 0]}>
+              <LabelList dataKey="_gtChotLabel" position="right" style={{ fontSize: 10, fill: '#065f46' }} />
+            </Bar>
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -136,16 +184,19 @@ function QuoteCloseCountBarChart({ data, title }) {
   return (
     <div className="rounded-xl border border-emerald-100 bg-emerald-50/20 p-4">
       {title && <p className="text-sm font-bold text-slate-800 mb-3">{title}</p>}
-      <div className="h-64">
+      <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 12 }}>
+          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 56 }}>
             <CartesianGrid strokeDasharray="3 3" horizontal={false} />
             <XAxis type="number" tick={{ fontSize: 10 }} allowDecimals={false} />
             <YAxis type="category" dataKey="name" width={92} tick={{ fontSize: 10 }} />
             <RechartsTooltip formatter={(v, n) => [`${v} deal`, n]} />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
-            <Bar dataKey="Tổng BG" fill="#fb923c" radius={[0, 4, 4, 0]} />
-            <Bar dataKey="Chốt SL" fill="#10b981" radius={[0, 4, 4, 0]} />
+            <Bar dataKey="Tổng BG" fill="#fb923c" radius={[0, 4, 4, 0]}>
+              <LabelList dataKey="Tổng BG" position="right" style={{ fontSize: 10, fill: '#9a3412' }} />
+            </Bar>
+            <Bar dataKey="Chốt SL" fill="#10b981" radius={[0, 4, 4, 0]}>
+              <LabelList dataKey="Chốt SL" position="right" style={{ fontSize: 10, fill: '#065f46' }} />
+            </Bar>
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -158,14 +209,18 @@ function QuoteWinRateBarChart({ data, title }) {
   return (
     <div className="rounded-xl border border-lime-100 bg-lime-50/20 p-4">
       {title && <p className="text-sm font-bold text-slate-800 mb-3">{title}</p>}
-      <div className="h-64">
+      <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 20 }}>
+          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 88 }}>
             <CartesianGrid strokeDasharray="3 3" horizontal={false} />
             <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 10 }} unit="%" />
             <YAxis type="category" dataKey="name" width={92} tick={{ fontSize: 10 }} />
-            <RechartsTooltip formatter={(v) => [`${v}%`, 'Tỷ lệ chốt/BG']} />
-            <Bar dataKey="Tỷ lệ chốt/BG" fill="#84cc16" radius={[0, 4, 4, 0]} />
+            <RechartsTooltip
+              formatter={(v, _n, item) => [item?.payload?._bgRateLabel || `${v}%`, 'Tỷ lệ chốt/BG']}
+            />
+            <Bar dataKey="Tỷ lệ chốt/BG" fill="#84cc16" radius={[0, 4, 4, 0]}>
+              <LabelList dataKey="_bgRateLabel" position="right" style={{ fontSize: 10, fill: '#365314' }} />
+            </Bar>
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -178,14 +233,66 @@ function DealCloseRateBarChart({ data, title }) {
   return (
     <div className="rounded-xl border border-violet-100 bg-violet-50/20 p-4">
       {title && <p className="text-sm font-bold text-slate-800 mb-3">{title}</p>}
-      <div className="h-64">
+      <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 20 }}>
+          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 88 }}>
             <CartesianGrid strokeDasharray="3 3" horizontal={false} />
             <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 10 }} unit="%" />
             <YAxis type="category" dataKey="name" width={92} tick={{ fontSize: 10 }} />
-            <RechartsTooltip formatter={(v) => [`${v}%`, 'Tỷ lệ chốt/tổng deal']} />
-            <Bar dataKey="Tỷ lệ chốt/tổng deal" fill="#8b5cf6" radius={[0, 4, 4, 0]} />
+            <RechartsTooltip
+              formatter={(v, _n, item) => [item?.payload?._dealRateLabel || `${v}%`, 'Tỷ lệ chốt/tổng deal']}
+            />
+            <Bar dataKey="Tỷ lệ chốt/tổng deal" fill="#8b5cf6" radius={[0, 4, 4, 0]}>
+              <LabelList dataKey="_dealRateLabel" position="right" style={{ fontSize: 10, fill: '#5b21b6' }} />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function QuoteValueCloseRateBarChart({ data, title }) {
+  if (!data?.length) return null;
+  return (
+    <div className="rounded-xl border border-teal-100 bg-teal-50/20 p-4">
+      {title && <p className="text-sm font-bold text-slate-800 mb-3">{title}</p>}
+      <div className="h-72">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 108 }}>
+            <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+            <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 10 }} unit="%" />
+            <YAxis type="category" dataKey="name" width={92} tick={{ fontSize: 10 }} />
+            <RechartsTooltip
+              formatter={(v, _n, item) => [item?.payload?._gtRateLabel || `${v}%`, 'GT chốt / GT báo giá']}
+            />
+            <Bar dataKey="GT chốt/BG" fill="#14b8a6" radius={[0, 4, 4, 0]}>
+              <LabelList dataKey="_gtRateLabel" position="right" style={{ fontSize: 10, fill: '#115e59' }} />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function CancelRateBarChart({ data, title }) {
+  if (!data?.length) return null;
+  return (
+    <div className="rounded-xl border border-rose-100 bg-rose-50/20 p-4">
+      {title && <p className="text-sm font-bold text-slate-800 mb-3">{title}</p>}
+      <div className="h-72">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 88 }}>
+            <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+            <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 10 }} unit="%" />
+            <YAxis type="category" dataKey="name" width={92} tick={{ fontSize: 10 }} />
+            <RechartsTooltip
+              formatter={(v, _n, item) => [item?.payload?._cancelRateLabel || `${v}%`, 'Tỷ lệ hủy']}
+            />
+            <Bar dataKey="Tỷ lệ hủy" fill="#f43f5e" radius={[0, 4, 4, 0]}>
+              <LabelList dataKey="_cancelRateLabel" position="right" style={{ fontSize: 10, fill: '#9f1239' }} />
+            </Bar>
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -198,14 +305,21 @@ function GrowthRateBarChart({ data, title }) {
   return (
     <div className="rounded-xl border border-indigo-100 bg-indigo-50/20 p-4">
       {title && <p className="text-sm font-bold text-slate-800 mb-3">{title}</p>}
-      <div className="h-64">
+      <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 20 }}>
+          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 56 }}>
             <CartesianGrid strokeDasharray="3 3" horizontal={false} />
             <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => `${v > 0 ? '+' : ''}${v}%`} />
             <YAxis type="category" dataKey="name" width={92} tick={{ fontSize: 10 }} />
             <RechartsTooltip formatter={(v) => [`${v > 0 ? '+' : ''}${v}%`, 'Tăng trưởng GT chốt']} />
-            <Bar dataKey="Tăng trưởng" fill="#6366f1" radius={[0, 4, 4, 0]} />
+            <Bar dataKey="Tăng trưởng" fill="#6366f1" radius={[0, 4, 4, 0]}>
+              <LabelList
+                dataKey="Tăng trưởng"
+                position="right"
+                formatter={(v) => `${v > 0 ? '+' : ''}${v}%`}
+                style={{ fontSize: 10, fill: '#3730a3' }}
+              />
+            </Bar>
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -230,13 +344,14 @@ function QuoteFunnelPieChart({ data, title }) {
               paddingAngle={2}
               dataKey="value"
               nameKey="name"
+              label={({ name, value, percent }) => `${name}: ${value} (${Math.round(percent * 100)}%)`}
+              labelLine={{ stroke: '#94a3b8', strokeWidth: 1 }}
             >
               {data.map((entry) => (
                 <Cell key={entry.name} fill={entry.color} stroke="#fff" strokeWidth={2} />
               ))}
             </Pie>
             <RechartsTooltip formatter={(v, n) => [`${v} deal`, n]} />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
           </PieChart>
         </ResponsiveContainer>
       </div>
@@ -250,11 +365,19 @@ function QuoteCloseChartsGrid({ rows, nameKey, entityLabel = 'đơn vị' }) {
     [rows, nameKey],
   );
   const rateRows = useMemo(
-    () => chartRows.filter((r) => r['Tỷ lệ chốt/BG'] > 0),
+    () => chartRows.filter((r) => (r['Tổng BG'] || 0) > 0),
     [chartRows],
   );
   const dealCloseRateRows = useMemo(
     () => chartRows.filter((r) => (r.Deal || 0) > 0),
+    [chartRows],
+  );
+  const valueCloseRateRows = useMemo(
+    () => chartRows.filter((r) => (r['GT báo giá'] || 0) > 0),
+    [chartRows],
+  );
+  const cancelRateRows = useMemo(
+    () => chartRows.filter((r) => (r['Tổng LD'] || 0) > 0),
     [chartRows],
   );
   const growthRows = useMemo(
@@ -269,18 +392,28 @@ function QuoteCloseChartsGrid({ rows, nameKey, entityLabel = 'đơn vị' }) {
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <div className="space-y-4">
+      {(dealCloseRateRows.length > 0 || rateRows.length > 0 || valueCloseRateRows.length > 0 || cancelRateRows.length > 0) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          {dealCloseRateRows.length > 0 && (
+            <DealCloseRateBarChart data={dealCloseRateRows} title={`Tỷ lệ chốt/tổng deal — ${entityLabel}`} />
+          )}
+          {rateRows.length > 0 && (
+            <QuoteWinRateBarChart data={rateRows} title={`Tỷ lệ chốt/BG — ${entityLabel}`} />
+          )}
+          {valueCloseRateRows.length > 0 && (
+            <QuoteValueCloseRateBarChart data={valueCloseRateRows} title={`GT chốt / GT báo giá — ${entityLabel}`} />
+          )}
+          {cancelRateRows.length > 0 && (
+            <CancelRateBarChart data={cancelRateRows} title={`Tỷ lệ hủy — ${entityLabel}`} />
+          )}
+        </div>
+      )}
       {chartRows.length > 0 && (
-        <>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <QuoteCloseValueBarChart data={chartRows} title={`GT báo giá vs GT chốt — top ${entityLabel}`} />
           <QuoteCloseCountBarChart data={chartRows} title={`Số deal BG vs chốt — top ${entityLabel}`} />
-          {rateRows.length > 0 && (
-            <QuoteWinRateBarChart data={rateRows} title={`Tỷ lệ chốt/BG — top ${entityLabel}`} />
-          )}
-          {dealCloseRateRows.length > 0 && (
-            <DealCloseRateBarChart data={dealCloseRateRows} title={`Tỷ lệ chốt/tổng deal — top ${entityLabel}`} />
-          )}
-        </>
+        </div>
       )}
       {growthRows.length > 0 && (
         <GrowthRateBarChart data={growthRows} title={`Tăng trưởng GT chốt vs kỳ trước — ${entityLabel}`} />
@@ -474,6 +607,17 @@ const METRIC_COLS = [
     label: 'Chốt/tổng deal (GT)',
     align: 'right',
     render: (r) => (r.deal_close_value_rate_pct == null ? '—' : `${r.deal_close_value_rate_pct}%`),
+  },
+  {
+    key: 'cancel_rate_pct',
+    label: 'Tỷ lệ hủy',
+    align: 'right',
+    render: (r) => {
+      if (r.cancel_rate_pct == null) return '—';
+      const lost = reportCancelLostTotal(r);
+      const total = reportCancelTotalCount(r);
+      return `${r.cancel_rate_pct}% (${lost}/${total})`;
+    },
   },
   ...QUOTE_CLOSE_COLS,
   {
@@ -781,6 +925,7 @@ export default function CrmOrgOverviewReport() {
       'Chot SL': reportClosedWonCount(r),
       'Gia tri chot': reportClosedWonValue(r),
       'Ty le chot/BG %': r.quote_win_rate_pct ?? null,
+      'Ty le huy %': r.cancel_rate_pct ?? null,
       'Tang truong thang %': r.monthly_growth_pct ?? null,
     }));
     sheet('Cong ty', data.by_company, (r) => ({
@@ -812,6 +957,7 @@ export default function CrmOrgOverviewReport() {
       'Gia tri chot': reportClosedWonValue(r),
       'Ty le chot/tong deal %': r.conversion_rate,
       'Ty le chot/tong deal GT %': r.deal_close_value_rate_pct,
+      'Ty le huy %': r.cancel_rate_pct,
       'Ty le chot/BG %': r.quote_win_rate_pct,
       'Tang truong thang %': r.monthly_growth_pct,
       'QH tiep nhan %': r.reception_overdue_rate_pct,
@@ -1028,10 +1174,11 @@ export default function CrmOrgOverviewReport() {
         title="Chọn khoảng thời gian báo cáo"
         from={dateFrom}
         to={dateTo}
+        allowClear={false}
         onClose={() => setRangePickerOpen(false)}
-        onApply={({ from, to }) => {
-          setDateFrom(from);
-          setDateTo(to);
+        onChange={({ from, to }) => {
+          if (from) setDateFrom(from);
+          if (to) setDateTo(to);
           setRangePickerOpen(false);
         }}
       />
@@ -1104,7 +1251,7 @@ export default function CrmOrgOverviewReport() {
             />
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
             <KpiCard label="Lead" value={summary.lead_count ?? 0} compare={compare} compareKey="lead_count" accent="border-blue-200 bg-blue-50" />
             <KpiCard label="Deal" value={summary.deal_count ?? 0} compare={compare} compareKey="deal_count" accent="border-cyan-200 bg-cyan-50" />
             <KpiCard
@@ -1122,9 +1269,15 @@ export default function CrmOrgOverviewReport() {
               sub={
                 summary.deal_close_value_rate_pct != null
                   ? `${reportClosedWonCount(summary)}/${summary.deal_count ?? 0} deal · GT ${summary.deal_close_value_rate_pct}%`
-                  : `${reportClosedWonCount(summary)}/${summary.deal_count ?? 0} deal · ${summary.lost_deal_count ?? 0} thua`
+                  : `${reportClosedWonCount(summary)}/${summary.deal_count ?? 0} deal`
               }
               accent="border-slate-200 bg-slate-50"
+            />
+            <KpiCard
+              label="Tỷ lệ hủy"
+              value={summary.cancel_rate_pct != null ? `${summary.cancel_rate_pct}%` : '—'}
+              sub={`${reportCancelLostTotal(summary)}/${reportCancelTotalCount(summary)} lead+deal thua/hủy`}
+              accent="border-rose-200 bg-rose-50"
             />
           </div>
 
@@ -1135,7 +1288,7 @@ export default function CrmOrgOverviewReport() {
                 BG = deal ở cột Báo giá trở về sau · Chốt = thắng + sau thắng + hoàn thành (cùng một chỉ số) · Tăng trưởng so với kỳ trước
               </p>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-8 gap-3">
             <KpiCard
               label="Tổng báo giá"
               value={summary.quote_deal_count ?? 0}
@@ -1185,6 +1338,12 @@ export default function CrmOrgOverviewReport() {
               value={compare?.won_or_later_value?.pct != null ? `${compare.won_or_later_value.pct > 0 ? '+' : ''}${compare.won_or_later_value.pct}%` : '—'}
               sub="Giá trị chốt vs kỳ trước"
               accent="border-indigo-200 bg-indigo-50"
+            />
+            <KpiCard
+              label="Tỷ lệ hủy"
+              value={summary.cancel_rate_pct != null ? `${summary.cancel_rate_pct}%` : '—'}
+              sub={`${reportCancelLostTotal(summary)}/${reportCancelTotalCount(summary)} thua/hủy`}
+              accent="border-rose-200 bg-rose-50"
             />
             </div>
             {(quoteFunnelPie.length > 0 || periodCompareChart.length > 0) && (
@@ -1250,7 +1409,7 @@ export default function CrmOrgOverviewReport() {
                   nameKey="full_name"
                   entityLabel="nhân viên"
                 />
-                <div className="mt-4">
+                <CollapsibleDataList label="bảng số liệu báo giá & chốt">
                   <MetricTable
                   columns={[
                     { key: 'full_name', label: 'Nhân viên', bold: true },
@@ -1262,7 +1421,7 @@ export default function CrmOrgOverviewReport() {
                     .map((r) => ({ ...r, _key: r.user_id }))}
                   emptyLabel="Chưa có dữ liệu nhân viên trong kỳ"
                 />
-                </div>
+                </CollapsibleDataList>
               </Section>
 
               <Section title="Xu hướng theo ngày" subtitle="Lead / Deal tạo mới trong kỳ" className="lg:col-span-2">
