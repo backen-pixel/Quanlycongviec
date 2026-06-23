@@ -19,18 +19,18 @@ import {
 import { formatVND, formatDate } from '../lib/utils';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
 import {
-  getWorkshopDateRange, WS_TIME_PRESETS, WS_KANBAN_LOAD_OPTIONS,
+  getWorkshopDateRange, WS_TIME_PRESETS,
   workshopCreatedInRange, fetchWorkshopProjectPages,
 } from '../lib/workshopDashboardUtils';
 import {
   CheckCircle2, Search, X, Calendar, Plus,
   Factory, Users, LayoutGrid, List,
-  CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Layers, Trash2, MessageSquare, Pin, ArrowUpDown, Building2, ArrowRightLeft,
+  CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Layers, Trash2, MessageSquare, Pin, Building2, ArrowRightLeft,
 } from 'lucide-react';
 import { ProductionListView, ProductionPlannerView, ProductionCalendarView, ProductionCommentsView, ProductionDeadlineView } from '../components/ProductionViews';
 import WorkshopPipelineKanbanScroll from '../components/WorkshopPipelineKanbanScroll';
 import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
-import WorkshopStaffFilterPanel from '../components/WorkshopStaffFilterPanel';
+import WorkshopDashboardFilterPanel, { SX_FILTER_TABS_META } from '../components/WorkshopDashboardFilterPanel';
 import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
@@ -54,6 +54,28 @@ const INTAKE_BUCKET = 'won_pending';
 const WS_DASH_VIEW_MODES = ['kanban', 'list', 'planner', 'deadline', 'comments', 'calendar'];
 
 const LS_SX = 'sx_dash_filters_v1';
+const LS_SX_FILTER_PANEL_POS = 'sx_filter_panel_pos';
+
+function readStoredSxFilterPanelPos() {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(LS_SX_FILTER_PANEL_POS);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || typeof data.x !== 'number' || typeof data.y !== 'number') return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function storeSxFilterPanelPos(pos) {
+  if (typeof window === 'undefined') return;
+  try {
+    if (!pos) localStorage.removeItem(LS_SX_FILTER_PANEL_POS);
+    else localStorage.setItem(LS_SX_FILTER_PANEL_POS, JSON.stringify(pos));
+  } catch { /* ignore */ }
+}
 function readSxDashPersisted() {
   if (typeof window === 'undefined') return null;
   try {
@@ -256,7 +278,12 @@ export default function ProductionDashboard() {
   const [showDateRangePicker, setShowDateRangePicker] = useState(false);
   const [kanbanLoadKey, setKanbanLoadKey] = useState(() => P0?.kanbanLoadKey ?? '500');
   const [filterPhone, setFilterPhone] = useState(() => P0?.filterPhone ?? '');
-  const [showAdvFilter, setShowAdvFilter] = useState(false);
+  const [showAdvFilter, setShowAdvFilter] = useState(() => !!P0?.showAdvFilter);
+  const [sxFilterTab, setSxFilterTab] = useState(() => P0?.sxFilterTab || 'employee');
+  const [filterPanelPos, setFilterPanelPos] = useState(() => readStoredSxFilterPanelPos());
+  const [searchFocused, setSearchFocused] = useState(false);
+  const filterPanelRef = useRef(null);
+  const filterPanelDragRef = useRef(null);
   const [filterWorkTypeId, setFilterWorkTypeId] = useState(() => P0?.filterWorkTypeId ?? '');
   const [workTypes, setWorkTypes] = useState([]);
   /** Công ty mà danh sách `workTypes` hiện tại thuộc về — chống dùng nhầm loại của công ty cũ khi đổi công ty. */
@@ -653,13 +680,13 @@ export default function ProductionDashboard() {
         filterCompany, filterDealCompany, timePreset, customFrom, customTo, showCustomDate, kanbanLoadKey,
         filterPersonId, filterPersonName, filterRegion, filterPhone, filterWorkTypeId,
         searchQuery, priorityFilter, stageFilter, viewMode, sortBy,
-        showOrphanColumn,
+        showOrphanColumn, showAdvFilter, sxFilterTab,
       }));
     } catch { /* ignore */ }
   }, [
     filterCompany, filterDealCompany, timePreset, customFrom, customTo, showCustomDate, kanbanLoadKey, filterPersonId, filterPersonName,
     filterRegion, filterPhone, filterWorkTypeId, searchQuery, priorityFilter, stageFilter, viewMode, sortBy,
-    showOrphanColumn,
+    showOrphanColumn, showAdvFilter, sxFilterTab,
   ]);
 
   // Đóng menu sắp xếp khi click ra ngoài
@@ -1589,23 +1616,6 @@ export default function ProductionDashboard() {
     return weeks === 1 ? '1 tuần' : `${weeks} tuần`;
   };
 
-  const hasTimeFilter = Boolean(
-    (timePreset && timePreset !== 'custom') || (timePreset === 'custom' && customFrom && customTo),
-  );
-  const advFilterCount =
-    staffFilterActiveCount + (filterPhone ? 1 : 0)
-    + (String(searchQuery || '').trim() ? 1 : 0) + (priorityFilter ? 1 : 0) + (stageFilter ? 1 : 0)
-    + (hasTimeFilter ? 1 : 0)
-    + (viewMode === 'kanban' && showOrphanColumn ? 1 : 0);
-
-  const hasActiveFilter = !!(
-    searchQuery || priorityFilter || stageFilter || hasTimeFilter
-    || filterPhone || filterWorkTypeId || staffFilterActiveCount
-    || (canPickCompany && filterCompany)
-    || (isSystemAdmin(user) && filterDealCompany)
-    || (viewMode === 'kanban' && showOrphanColumn)
-  );
-
   const clearAllFilters = useCallback(() => {
     setSearchQuery('');
     setPriorityFilter('');
@@ -1617,6 +1627,185 @@ export default function ProductionDashboard() {
     if (isSystemAdmin(user)) setFilterDealCompany('');
     resetStaffFilters();
   }, [resetStaffFilters, handleTimePresetChange, user]);
+
+  const openSxFilterPanel = useCallback(() => {
+    setShowAdvFilter((open) => !open);
+    if (!showAdvFilter) setSxFilterTab('employee');
+  }, [showAdvFilter]);
+
+  const closeSxFilterPanel = useCallback(() => {
+    setShowAdvFilter(false);
+    setShowDateRangePicker(false);
+  }, []);
+
+  const beginFilterPanelDrag = useCallback((e) => {
+    if (e.button !== 0) return;
+    const panel = filterPanelRef.current;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    const originX = filterPanelPos?.x ?? rect.left;
+    const originY = filterPanelPos?.y ?? rect.top;
+    filterPanelDragRef.current = {
+      dragging: true,
+      startX: e.clientX,
+      startY: e.clientY,
+      originX,
+      originY,
+      width: rect.width,
+      height: rect.height,
+    };
+    if (!filterPanelPos) setFilterPanelPos({ x: originX, y: originY });
+    e.preventDefault();
+  }, [filterPanelPos]);
+
+  useEffect(() => {
+    const onMove = (e) => {
+      const drag = filterPanelDragRef.current;
+      if (!drag?.dragging) return;
+      const margin = 8;
+      const maxX = Math.max(margin, window.innerWidth - drag.width - margin);
+      const maxY = Math.max(margin, window.innerHeight - drag.height - margin);
+      const x = Math.min(maxX, Math.max(margin, drag.originX + (e.clientX - drag.startX)));
+      const y = Math.min(maxY, Math.max(margin, drag.originY + (e.clientY - drag.startY)));
+      setFilterPanelPos({ x, y });
+    };
+    const onUp = () => {
+      const drag = filterPanelDragRef.current;
+      if (!drag?.dragging) return;
+      drag.dragging = false;
+      setFilterPanelPos((pos) => {
+        if (pos) storeSxFilterPanelPos(pos);
+        return pos;
+      });
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!showAdvFilter) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape' && !showDateRangePicker) closeSxFilterPanel();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showAdvFilter, showDateRangePicker, closeSxFilterPanel]);
+
+  const activeSxFilterChips = useMemo(() => {
+    const chips = [];
+    const push = (key, label, onClear) => chips.push({ key, label, onClear });
+
+    if (searchQuery.trim()) {
+      push('search', `Tìm: “${searchQuery.trim()}”`, () => setSearchQuery(''));
+    }
+    if (filterCompany && canPickCompany) {
+      const name = companies.find((c) => String(c.id) === String(filterCompany))?.short_name
+        || companies.find((c) => String(c.id) === String(filterCompany))?.name
+        || filterCompany;
+      push('company', `Công ty: ${name}`, () => handleStaffFilterCompanyChange(''));
+    }
+    if (filterDealCompany && showDealCompanyFilter) {
+      const name = selectedDealCompanyLabel
+        || dealCompanyOptions.find((c) => String(c.id) === String(filterDealCompany))?.short_name
+        || dealCompanyOptions.find((c) => String(c.id) === String(filterDealCompany))?.name
+        || filterDealCompany;
+      push('dealCompany', `Đặt hàng: ${name}`, () => {
+        setFilterDealCompany('');
+        setFilterWorkTypeId('');
+      });
+    }
+    if (filterSxWorkshopCompany && showVptSxWorkshopFilter) {
+      const name = sxWorkshopFilterOptions.find((c) => String(c.id) === String(filterSxWorkshopCompany))?.short_name
+        || sxWorkshopFilterOptions.find((c) => String(c.id) === String(filterSxWorkshopCompany))?.name
+        || filterSxWorkshopCompany;
+      push('sxWorkshop', `SX tại: ${name}`, () => {
+        setFilterSxWorkshopCompany('');
+        setFilterWorkTypeId('');
+      });
+    }
+    if (filterRegion) {
+      const label = filterRegion === '__none__'
+        ? 'Khu vực: Chưa gán'
+        : `Khu vực: ${companyRegions.find((r) => String(r.id) === String(filterRegion))?.name || filterRegion}`;
+      push('region', label, () => {
+        setFilterRegion('');
+        setFilterPersonId('');
+        setFilterPersonName('');
+      });
+    }
+    if (filterPersonId) {
+      const name = employeeOptionsForSelect.find((u) => String(u.id) === String(filterPersonId))?.full_name
+        || filterPersonId;
+      push('person', `NV: ${name}`, () => {
+        setFilterPersonId('');
+        setFilterPersonName('');
+      });
+    }
+    if (filterPersonName.trim()) {
+      push('personName', `Tên: ${filterPersonName.trim()}`, () => setFilterPersonName(''));
+    }
+    if (stageFilter) {
+      const name = pipeline.find((s) => String(s.id) === String(stageFilter))?.name || stageFilter;
+      push('stage', `Giai đoạn: ${name}`, () => setStageFilter(''));
+    }
+    if (filterWorkTypeId === 'none') {
+      push('workType', 'Phân loại: Chưa phân loại', () => setFilterWorkTypeId(''));
+    } else if (filterWorkTypeId) {
+      const name = workTypes.find((wt) => String(wt.id) === String(filterWorkTypeId))?.name || filterWorkTypeId;
+      push('workType', `Phân loại: ${name}`, () => setFilterWorkTypeId(''));
+    }
+    if (priorityFilter) {
+      const label = priorityFilter === 'high' ? 'Cao' : priorityFilter === 'medium' ? 'TB' : 'Thấp';
+      push('priority', `Ưu tiên: ${label}`, () => setPriorityFilter(''));
+    }
+    if (filterPhone === 'has') {
+      push('phone', 'Có SĐT', () => setFilterPhone(''));
+    } else if (filterPhone === 'no') {
+      push('phone', 'Chưa có SĐT', () => setFilterPhone(''));
+    }
+    if (timePreset) {
+      push('time', `Thời gian: ${timeFilterLabel || timePreset}`, () => handleTimePresetChange(''));
+    }
+    if (showOrphanColumn) {
+      push('orphan', 'Cột chưa phân loại', () => setShowOrphanColumn(false));
+    }
+    return chips;
+  }, [
+    searchQuery, filterCompany, canPickCompany, companies, handleStaffFilterCompanyChange,
+    filterDealCompany, showDealCompanyFilter, selectedDealCompanyLabel, dealCompanyOptions,
+    filterSxWorkshopCompany, showVptSxWorkshopFilter, sxWorkshopFilterOptions,
+    filterRegion, companyRegions, filterPersonId, filterPersonName, employeeOptionsForSelect,
+    stageFilter, pipeline, filterWorkTypeId, workTypes, priorityFilter, filterPhone,
+    timePreset, timeFilterLabel, handleTimePresetChange, showOrphanColumn,
+    setFilterRegion, setFilterPersonId, setFilterPersonName,
+  ]);
+
+  const activeSxFilterCount = activeSxFilterChips.length;
+
+  const sxFilterTabCounts = useMemo(() => ({
+    employee: staffFilterActiveCount,
+    pipeline: (stageFilter ? 1 : 0) + (filterWorkTypeId ? 1 : 0) + (priorityFilter ? 1 : 0)
+      + (filterPhone ? 1 : 0) + (showOrphanColumn ? 1 : 0) + (filterSxWorkshopCompany ? 1 : 0),
+    display: (timePreset ? 1 : 0) + (sortBy !== 'newest' ? 1 : 0) + (kanbanLoadKey !== '500' ? 1 : 0),
+  }), [
+    staffFilterActiveCount, stageFilter, filterWorkTypeId,
+    priorityFilter, filterPhone, showOrphanColumn, filterSxWorkshopCompany,
+    timePreset, sortBy, kanbanLoadKey,
+  ]);
+
+  const sxFilterTabs = useMemo(
+    () => SX_FILTER_TABS_META.map((t) => ({ ...t, count: sxFilterTabCounts[t.id] || 0 })),
+    [sxFilterTabCounts],
+  );
+
+  const sxFilterPanelActive = showAdvFilter
+    || filterCompany || filterDealCompany || filterSxWorkshopCompany || filterRegion || filterPersonId
+    || filterPersonName || stageFilter || filterWorkTypeId || priorityFilter || filterPhone
+    || timePreset || showOrphanColumn || searchQuery.trim();
 
   // Lần đầu chưa có data → spinner toàn vùng. Reload sau đó dùng overlay nhẹ
   // (xem block <main className="relative"> ở dưới) để toolbar/KPI vẫn hiển thị.
@@ -1796,79 +1985,154 @@ export default function ProductionDashboard() {
         </div>
       )}
 
-      {/* Bộ lọc gọn — khi đóng chỉ 1 hàng + tóm tắt phạm vi */}
+      {/* Toolbar — tìm kiếm + bộ lọc nổi (đồng bộ CRM) */}
       <div className="space-y-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setShowAdvFilter((s) => !s)}
-            className={`h-9 px-3 rounded-lg border text-sm font-medium inline-flex items-center gap-1.5 shrink-0 cursor-pointer ${
-              showAdvFilter || advFilterCount
-                ? 'border-blue-300 bg-blue-50 text-blue-700'
-                : 'border-gray-200 bg-white hover:bg-gray-50 text-gray-900'
+        <div className="flex flex-wrap items-center gap-1.5">
+          <div
+            className={`group/search flex items-center shrink-0 w-full sm:w-[280px] md:w-[340px] max-w-[360px] rounded-xl border-2 transition-all duration-200 ${
+              searchFocused
+                ? 'border-violet-400 bg-white shadow-lg shadow-violet-500/20 ring-2 ring-violet-200/70'
+                : searchQuery.trim()
+                  ? 'border-violet-300 bg-violet-50/90 shadow-md shadow-violet-500/10 ring-1 ring-violet-200/50'
+                  : 'border-violet-200 bg-violet-50/70 hover:border-violet-300 hover:bg-violet-50 hover:shadow-md hover:shadow-violet-500/10'
             }`}
           >
-            <Filter className="h-3.5 w-3.5" />
-            Bộ lọc và tìm kiếm
-            {advFilterCount > 0 && (
-              <span className="text-[10px] font-bold bg-blue-600 text-white rounded-full min-w-[1.1rem] px-1 text-center">
-                {advFilterCount}
-              </span>
-            )}
-          </button>
+            <div className="relative flex-1 min-w-0">
+              <Search
+                className={`absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 pointer-events-none transition-colors duration-200 ${
+                  searchFocused || searchQuery.trim() ? 'text-violet-600' : 'text-violet-500'
+                }`}
+              />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onFocus={() => setSearchFocused(true)}
+                onBlur={() => setTimeout(() => setSearchFocused(false), 180)}
+                placeholder="Tìm mã TB, tên khách, SĐT…"
+                className="w-full h-9 pl-9 pr-8 bg-transparent border-0 text-xs font-medium text-slate-900 placeholder:text-violet-500/65 focus:outline-none focus:ring-0 rounded-l-xl"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => { setSearchQuery(''); setSearchFocused(false); }}
+                  className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded-md text-violet-400 hover:text-violet-700 hover:bg-violet-200/60 cursor-pointer transition-colors"
+                  aria-label="Xóa tìm kiếm"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            <div className="shrink-0 pr-1.5 pl-0.5">
+              <button
+                type="button"
+                onClick={openSxFilterPanel}
+                aria-expanded={showAdvFilter}
+                className={`relative h-7 w-7 flex items-center justify-center rounded-lg border transition-all duration-200 cursor-pointer ${
+                  showAdvFilter || sxFilterPanelActive
+                    ? 'bg-violet-200 text-violet-800 border-violet-400 shadow-md ring-2 ring-violet-200/60'
+                    : 'bg-violet-50 text-violet-600 border-violet-200 hover:bg-violet-100 hover:text-violet-800 hover:border-violet-300 hover:shadow-sm'
+                }`}
+                title={showAdvFilter ? 'Thu gọn bộ lọc' : 'Bộ lọc nâng cao'}
+                aria-label="Bộ lọc"
+              >
+                <Filter className="h-3.5 w-3.5" />
+                {activeSxFilterCount > 0 && (
+                  <span className="absolute top-0.5 right-0.5 h-1.5 w-1.5 rounded-full bg-violet-600 ring-2 ring-white" />
+                )}
+              </button>
+            </div>
+          </div>
 
-          {!showAdvFilter && hasActiveFilter && (
-            <button
-              type="button"
-              onClick={clearAllFilters}
-              className="h-9 px-3 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 cursor-pointer inline-flex items-center gap-1.5"
-            >
-              <X className="h-3.5 w-3.5" /> Xóa bộ lọc
-            </button>
+          {canPickCompany && !isCompanyScopedAdmin && workshopCompanyPickerList.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto max-w-full shrink-0 pb-0.5 scrollbar-thin scrollbar-thumb-violet-200">
+              {(isAdmin ? [{ id: '', name: 'Tất cả' }, ...workshopCompanyPickerList] : workshopCompanyPickerList).map((c) => {
+                const active = filterCompany === c.id;
+                return (
+                  <button
+                    key={c.id || 'all'}
+                    type="button"
+                    onClick={() => {
+                      if (active) return;
+                      handleStaffFilterCompanyChange(c.id);
+                    }}
+                    className={`shrink-0 h-9 px-3 rounded-full text-xs font-semibold border transition-all cursor-pointer whitespace-nowrap ${
+                      active
+                        ? 'bg-violet-600 border-violet-600 text-white shadow-sm'
+                        : 'bg-white border-violet-200 text-slate-600 hover:border-violet-400 hover:text-violet-700 hover:bg-violet-50'
+                    }`}
+                  >
+                    {active && <span className="mr-1">✓</span>}
+                    {c.id === '' ? 'Tất cả' : (c.short_name || c.name)}
+                  </button>
+                );
+              })}
+            </div>
           )}
 
-          {!showAdvFilter && hasTimeFilter && timeFilterLabel && (
-            <span className="inline-flex items-center gap-1 h-8 px-2.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-lg text-xs font-medium">
-              <Clock className="h-3 w-3 shrink-0" />
-              {timeFilterLabel}
-            </span>
+          {showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto max-w-full shrink-0 pb-0.5 scrollbar-thin scrollbar-thumb-violet-200">
+              <span className="text-[11px] font-semibold text-violet-700/80 shrink-0">SX tại:</span>
+              {[{ id: '', name: 'Tất cả' }, ...sxWorkshopFilterOptions].map((c) => {
+                const active = filterSxWorkshopCompany === c.id;
+                return (
+                  <button
+                    key={c.id || 'all-sx'}
+                    type="button"
+                    onClick={() => {
+                      if (active) return;
+                      setFilterSxWorkshopCompany(c.id);
+                      setFilterWorkTypeId('');
+                    }}
+                    className={`shrink-0 h-8 px-2.5 rounded-full text-[11px] font-semibold border transition-all cursor-pointer whitespace-nowrap ${
+                      active
+                        ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm'
+                        : 'bg-white border-violet-200 text-slate-600 hover:border-indigo-300 hover:text-indigo-700 hover:bg-indigo-50'
+                    }`}
+                  >
+                    {active && <span className="mr-1">✓</span>}
+                    {c.id === '' ? 'Tất cả' : (c.short_name || c.name)}
+                  </button>
+                );
+              })}
+            </div>
           )}
 
-          {companyForTypes && (
-            <div
+          {companyForTypes && workTypes.length > 0 && (            <div
               className={`inline-flex items-center gap-1 h-9 px-2 rounded-lg border shrink-0 ${
                 filterWorkTypeId === 'none'
                   ? 'border-amber-300 bg-amber-50'
                   : filterWorkTypeId
                     ? 'border-teal-300 bg-teal-50'
-                    : 'border-gray-200 bg-white'
+                    : 'border-violet-200 bg-white'
               }`}
               title="Phân loại dự án xưởng"
             >
               <Layers className={`h-3.5 w-3.5 shrink-0 ${
                 filterWorkTypeId === 'none' ? 'text-amber-600'
-                : filterWorkTypeId ? 'text-teal-700' : 'text-gray-500'
+                : filterWorkTypeId ? 'text-teal-700' : 'text-violet-500'
               }`} />
               <select
                 value={filterWorkTypeId}
                 onChange={(e) => setFilterWorkTypeId(e.target.value)}
-                className={`h-8 text-sm bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[12rem] font-medium ${
+                className={`h-8 text-xs bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[12rem] font-semibold ${
                   filterWorkTypeId === 'none' ? 'text-amber-700'
-                  : filterWorkTypeId ? 'text-teal-800' : 'text-gray-700'
+                  : filterWorkTypeId ? 'text-teal-800' : 'text-slate-700'
                 }`}
               >
-                <option value="">{workTypes.length === 0 ? 'Chưa cấu hình loại' : 'Phân loại: Tất cả'}</option>
-                <option value="none">⚠️ Chưa phân loại</option>
+                <option value="">Phân loại: Tất cả</option>
+                <option value="none">Chưa phân loại</option>
                 {workTypes.map((wt) => (
                   <option key={wt.id} value={wt.id}>{wt.name}</option>
                 ))}
               </select>
-              {filterWorkTypeId && workTypes.length > 0 && (
+              {filterWorkTypeId && (
                 <button
                   type="button"
-                  onClick={() => setFilterWorkTypeId(String(workTypes[0].id))}
+                  onClick={() => setFilterWorkTypeId('')}
                   className="p-1 rounded hover:bg-white/70 cursor-pointer"
-                  title="Chọn phân loại mặc định"
+                  title="Bỏ phân loại"
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -1900,7 +2164,28 @@ export default function ProductionDashboard() {
             {' · '}<strong className="text-blue-700">{filteredCardCount}</strong> thẻ sau lọc
           </span>
         </div>
-
+{!showAdvFilter && showCustomDate && (
+          <div className="flex flex-wrap items-center gap-3 bg-violet-50 border border-violet-200 rounded-xl p-3 shadow-sm">
+            <span className="text-xs font-bold text-violet-600 uppercase flex items-center gap-1.5">
+              <Calendar className="h-3.5 w-3.5" /> Khoảng thời gian:
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowDateRangePicker(true)}
+              className="h-9 px-3 bg-white border border-violet-200 rounded-lg text-sm hover:bg-violet-50 cursor-pointer"
+              title="Chọn khoảng ngày"
+            >
+              {customFrom && customTo ? `${customFrom} → ${customTo}` : 'Chọn ngày bắt đầu/kết thúc'}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleTimePresetChange('')}
+              className="h-9 px-3 bg-white text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-lg text-sm transition cursor-pointer border border-gray-200"
+            >
+              Hủy
+            </button>
+          </div>
+        )}
         <DateRangePickerPopover
           open={showDateRangePicker}
           title="Phạm vi tuỳ chỉnh"
@@ -1913,187 +2198,113 @@ export default function ProductionDashboard() {
           onClose={() => setShowDateRangePicker(false)}
         />
 
-        {showAdvFilter && (
-          <div className="space-y-3 p-3 rounded-xl border border-dashed border-gray-200 bg-gray-50/80">
-            {/* Tìm kiếm */}
-            <div className="relative w-full max-w-xl">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Tìm theo mã TB, tên khách, SĐT, ghi chú..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full h-9 pl-9 pr-8 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-              {searchQuery && (
-                <button type="button" onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer">
-                  <X className="h-4 w-4" />
-                </button>
-              )}
-            </div>
+        {!showAdvFilter && timePreset && timePreset !== 'custom' && timeFilterLabel && (
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-violet-100 text-violet-700 rounded-lg text-xs font-medium border border-violet-200">
+              <Clock className="h-3 w-3" />
+              {timeFilterLabel}
+              <button type="button" onClick={() => handleTimePresetChange('')} className="ml-1 hover:text-violet-900 cursor-pointer" title="Bỏ lọc thời gian">
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          </div>
+        )}
 
-            {/* Thời gian & hiển thị */}
-            <div className="flex flex-wrap items-end gap-3">
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] font-semibold text-gray-500">Thời gian tạo</label>
-                <div className="inline-flex items-center gap-0.5 rounded-lg border border-gray-200 bg-white px-1.5 h-9">
-                  <Clock className="h-3.5 w-3.5 text-gray-400 ml-0.5 shrink-0" />
-                  <select
-                    value={timePreset}
-                    onChange={(e) => handleTimePresetChange(e.target.value)}
-                    className="h-8 pr-1 text-xs sm:text-sm bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[9rem]"
-                  >
-                    {WS_TIME_PRESETS.map((o) => (
-                      <option key={o.key || 'all'} value={o.key}>{o.label}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              {timePreset === 'custom' && (
-                <div className="flex items-center gap-1 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={() => setShowDateRangePicker(true)}
-                    className="h-9 px-3 bg-white border border-purple-200 rounded-lg text-xs hover:bg-purple-50 cursor-pointer"
-                  >
-                    {customFrom && customTo ? `${customFrom} → ${customTo}` : 'Chọn khoảng ngày'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleTimePresetChange('')}
-                    className="h-9 px-2 text-gray-500 hover:text-gray-700 text-xs cursor-pointer"
-                  >
-                    Bỏ
-                  </button>
-                </div>
-              )}
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] font-semibold text-gray-500">Sắp xếp</label>
-                <div className="relative" ref={sortMenuRef}>
-                  <button
-                    type="button"
-                    onClick={() => setSortOpen((s) => !s)}
-                    className={`h-9 px-3 rounded-lg border text-sm font-medium inline-flex items-center gap-1.5 cursor-pointer ${
-                      sortOpen ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white hover:bg-gray-50'
-                    }`}
-                  >
-                    <ArrowUpDown className="h-3.5 w-3.5" />
-                    {SX_SORT_OPTIONS_VISIBLE.find((o) => o.id === sortBy)?.label || 'Sắp xếp'}
-                  </button>
-                  {sortOpen && (
-                    <div className="absolute left-0 top-full mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-30 py-1">
-                      {SX_SORT_OPTIONS_VISIBLE.map((o) => (
-                        <button
-                          key={o.id}
-                          type="button"
-                          onClick={() => { setSortBy(o.id); setSortOpen(false); }}
-                          className={`w-full text-left px-3 py-1.5 text-sm cursor-pointer ${
-                            sortBy === o.id ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'
-                          }`}
-                        >
-                          {o.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] font-semibold text-gray-500">Tải tối đa</label>
-                <select
-                  value={kanbanLoadKey}
-                  onChange={(e) => setKanbanLoadKey(e.target.value)}
-                  className="h-9 px-2 border border-gray-200 rounded-lg text-xs sm:text-sm bg-amber-50/80"
-                  title="Số bản ghi tối đa từ server"
-                >
-                  {WS_KANBAN_LOAD_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <WorkshopStaffFilterPanel
-              isAdmin={isAdmin}
-              isCompanyScopedAdmin={isCompanyScopedAdmin}
-              userCompanyId={userCompanyId}
-              companies={companies}
-              filterCompany={filterCompany}
-              onCompanyChange={handleStaffFilterCompanyChange}
-              dashboardScopeCompanyId={dashboardScopeCompanyId}
-              companyRegions={companyRegions}
-              filterRegion={filterRegion}
-              setFilterRegion={setFilterRegion}
-              assigneeListSearch={assigneeListSearch}
-              setAssigneeListSearch={setAssigneeListSearch}
-              filterPersonId={filterPersonId}
-              setFilterPersonId={setFilterPersonId}
-              setFilterPersonName={setFilterPersonName}
-              employeeOptionsForSelect={employeeOptionsForSelect}
-              companyDepts={companyDepts}
-              filterPersonName={filterPersonName}
-              employeeFilterListByRegion={employeeFilterListByRegion}
-              companyEmployees={companyEmployees}
-              ringFocusClass="focus:ring-blue-500"
-              hideCompanySelect={canPickCompany && workshopCompanyPickerList.length > 0}
-            />
-
-            <div className="rounded-lg border border-slate-200 bg-white/80 p-3 space-y-2">
-              <p className="text-[11px] font-bold text-slate-600 uppercase tracking-wide">Lọc chi tiết thẻ</p>
-              <div className="flex flex-wrap items-end gap-3">
-                <div className="flex flex-col gap-0.5 min-w-[10rem]">
-                  <label className="text-[10px] text-gray-500 font-medium">Giai đoạn pipeline</label>
-                  <select
-                    value={stageFilter}
-                    onChange={(e) => setStageFilter(e.target.value)}
-                    className="h-9 w-44 px-2 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
-                  >
-                    <option value="">Tất cả giai đoạn</option>
-                    {pipeline.map((stage) => (
-                      <option key={stage.id} value={stage.id}>{stage.icon || '•'} {stage.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-0.5">
-                  <label className="text-[10px] text-gray-500 font-medium">Ưu tiên</label>
-                  <select
-                    value={priorityFilter}
-                    onChange={(e) => setPriorityFilter(e.target.value)}
-                    className="h-9 w-32 px-2 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
-                  >
-                    <option value="">Tất cả</option>
-                    <option value="high">Cao</option>
-                    <option value="medium">Trung bình</option>
-                    <option value="low">Thấp</option>
-                  </select>
-                </div>
-                <div className="flex flex-col gap-0.5">
-                  <label className="text-[10px] text-gray-500 font-medium">Số điện thoại</label>
-                  <select
-                    value={filterPhone}
-                    onChange={(e) => setFilterPhone(e.target.value)}
-                    className="h-9 w-36 px-2 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
-                  >
-                    <option value="">Không lọc</option>
-                    <option value="has">Có SĐT</option>
-                    <option value="no">Chưa có SĐT</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            {hasActiveFilter && (
-              <div className="flex justify-end pt-1">
+        {!showAdvFilter && activeSxFilterCount > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {activeSxFilterChips.map((chip) => (
+              <span
+                key={chip.key}
+                className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-violet-100 border border-violet-300 text-[11px] font-semibold text-violet-900 shadow-sm"
+              >
+                <span className="max-w-[12rem] truncate">{chip.label}</span>
                 <button
                   type="button"
-                  onClick={clearAllFilters}
-                  className="h-9 px-3 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-white cursor-pointer inline-flex items-center gap-1.5 bg-white"
+                  onClick={chip.onClear}
+                  className="p-0.5 rounded-full hover:bg-violet-200 text-violet-600 cursor-pointer"
+                  aria-label={`Bỏ lọc ${chip.label}`}
                 >
-                  <X className="h-3.5 w-3.5" /> Xóa toàn bộ bộ lọc
+                  <X className="h-3 w-3" />
                 </button>
-              </div>
-            )}
-          </div>
+              </span>
+            ))}
+            <button
+              type="button"
+              onClick={clearAllFilters}
+              className="text-[11px] font-medium text-slate-500 hover:text-red-600 cursor-pointer px-1"
+            >
+              Xóa tất cả
+            </button>          </div>
+        )}
+
+        {showAdvFilter && (
+          <WorkshopDashboardFilterPanel
+            panelRef={filterPanelRef}
+            position={filterPanelPos}
+            onDragStart={beginFilterPanelDrag}
+            onClose={closeSxFilterPanel}
+            tab={sxFilterTab}
+            onTabChange={setSxFilterTab}
+            tabs={sxFilterTabs}
+            onReset={clearAllFilters}
+            onResetPosition={() => {
+              setFilterPanelPos(null);
+              storeSxFilterPanelPos(null);
+            }}
+            hasCustomPosition={!!filterPanelPos}
+            isAdmin={isAdmin}
+            isCompanyScopedAdmin={isCompanyScopedAdmin}
+            userCompanyId={userCompanyId}
+            companies={companies}
+            filterCompany={filterCompany}
+            onCompanyChange={handleStaffFilterCompanyChange}
+            dashboardScopeCompanyId={dashboardScopeCompanyId}
+            companyRegions={companyRegions}
+            filterRegion={filterRegion}
+            setFilterRegion={setFilterRegion}
+            assigneeListSearch={assigneeListSearch}
+            setAssigneeListSearch={setAssigneeListSearch}
+            filterPersonId={filterPersonId}
+            setFilterPersonId={setFilterPersonId}
+            setFilterPersonName={setFilterPersonName}
+            employeeOptionsForSelect={employeeOptionsForSelect}
+            companyDepts={companyDepts}
+            filterPersonName={filterPersonName}
+            employeeFilterListByRegion={employeeFilterListByRegion}
+            companyEmployees={companyEmployees}
+            hideCompanySelect={canPickCompany && workshopCompanyPickerList.length > 0}
+            pipeline={pipeline}
+            stageFilter={stageFilter}
+            setStageFilter={setStageFilter}
+            filterWorkTypeId={filterWorkTypeId}
+            setFilterWorkTypeId={setFilterWorkTypeId}
+            workTypes={workTypes}
+            companyForTypes={companyForTypes}
+            priorityFilter={priorityFilter}
+            setPriorityFilter={setPriorityFilter}
+            filterPhone={filterPhone}
+            setFilterPhone={setFilterPhone}
+            showOrphanColumn={showOrphanColumn}
+            setShowOrphanColumn={setShowOrphanColumn}
+            viewMode={viewMode}
+            showVptSxWorkshopFilter={showVptSxWorkshopFilter}
+            sxWorkshopFilterOptions={sxWorkshopFilterOptions}
+            filterSxWorkshopCompany={filterSxWorkshopCompany}
+            setFilterSxWorkshopCompany={setFilterSxWorkshopCompany}
+            timePreset={timePreset}
+            onTimePresetChange={handleTimePresetChange}
+            onOpenDateRangePicker={() => setShowDateRangePicker(true)}
+            customFrom={customFrom}
+            customTo={customTo}
+            kanbanLoadKey={kanbanLoadKey}
+            setKanbanLoadKey={setKanbanLoadKey}
+            sortBy={sortBy}
+            setSortBy={setSortBy}
+            sortOpen={sortOpen}
+            setSortOpen={setSortOpen}
+            sortMenuRef={sortMenuRef}
+            sortOptions={SX_SORT_OPTIONS_VISIBLE}
+          />
         )}
       </div>
 

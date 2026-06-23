@@ -135,6 +135,17 @@ select.input {
   cursor: pointer;
 }
 
+/* Nút / vùng bấm — con trỏ bàn tay khi hover (trừ disabled) */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+summary {
+  cursor: pointer;
+}
+button:disabled,
+[role="button"][aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
 /* Animations */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(8px); }

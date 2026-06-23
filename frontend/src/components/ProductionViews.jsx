@@ -1,8 +1,9 @@
 import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Plus, Edit2, Trash2, X, Search, GripVertical, ChevronLeft, ChevronRight, MessageSquare,
+  Plus, Edit2, Trash2, X, Search, GripVertical, MessageSquare,
 } from 'lucide-react';
+import { KanbanBoardEdgeScrollChrome } from '../lib/kanbanEdgeScrollControls';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
@@ -712,27 +713,13 @@ function PlannerBoardShell({ children }) {
 
   return (
     <div ref={wrapRef} className="relative">
-      <div className={`pointer-events-none absolute left-0 top-0 bottom-4 z-20 flex w-12 items-stretch sm:w-14 transition-opacity ${dragging ? 'opacity-100' : 'opacity-40'}`} aria-hidden>
-        <div className="flex w-full items-center justify-center bg-gradient-to-r from-slate-200/95 via-slate-100/40 to-transparent pl-0.5">
-          <ChevronLeft className="h-9 w-9 text-slate-600 drop-shadow sm:h-10 sm:w-10" strokeWidth={2.25} />
-        </div>
-      </div>
-      <div className={`pointer-events-none absolute right-0 top-0 bottom-4 z-20 flex w-12 items-stretch sm:w-14 transition-opacity ${dragging ? 'opacity-100' : 'opacity-40'}`} aria-hidden>
-        <div className="ml-auto flex w-full items-center justify-center bg-gradient-to-l from-slate-200/95 via-slate-100/40 to-transparent pr-0.5">
-          <ChevronRight className="h-9 w-9 text-slate-600 drop-shadow sm:h-10 sm:w-10" strokeWidth={2.25} />
-        </div>
-      </div>
-      <button
-        type="button"
-        className={`absolute left-0 top-0 bottom-4 z-[21] w-10 border-0 bg-transparent p-0 sm:w-12 ${dragging ? 'pointer-events-none cursor-default' : 'cursor-pointer'}`}
-        title="Cuộn nhanh sang trái"
-        onClick={() => nudge('left')}
-      />
-      <button
-        type="button"
-        className={`absolute right-0 top-0 bottom-4 z-[21] w-10 border-0 bg-transparent p-0 sm:w-12 ${dragging ? 'pointer-events-none cursor-default' : 'cursor-pointer'}`}
-        title="Cuộn nhanh sang phải"
-        onClick={() => nudge('right')}
+      <KanbanBoardEdgeScrollChrome
+        wrapRef={wrapRef}
+        isDraggingCard={dragging}
+        onNudgeLeft={() => nudge('left')}
+        onNudgeRight={() => nudge('right')}
+        leftTitle="Cuộn nhanh sang trái"
+        rightTitle="Cuộn nhanh sang phải"
       />
       <div ref={scrollRef} className="overflow-x-auto pb-4 [scrollbar-gutter:stable]">
         <div className="flex min-w-max gap-3">{children}</div>

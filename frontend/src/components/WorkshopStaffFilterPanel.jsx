@@ -27,6 +27,7 @@ export default function WorkshopStaffFilterPanel({
   hidePersonSelect = false,
   hidePersonName = false,
   hideCompanySelect = false,
+  hideAssigneeSearch = false,
 }) {
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50/90 p-3 space-y-3">
@@ -114,16 +115,18 @@ export default function WorkshopStaffFilterPanel({
 
         <div className="flex flex-wrap items-end gap-2 border-t border-slate-200/80 pt-3 mt-1 w-full sm:border-t-0 sm:pt-0 sm:mt-0 sm:w-auto sm:border-l sm:pl-3 sm:ml-0">
           <span className="text-[10px] font-bold text-slate-500 uppercase self-center mr-1 hidden sm:inline">3</span>
-          <div className="flex flex-col gap-0.5">
-            <label className="text-[10px] text-slate-600 font-semibold">Tìm NV</label>
-            <input
-              type="search"
-              value={assigneeListSearch}
-              onChange={(e) => setAssigneeListSearch(e.target.value)}
-              placeholder="Tên, email…"
-              className={`h-9 w-36 px-2 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 ${ringFocusClass}`}
-            />
-          </div>
+          {!hideAssigneeSearch && (
+            <div className="flex flex-col gap-0.5">
+              <label className="text-[10px] text-slate-600 font-semibold">Tìm NV</label>
+              <input
+                type="search"
+                value={assigneeListSearch}
+                onChange={(e) => setAssigneeListSearch(e.target.value)}
+                placeholder="Tên, email…"
+                className={`h-9 w-36 px-2 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 ${ringFocusClass}`}
+              />
+            </div>
+          )}
           {!hidePersonSelect && (
             <div className="flex flex-col gap-0.5 min-w-[11rem] flex-1 sm:flex-initial sm:min-w-[12rem]">
               <label className="text-[10px] text-slate-600 font-semibold">{personSelectLabel}</label>

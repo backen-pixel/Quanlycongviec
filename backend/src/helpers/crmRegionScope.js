@@ -57,6 +57,34 @@ function applyCrmLeadRegionFilterToQuery(q, req) {
   return q.in('region_id', c.ids);
 }
 
+/** UUID không tồn tại — dùng khi p_region_ids rỗng để RPC trả 0 dòng. */
+const CRM_EMPTY_REGION_SENTINEL = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * Gộp lọc khu vực từ query `region_id` với phạm vi JWT (crm_region_ids).
+ * Admin / sales_admin: có thể lọc bất kỳ khu vực trong công ty.
+ * NV có crm_region_ids: chỉ khu vực được gán; query ngoài phạm vi → không có dòng.
+ */
+function resolveRpcRegionIdsForCrmList(req, queryRegionId) {
+  const constraint = getCrmLeadRegionConstraint(req);
+  const explicit = normalizeRegionIdList(queryRegionId ? [queryRegionId] : [])[0] || null;
+
+  if (explicit) {
+    if (userCanAssignAnyCrmRegion(req?.user)) {
+      return [explicit];
+    }
+    if (constraint.mode === 'in' && constraint.ids?.length) {
+      return constraint.ids.includes(explicit) ? [explicit] : [CRM_EMPTY_REGION_SENTINEL];
+    }
+    return [explicit];
+  }
+
+  if (constraint.mode === 'in' && constraint.ids?.length) {
+    return constraint.ids;
+  }
+  return null;
+}
+
 /**
  * @param {import('@supabase/supabase-js').SupabaseClient} supabase
  * @param {string} userId
@@ -111,6 +139,8 @@ module.exports = {
   normalizeRegionIdList,
   getCrmLeadRegionConstraint,
   applyCrmLeadRegionFilterToQuery,
+  resolveRpcRegionIdsForCrmList,
+  CRM_EMPTY_REGION_SENTINEL,
   fetchUserCrmRegionIds,
   assertLeadReadableByRegionScope,
   assertRegionBelongsToCompany,

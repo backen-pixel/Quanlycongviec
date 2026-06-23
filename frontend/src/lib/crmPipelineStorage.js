@@ -83,6 +83,17 @@ export function clearCrmPipelineCardFocus() {
   } catch (_) {}
 }
 
+/** Xóa snapshot bộ lọc pipeline (session + localStorage) — gọi khi đăng xuất / đổi tài khoản. */
+export function clearCrmPipelineUiPersistence() {
+  try {
+    sessionStorage.removeItem(UI_KEY);
+  } catch (_) {}
+  try {
+    localStorage.removeItem(UI_LS_KEY);
+  } catch (_) {}
+  clearCrmPipelineCardFocus();
+}
+
 const viewedLeadsKey = (userKey) => `crm_lead_detail_viewed:${String(userKey || '').trim()}`;
 
 function peekUserIdFromLocalStorage() {

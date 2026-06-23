@@ -19,8 +19,9 @@ import { CrmCommentMentionComposer, renderCrmCommentBody } from './crmCommentMen
 import { upsertComment } from './CommentsPanels';
 import {
   Plus, X, Trash2, MessageSquare, GripVertical, Search, Edit2, Settings as SettingsIcon,
-  ChevronLeft, ChevronRight, CheckSquare, Eye, Clock,
+  CheckSquare, Eye, Clock,
 } from 'lucide-react';
+import { KanbanBoardEdgeScrollChrome } from '../lib/kanbanEdgeScrollControls';
 
 function formatVND(v) {
   if (!v) return '0đ';
@@ -402,37 +403,13 @@ function KanbanBoardShell({ children }) {
 
   return (
     <div ref={wrapRef} className="relative">
-      <div
-        className={`pointer-events-none absolute left-0 top-0 bottom-4 z-20 flex w-12 items-stretch sm:w-14 transition-opacity ${dragging ? 'opacity-100' : 'opacity-40'}`}
-        aria-hidden
-      >
-        <div className="flex w-full items-center justify-center bg-gradient-to-r from-slate-200/95 via-slate-100/40 to-transparent pl-0.5">
-          <ChevronLeft className="h-9 w-9 text-slate-600 drop-shadow sm:h-10 sm:w-10" strokeWidth={2.25} />
-        </div>
-      </div>
-      <div
-        className={`pointer-events-none absolute right-0 top-0 bottom-4 z-20 flex w-12 items-stretch sm:w-14 transition-opacity ${dragging ? 'opacity-100' : 'opacity-40'}`}
-        aria-hidden
-      >
-        <div className="ml-auto flex w-full items-center justify-center bg-gradient-to-l from-slate-200/95 via-slate-100/40 to-transparent pr-0.5">
-          <ChevronRight className="h-9 w-9 text-slate-600 drop-shadow sm:h-10 sm:w-10" strokeWidth={2.25} />
-        </div>
-      </div>
-      <button
-        type="button"
-        className={`absolute left-0 top-0 bottom-4 z-[21] w-10 border-0 bg-transparent p-0 sm:w-12 ${
-          dragging ? 'pointer-events-none cursor-default' : 'cursor-pointer'
-        }`}
-        title="Cuộn nhanh sang trái (hoặc kéo thẻ tới mép để tự cuộn)"
-        onClick={() => nudge('left')}
-      />
-      <button
-        type="button"
-        className={`absolute right-0 top-0 bottom-4 z-[21] w-10 border-0 bg-transparent p-0 sm:w-12 ${
-          dragging ? 'pointer-events-none cursor-default' : 'cursor-pointer'
-        }`}
-        title="Cuộn nhanh sang phải (hoặc kéo thẻ tới mép để tự cuộn)"
-        onClick={() => nudge('right')}
+      <KanbanBoardEdgeScrollChrome
+        wrapRef={wrapRef}
+        isDraggingCard={dragging}
+        onNudgeLeft={() => nudge('left')}
+        onNudgeRight={() => nudge('right')}
+        leftTitle="Cuộn nhanh sang trái (hoặc kéo thẻ tới mép để tự cuộn)"
+        rightTitle="Cuộn nhanh sang phải (hoặc kéo thẻ tới mép để tự cuộn)"
       />
       <div ref={scrollRef} className="overflow-x-auto pb-4 [scrollbar-gutter:stable]">
         <div className="flex min-w-max gap-3">
