@@ -49,6 +49,7 @@ async function updateGroupAvatar(gid, avatarUrl) {
 }
 
 /** Bucket Supabase Storage (mặc định giống upload CRM). */
+const { uploadBufferToStorage } = require('../helpers/storageUpload');
 const MESSENGER_STORAGE_BUCKET = process.env.SUPABASE_MESSENGER_BUCKET || 'attachments';
 /** Thư mục trong bucket, mặc định `messenger` — có thể set `messsenger` trong .env nếu đã tạo đúng tên đó. */
 const MESSENGER_STORAGE_FOLDER = (process.env.SUPABASE_MESSENGER_FOLDER || 'messenger').replace(/^\/+|\/+$/g, '');
@@ -377,26 +378,32 @@ function writeMessengerBufferLocal(buffer, originalName) {
 async function storeMessengerUploadedFile(groupId, file) {
   const mime = file.mimetype || 'application/octet-stream';
   const original = fixUploadFilename(file.originalname || 'file');
-  const ext = path.extname(original) || '';
-  const safeBase = sanitizeMessengerStorageBaseName(original, ext);
 
   if (supabaseMessengerStorageEnabled()) {
-    const prefix = `${MESSENGER_STORAGE_FOLDER}/${groupId}`.replace(/\/+/g, '/');
-    const objectPath = `${prefix}/${Date.now()}_${crypto.randomBytes(4).toString('hex')}_${safeBase}${ext}`.replace(/^\//, '');
-    const { error } = await supabase.storage.from(MESSENGER_STORAGE_BUCKET).upload(objectPath, file.buffer, {
-      contentType: mime,
-      upsert: false,
-    });
-    if (error) {
-      console.error('[messenger] Supabase storage upload failed:', error.message);
+    const folder = `${MESSENGER_STORAGE_FOLDER}/${groupId}`.replace(/\/+/g, '/');
+    try {
+      const stored = await uploadBufferToStorage(file.buffer, {
+        originalName: original,
+        mimetype: mime,
+        size: file.size,
+        bucket: MESSENGER_STORAGE_BUCKET,
+        folderPrefix: folder,
+      });
+      return {
+        name: original,
+        url: stored.file_url,
+        type: mime,
+        size: file.size,
+        storage_path: stored.storage_path,
+      };
+    } catch (e) {
+      console.error('[messenger] Supabase storage upload failed:', e.message);
       if (process.env.NODE_ENV === 'production' || process.env.RENDER) {
-        throw new Error(`Không lưu được file lên Storage: ${error.message}`);
+        throw new Error(`Không lưu được file lên Storage: ${e.message}`);
       }
-      const url = writeMessengerBufferLocal(file.buffer, original);
-      return { name: original, url, type: mime, size: file.size };
     }
-    const { data: urlData } = supabase.storage.from(MESSENGER_STORAGE_BUCKET).getPublicUrl(objectPath);
-    return { name: original, url: urlData.publicUrl, type: mime, size: file.size };
+  } else if (process.env.NODE_ENV === 'production' || process.env.RENDER) {
+    throw new Error('Upload chat cần Supabase Storage — thiếu SUPABASE_URL hoặc SUPABASE_SERVICE_ROLE_KEY trên server');
   }
 
   const url = writeMessengerBufferLocal(file.buffer, original);
@@ -434,20 +441,17 @@ r.use((req, res, next) => {
 /** Tải file chat đã lưu local (/uploads/messenger-chat/...) — có auth, UTF-8 filename. */
 r.get('/files/download', async (req, res) => {
   try {
-    const { resolveLocalUploadFile } = require('../helpers/localUploadServe');
+    const { resolveUploadDownloadSource, sendUploadDownloadResponse } = require('../helpers/localUploadServe');
     const rawPath = String(req.query.path || '').trim();
     if (!rawPath) return res.status(400).json({ error: 'Thiếu path' });
-    const resolved = resolveLocalUploadFile(rawPath);
+    const resolved = await resolveUploadDownloadSource(rawPath);
     if (!resolved) {
       return res.status(404).json({
-        error: 'Không tìm thấy file trên máy chủ — có thể đã mất sau khi deploy. Hãy gửi lại file.',
+        error: 'Không tìm thấy file — file có thể đã mất sau deploy (chưa lưu Storage). Hãy gửi lại file.',
       });
     }
     const downloadName = fixUploadFilename(String(req.query.name || '').trim()) || resolved.basename;
-    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(downloadName)}`);
-    res.sendFile(resolved.fullPath);
+    return sendUploadDownloadResponse(res, resolved, downloadName);
   } catch (e) {
     console.error('GET /messenger/files/download:', e.message);
     res.status(500).json({ error: e.message || 'Lỗi tải file' });

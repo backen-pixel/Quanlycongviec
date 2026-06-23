@@ -160,6 +160,22 @@ app.use('/uploads', (req, res, next) => {
   next();
 }, express.static(path.join(__dirname, '../uploads')));
 
+/** Fallback: URL /uploads/messenger-chat/... cũ → tìm trên Supabase Storage (file không còn trên disk). */
+app.use('/uploads/messenger-chat', async (req, res, next) => {
+  if (req.method !== 'GET' || res.headersSent) return next();
+  try {
+    const { resolveUploadDownloadSource, sendUploadDownloadResponse } = require('./helpers/localUploadServe');
+    const urlPath = `/uploads/messenger-chat${req.path}`;
+    const resolved = await resolveUploadDownloadSource(urlPath);
+    if (!resolved) return next();
+    const baseName = path.basename(urlPath);
+    return sendUploadDownloadResponse(res, resolved, baseName);
+  } catch (e) {
+    console.warn('[uploads/messenger-chat fallback]', e.message);
+    return next();
+  }
+});
+
 // Root + Health
 app.get('/', (_, res) => res.json({ app: 'TuBep Pro API', status: 'ok' }));
 const { getStatus: getRedisStatus, getRedis: _initRedis } = require('./config/redis');
