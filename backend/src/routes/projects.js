@@ -2860,11 +2860,37 @@ r.put('/:id/documents/:docId/share-crm', async (req, res) => {
 
 r.delete('/:id/documents/:docId', async (req, res) => {
   try {
+    const projectId = req.params.id;
+    const docId = req.params.docId;
+    const { data: fileRow, error: fetchErr } = await supabase
+      .from('file_attachments')
+      .select('id, entity_type, entity_id')
+      .eq('id', docId)
+      .maybeSingle();
+    if (fetchErr) throw fetchErr;
+    if (!fileRow || fileRow.entity_type !== 'project' || String(fileRow.entity_id) !== String(projectId)) {
+      return res.status(404).json({ error: 'Không tìm thấy tài liệu' });
+    }
+
     const { removeLeadDocumentForWorkshopFile } = require('../helpers/syncWorkshopFileToLeadDocument');
-    await removeLeadDocumentForWorkshopFile(req.params.docId);
-    await supabase.from('file_attachments').delete().eq('id', req.params.docId).eq('entity_type', 'project');
+    await removeLeadDocumentForWorkshopFile(docId);
+
+    const { data: deleted, error } = await supabase
+      .from('file_attachments')
+      .delete()
+      .eq('id', docId)
+      .eq('entity_type', 'project')
+      .eq('entity_id', projectId)
+      .select('id');
+    if (error) throw error;
+    if (!deleted?.length) {
+      return res.status(404).json({ error: 'Không xóa được tài liệu' });
+    }
     res.json({ message: 'Đã xóa' });
-  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+  } catch (e) {
+    console.error('DELETE /projects/:id/documents/:docId:', e.message);
+    res.status(500).json({ error: e.message || 'Lỗi xóa tài liệu' });
+  }
 });
 
 // ─── PROJECT TASK FILES (all task attachments for a project) ──

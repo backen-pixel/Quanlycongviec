@@ -8692,6 +8692,16 @@ r.post('/leads/:id/documents/bulk', async (req, res) => {
 // Delete document + sync xóa crm_task_attachment liên kết
 r.delete('/leads/:id/documents/:docId', async (req, res) => {
   try {
+    const { data: doc, error: docErr } = await supabase.from('lead_documents')
+      .select('id, lead_id, source_attachment_id, source_file_attachment_id')
+      .eq('id', req.params.docId)
+      .maybeSingle();
+    if (docErr) throw docErr;
+    if (!doc) return res.status(404).json({ error: 'Không tìm thấy tài liệu' });
+    if (doc.lead_id && String(doc.lead_id) !== String(req.params.id)) {
+      return res.status(404).json({ error: 'Tài liệu không thuộc deal này' });
+    }
+
     // Snapshot vào Thùng rác trước khi xóa thật (trừ khi permanent=true)
     if (req.query.permanent !== 'true') {
       try {
@@ -8702,35 +8712,47 @@ r.delete('/leads/:id/documents/:docId', async (req, res) => {
         console.warn('[delete lead doc] trash snapshot error:', e.message);
       }
     }
-    // Check if this doc was synced FROM a task attachment
-    const { data: doc } = await supabase.from('lead_documents')
-      .select('source_attachment_id, source_file_attachment_id')
-      .eq('id', req.params.docId)
-      .single();
 
-    if (doc?.source_file_attachment_id) {
-      return res.status(403).json({
-        error: 'Tài liệu do xưởng chia sẻ — chỉ tắt chia sẻ tại module Sản xuất (tab Tài liệu dự án).',
-      });
+    // Mirror từ file xưởng — xóa file gốc + bản mirror trên CRM
+    if (doc.source_file_attachment_id) {
+      const { removeLeadDocumentForWorkshopFile } = require('../helpers/syncWorkshopFileToLeadDocument');
+      await removeLeadDocumentForWorkshopFile(doc.source_file_attachment_id);
+      const { error: fileDelErr } = await supabase
+        .from('file_attachments')
+        .delete()
+        .eq('id', doc.source_file_attachment_id);
+      if (fileDelErr) throw fileDelErr;
+      const { data: mirrorDeleted, error: mirrorErr } = await supabase
+        .from('lead_documents')
+        .delete()
+        .eq('id', req.params.docId)
+        .select('id');
+      if (mirrorErr) throw mirrorErr;
+      if (!mirrorDeleted?.length) {
+        return res.status(404).json({ error: 'Không xóa được tài liệu' });
+      }
+      return res.json({ success: true, via: 'workshop_file' });
     }
-    
+
     // Xóa task attachment liên kết (nếu có)
-    if (doc?.source_attachment_id) {
+    if (doc.source_attachment_id) {
       await supabase.from('crm_task_attachments')
         .delete().eq('id', doc.source_attachment_id);
     }
-    
+
     // Xóa lead_documents liên kết ngược (nếu doc này là source cho attachment)
     await supabase.from('crm_task_attachments')
       .delete().eq('source_document_id', req.params.docId);
 
-    // Xóa document chính
-    const { error } = await supabase
+    const { data: deleted, error } = await supabase
       .from('lead_documents')
       .delete()
       .eq('id', req.params.docId)
-      .eq('lead_id', req.params.id);
+      .select('id');
     if (error) throw error;
+    if (!deleted?.length) {
+      return res.status(404).json({ error: 'Không xóa được tài liệu' });
+    }
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
