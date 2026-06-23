@@ -28,6 +28,7 @@ import {
   IconTrendingUp,
   IconBuildingFactory,
   IconPencil,
+  IconShieldLock,
 } from '@tabler/icons-react';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
@@ -95,6 +96,7 @@ const ICONS = ['🆕','📞','💬','📋','📧','⏳','🤝','💰','📝','�
 const SETTINGS_TABS = [
   { id: 'taxonomy', label: 'Phân loại', Icon: IconTags },
   { id: 'stages', label: 'Giai đoạn', Icon: IconLayoutKanban },
+  { id: 'permissions', label: 'Quyền xóa', Icon: IconShieldLock },
   { id: 'zalo', label: 'Zalo OA', Icon: IconMessageCircle },
   { id: 'copy', label: 'Sao chép pipeline', Icon: IconCopy, adminOnly: true },
 ];
@@ -324,6 +326,10 @@ export default function PipelineSettingsPage() {
   const [copyName, setCopyName] = useState('');
   const [copySetDefault, setCopySetDefault] = useState(false);
   const [copying, setCopying] = useState(false);
+
+  const [deletePermLead, setDeletePermLead] = useState(true);
+  const [deletePermDeal, setDeletePermDeal] = useState(true);
+  const [deletePermSaving, setDeletePermSaving] = useState(false);
 
   // Lead/Deal types (company-scoped)
   const [leadTypes, setLeadTypes] = useState([]);
@@ -728,6 +734,32 @@ export default function PipelineSettingsPage() {
     if (!selectedCompanyId) return pipelines || [];
     return (pipelines || []).filter((p) => String(p.company_id || '') === String(selectedCompanyId));
   }, [pipelines, isAdmin, selectedCompanyId]);
+
+  const selectedPipeline = useMemo(
+    () => visiblePipelines.find((p) => p.id === selectedPipelineId) || null,
+    [visiblePipelines, selectedPipelineId],
+  );
+
+  useEffect(() => {
+    if (!selectedPipeline) return;
+    setDeletePermLead(selectedPipeline.allow_employee_delete_lead !== false);
+    setDeletePermDeal(selectedPipeline.allow_employee_delete_deal !== false);
+  }, [selectedPipeline?.id, selectedPipeline?.allow_employee_delete_lead, selectedPipeline?.allow_employee_delete_deal]);
+
+  const saveDeletePermissions = async () => {
+    if (!selectedPipelineId) return alert('Chọn pipeline trước');
+    setDeletePermSaving(true);
+    try {
+      const { data } = await api.put(`/crm/pipelines/${selectedPipelineId}`, {
+        allow_employee_delete_lead: !!deletePermLead,
+        allow_employee_delete_deal: !!deletePermDeal,
+      });
+      setPipelines((prev) => prev.map((p) => (p.id === data.id ? { ...p, ...data } : p)));
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi lưu quyền xóa');
+    }
+    setDeletePermSaving(false);
+  };
 
   useEffect(() => {
     if (!zaloPlId) return;
@@ -1542,6 +1574,61 @@ export default function PipelineSettingsPage() {
                 {renderPipeline('lead', leadStagesSorted)}
                 {renderPipeline('deal', dealStagesSorted)}
               </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'permissions' && (
+          <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-4 shadow-sm max-w-2xl">
+            <h2 className="text-xs font-semibold text-gray-900 flex items-center gap-2">
+              <IconShieldLock className="w-4 h-4 text-rose-600" stroke={2} />
+              Quyền xóa Lead / Deal
+            </h2>
+            {!selectedPipelineId ? (
+              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                Chọn pipeline CRM phía trên để cấu hình.
+              </p>
+            ) : (
+              <>
+                <p className="text-[11px] text-gray-500">
+                  Áp dụng cho pipeline <strong className="text-gray-800">{selectedPipeline?.name || 'đang chọn'}</strong>.
+                  Nhân viên CRM (không phải admin) sẽ bị chặn xóa khi tắt tùy chọn tương ứng.
+                  Admin CRM vẫn luôn được xóa.
+                </p>
+                <div className="space-y-3">
+                  <label className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 px-3 py-2.5 bg-gray-50/40">
+                    <div>
+                      <div className="text-xs font-semibold text-gray-900">Cho phép nhân viên xóa Lead</div>
+                      <div className="text-[10px] text-gray-500">Nút xóa trên Kanban, chi tiết Lead và xóa hàng loạt</div>
+                    </div>
+                    <ToggleSwitch
+                      checked={deletePermLead}
+                      onChange={setDeletePermLead}
+                      title={deletePermLead ? 'Đang cho phép' : 'Đang chặn'}
+                    />
+                  </label>
+                  <label className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 px-3 py-2.5 bg-gray-50/40">
+                    <div>
+                      <div className="text-xs font-semibold text-gray-900">Cho phép nhân viên xóa Deal</div>
+                      <div className="text-[10px] text-gray-500">Nút xóa trên Kanban, chi tiết Deal và xóa hàng loạt</div>
+                    </div>
+                    <ToggleSwitch
+                      checked={deletePermDeal}
+                      onChange={setDeletePermDeal}
+                      title={deletePermDeal ? 'Đang cho phép' : 'Đang chặn'}
+                    />
+                  </label>
+                </div>
+                <button
+                  type="button"
+                  disabled={deletePermSaving}
+                  onClick={saveDeletePermissions}
+                  className="h-8 px-3 rounded-lg bg-violet-700 text-white text-xs font-medium hover:bg-violet-800 disabled:opacity-50 cursor-pointer inline-flex items-center gap-1"
+                >
+                  <IconDeviceFloppy className="w-3.5 h-3.5" stroke={2} />
+                  {deletePermSaving ? 'Đang lưu…' : 'Lưu quyền xóa'}
+                </button>
+              </>
             )}
           </div>
         )}
