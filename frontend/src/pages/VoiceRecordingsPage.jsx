@@ -122,6 +122,7 @@ export default function VoiceRecordingsPage() {
   const [relinking, setRelinking] = useState(false);
   const [relinkingRowId, setRelinkingRowId] = useState(null);
   const [scanMetaBusy, setScanMetaBusy] = useState(false);
+  const [scanDupBusy, setScanDupBusy] = useState(false);
   const [scanMessage, setScanMessage] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
@@ -440,6 +441,26 @@ export default function VoiceRecordingsPage() {
     setScanMetaBusy(false);
   };
 
+  /** Quét bản ghi trùng trên server (tên + dung lượng + SĐT + thời gian + thời lượng). */
+  const runScanDuplicates = async () => {
+    setScanDupBusy(true);
+    setErr('');
+    setScanMessage('');
+    try {
+      const { data } = await api.post('/voice-recordings/scan-duplicates', {}, {
+        params: voiceListScopeParams(),
+      });
+      if (data?.duplicate_groups != null) {
+        setScanMessage(
+          `Quét trùng: ${data.scanned} bản — ${data.duplicate_groups} nhóm trùng (${data.duplicate_rows} bản ghi).`,
+        );
+      }
+    } catch (e) {
+      setErr(e.response?.data?.error || e.message || 'Quét trùng thất bại');
+    }
+    setScanDupBusy(false);
+  };
+
   const saveBootstrap = async () => {
     if (!bootstrapRecording) return;
     const hasCustomer = recordingHasCustomer(bootstrapRecording);
@@ -699,8 +720,18 @@ export default function VoiceRecordingsPage() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => void runScanDuplicates()}
+                  disabled={loading || relinking || scanMetaBusy || scanDupBusy || relinkingRowId != null}
+                  title="Quét trùng (tên, dung lượng, SĐT, thời gian)"
+                  className="h-9 px-2.5 rounded-lg border border-slate-200/80 bg-white/90 text-slate-700 text-xs font-medium hover:bg-slate-50 disabled:opacity-50 inline-flex items-center gap-1"
+                >
+                  <ScanLine className={`h-3.5 w-3.5 ${scanDupBusy ? 'animate-pulse' : ''}`} />
+                  <span className="hidden sm:inline">{scanDupBusy ? 'Quét trùng…' : 'Quét trùng'}</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => void runScanPhonesFromMetadata()}
-                  disabled={loading || relinking || scanMetaBusy || relinkingRowId != null}
+                  disabled={loading || relinking || scanMetaBusy || scanDupBusy || relinkingRowId != null}
                   title="Quét SĐT từ tên file"
                   className="h-9 px-2.5 rounded-lg border border-amber-200/80 bg-amber-50/90 text-amber-900 text-xs font-medium hover:bg-amber-100 disabled:opacity-50 inline-flex items-center gap-1"
                 >

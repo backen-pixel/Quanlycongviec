@@ -5,7 +5,47 @@
  * Nhiều lead hoặc nhiều deal song song (không rõ ràng) → chỉ gắn customer_id; NV chọn tay trên web.
  */
 
-const { fetchCrmLeadsForCustomerScoped } = require('./crmAccessRoles');
+const {
+  fetchCrmLeadsForCustomerScoped,
+  userSeesAllCrmLeadsForScope,
+  userSeesAllCrmDealsForScope,
+} = require('./crmAccessRoles');
+
+function filterLeadsByStaffScope(leads, staffUserId, role) {
+  const rows = leads || [];
+  const user = { role, userId: staffUserId };
+  const seesAllLeads = userSeesAllCrmLeadsForScope(user);
+  const seesAllDeals = userSeesAllCrmDealsForScope(user);
+  if (seesAllLeads && seesAllDeals) return rows;
+
+  return rows.filter((l) => {
+    if (l.type === 'deal') {
+      if (seesAllDeals) return true;
+      return staffUserId && String(l.assigned_to || '') === String(staffUserId);
+    }
+    if (seesAllLeads) return true;
+    return (
+      staffUserId
+      && (String(l.assigned_to || '') === String(staffUserId)
+        || String(l.lead_owner_id || '') === String(staffUserId))
+    );
+  });
+}
+
+function pickUniqueCrmOpportunity(leads) {
+  if (!leads?.length) return { chosen: null, multiple: false };
+  const leadRows = leads.filter((x) => x.type === 'lead');
+  const dealRows = leads.filter((x) => x.type === 'deal');
+
+  if (leads.length === 1) return { chosen: leads[0], multiple: false };
+  if (leads.length > 1 && leadRows.length === 1) {
+    return { chosen: leadRows[0], multiple: false };
+  }
+  if (leadRows.length === 0 && dealRows.length === 1) {
+    return { chosen: dealRows[0], multiple: false };
+  }
+  return { chosen: null, multiple: leads.length >= 2 };
+}
 
 function digitsOnly(s) {
   return String(s || '').replace(/\D/g, '');
@@ -66,9 +106,10 @@ function extractPhonesFromText(text) {
  * @param {string} phoneRaw
  * @param {string} staffUserId — user đăng nhập (mobile/web); chỉ lead/deal do user đó phụ trách
  * @param {string} [role] — 'admin' thì không lọc theo nhân viên
+ * @param {string} [companyId] — khi có: chỉ ghép lead/deal thuộc công ty NV upload
  * @returns {Promise<{ customer_id: string, lead_id: string|null, customer: object, lead: object|null } | null>}
  */
-async function resolveCustomerLeadByPhone(supabase, phoneRaw, staffUserId, role) {
+async function resolveCustomerLeadByPhone(supabase, phoneRaw, staffUserId, role, companyId = null) {
   const d = digitsOnly(phoneRaw);
   if (d.length < 9) return null;
   const tail9 = d.slice(-9);
@@ -90,18 +131,31 @@ async function resolveCustomerLeadByPhone(supabase, phoneRaw, staffUserId, role)
   const exact = candidates.find((c) => digitsOnly(c.phone) === d);
   const customer = exact || candidates[0];
 
-  let leads;
-  try {
-    leads = await fetchCrmLeadsForCustomerScoped(supabase, customer.id, staffUserId, role, 40);
-  } catch (_e) {
-    return {
-      customer_id: customer.id,
-      lead_id: null,
-      customer,
-      lead: null,
-      multiple_leads: false,
-      visible_lead_count: 0,
-    };
+  let leads = [];
+  if (companyId) {
+    const { data: companyLeads, error: coErr } = await supabase
+      .from('crm_leads')
+      .select('id, code, title, type, updated_at, assigned_to, lead_owner_id, company_id')
+      .eq('customer_id', customer.id)
+      .eq('company_id', companyId)
+      .order('updated_at', { ascending: false })
+      .limit(40);
+    if (!coErr && companyLeads?.length) {
+      leads = filterLeadsByStaffScope(companyLeads, staffUserId, role);
+    }
+  } else {
+    try {
+      leads = await fetchCrmLeadsForCustomerScoped(supabase, customer.id, staffUserId, role, 40);
+    } catch (_e) {
+      return {
+        customer_id: customer.id,
+        lead_id: null,
+        customer,
+        lead: null,
+        multiple_leads: false,
+        visible_lead_count: 0,
+      };
+    }
   }
 
   if (!leads?.length) {
@@ -115,18 +169,7 @@ async function resolveCustomerLeadByPhone(supabase, phoneRaw, staffUserId, role)
     };
   }
 
-  const leadRows = leads.filter((x) => x.type === 'lead');
-  const dealRows = leads.filter((x) => x.type === 'deal');
-
-  let chosen = null;
-  if (leads.length === 1) {
-    chosen = leads[0];
-  } else if (leads.length > 1 && leadRows.length === 1) {
-    /* Ví dụ 1 lead + n deal: chỉ một lead → gắn lead; nhiều lead → không tự chọn */
-    chosen = leadRows[0];
-  } else if (leadRows.length === 0 && dealRows.length === 1) {
-    chosen = dealRows[0];
-  }
+  const { chosen, multiple } = pickUniqueCrmOpportunity(leads);
 
   if (!chosen) {
     return {
@@ -134,7 +177,7 @@ async function resolveCustomerLeadByPhone(supabase, phoneRaw, staffUserId, role)
       lead_id: null,
       customer,
       lead: null,
-      multiple_leads: leads.length >= 2,
+      multiple_leads: multiple,
       visible_lead_count: leads.length,
     };
   }

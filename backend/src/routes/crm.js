@@ -1196,6 +1196,43 @@ async function computeCrmLiveVersionMs(req, effectiveCompanyId, date_from, date_
   return Math.max(a, b);
 }
 
+/** GET /crm/kanban-rows?lead_ids=… — hydrate vài dòng Kanban cho realtime (không reload cả trang). */
+r.get('/kanban-rows', async (req, res) => {
+  try {
+    const leadIds = parseLeadIdsCsvQuery(req.query.lead_ids, 50);
+    if (!leadIds.length) return res.json({ data: [] });
+
+    const sac = scopedAdminCompanyId(req);
+    if (!userIsAdmin(req.user?.role) && !sac) {
+      const cid = await requireUserCompanyIdResolved(req, res);
+      if (!cid) return;
+    }
+
+    const lite = resolveCrmLeadsKanbanLite(req.query);
+    const skipDeadline = resolveCrmLeadsSkipDeadline(req.query);
+    let hydrated = await fetchCrmLeadsByIdsOrdered(leadIds, { skipEnrich: lite, lite });
+
+    if (sac) {
+      hydrated = hydrated.filter((r) => String(r.company_id || '') === String(sac));
+    } else if (!userIsAdmin(req.user?.role)) {
+      const { resolveCompanyIdForUser } = require('../middleware/auth');
+      const cid = await resolveCompanyIdForUser(req.user?.userId);
+      if (cid) hydrated = hydrated.filter((r) => String(r.company_id || '') === String(cid));
+    }
+    hydrated = hydrated.filter((r) => {
+      const ar = assertLeadReadableByRegionScope(req, r);
+      return ar.ok;
+    });
+
+    let page = attachLeadNewFlagForList(hydrated, req.user?.userId);
+    if (!skipDeadline) page = await attachCrmNextOpenTaskDeadline(page);
+    page = await attachLeadUserFlagsForList(page, req.user?.userId);
+    res.json({ data: page });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Lỗi tải kanban-rows' });
+  }
+});
+
 /** GET /crm/live-version — poll nhẹ cho dashboard (chỉ số v = ms) */
 r.get('/live-version', responseCache({ ttl: 5, scope: 'company', tags: ['crm:live'] }), async (req, res) => {
   try {
@@ -5458,7 +5495,12 @@ r.post('/leads/merge-duplicates', async (req, res) => {
   try {
     const { keep_id, delete_ids } = req.body;
     const result = await executeLeadMerge(keep_id, delete_ids, { mergeCustomers: false });
-    emitCrmDashboardChanged(req, { action: 'merged', keep_id, count: (delete_ids || []).length });
+    emitCrmDashboardChanged(req, {
+      action: 'merged',
+      keep_id,
+      delete_ids: (delete_ids || []).map((x) => String(x)),
+      count: (delete_ids || []).length,
+    });
     res.json(result);
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });
@@ -5477,7 +5519,12 @@ r.post('/leads/merge-selected', async (req, res) => {
       finalTitle: title,
       includeSecondaryData: full,
     });
-    emitCrmDashboardChanged(req, { action: 'merged_selected', keep_id, count: (delete_ids || []).length });
+    emitCrmDashboardChanged(req, {
+      action: 'merged_selected',
+      keep_id,
+      delete_ids: (delete_ids || []).map((x) => String(x)),
+      count: (delete_ids || []).length,
+    });
     res.json(result);
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });
@@ -5600,7 +5647,12 @@ r.post('/leads/bulk-assign', async (req, res) => {
       }
     }
 
-    emitCrmDashboardChanged(req, { type: olds[0].type, action: 'bulk_assigned', count: idList.length });
+    emitCrmDashboardChanged(req, {
+      type: olds[0].type,
+      action: 'bulk_assigned',
+      lead_ids: idList.map((x) => String(x)),
+      count: idList.length,
+    });
     res.json({ success: true, updated: idList.length, type: olds[0].type });
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });

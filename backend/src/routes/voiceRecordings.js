@@ -19,9 +19,14 @@ const {
 } = require('../helpers/voiceStorageUpload');
 const {
   resolveVoiceRecordingCompanyId,
+  resolveVoiceStaffContext,
   createCrmOpportunityForCustomer,
   ensureVoiceRecordingCrmLink,
 } = require('../helpers/voiceRecordingCrmAuto');
+const {
+  isVoiceRecordingDuplicate,
+  groupVoiceRecordingDuplicates,
+} = require('../helpers/voiceRecordingDedup');
 const {
   fetchCrmLeadsForCustomerScoped,
   userSeesAllCrmDeals,
@@ -86,6 +91,41 @@ function expandFileNameLookupKeys(raw) {
     /* ignore */
   }
   return [...keys];
+}
+
+const VOICE_DEDUP_ROW_SELECT =
+  'id, user_id, file_name, file_size, duration_sec, phone_number, call_started_at, call_ended_at, created_at, customer_id, lead_id, storage_path';
+
+/** Tìm bản ghi trùng (cùng user) theo tên + size/SĐT/thời gian/thời lượng. */
+async function findVoiceRecordingDuplicate(supabaseClient, userId, clientItem, selectFields = VOICE_DEDUP_ROW_SELECT) {
+  const names = expandFileNameLookupKeys(clientItem?.file_name);
+  if (!userId || !names.length) return null;
+
+  const { data, error } = await supabaseClient
+    .from('voice_recordings')
+    .select(selectFields)
+    .eq('user_id', userId)
+    .in('file_name', names)
+    .order('created_at', { ascending: false })
+    .limit(30);
+  if (error || !data?.length) return null;
+
+  const hit = data.find((row) => isVoiceRecordingDuplicate(clientItem, row));
+  return hit || null;
+}
+
+function parseOptionalIsoTime(v) {
+  if (v == null || v === '') return null;
+  const t = new Date(v);
+  if (Number.isNaN(t.getTime())) return null;
+  return t.toISOString();
+}
+
+function parseOptionalDurationSec(v) {
+  if (v == null || v === '') return null;
+  const d = parseFloat(v);
+  if (!Number.isFinite(d) || d < 0 || d >= 86400) return null;
+  return d;
 }
 
 /** Các trường + join CRM (PostgREST cần FK 63_voice_recordings_crm_link.sql) */
@@ -298,7 +338,7 @@ function ensureUserDir(userId) {
 async function enrichVoiceRecordingFromMetadataById(supabaseClient, recordId, actingUserId, actingRole) {
   let { data: row, error } = await supabaseClient
     .from('voice_recordings')
-    .select('id, phone_number, notes, file_name, device_label, customer_id, lead_id, user_id')
+    .select('id, phone_number, notes, file_name, device_label, customer_id, lead_id, user_id, company_id')
     .eq('id', recordId)
     .single();
   if (error || !row) return null;
@@ -315,7 +355,7 @@ async function enrichVoiceRecordingFromMetadataById(supabaseClient, recordId, ac
           .from('voice_recordings')
           .update({ phone_number: phoneNum })
           .eq('id', recordId)
-          .select('id, phone_number, notes, file_name, device_label, customer_id, lead_id, user_id')
+          .select('id, phone_number, notes, file_name, device_label, customer_id, lead_id, user_id, company_id')
           .single();
         if (!pe && withPhone) row = withPhone;
       }
@@ -380,7 +420,17 @@ r.get('/phone-preview', async (req, res) => {
   try {
     const phone = req.query.phone ? String(req.query.phone).trim() : '';
     if (!phone) return res.status(400).json({ error: 'Thiếu phone' });
-    const resolved = await resolveCustomerLeadByPhone(supabase, phone, req.user.userId, req.user.role);
+    const staff = await resolveVoiceStaffContext(supabase, {
+      userId: req.user.userId,
+      recordingCompanyId: req.user?.company_id || null,
+    });
+    const resolved = await resolveCustomerLeadByPhone(
+      supabase,
+      phone,
+      req.user.userId,
+      req.user.role,
+      staff.companyId,
+    );
     res.json({ match: resolved });
   } catch (e) {
     res.status(500).json({ error: e.message || 'Lỗi' });
@@ -389,15 +439,14 @@ r.get('/phone-preview', async (req, res) => {
 
 /**
  * POST /voice-recordings/bulk-check
- * Body: { items: [{ file_name, file_size? }, ...] }
+ * Body: { items: [{ file_name, file_size?, phone_number?, call_started_at?, duration_sec?, created_at? }, ...] }
  * Trả về: {
- *   existing: [{ file_name, file_size, id, created_at, customer_id, lead_id, phone_number }],
+ *   existing: [{ file_name, file_size, id, created_at, customer_id, lead_id, phone_number, duration_sec, call_started_at }],
  *   tombstoned: [{ file_name, file_size, deleted_at, original_id }],
  * }
  *
  * Mobile dùng để so danh sách file local với server (1 round-trip thay vì N).
- * - existing  = bản ghi đang còn trên server (status: synced).
- * - tombstoned = đã từng có nhưng bị xóa → KHÔNG quét up lại (status: deleted_on_server).
+ * Trùng khi: cùng tên + dung lượng (+ SĐT + thời gian cuộc gọi + thời lượng nếu client gửi đủ).
  */
 r.post('/bulk-check', async (req, res) => {
   try {
@@ -416,27 +465,30 @@ r.post('/bulk-check', async (req, res) => {
     );
     if (fileNames.length === 0) return res.json({ existing: [], tombstoned: [] });
 
-    // Map theo "name" → mảng size client gửi lên (có thể nhiều size cùng tên).
-    const sizeIndex = new Map();
-    for (const it of safe) {
-      const n = it && typeof it.file_name === 'string' ? normalizeVoiceFileName(it.file_name) : '';
-      if (!n) continue;
-      const sz = Number(it.file_size);
-      if (!sizeIndex.has(n)) sizeIndex.set(n, []);
-      sizeIndex.get(n).push(Number.isFinite(sz) ? sz : null);
-    }
-    const matchByName = (rowName, rowSize) => {
+    const normalizedItems = safe
+      .filter((it) => it && typeof it.file_name === 'string')
+      .map((it) => ({
+        file_name: normalizeVoiceFileName(it.file_name),
+        file_size: Number(it.file_size),
+        phone_number: it.phone_number != null ? String(it.phone_number).trim() : null,
+        call_started_at: parseOptionalIsoTime(it.call_started_at ?? it.created_at),
+        duration_sec: parseOptionalDurationSec(it.duration_sec),
+      }))
+      .filter((it) => it.file_name);
+
+    const matchByNameSize = (rowName, rowSize) => {
       const key = normalizeVoiceFileName(rowName);
-      const sizes = sizeIndex.get(key);
-      if (!sizes) return false;
-      const wantsAnySize = sizes.some((s) => s == null || s <= 0);
-      return wantsAnySize || sizes.includes(rowSize);
+      return normalizedItems.some(
+        (it) => it.file_name === key && (it.file_size <= 0 || it.file_size === Number(rowSize)),
+      );
     };
 
     const [activeRes, tombRes] = await Promise.all([
       supabase
         .from('voice_recordings')
-        .select('id, file_name, file_size, created_at, customer_id, lead_id, phone_number')
+        .select(
+          'id, file_name, file_size, duration_sec, phone_number, call_started_at, created_at, customer_id, lead_id',
+        )
         .eq('user_id', req.user.userId)
         .in('file_name', fileNames)
         .limit(2000),
@@ -448,17 +500,25 @@ r.post('/bulk-check', async (req, res) => {
         .limit(2000),
     ]);
     if (activeRes.error) throw activeRes.error;
-    if (tombRes.error && tombRes.error.code !== '42P01') throw tombRes.error; // 42P01: bảng chưa migrate → bỏ qua tombstone.
+    if (tombRes.error && tombRes.error.code !== '42P01') throw tombRes.error;
 
+    const serverRows = activeRes.data || [];
     const existing = [];
-    for (const row of activeRes.data || []) {
-      if (matchByName(row.file_name, row.file_size)) existing.push(row);
+    const matchedServerIds = new Set();
+    for (const it of normalizedItems) {
+      const hit = serverRows.find(
+        (row) => !matchedServerIds.has(row.id) && isVoiceRecordingDuplicate(it, row),
+      );
+      if (hit) {
+        matchedServerIds.add(hit.id);
+        existing.push(hit);
+      }
     }
+
     const activeKeys = new Set(existing.map((r) => `${r.file_name}|${r.file_size ?? -1}`));
     const tombstoned = [];
     for (const row of tombRes.data || []) {
-      if (!matchByName(row.file_name, row.file_size)) continue;
-      // Nếu file đã có active record cùng (name,size) thì coi như đã restore → không gắn tombstone.
+      if (!matchByNameSize(row.file_name, row.file_size)) continue;
       if (activeKeys.has(`${row.file_name}|${row.file_size ?? -1}`)) continue;
       tombstoned.push(row);
     }
@@ -469,13 +529,8 @@ r.post('/bulk-check', async (req, res) => {
 });
 
 /**
- * GET /voice-recordings/exists?file_name=&file_size=
- * Background sync (Android) gọi trước khi upload để tránh up lại file đã có **hoặc đã từng bị xóa** trong tài khoản.
- * Chỉ scope theo user hiện tại (mỗi user có không gian dedup riêng).
- *
- * Trả về:
- *  - exists: true nếu có active record HOẶC tombstone match.
- *  - reason: 'active' | 'tombstoned' | null.
+ * GET /voice-recordings/exists?file_name=&file_size=&phone_number=&call_started_at=&duration_sec=
+ * Background sync gọi trước khi upload để tránh up lại file đã có hoặc đã từng bị xóa.
  */
 r.get('/exists', async (req, res) => {
   try {
@@ -490,18 +545,17 @@ r.get('/exists', async (req, res) => {
       if (Number.isFinite(n) && n >= 0) sizeNum = n;
     }
 
-    let activeQ = supabase
-      .from('voice_recordings')
-      .select('id, file_name, file_size, created_at')
-      .eq('user_id', req.user.userId)
-      .in('file_name', lookupNames);
-    if (sizeNum != null) activeQ = activeQ.eq('file_size', sizeNum);
-    activeQ = activeQ.order('created_at', { ascending: false }).limit(1);
+    const clientItem = {
+      file_name: normalizeVoiceFileName(fileName),
+      file_size: sizeNum,
+      phone_number: req.query.phone_number != null ? String(req.query.phone_number).trim() : null,
+      call_started_at: parseOptionalIsoTime(req.query.call_started_at ?? req.query.created_at),
+      duration_sec: parseOptionalDurationSec(req.query.duration_sec),
+    };
 
-    const { data: activeRows, error: activeErr } = await activeQ;
-    if (activeErr) throw activeErr;
-    if (activeRows && activeRows[0]) {
-      return res.json({ exists: true, reason: 'active', id: activeRows[0].id });
+    const dup = await findVoiceRecordingDuplicate(supabase, req.user.userId, clientItem, 'id, file_name, file_size, created_at');
+    if (dup) {
+      return res.json({ exists: true, reason: 'active', id: dup.id, duplicate: true });
     }
 
     let tombQ = supabase
@@ -513,7 +567,6 @@ r.get('/exists', async (req, res) => {
     tombQ = tombQ.order('deleted_at', { ascending: false }).limit(1);
 
     const { data: tombRows, error: tombErr } = await tombQ;
-    // Nếu bảng chưa migrate (42P01), bỏ qua tombstone — không treo background sync.
     if (tombErr && tombErr.code !== '42P01') throw tombErr;
     if (tombRows && tombRows[0]) {
       return res.json({ exists: true, reason: 'tombstoned', id: tombRows[0].original_id || null });
@@ -522,6 +575,75 @@ r.get('/exists', async (req, res) => {
     res.json({ exists: false, reason: null, id: null });
   } catch (e) {
     res.status(500).json({ error: e.message || 'Lỗi kiểm tra' });
+  }
+});
+
+/**
+ * POST /voice-recordings/scan-duplicates
+ * Quét bản ghi trùng trên server: cùng tên + dung lượng (+ SĐT + thời gian + thời lượng khi đủ dữ liệu).
+ * Query: admin có thể `user_id=`; `company_id=` lọc theo công ty NV upload.
+ */
+r.post('/scan-duplicates', async (req, res) => {
+  try {
+    const companyViewer = canViewAllVoiceInCompany(req);
+    const filterUserId = companyViewer && req.query.user_id ? uuidOrNull(req.query.user_id) : null;
+    if (companyViewer && req.query.user_id && filterUserId === false) {
+      return res.status(400).json({ error: 'user_id không hợp lệ' });
+    }
+    const listFilters = resolveVoiceListFilters(req);
+    if (listFilters.error) {
+      return res.status(listFilters.status || 400).json({ error: listFilters.error });
+    }
+    const effectiveStaffCo = resolveEffectiveVoiceStaffCompanyId(listFilters);
+    let companyUserIds = null;
+    if (effectiveStaffCo) {
+      companyUserIds = await resolveVoiceCompanyUserIds(supabase, effectiveStaffCo);
+      if (!companyUserIds.length && companyViewer) {
+        return res.json({ ok: true, scanned: 0, duplicate_groups: 0, groups: [] });
+      }
+    }
+    const mgmtCompanyId = listFilters.mgmtCompanyId;
+
+    let q = supabase
+      .from('voice_recordings')
+      .select(
+        `id, user_id, file_name, file_size, duration_sec, phone_number, call_started_at, created_at, customer_id, lead_id, company_id, uploader:users!voice_recordings_user_id_fkey(${UPLOADER_SELECT})`,
+      )
+      .order('created_at', { ascending: false })
+      .limit(companyViewer ? 1500 : 600);
+
+    if (!companyViewer) {
+      q = q.eq('user_id', req.user.userId);
+    } else if (filterUserId) {
+      if (companyUserIds && !companyUserIds.includes(String(filterUserId))) {
+        return res.status(403).json({ error: 'Không có quyền quét ghi âm nhân viên khác công ty' });
+      }
+      q = q.eq('user_id', filterUserId);
+    } else if (companyUserIds) {
+      q = q.in('user_id', companyUserIds);
+    }
+
+    const { data: rows, error } = await q;
+    if (error) throw error;
+
+    let scoped = rows || [];
+    if (mgmtCompanyId) {
+      scoped = scoped.filter((r) => voiceRecordingInMgmtScope(r, mgmtCompanyId));
+    }
+
+    const groups = groupVoiceRecordingDuplicates(scoped);
+    const duplicateRowCount = groups.reduce((sum, g) => sum + g.count, 0);
+
+    res.json({
+      ok: true,
+      scanned: scoped.length,
+      duplicate_groups: groups.length,
+      duplicate_rows: duplicateRowCount,
+      groups: groups.slice(0, 80),
+    });
+  } catch (e) {
+    console.error('voice-recordings scan-duplicates:', e.message);
+    res.status(500).json({ error: e.message || 'Lỗi quét trùng' });
   }
 });
 
@@ -844,23 +966,20 @@ r.post('/', upload.single('audio'), async (req, res) => {
       }
     }
 
-    // Dedup theo (user_id, file_name, file_size) — chống up lại file đã có sau khi user logout/login
-    // hoặc cài lại app làm reset cache local. Chỉ dedup khi cả tên + size khớp để tránh "false positive"
-    // với các file khác cùng tên.
+    // Dedup: tên + dung lượng (+ SĐT + thời gian cuộc gọi + thời lượng khi có đủ metadata)
     {
       const baseName = voiceFileNameFromUpload(req.file);
       const fileSize = Number(req.file.size || 0);
-      if (baseName && Number.isFinite(fileSize) && fileSize > 0) {
-        const { data: dup, error: dupErr } = await supabase
-          .from('voice_recordings')
-          .select(RECORDING_SELECT)
-          .eq('user_id', req.user.userId)
-          .eq('file_name', baseName)
-          .eq('file_size', fileSize)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (!dupErr && dup) {
+      if (baseName) {
+        const clientItem = {
+          file_name: baseName,
+          file_size: fileSize,
+          phone_number,
+          call_started_at,
+          duration_sec,
+        };
+        const dup = await findVoiceRecordingDuplicate(supabase, req.user.userId, clientItem, RECORDING_SELECT);
+        if (dup) {
           if (req.file?.path && fs.existsSync(req.file.path)) {
             try {
               fs.unlinkSync(req.file.path);
@@ -904,6 +1023,12 @@ r.post('/', upload.single('audio'), async (req, res) => {
     const fileBaseName = voiceFileNameFromUpload(req.file);
     const metaTextBlob = [notes, fileBaseName, device_label].filter(Boolean).join('\n');
 
+    const uploaderStaff = await resolveVoiceStaffContext(supabase, {
+      userId: req.user.userId,
+      recordingCompanyId: req.user?.company_id || null,
+    });
+    const uploaderCompanyId = uploaderStaff.companyId || null;
+
     let customer_id = null;
     let lead_id = null;
 
@@ -916,6 +1041,7 @@ r.post('/', upload.single('audio'), async (req, res) => {
           c,
           req.user.userId,
           req.user.role,
+          uploaderCompanyId,
         );
         if (resolved?.customer_id) {
           phone_number = digitsOnly(c).slice(0, 32);
@@ -935,6 +1061,7 @@ r.post('/', upload.single('audio'), async (req, res) => {
         phone_number,
         req.user.userId,
         req.user.role,
+        uploaderCompanyId,
       );
       if (resolved) {
         customer_id = resolved.customer_id;
@@ -942,10 +1069,12 @@ r.post('/', upload.single('audio'), async (req, res) => {
       }
     }
 
-    let company_id = await resolveVoiceRecordingCompanyId(supabase, { lead_id, customer_id });
-    if (!company_id && req.user?.company_id) {
-      company_id = String(req.user.company_id).trim();
-    }
+    let company_id = await resolveVoiceRecordingCompanyId(supabase, {
+      lead_id,
+      customer_id,
+      staffCompanyId: uploaderCompanyId,
+    });
+    if (!company_id) company_id = uploaderCompanyId;
 
     const { data, error } = await supabase
       .from('voice_recordings')
@@ -1049,14 +1178,17 @@ r.post('/:id/bootstrap-crm', async (req, res) => {
     if (!phone && phoneBody) phone = String(phoneBody).replace(/\s+/g, '').trim();
 
     const dealType = String(type).toLowerCase() === 'deal' ? 'deal' : 'lead';
+    const uid = rec.user_id || req.user.userId;
+    const uploaderStaff = await resolveVoiceStaffContext(supabase, {
+      userId: uid,
+      recordingCompanyId: rec.company_id || req.user?.company_id || null,
+    });
+
     let cidBody = uuidOrNull(company_id);
     if (cidBody === false) return res.status(400).json({ error: 'company_id không hợp lệ' });
-    if (dealType === 'deal' && !cidBody) {
-      const fallbackCo = req.user?.company_id ? uuidOrNull(req.user.company_id) : null;
-      if (fallbackCo && fallbackCo !== false) cidBody = fallbackCo;
-    }
-    if (dealType === 'deal' && !cidBody) {
-      return res.status(400).json({ error: 'Tạo Deal cần company_id' });
+    const effectiveCompanyId = cidBody || uploaderStaff.companyId || null;
+    if (!effectiveCompanyId) {
+      return res.status(400).json({ error: 'Không xác định được công ty của nhân viên upload' });
     }
 
     let customerRow;
@@ -1076,7 +1208,12 @@ r.post('/:id/bootstrap-crm', async (req, res) => {
       if (!customerRow) {
         const { data: ins, error: ce } = await supabase
           .from('customers')
-          .insert({ full_name: name.slice(0, 200), phone: phone.slice(0, 32), source: 'Ghi âm' })
+          .insert({
+            full_name: name.slice(0, 200),
+            phone: phone.slice(0, 32),
+            source: 'Ghi âm',
+            company_id: effectiveCompanyId,
+          })
           .select('id, full_name, phone')
           .single();
         if (ce) throw ce;
@@ -1084,7 +1221,6 @@ r.post('/:id/bootstrap-crm', async (req, res) => {
       }
     }
 
-    const uid = rec.user_id || req.user.userId;
     const titleLabel = phone || customerRow.full_name || 'Ghi âm';
     let leadRow;
     try {
@@ -1093,7 +1229,7 @@ r.post('/:id/bootstrap-crm', async (req, res) => {
         phone,
         staffUserId: uid,
         type: dealType,
-        companyId: dealType === 'deal' ? cidBody : null,
+        companyId: effectiveCompanyId,
         title:
           (title && String(title).trim()) ||
           (dealType === 'deal' ? `Deal — ${titleLabel}` : `Lead — ${titleLabel}`),
@@ -1106,11 +1242,12 @@ r.post('/:id/bootstrap-crm', async (req, res) => {
     const bootCompanyId = await resolveVoiceRecordingCompanyId(supabase, {
       lead_id: leadRow.id,
       customer_id: customerRow.id,
+      staffCompanyId: effectiveCompanyId,
     });
     const recPatch = {
       customer_id: customerRow.id,
       lead_id: leadRow.id,
-      company_id: bootCompanyId || cidBody || null,
+      company_id: bootCompanyId || effectiveCompanyId,
     };
     if (phone && !rec.phone_number) recPatch.phone_number = phone.slice(0, 32);
     const { data: updated, error: ue } = await supabase
@@ -1142,6 +1279,11 @@ r.patch('/:id', async (req, res) => {
     );
     if (loaded.error) return res.status(loaded.status || 403).json({ error: loaded.error });
     const row = loaded.rec;
+    const rowStaff = await resolveVoiceStaffContext(supabase, {
+      userId: row.user_id || req.user.userId,
+      recordingCompanyId: row.company_id || resolveVoiceUploaderCompanyId(row) || null,
+    });
+    const rowCompanyId = rowStaff.companyId || null;
 
     const origPhoneNorm = row.phone_number != null ? String(row.phone_number).replace(/\s+/g, '').trim() : '';
     let customer_id = row.customer_id;
@@ -1167,6 +1309,7 @@ r.patch('/:id', async (req, res) => {
             c,
             row.user_id || req.user.userId,
             req.user.role,
+            rowCompanyId,
           );
           if (resolved0?.customer_id) {
             phoneNum = digitsOnly(c).slice(0, 32);
@@ -1191,6 +1334,7 @@ r.patch('/:id', async (req, res) => {
           phoneNum,
           row.user_id || req.user.userId,
           req.user.role,
+          rowCompanyId,
         );
         if (!resolved) {
           customer_id = null;
@@ -1257,6 +1401,7 @@ r.patch('/:id', async (req, res) => {
         nextPhoneNorm,
         row.user_id || req.user.userId,
         req.user.role,
+        rowCompanyId,
       );
       if (resolved) {
         customer_id = resolved.customer_id;
@@ -1264,7 +1409,11 @@ r.patch('/:id', async (req, res) => {
       }
     }
 
-    const company_id = await resolveVoiceRecordingCompanyId(supabase, { lead_id, customer_id });
+    const company_id = await resolveVoiceRecordingCompanyId(supabase, {
+      lead_id,
+      customer_id,
+      staffCompanyId: rowCompanyId,
+    });
     const patch = { customer_id, lead_id, company_id };
     if (req.body.phone_number !== undefined) patch.phone_number = phone_number || null;
 
