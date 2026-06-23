@@ -148,74 +148,95 @@ export default function WorkshopDashboardFilterPanel({
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-3 py-1 bg-white/60 [scrollbar-width:thin]">
-        {tab === 'employee' && (
-          <div className="py-2.5 space-y-3">
-            {(canPickCompany && workshopCompanyPickerList.length > 0 || showDealCompanyFilter) && (
-              <div className="rounded-lg border border-violet-200 bg-violet-50/50 p-3 space-y-2">
-                <p className="text-[11px] font-bold text-violet-800 uppercase tracking-wide">Phạm vi</p>
-                <div className="grid grid-cols-1 gap-2">
-                  {canPickCompany && workshopCompanyPickerList.length > 0 && (
-                    <div className="min-w-0">
-                      <label className={SX_FILTER_LABEL_CLS}>
-                        <Factory className="inline h-3 w-3 mr-0.5" />
-                        Công ty sản xuất (xưởng)
-                      </label>
+        {(canPickCompany && workshopCompanyPickerList.length > 0 || showDealCompanyFilter || (showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0)) && (
+          <div className="py-2 border-b border-violet-100/80">
+            <div className="rounded-lg border border-violet-200 bg-violet-50/50 p-3 space-y-2">
+              <p className="text-[11px] font-bold text-violet-800 uppercase tracking-wide">Phạm vi xưởng</p>
+              <div className="grid grid-cols-1 gap-2">
+                {canPickCompany && workshopCompanyPickerList.length > 0 && (
+                  <div className="min-w-0">
+                    <label className={SX_FILTER_LABEL_CLS}>
+                      <Factory className="inline h-3 w-3 mr-0.5" />
+                      Công ty sản xuất (xưởng)
+                    </label>
+                    <select
+                      value={filterCompany}
+                      onChange={(e) => onCompanyChange(e.target.value)}
+                      className={SX_FILTER_SELECT_CLS}
+                    >
+                      {showAllWorkshopOption && <option value="">Tất cả xưởng</option>}
+                      {workshopCompanyPickerList.map((c) => (
+                        <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0 && (
+                  <div className="min-w-0">
+                    <label className={SX_FILTER_LABEL_CLS}>SX tại (xưởng thực hiện)</label>
+                    <select
+                      value={filterSxWorkshopCompany}
+                      onChange={(e) => {
+                        setFilterSxWorkshopCompany(e.target.value);
+                        setFilterWorkTypeId('');
+                      }}
+                      className={SX_FILTER_SELECT_CLS}
+                    >
+                      <option value="">Tất cả xưởng SX</option>
+                      {sxWorkshopFilterOptions.map((c) => (
+                        <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {showDealCompanyFilter && (
+                  <div className="min-w-0">
+                    <label className={SX_FILTER_LABEL_CLS}>
+                      <Building2 className="inline h-3 w-3 mr-0.5" />
+                      Công ty đặt hàng
+                    </label>
+                    {canPickDealCompany ? (
                       <select
-                        value={filterCompany}
-                        onChange={(e) => onCompanyChange(e.target.value)}
-                        className={SX_FILTER_SELECT_CLS}
+                        value={filterDealCompany}
+                        onChange={(e) => onDealCompanyChange(e.target.value)}
+                        disabled={!clientCompaniesWorkshopId}
+                        className={`${SX_FILTER_SELECT_CLS} disabled:opacity-60 disabled:cursor-not-allowed`}
                       >
-                        {showAllWorkshopOption && <option value="">Tất cả xưởng</option>}
-                        {workshopCompanyPickerList.map((c) => (
-                          <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                        ))}
+                        <option value="">
+                          {clientCompaniesWorkshopId ? 'Tất cả công ty đặt hàng' : '-- Chọn xưởng trước --'}
+                        </option>
+                        {clientCrmDealOptions.length > 0 && (
+                          <optgroup label="Công ty CRM">
+                            {clientCrmDealOptions.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.short_name || c.name}
+                                {c.source === 'workshop' ? ' · đã liên kết' : ''}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {clientExternalDealOptions.length > 0 && (
+                          <optgroup label="Danh mục công ty ngoài">
+                            {clientExternalDealOptions.map((c) => (
+                              <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                          </optgroup>
+                        )}
                       </select>
-                    </div>
-                  )}
-                  {showDealCompanyFilter && (
-                    <div className="min-w-0">
-                      <label className={SX_FILTER_LABEL_CLS}>
-                        <Building2 className="inline h-3 w-3 mr-0.5" />
-                        Công ty đặt hàng
-                      </label>
-                      {canPickDealCompany ? (
-                        <select
-                          value={filterDealCompany}
-                          onChange={(e) => onDealCompanyChange(e.target.value)}
-                          disabled={!clientCompaniesWorkshopId}
-                          className={`${SX_FILTER_SELECT_CLS} disabled:opacity-60 disabled:cursor-not-allowed`}
-                        >
-                          <option value="">
-                            {clientCompaniesWorkshopId ? 'Tất cả công ty đặt hàng' : '-- Chọn xưởng trước --'}
-                          </option>
-                          {clientCrmDealOptions.length > 0 && (
-                            <optgroup label="Công ty CRM">
-                              {clientCrmDealOptions.map((c) => (
-                                <option key={c.id} value={c.id}>
-                                  {c.short_name || c.name}
-                                  {c.source === 'workshop' ? ' · đã liên kết' : ''}
-                                </option>
-                              ))}
-                            </optgroup>
-                          )}
-                          {clientExternalDealOptions.length > 0 && (
-                            <optgroup label="Danh mục công ty ngoài">
-                              {clientExternalDealOptions.map((c) => (
-                                <option key={c.id} value={c.id}>{c.name}</option>
-                              ))}
-                            </optgroup>
-                          )}
-                        </select>
-                      ) : (
-                        <span className={`${SX_FILTER_FIELD_CLS} flex items-center truncate text-indigo-900`}>
-                          {selectedDealCompanyLabel || '—'}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
+                    ) : (
+                      <span className={`${SX_FILTER_FIELD_CLS} flex items-center truncate text-indigo-900`}>
+                        {selectedDealCompanyLabel || '—'}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
-            )}
+            </div>
+          </div>
+        )}
+
+        {tab === 'employee' && (
+          <div className="py-2.5">
             <WorkshopStaffFilterPanel
               isAdmin={isAdmin}
               isCompanyScopedAdmin={isCompanyScopedAdmin}
@@ -247,25 +268,6 @@ export default function WorkshopDashboardFilterPanel({
 
         {tab === 'pipeline' && (
           <div className="py-2.5 grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
-            {showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0 && (
-              <div className="min-w-0 sm:col-span-2">
-                <label className={SX_FILTER_LABEL_CLS}>Xưởng SX (VPT)</label>
-                <select
-                  value={filterSxWorkshopCompany}
-                  onChange={(e) => {
-                    setFilterSxWorkshopCompany(e.target.value);
-                    setFilterWorkTypeId('');
-                  }}
-                  className={SX_FILTER_SELECT_CLS}
-                >
-                  <option value="">Tất cả xưởng</option>
-                  {sxWorkshopFilterOptions.map((c) => (
-                    <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-
             <div className="min-w-0">
               <label className={SX_FILTER_LABEL_CLS}>Giai đoạn</label>
               <select
