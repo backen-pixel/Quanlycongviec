@@ -34,26 +34,46 @@ function saveBlobDownload(blob, fileName) {
 }
 
 async function fetchLocalUploadBlob(urlPath, fileName) {
-  const base = resolveApiOrigin() || (typeof window !== 'undefined' ? window.location.origin : '');
-  if (!base) throw new Error('Không xác định được API');
   const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null;
   const qs = new URLSearchParams({ path: urlPath, name: fileName || 'download' });
-  const endpoints = [
-    `${base}/api/messenger/files/download?${qs}`,
-    `${base}/api/upload/serve-local?${qs}`,
-  ];
+  const pathOnly = localUploadPathFromUrl(urlPath);
+
+  const candidates = [];
+  if (pathOnly?.startsWith('/uploads/') && typeof window !== 'undefined') {
+    candidates.push(`${window.location.origin}${pathOnly}`);
+  }
+  candidates.push(
+    `/api/messenger/files/download?${qs}`,
+    `/api/upload/serve-local?${qs}`,
+  );
+
+  const apiOrigin = (resolveApiOrigin() || '').replace(/\/$/, '');
+  if (apiOrigin && typeof window !== 'undefined' && apiOrigin !== window.location.origin) {
+    candidates.push(
+      `${apiOrigin}/api/messenger/files/download?${qs}`,
+      `${apiOrigin}/api/upload/serve-local?${qs}`,
+    );
+  }
+
   let lastErr = null;
-  for (const href of endpoints) {
+  for (const href of [...new Set(candidates.filter(Boolean))]) {
     try {
+      const needsAuth = href.includes('/api/');
       const res = await fetch(href, {
         credentials: 'include',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: needsAuth && token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (res.ok) return res.blob();
+      if (res.status === 404) {
+        lastErr = new Error('File không còn trên máy chủ — hãy gửi lại file trong chat');
+        continue;
+      }
       const body = await res.json().catch(() => ({}));
       lastErr = new Error(body?.error || `Không tải được tệp (HTTP ${res.status})`);
     } catch (e) {
-      lastErr = e;
+      lastErr = e?.message === 'Failed to fetch'
+        ? new Error('Không kết nối được server — kiểm tra backend đang chạy')
+        : e;
     }
   }
   throw lastErr || new Error('Không tải được tệp');
