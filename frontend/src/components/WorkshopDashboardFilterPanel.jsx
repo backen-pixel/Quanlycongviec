@@ -1,5 +1,5 @@
 import {
-  Filter, X, GripVertical, RotateCcw, Users, Target, Clock, Calendar, LayoutGrid, ArrowUpDown, Layers,
+  Filter, X, GripVertical, RotateCcw, Users, Target, Clock, Calendar, LayoutGrid, ArrowUpDown, Layers, Factory, Building2,
 } from 'lucide-react';
 import WorkshopStaffFilterPanel from './WorkshopStaffFilterPanel';
 import { WS_TIME_PRESETS, WS_KANBAN_LOAD_OPTIONS } from '../lib/workshopDashboardUtils';
@@ -46,6 +46,18 @@ export default function WorkshopDashboardFilterPanel({
   employeeFilterListByRegion,
   companyEmployees,
   hideCompanySelect = false,
+  // Phạm vi xưởng / đặt hàng
+  canPickCompany = false,
+  workshopCompanyPickerList = [],
+  showAllWorkshopOption = false,
+  showDealCompanyFilter = false,
+  canPickDealCompany = false,
+  filterDealCompany = '',
+  onDealCompanyChange,
+  clientCompaniesWorkshopId = '',
+  clientCrmDealOptions = [],
+  clientExternalDealOptions = [],
+  selectedDealCompanyLabel = '',
   // Pipeline tab
   pipeline,
   stageFilter,
@@ -137,7 +149,73 @@ export default function WorkshopDashboardFilterPanel({
 
       <div className="flex-1 min-h-0 overflow-y-auto px-3 py-1 bg-white/60 [scrollbar-width:thin]">
         {tab === 'employee' && (
-          <div className="py-2.5">
+          <div className="py-2.5 space-y-3">
+            {(canPickCompany && workshopCompanyPickerList.length > 0 || showDealCompanyFilter) && (
+              <div className="rounded-lg border border-violet-200 bg-violet-50/50 p-3 space-y-2">
+                <p className="text-[11px] font-bold text-violet-800 uppercase tracking-wide">Phạm vi</p>
+                <div className="grid grid-cols-1 gap-2">
+                  {canPickCompany && workshopCompanyPickerList.length > 0 && (
+                    <div className="min-w-0">
+                      <label className={SX_FILTER_LABEL_CLS}>
+                        <Factory className="inline h-3 w-3 mr-0.5" />
+                        Công ty sản xuất (xưởng)
+                      </label>
+                      <select
+                        value={filterCompany}
+                        onChange={(e) => onCompanyChange(e.target.value)}
+                        className={SX_FILTER_SELECT_CLS}
+                      >
+                        {showAllWorkshopOption && <option value="">Tất cả xưởng</option>}
+                        {workshopCompanyPickerList.map((c) => (
+                          <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {showDealCompanyFilter && (
+                    <div className="min-w-0">
+                      <label className={SX_FILTER_LABEL_CLS}>
+                        <Building2 className="inline h-3 w-3 mr-0.5" />
+                        Công ty đặt hàng
+                      </label>
+                      {canPickDealCompany ? (
+                        <select
+                          value={filterDealCompany}
+                          onChange={(e) => onDealCompanyChange(e.target.value)}
+                          disabled={!clientCompaniesWorkshopId}
+                          className={`${SX_FILTER_SELECT_CLS} disabled:opacity-60 disabled:cursor-not-allowed`}
+                        >
+                          <option value="">
+                            {clientCompaniesWorkshopId ? 'Tất cả công ty đặt hàng' : '-- Chọn xưởng trước --'}
+                          </option>
+                          {clientCrmDealOptions.length > 0 && (
+                            <optgroup label="Công ty CRM">
+                              {clientCrmDealOptions.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.short_name || c.name}
+                                  {c.source === 'workshop' ? ' · đã liên kết' : ''}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                          {clientExternalDealOptions.length > 0 && (
+                            <optgroup label="Danh mục công ty ngoài">
+                              {clientExternalDealOptions.map((c) => (
+                                <option key={c.id} value={c.id}>{c.name}</option>
+                              ))}
+                            </optgroup>
+                          )}
+                        </select>
+                      ) : (
+                        <span className={`${SX_FILTER_FIELD_CLS} flex items-center truncate text-indigo-900`}>
+                          {selectedDealCompanyLabel || '—'}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             <WorkshopStaffFilterPanel
               isAdmin={isAdmin}
               isCompanyScopedAdmin={isCompanyScopedAdmin}
@@ -162,7 +240,7 @@ export default function WorkshopDashboardFilterPanel({
               ringFocusClass="focus:ring-violet-300/80 focus:border-violet-400"
               hideAssigneeSearch
               hidePersonName
-              hideCompanySelect={hideCompanySelect}
+              hideCompanySelect={hideCompanySelect || (canPickCompany && workshopCompanyPickerList.length > 0)}
             />
           </div>
         )}
@@ -252,7 +330,7 @@ export default function WorkshopDashboardFilterPanel({
               </select>
             </div>
 
-            {viewMode === 'kanban' && filterWorkTypeId !== 'none' && (
+            {viewMode === 'kanban' && (
               <div className="min-w-0 sm:col-span-2">
                 <label
                   className={`${SX_FILTER_LABEL_CLS} flex items-center gap-2 h-8 px-2 border rounded-md text-xs cursor-pointer transition-colors ${
@@ -267,7 +345,7 @@ export default function WorkshopDashboardFilterPanel({
                     onChange={(e) => setShowOrphanColumn(e.target.checked)}
                     className="h-3 w-3 cursor-pointer accent-violet-600"
                   />
-                  <span className="truncate normal-case tracking-normal font-medium">Hiện cột «Chưa phân loại»</span>
+                  <span className="truncate normal-case tracking-normal font-medium">Hiện cột «Chưa PL»</span>
                 </label>
               </div>
             )}

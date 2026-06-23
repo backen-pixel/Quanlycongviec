@@ -15,6 +15,7 @@ import {
   findVptCompany,
   isMetallaOrHucabiCompanyId,
   isAccountingUser,
+  sxWorkshopFilterCompanies,
 } from '../lib/crossWorkshopProduction';
 import { formatVND, formatDate } from '../lib/utils';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
@@ -269,6 +270,7 @@ export default function ProductionDashboard() {
   const [clientCompaniesForDeal, setClientCompaniesForDeal] = useState([]);
   const [filterCompany, setFilterCompany] = useState(() => P0?.filterCompany ?? '');
   const [filterDealCompany, setFilterDealCompany] = useState(() => P0?.filterDealCompany ?? '');
+  const [filterSxWorkshopCompany, setFilterSxWorkshopCompany] = useState(() => P0?.filterSxWorkshopCompany ?? '');
   const [timePreset, setTimePreset] = useState(() => P0?.timePreset ?? '');
   const [customFrom, setCustomFrom] = useState(() => P0?.customFrom ?? '');
   const [customTo, setCustomTo] = useState(() => P0?.customTo ?? '');
@@ -438,20 +440,43 @@ export default function ProductionDashboard() {
   const handleStaffFilterCompanyChange = useCallback((companyId) => {
     onStaffFilterCompanyChange(companyId);
     setFilterWorkTypeId('');
+    setFilterSxWorkshopCompany('');
   }, [onStaffFilterCompanyChange]);
+
+  const handleDealCompanyChange = useCallback((dealCompanyId) => {
+    setFilterDealCompany(dealCompanyId);
+    setFilterWorkTypeId('');
+  }, []);
 
   const companyParam = useMemo(() => {
     if (filterCompany) return String(filterCompany);
     return undefined;
   }, [filterCompany]);
 
-  const companyForTypes = useMemo(() => companyParam || '', [companyParam]);
+  const showVptSxWorkshopFilter = useMemo(() => {
+    const cid = companyParam || filterCompany || user?.company_id || '';
+    return isVptCompanyChip(cid, companies, user);
+  }, [companyParam, filterCompany, companies, user]);
+
+  const sxWorkshopFilterOptions = useMemo(
+    () => sxWorkshopFilterCompanies(companies, user),
+    [companies, user],
+  );
+
+  const companyForTypes = useMemo(() => {
+    const base = companyParam || (user?.company_id ? String(user.company_id) : '');
+    if (showVptSxWorkshopFilter && filterSxWorkshopCompany) {
+      return String(filterSxWorkshopCompany);
+    }
+    return base;
+  }, [companyParam, user?.company_id, showVptSxWorkshopFilter, filterSxWorkshopCompany]);
 
   const productionCreateCompanyIdDefault = useMemo(() => {
     if (filterCompany && isMetallaOrHucabiCompanyId(filterCompany, companies)) return String(filterCompany);
+    if (filterSxWorkshopCompany) return String(filterSxWorkshopCompany);
     const opts = productionCreateCompanyOptions(companies);
     return opts[0]?.id ? String(opts[0].id) : '';
-  }, [filterCompany, companies]);
+  }, [filterCompany, filterSxWorkshopCompany, companies]);
 
   /** Cùng company_id như modal Tạo deal → GET /production/client-companies */
   const clientCompaniesWorkshopId = productionCreateCompanyIdDefault;
@@ -468,12 +493,16 @@ export default function ProductionDashboard() {
     const bustCache = !!opts.bustCache;
     const fetchCompanyId = opts.companyId || companyParam;
     const fetchDealCompanyId = opts.dealCompanyId !== undefined ? opts.dealCompanyId : dealCompanyParam;
+    const fetchSxWorkshopId = opts.sxWorkshopCompanyId !== undefined
+      ? opts.sxWorkshopCompanyId
+      : (showVptSxWorkshopFilter && filterSxWorkshopCompany ? filterSxWorkshopCompany : undefined);
     if (silent) setSyncing(true);
     else setLoading(true);
     try {
       const dashQ = {
         ...(fetchCompanyId ? { company_id: fetchCompanyId } : {}),
         ...(fetchDealCompanyId ? { deal_company_id: fetchDealCompanyId } : {}),
+        ...(fetchSxWorkshopId ? { sx_workshop_company_id: fetchSxWorkshopId } : {}),
       };
       const cacheHeaders = bustCache ? { headers: { 'x-no-cache': '1' } } : {};
       const maxRecords = kanbanLoadKey === 'all' ? 5000
@@ -487,6 +516,7 @@ export default function ProductionDashboard() {
         fetchWorkshopProjectPages(api, '/production/projects', {
           companyId: fetchCompanyId,
           dealCompanyId: fetchDealCompanyId,
+          sxWorkshopCompanyId: fetchSxWorkshopId,
           maxRecords,
           pageSize: 500,
           bustCache,
@@ -505,7 +535,7 @@ export default function ProductionDashboard() {
       setLoading(false);
       setFirstLoaded(true);
     }
-  }, [companyParam, dealCompanyParam, kanbanLoadKey]);
+  }, [companyParam, dealCompanyParam, kanbanLoadKey, showVptSxWorkshopFilter, filterSxWorkshopCompany]);
 
   const handleNewDealCreated = useCallback(async (created) => {
     const projectId = created?.project_id;
@@ -514,20 +544,42 @@ export default function ProductionDashboard() {
 
     if (isAdmin && createdCompanyId && isMetallaOrHucabiCompanyId(createdCompanyId, companies)
       && createdCompanyId !== String(filterCompany || '')) {
-      setFilterCompany(createdCompanyId);
+      const onVptChip = isVptCompanyChip(filterCompany || user?.company_id || '', companies, user);
+      if (onVptChip) {
+        setFilterSxWorkshopCompany(createdCompanyId);
+      } else {
+        setFilterCompany(createdCompanyId);
+      }
     }
     if (canPickProductionCreateCompany && createdCompanyId && isMetallaOrHucabiCompanyId(createdCompanyId, companies)) {
-      setFilterCompany(createdCompanyId);
+      const onVptChip = isVptCompanyChip(filterCompany || user?.company_id || '', companies, user);
+      if (onVptChip) {
+        setFilterSxWorkshopCompany(createdCompanyId);
+      } else {
+        setFilterCompany(createdCompanyId);
+      }
     }
     if (wktId && wktId !== String(filterWorkTypeId || '')) {
       setFilterWorkTypeId(wktId);
     }
 
     const reloadCompanyId = (() => {
-      if (isMetallaOrHucabiCompanyId(createdCompanyId, companies)) return createdCompanyId;
+      if (isMetallaOrHucabiCompanyId(createdCompanyId, companies)) {
+        if (isVptCompanyChip(filterCompany || user?.company_id || '', companies, user)) {
+          return filterCompany || user?.company_id || companyParam;
+        }
+        return createdCompanyId;
+      }
       return companyParam;
     })();
     const reloadDealCompanyId = dealCompanyParam;
+    const reloadSxWorkshopId = (() => {
+      if (canPickProductionCreateCompany && isMetallaOrHucabiCompanyId(createdCompanyId, companies)
+        && isVptCompanyChip(filterCompany || user?.company_id || '', companies, user)) {
+        return createdCompanyId;
+      }
+      return showVptSxWorkshopFilter && filterSxWorkshopCompany ? filterSxWorkshopCompany : undefined;
+    })();
 
     try {
       await load({
@@ -535,6 +587,7 @@ export default function ProductionDashboard() {
         bustCache: true,
         companyId: reloadCompanyId,
         dealCompanyId: reloadDealCompanyId,
+        sxWorkshopCompanyId: reloadSxWorkshopId,
       });
     } catch (e) {
       console.error(e);
@@ -572,7 +625,7 @@ export default function ProductionDashboard() {
       };
       return [optimistic, ...prev];
     });
-  }, [load, pipeline, workTypes, companyParam, dealCompanyParam, filterCompany, filterWorkTypeId, companies, user]);
+  }, [load, pipeline, workTypes, companyParam, dealCompanyParam, filterCompany, filterWorkTypeId, companies, user, showVptSxWorkshopFilter, filterSxWorkshopCompany, canPickProductionCreateCompany]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -677,14 +730,14 @@ export default function ProductionDashboard() {
   useEffect(() => {
     try {
       localStorage.setItem(LS_SX, JSON.stringify({
-        filterCompany, filterDealCompany, timePreset, customFrom, customTo, showCustomDate, kanbanLoadKey,
+        filterCompany, filterDealCompany, filterSxWorkshopCompany, timePreset, customFrom, customTo, showCustomDate, kanbanLoadKey,
         filterPersonId, filterPersonName, filterRegion, filterPhone, filterWorkTypeId,
         searchQuery, priorityFilter, stageFilter, viewMode, sortBy,
         showOrphanColumn, showAdvFilter, sxFilterTab,
       }));
     } catch { /* ignore */ }
   }, [
-    filterCompany, filterDealCompany, timePreset, customFrom, customTo, showCustomDate, kanbanLoadKey, filterPersonId, filterPersonName,
+    filterCompany, filterDealCompany, filterSxWorkshopCompany, timePreset, customFrom, customTo, showCustomDate, kanbanLoadKey, filterPersonId, filterPersonName,
     filterRegion, filterPhone, filterWorkTypeId, searchQuery, priorityFilter, stageFilter, viewMode, sortBy,
     showOrphanColumn, showAdvFilter, sxFilterTab,
   ]);
@@ -1624,6 +1677,7 @@ export default function ProductionDashboard() {
     setFilterPhone('');
     setFilterWorkTypeId('');
     setShowOrphanColumn(false);
+    setFilterSxWorkshopCompany('');
     if (isSystemAdmin(user)) setFilterDealCompany('');
     resetStaffFilters();
   }, [resetStaffFilters, handleTimePresetChange, user]);
@@ -1771,7 +1825,7 @@ export default function ProductionDashboard() {
       push('time', `Thời gian: ${timeFilterLabel || timePreset}`, () => handleTimePresetChange(''));
     }
     if (showOrphanColumn) {
-      push('orphan', 'Cột chưa phân loại', () => setShowOrphanColumn(false));
+      push('orphan', 'Cột «Chưa PL»', () => setShowOrphanColumn(false));
     }
     return chips;
   }, [
@@ -1787,13 +1841,15 @@ export default function ProductionDashboard() {
   const activeSxFilterCount = activeSxFilterChips.length;
 
   const sxFilterTabCounts = useMemo(() => ({
-    employee: staffFilterActiveCount,
+    employee: staffFilterActiveCount
+      + (filterDealCompany && showDealCompanyFilter ? 1 : 0),
     pipeline: (stageFilter ? 1 : 0) + (filterWorkTypeId ? 1 : 0) + (priorityFilter ? 1 : 0)
       + (filterPhone ? 1 : 0) + (showOrphanColumn ? 1 : 0) + (filterSxWorkshopCompany ? 1 : 0),
     display: (timePreset ? 1 : 0) + (sortBy !== 'newest' ? 1 : 0) + (kanbanLoadKey !== '500' ? 1 : 0),
   }), [
-    staffFilterActiveCount, stageFilter, filterWorkTypeId,
-    priorityFilter, filterPhone, showOrphanColumn, filterSxWorkshopCompany,
+    staffFilterActiveCount, filterDealCompany, showDealCompanyFilter,
+    stageFilter, filterWorkTypeId, filterSxWorkshopCompany,
+    priorityFilter, filterPhone, showOrphanColumn,
     timePreset, sortBy, kanbanLoadKey,
   ]);
 
@@ -1919,72 +1975,6 @@ export default function ProductionDashboard() {
         );
       })()}
 
-      {/* Phạm vi xưởng & công ty đặt hàng — luôn hiển thị, ngoài panel bộ lọc */}
-      {(canPickCompany && workshopCompanyPickerList.length > 0 || showDealCompanyFilter) && (
-        <div className="flex flex-wrap items-end gap-3 p-3 rounded-xl border border-blue-100 bg-blue-50/40">
-          {canPickCompany && workshopCompanyPickerList.length > 0 && (
-            <div className="flex flex-col gap-0.5 min-w-[11rem]">
-              <label className="text-[10px] font-semibold text-blue-900 flex items-center gap-1">
-                <Factory className="h-3 w-3" /> Công ty sản xuất (xưởng)
-              </label>
-              <select
-                value={filterCompany}
-                onChange={(e) => handleStaffFilterCompanyChange(e.target.value)}
-                className="h-9 w-full min-w-[11rem] max-w-[16rem] px-2 bg-white border border-blue-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
-              >
-                {isSystemAdmin(user) && <option value="">Tất cả xưởng</option>}
-                {workshopCompanyPickerList.map((c) => (
-                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-          {showDealCompanyFilter && (
-            <div className="flex flex-col gap-0.5 min-w-[11rem]">
-              <label className="text-[10px] font-semibold text-indigo-900 flex items-center gap-1">
-                <Building2 className="h-3 w-3" /> Công ty đặt hàng
-              </label>
-              {canPickDealCompany ? (
-                <select
-                  value={filterDealCompany}
-                  onChange={(e) => {
-                    setFilterDealCompany(e.target.value);
-                    setFilterWorkTypeId('');
-                  }}
-                  disabled={!clientCompaniesWorkshopId}
-                  className="h-9 w-full min-w-[11rem] max-w-[18rem] px-2 bg-white border border-indigo-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  <option value="">
-                    {clientCompaniesWorkshopId ? 'Tất cả công ty đặt hàng' : '-- Chọn xưởng trước --'}
-                  </option>
-                  {clientCrmDealOptions.length > 0 && (
-                    <optgroup label="Công ty CRM">
-                      {clientCrmDealOptions.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.short_name || c.name}
-                          {c.source === 'workshop' ? ' · đã liên kết' : ''}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {clientExternalDealOptions.length > 0 && (
-                    <optgroup label="Danh mục công ty ngoài">
-                      {clientExternalDealOptions.map((c) => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
-              ) : (
-                <span className="h-9 inline-flex items-center px-2.5 bg-white border border-indigo-200 rounded-lg text-sm text-indigo-900 font-medium max-w-[18rem] truncate">
-                  {selectedDealCompanyLabel || '—'}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Toolbar — tìm kiếm + bộ lọc nổi (đồng bộ CRM) */}
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -2045,32 +2035,6 @@ export default function ProductionDashboard() {
             </div>
           </div>
 
-          {canPickCompany && !isCompanyScopedAdmin && workshopCompanyPickerList.length > 0 && (
-            <div className="flex items-center gap-1.5 overflow-x-auto max-w-full shrink-0 pb-0.5 scrollbar-thin scrollbar-thumb-violet-200">
-              {(isAdmin ? [{ id: '', name: 'Tất cả' }, ...workshopCompanyPickerList] : workshopCompanyPickerList).map((c) => {
-                const active = filterCompany === c.id;
-                return (
-                  <button
-                    key={c.id || 'all'}
-                    type="button"
-                    onClick={() => {
-                      if (active) return;
-                      handleStaffFilterCompanyChange(c.id);
-                    }}
-                    className={`shrink-0 h-9 px-3 rounded-full text-xs font-semibold border transition-all cursor-pointer whitespace-nowrap ${
-                      active
-                        ? 'bg-violet-600 border-violet-600 text-white shadow-sm'
-                        : 'bg-white border-violet-200 text-slate-600 hover:border-violet-400 hover:text-violet-700 hover:bg-violet-50'
-                    }`}
-                  >
-                    {active && <span className="mr-1">✓</span>}
-                    {c.id === '' ? 'Tất cả' : (c.short_name || c.name)}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
           {showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0 && (
             <div className="flex items-center gap-1.5 overflow-x-auto max-w-full shrink-0 pb-0.5 scrollbar-thin scrollbar-thumb-violet-200">
               <span className="text-[11px] font-semibold text-violet-700/80 shrink-0">SX tại:</span>
@@ -2099,7 +2063,8 @@ export default function ProductionDashboard() {
             </div>
           )}
 
-          {companyForTypes && workTypes.length > 0 && (            <div
+          {companyForTypes && workTypes.length > 0 && (
+            <div
               className={`inline-flex items-center gap-1 h-9 px-2 rounded-lg border shrink-0 ${
                 filterWorkTypeId === 'none'
                   ? 'border-amber-300 bg-amber-50'
@@ -2138,25 +2103,6 @@ export default function ProductionDashboard() {
                 </button>
               )}
             </div>
-          )}
-
-          {viewMode === 'kanban' && filterWorkTypeId !== 'none' && (
-            <label
-              className={`inline-flex items-center gap-1.5 h-9 px-2.5 border rounded-lg text-xs cursor-pointer shrink-0 ${
-                showOrphanColumn
-                  ? 'bg-slate-100 border-slate-400 text-slate-800'
-                  : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-              }`}
-              title="Hiện cột ảo gom project chưa gán phân loại"
-            >
-              <input
-                type="checkbox"
-                checked={showOrphanColumn}
-                onChange={(e) => setShowOrphanColumn(e.target.checked)}
-                className="h-3.5 w-3.5 cursor-pointer accent-slate-600"
-              />
-              Cột «Chưa PL»
-            </label>
           )}
 
           <span className="text-[11px] text-gray-500 ml-auto shrink-0">
@@ -2272,7 +2218,17 @@ export default function ProductionDashboard() {
             filterPersonName={filterPersonName}
             employeeFilterListByRegion={employeeFilterListByRegion}
             companyEmployees={companyEmployees}
-            hideCompanySelect={canPickCompany && workshopCompanyPickerList.length > 0}
+            canPickCompany={canPickCompany}
+            workshopCompanyPickerList={workshopCompanyPickerList}
+            showAllWorkshopOption={isSystemAdmin(user)}
+            showDealCompanyFilter={showDealCompanyFilter}
+            canPickDealCompany={canPickDealCompany}
+            filterDealCompany={filterDealCompany}
+            onDealCompanyChange={handleDealCompanyChange}
+            clientCompaniesWorkshopId={clientCompaniesWorkshopId}
+            clientCrmDealOptions={clientCrmDealOptions}
+            clientExternalDealOptions={clientExternalDealOptions}
+            selectedDealCompanyLabel={selectedDealCompanyLabel}
             pipeline={pipeline}
             stageFilter={stageFilter}
             setStageFilter={setStageFilter}
