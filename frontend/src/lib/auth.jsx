@@ -1,6 +1,11 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import api from '../lib/api';
 import { flushNow } from '../lib/activityLogger';
+import {
+  clearCrmSessionFilterStorage,
+  clearCrmSessionUserMarker,
+  syncCrmSessionUserOnLogin,
+} from '../lib/crmCompanyFilter';
 import { connectSocket, disconnectSocket } from '../lib/socket';
 import { useActivityPing } from '../hooks/useActivityPing';
 import { useDeviceHeartbeat } from '../hooks/useDeviceHeartbeat';
@@ -33,7 +38,9 @@ export function AuthProvider({ children }) {
 
     if (u && token) {
       try {
-        setUser(JSON.parse(u));
+        const parsed = JSON.parse(u);
+        syncCrmSessionUserOnLogin(parsed?.id);
+        setUser(parsed);
         const s = connectSocket();
         setSocket(s);
       } catch {}
@@ -63,6 +70,7 @@ export function AuthProvider({ children }) {
   const applyAuthSession = async (auth, fallbackSessionId) => {
     const sessionId = auth.session_id || fallbackSessionId
       || `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    syncCrmSessionUserOnLogin(auth.user?.id);
     localStorage.setItem('token', auth.token);
     localStorage.setItem('user', JSON.stringify(auth.user));
     localStorage.setItem('session_id', sessionId);
@@ -92,6 +100,8 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('user');
     localStorage.removeItem('session_id');
     localStorage.removeItem('login_ts');
+    clearCrmSessionFilterStorage();
+    clearCrmSessionUserMarker();
     disconnectSocket();
     setUser(null);
     setSocket(null);

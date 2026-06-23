@@ -28,20 +28,30 @@ export const QUICK_CHAT_DOCK_MINI_W = 56;
 export const QUICK_CHAT_DOCK_VISUAL_W = QUICK_CHAT_DOCK_W + 12;
 export const QUICK_CHAT_PANEL_W = 320;
 export const QUICK_CHAT_DOCK_PANEL_W = QUICK_CHAT_PANEL_W;
+/** Lùi vùng nút cuộn Kanban mé phải — tránh chồng thanh chat nhanh (fixed z-[120]). */
+export const KANBAN_QUICK_CHAT_RIGHT_GAP_PX = 44;
+export const KANBAN_EDGE_SCROLL_Z_INDEX = 135;
 const MAX_COMPACT_AVATARS = 8;
 const DOCK_SHADOW = '0 12px 40px rgba(15, 23, 42, 0.12)';
 const DOCK_SHADOW_SUNK = '0 4px 16px rgba(15, 23, 42, 0.06)';
+/** Viền / glow làm nổi bật thanh chat nhanh trên nền Kanban */
+const DOCK_ACCENT_GLOW_ACTIVE =
+  '0 0 0 3px rgba(37, 99, 235, 0.22), 0 0 14px rgba(34, 197, 94, 0.12), 0 12px 40px rgba(15, 23, 42, 0.14)';
+const DOCK_ACCENT_GLOW_SUNK =
+  '0 0 0 2px rgba(37, 99, 235, 0.28), 0 4px 18px rgba(37, 99, 235, 0.1)';
+const DOCK_ACCENT_GLOW_UNREAD =
+  '0 0 0 2px rgba(239, 68, 68, 0.35), 0 0 10px rgba(37, 99, 235, 0.12), 0 8px 28px rgba(239, 68, 68, 0.22)';
 const DOCK_COLLAPSED_KEY = 'messenger_quick_dock_collapsed';
 const DOCK_PINNED_KEY = 'messenger_quick_dock_pinned';
 /** Class ẩn scrollbar nhưng vẫn cuộn được */
 const DOCK_STRIP_SCROLL_CLS =
   'overflow-y-auto overscroll-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden';
-/** Phần lộ ra mép phải khi thanh đang chìm */
-const SUNK_PEEK_PX = 24;
+/** Phần lộ ra mép phải khi thanh đang chìm (nhỏ → ít đè lên Kanban) */
+const SUNK_PEEK_PX = 14;
 /** Phần lộ ra khi chìm — avatar ghim (giữ nguyên icon, không bị khuất) */
-const PINNED_SUNK_PEEK_PX = 52;
-/** Khoảng cách mép phải viewport — chừa chỗ cho badge */
-const DOCK_VIEWPORT_RIGHT = 16;
+const PINNED_SUNK_PEEK_PX = 40;
+/** Khoảng cách mép phải viewport — sát mép màn hình */
+const DOCK_VIEWPORT_RIGHT = 0;
 /** Padding trong mỗi ô avatar (badge/status không bị cắt) */
 const COMPACT_ITEM_PAD = 6;
 /** Trễ trước khi hiện thẻ hover avatar (ms) */
@@ -312,6 +322,24 @@ export default function MessengerQuickChatDock({
   useEffect(() => {
     if (dockPinned) setRaised(true);
   }, [dockPinned]);
+
+  const handleDockEnter = useCallback(() => {
+    clearTimeout(leaveTimer.current);
+    setRaised(true);
+  }, []);
+
+  const handleDockLeave = useCallback((e) => {
+    if (dockPinned) return;
+    const next = e?.relatedTarget;
+    if (next && dockRef.current?.contains(next)) return;
+    clearTimeout(leaveTimer.current);
+    leaveTimer.current = setTimeout(() => {
+      if (dockPinned || previewEngaged || expanded) return;
+      if (dockRef.current?.matches(':hover')) return;
+      setRaised(false);
+    }, DOCK_SINK_DELAY_MS);
+  }, [expanded, dockPinned, previewEngaged]);
+
   const compactWidth = avatarsCollapsed ? QUICK_CHAT_DOCK_MINI_W : QUICK_CHAT_DOCK_W;
   const compactOuterWidth = compactWidth + COMPACT_ITEM_PAD * 2;
   const pinnedSinkX = dockActive ? 0 : Math.max(0, compactOuterWidth - PINNED_SUNK_PEEK_PX);
@@ -333,28 +361,6 @@ export default function MessengerQuickChatDock({
     const rest = items.filter((i) => !i.pinned || !i.groupId);
     return Math.max(0, rest.length - MAX_COMPACT_AVATARS);
   }, [items]);
-
-  const handleDockEnter = useCallback(() => {
-    clearTimeout(leaveTimer.current);
-    setRaised(true);
-  }, []);
-
-  const handleDockLeave = useCallback(() => {
-    if (dockPinned || previewEngaged) return;
-    clearTimeout(leaveTimer.current);
-    leaveTimer.current = setTimeout(() => {
-      if (!expanded) setRaised(false);
-    }, DOCK_SINK_DELAY_MS);
-  }, [expanded, dockPinned, previewEngaged]);
-
-  /** Avatar ghim — huỷ timer chìm; chỉ chìm thanh chính sau trễ ngắn khi không preview */
-  const handlePinnedStripEnter = useCallback(() => {
-    clearTimeout(leaveTimer.current);
-    if (dockPinned || expanded || previewEngaged) return;
-    leaveTimer.current = setTimeout(() => {
-      if (!expanded && !previewEngaged) setRaised(false);
-    }, DOCK_SINK_DELAY_MS);
-  }, [dockPinned, expanded, previewEngaged]);
 
   const toggleDockPinned = useCallback(() => {
     setDockPinned((v) => {
@@ -402,9 +408,17 @@ export default function MessengerQuickChatDock({
       setHoverItem(null);
       setHoverRect(null);
       setPreviewEngaged(false);
-      if (!dockPinned && !expanded) {
+      if (dockRef.current?.matches(':hover')) {
         clearTimeout(leaveTimer.current);
-        leaveTimer.current = setTimeout(() => setRaised(false), DOCK_SINK_DELAY_MS);
+        setRaised(true);
+      } else if (!dockPinned && !expanded) {
+        // Chuột đã rời dock — schedule sink ngay khi previewEngaged về false
+        clearTimeout(leaveTimer.current);
+        leaveTimer.current = setTimeout(() => {
+          if (dockPinned || expanded) return;
+          if (dockRef.current?.matches(':hover')) return;
+          setRaised(false);
+        }, DOCK_SINK_DELAY_MS);
       }
     }, HOVER_CARD_HIDE_MS);
   }, [dockPinned, expanded]);
@@ -418,6 +432,24 @@ export default function MessengerQuickChatDock({
   useEffect(() => {
     if (expanded) setRaised(true);
   }, [expanded]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const fire = () => {
+      window.dispatchEvent(
+        new CustomEvent('messenger-quick-dock-layout', {
+          detail: { dockActive, dockPinned, expanded, raised },
+        }),
+      );
+    };
+    fire();
+    const raf = requestAnimationFrame(fire);
+    const t = window.setTimeout(fire, DOCK_MOTION_MS + 48);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(t);
+    };
+  }, [dockActive, dockPinned, expanded, raised]);
 
   useEffect(() => {
     if (!hoverItem?.key) return;
@@ -438,8 +470,8 @@ export default function MessengerQuickChatDock({
     [],
   );
 
-  const compactPanelOpacity = dockActive ? 1 : totalUnread > 0 ? 0.94 : 0.58;
-  const compactControlOpacity = dockActive ? 1 : 0.78;
+  const compactPanelOpacity = dockActive ? 1 : totalUnread > 0 ? 0.72 : 0.58;
+  const compactControlOpacity = dockActive ? 1 : 0.55;
 
   const renderCompactButton = (item, { pinnedStrip = false } = {}) => {
     const presence = item.peerId ? getUserPresence(presenceByUser, item.peerId) : null;
@@ -573,16 +605,21 @@ export default function MessengerQuickChatDock({
 
       <div
         ref={dockRef}
-        className="fixed top-1/2 -translate-y-1/2 z-[120] flex flex-row-reverse items-stretch gap-3 font-[Inter,system-ui,sans-serif] overflow-visible"
+        data-messenger-quick-chat-dock=""
+        className={`fixed top-1/2 -translate-y-1/2 z-[120] flex flex-row-reverse items-stretch gap-3 font-[Inter,system-ui,sans-serif] overflow-visible ${
+          dockActive ? 'pointer-events-auto' : 'pointer-events-none'
+        }`}
         style={{ right: DOCK_VIEWPORT_RIGHT }}
+        onMouseEnter={handleDockEnter}
         onMouseLeave={handleDockLeave}
       >
         {/* Expanded panel — luôn hiển thị đầy đủ khi mở */}
         {expanded ? (
           <div
             ref={panelRef}
-            className="w-[320px] shrink-0 flex flex-col rounded-[24px] border border-[#E5E7EB] bg-white overflow-hidden max-h-[min(72vh,640px)]"
-            style={{ boxShadow: DOCK_SHADOW }}
+            data-messenger-quick-chat-dock-region="panel"
+            className="pointer-events-auto w-[320px] shrink-0 flex flex-col rounded-[24px] border-2 border-[#2563EB] bg-white overflow-hidden max-h-[min(72vh,640px)] shadow-[0_0_0_4px_rgba(37,99,235,0.14)]"
+            style={{ boxShadow: DOCK_ACCENT_GLOW_ACTIVE }}
           >
             <div className="shrink-0 px-4 pt-4 pb-3 border-b border-[#E5E7EB] bg-gradient-to-br from-[#2563EB]/5 via-white to-[#7C3AED]/5">
               <div className="flex items-center justify-between gap-2 mb-3">
@@ -808,37 +845,54 @@ export default function MessengerQuickChatDock({
 
         {/* Compact dock — chìm khi không hover; avatar ghim trượt cùng nhưng vẫn lộ ra */}
         <div
-          className={`flex flex-col items-center gap-1.5 shrink-0 overflow-visible ${DOCK_MOTION_CLS}`}
+          data-messenger-quick-chat-dock-region="compact"
+          className={`flex flex-col items-center gap-1.5 shrink-0 overflow-visible pointer-events-auto ${DOCK_MOTION_CLS}`}
           style={{ transform: `translateX(${pinnedSinkX}px)` }}
+          onMouseEnter={handleDockEnter}
+          onMouseLeave={handleDockLeave}
         >
           {pinnedStripItems.length > 0 ? (
             <div
               className="flex flex-col items-center gap-1 shrink-0 py-0.5"
               aria-label="Chat đã ghim"
-              onMouseEnter={handlePinnedStripEnter}
             >
               {pinnedStripItems.map((item) => renderCompactButton(item, { pinnedStrip: true }))}
             </div>
           ) : null}
 
           <div
-            onMouseEnter={handleDockEnter}
-            className={`relative shrink-0 flex flex-col items-center rounded-[24px] border py-3 gap-2 overflow-visible ${DOCK_MOTION_CLS} ${
-              dockActive
-                ? 'border-[#E5E7EB] bg-white px-2.5'
+            className={`relative shrink-0 flex flex-col items-center rounded-[24px] border-2 py-3 gap-2 overflow-visible pointer-events-auto ${DOCK_MOTION_CLS} ${
+              dockActive || dockPinned
+                ? 'border-[#2563EB] bg-white px-2.5'
                 : totalUnread > 0
-                  ? 'border-[#FECACA] bg-white shadow-[0_0_0_2px_rgba(239,68,68,0.25)] px-2.5'
-                  : 'border-transparent bg-white/75 backdrop-blur-sm px-2'
+                  ? 'border-[#EF4444]/75 bg-white/85 px-2.5'
+                  : 'border-[#2563EB]/55 bg-white/75 backdrop-blur-sm px-2'
             }`}
             style={{
               width: compactOuterWidth,
               opacity: compactPanelOpacity,
-              boxShadow: dockActive ? DOCK_SHADOW : totalUnread > 0 ? '0 8px 28px rgba(239,68,68,0.22)' : DOCK_SHADOW_SUNK,
+              boxShadow:
+                dockActive || dockPinned
+                  ? DOCK_ACCENT_GLOW_ACTIVE
+                  : totalUnread > 0
+                    ? DOCK_ACCENT_GLOW_UNREAD
+                    : DOCK_ACCENT_GLOW_SUNK,
               transform: `translateX(${mainExtraSinkX}px)`,
               transitionDuration: `${DOCK_MOTION_MS}ms`,
+              transitionTimingProperty: 'transform, opacity, box-shadow, border-color, background-color',
               transitionTimingFunction: DOCK_MOTION_EASE,
             }}
           >
+          {(dockActive || dockPinned || expanded) ? (
+            <span
+              className={`pointer-events-none absolute left-0 top-4 bottom-4 w-[3px] rounded-r-full ${DOCK_MOTION_CLS}`}
+              style={{
+                background: 'linear-gradient(180deg, #22C55E 0%, #2563EB 55%, #3B82F6 100%)',
+                boxShadow: '0 0 8px rgba(34, 197, 94, 0.45)',
+              }}
+              aria-hidden
+            />
+          ) : null}
           <button
             type="button"
             onClick={onToggleExpanded}
@@ -846,7 +900,7 @@ export default function MessengerQuickChatDock({
               expanded
                 ? 'bg-gradient-to-br from-[#2563EB] to-[#7C3AED] text-white shadow-md scale-95'
                 : totalUnread > 0 && !dockActive
-                  ? 'bg-gradient-to-br from-[#EF4444] to-[#DC2626] text-white shadow-[0_4px_16px_rgba(239,68,68,0.45)] ring-2 ring-[#FCA5A5] animate-pulse'
+                  ? 'bg-gradient-to-br from-[#EF4444]/90 to-[#DC2626]/90 text-white shadow-sm ring-1 ring-[#FCA5A5]/60'
                   : dockActive
                     ? 'bg-slate-50 text-[#2563EB] hover:bg-gradient-to-br hover:from-[#2563EB] hover:to-[#7C3AED] hover:text-white hover:shadow-md'
                     : 'bg-white/90 text-[#2563EB]/80 shadow-sm'
@@ -946,7 +1000,11 @@ export default function MessengerQuickChatDock({
             />
           ) : !dockActive && !expanded ? (
             <span
-              className={`absolute left-1 top-1/2 -translate-y-1/2 w-0.5 h-8 rounded-full bg-[#2563EB]/30 ${DOCK_MOTION_CLS}`}
+              className={`absolute left-0 top-1/2 -translate-y-1/2 w-1 h-10 rounded-full ${DOCK_MOTION_CLS}`}
+              style={{
+                background: 'linear-gradient(180deg, #22C55E, #2563EB)',
+                boxShadow: '0 0 10px rgba(37, 99, 235, 0.55)',
+              }}
               aria-hidden
             />
           ) : null}

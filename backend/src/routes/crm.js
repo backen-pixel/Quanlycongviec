@@ -84,6 +84,8 @@ const {
   assertRegionBelongsToCompany,
   assertUserCanAssignCrmRegion,
   normalizeRegionIdList,
+  resolveRpcRegionIdsForCrmList,
+  userCanAssignAnyCrmRegion,
 } = require('../helpers/crmRegionScope');
 const {
   filterUserIdsForCrmLeadScopedNotification,
@@ -3439,6 +3441,7 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
     const light = req.query.light === '1' || req.query.light === 'true';
     const minimal = req.query.minimal === '1' || req.query.minimal === 'true';
     const phone_filter = req.query.phone_filter;
+    const explicitRegionId = uuidQueryOrNull(req.query.region_id);
     const canUseLight =
       light &&
       !crmListUsesLegacyFilters({
@@ -3459,6 +3462,7 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
     if (canUseLight) {
       const lightStats = await computeCrmDashboardLightStats(req, type, {
         effectiveCompanyId,
+        region_id: explicitRegionId || undefined,
         stages: stages || [],
         assigned_to_only,
         date_from,
@@ -3471,6 +3475,7 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
     } else {
       leads = await fetchCrmLeadsForDashboardBatched(type, {
         company_id: effectiveCompanyId || undefined,
+        region_id: explicitRegionId || undefined,
         date_from,
         date_to,
         assigned_to_only,
@@ -6517,6 +6522,7 @@ function buildCrmLeadsRpcFilterParams(mergedQuery, type, rpcAssigneeStrict, rpcR
 /** Dashboard `light=1`: stage counts qua RPC — không quét toàn bộ crm_leads. */
 async function computeCrmDashboardLightStats(req, type, {
   effectiveCompanyId,
+  region_id,
   stages,
   assigned_to_only,
   date_from,
@@ -6526,6 +6532,7 @@ async function computeCrmDashboardLightStats(req, type, {
   const mergedQuery = {
     type,
     company_id: effectiveCompanyId || undefined,
+    region_id: region_id || undefined,
     assigned_to: assigned_to_only || undefined,
     date_from,
     date_to,
@@ -6534,8 +6541,7 @@ async function computeCrmDashboardLightStats(req, type, {
   const dealAssigneeStrict = type === 'deal' && !!uuidQueryOrNull(assigned_to_only);
   const leadAssigneeStrict = type === 'lead' && !!uuidQueryOrNull(assigned_to_only);
   const rpcAssigneeStrict = dealAssigneeStrict || leadAssigneeStrict;
-  const rcForRpc = getCrmLeadRegionConstraint(req);
-  const rpcRegionIds = rcForRpc.mode === 'in' && rcForRpc.ids?.length ? rcForRpc.ids : null;
+  const rpcRegionIds = resolveRpcRegionIdsForCrmList(req, mergedQuery.region_id);
   const filterParams = buildCrmLeadsRpcFilterParams(mergedQuery, type, rpcAssigneeStrict, rpcRegionIds);
   const stageIds = (stages || []).map((s) => s.id).filter(Boolean);
   const countsParsed = await invokeCrmLeadsStageCountsRpc({
@@ -6576,8 +6582,7 @@ async function resolveCrmLeadsMergedQuery(req, res) {
   const dealAssigneeStrict = type === 'deal' && (!!uuidQueryOrNull(assigned_to) || forcedDealSelf);
   const leadAssigneeStrict = type === 'lead' && (!!uuidQueryOrNull(assigned_to) || forcedLeadSelf);
   const rpcAssigneeStrict = dealAssigneeStrict || leadAssigneeStrict;
-  const rcForRpc = getCrmLeadRegionConstraint(req);
-  const rpcRegionIds = rcForRpc.mode === 'in' && rcForRpc.ids?.length ? rcForRpc.ids : null;
+  const rpcRegionIds = resolveRpcRegionIdsForCrmList(req, mergedQuery.region_id);
   return { type, mergedQuery, rpcAssigneeStrict, rpcRegionIds };
 }
 
@@ -6726,8 +6731,7 @@ async function fetchCrmLeadsPageViaRpc(req, mergedQuery, type, parsedOffset, par
   const dealAssigneeStrict = type === 'deal' && (!!uuidQueryOrNull(mergedQuery.assigned_to) || forcedDealSelf);
   const leadAssigneeStrict = type === 'lead' && (!!uuidQueryOrNull(mergedQuery.assigned_to) || forcedLeadSelf);
   const rpcAssigneeStrict = dealAssigneeStrict || leadAssigneeStrict;
-  const rcForRpc = getCrmLeadRegionConstraint(req);
-  const rpcRegionIds = rcForRpc.mode === 'in' && rcForRpc.ids?.length ? rcForRpc.ids : null;
+  const rpcRegionIds = resolveRpcRegionIdsForCrmList(req, mergedQuery.region_id);
   const { assigned_to, source_id, search, company_id, date_from, date_to, phone_filter, stage_id } = mergedQuery;
   const rpcParams = {
     p_type: type,
@@ -6840,6 +6844,7 @@ r.get('/web-dashboard-bootstrap', responseCache({ ttl: 15, scope: 'user', tags: 
 
     const lightStats = await computeCrmDashboardLightStats(req, type, {
       effectiveCompanyId: companyId,
+      region_id: uuidQueryOrNull(mergedQuery.region_id),
       stages: stages || [],
       assigned_to_only: uuidQueryOrNull(mergedQuery.assigned_to),
       date_from: mergedQuery.date_from,
@@ -7028,8 +7033,7 @@ r.get('/leads', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'] }), a
       return res.json(legacy);
     }
 
-    const rcForRpc = getCrmLeadRegionConstraint(req);
-    const rpcRegionIds = rcForRpc.mode === 'in' && rcForRpc.ids?.length ? rcForRpc.ids : null;
+    const rpcRegionIds = resolveRpcRegionIdsForCrmList(req, mergedQuery.region_id);
 
     const rpcParams = {
       p_type: type,
@@ -7197,8 +7201,16 @@ r.get('/company-regions', async (req, res) => {
     }
 
     const data = await getCompanyRegionsList({ allowedIds, div: div || null, moduleDivIds });
-    void scheduleRegionGeocoding(data);
-    res.json(data);
+    let rows = data;
+    if (!userCanAssignAnyCrmRegion(req.user)) {
+      const scopedIds = normalizeRegionIdList(req.user?.crm_region_ids);
+      if (scopedIds.length) {
+        const allowed = new Set(scopedIds.map(String));
+        rows = (rows || []).filter((r) => allowed.has(String(r.id)));
+      }
+    }
+    void scheduleRegionGeocoding(rows);
+    res.json(rows);
   } catch (e) {
     if (String(e.message || '').includes('company_regions')) {
       return res.json([]);

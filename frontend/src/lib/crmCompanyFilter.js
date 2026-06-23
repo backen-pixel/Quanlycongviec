@@ -1,8 +1,15 @@
+import { clearCrmPipelineUiPersistence } from './crmPipelineStorage';
+
 /**
  * Công ty dùng để lọc dữ liệu CRM (admin) — đồng bộ với trang Pipeline, Nguồn, Dashboard…
  * Cùng key với CRMDashboard (localStorage).
  */
 export const LS_CRM_FILTER_COMPANY_ID = 'crm_dash_filter_company_id';
+
+/** Theo dõi user CRM gần nhất — khi đổi tài khoản thì xóa bộ lọc lưu chung. */
+export const LS_CRM_SESSION_USER_ID = 'crm_session_user_id';
+
+export const LS_CRM_DASH_LEAD_TYPE = 'crm_dash_filter_lead_type_id';
 
 /** Giữ tên cũ khi import từ code đã tồn tại */
 export const LS_CRM_DASH_COMPANY = LS_CRM_FILTER_COMPANY_ID;
@@ -23,6 +30,48 @@ export function setStoredCrmFilterCompanyId(companyId) {
     } else {
       localStorage.removeItem(LS_CRM_FILTER_COMPANY_ID);
     }
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Xóa bộ lọc CRM lưu chung (localStorage / snapshot pipeline) — tránh dính giữa các tài khoản. */
+export function clearCrmSessionFilterStorage() {
+  try {
+    localStorage.removeItem(LS_CRM_FILTER_COMPANY_ID);
+    localStorage.removeItem(LS_CRM_DASH_LEAD_TYPE);
+  } catch {
+    /* ignore */
+  }
+  clearCrmPipelineUiPersistence();
+}
+
+/**
+ * Gọi sau khi đăng nhập: nếu user khác phiên trước thì reset bộ lọc CRM.
+ * @returns {boolean} true nếu đã xóa bộ lọc do đổi user
+ */
+export function syncCrmSessionUserOnLogin(userId) {
+  const newId = userId != null ? String(userId).trim() : '';
+  let prevId = '';
+  try {
+    prevId = localStorage.getItem(LS_CRM_SESSION_USER_ID) || '';
+  } catch {
+    /* ignore */
+  }
+  const userChanged = !!(prevId && newId && prevId !== newId);
+  if (userChanged) clearCrmSessionFilterStorage();
+  try {
+    if (newId) localStorage.setItem(LS_CRM_SESSION_USER_ID, newId);
+    else localStorage.removeItem(LS_CRM_SESSION_USER_ID);
+  } catch {
+    /* ignore */
+  }
+  return userChanged;
+}
+
+export function clearCrmSessionUserMarker() {
+  try {
+    localStorage.removeItem(LS_CRM_SESSION_USER_ID);
   } catch {
     /* ignore */
   }

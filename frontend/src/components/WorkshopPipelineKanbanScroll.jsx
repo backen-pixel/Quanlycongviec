@@ -1,5 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+  KanbanBoardEdgeScrollChrome,
+} from '../lib/kanbanEdgeScrollControls';
 
 const EDGE_ZONE_PX = 56;
 const MIN_STEP = 5;
@@ -25,6 +27,7 @@ export default function WorkshopPipelineKanbanScroll({
   const lastPointerRef = useRef({ x: 0, y: 0 });
   const [isDraggingCard, setIsDraggingCard] = useState(false);
   const [scrollMaxH, setScrollMaxH] = useState('70vh');
+  const [quickChatDockRightInset, setQuickChatDockRightInset] = useState(0);
 
   const stopScrollLoop = useCallback(() => {
     if (scrollRafRef.current) {
@@ -58,7 +61,7 @@ export default function WorkshopPipelineKanbanScroll({
     const { x } = lastPointerRef.current;
     const r = wrap.getBoundingClientRect();
     const innerLeft = r.left + EDGE_ZONE_PX;
-    const innerRight = r.right - EDGE_ZONE_PX;
+    const innerRight = r.right - EDGE_ZONE_PX - quickChatDockRightInset;
     let delta = 0;
 
     if (x < innerLeft) {
@@ -76,7 +79,7 @@ export default function WorkshopPipelineKanbanScroll({
         scrollRafRef.current = requestAnimationFrame(runScrollLoop);
       }
     }
-  }, [scrollStep]);
+  }, [scrollStep, quickChatDockRightInset]);
 
   const scheduleScrollLoop = useCallback(() => {
     if (!scrollRafRef.current) {
@@ -100,8 +103,6 @@ export default function WorkshopPipelineKanbanScroll({
     const measure = () => {
       const el = kanbanHScrollRef.current;
       if (!el) return;
-      // Chiều cao Kanban cố định ~720px (đủ ~3-4 card), giới hạn trần theo viewport
-      // để không tràn trên màn hình nhỏ.
       const TARGET = 720;
       const maxByViewport = Math.max(360, window.innerHeight - 120);
       setScrollMaxH(`${Math.min(TARGET, maxByViewport)}px`);
@@ -142,7 +143,7 @@ export default function WorkshopPipelineKanbanScroll({
       if (!wrap) return;
       const r = wrap.getBoundingClientRect();
       const innerLeft = r.left + EDGE_ZONE_PX;
-      const innerRight = r.right - EDGE_ZONE_PX;
+      const innerRight = r.right - EDGE_ZONE_PX - quickChatDockRightInset;
       if (e.clientX < innerLeft || e.clientX > innerRight) {
         scheduleScrollLoop();
       }
@@ -159,7 +160,7 @@ export default function WorkshopPipelineKanbanScroll({
       document.removeEventListener('dragover', onDragOver, true);
       stopScrollLoop();
     };
-  }, [cardSelector, endDrag, scheduleScrollLoop, stopScrollLoop]);
+  }, [cardSelector, endDrag, scheduleScrollLoop, stopScrollLoop, quickChatDockRightInset]);
 
   const nudge = (dir) => {
     const sc = kanbanHScrollRef.current;
@@ -170,70 +171,38 @@ export default function WorkshopPipelineKanbanScroll({
     );
   };
 
-  const edgeZoneClass = (side) =>
-    `absolute ${side === 'left' ? 'left-0' : 'right-0'} top-0 bottom-4 z-[21] w-10 sm:w-12 ${
-      isDraggingCard ? 'pointer-events-auto' : 'pointer-events-none'
-    }`;
-
-  const clickBtnClass = (side) =>
-    `absolute ${side === 'left' ? 'left-0' : 'right-0'} top-0 bottom-4 z-[22] w-10 border-0 bg-transparent p-0 sm:w-12 ${
-      isDraggingCard ? 'pointer-events-none cursor-default' : 'cursor-pointer'
-    }`;
+  const rightEdgeStyle = quickChatDockRightInset > 0 ? { right: quickChatDockRightInset } : undefined;
 
   return (
     <div ref={kanbanWrapRef} className="relative">
-      {/* Gradient hints */}
-      <div
-        className="pointer-events-none absolute left-0 top-0 bottom-4 z-20 flex w-12 items-stretch sm:w-14"
-        aria-hidden
-      >
-        <div
-          className={`flex w-full items-center justify-center bg-gradient-to-r from-slate-200/95 via-slate-100/40 to-transparent pl-0.5 transition-opacity duration-200 ${
-            isDraggingCard ? 'opacity-100' : 'opacity-40'
-          }`}
-        >
-          <ChevronLeft className="h-9 w-9 text-slate-600 drop-shadow sm:h-10 sm:w-10" strokeWidth={2.25} aria-hidden />
-        </div>
-      </div>
-      <div
-        className="pointer-events-none absolute right-0 top-0 bottom-4 z-20 flex w-12 items-stretch sm:w-14"
-        aria-hidden
-      >
-        <div
-          className={`ml-auto flex w-full items-center justify-center bg-gradient-to-l from-slate-200/95 via-slate-100/40 to-transparent pr-0.5 transition-opacity duration-200 ${
-            isDraggingCard ? 'opacity-100' : 'opacity-40'
-          }`}
-        >
-          <ChevronRight className="h-9 w-9 text-slate-600 drop-shadow sm:h-10 sm:w-10" strokeWidth={2.25} aria-hidden />
-        </div>
-      </div>
+      <KanbanBoardEdgeScrollChrome
+        wrapRef={kanbanWrapRef}
+        remeasureToken={remeasureToken}
+        isDraggingCard={isDraggingCard}
+        onNudgeLeft={() => nudge('left')}
+        onNudgeRight={() => nudge('right')}
+        onRightInsetChange={setQuickChatDockRightInset}
+        leftTitle="Kéo thẻ tới mép này để tự cuộn cột bên trái — hoặc bấm (khi không kéo) để cuộn nhanh"
+        rightTitle="Kéo thẻ tới mép này để tự cuộn cột bên phải — hoặc bấm (khi không kéo) để cuộn nhanh"
+      />
 
       {/* Vùng mép nhận dragover khi đang kéo thẻ — kích hoạt auto-scroll */}
       <div
-        className={edgeZoneClass('left')}
+        className={`absolute left-0 top-0 bottom-4 z-[21] w-10 sm:w-12 ${
+          isDraggingCard ? 'pointer-events-auto' : 'pointer-events-none'
+        }`}
         onDragOver={(e) => handleEdgeDragOver(e, 'left')}
         onDragEnter={(e) => handleEdgeDragOver(e, 'left')}
         aria-hidden
       />
       <div
-        className={edgeZoneClass('right')}
+        className={`absolute top-0 bottom-4 z-[21] w-10 sm:w-12 motion-reduce:transition-none transition-[right] duration-[520ms] ease-[cubic-bezier(0.33,1,0.68,1)] ${
+          isDraggingCard ? 'pointer-events-auto' : 'pointer-events-none'
+        }`}
+        style={rightEdgeStyle ?? { right: 0 }}
         onDragOver={(e) => handleEdgeDragOver(e, 'right')}
         onDragEnter={(e) => handleEdgeDragOver(e, 'right')}
         aria-hidden
-      />
-
-      {/* Nút bấm cuộn nhanh — chỉ khi không kéo */}
-      <button
-        type="button"
-        className={clickBtnClass('left')}
-        title="Kéo thẻ tới mép này để tự cuộn cột bên trái — hoặc bấm (khi không kéo) để cuộn nhanh"
-        onClick={() => nudge('left')}
-      />
-      <button
-        type="button"
-        className={clickBtnClass('right')}
-        title="Kéo thẻ tới mép này để tự cuộn cột bên phải — hoặc bấm (khi không kéo) để cuộn nhanh"
-        onClick={() => nudge('right')}
       />
 
       <div
@@ -243,7 +212,6 @@ export default function WorkshopPipelineKanbanScroll({
       >
         {children}
       </div>
-      {/* Chú thích màu sắc trạng thái card — giúp người dùng phân biệt nhanh */}
       <div className="flex flex-wrap items-center gap-3 px-3 py-2 mt-1 border-t border-gray-100 bg-white text-[11px] text-gray-600 rounded-b-lg">
         <span className="font-semibold text-gray-500 mr-1">Chú thích:</span>
         <span className="inline-flex items-center gap-1.5">
