@@ -2376,8 +2376,9 @@ export default function CRMDashboard() {
     [stagesLead.length, stagesDeal.length, allLeads.length, allDeals.length],
   );
 
-  /** Chỉ che Kanban bằng loader to khi chưa có dữ liệu; có cache thì hiện Kanban + badge đồng bộ */
-  const crmShowMainLoader = crmMainContentLoading && !crmKanbanHasData;
+  /** Loader toàn màn khi chưa có dữ liệu; overlay khi đã có cache Kanban */
+  const crmShowFullLoader = crmMainContentLoading && !crmKanbanHasData;
+  const crmShowLoaderOverlay = crmMainContentLoading && crmKanbanHasData;
 
   const crmLoadProgressDisplay = (firstLoading || syncing)
     ? Math.max(0, Math.min(100, crmLoadProgress))
@@ -2385,11 +2386,10 @@ export default function CRMDashboard() {
 
   const showNoPipelineMainViews = useMemo(
     () =>
-      !crmShowMainLoader &&
       !crmMainContentLoading &&
       companyHasNoPipeline &&
       (viewMode === 'kanban' || viewMode === 'list' || viewMode === 'planner' || viewMode === 'deadline' || viewMode === 'comments'),
-    [crmShowMainLoader, crmMainContentLoading, companyHasNoPipeline, viewMode],
+    [crmMainContentLoading, companyHasNoPipeline, viewMode],
   );
 
   const buildStagesParams = useCallback((type) => {
@@ -2422,11 +2422,16 @@ export default function CRMDashboard() {
     startCrmLoadProgress();
     const markLoadComplete = () => {
       if (isStale()) return;
-      // Tắt trạng thái ngay khi API xong — không chờ animation (tránh kẹt 100% khi load bị hủy)
-      setFirstLoading(false);
-      setSyncing(false);
-      setLastSyncAt(new Date());
+      const mySeq = seq;
       finishCrmLoadProgress();
+      // Giữ thanh loading tối thiểu ~1.2s để user nhìn thấy tiến trình
+      const minVisibleMs = 1200;
+      window.setTimeout(() => {
+        if (loadSeqRef.current !== mySeq) return;
+        setFirstLoading(false);
+        setSyncing(false);
+        setLastSyncAt(new Date());
+      }, minVisibleMs);
     };
     try {
       let resolvedCompanyId = filterCompany;
@@ -4730,7 +4735,7 @@ export default function CRMDashboard() {
           )}
         </div>
         <div className="flex items-center gap-1.5 shrink-0 ml-auto">
-          {crmShowMainLoader ? (
+          {crmShowFullLoader ? (
             <span className={`inline-flex items-center gap-1.5 shrink-0 rounded-full border border-violet-200/80 bg-violet-50/90 px-2.5 py-1 ${compactLeadUi ? 'text-[10px]' : 'text-xs'}`}>
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-60 animate-ping" />
@@ -4738,7 +4743,7 @@ export default function CRMDashboard() {
               </span>
               <span className="font-semibold text-violet-800 whitespace-nowrap">Đang tải…</span>
             </span>
-          ) : syncing ? (
+          ) : crmMainContentLoading ? (
             <CrmDashboardLoaderCompact progress={crmLoadProgressDisplay} label="Đồng bộ" />
           ) : lastSyncAt ? (
             <span
@@ -5559,7 +5564,7 @@ export default function CRMDashboard() {
         )}
       </section>
 
-      {crmShowMainLoader ? (
+      {crmShowFullLoader ? (
         <CrmDashboardLoader
           progress={crmLoadProgressDisplay}
           pipelineType={pipelineType}
@@ -5593,6 +5598,21 @@ export default function CRMDashboard() {
           )}
         </div>
       ) : (
+        <div className="relative min-h-[min(420px,calc(100vh-280px))]">
+          {crmShowLoaderOverlay && (
+            <div
+              className="absolute inset-0 z-20 flex items-start justify-center pt-4 sm:pt-8 bg-white/65 backdrop-blur-[2px] rounded-xl"
+              aria-live="polite"
+              aria-busy="true"
+            >
+              <CrmDashboardLoader
+                className="w-full max-w-md shadow-2xl pointer-events-none"
+                progress={crmLoadProgressDisplay}
+                pipelineType={pipelineType}
+                companyName={scopedCompanyName}
+              />
+            </div>
+          )}
         <>
           {(viewMode === 'kanban' || viewMode === 'deadline') && manualMergeIds.length > 0 && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm">
@@ -5802,6 +5822,7 @@ export default function CRMDashboard() {
             />
           )}
         </>
+        </div>
       )}
       {viewMode === 'calendar' && (
         <div className="bg-white rounded-xl border p-12 text-center text-gray-500">
