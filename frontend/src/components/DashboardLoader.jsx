@@ -24,6 +24,7 @@ const THEMES = {
     skeletonCols: (pipelineType) => (pipelineType === 'deal'
       ? ['Mới', 'Báo giá', 'Thương thảo', 'Thắng']
       : ['Mới', 'Liên hệ', 'Tư vấn', 'Báo giá', 'Chốt']),
+    showKanbanSkeleton: false,
   },
   production: {
     gradient: ['#059669', '#0d9488', '#2563eb'],
@@ -41,7 +42,8 @@ const THEMES = {
     skeletonCard: 'from-slate-100 via-emerald-50 to-slate-100',
     title: 'Đang dựng Dashboard Sản xuất',
     badgeLabel: () => 'Pipeline xưởng',
-    skeletonCols: () => ['Chờ vào xưởng', 'Đang SX', 'Lắp đặt', 'Nghiệm thu', 'Hoàn thành'],
+    showKanbanSkeleton: false,
+    skeletonCols: () => [],
   },
 };
 
@@ -228,7 +230,9 @@ export function DashboardLoader({
           </div>
         </div>
 
-        <KanbanSkeletonPreview theme={theme} columns={columns} />
+        {theme.showKanbanSkeleton !== false && columns.length > 0 ? (
+          <KanbanSkeletonPreview theme={theme} columns={columns} />
+        ) : null}
       </div>
     </div>
   );

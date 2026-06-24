@@ -4,22 +4,37 @@ export default function ModuleAccessDeniedModal({ moduleName, onClose }) {
   if (!moduleName) return null;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+    <div
+      data-module-access-denied-modal
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    >
       <button
         type="button"
         className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px] cursor-pointer border-0"
         aria-label="Đóng"
-        onClick={onClose}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
       />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="module-access-denied-title"
         className="relative w-full max-w-[360px] rounded-2xl bg-white px-6 pt-6 pb-5 text-center shadow-2xl"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
       >
         <button
           type="button"
-          onClick={onClose}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
           className="absolute top-3 right-3 p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer transition-colors"
           aria-label="Đóng"
         >
