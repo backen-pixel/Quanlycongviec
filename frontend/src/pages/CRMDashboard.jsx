@@ -1326,10 +1326,8 @@ export default function CRMDashboard() {
           if (c.fbPages) setFbPages(c.fbPages);
           if (Array.isArray(c.companies) && c.companies.length) setCompanies(c.companies);
           if (Array.isArray(c.users) && c.users.length) setUsers(c.users);
-          // Tắt spinner ngay — user thấy dashboard tức thì
-          setFirstLoading(false);
+          // Giữ firstLoading — thanh tiến trình chạy đến khi load() hoàn tất (stale-while-revalidate)
           lastHydratedCacheKeyRef.current = cacheKey;
-          // Cache cực tươi (< 30s) → bỏ qua silent reload, giảm tải API
           if (cached.isVeryFresh) {
             veryFreshCacheHit = true;
           }
@@ -1339,7 +1337,13 @@ export default function CRMDashboard() {
       /* cache hydrate lỗi — fallback về fetch bình thường */
     }
     if (veryFreshCacheHit) {
-      // Không cần silent reload — live-version polling sẽ phát hiện thay đổi nếu có
+      // Cache rất tươi: vẫn chạy thanh đồng bộ tối thiểu, không gọi API
+      startCrmLoadProgress();
+      finishCrmLoadProgress(() => {
+        setFirstLoading(false);
+        setSyncing(false);
+        setLastSyncAt(new Date());
+      });
       return undefined;
     }
     if (loadDebounceTimerRef.current) clearTimeout(loadDebounceTimerRef.current);
@@ -5542,7 +5546,7 @@ export default function CRMDashboard() {
         )}
       </section>
 
-      {firstLoading ? (
+      {crmMainContentLoading ? (
         <CrmDashboardLoader
           progress={crmLoadProgressDisplay}
           pipelineType={pipelineType}
