@@ -129,11 +129,19 @@ export function writeAppSwitcherFavorites(paths) {
   }
 }
 
-export function defaultAppSwitcherFavorites(accessiblePaths) {
+export function defaultAppSwitcherFavorites(allPaths) {
   const preferred = ['/crm', '/sx', '/dashboard', '/knowledge', '/vc'];
-  const picked = preferred.filter((p) => accessiblePaths.includes(p));
+  const picked = preferred.filter((p) => allPaths.includes(p));
   if (picked.length >= 2) return picked.slice(0, 5);
-  return accessiblePaths.slice(0, 5);
+  return allPaths.slice(0, 5);
+}
+
+/** @param {AppModuleDef} mod */
+export function canUseAppModule(mod, { canAccessModule, crmOnly }) {
+  if (!mod) return false;
+  if (mod.always) return true;
+  if (!mod.mod) return !crmOnly;
+  return canAccessModule(mod.mod);
 }
 
 export function resolveActiveAppModuleId({

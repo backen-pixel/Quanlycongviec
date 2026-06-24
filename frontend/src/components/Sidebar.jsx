@@ -637,13 +637,11 @@ export default function Sidebar() {
     >
       {/* App Switcher Button + Logo */}
       <div className="flex items-center gap-2 px-3 h-14 border-b border-white/10 shrink-0">
-        {!crmOnly && (
         <AppSwitcherButton
           open={showAppSwitcher}
           onClick={() => setShowAppSwitcher(!showAppSwitcher)}
           collapsed={collapsed}
         />
-        )}
         {/* Active app indicator — click cycles through các module được phép (chỉ CRM nếu crmOnly) */}
         {(() => {
           const modList = [
