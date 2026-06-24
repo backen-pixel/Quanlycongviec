@@ -1446,11 +1446,15 @@ r.get('/leaves', async (req, res) => {
 
     const userIds = [...new Set((data || []).map((l) => l.user_id).filter(Boolean))];
     const usersList = userIds.length ? await resolveTargetUsers({ userIds }) : [];
-    const userMap = Object.fromEntries(usersList.map((u) => [u.id, u]));
+    const userMap = Object.fromEntries(usersList.map((u) => [String(u.id), u]));
     const leaves = (data || []).map((l) => ({
       ...l,
-      user: userMap[l.user_id]
-        ? { id: userMap[l.user_id].id, full_name: userMap[l.user_id].full_name, email: userMap[l.user_id].email }
+      user: userMap[String(l.user_id)]
+        ? {
+          id: userMap[String(l.user_id)].id,
+          full_name: userMap[String(l.user_id)].full_name,
+          email: userMap[String(l.user_id)].email,
+        }
         : null,
     }));
     res.json({ leaves });

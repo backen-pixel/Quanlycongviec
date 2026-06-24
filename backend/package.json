@@ -7,8 +7,8 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
+    "start": "node --use-system-ca src/server.js",
+    "dev": "node --use-system-ca --watch src/server.js",
     "fb:rescan-inbound-phones": "node scripts/rescan-fb-inbound-phones.js",
     "fb:validate-contact-phones": "node scripts/validate-fb-contact-phones.js",
     "build:frontend": "node ../scripts/knowledge/sync-screenshots-deploy.js && cd ../frontend && npm ci --prefer-offline --no-audit && npm run build",

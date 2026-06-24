@@ -36,6 +36,9 @@ function normalize(saved) {
     rangeTo: typeof saved?.rangeTo === 'string' ? saved.rangeTo : DEFAULTS.rangeTo,
     filterUserId: typeof saved?.filterUserId === 'string' ? saved.filterUserId : DEFAULTS.filterUserId,
     filterRegionId: typeof saved?.filterRegionId === 'string' ? saved.filterRegionId : DEFAULTS.filterRegionId,
+    listTimePreset: typeof saved?.listTimePreset === 'string' ? saved.listTimePreset : 'this_year',
+    listRangeFrom: typeof saved?.listRangeFrom === 'string' ? saved.listRangeFrom : '',
+    listRangeTo: typeof saved?.listRangeTo === 'string' ? saved.listRangeTo : '',
   };
 }
 
