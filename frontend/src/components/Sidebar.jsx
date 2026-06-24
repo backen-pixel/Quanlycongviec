@@ -596,6 +596,7 @@ export default function Sidebar() {
   // Close app switcher on outside click
   useEffect(() => {
     const handler = (e) => {
+      if (e.target.closest('[data-module-access-denied-modal]')) return;
       if (appSwitcherRef.current && !appSwitcherRef.current.contains(e.target)) setShowAppSwitcher(false);
     };
     if (showAppSwitcher) document.addEventListener('mousedown', handler);

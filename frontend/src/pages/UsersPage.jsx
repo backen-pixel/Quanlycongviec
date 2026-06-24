@@ -1,14 +1,17 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import api from '../lib/api';
 import Modal from '../components/Modal';
 import UserRolesModal from '../components/UserRolesModal';
 import { useAuth } from '../lib/auth';
-import { Plus, Search, Mail, Phone, Trash2, Edit, Users as UsersIcon, MoreVertical, Building2, Layers, UsersRound, Shield, MapPin, Camera, AlertTriangle } from 'lucide-react';
+import { Plus, Search, Mail, Phone, Trash2, Edit, Users as UsersIcon, MoreVertical, Building2, Layers, UsersRound, Shield, MapPin, Camera, AlertTriangle, ChevronLeft, ChevronRight, UserRound } from 'lucide-react';
 import { formatDate, getInitials, avatarColor } from '../lib/utils';
 
 const ROLES = { admin: 'Admin', manager: 'Quản lý', region_admin: 'Admin khu vực', sales_admin: 'Sales Admin', sales: 'Kinh doanh (SAE)', designer: 'Thiết kế', production: 'Sản xuất', production_staff: 'NV Sản xuất (Admin CV+SX)', production_admin: 'Admin Sản xuất', crm_production_staff: 'NV CRM + Admin SX', crm_production_admin: 'Admin CRM + Sản xuất', logistics_admin: 'Admin Vận chuyển', driver: 'Tài xế', installer: 'Lắp đặt', customer_care: 'CSKH', staff: 'Nhân viên' };
 const ROLE_COLORS = { admin: 'bg-red-100 text-red-700', manager: 'bg-purple-100 text-purple-700', region_admin: 'bg-rose-100 text-rose-800', sales_admin: 'bg-indigo-100 text-indigo-700', sales: 'bg-blue-100 text-blue-700', designer: 'bg-pink-100 text-pink-700', production: 'bg-orange-100 text-orange-700', production_staff: 'bg-teal-100 text-teal-800', production_admin: 'bg-orange-200 text-orange-900', crm_production_staff: 'bg-sky-100 text-sky-800', crm_production_admin: 'bg-violet-100 text-violet-800', logistics_admin: 'bg-amber-100 text-amber-800', installer: 'bg-cyan-100 text-cyan-700', customer_care: 'bg-green-100 text-green-700', driver: 'bg-amber-100 text-amber-700', staff: 'bg-gray-100 text-gray-600' };
+
+const employeeCardClass =
+  'group relative flex items-center gap-3.5 overflow-hidden rounded-2xl border border-slate-200/75 bg-gradient-to-b from-white via-white to-slate-50/90 p-4 transition-all duration-300 ease-out cursor-pointer shadow-[inset_0_1px_0_rgba(255,255,255,0.95),0_2px_4px_rgba(15,23,42,0.05),0_10px_24px_-8px_rgba(15,23,42,0.12)] hover:-translate-y-1 hover:border-violet-300/70 hover:from-violet-50/50 hover:via-white hover:to-violet-50/30 hover:shadow-[inset_0_1px_0_rgba(255,255,255,1),0_6px_14px_-4px_rgba(124,58,237,0.2),0_22px_38px_-14px_rgba(124,58,237,0.28)]';
 
 export default function UsersPage() {
   const { user: currentUser } = useAuth();
@@ -32,6 +35,8 @@ export default function UsersPage() {
   const menuRef = useRef(null);
   const [showRolesModal, setShowRolesModal] = useState(null); // { userId, userName }
   const [hardDeleteTarget, setHardDeleteTarget] = useState(null); // { id, full_name, email, role }
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -77,6 +82,21 @@ export default function UsersPage() {
   }, []);
   
   useEffect(() => { load(); }, [filterRole, filterDept, filterCompany, filterDivision]);
+  useEffect(() => { setPage(1); }, [search, filterRole, filterDept, filterCompany, filterDivision, pageSize]);
+
+  const totalUsers = users.length;
+  const totalPages = Math.max(1, Math.ceil(totalUsers / pageSize));
+  const paginatedUsers = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return users.slice(start, start + pageSize);
+  }, [users, page, pageSize]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  const pageStart = totalUsers === 0 ? 0 : (page - 1) * pageSize + 1;
+  const pageEnd = Math.min(page * pageSize, totalUsers);
 
   const deactivate = async (id, name) => {
     if (!confirm(`Vô hiệu hóa nhân viên "${name}"?`)) return;
@@ -127,188 +147,267 @@ export default function UsersPage() {
   }, [menuUser]);
 
   return (
-    <div className="space-y-5 max-w-7xl">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><UsersIcon className="h-6 w-6 text-gray-400" /> Quản lý nhân viên</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{stats.total || users.length} nhân viên</p>
+    <div className="w-full min-w-0 space-y-5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start gap-3 min-w-0">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-violet-600 text-white shadow-md shadow-violet-200">
+            <UserRound className="h-5 w-5" strokeWidth={2.25} />
+          </div>
+          <div className="min-w-0">
+            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Quản lý nhân viên</h1>
+            <p className="text-sm text-slate-500 mt-0.5">{stats.total || totalUsers} nhân viên</p>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button data-tour="add-user" onClick={() => { setEditUser(null); setShowCreate(true); }}
-          className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer">
+        <button
+          data-tour="add-user"
+          onClick={() => { setEditUser(null); setShowCreate(true); }}
+          className="h-10 px-4 bg-violet-600 text-white rounded-xl text-sm font-semibold flex items-center gap-2 hover:bg-violet-700 shadow-sm shadow-violet-200 cursor-pointer shrink-0"
+        >
           <Plus className="h-4 w-4" /> Thêm NV
         </button>
-        </div>
       </div>
 
-      {/* Role filter chips */}
-      <div className="flex gap-2 overflow-x-auto">
-        <button onClick={() => setFilterRole('')} className={`h-8 px-3 rounded-lg text-xs font-medium shrink-0 cursor-pointer ${!filterRole ? 'bg-gray-900 text-white' : 'bg-white border text-gray-600'}`}>Tất cả</button>
-        {Object.entries(ROLES).map(([k, v]) => (
-          <button key={k} onClick={() => setFilterRole(k === filterRole ? '' : k)}
-            className={`h-8 px-3 rounded-lg text-xs font-medium shrink-0 cursor-pointer flex items-center gap-1.5 ${filterRole === k ? 'bg-gray-900 text-white' : 'bg-white border text-gray-600'}`}>
-            {v} {stats.byRole?.[k] > 0 && <span className="text-[10px] opacity-60">{stats.byRole[k]}</span>}
+      {/* Role tabs */}
+      <div className="border-b border-slate-200">
+        <div className="flex gap-1 overflow-x-auto pb-px [scrollbar-width:thin]">
+          <button
+            type="button"
+            onClick={() => setFilterRole('')}
+            className={`shrink-0 px-3 py-2.5 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
+              !filterRole
+                ? 'border-violet-600 text-violet-700'
+                : 'border-transparent text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            Tất cả
+            <span className={`ml-1.5 text-xs ${!filterRole ? 'text-violet-500' : 'text-slate-400'}`}>
+              {stats.total || totalUsers}
+            </span>
           </button>
-        ))}
+          {Object.entries(ROLES).map(([k, v]) => {
+            const count = stats.byRole?.[k] || 0;
+            return (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setFilterRole(k === filterRole ? '' : k)}
+                className={`shrink-0 px-3 py-2.5 text-sm font-medium border-b-2 transition-colors cursor-pointer whitespace-nowrap ${
+                  filterRole === k
+                    ? 'border-violet-600 text-violet-700'
+                    : 'border-transparent text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {v}
+                {count > 0 && (
+                  <span className={`ml-1.5 text-xs ${filterRole === k ? 'text-violet-500' : 'text-slate-400'}`}>
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Filters: Division + Company + Department + Search */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-        {/* Division (Khối) */}
-        <div className="flex items-center gap-2 bg-white border rounded-lg px-3 h-9">
-          <Layers className="h-4 w-4 text-gray-400 shrink-0" />
-          <select 
-            value={filterDivision} 
-            onChange={e => {
-              setFilterDivision(e.target.value);
-              setFilterCompany(''); // Reset company when division changes
-            }} 
-            className="flex-1 text-sm outline-none bg-transparent"
-          >
-            <option value="">Tất cả khối</option>
-            {divisions.map(d => (
-              <option key={d.id} value={d.id}>{d.name}</option>
-            ))}
-          </select>
-        </div>
-
-        {/* Company */}
-        <div className="flex items-center gap-2 bg-white border rounded-lg px-3 h-9">
-          <Building2 className="h-4 w-4 text-gray-400 shrink-0" />
-          <select 
-            value={filterCompany} 
-            onChange={e => setFilterCompany(e.target.value)} 
-            className="flex-1 text-sm outline-none bg-transparent"
-          >
-            <option value="">Tất cả công ty</option>
-            {companies
-              .filter(c => !filterDivision || c.division_unit_id === filterDivision)
-              .map(c => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))
-            }
-          </select>
-        </div>
-
-        {/* Department */}
-        <div className="flex items-center gap-2 bg-white border rounded-lg px-3 h-9">
-          <UsersRound className="h-4 w-4 text-gray-400 shrink-0" />
-          <select 
-            value={filterDept} 
-            onChange={e => setFilterDept(e.target.value)} 
-            className="flex-1 text-sm outline-none bg-transparent"
-          >
-            <option value="">Tất cả phòng ban</option>
-            <option value="none">⚠️ Chưa có phòng ban</option>
-            {departments
-              .filter(d => !filterCompany || d.company_id === filterCompany)
-              .map(d => (
+      {/* Filters */}
+      <div className="flex flex-wrap gap-2.5">
+          <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 h-10 min-w-[148px]">
+            <Layers className="h-4 w-4 text-slate-400 shrink-0" />
+            <select
+              value={filterDivision}
+              onChange={(e) => {
+                setFilterDivision(e.target.value);
+                setFilterCompany('');
+              }}
+              className="flex-1 text-sm outline-none bg-transparent text-slate-700"
+            >
+              <option value="">Tất cả khối</option>
+              {divisions.map((d) => (
                 <option key={d.id} value={d.id}>{d.name}</option>
-              ))
-            }
-          </select>
-        </div>
+              ))}
+            </select>
+          </div>
 
-        {/* Search */}
-        <div className="relative sm:col-span-2">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <input 
-            value={search} 
-            onChange={e => setSearch(e.target.value)} 
-            onKeyDown={e => e.key === 'Enter' && load()}
-            placeholder="Tìm tên, email, SĐT..." 
-            className="w-full h-9 pl-10 pr-3 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white" 
-          />
-        </div>
+          <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 h-10 min-w-[156px]">
+            <Building2 className="h-4 w-4 text-slate-400 shrink-0" />
+            <select
+              value={filterCompany}
+              onChange={(e) => setFilterCompany(e.target.value)}
+              className="flex-1 text-sm outline-none bg-transparent text-slate-700"
+            >
+              <option value="">Tất cả công ty</option>
+              {companies
+                .filter((c) => !filterDivision || c.division_unit_id === filterDivision)
+                .map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 h-10 min-w-[168px]">
+            <UsersRound className="h-4 w-4 text-slate-400 shrink-0" />
+            <select
+              value={filterDept}
+              onChange={(e) => setFilterDept(e.target.value)}
+              className="flex-1 text-sm outline-none bg-transparent text-slate-700"
+            >
+              <option value="">Tất cả phòng ban</option>
+              <option value="none">Chưa có phòng ban</option>
+              {departments
+                .filter((d) => !filterCompany || d.company_id === filterCompany)
+                .map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+            </select>
+          </div>
+
+          <div className="relative flex-1 min-w-[220px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && load()}
+              placeholder="Tìm tên, email, SĐT..."
+              className="w-full h-10 pl-10 pr-3 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-100 focus:border-violet-300 bg-white text-slate-900"
+            />
+          </div>
       </div>
-
-      {/* Active filters summary */}
-      {(filterDivision || filterCompany || filterDept || filterRole) && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs text-gray-500">Đang lọc:</span>
-          {filterDivision && (
-            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full flex items-center gap-1">
-              Khối: {divisions.find(d => d.id === filterDivision)?.name}
-              <button onClick={() => setFilterDivision('')} className="hover:text-purple-900">×</button>
-            </span>
-          )}
-          {filterCompany && (
-            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full flex items-center gap-1">
-              Cty: {companies.find(c => c.id === filterCompany)?.name}
-              <button onClick={() => setFilterCompany('')} className="hover:text-blue-900">×</button>
-            </span>
-          )}
-          {filterDept && (
-            <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full flex items-center gap-1">
-              PB: {departments.find(d => d.id === filterDept)?.name}
-              <button onClick={() => setFilterDept('')} className="hover:text-green-900">×</button>
-            </span>
-          )}
-          {filterRole && (
-            <span className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded-full flex items-center gap-1">
-              Role: {ROLES[filterRole]}
-              <button onClick={() => setFilterRole('')} className="hover:text-gray-900">×</button>
-            </span>
-          )}
-          <button 
-            onClick={() => {
-              setFilterDivision('');
-              setFilterCompany('');
-              setFilterDept('');
-              setFilterRole('');
-            }}
-            className="text-xs text-red-600 hover:text-red-800 font-medium"
-          >
-            Xóa tất cả
-          </button>
-        </div>
-      )}
 
       {/* Users grid */}
       {loading ? (
-        <div className="flex items-center justify-center py-16"><div className="animate-spin h-6 w-6 border-2 border-gray-200 border-t-gray-600 rounded-full" /></div>
+        <div className="flex items-center justify-center py-20">
+          <div className="animate-spin h-7 w-7 border-2 border-violet-100 border-t-violet-600 rounded-full" />
+        </div>
       ) : users.length === 0 ? (
-        <div className="text-center py-16"><UsersIcon className="h-12 w-12 mx-auto text-gray-300 mb-3" /><p className="text-sm text-gray-400">Không tìm thấy nhân viên</p></div>
+        <div className="text-center py-20 bg-white rounded-2xl border border-slate-100">
+          <UsersIcon className="h-12 w-12 mx-auto text-slate-300 mb-3" />
+          <p className="text-sm text-slate-500">Không tìm thấy nhân viên</p>
+        </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 overflow-visible">
-          {users.map((u, i) => (
-            <div key={u.id} className={`bg-white rounded-xl border p-4 flex items-center gap-4 hover:shadow-md transition-all cursor-pointer group relative ${menuUser === u.id ? 'z-20' : ''}`}>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 overflow-visible">
+          {paginatedUsers.map((u) => (
+            <div
+              key={u.id}
+              className={`${employeeCardClass} ${menuUser === u.id ? 'z-20 ring-2 ring-violet-200/80' : ''}`}
+            >
+              <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white to-transparent opacity-90" />
               {u.avatar ? (
-                <img src={u.avatar} alt="" className="h-11 w-11 rounded-full object-cover border border-gray-200 shrink-0" />
+                <img
+                  src={u.avatar}
+                  alt=""
+                  className="h-12 w-12 rounded-full object-cover border-2 border-white shrink-0 shadow-[0_4px_10px_rgba(15,23,42,0.14)] ring-1 ring-slate-200/80"
+                />
               ) : (
-                <div className="h-11 w-11 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0"
-                  style={{ backgroundColor: avatarColor(u.full_name) }}>{getInitials(u.full_name)}</div>
+                <div
+                  className="h-12 w-12 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0 border-2 border-white shadow-[0_4px_10px_rgba(15,23,42,0.18)] ring-1 ring-black/5"
+                  style={{ backgroundColor: avatarColor(u.full_name) }}
+                >
+                  {getInitials(u.full_name)}
+                </div>
               )}
               <div className="flex-1 min-w-0" onClick={() => setShowDetail(u.id)}>
-                <div className="flex items-center gap-2 mb-0.5">
-                  <h3 className="text-sm font-semibold text-gray-900 truncate">{u.full_name}</h3>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${ROLE_COLORS[u.role] || 'bg-gray-100'}`}>{ROLES[u.role] || u.role}</span>
+                <div className="flex items-center gap-2 mb-1 min-w-0">
+                  <h3 className="text-[15px] font-bold text-slate-900 truncate transition-colors group-hover:text-violet-900">{u.full_name}</h3>
+                  <span className={`shrink-0 text-[10px] px-2 py-0.5 rounded-full font-semibold ${ROLE_COLORS[u.role] || 'bg-gray-100 text-gray-600'}`}>
+                    {ROLES[u.role] || u.role}
+                  </span>
                 </div>
-                <div className="flex items-center gap-3 text-xs text-gray-500">
-                  <span className="flex items-center gap-1 truncate"><Mail className="h-3 w-3 shrink-0" />{u.email}</span>
-                  {u.phone && <span className="flex items-center gap-1 shrink-0"><Phone className="h-3 w-3" />{u.phone}</span>}
+                <div className="flex items-center gap-1.5 text-xs text-slate-500 truncate">
+                  <Mail className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                  <span className="truncate">{u.email}</span>
                 </div>
-                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                <div className="mt-1.5">
                   {u.department ? (
-                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded" style={{ backgroundColor: u.department.color + '20', color: u.department.color }}>{u.department.name}</span>
+                    <span
+                      className="inline-flex text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                      style={{ backgroundColor: `${u.department.color}18`, color: u.department.color }}
+                    >
+                      {u.department.name}
+                    </span>
                   ) : (
-                    <span className="text-[10px] font-medium text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">Chưa có PB</span>
-                  )}
-                  {u.team && (
-                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded" style={{ backgroundColor: (u.team.color || '#3b82f6') + '20', color: u.team.color || '#3b82f6' }}>
-                      👥 {u.team.name}
+                    <span className="inline-flex text-[10px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">
+                      Chưa có PB
                     </span>
                   )}
                 </div>
               </div>
               <button
+                type="button"
                 onClick={(e) => openUserMenu(e, u)}
-                className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-400 hover:text-gray-600 cursor-pointer shrink-0"
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 shrink-0 transition-colors hover:bg-violet-100 hover:text-violet-700 cursor-pointer"
               >
                 <MoreVertical className="h-4 w-4" />
               </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {!loading && totalUsers > 0 && (
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-1">
+          <p className="text-sm text-slate-500">
+            Hiển thị <span className="font-medium text-slate-700">{pageStart}</span>
+            {' - '}
+            <span className="font-medium text-slate-700">{pageEnd}</span>
+            {' trong tổng số '}
+            <span className="font-medium text-slate-700">{totalUsers}</span> nhân viên
+          </p>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              className="h-9 w-9 rounded-full border border-slate-200 bg-white text-slate-600 flex items-center justify-center disabled:opacity-40 cursor-pointer hover:bg-slate-50"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+
+            {Array.from({ length: totalPages }, (_, i) => i + 1)
+              .filter((p) => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
+              .reduce((acc, p, idx, arr) => {
+                if (idx > 0 && p - arr[idx - 1] > 1) acc.push('…');
+                acc.push(p);
+                return acc;
+              }, [])
+              .map((p, idx) => (
+                typeof p === 'number' ? (
+                  <button
+                    key={`page-${p}`}
+                    type="button"
+                    onClick={() => setPage(p)}
+                    className={`h-9 min-w-9 px-2 rounded-full text-sm font-semibold cursor-pointer transition-colors ${
+                      page === p
+                        ? 'bg-violet-600 text-white shadow-sm shadow-violet-200'
+                        : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {p}
+                  </button>
+                ) : (
+                  <span key={`gap-${idx}`} className="px-1 text-slate-400">…</span>
+                )
+              ))}
+
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+              className="h-9 w-9 rounded-full border border-slate-200 bg-white text-slate-600 flex items-center justify-center disabled:opacity-40 cursor-pointer hover:bg-slate-50"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="h-9 ml-1 px-2.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-700 outline-none cursor-pointer"
+            >
+              {[10, 20, 30, 50].map((n) => (
+                <option key={n} value={n}>{n} / trang</option>
+              ))}
+            </select>
+          </div>
         </div>
       )}
 

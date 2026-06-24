@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useEffect } from 'react';
 import { Search, X, Pin, Pencil } from 'lucide-react';
 import {
   APP_MODULE_DEFINITIONS,
@@ -168,9 +168,23 @@ export default function AppSwitcherPanel({
       setDeniedModule(mod);
       return;
     }
+    setDeniedModule(null);
     onClose();
     navigate(mod.path);
   }, [moduleAccessCtx, navigate, onClose]);
+
+  const closeDeniedModal = useCallback(() => {
+    setDeniedModule(null);
+  }, []);
+
+  const handlePanelClose = useCallback(() => {
+    setDeniedModule(null);
+    onClose();
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!open) setDeniedModule(null);
+  }, [open]);
 
   if (!open) return null;
 
@@ -179,7 +193,7 @@ export default function AppSwitcherPanel({
       {deniedModule && (
         <ModuleAccessDeniedModal
           moduleName={deniedModule.name}
-          onClose={() => setDeniedModule(null)}
+          onClose={closeDeniedModal}
         />
       )}
       <div
@@ -191,7 +205,7 @@ export default function AppSwitcherPanel({
             <h2 className="text-base font-bold text-slate-900 tracking-tight">Ứng dụng</h2>
             <button
               type="button"
-              onClick={onClose}
+              onClick={handlePanelClose}
               className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer transition-colors"
               aria-label="Đóng"
             >
@@ -349,7 +363,7 @@ export default function AppSwitcherPanel({
         type="button"
         className="flex-1 bg-slate-900/40 backdrop-blur-[2px] cursor-pointer border-0"
         aria-label="Đóng bảng ứng dụng"
-        onClick={onClose}
+        onClick={deniedModule ? closeDeniedModal : handlePanelClose}
       />
     </div>
   );
