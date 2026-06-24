@@ -6,7 +6,9 @@ import {
   readAppSwitcherFavorites,
   writeAppSwitcherFavorites,
   resolveActiveAppModuleId,
+  canUseAppModule,
 } from '../lib/appSwitcherModules';
+import ModuleAccessDeniedModal from './ModuleAccessDeniedModal';
 
 function normalizeSearch(s) {
   return String(s || '').trim().toLowerCase();
@@ -48,7 +50,9 @@ function ModuleAppIcon({ mod, size = 'md' }) {
 const activeModuleCardClass =
   'border-blue-400 bg-blue-50/80 ring-2 ring-blue-200/90 shadow-md shadow-blue-200/45 hover:border-blue-500 hover:bg-blue-100/80 hover:ring-blue-300 hover:shadow-lg hover:shadow-blue-200/55';
 const idleModuleCardClass =
-  'border-slate-100 hover:border-slate-200 hover:bg-slate-50/90 hover:shadow-md';
+  'border-slate-100 bg-white hover:border-slate-200 hover:bg-slate-50/90 hover:shadow-md';
+const lockedModuleCardClass =
+  'border-slate-100 bg-white/90 opacity-[0.68] saturate-[0.42] cursor-not-allowed';
 
 export function AppSwitcherButton({ open, onClick, collapsed }) {
   return (
@@ -103,6 +107,7 @@ export default function AppSwitcherPanel({
   const [search, setSearch] = useState('');
   const [editFavorites, setEditFavorites] = useState(false);
   const [favoritePaths, setFavoritePaths] = useState(() => readAppSwitcherFavorites() || []);
+  const [deniedModule, setDeniedModule] = useState(null);
 
   const activeModuleId = resolveActiveAppModuleId({
     isKnowledge,
@@ -113,59 +118,70 @@ export default function AppSwitcherPanel({
     isCRM,
   });
 
-  const accessibleModules = useMemo(() => {
-    return APP_MODULE_DEFINITIONS.filter((mod) => {
-      if (mod.hideCrmOnly && crmOnly) return false;
-      if (mod.always) return true;
-      if (!mod.mod) return !crmOnly;
-      return canAccessModule(mod.mod);
-    });
-  }, [canAccessModule, crmOnly]);
+  const allModulePaths = useMemo(
+    () => APP_MODULE_DEFINITIONS.map((m) => m.path),
+    [],
+  );
 
-  const accessiblePaths = useMemo(
-    () => accessibleModules.map((m) => m.path),
-    [accessibleModules],
+  const moduleAccessCtx = useMemo(
+    () => ({ canAccessModule, crmOnly }),
+    [canAccessModule, crmOnly],
+  );
+
+  const canUseModule = useCallback(
+    (mod) => canUseAppModule(mod, moduleAccessCtx),
+    [moduleAccessCtx],
   );
 
   const resolvedFavorites = useMemo(() => {
-    const stored = favoritePaths.filter((p) => accessiblePaths.includes(p));
+    const stored = favoritePaths.filter((p) => allModulePaths.includes(p));
     if (stored.length) return stored;
-    return defaultAppSwitcherFavorites(accessiblePaths);
-  }, [favoritePaths, accessiblePaths]);
+    return defaultAppSwitcherFavorites(allModulePaths);
+  }, [favoritePaths, allModulePaths]);
 
   const q = normalizeSearch(search);
 
   const favoriteModules = useMemo(() => {
     const list = resolvedFavorites
-      .map((path) => accessibleModules.find((m) => m.path === path))
+      .map((path) => APP_MODULE_DEFINITIONS.find((m) => m.path === path))
       .filter(Boolean);
     return q ? list.filter((m) => moduleMatchesSearch(m, q)) : list;
-  }, [resolvedFavorites, accessibleModules, q]);
+  }, [resolvedFavorites, q]);
 
   const allModules = useMemo(() => {
-    return accessibleModules.filter((m) => moduleMatchesSearch(m, q));
-  }, [accessibleModules, q]);
+    return APP_MODULE_DEFINITIONS.filter((m) => moduleMatchesSearch(m, q));
+  }, [q]);
 
   const toggleFavorite = useCallback((path, e) => {
     e?.stopPropagation?.();
     e?.preventDefault?.();
     setFavoritePaths((prev) => {
-      const base = prev.length ? prev.filter((p) => accessiblePaths.includes(p)) : [...resolvedFavorites];
+      const base = prev.length ? prev.filter((p) => allModulePaths.includes(p)) : [...resolvedFavorites];
       const next = base.includes(path) ? base.filter((p) => p !== path) : [...base, path];
       writeAppSwitcherFavorites(next);
       return next;
     });
-  }, [accessiblePaths, resolvedFavorites]);
+  }, [allModulePaths, resolvedFavorites]);
 
-  const openModule = useCallback((path) => {
+  const openModule = useCallback((mod) => {
+    if (!canUseAppModule(mod, moduleAccessCtx)) {
+      setDeniedModule(mod);
+      return;
+    }
     onClose();
-    navigate(path);
-  }, [navigate, onClose]);
+    navigate(mod.path);
+  }, [moduleAccessCtx, navigate, onClose]);
 
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex">
+      {deniedModule && (
+        <ModuleAccessDeniedModal
+          moduleName={deniedModule.name}
+          onClose={() => setDeniedModule(null)}
+        />
+      )}
       <div
         ref={panelRef}
         className="w-full max-w-[392px] bg-gradient-to-b from-slate-50 via-white to-slate-50 shadow-2xl border-r border-slate-200/80 flex flex-col animate-slide-in overflow-hidden"
@@ -215,15 +231,20 @@ export default function AppSwitcherPanel({
                 {favoriteModules.map((mod) => {
                   const isPinned = resolvedFavorites.includes(mod.path);
                   const isActive = mod.id === activeModuleId;
+                  const canUse = canUseModule(mod);
                   return (
                     <div
                       key={mod.id}
                       role="button"
                       tabIndex={0}
-                      onClick={() => openModule(mod.path)}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openModule(mod.path); }}
-                      className={`relative shrink-0 w-[86px] rounded-xl border bg-white px-2 py-2.5 text-center shadow-sm transition-all cursor-pointer ${
-                        isActive ? activeModuleCardClass : idleModuleCardClass
+                      onClick={() => openModule(mod)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openModule(mod); }}
+                      className={`relative shrink-0 w-[86px] rounded-xl border px-2 py-2.5 text-center shadow-sm transition-all ${
+                        !canUse
+                          ? lockedModuleCardClass
+                          : isActive
+                            ? `${activeModuleCardClass} cursor-pointer`
+                            : `${idleModuleCardClass} cursor-pointer`
                       }`}
                     >
                       {(editFavorites || isPinned) && (
@@ -256,15 +277,20 @@ export default function AppSwitcherPanel({
                 const isActive = mod.id === activeModuleId;
                 const isPinnedLogin = pinnedModule === mod.path;
                 const isFavorite = resolvedFavorites.includes(mod.path);
+                const canUse = canUseModule(mod);
                 return (
                   <div
                     key={mod.id}
                     role="button"
                     tabIndex={0}
-                    onClick={() => openModule(mod.path)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openModule(mod.path); }}
-                    className={`group relative flex items-center gap-2 rounded-xl border bg-white px-2 py-2 text-left shadow-sm transition-all cursor-pointer ${
-                      isActive ? activeModuleCardClass : idleModuleCardClass
+                    onClick={() => openModule(mod)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openModule(mod); }}
+                    className={`group relative flex items-center gap-2 rounded-xl border px-2 py-2 text-left shadow-sm transition-all ${
+                      !canUse
+                        ? lockedModuleCardClass
+                        : isActive
+                          ? `${activeModuleCardClass} cursor-pointer`
+                          : `${idleModuleCardClass} cursor-pointer`
                     }`}
                   >
                     <ModuleAppIcon mod={mod} size="sm" />
@@ -292,16 +318,18 @@ export default function AppSwitcherPanel({
                       >
                         <Pin className={`h-3 w-3 ${isFavorite ? 'fill-current rotate-45' : ''}`} />
                       </button>
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); onPinModule(mod.path); }}
-                        title={isPinnedLogin ? 'Mặc định khi đăng nhập' : 'Ghim — đăng nhập vào module này'}
-                        className={`p-1 rounded-md cursor-pointer transition-colors ${
-                          isPinnedLogin ? 'text-amber-600 bg-amber-50' : 'text-slate-300 opacity-0 group-hover:opacity-100 hover:text-slate-600 hover:bg-slate-50'
-                        } ${isPinnedLogin ? 'opacity-100' : ''}`}
-                      >
-                        <Pin className={`h-3 w-3 ${isPinnedLogin ? 'fill-current' : ''}`} />
-                      </button>
+                      {canUse && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); onPinModule(mod.path); }}
+                          title={isPinnedLogin ? 'Mặc định khi đăng nhập' : 'Ghim — đăng nhập vào module này'}
+                          className={`p-1 rounded-md cursor-pointer transition-colors ${
+                            isPinnedLogin ? 'text-amber-600 bg-amber-50' : 'text-slate-300 opacity-0 group-hover:opacity-100 hover:text-slate-600 hover:bg-slate-50'
+                          } ${isPinnedLogin ? 'opacity-100' : ''}`}
+                        >
+                          <Pin className={`h-3 w-3 ${isPinnedLogin ? 'fill-current' : ''}`} />
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
