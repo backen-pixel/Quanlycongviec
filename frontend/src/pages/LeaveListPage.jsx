@@ -3,9 +3,9 @@ import { useAuth } from '../lib/auth';
 import { isSystemAdmin as checkSystemAdmin } from '../lib/adminRole';
 import { useScopeFilter } from '../shared/hooks/useScopeFilter';
 import LeaveScheduleShell from '../components/LeaveScheduleShell';
-import EventsOffLeaveSection from '../components/EventsOffLeaveSection';
+import LeaveListSection from '../components/LeaveListSection';
 
-export default function LeaveSchedulePage() {
+export default function LeaveListPage() {
   const { user } = useAuth();
   const isSystemAdmin = checkSystemAdmin(user);
 
@@ -32,7 +32,7 @@ export default function LeaveSchedulePage() {
 
   return (
     <LeaveScheduleShell>
-      <EventsOffLeaveSection
+      <LeaveListSection
         companyId={effectiveCompanyId || null}
         departmentId={scope.departmentId || null}
         isSystemAdmin={isSystemAdmin}

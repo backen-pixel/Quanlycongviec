@@ -2736,10 +2736,17 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineStages, calculateD
         className={`sticky top-0 z-10 bg-gray-200/95 backdrop-blur supports-[backdrop-filter]:bg-gray-200/85 px-2 py-2.5 border-b rounded-t-md transition-colors ${isOverColumn ? 'bg-blue-100/90 border-blue-300' : 'border-gray-300/70'}`}
         style={{ borderTop: `8px solid ${stageColor}` }}
       >
-        <div className="flex items-center gap-1.5">
-          <h3 className="text-sm font-semibold truncate" style={{ color: '#000000' }}>{stage.name}</h3>
+        <div className="flex flex-nowrap items-center gap-1 min-w-0">
+          <h3
+            className="flex-1 min-w-0 text-sm font-semibold truncate leading-snug"
+            style={{ color: '#000000' }}
+            title={stage.name}
+          >
+            {stage.name}
+          </h3>
+          <div className="flex flex-nowrap items-center gap-1 shrink-0">
           <span
-            className="shrink-0 inline-flex items-center justify-center min-w-[24px] h-[22px] px-1.5 rounded-md text-[13px] font-bold tabular-nums leading-none"
+            className="inline-flex items-center justify-center min-w-[24px] h-[22px] px-1.5 rounded-md text-[13px] font-bold tabular-nums leading-none"
             style={{
               backgroundColor: `${stageColor}22`,
               color: stageColor,
@@ -2765,12 +2772,13 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineStages, calculateD
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSelectColumn(stage.id); }}
-              className="ml-auto px-1.5 py-0.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50 rounded cursor-pointer"
+              className="px-1 py-0.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50 rounded cursor-pointer whitespace-nowrap"
               title="Chọn tất cả dự án trong cột này"
             >
               Chọn cột
             </button>
           )}
+          </div>
         </div>
         {/* Mô tả phân loại — gắn với workshop_type của cột */}
         {(() => {

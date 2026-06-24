@@ -1,16 +1,24 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import api from '../lib/api';
 import { loadLeaveScheduleUi, patchLeaveScheduleUi } from '../lib/leaveScheduleStorage';
+import { useLeaveFilterActions } from '../lib/useLeaveFilterActions';
+import { downloadLeavesExcel } from '../lib/leaveScheduleExport';
+import LeaveActiveFilterBar from './LeaveActiveFilterBar';
+import {
+  leavePersonCalendarLabel,
+  resolveLeaveUser,
+} from '../lib/leaveScheduleUtils';
 import {
   CRM_TIME_PRESETS,
   getCrmDateRangeFromPreset,
 } from '../lib/crmDateRangePresets';
 import DateRangePickerPopover from './DateRangePickerPopover';
 import ScopeFilterBar from '../shared/components/ScopeFilterBar';
-import * as XLSX from 'xlsx';
 import {
-  Calendar, ChevronLeft, ChevronRight, Loader2, UserMinus, ClipboardCheck,
-  Plus, Check, X, Trash2, Clock, FileSpreadsheet, CalendarRange, Filter, MapPin, Pencil,
+  Calendar, ChevronLeft, ChevronRight, Loader2, UserMinus,
+  Plus, X, Trash2, Clock, FileSpreadsheet, CalendarRange, Filter, MapPin, Pencil,
+  MoreHorizontal, CalendarPlus,
 } from 'lucide-react';
 
 const LEAVE_TYPES = [
@@ -26,45 +34,6 @@ const HALF_DAY = [
   { v: 'morning', l: 'Sáng' },
   { v: 'afternoon', l: 'Chiều' },
 ];
-const STATUS_MAP = {
-  pending: {
-    label: 'Chờ duyệt',
-    cls: 'bg-yellow-100 text-yellow-800 border border-yellow-300',
-    chipCls: 'bg-yellow-400 text-yellow-950',
-    rowBorder: 'border-l-yellow-400',
-  },
-  approved: {
-    label: 'Đã duyệt',
-    cls: 'bg-emerald-100 text-emerald-800 border border-emerald-300',
-    chipCls: 'bg-emerald-500 text-white',
-    rowBorder: 'border-l-emerald-500',
-  },
-  rejected: {
-    label: 'Từ chối',
-    cls: 'bg-red-100 text-red-800 border border-red-300',
-    chipCls: 'bg-red-500 text-white',
-    rowBorder: 'border-l-red-500',
-  },
-  cancelled: {
-    label: 'Đã hủy',
-    cls: 'bg-gray-100 text-gray-600 border border-gray-200',
-    chipCls: 'bg-gray-400 text-white',
-    rowBorder: 'border-l-gray-400',
-  },
-};
-
-const STATUS_FILTER_OPTIONS = [
-  { v: '', l: 'Tất cả TT', activeCls: 'bg-purple-100 border-purple-300 text-purple-800' },
-  { v: 'pending', l: 'Chờ duyệt', activeCls: 'bg-yellow-100 border-yellow-400 text-yellow-900' },
-  { v: 'approved', l: 'Đã duyệt', activeCls: 'bg-emerald-100 border-emerald-400 text-emerald-900' },
-  { v: 'rejected', l: 'Từ chối', activeCls: 'bg-red-100 border-red-400 text-red-900' },
-  { v: 'cancelled', l: 'Đã hủy', activeCls: 'bg-gray-100 border-gray-300 text-gray-700' },
-];
-
-function leaveStatusMeta(status) {
-  return STATUS_MAP[status] || STATUS_MAP.pending;
-}
-
 const MONTH_NAMES = [
   'Tháng 1', 'Tháng 2', 'Tháng 3', 'Tháng 4', 'Tháng 5', 'Tháng 6',
   'Tháng 7', 'Tháng 8', 'Tháng 9', 'Tháng 10', 'Tháng 11', 'Tháng 12',
@@ -134,9 +103,144 @@ function fmtCreatedAt(iso) {
   });
 }
 
+const WEEKDAY_LABELS = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
+
+function leaveTypeDisplayLabel(v) {
+  if (v === 'paid') return 'Nghỉ phép';
+  return leaveTypeMeta(v).l;
+}
+
+function halfDayDisplayLabel(v) {
+  if (v === 'morning') return 'Buổi sáng';
+  if (v === 'afternoon') return 'Buổi chiều';
+  return 'Cả ngày';
+}
+
+function formatLeaveDateWithWeekday(startDate, endDate) {
+  if (!startDate) return '—';
+  const d = new Date(`${startDate}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return startDate;
+  const dateText = d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const weekday = WEEKDAY_LABELS[d.getDay()];
+  if (!endDate || endDate === startDate) return `${dateText} (${weekday})`;
+  const end = new Date(`${endDate}T12:00:00`);
+  const endText = end.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  return `${dateText} → ${endText}`;
+}
+
+function formatUpcomingDateBlock(isoDateStr) {
+  if (!isoDateStr) return { day: '—', month: '' };
+  const d = new Date(`${isoDateStr}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return { day: '—', month: '' };
+  return {
+    day: String(d.getDate()).padStart(2, '0'),
+    month: `TH ${d.getMonth() + 1}`,
+  };
+}
+
+function buildDayCalendarChips(dayLeaves, holiday, usersById, currentUser) {
+  const chips = [];
+  if (holiday) {
+    chips.push({
+      key: `h-${holiday.id}`,
+      kind: 'holiday',
+      label: holiday.name || 'Ngày lễ',
+      title: holiday.name || 'Ngày lễ',
+    });
+  }
+  const active = (dayLeaves || []);
+  active.slice(0, 4).forEach((l) => {
+    const isHalf = l.half_day && l.half_day !== 'full';
+    const typeLabel = isHalf ? 'Nửa ngày' : leaveTypeDisplayLabel(l.leave_type);
+    const person = leavePersonCalendarLabel(l, usersById, currentUser);
+    const user = resolveLeaveUser(l, usersById, currentUser);
+    chips.push({
+      key: String(l.id),
+      kind: isHalf ? 'half' : 'full',
+      person,
+      typeLabel,
+      label: `${person} · ${typeLabel}`,
+      title: `${user?.full_name || person} — ${typeLabel}${l.reason ? ` — ${l.reason}` : ''}`,
+      leave: l,
+    });
+  });
+  if (active.length > 4) {
+    chips.push({
+      key: 'more',
+      kind: 'more',
+      label: `+${active.length - 4} người`,
+      title: `${active.length} đơn nghỉ trong ngày`,
+    });
+  }
+  return chips;
+}
+
+function LeaveCreateSticker() {
+  return (
+    <div className="shrink-0 w-[76px] h-[76px]" aria-hidden>
+      <svg viewBox="0 0 76 76" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full drop-shadow-sm">
+        <circle cx="38" cy="38" r="36" fill="#F5F3FF" />
+        <circle cx="38" cy="38" r="36" stroke="#EDE9FE" strokeWidth="1.5" />
+        <rect x="16" y="20" width="36" height="34" rx="5" fill="#fff" stroke="#8B5CF6" strokeWidth="1.5" />
+        <rect x="16" y="20" width="36" height="11" rx="5" fill="#8B5CF6" />
+        <rect x="16" y="26" width="36" height="5" fill="#7C3AED" />
+        <line x1="24" y1="16" x2="24" y2="24" stroke="#A78BFA" strokeWidth="2.5" strokeLinecap="round" />
+        <line x1="44" y1="16" x2="44" y2="24" stroke="#A78BFA" strokeWidth="2.5" strokeLinecap="round" />
+        <circle cx="26" cy="38" r="2" fill="#C4B5FD" />
+        <circle cx="34" cy="38" r="2" fill="#C4B5FD" />
+        <circle cx="42" cy="38" r="2" fill="#C4B5FD" />
+        <circle cx="26" cy="46" r="2" fill="#DDD6FE" />
+        <circle cx="34" cy="46" r="2.5" fill="#8B5CF6" />
+        <circle cx="42" cy="46" r="2" fill="#DDD6FE" />
+        <ellipse cx="58" cy="58" rx="10" ry="4" fill="#BBF7D0" opacity="0.7" />
+        <path d="M58 52 C54 48 50 54 52 58 C54 62 58 64 62 58 C64 54 60 48 58 52Z" fill="#4ADE80" />
+        <path d="M62 50 C66 46 68 52 65 56 C63 58 60 56 62 50Z" fill="#22C55E" />
+        <rect x="54" y="54" width="8" height="9" rx="1.5" fill="#FB923C" />
+        <path d="M12 58 L18 52 L22 56 L28 48 L34 54" stroke="#F472B6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.85" />
+      </svg>
+    </div>
+  );
+}
+
+function LeaveLegendPanel() {
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+      <h3 className="text-[15px] font-bold text-gray-900 mb-3">Chú thích</h3>
+      <ul className="space-y-3">
+        <li className="flex gap-2.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-violet-600 mt-1 shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-gray-900">Nghỉ phép</p>
+            <p className="text-xs text-gray-500 mt-0.5">Nghỉ nguyên ngày</p>
+          </div>
+        </li>
+        <li className="flex gap-2.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-pink-400 mt-1 shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-gray-900">Nửa ngày</p>
+            <p className="text-xs text-gray-500 mt-0.5">Nghỉ 1 buổi (sáng hoặc chiều)</p>
+          </div>
+        </li>
+        <li className="flex gap-2.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-orange-400 mt-1 shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-gray-900">Ngày lễ</p>
+            <p className="text-xs text-gray-500 mt-0.5">Ngày nghỉ lễ, tết</p>
+          </div>
+        </li>
+        <li className="flex gap-2.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-gray-400 mt-1 shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-gray-900">Hôm nay</p>
+            <p className="text-xs text-gray-500 mt-0.5">Ngày hiện tại</p>
+          </div>
+        </li>
+      </ul>
+    </div>
+  );
+}
+
 export default function EventsOffLeaveSection({
-  mode,
-  onModeChange,
   companyId,
   departmentId,
   isSystemAdmin,
@@ -145,6 +249,7 @@ export default function EventsOffLeaveSection({
   isManager,
   persistUi = false,
 }) {
+  const location = useLocation();
   const initialUi = useMemo(() => (persistUi ? loadLeaveScheduleUi() : null), [persistUi]);
   const [month, setMonth] = useState(() => initialUi?.month ?? new Date().getMonth() + 1);
   const [year, setYear] = useState(() => initialUi?.year ?? new Date().getFullYear());
@@ -160,10 +265,6 @@ export default function EventsOffLeaveSection({
   const [timePreset, setTimePreset] = useState(() => initialUi?.timePreset ?? '');
   const [rangeFrom, setRangeFrom] = useState(() => initialUi?.rangeFrom ?? '');
   const [rangeTo, setRangeTo] = useState(() => initialUi?.rangeTo ?? '');
-  const [statusFilter, setStatusFilter] = useState(() => {
-    if (persistUi && initialUi?.statusFilter != null) return initialUi.statusFilter;
-    return isManager ? 'pending' : '';
-  });
   const [filterUserId, setFilterUserId] = useState(() => initialUi?.filterUserId ?? '');
   const [filterRegionId, setFilterRegionId] = useState(() => initialUi?.filterRegionId ?? '');
   const [form, setForm] = useState({ ...EMPTY_FORM });
@@ -173,6 +274,10 @@ export default function EventsOffLeaveSection({
   /** Khu vực trong form tạo — đồng bộ từ bộ lọc danh sách khi mở form */
   const [createFormRegionId, setCreateFormRegionId] = useState('');
   const [createFormUsers, setCreateFormUsers] = useState([]);
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
+  const [showAllRecent, setShowAllRecent] = useState(false);
+  const [showAllUpcoming, setShowAllUpcoming] = useState(false);
+  const [rowMenuOpenId, setRowMenuOpenId] = useState(null);
 
   const openCreateForm = useCallback((prefill = null) => {
     setEditingLeaveId(null);
@@ -208,13 +313,13 @@ export default function EventsOffLeaveSection({
   const canEditLeave = useCallback((l) => {
     const isOwn = String(l.user_id) === String(currentUser?.id);
     if (isManager) return true;
-    return isOwn && l.status === 'pending';
+    return isOwn;
   }, [isManager, currentUser?.id]);
 
   const canDeleteLeave = useCallback((l) => {
     const isOwn = String(l.user_id) === String(currentUser?.id);
     if (isManager) return true;
-    return isOwn && l.status === 'pending';
+    return isOwn;
   }, [isManager, currentUser?.id]);
 
   const persistUiPatch = useCallback((patch) => {
@@ -225,11 +330,6 @@ export default function EventsOffLeaveSection({
     setMonth(nextMonth);
     setYear(nextYear);
     persistUiPatch({ month: nextMonth, year: nextYear });
-  }, [persistUiPatch]);
-
-  const changeStatusFilter = useCallback((v) => {
-    setStatusFilter(v);
-    persistUiPatch({ statusFilter: v });
   }, [persistUiPatch]);
 
   const changeFilterUser = useCallback((v) => {
@@ -272,9 +372,8 @@ export default function EventsOffLeaveSection({
   /** Khoảng ngày dùng cho API / lọc danh sách / xuất Excel */
   const effectiveRange = useMemo(() => {
     if (rangeFrom || rangeTo) return { from: rangeFrom, to: rangeTo };
-    if (mode === 'calendar') return monthBounds;
-    return { from: '', to: '' };
-  }, [rangeFrom, rangeTo, mode, monthBounds]);
+    return monthBounds;
+  }, [rangeFrom, rangeTo, monthBounds]);
 
   const buildLeaveQueryParams = useCallback((extra = {}) => {
     const p = { ...extra };
@@ -284,19 +383,28 @@ export default function EventsOffLeaveSection({
     if (departmentId) p.department_id = departmentId;
     if (filterRegionId) p.region_id = filterRegionId;
     if (filterUserId) p.user_id = filterUserId;
-    if (statusFilter) p.status = statusFilter;
     return p;
-  }, [effectiveRange.from, effectiveRange.to, companyId, departmentId, filterRegionId, filterUserId, statusFilter]);
+  }, [effectiveRange.from, effectiveRange.to, companyId, departmentId, filterRegionId, filterUserId]);
 
-  const hasScopeFilters = !!(filterUserId || filterRegionId || departmentId || (isSystemAdmin && companyId));
-  const hasActiveFilters = hasScopeFilters || !!(timePreset || rangeFrom || rangeTo || statusFilter);
+  const showCalendarMonthChip = false;
 
-  const clearFilters = useCallback(() => {
-    handleTimePresetChange('');
-    changeStatusFilter('');
-    changeFilterUser('');
-    changeFilterRegion('');
-  }, [handleTimePresetChange, changeStatusFilter, changeFilterUser, changeFilterRegion]);
+  const { activeFilterChips, hasActiveFilters, clearFilters } = useLeaveFilterActions({
+    scope,
+    isSystemAdmin,
+    filterRegionId,
+    filterUserId,
+    timePreset,
+    rangeFrom,
+    rangeTo,
+    regions,
+    users,
+    month,
+    year,
+    showCalendarMonth: showCalendarMonthChip,
+    changeFilterRegion,
+    changeFilterUser,
+    handleTimePresetChange,
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -318,6 +426,10 @@ export default function EventsOffLeaveSection({
   }, [buildLeaveQueryParams, companyId]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (location.state?.openCreate) openCreateForm();
+  }, [location.state?.openCreate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     changeFilterUser('');
@@ -365,9 +477,35 @@ export default function EventsOffLeaveSection({
 
   const filteredLeaves = useMemo(() => [...leaves], [leaves]);
 
+  const usersById = useMemo(
+    () => Object.fromEntries((users || []).map((u) => [String(u.id), u])),
+    [users],
+  );
+
   const calendarLeaves = useMemo(
-    () => filteredLeaves.filter((l) => ['approved', 'pending', 'rejected', 'cancelled'].includes(l.status)),
-    [filteredLeaves],
+    () => filteredLeaves
+      .map((l) => {
+        if (l.user?.full_name || l.user?.email) return l;
+        const u = usersById[String(l.user_id)];
+        if (u) {
+          return {
+            ...l,
+            user: { id: u.id, full_name: u.full_name, email: u.email },
+          };
+        }
+        if (String(l.user_id) === String(currentUser?.id)) {
+          return {
+            ...l,
+            user: {
+              id: currentUser.id,
+              full_name: currentUser.full_name,
+              email: currentUser.email,
+            },
+          };
+        }
+        return l;
+      }),
+    [filteredLeaves, usersById, currentUser],
   );
 
   const leavesByDay = useMemo(() => {
@@ -387,11 +525,6 @@ export default function EventsOffLeaveSection({
     monthHolidays.forEach((h) => { m[h.day] = h; });
     return m;
   }, [monthHolidays]);
-
-  const pendingCount = useMemo(
-    () => leaves.filter((l) => l.status === 'pending').length,
-    [leaves],
-  );
 
   const selectedDayLeaves = selectedDay ? (leavesByDay[selectedDay] || []) : [];
   const selectedHoliday = selectedDay ? holidaysByDay[selectedDay] : null;
@@ -414,15 +547,6 @@ export default function EventsOffLeaveSection({
       end_date: d,
       user_id: isManager ? '' : (currentUser?.id || ''),
     });
-  };
-
-  const updateStatus = async (id, status) => {
-    try {
-      await api.patch(`/kpi/leaves/${id}`, { status });
-      load();
-    } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi cập nhật');
-    }
   };
 
   const deleteLeave = async (id) => {
@@ -465,7 +589,6 @@ export default function EventsOffLeaveSection({
           half_day: form.half_day,
           reason: String(form.reason).trim(),
         };
-        if (isManager && form.status) patch.status = form.status;
         await api.patch(`/kpi/leaves/${editingLeaveId}`, patch);
       } else {
         await api.post('/kpi/leaves', {
@@ -475,7 +598,7 @@ export default function EventsOffLeaveSection({
           leave_type: form.leave_type,
           half_day: form.half_day,
           reason: String(form.reason).trim(),
-          status: isManager ? (form.status || 'approved') : 'pending',
+          status: 'approved',
         });
       }
       closeCreateForm();
@@ -492,32 +615,16 @@ export default function EventsOffLeaveSection({
     try {
       const { data } = await api.get('/kpi/leaves', { params: buildLeaveQueryParams() });
       const rows = data?.leaves || [];
-      if (rows.length === 0) {
+      const ok = await downloadLeavesExcel(rows, {
+        sheetName: 'Lịch nghỉ',
+        filenamePrefix: 'lich_nghi',
+        title: 'LỊCH NGHỈ PHÉP',
+        from: effectiveRange.from,
+        to: effectiveRange.to,
+      });
+      if (!ok) {
         alert('Không có đơn nghỉ nào trong khoảng thời gian/bộ lọc để xuất.');
-        return;
       }
-      const sheetRows = rows.map((l, idx) => ({
-        STT: idx + 1,
-        Nhân_viên: l.user?.full_name || '',
-        Email: l.user?.email || '',
-        Từ_ngày: l.start_date || '',
-        Đến_ngày: l.end_date || '',
-        Loại_nghỉ: leaveTypeMeta(l.leave_type).l,
-        Buổi: HALF_DAY.find((h) => h.v === l.half_day)?.l || l.half_day,
-        Trạng_thái: STATUS_MAP[l.status]?.label || l.status,
-        Lý_do: l.reason || '',
-        Ngày_tạo: fmtCreatedAt(l.created_at),
-      }));
-      const ws = XLSX.utils.json_to_sheet(sheetRows);
-      ws['!cols'] = [
-        { wch: 5 }, { wch: 22 }, { wch: 26 }, { wch: 12 }, { wch: 12 },
-        { wch: 16 }, { wch: 10 }, { wch: 12 }, { wch: 36 }, { wch: 18 },
-      ];
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Lịch nghỉ');
-      const fromStamp = effectiveRange.from || 'all';
-      const toStamp = effectiveRange.to || 'all';
-      XLSX.writeFile(wb, `lich_nghi_${fromStamp}_${toStamp}.xlsx`);
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Lỗi xuất Excel');
     } finally {
@@ -526,26 +633,83 @@ export default function EventsOffLeaveSection({
   };
 
   const daysInMonth = new Date(year, month, 0).getDate();
-  const firstDay = (new Date(year, month - 1, 1).getDay() + 6) % 7;
-  const cells = [];
-  for (let i = 0; i < firstDay; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-  while (cells.length % 7 !== 0) cells.push(null);
+  const firstDayOfWeek = (new Date(year, month - 1, 1).getDay() + 6) % 7;
+  const prevMonthLastDay = new Date(year, month - 1, 0).getDate();
+
+  const calendarGrid = useMemo(() => {
+    const grid = [];
+    for (let i = firstDayOfWeek - 1; i >= 0; i -= 1) {
+      const d = prevMonthLastDay - i;
+      const pm = month === 1 ? 12 : month - 1;
+      const py = month === 1 ? year - 1 : year;
+      grid.push({ day: d, month: pm, year: py, inMonth: false });
+    }
+    for (let d = 1; d <= daysInMonth; d += 1) {
+      grid.push({ day: d, month, year, inMonth: true });
+    }
+    let nextDay = 1;
+    const nm = month === 12 ? 1 : month + 1;
+    const ny = month === 12 ? year + 1 : year;
+    while (grid.length % 7 !== 0) {
+      grid.push({ day: nextDay, month: nm, year: ny, inMonth: false });
+      nextDay += 1;
+    }
+    return grid;
+  }, [daysInMonth, firstDayOfWeek, prevMonthLastDay, month, year]);
 
   const today = new Date();
-  const isCurrentMonth = today.getFullYear() === year && today.getMonth() + 1 === month;
 
-  const approvalRows = useMemo(
+  const recentRows = useMemo(
     () => [...filteredLeaves].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))),
     [filteredLeaves],
   );
 
+  const todayIso = useMemo(() => {
+    const t = new Date();
+    return isoDate(t.getFullYear(), t.getMonth() + 1, t.getDate());
+  }, []);
+
+  const upcomingLeaves = useMemo(() => (
+    [...filteredLeaves]
+      .filter((l) => l.end_date >= todayIso)
+      .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)))
+  ), [filteredLeaves, todayIso]);
+
+  const RECENT_LIMIT = 5;
+  const UPCOMING_LIMIT = 4;
+
+  const displayedUpcoming = showAllUpcoming ? upcomingLeaves : upcomingLeaves.slice(0, UPCOMING_LIMIT);
+  const displayedRecent = showAllRecent ? recentRows : recentRows.slice(0, RECENT_LIMIT);
+  const canExpandRecent = recentRows.length > RECENT_LIMIT;
+  const canExpandUpcoming = upcomingLeaves.length > UPCOMING_LIMIT;
+
+  const goToday = () => {
+    const t = new Date();
+    changeMonth(t.getMonth() + 1, t.getFullYear());
+    setSelectedDay(t.getDate());
+  };
+
+  const monthYearOptions = useMemo(() => {
+    const opts = [];
+    const base = new Date(year, month - 1, 1);
+    for (let i = -6; i <= 6; i += 1) {
+      const d = new Date(base.getFullYear(), base.getMonth() + i, 1);
+      opts.push({
+        key: `${d.getFullYear()}-${d.getMonth() + 1}`,
+        year: d.getFullYear(),
+        month: d.getMonth() + 1,
+        label: `Tháng ${d.getMonth() + 1}, ${d.getFullYear()}`,
+      });
+    }
+    return opts;
+  }, [month, year]);
+
   const createFormBlock = showCreateForm && (
-    <div className="bg-purple-50/40 border border-purple-100 rounded-xl p-4">
-      <div className="flex items-center justify-between gap-2 mb-3">
-        <p className="text-sm font-semibold text-purple-900 flex items-center gap-1.5">
-          {editingLeaveId ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-          {editingLeaveId ? 'Sửa đơn nghỉ' : 'Tạo lịch nghỉ'}
+    <div className="bg-white">
+      <div className="flex items-center justify-between gap-2 mb-4">
+        <p className="text-base font-bold text-gray-900 flex items-center gap-2">
+          {editingLeaveId ? <Pencil className="h-5 w-5 text-violet-600" /> : <CalendarPlus className="h-5 w-5 text-violet-600" />}
+          {editingLeaveId ? 'Sửa đơn nghỉ' : 'Tạo đơn nghỉ mới'}
         </p>
         <button
           type="button"
@@ -672,30 +836,6 @@ export default function EventsOffLeaveSection({
             {HALF_DAY.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}
           </select>
         </div>
-        {isManager && (
-          <div className="lg:col-span-2">
-            <label className="block text-[10px] font-medium text-gray-600 mb-0.5">Trạng thái</label>
-            <select
-              value={form.status}
-              onChange={(e) => setForm({ ...form, status: e.target.value })}
-              className="w-full px-2 py-1.5 border rounded-lg text-sm bg-white"
-            >
-              {editingLeaveId ? (
-                <>
-                  <option value="pending">Chờ duyệt</option>
-                  <option value="approved">Đã duyệt</option>
-                  <option value="rejected">Từ chối</option>
-                  <option value="cancelled">Đã hủy</option>
-                </>
-              ) : (
-                <>
-                  <option value="approved">Duyệt ngay</option>
-                  <option value="pending">Chờ duyệt</option>
-                </>
-              )}
-            </select>
-          </div>
-        )}
         <div className="lg:col-span-12">
           <label className="block text-[10px] font-medium text-gray-600 mb-0.5">Lý do nghỉ *</label>
           <input
@@ -730,7 +870,7 @@ export default function EventsOffLeaveSection({
             className="h-9 px-4 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
           >
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : editingLeaveId ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-            {editingLeaveId ? 'Lưu thay đổi' : (isManager && form.status === 'approved' ? 'Tạo & duyệt' : 'Gửi đơn nghỉ')}
+            {editingLeaveId ? 'Lưu thay đổi' : 'Gửi đơn nghỉ'}
           </button>
         </div>
       </div>
@@ -739,30 +879,36 @@ export default function EventsOffLeaveSection({
 
   const filterToolbar = (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-      <details open className="border-b border-gray-100">
-        <summary className="list-none cursor-pointer select-none flex items-center justify-between gap-2 px-4 py-2 bg-gray-50/90 hover:bg-gray-100/90">
-          <div className="flex items-center gap-2 text-xs font-semibold text-gray-700 uppercase tracking-wide">
-            <Filter className="h-3.5 w-3.5" /> Bộ lọc
-            {hasActiveFilters && (
-              <span className="ml-1 inline-flex items-center gap-1 text-[10px] font-bold text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded-full normal-case">
-                Đang lọc
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {hasActiveFilters && (
-              <button
-                type="button"
-                onClick={(e) => { e.preventDefault(); clearFilters(); }}
-                className="h-7 px-2.5 text-[11px] font-medium text-red-600 hover:bg-red-50 rounded-md cursor-pointer"
-              >
-                × Xoá lọc
-              </button>
-            )}
-            <span className="text-[10px] text-gray-400 hidden sm:inline">Click để gập/mở</span>
-          </div>
-        </summary>
-        <div className="px-4 py-3 bg-gray-50/60 space-y-3">
+      <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-gray-50/90 border-b border-gray-100">
+        <div className="flex items-center gap-2 text-xs font-semibold text-gray-700 uppercase tracking-wide">
+          <Filter className="h-3.5 w-3.5" /> Bộ lọc
+          {hasActiveFilters && (
+            <span className="ml-1 inline-flex items-center gap-1 text-[10px] font-bold text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded-full normal-case">
+              Đang lọc
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="h-7 px-2.5 text-[11px] font-medium text-red-600 hover:bg-red-50 rounded-md cursor-pointer"
+            >
+              × Xoá lọc
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowFilterPanel(false)}
+            className="h-8 px-2.5 inline-flex items-center gap-1 text-xs font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg cursor-pointer"
+            aria-label="Đóng bộ lọc"
+          >
+            <X className="h-4 w-4" /> Đóng
+          </button>
+        </div>
+      </div>
+      <div className="px-4 py-3 bg-gray-50/60 space-y-3">
           <div className="flex flex-wrap items-end gap-2">
             {scope && (
               <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
@@ -859,306 +1005,403 @@ export default function EventsOffLeaveSection({
                 )}
               </button>
             </div>
-            {mode === 'calendar' && (
-              <div>
-                <label className="block text-[10px] font-medium text-gray-500 mb-0.5 flex items-center gap-1">
-                  <Calendar className="h-3 w-3" /> Tháng lịch
-                </label>
-                <div className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg text-sm border bg-gray-100 text-gray-700 border-gray-200 tabular-nums">
-                  {monthBounds.from} → {monthBounds.to}
-                </div>
+            <div>
+              <label className="block text-[10px] font-medium text-gray-500 mb-0.5 flex items-center gap-1">
+                <Calendar className="h-3 w-3" /> Tháng lịch
+              </label>
+              <div className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg text-sm border bg-gray-100 text-gray-700 border-gray-200 tabular-nums">
+                {monthBounds.from} → {monthBounds.to}
               </div>
-            )}
-            <div className="flex flex-wrap gap-1.5 items-center">
-              {STATUS_FILTER_OPTIONS.map((f) => (
-                <button
-                  key={f.v || 'all'}
-                  type="button"
-                  onClick={() => changeStatusFilter(f.v)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-medium border cursor-pointer ${
-                    statusFilter === f.v ? f.activeCls : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-                  }`}
-                >
-                  {f.l}
-                </button>
-              ))}
             </div>
             <button
               type="button"
               onClick={handleExportExcel}
               disabled={exporting}
-              className="ml-auto h-9 px-3 inline-flex items-center gap-1.5 text-sm font-medium border border-emerald-300 text-emerald-700 rounded-lg bg-white hover:bg-emerald-50 disabled:opacity-50 cursor-pointer"
+              className="ml-auto h-9 px-3 inline-flex items-center gap-1.5 text-sm font-medium border border-emerald-300 text-emerald-700 rounded-lg bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 cursor-pointer"
+              title="Xuất lịch theo bộ lọc hiện tại"
             >
               {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
               Xuất Excel
             </button>
           </div>
         </div>
-      </details>
+    </div>
+  );
+
+  const renderLeaveRowMenu = (l) => (
+    <div className="relative inline-block text-left">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setRowMenuOpenId((prev) => (prev === l.id ? null : l.id));
+        }}
+        className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 cursor-pointer"
+        aria-label="Tùy chọn"
+      >
+        <MoreHorizontal className="h-4 w-4" />
+      </button>
+      {rowMenuOpenId === l.id && (
+        <>
+          <button type="button" className="fixed inset-0 z-10 cursor-default" aria-label="Đóng menu" onClick={() => setRowMenuOpenId(null)} />
+          <div className="absolute right-0 z-20 mt-1 w-40 rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
+            {canEditLeave(l) && (
+              <button type="button" onClick={() => { setRowMenuOpenId(null); openEditForm(l); }}
+                className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-700 cursor-pointer inline-flex items-center gap-2">
+                <Pencil className="h-3.5 w-3.5" /> Sửa
+              </button>
+            )}
+            {canDeleteLeave(l) && (
+              <button type="button" onClick={() => { setRowMenuOpenId(null); deleteLeave(l.id); }}
+                className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 cursor-pointer inline-flex items-center gap-2">
+                <Trash2 className="h-3.5 w-3.5" /> Xóa
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex bg-purple-100 rounded-lg p-0.5">
-          <button
-            type="button"
-            onClick={() => onModeChange('calendar')}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${
-              mode === 'calendar' ? 'bg-white shadow text-purple-700' : 'text-purple-600 hover:text-purple-800'
-            }`}
-          >
-            <Calendar className="h-4 w-4" /> Lịch off
-          </button>
-          <button
-            type="button"
-            onClick={() => onModeChange('approval')}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${
-              mode === 'approval' ? 'bg-white shadow text-purple-700' : 'text-purple-600 hover:text-purple-800'
-            }`}
-          >
-            <ClipboardCheck className="h-4 w-4" /> Duyệt nghỉ
-            {pendingCount > 0 && (
-              <span className="ml-0.5 min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-amber-500 text-white text-[10px] font-bold">
-                {pendingCount}
-              </span>
-            )}
-          </button>
-        </div>
-        <button
-          type="button"
-          onClick={() => (showCreateForm ? closeCreateForm() : openCreateForm())}
-          className={`h-9 px-4 rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer ${
-            showCreateForm
-              ? 'bg-white border border-purple-300 text-purple-700 hover:bg-purple-50'
-              : 'bg-purple-600 text-white hover:bg-purple-700'
-          }`}
-        >
-          {showCreateForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-          {showCreateForm ? 'Đóng form' : 'Tạo đơn nghỉ'}
-        </button>
-      </div>
-
-      {filterToolbar}
-
+    <div className="space-y-5">
       {err && (
-        <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">{err}</div>
+        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">{err}</div>
       )}
 
-      {createFormBlock}
+      {showFilterPanel && filterToolbar}
 
-      {mode === 'calendar' && (
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-gradient-to-r from-purple-50/70 via-white to-purple-50/70 border-b border-gray-100">
-            <div className="flex items-center gap-1.5">
-              <button type="button" onClick={prevMonth} className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-gray-600 hover:bg-white hover:text-purple-600 cursor-pointer">
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              <h2 className="text-base font-bold text-gray-900">{MONTH_NAMES[month - 1]} {year}</h2>
-              <button type="button" onClick={nextMonth} className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-gray-600 hover:bg-white hover:text-purple-600 cursor-pointer">
-                <ChevronRight className="h-4 w-4" />
-              </button>
+      <LeaveActiveFilterBar chips={activeFilterChips} onClearAll={hasActiveFilters ? clearFilters : undefined} />
+
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-5 items-start">
+          <div className="space-y-5 min-w-0">
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
+                <div className="flex items-center gap-1">
+                  <button type="button" onClick={prevMonth} className="w-9 h-9 inline-flex items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-violet-700 cursor-pointer">
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <h2 className="min-w-[150px] text-center text-[15px] font-bold text-gray-900 tabular-nums">
+                    Tháng {month}, {year}
+                  </h2>
+                  <button type="button" onClick={nextMonth} className="w-9 h-9 inline-flex items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-violet-700 cursor-pointer">
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button type="button" onClick={goToday}
+                    className="h-9 px-3.5 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:border-violet-300 hover:text-violet-700 cursor-pointer">
+                    <Calendar className="h-4 w-4 text-violet-600" /> Hôm nay
+                  </button>
+                  <select
+                    value={`${year}-${month}`}
+                    onChange={(e) => {
+                      const [y, m] = e.target.value.split('-').map(Number);
+                      changeMonth(m, y);
+                      setSelectedDay(null);
+                    }}
+                    className="h-9 px-3 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 cursor-pointer min-w-[140px]"
+                    aria-label="Chọn tháng"
+                  >
+                    {monthYearOptions.map((opt) => (
+                      <option key={opt.key} value={opt.key}>{opt.label}</option>
+                    ))}
+                  </select>
+                  <button type="button" onClick={() => setShowFilterPanel((v) => !v)}
+                    className={`relative h-9 px-3.5 inline-flex items-center gap-1.5 rounded-lg border text-sm font-medium cursor-pointer ${
+                      showFilterPanel
+                        ? 'border-violet-300 bg-violet-50 text-violet-700'
+                        : hasActiveFilters
+                          ? 'border-violet-200 bg-white text-violet-700 hover:border-violet-300'
+                          : 'border-gray-200 bg-white text-gray-700 hover:border-violet-300 hover:text-violet-700'
+                    }`}>
+                    <Filter className="h-4 w-4" />
+                    Bộ lọc
+                    {hasActiveFilters && (
+                      <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-violet-600" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportExcel}
+                    disabled={exporting}
+                    className="h-9 px-3 inline-flex items-center gap-1.5 text-sm font-medium border border-emerald-300 text-emerald-700 rounded-lg bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 cursor-pointer"
+                    title="Xuất lịch tháng đang xem ra Excel"
+                  >
+                    {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+                    Xuất Excel
+                  </button>
+                </div>
+              </div>
+
+              {loading ? (
+                <div className="flex justify-center py-24"><Loader2 className="h-8 w-8 animate-spin text-violet-600" /></div>
+              ) : (
+                <div className="px-2 pb-4 pt-1">
+                  <div className="grid grid-cols-7">
+                    {DAY_NAMES.map((d, i) => (
+                      <div key={d} className={`text-center text-xs font-semibold py-2.5 ${i >= 5 ? 'text-red-500' : 'text-gray-500'}`}>{d}</div>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-7 border border-gray-100 rounded-xl overflow-hidden">
+                    {calendarGrid.map((cell, i) => {
+                      const isWeekendCol = i % 7 >= 5;
+                      const isSunday = i % 7 === 6;
+                      const isCurrentMonthCell = cell.inMonth && cell.month === month && cell.year === year;
+                      const dayLeaves = isCurrentMonthCell ? (leavesByDay[cell.day] || []) : [];
+                      const holiday = isCurrentMonthCell ? holidaysByDay[cell.day] : null;
+                      const isTodayCell = isCurrentMonthCell
+                        && today.getFullYear() === year
+                        && today.getMonth() + 1 === month
+                        && today.getDate() === cell.day;
+                      const isSelected = isCurrentMonthCell && cell.day === selectedDay;
+                      const chips = isCurrentMonthCell
+                        ? buildDayCalendarChips(dayLeaves, holiday, usersById, currentUser)
+                        : [];
+                      return (
+                        <div
+                          key={`${cell.year}-${cell.month}-${cell.day}-${i}`}
+                          role="presentation"
+                          onClick={() => {
+                            if (!isCurrentMonthCell) {
+                              changeMonth(cell.month, cell.year);
+                              setSelectedDay(cell.day);
+                              return;
+                            }
+                            setSelectedDay(cell.day);
+                          }}
+                          onDoubleClick={(e) => {
+                            if (!isCurrentMonthCell) return;
+                            e.stopPropagation();
+                            prefillFormForDay(cell.day);
+                          }}
+                          className={`min-h-[112px] border-b border-r border-gray-100 p-2 flex flex-col cursor-pointer transition ${
+                            isWeekendCol ? 'bg-rose-50/50' : 'bg-white'
+                          } ${isSelected ? 'ring-2 ring-inset ring-violet-500 z-[1] bg-violet-50/20' : 'hover:bg-violet-50/25'} ${
+                            !isCurrentMonthCell ? 'opacity-60' : ''
+                          }`}
+                        >
+                          <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-semibold tabular-nums ${
+                            isSelected
+                              ? 'bg-violet-600 text-white'
+                              : isTodayCell
+                                ? 'bg-gray-400 text-white'
+                                : !isCurrentMonthCell
+                                  ? 'text-gray-300'
+                                  : isSunday
+                                    ? 'text-red-500'
+                                    : 'text-gray-800'
+                          }`}>{cell.day}</span>
+                          <div className="mt-1.5 space-y-1 flex-1 min-w-0">
+                            {chips.map((chip) => (
+                              <div
+                                key={chip.key}
+                                role={chip.leave ? 'button' : undefined}
+                                tabIndex={chip.leave ? 0 : undefined}
+                                onClick={(e) => {
+                                  if (chip.leave) {
+                                    e.stopPropagation();
+                                    openEditForm(chip.leave);
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if (chip.leave && (e.key === 'Enter' || e.key === ' ')) {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                    openEditForm(chip.leave);
+                                  }
+                                }}
+                                className={`text-[10px] leading-tight px-2 py-1 rounded-md font-medium min-w-0 ${
+                                  chip.kind === 'holiday'
+                                    ? 'bg-orange-100 text-orange-800 truncate'
+                                    : chip.kind === 'half'
+                                      ? 'bg-pink-100 text-pink-800'
+                                      : chip.kind === 'more'
+                                        ? 'bg-gray-100 text-gray-600 truncate'
+                                        : 'bg-violet-600 text-white'
+                                } ${chip.leave ? 'cursor-pointer hover:opacity-90' : ''}`}
+                                title={chip.title || chip.label}
+                              >
+                                {chip.person ? (
+                                  <>
+                                    <div className="font-semibold truncate">{chip.person}</div>
+                                    <div className="truncate opacity-90">{chip.typeLabel || chip.label}</div>
+                                  </>
+                                ) : (
+                                  <div className="truncate">{chip.label}</div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-gray-500">
+                    <span className="inline-flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-violet-600" /> Nghỉ phép</span>
+                    <span className="inline-flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-pink-400" /> Nửa ngày</span>
+                    <span className="inline-flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-orange-400" /> Ngày lễ</span>
+                    <span className="inline-flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-400" /> Hôm nay</span>
+                  </div>
+                </div>
+              )}
             </div>
-            <span className="text-[11px] text-gray-500">{calendarLeaves.length} đơn · {monthHolidays.length} ngày lễ</span>
+
+            {/* Bảng đơn nghỉ gần đây */}
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                <div>
+                  <h3 className="text-[15px] font-bold text-gray-900 inline-flex items-center gap-2">
+                    <Calendar className="h-4 w-4 text-violet-600" />
+                    Đơn nghỉ gần đây
+                  </h3>
+                  {recentRows.length > 0 && (
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {showAllRecent || !canExpandRecent
+                        ? `${recentRows.length} đơn`
+                        : `Hiển thị ${RECENT_LIMIT} / ${recentRows.length} đơn`}
+                    </p>
+                  )}
+                </div>
+                {canExpandRecent && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllRecent((v) => !v)}
+                    className="text-sm font-semibold text-violet-600 hover:text-violet-800 cursor-pointer shrink-0"
+                  >
+                    {showAllRecent ? 'Thu gọn' : `Xem tất cả (${recentRows.length})`}
+                  </button>
+                )}
+              </div>
+              {loading ? (
+                <div className="flex justify-center py-12"><Loader2 className="h-7 w-7 animate-spin text-violet-600" /></div>
+              ) : (
+                <div className={`overflow-x-auto ${showAllRecent && canExpandRecent ? 'max-h-[420px] overflow-y-auto' : ''}`}>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 border-b border-gray-100">
+                        <th className="text-left px-5 py-3">Ngày nghỉ</th>
+                        <th className="text-left px-5 py-3">Loại nghỉ</th>
+                        <th className="text-left px-5 py-3">Thời gian</th>
+                        <th className="text-left px-5 py-3">Ghi chú</th>
+                        <th className="text-left px-5 py-3">Tạo lúc</th>
+                        <th className="text-right px-5 py-3">Thao tác</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {displayedRecent.length === 0 ? (
+                        <tr><td colSpan={6} className="text-center text-gray-400 py-12">Chưa có đơn nghỉ nào.</td></tr>
+                      ) : displayedRecent.map((l) => {
+                        const typeColor = leaveTypeMeta(l.leave_type).color;
+                        return (
+                          <tr key={l.id} className="border-b border-gray-50 hover:bg-gray-50/60">
+                            <td className="px-5 py-3.5 text-gray-800 whitespace-nowrap">
+                              {formatLeaveDateWithWeekday(l.start_date, l.end_date)}
+                            </td>
+                            <td className="px-5 py-3.5">
+                              <span className="inline-flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: typeColor }} />
+                                <span className="font-medium text-gray-800">{leaveTypeDisplayLabel(l.leave_type)}</span>
+                              </span>
+                            </td>
+                            <td className="px-5 py-3.5 text-gray-600">{halfDayDisplayLabel(l.half_day)}</td>
+                            <td className="px-5 py-3.5 text-gray-600 max-w-[220px] truncate" title={l.reason}>{l.reason || '—'}</td>
+                            <td className="px-5 py-3.5 text-gray-500 tabular-nums whitespace-nowrap">{fmtCreatedAt(l.created_at)}</td>
+                            <td className="px-5 py-3.5 text-right">{renderLeaveRowMenu(l)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
 
-          {loading ? (
-            <div className="flex justify-center py-16"><Loader2 className="h-7 w-7 animate-spin text-purple-500" /></div>
-          ) : (
-            <div className="p-3 sm:p-4">
-              <div className="grid grid-cols-7 mb-1">
-                {DAY_NAMES.map((d, i) => (
-                  <div key={d} className={`text-center text-[11px] font-bold py-1.5 ${i === 6 ? 'text-rose-500' : 'text-gray-500'}`}>{d}</div>
-                ))}
+          {/* Sidebar phải */}
+          <div className="space-y-4 xl:sticky xl:top-4">
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                <div>
+                  <h3 className="text-[15px] font-bold text-gray-900">Sắp tới</h3>
+                  {upcomingLeaves.length > 0 && (
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {showAllUpcoming || !canExpandUpcoming
+                        ? `${upcomingLeaves.length} lịch`
+                        : `Hiển thị ${UPCOMING_LIMIT} / ${upcomingLeaves.length} lịch`}
+                    </p>
+                  )}
+                </div>
+                {canExpandUpcoming && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllUpcoming((v) => !v)}
+                    className="text-sm font-semibold text-violet-600 hover:text-violet-800 cursor-pointer shrink-0"
+                  >
+                    {showAllUpcoming ? 'Thu gọn' : `Xem tất cả (${upcomingLeaves.length})`}
+                  </button>
+                )}
               </div>
-              <div className="grid grid-cols-7 gap-1">
-                {cells.map((day, i) => {
-                  if (!day) {
-                    return <div key={`e-${i}`} className="rounded-lg bg-gray-50/40 border border-dashed border-gray-100 min-h-[88px]" />;
-                  }
-                  const dayLeaves = leavesByDay[day] || [];
-                  const holiday = holidaysByDay[day];
-                  const isToday = isCurrentMonth && day === today.getDate();
-                  const isSelected = day === selectedDay;
-                  const isWeekend = i % 7 >= 5;
+              <div className={`divide-y divide-gray-100 ${showAllUpcoming && canExpandUpcoming ? 'max-h-[360px] overflow-y-auto' : ''}`}>
+                {displayedUpcoming.length === 0 ? (
+                  <p className="px-5 py-8 text-sm text-gray-400 text-center">Không có lịch nghỉ sắp tới.</p>
+                ) : displayedUpcoming.map((l) => {
+                  const dateBlock = formatUpcomingDateBlock(l.start_date);
+                  const typeColor = leaveTypeMeta(l.leave_type).color;
                   return (
-                    <div
-                      key={day}
-                      role="presentation"
-                      onClick={() => setSelectedDay(day)}
-                      className={`rounded-lg border min-h-[88px] p-1 flex flex-col cursor-pointer transition ${
-                        isSelected ? 'ring-2 ring-purple-500 border-purple-300 shadow-md' : 'border-gray-200 hover:border-purple-300'
-                      } ${isToday ? 'bg-purple-50/50' : isWeekend ? 'bg-gray-50/60' : 'bg-white'}`}
+                    <button
+                      key={l.id}
+                      type="button"
+                      onClick={() => openEditForm(l)}
+                      className="w-full px-5 py-4 flex items-center gap-4 text-left hover:bg-violet-50/40 cursor-pointer"
                     >
-                      <div className="flex items-center justify-between px-0.5">
-                        <span className={`text-[11px] font-bold w-5 h-5 inline-flex items-center justify-center rounded-full ${
-                          isToday ? 'bg-purple-600 text-white' : 'text-gray-800'
-                        }`}>{day}</span>
-                        {holiday && <span className="text-[9px]" title={holiday.name}>🎉</span>}
+                      <div className="w-12 h-12 shrink-0 rounded-xl bg-violet-100 flex flex-col items-center justify-center">
+                        <div className="text-lg font-bold text-violet-700 leading-none tabular-nums">{dateBlock.day}</div>
+                        <div className="text-[9px] font-bold text-violet-500 uppercase mt-0.5 tracking-wide">{dateBlock.month}</div>
                       </div>
-                      <div className="flex-1 space-y-0.5 mt-0.5 overflow-hidden">
-                        {holiday && (
-                          <div className="text-[9px] px-1 py-0.5 rounded bg-rose-100 text-rose-700 truncate" title={holiday.name}>
-                            {holiday.name}
-                          </div>
-                        )}
-                        {dayLeaves.slice(0, 3).map((l) => {
-                          const st = leaveStatusMeta(l.status);
-                          const name = l.user?.full_name || l.user?.email || 'NV';
-                          return (
-                            <div
-                              key={`${l.id}-${day}`}
-                              className={`text-[9px] px-1 py-0.5 rounded truncate font-medium ${st.chipCls}`}
-                              title={`${name} — ${st.label}`}
-                            >
-                              {name.split(' ').slice(-1)[0]}
-                            </div>
-                          );
-                        })}
-                        {dayLeaves.length > 3 && (
-                          <div className="text-[9px] text-gray-500 font-medium px-1">+{dayLeaves.length - 3}</div>
-                        )}
+                      <span className="w-px self-stretch bg-gray-200 shrink-0" aria-hidden />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: typeColor }} />
+                          <span className="text-sm font-semibold text-gray-900 truncate">{leaveTypeDisplayLabel(l.leave_type)}</span>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">{halfDayDisplayLabel(l.half_day)}</p>
                       </div>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
+            </div>
 
-              {selectedDay && (
-                <div className="mt-4 p-3 rounded-xl bg-purple-50/60 border border-purple-100">
-                  <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-                    <h3 className="text-sm font-semibold text-gray-800">
-                      Ngày {pad(selectedDay)}/{pad(month)}/{year}
-                      {selectedHoliday && <span className="ml-2 text-rose-600 font-normal">— {selectedHoliday.name}</span>}
-                    </h3>
-                    <button
-                      type="button"
-                      onClick={() => prefillFormForDay(selectedDay)}
-                      className="h-7 px-2.5 text-xs font-medium bg-purple-600 text-white rounded-md hover:bg-purple-700 cursor-pointer"
-                    >
-                      + Tạo nghỉ ngày này
-                    </button>
-                  </div>
-                  {selectedDayLeaves.length === 0 ? (
-                    <p className="text-xs text-gray-500">Không có ai nghỉ trong ngày này.</p>
-                  ) : (
-                    <ul className="space-y-1.5">
-                      {selectedDayLeaves.map((l) => {
-                        const st = leaveStatusMeta(l.status);
-                        return (
-                          <li key={l.id} className={`flex items-center gap-2 text-sm bg-white rounded-lg px-2.5 py-1.5 border border-gray-100 border-l-4 ${st.rowBorder}`}>
-                            <UserMinus className="h-3.5 w-3.5 text-purple-500 shrink-0" />
-                            <span className="font-medium text-gray-800">{l.user?.full_name || l.user?.email || '—'}</span>
-                            <span className="text-xs text-gray-500">{leaveTypeMeta(l.leave_type).l}</span>
-                            <span className="text-xs text-gray-400 truncate max-w-[120px]" title={l.reason}>{l.reason || '—'}</span>
-                            <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-medium ${st.cls}`}>{st.label}</span>
-                            {(canEditLeave(l) || canDeleteLeave(l)) && (
-                              <div className="inline-flex gap-0.5 shrink-0">
-                                {canEditLeave(l) && (
-                                  <button type="button" onClick={() => openEditForm(l)} title="Sửa"
-                                    className="p-1 text-gray-500 hover:text-purple-600 hover:bg-purple-50 rounded cursor-pointer">
-                                    <Pencil className="h-3 w-3" />
-                                  </button>
-                                )}
-                                {canDeleteLeave(l) && (
-                                  <button type="button" onClick={() => deleteLeave(l.id)} title="Xóa"
-                                    className="p-1 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded cursor-pointer">
-                                    <Trash2 className="h-3 w-3" />
-                                  </button>
-                                )}
-                              </div>
-                            )}
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-[16px] font-bold text-gray-900">Tạo đơn nghỉ mới</h3>
+                  <p className="mt-2 text-xs leading-relaxed text-gray-500">
+                    Ghi nhận ngày nghỉ của bạn để quản lý lịch làm việc hiệu quả hơn.
+                  </p>
                 </div>
-              )}
-
-              <div className="mt-3 flex flex-wrap gap-3 text-[10px] text-gray-600">
-                <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-yellow-400" /> Chờ duyệt</span>
-                <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-emerald-500" /> Đã duyệt</span>
-                <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-red-500" /> Từ chối</span>
-                <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-gray-400" /> Đã hủy</span>
-                <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-rose-200" /> Ngày lễ</span>
+                <LeaveCreateSticker />
               </div>
+              <button
+                type="button"
+                onClick={() => openCreateForm()}
+                className="w-full h-11 inline-flex items-center justify-center gap-2 rounded-xl bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 shadow-sm cursor-pointer"
+              >
+                <Plus className="h-4 w-4" /> Tạo đơn nghỉ
+              </button>
             </div>
-          )}
-        </div>
-      )}
 
-      {mode === 'approval' && (
-        <div className="space-y-3">
-          {loading ? (
-            <div className="flex justify-center py-12"><Loader2 className="h-7 w-7 animate-spin text-purple-500" /></div>
-          ) : (
-            <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 text-xs text-gray-700 uppercase">
-                  <tr>
-                    <th className="text-left px-3 py-2.5">Nhân viên</th>
-                    <th className="text-left px-3 py-2.5">Từ ngày</th>
-                    <th className="text-left px-3 py-2.5">Đến ngày</th>
-                    <th className="text-left px-3 py-2.5">Loại</th>
-                    <th className="text-left px-3 py-2.5">Buổi</th>
-                    <th className="text-left px-3 py-2.5">Trạng thái</th>
-                    <th className="text-left px-3 py-2.5">Lý do</th>
-                    <th className="px-3 py-2.5" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {approvalRows.length === 0 ? (
-                    <tr><td colSpan={8} className="text-center text-gray-400 py-8">Không có đơn nghỉ phù hợp bộ lọc.</td></tr>
-                  ) : approvalRows.map((l) => {
-                    const st = leaveStatusMeta(l.status);
-                    return (
-                      <tr key={l.id} className={`border-t hover:bg-gray-50 border-l-4 ${st.rowBorder}`}>
-                        <td className="px-3 py-2 font-medium">{l.user?.full_name || l.user?.email || l.user_id?.slice(0, 8)}</td>
-                        <td className="px-3 py-2 font-mono text-xs">{l.start_date}</td>
-                        <td className="px-3 py-2 font-mono text-xs">{l.end_date}</td>
-                        <td className="px-3 py-2 text-xs">{leaveTypeMeta(l.leave_type).l}</td>
-                        <td className="px-3 py-2 text-xs">{HALF_DAY.find((h) => h.v === l.half_day)?.l}</td>
-                        <td className="px-3 py-2">
-                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${st.cls}`}>{st.label}</span>
-                        </td>
-                        <td className="px-3 py-2 text-xs text-gray-600 max-w-[200px]" title={l.reason}>{l.reason || '—'}</td>
-                        <td className="px-3 py-2 text-right whitespace-nowrap">
-                          <div className="inline-flex gap-1">
-                            {isManager && l.status === 'pending' && (
-                              <>
-                                <button type="button" onClick={() => updateStatus(l.id, 'approved')}
-                                  className="px-2 py-1 bg-emerald-600 text-white rounded text-xs hover:bg-emerald-700 inline-flex items-center gap-0.5 cursor-pointer">
-                                  <Check className="h-3 w-3" /> Duyệt
-                                </button>
-                                <button type="button" onClick={() => updateStatus(l.id, 'rejected')}
-                                  className="px-2 py-1 bg-red-100 text-red-700 rounded text-xs hover:bg-red-200 inline-flex items-center gap-0.5 cursor-pointer">
-                                  <X className="h-3 w-3" /> Từ chối
-                                </button>
-                              </>
-                            )}
-                            {canEditLeave(l) && (
-                              <button type="button" onClick={() => openEditForm(l)} title="Sửa đơn"
-                                className="px-2 py-1 text-purple-700 hover:bg-purple-50 rounded text-xs cursor-pointer inline-flex items-center gap-0.5">
-                                <Pencil className="h-3 w-3" /> Sửa
-                              </button>
-                            )}
-                            {canDeleteLeave(l) && (
-                              <button type="button" onClick={() => deleteLeave(l.id)} title="Xóa đơn"
-                                className="px-2 py-1 text-red-600 hover:bg-red-50 rounded text-xs cursor-pointer inline-flex items-center gap-0.5">
-                                <Trash2 className="h-3 w-3" /> Xóa
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+            <LeaveLegendPanel />
+          </div>
+        </div>
+
+      {showCreateForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={closeCreateForm}>
+          <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto bg-white rounded-2xl shadow-2xl border border-gray-200" onClick={(e) => e.stopPropagation()}>
+            <div className="p-4 sm:p-5">{createFormBlock}</div>
+          </div>
         </div>
       )}
 
