@@ -7,6 +7,7 @@ import {
   syncCrmSessionUserOnLogin,
 } from '../lib/crmCompanyFilter';
 import { connectSocket, disconnectSocket } from '../lib/socket';
+import { resetClientSessionState } from '../lib/sessionReset';
 import { useActivityPing } from '../hooks/useActivityPing';
 import { useDeviceHeartbeat } from '../hooks/useDeviceHeartbeat';
 import { useAutoLogoutAtMidnight } from '../hooks/useAutoLogoutAtMidnight';
@@ -68,6 +69,8 @@ export function AuthProvider({ children }) {
   };
 
   const applyAuthSession = async (auth, fallbackSessionId) => {
+    disconnectSocket();
+    resetClientSessionState();
     const sessionId = auth.session_id || fallbackSessionId
       || `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
     syncCrmSessionUserOnLogin(auth.user?.id);
@@ -82,7 +85,12 @@ export function AuthProvider({ children }) {
   };
 
   const logout = async (reason = 'manual') => {
-    // Audit logout: gọi API trước khi xoá token. Lỗi mạng cũng vẫn xoá cục bộ.
+    // Ngắt realtime ngay — không chờ API logout (tránh nhận tin tài khoản cũ).
+    disconnectSocket();
+    resetClientSessionState();
+    setUser(null);
+    setSocket(null);
+
     try {
       await flushNow();
     } catch (_) {}
@@ -102,9 +110,6 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('login_ts');
     clearCrmSessionFilterStorage();
     clearCrmSessionUserMarker();
-    disconnectSocket();
-    setUser(null);
-    setSocket(null);
   };
 
   return (

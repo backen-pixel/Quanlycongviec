@@ -10,6 +10,8 @@ import {
   Calendar, List, Users, AlertTriangle, X, Save, ListChecks, ClipboardList,
   Edit3, Paperclip, FileUp, FileText, MessageSquare,
 } from 'lucide-react';
+import UploadProgressBubble from './UploadProgressBubble';
+import { mergeUploadProgressState, uploadSingleFileWithProgress, formatUploadProgressMeta } from '../lib/uploadProgressEta';
 
 const PRIORITY_COLORS = { low: 'bg-gray-100 text-gray-600', medium: 'bg-blue-100 text-blue-700', high: 'bg-orange-100 text-orange-700', urgent: 'bg-red-100 text-red-700' };
 const PRIORITY_LABELS = { low: 'Thấp', medium: 'TB', high: 'Cao', urgent: 'Gấp' };
@@ -169,24 +171,21 @@ export default function ProductionTasksTab({
           setUploadProgress(p => ({ ...p, [taskId]: { percent: 0, name: file.name, size: file.size } }));
           const isLarge = file.size > 10 * 1024 * 1024;
           const endpoint = isLarge ? '/upload/stream' : '/upload/single';
-          const result = await new Promise((resolve, reject) => {
-            const formData = new FormData();
-            formData.append('file', file);
-            const xhr = new XMLHttpRequest();
-            xhr.open('POST', `${api.defaults.baseURL}${endpoint}`);
-            xhr.setRequestHeader('Authorization', `Bearer ${localStorage.getItem('token')}`);
-            xhr.upload.onprogress = (ev) => {
-              if (ev.lengthComputable) {
-                const pct = Math.round((ev.loaded / ev.total) * 100);
-                setUploadProgress(p => ({ ...p, [taskId]: { percent: pct, name: file.name } }));
-              }
-            };
-            xhr.onload = () => {
-              if (xhr.status >= 200 && xhr.status < 300) resolve(JSON.parse(xhr.responseText));
-              else reject(new Error(`Upload lỗi: ${xhr.status}`));
-            };
-            xhr.onerror = () => reject(new Error('Lỗi mạng'));
-            xhr.send(formData);
+          const result = await uploadSingleFileWithProgress({
+            file,
+            endpoint,
+            baseURL: api.defaults.baseURL,
+            token: localStorage.getItem('token'),
+            onProgress: (stats) => {
+              setUploadProgress(p => ({
+                ...p,
+                [taskId]: mergeUploadProgressState({
+                  percent: 0,
+                  name: file.name,
+                  size: file.size,
+                }, stats),
+              }));
+            },
           });
           allUploaded.push(result);
         }
@@ -683,7 +682,11 @@ export default function ProductionTasksTab({
                     <span className="text-[10px] text-orange-600 flex items-center gap-1 px-1.5 py-0.5">
                       <span className="animate-spin h-3 w-3 border-2 border-orange-600 border-t-transparent rounded-full" />
                       {uploadProgress[task.id]
-                        ? <span>{uploadProgress[task.id].name} — {uploadProgress[task.id].percent}%</span>
+                        ? (
+                          <span>
+                            {uploadProgress[task.id].name} — {formatUploadProgressMeta(uploadProgress[task.id])}
+                          </span>
+                        )
                         : 'Đang nén ảnh...'}
                     </span>
                   ) : (
@@ -728,16 +731,14 @@ export default function ProductionTasksTab({
 
               {/* Upload progress bar */}
               {uploadProgress[task.id] && (
-                <div className="mb-2">
-                  <div className="flex items-center justify-between text-[10px] text-blue-600 mb-1">
-                    <span className="truncate max-w-[200px]">📤 {uploadProgress[task.id].name}</span>
-                    <span className="font-bold">{uploadProgress[task.id].percent}%</span>
-                  </div>
-                  <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-                    <div className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full transition-all duration-300"
-                      style={{ width: `${uploadProgress[task.id].percent}%` }} />
-                  </div>
-                </div>
+                <UploadProgressBubble
+                  variant="inline"
+                  fileName={uploadProgress[task.id].name}
+                  fileSize={uploadProgress[task.id].size}
+                  percent={uploadProgress[task.id].percent}
+                  bytesPerSec={uploadProgress[task.id].bytesPerSec}
+                  remainingSec={uploadProgress[task.id].remainingSec}
+                />
               )}
 
               {/* Attachment list */}

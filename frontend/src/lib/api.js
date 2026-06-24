@@ -1,5 +1,7 @@
 import axios from 'axios';
 import { resolveApiOrigin } from './apiOrigin';
+import { disconnectSocket } from './socket';
+import { resetClientSessionState } from './sessionReset';
 
 const API_URL = resolveApiOrigin();
 
@@ -16,6 +18,8 @@ api.interceptors.response.use(r => r, (err) => {
     const code = err.response?.data?.code;
     const isMidnight = code === 'session_expired_midnight'
       || localStorage.getItem('logoutReason') === 'midnight';
+    disconnectSocket();
+    resetClientSessionState();
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     localStorage.removeItem('logoutReason');

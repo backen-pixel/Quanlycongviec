@@ -23,6 +23,7 @@ import DriveFilePicker from './DriveFilePicker';
 import DriveEntityFolderPickerModal from './DriveEntityFolderPickerModal';
 import PreviewModal from './PreviewModal';
 import DriveLocationBar, { enrichDriveBreadcrumb } from './DriveLocationBar';
+import DriveUploadStatus from './DriveUploadStatus';
 import DriveFileIcon from './DriveFileIcon';
 import { DriveFilesListView, DriveFilesGridView, filterImageFiles, DriveFileMoreMenu } from './DriveFileViews';
 
@@ -332,6 +333,7 @@ export default function DriveAttachments({ entityType, entityId, className = '',
 
   return (
     <div className={`bg-white border rounded-xl p-4 ${className}`}>
+      <DriveUploadStatus className="mb-3" />
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
           <Link2 size={16} className="text-blue-600" /> File từ Drive ({links.length})

@@ -5,6 +5,9 @@ const { lookupCache } = require('../helpers/ttlCache');
 const {
   pgDashboardNotificationStats,
   pgDashboardNotificationsList,
+  pgDashboardOverview,
+  pgDashboardWorkload,
+  pgDashboardCustomers,
 } = require('../helpers/pgHotQueries');
 const { responseCache, invalidateTags } = require('../middleware/responseCache');
 const {
@@ -308,14 +311,24 @@ r.put('/notifications/:id/read', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // DASHBOARD OVERVIEW - KPIs Tổng Quan
 // ═══════════════════════════════════════════════════════════════════════════
-r.get('/overview', async (req, res) => {
+r.get('/overview', responseCache({ ttl: 60, scope: 'global', tags: ['dashboard:overview'] }), async (req, res) => {
   try {
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-
     const firstDayThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const firstDayLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+
+    const pgOverview = await pgDashboardOverview({
+      sevenDaysAgo: sevenDaysAgo.toISOString(),
+      thirtyDaysAgo: thirtyDaysAgo.toISOString(),
+      firstDayThisMonth: firstDayThisMonth.toISOString(),
+      firstDayLastMonth: firstDayLastMonth.toISOString(),
+      nowIso: now.toISOString(),
+    });
+    if (pgOverview) {
+      return res.json(pgOverview);
+    }
 
     const [
       totalProjectsRes, activeProjectsRes, completedProjectsRes, newProjects7dRes, overdueProjectsRes,
@@ -440,7 +453,7 @@ r.get('/overview', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // WORKLOAD BY STAGE - Phân bổ dự án theo Giai đoạn
 // ═══════════════════════════════════════════════════════════════════════════
-r.get('/workload', async (req, res) => {
+r.get('/workload', responseCache({ ttl: 60, scope: 'global', tags: ['dashboard:workload'] }), async (req, res) => {
   try {
     const systemStages = await lookupCache.getOrFetch('workflow_stages:system', async () => {
       const { data } = await supabase
@@ -468,19 +481,22 @@ r.get('/workload', async (req, res) => {
       nameToIds[s.name].push(s.id);
     });
 
-    // Get all projects with their current stage (not completed)
-    const { data: projects } = await supabase
-      .from('projects')
-      .select('id, current_stage_id, status')
-      .neq('status', 'completed');
+    let stageProjectCount = {};
+    const pgWorkload = await pgDashboardWorkload();
+    if (pgWorkload) {
+      stageProjectCount = pgWorkload.stageProjectCount;
+    } else {
+      const { data: projects } = await supabase
+        .from('projects')
+        .select('id, current_stage_id, status')
+        .neq('status', 'completed');
 
-    // Count projects per stage_id
-    const stageProjectCount = {};
-    (projects || []).forEach(p => {
-      if (p.current_stage_id) {
-        stageProjectCount[p.current_stage_id] = (stageProjectCount[p.current_stage_id] || 0) + 1;
-      }
-    });
+      (projects || []).forEach(p => {
+        if (p.current_stage_id) {
+          stageProjectCount[p.current_stage_id] = (stageProjectCount[p.current_stage_id] || 0) + 1;
+        }
+      });
+    }
 
     // Build workload from system stages (already in correct order)
     const workload = systemStages.map((stage, idx) => {
@@ -669,8 +685,13 @@ r.get('/alerts', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // CUSTOMERS - Khách hàng insights
 // ═══════════════════════════════════════════════════════════════════════════
-r.get('/customers', async (req, res) => {
+r.get('/customers', responseCache({ ttl: 60, scope: 'global', tags: ['dashboard:customers'] }), async (req, res) => {
   try {
+    const pgCustomers = await pgDashboardCustomers();
+    if (pgCustomers) {
+      return res.json(pgCustomers);
+    }
+
     // Top customers by project count
     const { data: projects } = await supabase.from('projects').select('customer_id, estimated_value, customers(id, full_name, phone, email)');
     

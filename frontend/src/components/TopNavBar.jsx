@@ -121,8 +121,8 @@ export default function TopNavBar() {
   const navigate = useNavigate();
   const isAdmin = isAdminLike(user) || user?.role === 'manager';
 
-  const doLogout = () => {
-    logout();
+  const doLogout = async () => {
+    await logout();
     navigate('/login');
   };
 

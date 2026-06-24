@@ -33,19 +33,47 @@ function saveBlobDownload(blob, fileName) {
   window.setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
 }
 
+/** SPA static host (tubep-frontend) trả index.html 200 cho /uploads/... — không phải file thật. */
+function canServeUploadsFromPageOrigin() {
+  if (typeof window === 'undefined') return false;
+  if (import.meta.env.DEV) return true;
+  const apiOrigin = (resolveApiOrigin() || '').replace(/\/$/, '');
+  return !apiOrigin || apiOrigin === window.location.origin;
+}
+
+/** Từ chối blob HTML/JSON (thường do SPA fallback hoặc trang lỗi được lưu nhầm thành .xlsx). */
+async function assertValidDownloadBlob(blob, fileName) {
+  if (!blob || blob.size < 4) {
+    throw new Error('File tải về rỗng hoặc hỏng — hãy gửi lại file trong chat');
+  }
+  const head = new Uint8Array(await blob.slice(0, 64).arrayBuffer());
+  const sig4 = String.fromCharCode(head[0], head[1], head[2], head[3]);
+  const isZip = head[0] === 0x50 && head[1] === 0x4b;
+  const isPdf = sig4 === '%PDF';
+  const ext = String(fileName || '').split('.').pop()?.toLowerCase() || '';
+  const zipExt = new Set(['xlsx', 'xlsm', 'docx', 'pptx', 'zip']);
+  if (zipExt.has(ext) && !isZip) {
+    throw new Error('File Excel/Word tải về không hợp lệ — có thể đã mất trên server, hãy gửi lại');
+  }
+  if (ext === 'pdf' && !isPdf) {
+    throw new Error('File PDF tải về không hợp lệ — hãy gửi lại file trong chat');
+  }
+  const textHead = new TextDecoder('utf-8', { fatal: false }).decode(head).trimStart();
+  if (textHead.startsWith('<!DOCTYPE') || textHead.startsWith('<html') || textHead.startsWith('{')) {
+    throw new Error('File không còn trên máy chủ — hãy gửi lại file trong chat');
+  }
+  return blob;
+}
+
 async function fetchLocalUploadBlob(urlPath, fileName) {
   const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null;
   const qs = new URLSearchParams({ path: urlPath, name: fileName || 'download' });
   const pathOnly = localUploadPathFromUrl(urlPath);
 
-  const candidates = [];
-  if (pathOnly?.startsWith('/uploads/') && typeof window !== 'undefined') {
-    candidates.push(`${window.location.origin}${pathOnly}`);
-  }
-  candidates.push(
+  const candidates = [
     `/api/messenger/files/download?${qs}`,
     `/api/upload/serve-local?${qs}`,
-  );
+  ];
 
   const apiOrigin = (resolveApiOrigin() || '').replace(/\/$/, '');
   if (apiOrigin && typeof window !== 'undefined' && apiOrigin !== window.location.origin) {
@@ -53,6 +81,9 @@ async function fetchLocalUploadBlob(urlPath, fileName) {
       `${apiOrigin}/api/messenger/files/download?${qs}`,
       `${apiOrigin}/api/upload/serve-local?${qs}`,
     );
+  }
+  if (pathOnly?.startsWith('/uploads/') && canServeUploadsFromPageOrigin()) {
+    candidates.push(`${window.location.origin}${pathOnly}`);
   }
 
   let lastErr = null;
@@ -63,7 +94,15 @@ async function fetchLocalUploadBlob(urlPath, fileName) {
         credentials: 'include',
         headers: needsAuth && token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (res.ok) return res.blob();
+      if (res.ok) {
+        const blob = await res.blob();
+        try {
+          return await assertValidDownloadBlob(blob, fileName);
+        } catch (e) {
+          lastErr = e;
+          continue;
+        }
+      }
       if (res.status === 404) {
         lastErr = new Error('File không còn trên máy chủ — hãy gửi lại file trong chat');
         continue;
@@ -320,16 +359,15 @@ export async function downloadMessengerFile(url, name) {
 
   const full = resolveMediaUrl(url);
   if (!full) return Promise.reject(new Error('URL không hợp lệ'));
-  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null;
 
   try {
     const res = await fetch(full, {
       mode: 'cors',
       credentials: 'omit',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: {},
     });
     if (!res.ok) throw new Error('Không tải được tệp');
-    const blob = await res.blob();
+    const blob = await assertValidDownloadBlob(await res.blob(), fileName);
     saveBlobDownload(blob, fileName);
   } catch (e) {
     throw new Error(
@@ -359,7 +397,7 @@ export async function openMessengerFile(url, name) {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new Error('fetch failed');
-      blob = await res.blob();
+      blob = await assertValidDownloadBlob(await res.blob(), fileName);
     }
     const blobUrl = URL.createObjectURL(blob);
     const opened = window.open(blobUrl, '_blank', 'noopener,noreferrer');

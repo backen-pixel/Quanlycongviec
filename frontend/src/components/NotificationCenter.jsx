@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { alertIncomingNotification, cancelNotificationSpeech } from '../lib/notificationAlert';
 import { setNotificationPrefsCache, getNotificationPrefsCache, isNotificationTypeEnabled } from '../lib/notificationPrefsCache';
 import { isExpiryDeadlineNotificationType } from '../lib/notificationOperationalFilter';
@@ -260,6 +261,7 @@ function extractChatSenderName(n) {
 
 export default function NotificationCenter({ socket }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { openMessengerGroupChat, openLeadChat } = useMessengerDock();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
@@ -286,6 +288,36 @@ export default function NotificationCenter({ socket }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const rootRef = useRef(null);
   const panelRef = useRef(null);
+
+  useEffect(() => {
+    if (user) return undefined;
+    cancelNotificationSpeech();
+    setNotifications([]);
+    setToastNotification(null);
+    setUnreadActivity(0);
+    setUnreadChat(0);
+    setUnreadDeadlines(0);
+    setUnreadEvents(0);
+    setUnreadAssignments(0);
+    setOpen(false);
+    return undefined;
+  }, [user]);
+
+  useEffect(() => {
+    const onCleared = () => {
+      cancelNotificationSpeech();
+      setNotifications([]);
+      setToastNotification(null);
+      setUnreadActivity(0);
+      setUnreadChat(0);
+      setUnreadDeadlines(0);
+      setUnreadEvents(0);
+      setUnreadAssignments(0);
+    };
+    window.addEventListener('auth:session-cleared', onCleared);
+    return () => window.removeEventListener('auth:session-cleared', onCleared);
+  }, []);
+
   const [panelPos, setPanelPos] = useState({ top: 0, left: 0 });
 
   const PANEL_WIDTH = 440;
@@ -499,8 +531,9 @@ export default function NotificationCenter({ socket }) {
   }, []);
 
   useEffect(() => {
-    if (!socket) return;
+    if (!socket || !user) return;
     const handler = (notif) => {
+      if (!localStorage.getItem('token')) return;
       if (isExpiryDeadlineNotificationType(notif?.type)) return;
       if (!isNotificationTypeEnabled(notif?.type, notif?.entity_type, notif?.metadata)) return;
 
@@ -544,7 +577,7 @@ export default function NotificationCenter({ socket }) {
     };
     socket.on('notification', handler);
     return () => socket.off('notification', handler);
-  }, [socket, tab]);
+  }, [socket, tab, user]);
 
   useEffect(() => {
     if (open) load();

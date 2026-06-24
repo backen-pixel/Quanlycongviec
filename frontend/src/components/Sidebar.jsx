@@ -601,8 +601,8 @@ export default function Sidebar() {
     return () => document.removeEventListener('mousedown', handler);
   }, [showAppSwitcher]);
 
-  const doLogout = () => {
-    logout();
+  const doLogout = async () => {
+    await logout();
     navigate('/login');
   };
 

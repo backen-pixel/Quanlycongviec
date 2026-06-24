@@ -31,6 +31,7 @@ import { DRIVE_FILE_LIST_GRID, fmtDriveDate, filterImageFiles, DriveFilesListVie
 import DriveFolderPickerModal from '../components/drive/DriveFolderPickerModal';
 import DriveMarqueeSelectArea from '../components/drive/DriveMarqueeSelectArea';
 import UploadDropzone from '../components/drive/UploadDropzone';
+import DriveUploadStatus from '../components/drive/DriveUploadStatus';
 import PreviewModal from '../components/drive/PreviewModal';
 import ShareModal from '../components/drive/ShareModal';
 import { useAuth } from '../lib/auth';
@@ -921,6 +922,7 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
         />
 
         <div className="flex-1 overflow-auto px-5 py-4 bg-[#f4f6f8]">
+          <DriveUploadStatus className="mb-4" />
           {/* Upload dropzone */}
           {showUpload && (activeRoot || activeFolder) && (
             <div className="mb-4">

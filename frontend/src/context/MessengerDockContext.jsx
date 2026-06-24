@@ -514,18 +514,36 @@ export function MessengerDockProvider({ children }) {
 
   /** Phát read receipt realtime tới mọi khung chat nhóm đang mở (web + bong bóng). */
   useEffect(() => {
-    if (!socket) return undefined;
+    if (!uid) {
+      setWindows([]);
+      setHubThreadLeadIds([]);
+      setHubMessengerGroupIds([]);
+      setUnreadByLeadId({});
+      setUnreadByGroupId({});
+      setUnreadByDeptId({});
+      setMyDepartmentIds([]);
+      setDeptMetaMap({});
+      setPinnedGroupIds([]);
+      presenceLeadRef.current.clear();
+      presenceGroupRef.current.clear();
+      presenceDeptRef.current.clear();
+    }
+  }, [uid]);
+
+  useEffect(() => {
+    if (!socket || !uid) return undefined;
     const onRead = (payload) => {
       if (!payload?.group_id || !payload?.user_id || !payload?.last_read_at) return;
       window.dispatchEvent(new CustomEvent('messenger:group-read', { detail: payload }));
     };
     socket.on('messenger_group:read', onRead);
     return () => socket.off('messenger_group:read', onRead);
-  }, [socket]);
+  }, [socket, uid]);
 
   useEffect(() => {
     if (!socket || !uid) return;
     const onLeadChat = (msg) => {
+      if (!localStorage.getItem('token')) return;
       const leadId = msg.lead_id;
       if (!leadId) return;
       window.dispatchEvent(
@@ -563,6 +581,7 @@ export function MessengerDockProvider({ children }) {
       });
     };
     const onGroupChat = (msg) => {
+      if (!localStorage.getItem('token')) return;
       const gid = msg.group_id;
       if (!gid) return;
       window.dispatchEvent(
@@ -613,6 +632,7 @@ export function MessengerDockProvider({ children }) {
       });
     };
     const onDeptChat = (payload) => {
+      if (!localStorage.getItem('token')) return;
       const deptId = payload?.department_id;
       const msg = payload?.message;
       if (!deptId || !msg) return;

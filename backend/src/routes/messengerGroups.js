@@ -1,12 +1,8 @@
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
 const { Router } = require('express');
 const multer = require('multer');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { pgQuery, pgSessionQuery } = require('../config/db');
-const config = require('../config');
 const { MESSENGER_MAX_UPLOAD_MB, MESSENGER_MAX_FILE_BYTES } = require('../config/messengerUpload');
 const { notifyMultiple } = require('../helpers/notifications');
 const { isAdminLike } = require('../helpers/adminRole');
@@ -54,15 +50,8 @@ const MESSENGER_STORAGE_BUCKET = process.env.SUPABASE_MESSENGER_BUCKET || 'attac
 /** Thư mục trong bucket, mặc định `messenger` — có thể set `messsenger` trong .env nếu đã tạo đúng tên đó. */
 const MESSENGER_STORAGE_FOLDER = (process.env.SUPABASE_MESSENGER_FOLDER || 'messenger').replace(/^\/+|\/+$/g, '');
 
-const MESSENGER_CHAT_UPLOAD = path.join(__dirname, '../../uploads/messenger-chat');
-try {
-  fs.mkdirSync(MESSENGER_CHAT_UPLOAD, { recursive: true });
-} catch {
-  /* ignore */
-}
-
 function supabaseMessengerStorageEnabled() {
-  return !!(config.supabaseUrl && config.supabaseServiceKey);
+  return !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
 function logMessengerAction(payload) {
@@ -352,26 +341,9 @@ function fixUploadFilename(originalname) {
   return s;
 }
 
-function sanitizeMessengerStorageBaseName(original, ext) {
-  return path
-    .basename(original || 'file', ext)
-    .replace(/[^a-zA-Z0-9.\u00C0-\u024F\u1E00-\u1EFF\u0100-\u017F_\s-]/g, '_')
-    .replace(/\s+/g, '_')
-    .slice(0, 100);
-}
-
-function writeMessengerBufferLocal(buffer, originalName) {
-  fs.mkdirSync(MESSENGER_CHAT_UPLOAD, { recursive: true });
-  const ext = path.extname(originalName || '') || '';
-  const safeBase = sanitizeMessengerStorageBaseName(originalName, ext);
-  const fname = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}_${safeBase}${ext}`;
-  const full = path.join(MESSENGER_CHAT_UPLOAD, fname);
-  fs.writeFileSync(full, buffer);
-  return `/uploads/messenger-chat/${fname}`;
-}
-
 /**
- * Lưu file chat nhóm: ưu tiên Supabase Storage (`{folder}/{groupId}/…`), fallback thư mục uploads khi lỗi hoặc chưa cấu hình.
+ * Lưu file chat nhóm lên Supabase Storage (`{folder}/{groupId}/…`).
+ * Không fallback local để tránh mất file sau deploy/restart.
  * @param {string} groupId
  * @param {{ buffer: Buffer, mimetype: string, originalname: string, size: number }} file
  */
@@ -379,35 +351,30 @@ async function storeMessengerUploadedFile(groupId, file) {
   const mime = file.mimetype || 'application/octet-stream';
   const original = fixUploadFilename(file.originalname || 'file');
 
-  if (supabaseMessengerStorageEnabled()) {
-    const folder = `${MESSENGER_STORAGE_FOLDER}/${groupId}`.replace(/\/+/g, '/');
-    try {
-      const stored = await uploadBufferToStorage(file.buffer, {
-        originalName: original,
-        mimetype: mime,
-        size: file.size,
-        bucket: MESSENGER_STORAGE_BUCKET,
-        folderPrefix: folder,
-      });
-      return {
-        name: original,
-        url: stored.file_url,
-        type: mime,
-        size: file.size,
-        storage_path: stored.storage_path,
-      };
-    } catch (e) {
-      console.error('[messenger] Supabase storage upload failed:', e.message);
-      if (process.env.NODE_ENV === 'production' || process.env.RENDER) {
-        throw new Error(`Không lưu được file lên Storage: ${e.message}`);
-      }
-    }
-  } else if (process.env.NODE_ENV === 'production' || process.env.RENDER) {
+  if (!supabaseMessengerStorageEnabled()) {
     throw new Error('Upload chat cần Supabase Storage — thiếu SUPABASE_URL hoặc SUPABASE_SERVICE_ROLE_KEY trên server');
   }
 
-  const url = writeMessengerBufferLocal(file.buffer, original);
-  return { name: original, url, type: mime, size: file.size };
+  const folder = `${MESSENGER_STORAGE_FOLDER}/${groupId}`.replace(/\/+/g, '/');
+  try {
+    const stored = await uploadBufferToStorage(file.buffer, {
+      originalName: original,
+      mimetype: mime,
+      size: file.size,
+      bucket: MESSENGER_STORAGE_BUCKET,
+      folderPrefix: folder,
+    });
+    return {
+      name: original,
+      url: stored.file_url,
+      type: mime,
+      size: file.size,
+      storage_path: stored.storage_path,
+    };
+  } catch (e) {
+    console.error('[messenger] Supabase storage upload failed:', e.message);
+    throw new Error(`Không lưu được file lên Storage: ${e.message}`);
+  }
 }
 
 const messengerMemoryUpload = multer({

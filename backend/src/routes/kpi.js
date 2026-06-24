@@ -421,10 +421,12 @@ r.get('/dashboard/deal', async (req, res) => {
 // ─── GET /api/kpi/scorecard ──────────────────────────────────────────────────
 // Bảng 15 KPI × N nhân viên (cho cuộc họp giao ban). Manager+ only.
 // Filter: company_id, department_id, q (search tên/email), user_ids (CSV), roles (CSV — khớp GET /kpi/users).
-r.get('/scorecard', async (req, res) => {
+// Mặc định đọc kpi_scores đã lưu (cron nightly). ?force=1 để recompute realtime (chậm).
+r.get('/scorecard', responseCache({ ttl: 60, scope: 'user', tags: ['kpi', 'kpi:scorecard'] }), async (req, res) => {
   try {
     if (!isManager(req)) return res.status(403).json({ error: 'Chỉ manager+ xem được scorecard' });
     const { periodType, periodStart } = parsePeriod(req.query);
+    const forceRecompute = req.query.force === '1' || req.query.recompute === '1';
 
     const userIdsRaw = req.query.user_ids ? String(req.query.user_ids).split(',').filter(Boolean) : null;
     const rolesRaw = req.query.roles ? String(req.query.roles).split(',').filter(Boolean) : null;
@@ -437,22 +439,99 @@ r.get('/scorecard', async (req, res) => {
     });
 
     const rows = [];
-    for (const u of usersList) {
-      try {
-        const r1 = await computeAndStoreForUser({
-          userId: u.id,
-          companyId: req.query.company_id || req.user?.company_id || null,
-          periodType, periodStart,
+    if (forceRecompute) {
+      for (const u of usersList) {
+        try {
+          const r1 = await computeAndStoreForUser({
+            userId: u.id,
+            companyId: req.query.company_id || req.user?.company_id || null,
+            periodType, periodStart,
+          });
+          rows.push({ ...r1, _user: u });
+        } catch (err) {
+          rows.push({ user_id: u.id, error: err.message, _user: u });
+        }
+      }
+    } else {
+      const { data: period } = await supabase
+        .from('kpi_periods')
+        .select('id, period_start, period_end, status')
+        .eq('period_type', periodType)
+        .eq('period_start', periodStart)
+        .maybeSingle();
+
+      const userIds = usersList.map((u) => u.id);
+      let scores = [];
+      if (period && userIds.length) {
+        const chunks = [];
+        for (let i = 0; i < userIds.length; i += 200) chunks.push(userIds.slice(i, i + 200));
+        for (const chunk of chunks) {
+          const { data } = await supabase
+            .from('kpi_scores')
+            .select(`
+              user_id, kpi_definition_id, actual_value, target_value,
+              raw_score, capped_score, weight_used, breakdown,
+              kpi_definition:kpi_definitions!kpi_definition_id(
+                id, code, name, group_code, formula_type, weight, is_gating, min_threshold
+              )
+            `)
+            .eq('period_id', period.id)
+            .in('user_id', chunk);
+          scores.push(...(data || []));
+        }
+      }
+
+      const scoresByUser = new Map();
+      for (const s of scores) {
+        const list = scoresByUser.get(s.user_id) || [];
+        list.push(s);
+        scoresByUser.set(s.user_id, list);
+      }
+
+      for (const u of usersList) {
+        const userScores = scoresByUser.get(u.id) || [];
+        let gatingTriggered = false;
+        let gatingKpi = null;
+        const mappedScores = userScores.map((s) => {
+          const def = s.kpi_definition || {};
+          if (def.is_gating && def.min_threshold != null
+              && s.actual_value != null && s.actual_value < def.min_threshold) {
+            gatingTriggered = true;
+            gatingKpi = def.code;
+          }
+          return {
+            kpi_definition_id: s.kpi_definition_id,
+            kpi_code: def.code,
+            kpi_name: def.name,
+            group_code: def.group_code,
+            formula_type: def.formula_type,
+            actual_value: s.actual_value,
+            target_value: s.target_value,
+            weight_used: s.weight_used,
+            raw_score: s.raw_score,
+            capped_score: s.capped_score,
+            breakdown: s.breakdown,
+          };
         });
-        rows.push({ ...r1, _user: u });
-      } catch (err) {
-        rows.push({ user_id: u.id, error: err.message, _user: u });
+        const totalScore = mappedScores.reduce((sum, r) => sum + Number(r.capped_score || 0), 0);
+        const finalScore = gatingTriggered ? Math.min(totalScore, 70) : totalScore;
+        rows.push({
+          user_id: u.id,
+          total_raw: Math.round(totalScore * 100) / 100,
+          total_final: Math.round(finalScore * 100) / 100,
+          gating_triggered: gatingTriggered,
+          gating_kpi: gatingKpi,
+          scores: mappedScores,
+          _user: u,
+          stale: !period || userScores.length === 0,
+        });
       }
     }
 
     res.json({
       period_type: periodType,
       period_start: periodStart,
+      from_cache: !forceRecompute,
       filters: {
         company_id: req.query.company_id || null,
         department_id: req.query.department_id || null,
@@ -465,6 +544,7 @@ r.get('/scorecard', async (req, res) => {
         gating_triggered: r.gating_triggered || false,
         gating_kpi: r.gating_kpi || null,
         scores: r.scores || [],
+        stale: r.stale || false,
         error: r.error,
       })),
     });

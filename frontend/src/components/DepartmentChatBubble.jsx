@@ -6,6 +6,8 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import { getInitials, avatarColor } from '../lib/utils';
+import UploadProgressBubble from './UploadProgressBubble';
+import { makeAxiosUploadProgressHandler, mergeUploadProgressState } from '../lib/uploadProgressEta';
 
 // Inline: [label](url) markdown link + bare http(s) URL
 const INLINE_LINK_RE = /(\[[^\]]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s]+)/g;
@@ -57,6 +59,7 @@ export default function DepartmentChatBubble({ deptId, socket, fillParent }) {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadState, setUploadState] = useState(null);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -118,12 +121,25 @@ export default function DepartmentChatBubble({ deptId, socket, fillParent }) {
     if (!files?.length) return;
     setUploading(true);
     try {
-      for (const file of files) {
+      const list = Array.from(files);
+      for (let i = 0; i < list.length; i++) {
+        const file = list[i];
+        setUploadState({
+          fileIndex: i + 1,
+          fileTotal: list.length,
+          fileName: file.name,
+          fileSize: file.size,
+          percent: 0,
+        });
         const fd = new FormData();
         fd.append('file', file);
         fd.append('content', text.trim() || '');
+        const onProgress = makeAxiosUploadProgressHandler(file.size, (stats) => {
+          setUploadState((prev) => (prev ? mergeUploadProgressState(prev, stats) : prev));
+        });
         const { data } = await api.post(`/departments/${deptId}/chat/upload`, fd, {
           headers: { 'Content-Type': 'multipart/form-data' },
+          onUploadProgress: onProgress,
         });
         if (data?.message) {
           setMessages((prev) => (prev.some((x) => x.id === data.message.id) ? prev : [...prev, data.message]));
@@ -133,6 +149,7 @@ export default function DepartmentChatBubble({ deptId, socket, fillParent }) {
     } catch (e) {
       alert(e?.response?.data?.error || 'Upload thất bại');
     }
+    setUploadState(null);
     setUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -222,6 +239,17 @@ export default function DepartmentChatBubble({ deptId, socket, fillParent }) {
             );
           })
         )}
+        {uploadState ? (
+          <UploadProgressBubble
+            compact
+            title={`Đang gửi file${uploadState.fileTotal > 1 ? ` ${uploadState.fileIndex}/${uploadState.fileTotal}` : ''}…`}
+            fileName={uploadState.fileName}
+            fileSize={uploadState.fileSize}
+            percent={uploadState.percent}
+            bytesPerSec={uploadState.bytesPerSec}
+            remainingSec={uploadState.remainingSec}
+          />
+        ) : null}
         <div ref={messagesEndRef} />
       </div>
 

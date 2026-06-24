@@ -25,7 +25,10 @@ export function PresenceProvider({ children }) {
   const [liveMap, setLiveMap] = useState({});
 
   useEffect(() => {
-    if (!socket) return undefined;
+    if (!socket) {
+      setLiveMap({});
+      return undefined;
+    }
     const onUpdate = (payload) => {
       const entry = normalizeLiveEntry(payload);
       if (!entry) return;
