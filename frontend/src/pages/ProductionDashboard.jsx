@@ -50,6 +50,8 @@ import {
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import NewDealModal from '../components/NewDealModal';
+import { DashboardLoader } from '../components/DashboardLoader';
+import { createCrmLoadProgressController } from '../lib/crmDashboardLoadProgress';
 import { getCrmDeadlineUrgencyFromIso, getCrmDeadlineUrgencyBadgeClass } from '../lib/crmLeadDeadlineDisplay';
 
 const INTAKE_BUCKET = 'won_pending';
@@ -252,6 +254,12 @@ export default function ProductionDashboard() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [firstLoaded, setFirstLoaded] = useState(false);
+  const [sxLoadProgress, setSxLoadProgress] = useState(0);
+  const loadSeqRef = useRef(0);
+  const sxLoadProgressCtrlRef = useRef(null);
+  if (sxLoadProgressCtrlRef.current === null) {
+    sxLoadProgressCtrlRef.current = createCrmLoadProgressController(setSxLoadProgress);
+  }
   const [searchQuery, setSearchQuery] = useState(() => (typeof P0?.searchQuery === 'string' ? P0.searchQuery : ''));
   const [priorityFilter, setPriorityFilter] = useState(() => (typeof P0?.priorityFilter === 'string' ? P0.priorityFilter : ''));
   const [stageFilter, setStageFilter] = useState(() => (typeof P0?.stageFilter === 'string' ? P0.stageFilter : ''));
@@ -492,9 +500,31 @@ export default function ProductionDashboard() {
 
   const canPickProductionCreateCompany = crossWorkshopViewer || isDealParticipantProductionViewer(user) || isAccountingUser(user);
 
+  const sxLoadProgressDisplay = (loading || syncing)
+    ? Math.max(0, Math.min(100, sxLoadProgress))
+    : 0;
+
+  const sxLoaderCompanyName = useMemo(() => {
+    if (filterCompany) {
+      const c = companies.find((x) => String(x.id) === String(filterCompany));
+      return c?.short_name || c?.name || '';
+    }
+    if (filterDealCompany) {
+      const c = dealCompanyOptions.find((x) => String(x.id) === String(filterDealCompany));
+      return c?.short_name || c?.name || '';
+    }
+    if (filterSxWorkshopCompany) {
+      const c = sxWorkshopFilterOptions.find((x) => String(x.id) === String(filterSxWorkshopCompany));
+      return c?.short_name || c?.name || '';
+    }
+    return '';
+  }, [filterCompany, filterDealCompany, filterSxWorkshopCompany, companies, dealCompanyOptions, sxWorkshopFilterOptions]);
+
   const load = useCallback(async (opts = {}) => {
     const silent = !!opts.silent;
     const bustCache = !!opts.bustCache;
+    const seq = ++loadSeqRef.current;
+    const isStale = () => seq !== loadSeqRef.current;
     const fetchCompanyId = opts.companyId || companyParam;
     const fetchDealCompanyId = opts.dealCompanyId !== undefined ? opts.dealCompanyId : dealCompanyParam;
     const fetchSxWorkshopId = opts.sxWorkshopCompanyId !== undefined
@@ -502,6 +532,18 @@ export default function ProductionDashboard() {
       : (showVptSxWorkshopFilter && filterSxWorkshopCompany ? filterSxWorkshopCompany : undefined);
     if (silent) setSyncing(true);
     else setLoading(true);
+    sxLoadProgressCtrlRef.current?.start();
+    const markLoadComplete = () => {
+      if (isStale()) return;
+      sxLoadProgressCtrlRef.current?.finish(() => {
+        if (isStale()) return;
+        if (silent) setSyncing(false);
+        else {
+          setLoading(false);
+          setFirstLoaded(true);
+        }
+      });
+    };
     try {
       const dashQ = {
         ...(fetchCompanyId ? { company_id: fetchCompanyId } : {}),
@@ -531,13 +573,15 @@ export default function ProductionDashboard() {
       // của TẤT CẢ phân loại → gây hiển thị pipeline của cả 2 loại. Cột Kanban do effect
       // riêng bên dưới sở hữu, luôn lọc theo `filterWorkTypeId` của công ty hiện hành.
       if (projectList !== null) setProjects(projectList);
+      if (!isStale()) markLoadComplete();
     } catch (e) {
       console.error(e);
-    }
-    if (silent) setSyncing(false);
-    else {
-      setLoading(false);
-      setFirstLoaded(true);
+      if (!isStale()) {
+        sxLoadProgressCtrlRef.current?.reset();
+        setSyncing(false);
+        setLoading(false);
+        setFirstLoaded(true);
+      }
     }
   }, [companyParam, dealCompanyParam, kanbanLoadKey, showVptSxWorkshopFilter, filterSxWorkshopCompany]);
 
@@ -1183,6 +1227,7 @@ export default function ProductionDashboard() {
   /** Realtime Kanban SX: kéo thẻ / sửa nhiệm vụ từ mobile → refetch silent */
   const loadRef = useRef(load);
   loadRef.current = load;
+  useEffect(() => () => sxLoadProgressCtrlRef.current?.dispose(), []);
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return undefined;
@@ -1869,15 +1914,7 @@ export default function ProductionDashboard() {
     || filterPersonName || stageFilter || filterWorkTypeId || priorityFilter || filterPhone
     || timePreset || showOrphanColumn || searchQuery.trim();
 
-  // Lần đầu chưa có data → spinner toàn vùng. Reload sau đó dùng overlay nhẹ
-  // (xem block <main className="relative"> ở dưới) để toolbar/KPI vẫn hiển thị.
-  if (loading && !firstLoaded) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full" />
-      </div>
-    );
-  }
+  const sxMainContentLoading = (loading && !firstLoaded) || syncing;
 
   return (
     <div className="space-y-3">
@@ -1890,6 +1927,15 @@ export default function ProductionDashboard() {
           </h1>
         </div>
         <div className="flex items-center gap-2 flex-wrap shrink-0">
+          {loading && !firstLoaded && (
+            <span className="inline-flex items-center gap-1.5 shrink-0 rounded-full border border-emerald-200/80 bg-emerald-50/90 px-2.5 py-1 text-xs font-semibold text-emerald-800">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60 animate-ping" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-600" />
+              </span>
+              Đang tải…
+            </span>
+          )}
           <button
             type="button"
             onClick={() => setShowNewDeal(true)}
@@ -2335,16 +2381,16 @@ export default function ProductionDashboard() {
       )}
 
 
-      <div className="relative">
-        {syncing && firstLoaded && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/60 backdrop-blur-[2px] rounded-xl pointer-events-none">
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-200 rounded-full shadow-sm">
-              <div className="animate-spin h-4 w-4 border-2 border-blue-600 border-t-transparent rounded-full" />
-              <span className="text-xs text-gray-700">Đang cập nhật…</span>
-            </div>
-          </div>
-        )}
-
+      <div className="relative min-h-[min(420px,calc(100vh-280px))]">
+        {sxMainContentLoading ? (
+          <DashboardLoader
+            variant="production"
+            progress={sxLoadProgressDisplay}
+            companyName={sxLoaderCompanyName}
+            tourId="sx-loading"
+          />
+        ) : (
+          <>
         {viewMode === 'kanban' && (
           <KanbanView pipeline={filteredKanbanPipeline} onMoveStage={handleMoveStage} calculateDays={calculateDays}
             selectedIds={selectedIds} onToggleSelect={toggleSelect} onSelectColumn={selectColumn}
@@ -2388,6 +2434,8 @@ export default function ProductionDashboard() {
             commentsIndex={commentsIndex}
             onRefreshIndex={() => refreshProjectCommentsIndex()}
           />
+        )}
+          </>
         )}
       </div>
 

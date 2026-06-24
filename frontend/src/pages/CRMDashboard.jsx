@@ -79,6 +79,8 @@ import { logFilter } from '../lib/activityLogger';
 import { CrmCommentMentionComposer } from '../components/crmCommentMentionUi';
 import { resolveMentionIdsFromContent } from '../lib/crmCommentMentions';
 import { KanbanBoardEdgeScrollChrome } from '../lib/kanbanEdgeScrollControls';
+import { CrmDashboardLoader, CrmDashboardLoaderCompact } from '../components/CrmDashboardLoader';
+import { createCrmLoadProgressController } from '../lib/crmDashboardLoadProgress';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
 
@@ -846,6 +848,8 @@ export default function CRMDashboard() {
   // True khi đang load lần đầu (chưa có dữ liệu trên dashboard).
   // Hiển thị banner "Đang tải dữ liệu…" thay vì màn trắng.
   const [firstLoading, setFirstLoading] = useState(true);
+  /** 0 = ẩn; 1–100 khi đang load CRM (100 = xong, rồi reset). */
+  const [crmLoadProgress, setCrmLoadProgress] = useState(0);
   const [viewMode, setViewMode] = useState(() => {
     const v = P?.viewMode;
     return ['kanban', 'list', 'planner', 'deadline', 'comments', 'calendar'].includes(v) ? v : 'kanban';
@@ -924,6 +928,10 @@ export default function CRMDashboard() {
   const loadRef = useRef(null);
   /** Tăng mỗi lần gọi load — bỏ qua kết quả cũ nếu đã có load mới hơn */
   const loadSeqRef = useRef(0);
+  const crmLoadProgressCtrlRef = useRef(null);
+  if (crmLoadProgressCtrlRef.current === null) {
+    crmLoadProgressCtrlRef.current = createCrmLoadProgressController(setCrmLoadProgress);
+  }
   /** load() vừa setFilterCompany — tránh useEffect filterCompany gọi load() lần 2 */
   const suppressFilterCompanyLoadRef = useRef(false);
   const loadDebounceTimerRef = useRef(null);
@@ -2319,6 +2327,20 @@ export default function CRMDashboard() {
     };
   }, [wonAssignModal, wonAssignLeadId, allLeads]);
 
+  const startCrmLoadProgress = useCallback(() => {
+    crmLoadProgressCtrlRef.current?.start();
+  }, []);
+
+  const finishCrmLoadProgress = useCallback((onDone) => {
+    crmLoadProgressCtrlRef.current?.finish(onDone);
+  }, []);
+
+  const resetCrmLoadProgress = useCallback(() => {
+    crmLoadProgressCtrlRef.current?.reset();
+  }, []);
+
+  useEffect(() => () => crmLoadProgressCtrlRef.current?.dispose(), []);
+
   const companyHasNoPipeline = useMemo(() => {
     if (!dashboardScopeCompanyId) return false;
     if (firstLoading || syncing) return false;
@@ -2339,6 +2361,10 @@ export default function CRMDashboard() {
   ]);
 
   const crmMainContentLoading = firstLoading || syncing;
+
+  const crmLoadProgressDisplay = (firstLoading || syncing)
+    ? Math.max(0, Math.min(100, crmLoadProgress))
+    : 0;
 
   const showNoPipelineMainViews = useMemo(
     () =>
@@ -2375,6 +2401,16 @@ export default function CRMDashboard() {
     const seq = ++loadSeqRef.current;
     const isStale = () => seq !== loadSeqRef.current;
     if (silent) setSyncing(true);
+    startCrmLoadProgress();
+    const markLoadComplete = () => {
+      if (isStale()) return;
+      finishCrmLoadProgress(() => {
+        if (isStale()) return;
+        setFirstLoading(false);
+        setSyncing(false);
+        setLastSyncAt(new Date());
+      });
+    };
     try {
       let resolvedCompanyId = filterCompany;
       if (isCompanyScopedAdmin && user?.company_id) {
@@ -2610,9 +2646,7 @@ export default function CRMDashboard() {
             });
           });
           if (!isStale()) {
-            setFirstLoading(false);
-            setSyncing(false);
-            setLastSyncAt(new Date());
+            markLoadComplete();
           }
           runDeferredCrmEnrichment(activeType, activeMerged, boot.dashboard);
           scheduleInactivePipelineLoad();
@@ -2680,6 +2714,7 @@ export default function CRMDashboard() {
       ]);
       if (isStale()) {
         if (silent) setSyncing(false);
+        resetCrmLoadProgress();
         return;
       }
 
@@ -2740,9 +2775,7 @@ export default function CRMDashboard() {
         else setStagesDeal(stagesActiveValue);
       });
       if (!isStale()) {
-        setFirstLoading(false);
-        setSyncing(false);
-        setLastSyncAt(new Date());
+        markLoadComplete();
       }
       runDeferredCrmEnrichment(activeType, activeMerged, dashActiveRes.data);
       scheduleInactivePipelineLoad();
@@ -2842,11 +2875,15 @@ export default function CRMDashboard() {
       }
     } catch (e) {
       console.error(e);
-      if (silent && !isStale()) setSyncing(false);
-      if (!isStale()) setFirstLoading(false);
+      if (!isStale()) {
+        resetCrmLoadProgress();
+        if (silent) setSyncing(false);
+        setFirstLoading(false);
+      }
     }
     if (isStale()) {
       if (silent) setSyncing(false);
+      resetCrmLoadProgress();
       return;
     }
     try {
@@ -2859,11 +2896,6 @@ export default function CRMDashboard() {
       if (!isStale() && lv && lv.v != null) crmLiveVersionRef.current = lv.v;
     } catch {
       /* ignore */
-    }
-    if (!isStale()) {
-      setSyncing(false);
-      setLastSyncAt(new Date());
-      setFirstLoading(false);
     }
   };
 
@@ -4681,11 +4713,16 @@ export default function CRMDashboard() {
           )}
         </div>
         <div className="flex items-center gap-1.5 shrink-0 ml-auto">
-          {firstLoading || syncing ? (
-            <span className={`inline-flex items-center gap-1.5 text-blue-600 shrink-0 ${compactLeadUi ? 'text-[10px]' : 'text-xs'}`}>
-              <span className={`inline-block rounded-full bg-blue-500 animate-pulse ${compactLeadUi ? 'h-1.5 w-1.5' : 'h-2 w-2'}`} />
-              <span className="font-medium whitespace-nowrap">Đang tải…</span>
+          {firstLoading ? (
+            <span className={`inline-flex items-center gap-1.5 shrink-0 rounded-full border border-violet-200/80 bg-violet-50/90 px-2.5 py-1 ${compactLeadUi ? 'text-[10px]' : 'text-xs'}`}>
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-60 animate-ping" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-600" />
+              </span>
+              <span className="font-semibold text-violet-800 whitespace-nowrap">Đang tải…</span>
             </span>
+          ) : syncing ? (
+            <CrmDashboardLoaderCompact progress={crmLoadProgressDisplay} label="Đồng bộ" />
           ) : lastSyncAt ? (
             <span
               className={`inline-flex items-center gap-1.5 text-gray-500 shrink-0 ${compactLeadUi ? 'text-[10px]' : 'text-xs'}`}
@@ -4723,21 +4760,6 @@ export default function CRMDashboard() {
           </button>
         </div>
       </div>
-
-      {/* Banner đang tải — lần đầu hoặc đổi bộ lọc / công ty (không nhầm với «chưa có pipeline»). */}
-      {crmMainContentLoading && (
-        <div className="flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 shadow-sm">
-          <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-100">
-            <span className="inline-block h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" aria-hidden />
-          </span>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-blue-900">Đang tải dữ liệu CRM…</p>
-            <p className="text-[11px] text-blue-700/80 mt-0.5">
-              Đồng bộ {pipelineType === 'lead' ? 'leads' : 'deals'}, pipeline, KPI và bộ lọc. Vui lòng chờ trong giây lát.
-            </p>
-          </div>
-        </div>
-      )}
 
       {/* Toolbar: tìm kiếm + chế độ xem + tùy chỉnh */}
       <div className={compactLeadUi ? 'space-y-2' : 'space-y-3'}>
@@ -5520,22 +5542,12 @@ export default function CRMDashboard() {
         )}
       </section>
 
-      {crmMainContentLoading ? (
-        <div
-          data-tour="crm-loading"
-          className="rounded-xl border border-blue-200 bg-blue-50/90 px-6 py-10 sm:px-10 sm:py-12 text-center shadow-sm"
-        >
-          <span className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-blue-100 mb-4">
-            <span className="inline-block h-7 w-7 border-[3px] border-blue-500 border-t-transparent rounded-full animate-spin" aria-hidden />
-          </span>
-          <h2 className="text-lg sm:text-xl font-bold text-blue-950 mb-2">Đang tải dữ liệu CRM…</h2>
-          {scopedCompanyName && (
-            <p className="text-sm font-medium text-blue-900/85 mb-3">{scopedCompanyName}</p>
-          )}
-          <p className="text-sm text-blue-900/90 max-w-lg mx-auto leading-relaxed">
-            Đang đồng bộ {pipelineType === 'lead' ? 'leads' : 'deals'}, cột pipeline và bộ lọc. Kanban sẽ hiển thị ngay khi tải xong.
-          </p>
-        </div>
+      {firstLoading ? (
+        <CrmDashboardLoader
+          progress={crmLoadProgressDisplay}
+          pipelineType={pipelineType}
+          companyName={scopedCompanyName}
+        />
       ) : showNoPipelineMainViews ? (
         <div
           data-tour="crm-no-pipeline"
