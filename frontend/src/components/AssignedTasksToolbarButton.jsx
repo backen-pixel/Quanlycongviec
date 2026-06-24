@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { ClipboardList } from 'lucide-react';
-import { useCrmAssignmentsUnread } from '../hooks/useCrmAssignmentsUnread';
+import { useUnreadBadges } from '../shared/context/UnreadBadgesContext';
 
 /**
  * Nút «Giao việc» + badge nhấp nháy — đặt cạnh toolbar Kanban (CRM / SX pipeline).
@@ -11,7 +11,8 @@ export default function AssignedTasksToolbarButton({
   variant = 'filled',
   className = '',
 }) {
-  const { unread, overdue, dueSoon, pending } = useCrmAssignmentsUnread();
+  const { assignmentsDetail } = useUnreadBadges();
+  const { unread, overdue, dueSoon, pending } = assignmentsDetail || { unread: 0, overdue: 0, dueSoon: 0, pending: 0 };
 
   const parts = [];
   if (overdue > 0) parts.push(`${overdue} quá hạn`);

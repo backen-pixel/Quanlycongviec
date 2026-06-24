@@ -2,6 +2,7 @@
  * Drive module — REST client (gọi backend /api/drive).
  */
 import api from './api';
+import { createUploadProgressTracker, updateUploadProgressTracker } from './uploadProgressEta';
 import {
   createTransferId,
   addDriveUpload,
@@ -101,12 +102,18 @@ export function driveUploadFile(file, { folder_id, root_id, name, onProgress, si
   const abortSignal = signal || controller?.signal;
   const transferId = track ? createTransferId() : null;
 
+  const progressTracker = createUploadProgressTracker(file?.size || 0);
+
   if (transferId) {
     addDriveUpload({
       id: transferId,
       name: name || file.name,
       progress: 0,
       status: 'uploading',
+      sizeBytes: file?.size || 0,
+      loadedBytes: 0,
+      bytesPerSec: 0,
+      remainingSec: null,
     });
     if (controller) registerUploadAbort(transferId, controller);
   }
@@ -115,9 +122,20 @@ export function driveUploadFile(file, { folder_id, root_id, name, onProgress, si
     headers: { 'Content-Type': 'multipart/form-data' },
     signal: abortSignal,
     onUploadProgress: (e) => {
-      const p = e.total ? Math.round((e.loaded * 100) / e.total) : 0;
-      onProgress?.(p);
-      if (transferId) patchDriveUpload(transferId, { progress: p });
+      const stats = updateUploadProgressTracker(progressTracker, {
+        loaded: e.loaded,
+        total: e.total || file?.size,
+      });
+      onProgress?.(stats.percent);
+      if (transferId) {
+        patchDriveUpload(transferId, {
+          progress: stats.percent,
+          loadedBytes: stats.loadedBytes,
+          sizeBytes: stats.totalBytes,
+          bytesPerSec: stats.bytesPerSec,
+          remainingSec: stats.remainingSec,
+        });
+      }
     },
   }).then((r) => {
     if (transferId) {
@@ -159,12 +177,18 @@ export function driveUploadToEntity(file, { entity_type, entity_id, folder_id, n
   const abortSignal = signal || controller?.signal;
   const transferId = track ? createTransferId() : null;
 
+  const progressTracker = createUploadProgressTracker(file?.size || 0);
+
   if (transferId) {
     addDriveUpload({
       id: transferId,
       name: name || file.name,
       progress: 0,
       status: 'uploading',
+      sizeBytes: file?.size || 0,
+      loadedBytes: 0,
+      bytesPerSec: 0,
+      remainingSec: null,
     });
     if (controller) registerUploadAbort(transferId, controller);
   }
@@ -173,9 +197,20 @@ export function driveUploadToEntity(file, { entity_type, entity_id, folder_id, n
     headers: { 'Content-Type': 'multipart/form-data' },
     signal: abortSignal,
     onUploadProgress: (e) => {
-      const p = e.total ? Math.round((e.loaded * 100) / e.total) : 0;
-      onProgress?.(p);
-      if (transferId) patchDriveUpload(transferId, { progress: p });
+      const stats = updateUploadProgressTracker(progressTracker, {
+        loaded: e.loaded,
+        total: e.total || file?.size,
+      });
+      onProgress?.(stats.percent);
+      if (transferId) {
+        patchDriveUpload(transferId, {
+          progress: stats.percent,
+          loadedBytes: stats.loadedBytes,
+          sizeBytes: stats.totalBytes,
+          bytesPerSec: stats.bytesPerSec,
+          remainingSec: stats.remainingSec,
+        });
+      }
     },
   }).then((r) => {
     if (transferId) {

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import api from '../lib/api';
 import { getSocket } from '../lib/socket';
+import { isAppHeartbeatActive } from '../lib/appHeartbeatFlag';
 
 /** Ping HTTP mỗi 60s; ngưỡng online trên server là 2 phút */
 const PING_MS = 60 * 1000;
@@ -21,9 +22,11 @@ function warnMissingPresenceTable(err) {
 
 /** HTTP + socket presence:ping */
 export function sendActivityPing() {
-  api.post('/users/ping').catch((err) => {
-    warnMissingPresenceTable(err);
-  });
+  if (!isAppHeartbeatActive()) {
+    api.post('/users/ping').catch((err) => {
+      warnMissingPresenceTable(err);
+    });
+  }
   const socket = getSocket();
   if (socket?.connected) {
     socket.emit('presence:ping');

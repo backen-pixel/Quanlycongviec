@@ -8,6 +8,7 @@ import { useAuth } from '../lib/auth';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmCommentFullDateTime, formatCrmFbRelativeTime } from './crmFbCommentUi';
 import { CrmCommentMentionComposer, renderCrmCommentBody } from './crmCommentMentionUi';
 import { FilePreview, FileUploadButton, uploadFilesBatch } from './FileUpload';
+import UploadProgressBubble from './UploadProgressBubble';
 import { publicFileUrl as pubUrl } from '../lib/publicFileUrl';
 import { handleCommentFilePaste } from '../lib/chatClipboard';
 
@@ -376,22 +377,25 @@ function ReactionCornerBadge({ comment }) {
 
 function useCommentPasteUpload(onFilesUploaded) {
   const [uploadingPaste, setUploadingPaste] = useState(false);
+  const [pasteProgress, setPasteProgress] = useState(null);
 
   const handlePasteFiles = useCallback(async (rawFiles) => {
     const files = Array.from(rawFiles || []).filter(Boolean).slice(0, 20);
     if (!files.length) return;
     setUploadingPaste(true);
+    setPasteProgress(null);
     try {
-      const uploaded = await uploadFilesBatch(files);
+      const uploaded = await uploadFilesBatch(files, { onProgress: setPasteProgress });
       onFilesUploaded?.(uploaded);
     } catch (e) {
       alert(e?.response?.data?.error || e?.message || 'Không upload được file dán');
     } finally {
+      setPasteProgress(null);
       setUploadingPaste(false);
     }
   }, [onFilesUploaded]);
 
-  return { handlePasteFiles, uploadingPaste };
+  return { handlePasteFiles, uploadingPaste, pasteProgress };
 }
 
 function commentComposerPlaceholder(replyTo, user, { withPasteHint = false, withMentionHint = false } = {}) {
@@ -432,6 +436,7 @@ function CommentThread({
   onFilesUploaded,
   onRemovePendingFile,
   onPasteFiles,
+  pasteUploadProgress = null,
   canSubmit,
   readReceipts,
   commentMembers = [],
@@ -566,6 +571,20 @@ function CommentThread({
             <FilePreview files={pendingFiles} onRemove={onRemovePendingFile} small />
           </div>
         )}
+        {pasteUploadProgress ? (
+          <div className="px-3 pt-2">
+            <UploadProgressBubble
+              variant="inline"
+              align="start"
+              fileName={pasteUploadProgress.fileName}
+              fileSize={pasteUploadProgress.fileSize}
+              percent={pasteUploadProgress.percent}
+              bytesPerSec={pasteUploadProgress.bytesPerSec}
+              remainingSec={pasteUploadProgress.remainingSec}
+              compact
+            />
+          </div>
+        ) : null}
         {enableMentions ? (
           <CrmCommentMentionComposer
             user={user}
@@ -704,7 +723,7 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
     setPendingFiles((prev) => [...prev, ...uploaded]);
   }, []);
 
-  const { handlePasteFiles, uploadingPaste } = useCommentPasteUpload(handleFilesUploaded);
+  const { handlePasteFiles, uploadingPaste, pasteProgress } = useCommentPasteUpload(handleFilesUploaded);
 
   const saveEdit = async () => {
     const v = editingBody.trim();
@@ -776,6 +795,7 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
       pendingFiles={pendingFiles}
       onFilesUploaded={handleFilesUploaded}
       onPasteFiles={handlePasteFiles}
+      pasteUploadProgress={pasteProgress}
       onRemovePendingFile={(i) => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))}
       canSubmit={Boolean(body.trim() || pendingFiles.length)}
       renderBody={(text) => renderCrmCommentBody(text, members)}
@@ -922,7 +942,7 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
     setPendingFiles((prev) => [...prev, ...uploaded]);
   }, []);
 
-  const { handlePasteFiles, uploadingPaste } = useCommentPasteUpload(handleFilesUploaded);
+  const { handlePasteFiles, uploadingPaste, pasteProgress } = useCommentPasteUpload(handleFilesUploaded);
 
   const saveEdit = async () => {
     const v = editingBody.trim();
@@ -991,6 +1011,7 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
       pendingFiles={pendingFiles}
       onFilesUploaded={handleFilesUploaded}
       onPasteFiles={handlePasteFiles}
+      pasteUploadProgress={pasteProgress}
       onRemovePendingFile={(i) => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))}
       canSubmit={Boolean(body.trim() || pendingFiles.length)}
       readReceipts={readReceipts}

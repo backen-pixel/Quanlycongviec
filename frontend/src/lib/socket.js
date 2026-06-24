@@ -1,17 +1,24 @@
 import { io } from 'socket.io-client';
 import { resolveApiOrigin } from './apiOrigin';
-import api from './api';
 
 const API_URL = resolveApiOrigin();
 
 let socket = null;
+let boundToken = null;
 
 export function connectSocket() {
-  if (socket?.connected) return socket;
-
   const token = localStorage.getItem('token');
-  if (!token) return null;
+  if (!token) {
+    disconnectSocket();
+    return null;
+  }
 
+  if (socket) {
+    if (boundToken === token && socket.connected) return socket;
+    disconnectSocket();
+  }
+
+  boundToken = token;
   socket = io(API_URL, {
     auth: { token },
     transports: ['websocket', 'polling'],
@@ -21,9 +28,11 @@ export function connectSocket() {
   });
 
   socket.on('connect', () => {
+    if (localStorage.getItem('token') !== boundToken) {
+      disconnectSocket();
+      return;
+    }
     console.log('🔌 Socket connected:', socket.id);
-    api.post('/users/ping').catch(() => {});
-    socket.emit('presence:ping');
     const user = JSON.parse(localStorage.getItem('user') || '{}');
     if (user.id) socket.emit('join:user', user.id);
   });
@@ -34,18 +43,31 @@ export function connectSocket() {
 
   socket.on('connect_error', (err) => {
     console.warn('⚠️ Socket error:', err.message);
+    if (!localStorage.getItem('token')) {
+      disconnectSocket();
+    }
   });
 
   return socket;
 }
 
 export function disconnectSocket() {
-  if (socket) {
-    socket.disconnect();
-    socket = null;
+  if (!socket) {
+    boundToken = null;
+    return;
   }
+  try {
+    socket.removeAllListeners();
+    if (socket.io) socket.io.reconnection(false);
+    socket.disconnect();
+  } catch {
+    /* ignore */
+  }
+  socket = null;
+  boundToken = null;
 }
 
 export function getSocket() {
+  if (!localStorage.getItem('token')) return null;
   return socket;
 }

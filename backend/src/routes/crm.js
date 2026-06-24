@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { responseCache, invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
+const { pgCrmDuplicateLeadIds } = require('../helpers/pgHotQueries');
 const PDFDocument = require('pdfkit');
 const multer = require('multer');
 const XLSX = require('xlsx');
@@ -5606,6 +5607,106 @@ async function executeLeadMerge(keepId, deleteIds, options = {}) {
 }
 
 // ═══ QUÉT TRÙNG LEAD — Scan duplicates by customer_id + Facebook PSID ═══
+const SCAN_DUP_LITE_SELECT = 'id, customer_id, assigned_to, source_id, updated_at, created_at, type';
+
+async function fetchCrmLeadsLiteForDuplicateScan({ uid, seeAllLeads, seeAllDeals }) {
+  const liteRows = [];
+  const PAGE = 1000;
+  if (seeAllLeads && seeAllDeals) {
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase.from('crm_leads')
+        .select(SCAN_DUP_LITE_SELECT)
+        .order('created_at', { ascending: false })
+        .range(from, from + PAGE - 1);
+      if (error) throw error;
+      const chunk = data || [];
+      liteRows.push(...chunk);
+      if (chunk.length < PAGE) break;
+    }
+    return liteRows;
+  }
+  const fetchBatched = async (q) => {
+    const rows = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await q.range(from, from + PAGE - 1);
+      if (error) throw error;
+      const chunk = data || [];
+      rows.push(...chunk);
+      if (chunk.length < PAGE) break;
+    }
+    return rows;
+  };
+  let leadQ = supabase.from('crm_leads').select(SCAN_DUP_LITE_SELECT).eq('type', 'lead').order('created_at', { ascending: false });
+  if (!seeAllLeads) leadQ = leadQ.or(`assigned_to.eq.${uid},lead_owner_id.eq.${uid}`);
+  let dealQ = supabase.from('crm_leads').select(SCAN_DUP_LITE_SELECT).eq('type', 'deal').order('created_at', { ascending: false });
+  if (!seeAllDeals) dealQ = dealQ.eq('assigned_to', uid);
+  const [leadRows, dealRows] = await Promise.all([fetchBatched(leadQ), fetchBatched(dealQ)]);
+  return [...leadRows, ...dealRows];
+}
+
+function duplicateLeadIdsFromLiteRows(liteRows) {
+  const byCombo = {};
+  for (const l of liteRows || []) {
+    if (!l.customer_id || !l.assigned_to || !l.source_id) continue;
+    const key = `${l.customer_id}_${l.assigned_to}_${l.source_id}`;
+    if (!byCombo[key]) byCombo[key] = [];
+    byCombo[key].push(l.id);
+  }
+  const ids = [];
+  const seen = new Set();
+  for (const key of Object.keys(byCombo)) {
+    if (byCombo[key].length <= 1) continue;
+    for (const id of byCombo[key]) {
+      const sid = String(id);
+      if (!seen.has(sid)) {
+        seen.add(sid);
+        ids.push(sid);
+      }
+    }
+  }
+  return ids;
+}
+
+async function hydrateScanDuplicateLeads(leadIds, scanSelect) {
+  if (!leadIds.length) return [];
+  const leads = [];
+  for (let i = 0; i < leadIds.length; i += 200) {
+    const chunk = leadIds.slice(i, i + 200);
+    const { data, error } = await supabase.from('crm_leads').select(scanSelect).in('id', chunk);
+    if (error) throw error;
+    leads.push(...(data || []));
+  }
+  return leads.sort(
+    (a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at),
+  );
+}
+
+function buildScanDuplicateGroups(leads, leadFbMap) {
+  const byCombo = {};
+  for (const l of leads || []) {
+    if (!l.customer_id || !l.assigned_to || !l.source_id) continue;
+    const key = `${l.customer_id}_${l.assigned_to}_${l.source_id}`;
+    if (!byCombo[key]) byCombo[key] = [];
+    byCombo[key].push({ ...l, fb_contacts: leadFbMap[l.id] || [] });
+  }
+  const groups = [];
+  for (const key of Object.keys(byCombo)) {
+    if (byCombo[key].length <= 1) continue;
+    groups.push({
+      reason: 'combo_match',
+      key,
+      customer: byCombo[key][0].customer,
+      assignee: byCombo[key][0].assignee,
+      source: byCombo[key][0].source,
+      leads: byCombo[key].sort(
+        (a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at),
+      ),
+    });
+  }
+  const totalDuplicates = groups.reduce((s, g) => s + g.leads.length - 1, 0);
+  return { groups, total_groups: groups.length, total_duplicates: totalDuplicates };
+}
+
 r.get('/leads/scan-duplicates', async (req, res) => {
   try {
     const uid = req.user?.userId;
@@ -5613,62 +5714,33 @@ r.get('/leads/scan-duplicates', async (req, res) => {
       'id, code, title, type, customer_id, estimated_value, created_at, updated_at, stage_id, assigned_to, lead_owner_id, source_id, customer:customers(id, full_name, phone, email), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon), assignee:users!crm_leads_assigned_to_fkey(id, full_name), source:crm_sources(id, name, icon)';
     const seeAllLeads = !uid || userSeesAllCrmLeads(req.user.role);
     const seeAllDeals = !uid || userSeesAllCrmDeals(req.user.role);
-    let leads = [];
-    if (seeAllLeads && seeAllDeals) {
-      const { data } = await supabase.from('crm_leads').select(scanSelect).order('created_at', { ascending: false });
-      leads = data || [];
+
+    let duplicateIds = null;
+    const pgDup = await pgCrmDuplicateLeadIds({ uid, seeAllLeads, seeAllDeals });
+    if (pgDup) {
+      duplicateIds = pgDup.leadIds;
     } else {
-      let leadQ = supabase.from('crm_leads').select(scanSelect).eq('type', 'lead').order('created_at', { ascending: false });
-      if (!seeAllLeads) leadQ = leadQ.or(`assigned_to.eq.${uid},lead_owner_id.eq.${uid}`);
-      let dealQ = supabase.from('crm_leads').select(scanSelect).eq('type', 'deal').order('created_at', { ascending: false });
-      if (!seeAllDeals) dealQ = dealQ.eq('assigned_to', uid);
-      const [{ data: leadRows }, { data: dealRows }] = await Promise.all([leadQ, dealQ]);
-      leads = [...(leadRows || []), ...(dealRows || [])].sort(
-        (a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at),
-      );
+      const liteRows = await fetchCrmLeadsLiteForDuplicateScan({ uid, seeAllLeads, seeAllDeals });
+      duplicateIds = duplicateLeadIdsFromLiteRows(liteRows);
     }
+
+    if (!duplicateIds.length) {
+      return res.json({ groups: [], total_groups: 0, total_duplicates: 0 });
+    }
+
+    const leads = await hydrateScanDuplicateLeads(duplicateIds, scanSelect);
 
     const { data: fbContacts } = await supabase.from('facebook_contacts')
       .select('id, psid, lead_id, fb_name, fb_profile_pic, page_id')
-      .not('lead_id', 'is', null);
+      .in('lead_id', duplicateIds);
 
     const leadFbMap = {};
-    (fbContacts || []).forEach(fc => {
+    (fbContacts || []).forEach((fc) => {
       if (!leadFbMap[fc.lead_id]) leadFbMap[fc.lead_id] = [];
       leadFbMap[fc.lead_id].push(fc);
     });
 
-    // Group by Combo: customer_id + assigned_to + source_id
-    const byCombo = {};
-    (leads || []).forEach(l => {
-      // Chỉ nhóm nếu có ĐỦ 3 yếu tố này
-      if (!l.customer_id || !l.assigned_to || !l.source_id) return;
-      const key = `${l.customer_id}_${l.assigned_to}_${l.source_id}`;
-      if (!byCombo[key]) byCombo[key] = [];
-      byCombo[key].push({ ...l, fb_contacts: leadFbMap[l.id] || [] });
-    });
-
-    const groups = [];
-    const usedLeadIds = new Set();
-
-    // Group A: Combo trùng
-    for (const key in byCombo) {
-      if (byCombo[key].length > 1) {
-        const group = {
-          reason: 'combo_match',
-          key: key,
-          customer: byCombo[key][0].customer,
-          assignee: byCombo[key][0].assignee,
-          source: byCombo[key][0].source,
-          leads: byCombo[key].sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at)),
-        };
-        group.leads.forEach(l => usedLeadIds.add(l.id));
-        groups.push(group);
-      }
-    }
-
-    const totalDuplicates = groups.reduce((s, g) => s + g.leads.length - 1, 0);
-    res.json({ groups, total_groups: groups.length, total_duplicates: totalDuplicates });
+    res.json(buildScanDuplicateGroups(leads, leadFbMap));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

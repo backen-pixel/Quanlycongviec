@@ -2,21 +2,18 @@
  * Panel góc dưới — tiến trình tải lên / tải xuống (kiểu Google Drive).
  * Portal toàn app, thu nhỏ thành thanh dưới cùng, giữ khi đổi trang.
  */
-import { useSyncExternalStore, useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, ChevronUp, X, Loader2, CheckCircle2, AlertCircle, Upload, Download } from 'lucide-react';
 import { useAuth } from '../../lib/auth';
+import { formatFileSize } from '../../lib/messengerUploadLimits';
+import { formatUploadProgressMeta } from '../../lib/uploadProgressEta';
 import {
-  subscribeDriveTransfers,
-  getDriveTransferState,
   cancelDriveUpload,
   cancelAllDriveUploads,
   clearFinishedDriveTransfers,
 } from './driveTransferStore';
-
-function useDriveTransfers() {
-  return useSyncExternalStore(subscribeDriveTransfers, getDriveTransferState, getDriveTransferState);
-}
+import { useDriveTransfers } from './useDriveTransfers';
 
 function statusLabel(items, kind) {
   const active = items.filter((x) => x.status === (kind === 'upload' ? 'uploading' : 'downloading'));
@@ -43,9 +40,16 @@ function TransferRow({ item, kind }) {
         {failed && <AlertCircle size={14} className="text-red-500" />}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-xs text-slate-800 truncate" title={item.name}>{item.name}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-xs text-slate-800 truncate flex-1" title={item.name}>{item.name}</p>
+          {active && (
+            <span className="text-[11px] font-bold text-blue-700 tabular-nums shrink-0">
+              {item.progress >= 99 ? '99%' : `${item.progress || 0}%`}
+            </span>
+          )}
+        </div>
         {active && (
-          <div className="mt-1.5 h-1 bg-slate-100 rounded-full overflow-hidden">
+          <div className="mt-1.5 h-1.5 bg-slate-100 rounded-full overflow-hidden">
             <div
               className={`h-full transition-all ${kind === 'upload' ? 'bg-blue-500' : 'bg-violet-500'}`}
               style={{ width: `${Math.max(item.progress || 0, active && !item.progress ? 8 : 0)}%` }}
@@ -53,8 +57,14 @@ function TransferRow({ item, kind }) {
           </div>
         )}
         {active && (
-          <p className="text-[10px] text-slate-500 mt-0.5">
-            {(item.progress || 0) >= 99 ? 'Đang xử lý…' : `${item.progress || 0}%`}
+          <p className="text-[10px] text-slate-500 mt-0.5 tabular-nums truncate">
+            {formatUploadProgressMeta({
+              percent: item.progress || 0,
+              bytesPerSec: item.bytesPerSec || 0,
+              remainingSec: item.remainingSec,
+              includePercent: true,
+            })}
+            {item.sizeBytes ? ` · ${formatFileSize(item.sizeBytes)}` : ''}
           </p>
         )}
         {item.status === 'done' && (
@@ -125,6 +135,16 @@ function DriveTransferPanelInner() {
     if (total > 0) setDismissed(false);
   }, [total]);
 
+  const prevActiveRef = useRef(0);
+  useEffect(() => {
+    const activeCount = activeUploads.length + activeDownloads.length;
+    if (activeCount > prevActiveRef.current) {
+      setMinimized(false);
+      setDismissed(false);
+    }
+    prevActiveRef.current = activeCount;
+  }, [activeUploads.length, activeDownloads.length]);
+
   if (!total || dismissed) return null;
 
   const headerUpload = activeUploads.length
@@ -171,7 +191,14 @@ function DriveTransferPanelInner() {
         )}
         <span className="flex-1 text-sm font-medium text-slate-800 truncate">{header}</span>
         {minimized && hasActive && (
-          <span className="text-xs text-slate-500 shrink-0">{avgProgress}%</span>
+          <span className="text-xs text-slate-500 shrink-0 tabular-nums">
+            {avgProgress}%
+            {activeUploads[0]?.bytesPerSec ? ` · ${formatUploadProgressMeta({
+              percent: activeUploads[0].progress || avgProgress,
+              bytesPerSec: activeUploads[0].bytesPerSec,
+              remainingSec: activeUploads[0].remainingSec,
+            }).split(' · ')[0] || ''}` : ''}
+          </span>
         )}
         <button
           type="button"
@@ -207,9 +234,21 @@ function DriveTransferPanelInner() {
         <>
           {hasActive && activeUploads.length > 0 && (
             <div className="flex items-center justify-between px-3 py-2 text-xs bg-blue-50 border-b border-blue-100">
-              <span className="text-slate-600">Đang bắt đầu tải lên…</span>
+              <span className="text-slate-600">
+                {activeUploads.length} file đang tải lên
+                {activeUploads[0]?.bytesPerSec ? (
+                  <span className="text-blue-700 font-medium ml-1">
+                    · {formatUploadProgressMeta({
+                      percent: activeUploads[0].progress || 0,
+                      bytesPerSec: activeUploads[0].bytesPerSec,
+                      remainingSec: activeUploads[0].remainingSec,
+                      includePercent: true,
+                    })}
+                  </span>
+                ) : null}
+              </span>
               <button type="button" onClick={cancelAllDriveUploads} className="text-blue-600 hover:underline">
-                Huỷ
+                Huỷ tất cả
               </button>
             </div>
           )}

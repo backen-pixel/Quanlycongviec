@@ -308,10 +308,286 @@ async function pgDashboardMainStats(userId, projectIds) {
   return result.rows[0];
 }
 
+/**
+ * GET /api/dashboard/overview — aggregate counts/sums in SQL (no full-table row fetch).
+ */
+async function pgDashboardOverview({
+  sevenDaysAgo,
+  thirtyDaysAgo,
+  firstDayThisMonth,
+  firstDayLastMonth,
+  nowIso,
+} = {}) {
+  if (!isPgEnabled()) return null;
+
+  const [projectsRes, tasksRes, customersRes, crmRes, custProjRes] = await Promise.all([
+    pgQuery(
+      `SELECT
+         COUNT(*)::int AS total_projects,
+         COUNT(*) FILTER (WHERE status IN (
+           'consulting','designing','quoting','contract_signed','producing','shipping','installing'
+         ))::int AS active_projects,
+         COUNT(*) FILTER (WHERE status = 'warranty')::int AS completed_projects,
+         COUNT(*) FILTER (WHERE created_at >= $1::timestamptz)::int AS new_projects_7d,
+         COUNT(*) FILTER (WHERE due_date < $2::timestamptz AND status IS DISTINCT FROM 'warranty')::int AS overdue_projects,
+         COALESCE(SUM(estimated_value), 0)::float8 AS total_revenue,
+         COALESCE(SUM(estimated_value) FILTER (WHERE created_at >= $3::timestamptz), 0)::float8 AS this_month_revenue,
+         COALESCE(SUM(estimated_value) FILTER (
+           WHERE created_at >= $4::timestamptz AND created_at < $3::timestamptz
+         ), 0)::float8 AS last_month_revenue
+       FROM projects`,
+      [sevenDaysAgo, nowIso, firstDayThisMonth, firstDayLastMonth],
+    ),
+    pgQuery(
+      `SELECT
+         COUNT(*)::int AS total_tasks,
+         COUNT(*) FILTER (WHERE status = 'done')::int AS completed_tasks,
+         COUNT(*) FILTER (
+           WHERE due_date < NOW() AND status IS DISTINCT FROM 'done'
+         )::int AS overdue_tasks,
+         COUNT(*) FILTER (WHERE status = 'blocked')::int AS blocked_tasks
+       FROM tasks`,
+    ),
+    pgQuery(
+      `SELECT
+         COUNT(*)::int AS total_customers,
+         COUNT(*) FILTER (WHERE created_at >= $1::timestamptz)::int AS new_customers_7d
+       FROM customers`,
+      [sevenDaysAgo],
+    ),
+    pgQuery(
+      `SELECT
+         COUNT(*) FILTER (WHERE type = 'lead')::int AS total_leads,
+         COUNT(*) FILTER (WHERE type = 'deal')::int AS total_deals,
+         COUNT(*) FILTER (WHERE type = 'lead' AND created_at >= $1::timestamptz)::int AS new_leads_30d,
+         COUNT(*) FILTER (WHERE type = 'deal' AND created_at >= $1::timestamptz)::int AS new_deals_30d,
+         COUNT(*) FILTER (WHERE type = 'deal' AND project_id IS NOT NULL)::int AS won_deals,
+         COALESCE(SUM(budget) FILTER (WHERE type = 'deal' AND project_id IS NULL), 0)::float8 AS deal_pipeline_value
+       FROM crm_leads`,
+      [thirtyDaysAgo],
+    ),
+    pgQuery(
+      `SELECT
+         (SELECT COUNT(*)::int FROM (
+            SELECT customer_id FROM projects
+            WHERE customer_id IS NOT NULL
+            GROUP BY customer_id HAVING COUNT(*) >= 5
+          ) t) AS vip_customers,
+         (SELECT COUNT(*)::int FROM (
+            SELECT customer_id FROM projects
+            WHERE customer_id IS NOT NULL
+            GROUP BY customer_id HAVING COUNT(*) > 1
+          ) t) AS return_customers`,
+    ),
+  ]);
+
+  if (!projectsRes || !tasksRes || !customersRes || !crmRes || !custProjRes) return null;
+
+  const p = projectsRes.rows[0] || {};
+  const t = tasksRes.rows[0] || {};
+  const c = customersRes.rows[0] || {};
+  const crm = crmRes.rows[0] || {};
+  const cp = custProjRes.rows[0] || {};
+
+  const totalProjects = Number(p.total_projects || 0);
+  const totalTasks = Number(t.total_tasks || 0);
+  const completedTasks = Number(t.completed_tasks || 0);
+  const totalCustomers = Number(c.total_customers || 0);
+  const totalLeads = Number(crm.total_leads || 0);
+  const totalDeals = Number(crm.total_deals || 0);
+  const wonDeals = Number(crm.won_deals || 0);
+  const totalRevenue = Number(p.total_revenue || 0);
+  const thisMonthRevenue = Number(p.this_month_revenue || 0);
+  const lastMonthRevenue = Number(p.last_month_revenue || 0);
+  const returnCustomers = Number(cp.return_customers || 0);
+  const revenueGrowth = lastMonthRevenue > 0
+    ? (((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100).toFixed(1)
+    : 0;
+  const leadToDealRate = totalLeads > 0 ? ((totalDeals / totalLeads) * 100).toFixed(1) : 0;
+  const dealToProjectRate = totalDeals > 0 ? (((wonDeals / totalDeals) * 100).toFixed(1)) : 0;
+
+  return {
+    projects: {
+      total: totalProjects,
+      active: Number(p.active_projects || 0),
+      completed: Number(p.completed_projects || 0),
+      new_7d: Number(p.new_projects_7d || 0),
+      overdue: Number(p.overdue_projects || 0),
+    },
+    tasks: {
+      total: totalTasks,
+      completed: completedTasks,
+      completion_rate: totalTasks > 0 ? ((completedTasks / totalTasks) * 100).toFixed(1) : 0,
+      overdue: Number(t.overdue_tasks || 0),
+      blocked: Number(t.blocked_tasks || 0),
+    },
+    customers: {
+      total: totalCustomers,
+      new_7d: Number(c.new_customers_7d || 0),
+      vip: Number(cp.vip_customers || 0),
+      return_rate: totalCustomers > 0 ? ((returnCustomers / totalCustomers) * 100).toFixed(1) : 0,
+    },
+    revenue: {
+      total: totalRevenue,
+      growth_pct: parseFloat(revenueGrowth),
+      avg_project_value: totalProjects > 0 ? Math.round(totalRevenue / totalProjects) : 0,
+      this_month: thisMonthRevenue,
+      last_month: lastMonthRevenue,
+    },
+    crm: {
+      leads: totalLeads,
+      deals: totalDeals,
+      new_leads_30d: Number(crm.new_leads_30d || 0),
+      new_deals_30d: Number(crm.new_deals_30d || 0),
+      won_deals: wonDeals,
+      lead_to_deal_rate: parseFloat(leadToDealRate),
+      deal_to_project_rate: parseFloat(dealToProjectRate),
+      pipeline_value: Number(crm.deal_pipeline_value || 0),
+    },
+  };
+}
+
+/**
+ * GET /api/dashboard/workload — COUNT projects GROUP BY current_stage_id.
+ */
+async function pgDashboardWorkload() {
+  if (!isPgEnabled()) return null;
+
+  const result = await pgQuery(
+    `SELECT current_stage_id::text AS stage_id, COUNT(*)::int AS cnt
+     FROM projects
+     WHERE status IS DISTINCT FROM 'completed'
+       AND current_stage_id IS NOT NULL
+     GROUP BY current_stage_id`,
+  );
+  if (!result) return null;
+
+  const stageProjectCount = {};
+  for (const row of result.rows || []) {
+    if (row.stage_id) stageProjectCount[row.stage_id] = Number(row.cnt || 0);
+  }
+  return { stageProjectCount };
+}
+
+/**
+ * GET /api/dashboard/customers — top customers + geo distribution via SQL.
+ */
+async function pgDashboardCustomers() {
+  if (!isPgEnabled()) return null;
+
+  const [topRes, geoRes] = await Promise.all([
+    pgQuery(
+      `SELECT
+         c.id::text AS id,
+         c.full_name AS name,
+         c.phone,
+         c.email,
+         COUNT(p.id)::int AS projects_count,
+         COALESCE(SUM(p.estimated_value), 0)::float8 AS total_value
+       FROM projects p
+       INNER JOIN customers c ON c.id = p.customer_id
+       WHERE p.customer_id IS NOT NULL
+       GROUP BY c.id, c.full_name, c.phone, c.email
+       ORDER BY total_value DESC
+       LIMIT 10`,
+    ),
+    pgQuery(
+      `SELECT COALESCE(NULLIF(TRIM(city), ''), 'Other') AS city, COUNT(*)::int AS cnt
+       FROM customers
+       GROUP BY COALESCE(NULLIF(TRIM(city), ''), 'Other')`,
+    ),
+  ]);
+  if (!topRes || !geoRes) return null;
+
+  const topCustomers = (topRes.rows || []).map((row) => {
+    const projectsCount = Number(row.projects_count || 0);
+    const totalValue = Number(row.total_value || 0);
+    return {
+      id: row.id,
+      name: row.name,
+      phone: row.phone,
+      email: row.email,
+      projects_count: projectsCount,
+      total_value: totalValue,
+      avg_value: projectsCount > 0 ? Math.round(totalValue / projectsCount) : 0,
+    };
+  });
+
+  const geoDistribution = {};
+  for (const row of geoRes.rows || []) {
+    geoDistribution[row.city || 'Other'] = Number(row.cnt || 0);
+  }
+
+  return { top_customers: topCustomers, geo_distribution: geoDistribution };
+}
+
+/**
+ * CRM scan-duplicates — tìm combo trùng bằng GROUP BY HAVING (không full-scan embed).
+ * Trả { leadIds: string[] } hoặc null khi PG tắt.
+ */
+async function pgCrmDuplicateLeadIds({ uid, seeAllLeads, seeAllDeals, maxGroups = 200 } = {}) {
+  if (!isPgEnabled()) return null;
+
+  const params = [];
+  let paramIdx = 1;
+  const scopeParts = [];
+
+  if (seeAllLeads && seeAllDeals) {
+    // no scope filter
+  } else {
+    const uidParam = `$${paramIdx++}`;
+    params.push(uid);
+    if (seeAllLeads) {
+      scopeParts.push(`type = 'lead'`);
+    } else {
+      scopeParts.push(`(type = 'lead' AND (assigned_to = ${uidParam}::uuid OR lead_owner_id = ${uidParam}::uuid))`);
+    }
+    if (seeAllDeals) {
+      scopeParts.push(`type = 'deal'`);
+    } else {
+      scopeParts.push(`(type = 'deal' AND assigned_to = ${uidParam}::uuid)`);
+    }
+  }
+
+  const scopeSql = scopeParts.length ? `AND (${scopeParts.join(' OR ')})` : '';
+  params.push(Math.min(Math.max(Number(maxGroups) || 200, 1), 500));
+
+  const result = await pgQuery(
+    `SELECT array_agg(id ORDER BY COALESCE(updated_at, created_at) DESC) AS lead_ids
+     FROM crm_leads
+     WHERE customer_id IS NOT NULL
+       AND assigned_to IS NOT NULL
+       AND source_id IS NOT NULL
+       ${scopeSql}
+     GROUP BY customer_id, assigned_to, source_id
+     HAVING COUNT(*) > 1
+     LIMIT $${paramIdx}`,
+    params,
+  );
+  if (!result) return null;
+
+  const leadIds = [];
+  const seen = new Set();
+  for (const row of result.rows || []) {
+    for (const id of row.lead_ids || []) {
+      const sid = String(id);
+      if (!seen.has(sid)) {
+        seen.add(sid);
+        leadIds.push(sid);
+      }
+    }
+  }
+  return { leadIds };
+}
+
 module.exports = {
   pgDashboardNotificationStats,
   pgDashboardNotificationsList,
   pgUsersActivityStats,
   pgKpiDefinitions,
   pgDashboardMainStats,
+  pgDashboardOverview,
+  pgDashboardWorkload,
+  pgDashboardCustomers,
+  pgCrmDuplicateLeadIds,
 };

@@ -1,25 +1,75 @@
-import { createContext, useContext, useEffect, useMemo } from 'react';
-import { useAuth } from '../../lib/auth';
-import { useReleaseNotesUnread } from '../../hooks/useReleaseNotesUnread';
-import { useCrmAssignmentsUnread } from '../../hooks/useCrmAssignmentsUnread';
-import { useInternalSocialUnread } from '../../hooks/useInternalSocialUnread';
+import { createContext, useContext, useCallback, useEffect, useMemo, useState } from 'react';import { useAuth } from '../../lib/auth';
+import { useAppHeartbeat, EMPTY_ASSIGN } from '../../hooks/useAppHeartbeat';
+import { builtinUpdateUnreadCount } from '../../lib/releaseNotesRead';
 import { BADGE_CHANNELS, dispatchBadgeRefresh } from '../lib/badgeEvents';
 
 const UnreadBadgesContext = createContext(null);
 
 export function UnreadBadgesProvider({ children }) {
-  const { socket } = useAuth();
-  const release = useReleaseNotesUnread();
-  const assignmentsCrm = useCrmAssignmentsUnread('crm');
-  const assignmentsSx = useCrmAssignmentsUnread('production');
-  const social = useInternalSocialUnread();
+  const { user, socket } = useAuth();
+  const [assignmentsCrm, setAssignmentsCrm] = useState(EMPTY_ASSIGN);
+  const [assignmentsSx, setAssignmentsSx] = useState(EMPTY_ASSIGN);
+  const [socialUnread, setSocialUnread] = useState(0);
+  const [dbUnread, setDbUnread] = useState(0);
+  const [builtinUnread, setBuiltinUnread] = useState(() => builtinUpdateUnreadCount());
+
+  const resetBadgeState = useCallback(() => {
+    setAssignmentsCrm(EMPTY_ASSIGN);
+    setAssignmentsSx(EMPTY_ASSIGN);
+    setSocialUnread(0);
+    setDbUnread(0);
+  }, []);
+
+  useEffect(() => {
+    if (!user) resetBadgeState();
+  }, [user, resetBadgeState]);
+
+  useEffect(() => {
+    const onSessionCleared = () => resetBadgeState();
+    window.addEventListener('auth:session-cleared', onSessionCleared);
+    return () => window.removeEventListener('auth:session-cleared', onSessionCleared);
+  }, [resetBadgeState]);
+
+  const onHeartbeat = useCallback((payload) => {
+    if (!payload) return;
+    setAssignmentsCrm(payload.assignmentsCrm || EMPTY_ASSIGN);
+    setAssignmentsSx(payload.assignmentsProduction || EMPTY_ASSIGN);
+    setSocialUnread(Number(payload.social) || 0);
+    setDbUnread(Number(payload.releaseNotesDb) || 0);
+  }, []);
+
+  const { refresh: refreshHeartbeat } = useAppHeartbeat({
+    enabled: !!user,
+    user,
+    onUpdate: onHeartbeat,
+  });
+
+  useEffect(() => {
+    setBuiltinUnread(builtinUpdateUnreadCount());
+    const onStorage = (e) => {
+      if (e.key === 'release_notes_read_builtin_ids') {
+        setBuiltinUnread(builtinUpdateUnreadCount());
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    const t = setInterval(() => setBuiltinUnread(builtinUpdateUnreadCount()), 5000);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      clearInterval(t);
+    };
+  }, []);
+
+  const refreshReleaseNotes = useCallback(async () => {
+    setBuiltinUnread(builtinUpdateUnreadCount());
+    await refreshHeartbeat({ fresh: true });
+  }, [refreshHeartbeat]);
 
   useEffect(() => {
     const handlers = {
-      social: () => { void social.refresh?.(); },
-      assignments: () => { void assignmentsCrm.refresh?.(); void assignmentsSx.refresh?.(); },
-      updates: () => { void release.refresh?.(); },
-      events: () => { void release.refresh?.(); },
+      social: () => { void refreshHeartbeat({ fresh: true }); },
+      assignments: () => { void refreshHeartbeat({ fresh: true }); },
+      updates: () => { void refreshReleaseNotes(); },
+      events: () => { void refreshReleaseNotes(); },
     };
 
     const onWindow = (e) => {
@@ -36,7 +86,7 @@ export function UnreadBadgesProvider({ children }) {
         window.removeEventListener(`badge:refresh:${ch}`, onWindow);
       }
     };
-  }, [social, assignmentsCrm, assignmentsSx, release]);
+  }, [refreshHeartbeat, refreshReleaseNotes]);
 
   useEffect(() => {
     if (!socket) return undefined;
@@ -50,6 +100,13 @@ export function UnreadBadgesProvider({ children }) {
     };
   }, [socket]);
 
+  const release = useMemo(() => ({
+    dbUnread,
+    builtinUnread,
+    total: dbUnread + builtinUnread,
+    refresh: refreshReleaseNotes,
+  }), [dbUnread, builtinUnread, refreshReleaseNotes]);
+
   const value = useMemo(
     () => ({
       updates: release.total,
@@ -58,22 +115,18 @@ export function UnreadBadgesProvider({ children }) {
       assignmentsDetail: assignmentsCrm,
       sxAssignments: assignmentsSx.unread,
       sxAssignmentsDetail: assignmentsSx,
-      social: social.unread,
-      socialDetail: social,
+      social: socialUnread,
+      socialDetail: { unread: socialUnread, refresh: () => refreshHeartbeat({ fresh: true }) },
       refreshAll: async () => {
-        await Promise.all([
-          release.refresh?.(),
-          assignmentsCrm.refresh?.(),
-          assignmentsSx.refresh?.(),
-          social.refresh?.(),
-        ]);
+        setBuiltinUnread(builtinUpdateUnreadCount());
+        await refreshHeartbeat({ fresh: true });
       },
-      refreshSocial: social.refresh,
-      refreshAssignments: assignmentsCrm.refresh,
-      refreshSxAssignments: assignmentsSx.refresh,
-      refreshUpdates: release.refresh,
+      refreshSocial: () => refreshHeartbeat({ fresh: true }),
+      refreshAssignments: () => refreshHeartbeat({ fresh: true }),
+      refreshSxAssignments: () => refreshHeartbeat({ fresh: true }),
+      refreshUpdates: refreshReleaseNotes,
     }),
-    [release, assignmentsCrm, assignmentsSx, social],
+    [release, assignmentsCrm, assignmentsSx, socialUnread, refreshHeartbeat, refreshReleaseNotes],
   );
 
   return (

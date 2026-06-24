@@ -9,6 +9,8 @@ import {
   Send, ArrowLeft, Pin, Reply, Trash2, Edit, MoreVertical, Paperclip, X,
   Users, Building, Image, File, Plus, Video, UserPlus, Smile, Bot
 } from 'lucide-react';
+import UploadProgressBubble from '../components/UploadProgressBubble';
+import { makeAxiosUploadProgressHandler, mergeUploadProgressState } from '../lib/uploadProgressEta';
 
 export default function DepartmentChat() {
   const { id } = useParams();
@@ -26,6 +28,7 @@ export default function DepartmentChat() {
   const [showMembers, setShowMembers] = useState(false);
   const [menuMsg, setMenuMsg] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadState, setUploadState] = useState(null);
   const [showAddMember, setShowAddMember] = useState(false);
   const [availableUsers, setAvailableUsers] = useState([]);
   const [userSearch, setUserSearch] = useState('');
@@ -122,12 +125,24 @@ export default function DepartmentChat() {
     if (!files?.length) return;
     setUploading(true);
     try {
-      for (const file of files) {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setUploadState({
+          fileIndex: i + 1,
+          fileTotal: files.length,
+          fileName: file.name,
+          fileSize: file.size,
+          percent: 0,
+        });
         const formData = new FormData();
         formData.append('file', file);
         formData.append('content', text.trim() || '');
+        const onProgress = makeAxiosUploadProgressHandler(file.size, (stats) => {
+          setUploadState((prev) => (prev ? mergeUploadProgressState(prev, stats) : prev));
+        });
         const { data } = await api.post(`/departments/${id}/chat/upload`, formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
+          headers: { 'Content-Type': 'multipart/form-data' },
+          onUploadProgress: onProgress,
         });
         setMessages(prev => [...prev, data.message]);
       }
@@ -137,6 +152,7 @@ export default function DepartmentChat() {
       console.error(e);
       alert(e?.response?.data?.error || 'Upload thất bại');
     }
+    setUploadState(null);
     setUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -481,6 +497,16 @@ export default function DepartmentChat() {
                 </div>
               ))
             )}
+            {uploadState ? (
+              <UploadProgressBubble
+                title={`Đang gửi file${uploadState.fileTotal > 1 ? ` ${uploadState.fileIndex}/${uploadState.fileTotal}` : ''}…`}
+                fileName={uploadState.fileName}
+                fileSize={uploadState.fileSize}
+                percent={uploadState.percent}
+                bytesPerSec={uploadState.bytesPerSec}
+                remainingSec={uploadState.remainingSec}
+              />
+            ) : null}
             <div ref={messagesEndRef} />
           </div>
 

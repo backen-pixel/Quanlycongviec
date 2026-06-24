@@ -811,5 +811,6 @@ export default function MessengerDock() {
     </>
   );
 
+  if (!uid) return null;
   return createPortal(ui, document.body);
 }

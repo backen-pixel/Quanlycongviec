@@ -48,6 +48,8 @@ import {
   CHAT_DRIVE_REMIND_HINT,
   formatFileSize,
 } from '../lib/messengerUploadLimits';
+import UploadProgressBubble from './UploadProgressBubble';
+import { makeAxiosUploadProgressHandler, mergeUploadProgressState } from '../lib/uploadProgressEta';
 import { handleChatImagePaste } from '../lib/chatClipboard';
 import { showCopyToast } from '../lib/copyToast';
 import { useChatPendingImages, splitChatImageFiles } from '../hooks/useChatPendingImages';
@@ -1275,6 +1277,7 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
   const [pickerOpen, setPickerOpen] = useState(false);
   const [drivePickerOpen, setDrivePickerOpen] = useState(false);
   const [largeFileReminder, setLargeFileReminder] = useState(null);
+  const [uploadState, setUploadState] = useState(null);
   const fileInputRef = useRef(null);
   const audioInputRef = useRef(null);
   const textareaRef = useRef(null);
@@ -1386,13 +1389,26 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
     try {
       if (pickedFiles.length > 0) {
         for (let i = 0; i < pickedFiles.length; i++) {
+          const file = pickedFiles[i];
+          setUploadState({
+            fileIndex: i + 1,
+            fileTotal: pickedFiles.length,
+            fileName: file.name,
+            fileSize: file.size,
+            percent: 0,
+          });
           const fd = new FormData();
-          fd.append('file', pickedFiles[i]);
-          if (i === 0 && text.trim()) fd.append('content', text);
+          fd.append('file', file);
+          if (i === 0 && text.trim()) fd.append('content', text.trim());
           if (i === 0 && replyId) fd.append('reply_to', replyId);
+          const onProgress = makeAxiosUploadProgressHandler(file.size, (stats) => {
+            setUploadState((prev) => (prev ? mergeUploadProgressState(prev, stats) : prev));
+          });
           await api.post(`/crm/leads/${leadId}/chat/upload`, fd, {
             headers: { 'Content-Type': 'multipart/form-data' },
+            onUploadProgress: onProgress,
           });
+          setUploadState((prev) => (prev ? { ...prev, percent: 100 } : prev));
         }
       } else {
         await api.post(`/crm/leads/${leadId}/chat`, {
@@ -1405,6 +1421,7 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
       clearPendingImages();
       clearChatFileInputs(fileInputRef, audioInputRef);
     } catch (e) { alert(e.response?.data?.error || 'Lỗi gửi tin nhắn'); }
+    setUploadState(null);
     setSending(false);
   };
 
@@ -1595,6 +1612,17 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
             </div>
           );
         })}
+        {uploadState ? (
+          <UploadProgressBubble
+            compact={compact}
+            title={`Đang gửi file${uploadState.fileTotal > 1 ? ` ${uploadState.fileIndex}/${uploadState.fileTotal}` : ''}…`}
+            fileName={uploadState.fileName}
+            fileSize={uploadState.fileSize}
+            percent={uploadState.percent}
+            bytesPerSec={uploadState.bytesPerSec}
+            remainingSec={uploadState.remainingSec}
+          />
+        ) : null}
         <div ref={messagesEndRef} />
       </div>
 
@@ -2553,14 +2581,12 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
             if (mentionIds.length) fd.append('mention_user_ids', JSON.stringify(mentionIds));
           }
           if (i === 0 && replyId) fd.append('reply_to', replyId);
+          const onProgress = makeAxiosUploadProgressHandler(file.size, (stats) => {
+            setUploadState((prev) => (prev ? mergeUploadProgressState(prev, stats) : prev));
+          });
           await api.post(`/messenger/groups/${groupId}/chat/upload`, fd, {
             headers: { 'Content-Type': 'multipart/form-data' },
-            onUploadProgress: (ev) => {
-              const percent = ev.total
-                ? Math.min(99, Math.round((ev.loaded * 100) / ev.total))
-                : 0;
-              setUploadState((prev) => (prev ? { ...prev, percent } : prev));
-            },
+            onUploadProgress: onProgress,
           });
           setUploadState((prev) => (prev ? { ...prev, percent: 100 } : prev));
         }
@@ -3091,7 +3117,15 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
         })}
         <TypingIndicators typingMap={typingMap} />
         {uploadState ? (
-          <MessengerUploadProgress uploadState={uploadState} compact={compact} />
+          <UploadProgressBubble
+            compact={compact}
+            title={`Đang gửi file${uploadState.fileTotal > 1 ? ` ${uploadState.fileIndex}/${uploadState.fileTotal}` : ''}…`}
+            fileName={uploadState.fileName}
+            fileSize={uploadState.fileSize}
+            percent={uploadState.percent}
+            bytesPerSec={uploadState.bytesPerSec}
+            remainingSec={uploadState.remainingSec}
+          />
         ) : null}
         <div ref={messagesEndRef} />
       </div>
@@ -3449,41 +3483,6 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           onClose={() => setDrivePickerOpen(false)}
         />
       )}
-    </div>
-  );
-}
-
-/** Bubble “đang gửi file” trong luồng chat. */
-function MessengerUploadProgress({ uploadState, compact }) {
-  if (!uploadState) return null;
-  const { fileIndex, fileTotal, fileName, fileSize, percent } = uploadState;
-  return (
-    <div className="flex justify-end my-2 px-1">
-      <div
-        className={`max-w-[min(92%,320px)] rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 to-white shadow-sm ${
-          compact ? 'px-3 py-2' : 'px-4 py-3'
-        }`}
-      >
-        <div className="flex items-center gap-2 text-violet-800">
-          <Loader2 className={`shrink-0 animate-spin ${compact ? 'h-3.5 w-3.5' : 'h-4 w-4'}`} />
-          <span className={compact ? 'text-[11px] font-medium' : 'text-sm font-medium'}>
-            Đang gửi file{fileTotal > 1 ? ` ${fileIndex}/${fileTotal}` : ''}…
-          </span>
-        </div>
-        <p className={`mt-1 text-violet-700/90 truncate ${compact ? 'text-[10px]' : 'text-xs'}`} title={fileName}>
-          {fileName}
-          {fileSize ? ` · ${formatFileSize(fileSize)}` : ''}
-        </p>
-        <div className="mt-2 h-1.5 rounded-full bg-violet-100 overflow-hidden">
-          <div
-            className="h-full rounded-full bg-violet-500 transition-[width] duration-200 ease-out"
-            style={{ width: `${Math.max(8, percent || 0)}%` }}
-          />
-        </div>
-        <p className={`mt-1 text-violet-500 ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
-          {percent >= 99 ? 'Đang xử lý trên server…' : `${percent || 0}%`}
-        </p>
-      </div>
     </div>
   );
 }
