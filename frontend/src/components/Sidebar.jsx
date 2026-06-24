@@ -9,9 +9,9 @@ import { publicFileUrl } from '../lib/publicFileUrl';
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut, Lock,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Inbox, UserCircle, Package, ClipboardList, 
-  UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Grid3X3, X, UsersRound,
+  UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, UsersRound,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
-  BookOpen, FolderTree, Factory, Pin, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot, Download, UserMinus,
+  BookOpen, FolderTree, Factory, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot, Download, UserMinus,
   Sigma, Calculator, FileUp, History as HistoryIcon, HardDrive,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
@@ -23,6 +23,7 @@ import {
 } from '../lib/sidebarModuleContext';
 import { useModuleAccess } from '../shared/context/ModuleAccessContext';
 import { useSidebarUnreadBadges } from '../shared/context/UnreadBadgesContext';
+import AppSwitcherPanel, { AppSwitcherButton } from './AppSwitcherPanel';
 
 // Reorganized menu structure - 4 groups
 const MENU_GROUPS = [
@@ -608,185 +609,22 @@ export default function Sidebar() {
 
   return (
     <>
-      {/* App Switcher Panel */}
-      {showAppSwitcher && (
-        <div className="fixed inset-0 z-50 flex">
-          <div ref={appSwitcherRef} className="w-[300px] bg-white shadow-2xl border-r border-gray-200 flex flex-col animate-slide-in">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <h2 className="text-base font-bold text-gray-900">Ứng dụng</h2>
-              <button onClick={() => setShowAppSwitcher(false)} className="p-1 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer">
-                <X className="h-5 w-5 text-gray-500" />
-              </button>
-            </div>
-            <div className="flex-1 p-5 space-y-3">
-              {/* Công việc — ẩn với nhân viên chỉ CRM */}
-              {!crmOnly && (
-              <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${!isCRM && !isSX && !isVC && !isKetoan && !isCalc && !isKnowledge ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200 hover:border-blue-400 hover:bg-blue-50'}`}>
-                <button onClick={() => { setShowAppSwitcher(false); navigate('/dashboard'); }}
-                  className="flex items-center gap-4 flex-1 cursor-pointer">
-                  <div className="w-12 h-12 rounded-xl bg-blue-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
-                    <CheckSquare className="h-6 w-6 text-white" />
-                  </div>
-                  <div className="text-left">
-                    <h3 className="text-sm font-bold text-gray-900">Công việc</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">Quản lý dự án & nhiệm vụ</p>
-                  </div>
-                </button>
-                <div className="flex flex-col items-center gap-1 ml-auto">
-                  {!isCRM && !isSX && !isVC && !isKetoan && !isCalc && !isKnowledge && <span className="text-[10px] px-2 py-0.5 bg-blue-600 text-white rounded-full font-bold">Đang dùng</span>}
-                  <button onClick={(e) => { e.stopPropagation(); pinModule('/dashboard'); }}
-                    title={pinnedModule === '/dashboard' ? 'Đã ghim — bấm để bỏ ghim' : 'Ghim — đăng nhập vào thẳng module này'}
-                    className={`p-1.5 rounded-lg cursor-pointer transition-all ${pinnedModule === '/dashboard' ? 'bg-amber-100 text-amber-600 hover:bg-amber-200' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
-                    <Pin className={`h-4 w-4 ${pinnedModule === '/dashboard' ? 'rotate-45' : ''}`} />
-                  </button>
-                </div>
-              </div>
-              )}
-              {/* CRM */}
-              {canAccessModule('crm') && (
-              <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${isCRM ? 'bg-emerald-50 border-emerald-200' : 'bg-gray-50 border-gray-200 hover:border-emerald-400 hover:bg-emerald-50'}`}>
-                <button onClick={() => { setShowAppSwitcher(false); navigate('/crm'); }}
-                  className="flex items-center gap-4 flex-1 cursor-pointer">
-                  <div className="w-12 h-12 rounded-xl bg-emerald-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
-                    <UserCircle className="h-6 w-6 text-white" />
-                  </div>
-                  <div className="text-left">
-                    <h3 className="text-sm font-bold text-gray-900">CRM</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">Quản lý khách hàng & bán hàng</p>
-                  </div>
-                </button>
-                <div className="flex flex-col items-center gap-1 ml-auto">
-                  {isCRM && <span className="text-[10px] px-2 py-0.5 bg-emerald-600 text-white rounded-full font-bold">Đang dùng</span>}
-                  <button onClick={(e) => { e.stopPropagation(); pinModule('/crm'); }}
-                    title={pinnedModule === '/crm' ? 'Đã ghim — bấm để bỏ ghim' : 'Ghim — đăng nhập vào thẳng module này'}
-                    className={`p-1.5 rounded-lg cursor-pointer transition-all ${pinnedModule === '/crm' ? 'bg-amber-100 text-amber-600 hover:bg-amber-200' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
-                    <Pin className={`h-4 w-4 ${pinnedModule === '/crm' ? 'rotate-45' : ''}`} />
-                  </button>
-                </div>
-              </div>
-              )}
-              {/* Sản xuất */}
-              {canAccessModule('production') && (
-              <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${isSX ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200 hover:border-orange-400 hover:bg-orange-50'}`}>
-                <button onClick={() => { setShowAppSwitcher(false); navigate('/sx'); }}
-                  className="flex items-center gap-4 flex-1 cursor-pointer">
-                  <div className="w-12 h-12 rounded-xl bg-orange-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
-                    <Factory className="h-6 w-6 text-white" />
-                  </div>
-                  <div className="text-left">
-                    <h3 className="text-sm font-bold text-gray-900">Xưởng SX</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">Quản lý deal, pipeline và duyệt sản xuất</p>
-                  </div>
-                </button>
-                <div className="flex flex-col items-center gap-1 ml-auto">
-                  {isSX && <span className="text-[10px] px-2 py-0.5 bg-orange-600 text-white rounded-full font-bold">Đang dùng</span>}
-                  <button onClick={(e) => { e.stopPropagation(); pinModule('/sx'); }}
-                    title={pinnedModule === '/sx' ? 'Đã ghim — bấm để bỏ ghim' : 'Ghim — đăng nhập vào thẳng module này'}
-                    className={`p-1.5 rounded-lg cursor-pointer transition-all ${pinnedModule === '/sx' ? 'bg-amber-100 text-amber-600 hover:bg-amber-200' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
-                    <Pin className={`h-4 w-4 ${pinnedModule === '/sx' ? 'rotate-45' : ''}`} />
-                  </button>
-                </div>
-              </div>
-              )}
-              {/* Vận chuyển & Lắp đặt */}
-              {canAccessModule('logistics') && (
-              <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${isVC ? 'bg-amber-50 border-amber-300' : 'bg-gray-50 border-gray-200 hover:border-amber-400 hover:bg-amber-50'}`}>
-                <button onClick={() => { setShowAppSwitcher(false); navigate('/vc'); }}
-                  className="flex items-center gap-4 flex-1 cursor-pointer">
-                  <div className="w-12 h-12 rounded-xl bg-amber-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
-                    <span className="text-2xl">🚚</span>
-                  </div>
-                  <div className="text-left">
-                    <h3 className="text-sm font-bold text-gray-900">Vận chuyển & Lắp đặt</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">Quản lý giao hàng, lắp đặt, bảo hành</p>
-                  </div>
-                </button>
-                <div className="flex flex-col items-center gap-1 ml-auto">
-                  {isVC && <span className="text-[10px] px-2 py-0.5 bg-amber-600 text-white rounded-full font-bold">Đang dùng</span>}
-                  <button onClick={(e) => { e.stopPropagation(); pinModule('/vc'); }}
-                    title={pinnedModule === '/vc' ? 'Đã ghim — bấm để bỏ ghim' : 'Ghim — đăng nhập vào thẳng module này'}
-                    className={`p-1.5 rounded-lg cursor-pointer transition-all ${pinnedModule === '/vc' ? 'bg-amber-100 text-amber-600 hover:bg-amber-200' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
-                    <Pin className={`h-4 w-4 ${pinnedModule === '/vc' ? 'rotate-45' : ''}`} />
-                  </button>
-                </div>
-              </div>
-              )}
-              {/* Kế toán */}
-              {canAccessModule('accounting') && (
-              <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${isKetoan ? 'bg-indigo-50 border-indigo-200' : 'bg-gray-50 border-gray-200 hover:border-indigo-400 hover:bg-indigo-50'}`}>
-                <button onClick={() => { setShowAppSwitcher(false); navigate('/ketoan'); }}
-                  className="flex items-center gap-4 flex-1 cursor-pointer">
-                  <div className="w-12 h-12 rounded-xl bg-indigo-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
-                    <Receipt className="h-6 w-6 text-white" />
-                  </div>
-                  <div className="text-left">
-                    <h3 className="text-sm font-bold text-gray-900">Kế toán</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">Tổng hợp deal SX theo xưởng xử lý</p>
-                  </div>
-                </button>
-                <div className="flex flex-col items-center gap-1 ml-auto">
-                  {isKetoan && <span className="text-[10px] px-2 py-0.5 bg-indigo-600 text-white rounded-full font-bold">Đang dùng</span>}
-                  <button onClick={(e) => { e.stopPropagation(); pinModule('/ketoan'); }}
-                    title={pinnedModule === '/ketoan' ? 'Đã ghim — bấm để bỏ ghim' : 'Ghim — đăng nhập vào thẳng module này'}
-                    className={`p-1.5 rounded-lg cursor-pointer transition-all ${pinnedModule === '/ketoan' ? 'bg-amber-100 text-amber-600 hover:bg-amber-200' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
-                    <Pin className={`h-4 w-4 ${pinnedModule === '/ketoan' ? 'rotate-45' : ''}`} />
-                  </button>
-                </div>
-              </div>
-              )}
-              {/* Tính toán */}
-              {canAccessModule('tinhtoan') && (
-              <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${isCalc ? 'bg-indigo-50 border-indigo-200' : 'bg-gray-50 border-gray-200 hover:border-indigo-400 hover:bg-indigo-50'}`}>
-                <button onClick={() => { setShowAppSwitcher(false); navigate('/calc'); }}
-                  className="flex items-center gap-4 flex-1 cursor-pointer">
-                  <div className="w-12 h-12 rounded-xl bg-indigo-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
-                    <Sigma className="h-6 w-6 text-white" />
-                  </div>
-                  <div className="text-left">
-                    <h3 className="text-sm font-bold text-gray-900">Tính toán</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">Công thức, rule, tính từ kích thước & file 3D</p>
-                  </div>
-                </button>
-                <div className="flex flex-col items-center gap-1 ml-auto">
-                  {isCalc && <span className="text-[10px] px-2 py-0.5 bg-indigo-600 text-white rounded-full font-bold">Đang dùng</span>}
-                  <button onClick={(e) => { e.stopPropagation(); pinModule('/calc'); }}
-                    title={pinnedModule === '/calc' ? 'Đã ghim — bấm để bỏ ghim' : 'Ghim — đăng nhập vào thẳng module này'}
-                    className={`p-1.5 rounded-lg cursor-pointer transition-all ${pinnedModule === '/calc' ? 'bg-amber-100 text-amber-600 hover:bg-amber-200' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
-                    <Pin className={`h-4 w-4 ${pinnedModule === '/calc' ? 'rotate-45' : ''}`} />
-                  </button>
-                </div>
-              </div>
-              )}
-              {/* Kiến thức — mọi user đều dùng được */}
-              <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all group ${isKnowledge ? 'bg-violet-50 border-violet-200' : 'bg-gray-50 border-gray-200 hover:border-violet-400 hover:bg-violet-50'}`}>
-                <button onClick={() => { setShowAppSwitcher(false); navigate('/knowledge'); }}
-                  className="flex items-center gap-4 flex-1 cursor-pointer">
-                  <div className="w-12 h-12 rounded-xl bg-violet-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
-                    <GraduationCap className="h-6 w-6 text-white" />
-                  </div>
-                  <div className="text-left">
-                    <h3 className="text-sm font-bold text-gray-900">Kiến thức</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">Bài học, video và bài tập theo chủ đề</p>
-                  </div>
-                </button>
-                <div className="flex flex-col items-center gap-1 ml-auto">
-                  {isKnowledge && <span className="text-[10px] px-2 py-0.5 bg-violet-600 text-white rounded-full font-bold">Đang dùng</span>}
-                  <button onClick={(e) => { e.stopPropagation(); pinModule('/knowledge'); }}
-                    title={pinnedModule === '/knowledge' ? 'Đã ghim — bấm để bỏ ghim' : 'Ghim — đăng nhập vào thẳng module này'}
-                    className={`p-1.5 rounded-lg cursor-pointer transition-all ${pinnedModule === '/knowledge' ? 'bg-amber-100 text-amber-600 hover:bg-amber-200' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
-                    <Pin className={`h-4 w-4 ${pinnedModule === '/knowledge' ? 'rotate-45' : ''}`} />
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div className="px-5 py-3 border-t border-gray-100">
-              <p className="text-[10px] text-gray-400 text-center">TuBep Pro © 2026</p>
-            </div>
-          </div>
-          {/* Overlay */}
-          <div className="flex-1 bg-black/30" onClick={() => setShowAppSwitcher(false)} />
-        </div>
-      )}
+      <AppSwitcherPanel
+        open={showAppSwitcher}
+        onClose={() => setShowAppSwitcher(false)}
+        navigate={navigate}
+        canAccessModule={canAccessModule}
+        crmOnly={crmOnly}
+        pinnedModule={pinnedModule}
+        onPinModule={pinModule}
+        isKnowledge={isKnowledge}
+        isCalc={isCalc}
+        isKetoan={isKetoan}
+        isVC={isVC}
+        isSX={isSX}
+        isCRM={isCRM}
+        panelRef={appSwitcherRef}
+      />
 
       <aside
       style={{
@@ -800,10 +638,11 @@ export default function Sidebar() {
       {/* App Switcher Button + Logo */}
       <div className="flex items-center gap-2 px-3 h-14 border-b border-white/10 shrink-0">
         {!crmOnly && (
-        <button onClick={() => setShowAppSwitcher(!showAppSwitcher)}
-          className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors cursor-pointer ${showAppSwitcher ? 'bg-white/20 ring-1 ring-white/30' : 'hover:bg-white/10'}`} title="Chuyển ứng dụng">
-          <Grid3X3 className="h-5 w-5 text-white" />
-        </button>
+        <AppSwitcherButton
+          open={showAppSwitcher}
+          onClick={() => setShowAppSwitcher(!showAppSwitcher)}
+          collapsed={collapsed}
+        />
         )}
         {/* Active app indicator — click cycles through các module được phép (chỉ CRM nếu crmOnly) */}
         {(() => {

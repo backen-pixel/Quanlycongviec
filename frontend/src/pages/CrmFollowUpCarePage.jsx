@@ -15,7 +15,6 @@ import EmployeePicker from '../components/EmployeePicker';
 import {
   CalendarClock,
   Search,
-  Phone,
   User,
   Layers,
   AlertTriangle,
@@ -25,10 +24,11 @@ import {
   Filter,
   Tag,
   CheckCircle2,
-  Circle,
-  ArrowRightCircle,
   Download,
   ChevronDown,
+  ChevronUp,
+  MoreHorizontal,
+  Settings,
 } from 'lucide-react';
 
 function parseStageIdsFromSearchParams(sp) {
@@ -59,6 +59,42 @@ function addDays(d, n) {
 
 function toIso(d) {
   return startOfDay(d).toISOString().split('T')[0];
+}
+
+function getLeadAgeDays(createdAt) {
+  if (!createdAt) return null;
+  const created = startOfDay(new Date(createdAt));
+  const today = startOfDay(new Date());
+  return Math.max(0, Math.floor((today - created) / 86400000));
+}
+
+function getPersonInitials(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
+
+const AVATAR_COLORS = ['#8B5CF6', '#3B82F6', '#10B981', '#F59E0B', '#EC4899', '#6366F1', '#14B8A6'];
+
+function avatarColorFromName(name) {
+  const s = String(name || '');
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) h = (h + s.charCodeAt(i)) % AVATAR_COLORS.length;
+  return AVATAR_COLORS[h];
+}
+
+function formatDateTimeVi(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('vi-VN', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 /** Khoảng ngày (YYYY-MM-DD) để lọc theo created_at, dạng bucket tuần quá khứ (không chồng lấn). */
@@ -175,6 +211,11 @@ export default function CrmFollowUpCarePage() {
   const [lostSubmitting, setLostSubmitting] = useState(false);
   const [lostError, setLostError] = useState('');
   const [exporting, setExporting] = useState(false);
+  const [showFilters, setShowFilters] = useState(true);
+  const [pageSize, setPageSize] = useState(20);
+  const [page, setPage] = useState(1);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [rowMenuOpenId, setRowMenuOpenId] = useState(null);
 
   // Áp filter từ URL search params mỗi khi URL thay đổi (kể cả khi component đã mount sẵn,
   // ví dụ user bấm thông báo CSKH lần thứ hai). Không xóa params để giữ làm "source of truth"
@@ -672,6 +713,63 @@ export default function CrmFollowUpCarePage() {
     return rows;
   }, [leads, onlyOpenStages]);
 
+  useEffect(() => {
+    setPage(1);
+    setSelectedIds(new Set());
+  }, [
+    debouncedSearch,
+    timePreset,
+    customFrom,
+    customTo,
+    pipelineType,
+    pipelineId,
+    stageIds.join(','),
+    filterAssignee,
+    filterSourceId,
+    filterCompany,
+    onlyOpenStages,
+  ]);
+
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(filtered.length / pageSize)),
+    [filtered.length, pageSize],
+  );
+
+  const safePage = Math.min(page, totalPages);
+
+  const paginatedRows = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, safePage, pageSize]);
+
+  const pageSelectedCount = useMemo(
+    () => paginatedRows.filter((r) => selectedIds.has(String(r.id))).length,
+    [paginatedRows, selectedIds],
+  );
+
+  const toggleSelectAllOnPage = useCallback(() => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      const allSelected = paginatedRows.every((r) => next.has(String(r.id)));
+      paginatedRows.forEach((r) => {
+        const id = String(r.id);
+        if (allSelected) next.delete(id);
+        else next.add(id);
+      });
+      return next;
+    });
+  }, [paginatedRows]);
+
+  const toggleSelectRow = useCallback((id) => {
+    const sid = String(id);
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sid)) next.delete(sid);
+      else next.add(sid);
+      return next;
+    });
+  }, []);
+
   const overdueCount = useMemo(() => {
     const t0 = startOfDay(new Date()).getTime();
     return filtered.filter((l) => {
@@ -714,6 +812,8 @@ export default function CrmFollowUpCarePage() {
       'Nguồn': src?.name || '',
       'SĐT': phone || '',
       'Cột pipeline': st ? `${st.icon ? `${st.icon} ` : ''}${st.name}` : '',
+      'Tuổi lead (ngày)': getLeadAgeDays(row.created_at) ?? '',
+      'Cập nhật cuối': formatDateTimeVi(row.updated_at || row.stage_entered_at || row.created_at),
       'Theo dõi tiếp': nf ? formatDate(nf) + (overdue ? ' (quá hạn)' : '') : 'Chưa hẹn',
       'Phụ trách': assignee?.full_name || '',
       'Đã CSKH': mark ? 'Có' : 'Không',
@@ -799,6 +899,23 @@ export default function CrmFollowUpCarePage() {
     careMarks,
   ]);
 
+  useEffect(() => {
+    if (!rowMenuOpenId) return undefined;
+    const onDoc = (e) => {
+      if (!e.target.closest('[data-row-menu]')) setRowMenuOpenId(null);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [rowMenuOpenId]);
+
+  const pageNumbers = useMemo(() => {
+    if (totalPages <= 7) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+    const nums = new Set([1, totalPages, safePage, safePage - 1, safePage + 1]);
+    return [...nums].filter((p) => p >= 1 && p <= totalPages).sort((a, b) => a - b);
+  }, [totalPages, safePage]);
+
   return (
     <div className="space-y-5 max-w-[1400px] mx-auto px-3 sm:px-4 pb-10">
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
@@ -813,7 +930,7 @@ export default function CrmFollowUpCarePage() {
             type="button"
             onClick={() => void exportExcel()}
             disabled={exporting || loading}
-            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             title="Xuất Excel — mỗi cột giai đoạn đã chọn = 1 sheet"
           >
             <Download className={`h-4 w-4 ${exporting ? 'animate-pulse' : ''}`} />
@@ -830,12 +947,33 @@ export default function CrmFollowUpCarePage() {
         </div>
       </div>
 
-      <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm space-y-4">
-        <div className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-          <Filter className="h-4 w-4" /> Bộ lọc
+      <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-100 bg-gray-50/80">
+          <div className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+            <Filter className="h-4 w-4" /> Bộ lọc
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowFilters((v) => !v)}
+            className="inline-flex items-center gap-1 text-xs font-medium text-violet-700 hover:text-violet-900 cursor-pointer"
+          >
+            {showFilters ? (
+              <>
+                Thu gọn
+                <ChevronUp className="h-3.5 w-3.5" />
+              </>
+            ) : (
+              <>
+                Mở rộng
+                <ChevronDown className="h-3.5 w-3.5" />
+              </>
+            )}
+          </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+        {showFilters && (
+          <div className="p-4 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
           {isAdmin && (
             <label className="flex flex-col gap-1">
               <span className="text-xs text-gray-500 flex items-center gap-1"><Building2 className="h-3.5 w-3.5" /> Công ty</span>
@@ -1019,27 +1157,31 @@ export default function CrmFollowUpCarePage() {
           onClose={() => setShowDateRangePicker(false)}
         />
 
-        <div className="flex flex-col sm:flex-row flex-wrap gap-3 items-stretch sm:items-center">
-          <div className="relative flex-1 min-w-[200px]">
+        <div className="space-y-3">
+          <div className="relative w-full">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
             <input
               type="search"
-              placeholder="Tìm mã, tiêu đề, SĐT…"
+              placeholder="Tìm mã, tiêu đề, SĐT, email, khách hàng…"
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
               className="w-full h-9 pl-9 pr-3 rounded-lg border border-gray-200 text-sm"
             />
           </div>
-          <label className="inline-flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={onlyOpenStages}
-              onChange={(e) => setOnlyOpenStages(e.target.checked)}
-              className="rounded border-gray-300"
-            />
-            Ẩn lead/deal đã chốt hoặc thua
-          </label>
+          <div className="flex justify-end">
+            <label className="inline-flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={onlyOpenStages}
+                onChange={(e) => setOnlyOpenStages(e.target.checked)}
+                className="rounded border-gray-300 accent-violet-600"
+              />
+              Ẩn lead/deal đã chốt hoặc thua
+            </label>
+          </div>
         </div>
+          </div>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-3 text-sm">
@@ -1075,183 +1217,288 @@ export default function CrmFollowUpCarePage() {
           Không có lead/deal khớp bộ lọc. Thử nới «Khung thời gian» hoặc bỏ cột pipeline.
         </div>
       ) : (
-        <div
-          className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-auto"
-          style={{ maxHeight: 'calc(100vh - 180px)', minHeight: '70vh' }}
-        >
-          <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide sticky top-0 z-10 shadow-sm">
-              <tr>
-                <th className="px-3 py-2.5 text-center" title="Đã chăm sóc — ẩn nhắc 30 ngày">CSKH</th>
-                <th className="px-3 py-2.5">Lead / Deal</th>
-                <th className="px-3 py-2.5">Khách</th>
-                <th className="px-3 py-2.5">Nguồn</th>
-                <th className="px-3 py-2.5">SĐT</th>
-                <th className="px-3 py-2.5">Cột pipeline</th>
-                <th className="px-3 py-2.5 min-w-[11rem]">
-                  <span className="inline-flex items-center gap-1">
-                    <ArrowRightCircle className="h-3.5 w-3.5" />
-                    Chuyển cột
-                  </span>
-                </th>
-                <th className="px-3 py-2.5">Theo dõi tiếp</th>
-                <th className="px-3 py-2.5">Phụ trách</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {filtered.map((row) => {
-                const st = row.stage;
-                const assignee = row.assignee || row.lead_owner;
-                const phone = row.display_phone || row.customer?.phone || row.phone;
-                const src = row.source;
-                const nf = row.next_follow_up;
-                const nfMs = nf ? new Date(nf).getTime() : null;
-                const today0 = startOfDay(new Date()).getTime();
-                const overdue = nfMs != null && nfMs < today0;
-                const mark = careMarks[row.id];
-                const isMarked = !!mark;
-                const busy = careBusyId === row.id;
-                const moving = stageMoveBusyId === row.id;
-                const rowMoveStages = getMoveStagesForRow(row);
-                const moveDisabled = moving || rowMoveStages.length === 0;
-                const rowTypeLabel = row.type === 'deal' ? 'Deal' : 'Lead';
-                return (
-                  <tr key={row.id} className={`hover:bg-emerald-50/40 ${isMarked ? 'bg-emerald-50/60' : ''}`}>
-                    <td className="px-3 py-2 align-middle text-center">
-                      <button
-                        type="button"
-                        onClick={() => toggleCareMark(row.id)}
-                        disabled={busy}
-                        className={`w-7 h-7 rounded-lg inline-flex items-center justify-center transition-colors cursor-pointer ${
-                          isMarked
-                            ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-                            : 'text-gray-300 hover:bg-emerald-100 hover:text-emerald-600'
-                        } ${busy ? 'opacity-50 cursor-wait' : ''}`}
-                        title={
-                          isMarked
-                            ? `Đã chăm sóc${mark?.marked_at ? ` lúc ${formatDate(mark.marked_at)}` : ''} — bấm để bỏ`
-                            : 'Đánh dấu đã chăm sóc (ẩn nhắc 30 ngày)'
-                        }
-                      >
-                        {isMarked ? <CheckCircle2 className="h-4 w-4" /> : <Circle className="h-4 w-4" />}
-                      </button>
-                    </td>
-                    <td className="px-3 py-2 align-top">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span
-                          className={`shrink-0 text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
-                            row.type === 'deal' ? 'bg-cyan-100 text-cyan-800' : 'bg-blue-100 text-blue-800'
-                          }`}
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 280px)', minHeight: '420px' }}>
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide sticky top-0 z-10 border-b border-gray-200">
+                <tr>
+                  <th className="px-3 py-3 w-10">
+                    <input
+                      type="checkbox"
+                      checked={paginatedRows.length > 0 && pageSelectedCount === paginatedRows.length}
+                      onChange={toggleSelectAllOnPage}
+                      className="rounded border-gray-300 accent-violet-600"
+                      aria-label="Chọn tất cả trang"
+                    />
+                  </th>
+                  <th className="px-3 py-3 text-center w-16">CSKH</th>
+                  <th className="px-3 py-3 min-w-[14rem]">Lead / Deal</th>
+                  <th className="px-3 py-3 min-w-[12rem]">Khách hàng</th>
+                  <th className="px-3 py-3">Nguồn</th>
+                  <th className="px-3 py-3 min-w-[10rem]">NV phụ trách</th>
+                  <th className="px-3 py-3">Giai đoạn</th>
+                  <th className="px-3 py-3">Tuổi lead</th>
+                  <th className="px-3 py-3 whitespace-nowrap">Cập nhật cuối</th>
+                  <th className="px-3 py-3 w-10">
+                    <Settings className="h-4 w-4 text-gray-400 mx-auto" aria-hidden />
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {paginatedRows.map((row) => {
+                  const st = row.stage;
+                  const assignee = row.assignee || row.lead_owner;
+                  const assigneeName = assignee?.full_name || assignee?.email || '';
+                  const src = row.source;
+                  const mark = careMarks[row.id];
+                  const isMarked = !!mark;
+                  const busy = careBusyId === row.id;
+                  const moving = stageMoveBusyId === row.id;
+                  const rowMoveStages = getMoveStagesForRow(row);
+                  const moveDisabled = moving || rowMoveStages.length === 0;
+                  const rowTypeLabel = row.type === 'deal' ? 'DEAL' : 'LEAD';
+                  const leadAge = getLeadAgeDays(row.created_at);
+                  const lastUpdate = row.updated_at || row.stage_entered_at || row.created_at;
+                  const initials = getPersonInitials(assigneeName);
+                  const avatarColor = avatarColorFromName(assigneeName || row.id);
+                  const isSelected = selectedIds.has(String(row.id));
+                  const sourceLabel = src?.name || '';
+                  return (
+                    <tr
+                      key={row.id}
+                      className={`hover:bg-violet-50/30 ${isMarked ? 'bg-emerald-50/40' : ''} ${isSelected ? 'bg-violet-50/50' : ''}`}
+                    >
+                      <td className="px-3 py-3 align-middle">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleSelectRow(row.id)}
+                          className="rounded border-gray-300 accent-violet-600"
+                          aria-label={`Chọn ${row.code || row.title}`}
+                        />
+                      </td>
+                      <td className="px-3 py-3 align-middle text-center">
+                        <button
+                          type="button"
+                          onClick={() => toggleCareMark(row.id)}
+                          disabled={busy}
+                          className={`w-9 h-9 rounded-full inline-flex items-center justify-center text-[11px] font-bold text-white shadow-sm transition-all cursor-pointer ${
+                            isMarked ? 'ring-2 ring-emerald-500 ring-offset-1' : 'hover:scale-105'
+                          } ${busy ? 'opacity-50 cursor-wait' : ''}`}
+                          style={{ backgroundColor: avatarColor }}
+                          title={
+                            isMarked
+                              ? `Đã chăm sóc${mark?.marked_at ? ` lúc ${formatDate(mark.marked_at)}` : ''} — bấm để bỏ`
+                              : `${assigneeName || 'Chưa có NV'} — đánh dấu đã CSKH`
+                          }
                         >
-                          {rowTypeLabel}
-                        </span>
-                        <Link
-                          to={`/crm/leads/${row.id}`}
-                          className="font-medium text-indigo-600 hover:underline"
-                        >
-                          {row.code ? `${row.code} · ` : ''}{row.title}
-                        </Link>
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 align-top text-gray-800">
-                      {row.customer?.full_name || '—'}
-                    </td>
-                    <td className="px-3 py-2 align-top text-gray-700">
-                      {src ? (
-                        <span className="inline-flex items-center gap-1 text-xs">
-                          {src.icon ? <span aria-hidden>{src.icon}</span> : null}
-                          {src.name || '—'}
-                        </span>
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                    <td className="px-3 py-2 align-top">
-                      {phone ? (
-                        <span className="inline-flex items-center gap-1 font-mono text-xs text-gray-700">
-                          <Phone className="h-3.5 w-3.5 text-gray-400 shrink-0" />
-                          {phone}
-                        </span>
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                    <td className="px-3 py-2 align-top max-w-[14rem]">
-                      {st ? (
-                        <span
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium"
-                          style={{
-                            backgroundColor: `${st.color || '#64748b'}18`,
-                            color: st.color || '#475569',
-                          }}
-                        >
-                          {st.icon ? `${st.icon} ` : ''}{st.name}
-                        </span>
-                      ) : (
-                        '—'
-                      )}
-                      {row.lost_reason && (
-                        <div
-                          className="mt-1.5 px-2 py-1.5 bg-red-50 border border-red-100 rounded-lg"
-                          title={row.lost_reason}
-                        >
-                          <p className="text-[10px] text-red-500 font-medium">❌ Lý do mất</p>
-                          <p className="text-xs text-red-700 line-clamp-3 whitespace-pre-wrap break-words">
-                            {row.lost_reason}
+                          {initials}
+                        </button>
+                      </td>
+                      <td className="px-3 py-3 align-top">
+                        <div className="space-y-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span
+                              className={`shrink-0 text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                                row.type === 'deal' ? 'bg-cyan-100 text-cyan-800' : 'bg-violet-100 text-violet-800'
+                              }`}
+                            >
+                              {rowTypeLabel}
+                            </span>
+                            <Link
+                              to={`/crm/leads/${row.id}`}
+                              className="font-semibold text-gray-900 hover:text-violet-700 hover:underline"
+                            >
+                              {row.code || row.title}
+                            </Link>
+                          </div>
+                          <p className="text-xs text-gray-600 line-clamp-2">
+                            {sourceLabel ? `[${sourceLabel}] ` : ''}
+                            {row.title}
+                            {row.customer?.full_name ? ` · ${row.customer.full_name}` : ''}
                           </p>
                         </div>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 align-top">
-                      <select
-                        value={String(row.stage_id || '')}
-                        disabled={moveDisabled}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          if (v && v !== String(row.stage_id || '')) moveLeadToStage(row, v);
-                        }}
-                        className={`w-full max-w-[12rem] h-8 px-2 rounded-lg border text-xs bg-white ${
-                          moving ? 'border-emerald-300 opacity-60' : 'border-gray-200 hover:border-emerald-400'
-                        }`}
-                        title={
-                          rowMoveStages.length
-                            ? `Chọn cột pipeline ${rowTypeLabel} (cùng công ty / pipeline đang lọc)`
-                            : 'Chọn công ty và pipeline CRM để tải danh sách cột'
-                        }
-                      >
-                        <option value={row.stage_id || ''}>
-                          {st ? `${st.icon ? `${st.icon} ` : ''}${st.name}` : '— Chọn cột —'}
-                        </option>
-                        {rowMoveStages
-                          .filter((s) => String(s.id) !== String(row.stage_id || ''))
-                          .map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.icon ? `${s.icon} ` : ''}
-                              {s.name}
-                              {s.is_won ? ' · Thắng' : ''}
-                              {s.is_lost ? ' · Mất' : ''}
-                            </option>
-                          ))}
-                      </select>
-                    </td>
-                    <td className="px-3 py-2 align-top whitespace-nowrap">
-                      {nf ? (
-                        <span className={overdue ? 'text-red-600 font-semibold' : 'text-gray-800'}>
-                          {formatDate(nf)}
-                          {overdue && ' · quá hạn'}
+                      </td>
+                      <td className="px-3 py-3 align-top">
+                        <span className="inline-flex items-start gap-1.5 text-gray-800">
+                          <Building2 className="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
+                          <span className="line-clamp-2">{row.customer?.full_name || row.customer?.company_name || '—'}</span>
                         </span>
-                      ) : (
-                        <span className="text-amber-700">Chưa hẹn</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 align-top text-gray-700">
-                      {assignee?.full_name || '—'}
-                    </td>
-                  </tr>
+                      </td>
+                      <td className="px-3 py-3 align-top text-gray-700">
+                        {src ? (
+                          <span className="inline-flex items-center gap-1 text-xs">
+                            {src.icon ? <span aria-hidden>{src.icon}</span> : null}
+                            {src.name || '—'}
+                          </span>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td className="px-3 py-3 align-top">
+                        {assigneeName ? (
+                          <span className="inline-flex items-center gap-2 text-gray-800">
+                            <span
+                              className="w-7 h-7 rounded-full inline-flex items-center justify-center text-[10px] font-bold text-white shrink-0"
+                              style={{ backgroundColor: avatarColor }}
+                            >
+                              {initials}
+                            </span>
+                            <span className="text-sm">{assigneeName}</span>
+                          </span>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td className="px-3 py-3 align-top">
+                        {st ? (
+                          <span className="inline-flex items-center gap-1.5 text-sm text-gray-800">
+                            <span
+                              className="w-2 h-2 rounded-full shrink-0"
+                              style={{ backgroundColor: st.color || '#64748b' }}
+                            />
+                            {st.name}
+                          </span>
+                        ) : (
+                          '—'
+                        )}
+                        {row.lost_reason && (
+                          <p className="mt-1 text-[11px] text-red-600 line-clamp-2" title={row.lost_reason}>
+                            {row.lost_reason}
+                          </p>
+                        )}
+                      </td>
+                      <td className="px-3 py-3 align-top whitespace-nowrap">
+                        {leadAge != null ? (
+                          <span className="font-semibold text-amber-600">{leadAge} ngày</span>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td className="px-3 py-3 align-top whitespace-nowrap text-gray-700 text-xs">
+                        {formatDateTimeVi(lastUpdate)}
+                      </td>
+                      <td className="px-3 py-3 align-middle relative" data-row-menu>
+                        <button
+                          type="button"
+                          onClick={() => setRowMenuOpenId((id) => (id === row.id ? null : row.id))}
+                          className="w-8 h-8 rounded-lg inline-flex items-center justify-center text-gray-500 hover:bg-gray-100 cursor-pointer"
+                          aria-label="Thao tác"
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                        </button>
+                        {rowMenuOpenId === row.id && (
+                          <div className="absolute right-2 top-full z-30 mt-1 w-52 rounded-xl border border-gray-200 bg-white shadow-lg py-1 text-sm">
+                            <Link
+                              to={`/crm/leads/${row.id}`}
+                              className="block px-3 py-2 text-gray-800 hover:bg-violet-50"
+                              onClick={() => setRowMenuOpenId(null)}
+                            >
+                              Xem chi tiết
+                            </Link>
+                            <button
+                              type="button"
+                              className="w-full text-left px-3 py-2 text-gray-800 hover:bg-violet-50 cursor-pointer"
+                              onClick={() => {
+                                setRowMenuOpenId(null);
+                                void toggleCareMark(row.id);
+                              }}
+                            >
+                              {isMarked ? 'Bỏ đánh dấu CSKH' : 'Đánh dấu đã CSKH'}
+                            </button>
+                            <div className="border-t border-gray-100 my-1 px-3 py-2">
+                              <p className="text-[10px] font-semibold text-gray-500 uppercase mb-1.5">Chuyển giai đoạn</p>
+                              <select
+                                value={String(row.stage_id || '')}
+                                disabled={moveDisabled}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (v && v !== String(row.stage_id || '')) {
+                                    setRowMenuOpenId(null);
+                                    moveLeadToStage(row, v);
+                                  }
+                                }}
+                                className="w-full h-8 px-2 rounded-lg border border-gray-200 text-xs bg-white"
+                              >
+                                <option value={row.stage_id || ''}>
+                                  {st ? st.name : '— Chọn cột —'}
+                                </option>
+                                {rowMoveStages
+                                  .filter((s) => String(s.id) !== String(row.stage_id || ''))
+                                  .map((s) => (
+                                    <option key={s.id} value={s.id}>
+                                      {s.name}
+                                      {s.is_won ? ' · Thắng' : ''}
+                                      {s.is_lost ? ' · Mất' : ''}
+                                    </option>
+                                  ))}
+                              </select>
+                            </div>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 bg-gray-50/50">
+            <label className="inline-flex items-center gap-2 text-sm text-gray-600">
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPage(1);
+                }}
+                className="h-8 px-2 rounded-lg border border-gray-200 bg-white text-sm"
+              >
+                {[20, 50, 100].map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+              <span>/ trang</span>
+            </label>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                disabled={safePage <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                className="min-w-8 h-8 px-2 rounded-lg border border-gray-200 bg-white text-sm disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed hover:bg-gray-50"
+              >
+                ‹
+              </button>
+              {pageNumbers.map((n, idx) => {
+                const prev = pageNumbers[idx - 1];
+                const showEllipsis = prev != null && n - prev > 1;
+                return (
+                  <span key={n} className="inline-flex items-center gap-1">
+                    {showEllipsis && <span className="px-1 text-gray-400">…</span>}
+                    <button
+                      type="button"
+                      onClick={() => setPage(n)}
+                      className={`min-w-8 h-8 px-2 rounded-lg text-sm cursor-pointer ${
+                        n === safePage
+                          ? 'bg-violet-600 text-white font-medium'
+                          : 'border border-gray-200 bg-white hover:bg-gray-50 text-gray-700'
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  </span>
                 );
               })}
-            </tbody>
-          </table>
+              <button
+                type="button"
+                disabled={safePage >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                className="min-w-8 h-8 px-2 rounded-lg border border-gray-200 bg-white text-sm disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed hover:bg-gray-50"
+              >
+                ›
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
