@@ -3831,35 +3831,59 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
   }
 });
 
-/** GET /crm/ledger-net-by-leads — điểm KPI tháng theo danh sách lead (tối đa 500 id), dùng sau khi tải Kanban. */
+async function resolveCrmLedgerNetByLeadIdsPayload(req, leadIds, opts = {}) {
+  if (!leadIds.length) {
+    return { ledger_net_by_lead: {}, kpi_ledger_period_start: defaultKpiLedgerMonthStartYmd() };
+  }
+  const rawLedgerPs = opts.ledger_period_start && String(opts.ledger_period_start).trim();
+  const ledgerPeriodStart = (rawLedgerPs && /^\d{4}-\d{2}-\d{2}$/.test(rawLedgerPs.slice(0, 10)))
+    ? rawLedgerPs.slice(0, 10)
+    : defaultKpiLedgerMonthStartYmd();
+  const queryAssigneeUuid = uuidQueryOrNull(opts.assigned_to);
+  const type = opts.type === 'deal' ? 'deal' : 'lead';
+  const selfAssignee =
+    type === 'deal' && req.user?.userId && !userSeesAllCrmDealsForScope(req.user)
+      ? req.user.userId
+      : type === 'lead' && req.user?.userId && !userSeesAllCrmLeadsForScope(req.user)
+        ? req.user.userId
+        : null;
+  const canUseAssigneeQuery =
+    type === 'deal' ? userSeesAllCrmDealsForScope(req.user) : userSeesAllCrmLeadsForScope(req.user);
+  const ledgerUserId = selfAssignee || (canUseAssigneeQuery && queryAssigneeUuid ? queryAssigneeUuid : null);
+  const ledgerNetByLead = await sumCrmKpiLedgerNetByLeadIds(leadIds, ledgerPeriodStart, 'monthly', {
+    userId: ledgerUserId || null,
+  });
+  return {
+    ledger_net_by_lead: ledgerNetByLead,
+    kpi_ledger_period_start: ledgerPeriodStart,
+  };
+}
+
+/** GET /crm/ledger-net-by-leads — điểm KPI tháng theo danh sách lead, dùng sau khi tải Kanban. */
 r.get('/ledger-net-by-leads', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
   try {
-    const leadIds = parseLeadIdsCsvQuery(req.query.lead_ids, 500);
-    if (!leadIds.length) {
-      return res.json({ ledger_net_by_lead: {}, kpi_ledger_period_start: defaultKpiLedgerMonthStartYmd() });
-    }
-    const rawLedgerPs = req.query.ledger_period_start && String(req.query.ledger_period_start).trim();
-    const ledgerPeriodStart = (rawLedgerPs && /^\d{4}-\d{2}-\d{2}$/.test(rawLedgerPs.slice(0, 10)))
-      ? rawLedgerPs.slice(0, 10)
-      : defaultKpiLedgerMonthStartYmd();
-    const queryAssigneeUuid = uuidQueryOrNull(req.query.assigned_to);
-    const type = req.query.type === 'deal' ? 'deal' : 'lead';
-    const selfAssignee =
-      type === 'deal' && req.user?.userId && !userSeesAllCrmDealsForScope(req.user)
-        ? req.user.userId
-        : type === 'lead' && req.user?.userId && !userSeesAllCrmLeadsForScope(req.user)
-          ? req.user.userId
-          : null;
-    const canUseAssigneeQuery =
-      type === 'deal' ? userSeesAllCrmDealsForScope(req.user) : userSeesAllCrmLeadsForScope(req.user);
-    const ledgerUserId = selfAssignee || (canUseAssigneeQuery && queryAssigneeUuid ? queryAssigneeUuid : null);
-    const ledgerNetByLead = await sumCrmKpiLedgerNetByLeadIds(leadIds, ledgerPeriodStart, 'monthly', {
-      userId: ledgerUserId || null,
+    const leadIds = parseLeadIdsCsvQuery(req.query.lead_ids, 80);
+    const payload = await resolveCrmLedgerNetByLeadIdsPayload(req, leadIds, {
+      ledger_period_start: req.query.ledger_period_start,
+      assigned_to: req.query.assigned_to,
+      type: req.query.type,
     });
-    res.json({
-      ledger_net_by_lead: ledgerNetByLead,
-      kpi_ledger_period_start: ledgerPeriodStart,
+    res.json(payload);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** POST /crm/ledger-net-by-leads — batch lead_ids trong body (tránh URL quá dài). */
+r.post('/ledger-net-by-leads', async (req, res) => {
+  try {
+    const leadIds = parseLeadIdsFromBody(req.body, 500);
+    const payload = await resolveCrmLedgerNetByLeadIdsPayload(req, leadIds, {
+      ledger_period_start: req.body?.ledger_period_start,
+      assigned_to: req.body?.assigned_to,
+      type: req.body?.type,
     });
+    res.json(payload);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -6037,6 +6061,20 @@ function resolveCrmLeadsSkipDeadline(reqQuery, opts = {}) {
 function parseLeadIdsCsvQuery(raw, maxIds = 500) {
   if (raw == null || raw === '') return [];
   const parts = String(raw).split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
+  return parseLeadIdUuidList(parts, maxIds);
+}
+
+/** Parse `lead_ids` từ body POST (mảng hoặc CSV) — tối đa maxIds. */
+function parseLeadIdsFromBody(body, maxIds = 500) {
+  const raw = body?.lead_ids;
+  if (raw == null) return [];
+  const parts = Array.isArray(raw)
+    ? raw.map((x) => String(x).trim()).filter(Boolean)
+    : String(raw).split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
+  return parseLeadIdUuidList(parts, maxIds);
+}
+
+function parseLeadIdUuidList(parts, maxIds = 500) {
   const out = [];
   for (const p of parts) {
     if (!/^[0-9a-f-]{36}$/i.test(p)) continue;
@@ -7101,17 +7139,34 @@ function buildCrmDashboardMinimalKpis(type, totalItems, wonItemCount, totalValue
   };
 }
 
+async function resolveCrmLeadsDeadlinesMap(leadIds) {
+  if (!leadIds.length) return {};
+  const stubRows = leadIds.map((id) => ({ id }));
+  const enriched = await attachCrmNextOpenTaskDeadline(stubRows);
+  const deadlines = {};
+  for (const row of enriched) {
+    deadlines[String(row.id)] = row.crm_next_open_task_deadline ?? null;
+  }
+  return deadlines;
+}
+
 /** GET /crm/leads-deadlines — hạn task CRM mở theo lead_ids (nền sau bootstrap). */
 r.get('/leads-deadlines', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
   try {
-    const leadIds = parseLeadIdsCsvQuery(req.query.lead_ids, 500);
-    if (!leadIds.length) return res.json({ deadlines: {} });
-    const stubRows = leadIds.map((id) => ({ id }));
-    const enriched = await attachCrmNextOpenTaskDeadline(stubRows);
-    const deadlines = {};
-    for (const row of enriched) {
-      deadlines[String(row.id)] = row.crm_next_open_task_deadline ?? null;
-    }
+    // Giới hạn thấp — URL dài dễ vượt proxy (~2–8KB); client nên dùng POST.
+    const leadIds = parseLeadIdsCsvQuery(req.query.lead_ids, 80);
+    const deadlines = await resolveCrmLeadsDeadlinesMap(leadIds);
+    res.json({ deadlines });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** POST /crm/leads-deadlines — batch lead_ids trong body (tránh URL quá dài). */
+r.post('/leads-deadlines', async (req, res) => {
+  try {
+    const leadIds = parseLeadIdsFromBody(req.body, 500);
+    const deadlines = await resolveCrmLeadsDeadlinesMap(leadIds);
     res.json({ deadlines });
   } catch (e) {
     res.status(500).json({ error: e.message });

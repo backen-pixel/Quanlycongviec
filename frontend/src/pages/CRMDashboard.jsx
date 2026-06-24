@@ -377,22 +377,22 @@ async function fetchCrmKanbanRowsPage(apiClient, common, loadSpec = 'initial') {
   return { rows, nextOffset, total };
 }
 
-/** KPI sổ cái theo danh sách lead đã tải (batch 500 id/request). */
+/** Số lead_id tối đa mỗi request POST (tránh URL GET quá dài). */
+const CRM_LEAD_IDS_POST_BATCH = 500;
+
+/** KPI sổ cái theo danh sách lead đã tải (batch POST). */
 async function fetchCrmLedgerNetByLeadIds(apiClient, { type, leadIds, assigned_to }) {
   const ids = [...new Set((leadIds || []).map((id) => String(id)).filter(Boolean))];
   if (!ids.length) return { ledger_net_by_lead: {}, kpi_ledger_period_start: null };
-  const chunk = 500;
   const merged = {};
   let periodStart = null;
-  for (let i = 0; i < ids.length; i += chunk) {
-    const slice = ids.slice(i, i + chunk);
+  for (let i = 0; i < ids.length; i += CRM_LEAD_IDS_POST_BATCH) {
+    const slice = ids.slice(i, i + CRM_LEAD_IDS_POST_BATCH);
     const res = await apiClient
-      .get('/crm/ledger-net-by-leads', {
-        params: {
-          type,
-          lead_ids: slice.join(','),
-          ...(assigned_to ? { assigned_to } : {}),
-        },
+      .post('/crm/ledger-net-by-leads', {
+        type,
+        lead_ids: slice,
+        ...(assigned_to ? { assigned_to } : {}),
       })
       .catch(() => ({ data: {} }));
     Object.assign(merged, res.data?.ledger_net_by_lead || {});
@@ -425,10 +425,10 @@ async function enrichCrmKanbanRowsWithDeadlines(apiClient, rows) {
   const ids = [...new Set((rows || []).map((r) => String(r.id)).filter(Boolean))];
   if (!ids.length) return rows || [];
   const deadlineMap = {};
-  const chunk = 500;
-  for (let i = 0; i < ids.length; i += chunk) {
+  for (let i = 0; i < ids.length; i += CRM_LEAD_IDS_POST_BATCH) {
+    const slice = ids.slice(i, i + CRM_LEAD_IDS_POST_BATCH);
     const res = await apiClient
-      .get('/crm/leads-deadlines', { params: { lead_ids: ids.slice(i, i + chunk).join(',') } })
+      .post('/crm/leads-deadlines', { lead_ids: slice })
       .catch(() => ({ data: {} }));
     Object.assign(deadlineMap, res.data?.deadlines || {});
   }
@@ -1326,7 +1326,8 @@ export default function CRMDashboard() {
           if (c.fbPages) setFbPages(c.fbPages);
           if (Array.isArray(c.companies) && c.companies.length) setCompanies(c.companies);
           if (Array.isArray(c.users) && c.users.length) setUsers(c.users);
-          // Giữ firstLoading — thanh tiến trình chạy đến khi load() hoàn tất (stale-while-revalidate)
+          // Stale-while-revalidate: hiện Kanban từ cache ngay; đồng bộ ngầm vẫn chạy thanh tiến trình
+          setFirstLoading(false);
           lastHydratedCacheKeyRef.current = cacheKey;
           if (cached.isVeryFresh) {
             veryFreshCacheHit = true;
@@ -1337,12 +1338,12 @@ export default function CRMDashboard() {
       /* cache hydrate lỗi — fallback về fetch bình thường */
     }
     if (veryFreshCacheHit) {
-      // Cache rất tươi: vẫn chạy thanh đồng bộ tối thiểu, không gọi API
-      startCrmLoadProgress();
-      finishCrmLoadProgress(() => {
-        setFirstLoading(false);
+      // Cache rất tươi: thanh tiến trình tối thiểu, không gọi API
+      setSyncing(true);
+      setLastSyncAt(new Date());
+      crmLoadProgressCtrlRef.current?.start();
+      crmLoadProgressCtrlRef.current?.finish(() => {
         setSyncing(false);
-        setLastSyncAt(new Date());
       });
       return undefined;
     }
@@ -2366,16 +2367,29 @@ export default function CRMDashboard() {
 
   const crmMainContentLoading = firstLoading || syncing;
 
+  const crmKanbanHasData = useMemo(
+    () =>
+      stagesLead.length > 0
+      || stagesDeal.length > 0
+      || allLeads.length > 0
+      || allDeals.length > 0,
+    [stagesLead.length, stagesDeal.length, allLeads.length, allDeals.length],
+  );
+
+  /** Chỉ che Kanban bằng loader to khi chưa có dữ liệu; có cache thì hiện Kanban + badge đồng bộ */
+  const crmShowMainLoader = crmMainContentLoading && !crmKanbanHasData;
+
   const crmLoadProgressDisplay = (firstLoading || syncing)
     ? Math.max(0, Math.min(100, crmLoadProgress))
     : 0;
 
   const showNoPipelineMainViews = useMemo(
     () =>
+      !crmShowMainLoader &&
       !crmMainContentLoading &&
       companyHasNoPipeline &&
       (viewMode === 'kanban' || viewMode === 'list' || viewMode === 'planner' || viewMode === 'deadline' || viewMode === 'comments'),
-    [crmMainContentLoading, companyHasNoPipeline, viewMode],
+    [crmShowMainLoader, crmMainContentLoading, companyHasNoPipeline, viewMode],
   );
 
   const buildStagesParams = useCallback((type) => {
@@ -2408,12 +2422,11 @@ export default function CRMDashboard() {
     startCrmLoadProgress();
     const markLoadComplete = () => {
       if (isStale()) return;
-      finishCrmLoadProgress(() => {
-        if (isStale()) return;
-        setFirstLoading(false);
-        setSyncing(false);
-        setLastSyncAt(new Date());
-      });
+      // Tắt trạng thái ngay khi API xong — không chờ animation (tránh kẹt 100% khi load bị hủy)
+      setFirstLoading(false);
+      setSyncing(false);
+      setLastSyncAt(new Date());
+      finishCrmLoadProgress();
     };
     try {
       let resolvedCompanyId = filterCompany;
@@ -4717,7 +4730,7 @@ export default function CRMDashboard() {
           )}
         </div>
         <div className="flex items-center gap-1.5 shrink-0 ml-auto">
-          {firstLoading ? (
+          {crmShowMainLoader ? (
             <span className={`inline-flex items-center gap-1.5 shrink-0 rounded-full border border-violet-200/80 bg-violet-50/90 px-2.5 py-1 ${compactLeadUi ? 'text-[10px]' : 'text-xs'}`}>
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-60 animate-ping" />
@@ -5546,7 +5559,7 @@ export default function CRMDashboard() {
         )}
       </section>
 
-      {crmMainContentLoading ? (
+      {crmShowMainLoader ? (
         <CrmDashboardLoader
           progress={crmLoadProgressDisplay}
           pipelineType={pipelineType}
