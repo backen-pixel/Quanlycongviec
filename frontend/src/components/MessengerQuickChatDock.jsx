@@ -331,7 +331,7 @@ export default function MessengerQuickChatDock({
   const handleDockLeave = useCallback((e) => {
     if (dockPinned) return;
     const next = e?.relatedTarget;
-    if (next && dockRef.current?.contains(next)) return;
+    if (next instanceof Node && dockRef.current?.contains(next)) return;
     clearTimeout(leaveTimer.current);
     leaveTimer.current = setTimeout(() => {
       if (dockPinned || previewEngaged || expanded) return;
