@@ -1,3 +1,6 @@
+import { useEffect, useState } from 'react';
+import { isModuleIconDecoded, preloadModuleIcon } from '../lib/moduleIconPreload';
+
 const SIZE_MAP = {
   '2xs': { box: 'h-4 w-4', img: 'h-4 w-4', icon: 'h-2.5 w-2.5' },
   xs: { box: 'h-6 w-6', img: 'h-6 w-6', icon: 'h-3 w-3' },
@@ -9,6 +12,27 @@ const SIZE_MAP = {
 
 /** Icon thương hiệu module — PNG ưu tiên, fallback Lucide. */
 export default function ModuleBrandIcon({ mod, size = 'md', wrapClass = '', className = '' }) {
+  const url = mod?.imageUrl || '';
+  const [ready, setReady] = useState(() => isModuleIconDecoded(url));
+
+  useEffect(() => {
+    if (!url) {
+      setReady(true);
+      return;
+    }
+    if (isModuleIconDecoded(url)) {
+      setReady(true);
+      return;
+    }
+    let cancelled = false;
+    void preloadModuleIcon(url).then(() => {
+      if (!cancelled) setReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [url]);
+
   if (!mod) return null;
   const s = SIZE_MAP[size] || SIZE_MAP.md;
   const Icon = mod.Icon;
@@ -19,8 +43,11 @@ export default function ModuleBrandIcon({ mod, size = 'md', wrapClass = '', clas
         <img
           src={mod.imageUrl}
           alt=""
-          className={`${s.img} object-contain drop-shadow-sm`}
+          decoding="async"
           draggable={false}
+          className={`${s.img} object-contain drop-shadow-sm ${
+            ready ? 'module-brand-icon-ready' : 'module-brand-icon-loading'
+          }`}
         />
       </div>
     );

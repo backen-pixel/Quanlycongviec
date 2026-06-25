@@ -25,6 +25,8 @@ import { useModuleAccess } from '../shared/context/ModuleAccessContext';
 import { useSidebarUnreadBadges } from '../shared/context/UnreadBadgesContext';
 import AppSwitcherPanel, { AppSwitcherButton } from './AppSwitcherPanel';
 import SidebarModuleCycleButton from './SidebarModuleCycleButton';
+import { APP_MODULE_DEFINITIONS } from '../lib/appSwitcherModules';
+import { preloadModuleIconsFromModules } from '../lib/moduleIconPreload';
 
 // Reorganized menu structure - 4 groups
 const MENU_GROUPS = [
@@ -545,6 +547,10 @@ export default function Sidebar() {
   const { user, logout, socket } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+
+  useEffect(() => {
+    void preloadModuleIconsFromModules(APP_MODULE_DEFINITIONS);
+  }, []);
 
   // Auto-collapse sidebar on quotation form pages (need more screen space)
   useEffect(() => {
