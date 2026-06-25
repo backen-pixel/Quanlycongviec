@@ -16,15 +16,15 @@ const { supabase } = require('../src/config/supabase');
 const { buildStandardApkFilename } = require('../src/helpers/appReleaseFilename');
 
 const APP_KEY = 'sx-mobile';
-const VERSION = process.env.PUB_VERSION || '1.0.58';
-const VERSION_CODE = parseInt(process.env.PUB_CODE || '61', 10);
+const VERSION = process.env.PUB_VERSION || '1.0.64';
+const VERSION_CODE = parseInt(process.env.PUB_CODE || '67', 10);
 const PUBLIC_HOST = (process.env.PUB_HOST || 'https://tubep-backend.onrender.com').replace(/\/$/, '');
 const FILE_NAME = buildStandardApkFilename(APP_KEY, VERSION, VERSION_CODE, { release: true });
 const APK = path.resolve(__dirname, `../uploads/app-releases/sx-mobile/${FILE_NAME}`);
 const FILE_URL = `${PUBLIC_HOST}/uploads/app-releases/sx-mobile/${FILE_NAME}`;
 const RELEASE_NOTES =
   process.env.PUB_NOTES
-  || 'Chia sẻ ảnh/PDF từ app khác vào chat nội bộ (Share → Quản lý sản xuất).';
+  || 'Chat đồng bộ CRM v2: mentions, tìm kiếm, đã xem, voice, file, reactions, group call. Bong bóng chat native.';
 
 async function uploadApkToStorage() {
   console.log('\n>> Fallback: upload Supabase Storage…');

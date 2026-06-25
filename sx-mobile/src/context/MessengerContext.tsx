@@ -14,6 +14,7 @@ import {
   mapMessageRow,
   markMessengerGroupRead,
   patchThreadFromMessage,
+  resolveMediaUrl,
   sendMessengerText,
 } from '../lib/messengerApi';
 import { fetchUserPresence, type UserPresence } from '../lib/messengerPresence';
@@ -43,11 +44,19 @@ type MessengerCtx = {
   unreadTotal: number;
   refreshThreads: (silent?: boolean) => Promise<void>;
   markThreadRead: (groupId: string) => Promise<void>;
-  sendText: (groupId: string, content: string, replyTo?: string | null) => Promise<MessengerMessage>;
+  sendText: (
+    groupId: string,
+    content: string,
+    opts?: { replyTo?: string | null; mentionUserIds?: string[] },
+  ) => Promise<MessengerMessage>;
   loadMessages: (groupId: string) => Promise<MessengerMessage[]>;
   subscribeGroupMessage: (fn: GroupMessageListener) => () => void;
   subscribeMessengerMeta: (fn: MessengerMetaListener) => () => void;
   upsertLocalMessage: (groupId: string, message: MessengerMessage) => void;
+  patchThreadMeta: (
+    groupId: string,
+    patch: { name?: string | null; avatarUrl?: string | null },
+  ) => void;
   getPeerPresence: (peerId: string) => UserPresence | null;
   activeGroupId: string | null;
   setActiveGroupId: (groupId: string | null) => void;
@@ -138,6 +147,28 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
     }
   }, [token, myUserId, joinMessengerGroups, syncPresence]);
 
+  const patchThreadMeta = useCallback((
+    groupId: string,
+    patch: { name?: string | null; avatarUrl?: string | null },
+  ) => {
+    setThreads((prev) =>
+      prev.map((t) => {
+        if (t.id !== groupId) return t;
+        return {
+          ...t,
+          name:
+            patch.name != null && patch.name.trim()
+              ? patch.name.trim()
+              : t.name,
+          avatarUrl:
+            patch.avatarUrl !== undefined
+              ? resolveMediaUrl(patch.avatarUrl)
+              : t.avatarUrl,
+        };
+      }),
+    );
+  }, []);
+
   const upsertLocalMessage = useCallback((groupId: string, message: MessengerMessage) => {
     setThreads((prev) => {
       const idx = prev.findIndex((t) => t.id === groupId);
@@ -206,7 +237,8 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
               ? {
                   ...t,
                   name: evt.name != null && evt.name.trim() ? evt.name : t.name,
-                  avatarUrl: evt.avatar !== undefined ? evt.avatar : t.avatarUrl,
+                  avatarUrl:
+                    evt.avatar !== undefined ? resolveMediaUrl(evt.avatar) : t.avatarUrl,
                 }
               : t,
           ),
@@ -238,8 +270,12 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const sendText = useCallback(async (groupId: string, content: string, replyTo?: string | null) => {
-    const message = await sendMessengerText(groupId, content, replyTo);
+  const sendText = useCallback(async (
+    groupId: string,
+    content: string,
+    opts?: { replyTo?: string | null; mentionUserIds?: string[] },
+  ) => {
+    const message = await sendMessengerText(groupId, content, opts);
     upsertLocalMessage(groupId, message);
     return message;
   }, [upsertLocalMessage]);
@@ -278,6 +314,7 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
       subscribeGroupMessage,
       subscribeMessengerMeta,
       upsertLocalMessage,
+      patchThreadMeta,
       getPeerPresence,
       activeGroupId,
       setActiveGroupId,
@@ -294,6 +331,7 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
       subscribeGroupMessage,
       subscribeMessengerMeta,
       upsertLocalMessage,
+      patchThreadMeta,
       getPeerPresence,
       activeGroupId,
     ],

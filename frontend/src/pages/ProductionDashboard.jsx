@@ -19,6 +19,7 @@ import {
 } from '../lib/crossWorkshopProduction';
 import { formatVND, formatDate } from '../lib/utils';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
+import { resolveSxProjectLeadId, partitionSxProjectsByCommentSource } from '../lib/sxProjectComments';
 import {
   getWorkshopDateRange, WS_TIME_PRESETS,
   workshopCreatedInRange, fetchWorkshopProjectPages,
@@ -190,13 +191,6 @@ const SX_SORT_OPTIONS = [
 const SX_SORT_OPTIONS_VISIBLE = HIDE_PRODUCTION_DEAL_VALUES
   ? SX_SORT_OPTIONS.filter((o) => o.id !== 'value_desc' && o.id !== 'value_asc')
   : SX_SORT_OPTIONS;
-
-function resolveSxProjectLeadId(project) {
-  if (project?.crm_lead_id) return String(project.crm_lead_id);
-  const deals = Array.isArray(project?.crm_deals) ? project.crm_deals : [];
-  const deal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0];
-  return deal?.id ? String(deal.id) : null;
-}
 
 function projectMatchesDealCompanyExternalFilter(project, externalFilter) {
   if (!externalFilter) return true;
@@ -1192,13 +1186,40 @@ export default function ProductionDashboard() {
       return;
     }
     try {
-      const chunks = [];
-      for (let i = 0; i < uniqIds.length; i += 200) chunks.push(uniqIds.slice(i, i + 200));
-      const maps = await Promise.all(
-        chunks.map((chunk) => api.get(`/projects/comments/index?project_ids=${chunk.join(',')}`).then((r) => r.data || {}).catch(() => ({}))),
-      );
+      const itemsById = new Map();
+      for (const col of filteredKanbanPipelineRef.current || []) {
+        for (const it of col.items || []) {
+          if (it?.id) itemsById.set(String(it.id), it);
+        }
+      }
+      const items = uniqIds.map((pid) => itemsById.get(pid)).filter(Boolean);
+      const { projectOnlyIds, leadIds, leadIdToProjectId } = partitionSxProjectsByCommentSource(items);
       const merged = {};
-      maps.forEach((m) => Object.assign(merged, m || {}));
+
+      const fetchIndexChunks = async (urlPrefix, idList) => {
+        const out = {};
+        const chunks = [];
+        for (let i = 0; i < idList.length; i += 200) chunks.push(idList.slice(i, i + 200));
+        const maps = await Promise.all(
+          chunks.map((chunk) => api.get(`${urlPrefix}${chunk.join(',')}`).then((r) => r.data || {}).catch(() => ({}))),
+        );
+        maps.forEach((m) => Object.assign(out, m || {}));
+        return out;
+      };
+
+      if (projectOnlyIds.length) {
+        Object.assign(merged, await fetchIndexChunks('/projects/comments/index?project_ids=', projectOnlyIds));
+      }
+
+      if (leadIds.length) {
+        const leadIndex = await fetchIndexChunks('/crm/lead-comments/index?lead_ids=', leadIds);
+        for (const leadId of leadIds) {
+          const meta = leadIndex[leadId] || leadIndex[String(leadId)];
+          const pid = leadIdToProjectId[leadId];
+          if (pid && meta) merged[pid] = meta;
+        }
+      }
+
       setCommentsIndex(merged);
     } catch {
       setCommentsIndex({});
@@ -1214,17 +1235,30 @@ export default function ProductionDashboard() {
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return;
-    const bumpIndex = (payload) => {
-      const pid = payload?.project_id;
+
+    const resolveProjectId = (payload, fromLead = false) => {
+      if (!fromLead) return payload?.project_id ? String(payload.project_id) : null;
+      const lid = payload?.lead_id;
+      if (!lid) return null;
+      for (const col of filteredKanbanPipelineRef.current || []) {
+        for (const it of col.items || []) {
+          if (resolveSxProjectLeadId(it) === String(lid) && it?.id) return String(it.id);
+        }
+      }
+      return null;
+    };
+
+    const bumpIndex = (payload, fromLead = false) => {
+      const pid = resolveProjectId(payload, fromLead);
       if (!pid) return;
       const action = payload?.action;
       if (action === 'deleted') {
         setCommentsIndex((prev) => {
-          const cur = prev[String(pid)];
+          const cur = prev[pid];
           if (!cur) return prev;
           return {
             ...prev,
-            [String(pid)]: {
+            [pid]: {
               ...cur,
               count: Math.max(0, (cur.count || 1) - 1),
             },
@@ -1236,18 +1270,25 @@ export default function ProductionDashboard() {
       if (!c) return;
       setCommentsIndex((prev) => ({
         ...prev,
-        [String(pid)]: {
-          count: action === 'created' ? ((prev[String(pid)]?.count || 0) + 1) : (prev[String(pid)]?.count || 1),
+        [pid]: {
+          count: action === 'created' ? ((prev[pid]?.count || 0) + 1) : (prev[pid]?.count || 1),
           last_at: c.created_at || new Date().toISOString(),
           last_user_id: c.user_id ?? null,
         },
       }));
     };
-    socket.on('project:comment', bumpIndex);
-    socket.on('project:comment:deleted', (p) => bumpIndex({ ...p, action: 'deleted' }));
+
+    const onProjectComment = (p) => bumpIndex(p, false);
+    const onLeadComment = (p) => bumpIndex(p, true);
+    const onProjectDeleted = (p) => bumpIndex({ ...p, action: 'deleted' }, false);
+
+    socket.on('project:comment', onProjectComment);
+    socket.on('project:comment:deleted', onProjectDeleted);
+    socket.on('lead:comment', onLeadComment);
     return () => {
-      socket.off('project:comment', bumpIndex);
-      socket.off('project:comment:deleted', bumpIndex);
+      socket.off('project:comment', onProjectComment);
+      socket.off('project:comment:deleted', onProjectDeleted);
+      socket.off('lead:comment', onLeadComment);
     };
   }, []);
 
@@ -1280,7 +1321,12 @@ export default function ProductionDashboard() {
     if (!v || !it) return;
     setKanbanCommentPosting(true);
     try {
-      await api.post(`/projects/${it.id}/comments`, { content: v });
+      const leadId = resolveSxProjectLeadId(it);
+      if (leadId) {
+        await api.post(`/crm/leads/${leadId}/comments`, { body: v });
+      } else {
+        await api.post(`/projects/${it.id}/comments`, { content: v });
+      }
       setKanbanCommentItem(null);
       setKanbanCommentBody('');
       setCommentsIndex((prev) => ({
@@ -2704,7 +2750,7 @@ export default function ProductionDashboard() {
         </div>
       )}
 
-      {/* Bình luận nhanh trên thẻ Kanban — gửi vào /projects/:id/comments */}
+      {/* Bình luận nhanh — deal CRM → crm_lead_comments; dự án độc lập → project_comments */}
       {kanbanCommentItem && (
         <div
           className="fixed inset-0 z-[70] flex items-start justify-center bg-black/50 p-4 pt-[10vh]"

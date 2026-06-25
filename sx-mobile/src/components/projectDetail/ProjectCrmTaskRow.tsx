@@ -7,6 +7,7 @@ import {
   Alert,
   FlatList,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -33,6 +34,7 @@ import {
 import { Radii, Spacing } from '../../theme';
 import type { CrmTask, PersonRef } from '../../types';
 import TapHighlight from '../TapHighlight';
+import { resolveMediaUrl } from '../../lib/mediaUtils';
 
 type Props = {
   task: CrmTask;
@@ -740,7 +742,14 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
                 ) : attachments.length ? (
                   <ScrollView style={{ maxHeight: 180 }}>
                     {attachments.map((a) => (
-                      <View key={a.id} style={styles.attRow}>
+                      <TapHighlight
+                        key={a.id}
+                        style={styles.attRow}
+                        onPress={() => {
+                          const url = resolveMediaUrl(a.file_url);
+                          if (url) void Linking.openURL(url);
+                        }}
+                      >
                         <Ionicons
                           name={a.doc_type === 'task_note' ? 'document-text-outline' : 'document-outline'}
                           size={18}
@@ -762,7 +771,7 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
                         >
                           <Ionicons name="trash-outline" size={16} color={colors.danger} />
                         </TapHighlight>
-                      </View>
+                      </TapHighlight>
                     ))}
                   </ScrollView>
                 ) : (

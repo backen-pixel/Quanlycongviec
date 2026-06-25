@@ -12,6 +12,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ProductionPipelineStepper from '../components/projectDetail/ProductionPipelineStepper';
 import ProjectCrmTaskRow from '../components/projectDetail/ProjectCrmTaskRow';
+import ProjectDocumentsTab from '../components/projectDetail/ProjectDocumentsTab';
+import ProjectDriveTab from '../components/projectDetail/ProjectDriveTab';
+import ProjectMembersTab from '../components/projectDetail/ProjectMembersTab';
 import TapHighlight from '../components/TapHighlight';
 import { formatApiError } from '../api/client';
 import { useNotifications } from '../context/NotificationContext';
@@ -32,7 +35,7 @@ import { formatMoneyAmount, Radii, Spacing, getTaskProgressColor } from '../them
 import type { CrmTask, ProductionProjectDetail, ProjectActivity } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ProjectDetail'>;
-type TabKey = 'tasks' | 'info' | 'team' | 'schedule';
+type TabKey = 'tasks' | 'documents' | 'drive' | 'info' | 'team' | 'schedule';
 
 function formatDate(value?: string | null): string {
   if (!value) return '';
@@ -183,12 +186,12 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         progressFill: { height: '100%', borderRadius: Radii.full },
         progressPct: { color: colors.textFaint, fontSize: 11, fontWeight: '700', marginTop: 6, textAlign: 'right' },
         tabs: {
-          flexDirection: 'row',
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: colors.border,
           backgroundColor: colors.bgElevated,
         },
-        tabBtn: { flex: 1, paddingVertical: 12, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
+        tabsInner: { flexDirection: 'row', paddingHorizontal: 4 },
+        tabBtn: { paddingVertical: 12, paddingHorizontal: 14, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
         tabBtnActive: { borderBottomColor: colors.primary },
         tabText: { color: colors.textMuted, fontSize: 12, fontWeight: '700' },
         tabTextActive: { color: colors.primary },
@@ -309,11 +312,14 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         </View>
       ) : null}
 
-      <ScrollView
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={colors.primary} />}
-        contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
-      >
-        <View style={styles.content}>
+      <View style={{ flex: 1 }}>
+        <ScrollView
+          scrollEnabled={tab === 'tasks' || tab === 'info' || tab === 'schedule'}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={colors.primary} />}
+          contentContainerStyle={{ paddingBottom: tab === 'documents' || tab === 'drive' || tab === 'team' ? 0 : insets.bottom + 24 }}
+          nestedScrollEnabled
+        >
+          <View style={styles.content}>
           <ProductionPipelineStepper
             stages={project?.sxKanbanStages || []}
             currentStageId={project?.sx_kanban_column_id}
@@ -347,9 +353,16 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           </View>
         </View>
 
-        <View style={styles.tabs}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.tabs}
+          contentContainerStyle={styles.tabsInner}
+        >
           {([
             ['tasks', `Công việc${taskTotal ? ` (${taskTotal})` : ''}`],
+            ['documents', `Tài liệu${docCount ? ` (${docCount})` : ''}`],
+            ['drive', 'Drive'],
             ['info', 'Thông tin'],
             ['team', 'Đội ngũ'],
             ['schedule', 'Lịch'],
@@ -362,7 +375,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
               <Text style={[styles.tabText, tab === key && styles.tabTextActive]}>{label}</Text>
             </TapHighlight>
           ))}
-        </View>
+        </ScrollView>
 
         <View style={{ padding: Spacing.lg }}>
           {tab === 'tasks' && (
@@ -411,25 +424,6 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
             </View>
           )}
 
-          {tab === 'team' && project && (
-            <View style={styles.infoCard}>
-              {[
-                ['Kinh doanh', project.sales_person?.full_name],
-                ['QL dự án', project.project_manager?.full_name],
-                ['Giám sát', project.supervisor?.full_name],
-                ['Phụ trách SX', project.production_person?.full_name || project.production_person_name],
-                ['Vận chuyển', project.shipping_person?.full_name],
-                ['CSKH', project.care_person?.full_name],
-                ['CRM phụ trách', project.crmDeals?.[0]?.assignee?.full_name || project.crmDeals?.[0]?.lead_owner?.full_name],
-              ].map(([label, name]) => (
-                <View key={label} style={styles.personRow}>
-                  <Text style={styles.personLabel}>{label}</Text>
-                  <Text style={styles.personName}>{name || '— Chưa phân công —'}</Text>
-                </View>
-              ))}
-            </View>
-          )}
-
           {tab === 'schedule' && (
             <>
               {project?.production_deadline ? (
@@ -462,7 +456,30 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
             </>
           )}
         </View>
-      </ScrollView>
+        </ScrollView>
+
+        {tab === 'documents' ? (
+          <View style={{ flex: 1, minHeight: 320 }}>
+            <ProjectDocumentsTab
+              projectId={projectId}
+              dealId={dealId}
+              sharedDocuments={project?.sharedDocuments}
+            />
+          </View>
+        ) : null}
+
+        {tab === 'drive' ? (
+          <View style={{ flex: 1, minHeight: 320 }}>
+            <ProjectDriveTab projectId={projectId} />
+          </View>
+        ) : null}
+
+        {tab === 'team' && project ? (
+          <View style={{ flex: 1, minHeight: 320 }}>
+            <ProjectMembersTab project={project} dealId={dealId} />
+          </View>
+        ) : null}
+      </View>
     </View>
   );
 }

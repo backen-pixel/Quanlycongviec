@@ -7,7 +7,9 @@ import LoginScreen from '../screens/LoginScreen';
 import ChatDetailInfoScreen from '../screens/ChatDetailInfoScreen';
 import ChatDetailScreen from '../screens/ChatDetailScreen';
 import MessengerForwardScreen from '../screens/MessengerForwardScreen';
+import CreateGroupChatScreen from '../screens/CreateGroupChatScreen';
 import ShareToChatScreen from '../screens/ShareToChatScreen';
+import BubbleChatScreen from '../screens/BubbleChatScreen';
 import MessagesScreen from '../screens/MessagesScreen';
 import ProjectDetailScreen from '../screens/ProjectDetailScreen';
 import UpdateFromServerScreen from '../screens/UpdateFromServerScreen';
@@ -18,7 +20,18 @@ export type RootStackParamList = {
   Main: undefined;
   ProjectDetail: { projectId: string };
   Messages: { tab?: 'chats' | 'calls' } | undefined;
-  ChatDetail: { threadId: string; title: string };
+  ChatDetail: {
+    threadId: string;
+    title: string;
+    peerId?: string | null;
+    openSearch?: boolean;
+    fromBubble?: boolean;
+  };
+  BubbleChat: { threadId: string; title: string };
+  CreateGroupChat: {
+    preselectedUserIds?: string[];
+    suggestedName?: string;
+  };
   MessengerForward: {
     excludeGroupId: string;
     sourceTitle: string;
@@ -30,6 +43,7 @@ export type RootStackParamList = {
     avatarColor?: string;
     avatarUrl?: string | null;
     isDirect?: boolean;
+    peerId?: string | null;
     messagesJson: string;
   };
   UpdateFromServer: undefined;
@@ -76,6 +90,15 @@ export default function RootNavigator() {
             options={{ animation: 'slide_from_right' }}
           />
           <Stack.Screen
+            name="BubbleChat"
+            component={BubbleChatScreen}
+            options={{
+              presentation: 'transparentModal',
+              animation: 'none',
+              contentStyle: { backgroundColor: 'transparent' },
+            }}
+          />
+          <Stack.Screen
             name="MessengerForward"
             component={MessengerForwardScreen}
             options={{ animation: 'slide_from_bottom' }}
@@ -83,6 +106,11 @@ export default function RootNavigator() {
           <Stack.Screen
             name="ChatDetailInfo"
             component={ChatDetailInfoScreen}
+            options={{ animation: 'slide_from_right' }}
+          />
+          <Stack.Screen
+            name="CreateGroupChat"
+            component={CreateGroupChatScreen}
             options={{ animation: 'slide_from_right' }}
           />
           <Stack.Screen

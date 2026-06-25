@@ -1,4 +1,5 @@
 import { api } from '../api/client';
+import { formatActivityAgo } from './media';
 
 export type UserPresence = {
   online: boolean;
@@ -18,15 +19,14 @@ export async function fetchUserPresence(userIds: string[]): Promise<Record<strin
   }
 }
 
+/** Online: chấm xanh trên avatar; offline: nhãn thời gian hoạt động. */
 export function formatPresenceLabel(p?: UserPresence | null): string {
-  if (!p) return 'Offline';
-  if (p.online) return 'Đang hoạt động';
-  if (p.last_ping_at) {
-    const diff = Date.now() - new Date(p.last_ping_at).getTime();
-    if (Number.isFinite(diff) && diff < 3600000) {
-      const mins = Math.max(1, Math.floor(diff / 60000));
-      return `Offline · ${mins} phút trước`;
-    }
-  }
-  return 'Offline';
+  if (!p || p.online) return '';
+  return formatActivityAgo(p.last_ping_at);
+}
+
+/** Header cuộc trò chuyện 1-1: online → "Đang hoạt động", offline → thời gian hoạt động. */
+export function formatChatHeaderPresenceLabel(p?: UserPresence | null): string {
+  if (p?.online) return 'Đang hoạt động';
+  return formatActivityAgo(p?.last_ping_at) || 'Offline';
 }

@@ -530,7 +530,7 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
             disabled={!hasReadItems}
             android_ripple={{ color: colors.danger + '33', borderless: false }}
           >
-            {({ pressed }) => (
+            {({ pressed }: { pressed: boolean }) => (
               <Text
                 style={[
                   styles.footerBtnDangerText,

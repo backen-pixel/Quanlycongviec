@@ -112,3 +112,24 @@ export function subscribeLockScreenCallAccept(handler: (callId: string) => void)
   });
   return () => sub.remove();
 }
+
+export function subscribeIncomingCallPush(
+  handler: (payload: import('./incomingCallNotifications').IncomingCallPayload) => void,
+): () => void {
+  if (!emitter) return () => {};
+  const sub = emitter.addListener('IncomingCallPush', (e: Record<string, unknown>) => {
+    const callId = String(e.callId || '').trim();
+    const fromUserId = String(e.fromUserId || '').trim();
+    if (!callId || !fromUserId) return;
+    handler({
+      callId,
+      fromUserId,
+      fromName: typeof e.fromName === 'string' ? e.fromName : undefined,
+      kind: typeof e.kind === 'string' ? e.kind : 'audio',
+      isGroup: e.isGroup === true || e.isGroup === 'true',
+      groupId: typeof e.groupId === 'string' ? e.groupId : undefined,
+      groupName: typeof e.groupName === 'string' ? e.groupName : undefined,
+    });
+  });
+  return () => sub.remove();
+}

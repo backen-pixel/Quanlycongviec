@@ -23,7 +23,7 @@
     },
     "android": {
       "package": "vn.tubeppro.crmobilev2",
-      "versionCode": 94,
+      "versionCode": 95,
       "edgeToEdgeEnabled": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

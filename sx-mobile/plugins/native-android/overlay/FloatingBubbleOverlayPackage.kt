@@ -1,4 +1,4 @@
-package vn.tubeppro.sxmobile.overlay
+﻿package vn.tubeppro.sxmobile.overlay
 
 import com.facebook.react.ReactPackage
 import com.facebook.react.bridge.NativeModule

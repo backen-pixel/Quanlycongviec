@@ -8,9 +8,11 @@ import TapHighlight from '../TapHighlight';
 
 import MessengerAvatar from './MessengerAvatar';
 
-import { useCall } from '../../calling';
+import { useCall } from '../../context/CallContext';
 
 import { useTheme } from '../../context/ThemeContext';
+
+import { fetchMessengerGroupDetail } from '../../lib/messengerApi';
 
 import { getMessengerColors } from '../../lib/messengerTheme';
 
@@ -43,7 +45,7 @@ type Props = {
   onBack: () => void;
 
   onOpenDetails: () => void;
-
+  onSearch?: () => void;
 };
 
 
@@ -74,21 +76,23 @@ export default function ChatHeader({
 
   onOpenDetails,
 
+  onSearch,
+
 }: Props) {
 
   const { colors, isDark } = useTheme();
 
   const mc = getMessengerColors(colors, isDark);
 
-  const { startCall, session } = useCall();
+  const { startCall, startVideoCall, startGroupCall, status: callStatus } = useCall();
 
   const [calling, setCalling] = useState(false);
 
-  const busy = !!session && session.state !== 'IDLE';
 
-  const beginCall = async (media: 'audio' | 'video') => {
 
-    if (busy || calling) {
+  const onCall = async () => {
+
+    if (callStatus !== 'idle' || calling) {
 
       Alert.alert('Cuộc gọi', 'Đang có cuộc gọi khác.');
 
@@ -96,17 +100,27 @@ export default function ChatHeader({
 
     }
 
-    if (!isDirect) {
+    if (isDirect) {
 
-      Alert.alert('Cuộc gọi nhóm', 'Cuộc gọi nhóm tạm thời chưa khả dụng.');
+      if (!peerId) {
 
-      return;
+        Alert.alert('Cuộc gọi', 'Không xác định được người nhận.');
 
-    }
+        return;
 
-    if (!peerId) {
+      }
 
-      Alert.alert('Cuộc gọi', 'Không xác định được người nhận.');
+      setCalling(true);
+
+      try {
+
+        await startCall({ id: String(peerId), name: displayName, avatar: avatarUrl || null });
+
+      } finally {
+
+        setCalling(false);
+
+      }
 
       return;
 
@@ -116,7 +130,27 @@ export default function ChatHeader({
 
     try {
 
-      await startCall({ id: String(peerId), name: displayName, avatar: avatarUrl || null }, media);
+      const detail = await fetchMessengerGroupDetail(threadId);
+
+      const members = (detail.members || [])
+
+        .filter((m) => String(m.id) !== String(myUserId))
+
+        .map((m) => ({ id: m.id, name: m.name, avatar: m.avatar }));
+
+      if (!members.length) {
+
+        Alert.alert('Cuộc gọi nhóm', 'Nhóm không có thành viên khác.');
+
+        return;
+
+      }
+
+      await startGroupCall({ id: threadId, name: displayName, members });
+
+    } catch {
+
+      Alert.alert('Cuộc gọi nhóm', 'Không thể bắt đầu cuộc gọi nhóm.');
 
     } finally {
 
@@ -126,9 +160,44 @@ export default function ChatHeader({
 
   };
 
-  const onCall = () => beginCall('audio');
 
-  const onVideoCall = () => beginCall('video');
+
+  const onVideoCall = async () => {
+    if (callStatus !== 'idle' || calling) {
+      Alert.alert('Cuộc gọi', 'Đang có cuộc gọi khác.');
+      return;
+    }
+    if (isDirect) {
+      if (!peerId) {
+        Alert.alert('Gọi video', 'Không xác định được người nhận.');
+        return;
+      }
+      setCalling(true);
+      try {
+        await startVideoCall({ id: String(peerId), name: displayName, avatar: avatarUrl || null });
+      } finally {
+        setCalling(false);
+      }
+      return;
+    }
+
+    setCalling(true);
+    try {
+      const detail = await fetchMessengerGroupDetail(threadId);
+      const members = (detail.members || [])
+        .filter((m) => String(m.id) !== String(myUserId))
+        .map((m) => ({ id: m.id, name: m.name, avatar: m.avatar }));
+      if (!members.length) {
+        Alert.alert('Cuộc gọi nhóm', 'Nhóm không có thành viên khác.');
+        return;
+      }
+      await startGroupCall({ id: threadId, name: displayName, members }, 'video');
+    } catch {
+      Alert.alert('Cuộc gọi nhóm', 'Không thể bắt đầu cuộc gọi video nhóm.');
+    } finally {
+      setCalling(false);
+    }
+  };
 
 
 
@@ -196,28 +265,11 @@ export default function ChatHeader({
 
         name: { color: colors.text, fontSize: 16, fontWeight: '800' },
 
-        statusRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
-
-        statusDot: {
-
-          width: 6,
-
-          height: 6,
-
-          borderRadius: 3,
-
-          backgroundColor: online ? '#22C55E' : colors.textFaint,
-
-        },
-
         status: {
-
-          color: online ? mc.online : colors.textMuted,
-
+          color: colors.textMuted,
           fontSize: 11,
-
           fontWeight: '600',
-
+          marginTop: 2,
         },
 
         actions: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingRight: 2 },
@@ -270,21 +322,20 @@ export default function ChatHeader({
 
           avatarUrl={avatarUrl}
 
-          online={online}
-
         />
 
         <View style={styles.body}>
 
           <Text style={styles.name} numberOfLines={1}>{displayName}</Text>
 
-          <View style={styles.statusRow}>
-
-            <View style={styles.statusDot} />
-
-            <Text style={styles.status} numberOfLines={1}>{statusLabel}</Text>
-
-          </View>
+          {statusLabel ? (
+            <Text
+              style={[styles.status, online && { color: mc.online }]}
+              numberOfLines={1}
+            >
+              {statusLabel}
+            </Text>
+          ) : null}
 
         </View>
 
@@ -308,11 +359,17 @@ export default function ChatHeader({
 
         </TapHighlight>
 
-        <TapHighlight style={styles.callBtn} onPress={onVideoCall}>
+        <TapHighlight style={styles.callBtn} onPress={onVideoCall} disabled={calling}>
 
           <Ionicons name="videocam" size={18} color={mc.accent} />
 
         </TapHighlight>
+
+        {onSearch ? (
+          <TapHighlight style={styles.callBtn} onPress={onSearch}>
+            <Ionicons name="search" size={18} color={mc.accent} />
+          </TapHighlight>
+        ) : null}
 
         <TapHighlight style={styles.callBtn} onPress={onOpenDetails}>
 

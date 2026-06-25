@@ -35,6 +35,7 @@ import FacebookChatTab from '../components/FacebookChatTab';
 import ZaloChatTab from '../components/ZaloChatTab';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
+import CrmLeadDeadlineOverview from '../components/CrmLeadDeadlineOverview';
 import Modal from '../components/Modal';
 import DealCrossScoresPanel from '../components/DealCrossScoresPanel';
 import LeadKpiLedgerPanel from '../components/LeadKpiLedgerPanel';
@@ -3566,6 +3567,10 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
           </div>
         )}
       </div>
+      )}
+
+      {!lead?.stage?.is_won && !lead?.stage?.counts_as_completed_revenue && (
+        <CrmLeadDeadlineOverview lead={lead} />
       )}
 
       {!lead?.stage?.is_won && !lead?.stage?.counts_as_completed_revenue && (
