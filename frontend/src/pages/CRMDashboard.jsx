@@ -81,6 +81,7 @@ import { resolveMentionIdsFromContent } from '../lib/crmCommentMentions';
 import { KanbanBoardEdgeScrollChrome } from '../lib/kanbanEdgeScrollControls';
 import { CrmDashboardLoader, CrmDashboardLoaderCompact } from '../components/CrmDashboardLoader';
 import { createCrmLoadProgressController } from '../lib/crmDashboardLoadProgress';
+import { isClickOutside } from '../lib/domUtils';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
 
@@ -2423,15 +2424,13 @@ export default function CRMDashboard() {
     const markLoadComplete = () => {
       if (isStale()) return;
       const mySeq = seq;
-      finishCrmLoadProgress();
-      // Giữ thanh loading tối thiểu ~1.2s để user nhìn thấy tiến trình
-      const minVisibleMs = 1200;
-      window.setTimeout(() => {
+      // Ẩn loader sau khi thanh chạy mượt tới 100% (controller giữ tối thiểu ~1.2s trước giai đoạn kết thúc)
+      finishCrmLoadProgress(() => {
         if (loadSeqRef.current !== mySeq) return;
         setFirstLoading(false);
         setSyncing(false);
         setLastSyncAt(new Date());
-      }, minVisibleMs);
+      });
     };
     try {
       let resolvedCompanyId = filterCompany;
@@ -3614,7 +3613,7 @@ export default function CRMDashboard() {
   useEffect(() => {
     if (!showKanbanSettings) return undefined;
     const onDocClick = (e) => {
-      if (kanbanSettingsRef.current && !kanbanSettingsRef.current.contains(e.target)) {
+      if (isClickOutside(kanbanSettingsRef.current, e)) {
         setShowKanbanSettings(false);
       }
     };
@@ -3625,7 +3624,7 @@ export default function CRMDashboard() {
   useEffect(() => {
     if (!showOverduePopover) return undefined;
     const onDocClick = (e) => {
-      if (overduePopoverRef.current && !overduePopoverRef.current.contains(e.target)) {
+      if (isClickOutside(overduePopoverRef.current, e)) {
         setShowOverduePopover(false);
       }
     };
@@ -4919,7 +4918,7 @@ export default function CRMDashboard() {
                 onClick={() => setShowKanbanSettings((v) => !v)}
                 className={`${ctrlH} px-2.5 rounded-lg ${ctrlTxt} font-medium flex items-center gap-1 cursor-pointer transition-colors border shrink-0 ${
                   showKanbanSettings || kanbanColumnScrollMode === 'per-column'
-                    ? 'bg-violet-50 text-violet-700 border-violet-300'
+                    ? 'bg-white text-violet-700 border-violet-400 shadow-sm'
                     : 'bg-white text-slate-600 border-gray-200 hover:bg-gray-50'
                 }`}
                 title="Tùy chỉnh hiển thị"
@@ -4928,10 +4927,10 @@ export default function CRMDashboard() {
                 Tùy chỉnh
               </button>
               {showKanbanSettings && (
-                <div className="absolute right-0 top-full mt-1.5 z-40 w-[min(100vw-1.5rem,18rem)] rounded-xl border border-gray-200 bg-white p-3 shadow-lg">
+                <div className="absolute right-0 top-full mt-1.5 z-40 w-[min(100vw-1.5rem,18rem)] rounded-xl border border-gray-200 bg-white p-3 shadow-lg ring-1 ring-gray-100">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2.5">Cuộn cột Kanban</p>
                   <div className="space-y-2">
-                    <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-transparent px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-violet-200 has-[:checked]:bg-violet-50/60">
+                    <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-gray-100 bg-white px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-violet-400 has-[:checked]:bg-white has-[:checked]:shadow-sm">
                       <input
                         type="radio"
                         name="kanban-column-scroll"
@@ -4947,7 +4946,7 @@ export default function CRMDashboard() {
                         <span className="block text-[11px] text-gray-500 leading-snug mt-0.5">Kéo một lần, mọi cột cuộn cùng chiều dọc (mặc định).</span>
                       </span>
                     </label>
-                    <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-transparent px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-violet-200 has-[:checked]:bg-violet-50/60">
+                    <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-gray-100 bg-white px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-violet-400 has-[:checked]:bg-white has-[:checked]:shadow-sm">
                       <input
                         type="radio"
                         name="kanban-column-scroll"

@@ -3,7 +3,11 @@ const CREEP_MS = 1500;
 /** % tối đa tự chạy trước khi chờ API (tránh nhảy 100% khi chưa xong) */
 const STALL_PCT = 88;
 /** Thời gian chạy STALL → 100 sau khi API sẵn sàng */
-const FINISH_MS = 480;
+const FINISH_MS = 520;
+/** Lerp mượt khi đang chờ API */
+const LERP_CREEP = 0.11;
+/** Lerp nhanh hơn khi API xong — đảm bảo kịp lên 100% trước khi ẩn loader */
+const LERP_FINISH = 0.34;
 /** Tối thiểu hiển thị loader (load nhanh vẫn mượt) */
 const MIN_TOTAL_MS = 1200;
 /** Bắt đầu giai đoạn kết thúc khi đã qua MIN_TOTAL và creep đủ cao */
@@ -70,14 +74,19 @@ export function createCrmLoadProgressController(setProgress) {
       }
     }
 
-    displayed += (target - displayed) * 0.11;
+    const inFinishPhase = apiReadyAt != null && finishPhaseAt != null;
+    const lerp = inFinishPhase ? LERP_FINISH : LERP_CREEP;
+    displayed += (target - displayed) * lerp;
     if (target - displayed < 0.08) displayed = target;
 
     setProgress(Math.round(displayed));
 
-    if (apiReadyAt != null && finishPhaseAt != null && displayed >= 99.4) {
-      complete();
-      return;
+    if (inFinishPhase) {
+      const finishElapsed = now - finishPhaseAt;
+      if (finishElapsed >= FINISH_MS || displayed >= 99.5) {
+        complete();
+        return;
+      }
     }
 
     rafId = requestAnimationFrame((t) => tick(t, mySeq));

@@ -52,6 +52,7 @@ import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import NewDealModal from '../components/NewDealModal';
 import { DashboardLoader } from '../components/DashboardLoader';
 import { createCrmLoadProgressController } from '../lib/crmDashboardLoadProgress';
+import { isClickOutside } from '../lib/domUtils';
 import { getCrmDeadlineUrgencyFromIso, getCrmDeadlineUrgencyBadgeClass } from '../lib/crmLeadDeadlineDisplay';
 
 const INTAKE_BUCKET = 'won_pending';
@@ -809,7 +810,7 @@ export default function ProductionDashboard() {
   useEffect(() => {
     if (!showKanbanSettings) return undefined;
     const onDown = (e) => {
-      if (kanbanSettingsRef.current && !kanbanSettingsRef.current.contains(e.target)) {
+      if (isClickOutside(kanbanSettingsRef.current, e)) {
         setShowKanbanSettings(false);
       }
     };
@@ -821,8 +822,7 @@ export default function ProductionDashboard() {
   useEffect(() => {
     if (!sortOpen) return undefined;
     const onDown = (e) => {
-      if (!sortMenuRef.current) return;
-      if (!sortMenuRef.current.contains(e.target)) setSortOpen(false);
+      if (isClickOutside(sortMenuRef.current, e)) setSortOpen(false);
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
@@ -2003,7 +2003,7 @@ export default function ProductionDashboard() {
                 onClick={() => setShowKanbanSettings((v) => !v)}
                 className={`h-9 px-3 rounded-lg border text-sm font-medium inline-flex items-center gap-1.5 cursor-pointer transition-colors shrink-0 ${
                   showKanbanSettings || kanbanColumnScrollMode === 'per-column'
-                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    ? 'border-blue-500 bg-white text-blue-700 shadow-sm'
                     : 'border-gray-200 bg-white hover:bg-gray-50'
                 }`}
                 title="Tùy chỉnh cuộn Kanban"
@@ -2012,10 +2012,10 @@ export default function ProductionDashboard() {
                 Tùy chỉnh
               </button>
               {showKanbanSettings && (
-                <div className="absolute right-0 top-full mt-1.5 z-40 w-[min(100vw-1.5rem,18rem)] rounded-xl border border-gray-200 bg-white p-3 shadow-lg">
+                <div className="absolute right-0 top-full mt-1.5 z-40 w-[min(100vw-1.5rem,18rem)] rounded-xl border border-gray-200 bg-white p-3 shadow-lg ring-1 ring-gray-100">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2.5">Cuộn cột Kanban</p>
                   <div className="space-y-2">
-                    <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-transparent px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-blue-200 has-[:checked]:bg-blue-50/60">
+                    <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-gray-100 bg-white px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-blue-400 has-[:checked]:bg-white has-[:checked]:shadow-sm">
                       <input
                         type="radio"
                         name="sx-kanban-column-scroll"
@@ -2031,7 +2031,7 @@ export default function ProductionDashboard() {
                         <span className="block text-[11px] text-gray-500 leading-snug mt-0.5">Kéo một lần, mọi cột cuộn cùng chiều dọc (mặc định).</span>
                       </span>
                     </label>
-                    <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-transparent px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-blue-200 has-[:checked]:bg-blue-50/60">
+                    <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-gray-100 bg-white px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-blue-400 has-[:checked]:bg-white has-[:checked]:shadow-sm">
                       <input
                         type="radio"
                         name="sx-kanban-column-scroll"
