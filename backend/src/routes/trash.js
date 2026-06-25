@@ -26,7 +26,7 @@ const TRASH_SELECT_NO_REASON =
 
 r.get('/', requireTrashAccess, async (req, res) => {
   try {
-    let { entity_type, q } = req.query;
+    let { entity_type, q, company_id: companyIdQ, deleted_by: deletedByQ } = req.query;
     if (isProductionAdmin(req.user) && !isAdminLike(req.user)) {
       if (entity_type && entity_type !== 'project') {
         return res.status(403).json({ error: 'Chỉ được xem thùng rác Sản xuất (dự án)' });
@@ -40,6 +40,10 @@ r.get('/', requireTrashAccess, async (req, res) => {
     }
     const isSuper = req.user?.role === 'superadmin' || req.user?.role === 'super_admin';
 
+    if (companyIdQ && !isSuper && req.user?.company_id && String(companyIdQ) !== String(req.user.company_id)) {
+      return res.status(403).json({ error: 'Không có quyền lọc công ty khác' });
+    }
+
     const buildQuery = (selectCols) => {
       let query = supabase
         .from('trash_items')
@@ -49,6 +53,8 @@ r.get('/', requireTrashAccess, async (req, res) => {
       if (!isSuper && req.user?.company_id) {
         query = query.or(`company_id.eq.${req.user.company_id},company_id.is.null`);
       }
+      if (companyIdQ) query = query.eq('company_id', companyIdQ);
+      if (deletedByQ) query = query.eq('deleted_by', deletedByQ);
       if (entity_type) query = query.eq('entity_type', entity_type);
       if (q) query = query.ilike('entity_label', `%${q}%`);
       return query;
