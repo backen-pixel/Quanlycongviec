@@ -1323,7 +1323,7 @@ r.delete('/projects/:id', requirePermission('projects', 'edit'), async (req, res
 // GET /api/logistics/trash — danh sách dự án đã xóa khỏi VC
 r.get('/trash', requirePermission('projects', 'view'), async (req, res) => {
   try {
-    const { search, company_id: companyIdQuery } = req.query;
+    const { search, company_id: companyIdQuery, deleted_by: deletedByQ } = req.query;
     const company_id = effectiveWorkshopCompanyId(req, companyIdQuery);
 
     const buildQuery = (selectCols) => {
@@ -1334,6 +1334,7 @@ r.get('/trash', requirePermission('projects', 'view'), async (req, res) => {
         .order('vc_deleted_at', { ascending: false })
         .limit(500);
       if (company_id) q = q.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
+      if (deletedByQ) q = q.eq('vc_deleted_by', deletedByQ);
       if (search) q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%`);
       return q;
     };

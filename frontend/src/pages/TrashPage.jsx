@@ -1,5 +1,8 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { RotateCcw, Trash2, AlertTriangle, Search, RefreshCw, FileText, Target, Paperclip, Eye, X, User, Phone, Mail, DollarSign, Calendar, Tag, Briefcase, MessageSquare, CheckSquare, FileIcon, ChevronDown, ChevronUp } from 'lucide-react';
+import { TrashTablePagination, TrashScrollTableShell } from '../components/UnifiedTrashFilters';
+import { paginateItems, fmtTrashDateTime } from '../lib/trashPageUtils';
+import { resolveTrashCompanyLabel } from '../lib/trashCompanyLabel';
 import api from '../lib/api';
 
 const ENTITY_META = {
@@ -16,10 +19,7 @@ const FILTER_TABS = [
 ];
 
 function fmtDate(s) {
-  if (!s) return '—';
-  try {
-    return new Date(s).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' });
-  } catch { return s; }
+  return fmtTrashDateTime(s);
 }
 
 function fmtVND(v) {
@@ -245,32 +245,39 @@ function TrashDetailModal({ trashId, onClose }) {
   );
 }
 
-export default function TrashPage({ embedded = false }) {
+export default function TrashPage({ embedded = false, filters, showCompanyColumn = false, companies = [] }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
   const [busyId, setBusyId] = useState(null);
   const [confirmEmpty, setConfirmEmpty] = useState(false);
   const [detailId, setDetailId] = useState(null);
+
+  const effectiveSearch = embedded && filters ? (filters.search || '') : search.trim();
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
       const params = {};
       if (filter !== 'all') params.entity_type = filter;
-      if (search.trim()) params.q = search.trim();
+      if (effectiveSearch) params.q = effectiveSearch;
+      if (filters?.companyId) params.company_id = filters.companyId;
+      if (filters?.deletedBy) params.deleted_by = filters.deletedBy;
       const { data } = await api.get('/trash', { params });
       setItems(data.items || []);
+      setPage(1);
     } catch (e) {
       setError(e.response?.data?.error || e.message);
     } finally {
       setLoading(false);
     }
-  }, [filter, search]);
+  }, [filter, effectiveSearch, filters?.companyId, filters?.deletedBy]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setPage(1); }, [filter, effectiveSearch, filters?.companyId, filters?.deletedBy]);
 
   const handleRestore = async (id) => {
     if (busyId) return;
@@ -318,8 +325,11 @@ export default function TrashPage({ embedded = false }) {
     return c;
   }, [items]);
 
+  const pagination = useMemo(() => paginateItems(items, page), [items, page]);
+  const pagedItems = pagination.items;
+
   return (
-    <div className={embedded ? 'space-y-4' : 'max-w-6xl mx-auto'}>
+    <div className={`flex flex-col min-h-0 h-full ${embedded ? 'gap-2' : 'max-w-6xl mx-auto space-y-4'}`}>
       {!embedded && (
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -369,12 +379,13 @@ export default function TrashPage({ embedded = false }) {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2 mb-4">
+      <div className="flex flex-wrap items-center gap-2 shrink-0">
         {FILTER_TABS.map((t) => (
           <button
             key={t.id}
+            type="button"
             onClick={() => setFilter(t.id)}
-            className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+            className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors cursor-pointer ${
               filter === t.id
                 ? 'bg-red-600 text-white'
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
@@ -383,101 +394,123 @@ export default function TrashPage({ embedded = false }) {
             {t.label} <span className="opacity-70">({counts[t.id] ?? 0})</span>
           </button>
         ))}
-        <div className="ml-auto relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Tìm theo tên…"
-            className="pl-8 pr-3 py-2 border border-gray-300 rounded-lg text-sm w-64"
-          />
-        </div>
+        {!embedded && (
+          <div className="ml-auto relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Tìm theo tên…"
+              className="pl-8 pr-3 py-1.5 border border-gray-300 rounded-lg text-sm w-56"
+            />
+          </div>
+        )}
       </div>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-red-700 text-sm">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-sm shrink-0">
           {error}
         </div>
       )}
 
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <TrashScrollTableShell
+        header={(
+          <div className="px-3 py-2 text-[11px] font-semibold text-gray-500 uppercase tracking-wide bg-gray-50 border-b border-gray-100">
+            {loading ? 'Đang tải…' : `${items.length} mục trong thùng rác CRM`}
+          </div>
+        )}
+        footer={(
+          <TrashTablePagination
+            page={pagination.page}
+            totalPages={pagination.totalPages}
+            total={pagination.total}
+            onPageChange={setPage}
+          />
+        )}
+      >
         {loading ? (
-          <div className="p-8 text-center text-gray-500">Đang tải…</div>
+          <div className="p-8 text-center text-gray-500 text-sm">Đang tải…</div>
         ) : items.length === 0 ? (
-          <div className="p-12 text-center">
-            <Trash2 className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-500">Thùng rác trống</p>
+          <div className="p-10 text-center">
+            <Trash2 className="h-10 w-10 text-gray-300 mx-auto mb-2" />
+            <p className="text-sm text-gray-500">Thùng rác trống</p>
           </div>
         ) : (
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wider">
+            <thead className="bg-gray-50 text-gray-600 text-[10px] uppercase tracking-wider sticky top-0 z-10 shadow-[0_1px_0_0_rgb(229,231,235)]">
               <tr>
-                <th className="text-left px-4 py-3">Loại</th>
-                <th className="text-left px-4 py-3">Tên</th>
-                <th className="text-left px-4 py-3">Lý do xóa</th>
-                <th className="text-left px-4 py-3">Người xóa</th>
-                <th className="text-left px-4 py-3">Xóa lúc</th>
-                <th className="text-left px-4 py-3">Tự động dọn</th>
-                <th className="text-right px-4 py-3">Thao tác</th>
+                <th className="text-left px-3 py-2 font-semibold">Loại</th>
+                <th className="text-left px-3 py-2 font-semibold">Tên</th>
+                {showCompanyColumn && <th className="text-left px-3 py-2 font-semibold hidden lg:table-cell">Công ty</th>}
+                <th className="text-left px-3 py-2 font-semibold hidden md:table-cell">Lý do</th>
+                <th className="text-left px-3 py-2 font-semibold hidden sm:table-cell">Người xóa</th>
+                <th className="text-left px-3 py-2 font-semibold whitespace-nowrap">Xóa lúc</th>
+                <th className="text-right px-3 py-2 font-semibold">Thao tác</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {items.map((it) => {
+              {pagedItems.map((it) => {
                 const meta = ENTITY_META[it.entity_type] || { label: it.entity_type, icon: FileText, color: 'bg-gray-100 text-gray-700' };
                 const Icon = meta.icon;
                 return (
-                  <tr key={it.id} className="hover:bg-slate-200/70 transition-colors">
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium ${meta.color}`}>
-                        <Icon className="h-3.5 w-3.5" /> {meta.label}
+                  <tr key={it.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-3 py-2">
+                      <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${meta.color}`}>
+                        <Icon className="h-3 w-3" /> {meta.label}
                       </span>
                     </td>
-                    <td className="px-4 py-3 font-medium max-w-xs truncate" style={{ color: '#000000' }} title={it.entity_label}>
+                    <td className="px-3 py-2 font-medium max-w-[14rem]">
                       <button
                         type="button"
                         onClick={() => setDetailId(it.id)}
-                        className="hover:text-blue-600 hover:underline text-left truncate max-w-full cursor-pointer"
-                        style={{ color: '#000000' }}
-                        title="Bấm để xem chi tiết"
+                        className="hover:text-blue-600 hover:underline text-left truncate max-w-full cursor-pointer text-gray-900"
+                        title={it.entity_label}
                       >
                         {it.entity_label || '—'}
                       </button>
                     </td>
-                    <td className="px-4 py-3 max-w-[200px]">
+                    {showCompanyColumn && (
+                      <td className="px-3 py-2 text-gray-600 text-xs hidden lg:table-cell max-w-[8rem] truncate" title={resolveTrashCompanyLabel(it.company_id, companies)}>
+                        {resolveTrashCompanyLabel(it.company_id, companies)}
+                      </td>
+                    )}
+                    <td className="px-3 py-2 max-w-[10rem] hidden md:table-cell">
                       {it.delete_reason ? (
-                        <span className="text-sm text-orange-700 bg-orange-50 border border-orange-200 rounded px-2 py-0.5 inline-block truncate max-w-full" title={it.delete_reason}>
+                        <span className="text-xs text-orange-700 bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5 inline-block truncate max-w-full" title={it.delete_reason}>
                           {it.delete_reason}
                         </span>
                       ) : (
                         <span className="text-gray-400 text-xs">—</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-gray-600">{it.deleter?.full_name || '—'}</td>
-                    <td className="px-4 py-3 text-gray-600">{fmtDate(it.deleted_at)}</td>
-                    <td className="px-4 py-3 text-gray-500 text-xs">{fmtDate(it.purge_after)}</td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-3 py-2 text-gray-600 text-xs hidden sm:table-cell">{it.deleter?.full_name || '—'}</td>
+                    <td className="px-3 py-2 text-gray-600 text-xs whitespace-nowrap tabular-nums">{fmtDate(it.deleted_at)}</td>
+                    <td className="px-3 py-2 text-right whitespace-nowrap">
                       <div className="inline-flex gap-1">
                         <button
+                          type="button"
                           onClick={() => setDetailId(it.id)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-blue-300 text-blue-700 hover:bg-blue-50 text-xs font-medium"
+                          className="inline-flex items-center gap-0.5 px-2 py-1 rounded border border-blue-200 text-blue-700 hover:bg-blue-50 text-[11px] font-medium cursor-pointer"
                           title="Xem chi tiết"
                         >
-                          <Eye className="h-3.5 w-3.5" /> Xem
+                          <Eye className="h-3 w-3" />
                         </button>
                         <button
+                          type="button"
                           onClick={() => handleRestore(it.id)}
                           disabled={busyId === it.id}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium disabled:opacity-50"
+                          className="inline-flex items-center gap-0.5 px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-medium disabled:opacity-50 cursor-pointer"
                         >
-                          <RotateCcw className="h-3.5 w-3.5" /> Phục hồi
+                          <RotateCcw className="h-3 w-3" />
                         </button>
                         <button
+                          type="button"
                           onClick={() => handlePurge(it.id, it.entity_label)}
                           disabled={busyId === it.id}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-red-300 text-red-700 hover:bg-red-50 text-xs font-medium disabled:opacity-50"
+                          className="inline-flex items-center gap-0.5 px-2 py-1 rounded border border-red-200 text-red-700 hover:bg-red-50 text-[11px] font-medium disabled:opacity-50 cursor-pointer"
                         >
-                          <Trash2 className="h-3.5 w-3.5" /> Xóa
+                          <Trash2 className="h-3 w-3" />
                         </button>
                       </div>
                     </td>
@@ -487,7 +520,7 @@ export default function TrashPage({ embedded = false }) {
             </tbody>
           </table>
         )}
-      </div>
+      </TrashScrollTableShell>
 
       {confirmEmpty && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
