@@ -1,4 +1,4 @@
-const { Router } = require('express');
+﻿const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/newPermission');
@@ -2420,7 +2420,7 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
                 vcRecipients,
                 'workshop_new_deal',
                 `🚚 Vận chuyển: Deal mới từ Xưởng`,
-                `Dự án ${updatedSnapshot.code || updatedSnapshot.name} đã hoàn thành sản xuất, chuyển sang Vận chuyển & Lắp đặt`,
+                `Dự án ${updatedSnapshot.code || updatedSnapshot.name} đã hoàn thành sản xuất, chuyển sang Vận chuyển`,
                 'project',
                 projectId,
               );
@@ -2676,7 +2676,7 @@ r.patch('/projects/:id/switch-workshop-type', requirePermission('projects', 'edi
 });
 
 // ─── PATCH /production/projects/:id/handover-vc ───────────────────────────
-// Bàn giao thủ công từ SX sang module Vận chuyển & Lắp đặt
+// Bàn giao thủ công từ SX sang module Vận chuyển
 r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     const { id } = req.params;
@@ -2686,7 +2686,7 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
     const deliveryTeamId = req.body?.delivery_team_id || null;
     const installationTeamId = req.body?.installation_team_id || null;
 
-    if (!logisticsCompanyId) return res.status(400).json({ error: 'Vui lòng chọn công ty Vận chuyển/Lắp đặt.' });
+    if (!logisticsCompanyId) return res.status(400).json({ error: 'Vui lòng chọn công ty Vận chuyển.' });
 
     // Validate logistics company belongs to module scope (logistics)
     const { data: lco, error: lcoErr } = await supabase
@@ -2694,8 +2694,8 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
       .select('id, division_unit_id, is_active')
       .eq('id', logisticsCompanyId)
       .maybeSingle();
-    if (lcoErr || !lco) return res.status(400).json({ error: 'Công ty VC/Lắp đặt không tồn tại.' });
-    if (lco.is_active === false) return res.status(400).json({ error: 'Công ty VC/Lắp đặt đã ngưng hoạt động.' });
+    if (lcoErr || !lco) return res.status(400).json({ error: 'Công ty VC không tồn tại.' });
+    if (lco.is_active === false) return res.status(400).json({ error: 'Công ty VC đã ngưng hoạt động.' });
     try {
       const restricted = await getRestrictedDivisionIdsForModule('logistics');
       if (restricted && restricted.size > 0) {
@@ -2708,7 +2708,7 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
             .eq('company_id', logisticsCompanyId);
           ok = (links || []).some((r) => r?.division_unit_id && restricted.has(String(r.division_unit_id)));
         }
-        if (!ok) return res.status(400).json({ error: 'Công ty VC/Lắp đặt không thuộc phạm vi module Vận chuyển & Lắp đặt.' });
+        if (!ok) return res.status(400).json({ error: 'Công ty VC không thuộc phạm vi module Vận chuyển.' });
       }
     } catch (_e) { /* ignore */ }
 
@@ -2721,7 +2721,7 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
       if (uErr || !u) return res.status(400).json({ error: 'Người nhận bàn giao không tồn tại.' });
       if (u.is_active === false) return res.status(400).json({ error: 'Người nhận bàn giao đã ngưng hoạt động.' });
       if (!['logistics', 'installer', 'manager', 'admin'].includes(String(u.role || ''))) {
-        return res.status(400).json({ error: 'Người nhận bàn giao phải thuộc nhóm Vận chuyển/Lắp đặt.' });
+        return res.status(400).json({ error: 'Người nhận bàn giao phải thuộc nhóm Vận chuyển.' });
       }
     }
 
@@ -2886,7 +2886,7 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
       console.warn('[production/handover-vc] expand doc modules for VC:', mdErr.message);
     }
 
-    // ── 2b. Gen nhiệm vụ VC/LĐ theo bộ mẫu của công ty VC đã chọn ────────────
+    // ── 2b. Gen nhiệm vụ VC theo bộ mẫu của công ty VC đã chọn ────────────
     // Idempotent theo metadata.workshop_template_id nên gọi lại an toàn.
     try {
       const out = await applyAllActiveWorkshopTemplatesForArea(id, userId, {
@@ -2912,7 +2912,7 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
         project_id: id,
         from_stage_id: project.current_stage_id,
         to_stage_id: null,
-        notes: 'Bàn giao sang module Vận chuyển & Lắp đặt (thủ công)',
+        notes: 'Bàn giao sang module Vận chuyển (thủ công)',
         transitioned_by: userId,
       });
     } catch (te) { console.warn('[production/handover-vc] stage_transitions:', te.message); }
@@ -2959,7 +2959,7 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
         await notifyMultipleShared(
           req, vcRecipients, 'workshop_new_deal',
           `🚚 Vận chuyển: Deal mới từ Xưởng`,
-          `Dự án ${project.code || project.name} đã bàn giao sang Vận chuyển & Lắp đặt`,
+          `Dự án ${project.code || project.name} đã bàn giao sang Vận chuyển`,
           'project', id,
         );
       }

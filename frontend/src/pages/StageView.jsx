@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+﻿import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -17,8 +17,8 @@ import {
 
 const STAGE_NAMES = {
   consulting: 'Tư vấn', design: 'Thiết kế', quotation: 'Báo giá', contract: 'Hợp đồng',
-  production: 'Sản xuất', delivery: 'Vận chuyển & Lắp đặt', 'customer-care': 'Chăm sóc KH',
-  shipping: 'Vận chuyển & Lắp đặt', installation: 'Vận chuyển & Lắp đặt', // backward compat
+  production: 'Sản xuất', delivery: 'Vận chuyển', 'customer-care': 'Chăm sóc KH',
+  shipping: 'Vận chuyển', installation: 'Lắp đặt', // backward compat
 };
 
 const NEXT_STATUS = { consulting:'designing', design:'quoting', quotation:'contract_signed', contract:'producing', production:'shipping', delivery:'warranty' };

@@ -1,4 +1,4 @@
-const { Router } = require('express');
+﻿const { Router } = require('express');
 const { requirePermission } = require('../middleware/newPermission');
 const bcrypt = require('bcryptjs');
 const { supabase } = require('../config/supabase');
@@ -74,7 +74,7 @@ r.get('/stages', async (req, res) => {
         { id: 'c3', slug: 'quotation', name: 'Báo giá', color: '#F59E0B', icon: '💰', order_index: 3 },
         { id: 'c4', slug: 'contract', name: 'Hợp đồng', color: '#10B981', icon: '📝', order_index: 4 },
         { id: 'c5', slug: 'production', name: 'Sản xuất', color: '#F97316', icon: '🏭', order_index: 5 },
-        { id: 'c6', slug: 'delivery', name: 'Vận chuyển & Lắp đặt', color: '#06B6D4', icon: '🚚', order_index: 6 },
+        { id: 'c6', slug: 'delivery', name: 'Vận chuyển', color: '#06B6D4', icon: '🚚', order_index: 6 },
         { id: 'c8', slug: 'customer-care', name: 'Chăm sóc KH', color: '#EF4444', icon: '❤️', order_index: 7 },
       ] });
     }

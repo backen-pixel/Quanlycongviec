@@ -26,7 +26,7 @@ const TASK_KIND_OPTIONS = [
 const GROUP_LABELS = {
   crm_deal: 'NV CRM (Deal/Lead)',
   production: 'NV Sản xuất',
-  logistics: 'NV Vận chuyển / Lắp đặt',
+  logistics: 'NV Vận chuyển',
   assignment: 'Giao việc CRM gắn dự án',
   other: 'Khác',
 };

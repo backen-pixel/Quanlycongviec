@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+﻿import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -73,7 +73,7 @@ const TOGGLE_ROWS: Row[] = [
   },
   {
     key: 'logistics_deadlines',
-    label: 'Nhắc / quá hạn — Vận chuyển & lắp đặt',
+    label: 'Nhắc / quá hạn — Vận chuyển',
     sub: 'Task khi dự án ở giai đoạn giao / lắp / bảo hành.',
     examples: ['Sắp đến hạn giao hàng', 'Task VC quá hạn'],
   },

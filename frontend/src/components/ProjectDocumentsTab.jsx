@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+﻿import { useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 import {
@@ -70,7 +70,7 @@ export default function ProjectDocumentsTab({ projectId, project }) {
     { slug: 'quotation', status: 'quoting', label: 'Báo giá' },
     { slug: 'contract', status: 'contract_signed', label: 'Hợp đồng' },
     { slug: 'production', status: 'producing', label: 'Sản xuất' },
-    { slug: 'delivery', status: 'shipping', label: 'Vận chuyển & Lắp đặt' },
+    { slug: 'delivery', status: 'shipping', label: 'Vận chuyển' },
     { slug: 'customer-care', status: 'warranty', label: 'CSKH' },
   ];
 

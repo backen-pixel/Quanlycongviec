@@ -1,4 +1,4 @@
-import { NavLink, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
+﻿import { NavLink, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isCrmModuleAdmin, isStrictAdmin, isWorkProductionModuleAdmin, canAccessCrmSocialInbox } from '../lib/adminRole';
@@ -24,6 +24,7 @@ import {
 import { useModuleAccess } from '../shared/context/ModuleAccessContext';
 import { useSidebarUnreadBadges } from '../shared/context/UnreadBadgesContext';
 import AppSwitcherPanel, { AppSwitcherButton } from './AppSwitcherPanel';
+import SidebarModuleCycleButton from './SidebarModuleCycleButton';
 
 // Reorganized menu structure - 4 groups
 const MENU_GROUPS = [
@@ -361,7 +362,7 @@ const KETOAN_MENU_GROUPS = [
   },
 ];
 
-// LOGISTICS (VẬN CHUYỂN & LẮP ĐẶT) menu structure
+// LOGISTICS (VẬN CHUYỂN) menu structure
 const VC_MENU_GROUPS = [
   {
     id: 'vc-overview',
@@ -386,9 +387,9 @@ const VC_MENU_GROUPS = [
     emoji: '📦',
     items: [
       { to: '/vc/dashboard', icon: FolderKanban, label: 'Dự án vận chuyển' },
-      { to: '/vc/pipeline-settings', icon: Settings, label: 'Pipeline VC/LĐ' },
+      { to: '/vc/pipeline-settings', icon: Settings, label: 'Pipeline VC' },
       { to: '/vc/teams', icon: Users, label: 'Quản lý Đội nhóm' },
-      { to: '/vc/task-templates', icon: ListChecks, label: 'Bộ nhiệm vụ VC/LĐ' },
+      { to: '/vc/task-templates', icon: ListChecks, label: 'Bộ nhiệm vụ VC' },
       { to: { pathname: '/admin/trash', search: '?tab=vc' }, icon: Trash2, label: 'Thùng rác VC', adminOnly: true, strictAdminOnly: true },
     ]
   },
@@ -636,54 +637,29 @@ export default function Sidebar() {
         collapsed ? 'w-[60px]' : 'w-[240px]'
       }`}
     >
-      {/* App Switcher Button + Logo */}
-      <div className="flex items-center gap-2 px-3 h-14 border-b border-white/10 shrink-0">
+      {/* App Switcher + vòng xoay module */}
+      <div
+        className={`border-b border-white/10 shrink-0 ${
+          collapsed ? 'flex flex-col items-center gap-1.5 py-2 px-1' : 'flex items-center gap-2.5 px-3 h-[3.75rem]'
+        }`}
+      >
         <AppSwitcherButton
           open={showAppSwitcher}
           onClick={() => setShowAppSwitcher(!showAppSwitcher)}
           collapsed={collapsed}
         />
-        {/* Active app indicator — click cycles through các module được phép (chỉ CRM nếu crmOnly) */}
-        {(() => {
-          const modList = [
-            { key: 'work', mod: null, label: 'Công việc', emoji: '📋', path: '/dashboard', color: 'bg-blue-500/35 hover:bg-blue-500/55 ring-blue-300/40', dot: 'bg-blue-500/70' },
-            { key: 'crm', mod: 'crm', label: 'CRM', emoji: '💼', path: '/crm', color: 'bg-emerald-500/35 hover:bg-emerald-500/55 ring-emerald-300/40', dot: 'bg-emerald-500/70' },
-            { key: 'sx', mod: 'production', label: 'Xưởng SX', emoji: '🏭', path: '/sx', color: 'bg-orange-500/35 hover:bg-orange-500/55 ring-orange-300/40', dot: 'bg-orange-500/70' },
-            { key: 'vc', mod: 'logistics', label: 'Vận chuyển', emoji: '🚚', path: '/vc', color: 'bg-amber-500/35 hover:bg-amber-500/55 ring-amber-300/40', dot: 'bg-amber-500/70' },
-            { key: 'ketoan', mod: 'accounting', label: 'Kế toán', emoji: '🧾', path: '/ketoan', color: 'bg-indigo-500/35 hover:bg-indigo-500/55 ring-indigo-300/40', dot: 'bg-indigo-500/70' },
-            { key: 'calc', mod: 'tinhtoan', label: 'Tính toán', emoji: '🧮', path: '/calc', color: 'bg-indigo-500/35 hover:bg-indigo-500/55 ring-indigo-300/40', dot: 'bg-indigo-500/70' },
-            { key: 'knowledge', mod: null, label: 'Kiến thức', emoji: '🎓', path: '/knowledge', color: 'bg-violet-500/35 hover:bg-violet-500/55 ring-violet-300/40', dot: 'bg-violet-500/70' },
-          ].filter((m) => {
-            if (crmOnly) return m.key === 'crm' || m.key === 'knowledge';
-            return !m.mod || canAccessModule(m.mod);
-          });
-          if (!modList.length) return null;
-          const activeKey = isKnowledge ? 'knowledge' : isCalc ? 'calc' : isKetoan ? 'ketoan' : isVC ? 'vc' : isSX ? 'sx' : isCRM ? 'crm' : 'work';
-          let curIdx = modList.findIndex((m) => m.key === activeKey);
-          if (curIdx < 0) curIdx = 0;
-          const cur = modList[curIdx];
-          const next = modList[(curIdx + 1) % modList.length];
-          return (
-            <button
-              onClick={() => navigate(next.path)}
-              title={`Đang ở: ${cur.label} — bấm để chuyển sang ${next.label}`}
-              className={`group flex items-center gap-2.5 flex-1 rounded-lg px-2 py-1.5 ring-1 shadow-sm transition-all cursor-pointer ${cur.color}`}
-            >
-              <div className={`flex items-center justify-center w-9 h-9 rounded-lg text-white text-lg shrink-0 shadow-inner ${cur.dot}`}>
-                {cur.emoji}
-              </div>
-              {!collapsed && (
-                <div className="flex-1 text-left min-w-0">
-                  <h1 className="text-[15px] font-extrabold text-white leading-tight truncate drop-shadow-sm">{cur.label}</h1>
-                  <p className="text-[11px] font-medium text-white/85 leading-tight truncate flex items-center gap-1">
-                    <ChevronRight className="h-3 w-3 shrink-0 -ml-0.5 transition-transform group-hover:translate-x-0.5" />
-                    <span className="truncate">{next.label}</span>
-                  </p>
-                </div>
-              )}
-            </button>
-          );
-        })()}
+        <SidebarModuleCycleButton
+            collapsed={collapsed}
+            navigate={navigate}
+            canAccessModule={canAccessModule}
+            crmOnly={crmOnly}
+            isKnowledge={isKnowledge}
+            isCalc={isCalc}
+            isKetoan={isKetoan}
+            isVC={isVC}
+            isSX={isSX}
+          isCRM={isCRM}
+        />
       </div>
 
       {/* Notification bell — overflow-visible để panel portal không bị cắt */}

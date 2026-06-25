@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+﻿import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Bell, RefreshCw, GitBranch, LayoutGrid, Filter, Building2 } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -43,7 +43,7 @@ const STEPS = [
     detail:'Nhân viên nhấn "Bàn giao VC" trên Kanban. Hệ thống tự tạo Dự án Vận chuyển. CRM deal nhảy sang "Vận chuyển".',
     tips:['📂 Đảm bảo hồ sơ kỹ thuật đã đính kèm','📍 Ghi chú địa điểm giao hàng'],
     event:{ icon:'🚀', type:'trigger', title:'Tự động tạo Dự án VC',
-      desc:'Dự án xuất hiện trong module Vận chuyển & Lắp đặt. Quản lý VC nhận thông báo điều phối.',
+      desc:'Dự án xuất hiện trong module Vận chuyển. Quản lý VC nhận thông báo điều phối.',
       notify:'logistics · installer', crmUpdate:'CRM deal → cột "Vận chuyển"' } },
   { id:10, mod:'VC',  col:0, icon:'📋', label:'Tiếp nhận',      sub:'Điều phối đội',  color:'#0f766e',
     detail:'Quản lý VC phân công người vận chuyển và đội lắp đặt. Gửi thông báo tới từng người được gán.',
@@ -73,7 +73,7 @@ const CRM_DEAL = [
 const LANE = {
   CRM:{ color:'#7c3aed', light:'#f5f3ff', border:'#ddd6fe', label:'CRM Pipeline', icon:'💼', gradient:'#ede9fe' },
   SX: { color:'#ea580c', light:'#fff7ed', border:'#fdba74', label:'Xưởng Sản xuất', icon:'🏭', gradient:'#ffedd5' },
-  VC: { color:'#0f766e', light:'#f0fdfa', border:'#5eead4', label:'Vận chuyển & Lắp đặt', icon:'🚚', gradient:'#ccfbf1' },
+  VC: { color:'#0f766e', light:'#f0fdfa', border:'#5eead4', label:'Vận chuyển', icon:'🚚', gradient:'#ccfbf1' },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -91,7 +91,7 @@ Sau khi chạy migration, vào **Quản trị → Drive → Roots** để gán m
 
 Menu **Công việc → Tổng hợp nhiệm vụ** (\`/work/unified\`) — đầu mối xem mọi nhiệm vụ từ:
 - **CRM** (Lead/Deal)
-- **Sản xuất** & **Vận chuyển / Lắp đặt**
+- **Sản xuất** & **Vận chuyển**
 - **Giao việc CRM** (Kanban độc lập)
 
 ### 3 tab chính

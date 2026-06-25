@@ -159,6 +159,18 @@ button:disabled,
 }
 .animate-slide-in { animation: slideIn 0.15s ease-out; }
 
+.module-cycle-dial:not(:disabled):active .module-cycle-wheel {
+  filter: brightness(1.08);
+}
+
+.module-cycle-dial:not(:disabled):hover {
+  filter: brightness(1.06);
+}
+
+.module-cycle-dial.is-spinning {
+  pointer-events: none;
+}
+
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }

@@ -1,5 +1,5 @@
 import { useMemo, useState, useCallback, useEffect } from 'react';
-import { Search, X, Pin, Pencil } from 'lucide-react';
+import { Search, X, Pin, Pencil, LayoutGrid } from 'lucide-react';
 import {
   APP_MODULE_DEFINITIONS,
   defaultAppSwitcherFavorites,
@@ -9,6 +9,7 @@ import {
   canUseAppModule,
 } from '../lib/appSwitcherModules';
 import ModuleAccessDeniedModal from './ModuleAccessDeniedModal';
+import ModuleBrandIcon from './ModuleBrandIcon';
 
 function normalizeSearch(s) {
   return String(s || '').trim().toLowerCase();
@@ -20,30 +21,6 @@ function moduleMatchesSearch(mod, q) {
     mod.name.toLowerCase().includes(q)
     || mod.desc.toLowerCase().includes(q)
     || mod.category.toLowerCase().includes(q)
-  );
-}
-
-function ModuleAppIcon({ mod, size = 'md' }) {
-  const box = size === 'sm' ? 'h-10 w-10' : 'h-11 w-11';
-  const wrapClass = size === 'md' ? 'mx-auto shrink-0' : 'shrink-0';
-  if (mod.imageUrl) {
-    return (
-      <div className={`${wrapClass} flex ${box} items-center justify-center`}>
-        <img
-          src={mod.imageUrl}
-          alt=""
-          className={`${box} object-contain`}
-          draggable={false}
-        />
-      </div>
-    );
-  }
-  const Icon = mod.Icon;
-  const iconSize = size === 'sm' ? 'h-5 w-5' : 'h-[22px] w-[22px]';
-  return (
-    <div className={`${wrapClass} flex ${box} items-center justify-center rounded-lg shadow-sm ${mod.iconClass}`}>
-      <Icon className={iconSize} strokeWidth={1.75} />
-    </div>
   );
 }
 
@@ -59,31 +36,18 @@ export function AppSwitcherButton({ open, onClick, collapsed }) {
     <button
       type="button"
       onClick={onClick}
-      title="Chuyển ứng dụng"
-      aria-label="Chuyển ứng dụng"
+      title="Tất cả ứng dụng"
+      aria-label="Tất cả ứng dụng"
       aria-expanded={open}
-      className={`group relative flex items-center justify-center shrink-0 cursor-pointer transition-all duration-200 ${
-        collapsed ? 'w-9 h-9' : 'w-10 h-10'
+      className={`shrink-0 flex items-center justify-center rounded-lg transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-white/35 ${
+        collapsed ? 'w-9 h-9' : 'w-9 h-9'
+      } ${
+        open
+          ? 'bg-white/18 text-white ring-1 ring-white/25'
+          : 'bg-white/8 text-white/85 hover:bg-white/14 hover:text-white'
       }`}
     >
-      <span
-        className={`absolute inset-0 rounded-xl transition-all duration-200 ${
-          open
-            ? 'bg-white/25 ring-2 ring-white/40 shadow-lg shadow-black/20'
-            : 'bg-white/10 ring-1 ring-white/20 group-hover:bg-white/18 group-hover:ring-white/35 group-hover:shadow-md group-hover:shadow-black/15'
-        }`}
-      />
-      <span className="relative grid grid-cols-3 gap-[3px] p-[2px]">
-        {Array.from({ length: 9 }).map((_, i) => (
-          <span
-            key={i}
-            className={`rounded-[3px] transition-all duration-200 ${
-              open ? 'w-[5px] h-[5px] bg-white' : 'w-[4px] h-[4px] bg-white/90 group-hover:bg-white group-hover:scale-110'
-            }`}
-            style={{ transitionDelay: open ? `${i * 15}ms` : '0ms' }}
-          />
-        ))}
-      </span>
+      <LayoutGrid className="h-[18px] w-[18px]" strokeWidth={2} />
     </button>
   );
 }
@@ -275,7 +239,7 @@ export default function AppSwitcherPanel({
                           <Pin className={`h-3 w-3 ${isPinned ? 'fill-current rotate-45' : ''}`} />
                         </span>
                       )}
-                      <ModuleAppIcon mod={mod} size="md" />
+                      <ModuleBrandIcon mod={mod} size="lg" wrapClass="mx-auto" />
                       <p className="mt-2 text-xs font-bold text-slate-900 leading-tight line-clamp-2">{mod.name}</p>
                     </div>
                   );
@@ -307,7 +271,7 @@ export default function AppSwitcherPanel({
                           : `${idleModuleCardClass} cursor-pointer`
                     }`}
                   >
-                    <ModuleAppIcon mod={mod} size="sm" />
+                    <ModuleBrandIcon mod={mod} size="md" />
                     <div className="min-w-0 flex-1 pr-11">
                       <div className="flex flex-wrap items-center gap-1">
                         <span className="text-[13px] font-bold text-slate-900 truncate">{mod.name}</span>

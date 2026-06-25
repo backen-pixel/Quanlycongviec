@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { Trash2, Target, Factory, Truck, AlertTriangle } from 'lucide-react';
 import api from '../lib/api';
@@ -125,7 +125,7 @@ export default function UnifiedTrashPage() {
           <div>
             <h1 className="text-xl font-bold text-gray-900">Thùng rác — Tổng hợp</h1>
             <p className="text-sm text-gray-500">
-              Quản lý mục đã xóa theo module CRM, Sản xuất và Vận chuyển & Lắp đặt.
+              Quản lý mục đã xóa theo module CRM, Sản xuất và Vận chuyển.
             </p>
           </div>
         </div>

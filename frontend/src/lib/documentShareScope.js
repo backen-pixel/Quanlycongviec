@@ -1,10 +1,10 @@
-/** Khớp backend/helpers/documentShareScope.js — lọc tài liệu CRM theo module chia sẻ */
+﻿/** Khớp backend/helpers/documentShareScope.js — lọc tài liệu CRM theo module chia sẻ */
 
 export const SHARE_MODULE_KEYS = new Set(['production', 'logistics', 'workshop']);
 
 export const SHARE_MODULE_OPTIONS = [
   { id: 'production', label: '🏭 Sản xuất (SX)' },
-  { id: 'logistics', label: '🚚 Vận chuyển & LĐ (VC)' },
+  { id: 'logistics', label: '🚚 Vận chuyển (VC)' },
   { id: 'workshop', label: '📁 Công việc dự án' },
 ];
 

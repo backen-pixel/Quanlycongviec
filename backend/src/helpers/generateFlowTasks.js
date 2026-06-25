@@ -1,4 +1,4 @@
-/**
+﻿/**
  * generateFlowTasks — Shared task generation logic
  * Used by: create-with-flow (projects.js) AND convert-to-deal (crm.js)
  * 
@@ -20,7 +20,7 @@ const PROCESS_STAGE_MAP = {
   'Thiết kế': 'design',
   'Báo giá & Hợp đồng': 'quotation',
   'Sản xuất': 'production',
-  'Vận chuyển & Lắp đặt': 'delivery',
+  'Vận chuyển': 'delivery',
   'Giao hàng': 'delivery',
   'Giao hàng ': 'delivery',
   'Lắp đặt': 'delivery',

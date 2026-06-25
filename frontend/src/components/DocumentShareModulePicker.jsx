@@ -1,4 +1,4 @@
-import { SHARE_MODULE_OPTIONS } from '../lib/documentShareScope';
+﻿import { SHARE_MODULE_OPTIONS } from '../lib/documentShareScope';
 
 /**
  * Chọn khối được xem khi đã bật chia sẻ (SX / VC / Công việc dự án).
@@ -7,7 +7,7 @@ export default function DocumentShareModulePicker({
   value = [],
   onChange,
   disabled = false,
-  hint = 'Chọn khối cụ thể (vd. chỉ Sản xuất) — VC/LĐ và Công việc dự án sẽ không thấy. Để trống = cả ba khối đều xem được.',
+  hint = 'Chọn khối cụ thể (vd. chỉ Sản xuất) — VC và Công việc dự án sẽ không thấy. Để trống = cả ba khối đều xem được.',
   className = '',
 }) {
   const toggle = (id) => {

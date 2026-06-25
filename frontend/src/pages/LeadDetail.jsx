@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { markCrmPipelineCardFocus, notifyCrmLeadSeenByCurrentUser, saveCrmPipelineSnapshot, loadCrmPipelineSnapshot, persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
 import {
@@ -3882,7 +3882,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
               </div>
             );
           })()}
-          {/* Trạng thái Vận chuyển & Lắp đặt */}
+          {/* Trạng thái Vận chuyển */}
           {lead.vc_pipeline_stage && (() => {
             const vc = lead.vc_pipeline_stage;
             const icon = vc.bucket_slug === 'delivery_pending' ? '📦'
@@ -3896,7 +3896,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
                 <span className="text-base mt-0.5 shrink-0">{icon}</span>
                 <div className="flex-1 min-w-0">
                   <p className="text-[10px] font-bold uppercase tracking-wider mb-0.5" style={{ color: vc.color || '#ea580c' }}>
-                    🚚 Vận chuyển & Lắp đặt
+                    🚚 Vận chuyển
                   </p>
                   <p className="text-sm font-semibold" style={{ color: vc.color || '#c2410c' }}>
                     {label}

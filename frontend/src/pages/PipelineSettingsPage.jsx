@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+﻿import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
 import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar, CheckCircle2, Clock, Factory, Search, X, TrendingUp, RotateCcw } from 'lucide-react';
 import {
@@ -944,7 +944,7 @@ export default function PipelineSettingsPage() {
     }
   };
 
-  /** Gán role auto-sync cho cột VC/LĐ (delivery|installation) cho từng cột. */
+  /** Gán role auto-sync cho cột VC (delivery|installation) cho từng cột. */
   const setVcSyncType = async (moduleStage, syncType) => {
     if (!moduleStage?.id) return;
     const nextType = moduleStage.crm_sync_type === syncType ? null : syncType;
@@ -955,11 +955,11 @@ export default function PipelineSettingsPage() {
       });
       load();
     } catch (e) {
-      alert('Lỗi cập nhật role VC/LĐ: ' + (e.response?.data?.error || e.message));
+      alert('Lỗi cập nhật role VC: ' + (e.response?.data?.error || e.message));
     }
   };
 
-  /** Gán role auto-sync VC/LĐ hàng loạt cho nhiều cột đã chọn. */
+  /** Gán role auto-sync VC hàng loạt cho nhiều cột đã chọn. */
   const bulkSetVcSyncType = async (stageIds = [], syncType = null) => {
     const ids = Array.from(new Set((stageIds || []).filter(Boolean)));
     if (!ids.length) return;
@@ -972,7 +972,7 @@ export default function PipelineSettingsPage() {
       );
       load();
     } catch (e) {
-      alert('Lỗi gán trigger VC/LĐ hàng loạt: ' + (e.response?.data?.error || e.message));
+      alert('Lỗi gán trigger VC hàng loạt: ' + (e.response?.data?.error || e.message));
     }
   };
 
@@ -2272,7 +2272,7 @@ function StageForm({
             <optgroup label="Sản xuất (SX)">
               <option value="sx_production">🏭 Nhận deal khi SX project đến cột có trigger CRM</option>
             </optgroup>
-            <optgroup label="Vận chuyển & Lắp đặt (VC)">
+            <optgroup label="Vận chuyển (VC)">
               <option value="vc_delivery">🚚 Nhận deal khi VC chuyển sang «Vận chuyển»</option>
               <option value="vc_installation">🔧 Nhận deal khi VC chuyển sang «Lắp đặt»</option>
               <option value="vc_customer_care">🤝 Nhận deal khi VC chuyển sang «CSKH / Bảo hành»</option>
@@ -2321,7 +2321,7 @@ function StageForm({
           {vcStages.length > 0 && (
             <div>
               <div className="flex flex-wrap items-center gap-2 mb-1">
-                <p className="text-[10px] font-semibold text-orange-700">🚚 Vận chuyển & Lắp đặt (VC)</p>
+                <p className="text-[10px] font-semibold text-orange-700">🚚 Vận chuyển (VC)</p>
                 <label className="inline-flex items-center gap-1 text-[10px] text-gray-600 cursor-pointer">
                   <input
                     type="checkbox"
@@ -2357,7 +2357,7 @@ function StageForm({
                       type="button"
                       onClick={() => onBulkSetVcSyncType?.(Array.from(bulkVcSelected), null)}
                       className="h-6 px-2 rounded border border-gray-300 bg-white text-gray-600 text-[10px] font-semibold cursor-pointer hover:bg-gray-50"
-                      title="Bỏ trigger VC/LĐ cho các cột đã chọn"
+                      title="Bỏ trigger VC cho các cột đã chọn"
                     >
                       Bỏ trigger
                     </button>
@@ -2391,7 +2391,7 @@ function StageForm({
                         type="button"
                         onClick={() => onSetModuleTarget?.(vc, 'vc', linked ? null : editingStageId)}
                         className="cursor-pointer hover:text-orange-700"
-                        title="Map cột VC/LĐ này vào CRM stage đang sửa"
+                        title="Map cột VC này vào CRM stage đang sửa"
                       >
                         {vc.icon || '📋'} {vc.name}
                         {linked && ' ✓'}

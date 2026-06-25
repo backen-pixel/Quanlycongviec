@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Bell, Phone, X } from 'lucide-react';
 import api from '../lib/api';
@@ -149,7 +149,7 @@ const MODULE_SECTIONS = [
       },
       {
         key: 'logistics_deadlines',
-        label: 'Nhắc / quá hạn — Vận chuyển & lắp đặt',
+        label: 'Nhắc / quá hạn — Vận chuyển',
         sub: 'Task dự án khi dự án ở giai đoạn giao hàng, lắp đặt, bảo hành — chỉ người được giao task.',
         examples: ['Sắp đến hạn giao / lắp', 'Task VC quá hạn'],
       },

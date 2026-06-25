@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
@@ -7,7 +7,7 @@ import { Search, Filter, FolderKanban } from 'lucide-react';
 
 const DEFAULT_STAGES = [
   { slug: 'production', name: 'Sản xuất', color: '#EA580C', icon: '🏭' },
-  { slug: 'delivery', name: 'VC & Lắp đặt', color: '#F97316', icon: '🚚' },
+  { slug: 'delivery', name: 'Vận chuyển', color: '#F97316', icon: '🚚' },
   { slug: 'customer-care', name: 'CSKH', color: '#FDBA74', icon: '🤝' },
 ];
 
