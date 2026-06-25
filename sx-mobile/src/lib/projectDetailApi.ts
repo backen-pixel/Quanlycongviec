@@ -377,6 +377,93 @@ export async function fetchUsersForAssign(): Promise<PersonRef[]> {
 
 export type LeadMember = { user_id: string; role?: string; user?: PersonRef | null };
 
+export type ProjectDocument = {
+  id: string;
+  name?: string | null;
+  doc_type?: string | null;
+  file_url?: string | null;
+  file_name?: string | null;
+  mime_type?: string | null;
+  notes?: string | null;
+  created_at?: string | null;
+  creator?: PersonRef | null;
+  uploader?: PersonRef | null;
+  is_from_task?: boolean;
+};
+
+export type ProjectTaskFile = {
+  id: string;
+  file_name?: string | null;
+  file_url?: string | null;
+  mime_type?: string | null;
+  created_at?: string | null;
+  task?: { id?: string; title?: string | null } | null;
+  uploader?: PersonRef | null;
+};
+
+function mapProjectDocument(row: Record<string, unknown>): ProjectDocument {
+  return {
+    id: String(row.id || ''),
+    name: row.name != null ? String(row.name) : null,
+    doc_type: row.doc_type != null ? String(row.doc_type) : null,
+    file_url: row.file_url != null ? String(row.file_url) : null,
+    file_name: row.file_name != null ? String(row.file_name) : null,
+    mime_type: row.mime_type != null ? String(row.mime_type) : null,
+    notes: row.notes != null ? String(row.notes) : null,
+    created_at: row.created_at != null ? String(row.created_at) : null,
+    creator: mapPerson(row.creator),
+    uploader: mapPerson(row.uploader),
+    is_from_task: Boolean(row.is_from_task),
+  };
+}
+
+export async function fetchProjectDocuments(projectId: string): Promise<ProjectDocument[]> {
+  const { data } = await api.get<{ documents?: unknown[] }>(`/projects/${projectId}/documents`);
+  const list = Array.isArray(data?.documents) ? data.documents : [];
+  return list.map((row) => mapProjectDocument(row as Record<string, unknown>));
+}
+
+export async function fetchProjectTaskFiles(projectId: string): Promise<ProjectTaskFile[]> {
+  const { data } = await api.get<{ taskFiles?: unknown[] }>(`/projects/${projectId}/task-files`, {
+    params: { for_module: 'production' },
+  });
+  const list = Array.isArray(data?.taskFiles) ? data.taskFiles : [];
+  return list.map((row) => {
+    const r = row as Record<string, unknown>;
+    const task = r.task as Record<string, unknown> | undefined;
+    return {
+      id: String(r.id || ''),
+      file_name: r.file_name != null ? String(r.file_name) : null,
+      file_url: r.file_url != null ? String(r.file_url) : null,
+      mime_type: r.mime_type != null ? String(r.mime_type) : null,
+      created_at: r.created_at != null ? String(r.created_at) : null,
+      task: task
+        ? { id: task.id != null ? String(task.id) : undefined, title: task.title != null ? String(task.title) : null }
+        : null,
+      uploader: mapPerson(r.uploader),
+    };
+  });
+}
+
+export async function fetchLeadDocuments(dealId: string): Promise<ProjectDocument[]> {
+  const { data } = await api.get<unknown>(`/crm/leads/${dealId}/documents`);
+  const list = Array.isArray(data) ? data : [];
+  return list.map((row) => mapProjectDocument(row as Record<string, unknown>));
+}
+
+export async function fetchLeadTaskDocuments(dealId: string): Promise<ProjectDocument[]> {
+  const { data } = await api.get<unknown>(`/crm/leads/${dealId}/task-documents`);
+  const list = Array.isArray(data) ? data : [];
+  return list.map((row) => {
+    const r = row as Record<string, unknown>;
+    return mapProjectDocument({
+      ...r,
+      name: r.file_name || r.name,
+      is_from_task: true,
+    });
+  });
+}
+
 export async function fetchLeadMembers(dealId: string): Promise<LeadMember[]> {
   const { data } = await api.get<unknown>(`/crm/leads/${dealId}/members`);
   const list = Array.isArray(data) ? data : [];

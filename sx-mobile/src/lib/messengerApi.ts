@@ -90,6 +90,9 @@ export function mapMessageRow(row: Record<string, unknown>): MessengerMessage {
     recalled_by: row.recalled_by != null ? String(row.recalled_by) : null,
     reply_to: row.reply_to != null ? String(row.reply_to) : null,
     reply_to_message: replyParent?.id ? mapMessageRow({ ...replyParent, group_id: row.group_id }) : null,
+    mention_user_ids: Array.isArray(row.mention_user_ids)
+      ? row.mention_user_ids.map((id) => String(id))
+      : null,
     attachment_url: row.attachment_url != null ? String(row.attachment_url) : null,
     attachment_name: row.attachment_name != null ? String(row.attachment_name) : null,
     attachment_mime: row.attachment_mime != null ? String(row.attachment_mime) : null,
@@ -128,10 +131,11 @@ export async function fetchMessengerMessages(groupId: string): Promise<Messenger
 export async function sendMessengerText(
   groupId: string,
   content: string,
-  replyTo?: string | null,
+  opts?: { replyTo?: string | null; mentionUserIds?: string[] },
 ): Promise<MessengerMessage> {
-  const body: { content: string; reply_to?: string } = { content };
-  if (replyTo) body.reply_to = replyTo;
+  const body: { content: string; reply_to?: string; mention_user_ids?: string[] } = { content };
+  if (opts?.replyTo) body.reply_to = opts.replyTo;
+  if (opts?.mentionUserIds?.length) body.mention_user_ids = opts.mentionUserIds;
   const { data } = await api.post<Record<string, unknown>>(`/messenger/groups/${groupId}/chat`, body);
   return mapMessageRow(data || {});
 }
@@ -180,9 +184,14 @@ export type MessengerGroupMember = {
 export async function fetchMessengerGroupDetail(groupId: string): Promise<{
   id: string;
   name: string;
+  avatar?: string | null;
+  isDirect?: boolean;
+  peerId?: string | null;
   members: MessengerGroupMember[];
 }> {
-  const { data } = await api.get<Record<string, unknown>>(`/messenger/groups/${groupId}`);
+  const { data } = await api.get<Record<string, unknown>>(`/messenger/groups/${groupId}`, {
+    params: { _ts: Date.now() },
+  });
   const membersRaw = Array.isArray(data.members) ? data.members : [];
   const members = membersRaw.map((row) => {
     const m = row as Record<string, unknown>;
@@ -196,9 +205,36 @@ export async function fetchMessengerGroupDetail(groupId: string): Promise<{
   }).filter((m) => m.id);
   return {
     id: String(data.id || groupId),
-    name: String(data.name || 'Nhóm chat'),
+    name: String(data.display_name || data.name || 'Nhóm chat'),
+    avatar: resolveMediaUrl(
+      (data.peer_avatar as string) || (data.avatar as string) || null,
+    ),
+    isDirect: Boolean(data.is_direct),
+    peerId: data.peer_id != null ? String(data.peer_id) : null,
     members,
   };
+}
+
+export async function updateMessengerGroupName(groupId: string, name: string): Promise<void> {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error('Tên nhóm không được để trống');
+  await api.patch(`/messenger/groups/${groupId}`, { name: trimmed });
+}
+
+export async function updateMessengerGroupAvatar(
+  groupId: string,
+  asset: { uri: string; name?: string; type?: string },
+): Promise<string> {
+  const form = new FormData();
+  form.append('file', {
+    uri: asset.uri,
+    name: asset.name || 'avatar.jpg',
+    type: asset.type || 'image/jpeg',
+  } as unknown as Blob);
+  const { data } = await api.patch<{ avatar?: string }>(`/messenger/groups/${groupId}/avatar`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return data?.avatar ? String(data.avatar) : '';
 }
 
 export async function fetchCallHistoryItems(
@@ -247,3 +283,33 @@ export function patchThreadFromMessage(
 }
 
 export type { MessengerGroupRow };
+
+export async function createDirectChat(peerUserId: string): Promise<string> {
+  const { data } = await api.post<{ id?: string }>('/messenger/direct', { peer_user_id: peerUserId });
+  if (!data?.id) throw new Error('Không tạo được hội thoại');
+  return data.id;
+}
+
+export async function createMessengerGroup(
+  name: string,
+  memberIds: string[],
+): Promise<{ id: string; name: string }> {
+  const members = memberIds.map((user_id) => ({ user_id, role: 'member' }));
+  const { data } = await api.post<{ id?: string; name?: string }>('/messenger/groups', { name, members });
+  if (!data?.id) throw new Error('Không tạo được nhóm');
+  return { id: String(data.id), name: String(data.name || name) };
+}
+
+export async function leaveMessengerGroup(groupId: string): Promise<void> {
+  await api.post(`/messenger/groups/${groupId}/leave`);
+}
+
+export async function addMessengerGroupMembers(
+  groupId: string,
+  memberIds: string[],
+): Promise<void> {
+  if (!memberIds.length) return;
+  await api.post(`/messenger/groups/${groupId}/members`, {
+    members: memberIds.map((user_id) => ({ user_id, role: 'member' })),
+  });
+}

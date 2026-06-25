@@ -66,9 +66,18 @@ export function messageDisplayText(
   return buildMessengerMessagePreview(message, { forUserId, maxLen: 5000 }) || '';
 }
 
+import { senderDisplayName } from './messengerReadReceipts';
+
 export function formatReplyPreview(message: MessengerMessage | null | undefined): string {
   if (!message) return 'Tin nhắn';
   if (message.is_recalled || message.recalled_at) return 'Tin nhắn đã thu hồi';
   const preview = buildMessengerMessagePreview(message, { maxLen: 80 });
   return preview || 'Tin nhắn';
+}
+
+export function formatReplyComposerLabel(message: MessengerMessage | null | undefined): string {
+  if (!message) return 'Tin nhắn';
+  const name = senderDisplayName(message);
+  const body = formatReplyPreview(message);
+  return `${name}: ${body}`;
 }

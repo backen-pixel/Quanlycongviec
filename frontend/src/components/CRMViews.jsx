@@ -304,7 +304,7 @@ function PlannerByOwner({ allItems, pipelineType, navigate, onGoPersonal }) {
             </div>
             <div>
               <p className="text-sm font-semibold" style={{ color: '#000000' }}>{group.user.full_name}</p>
-              <p className="text-[10px] text-gray-500">{group.items.length} {pipelineType === 'deal' ? 'deal' : 'lead'} • {formatVND(group.totalValue)}</p>
+              <p className="text-[10px] text-gray-500">{group.items.length} {pipelineType === 'lead' ? 'lead' : 'deal'} • {formatVND(group.totalValue)}</p>
             </div>
           </div>
           <div className="p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
@@ -607,7 +607,7 @@ function PlannerPersonal({ allItems, pipelineType, navigate }) {
           className="h-8 px-3 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 cursor-pointer inline-flex items-center gap-1.5">
           <Plus className="h-3.5 w-3.5" /> Thêm cột
         </button>
-        <p className="text-xs text-gray-500">Kéo-thả {pipelineType === 'deal' ? 'deal' : 'lead'} giữa các cột. Cấu hình này chỉ thuộc về bạn.</p>
+        <p className="text-xs text-gray-500">Kéo-thả {pipelineType === 'lead' ? 'lead' : 'deal'} giữa các cột. Cấu hình này chỉ thuộc về bạn.</p>
       </div>
 
       {columns.length === 0 ? (
@@ -669,7 +669,7 @@ function PlannerPersonal({ allItems, pipelineType, navigate }) {
                 ))}
                 <button onClick={() => setAddingTo(col.id)}
                   className="w-full h-8 rounded-lg border border-dashed border-gray-300 text-gray-500 text-xs font-medium hover:bg-white hover:border-blue-400 hover:text-blue-600 cursor-pointer inline-flex items-center justify-center gap-1">
-                  <Plus className="h-3.5 w-3.5" /> Thêm {pipelineType === 'deal' ? 'deal' : 'lead'}
+                  <Plus className="h-3.5 w-3.5" /> Thêm {pipelineType === 'lead' ? 'lead' : 'deal'}
                 </button>
               </KanbanColumn>
             );
@@ -681,7 +681,7 @@ function PlannerPersonal({ allItems, pipelineType, navigate }) {
         <div className="fixed inset-0 bg-black/40 z-50 flex items-start justify-center p-6" onClick={() => { setAddingTo(null); setPickerQuery(''); }}>
           <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-4 py-3 border-b">
-              <p className="text-sm font-semibold text-gray-900">Chọn {pipelineType === 'deal' ? 'deal' : 'lead'} để thêm</p>
+              <p className="text-sm font-semibold text-gray-900">Chọn {pipelineType === 'lead' ? 'lead' : 'deal'} để thêm</p>
               <button onClick={() => { setAddingTo(null); setPickerQuery(''); }} className="text-gray-400 hover:text-gray-700 cursor-pointer">
                 <X className="h-4 w-4" />
               </button>
@@ -1076,13 +1076,13 @@ export function CommentsView({ pipeline, pipelineType, commentsIndex, onRefreshI
           Bình luận cuối là của tôi
         </label>
         <span className="text-xs text-gray-500 ml-auto">
-          {filtered.length} / {allItems.length} {pipelineType === 'deal' ? 'deal' : 'lead'} có bình luận
+          {filtered.length} / {allItems.length} {pipelineType === 'lead' ? 'lead' : 'deal'} có bình luận
         </span>
       </div>
 
       {filtered.length === 0 ? (
         <p className="text-center text-gray-400 py-12 text-sm">
-          Chưa có {pipelineType === 'deal' ? 'deal' : 'lead'} nào có bình luận.
+          Chưa có {pipelineType === 'lead' ? 'lead' : 'deal'} nào có bình luận.
         </p>
       ) : (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 lg:gap-4">

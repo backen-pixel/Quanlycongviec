@@ -1,6 +1,6 @@
 {
   "name": "sx-mobile",
-  "version": "1.0.0",
+  "version": "1.0.64",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
@@ -23,6 +23,7 @@
     "babel-preset-expo": "~54.0.10",
     "expo": "~54.0.33",
     "expo-application": "~7.0.8",
+    "expo-av": "~16.0.8",
     "expo-constants": "~18.0.13",
     "expo-device": "~8.0.10",
     "expo-document-picker": "~14.0.8",
@@ -30,6 +31,7 @@
     "expo-image-picker": "~17.0.10",
     "expo-intent-launcher": "~13.0.8",
     "expo-linking": "~8.0.12",
+    "expo-media-library": "~18.2.1",
     "expo-notifications": "^0.32.17",
     "expo-share-intent": "^5.1.1",
     "expo-status-bar": "~3.0.9",

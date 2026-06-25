@@ -23,6 +23,7 @@ import UploadFileLightbox, {
   isUploadImageFile,
 } from '../components/UploadFileLightbox';
 import { downloadWorkshopDocumentsZip } from '../lib/workshopDocumentsZipDownload';
+import { resolveSxProjectLeadId } from '../lib/sxProjectComments';
 import {
   ArrowLeft, FolderKanban, MessageSquare, Plus, X,
   FileUp, Edit2, Save, ChevronDown, Trash2, Send, Paperclip,
@@ -1246,7 +1247,12 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [commentCount, setCommentCount] = useState(0);
   const [docLightboxIndex, setDocLightboxIndex] = useState(null);
 
-  const dealIdForCommentCount = project?.crmDeals?.[0]?.id || fallbackDealIdForTasks;
+  const dealIdForCommentCount = project
+    ? (resolveSxProjectLeadId({
+      crm_lead_id: project.crm_lead_id,
+      crm_deals: project.crmDeals || project.crm_deals,
+    }) || fallbackDealIdForTasks)
+    : null;
 
   useEffect(() => {
     if (dealIdForCommentCount) {
@@ -2315,7 +2321,10 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     ? (project.vc_kanban_column_id || project.current_stage_id || project.current_stage?.id)
     : resolveSxKanbanCurrentStageId(project, safePipelineStages);
   const primaryCrmDeal = project.crmDeals?.[0];
-  const crmLeadId = primaryCrmDeal?.id || fallbackDealIdForTasks;
+  const crmLeadId = resolveSxProjectLeadId({
+    crm_lead_id: project.crm_lead_id,
+    crm_deals: project.crmDeals || project.crm_deals,
+  }) || fallbackDealIdForTasks;
   const dealLeadFromUrl = searchParams.get('deal_lead');
   const tasksLeadId = dealLeadFromUrl || crmLeadId;
   const focusCrmTaskId = searchParams.get('crm_task');

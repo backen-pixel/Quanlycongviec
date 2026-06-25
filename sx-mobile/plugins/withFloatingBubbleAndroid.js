@@ -1,5 +1,5 @@
 /**
- * Expo config plugin — copy native overlay bubble vào android/ khi prebuild.
+ * Expo config plugin — copy native overlay bubble (đồng bộ crm-mobile-v2) vào android/ khi prebuild.
  */
 const fs = require('fs');
 const path = require('path');
@@ -8,10 +8,26 @@ const { withDangerousMod, withAndroidManifest, withAppBuildGradle } = require('@
 const SOURCE_ROOT = path.join(__dirname, 'native-android');
 const OVERLAY_FILES = [
   'overlay/OverlayBubbleService.kt',
+  'overlay/OverlayChatPanel.kt',
+  'overlay/OverlayChatTheme.kt',
+  'overlay/BubbleChatApi.kt',
+  'overlay/BubbleComposeBridge.kt',
+  'overlay/BubbleComposeActivity.kt',
+  'overlay/BubbleMediaBridge.kt',
+  'overlay/BubbleMediaPickerActivity.kt',
+  'overlay/FloatingBubbleBridge.kt',
   'overlay/FloatingBubbleModule.kt',
   'overlay/FloatingBubbleOverlayPackage.kt',
   'overlay/BubbleFcmWake.kt',
   'overlay/SxFirebaseMessagingService.kt',
+  'MainActivity.kt',
+  'MainApplication.kt',
+];
+
+const RES_FILES = [
+  'res/values/ids.xml',
+  'res/values/styles_bubble.xml',
+  'res/xml/bubble_file_paths.xml',
 ];
 
 function copyOverlayNative(projectRoot) {
@@ -26,6 +42,8 @@ function copyOverlayNative(projectRoot) {
     'tubeppro',
     'sxmobile',
   );
+  const resRoot = path.join(projectRoot, 'android', 'app', 'src', 'main', 'res');
+
   for (const rel of OVERLAY_FILES) {
     const src = path.join(SOURCE_ROOT, rel);
     const dest = path.join(androidJava, rel);
@@ -34,17 +52,12 @@ function copyOverlayNative(projectRoot) {
     fs.copyFileSync(src, dest);
   }
 
-  const mainAppSrc = path.join(SOURCE_ROOT, 'MainApplication.kt');
-  const mainAppDest = path.join(androidJava, 'MainApplication.kt');
-  if (fs.existsSync(mainAppSrc)) {
-    fs.copyFileSync(mainAppSrc, mainAppDest);
-  }
-
-  const idsSrc = path.join(SOURCE_ROOT, 'res', 'values', 'ids.xml');
-  const idsDest = path.join(projectRoot, 'android', 'app', 'src', 'main', 'res', 'values', 'ids.xml');
-  if (fs.existsSync(idsSrc)) {
-    fs.mkdirSync(path.dirname(idsDest), { recursive: true });
-    fs.copyFileSync(idsSrc, idsDest);
+  for (const rel of RES_FILES) {
+    const src = path.join(SOURCE_ROOT, rel);
+    const dest = path.join(resRoot, rel.replace(/^res[\\/]/, ''));
+    if (!fs.existsSync(src)) continue;
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(src, dest);
   }
 }
 
@@ -57,14 +70,12 @@ function withFloatingBubbleManifest(config) {
 
     const perms = manifest.manifest['uses-permission'] || [];
     const permNames = new Set(perms.map((p) => p.$?.['android:name']));
-    if (!permNames.has('android.permission.SYSTEM_ALERT_WINDOW')) {
-      perms.push({ $: { 'android:name': 'android.permission.SYSTEM_ALERT_WINDOW' } });
-    }
-    if (!permNames.has('android.permission.FOREGROUND_SERVICE')) {
-      perms.push({ $: { 'android:name': 'android.permission.FOREGROUND_SERVICE' } });
-    }
-    if (!permNames.has('android.permission.FOREGROUND_SERVICE_SPECIAL_USE')) {
-      perms.push({ $: { 'android:name': 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE' } });
+    for (const name of [
+      'android.permission.SYSTEM_ALERT_WINDOW',
+      'android.permission.FOREGROUND_SERVICE',
+      'android.permission.FOREGROUND_SERVICE_SPECIAL_USE',
+    ]) {
+      if (!permNames.has(name)) perms.push({ $: { 'android:name': name } });
     }
     manifest.manifest['uses-permission'] = perms;
 
@@ -94,8 +105,6 @@ function withFloatingBubbleManifest(config) {
       });
     }
 
-    // ExpoFirebaseMessagingService được merge từ AAR lúc Gradle build — gỡ bằng tools:node
-    // rồi đăng ký SxFirebaseMessagingService (kế thừa Expo, thêm bubble_wake).
     app.service = app.service.filter((s) => {
       const n = String(s.$?.['android:name'] || '');
       return (
@@ -131,6 +140,53 @@ function withFloatingBubbleManifest(config) {
           {
             $: { 'android:priority': '1' },
             action: [{ $: { 'android:name': 'com.google.firebase.MESSAGING_EVENT' } }],
+          },
+        ],
+      });
+    }
+
+    app.activity = app.activity || [];
+    if (!app.activity.some((a) => a.$?.['android:name'] === '.overlay.BubbleComposeActivity')) {
+      app.activity.push({
+        $: {
+          'android:name': '.overlay.BubbleComposeActivity',
+          'android:exported': 'false',
+          'android:launchMode': 'singleTop',
+          'android:theme': '@style/Theme.BubbleCompose',
+          'android:windowSoftInputMode': 'adjustResize',
+          'android:excludeFromRecents': 'true',
+          'android:taskAffinity': 'vn.tubeppro.sxmobile.bubblecompose',
+        },
+      });
+    }
+
+    if (!app.activity.some((a) => a.$?.['android:name'] === '.overlay.BubbleMediaPickerActivity')) {
+      app.activity.push({
+        $: {
+          'android:name': '.overlay.BubbleMediaPickerActivity',
+          'android:exported': 'false',
+          'android:theme': '@android:style/Theme.Translucent.NoTitleBar',
+          'android:excludeFromRecents': 'true',
+          'android:taskAffinity': 'vn.tubeppro.sxmobile.bubblepicker',
+        },
+      });
+    }
+
+    app.provider = app.provider || [];
+    if (!app.provider.some((p) => String(p.$?.['android:authorities'] || '').includes('bubblefileprovider'))) {
+      app.provider.push({
+        $: {
+          'android:name': 'androidx.core.content.FileProvider',
+          'android:authorities': '${applicationId}.bubblefileprovider',
+          'android:exported': 'false',
+          'android:grantUriPermissions': 'true',
+        },
+        'meta-data': [
+          {
+            $: {
+              'android:name': 'android.support.FILE_PROVIDER_PATHS',
+              'android:resource': '@xml/bubble_file_paths',
+            },
           },
         ],
       });

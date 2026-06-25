@@ -79,6 +79,7 @@ export function resolvePrimaryAttachment(msg: MessengerMessage) {
     url: msg.attachment_url || first?.url || null,
     name: msg.attachment_name || first?.name || null,
     type: msg.attachment_mime || first?.type || null,
+    size: first?.size ?? undefined,
   };
 }
 
@@ -92,6 +93,74 @@ export function isVideoMessage(msg: MessengerMessage): boolean {
   if (msg.is_recalled || msg.recalled_at) return false;
   const { url, type } = resolvePrimaryAttachment(msg);
   return isVideoMimeOrUrl(type, url, msg.message_type);
+}
+
+export function isAudioMessage(msg: MessengerMessage): boolean {
+  if (msg.is_recalled || msg.recalled_at) return false;
+  const { type } = resolvePrimaryAttachment(msg);
+  const mt = String(msg.message_type || '');
+  return mt === 'audio' || mt === 'voice' || (type || '').startsWith('audio/');
+}
+
+export function isAudioMimeOrName(mime?: string | null, name?: string | null): boolean {
+  if ((mime || '').startsWith('audio/')) return true;
+  return /\.(mp3|m4a|wav|aac|ogg|opus|webm)(\?|$)/i.test(String(name || ''));
+}
+
+export function isDocumentMessage(msg: MessengerMessage): boolean {
+  if (msg.is_recalled || msg.recalled_at) return false;
+  if (isImageMessage(msg) || isVideoMessage(msg) || isAudioMessage(msg)) return false;
+  const att = resolvePrimaryAttachment(msg);
+  if (!att.url) return false;
+  if (msg.message_type === 'file') return true;
+  return !!att.name;
+}
+
+export type FileTypeMeta = {
+  bg: string;
+  letter: string;
+  label: string;
+};
+
+export function getFileTypeMeta(name?: string | null, mime = ''): FileTypeMeta {
+  const ext = (name || '').match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase() || '';
+  const ml = (mime || '').toLowerCase();
+  if (['doc', 'docx'].includes(ext) || ml.includes('word')) {
+    return { bg: '#2B579A', letter: 'W', label: 'Word' };
+  }
+  if (['xls', 'xlsx', 'csv'].includes(ext) || ml.includes('sheet') || ml.includes('excel')) {
+    return { bg: '#217346', letter: 'X', label: 'Excel' };
+  }
+  if (ext === 'pdf' || ml.includes('pdf')) {
+    return { bg: '#E74C3C', letter: 'P', label: 'PDF' };
+  }
+  if (['ppt', 'pptx'].includes(ext) || ml.includes('presentation') || ml.includes('powerpoint')) {
+    return { bg: '#D24726', letter: 'P', label: 'PowerPoint' };
+  }
+  if (['zip', 'rar', '7z'].includes(ext) || ml.includes('zip')) {
+    return { bg: '#F59E0B', letter: 'Z', label: 'Nén' };
+  }
+  if (['txt', 'md'].includes(ext) || ml.startsWith('text/')) {
+    if (ext === 'md') return { bg: '#64748B', letter: 'M', label: 'Markdown' };
+    return { bg: '#64748B', letter: 'T', label: 'Văn bản' };
+  }
+  return { bg: '#64748B', letter: 'F', label: 'Tệp tin' };
+}
+
+const FILE_TYPE_DESC: Record<string, string> = {
+  Word: 'Tài liệu Word',
+  Excel: 'Bảng tính Excel',
+  PDF: 'Tài liệu PDF',
+  PowerPoint: 'Trình chiếu PowerPoint',
+  Markdown: 'Tài liệu Markdown',
+  'Văn bản': 'Tài liệu văn bản',
+  Nén: 'Tệp nén',
+  'Tệp tin': 'Tệp đính kèm',
+};
+
+export function getFileTypeDescription(name?: string | null, mime?: string | null): string {
+  const meta = getFileTypeMeta(name, mime || '');
+  return FILE_TYPE_DESC[meta.label] || meta.label;
 }
 
 export function isStickerContent(text?: string | null): boolean {

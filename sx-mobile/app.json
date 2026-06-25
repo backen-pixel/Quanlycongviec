@@ -2,7 +2,7 @@
   "expo": {
     "name": "Quản lý sản xuất",
     "slug": "sx-mobile",
-    "version": "1.0.59",
+    "version": "1.0.64",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -22,7 +22,7 @@
     },
     "android": {
       "package": "vn.tubeppro.sxmobile",
-      "versionCode": 62,
+      "versionCode": 67,
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": false,
       "softwareKeyboardLayoutMode": "resize",
@@ -45,7 +45,8 @@
         "android.permission.WAKE_LOCK",
         "android.permission.DISABLE_KEYGUARD",
         "android.permission.FOREGROUND_SERVICE_MICROPHONE",
-        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.REQUEST_INSTALL_PACKAGES"
       ]
     },
     "plugins": [
@@ -75,6 +76,7 @@
       "./plugins/withGoogleServices.js",
       "./plugins/withFloatingBubbleAndroid.js",
       "./plugins/withIncomingCallAndroid.js",
+      "./plugins/withApkInstallAndroid.js",
       [
         "expo-share-intent",
         {

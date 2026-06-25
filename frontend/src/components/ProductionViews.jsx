@@ -8,9 +8,10 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmCommentFullDateTime, formatCrmFbRelativeTime } from './crmFbCommentUi';
-import { upsertComment, CommentAttachmentsBlock } from './CommentsPanels';
+import { upsertComment, CommentAttachmentsBlock, CrmLeadCommentsPanel } from './CommentsPanels';
 import { FilePreview, FileUploadButton } from './FileUpload';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
+import { resolveSxProjectLeadId } from '../lib/sxProjectComments';
 
 /** Bộ emoji được phép — đồng bộ với backend PROJECT_COMMENT_ALLOWED_REACTION_EMOJI */
 const PROJECT_COMMENT_REACTION_PICKER = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
@@ -1408,6 +1409,7 @@ export function ProductionCommentsView({ pipeline, commentsIndex, onRefreshIndex
 
 function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, user }) {
   const { socket } = useAuth();
+  const leadId = resolveSxProjectLeadId(item);
   const [comments, setComments] = useState(null);
   const [loading, setLoading] = useState(false);
   const [body, setBody] = useState('');
@@ -1419,6 +1421,7 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
   const [reactionBusy, setReactionBusy] = useState(null);
 
   const load = useCallback(async (opts) => {
+    if (leadId) return;
     const silent = opts?.silent;
     try {
       if (!silent) setLoading(true);
@@ -1430,13 +1433,13 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [item.id]);
+  }, [item.id, leadId]);
 
-  useEffect(() => { if (expanded && comments == null) load(); }, [expanded, comments, load]);
+  useEffect(() => { if (expanded && comments == null && !leadId) load(); }, [expanded, comments, load, leadId]);
   useEffect(() => { if (!expanded) setReplyTo(null); }, [expanded]);
 
   useEffect(() => {
-    if (!expanded || !socket) return;
+    if (!expanded || !socket || leadId) return;
     const join = () => socket.emit('join:project', item.id);
     join();
     socket.on('connect', join);
@@ -1468,7 +1471,7 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
       socket.off('project:comment:deleted', onDeleted);
       socket.off('project:comment:updated', onUpdated);
     };
-  }, [expanded, item.id, socket]);
+  }, [expanded, item.id, socket, leadId]);
 
   const commentsByParent = useMemo(() => groupProjectCommentsByParent(comments || []), [comments]);
 
@@ -1686,6 +1689,11 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
       </button>
 
       {expanded && (
+        leadId ? (
+          <div className="border-t border-[#e4e6eb] bg-[#f0f2f5]">
+            <CrmLeadCommentsPanel leadId={leadId} onCountChange={() => onChanged?.()} />
+          </div>
+        ) : (
         <div className="max-h-[min(360px,55vh)] overflow-y-auto border-t border-[#e4e6eb] bg-[#f0f2f5] px-2 py-2">
           {loading && <p className="py-6 text-center text-sm text-[#65676b]">Đang tải…</p>}
           {!loading && (comments || []).length === 0 && (
@@ -1693,8 +1701,10 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
           )}
           {!loading && renderCommentBranch('__root__', 0)}
         </div>
+        )
       )}
 
+      {!leadId && (
       <div className="border-t border-[#e4e6eb] bg-white">
         {replyTo && (
           <div className="flex items-center justify-between gap-2 border-b border-[#e4e6eb] bg-[#f0f2f5] px-3 py-2 text-[13px] text-[#050505]">
@@ -1731,6 +1741,7 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

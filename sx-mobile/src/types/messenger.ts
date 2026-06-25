@@ -39,6 +39,7 @@ export type MessengerMessage = {
   recalled_by?: string | null;
   reply_to?: string | null;
   reply_to_message?: MessengerMessage | null;
+  mention_user_ids?: string[] | null;
   attachment_url?: string | null;
   attachment_name?: string | null;
   attachment_mime?: string | null;

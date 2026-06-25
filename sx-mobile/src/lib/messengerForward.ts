@@ -65,3 +65,33 @@ export type ForwardTarget =
 export function forwardTargetKey(t: ForwardTarget): string {
   return t.type === 'group' ? `g:${t.id}` : `u:${t.id}`;
 }
+
+export function buildForwardMessageFromAttachment(
+  url: string,
+  opts?: { name?: string | null; mime?: string | null; sourceTitle?: string; note?: string },
+): MessengerMessage {
+  const mime = String(opts?.mime || '').toLowerCase();
+  let message_type = 'file';
+  if (mime.startsWith('audio/')) message_type = 'audio';
+  else if (mime.startsWith('image/')) message_type = 'image';
+  else if (mime.startsWith('video/')) message_type = 'video';
+
+  const name = opts?.name?.trim() || '';
+  const lines: string[] = [];
+  if (opts?.note?.trim()) lines.push(opts.note.trim());
+  const from = String(opts?.sourceTitle || '').trim();
+  lines.push(from ? `↪ Chia sẻ từ ${from}` : '↪ Chia sẻ tệp');
+  if (name) lines.push(name);
+  lines.push(url);
+
+  return {
+    id: `forward-file-${Date.now()}`,
+    group_id: '',
+    content: lines.filter(Boolean).join('\n\n'),
+    message_type,
+    attachment_url: url,
+    attachment_name: name || null,
+    attachment_mime: opts?.mime || null,
+    created_at: new Date().toISOString(),
+  };
+}

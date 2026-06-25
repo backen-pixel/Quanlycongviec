@@ -8,12 +8,16 @@ export async function sendMessengerWithFiles(
   opts: {
     content?: string;
     replyTo?: string | null;
+    mentionUserIds?: string[];
     files: PendingChatFile[];
   },
 ): Promise<MessengerMessage> {
   const form = new FormData();
   form.append('content', opts.content || '');
   if (opts.replyTo) form.append('reply_to', opts.replyTo);
+  if (opts.mentionUserIds?.length) {
+    form.append('mention_user_ids', JSON.stringify(opts.mentionUserIds));
+  }
   opts.files.forEach((f, i) => {
     const safeName = (f.name || '').trim() || `file_${Date.now()}_${i}.bin`;
     form.append('files', {
@@ -33,11 +37,14 @@ export async function sendMessengerWithFiles(
 export async function uploadMessengerSingleFile(
   groupId: string,
   file: PendingChatFile,
-  opts?: { content?: string; replyTo?: string | null },
+  opts?: { content?: string; replyTo?: string | null; mentionUserIds?: string[] },
 ): Promise<MessengerMessage> {
   const form = new FormData();
   form.append('content', opts?.content || '');
   if (opts?.replyTo) form.append('reply_to', opts.replyTo);
+  if (opts?.mentionUserIds?.length) {
+    form.append('mention_user_ids', JSON.stringify(opts.mentionUserIds));
+  }
   form.append('file', {
     uri: file.uri,
     name: file.name,
