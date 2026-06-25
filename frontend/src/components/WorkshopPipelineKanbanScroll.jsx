@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { useRef, useState, useEffect, useCallback, createContext, useContext } from 'react';
 import {
   KanbanBoardEdgeScrollChrome,
 } from '../lib/kanbanEdgeScrollControls';
@@ -8,18 +8,30 @@ const MIN_STEP = 5;
 const MAX_STEP = 34;
 const NUDGE_PX = 280;
 
+/** Chiều cao vùng cuộn Kanban — dùng cho cột khi `per-column`. */
+export const WorkshopKanbanScrollContext = createContext({ columnScrollMaxH: null });
+
+export function useWorkshopKanbanScrollLayout() {
+  return useContext(WorkshopKanbanScrollContext);
+}
+
 /**
  * Vùng mép hai bên (mũi tên) + tự cuộn ngang khi kéo thẻ tới sát mép / bấm để nudge.
  * @param {string} cardSelector — selector cho `Element.closest` khi bắt drag (vd: '[data-sx-kanban-card]')
- * @param {boolean} enableViewportScroll — bật chế độ cuộn dọc toàn Kanban như CRM
+ * @param {'unified'|'per-column'|'off'} columnScrollMode — cuộn dọc chung / riêng từng cột / tắt
+ * @param {boolean} enableViewportScroll — legacy: true = unified
  * @param {number|string} remeasureToken — token đổi khi cần đo lại chiều cao vùng cuộn
  */
 export default function WorkshopPipelineKanbanScroll({
   cardSelector,
   children,
+  columnScrollMode,
   enableViewportScroll = false,
   remeasureToken,
 }) {
+  const resolvedScrollMode = columnScrollMode ?? (enableViewportScroll ? 'unified' : 'off');
+  const perColumnScroll = resolvedScrollMode === 'per-column';
+  const unifiedScroll = resolvedScrollMode === 'unified';
   const kanbanHScrollRef = useRef(null);
   const kanbanWrapRef = useRef(null);
   const pipelineDraggingRef = useRef(false);
@@ -99,7 +111,7 @@ export default function WorkshopPipelineKanbanScroll({
   }, [scrollStep, scheduleScrollLoop]);
 
   useEffect(() => {
-    if (!enableViewportScroll) return undefined;
+    if (!unifiedScroll && !perColumnScroll) return undefined;
     const measure = () => {
       const el = kanbanHScrollRef.current;
       if (!el) return;
@@ -115,7 +127,7 @@ export default function WorkshopPipelineKanbanScroll({
       clearTimeout(t);
       window.removeEventListener('resize', measure);
     };
-  }, [enableViewportScroll, remeasureToken]);
+  }, [unifiedScroll, perColumnScroll, remeasureToken]);
 
   useEffect(() => {
     const isOurCard = (e) => {
@@ -174,7 +186,8 @@ export default function WorkshopPipelineKanbanScroll({
   const rightEdgeStyle = quickChatDockRightInset > 0 ? { right: quickChatDockRightInset } : undefined;
 
   return (
-    <div ref={kanbanWrapRef} className="relative">
+    <WorkshopKanbanScrollContext.Provider value={{ columnScrollMaxH: scrollMaxH }}>
+      <div ref={kanbanWrapRef} className="relative">
       <KanbanBoardEdgeScrollChrome
         wrapRef={kanbanWrapRef}
         remeasureToken={remeasureToken}
@@ -207,8 +220,13 @@ export default function WorkshopPipelineKanbanScroll({
 
       <div
         ref={kanbanHScrollRef}
-        className={`${enableViewportScroll ? 'overflow-auto' : 'overflow-x-auto'} pb-4 [scrollbar-gutter:stable]`}
-        style={enableViewportScroll ? { maxHeight: scrollMaxH } : undefined}
+        className={`overscroll-y-contain pb-4 [scrollbar-gutter:stable] [overflow-anchor:none] ${
+          perColumnScroll ? 'overflow-x-auto overflow-y-hidden' : unifiedScroll ? 'overflow-auto' : 'overflow-x-auto'
+        }`}
+        style={{
+          ...(perColumnScroll ? { height: scrollMaxH } : unifiedScroll ? { maxHeight: scrollMaxH } : {}),
+          WebkitOverflowScrolling: 'touch',
+        }}
       >
         {children}
       </div>
@@ -227,6 +245,7 @@ export default function WorkshopPipelineKanbanScroll({
           Quá hạn
         </span>
       </div>
-    </div>
+      </div>
+    </WorkshopKanbanScrollContext.Provider>
   );
 }
