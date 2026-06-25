@@ -3314,74 +3314,75 @@ function KanbanCard({ item, stage, onMoveStage, pipelineStages, calculateDays, i
         </div>
       )}
 
-      {/* Footer: time chip + avatar + quick actions */}
-      <div className="flex items-center gap-1.5 pt-1.5 border-t border-gray-100">
-        {/* Time chip */}
-        <span
-          className="inline-flex items-center gap-0.5 text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded"
-          title={columnEnteredAt ? `Vào cột: ${formatDate(columnEnteredAt)}` : `Tạo: ${formatDate(item.created_at)}`}
-        >
-          <Clock className="h-2.5 w-2.5" />
-          {columnEnteredAt ? formatDate(columnEnteredAt) : formatDate(item.created_at)}
-        </span>
-        {columnSlaTone && columnSlaTone.level !== 'ok' && (
+      {/* Footer: meta trái + actions phải — nút luôn nằm trong thẻ */}
+      <div className="flex items-center justify-between gap-1.5 pt-1.5 border-t border-gray-100 min-w-0">
+        <div className="flex items-center gap-1 min-w-0 flex-1 overflow-hidden">
           <span
-            className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded font-medium ${
-              columnSlaTone.level === 'overdue'
-                ? 'bg-red-100 text-red-700'
-                : columnSlaTone.level === 'soon'
-                  ? 'bg-amber-100 text-amber-800'
-                  : 'bg-yellow-50 text-yellow-800'
-            }`}
-            title="SLA cột pipeline"
+            className="inline-flex items-center gap-0.5 text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded shrink-0"
+            title={columnEnteredAt ? `Vào cột: ${formatDate(columnEnteredAt)}` : `Tạo: ${formatDate(item.created_at)}`}
           >
-            SLA {columnSlaTone.level === 'overdue' ? 'quá hạn' : 'sắp hết'}
+            <Clock className="h-2.5 w-2.5" />
+            {columnEnteredAt ? formatDate(columnEnteredAt) : formatDate(item.created_at)}
           </span>
-        )}
-
-        {/* Spacer */}
-        <span className="flex-1" />
-
-        {/* Avatar / đội SX */}
-        {staffList.length > 1 ? (
-          <span className="inline-flex items-center -space-x-1.5 shrink-0" title={staffList.map((u) => u.full_name).join(', ')}>
-            {staffList.slice(0, 3).map((u) => (
-              u.avatar ? (
-                <img key={u.id} src={u.avatar} alt="" className="h-5 w-5 rounded-full ring-2 ring-white" />
-              ) : (
-                <div
-                  key={u.id}
-                  className="h-5 w-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white ring-2 ring-white"
-                  style={{ backgroundColor: u.is_primary ? '#4f46e5' : stageColor }}
-                >
-                  {getInitials(u.full_name)}
-                </div>
-              )
-            ))}
-            {staffList.length > 3 && (
-              <span className="h-5 min-w-[20px] px-1 rounded-full bg-gray-200 text-[9px] font-bold text-gray-600 flex items-center justify-center ring-2 ring-white">
-                +{staffList.length - 3}
-              </span>
-            )}
-          </span>
-        ) : assignee?.full_name ? (
-          assignee.avatar ? (
-            <img src={assignee.avatar} alt="" className="h-5 w-5 rounded-full shrink-0" title={assignee.full_name} />
-          ) : (
-            <div
-              className="h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0"
-              style={{ backgroundColor: stageColor }}
-              title={assignee.full_name}
+          {columnSlaTone && columnSlaTone.level !== 'ok' && (
+            <span
+              className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${
+                columnSlaTone.level === 'overdue'
+                  ? 'bg-red-100 text-red-700'
+                  : columnSlaTone.level === 'soon'
+                    ? 'bg-amber-100 text-amber-800'
+                    : 'bg-yellow-50 text-yellow-800'
+              }`}
+              title="SLA cột pipeline"
             >
-              {getInitials(assignee.full_name)}
-            </div>
-          )
-        ) : (
-          <span className="h-5 w-5 rounded-full bg-gray-100 text-gray-400 text-[10px] flex items-center justify-center shrink-0" title="Chưa có người phụ trách">?</span>
-        )}
+              SLA {columnSlaTone.level === 'overdue' ? 'quá hạn' : 'sắp hết'}
+            </span>
+          )}
 
-        {/* Nhóm icon thao tác nhanh */}
-        <div className="flex items-center gap-0.5 shrink-0 rounded-full border border-teal-100 bg-white px-1 py-0.5 shadow-sm">
+          {/* Avatar / đội SX — tối đa 2 + badge, không chiếm chỗ nút thao tác */}
+          {staffList.length > 1 ? (
+            <span
+              className="inline-flex items-center -space-x-1 min-w-0 overflow-hidden"
+              title={staffList.map((u) => u.full_name).join(', ')}
+            >
+              {staffList.slice(0, 2).map((u) => (
+                u.avatar ? (
+                  <img key={u.id} src={u.avatar} alt="" className="h-5 w-5 rounded-full ring-2 ring-white shrink-0" />
+                ) : (
+                  <div
+                    key={u.id}
+                    className="h-5 w-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white ring-2 ring-white shrink-0"
+                    style={{ backgroundColor: u.is_primary ? '#4f46e5' : stageColor }}
+                  >
+                    {getInitials(u.full_name)}
+                  </div>
+                )
+              ))}
+              {staffList.length > 2 && (
+                <span className="h-5 min-w-[20px] px-1 rounded-full bg-gray-200 text-[9px] font-bold text-gray-600 flex items-center justify-center ring-2 ring-white shrink-0">
+                  +{staffList.length - 2}
+                </span>
+              )}
+            </span>
+          ) : assignee?.full_name ? (
+            assignee.avatar ? (
+              <img src={assignee.avatar} alt="" className="h-5 w-5 rounded-full shrink-0" title={assignee.full_name} />
+            ) : (
+              <div
+                className="h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0"
+                style={{ backgroundColor: stageColor }}
+                title={assignee.full_name}
+              >
+                {getInitials(assignee.full_name)}
+              </div>
+            )
+          ) : (
+            <span className="h-5 w-5 rounded-full bg-gray-100 text-gray-400 text-[10px] flex items-center justify-center shrink-0" title="Chưa có người phụ trách">?</span>
+          )}
+        </div>
+
+        {/* Nhóm icon thao tác nhanh — luôn cố định bên phải */}
+        <div className="flex items-center gap-0.5 shrink-0 ml-0.5 rounded-full border border-teal-100 bg-white px-1 py-0.5 shadow-sm">
         {typeof onMoveStage === 'function' && Array.isArray(pipelineStages) && pipelineStages.length > 1 && (
           <KanbanCardQuickMove
             stages={pipelineStages}
