@@ -327,8 +327,8 @@ function formatCrmPipelineTabCount(total, fallbackLen) {
 
 /** Query flags — backend trả select nhẹ + bỏ enrich nặng cho Kanban. */
 const CRM_KANBAN_LEAD_QUERY = { kanban: '1', lite: '1', skip_deadline: '1' };
-/** Trì hoãn pipeline/tab không active và số SĐT — tránh tranh băng thông lúc mở trang. */
-const CRM_INACTIVE_PIPELINE_DEFER_MS = 6000;
+/** Trì hoãn pipeline/tab không active — ngắn để tab Deal/Lead kia không trống quá lâu. */
+const CRM_INACTIVE_PIPELINE_DEFER_MS = 400;
 const CRM_PHONE_TOTALS_DEFER_MS = 3500;
 
 function crmDashboardUsesLegacyListFilters({ filterLeadType, filterReferrer, filterCustomerCompany }) {
@@ -942,6 +942,7 @@ export default function CRMDashboard() {
   const pipelinesAllRef = useRef([]);
   /** Giá trị GET /crm/live-version gần nhất — đổi → silent reload Kanban/KPI */
   const inactiveKanbanLoadSeqRef = useRef(0);
+  const missingPipelineLoadRef = useRef({ lead: false, deal: false });
   const crmLiveVersionRef = useRef(null);
   /** Lần cuối patch realtime Kanban — polling live-version bỏ qua refresh list nếu gần đây */
   const lastCrmRealtimeAtRef = useRef(0);
@@ -1330,7 +1331,13 @@ export default function CRMDashboard() {
           // Stale-while-revalidate: hiện Kanban từ cache ngay; đồng bộ ngầm vẫn chạy thanh tiến trình
           setFirstLoading(false);
           lastHydratedCacheKeyRef.current = cacheKey;
-          if (cached.isVeryFresh) {
+          const activeTab = pipelineType === 'deal' ? 'deal' : 'lead';
+          const cachedActiveStages = activeTab === 'lead' ? c.stagesLead : c.stagesDeal;
+          if (
+            cached.isVeryFresh
+            && Array.isArray(cachedActiveStages)
+            && cachedActiveStages.length > 0
+          ) {
             veryFreshCacheHit = true;
           }
         }
@@ -1371,6 +1378,7 @@ export default function CRMDashboard() {
     filterReferrer,
     filterCustomerCompany,
     filterRegion,
+    pipelineType,
   ]);
 
   // Khi mở view "Bình luận": tải comments-index cho toàn bộ lead/deal đang hiển thị
@@ -1792,6 +1800,7 @@ export default function CRMDashboard() {
   /** Xóa Kanban cũ ngay khi đổi công ty (tránh hiển thị nhầm dữ liệu công ty trước). */
   const resetKanbanForFilterChange = useCallback(() => {
     lastHydratedCacheKeyRef.current = null;
+    missingPipelineLoadRef.current = { lead: false, deal: false };
     setSyncing(true);
     startTransition(() => {
       setAllLeads([]);
@@ -2368,18 +2377,15 @@ export default function CRMDashboard() {
 
   const crmMainContentLoading = firstLoading || syncing;
 
-  const crmKanbanHasData = useMemo(
-    () =>
-      stagesLead.length > 0
-      || stagesDeal.length > 0
-      || allLeads.length > 0
-      || allDeals.length > 0,
-    [stagesLead.length, stagesDeal.length, allLeads.length, allDeals.length],
+  /** Tab Lead/Deal đang xem — cần có cột pipeline mới render được thẻ Kanban. */
+  const crmActiveTabStagesReady = useMemo(
+    () => (pipelineType === 'lead' ? stagesLead.length : stagesDeal.length) > 0,
+    [pipelineType, stagesLead.length, stagesDeal.length],
   );
 
-  /** Loader toàn màn khi chưa có dữ liệu; overlay khi đã có cache Kanban */
-  const crmShowFullLoader = crmMainContentLoading && !crmKanbanHasData;
-  const crmShowLoaderOverlay = crmMainContentLoading && crmKanbanHasData;
+  /** Loader toàn màn khi tab hiện tại chưa có cột; overlay khi đã có cột (đồng bộ ngầm). */
+  const crmShowFullLoader = crmMainContentLoading && !crmActiveTabStagesReady && !companyHasNoPipeline;
+  const crmShowLoaderOverlay = crmMainContentLoading && crmActiveTabStagesReady;
 
   const crmLoadProgressDisplay = (firstLoading || syncing)
     ? Math.max(0, Math.min(100, crmLoadProgress))
@@ -2417,14 +2423,24 @@ export default function CRMDashboard() {
 
   const load = async (opts) => {
     const silent = !!(opts && opts.silent);
-    const seq = ++loadSeqRef.current;
-    const isStale = () => seq !== loadSeqRef.current;
-    if (silent) setSyncing(true);
-    startCrmLoadProgress();
+    const background = !!opts?.background;
+    const onlyType = opts?.onlyType === 'deal' || opts?.onlyType === 'lead' ? opts.onlyType : null;
+
+    let mySeq;
+    let isStale;
+    if (background) {
+      mySeq = ++inactiveKanbanLoadSeqRef.current;
+      isStale = () => mySeq !== inactiveKanbanLoadSeqRef.current;
+    } else {
+      if (onlyType) inactiveKanbanLoadSeqRef.current += 1;
+      mySeq = ++loadSeqRef.current;
+      isStale = () => mySeq !== loadSeqRef.current;
+    }
+
+    if (silent && !background) setSyncing(true);
+    if (!background) startCrmLoadProgress();
     const markLoadComplete = () => {
-      if (isStale()) return;
-      const mySeq = seq;
-      // Ẩn loader sau khi thanh chạy mượt tới 100% (controller giữ tối thiểu ~1.2s trước giai đoạn kết thúc)
+      if (background || isStale()) return;
       finishCrmLoadProgress(() => {
         if (loadSeqRef.current !== mySeq) return;
         setFirstLoading(false);
@@ -2507,7 +2523,7 @@ export default function CRMDashboard() {
         ...resolveCrmRegionFilterParams(filterRegion),
       };
 
-      const activeType = pipelineType === 'deal' ? 'deal' : 'lead';
+      const activeType = onlyType || (pipelineType === 'deal' ? 'deal' : 'lead');
       const inactiveType = activeType === 'lead' ? 'deal' : 'lead';
       const emptyDash = { pipeline: [], kpis: {}, ledger_net_by_lead: {}, recent_quotations: [], recent_orders: [] };
       const loadAllKanban = String(kanbanLoadLimit ?? '').trim().toLowerCase() === 'all';
@@ -2589,46 +2605,9 @@ export default function CRMDashboard() {
         }
       };
 
-      const scheduleInactivePipelineLoad = () => {
-        const bgSeq = ++inactiveKanbanLoadSeqRef.current;
+      const prefetchInactivePipeline = () => {
         window.setTimeout(() => {
-          void (async () => {
-            try {
-              const inactiveStagesParams = inactiveType === 'lead' ? stagesLeadParams : stagesDealParams;
-              const [dashInactiveRes, inactiveRows, inactiveStagesRes] = await Promise.all([
-                api.get('/crm/dashboard', { params: { type: inactiveType, ...dashListParams } }).catch(() => ({ data: emptyDash })),
-                fetchKanbanRows(inactiveType),
-                api.get('/crm/pipeline-stages', { params: inactiveStagesParams }).catch(() => ({ data: [] })),
-              ]);
-              if (isStale() || bgSeq !== inactiveKanbanLoadSeqRef.current) return;
-              const inactiveStages = sortAndDedupePipelineStages(inactiveStagesRes.data || []);
-              if (inactiveType === 'lead') setStagesLead(inactiveStages);
-              else setStagesDeal(inactiveStages);
-              const inactiveResult = inactiveRows || { rows: [], nextOffset: 0, total: null };
-              const inactiveData = Array.isArray(inactiveResult) ? inactiveResult : inactiveResult.rows;
-              const inactiveMerged = dedupeCrmKanbanRows(mergeLeadSeenLocal(inactiveData));
-              if (inactiveType === 'lead') {
-                setDataLead(dashInactiveRes.data);
-                setAllLeads(inactiveMerged);
-                setLoadMoreState((s) => ({
-                  ...s,
-                  leadOffset: inactiveResult.nextOffset ?? inactiveMerged.length,
-                  leadTotal: inactiveResult.total,
-                }));
-              } else {
-                setDataDeal(dashInactiveRes.data);
-                setAllDeals((prev) => preserveCrmKanbanPipelineBadges(prev, inactiveMerged));
-                setLoadMoreState((s) => ({
-                  ...s,
-                  dealOffset: inactiveResult.nextOffset ?? inactiveMerged.length,
-                  dealTotal: inactiveResult.total,
-                }));
-              }
-              runDeferredCrmEnrichment(inactiveType, inactiveMerged, dashInactiveRes.data);
-            } catch (bgErr) {
-              console.error('[load inactive pipeline]', bgErr);
-            }
-          })();
+          void loadRef.current?.({ silent: true, onlyType: inactiveType, background: true });
         }, CRM_INACTIVE_PIPELINE_DEFER_MS);
       };
 
@@ -2648,29 +2627,27 @@ export default function CRMDashboard() {
           const activeMerged = dedupeCrmKanbanRows(mergeLeadSeenLocal(kanbanPage.data || []));
           const stagesActive = sortAndDedupePipelineStages(boot.stages || []);
 
-          startTransition(() => {
-            if (activeType === 'lead') {
-              setDataLead(boot.dashboard);
-              setStagesLead(stagesActive);
-              setAllLeads(activeMerged);
-            } else {
-              setDataDeal(boot.dashboard);
-              setStagesDeal(stagesActive);
-              setAllDeals(preserveCrmKanbanPipelineBadges(allDeals, activeMerged));
-            }
-            setLoadMoreState({
-              leadOffset: activeType === 'lead' ? (kanbanPage.nextOffset ?? activeMerged.length) : loadMoreState.leadOffset,
-              dealOffset: activeType === 'deal' ? (kanbanPage.nextOffset ?? activeMerged.length) : loadMoreState.dealOffset,
-              leadTotal: activeType === 'lead' ? kanbanPage.total : loadMoreState.leadTotal,
-              dealTotal: activeType === 'deal' ? kanbanPage.total : loadMoreState.dealTotal,
-              loading: false,
-            });
+          if (activeType === 'lead') {
+            setDataLead(boot.dashboard);
+            setStagesLead(stagesActive);
+            setAllLeads(activeMerged);
+          } else {
+            setDataDeal(boot.dashboard);
+            setStagesDeal(stagesActive);
+            setAllDeals(preserveCrmKanbanPipelineBadges(allDeals, activeMerged));
+          }
+          setLoadMoreState({
+            leadOffset: activeType === 'lead' ? (kanbanPage.nextOffset ?? activeMerged.length) : loadMoreState.leadOffset,
+            dealOffset: activeType === 'deal' ? (kanbanPage.nextOffset ?? activeMerged.length) : loadMoreState.dealOffset,
+            leadTotal: activeType === 'lead' ? kanbanPage.total : loadMoreState.leadTotal,
+            dealTotal: activeType === 'deal' ? kanbanPage.total : loadMoreState.dealTotal,
+            loading: false,
           });
           if (!isStale()) {
             markLoadComplete();
           }
           runDeferredCrmEnrichment(activeType, activeMerged, boot.dashboard);
-          scheduleInactivePipelineLoad();
+          if (!onlyType && !background) prefetchInactivePipeline();
           void (async () => {
             try {
               const [
@@ -2783,23 +2760,21 @@ export default function CRMDashboard() {
       const stagesLeadValue = activeType === 'lead' ? stagesActiveValue : stagesLead;
       const stagesDealValue = activeType === 'deal' ? stagesActiveValue : stagesDeal;
 
-      startTransition(() => {
-        if (activeType === 'lead') {
-          setDataLead(dashLeadSnapshot);
-          setAllLeads(allLeadsValue);
-        } else {
-          setDataDeal(dashDealSnapshot);
-          setAllDeals(allDealsValue);
-        }
-        setLoadMoreState(loadMoreStateValue);
-        if (activeType === 'lead') setStagesLead(stagesActiveValue);
-        else setStagesDeal(stagesActiveValue);
-      });
+      if (activeType === 'lead') {
+        setDataLead(dashLeadSnapshot);
+        setAllLeads(allLeadsValue);
+        setStagesLead(stagesActiveValue);
+      } else {
+        setDataDeal(dashDealSnapshot);
+        setAllDeals(allDealsValue);
+        setStagesDeal(stagesActiveValue);
+      }
+      setLoadMoreState(loadMoreStateValue);
       if (!isStale()) {
         markLoadComplete();
       }
       runDeferredCrmEnrichment(activeType, activeMerged, dashActiveRes.data);
-      scheduleInactivePipelineLoad();
+      if (!onlyType && !background) prefetchInactivePipeline();
       void (async () => {
         const inactiveParams = inactiveType === 'lead' ? stagesLeadParams : stagesDealParams;
         const { data: inactiveStages } = await api
@@ -2896,15 +2871,17 @@ export default function CRMDashboard() {
       }
     } catch (e) {
       console.error(e);
-      if (!isStale()) {
+      if (!background && !isStale()) {
         resetCrmLoadProgress();
         if (silent) setSyncing(false);
         setFirstLoading(false);
       }
     }
     if (isStale()) {
-      if (silent) setSyncing(false);
-      resetCrmLoadProgress();
+      if (!background) {
+        if (silent) setSyncing(false);
+        resetCrmLoadProgress();
+      }
       return;
     }
     try {
@@ -3420,8 +3397,11 @@ export default function CRMDashboard() {
     return currentPipeline;
   }, [currentPipeline, orphanDealColumn]);
 
-  /** Defer pipeline render — tránh block main thread khi vừa load thêm bản ghi. */
-  const kanbanPipelineForView = useDeferredValue(kanbanPipeline);
+  /** Defer render chỉ khi đang tải thêm thẻ — đổi tab Lead/Deal hiển thị ngay từ bộ nhớ. */
+  const deferredKanbanPipeline = useDeferredValue(kanbanPipeline);
+  const kanbanPipelineForView = (crmMainContentLoading || loadMoreState.loading)
+    ? (crmMainContentLoading ? kanbanPipeline : deferredKanbanPipeline)
+    : kanbanPipeline;
 
   /** Cuộn Kanban → tải thêm từ API (mỗi lần 500 thẻ). */
   const kanbanScrollLoad = useMemo(() => {
@@ -4218,6 +4198,28 @@ export default function CRMDashboard() {
   pipelineTypeRef.current = pipelineType;
 
   loadRef.current = load;
+
+  /** Tab Lead/Deal chưa có cột — prefetch nền (không loader, không chặn UI). */
+  useEffect(() => {
+    if (!crmDashboardDataReady || firstLoading || syncing || companyHasNoPipeline) return;
+    const type = pipelineType === 'deal' ? 'deal' : 'lead';
+    const stagesLen = type === 'lead' ? stagesLead.length : stagesDeal.length;
+    if (stagesLen > 0) {
+      missingPipelineLoadRef.current[type] = false;
+      return;
+    }
+    if (missingPipelineLoadRef.current[type]) return;
+    missingPipelineLoadRef.current[type] = true;
+    void loadRef.current?.({ silent: true, onlyType: type, background: true });
+  }, [
+    crmDashboardDataReady,
+    firstLoading,
+    syncing,
+    companyHasNoPipeline,
+    pipelineType,
+    stagesLead.length,
+    stagesDeal.length,
+  ]);
 
   /**
    * Đồng bộ nhẹ: mỗi 15s poll GET /crm/live-version (vài chục byte).
