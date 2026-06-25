@@ -26,10 +26,10 @@ import {
 import {
   CheckCircle2, Search, X, Calendar, Plus,
   Factory, Users, LayoutGrid, List,
-  CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Layers, Trash2, MessageSquare, Pin, Building2, ArrowRightLeft,
+  CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Layers, Trash2, MessageSquare, Pin, Building2, ArrowRightLeft, Settings,
 } from 'lucide-react';
 import { ProductionListView, ProductionPlannerView, ProductionCalendarView, ProductionCommentsView, ProductionDeadlineView } from '../components/ProductionViews';
-import WorkshopPipelineKanbanScroll from '../components/WorkshopPipelineKanbanScroll';
+import WorkshopPipelineKanbanScroll, { useWorkshopKanbanScrollLayout } from '../components/WorkshopPipelineKanbanScroll';
 import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
 import WorkshopDashboardFilterPanel, { SX_FILTER_TABS_META } from '../components/WorkshopDashboardFilterPanel';
 import KanbanCardQuickMove from '../components/KanbanCardQuickMove';
@@ -60,6 +60,9 @@ const WS_DASH_VIEW_MODES = ['kanban', 'list', 'planner', 'deadline', 'comments',
 
 const LS_SX = 'sx_dash_filters_v1';
 const LS_SX_FILTER_PANEL_POS = 'sx_filter_panel_pos';
+const LS_SX_KANBAN_COLUMN_SCROLL = 'sx_kanban_column_scroll_mode';
+const KANBAN_COLUMN_SCROLL_MODES = ['unified', 'per-column'];
+const KANBAN_DEFAULT_COLUMN_SCROLL_MODE = 'unified';
 
 function readStoredSxFilterPanelPos() {
   if (typeof window === 'undefined') return null;
@@ -332,6 +335,19 @@ export default function ProductionDashboard() {
   const [deadlineCtx, setDeadlineCtx] = useState(null);
   const [deadlineBusy, setDeadlineBusy] = useState(false);
   const [showNewDeal, setShowNewDeal] = useState(false);
+  const [showKanbanSettings, setShowKanbanSettings] = useState(false);
+  const kanbanSettingsRef = useRef(null);
+  const [kanbanColumnScrollMode, setKanbanColumnScrollMode] = useState(() => {
+    const fromP = P0?.kanbanColumnScrollMode;
+    if (fromP && KANBAN_COLUMN_SCROLL_MODES.includes(fromP)) return fromP;
+    try {
+      const s = localStorage.getItem(LS_SX_KANBAN_COLUMN_SCROLL);
+      if (s && KANBAN_COLUMN_SCROLL_MODES.includes(s)) return s;
+    } catch {
+      /* ignore */
+    }
+    return KANBAN_DEFAULT_COLUMN_SCROLL_MODE;
+  });
   const navigate = useNavigate();
 
   const staffFilter = useWorkshopStaffFilter({
@@ -781,14 +797,25 @@ export default function ProductionDashboard() {
         filterCompany, filterDealCompany, filterSxWorkshopCompany, timePreset, customFrom, customTo, showCustomDate, kanbanLoadKey,
         filterPersonId, filterPersonName, filterRegion, filterPhone, filterWorkTypeId,
         searchQuery, priorityFilter, stageFilter, viewMode, sortBy,
-        showOrphanColumn, showAdvFilter, sxFilterTab,
+        showOrphanColumn, showAdvFilter, sxFilterTab, kanbanColumnScrollMode,
       }));
     } catch { /* ignore */ }
   }, [
     filterCompany, filterDealCompany, filterSxWorkshopCompany, timePreset, customFrom, customTo, showCustomDate, kanbanLoadKey, filterPersonId, filterPersonName,
     filterRegion, filterPhone, filterWorkTypeId, searchQuery, priorityFilter, stageFilter, viewMode, sortBy,
-    showOrphanColumn, showAdvFilter, sxFilterTab,
+    showOrphanColumn, showAdvFilter, sxFilterTab, kanbanColumnScrollMode,
   ]);
+
+  useEffect(() => {
+    if (!showKanbanSettings) return undefined;
+    const onDown = (e) => {
+      if (kanbanSettingsRef.current && !kanbanSettingsRef.current.contains(e.target)) {
+        setShowKanbanSettings(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [showKanbanSettings]);
 
   // Đóng menu sắp xếp khi click ra ngoài
   useEffect(() => {
@@ -1969,6 +1996,62 @@ export default function ProductionDashboard() {
               {v.label}
             </button>
           ))}
+          {viewMode === 'kanban' && (
+            <div className="relative" ref={kanbanSettingsRef}>
+              <button
+                type="button"
+                onClick={() => setShowKanbanSettings((v) => !v)}
+                className={`h-9 px-3 rounded-lg border text-sm font-medium inline-flex items-center gap-1.5 cursor-pointer transition-colors shrink-0 ${
+                  showKanbanSettings || kanbanColumnScrollMode === 'per-column'
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 bg-white hover:bg-gray-50'
+                }`}
+                title="Tùy chỉnh cuộn Kanban"
+              >
+                <Settings className="h-3.5 w-3.5" />
+                Tùy chỉnh
+              </button>
+              {showKanbanSettings && (
+                <div className="absolute right-0 top-full mt-1.5 z-40 w-[min(100vw-1.5rem,18rem)] rounded-xl border border-gray-200 bg-white p-3 shadow-lg">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2.5">Cuộn cột Kanban</p>
+                  <div className="space-y-2">
+                    <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-transparent px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-blue-200 has-[:checked]:bg-blue-50/60">
+                      <input
+                        type="radio"
+                        name="sx-kanban-column-scroll"
+                        className="mt-0.5 shrink-0"
+                        checked={kanbanColumnScrollMode === 'unified'}
+                        onChange={() => {
+                          setKanbanColumnScrollMode('unified');
+                          try { localStorage.setItem(LS_SX_KANBAN_COLUMN_SCROLL, 'unified'); } catch { /* ignore */ }
+                        }}
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-xs font-semibold text-gray-800">Cuộn chung tất cả cột</span>
+                        <span className="block text-[11px] text-gray-500 leading-snug mt-0.5">Kéo một lần, mọi cột cuộn cùng chiều dọc (mặc định).</span>
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-transparent px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-blue-200 has-[:checked]:bg-blue-50/60">
+                      <input
+                        type="radio"
+                        name="sx-kanban-column-scroll"
+                        className="mt-0.5 shrink-0"
+                        checked={kanbanColumnScrollMode === 'per-column'}
+                        onChange={() => {
+                          setKanbanColumnScrollMode('per-column');
+                          try { localStorage.setItem(LS_SX_KANBAN_COLUMN_SCROLL, 'per-column'); } catch { /* ignore */ }
+                        }}
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-xs font-semibold text-gray-800">Cuộn riêng từng cột</span>
+                        <span className="block text-[11px] text-gray-500 leading-snug mt-0.5">Mỗi cột có thanh cuộn dọc riêng; cuộn ngang giữa các cột.</span>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -2397,6 +2480,7 @@ export default function ProductionDashboard() {
             onHandoverVC={openHandoverModal}
             onOpenKanbanComment={(item) => { setKanbanCommentItem(item); setKanbanCommentBody(''); }}
             workTypes={workTypes}
+            columnScrollMode={kanbanColumnScrollMode}
             onSetWorkType={async (projectId, typeId) => {
               try {
                 const { data } = await api.put(`/projects/${projectId}`, { workshop_type_id: typeId || null });
@@ -2750,10 +2834,28 @@ function KPICard({ accent = 'bg-blue-500', label, value, descriptor, valueTone }
 }
 
 // ── KANBAN STAGE CARD — header tối giản (dot + tên + count + total) ────────
-function KanbanStageCard({ stage, items, onMoveStage, pipelineStages, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline, onTogglePin }) {
+function KanbanStageCard({
+  stage,
+  items,
+  onMoveStage,
+  pipelineStages,
+  calculateDays,
+  selectedIds,
+  onToggleSelect,
+  onSelectColumn,
+  onHandoverVC,
+  onOpenKanbanComment,
+  workTypes,
+  onSetWorkType,
+  onOpenDeadline,
+  onTogglePin,
+  columnScrollMode = 'unified',
+}) {
   const [isOverColumn, setIsOverColumn] = useState(false);
+  const { columnScrollMaxH } = useWorkshopKanbanScrollLayout();
   const stageColor = stage.color || '#94a3b8';
   const totalValue = items.reduce((sum, p) => sum + resolveSxProjectValue(p), 0);
+  const perColumnScroll = columnScrollMode === 'per-column';
 
   const handleColumnDragOver = (e) => {
     e.preventDefault();
@@ -2776,12 +2878,13 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineStages, calculateD
       onDragLeave={handleColumnDragLeave}
       onDrop={handleColumnDrop}
       className={`flex flex-col flex-shrink-0 w-[15rem] max-[400px]:w-[13.5rem] transition-all duration-200 ${
-        isOverColumn ? 'ring-2 ring-blue-400 ring-dashed rounded-lg' : ''
-      }`}
+        perColumnScroll ? 'h-full self-stretch' : ''
+      } ${isOverColumn ? 'ring-2 ring-blue-400 ring-dashed rounded-lg' : ''}`}
+      style={perColumnScroll && columnScrollMaxH ? { height: columnScrollMaxH, maxHeight: columnScrollMaxH } : undefined}
     >
-      {/* Header tối giản — sticky khi cuộn dọc, có thanh accent màu cột ở đỉnh */}
+      {/* Header — sticky khi cuộn chung; cố định trên khi cuộn riêng từng cột */}
       <div
-        className={`sticky top-0 z-10 bg-gray-200/95 backdrop-blur supports-[backdrop-filter]:bg-gray-200/85 px-2 py-2.5 border-b rounded-t-md transition-colors ${isOverColumn ? 'bg-blue-100/90 border-blue-300' : 'border-gray-300/70'}`}
+        className={`${perColumnScroll ? 'shrink-0' : 'sticky top-0'} z-10 bg-gray-200/95 backdrop-blur supports-[backdrop-filter]:bg-gray-200/85 px-2 py-2.5 border-b rounded-t-md transition-colors ${isOverColumn ? 'bg-blue-100/90 border-blue-300' : 'border-gray-300/70'}`}
         style={{ borderTop: `8px solid ${stageColor}` }}
       >
         <div className="flex flex-nowrap items-center gap-1 min-w-0">
@@ -2844,10 +2947,12 @@ function KanbanStageCard({ stage, items, onMoveStage, pipelineStages, calculateD
         </p>
       </div>
 
-      {/* Cards container — không viền, không nền (sạch sẽ như mockup) */}
+      {/* Cards container */}
       <div
-        className={`flex-1 px-1 pt-1.5 pb-2.5 space-y-1.5 transition-colors ${isOverColumn ? 'bg-blue-50/60 rounded-b-lg' : ''}`}
-        style={{ minHeight: '180px' }}
+        className={`flex-1 px-1 pt-1.5 pb-2.5 space-y-1.5 transition-colors ${
+          perColumnScroll ? 'min-h-0 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]' : ''
+        } ${isOverColumn ? 'bg-blue-50/60 rounded-b-lg' : ''}`}
+        style={perColumnScroll ? undefined : { minHeight: '180px' }}
       >
         {items.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-32 text-gray-400 gap-1.5">
@@ -3357,19 +3462,35 @@ function KanbanCard({ item, stage, onMoveStage, pipelineStages, calculateDays, i
 }
 
 // ── KANBAN VIEW CONTAINER (y hệt CRM KanbanView) ─────────────────────────────
-function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggleSelect, onSelectColumn, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline, onTogglePin, remeasureToken }) {
+function KanbanView({
+  pipeline,
+  onMoveStage,
+  calculateDays,
+  selectedIds,
+  onToggleSelect,
+  onSelectColumn,
+  onHandoverVC,
+  onOpenKanbanComment,
+  workTypes,
+  onSetWorkType,
+  onOpenDeadline,
+  onTogglePin,
+  remeasureToken,
+  columnScrollMode = 'unified',
+}) {
   const pipelineStages = useMemo(
     () => (pipeline || []).map(({ items, ...stage }) => stage),
     [pipeline],
   );
+  const perColumnScroll = columnScrollMode === 'per-column';
 
   return (
     <WorkshopPipelineKanbanScroll
       cardSelector="[data-sx-kanban-card]"
-      enableViewportScroll
+      columnScrollMode={columnScrollMode}
       remeasureToken={remeasureToken}
     >
-      <div className="flex min-w-max items-stretch gap-1">
+      <div className={`flex min-w-max items-stretch gap-1 ${perColumnScroll ? 'h-full' : ''}`}>
         {pipeline.map((stage) => (
           <KanbanStageCard
             key={stage.id || stage.slug}
@@ -3387,6 +3508,7 @@ function KanbanView({ pipeline, onMoveStage, calculateDays, selectedIds, onToggl
             onSetWorkType={onSetWorkType}
             onOpenDeadline={onOpenDeadline}
             onTogglePin={onTogglePin}
+            columnScrollMode={columnScrollMode}
           />
         ))}
       </div>
