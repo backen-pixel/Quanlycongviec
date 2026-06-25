@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+﻿import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -18,11 +18,11 @@ const WORKSHOP_PRODUCTION_STAGES = [
   { slug: 'production', label: 'Sản xuất', icon: '🏭', color: '#0f766e' },
 ];
 const WORKSHOP_LOGISTICS_STAGES = [
-  { slug: 'logistics', label: 'Vận chuyển & Lắp đặt', icon: '🚚', color: '#14b8a6' },
+  { slug: 'logistics', label: 'Vận chuyển', icon: '🚚', color: '#14b8a6' },
 ];
 const ALL_WORKSHOP_AREAS = [
   { slug: 'production', label: '🏭 Sản xuất', icon: '🏭', color: '#0f766e' },
-  { slug: 'logistics', label: '🚚 VC & Lắp đặt', icon: '🚚', color: '#14b8a6' },
+  { slug: 'logistics', label: '🚚 Vận chuyển', icon: '🚚', color: '#14b8a6' },
 ];
 
 // ═══ Sortable Item component ═══
@@ -813,7 +813,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
             <div className="inline-flex bg-gray-100 rounded-lg p-0.5" title="Phân loại bộ mẫu">
               {[
                 { key: 'production', label: '🏭 Sản xuất' },
-                { key: 'logistics',  label: '🚚 VC & Lắp đặt' },
+                { key: 'logistics',  label: '🚚 Vận chuyển' },
               ].map((a) => (
                 <button
                   key={a.key}
@@ -1048,7 +1048,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
         {!canLoadTemplates && selectedCompanyId && (
           <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">
             {!activeTab
-              ? '👉 Chọn khu vực xưởng (Sản xuất / VC & Lắp đặt) ở thanh bên trái.'
+              ? '👉 Chọn khu vực xưởng (Sản xuất / Vận chuyển) ở thanh bên trái.'
               : (usesWorkshopType && !selectedWorkshopTypeKey)
                 ? '👉 Chọn phân loại dự án (Cửa / Tủ bếp / …) hoặc "Tất cả phân loại" ở thanh bên trái.'
                 : '👉 Chọn pipeline / "Bộ mẫu chung" ở thanh bên trái để cấu hình bộ nhiệm vụ.'}
@@ -1057,7 +1057,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
       {/* Add Template Form */}
       {showAddTpl && (
         <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-blue-800">Tạo bộ mẫu mới ({activeTab === 'logistics' ? 'VC & Lắp đặt' : 'Sản xuất'})</h3>
+          <h3 className="text-sm font-semibold text-blue-800">Tạo bộ mẫu mới ({activeTab === 'logistics' ? 'Vận chuyển' : 'Sản xuất'})</h3>
           <div className="flex gap-2">
             <input value={newTpl.name} onChange={e => setNewTpl(p => ({...p, name: e.target.value}))}
               placeholder="Tên bộ mẫu..." className="flex-1 h-9 px-3 rounded-lg border text-sm outline-none focus:ring-2 focus:ring-blue-500" autoFocus

@@ -1,7 +1,7 @@
-import ProductionDetail from './ProductionDetail';
+﻿import ProductionDetail from './ProductionDetail';
 
 /**
- * Trang chi tiết dự án Vận chuyển & Lắp đặt — cùng luồng UI với chi tiết Sản xuất
+ * Trang chi tiết dự án Vận chuyển — cùng luồng UI với chi tiết Sản xuất
  * (pipeline VC, đội VC, tab CRM, Đơn hàng đã bàn giao, …) qua ProductionDetail với moduleKey="vc".
  */
 export default function LogisticsDetail() {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+﻿import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -8,7 +8,7 @@ import { Network, Building2, Save, Loader2, ArrowLeft, Layers } from 'lucide-rea
 const MODULE_ROWS = [
   { key: 'crm', label: 'CRM', hint: 'Bán hàng, pipeline, đơn hàng…' },
   { key: 'production', label: 'Sản xuất / Xưởng', hint: '/sx — deal vào xưởng' },
-  { key: 'logistics', label: 'Vận chuyển & lắp đặt', hint: '/vc' },
+  { key: 'logistics', label: 'Vận chuyển', hint: '/vc' },
   { key: 'projects', label: 'Dự án (workspace)', hint: '/projects, project-workflow' },
   { key: 'tasks', label: 'Tất cả công việc', hint: '/tasks' },
   { key: 'customers', label: 'Khách hàng (workspace)', hint: '/customers' },
@@ -125,7 +125,7 @@ export default function EcosystemModulesPage() {
             </p>
             <p className="text-gray-500">
               Nếu với một module <strong>không tick khối nào</strong> → module đó <strong>không giới hạn theo khối</strong> (mọi công ty đều thấy).
-              Khi đã tick ít nhất một khối → <strong>chỉ</strong> các công ty thuộc các khối đó mới thấy module đó; bộ lọc công ty trên <strong>CRM</strong>, <strong>Sản xuất</strong> và <strong>Vận chuyển &amp; lắp đặt</strong> (và cài pipeline theo công ty) cũng chỉ liệt kê đúng các công ty đó.
+              Khi đã tick ít nhất một khối → <strong>chỉ</strong> các công ty thuộc các khối đó mới thấy module đó; bộ lọc công ty trên <strong>CRM</strong>, <strong>Sản xuất</strong> và <strong>Vận chuyển</strong> (và cài pipeline theo công ty) cũng chỉ liệt kê đúng các công ty đó.
             </p>
           </div>
         </div>

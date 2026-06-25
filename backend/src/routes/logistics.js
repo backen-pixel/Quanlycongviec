@@ -1,5 +1,5 @@
-/**
- * Module Vận chuyển & Lắp đặt (VC)
+﻿/**
+ * Module Vận chuyển (VC)
  * API prefix: /api/logistics
  * Quản lý dự án ở giai đoạn giao hàng / lắp đặt / bảo hành
  */
@@ -808,7 +808,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
         if (!bareErr && bare?.id && error && error.code !== 'PGRST116') {
           console.error('[logistics/projects/:id] select failed for existing project:', error);
           return res.status(500).json({
-            error: 'Lỗi tải chi tiết dự án VC/LĐ',
+            error: 'Lỗi tải chi tiết dự án VC',
             details: error.message || String(error),
             project_id: bare.id,
             project_code: bare.code || null,
@@ -868,7 +868,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       }
     }
 
-    // A) VC/LĐ dùng chung tài liệu CRM (lead_documents) đã chia sẻ sang xưởng.
+    // A) VC dùng chung tài liệu CRM (lead_documents) đã chia sẻ sang xưởng.
     // (Tài liệu nội bộ VC nếu có sẽ nằm trong file_attachments / dự án đầy đủ.)
     const { data: sharedRaw, error: sharedErr } = await supabase
       .from('lead_documents')
@@ -878,7 +878,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       .order('created_at', { ascending: false });
     if (sharedErr) console.warn('[logistics/projects/:id] lead_documents shared:', sharedErr.message);
     const sharedDocs = (Array.isArray(sharedRaw) ? sharedRaw : []).filter((d) => {
-      // Nhiệm vụ / tài liệu giai đoạn SX chỉ thuộc module Sản xuất — không hiển thị ở VC & Lắp đặt
+      // Nhiệm vụ / tài liệu giai đoạn SX chỉ thuộc module Sản xuất — không hiển thị ở Vận chuyển
       if (String(d.crm_stage_slug || '').startsWith('sx_')) return false;
       return leadDocVisibleForModuleAndUser(d, 'logistics', req.user);
     });

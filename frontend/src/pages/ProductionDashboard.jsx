@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue } from 'react';
+﻿import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { getSocket } from '../lib/socket';
@@ -1698,7 +1698,7 @@ export default function ProductionDashboard() {
   const confirmHandoverVC = useCallback(async () => {
     if (!handoverModal) return;
     if (!handoverLogisticsCompanyId) {
-      setHandoverErr('Vui lòng chọn công ty Vận chuyển/Lắp đặt.');
+      setHandoverErr('Vui lòng chọn công ty Vận chuyển.');
       return;
     }
     setHandoverSaving(true);
@@ -2670,7 +2670,7 @@ export default function ProductionDashboard() {
               Chọn người nhận cho dự án <strong>{handoverModal.projectName}</strong>.
             </p>
             <label className="flex flex-col gap-1 mb-3">
-              <span className="text-xs font-semibold text-gray-600">Công ty VC/Lắp đặt *</span>
+              <span className="text-xs font-semibold text-gray-600">Công ty VC *</span>
               <select
                 value={handoverLogisticsCompanyId}
                 onChange={(e) => {
@@ -3452,7 +3452,7 @@ function KanbanCard({ item, stage, onMoveStage, pipelineStages, calculateDays, i
             Promise.resolve(onHandoverVC(item.id, item.name, stage?.id)).finally(() => setHandingOver(false));
           }}
           className="mt-1.5 w-full flex items-center justify-center gap-1 py-1 rounded text-[10px] font-semibold bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-          title="Bàn giao sang Vận chuyển & Lắp đặt"
+          title="Bàn giao sang Vận chuyển"
         >
           {handingOver ? <Loader2 className="h-3 w-3 animate-spin" /> : <Truck className="h-3 w-3" />}
           {handingOver ? 'Đang bàn giao...' : 'Bàn giao VC'}

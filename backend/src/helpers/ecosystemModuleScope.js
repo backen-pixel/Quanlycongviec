@@ -1,4 +1,4 @@
-const { supabase } = require('../config/supabase');
+﻿const { supabase } = require('../config/supabase');
 const { createTTLCache } = require('./ttlCache');
 const {
   isAdminLike,
@@ -11,7 +11,7 @@ const { isAccountingUser } = require('./accountingScope');
 
 const PRODUCTION_STAFF_MODULES = new Set(['tasks', 'production', 'projects']);
 const CRM_PRODUCTION_DUAL_MODULES = new Set(['crm', 'production', 'tasks', 'projects', 'customers']);
-/** Kế toán công ty — xem CRM + SX + VC/LĐ + module Kế toán (phạm vi deal thuộc công ty). */
+/** Kế toán công ty — xem CRM + SX + VC + module Kế toán (phạm vi deal thuộc công ty). */
 const ACCOUNTING_VIEW_MODULES = new Set(['crm', 'production', 'logistics', 'projects', 'accounting']);
 
 /** Khớp module_key dùng trong ecosystem_module_scopes và Sidebar */

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+﻿import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
@@ -1025,7 +1025,7 @@ function DocRow({
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4" onClick={() => !savingVis && setShowVis(false)}>
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
             <p className="text-sm font-semibold text-gray-900">Ai được xem tài liệu này?</p>
-            <p className="text-xs text-gray-500">Chọn khối được xem (vd. chỉ Sản xuất — VC/LĐ không thấy).</p>
+            <p className="text-xs text-gray-500">Chọn khối được xem (vd. chỉ Sản xuất — VC không thấy).</p>
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input type="checkbox" checked={sharedToWorkshop} onChange={(e) => setSharedToWorkshop(e.target.checked)} />
               Chia sẻ sang khối SX / VC / Công việc dự án
@@ -1778,7 +1778,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const confirmHandoverFromDetail = useCallback(async () => {
     if (!handoverModal?.projectId) return;
     if (!handoverLogisticsCompanyId) {
-      setHandoverErr('Vui lòng chọn công ty Vận chuyển/Lắp đặt.');
+      setHandoverErr('Vui lòng chọn công ty Vận chuyển.');
       return;
     }
     setHandoverSaving(true);
@@ -1811,7 +1811,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       closeHandoverModal();
       window.setTimeout(() => { refreshProjectSilently(); }, 200);
     } catch (e) {
-      setHandoverErr(e.response?.data?.error || e.message || 'Lỗi bàn giao VC/LĐ');
+      setHandoverErr(e.response?.data?.error || e.message || 'Lỗi bàn giao VC');
       refreshProjectSilently();
     }
     setHandoverSaving(false);
@@ -1971,7 +1971,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         };
       } else {
         const sxStage = pipelineStages.find((s) => String(s.id) === String(stageId));
-        // Nếu cột SX có cờ "bàn giao VC" → mở modal chọn công ty VC/LĐ thay vì patch stage thường
+        // Nếu cột SX có cờ "bàn giao VC" → mở modal chọn công ty VC thay vì patch stage thường
         if (sxStage?.is_handover_to_logistics === true) {
           setHandoverModal({ projectId: id, projectName: project?.name || project?.code || '', targetSxStageId: sxStage?.id || stageId });
           return;
@@ -3197,23 +3197,23 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         </div>
       )}
 
-      {/* SX → VC/LĐ handover modal (khi đổi stage tới cột có cờ bàn giao VC) */}
+      {/* SX → VC handover modal (khi đổi stage tới cột có cờ bàn giao VC) */}
       {handoverModal && moduleKey !== 'vc' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={closeHandoverModal}>
           <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-bold text-gray-900">🚚 Bàn giao sang VC/LĐ</h2>
+              <h2 className="text-lg font-bold text-gray-900">🚚 Bàn giao sang VC</h2>
               <button type="button" onClick={closeHandoverModal} className="p-1 hover:bg-gray-100 rounded cursor-pointer">
                 <X className="h-5 w-5" />
               </button>
             </div>
 
             <p className="text-sm text-gray-600 mb-3">
-              Chọn <strong>công ty VC/LĐ</strong> để bàn giao dự án. Sau khi xác nhận, dự án sẽ hiển thị trong dashboard VC của công ty đó.
+              Chọn <strong>công ty VC</strong> để bàn giao dự án. Sau khi xác nhận, dự án sẽ hiển thị trong dashboard VC của công ty đó.
             </p>
 
             <div className="space-y-2">
-              <label className="text-xs font-medium text-gray-700">🏢 Công ty VC/LĐ *</label>
+              <label className="text-xs font-medium text-gray-700">🏢 Công ty VC *</label>
               <select
                 value={handoverLogisticsCompanyId}
                 onChange={(e) => setHandoverLogisticsCompanyId(e.target.value)}

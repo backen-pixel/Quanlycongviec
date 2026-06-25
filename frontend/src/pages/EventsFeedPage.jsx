@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useLayoutEffect } from 'react';
+﻿import { useState, useEffect, useMemo, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
@@ -36,7 +36,7 @@ export const EVENT_MODULE_OPTIONS = [
   { value: '', label: 'Tất cả khối', emoji: '🌐', color: 'bg-gray-100 text-gray-700 border-gray-200' },
   { value: 'crm', label: 'Kinh doanh', emoji: '💼', color: 'bg-sky-100 text-sky-700 border-sky-200' },
   { value: 'production', label: 'Sản xuất', emoji: '🏭', color: 'bg-violet-100 text-violet-700 border-violet-200' },
-  { value: 'logistics', label: 'Vận chuyển/Lắp đặt', emoji: '🚚', color: 'bg-orange-100 text-orange-700 border-orange-200' },
+  { value: 'logistics', label: 'Vận chuyển', emoji: '🚚', color: 'bg-orange-100 text-orange-700 border-orange-200' },
   { value: 'general', label: 'Chung công ty', emoji: '🏢', color: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
 ];
 function moduleMeta(v) {

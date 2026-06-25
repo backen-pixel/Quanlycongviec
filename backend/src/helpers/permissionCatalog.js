@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Catalog quyền theo module — UI phân quyền nhân viên.
  * Module CRM/SX/VC/Kế toán: mỗi chức năng có 3 quyền view | edit | admin.
  * Module Công việc/Drive/Hệ thống: quyền legacy (nhiều action khác nhau).
@@ -140,7 +140,7 @@ const TIERED_MODULES = [
     groups: [
       {
         key: 'vc-ops',
-        label: 'Điều hành VC/LĐ',
+        label: 'Điều hành VC',
         features: [
           { key: 'vc_dashboard', label: 'Dashboard VC', resource: 'vc_dashboard' },
           { key: 'vc_projects', label: 'Dự án vận chuyển', resource: 'vc_projects' },

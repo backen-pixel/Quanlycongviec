@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+﻿import { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../lib/api';
 import CRMTasksTab from './CRMTasksTab';
 import { Truck, Loader2, ChevronDown, ChevronRight, Package, Factory, Trash2 } from 'lucide-react';
@@ -72,7 +72,7 @@ export default function ProjectOrdersTab({
 
   const pushVc = async (orderId, masterProjectId) => {
     const pid = masterProjectId || projectId;
-    if (!confirm('Tạo dự án VC và chuyển deal đơn này sang module Vận chuyển & Lắp đặt?')) return;
+    if (!confirm('Tạo dự án VC và chuyển deal đơn này sang module Vận chuyển?')) return;
     setPushing(orderId);
     setMsg('');
     try {
@@ -101,14 +101,14 @@ export default function ProjectOrdersTab({
 
   const bulkPushVc = async () => {
     if (!eligibleForVcIds.length) return;
-    if (!confirm(`Đẩy ${eligibleForVcIds.length} đơn sang VC/LĐ?`)) return;
+    if (!confirm(`Đẩy ${eligibleForVcIds.length} đơn sang VC?`)) return;
     setBulkPushing(true);
     setMsg('');
     try {
       const { data } = await api.post(`/projects/${projectId}/orders/push-to-logistics-bulk`, { order_ids: eligibleForVcIds });
       const failed = (data?.results || []).filter((r) => !r.ok);
       if (failed.length) setMsg(`Đã đẩy ${eligibleForVcIds.length - failed.length}/${eligibleForVcIds.length} đơn. ${failed.length} đơn lỗi.`);
-      else setMsg(`Đã đẩy ${eligibleForVcIds.length} đơn sang VC/LĐ.`);
+      else setMsg(`Đã đẩy ${eligibleForVcIds.length} đơn sang VC.`);
       setSelected({});
       await load();
       onChanged?.();
@@ -270,7 +270,7 @@ export default function ProjectOrdersTab({
                 onClick={bulkPushVc}
                 disabled={bulkPushing}
                 className="h-10 px-4 bg-orange-600 text-white rounded-lg text-sm font-semibold flex items-center gap-2 hover:bg-orange-700 disabled:opacity-50"
-                title="Đẩy nhiều đơn sang VC/LĐ"
+                title="Đẩy nhiều đơn sang VC"
               >
                 {bulkPushing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />}
                 Đẩy VC ({eligibleForVcIds.length})

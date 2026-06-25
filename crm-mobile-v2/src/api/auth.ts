@@ -1,4 +1,4 @@
-import { api } from './client';
+﻿import { api } from './client';
 import type { AuthUser } from '../context/AuthContext';
 
 export type MeUser = AuthUser & {
@@ -32,7 +32,8 @@ export const ROLE_LABELS: Record<string, string> = {
   crm_production_staff: 'NV CRM + Admin SX',
   crm_production_admin: 'Admin CRM + Sản xuất',
   logistics_admin: 'Admin Vận chuyển',
-  driver: 'Vận chuyển & Lắp đặt',
+  driver: 'Tài xế',
+  installer: 'Lắp đặt',
   customer_care: 'CSKH',
   staff: 'Nhân viên',
 };

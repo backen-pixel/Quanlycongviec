@@ -1,4 +1,4 @@
-// Labels & Colors — tất cả lấy từ DB, đây chỉ là fallback mapping
+﻿// Labels & Colors — tất cả lấy từ DB, đây chỉ là fallback mapping
 export const STATUS_LABELS = {
   new: 'Mới',
   consulting: 'Tư vấn',
@@ -6,9 +6,9 @@ export const STATUS_LABELS = {
   quoting: 'Báo giá',
   contract_signed: 'Đã ký HĐ',
   producing: 'Sản xuất',
-  delivering: 'Vận chuyển & Lắp đặt',
-  shipping: 'Vận chuyển & Lắp đặt',    // backward compat
-  installing: 'Vận chuyển & Lắp đặt',  // backward compat
+  delivering: 'Vận chuyển',
+  shipping: 'Vận chuyển',    // backward compat
+  installing: 'Lắp đặt',  // backward compat
   warranty: 'Bảo hành',
   completed: 'Hoàn thành',
   cancelled: 'Đã hủy',
@@ -105,7 +105,7 @@ export const ROLE_LABELS = {
   designer: 'Thiết kế', production: 'Sản xuất', production_staff: 'NV Sản xuất (Admin CV+SX)',
   production_admin: 'Admin Sản xuất', crm_production_staff: 'NV CRM + Admin SX',
   crm_production_admin: 'Admin CRM + Sản xuất', logistics_admin: 'Admin Vận chuyển',
-  driver: 'Vận chuyển & Lắp đặt', customer_care: 'CSKH', staff: 'Nhân viên',
+  driver: 'Tài xế', customer_care: 'CSKH', staff: 'Nhân viên',
 };
 
 export const ROLE_STAGE_MAP = {

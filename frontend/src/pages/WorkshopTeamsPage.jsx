@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+﻿import { useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
 import {
   Users, Plus, Trash2, Save, Loader2, Truck, Wrench,
@@ -140,7 +140,7 @@ export default function WorkshopTeamsPage() {
           </div>
           <div>
             <h1 className="text-xl font-bold text-gray-900">Quản lý Đội nhóm</h1>
-            <p className="text-sm text-gray-500">Đội Vận chuyển & Lắp đặt</p>
+            <p className="text-sm text-gray-500">Đội Vận chuyển</p>
           </div>
         </div>
         <button

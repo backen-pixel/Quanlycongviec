@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+﻿import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { taskBelongsToWorkshopModule } from '../lib/workshopTaskScope';
@@ -348,7 +348,7 @@ export default function WorkshopProjectTasksPanel({
         <div className="rounded-xl border border-amber-200 bg-amber-50/90 p-4 space-y-3">
           <div className="flex items-center justify-between gap-2">
             <p className="text-sm font-semibold text-amber-950 flex items-center gap-1.5">
-              📋 Gắn bộ nhiệm vụ mẫu ({workArea === 'logistics' ? 'VC & lắp đặt' : 'Sản xuất'})
+              📋 Gắn bộ nhiệm vụ mẫu ({workArea === 'logistics' ? 'Vận chuyển' : 'Sản xuất'})
             </p>
             <button type="button" onClick={() => setShowTemplatePanel(false)} className="p-1 rounded hover:bg-amber-100 text-amber-800" aria-label="Đóng">
               <X className="h-4 w-4" />

@@ -1,4 +1,4 @@
-const { supabase } = require('../config/supabase');
+﻿const { supabase } = require('../config/supabase');
 const {
   fetchProductionWorkshopTemplatesForApply,
   fetchProductionTemplatesForPipelineStage,
@@ -937,9 +937,9 @@ async function pushOrderToLogistics({ orderId, projectId, userId }) {
   if (String(order.project_id) !== String(projectId)) {
     throw new Error('Đơn không thuộc dự án này');
   }
-  // Không cho nhảy thẳng VC/LĐ: phải qua SX trước, sau đó chuyển trạng thái sang 'ready_logistics'
+  // Không cho nhảy thẳng VC: phải qua SX trước, sau đó chuyển trạng thái sang 'ready_logistics'
   if (String(order.order_phase || 'draft') !== 'ready_logistics') {
-    throw new Error('Chưa thể đẩy VC/LĐ. Hãy chuyển sang Sản xuất trước và đưa đơn về trạng thái "Chờ VC".');
+    throw new Error('Chưa thể đẩy VC. Hãy chuyển sang Sản xuất trước và đưa đơn về trạng thái "Chờ VC".');
   }
   if (order.logistics_project_id) {
     return { already: true, logistics_project_id: order.logistics_project_id, fulfillment_lead_id: order.fulfillment_lead_id };
@@ -971,7 +971,7 @@ async function pushOrderToLogistics({ orderId, projectId, userId }) {
   const insertPayload = {
     code: childCode,
     name: childName,
-    description: `Đơn hàng ${order.code || ''} — VC/LĐ`,
+    description: `Đơn hàng ${order.code || ''} — VC`,
     customer_id: parentProj.customer_id,
     company_id: parentProj.company_id,
     status: 'shipping',

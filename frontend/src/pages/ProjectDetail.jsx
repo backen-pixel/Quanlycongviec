@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import TaskDetailModal from '../components/TaskDetailModal';
@@ -33,7 +33,7 @@ const STAGE_FLOW = [
   { slug: 'quotation', status: 'quoting', label: 'Báo giá', personKey: 'quotation_person' },
   { slug: 'contract', status: 'contract_signed', label: 'Hợp đồng', personKey: 'contract_person' },
   { slug: 'production', status: 'producing', label: 'Sản xuất', personKey: 'production_person' },
-  { slug: 'delivery', status: 'shipping', label: 'Vận chuyển & Lắp đặt', personKey: 'shipping_person' },
+  { slug: 'delivery', status: 'shipping', label: 'Vận chuyển', personKey: 'shipping_person' },
   { slug: 'customer-care', status: 'warranty', label: 'CSKH', personKey: 'care_person' },
 ];
 

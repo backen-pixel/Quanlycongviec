@@ -1,4 +1,4 @@
-const { Router } = require('express');
+﻿const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { generateStepTasks } = require('../helpers/generateFlowTasks');
@@ -297,7 +297,7 @@ r.delete('/:id/orders/:orderId', async (req, res) => {
       return res.status(404).json({ error: 'Không tìm thấy đơn trên dự án này' });
     }
     if (existing.logistics_project_id) {
-      return res.status(400).json({ error: 'Đơn đã đẩy sang VC/LĐ — không cho xóa. Hãy xử lý dự án VC trước.' });
+      return res.status(400).json({ error: 'Đơn đã đẩy sang VC — không cho xóa. Hãy xử lý dự án VC trước.' });
     }
 
     // Xóa deal con (fulfillment) nếu có
@@ -335,7 +335,7 @@ r.post('/:id/orders/:orderId/push-to-logistics', async (req, res) => {
   }
 });
 
-/** Đẩy nhiều đơn sang VC/LĐ trong 1 lượt. */
+/** Đẩy nhiều đơn sang VC trong 1 lượt. */
 r.post('/:id/orders/push-to-logistics-bulk', async (req, res) => {
   try {
     const pid = req.params.id;

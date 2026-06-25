@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Chấm điểm chéo module trên Deal + sao KH + tổng hợp KPI / thưởng phạt gợi ý.
  */
 const { Router } = require('express');
@@ -13,7 +13,7 @@ r.use(auth);
 const MODULE_OPTIONS = [
   { key: 'crm', label: 'CRM / Bán hàng' },
   { key: 'production', label: 'Sản xuất (SX)' },
-  { key: 'logistics', label: 'Vận chuyển & Lắp đặt' },
+  { key: 'logistics', label: 'Vận chuyển' },
   { key: 'projects', label: 'Dự án / Thiết kế' },
 ];
 

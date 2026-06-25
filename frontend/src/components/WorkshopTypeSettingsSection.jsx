@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+﻿import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
@@ -36,7 +36,7 @@ export default function WorkshopTypeSettingsSection({ moduleContext, accent = 't
       ];
     }
     return [
-      { value: 'logistics', label: 'Chỉ Vận chuyển & lắp đặt' },
+      { value: 'logistics', label: 'Chỉ Vận chuyển' },
       { value: 'both', label: 'Sản xuất + Vận chuyển' },
     ];
   }, [moduleContext]);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Building2, ChevronRight, ListChecks, Loader2, Plus, Save, Settings, Trash2, Truck, Wrench, ShieldCheck,
@@ -341,7 +341,7 @@ export default function LogisticsPipelineSettingsPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Truck className="h-7 w-7 text-orange-600" />
-          <h1 className="text-xl font-bold text-gray-900">Pipeline VC/LĐ</h1>
+          <h1 className="text-xl font-bold text-gray-900">Pipeline VC</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Link
@@ -365,7 +365,7 @@ export default function LogisticsPipelineSettingsPage() {
         </span>
         <span className="text-gray-300">→</span>
         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full ${settingsCompanyId ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-gray-50 text-gray-400 border border-gray-200'}`}>
-          2. Pipeline VC/LĐ
+          2. Pipeline VC
         </span>
       </div>
 
@@ -405,7 +405,7 @@ export default function LogisticsPipelineSettingsPage() {
                 <Settings className="h-5 w-5" />
               </div>
               <div>
-                <h2 className="text-sm font-bold text-gray-900">Cột Kanban VC/LĐ</h2>
+                <h2 className="text-sm font-bold text-gray-900">Cột Kanban VC</h2>
                 <p className="text-[10px] text-gray-500">{sorted.length} cột — kéo ⋮⋮ để sắp xếp</p>
               </div>
             </div>
@@ -589,7 +589,7 @@ export default function LogisticsPipelineSettingsPage() {
                         )}
                       </p>
                       <p className="text-[10px] text-gray-400 mt-0.5">
-                        {isIntake ? 'Dự án bàn giao từ SX · chờ vận chuyển' : 'Cột pipeline VC/LĐ'}
+                        {isIntake ? 'Dự án bàn giao từ SX · chờ vận chuyển' : 'Cột pipeline VC'}
                       </p>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
