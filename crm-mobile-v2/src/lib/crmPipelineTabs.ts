@@ -55,10 +55,17 @@ export function splitDealStagesForCrmTabs(stagesDeal: CrmPipelineStage[]) {
   const wonStageId = wonStage ? String(wonStage.id) : null;
 
   if (wonAnchorOrder == null) {
-    return { dealTabStages: sorted, postWonStages: [] as CrmPipelineStage[], wonStage, wonAnchorOrder };
+    return {
+      dealTabStages: sorted,
+      customerTabStages: [] as CrmPipelineStage[],
+      postWonStages: [] as CrmPipelineStage[],
+      wonStage,
+      wonAnchorOrder,
+    };
   }
 
   const dealTabStages: CrmPipelineStage[] = [];
+  const customerTabStages: CrmPipelineStage[] = [];
   const postWonStages: CrmPipelineStage[] = [];
 
   for (const s of sorted) {
@@ -70,16 +77,18 @@ export function splitDealStagesForCrmTabs(stagesDeal: CrmPipelineStage[]) {
     }
     if (sid === wonStageId || order === wonAnchorOrder) {
       dealTabStages.push(s);
+      customerTabStages.push(s);
       continue;
     }
     if (order < wonAnchorOrder) {
       dealTabStages.push(s);
     } else {
       postWonStages.push(s);
+      customerTabStages.push(s);
     }
   }
 
-  return { dealTabStages, postWonStages, wonStage, wonAnchorOrder };
+  return { dealTabStages, customerTabStages, postWonStages, wonStage, wonAnchorOrder };
 }
 
 /**
@@ -167,6 +176,25 @@ export function sumCrmDealStatsCount(
     total += Number(dealCounts[stage.id] ?? 0) || 0;
   }
   return total;
+}
+
+/** Tổng tab KH — deal ở cột Thắng + sau Thắng (khớp CRM Hub tab Khách hàng). */
+export function sumCrmCustomerTabDealCount(
+  dealStages: CrmPipelineStage[],
+  dealCounts: Record<string, number>,
+): number {
+  const { customerTabStages } = splitDealStagesForCrmTabs(dealStages);
+  let total = 0;
+  for (const stage of customerTabStages) {
+    total += Number(dealCounts[stage.id] ?? 0) || 0;
+  }
+  return total;
+}
+
+/** Tỷ lệ chốt — chốt tab KH / tổng deal kỳ (%, làm tròn nguyên như BC web). */
+export function crmCustomerTabConversionRate(closedCount: number, dealCount: number): number {
+  if (!dealCount) return 0;
+  return Math.round((closedCount / dealCount) * 100);
 }
 
 /** Funnel Deal — chỉ cột thống kê tab Deal (không gồm Thắng / sau Thắng). */

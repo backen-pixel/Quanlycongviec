@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import type { OrgReportRow } from '../../api/employeeReport';
 import { formatKpiLedgerNet, formatVndShort } from '../../lib/reportFormat';
+import { reportClosedWonCount } from '../../lib/reportMetrics';
 import { Radii, Shadow, useColors, type ThemeColors } from '../../theme';
 import ReportMetricBlock from './ReportMetricBlock';
 
@@ -43,7 +44,7 @@ export default function ReportOverviewSummary({ summary }: Props) {
         <ReportMetricBlock label="Hoàn thành" value={formatVndShort(summary.completed_value)} tone="violet" />
         <ReportMetricBlock label="Quá hạn" value={overdueLabel} tone="rose" />
         <ReportMetricBlock label="Điểm KPI" value={formatKpiLedgerNet(summary.kpi_ledger_net)} tone="indigo" />
-        <ReportMetricBlock label="Chốt SL" value={summary.won_deal_count ?? 0} tone="emerald" />
+        <ReportMetricBlock label="Chốt SL" value={reportClosedWonCount(summary)} tone="emerald" />
         <ReportMetricBlock label="Thua" value={summary.lost_deal_count ?? 0} tone="rose" />
       </View>
     </View>

@@ -41,6 +41,8 @@ function defaultKpiLedgerMonthStartYmd() {
 async function fetchCrmLeadsForOrgReportBatched(type, {
   company_id, region_id, date_from, date_to, assigned_to_only, assigned_to_user, req,
 }, pageSize = 1000) {
+  const { listCrmModuleCompanyIds } = require('../../../helpers/crmModuleCompanies');
+  const crmCompanyIds = company_id ? null : await listCrmModuleCompanyIds();
   const rows = [];
   let from = 0;
   for (;;) {
@@ -57,6 +59,8 @@ async function fetchCrmLeadsForOrgReportBatched(type, {
       } else {
         q = q.eq('company_id', company_id);
       }
+    } else if (crmCompanyIds?.length) {
+      q = q.in('company_id', crmCompanyIds);
     }
     if (region_id) q = q.eq('region_id', region_id);
     if (req) q = applyCrmLeadRegionFilterToQuery(q, req);

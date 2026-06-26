@@ -24,7 +24,7 @@ export default function ReportOverviewTab({ report }: Props) {
 
   return (
     <>
-      <ReportKpiCarousel summary={report.summary} compare={report.compare} />
+      <ReportKpiCarousel summary={report.summary} compare={report.compare} companyId={report.company_id} />
 
       <ReportChartCard
         title="Xu hướng theo ngày"
@@ -36,7 +36,7 @@ export default function ReportOverviewTab({ report }: Props) {
 
       <ReportChartCard
         title="Kết quả Deal"
-        subtitle="Phân bổ chốt / mở / thua"
+        subtitle="Deal tạo trong kỳ · cột Thắng trở đi (Chốt SL)"
         empty={dealPie.length === 0}
       >
         <ReportDonutChart segments={dealPie} layout="side" />

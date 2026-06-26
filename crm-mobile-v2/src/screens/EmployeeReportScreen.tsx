@@ -33,6 +33,7 @@ import ReportPerformanceTab from '../components/reports/ReportPerformanceTab';
 import ReportPipelineTab from '../components/reports/ReportPipelineTab';
 import ReportTabBar, { type ReportTabId } from '../components/reports/ReportTabBar';
 import { useAuth } from '../context/AuthContext';
+import { defaultCompanyIdForUser, isSystemWideAdmin } from '../lib/crmDefaultCompany';
 import { canViewEmployeeReport } from '../lib/employeeReportAccess';
 import {
   defaultMonthRange,
@@ -58,7 +59,7 @@ function isAdminLike(role?: string | null): boolean {
 }
 
 function isSystemAdmin(user: { role?: string | null; company_id?: string | null } | null): boolean {
-  return String(user?.role || '').trim().toLowerCase() === 'admin' && !user?.company_id;
+  return isSystemWideAdmin(user);
 }
 
 export default function EmployeeReportScreen() {
@@ -116,9 +117,16 @@ export default function EmployeeReportScreen() {
   useEffect(() => {
     if (!showCompanyPicker) return;
     void fetchCrmCompanies()
-      .then((list) => setCompanies(list.map((c) => ({ id: c.id, name: c.shortName || c.name }))))
+      .then((list) => {
+        const mapped = list.map((c) => ({ id: c.id, name: c.shortName || c.name }));
+        setCompanies(mapped);
+        setCompanyId((prev) => {
+          if (prev) return prev;
+          return defaultCompanyIdForUser(user, mapped);
+        });
+      })
       .catch(() => setCompanies([]));
-  }, [showCompanyPicker]);
+  }, [showCompanyPicker, user]);
 
   useEffect(() => {
     if (!effectiveCompanyId) {
@@ -151,15 +159,7 @@ export default function EmployeeReportScreen() {
         return;
       }
       const hubSnap = await fetchCrmReportHubSnapshot(query);
-      let prevSnap = null;
-      if (orgReport.period_previous?.date_from && orgReport.period_previous?.date_to) {
-        prevSnap = await fetchCrmReportHubSnapshot({
-          ...query,
-          date_from: orgReport.period_previous.date_from,
-          date_to: orgReport.period_previous.date_to,
-        });
-      }
-      setReport(applyCrmHubSnapshotToReport(orgReport, hubSnap, typeView, prevSnap));
+      setReport(applyCrmHubSnapshotToReport(orgReport, hubSnap, typeView));
     } catch (e) {
       setError(formatApiError(e));
       setReport(null);
@@ -294,6 +294,15 @@ export default function EmployeeReportScreen() {
               );
             })}
           </View>
+
+          {!effectiveCompanyId && isSystemAdmin(user) ? (
+            <View style={styles.scopeHint}>
+              <Ionicons name="information-circle-outline" size={16} color={Colors.amber} />
+              <Text style={styles.scopeHintText}>
+                Đang xem tất cả công ty — số chốt là tổng mọi công ty trong kỳ. Chọn 1 công ty để so với BC web / CRM Hub từng công ty.
+              </Text>
+            </View>
+          ) : null}
 
           {(showCompanyPicker || effectiveCompanyId) ? (
             <View style={styles.filterRow}>
@@ -520,6 +529,18 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   chipActive: { backgroundColor: 'rgba(168,85,247,0.16)', borderColor: Colors.purple },
   chipText: { color: Colors.textMuted, fontSize: 12, fontWeight: '700' },
   chipTextActive: { color: Colors.purple },
+  scopeHint: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 10,
+    padding: 10,
+    borderRadius: Radii.md,
+    backgroundColor: Colors.amberSoft,
+    borderWidth: 1,
+    borderColor: Colors.amber,
+  },
+  scopeHintText: { flex: 1, color: Colors.textMuted, fontSize: 12, lineHeight: 17 },
   filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
   filterBtn: {
     flex: 1,

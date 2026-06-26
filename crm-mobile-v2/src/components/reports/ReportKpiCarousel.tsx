@@ -29,6 +29,8 @@ type KpiCard = {
 type Props = {
   summary: OrgReportRow;
   compare?: OrgReportCompare | null;
+  /** null/undefined = đang xem tất cả công ty */
+  companyId?: string | null;
 };
 
 const CARD_W = 132;
@@ -38,7 +40,7 @@ function pipelineDisplayValue(summary: OrgReportRow): number {
   return summary.open_pipeline_value ?? 0;
 }
 
-function buildCards(summary: OrgReportRow): KpiCard[] {
+function buildCards(summary: OrgReportRow, companyId?: string | null): KpiCard[] {
   return [
     {
       key: 'lead',
@@ -52,6 +54,8 @@ function buildCards(summary: OrgReportRow): KpiCard[] {
       key: 'deal',
       label: 'DEAL',
       value: String(summary.deal_count ?? 0),
+      hideCompare: true,
+      sub: companyId ? 'Tạo trong kỳ' : 'Tab Deal · có SĐT · khớp CRM Hub',
       bg: 'rgba(34,197,94,0.18)',
       border: 'rgba(34,197,94,0.42)',
       accent: '#34D399',
@@ -90,10 +94,10 @@ const COMPARE_KEYS: Record<string, string> = {
   conversion: 'conversion_rate',
 };
 
-export default function ReportKpiCarousel({ summary, compare }: Props) {
+export default function ReportKpiCarousel({ summary, compare, companyId }: Props) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
-  const cards = useMemo(() => buildCards(summary), [summary]);
+  const cards = useMemo(() => buildCards(summary, companyId), [summary, companyId]);
   const [page, setPage] = useState(0);
 
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {

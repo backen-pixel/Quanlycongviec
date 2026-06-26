@@ -967,13 +967,16 @@ async function fetchCrmLeadsForDashboardBatched(type, { company_id, region_id, d
 async function fetchCrmLeadsForOrgReportBatched(type, {
   company_id, region_id, date_from, date_to, assigned_to_only, assigned_to_user, req,
 }, pageSize = 1000) {
+  const { listCrmModuleCompanyIds } = require('../helpers/crmModuleCompanies');
+  const crmCompanyIds = company_id ? null : await listCrmModuleCompanyIds();
   const rows = [];
   let from = 0;
   for (;;) {
     let q = supabase
       .from('crm_leads')
       .select('id, stage_id, estimated_value, probability, type, assigned_to, lead_owner_id, company_id, region_id, created_at, source_id, stage_entered_at, first_touch_time, lead_type_id')
-      .eq('type', type);
+      .eq('type', type)
+      .is('parent_lead_id', null);
     if (company_id) {
       const { isCrmAccountingUser } = require('../helpers/crmAccessRoles');
       const { applyAccountingCrmCompanyFilter } = require('../helpers/accountingScope');
@@ -982,6 +985,8 @@ async function fetchCrmLeadsForOrgReportBatched(type, {
       } else {
         q = q.eq('company_id', company_id);
       }
+    } else if (crmCompanyIds?.length) {
+      q = q.in('company_id', crmCompanyIds);
     }
     if (region_id) q = q.eq('region_id', region_id);
     if (req) q = applyCrmLeadRegionFilterToQuery(q, req);
