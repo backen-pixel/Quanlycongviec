@@ -73,6 +73,7 @@ import {
   storeDealKhSplitPreference,
   splitDealStagesForCrmTabs,
 } from '../lib/crmPipelineTabs';
+import { fetchAggregatedOpenPipelineKpi } from '../lib/crmOpenPipelineKpi';
 import {
   canDropDealOnCrmKanbanStage,
   crmDealMoveToWonSxAlreadyCreatedMessage,
@@ -2730,27 +2731,8 @@ export default function CRMDashboard() {
         resolvedCompanyId = String(user.company_id);
       } else if (!isAdmin && user?.company_id) {
         resolvedCompanyId = resolvedCompanyId || String(user.company_id);
-      } else if (
-        isAdmin
-        && !isCompanyScopedAdmin
-        && !resolvedCompanyId
-        && !(hadSessionSnapshotRef.current && snapshotHasProperty(P, 'filterCompany'))
-      ) {
-        let fromLs = '';
-        try {
-          fromLs = getStoredCrmFilterCompanyId();
-        } catch {
-          /* ignore */
-        }
-        // Mặc định admin = «Tất cả công ty»; chỉ khôi phục khi đã lưu lựa chọn cụ thể trước đó
-        if (fromLs) {
-          resolvedCompanyId = fromLs;
-          if (String(fromLs) !== String(filterCompany)) {
-            suppressFilterCompanyLoadRef.current = true;
-            setFilterCompany(fromLs);
-          }
-        }
       }
+      // Admin «Tất cả công ty» (filterCompany rỗng): không khôi phục localStorage — tránh chỉ load Phúc Đạt.
 
       let stagesLeadParams = buildStagesParams('lead');
       let stagesDealParams = buildStagesParams('deal');
@@ -3670,6 +3652,61 @@ export default function CRMDashboard() {
     [customerTabDeals, customerTabStages, stagesDeal, customerKpiTotalCount],
   );
 
+  /** «Tất cả công ty»: KPI Dự kiến/Kỳ vọng từ stage-counts từng công ty (khớp Hub). */
+  const [allCompaniesPipelineKpi, setAllCompaniesPipelineKpi] = useState(null);
+
+  useEffect(() => {
+    if (dashboardScopeCompanyId || kpiUsesClientOnlyFilters || !companies?.length) {
+      setAllCompaniesPipelineKpi(null);
+      return undefined;
+    }
+    let cancel = false;
+    void (async () => {
+      try {
+        const totals = await fetchAggregatedOpenPipelineKpi(api, {
+          companies,
+          dateFrom: customDateFrom || undefined,
+          dateTo: customDateTo || undefined,
+          phoneFilter: filterPhone || undefined,
+          assignedTo: filterAssignee || undefined,
+          regionId: filterRegion || undefined,
+        });
+        if (!cancel) setAllCompaniesPipelineKpi(totals);
+      } catch {
+        if (!cancel) setAllCompaniesPipelineKpi(null);
+      }
+    })();
+    return () => { cancel = true; };
+  }, [
+    dashboardScopeCompanyId,
+    kpiUsesClientOnlyFilters,
+    companies,
+    customDateFrom,
+    customDateTo,
+    filterPhone,
+    filterAssignee,
+    filterRegion,
+  ]);
+
+  const applyAllCompaniesPipelineKpi = useCallback((base) => {
+    if (dashboardScopeCompanyId || kpiUsesClientOnlyFilters || !allCompaniesPipelineKpi) return base;
+    return {
+      ...base,
+      pipeline_estimated_value: allCompaniesPipelineKpi.raw,
+      expected_value: allCompaniesPipelineKpi.weighted,
+    };
+  }, [dashboardScopeCompanyId, kpiUsesClientOnlyFilters, allCompaniesPipelineKpi]);
+
+  const mergedDealKpisForDisplay = useMemo(
+    () => applyAllCompaniesPipelineKpi(mergedDealKpisFromFilters),
+    [applyAllCompaniesPipelineKpi, mergedDealKpisFromFilters],
+  );
+
+  const dealSalesKpisForDisplay = useMemo(
+    () => applyAllCompaniesPipelineKpi(dealSalesKpisFromFilters),
+    [applyAllCompaniesPipelineKpi, dealSalesKpisFromFilters],
+  );
+
   const ledgerMapLead = dataLead?.ledger_net_by_lead || {};
   const ledgerMapDeal = dataDeal?.ledger_net_by_lead || {};
 
@@ -3893,20 +3930,20 @@ export default function CRMDashboard() {
     }
     if (pipelineType === 'deal' && !dealKhSplitEnabled) {
       return [
-        `${Number(mergedDealKpisFromFilters.total_deals ?? 0).toLocaleString('vi-VN')} deal`,
-        `DT thắng ${formatVND(mergedDealKpisFromFilters.won_value)}`,
-        `Dự kiến ${formatVND(mergedDealKpisFromFilters.pipeline_estimated_value)}`,
+        `${Number(mergedDealKpisForDisplay.total_deals ?? 0).toLocaleString('vi-VN')} deal`,
+        `DT thắng ${formatVND(mergedDealKpisForDisplay.won_value)}`,
+        `Dự kiến ${formatVND(mergedDealKpisForDisplay.pipeline_estimated_value)}`,
         `KPI ${kpiPts}`,
       ].join(' · ');
     }
     return [
-      `${Number(dealSalesKpisFromFilters.total_deals ?? 0).toLocaleString('vi-VN')} deal`,
-      `${Number(dealSalesKpisFromFilters.deal_processing ?? 0).toLocaleString('vi-VN')} xử lý`,
-      `Dự kiến ${formatVND(dealSalesKpisFromFilters.pipeline_estimated_value)}`,
-      `KV ${formatVND(dealSalesKpisFromFilters.expected_value)}`,
+      `${Number(dealSalesKpisForDisplay.total_deals ?? 0).toLocaleString('vi-VN')} deal`,
+      `${Number(dealSalesKpisForDisplay.deal_processing ?? 0).toLocaleString('vi-VN')} xử lý`,
+      `Dự kiến ${formatVND(dealSalesKpisForDisplay.pipeline_estimated_value)}`,
+      `KV ${formatVND(dealSalesKpisForDisplay.expected_value)}`,
       `KPI ${kpiPts}`,
     ].join(' · ');
-  }, [pipelineType, dealKhSplitEnabled, dealSalesKpisFromFilters, mergedDealKpisFromFilters, customerKpisFromFilters, leadKpiTotalCount, leadActiveCount, customerKpiTotalCount, kpiLedgerMonthNetSumVisible]);
+  }, [pipelineType, dealKhSplitEnabled, dealSalesKpisForDisplay, mergedDealKpisForDisplay, customerKpisFromFilters, leadKpiTotalCount, leadActiveCount, customerKpiTotalCount, kpiLedgerMonthNetSumVisible]);
 
   const toggleKpiPanel = useCallback(() => {
     setKpiPanelOpen((open) => {
@@ -6063,11 +6100,11 @@ export default function CRMDashboard() {
           <>
             <DealCountSummaryKpiCard
               className="min-[520px]:col-span-2 xl:col-span-2"
-              total={mergedDealKpisFromFilters.total_deals}
-              dealProcessing={mergedDealKpisFromFilters.deal_processing}
-              dealLost={mergedDealKpisFromFilters.deal_lost}
-              projectActive={mergedDealKpisFromFilters.project_active}
-              projectCompleted={mergedDealKpisFromFilters.project_completed}
+              total={mergedDealKpisForDisplay.total_deals}
+              dealProcessing={mergedDealKpisForDisplay.deal_processing}
+              dealLost={mergedDealKpisForDisplay.deal_lost}
+              projectActive={mergedDealKpisForDisplay.project_active}
+              projectCompleted={mergedDealKpisForDisplay.project_completed}
               filterNote={kpiUsesClientOnlyFilters ? 'Sau lọc (trên bản ghi đã tải)' : undefined}
             />
             <KPICard
@@ -6077,7 +6114,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-sky-100"
               iconColor="text-sky-700"
               label="Giá trị dự kiến"
-              value={formatVND(mergedDealKpisFromFilters.pipeline_estimated_value)}
+              value={formatVND(mergedDealKpisForDisplay.pipeline_estimated_value)}
               trend={null}
             />
             <KPICard
@@ -6087,7 +6124,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-violet-100"
               iconColor="text-violet-700"
               label="Giá trị kỳ vọng"
-              value={formatVND(mergedDealKpisFromFilters.expected_value)}
+              value={formatVND(mergedDealKpisForDisplay.expected_value)}
               trend={null}
             />
             <KPICard
@@ -6097,7 +6134,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-amber-100"
               iconColor="text-amber-600"
               label="Doanh thu thắng"
-              value={formatVND(mergedDealKpisFromFilters.won_value)}
+              value={formatVND(mergedDealKpisForDisplay.won_value)}
               trend={null}
             />
             <KPICard
@@ -6106,7 +6143,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-teal-100"
               iconColor="text-teal-700"
               label="DT hoàn thành"
-              value={formatVND(mergedDealKpisFromFilters.completed_revenue_value)}
+              value={formatVND(mergedDealKpisForDisplay.completed_revenue_value)}
               trend={null}
             />
             <KPICard
@@ -6128,7 +6165,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-cyan-100"
               iconColor="text-cyan-700"
               label="Tổng deal"
-              value={dealSalesKpisFromFilters.total_deals}
+              value={dealSalesKpisForDisplay.total_deals}
               sublabel={kpiUsesClientOnlyFilters ? 'Sau lọc' : 'Trước Thắng + Thua'}
               trend={null}
             />
@@ -6138,7 +6175,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-blue-100"
               iconColor="text-blue-700"
               label="Đang xử lý"
-              value={dealSalesKpisFromFilters.deal_processing}
+              value={dealSalesKpisForDisplay.deal_processing}
               trend={null}
             />
             <KPICard
@@ -6147,7 +6184,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-red-100"
               iconColor="text-red-600"
               label="Hủy / thua"
-              value={dealSalesKpisFromFilters.deal_lost}
+              value={dealSalesKpisForDisplay.deal_lost}
               trend={null}
             />
             <KPICard
@@ -6157,7 +6194,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-sky-100"
               iconColor="text-sky-700"
               label="Giá trị dự kiến"
-              value={formatVND(dealSalesKpisFromFilters.pipeline_estimated_value)}
+              value={formatVND(dealSalesKpisForDisplay.pipeline_estimated_value)}
               sublabel="Pipeline mở"
               trend={null}
             />
@@ -6168,7 +6205,7 @@ export default function CRMDashboard() {
               iconBgColor="bg-violet-100"
               iconColor="text-violet-700"
               label="Giá trị kỳ vọng"
-              value={formatVND(dealSalesKpisFromFilters.expected_value)}
+              value={formatVND(dealSalesKpisForDisplay.expected_value)}
               sublabel="Theo xác suất cột"
               trend={null}
             />
