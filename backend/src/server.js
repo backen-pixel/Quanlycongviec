@@ -21,6 +21,9 @@ const io = new Server(server, {
   cors: { origin: true, methods: ['GET', 'POST'], credentials: true },
 });
 app.set('io', io);
+try {
+  require('./helpers/supabaseManualSwitch').setSwitchIo(io);
+} catch { /* ignore */ }
 
 // ── Redis adapter (tùy chọn) — connect xong mới gắn; lỗi Redis không crash server ──
 if (config.redisUrl) {

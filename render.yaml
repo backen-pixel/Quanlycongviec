@@ -75,5 +75,7 @@ services:
         sync: false
       - key: SUPABASE_SWITCH_SYNC_MAX_MS
         sync: false
+      - key: SUPABASE_SWITCH_COUNTDOWN_MS
+        sync: false
       - key: FCM_SA_JSON
         sync: false

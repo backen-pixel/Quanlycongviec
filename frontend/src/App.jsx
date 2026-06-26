@@ -199,6 +199,7 @@ import { useActivityRouteTracker } from './hooks/useActivityRouteTracker';
 import { isCrmSharedPath } from './lib/sidebarModuleContext';
 import ReleaseNoteLoginModal from './components/ReleaseNoteLoginModal';
 import SharedProviders from './shared/SharedProviders';
+import SupabaseSwitchCountdownBanner from './components/SupabaseSwitchCountdownBanner';
 import { useModuleAccess } from './shared/context/ModuleAccessContext';
 
 function PageLoader() {
@@ -273,6 +274,7 @@ function ProtectedLayout() {
   return (
     <CrmNotesFabProvider>
         <ReleaseNoteLoginModal />
+        <SupabaseSwitchCountdownBanner />
         <div className="flex h-screen bg-[var(--color-page-bg)] relative">
           <div className="absolute inset-0 pointer-events-none z-0"
             style={{ backgroundImage: 'var(--bg-image, none)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed' }} />
