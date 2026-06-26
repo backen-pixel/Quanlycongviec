@@ -230,6 +230,7 @@ app.use('/api/users', require('./routes/users'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/tasks', require('./routes/tasks'));
 app.use('/api/work-tasks', require('./routes/workTasks'));
+app.use('/api/management', require('./routes/management'));
 app.use('/api/customers', require('./routes/customers'));
 app.use('/api/products', require('./routes/products'));
 app.use('/api/dashboard-main', require('./routes/dashboardMain'));

@@ -132,8 +132,8 @@ export default function DriveFilePicker({
     if (entityType && entityId) {
       try {
         setSubmitting(file.id);
-        await driveLinkFile(file.id, entityType, entityId);
-        onPicked?.(file);
+        const res = await driveLinkFile(file.id, entityType, entityId);
+        onPicked?.(file, res?.link);
         onClose?.();
       } catch (e) { alert(e?.response?.data?.error || e?.message); }
       finally { setSubmitting(null); }

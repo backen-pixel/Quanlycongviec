@@ -15,8 +15,8 @@ import {
   FolderPlus, ChevronRight, X, Download, Trash2, FolderInput,
 } from 'lucide-react';
 import {
-  driveLinksByEntity, driveUnlinkFile, drivePreview, driveOpenDownload, driveFormatBytes,
-  driveUploadToEntity, driveCreateGoogleForEntity, driveEntityChildren, driveEntityCreateFolder,
+  driveLinksByEntity, driveUnlinkFile, driveTrashFile, drivePreview, driveOpenDownload, driveFormatBytes,
+  driveUploadFilesBatch, driveCreateGoogleForEntity, driveEntityChildren, driveEntityCreateFolder,
   driveUpdateFile,
 } from '../../lib/drive';
 import DriveFilePicker from './DriveFilePicker';
@@ -51,6 +51,7 @@ export default function DriveAttachments({ entityType, entityId, className = '',
   const [bulkWorking, setBulkWorking] = useState(false);
   const [moveTarget, setMoveTarget] = useState(null);
   const fileInputRef = useRef(null);
+  const isFirstLoadRef = useRef(true);
 
   const activeFolderId = currentFolderId || entityFolderId;
 
@@ -97,15 +98,62 @@ export default function DriveAttachments({ entityType, entityId, className = '',
     setLocationPath(enrichDriveBreadcrumb(r.breadcrumb || []));
   }, [entityType, entityId, currentFolderId]);
 
-  const reload = useCallback(async () => {
+  const reload = useCallback(async ({ silent = false } = {}) => {
     if (!entityType || !entityId) return;
-    setLoading(true);
+    if (!silent) setLoading(true);
     try {
       await Promise.all([reloadLinks(), reloadBrowse()]);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [entityType, entityId, reloadLinks, reloadBrowse]);
+
+  const applyEntityUploadPayload = useCallback((payload) => {
+    const file = payload?.file;
+    const link = payload?.link;
+    if (link?.file_id || link?.id) {
+      setLinks((cur) => {
+        const fileId = link.file_id || file?.id;
+        const idx = cur.findIndex((l) => l.id === link.id || l.file_id === fileId);
+        const row = { ...link, file: file || link.file };
+        if (idx >= 0) {
+          const next = [...cur];
+          next[idx] = { ...next[idx], ...row, file: file || next[idx].file };
+          return next;
+        }
+        return [row, ...cur];
+      });
+    } else if (file?.id) {
+      setLinks((cur) => {
+        if (cur.some((l) => l.file_id === file.id)) return cur;
+        return [{ id: `local-${file.id}`, file_id: file.id, file }, ...cur];
+      });
+    }
+    if (file?.id) {
+      const inCurrentFolder = !activeFolderId || file.folder_id === activeFolderId;
+      if (inCurrentFolder) {
+        setFolderFiles((cur) => {
+          const idx = cur.findIndex((f) => f.id === file.id);
+          if (idx >= 0) {
+            const next = [...cur];
+            next[idx] = { ...next[idx], ...file };
+            return next;
+          }
+          return [file, ...cur];
+        });
+      }
+    }
+  }, [activeFolderId]);
+
+  const applyLinkedFile = useCallback((file, link) => {
+    if (!file?.id) return;
+    setLinks((cur) => {
+      if (cur.some((l) => l.file_id === file.id)) {
+        return cur.map((l) => (l.file_id === file.id ? { ...l, ...link, file } : l));
+      }
+      return [{ ...(link || {}), id: link?.id || `local-${file.id}`, file_id: file.id, file }, ...cur];
+    });
+  }, []);
 
   useEffect(() => {
     setEntityFolderId(null);
@@ -114,10 +162,13 @@ export default function DriveAttachments({ entityType, entityId, className = '',
   }, [entityType, entityId]);
 
   useEffect(() => {
-    setSelectedIds(new Set());
-  }, [currentFolderId]);
+    isFirstLoadRef.current = true;
+  }, [entityType, entityId]);
 
-  useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => {
+    void reload({ silent: !isFirstLoadRef.current });
+    isFirstLoadRef.current = false;
+  }, [reload]);
 
   useEffect(() => {
     onCountChange?.(links.length);
@@ -139,7 +190,7 @@ export default function DriveAttachments({ entityType, entityId, className = '',
   }
 
   function handleSelectAll(checked) {
-    if (checked) setSelectedIds(new Set(folderFiles.map((f) => f.id)));
+    if (checked) setSelectedIds(new Set(displayFiles.map((f) => f.id)));
     else setSelectedIds(new Set());
   }
 
@@ -147,14 +198,19 @@ export default function DriveAttachments({ entityType, entityId, className = '',
     setSelectedIds(new Set());
   }
 
-  const selectedFiles = useMemo(
-    () => folderFiles.filter((f) => selectedIds.has(f.id)),
-    [folderFiles, selectedIds],
-  );
+  /** File đang gắn: trong thư mục entity + file liên kết từ Drive khác. */
+  const displayFiles = useMemo(() => {
+    const inFolder = folderFiles.filter((f) => linkByFileId.has(f.id));
+    const inFolderIds = new Set(inFolder.map((f) => f.id));
+    const linkedOnly = links
+      .map((l) => l.file)
+      .filter((f) => f?.id && !inFolderIds.has(f.id));
+    return [...inFolder, ...linkedOnly];
+  }, [folderFiles, linkByFileId, links]);
 
-  const selectedLinkIds = useMemo(
-    () => selectedFiles.map((f) => linkByFileId.get(f.id)).filter(Boolean),
-    [selectedFiles, linkByFileId],
+  const selectedFiles = useMemo(
+    () => displayFiles.filter((f) => selectedIds.has(f.id)),
+    [displayFiles, selectedIds],
   );
 
   async function bulkDownload() {
@@ -169,19 +225,45 @@ export default function DriveAttachments({ entityType, entityId, className = '',
     }
   }
 
-  async function bulkUnlink() {
-    if (!selectedLinkIds.length) return;
-    if (!confirm(`Xóa ${selectedLinkIds.length} file đã chọn?`)) return;
+  async function removeEntityFiles(filesToRemove) {
+    const items = (filesToRemove || []).filter((f) => f?.id);
+    if (!items.length) return;
+
     setBulkWorking(true);
+    const removedLinkIds = [];
+    const removedFileIds = [];
     try {
-      await Promise.all(selectedLinkIds.map((id) => driveUnlinkFile(id)));
-      setLinks((cur) => cur.filter((l) => !selectedLinkIds.includes(l.id)));
+      await Promise.all(items.map(async (file) => {
+        const linkId = linkByFileId.get(file.id);
+        const inEntityFolder = folderFiles.some((f) => f.id === file.id);
+        if (linkId) {
+          await driveUnlinkFile(linkId);
+          removedLinkIds.push(linkId);
+        }
+        if (inEntityFolder) {
+          await driveTrashFile(file.id);
+        }
+        removedFileIds.push(file.id);
+      }));
+
+      const linkIdSet = new Set(removedLinkIds);
+      const fileIdSet = new Set(removedFileIds);
+      setLinks((cur) => cur.filter((l) => !linkIdSet.has(l.id)));
+      setFolderFiles((cur) => cur.filter((f) => !fileIdSet.has(f.id)));
+      if (previewing && fileIdSet.has(previewing.id)) setPreviewing(null);
       clearSelection();
     } catch (e) {
-      alert(e?.response?.data?.error || e?.message);
+      alert(e?.response?.data?.error || e?.message || 'Không xóa được file');
+      await reload({ silent: true });
     } finally {
       setBulkWorking(false);
     }
+  }
+
+  async function bulkUnlink() {
+    if (!selectedFiles.length) return;
+    if (!confirm(`Xóa ${selectedFiles.length} file đã chọn khỏi deal? File sẽ được đưa vào thùng rác Drive.`)) return;
+    await removeEntityFiles(selectedFiles);
   }
 
   function openMoveDialog(fileIds) {
@@ -223,12 +305,14 @@ export default function DriveAttachments({ entityType, entityId, className = '',
     }
   }
 
-  async function unlink(linkId) {
-    if (!confirm('Xóa file này?')) return;
-    try {
-      await driveUnlinkFile(linkId);
-      setLinks((cur) => cur.filter((l) => l.id !== linkId));
-    } catch (e) { alert(e?.response?.data?.error || e?.message); }
+  async function unlink(linkId, file) {
+    if (!file?.id) return;
+    const inEntityFolder = folderFiles.some((f) => f.id === file.id);
+    const msg = inEntityFolder
+      ? 'Xóa file này khỏi deal? File sẽ được đưa vào thùng rác Drive.'
+      : 'Bỏ gắn file này khỏi deal? (File gốc vẫn giữ trên Drive.)';
+    if (!confirm(msg)) return;
+    await removeEntityFiles([file]);
   }
 
   async function preview(file) {
@@ -247,17 +331,14 @@ export default function DriveAttachments({ entityType, entityId, className = '',
     e.target.value = '';
     if (!selected.length) return;
 
-    for (const file of selected) {
-      try {
-        await driveUploadToEntity(file, {
-          entity_type: entityType,
-          entity_id: entityId,
-          folder_id: activeFolderId || undefined,
-        });
-      } catch (_) { /* panel góc phải hiển thị lỗi */ }
-    }
-
-    await reload();
+    await driveUploadFilesBatch(selected, {
+      entity_type: entityType,
+      entity_id: entityId,
+      folder_id: activeFolderId || undefined,
+      onFileComplete: (result) => {
+        if (result.ok) applyEntityUploadPayload(result.data);
+      },
+    });
   }
 
   async function handleCreateGoogle(kind) {
@@ -269,7 +350,7 @@ export default function DriveAttachments({ entityType, entityId, className = '',
         kind,
         folder_id: activeFolderId || undefined,
       });
-      await reload();
+      applyEntityUploadPayload(r);
       if (r?.file) {
         setPreviewing({
           ...r.file,
@@ -322,14 +403,14 @@ export default function DriveAttachments({ entityType, entityId, className = '',
         onPreview={() => preview(file)}
         onDownload={() => driveOpenDownload(file.id, file.name)}
         onMove={() => openMoveDialog([file.id])}
-        onUnlink={linkId ? () => unlink(linkId) : undefined}
+        onUnlink={linkId ? () => unlink(linkId, file) : undefined}
         unlinkLabel="Xóa"
         showUnlink={!!linkId}
       />
     );
   }
 
-  const isEmpty = !loading && subFolders.length === 0 && folderFiles.length === 0;
+  const isEmpty = !loading && subFolders.length === 0 && displayFiles.length === 0;
 
   return (
     <div className={`bg-white border rounded-xl p-4 ${className}`}>
@@ -402,7 +483,6 @@ export default function DriveAttachments({ entityType, entityId, className = '',
             ref={fileInputRef}
             type="file"
             multiple
-            accept=".doc,.docx,.xls,.xlsx,.pdf,.ppt,.pptx,.txt,.csv,image/*"
             className="hidden"
             onChange={handleFilesSelected}
           />
@@ -479,7 +559,7 @@ export default function DriveAttachments({ entityType, entityId, className = '',
             </section>
           )}
 
-          {folderFiles.length > 0 ? (
+          {displayFiles.length > 0 ? (
             <>
               {selectedIds.size > 0 && (
                 <div className="mb-3 flex items-center flex-wrap gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-sm">
@@ -502,14 +582,14 @@ export default function DriveAttachments({ entityType, entityId, className = '',
                   >
                     <FolderInput size={13} className="text-amber-600" /> Di chuyển
                   </button>
-                  {selectedLinkIds.length > 0 && (
+                  {selectedFiles.length > 0 && (
                     <button
                       type="button"
                       onClick={() => void bulkUnlink()}
                       disabled={bulkWorking}
                       className="h-7 px-2.5 bg-white border border-red-200 hover:bg-red-50 text-red-600 rounded-md text-xs font-medium flex items-center gap-1 disabled:opacity-60"
                     >
-                      <Trash2 size={13} /> Xóa ({selectedLinkIds.length})
+                      <Trash2 size={13} /> Xóa ({selectedFiles.length})
                     </button>
                   )}
                   <button
@@ -524,7 +604,7 @@ export default function DriveAttachments({ entityType, entityId, className = '',
 
               {viewMode === 'list' ? (
                 <DriveFilesListView
-                  files={folderFiles}
+                  files={displayFiles}
                   formatBytes={driveFormatBytes}
                   onPreview={preview}
                   renderActions={renderActions}
@@ -535,7 +615,7 @@ export default function DriveAttachments({ entityType, entityId, className = '',
                 />
               ) : (
                 <DriveFilesGridView
-                  files={folderFiles}
+                  files={displayFiles}
                   formatBytes={driveFormatBytes}
                   onPreview={preview}
                   renderActions={renderActions}
@@ -545,14 +625,14 @@ export default function DriveAttachments({ entityType, entityId, className = '',
                 />
               )}
 
-              {viewMode === 'grid' && selectedIds.size === 0 && folderFiles.length > 1 && (
+              {viewMode === 'grid' && selectedIds.size === 0 && displayFiles.length > 1 && (
                 <div className="mt-2 text-right">
                   <button
                     type="button"
                     onClick={() => handleSelectAll(true)}
                     className="text-xs text-blue-600 hover:underline"
                   >
-                    Chọn tất cả ({folderFiles.length})
+                    Chọn tất cả ({displayFiles.length})
                   </button>
                 </div>
               )}
@@ -579,14 +659,14 @@ export default function DriveAttachments({ entityType, entityId, className = '',
         <DriveFilePicker
           entityType={entityType}
           entityId={entityId}
-          onPicked={() => reload()}
+          onPicked={(file, link) => applyLinkedFile(file, link)}
           onClose={() => setPicking(false)}
         />
       )}
       {previewing && (
         <PreviewModal
           item={previewing}
-          galleryFiles={filterImageFiles(folderFiles)}
+          galleryFiles={filterImageFiles(displayFiles)}
           onClose={() => setPreviewing(null)}
           onDownload={(f) => driveOpenDownload((f || previewing).id, (f || previewing).name)}
         />

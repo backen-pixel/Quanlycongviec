@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import TaskDetailModal from '../components/TaskDetailModal';
@@ -10,7 +10,7 @@ import {
   ArrowLeft, Plus, Send, Trash2, ChevronRight, ChevronDown, Phone, MapPin,
   Calendar, Clock, CheckSquare, MessageSquare, ArrowRightCircle, ArrowRight,
   Paperclip, FileText, Edit, UserPlus, X, Shield, PlayCircle, AlertCircle, List, LayoutGrid, DollarSign, Pin, ShoppingCart,
-  Wallet,
+  Wallet, Layers,
 } from 'lucide-react';
 import ProjectOrdersTab from '../components/ProjectOrdersTab';
 import { togglePin, isPinned } from '../components/PinnedProjectsWidget';
@@ -19,6 +19,7 @@ import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import ProjectDocumentsTab from '../components/ProjectDocumentsTab';
 import ProjectFlowTab from '../components/ProjectFlowTab';
 import ProjectCRMTab from '../components/ProjectCRMTab';
+import ProjectDealAggregateTab from '../components/ProjectDealAggregateTab';
 import ProjectCashflowTab from '../components/ProjectCashflowTab';
 import SharedCRMNotes from '../components/SharedCRMNotes';
 import {
@@ -60,6 +61,7 @@ export default function ProjectDetail() {
   const [addLineStage, setAddLineStage] = useState('');
   const [editing, setEditing] = useState(false);
   const [editData, setEditData] = useState({});
+  const [aggregateBadge, setAggregateBadge] = useState(null);
 
   const load = () => {
     setLoading(true);
@@ -76,6 +78,15 @@ export default function ProjectDetail() {
     }).catch(() => {});
   };
   useEffect(() => { load(); api.get('/users').then(r => setAllUsers(r.data.users || [])).catch(() => {}); }, [id]);
+
+  useEffect(() => {
+    api.get(`/management/by-project/${id}`)
+      .then((r) => {
+        const t = r.data?.totals;
+        if (t) setAggregateBadge((t.tasks || 0) + (t.documents || 0));
+      })
+      .catch(() => setAggregateBadge(null));
+  }, [id]);
 
   const deleteProject = async () => {
     const msg = `⚠️ Xóa dự án "${project?.name}"?\n\nSẽ xóa luôn:\n• Tất cả nhiệm vụ và checklist\n• Lead/Deal liên kết (nếu có)\n• Tài liệu, báo giá, đơn hàng, hóa đơn\n• Comments, approvals, workflow lines\n\nHành động này KHÔNG THỂ hoàn tác!`;
@@ -542,6 +553,7 @@ export default function ProjectDetail() {
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-200">
         {[
+          { id: 'aggregate', label: 'Tổng hợp Deal', icon: Layers, count: aggregateBadge || undefined },
           { id: 'tasks', label: 'Công việc', icon: CheckSquare, count: totalTasks },
           { id: 'orders', label: 'Đơn hàng', icon: ShoppingCart, count: orderCount || undefined },
           { id: 'finance', label: 'Thu chi', icon: Wallet },
@@ -561,6 +573,11 @@ export default function ProjectDetail() {
           </button>
         ))}
       </div>
+
+      {/* ─── Tổng hợp Deal (CRM + SX + VC) ─── */}
+      {activeTab === 'aggregate' && (
+        <ProjectDealAggregateTab projectId={id} project={project} />
+      )}
 
       {/* ─── Tasks Tab ─── */}
       {activeTab === 'tasks' && (

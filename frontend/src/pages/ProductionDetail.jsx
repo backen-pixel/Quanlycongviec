@@ -43,7 +43,7 @@ import {
 } from '../lib/crmStageSlugLabels';
 import { buildCrmLeadDocTaskSections, normalizeCrmChecklist } from '../lib/crmTaskDocumentTree';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
-import { buildSxPipelineStageMeta } from '../lib/sxPipelineRevenue';
+import { buildSxPipelineStageMeta, resolveSxProjectDeposit, resolveSxProjectRemaining } from '../lib/sxPipelineRevenue';
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
 import DriveAttachments from '../components/drive/DriveAttachments';
 import { driveLinksCountByEntity } from '../lib/drive';
@@ -147,7 +147,16 @@ function WorkshopInfoPanel({
   const save = async (field, value) => {
     setSaving(true);
     try {
-      await api.put(`/projects/${project.id}`, { [field]: value || null });
+      let payloadValue = value || null;
+      if (field === 'deposit_amount') {
+        const raw = value;
+        if (raw === '' || raw == null) payloadValue = null;
+        else {
+          const n = Number(raw);
+          payloadValue = Number.isFinite(n) && n > 0 ? n : null;
+        }
+      }
+      await api.put(`/projects/${project.id}`, { [field]: payloadValue });
       onUpdate?.();
       setEditing(null);
     } catch (e) { alert(e.response?.data?.error || 'Lỗi lưu'); }
@@ -179,6 +188,14 @@ function WorkshopInfoPanel({
   const regionName = crmDeal?.crm_region?.name
     || companyRegions.find((r) => String(r.id) === String(crmDeal?.region_id))?.name
     || null;
+
+  const financeProject = {
+    ...project,
+    deal_deposit_amount: crmDeal?.deposit_amount ?? project.deal_deposit_amount ?? null,
+  };
+  const orderTotalValue = isVC ? project.estimated_value : project.production_value;
+  const depositValue = resolveSxProjectDeposit(financeProject);
+  const remainingValue = resolveSxProjectRemaining(financeProject);
 
   return (
     <div className="bg-white rounded-xl border p-5 space-y-1">
@@ -234,7 +251,7 @@ function WorkshopInfoPanel({
       <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== (isVC ? 'estimated_value' : 'production_value') && startEdit(isVC ? 'estimated_value' : 'production_value', isVC ? (project.estimated_value || '') : (project.production_value || ''))}>
           <span className="text-sm mt-0.5 shrink-0">💰</span>
           <div className="flex-1 min-w-0">
-            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">{isVC ? 'Giá trị dự án' : 'Giá trị sản xuất'}</p>
+            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">{isVC ? 'Giá trị dự án' : 'Giá trị đơn hàng'}</p>
             {editing === (isVC ? 'estimated_value' : 'production_value') ? (
               <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                 <input type="number" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
@@ -243,10 +260,44 @@ function WorkshopInfoPanel({
                 <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
               </div>
             ) : (
-              <p className="text-sm font-medium text-gray-900 flex items-center gap-1">{formatVND(isVC ? project.estimated_value : project.production_value)} <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" /></p>
+              <p className="text-sm font-medium text-gray-900 flex items-center gap-1">{formatVND(orderTotalValue)} <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" /></p>
             )}
           </div>
         </div>
+
+      {!isVC && (
+        <>
+          <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'deposit_amount' && startEdit('deposit_amount', project.deposit_amount ?? '')}>
+            <span className="text-sm mt-0.5 shrink-0">💵</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Tiền cọc</p>
+              {editing === 'deposit_amount' ? (
+                <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                  <input type="number" min="0" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
+                    className="w-full px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" placeholder="0" />
+                  <button onClick={() => save('deposit_amount', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+                  <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+                </div>
+              ) : (
+                <p className="text-sm font-medium text-gray-900 flex items-center gap-1">
+                  {depositValue > 0 ? formatVND(depositValue) : '—'}
+                  <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" />
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-start gap-2 py-2 px-1 rounded-lg -mx-1">
+            <span className="text-sm mt-0.5 shrink-0">📊</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Còn lại</p>
+              <p className="text-sm font-semibold text-emerald-700">
+                {Number(orderTotalValue) > 0 || depositValue > 0 ? formatVND(remainingValue) : '—'}
+              </p>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Ngày đặt hàng */}
       <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'order_date' && startEdit('order_date', project.order_date ? project.order_date.substring(0, 10) : '')}>

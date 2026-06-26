@@ -98,7 +98,7 @@ const {
   mapSwitchWorkshopTypeBodyToDb,
 } = require('../helpers/productionPipelineSchema');
 const { normalizePipelineStageSlaDaysForDb } = require('../helpers/crmPipelineSla');
-const { computeSxRevenueKpis, resolveSxProjectValue } = require('../helpers/sxPipelineRevenue');
+const { computeSxRevenueKpis, resolveSxProjectValue, resolveSxProjectDeposit, resolveSxProjectRemaining } = require('../helpers/sxPipelineRevenue');
 const {
   leadDocVisibleForModuleAndUser,
   isLeadDocSharedToWorkshop: isDocSharedToWorkshop,
@@ -309,6 +309,34 @@ async function findSxPipelineStageRowForWorkflow(workflowStageId, projectCompany
 function calcTaskProgress(tasks) {
   if (!tasks?.length) return 0;
   return Math.round((tasks.filter((task) => task.status === 'done').length / tasks.length) * 100);
+}
+
+async function loadDealDepositByProjectIds(projectIds) {
+  const map = {};
+  const ids = [...new Set((projectIds || []).filter(Boolean))];
+  if (!ids.length) return map;
+  const { data } = await supabase
+    .from('crm_leads')
+    .select('project_id, deposit_amount')
+    .eq('type', 'deal')
+    .in('project_id', ids);
+  for (const d of data || []) {
+    if (d.project_id && map[String(d.project_id)] == null) {
+      map[String(d.project_id)] = d.deposit_amount;
+    }
+  }
+  return map;
+}
+
+function attachSxFinanceToProjects(projects, dealDepositByProjectId = {}) {
+  return (projects || []).map((p) => {
+    const deal_deposit_amount = dealDepositByProjectId[String(p.id)] ?? null;
+    const enriched = { ...p, deal_deposit_amount };
+    return {
+      ...enriched,
+      remaining_value: resolveSxProjectRemaining(enriched),
+    };
+  });
 }
 
 const CRM_DEALS_FOR_PROJECT_EMBED = `
@@ -1046,7 +1074,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
       return supabase
         .from('projects')
         .select(`
-          id, code, name, estimated_value, production_value, status, deadline, created_at, company_id,
+          id, code, name, estimated_value, production_value, deposit_amount, status, deadline, created_at, company_id,
           sx_pipeline_stage_entered_at, sx_kanban_deadline_at, sx_kanban_deadline_reason,
           current_stage_id${wtScalar},
           current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1105,7 +1133,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
         return supabase
           .from('projects')
           .select(`
-          id, code, name, estimated_value, production_value, status, deadline, created_at, company_id,
+          id, code, name, estimated_value, production_value, deposit_amount, status, deadline, created_at, company_id,
           sx_pipeline_stage_entered_at,
           current_stage_id${wtScalar},
           current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1137,6 +1165,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
 
     const projectIds = enhancedProjects.map((p) => p.id).filter(Boolean);
     const dealProbByProjectId = {};
+    const dealDepositByProjectId = await loadDealDepositByProjectIds(projectIds);
     if (projectIds.length) {
       const { data: dealRows } = await supabase
         .from('crm_leads')
@@ -1147,10 +1176,13 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
         if (d.project_id) dealProbByProjectId[String(d.project_id)] = d.probability;
       }
     }
-    const projectsWithDealProb = enhancedProjects.map((p) => ({
-      ...p,
-      deal_probability: dealProbByProjectId[String(p.id)] ?? null,
-    }));
+    const projectsWithDealProb = attachSxFinanceToProjects(
+      enhancedProjects.map((p) => ({
+        ...p,
+        deal_probability: dealProbByProjectId[String(p.id)] ?? null,
+      })),
+      dealDepositByProjectId,
+    );
     const revenueKpis = computeSxRevenueKpis(projectsWithDealProb, sortedKanban, dealProbByProjectId);
 
     const intakeCount = projectsWithDealProb.filter((p) => p.sx_intake).length;
@@ -1218,7 +1250,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     let query = supabase
       .from('projects')
       .select(`
-        id, code, name, estimated_value, production_value, priority, deadline, ${MIGRATION_300_COLS} created_at, status, notes, company_id,
+        id, code, name, estimated_value, production_value, deposit_amount, priority, deadline, ${MIGRATION_300_COLS} created_at, status, notes, company_id,
         production_deadline, production_note, vc_kanban_column_id,
         current_stage_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1284,6 +1316,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       error.message?.includes('workshop_type_id') ||
       error.message?.includes('relationship') ||
       isOrderDeliveryDateMissingError(error) ||
+      isDepositAmountMissingError(error) ||
       isExternalCompanyNameMissingError(error)
     );
     if (needsFallback) {
@@ -1291,7 +1324,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       let fallbackQuery = supabase
         .from('projects')
         .select(`
-          id, code, name, estimated_value, production_value, priority, deadline, created_at, status, notes,
+          id, code, name, estimated_value, production_value, deposit_amount, priority, deadline, created_at, status, notes,
           production_deadline, production_note, workshop_type_id,
           current_stage_id,
           current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1341,12 +1374,15 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     }));
     const enhanced = await attachCrmProductionTaskStatsToProjects(workflowProjects);
     const withUserFlags = await attachLeadUserFlagsToProjects(enhanced, req.user?.userId);
+    const listProjectIds = withUserFlags.map((p) => p.id).filter(Boolean);
+    const dealDepositMap = await loadDealDepositByProjectIds(listProjectIds);
+    const projectsOut = attachSxFinanceToProjects(withUserFlags, dealDepositMap);
 
     res.json({
-      projects: withUserFlags,
-      total: count || withUserFlags.length,
+      projects: projectsOut,
+      total: count || projectsOut.length,
       page: parsedPage,
-      totalPages: Math.ceil((count || withUserFlags.length) / parsedLimit),
+      totalPages: Math.ceil((count || projectsOut.length) / parsedLimit),
       won_deal_project_ids: wonIds,
     });
   } catch (e) {
@@ -1374,6 +1410,12 @@ function isOrderDeliveryDateMissingError(err) {
   const m = String(err?.message || '');
   return m.includes('order_date') || m.includes('delivery_date');
 }
+function isDepositAmountMissingError(err) {
+  return String(err?.message || '').includes('deposit_amount');
+}
+function stripDepositAmountCol(sel) {
+  return sel.replace(/,?\s*deposit_amount,?\s*/g, ', ').replace(/,\s*,/g, ',');
+}
 /**
  * Workshop type fields (migration 97 + 251).
  * `workshop_type_id` scalar + embed `workshop_type:workshop_project_types(...)` để frontend
@@ -1383,7 +1425,7 @@ const WORKSHOP_TYPE_SCALAR = 'workshop_type_id,';
 const WORKSHOP_TYPE_EMBED = 'workshop_type:workshop_project_types(id, name, applies_to),';
 
 const PROJECT_DETAIL_SELECT = `
-        id, company_id, code, name, description, estimated_value, production_value, priority, deadline, ${MIGRATION_300_COLS} ${MIGRATION_76_COLS} status, notes, created_at,
+        id, company_id, code, name, description, estimated_value, production_value, deposit_amount, priority, deadline, ${MIGRATION_300_COLS} ${MIGRATION_76_COLS} status, notes, created_at,
         current_stage_id, ${WORKSHOP_TYPE_SCALAR}
         ${WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1832,9 +1874,12 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       ? Boolean(sortedK.find((c) => String(c.id) === String(finalSxKanbanColumnId))?.bucket_slug === INTAKE_BUCKET)
       : sxRow.sx_intake;
 
+    const dealDepositMap = await loadDealDepositByProjectIds([project.id]);
+    const [projectWithFinance] = attachSxFinanceToProjects([project], dealDepositMap);
+
     res.json({
       project: {
-        ...project,
+        ...projectWithFinance,
         is_partner_project_view: isPartnerProjectView,
         sx_won_deal: sxRow.sx_won_deal,
         sx_kanban_column_id: finalSxKanbanColumnId,

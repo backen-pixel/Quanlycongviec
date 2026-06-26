@@ -8,6 +8,7 @@
  */
 
 const { supabase } = require('../config/supabase');
+const { resolvePrimaryDealIdByProjectIds } = require('./crmProductionTaskStats');
 
 /**
  * Batch lấy flags của 1 user cho nhiều lead_id.
@@ -128,20 +129,29 @@ function resolvePrimaryCrmLeadIdFromProject(project) {
 /** Gắn cờ ghim/tương tác per-user từ deal CRM liên kết project SX. */
 async function attachLeadUserFlagsToProjects(projects, userId) {
   if (!Array.isArray(projects) || projects.length === 0) return projects;
+
+  const dealByProject = await resolvePrimaryDealIdByProjectIds(
+    projects.map((p) => p.id).filter(Boolean),
+  );
+  const resolveLeadId = (p) => resolvePrimaryCrmLeadIdFromProject(p)
+    || dealByProject.get(String(p.id))
+    || null;
+
   if (!userId) {
     return projects.map((p) => ({
       ...p,
-      crm_lead_id: resolvePrimaryCrmLeadIdFromProject(p),
+      crm_lead_id: resolveLeadId(p),
       is_pinned: false,
       pinned_at: null,
       is_interacted: false,
       interacted_at: null,
     }));
   }
-  const leadIds = projects.map(resolvePrimaryCrmLeadIdFromProject).filter(Boolean);
+
+  const leadIds = projects.map(resolveLeadId).filter(Boolean);
   const flags = await fetchFlagsByLeadIds(userId, leadIds);
   return projects.map((p) => {
-    const leadId = resolvePrimaryCrmLeadIdFromProject(p);
+    const leadId = resolveLeadId(p);
     const f = leadId ? flags.get(String(leadId)) : null;
     return {
       ...p,

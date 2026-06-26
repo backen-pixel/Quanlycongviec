@@ -115,6 +115,20 @@ function resolveSxProjectValue(project) {
   return 0;
 }
 
+/** Tiền cọc — ưu tiên projects.deposit_amount, fallback deal_deposit_amount từ CRM. */
+function resolveSxProjectDeposit(project) {
+  const pd = Number(project?.deposit_amount);
+  if (Number.isFinite(pd) && pd > 0) return pd;
+  const dd = Number(project?.deal_deposit_amount);
+  if (Number.isFinite(dd) && dd > 0) return dd;
+  return 0;
+}
+
+/** Còn lại = Tổng giá trị đơn − Tiền cọc (dùng cho KPI công nợ SX). */
+function resolveSxProjectRemaining(project) {
+  return Math.max(0, resolveSxProjectValue(project) - resolveSxProjectDeposit(project));
+}
+
 function computeSxRevenueKpis(projects, stages, dealProbByProjectId = {}) {
   const list = Array.isArray(projects) ? projects : [];
   const st = Array.isArray(stages) ? stages : [];
@@ -141,7 +155,7 @@ function computeSxRevenueKpis(projects, stages, dealProbByProjectId = {}) {
       collectedCount += 1;
     }
     if (projectCountsAsSxDebt(p, st)) {
-      debtRevenue += val;
+      debtRevenue += resolveSxProjectRemaining(p);
       debtCount += 1;
     }
     if (projectIsProducing(p, st)) producing += 1;
@@ -176,6 +190,8 @@ module.exports = {
   INTAKE_BUCKET,
   VC_SHIPPED_STATUSES,
   resolveSxProjectValue,
+  resolveSxProjectDeposit,
+  resolveSxProjectRemaining,
   pickSxWonStageIds,
   pickSxCompletedStageIds,
   pickSxCollectedStageIds,

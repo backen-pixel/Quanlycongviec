@@ -99,6 +99,8 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
     current_stage_id: null,
     install_address: deal.install_address || deal.customer?.address || null,
     estimated_value: deal.estimated_value || null,
+    production_value: deal.estimated_value || null,
+    deposit_amount: Number(deal.deposit_amount) > 0 ? Number(deal.deposit_amount) : null,
     priority: config?.default_priority || 'medium',
     sales_person_id: deal.assigned_to || userId,
     consult_date: new Date().toISOString(),

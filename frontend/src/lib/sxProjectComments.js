@@ -10,6 +10,20 @@ export function resolveSxProjectLeadId(project) {
   return deal?.id ? String(deal.id) : null;
 }
 
+/** Fallback orders.fulfillment_lead_id khi embed crm_deals chưa có trên thẻ Kanban. */
+export async function resolveSxProjectLeadIdAsync(apiClient, project) {
+  const direct = resolveSxProjectLeadId(project);
+  if (direct || !project?.id) return direct;
+  try {
+    const { data } = await apiClient.get(`/projects/${project.id}/orders`);
+    const orders = Array.isArray(data?.orders) ? data.orders : [];
+    const fid = orders.find((o) => o?.fulfillment_lead_id)?.fulfillment_lead_id;
+    return fid ? String(fid) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Gom dự án theo nguồn bình luận: deal CRM → crm_lead_comments, không deal → project_comments. */
 export function partitionSxProjectsByCommentSource(items = []) {
   const projectOnlyIds = [];

@@ -15,6 +15,18 @@ export function resolveSxProjectValue(project) {
   if (Number.isFinite(ev) && ev > 0) return ev;
   return 0;
 }
+
+export function resolveSxProjectDeposit(project) {
+  const pd = Number(project?.deposit_amount);
+  if (Number.isFinite(pd) && pd > 0) return pd;
+  const dd = Number(project?.deal_deposit_amount);
+  if (Number.isFinite(dd) && dd > 0) return dd;
+  return 0;
+}
+
+export function resolveSxProjectRemaining(project) {
+  return Math.max(0, resolveSxProjectValue(project) - resolveSxProjectDeposit(project));
+}
 export const VC_KANBAN_STATUSES = new Set(['shipping', 'installing', 'warranty']);
 
 function stageById(stages, colId) {
@@ -130,7 +142,7 @@ export function computeSxRevenueKpis(projects, stages) {
       collectedCount += 1;
     }
     if (projectCountsAsSxDebt(p, st)) {
-      debtRevenue += val;
+      debtRevenue += resolveSxProjectRemaining(p);
       debtCount += 1;
     }
     if (projectIsProducing(p, st)) producing += 1;

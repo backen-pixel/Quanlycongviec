@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND } from '../lib/utils';
@@ -142,7 +143,24 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId, sour
   };
 }
 
-export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportDone, onClose }) {
+/** Gắn file Excel đã upload vào mục Ghi chú & Đính kèm của nhiệm vụ CRM. */
+async function attachExcelToTaskNotes(taskId, leadId, uploaded) {
+  if (!taskId || !leadId || !uploaded?.file_url) return;
+  const baseName = (uploaded.file_name || 'Excel báo giá').replace(/\.[^.]+$/, '');
+  await api.post(`/crm/leads/${leadId}/tasks/${taskId}/attachments/bulk`, {
+    items: [{
+      name: baseName,
+      doc_type: 'spreadsheet',
+      file_url: uploaded.file_url,
+      file_name: uploaded.file_name,
+      file_size: uploaded.file_size,
+      mime_type: uploaded.mime_type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      notes: 'File Excel báo giá (từ nhiệm vụ)',
+    }],
+  });
+}
+
+export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportDone, onClose, onSourceAttached }) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [file, setFile] = useState(null);
@@ -158,6 +176,7 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
   const [expandGroups, setExpandGroups] = useState({});
   const [descPopup, setDescPopup] = useState(null); // { name, description }
   const fileRef = useRef(null);
+  const attachedSourceUrlRef = useRef(null);
 
   /** Deal context từ props (mở từ task/lead detail). Pre-fill picker; user vẫn được đổi. */
   const contextLeadId = dealId || leadId || '';
@@ -228,6 +247,7 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
     setSelectedSheet('');
     setParsing(false);
     setLoadingSheets(false);
+    attachedSourceUrlRef.current = null;
     if (fileRef.current) fileRef.current.value = '';
   };
 
@@ -249,6 +269,20 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
         try {
           const uploaded = await uploadQuotationSourceExcel(f, effectiveLeadId || 'import');
           setSourceFile(uploaded);
+          if (
+            uploaded?.file_url
+            && taskId
+            && effectiveLeadId
+            && attachedSourceUrlRef.current !== uploaded.file_url
+          ) {
+            try {
+              await attachExcelToTaskNotes(taskId, effectiveLeadId, uploaded);
+              attachedSourceUrlRef.current = uploaded.file_url;
+              onSourceAttached?.(taskId);
+            } catch (attachErr) {
+              console.warn('[excel-import] attach to task notes:', attachErr);
+            }
+          }
         } catch (upErr) {
           console.warn('[excel-import] upload source file:', upErr);
         } finally {
@@ -347,8 +381,19 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
   const itemCount = preview?.items?.filter(i => !i.is_group).length || 0;
   const groupCount = preview?.items?.filter(i => i.is_group).length || 0;
 
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
+  const modal = (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[10050] p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="excel-import-title"
+    >
       <div className="bg-white rounded-2xl max-w-5xl w-full max-h-[90vh] flex flex-col shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b">
@@ -357,7 +402,7 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
               <FileSpreadsheet className="h-5 w-5 text-emerald-600" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-gray-900">Import báo giá từ Excel</h2>
+              <h2 id="excel-import-title" className="text-lg font-bold text-gray-900">Import báo giá từ Excel</h2>
               <p className="text-xs text-gray-500">Upload .xlsx → Xem trước → Áp dụng vào form báo giá → Chỉnh sửa → Lưu</p>
             </div>
           </div>
@@ -883,7 +928,7 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
 
       {/* Description Detail Popup */}
       {descPopup && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4" onClick={() => setDescPopup(null)}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[10060] p-4" onClick={() => setDescPopup(null)}>
           <div className="bg-white rounded-xl max-w-lg w-full shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-3 border-b">
               <h3 className="text-sm font-bold text-gray-900">📝 Chi tiết mô tả — {descPopup.name}</h3>
@@ -900,4 +945,7 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
       )}
     </div>
   );
+
+  if (typeof document === 'undefined') return null;
+  return createPortal(modal, document.body);
 }

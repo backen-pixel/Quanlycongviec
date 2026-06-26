@@ -1,28 +1,29 @@
 import { useCallback, useRef, useState } from 'react';
 import { Upload, X } from 'lucide-react';
-import { driveUploadFile } from '../../lib/drive';
+import { driveUploadFilesBatch } from '../../lib/drive';
 
 /**
  * Vùng drag&drop để tải file lên folder/root hiện tại.
- * props: { folderId, rootId, onUploaded(file), onClose, disabled }
+ * props: { folderId, rootId, onUploaded(file), onBatchComplete(), onClose, disabled }
  */
-export default function UploadDropzone({ folderId, rootId, onUploaded, onClose, disabled }) {
+export default function UploadDropzone({ folderId, rootId, onUploaded, onBatchComplete, onClose, disabled }) {
   const [drag, setDrag] = useState(false);
   const inputRef = useRef(null);
 
   const startUpload = useCallback(async (files) => {
     if (disabled) return;
     const list = Array.from(files);
-    for (const file of list) {
-      try {
-        const res = await driveUploadFile(file, {
-          folder_id: folderId,
-          root_id: folderId ? null : rootId,
-        });
-        onUploaded?.(res.file);
-      } catch (_) { /* lỗi hiển thị ở panel góc phải */ }
-    }
-  }, [folderId, rootId, disabled, onUploaded]);
+    if (!list.length) return;
+
+    await driveUploadFilesBatch(list, {
+      folder_id: folderId,
+      root_id: folderId ? null : rootId,
+      onFileComplete: (result) => {
+        if (result.ok) onUploaded?.(result.data?.file);
+      },
+    });
+    onBatchComplete?.();
+  }, [folderId, rootId, disabled, onUploaded, onBatchComplete]);
 
   const onDrop = useCallback((e) => {
     e.preventDefault();
@@ -60,7 +61,7 @@ export default function UploadDropzone({ folderId, rootId, onUploaded, onClose, 
       >
         <Upload className="mx-auto mb-2 text-slate-400" size={28} />
         <p className="text-sm text-slate-600 font-medium">Kéo & thả file vào đây</p>
-        <p className="text-xs text-slate-400 mt-0.5">hoặc bấm để chọn file (nhiều file)</p>
+        <p className="text-xs text-slate-400 mt-0.5">hoặc bấm để chọn file (nhiều file) — tiến trình hiện ở góc dưới phải</p>
         <input ref={inputRef} type="file" multiple hidden onChange={onSelect} disabled={disabled} />
       </div>
     </div>

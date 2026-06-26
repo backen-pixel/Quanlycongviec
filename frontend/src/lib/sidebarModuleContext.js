@@ -56,6 +56,7 @@ export function isWorkPrimaryPath(pathname) {
   return (
     pathname === '/' ||
     pathname.startsWith('/dashboard') ||
+    pathname.startsWith('/management') ||
     pathname.startsWith('/tasks') ||
     pathname.startsWith('/projects') ||
     pathname.startsWith('/my-tasks') ||

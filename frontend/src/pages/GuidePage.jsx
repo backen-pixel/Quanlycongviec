@@ -7,7 +7,7 @@ const GUIDES = [
     id: 'start',
     icon: '🚀',
     title: 'Bắt đầu nhanh',
-    desc: 'Đăng nhập, làm quen giao diện, chuyển giữa Công việc & CRM',
+    desc: 'Đăng nhập, làm quen giao diện, chuyển giữa Quản lý & CRM',
     color: 'from-blue-500 to-cyan-500',
     steps: [
       {
@@ -20,9 +20,9 @@ const GUIDES = [
         content: 'Sidebar hiển thị tất cả chức năng, chia thành các nhóm:\n• 📊 Tổng quan: Dashboard, Việc của tôi\n• 🏢 Không gian làm việc: Dự án, Khách hàng, Sản phẩm\n• 🏗️ Hệ thống: Cấu trúc công ty, Nhân viên\n• ⚙️ Cài đặt: Phân quyền, Quy trình',
       },
       {
-        title: 'Chuyển giữa Công việc & CRM',
-        content: 'Góc trên trái sidebar có nút chuyển đổi (icon ô vuông 3x3):\n• Bấm → Hiện 2 app: "Công việc" và "CRM"\n• Chọn "CRM" → Sidebar đổi sang menu CRM\n• Chọn "Công việc" → Quay lại menu quản lý dự án',
-        tip: 'CRM = Quản lý bán hàng. Công việc = Quản lý dự án & sản xuất.',
+        title: 'Chuyển giữa Quản lý & CRM',
+        content: 'Góc trên trái sidebar có nút chuyển đổi (icon ô vuông 3x3):\n• Bấm → Hiện danh sách module: "Quản lý", "CRM", "Xưởng SX", "Vận chuyển"...\n• Chọn "CRM" → Sidebar đổi sang menu CRM\n• Chọn "Quản lý" → Quay lại menu tổng hợp dự án & nhiệm vụ',
+        tip: 'CRM = Quản lý bán hàng. Quản lý = Tổng hợp dự án, nhiệm vụ & vận hành.',
       },
       {
         title: 'Dashboard chính',
@@ -183,7 +183,7 @@ const GUIDES = [
       },
       {
         title: 'Truy cập trang Drive chính',
-        content: 'Có 2 cách vào Drive:\n\n① Từ Sidebar:\n  • App "Công việc": Menu → "☁️ Drive"\n  • App "CRM": Menu → "Drive CRM"\n\n② Từ Overview module:\n  • CRM → sidebar có nút "Vào Drive CRM"\n  • SX / VC tương tự\n\nTrang Drive gồm:\n  ← Sidebar trái: Cây thư mục org (Module → Công ty → Khu vực → Phòng ban → Nhân viên)\n  ← Panel phải: File / thư mục của node đang chọn\n  ← Thanh công cụ: Tìm kiếm, Tải lên, Tạo Doc/Sheet/Folder',
+        content: 'Có 2 cách vào Drive:\n\n① Từ Sidebar:\n  • App "Quản lý": Menu → "☁️ Drive"\n  • App "CRM": Menu → "Drive CRM"\n\n② Từ Overview module:\n  • CRM → sidebar có nút "Vào Drive CRM"\n  • SX / VC tương tự\n\nTrang Drive gồm:\n  ← Sidebar trái: Cây thư mục org (Module → Công ty → Khu vực → Phòng ban → Nhân viên)\n  ← Panel phải: File / thư mục của node đang chọn\n  ← Thanh công cụ: Tìm kiếm, Tải lên, Tạo Doc/Sheet/Folder',
         screenshot: '/uploads/knowledge-screenshots/drive/drive-01-trang-chu-full.png',
         link: { to: '/drive', label: 'Mở Drive' },
       },
@@ -348,7 +348,7 @@ export default function GuidePage() {
             { to: '/projects', icon: FolderKanban, label: 'Dự án', color: 'text-indigo-600 bg-indigo-50' },
             { to: '/projects/create', icon: FolderKanban, label: 'Tạo dự án', color: 'text-teal-600 bg-teal-50' },
             { to: '/users', icon: Users, label: 'Nhân viên', color: 'text-gray-600 bg-gray-50' },
-            { to: '/drive', icon: HardDrive, label: 'Drive (Công việc)', color: 'text-sky-600 bg-sky-50' },
+            { to: '/drive', icon: HardDrive, label: 'Drive (Quản lý)', color: 'text-sky-600 bg-sky-50' },
             { to: '/crm/pipeline-settings', icon: Settings, label: 'Cài đặt Pipeline', color: 'text-rose-600 bg-rose-50' },
           ].map(item => (
             <Link key={item.to} to={item.to} className={`flex items-center gap-2.5 p-3 rounded-xl border hover:shadow-md transition-all ${item.color}`}>
