@@ -146,6 +146,7 @@ const {
 } = require('../helpers/crmChecklistArtifacts');
 const { parseVietnameseMoney, parseVietnameseMeasure, parseExcelMoneyFromMappedColumn } = require('../helpers/excelVnNumbers');
 const { snapshotOrderRowFromQuotation, mapQuotationItemsToOrderRows } = require('../helpers/orderFromQuotation');
+const { syncQuotationDepositToDealAndProject } = require('../../helpers/syncQuotationDepositToDealAndProject');
 let autoFlowFns = {};
 try { autoFlowFns = require('../helpers/autoFlow'); } catch (e) { console.warn('⚠️ autoFlow not loaded:', e.message); }
 let misaService = null;
@@ -11105,6 +11106,16 @@ r.post('/quotations', async (req, res) => {
       }
     }
 
+    // Sync tiền cọc + trạng thái cọc → deal + dự án SX
+    if (linkedLeadId) {
+      try {
+        const depSync = await syncQuotationDepositToDealAndProject(quote, linkedLeadId);
+        if (depSync.synced) quote.deposit_synced = true;
+      } catch (syncErr) {
+        console.warn('[QUOTATION] Sync deposit error:', syncErr.message);
+      }
+    }
+
     res.status(201).json({ ...quote, synced_products: syncedProducts });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -11330,6 +11341,15 @@ r.put('/quotations/:id', async (req, res) => {
         `Báo giá ${data.code} đã được cập nhật${quoteData.status === 'accepted' ? ' → Chấp nhận ✅' : ''}`,
         'quotation', data.id);
     } catch (ne) { console.warn('[NOTIFY] quotation_updated:', ne.message); }
+
+    // Sync tiền cọc + trạng thái cọc → deal + dự án SX
+    if (data?.lead_id) {
+      try {
+        await syncQuotationDepositToDealAndProject(data, data.lead_id);
+      } catch (syncErr) {
+        console.warn('[QUOTATION] Sync deposit on update error:', syncErr.message);
+      }
+    }
 
     res.json({ ...data, auto: autoResult });
   } catch (e) {
@@ -13879,12 +13899,17 @@ r.post('/leads/:id/tasks/:taskId/import-quotation-excel', excelUpload.single('fi
       }).eq('id', taskId);
     }
 
-    // 7. Sync estimated_value vào lead
+    // 7. Sync estimated_value + cọc vào lead đang xem (+ dự án nếu có)
     if (quote.total > 0) {
       await supabase.from('crm_leads').update({
         estimated_value: quote.total,
         updated_at: new Date().toISOString(),
       }).eq('id', leadId);
+    }
+    try {
+      await syncQuotationDepositToDealAndProject(quote, leadId);
+    } catch (depErr) {
+      console.warn('[TASK-IMPORT] Sync deposit error:', depErr.message);
     }
 
     // 8. Sync customer

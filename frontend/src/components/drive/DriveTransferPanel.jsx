@@ -8,40 +8,76 @@ import { ChevronDown, ChevronUp, X, Loader2, CheckCircle2, AlertCircle, Upload, 
 import { useAuth } from '../../lib/auth';
 import { formatFileSize } from '../../lib/messengerUploadLimits';
 import { formatUploadProgressMeta } from '../../lib/uploadProgressEta';
+import DriveFileTypeBadge from './DriveFileTypeBadge';
 import {
   cancelDriveUpload,
   cancelAllDriveUploads,
   clearFinishedDriveTransfers,
+  subscribeDriveBatchComplete,
 } from './driveTransferStore';
 import { useDriveTransfers } from './useDriveTransfers';
 
 function statusLabel(items, kind) {
   const active = items.filter((x) => x.status === (kind === 'upload' ? 'uploading' : 'downloading'));
+  const queued = kind === 'upload' ? items.filter((x) => x.status === 'queued') : [];
   const done = items.filter((x) => x.status === 'done');
   const err = items.filter((x) => x.status === 'error' || x.status === 'cancelled');
-  if (active.length) {
-    return kind === 'upload' ? 'Đang bắt đầu tải lên…' : 'Đang tải xuống…';
+  if (active.length || queued.length) {
+    if (kind === 'upload') {
+      const parts = [];
+      if (active.length) parts.push(`${active.length} đang tải`);
+      if (queued.length) parts.push(`${queued.length} chờ`);
+      return parts.join(' · ');
+    }
+    return 'Đang tải xuống…';
   }
   if (err.length && !done.length) return kind === 'upload' ? 'Tải lên thất bại' : 'Tải xuống thất bại';
-  if (done.length) return kind === 'upload' ? 'Đã tải lên xong' : 'Đã tải xuống xong';
+  if (done.length) {
+    if (kind === 'upload') {
+      const failed = err.length;
+      if (failed) return `Đã tải lên ${done.length}/${items.length} file (${failed} lỗi/huỷ)`;
+      return `Đã tải lên xong ${done.length} file`;
+    }
+    return 'Đã tải xuống xong';
+  }
   return kind === 'upload' ? 'Tải lên' : 'Tải xuống';
+}
+
+function formatBatchToast(stats) {
+  const { done, error, cancelled, total } = stats;
+  if (error || cancelled) {
+    const parts = [`Đã tải lên ${done}/${total} file`];
+    if (error) parts.push(`${error} lỗi`);
+    if (cancelled) parts.push(`${cancelled} huỷ`);
+    return parts.join(' · ');
+  }
+  return `Đã tải lên xong ${done} file`;
 }
 
 function TransferRow({ item, kind }) {
   const active = item.status === 'uploading' || item.status === 'downloading';
+  const queued = item.status === 'queued';
   const done = item.status === 'done';
   const failed = item.status === 'error' || item.status === 'cancelled';
 
   return (
     <li className="flex items-start gap-2 px-3 py-2 border-b border-slate-100 last:border-0">
-      <div className="mt-0.5 shrink-0 text-slate-400">
-        {active && <Loader2 size={14} className="animate-spin text-blue-600" />}
-        {done && <CheckCircle2 size={14} className="text-emerald-500" />}
-        {failed && <AlertCircle size={14} className="text-red-500" />}
-      </div>
+      <DriveFileTypeBadge name={item.name} size={18} compact className="mt-0.5 shrink-0" />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <p className="text-xs text-slate-800 truncate flex-1" title={item.name}>{item.name}</p>
+          {active && (
+            <Loader2 size={12} className="animate-spin text-blue-600 shrink-0" />
+          )}
+          {queued && (
+            <Upload size={12} className="text-slate-400 shrink-0" />
+          )}
+          {done && (
+            <CheckCircle2 size={12} className="text-emerald-500 shrink-0" />
+          )}
+          {failed && (
+            <AlertCircle size={12} className="text-red-500 shrink-0" />
+          )}
           {active && (
             <span className="text-[11px] font-bold text-blue-700 tabular-nums shrink-0">
               {item.progress >= 99 ? '99%' : `${item.progress || 0}%`}
@@ -67,6 +103,9 @@ function TransferRow({ item, kind }) {
             {item.sizeBytes ? ` · ${formatFileSize(item.sizeBytes)}` : ''}
           </p>
         )}
+        {queued && (
+          <p className="text-[10px] text-slate-500 mt-0.5">Đang chờ trong hàng đợi</p>
+        )}
         {item.status === 'done' && (
           <p className="text-[10px] text-emerald-600 mt-0.5">{kind === 'upload' ? 'Đã tải lên' : 'Đã tải xuống'}</p>
         )}
@@ -77,7 +116,7 @@ function TransferRow({ item, kind }) {
           <p className="text-[10px] text-red-600 mt-0.5 truncate" title={item.error}>{item.error || 'Lỗi'}</p>
         )}
       </div>
-      {kind === 'upload' && item.status === 'uploading' && (
+      {kind === 'upload' && (item.status === 'uploading' || item.status === 'queued') && (
         <button
           type="button"
           onClick={() => cancelDriveUpload(item.id)}
@@ -103,7 +142,7 @@ function TransferSection({ title, icon: Icon, items, kind }) {
         <span className="flex-1 font-medium text-slate-700 truncate">{title}</span>
       </div>
       <div className="px-3 py-1.5 text-[11px] text-slate-500 bg-white border-b border-slate-100">{summary}</div>
-      <ul className="max-h-40 overflow-y-auto bg-white">
+      <ul className="max-h-72 overflow-y-auto bg-white">
         {items.map((item) => (
           <TransferRow key={item.id} item={item} kind={kind} />
         ))}
@@ -116,11 +155,13 @@ function DriveTransferPanelInner() {
   const { uploads, downloads } = useDriveTransfers();
   const [minimized, setMinimized] = useState(false);
   const [dismissed, setDismissed] = useState(false);
+  const [batchToast, setBatchToast] = useState(null);
 
   const total = uploads.length + downloads.length;
   const activeUploads = useMemo(() => uploads.filter((u) => u.status === 'uploading'), [uploads]);
+  const queuedUploads = useMemo(() => uploads.filter((u) => u.status === 'queued'), [uploads]);
   const activeDownloads = useMemo(() => downloads.filter((d) => d.status === 'downloading'), [downloads]);
-  const hasActive = activeUploads.length > 0 || activeDownloads.length > 0;
+  const hasActive = activeUploads.length > 0 || queuedUploads.length > 0 || activeDownloads.length > 0;
 
   const avgProgress = useMemo(() => {
     const active = [
@@ -137,18 +178,30 @@ function DriveTransferPanelInner() {
 
   const prevActiveRef = useRef(0);
   useEffect(() => {
-    const activeCount = activeUploads.length + activeDownloads.length;
+    const activeCount = activeUploads.length + queuedUploads.length + activeDownloads.length;
     if (activeCount > prevActiveRef.current) {
       setMinimized(false);
       setDismissed(false);
     }
     prevActiveRef.current = activeCount;
-  }, [activeUploads.length, activeDownloads.length]);
+  }, [activeUploads.length, queuedUploads.length, activeDownloads.length]);
+
+  useEffect(() => subscribeDriveBatchComplete((stats) => {
+    setBatchToast({ message: formatBatchToast(stats), stats, at: Date.now() });
+    setMinimized(false);
+    setDismissed(false);
+  }), []);
+
+  useEffect(() => {
+    if (!batchToast) return undefined;
+    const timer = setTimeout(() => setBatchToast(null), 12_000);
+    return () => clearTimeout(timer);
+  }, [batchToast]);
 
   if (!total || dismissed) return null;
 
-  const headerUpload = activeUploads.length
-    ? `Đang tải ${activeUploads.length} mục lên`
+  const headerUpload = activeUploads.length || queuedUploads.length
+    ? `Đang tải ${activeUploads.length + queuedUploads.length} file lên`
     : uploads.length
       ? `Tải lên (${uploads.length})`
       : null;
@@ -169,6 +222,28 @@ function DriveTransferPanelInner() {
   }
 
   const panel = (
+    <>
+      {batchToast && (
+        <div
+          className="fixed z-[10050] bottom-24 right-4 w-[min(100vw-1.5rem,380px)] rounded-xl border border-emerald-200 bg-emerald-50 shadow-lg px-4 py-3 flex items-start gap-2"
+          role="status"
+          aria-live="polite"
+        >
+          <CheckCircle2 size={18} className="text-emerald-600 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-emerald-900">Tải lên Drive hoàn tất</p>
+            <p className="text-xs text-emerald-800 mt-0.5">{batchToast.message}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setBatchToast(null)}
+            className="p-1 rounded hover:bg-emerald-100 text-emerald-700 shrink-0"
+            aria-label="Đóng thông báo"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
     <div
       className={`fixed z-[10040] w-[min(100vw-1.5rem,380px)] bg-white shadow-2xl border border-slate-200 overflow-hidden transition-all ${
         minimized
@@ -232,10 +307,11 @@ function DriveTransferPanelInner() {
 
       {!minimized && (
         <>
-          {hasActive && activeUploads.length > 0 && (
+          {hasActive && (activeUploads.length > 0 || queuedUploads.length > 0) && (
             <div className="flex items-center justify-between px-3 py-2 text-xs bg-blue-50 border-b border-blue-100">
               <span className="text-slate-600">
-                {activeUploads.length} file đang tải lên
+                {activeUploads.length + queuedUploads.length} file
+                {queuedUploads.length > 0 ? ` (${activeUploads.length} đang chạy, ${queuedUploads.length} chờ)` : ' đang tải lên'}
                 {activeUploads[0]?.bytesPerSec ? (
                   <span className="text-blue-700 font-medium ml-1">
                     · {formatUploadProgressMeta({
@@ -257,6 +333,7 @@ function DriveTransferPanelInner() {
         </>
       )}
     </div>
+    </>
   );
 
   return createPortal(panel, document.body);

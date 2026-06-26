@@ -53,7 +53,10 @@ import Sidebar from './components/Sidebar';
 import AnimatedBackground from './components/AnimatedBackground';
 import Login from './pages/Login';
 
-const Dashboard = lazyWithRetry(() => import('./pages/DashboardNew'));
+const Dashboard = lazyWithRetry(() => import('./pages/ManagementDashboard'));
+const ManagementDashboard = lazyWithRetry(() => import('./pages/ManagementDashboard'));
+const UnifiedDealPage = lazyWithRetry(() => import('./pages/UnifiedDealPage'));
+const DashboardClassic = lazyWithRetry(() => import('./pages/DashboardNew'));
 const MyTasks = lazyWithRetry(() => import('./pages/MyTasks'));
 const WorkTasksUnifiedPage = lazyWithRetry(() => import('./pages/WorkTasksUnifiedPage'));
 const Projects = lazyWithRetry(() => import('./pages/Projects'));
@@ -333,6 +336,9 @@ export default function App() {
           <Route element={<ProtectedLayout />}>
             <Route path="/" element={<DefaultRedirect />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/management" element={<ManagementDashboard />} />
+            <Route path="/management/deals/:leadId" element={<UnifiedDealPage />} />
+            <Route path="/dashboard/classic" element={<DashboardClassic />} />
             <Route path="/social" element={<SocialFeedPage />} />
             <Route path="/social/u/:userId" element={<SocialProfilePage />} />
             <Route path="/dashboard/divisions" element={<DivisionDashboardPage />} />

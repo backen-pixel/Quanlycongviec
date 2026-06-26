@@ -24,7 +24,7 @@ import {
   driveSearch, driveOpenDownload, drivePreview, driveHealth, driveFormatBytes,
   driveOrgTree, driveEnsureUserDrive,
   driveEnsureSharedCompany, driveEnsureSharedRegion, driveEnsureCompanyImages,
-  driveCreateGoogleFile,
+  driveCreateGoogleFile, driveUploadFilesBatch,
 } from '../lib/drive';
 import DriveLocationBar, { enrichDriveBreadcrumb } from '../components/drive/DriveLocationBar';
 import { DRIVE_FILE_LIST_GRID, fmtDriveDate, filterImageFiles, DriveFilesListView, DriveFilesGridView, DriveFileMoreMenu, driveSelectId, FolderCreatorCell, FolderCreatorAvatarBadge } from '../components/drive/DriveFileViews';
@@ -146,6 +146,8 @@ export default function DrivePage() {
   });
   const searchTimer = useRef(null);
   const searchInputRef = useRef(null);
+  const pageDragDepthRef = useRef(0);
+  const [pageDragActive, setPageDragActive] = useState(false);
 
   useEffect(() => {
     try { localStorage.setItem('drive.sidebarOpen', sidebarOpen ? '1' : '0'); } catch (_) {}
@@ -357,6 +359,51 @@ export default function DrivePage() {
   }
 
   // ── Actions ──
+  const mergeUploadedFile = useCallback((file) => {
+    if (!file?.id || searchResults) return;
+
+    const upsert = (cur) => {
+      const idx = cur.findIndex((f) => f.id === file.id);
+      if (idx >= 0) {
+        const next = [...cur];
+        next[idx] = { ...next[idx], ...file };
+        return next;
+      }
+      return [file, ...cur];
+    };
+
+    if (view === 'recent') {
+      setFiles(upsert);
+      return;
+    }
+
+    const inCurrentFolder = activeFolder
+      ? file.folder_id === activeFolder.id
+      : Boolean(activeRoot && !activeFolder && (!file.folder_id || file.folder_id === null));
+
+    if (inCurrentFolder) setFiles(upsert);
+  }, [activeFolder, activeRoot, view, searchResults]);
+
+  const removeFilesFromView = useCallback((fileIds) => {
+    const idSet = new Set(fileIds);
+    if (!idSet.size) return;
+    setFiles((cur) => cur.filter((f) => !idSet.has(f.id)));
+    setSearchResults((cur) => {
+      if (!cur?.files?.length) return cur;
+      return { ...cur, files: cur.files.filter((f) => !idSet.has(f.id)) };
+    });
+    if (previewItem?.id && idSet.has(previewItem.id)) setPreviewItem(null);
+  }, [previewItem?.id]);
+
+  const removeFolderFromView = useCallback((folderId) => {
+    if (!folderId) return;
+    setFolders((cur) => cur.filter((f) => f.id !== folderId));
+    setSearchResults((cur) => {
+      if (!cur?.folders?.length) return cur;
+      return { ...cur, folders: cur.folders.filter((f) => f.id !== folderId) };
+    });
+  }, []);
+
   async function reload() {
     if (activeFolder) await openFolder(activeFolder.id);
     else if (activeRoot) await openRoot(activeRoot);
@@ -383,9 +430,13 @@ export default function DrivePage() {
   async function handleTrash(item, type) {
     if (!confirm(`Đưa "${item.name}" vào thùng rác?`)) return;
     try {
-      if (type === 'folder') await driveTrashFolder(item.id);
-      else await driveTrashFile(item.id);
-      await reload();
+      if (type === 'folder') {
+        await driveTrashFolder(item.id);
+        removeFolderFromView(item.id);
+      } else {
+        await driveTrashFile(item.id);
+        removeFilesFromView([item.id]);
+      }
     } catch (e) { alert(e?.response?.data?.error || e?.message); }
   }
 
@@ -452,13 +503,16 @@ export default function DrivePage() {
 
   async function bulkTrash() {
     if (!confirm(`Đưa ${selectedIds.size} file vào thùng rác?`)) return;
+    const list = searchResults?.files ?? files;
+    const picked = list.filter((f) => selectedIds.has(driveSelectId(f.id)));
+    if (!picked.length) return;
     setBulkWorking(true);
     try {
-      for (const id of selectedIds) {
-        await driveTrashFile(id);
+      for (const f of picked) {
+        await driveTrashFile(f.id);
       }
       clearSelection();
-      await reload();
+      removeFilesFromView(picked.map((f) => f.id));
     } catch (e) {
       alert(e?.response?.data?.error || e?.message || 'Lỗi xoá');
     } finally {
@@ -467,13 +521,16 @@ export default function DrivePage() {
   }
 
   async function bulkRestore() {
+    const list = searchResults?.files ?? files;
+    const picked = list.filter((f) => selectedIds.has(driveSelectId(f.id)));
+    if (!picked.length) return;
     setBulkWorking(true);
     try {
-      for (const id of selectedIds) {
-        await driveRestoreFile(id);
+      for (const f of picked) {
+        await driveRestoreFile(f.id);
       }
       clearSelection();
-      await reload();
+      removeFilesFromView(picked.map((f) => f.id));
     } catch (e) {
       alert(e?.response?.data?.error || e?.message || 'Lỗi khôi phục');
     } finally {
@@ -483,13 +540,16 @@ export default function DrivePage() {
 
   async function bulkDeleteForever() {
     if (!confirm(`Xoá vĩnh viễn ${selectedIds.size} file? Không thể khôi phục.`)) return;
+    const list = searchResults?.files ?? files;
+    const picked = list.filter((f) => selectedIds.has(driveSelectId(f.id)));
+    if (!picked.length) return;
     setBulkWorking(true);
     try {
-      for (const id of selectedIds) {
-        await driveDeleteFileForever(id);
+      for (const f of picked) {
+        await driveDeleteFileForever(f.id);
       }
       clearSelection();
-      await reload();
+      removeFilesFromView(picked.map((f) => f.id));
     } catch (e) {
       alert(e?.response?.data?.error || e?.message || 'Lỗi xoá');
     } finally {
@@ -565,7 +625,10 @@ export default function DrivePage() {
       ]);
       setMoveTarget(null);
       clearSelection();
-      await reload();
+      removeFilesFromView(fileIds);
+      if (folderIds.length) {
+        setFolders((cur) => cur.filter((f) => !folderIds.includes(f.id)));
+      }
     } catch (e) {
       alert(e?.response?.data?.error || e?.message || 'Không di chuyển được');
     } finally {
@@ -637,6 +700,63 @@ export default function DrivePage() {
   }, []);
 
   const isTrashView = view === 'trash';
+  const canPageUpload = !isTrashView && !view && !!(activeRoot || activeFolder);
+
+  useEffect(() => {
+    if (!canPageUpload) {
+      pageDragDepthRef.current = 0;
+      setPageDragActive(false);
+      return undefined;
+    }
+
+    const hasFiles = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
+
+    const onDragEnter = (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      pageDragDepthRef.current += 1;
+      setPageDragActive(true);
+    };
+    const onDragLeave = (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      pageDragDepthRef.current -= 1;
+      if (pageDragDepthRef.current <= 0) {
+        pageDragDepthRef.current = 0;
+        setPageDragActive(false);
+      }
+    };
+    const onDragOver = (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+    };
+    const onDrop = (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      pageDragDepthRef.current = 0;
+      setPageDragActive(false);
+      const fileList = e.dataTransfer?.files;
+      if (!fileList?.length) return;
+      void driveUploadFilesBatch(fileList, {
+        folder_id: activeFolder?.id,
+        root_id: activeFolder ? null : activeRoot?.id,
+        onFileComplete: (result) => {
+          if (result.ok) mergeUploadedFile(result.data?.file);
+        },
+      });
+    };
+
+    window.addEventListener('dragenter', onDragEnter);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragenter', onDragEnter);
+      window.removeEventListener('dragleave', onDragLeave);
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, [canPageUpload, activeFolder?.id, activeRoot?.id, mergeUploadedFile]);
   const myUserId = user?.id || user?.userId || null;
   const showRoots = useMemo(() => ({
     personal: roots.filter((r) => r.scope === 'user' && (!myUserId || r.owner_id === myUserId)),
@@ -744,7 +864,16 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
   }
 
   return (
-    <div className="h-[calc(100vh-3.5rem)] flex bg-[#f4f6f8]">
+    <div className="h-[calc(100vh-3.5rem)] flex bg-[#f4f6f8] relative">
+      {pageDragActive && (
+        <div className="fixed inset-0 z-[10030] pointer-events-none flex items-center justify-center bg-indigo-600/10 backdrop-blur-[1px]">
+          <div className="rounded-2xl border-2 border-dashed border-indigo-500 bg-white/95 px-10 py-8 text-center shadow-xl">
+            <Upload size={40} className="mx-auto text-indigo-600 mb-3" />
+            <p className="text-lg font-semibold text-slate-800">Thả file để tải lên Drive</p>
+            <p className="text-sm text-slate-500 mt-1">Danh sách tiến trình hiện ở góc dưới phải</p>
+          </div>
+        </div>
+      )}
       {sidebarOpen && (
       <aside className="w-[17.5rem] shrink-0 border-r border-slate-200/80 bg-white flex flex-col">
         <div className="px-4 py-3.5 flex items-start justify-between gap-2 border-b border-slate-100">
@@ -929,7 +1058,7 @@ GDRIVE_ROOT_FOLDER_ID=<id folder gốc>`}</pre>
               <UploadDropzone
                 folderId={activeFolder?.id || null}
                 rootId={activeFolder ? null : activeRoot?.id}
-                onUploaded={() => reload()}
+                onUploaded={mergeUploadedFile}
                 onClose={() => setShowUpload(false)}
               />
             </div>

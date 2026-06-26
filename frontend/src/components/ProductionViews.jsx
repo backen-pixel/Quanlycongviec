@@ -11,7 +11,7 @@ import { FbCrmAvatar, FbCrmCommentComposer, formatCrmCommentFullDateTime, format
 import { upsertComment, CommentAttachmentsBlock, CrmLeadCommentsPanel } from './CommentsPanels';
 import { FilePreview, FileUploadButton } from './FileUpload';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
-import { resolveSxProjectLeadId } from '../lib/sxProjectComments';
+import { resolveSxProjectLeadId, resolveSxProjectLeadIdAsync } from '../lib/sxProjectComments';
 
 /** Bộ emoji được phép — đồng bộ với backend PROJECT_COMMENT_ALLOWED_REACTION_EMOJI */
 const PROJECT_COMMENT_REACTION_PICKER = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
@@ -1409,7 +1409,8 @@ export function ProductionCommentsView({ pipeline, commentsIndex, onRefreshIndex
 
 function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, user }) {
   const { socket } = useAuth();
-  const leadId = resolveSxProjectLeadId(item);
+  const [resolvedLeadId, setResolvedLeadId] = useState(null);
+  const leadId = resolveSxProjectLeadId(item) || resolvedLeadId;
   const [comments, setComments] = useState(null);
   const [loading, setLoading] = useState(false);
   const [body, setBody] = useState('');
@@ -1434,6 +1435,15 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
       if (!silent) setLoading(false);
     }
   }, [item.id, leadId]);
+
+  useEffect(() => {
+    if (!expanded || leadId) return undefined;
+    let cancelled = false;
+    resolveSxProjectLeadIdAsync(api, item).then((id) => {
+      if (!cancelled && id) setResolvedLeadId(id);
+    });
+    return () => { cancelled = true; };
+  }, [expanded, item, leadId]);
 
   useEffect(() => { if (expanded && comments == null && !leadId) load(); }, [expanded, comments, load, leadId]);
   useEffect(() => { if (!expanded) setReplyTo(null); }, [expanded]);

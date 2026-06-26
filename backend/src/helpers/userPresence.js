@@ -153,6 +153,40 @@ async function getDevicesForUserIds(userIds) {
 
 const MIGRATION_HINT = 'database/67_user_activity_and_messenger_pins.sql';
 
+function isMissingActivityTable(error) {
+  const code = String(error?.code || '');
+  const msg = String(error?.message || '').toLowerCase();
+  return (
+    code === '42P01'
+    || (msg.includes('user_last_activity') && (msg.includes('does not exist') || msg.includes('relation')))
+  );
+}
+
+/** Cloudflare 522 / timeout — Supabase origin không phản hồi (project pause, quá tải, mạng). */
+function isSupabaseInfraError(error) {
+  const msg = String(error?.message || '');
+  if (msg.trimStart().startsWith('<!DOCTYPE') || msg.includes('Connection timed out')) return true;
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes('fetch failed')
+    || lower.includes('econnreset')
+    || lower.includes('etimedout')
+    || lower.includes('connection terminated')
+    || lower.includes('522')
+  );
+}
+
+function formatPresenceError(error) {
+  if (isSupabaseInfraError(error)) {
+    return 'Supabase không phản hồi (timeout/522) — kiểm tra project trên dashboard có bị pause không, thử lại sau vài phút';
+  }
+  if (isMissingActivityTable(error)) {
+    return `Bảng user_last_activity chưa có — chạy migration ${MIGRATION_HINT}`;
+  }
+  const msg = String(error?.message || 'unknown_error');
+  return msg.length > 200 ? `${msg.slice(0, 200)}…` : msg;
+}
+
 /** Gắn từ server.js — phát `presence:update` qua Socket.IO khi có ping. */
 let presenceBroadcastFn = null;
 function setPresenceBroadcast(fn) {
@@ -175,8 +209,9 @@ async function recordUserPing(userId) {
   );
 
   if (error) {
-    console.warn('[userPresence] recordUserPing:', error.message, '- chạy migration', MIGRATION_HINT);
-    return { ok: false, persisted: false, error: error.message };
+    const detail = formatPresenceError(error);
+    console.warn('[userPresence] recordUserPing:', detail);
+    return { ok: false, persisted: false, error: detail };
   }
 
   if (presenceBroadcastFn) {

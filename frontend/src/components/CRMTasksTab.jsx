@@ -777,6 +777,15 @@ export default function CRMTasksTab({
     } catch (_) { /* ignore */ }
   };
 
+  const bumpTaskAttachmentCount = (taskId, delta) => {
+    if (!taskId || !delta) return;
+    setTasks((prev) => prev.map((t) => (
+      t.id === taskId
+        ? { ...t, file_count: Math.max(0, (Number(t.file_count) || 0) + delta) }
+        : t
+    )));
+  };
+
   const prevLeadIdForTasksRef = useRef(null);
   const loadTasksSeqRef = useRef(0);
 
@@ -2160,8 +2169,9 @@ export default function CRMTasksTab({
           mime_type: up.mime_type,
         }));
         await api.post(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/bulk`, { items });
+        setExpandedTask(taskId);
         loadAttachments({ id: taskId });
-        loadTasks(); // Refresh counts
+        bumpTaskAttachmentCount(taskId, items.length);
         notifyArtifactsSynced(taskId);
       } catch (err) {
         setUploadProgress(p => { const n = { ...p }; delete n[taskId]; return n; });
@@ -2193,7 +2203,7 @@ export default function CRMTasksTab({
     try {
       await api.delete(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/${attId}`);
       loadAttachments({ id: taskId });
-      loadTasks();
+      bumpTaskAttachmentCount(taskId, -1);
       notifyArtifactsSynced(taskId);
     } catch (e) { alert('Lỗi'); }
   };
@@ -2371,7 +2381,7 @@ export default function CRMTasksTab({
           checklist_id: ckId,
         });
         loadAttachments({ id: taskId });
-        loadTasks();
+        bumpTaskAttachmentCount(taskId, items.length);
         notifyArtifactsSynced(taskId);
       } catch (err) {
         alert(err.response?.data?.error || err.message || 'Upload lỗi');
@@ -4074,10 +4084,20 @@ export default function CRMTasksTab({
           dealId={excelQuotationLeadId}
           leadId={excelQuotationLeadId}
           taskId={excelImportTaskId}
+          onSourceAttached={(tid) => {
+            setExpandedTask(tid);
+            loadAttachments({ id: tid });
+            bumpTaskAttachmentCount(tid, 1);
+            notifyArtifactsSynced(tid);
+          }}
           onImportDone={(data) => {
+            const tid = excelImportTaskId;
             setExcelImportTaskId(null);
-            loadTasks();
-            notifyArtifactsSynced(excelImportTaskId);
+            if (tid) {
+              setExpandedTask(tid);
+              loadAttachments({ id: tid });
+            }
+            notifyArtifactsSynced(tid);
             if (data?.draft_only) {
               setImportToast({
                 message: 'Đã mở trang tạo báo giá với dữ liệu Excel — chỉnh sửa và bấm Lưu để tạo báo giá & hoàn thành nhiệm vụ.',

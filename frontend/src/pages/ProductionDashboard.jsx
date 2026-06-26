@@ -19,7 +19,9 @@ import {
 } from '../lib/crossWorkshopProduction';
 import { formatVND, formatDate } from '../lib/utils';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
-import { resolveSxProjectLeadId, partitionSxProjectsByCommentSource } from '../lib/sxProjectComments';
+import { resolveSxProjectLeadId, resolveSxProjectLeadIdAsync, partitionSxProjectsByCommentSource } from '../lib/sxProjectComments';
+import { CrmCommentMentionComposer } from '../components/crmCommentMentionUi';
+import { resolveMentionIdsFromContent } from '../lib/crmCommentMentions';
 import {
   getWorkshopDateRange, WS_TIME_PRESETS,
   workshopCreatedInRange, fetchWorkshopProjectPages,
@@ -327,6 +329,8 @@ export default function ProductionDashboard() {
   const [kanbanCommentItem, setKanbanCommentItem] = useState(null);
   const [kanbanCommentBody, setKanbanCommentBody] = useState('');
   const [kanbanCommentPosting, setKanbanCommentPosting] = useState(false);
+  const [kanbanCommentMembers, setKanbanCommentMembers] = useState([]);
+  const [kanbanCommentLeadId, setKanbanCommentLeadId] = useState(null);
   const [deadlineCtx, setDeadlineCtx] = useState(null);
   const [deadlineBusy, setDeadlineBusy] = useState(false);
   const [showNewDeal, setShowNewDeal] = useState(false);
@@ -1315,20 +1319,49 @@ export default function ProductionDashboard() {
     };
   }, []);
 
-  const submitKanbanQuickComment = useCallback(async () => {
+  useEffect(() => {
+    if (!kanbanCommentItem?.id) {
+      setKanbanCommentMembers([]);
+      setKanbanCommentLeadId(null);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      const leadId = await resolveSxProjectLeadIdAsync(api, kanbanCommentItem);
+      if (cancelled) return;
+      setKanbanCommentLeadId(leadId);
+      if (!leadId) {
+        setKanbanCommentMembers([]);
+        return;
+      }
+      api.get(`/crm/leads/${leadId}/members`)
+        .then((r) => { if (!cancelled) setKanbanCommentMembers(Array.isArray(r.data) ? r.data : []); })
+        .catch(() => { if (!cancelled) setKanbanCommentMembers([]); });
+    })();
+    return () => { cancelled = true; };
+  }, [kanbanCommentItem?.id]);
+
+  const submitKanbanQuickComment = useCallback(async ({ mention_user_ids } = {}) => {
     const v = kanbanCommentBody.trim();
     const it = kanbanCommentItem;
     if (!v || !it) return;
     setKanbanCommentPosting(true);
     try {
-      const leadId = resolveSxProjectLeadId(it);
+      const leadId = kanbanCommentLeadId || await resolveSxProjectLeadIdAsync(api, it);
       if (leadId) {
-        await api.post(`/crm/leads/${leadId}/comments`, { body: v });
+        const payload = { body: v };
+        const ids = mention_user_ids?.length
+          ? mention_user_ids
+          : resolveMentionIdsFromContent(v, kanbanCommentMembers, { excludeUserId: user?.id });
+        if (ids.length) payload.mention_user_ids = ids;
+        await api.post(`/crm/leads/${leadId}/comments`, payload);
       } else {
         await api.post(`/projects/${it.id}/comments`, { content: v });
       }
       setKanbanCommentItem(null);
       setKanbanCommentBody('');
+      setKanbanCommentLeadId(null);
+      setKanbanCommentMembers([]);
       setCommentsIndex((prev) => ({
         ...prev,
         [String(it.id)]: {
@@ -1341,7 +1374,7 @@ export default function ProductionDashboard() {
       alert(e?.response?.data?.error || 'Lỗi gửi bình luận');
     }
     setKanbanCommentPosting(false);
-  }, [kanbanCommentBody, kanbanCommentItem, user?.id]);
+  }, [kanbanCommentBody, kanbanCommentItem, kanbanCommentLeadId, kanbanCommentMembers, user?.id]);
 
   /** Từ chi tiết: cuộn tới thẻ vừa xem (cần đặt sau filteredKanbanPipeline) */
   useEffect(() => {
@@ -2787,32 +2820,47 @@ export default function ProductionDashboard() {
               </div>
             </div>
             <div className="bg-white px-3 py-3">
-              <textarea
-                autoFocus
-                value={kanbanCommentBody}
-                onChange={(e) => setKanbanCommentBody(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                    e.preventDefault();
-                    submitKanbanQuickComment();
-                  }
-                }}
-                disabled={kanbanCommentPosting}
-                rows={3}
-                placeholder={`Bình luận với tư cách ${user?.full_name || user?.email || 'bạn'}…`}
-                className="w-full resize-y rounded-xl border border-[#e4e6eb] bg-[#f0f2f5] px-3 py-2 text-sm text-[#050505] focus:border-[#1877f2]/40 focus:outline-none focus:ring-1 focus:ring-[#1877f2]/30"
-              />
-              <div className="mt-2 flex items-center justify-between">
-                <p className="text-[11px] text-[#65676b]">Ctrl+Enter để gửi nhanh</p>
-                <button
-                  type="button"
-                  disabled={kanbanCommentPosting || !kanbanCommentBody.trim()}
-                  onClick={submitKanbanQuickComment}
-                  className="h-9 px-4 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 disabled:opacity-50 cursor-pointer"
-                >
-                  {kanbanCommentPosting ? 'Đang gửi…' : 'Gửi'}
-                </button>
-              </div>
+              {kanbanCommentLeadId ? (
+                <CrmCommentMentionComposer
+                  user={user}
+                  members={kanbanCommentMembers}
+                  value={kanbanCommentBody}
+                  onChange={(e) => setKanbanCommentBody(e.target.value)}
+                  onSubmit={submitKanbanQuickComment}
+                  posting={kanbanCommentPosting}
+                  placeholder="Viết bình luận… (@ để nhắc thành viên)"
+                  autoFocus
+                />
+              ) : (
+                <>
+                  <textarea
+                    autoFocus
+                    value={kanbanCommentBody}
+                    onChange={(e) => setKanbanCommentBody(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                        e.preventDefault();
+                        submitKanbanQuickComment();
+                      }
+                    }}
+                    disabled={kanbanCommentPosting}
+                    rows={3}
+                    placeholder={`Bình luận với tư cách ${user?.full_name || user?.email || 'bạn'}…`}
+                    className="w-full resize-y rounded-xl border border-[#e4e6eb] bg-[#f0f2f5] px-3 py-2 text-sm text-[#050505] focus:border-[#1877f2]/40 focus:outline-none focus:ring-1 focus:ring-[#1877f2]/30"
+                  />
+                  <div className="mt-2 flex items-center justify-between">
+                    <p className="text-[11px] text-[#65676b]">Ctrl+Enter để gửi nhanh</p>
+                    <button
+                      type="button"
+                      disabled={kanbanCommentPosting || !kanbanCommentBody.trim()}
+                      onClick={() => submitKanbanQuickComment()}
+                      className="h-9 px-4 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 disabled:opacity-50 cursor-pointer"
+                    >
+                      {kanbanCommentPosting ? 'Đang gửi…' : 'Gửi'}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

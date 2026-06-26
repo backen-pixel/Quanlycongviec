@@ -8,6 +8,7 @@ import {
   GraduationCap,
 } from 'lucide-react';
 
+export const WORK_MODULE_LABEL = 'Quản lý';
 export const LOGISTICS_MODULE_LABEL = 'Vận chuyển';
 export const CRM_MODULE_ICON = '/icons/crm-module.png?v=4';
 export const WORK_MODULE_ICON = '/icons/work-module.png?v=3';
@@ -28,12 +29,12 @@ export const APP_MODULE_DEFINITIONS = [
   {
     id: 'work',
     path: '/dashboard',
-    name: 'Công việc',
-    desc: 'Quản lý dự án & nhiệm vụ cá nhân',
+    name: WORK_MODULE_LABEL,
+    desc: 'Tổng hợp dự án, nhiệm vụ & vận hành',
     Icon: CheckSquare,
     imageUrl: WORK_MODULE_ICON,
     iconClass: 'bg-transparent shadow-none',
-    category: 'Quản lý',
+    category: 'Tổng hợp',
     categoryClass: 'bg-blue-50 text-blue-700 border-blue-100',
     sidebarAccent: {
       ring: 'ring-blue-400/35 hover:ring-blue-300/55',

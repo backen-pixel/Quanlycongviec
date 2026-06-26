@@ -12,8 +12,107 @@ import {
   registerUploadAbort,
   scheduleRemoveUpload,
   scheduleRemoveDownload,
+  recordBatchUploadEnd,
   isUploadCancelledError,
 } from '../components/drive/driveTransferStore';
+
+const DRIVE_UPLOAD_CONCURRENCY = 3;
+
+function finalizeDriveUpload(transferId, { batchId, autoRemove, cancelled, error }) {
+  if (!transferId) return;
+  if (cancelled) {
+    patchDriveUpload(transferId, { status: 'cancelled', progress: 0 });
+  } else if (error) {
+    patchDriveUpload(transferId, {
+      status: 'error',
+      error: error?.response?.data?.error || error?.message || 'Lỗi upload',
+    });
+  } else {
+    patchDriveUpload(transferId, { status: 'done', progress: 100 });
+  }
+  if (batchId) {
+    recordBatchUploadEnd(batchId);
+    return;
+  }
+  if (autoRemove) {
+    scheduleRemoveUpload(transferId, cancelled ? 1500 : error ? 6000 : 4000);
+  }
+}
+
+function runTrackedDriveUpload(file, {
+  endpoint,
+  formFields = {},
+  name,
+  onProgress,
+  signal,
+  track = true,
+  transferId: existingTransferId = null,
+  batchId = null,
+  autoRemove = true,
+} = {}) {
+  const fd = new FormData();
+  fd.append('file', file);
+  Object.entries(formFields).forEach(([k, v]) => {
+    if (v != null && v !== '') fd.append(k, v);
+  });
+
+  const controller = signal ? null : new AbortController();
+  const abortSignal = signal || controller?.signal;
+  const transferId = track ? (existingTransferId || createTransferId()) : null;
+  const progressTracker = createUploadProgressTracker(file?.size || 0);
+
+  if (transferId && !existingTransferId) {
+    addDriveUpload({
+      id: transferId,
+      batchId: batchId || null,
+      name: name || file.name,
+      progress: 0,
+      status: 'uploading',
+      sizeBytes: file?.size || 0,
+      loadedBytes: 0,
+      bytesPerSec: 0,
+      remainingSec: null,
+    });
+    if (controller) registerUploadAbort(transferId, controller);
+  } else if (transferId && existingTransferId) {
+    patchDriveUpload(transferId, { status: 'uploading', progress: 0 });
+    if (controller) registerUploadAbort(transferId, controller);
+  }
+
+  return api.post(endpoint, fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    signal: abortSignal,
+    onUploadProgress: (e) => {
+      const stats = updateUploadProgressTracker(progressTracker, {
+        loaded: e.loaded,
+        total: e.total || file?.size,
+      });
+      onProgress?.(stats.percent);
+      if (transferId) {
+        patchDriveUpload(transferId, {
+          progress: stats.percent,
+          loadedBytes: stats.loadedBytes,
+          sizeBytes: stats.totalBytes,
+          bytesPerSec: stats.bytesPerSec,
+          remainingSec: stats.remainingSec,
+        });
+      }
+    },
+  }).then((r) => {
+    finalizeDriveUpload(transferId, { batchId, autoRemove });
+    return r.data;
+  }).catch((err) => {
+    if (transferId) {
+      finalizeDriveUpload(transferId, {
+        batchId,
+        autoRemove,
+        cancelled: isUploadCancelledError(err),
+        error: isUploadCancelledError(err) ? null : err,
+      });
+    }
+    throw err;
+  });
+}
 
 // ── Roots ──
 export const driveListRoots = () => api.get('/drive/roots').then((r) => r.data);
@@ -91,147 +190,118 @@ export const driveDeleteFolderForever = (id) =>
 /**
  * Upload file. options: { folder_id?, root_id?, name?, onProgress(p) }
  */
-export function driveUploadFile(file, { folder_id, root_id, name, onProgress, signal, track = true } = {}) {
-  const fd = new FormData();
-  fd.append('file', file);
-  if (folder_id) fd.append('folder_id', folder_id);
-  if (root_id) fd.append('root_id', root_id);
-  if (name) fd.append('name', name);
-
-  const controller = signal ? null : new AbortController();
-  const abortSignal = signal || controller?.signal;
-  const transferId = track ? createTransferId() : null;
-
-  const progressTracker = createUploadProgressTracker(file?.size || 0);
-
-  if (transferId) {
-    addDriveUpload({
-      id: transferId,
-      name: name || file.name,
-      progress: 0,
-      status: 'uploading',
-      sizeBytes: file?.size || 0,
-      loadedBytes: 0,
-      bytesPerSec: 0,
-      remainingSec: null,
-    });
-    if (controller) registerUploadAbort(transferId, controller);
-  }
-
-  return api.post('/drive/files/upload', fd, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    signal: abortSignal,
-    onUploadProgress: (e) => {
-      const stats = updateUploadProgressTracker(progressTracker, {
-        loaded: e.loaded,
-        total: e.total || file?.size,
-      });
-      onProgress?.(stats.percent);
-      if (transferId) {
-        patchDriveUpload(transferId, {
-          progress: stats.percent,
-          loadedBytes: stats.loadedBytes,
-          sizeBytes: stats.totalBytes,
-          bytesPerSec: stats.bytesPerSec,
-          remainingSec: stats.remainingSec,
-        });
-      }
-    },
-  }).then((r) => {
-    if (transferId) {
-      patchDriveUpload(transferId, { status: 'done', progress: 100 });
-      scheduleRemoveUpload(transferId);
-    }
-    return r.data;
-  }).catch((err) => {
-    if (transferId) {
-      if (isUploadCancelledError(err)) {
-        patchDriveUpload(transferId, { status: 'cancelled', progress: 0 });
-      } else {
-        patchDriveUpload(transferId, {
-          status: 'error',
-          error: err?.response?.data?.error || err?.message || 'Lỗi upload',
-        });
-      }
-      scheduleRemoveUpload(transferId, isUploadCancelledError(err) ? 1500 : 6000);
-    }
-    throw err;
+export function driveUploadFile(file, options = {}) {
+  const { folder_id, root_id, name, onProgress, signal, track, transferId, batchId, autoRemove } = options;
+  return runTrackedDriveUpload(file, {
+    endpoint: '/drive/files/upload',
+    formFields: { folder_id, root_id, name },
+    name,
+    onProgress,
+    signal,
+    track,
+    transferId,
+    batchId,
+    autoRemove,
   });
 }
 
 /**
  * Upload file vào "folder entity" trên Drive (Module/Cty/KV/Loại/PB/NV/Kind/Mã)
  * và auto-link vào entity. Dùng cho tab Drive trong chi tiết Lead/Deal/Dự án.
- *
- * options: { entity_type, entity_id, name?, onProgress(p) }
  */
-export function driveUploadToEntity(file, { entity_type, entity_id, folder_id, name, onProgress, signal, track = true } = {}) {
-  const fd = new FormData();
-  fd.append('file', file);
-  fd.append('entity_type', entity_type);
-  fd.append('entity_id', entity_id);
-  if (folder_id) fd.append('folder_id', folder_id);
-  if (name) fd.append('name', name);
+export function driveUploadToEntity(file, options = {}) {
+  const {
+    entity_type, entity_id, folder_id, name, onProgress, signal, track, transferId, batchId, autoRemove,
+  } = options;
+  return runTrackedDriveUpload(file, {
+    endpoint: '/drive/entity/upload',
+    formFields: { entity_type, entity_id, folder_id, name },
+    name,
+    onProgress,
+    signal,
+    track,
+    transferId,
+    batchId,
+    autoRemove,
+  });
+}
 
-  const controller = signal ? null : new AbortController();
-  const abortSignal = signal || controller?.signal;
-  const transferId = track ? createTransferId() : null;
+/**
+ * Tải nhiều file — hiện ngay danh sách trong bong bóng Drive, upload song song (tối đa 3),
+ * thông báo khi xong cả đợt (DriveTransferPanel, giữ khi đổi trang).
+ */
+export async function driveUploadFilesBatch(files, options = {}) {
+  const list = Array.from(files || []).filter(Boolean);
+  if (!list.length) return { batchId: null, results: [] };
 
-  const progressTracker = createUploadProgressTracker(file?.size || 0);
+  const {
+    folder_id,
+    root_id,
+    entity_type,
+    entity_id,
+    name,
+    onProgress,
+    onFileComplete,
+    concurrency = DRIVE_UPLOAD_CONCURRENCY,
+  } = options;
 
-  if (transferId) {
+  const batchId = createTransferId();
+  const queue = list.map((file) => {
+    const id = createTransferId();
     addDriveUpload({
-      id: transferId,
+      id,
+      batchId,
       name: name || file.name,
       progress: 0,
-      status: 'uploading',
+      status: 'queued',
       sizeBytes: file?.size || 0,
       loadedBytes: 0,
       bytesPerSec: 0,
       remainingSec: null,
     });
-    if (controller) registerUploadAbort(transferId, controller);
+    return { id, file };
+  });
+
+  const results = [];
+  let cursor = 0;
+
+  const uploadOne = async ({ id, file }) => {
+    const shared = {
+      transferId: id,
+      batchId,
+      autoRemove: false,
+      onProgress,
+      name,
+    };
+    try {
+      const data = entity_type
+        ? await driveUploadToEntity(file, { entity_type, entity_id, folder_id, ...shared })
+        : await driveUploadFile(file, { folder_id, root_id, ...shared });
+      const result = { ok: true, data, id, file };
+      results.push(result);
+      onFileComplete?.(result);
+      return result;
+    } catch (err) {
+      const result = { ok: false, err, id, file };
+      results.push(result);
+      onFileComplete?.(result);
+      return result;
+    }
+  };
+
+  async function worker() {
+    while (cursor < queue.length) {
+      const item = queue[cursor];
+      cursor += 1;
+      // eslint-disable-next-line no-await-in-loop
+      await uploadOne(item);
+    }
   }
 
-  return api.post('/drive/entity/upload', fd, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    signal: abortSignal,
-    onUploadProgress: (e) => {
-      const stats = updateUploadProgressTracker(progressTracker, {
-        loaded: e.loaded,
-        total: e.total || file?.size,
-      });
-      onProgress?.(stats.percent);
-      if (transferId) {
-        patchDriveUpload(transferId, {
-          progress: stats.percent,
-          loadedBytes: stats.loadedBytes,
-          sizeBytes: stats.totalBytes,
-          bytesPerSec: stats.bytesPerSec,
-          remainingSec: stats.remainingSec,
-        });
-      }
-    },
-  }).then((r) => {
-    if (transferId) {
-      patchDriveUpload(transferId, { status: 'done', progress: 100 });
-      scheduleRemoveUpload(transferId);
-    }
-    return r.data;
-  }).catch((err) => {
-    if (transferId) {
-      if (isUploadCancelledError(err)) {
-        patchDriveUpload(transferId, { status: 'cancelled', progress: 0 });
-      } else {
-        patchDriveUpload(transferId, {
-          status: 'error',
-          error: err?.response?.data?.error || err?.message || 'Lỗi upload',
-        });
-      }
-      scheduleRemoveUpload(transferId, isUploadCancelledError(err) ? 1500 : 6000);
-    }
-    throw err;
-  });
+  const workers = Math.min(Math.max(1, concurrency), queue.length);
+  await Promise.all(Array.from({ length: workers }, () => worker()));
+
+  return { batchId, results };
 }
 
 /** Tạo Google Doc / Sheet / Slides trống trong folder hoặc root. */
@@ -385,6 +455,8 @@ export const driveIconForMime = (mime, name) => {
   if (['xls', 'xlsx', 'csv', 'ods'].includes(ext)) return 'excel';
   if (['ppt', 'pptx', 'odp'].includes(ext)) return 'powerpoint';
   if (ext === 'pdf') return 'pdf';
+  if (['skp', 'skb', 'skm'].includes(ext)) return 'sketchup';
+  if (['dwg', 'dxf'].includes(ext)) return 'autocad';
   if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'archive';
 
   const m = String(mime || '').toLowerCase();
@@ -399,6 +471,8 @@ export const driveIconForMime = (mime, name) => {
   if (m.includes('word') || m.includes('officedocument.wordprocessing')) return 'word';
   if (m.includes('sheet') || m.includes('excel') || m.includes('officedocument.spreadsheet')) return 'excel';
   if (m.includes('presentation') || m.includes('powerpoint')) return 'powerpoint';
+  if (m.includes('sketchup') || m.includes('vnd.sketchup')) return 'sketchup';
+  if (m.includes('dwg') || m.includes('dxf') || m.includes('autocad')) return 'autocad';
   if (m.includes('zip') || m.includes('rar') || m.includes('compressed')) return 'archive';
   if (m.startsWith('text/') || m.includes('json') || m.includes('xml')) return 'text';
   return 'file';

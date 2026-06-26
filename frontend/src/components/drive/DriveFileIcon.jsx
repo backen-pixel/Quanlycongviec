@@ -5,7 +5,7 @@ import {
 import { driveIconForMime } from '../../lib/drive';
 import DriveFileTypeBadge from './DriveFileTypeBadge';
 
-const BADGE_TYPES = new Set(['word', 'excel', 'powerpoint', 'pdf', 'archive', 'text', 'file']);
+const BADGE_TYPES = new Set(['word', 'excel', 'powerpoint', 'pdf', 'sketchup', 'autocad', 'archive', 'text', 'file']);
 
 const COLORS = {
   image: 'text-violet-500',

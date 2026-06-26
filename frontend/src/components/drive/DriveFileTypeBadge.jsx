@@ -5,6 +5,8 @@ const CONFIG = {
   excel: { bg: 'bg-[#217346]', fold: 'bg-[#185c37]', letter: 'X' },
   powerpoint: { bg: 'bg-[#D24726]', fold: 'bg-[#b33d1f]', letter: 'P' },
   pdf: { bg: 'bg-[#E74C3C]', fold: 'bg-[#c0392b]', letter: 'PDF', compactLetter: 'P' },
+  sketchup: { bg: 'bg-[#005F9E]', fold: 'bg-[#004a7c]', letter: 'SU', compactLetter: 'S' },
+  autocad: { bg: 'bg-[#E31937]', fold: 'bg-[#b8142c]', letter: 'CAD', compactLetter: 'A' },
   archive: { bg: 'bg-amber-500', fold: 'bg-amber-600', letter: 'Z' },
   text: { bg: 'bg-slate-500', fold: 'bg-slate-600', letter: 'T' },
   file: { bg: 'bg-slate-400', fold: 'bg-slate-500', letter: 'F' },
@@ -27,8 +29,11 @@ function badgeDimensions(size, compact) {
 }
 
 function resolveLetter(cfg, dims, typeKey) {
-  if (typeKey === 'pdf' && cfg.letter === 'PDF') {
-    return dims.box.includes('w-14') ? 'PDF' : (cfg.compactLetter || 'P');
+  if ((typeKey === 'pdf' && cfg.letter === 'PDF') || typeKey === 'autocad') {
+    return dims.box.includes('w-14') ? cfg.letter : (cfg.compactLetter || cfg.letter.charAt(0));
+  }
+  if (typeKey === 'sketchup') {
+    return dims.box.includes('w-14') || dims.box.includes('w-11') ? cfg.letter : (cfg.compactLetter || 'S');
   }
   return cfg.letter;
 }
@@ -48,7 +53,7 @@ export default function DriveFileTypeBadge({
   const cfg = CONFIG[key] || CONFIG.file;
   const dims = badgeDimensions(size, compact);
   const letter = resolveLetter(cfg, dims, key);
-  const isPdfLabel = key === 'pdf' && letter === 'PDF';
+  const isPdfLabel = (key === 'pdf' && letter === 'PDF') || (key === 'autocad' && letter === 'CAD');
 
   return (
     <div

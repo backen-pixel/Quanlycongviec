@@ -1,4 +1,4 @@
-﻿import { NavLink, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
+import { NavLink, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isCrmModuleAdmin, isStrictAdmin, isWorkProductionModuleAdmin, canAccessCrmSocialInbox } from '../lib/adminRole';
@@ -35,7 +35,8 @@ const MENU_GROUPS = [
     title: '1. Tổng quan',
     emoji: '📊',
     items: [
-      { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+      { to: '/dashboard', icon: LayoutDashboard, label: 'Tổng hợp Quản lý' },
+      { to: '/dashboard/classic', icon: BarChart3, label: 'Dashboard cũ' },
       { to: '/dashboard/divisions', icon: BarChart3, label: 'Dashboard Khối' },
       { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
       { to: '/work/unified', icon: Layers, label: 'Tổng hợp nhiệm vụ' },
