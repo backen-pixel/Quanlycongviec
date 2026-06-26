@@ -273,7 +273,7 @@ r.get('/deals', async (req, res) => {
       .select(`
         id, code, title, type, budget, estimated_value, created_at, updated_at, deadline,
         project_id, company_id, assignee_id,
-        stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost),
+        stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost),
         customer:customers(id, full_name, phone),
         assignee:users!crm_leads_assignee_id_fkey(id, full_name, avatar),
         project:projects(
@@ -307,7 +307,7 @@ r.get('/deals', async (req, res) => {
         .select(`
           id, code, title, type, budget, estimated_value, created_at, updated_at, deadline,
           project_id, company_id, assignee_id,
-          stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost),
+          stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost),
           customer:customers(id, full_name, phone),
           assignee:users!crm_leads_assignee_id_fkey(id, full_name, avatar),
           project:projects(id, code, name, status, deadline, estimated_value, sx_kanban_column_id, vc_kanban_column_id)
@@ -398,7 +398,7 @@ r.get('/deals/:leadId', async (req, res) => {
       .from('crm_leads')
       .select(`
         *,
-        stage:crm_pipeline_stages(id, name, color, icon, is_won, is_lost, order_index),
+        stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, order_index),
         customer:customers(id, full_name, phone, email, address),
         assignee:users!crm_leads_assignee_id_fkey(id, full_name, avatar, phone),
         company:companies(id, name, short_name),

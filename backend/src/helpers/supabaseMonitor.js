@@ -5,6 +5,11 @@ const { fetch: undiciFetch } = require('undici');
 const { Pool } = require('pg');
 const config = require('../config');
 const { supabaseDispatcher } = require('../config/httpAgents');
+const {
+  isPgAuthBackoffActive,
+  getPgAuthBackoffUntil,
+  notePgAuthFailure,
+} = require('../config/db');
 
 function trimBase(url) {
   return String(url || '').replace(/\/+$/, '');
@@ -62,27 +67,121 @@ async function probeRest(base, key) {
   }
 }
 
-async function probeStorage(base, key) {
+async function queryStorageBucketStatsViaPg(connectionString) {
+  if (!connectionString || process.env.PG_POOL_DISABLED === '1') return null;
+  const start = Date.now();
+  const pool = new Pool({
+    connectionString,
+    ssl: { rejectUnauthorized: false },
+    max: 1,
+    connectionTimeoutMillis: 5000,
+    query_timeout: 15000,
+    statement_timeout: 15000,
+  });
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        bucket_id AS name,
+        COUNT(*)::int AS object_count,
+        COALESCE(SUM(COALESCE((metadata->>'size')::bigint, 0)), 0)::bigint AS size_bytes
+      FROM storage.objects
+      GROUP BY bucket_id
+      ORDER BY bucket_id
+    `);
+    return {
+      source: 'postgres',
+      latency_ms: Date.now() - start,
+      buckets: rows.map((r) => ({
+        name: r.name,
+        object_count: r.object_count,
+        size_bytes: Number(r.size_bytes || 0),
+      })),
+    };
+  } catch (e) {
+    notePgAuthFailure(e);
+    return { source: 'postgres', error: e.message, buckets: null };
+  } finally {
+    await pool.end().catch(() => {});
+  }
+}
+
+async function queryStorageBucketStatsViaApi(base, key, extraNames = []) {
+  const { createClient } = require('@supabase/supabase-js');
+  const { getStorageBuckets, summarizeBucketViaApi } = require('./supabaseStorageSync');
+  const client = createClient(base, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const start = Date.now();
+  const bucketNames = [...new Set([...getStorageBuckets(), ...extraNames])].filter(Boolean);
+  const buckets = [];
+  for (const name of bucketNames) {
+    try {
+      buckets.push(await summarizeBucketViaApi(client, name));
+    } catch (e) {
+      buckets.push({ name, object_count: null, size_bytes: null, error: e.message });
+    }
+  }
+  return {
+    source: 'storage_api',
+    latency_ms: Date.now() - start,
+    buckets,
+  };
+}
+
+function aggregateBucketStats(buckets) {
+  const list = (buckets || []).filter((b) => b && !b.error);
+  return {
+    bucket_count: list.length,
+    total_object_count: list.reduce((s, b) => s + (b.object_count || 0), 0),
+    total_size_bytes: list.reduce((s, b) => s + (b.size_bytes || 0), 0),
+    buckets: buckets || [],
+  };
+}
+
+async function probeStorage(base, key, dbUrl) {
   const start = Date.now();
   try {
     const res = await undiciFetch(`${base}/storage/v1/bucket`, {
       dispatcher: supabaseDispatcher,
       headers: { apikey: key, authorization: `Bearer ${key}` },
     });
-    let bucketCount = null;
+    let apiBucketNames = [];
     if (res.ok) {
       const data = await res.json().catch(() => []);
-      bucketCount = Array.isArray(data) ? data.length : null;
+      apiBucketNames = Array.isArray(data) ? data.map((b) => b.name || b.id).filter(Boolean) : [];
     }
+
+    let stats = await queryStorageBucketStatsViaPg(dbUrl);
+    if (!stats?.buckets?.length) {
+      stats = await queryStorageBucketStatsViaApi(base, key, apiBucketNames);
+    }
+
+    const agg = aggregateBucketStats(stats?.buckets);
+    if (apiBucketNames.length && stats?.source === 'postgres') {
+      const known = new Set(agg.buckets.map((b) => b.name));
+      for (const name of apiBucketNames) {
+        if (!known.has(name)) {
+          agg.buckets.push({ name, object_count: 0, size_bytes: 0, empty: true });
+          agg.bucket_count += 1;
+        }
+      }
+      agg.buckets.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    }
+
     return {
       ok: res.ok,
       latency_ms: Date.now() - start,
       status: res.status,
-      bucket_count: bucketCount,
+      bucket_count: apiBucketNames.length || agg.bucket_count,
+      buckets: agg.buckets,
+      total_object_count: agg.total_object_count,
+      total_size_bytes: agg.total_size_bytes,
+      stats_source: stats?.source || null,
+      stats_error: stats?.error || null,
       error: res.ok ? null : `HTTP ${res.status}`,
     };
   } catch (e) {
-    return { ok: false, latency_ms: Date.now() - start, error: e.message };
+    return { ok: false, latency_ms: Date.now() - start, error: e.message, buckets: [] };
   }
 }
 
@@ -90,8 +189,34 @@ async function probeDb(connectionString) {
   if (!connectionString) {
     return { ok: false, configured: false, error: 'not_configured' };
   }
+  if (process.env.PG_POOL_DISABLED === '1') {
+    return {
+      ok: true,
+      configured: false,
+      skipped: true,
+      mode: 'rest_only',
+      latency_ms: 0,
+      note: 'PG_POOL_DISABLED — dùng Supabase REST',
+    };
+  }
+  if (isPgAuthBackoffActive()) {
+    return {
+      ok: false,
+      configured: true,
+      error: 'auth_backoff',
+      retry_after: new Date(getPgAuthBackoffUntil()).toISOString(),
+      skipped: true,
+    };
+  }
   const start = Date.now();
-  const pool = new Pool({ connectionString, ssl: { rejectUnauthorized: false }, max: 1 });
+  const pool = new Pool({
+    connectionString,
+    ssl: { rejectUnauthorized: false },
+    max: 1,
+    connectionTimeoutMillis: 5000,
+    query_timeout: 8000,
+    statement_timeout: 8000,
+  });
   try {
     const { rows } = await pool.query(`
       SELECT
@@ -111,6 +236,7 @@ async function probeDb(connectionString) {
       postgres_version: String(row.version || '').split(' ').slice(0, 2).join(' '),
     };
   } catch (e) {
+    notePgAuthFailure(e);
     return {
       ok: false,
       configured: true,
@@ -141,7 +267,7 @@ async function probeInstance({ label, url, serviceKey, dbUrl }) {
   const [auth, rest, storage, db] = await Promise.all([
     probeAuthHealth(base, serviceKey),
     probeRest(base, serviceKey),
-    probeStorage(base, serviceKey),
+    probeStorage(base, serviceKey, dbUrl),
     probeDb(dbUrl),
   ]);
 
@@ -167,6 +293,14 @@ async function probeInstance({ label, url, serviceKey, dbUrl }) {
   };
 }
 
+function resolveDbProbeUrl(directUrl, poolUrl) {
+  // Dev/local: pooler (6543) thường ổn hơn direct db.*.supabase.co (IPv6 hay timeout).
+  if (process.env.PG_MONITOR_USE_DIRECT === '1') {
+    return directUrl || poolUrl || '';
+  }
+  return poolUrl || directUrl || '';
+}
+
 async function getSupabaseMonitorReport() {
   const {
     runHealthCheck,
@@ -187,13 +321,19 @@ async function getSupabaseMonitorReport() {
       label: 'primary',
       url: config.supabaseUrl,
       serviceKey: config.supabaseServiceKey,
-      dbUrl: process.env.SUPABASE_DB_DIRECT_URL || process.env.SUPABASE_DB_URL || process.env.DATABASE_URL,
+      dbUrl: resolveDbProbeUrl(
+        process.env.SUPABASE_DB_DIRECT_URL,
+        process.env.SUPABASE_DB_URL || process.env.DATABASE_URL,
+      ),
     }),
     probeInstance({
       label: 'backup',
       url: config.supabaseBackupUrl,
       serviceKey: config.supabaseBackupServiceKey,
-      dbUrl: process.env.SUPABASE_BACKUP_DB_DIRECT_URL || process.env.SUPABASE_BACKUP_DB_URL,
+      dbUrl: resolveDbProbeUrl(
+        process.env.SUPABASE_BACKUP_DB_DIRECT_URL,
+        process.env.SUPABASE_BACKUP_DB_URL,
+      ),
     }),
   ]);
 

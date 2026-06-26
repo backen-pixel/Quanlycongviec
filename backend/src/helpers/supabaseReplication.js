@@ -55,7 +55,7 @@ function skipTablesSet() {
 
 function isReplicationConfigured() {
   return !!(
-    config.supabaseReplicationEnabled
+    (config.supabaseReplicationEnabled || config.supabaseSwitchLogEnabled)
     && config.supabaseBackupUrl
     && config.supabaseBackupServiceKey
   );
@@ -241,16 +241,19 @@ async function applyJob(job) {
   _stats.last_applied_at = new Date().toISOString();
 }
 
-async function drainReplicationQueue({ maxJobs = 100 } = {}) {
-  if (!isReplicationConfigured() || !isActivePrimary()) {
-    return { processed: 0, failed: 0, remaining: await getQueueDepth() };
+async function drainReplicationQueue({ maxJobs = 100, force = false } = {}) {
+  if (!isReplicationConfigured()) {
+    return { processed: 0, failed: 0, remaining: await getQueueDepth(), skipped: true };
+  }
+  if (!force && !isActivePrimary()) {
+    return { processed: 0, failed: 0, remaining: await getQueueDepth(), skipped: true };
   }
   let processed = 0;
   let failed = 0;
   while (processed + failed < maxJobs) {
     const job = await redisPopNonBlocking();
     if (!job) break;
-    if (!isActivePrimary()) break;
+    if (!force && !isActivePrimary()) break;
     try {
       await applyJob(job);
       processed += 1;
@@ -315,6 +318,56 @@ async function getQueueDepth() {
   return memQueue.length;
 }
 
+function summarizeReplicationJob(job) {
+  if (!job) return '—';
+  if (job.type === 'storage') {
+    return `Storage ${job.bucket}/${job.path || job.storage_path || '?'}`;
+  }
+  const method = job.method || 'REST';
+  const path = job.path || '';
+  const table = path.match(/^\/rest\/v1\/([^/?]+)/)?.[1];
+  return table ? `${method} ${table}` : `${method} ${path.slice(0, 80)}`;
+}
+
+function sanitizeReplicationJob(job) {
+  if (!job) return null;
+  return {
+    id: job.id,
+    type: job.type || 'rest',
+    method: job.method || null,
+    path: job.path || null,
+    bucket: job.bucket || null,
+    storage_path: job.type === 'storage' ? (job.path || job.storage_path) : null,
+    enqueued_at: job.enqueued_at || null,
+    retry: job.retry || 0,
+    summary: summarizeReplicationJob(job),
+  };
+}
+
+/** Liệt kê job trong queue (không xóa) — newest trước. */
+async function listReplicationQueue({ limit = 50 } = {}) {
+  const cap = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+  const redis = getRedisIfReady();
+  let jobs = [];
+
+  if (redis) {
+    try {
+      const raw = await redis.lrange(REDIS_KEY, 0, cap - 1);
+      jobs = raw.map((s) => {
+        try { return JSON.parse(s); } catch { return null; }
+      }).filter(Boolean);
+    } catch {
+      jobs = memQueue.slice(-cap).reverse();
+    }
+  } else {
+    jobs = [...memQueue].slice(-cap).reverse();
+  }
+
+  const items = jobs.map(sanitizeReplicationJob).filter(Boolean);
+  const total = await getQueueDepth();
+  return { items, total };
+}
+
 function getReplicationStatus() {
   return {
     enabled: isReplicationConfigured(),
@@ -370,4 +423,6 @@ module.exports = {
   getReplicationStatus,
   getQueueDepth,
   drainReplicationQueue,
+  listReplicationQueue,
+  summarizeReplicationJob,
 };

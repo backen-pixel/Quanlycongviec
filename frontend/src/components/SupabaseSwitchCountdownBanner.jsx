@@ -1,15 +1,16 @@
 import { useEffect, useState, useCallback } from 'react';
-import { getSocket } from '../lib/socket';
 import { AlertTriangle, Database } from 'lucide-react';
-
-function labelTarget(t) {
-  if (t === 'primary') return 'Primary (Chính)';
-  if (t === 'backup') return 'Backup (Dự phòng)';
-  return t || '—';
-}
+import api from '../lib/api';
+import { connectSocket, getSocket } from '../lib/socket';
+import {
+  countdownStateFromPayload,
+  countdownStateFromPending,
+  formatTargetLabel,
+} from '../lib/supabaseSwitchCountdown';
+import { formatCountdownMessage } from '../lib/supabaseSwitchLabels';
 
 /**
- * Banner toàn app khi admin chuẩn bị chuyển Supabase primary ↔ backup.
+ * Banner toàn app — đếm ngược chuyển Supabase (mọi user đăng nhập).
  */
 export default function SupabaseSwitchCountdownBanner() {
   const [countdown, setCountdown] = useState(null);
@@ -20,7 +21,13 @@ export default function SupabaseSwitchCountdownBanner() {
     setSyncReady(null);
   }, []);
 
+  const applyCountdown = useCallback((payload) => {
+    const next = countdownStateFromPayload(payload);
+    if (next) setCountdown(next);
+  }, []);
+
   useEffect(() => {
+    connectSocket();
     const socket = getSocket();
     if (!socket) return undefined;
 
@@ -30,49 +37,60 @@ export default function SupabaseSwitchCountdownBanner() {
         target: payload?.target,
         at: Date.now(),
       });
-      setTimeout(() => setSyncReady(null), 3000);
+      setTimeout(() => setSyncReady(null), 4000);
     };
 
-    const onStart = (payload) => {
-      if (!payload?.sync_verified_100) return;
-      const switchAt = payload?.switch_at ? new Date(payload.switch_at).getTime() : Date.now() + 15000;
-      setCountdown({
-        from: payload?.from,
-        target: payload?.target,
-        switchAt,
-        message: payload?.message,
-        syncVerified: true,
-      });
+    const onCountdown = (payload) => {
+      setSyncReady(null);
+      applyCountdown(payload);
     };
 
     const onDone = () => {
       setCountdown((c) => (c ? { ...c, done: true, remaining: 0 } : null));
-      setTimeout(clear, 4000);
+      setTimeout(clear, 5000);
     };
 
     const onCancel = () => clear();
 
     socket.on('supabase:switch-sync-ready', onSyncReady);
-    socket.on('supabase:switch-countdown', onStart);
+    socket.on('supabase:switch-countdown', onCountdown);
     socket.on('supabase:switch-done', onDone);
     socket.on('supabase:switch-cancelled', onCancel);
 
     return () => {
       socket.off('supabase:switch-sync-ready', onSyncReady);
-      socket.off('supabase:switch-countdown', onStart);
+      socket.off('supabase:switch-countdown', onCountdown);
       socket.off('supabase:switch-done', onDone);
       socket.off('supabase:switch-cancelled', onCancel);
     };
-  }, [clear]);
+  }, [applyCountdown, clear]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const { data } = await api.get('/production/backup-sync/switch/public-pending');
+        if (cancelled) return;
+        const next = countdownStateFromPending(data?.pending);
+        if (next && next.remaining > 0) {
+          setCountdown((c) => (c?.done ? c : next));
+        }
+      } catch { /* ignore */ }
+    };
+    void poll();
+    const id = setInterval(poll, 2000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
 
   useEffect(() => {
     if (!countdown || countdown.done) return undefined;
     const tick = () => {
       const remaining = Math.max(0, Math.ceil((countdown.switchAt - Date.now()) / 1000));
-      setCountdown((c) => (c ? { ...c, remaining } : null));
-      if (remaining <= 0) {
-        setCountdown((c) => (c ? { ...c, done: true, remaining: 0 } : null));
-      }
+      setCountdown((c) => {
+        if (!c || c.done) return c;
+        if (remaining <= 0) return { ...c, done: true, remaining: 0 };
+        return { ...c, remaining };
+      });
     };
     tick();
     const id = setInterval(tick, 250);
@@ -109,7 +127,7 @@ export default function SupabaseSwitchCountdownBanner() {
       {countdown.done ? (
         <>
           <Database className="w-5 h-5 shrink-0" />
-          <span>Đã chuyển sang {labelTarget(countdown.target)} — trang sẽ dùng database mới.</span>
+          <span>Đã chuyển sang {formatTargetLabel(countdown.target)} — trang sẽ dùng database mới.</span>
         </>
       ) : (
         <>
@@ -118,11 +136,15 @@ export default function SupabaseSwitchCountdownBanner() {
             {countdown.syncVerified && (
               <span className="font-semibold">Đã đồng bộ 100% · </span>
             )}
-            {countdown.message || `Chuyển sang ${labelTarget(countdown.target)} sau ${remaining}s`}
+            {countdown.quickSwitch && !countdown.syncVerified && (
+              <span className="font-semibold">Chuyển nhanh · đồng bộ sau · </span>
+            )}
+            {countdown.direction && (
+              <span className="font-semibold">{countdown.direction} · </span>
+            )}
+            {countdown.message || formatCountdownMessage(countdown.from, countdown.target, remaining)}
             {' '}
             <strong className="text-lg tabular-nums">{remaining}</strong>s
-            {' · '}
-            {labelTarget(countdown.from)} → {labelTarget(countdown.target)}
           </span>
         </>
       )}

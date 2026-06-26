@@ -891,7 +891,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
         .from('crm_leads')
         .select(`
           id, name, type,
-          stage:crm_pipeline_stages(id, name, color, is_won),
+          stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, is_won),
           sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name)),
           vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)
         `)
@@ -903,7 +903,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       console.warn('[logistics/projects/:id] crm_leads badges:', crmDealsBadgeErr.message);
       const { data: crmDealsRaw2, error: crmDealsErr2 } = await supabase
         .from('crm_leads')
-        .select('id, name, type, stage:crm_pipeline_stages(id, name, color, is_won)')
+        .select('id, name, type, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, is_won)')
         .eq('project_id', rowId)
         .eq('type', 'deal');
       if (crmDealsErr2) console.warn('[logistics/projects/:id] crm_leads:', crmDealsErr2.message);

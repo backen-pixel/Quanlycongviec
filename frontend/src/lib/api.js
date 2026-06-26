@@ -2,6 +2,7 @@ import axios from 'axios';
 import { resolveApiOrigin } from './apiOrigin';
 import { disconnectSocket } from './socket';
 import { resetClientSessionState } from './sessionReset';
+import { getSupabaseMonitorToken, clearSupabaseMonitorToken } from './supabaseMonitorAuth';
 
 const API_URL = resolveApiOrigin();
 
@@ -13,9 +14,8 @@ api.interceptors.request.use((c) => {
   const url = String(c.url || '');
   if (url.includes('/production/backup-sync') && !url.endsWith('/unlock')) {
     try {
-      const mt = sessionStorage.getItem('supabase_monitor_token');
-      const exp = Number(sessionStorage.getItem('supabase_monitor_exp') || 0);
-      if (mt && exp && Date.now() < exp) {
+      const mt = getSupabaseMonitorToken();
+      if (mt) {
         c.headers['X-Supabase-Monitor-Token'] = mt;
       }
     } catch { /* ignore */ }
@@ -24,6 +24,10 @@ api.interceptors.request.use((c) => {
 });
 
 api.interceptors.response.use(r => r, (err) => {
+  if (err.response?.status === 403 && err.response?.data?.code === 'MONITOR_LOCKED') {
+    const sent = err.config?.headers?.['X-Supabase-Monitor-Token'];
+    if (sent) clearSupabaseMonitorToken();
+  }
   if (err.response?.status === 401) {
     const code = err.response?.data?.code;
     const isMidnight = code === 'session_expired_midnight'

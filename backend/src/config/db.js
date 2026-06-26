@@ -9,7 +9,9 @@
 const { Pool } = require('pg');
 
 const PG_DISABLED = process.env.PG_POOL_DISABLED === '1';
+const PG_AUTH_BACKOFF_MS = parseInt(process.env.PG_AUTH_BACKOFF_MS || String(10 * 60 * 1000), 10);
 
+let _pgAuthBackoffUntil = 0;
 let _pool = null;
 let _sessionPool = null;
 let _poolUrl = null;
@@ -22,7 +24,7 @@ function _activeDbUrl() {
       return process.env.SUPABASE_BACKUP_DB_URL;
     }
   } catch { /* ignore */ }
-  return process.env.SUPABASE_DB_URL || '';
+  return process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || '';
 }
 
 function _activeDbDirectUrl() {
@@ -32,7 +34,7 @@ function _activeDbDirectUrl() {
       return process.env.SUPABASE_BACKUP_DB_DIRECT_URL;
     }
   } catch { /* ignore */ }
-  return process.env.SUPABASE_DB_DIRECT_URL || '';
+  return process.env.SUPABASE_DB_DIRECT_URL || process.env.DATABASE_URL || '';
 }
 
 function _buildPool(connectionString, maxDefault) {
@@ -52,6 +54,30 @@ function _buildPool(connectionString, maxDefault) {
   return pool;
 }
 
+function isPgAuthBackoffActive() {
+  return Date.now() < _pgAuthBackoffUntil;
+}
+
+function getPgAuthBackoffUntil() {
+  return _pgAuthBackoffUntil;
+}
+
+/** Tạm dừng thử kết nối DB khi sai mật khẩu / Supabase ECIRCUITBREAKER. */
+function notePgAuthFailure(err) {
+  if (!err || !isPgConnectionError(err)) return;
+  const msg = String(err.message || '');
+  if (
+    err.code === '28P01'
+    || err.code === 'XX000'
+    || /ECIRCUITBREAKER|authentication failed|password authentication/i.test(msg)
+  ) {
+    _pgAuthBackoffUntil = Date.now() + PG_AUTH_BACKOFF_MS;
+    resetPools();
+    const mins = Math.ceil(PG_AUTH_BACKOFF_MS / 60_000);
+    console.warn(`[pg-pool] tạm dừng kết nối PostgreSQL ${mins} phút (sai mật khẩu hoặc circuit breaker)`);
+  }
+}
+
 function resetPools() {
   if (_pool) {
     _pool.end().catch(() => {});
@@ -66,7 +92,7 @@ function resetPools() {
 }
 
 function getPool() {
-  if (PG_DISABLED) return null;
+  if (PG_DISABLED || isPgAuthBackoffActive()) return null;
   const url = _activeDbUrl();
   if (!url) return null;
   if (_pool && _poolUrl !== url) {
@@ -81,7 +107,7 @@ function getPool() {
 }
 
 function getSessionPool() {
-  if (PG_DISABLED) return null;
+  if (PG_DISABLED || isPgAuthBackoffActive()) return null;
   const url = _activeDbDirectUrl();
   if (!url) return getPool();
   if (_sessionPool && _sessionPoolUrl !== url) {
@@ -97,6 +123,31 @@ function getSessionPool() {
 
 function isPgEnabled() {
   return !PG_DISABLED && !!(_activeDbUrl() || _activeDbDirectUrl());
+}
+
+const PG_FALLBACK_CODES = new Set(['28P01', '3D000', 'ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'XX000']);
+
+function isPgConnectionError(err) {
+  if (!err) return false;
+  if (PG_FALLBACK_CODES.has(err.code)) return true;
+  const msg = String(err.message || '');
+  return /authentication failed|password authentication|connection terminated|timeout|circuitbreaker/i.test(msg);
+}
+
+/**
+ * Như pgQuery nhưng trả null khi lỗi kết nối/xác thực — caller fallback Supabase REST.
+ */
+async function pgQuerySafe(text, params = []) {
+  try {
+    return await pgQuery(text, params);
+  } catch (err) {
+    if (isPgConnectionError(err)) {
+      notePgAuthFailure(err);
+      console.warn('[pg-pool] query fallback REST:', err.code || 'err', String(err.message || '').slice(0, 100));
+      return null;
+    }
+    throw err;
+  }
 }
 
 /**
@@ -121,6 +172,7 @@ async function pgQuery(text, params = []) {
     if (metrics && typeof metrics.incPgQuery === 'function') {
       metrics.incPgQuery(Date.now() - start, true);
     }
+    notePgAuthFailure(err);
     throw err;
   }
 }
@@ -143,6 +195,7 @@ async function pgSessionQuery(text, params = []) {
     if (metrics && typeof metrics.incPgQuery === 'function') {
       metrics.incPgQuery(Date.now() - start, true);
     }
+    notePgAuthFailure(err);
     throw err;
   }
 }
@@ -151,7 +204,12 @@ module.exports = {
   getPool,
   getSessionPool,
   isPgEnabled,
+  isPgAuthBackoffActive,
+  getPgAuthBackoffUntil,
+  notePgAuthFailure,
   pgQuery,
+  pgQuerySafe,
   pgSessionQuery,
   resetPools,
+  isPgConnectionError,
 };

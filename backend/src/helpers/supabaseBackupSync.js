@@ -42,6 +42,57 @@ const DEFAULT_SETTINGS = {
 
 let _jobRunning = false;
 let _jobLog = [];
+let _jobStartedAt = null;
+let _jobFinishedAt = null;
+let _jobLastOk = true;
+let _jobLastError = null;
+let _jobSyncParts = ['DB', 'Storage'];
+let _logListener = null;
+let _ioRef = null;
+
+function setBackupSyncIo(io) {
+  _ioRef = io || null;
+}
+
+function broadcastBackupSync(event, data) {
+  if (!_ioRef) return;
+  try {
+    _ioRef.emit(event, data);
+  } catch { /* ignore */ }
+}
+
+function setBackupSyncLogListener(fn) {
+  _logListener = typeof fn === 'function' ? fn : null;
+}
+
+function getJobLog(limit = 30) {
+  return _jobLog.slice(-limit);
+}
+
+function isRecentIso(iso, maxMs = 15 * 60 * 1000) {
+  if (!iso) return false;
+  return Date.now() - new Date(iso).getTime() < maxMs;
+}
+
+function getBackupJobPublicSnapshot() {
+  if (!_jobRunning && !_jobFinishedAt) return null;
+  if (!_jobRunning && !isRecentIso(_jobFinishedAt)) return null;
+  return {
+    type: 'backup',
+    running: _jobRunning,
+    status: _jobRunning ? null : (_jobLastOk ? 'done' : 'error'),
+    title: 'Đồng bộ Supabase Backup',
+    direction: 'primary→backup',
+    message: _jobLog.length
+      ? _jobLog[_jobLog.length - 1].line
+      : 'Đang đồng bộ backup Primary → Backup…',
+    sync_parts: _jobSyncParts,
+    log: _jobLog.slice(-80),
+    started_at: _jobStartedAt,
+    finished_at: _jobFinishedAt,
+    error: _jobLastError,
+  };
+}
 
 function slotLabel(slot) {
   return `${String(slot.h).padStart(2, '0')}:${String(slot.m).padStart(2, '0')}`;
@@ -135,6 +186,17 @@ function appendLog(line) {
   if (!s) return;
   _jobLog.push({ at: new Date().toISOString(), line: s.slice(0, 500) });
   if (_jobLog.length > 200) _jobLog.shift();
+  if (_logListener) {
+    try {
+      _logListener(s, _jobLog.length);
+    } catch { /* ignore */ }
+  } else {
+    broadcastBackupSync('supabase:backup-sync-progress', {
+      line: s,
+      at: new Date().toISOString(),
+      log_count: _jobLog.length,
+    });
+  }
 }
 
 async function loadSettings() {
@@ -263,8 +325,22 @@ async function runBackupSync({
 
   _jobRunning = true;
   _jobLog = [];
+  _jobFinishedAt = null;
+  _jobLastError = null;
+  _jobLastOk = true;
   const startedAt = new Date().toISOString();
+  _jobStartedAt = startedAt;
+  const parts = [];
+  if (includeDb) parts.push('DB');
+  if (includeStorage) parts.push('Storage/bucket');
+  _jobSyncParts = parts.length ? parts : ['DB', 'Storage'];
   appendLog('Bắt đầu đồng bộ backup…');
+  broadcastBackupSync('supabase:backup-sync-start', {
+    message: 'Đang đồng bộ Primary → Backup…',
+    userId: userId || null,
+    slot: runSlot,
+    at: startedAt,
+  });
   if (runSlot) appendLog(`Lịch VN ${runSlot}`);
 
   const settings = await loadSettings();
@@ -278,14 +354,33 @@ async function runBackupSync({
     }
 
     if (includeDb) {
-      appendLog('Clone DB primary → backup…');
-      await runScript('clone-primary-to-backup.js');
-      appendLog('Fix grants backup…');
-      await runScript('fix-backup-schema-grants.js');
+      appendLog('Đồng bộ DB incremental (log thay đổi + bảng lệch, không clone full)…');
+      const { runIncrementalDbSyncPrimaryToBackup } = require('./supabaseIncrementalDbSync');
+      const inc = await runIncrementalDbSyncPrimaryToBackup({ onLog: appendLog });
+      if (inc.ok) {
+        appendLog(`DB OK (${inc.mode})`);
+      } else if (inc.full_clone_required && process.env.SUPABASE_BACKUP_ALLOW_FULL_CLONE === '1') {
+        appendLog('Incremental chưa đủ — clone full DB (SUPABASE_BACKUP_ALLOW_FULL_CLONE=1)…');
+        await runScript('clone-primary-to-backup.js');
+        appendLog('Fix grants backup…');
+        await runScript('fix-backup-schema-grants.js');
+      } else if (!inc.ok) {
+        const names = (inc.drifted || []).map((r) => r.table).filter(Boolean).join(', ');
+        throw new Error(
+          names
+            ? `DB vẫn lệch sau incremental (${names}). Sửa mật khẩu DB hoặc bật SUPABASE_BACKUP_ALLOW_FULL_CLONE=1 để clone full.`
+            : (inc.error || 'Đồng bộ DB incremental thất bại'),
+        );
+      }
     }
     if (includeStorage) {
-      appendLog('Đồng bộ Storage…');
-      await runScript('sync-storage-to-backup.js');
+      appendLog('Đồng bộ Storage (chỉ file mới / khác kích thước)…');
+      const { runStorageSync } = require('./supabaseStorageSync');
+      await runStorageSync({
+        from: 'primary',
+        to: 'backup',
+        onLog: appendLog,
+      });
     }
 
     let verifyResult = null;
@@ -304,27 +399,43 @@ async function runBackupSync({
       settings.next_run_at = computeNextRunAt(settings);
     }
 
-    await supabase.from('app_settings').upsert(
+    const { error: saveErr } = await supabase.from('app_settings').upsert(
       { key: SETTINGS_KEY, value: settings, updated_at: new Date().toISOString() },
       { onConflict: 'key' },
     );
+    if (saveErr) throw saveErr;
     invalidateAppSettingKey(SETTINGS_KEY);
     appendLog('Hoàn tất.');
+    broadcastBackupSync('supabase:backup-sync-done', {
+      ok: true,
+      at: new Date().toISOString(),
+    });
     return { ok: true, started_at: startedAt, finished_at: new Date().toISOString(), verify: verifyResult };
   } catch (e) {
     settings.last_run_at = startedAt;
     settings.last_run_status = 'failed';
     settings.last_run_error = String(e.message || e).slice(0, 500);
     settings.last_run_by = userId || null;
-    await supabase.from('app_settings').upsert(
-      { key: SETTINGS_KEY, value: settings, updated_at: new Date().toISOString() },
-      { onConflict: 'key' },
-    ).catch(() => {});
+    try {
+      const { error: failSaveErr } = await supabase.from('app_settings').upsert(
+        { key: SETTINGS_KEY, value: settings, updated_at: new Date().toISOString() },
+        { onConflict: 'key' },
+      );
+      if (failSaveErr) console.warn('[supabase-backup-sync] save failed status:', failSaveErr.message);
+    } catch { /* ignore */ }
     invalidateAppSettingKey(SETTINGS_KEY);
     appendLog(`Lỗi: ${e.message}`);
+    _jobLastOk = false;
+    _jobLastError = String(e.message || e).slice(0, 500);
+    broadcastBackupSync('supabase:backup-sync-done', {
+      ok: false,
+      error: _jobLastError,
+      at: new Date().toISOString(),
+    });
     throw e;
   } finally {
     _jobRunning = false;
+    _jobFinishedAt = new Date().toISOString();
   }
 }
 
@@ -464,6 +575,10 @@ module.exports = {
   getFullStatus,
   startBackupSyncCron,
   isJobRunning: () => _jobRunning,
+  getJobLog,
+  getBackupJobPublicSnapshot,
+  setBackupSyncLogListener,
+  setBackupSyncIo,
   getEffectiveSyncSlots,
   computeNextRunAt,
   slotLabel,

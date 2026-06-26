@@ -3,7 +3,7 @@
  * Trả null khi pool không khả dụng → caller fallback Supabase.
  */
 
-const { pgQuery, isPgEnabled } = require('../config/db');
+const { pgQuerySafe, isPgEnabled } = require('../config/db');
 const { ONLINE_THRESHOLD_MS } = require('./userPresence');
 const {
   EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST,
@@ -99,7 +99,7 @@ function countNotificationStats(rows) {
 async function pgDashboardNotificationStats(userId) {
   if (!isPgEnabled() || !userId) return null;
 
-  const result = await pgQuery(
+  const result = await pgQuerySafe(
     `SELECT type, entity_type, metadata, COUNT(*)::int AS cnt
      FROM notifications
      WHERE user_id = $1
@@ -180,7 +180,7 @@ async function pgDashboardNotificationsList(userId, {
     ORDER BY created_at DESC
     LIMIT $${paramIdx}`;
 
-  const result = await pgQuery(sql, params);
+  const result = await pgQuerySafe(sql, params);
   if (!result) return null;
 
   let rows = (result.rows || []).filter((n) => !isProjectModuleNotification(n));
@@ -223,7 +223,7 @@ async function pgUsersActivityStats({ companyId, departmentId } = {}) {
     LEFT JOIN user_last_activity ula ON ula.user_id = u.id
     WHERE ${conditions.join(' AND ')}`;
 
-  const result = await pgQuery(sql, params);
+  const result = await pgQuerySafe(sql, params);
   if (!result || !result.rows.length) return null;
   return result.rows[0];
 }
@@ -236,7 +236,7 @@ async function pgKpiDefinitions() {
 
   let result;
   try {
-    result = await pgQuery(
+    result = await pgQuerySafe(
       `SELECT id, code, name, group_code, formula_type, unit, weight, target_default,
               target_max, min_threshold, is_gating, applies_to, calc_params, description
        FROM kpi_definitions
@@ -245,7 +245,7 @@ async function pgKpiDefinitions() {
     );
   } catch (err) {
     if (String(err.message || '').includes('calc_params') || err.code === '42703') {
-      result = await pgQuery(
+      result = await pgQuerySafe(
         `SELECT id, code, name, group_code, formula_type, unit, weight, target_default,
                 target_max, min_threshold, is_gating, applies_to, description
          FROM kpi_definitions
@@ -280,7 +280,7 @@ async function pgDashboardMainStats(userId, projectIds) {
     };
   }
 
-  const result = await pgQuery(
+  const result = await pgQuerySafe(
     `SELECT
        COUNT(DISTINCT p.id)::int AS total_projects,
        COUNT(t.id)::int AS total_tasks,
@@ -321,7 +321,7 @@ async function pgDashboardOverview({
   if (!isPgEnabled()) return null;
 
   const [projectsRes, tasksRes, customersRes, crmRes, custProjRes] = await Promise.all([
-    pgQuery(
+    pgQuerySafe(
       `SELECT
          COUNT(*)::int AS total_projects,
          COUNT(*) FILTER (WHERE status IN (
@@ -338,7 +338,7 @@ async function pgDashboardOverview({
        FROM projects`,
       [sevenDaysAgo, nowIso, firstDayThisMonth, firstDayLastMonth],
     ),
-    pgQuery(
+    pgQuerySafe(
       `SELECT
          COUNT(*)::int AS total_tasks,
          COUNT(*) FILTER (WHERE status = 'done')::int AS completed_tasks,
@@ -348,14 +348,14 @@ async function pgDashboardOverview({
          COUNT(*) FILTER (WHERE status = 'blocked')::int AS blocked_tasks
        FROM tasks`,
     ),
-    pgQuery(
+    pgQuerySafe(
       `SELECT
          COUNT(*)::int AS total_customers,
          COUNT(*) FILTER (WHERE created_at >= $1::timestamptz)::int AS new_customers_7d
        FROM customers`,
       [sevenDaysAgo],
     ),
-    pgQuery(
+    pgQuerySafe(
       `SELECT
          COUNT(*) FILTER (WHERE type = 'lead')::int AS total_leads,
          COUNT(*) FILTER (WHERE type = 'deal')::int AS total_deals,
@@ -366,7 +366,7 @@ async function pgDashboardOverview({
        FROM crm_leads`,
       [thirtyDaysAgo],
     ),
-    pgQuery(
+    pgQuerySafe(
       `SELECT
          (SELECT COUNT(*)::int FROM (
             SELECT customer_id FROM projects
@@ -453,7 +453,7 @@ async function pgDashboardOverview({
 async function pgDashboardWorkload() {
   if (!isPgEnabled()) return null;
 
-  const result = await pgQuery(
+  const result = await pgQuerySafe(
     `SELECT current_stage_id::text AS stage_id, COUNT(*)::int AS cnt
      FROM projects
      WHERE status IS DISTINCT FROM 'completed'
@@ -476,7 +476,7 @@ async function pgDashboardCustomers() {
   if (!isPgEnabled()) return null;
 
   const [topRes, geoRes] = await Promise.all([
-    pgQuery(
+    pgQuerySafe(
       `SELECT
          c.id::text AS id,
          c.full_name AS name,
@@ -491,7 +491,7 @@ async function pgDashboardCustomers() {
        ORDER BY total_value DESC
        LIMIT 10`,
     ),
-    pgQuery(
+    pgQuerySafe(
       `SELECT COALESCE(NULLIF(TRIM(city), ''), 'Other') AS city, COUNT(*)::int AS cnt
        FROM customers
        GROUP BY COALESCE(NULLIF(TRIM(city), ''), 'Other')`,
@@ -552,7 +552,7 @@ async function pgCrmDuplicateLeadIds({ uid, seeAllLeads, seeAllDeals, maxGroups 
   const scopeSql = scopeParts.length ? `AND (${scopeParts.join(' OR ')})` : '';
   params.push(Math.min(Math.max(Number(maxGroups) || 200, 1), 500));
 
-  const result = await pgQuery(
+  const result = await pgQuerySafe(
     `SELECT array_agg(id ORDER BY COALESCE(updated_at, created_at) DESC) AS lead_ids
      FROM crm_leads
      WHERE customer_id IS NOT NULL

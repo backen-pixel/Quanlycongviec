@@ -33,14 +33,27 @@ function skipTablesSet() {
   return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
 }
 
-function isFailbackConfigured() {
+function hasFailbackEndpoints() {
   return !!(
-    config.supabaseFailoverEnabled
-    && config.supabaseBackupUrl
+    config.supabaseBackupUrl
     && config.supabaseBackupServiceKey
     && config.supabaseUrl
     && config.supabaseServiceKey
   );
+}
+
+function isFailbackConfigured() {
+  return hasFailbackEndpoints() && config.supabaseFailoverEnabled;
+}
+
+function isSwitchLogEnabled() {
+  return config.supabaseSwitchLogEnabled
+    || config.supabaseFailoverEnabled
+    || config.supabaseReplicationEnabled;
+}
+
+function isFailbackLogConfigured() {
+  return hasFailbackEndpoints() && isSwitchLogEnabled();
 }
 
 function isActiveBackup() {
@@ -53,7 +66,7 @@ function isActiveBackup() {
 }
 
 function canLogFailback() {
-  return isFailbackConfigured() && isActiveBackup();
+  return hasFailbackEndpoints() && isSwitchLogEnabled() && isActiveBackup();
 }
 
 function extractHeaders(init) {
@@ -182,6 +195,43 @@ function maybeLogFailbackStorage({ bucket, storagePath, mimetype, upsert = true 
   });
 }
 
+async function fetchFailbackLogEntries({ limit = 50, pendingOnly = false } = {}) {
+  if (!hasFailbackEndpoints()) return [];
+  const cap = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+  const backupBase = trimBase(config.supabaseBackupUrl);
+  const key = config.supabaseBackupServiceKey;
+  const cols = 'id,job_type,method,path,bucket,storage_path,created_at,applied_to_primary,applied_at,error,retry_count';
+  let q = `${backupBase}/rest/v1/${TABLE}?select=${cols}&order=created_at.desc&limit=${cap}`;
+  if (pendingOnly) q += '&applied_to_primary=eq.false';
+  const res = await undiciFetch(q, {
+    headers: { apikey: key, authorization: `Bearer ${key}` },
+    dispatcher: supabaseDispatcher,
+  });
+  if (!res.ok) {
+    if (res.status === 404 || res.status === 400) {
+      return [];
+    }
+    const text = await res.text().catch(() => '');
+    throw new Error(`fetch failback log → ${res.status} ${text.slice(0, 200)}`);
+  }
+  const rows = await res.json();
+  return (Array.isArray(rows) ? rows : []).map((row) => ({
+    ...row,
+    summary: summarizeFailbackRow(row),
+  }));
+}
+
+function summarizeFailbackRow(row) {
+  if (!row) return '—';
+  if (row.job_type === 'storage') {
+    return `Storage ${row.bucket}/${row.storage_path || '?'}`;
+  }
+  const method = row.method || 'REST';
+  const path = row.path || '';
+  const table = path.match(/^\/rest\/v1\/([^/?]+)/)?.[1];
+  return table ? `${method} ${table}` : `${method} ${path.slice(0, 80)}`;
+}
+
 async function fetchPendingLogs(limit = 100) {
   const backupBase = trimBase(config.supabaseBackupUrl);
   const key = config.supabaseBackupServiceKey;
@@ -300,8 +350,8 @@ async function getPendingCount() {
  * @returns {{ applied, failed, remaining, errors: string[] }}
  */
 async function runFailbackReplay({ dryRun = false, limit = 500 } = {}) {
-  if (!isFailbackConfigured()) {
-    throw new Error('Failback chưa cấu hình — cần SUPABASE_FAILOVER_ENABLED=1 + env primary/backup');
+  if (!hasFailbackEndpoints()) {
+    throw new Error('Failback chưa cấu hình — cần env SUPABASE_URL + SUPABASE_BACKUP_URL');
   }
 
   const { probeTarget } = require('../config/supabaseRouter');
@@ -354,4 +404,7 @@ module.exports = {
   runFailbackReplay,
   getFailbackStatus,
   getPendingCount,
+  hasFailbackEndpoints,
+  fetchFailbackLogEntries,
+  summarizeFailbackRow,
 };
