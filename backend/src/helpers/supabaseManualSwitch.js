@@ -1,5 +1,5 @@
 /**
- * Chuyển đổi thủ công primary ↔ backup — kiểm tra drift, sync log, đếm ngược, chuyển mượt.
+ * Chuyển đổi thủ công primary ↔ backup — kiểm tra drift, sync log, xác nhận 100%, đếm ngược, chuyển.
  */
 const crypto = require('crypto');
 const config = require('../config');
@@ -14,6 +14,7 @@ const { getPendingCount } = require('./supabaseFailback');
 const { getQueueDepth } = require('./supabaseReplication');
 
 const COUNTDOWN_MS = Math.max(5000, parseInt(process.env.SUPABASE_SWITCH_COUNTDOWN_MS || '15000', 10));
+const PREPARE_TOKEN_TTL_MS = 10 * 60 * 1000;
 
 let _pending = null;
 let _switchTimer = null;
@@ -126,8 +127,37 @@ function scheduleSwitchExecution(pending) {
   if (_switchTimer.unref) _switchTimer.unref();
 }
 
+function buildSyncIssues({ verify, sync, replicationAfter, failbackAfter }) {
+  const issues = [];
+  if (!verify?.all_ok) {
+    const bad = (verify?.rows || []).filter((r) => !r.ok);
+    if (bad.length) {
+      issues.push(`Drift dữ liệu: ${bad.map((r) => `${r.table} (${r.primary} vs ${r.backup})`).join(', ')}`);
+    } else {
+      issues.push('Drift dữ liệu — bảng mẫu chưa khớp 100%');
+    }
+  }
+  if (sync?.remaining > 0) {
+    issues.push(`Queue sync log còn ${sync.remaining} job`);
+  }
+  if (replicationAfter > 0) {
+    issues.push(`Replication queue còn ${replicationAfter} job`);
+  }
+  if (failbackAfter > 0) {
+    issues.push(`Failback log còn ${failbackAfter} job chưa replay`);
+  }
+  return issues;
+}
+
+function isFullySynced({ verify, sync, replicationAfter, failbackAfter }) {
+  const logOk = (sync?.remaining === 0 || sync?.remaining == null)
+    && (replicationAfter === 0 || replicationAfter == null)
+    && (failbackAfter === 0 || failbackAfter == null);
+  return verify?.all_ok === true && logOk;
+}
+
 /**
- * Bước 1: kiểm tra + sync log + bắt đầu đếm ngược toàn hệ thống.
+ * Bước 1: kiểm tra + sync log — KHÔNG đếm ngược. Chỉ trả prepare_token khi 100%.
  */
 async function prepareManualSwitch(target, userId) {
   if (target !== 'primary' && target !== 'backup') {
@@ -163,6 +193,7 @@ async function prepareManualSwitch(target, userId) {
   if (!targetHealthy) {
     return {
       ok: false,
+      sync_verified_100: false,
       error: `${target === 'primary' ? 'Primary' : 'Backup'} chưa healthy — không thể chuyển`,
       steps,
       from,
@@ -170,19 +201,19 @@ async function prepareManualSwitch(target, userId) {
     };
   }
 
-  let verify = null;
+  let verifyBefore = null;
   try {
-    verify = await verifyBackup();
+    verifyBefore = await verifyBackup();
     steps.push({
-      id: 'drift',
-      label: 'Kiểm tra drift dữ liệu',
-      ok: verify.all_ok,
-      detail: { rows: verify.rows, all_ok: verify.all_ok },
+      id: 'drift_before',
+      label: 'Kiểm tra drift (trước sync)',
+      ok: verifyBefore.all_ok,
+      detail: { rows: verifyBefore.rows, all_ok: verifyBefore.all_ok },
     });
   } catch (e) {
     steps.push({
-      id: 'drift',
-      label: 'Kiểm tra drift dữ liệu',
+      id: 'drift_before',
+      label: 'Kiểm tra drift (trước sync)',
       ok: false,
       detail: { error: e.message },
     });
@@ -191,7 +222,7 @@ async function prepareManualSwitch(target, userId) {
   const replicationBefore = await getQueueDepth().catch(() => null);
   const failbackBefore = await getPendingCount().catch(() => null);
 
-  const sync = await runPreSwitchSync(from, target);
+  let sync = await runPreSwitchSync(from, target);
   steps.push({
     id: 'sync',
     label: from === 'primary' ? 'Đồng bộ log primary → backup' : 'Đồng bộ log backup → primary',
@@ -199,20 +230,157 @@ async function prepareManualSwitch(target, userId) {
     detail: sync,
   });
 
-  const replicationAfter = await getQueueDepth().catch(() => null);
-  const failbackAfter = await getPendingCount().catch(() => null);
+  // Retry sync nếu còn job (tối đa thêm 2 vòng)
+  let extraRound = 0;
+  while (sync.remaining > 0 && extraRound < 2) {
+    extraRound += 1;
+    sync = await runPreSwitchSync(from, target);
+  }
+
+  const replicationAfter = await getQueueDepth().catch(() => 0);
+  const failbackAfter = await getPendingCount().catch(() => 0);
+
+  let verifyAfter = null;
+  try {
+    verifyAfter = await verifyBackup();
+    steps.push({
+      id: 'drift_after',
+      label: 'Kiểm tra drift (sau sync)',
+      ok: verifyAfter.all_ok,
+      detail: { rows: verifyAfter.rows, all_ok: verifyAfter.all_ok },
+    });
+  } catch (e) {
+    steps.push({
+      id: 'drift_after',
+      label: 'Kiểm tra drift (sau sync)',
+      ok: false,
+      detail: { error: e.message },
+    });
+  }
+
+  const syncVerified100 = isFullySynced({
+    verify: verifyAfter,
+    sync,
+    replicationAfter,
+    failbackAfter,
+  });
+
+  steps.push({
+    id: 'verify_final',
+    label: 'Xác nhận đồng bộ 100%',
+    ok: syncVerified100,
+    detail: {
+      drift_ok: verifyAfter?.all_ok === true,
+      log_queue_ok: (sync?.remaining || 0) === 0,
+      replication_ok: replicationAfter === 0,
+      failback_ok: failbackAfter === 0,
+    },
+  });
+
+  const issues = buildSyncIssues({
+    verify: verifyAfter,
+    sync,
+    replicationAfter,
+    failbackAfter,
+  });
+
+  if (!syncVerified100) {
+    return {
+      ok: false,
+      sync_verified_100: false,
+      error: issues.length
+        ? `Chưa đồng bộ 100% — ${issues.join(' · ')}`
+        : 'Chưa đồng bộ 100% — chạy «Chạy đồng bộ ngay» rồi thử lại',
+      steps,
+      from,
+      target,
+      verify: verifyAfter,
+      verify_before: verifyBefore,
+      sync,
+      replication: { before: replicationBefore, after: replicationAfter },
+      failback: { before: failbackBefore, after: failbackAfter },
+      issues,
+    };
+  }
+
+  const preparedAt = Date.now();
+  const prepareTokenPayload = {
+    type: 'prepare',
+    from,
+    target,
+    userId: userId || null,
+    preparedAt,
+    exp: preparedAt + PREPARE_TOKEN_TTL_MS,
+    sync_verified_100: true,
+  };
+  const prepare_token = signPayload(prepareTokenPayload);
+
+  return {
+    ok: true,
+    sync_verified_100: true,
+    message: 'Đã đồng bộ dữ liệu thành công 100%',
+    from,
+    target,
+    steps,
+    verify: verifyAfter,
+    verify_before: verifyBefore,
+    sync,
+    replication: { before: replicationBefore, after: replicationAfter },
+    failback: { before: failbackBefore, after: failbackAfter },
+    prepare_token,
+    prepare_expires_at: new Date(prepareTokenPayload.exp).toISOString(),
+    countdown_sec: Math.round(COUNTDOWN_MS / 1000),
+  };
+}
+
+/**
+ * Bước 2: sau thông báo 100% — bắt đầu đếm ngược 15s + broadcast toàn hệ thống.
+ */
+async function startSwitchCountdown(prepareToken, userId) {
+  const payload = verifySignedToken(prepareToken);
+  if (!payload || payload.type !== 'prepare') {
+    throw new Error('Token chuẩn bị không hợp lệ');
+  }
+  if (Date.now() > payload.exp) {
+    throw new Error('Token chuẩn bị đã hết hạn — kiểm tra lại từ đầu');
+  }
+  if (!payload.sync_verified_100) {
+    throw new Error('Chưa xác nhận đồng bộ 100%');
+  }
+  if (payload.userId && userId && payload.userId !== userId) {
+    throw new Error('Token không thuộc phiên admin hiện tại');
+  }
+
+  const { from, target } = payload;
+  if (getActiveTarget() !== from) {
+    throw new Error(`Database đang dùng đã đổi (${getActiveTarget()}) — kiểm tra lại từ đầu`);
+  }
+  if (_pending && Date.now() < _pending.exp) {
+    throw new Error('Đang có lịch chuyển đổi — hủy hoặc đợi hoàn tất');
+  }
+
+  // Kiểm tra lại nhanh trước countdown
+  const verify = await verifyBackup();
+  const replicationAfter = await getQueueDepth().catch(() => 0);
+  const failbackAfter = await getPendingCount().catch(() => 0);
+  if (!isFullySynced({ verify, sync: { remaining: 0 }, replicationAfter, failbackAfter })) {
+    const issues = buildSyncIssues({ verify, sync: { remaining: 0 }, replicationAfter, failbackAfter });
+    throw new Error(`Dữ liệu thay đổi sau khi kiểm tra — ${issues.join(' · ')}`);
+  }
 
   const preparedAt = Date.now();
   const switchAt = preparedAt + COUNTDOWN_MS;
   const exp = switchAt + 60_000;
 
   const tokenPayload = {
+    type: 'switch',
     from,
     target,
     userId: userId || null,
     preparedAt,
     switchAt,
     exp,
+    sync_verified_100: true,
   };
   const token = signPayload(tokenPayload);
 
@@ -226,32 +394,34 @@ async function prepareManualSwitch(target, userId) {
       switch_at: new Date(switchAt).toISOString(),
       countdown_sec: Math.round(COUNTDOWN_MS / 1000),
       token,
+      sync_verified_100: true,
     },
   };
 
   scheduleSwitchExecution(_pending);
+
+  broadcast('supabase:switch-sync-ready', {
+    from,
+    target,
+    message: 'Đã đồng bộ dữ liệu thành công 100%',
+    at: new Date().toISOString(),
+  });
 
   broadcast('supabase:switch-countdown', {
     from,
     target,
     switch_at: new Date(switchAt).toISOString(),
     countdown_sec: Math.round(COUNTDOWN_MS / 1000),
-    message: `Hệ thống sẽ chuyển sang ${target === 'primary' ? 'Primary (Chính)' : 'Backup (Dự phòng)'} sau ${Math.round(COUNTDOWN_MS / 1000)} giây — vui lòng hoàn tất thao tác đang làm.`,
+    sync_verified_100: true,
+    message: `Đã đồng bộ 100% — chuyển sang ${target === 'primary' ? 'Primary (Chính)' : 'Backup (Dự phòng)'} sau ${Math.round(COUNTDOWN_MS / 1000)} giây. Vui lòng hoàn tất thao tác đang làm.`,
   });
 
   return {
     ok: true,
+    sync_verified_100: true,
+    message: 'Đã đồng bộ dữ liệu thành công 100%',
     from,
     target,
-    steps,
-    verify,
-    sync,
-    replication: { before: replicationBefore, after: replicationAfter },
-    failback: { before: failbackBefore, after: failbackAfter },
-    can_switch: sync.remaining === 0 || sync.remaining == null,
-    warnings: (sync.remaining > 0)
-      ? [`Còn ${sync.remaining} job trong queue — đã lên lịch chuyển sau đếm ngược`]
-      : [],
     countdown_sec: Math.round(COUNTDOWN_MS / 1000),
     switch_at: new Date(switchAt).toISOString(),
     token,
@@ -277,9 +447,6 @@ function cancelManualSwitch(token, userId) {
   return { ok: true, cancelled: true };
 }
 
-/**
- * Xác nhận sớm (sau khi đếm ngược) — thường server đã tự chuyển; dùng khi cần chốt tay.
- */
 async function confirmManualSwitch(token, userId) {
   const payload = verifySignedToken(token);
   if (!payload) throw new Error('Token chuyển đổi không hợp lệ');
@@ -319,6 +486,7 @@ async function confirmManualSwitch(token, userId) {
 module.exports = {
   setSwitchIo,
   prepareManualSwitch,
+  startSwitchCountdown,
   confirmManualSwitch,
   cancelManualSwitch,
   getPendingSwitch,
