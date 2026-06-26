@@ -46,11 +46,20 @@ function attachActivityContext(config) {
   return config;
 }
 
+function shouldAttachActivityContext(url, method) {
+  if (url.includes('/user-activity')) return true;
+  if (!url.includes('/production/backup-sync')) return false;
+  const m = String(method || 'get').toLowerCase();
+  // Chỉ gắn thiết bị/vị trí khi ghi log thao tác (POST/PUT), không poll GET monitor
+  return m !== 'get' && m !== 'delete';
+}
+
 api.interceptors.request.use((c) => {
   const t = localStorage.getItem('token');
   if (t) c.headers.Authorization = `Bearer ${t}`;
   const url = String(c.url || '');
-  if (url.includes('/production/backup-sync') || url.includes('/user-activity')) {
+  const method = String(c.method || 'get');
+  if (shouldAttachActivityContext(url, method)) {
     attachActivityContext(c);
   }
   if (url.includes('/production/backup-sync') && !url.endsWith('/unlock')) {
