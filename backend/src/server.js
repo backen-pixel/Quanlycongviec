@@ -71,7 +71,7 @@ const CORS_PREFLIGHT_MAX_AGE = 600;
 const corsMainApp = cors({
   origin: config.corsOrigins,
   credentials: true,
-  allowedHeaders: ['Authorization', 'Content-Type', 'Accept', 'X-Requested-With', 'X-Api-Key', 'X-Supabase-Monitor-Token'],
+  allowedHeaders: ['Authorization', 'Content-Type', 'Accept', 'X-Requested-With', 'X-Api-Key', 'X-Supabase-Monitor-Token', 'X-Device-Id'],
   exposedHeaders: ['Content-Disposition'],
   maxAge: CORS_PREFLIGHT_MAX_AGE,
 });

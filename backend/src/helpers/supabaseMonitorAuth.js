@@ -16,11 +16,10 @@ function verifyPassword(input) {
   const expected = monitorPassword();
   const a = String(input || '');
   if (!a || !expected) return false;
-  try {
-    return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(expected));
-  } catch {
-    return a === expected;
-  }
+  const ba = Buffer.from(a, 'utf8');
+  const be = Buffer.from(expected, 'utf8');
+  if (ba.length !== be.length) return false;
+  return crypto.timingSafeEqual(ba, be);
 }
 
 function issueMonitorToken() {

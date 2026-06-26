@@ -21,7 +21,6 @@ const {
   logSupabaseMonitorAction,
   getSupabaseMonitorActivityLog,
 } = require('../helpers/supabaseMonitorAudit');
-
 const router = Router();
 
 function monitorGate(req, res, next) {
@@ -36,13 +35,12 @@ function monitorGate(req, res, next) {
 router.post('/unlock', auth, async (req, res) => {
   const password = String(req.body?.password || '');
   if (!verifyPassword(password)) {
-    return res.status(401).json({ error: 'Mật khẩu không đúng' });
+    return res.status(401).json({ error: 'Mật khẩu không đúng', code: 'MONITOR_PASSWORD_INVALID' });
   }
   const token = issueMonitorToken();
   void logSupabaseMonitorAction(req, {
     action: 'monitor_unlock',
     importance: 2,
-    metadata: { user_agent: req.headers['user-agent'] },
   });
   res.json({
     ok: true,

@@ -14,6 +14,7 @@ const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { isAdminLike } = require('../helpers/adminRole');
+const { activityContextFromEntry, missingDeviceGeoColumns } = require('../helpers/activityContext');
 
 const r = Router();
 r.use(auth);
@@ -41,6 +42,7 @@ function sanitizeEntry(raw, userId) {
   const action_type = String(raw.action_type || '').trim().toLowerCase();
   if (!ALLOWED_ACTIONS.has(action_type)) return null;
 
+  const ctx = activityContextFromEntry(raw);
   const out = {
     user_id: userId,
     session_id: raw.session_id ? String(raw.session_id).slice(0, 80) : null,
@@ -58,7 +60,18 @@ function sanitizeEntry(raw, userId) {
       Number.isInteger(raw.importance) && raw.importance >= 0 && raw.importance <= 3
         ? raw.importance
         : 1,
+    ...ctx,
   };
+  if (out.metadata && typeof out.metadata === 'object') {
+    out.metadata = {
+      ...out.metadata,
+      device_id: ctx.device_id,
+      device_name: ctx.device_name,
+      geo_lat: ctx.geo_lat,
+      geo_lng: ctx.geo_lng,
+      geo_address: ctx.geo_address,
+    };
+  }
   return out;
 }
 
@@ -77,7 +90,11 @@ r.post('/', async (req, res) => {
 
     if (!rows.length) return res.json({ ok: true, inserted: 0 });
 
-    const { error } = await supabase.from('user_activity_log').insert(rows);
+    let { error } = await supabase.from('user_activity_log').insert(rows);
+    if (error && missingDeviceGeoColumns(error)) {
+      const fallbackRows = rows.map(({ device_id, device_name, geo_lat, geo_lng, geo_address, ...rest }) => rest);
+      ({ error } = await supabase.from('user_activity_log').insert(fallbackRows));
+    }
     if (error) {
       if (/relation .* does not exist/i.test(error.message || '')) {
         return res.status(503).json({

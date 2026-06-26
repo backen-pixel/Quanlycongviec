@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { logClick } from '../lib/activityLogger';
+import { sendDevicePing } from '../lib/deviceHeartbeat';
 import SupabaseMonitorGate from '../components/SupabaseMonitorGate';
 import SupabaseSwitchPanel from '../components/SupabaseSwitchPanel';
 import {
@@ -25,6 +26,33 @@ function fmtDt(iso) {
   } catch {
     return iso;
   }
+}
+
+function fmtAuditDevice(row) {
+  const name = row.device?.name || row.metadata?.device_name;
+  const id = row.device?.id || row.metadata?.device_id;
+  if (name && id && name !== id) return name;
+  return name || id || '—';
+}
+
+function fmtAuditLocation(row) {
+  const loc = row.location;
+  const lat = loc?.lat ?? row.metadata?.geo_lat;
+  const lng = loc?.lng ?? row.metadata?.geo_lng;
+  const address = loc?.address || row.metadata?.geo_address;
+  if (address) return address;
+  if (lat != null && lng != null) {
+    return `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`;
+  }
+  return '—';
+}
+
+function auditLocationMapUrl(row) {
+  const loc = row.location;
+  const lat = loc?.lat ?? row.metadata?.geo_lat;
+  const lng = loc?.lng ?? row.metadata?.geo_lng;
+  if (lat == null || lng == null) return null;
+  return `https://www.google.com/maps?q=${Number(lat)},${Number(lng)}`;
 }
 
 function StatusBadge({ ok, label }) {
@@ -67,7 +95,23 @@ function fmtBytes(n) {
   return `${mb.toFixed(1)} MB`;
 }
 
-function CheckRow({ name, check }) {
+function formatCheckError(check, label) {
+  if (!check?.error) return 'Lỗi';
+  if (check.error === 'not_configured') {
+    return label === 'backup'
+      ? 'Chưa cấu hình SUPABASE_BACKUP_DB_URL'
+      : 'Chưa cấu hình SUPABASE_DB_URL';
+  }
+  if (check.error === 'auth_backoff') {
+    return 'Tạm dừng PG (sai mật khẩu) — kiểm tra DB URL trên Render';
+  }
+  if (check.skipped && check.mode === 'rest_only') {
+    return 'Bỏ qua (PG_POOL_DISABLED)';
+  }
+  return check.error;
+}
+
+function CheckRow({ name, check, instanceLabel }) {
   if (!check) return null;
   const ok = check.ok === true;
   return (
@@ -78,10 +122,8 @@ function CheckRow({ name, check }) {
         {ok ? (
           <span className="text-emerald-600 font-medium">OK</span>
         ) : (
-          <span className="text-red-600 text-xs max-w-[180px] truncate" title={check.error}>
-            {check.error === 'not_configured'
-              ? 'Chưa cấu hình SUPABASE_DB_URL'
-              : (check.error || 'Lỗi')}
+          <span className="text-red-600 text-xs max-w-[220px] truncate" title={check.error}>
+            {formatCheckError(check, instanceLabel)}
           </span>
         )}
       </span>
@@ -129,10 +171,10 @@ function InstanceMonitorCard({ instance, isActive }) {
         <OverallBadge status={instance.overall} />
       </div>
       <p className="text-xs text-slate-400 truncate mb-3" title={instance.url}>{instance.url}</p>
-      <CheckRow name="Auth API" check={c.auth} />
-      <CheckRow name="REST API" check={c.rest} />
-      <CheckRow name="PostgreSQL" check={c.db} />
-      <CheckRow name="Storage" check={c.storage} />
+      <CheckRow name="Auth API" check={c.auth} instanceLabel={instance.label} />
+      <CheckRow name="REST API" check={c.rest} instanceLabel={instance.label} />
+      <CheckRow name="PostgreSQL" check={c.db} instanceLabel={instance.label} />
+      <CheckRow name="Storage" check={c.storage} instanceLabel={instance.label} />
       {(c.db?.table_count != null || c.storage?.buckets?.length > 0) && (
         <div className="mt-3 pt-3 border-t border-slate-100 space-y-3 text-xs text-slate-500">
           {c.db?.table_count != null && (
@@ -437,6 +479,7 @@ function ProductionBackupSyncContent() {
   useEffect(() => {
     if (enteredRef.current) return;
     enteredRef.current = true;
+    void sendDevicePing({ forceGeo: true });
     logClick({
       module: 'supabase_monitor',
       feature: 'backup_sync',
@@ -745,7 +788,7 @@ function ProductionBackupSyncContent() {
                   </p>
                 )}
                 <div className="mt-3 flex flex-wrap gap-3 text-xs text-slate-500">
-                  <span className="flex items-center gap-1"><Globe className="w-3 h-3" /> Replication: {monitor?.env?.replication_enabled ? (monitor.env.replication_light ? 'Nhẹ' : 'Bật') : 'Tắt'}</span>
+                  <span className="flex items-center gap-1"><Globe className="w-3 h-3" /> Replication: {monitor?.env?.replication_enabled ? (monitor.env.replication_light ? 'Nhẹ' : 'Bật') : 'Tắt'}{monitor?.env?.switch_log_enabled ? ' · Log bật' : ''}</span>
                   <span className="flex items-center gap-1"><HardDrive className="w-3 h-3" /> PG pool: {monitor?.env?.pg_pool}</span>
                   {monitor?.replication?.last_error && (
                     <span className="text-red-600">Rep lỗi: {monitor.replication.last_error}</span>
@@ -1205,7 +1248,8 @@ function ProductionBackupSyncContent() {
                       Nhật ký truy cập &amp; thao tác
                     </h2>
                     <p className="text-sm text-slate-500 mt-1">
-                      Ai đã mở khóa trang, chạy đồng bộ, chuyển DB, đổi lịch… (30 ngày gần nhất)
+                      Ai đã mở khóa trang, chạy đồng bộ, chuyển DB, đổi lịch… (30 ngày gần nhất).
+                      Mỗi bản ghi gồm thiết bị và vị trí bắt buộc.
                     </p>
                   </div>
                   <button
@@ -1238,13 +1282,15 @@ function ProductionBackupSyncContent() {
                           <th className="py-2 pr-3 font-medium">Thời gian</th>
                           <th className="py-2 pr-3 font-medium">Nhân viên</th>
                           <th className="py-2 pr-3 font-medium">Thao tác</th>
+                          <th className="py-2 pr-3 font-medium">Thiết bị</th>
+                          <th className="py-2 pr-3 font-medium">Vị trí</th>
                           <th className="py-2 font-medium">IP</th>
                         </tr>
                       </thead>
                       <tbody>
                         {(auditLog?.items || []).length === 0 ? (
                           <tr>
-                            <td colSpan={4} className="py-8 text-center text-slate-400">
+                            <td colSpan={6} className="py-8 text-center text-slate-400">
                               Chưa có bản ghi — thao tác trên trang này sẽ được ghi nhận tự động.
                             </td>
                           </tr>
@@ -1259,6 +1305,26 @@ function ProductionBackupSyncContent() {
                                 )}
                               </td>
                               <td className="py-2.5 pr-3 text-slate-700">{row.label || row.metadata?.monitor_action || '—'}</td>
+                              <td className="py-2.5 pr-3 text-xs text-slate-600 max-w-[140px]">
+                                <div className="font-medium truncate" title={fmtAuditDevice(row)}>
+                                  {fmtAuditDevice(row)}
+                                </div>
+                              </td>
+                              <td className="py-2.5 pr-3 text-xs text-slate-600 max-w-[180px]">
+                                {auditLocationMapUrl(row) ? (
+                                  <a
+                                    href={auditLocationMapUrl(row)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-teal-700 hover:underline line-clamp-2"
+                                    title={fmtAuditLocation(row)}
+                                  >
+                                    {fmtAuditLocation(row)}
+                                  </a>
+                                ) : (
+                                  <span className="text-amber-600">{fmtAuditLocation(row)}</span>
+                                )}
+                              </td>
                               <td className="py-2.5 text-xs text-slate-500 font-mono">{row.metadata?.ip || '—'}</td>
                             </tr>
                           ))
