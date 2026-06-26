@@ -72,6 +72,13 @@ router.put('/settings', auth, monitorGate, async (req, res) => {
     const body = req.body || {};
     const patch = {};
     if (body.schedule_enabled != null) patch.schedule_enabled = !!body.schedule_enabled;
+    if (body.schedule_mode != null) {
+      patch.schedule_mode = body.schedule_mode === 'interval' ? 'interval' : 'slots';
+    }
+    if (body.sync_slots_vn != null && Array.isArray(body.sync_slots_vn)) {
+      patch.sync_slots_vn = body.sync_slots_vn;
+    }
+    if (body.verify_before_sync != null) patch.verify_before_sync = !!body.verify_before_sync;
     if (body.interval_hours != null) {
       patch.interval_hours = Math.min(168, Math.max(1, parseInt(body.interval_hours, 10) || 24));
     }

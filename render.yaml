@@ -61,6 +61,12 @@ services:
         sync: false
       - key: SUPABASE_MONITOR_PASSWORD
         sync: false
+      - key: SUPABASE_BACKUP_SYNC_SCHEDULE_ENABLED
+        sync: false
+      - key: SUPABASE_BACKUP_SYNC_SLOTS_VN
+        sync: false
+      - key: SUPABASE_BACKUP_SYNC_CRON_MS
+        sync: false
       - key: SUPABASE_FAILBACK_SKIP_TABLES
         sync: false
       - key: SUPABASE_SWITCH_SYNC_ROUNDS

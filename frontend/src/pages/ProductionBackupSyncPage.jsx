@@ -68,7 +68,11 @@ function CheckRow({ name, check }) {
         {ok ? (
           <span className="text-emerald-600 font-medium">OK</span>
         ) : (
-          <span className="text-red-600 text-xs max-w-[180px] truncate" title={check.error}>{check.error || 'Lỗi'}</span>
+          <span className="text-red-600 text-xs max-w-[180px] truncate" title={check.error}>
+            {check.error === 'not_configured'
+              ? 'Chưa cấu hình SUPABASE_DB_URL'
+              : (check.error || 'Lỗi')}
+          </span>
         )}
       </span>
     </div>
@@ -136,6 +140,30 @@ function InstanceMonitorCard({ instance, isActive }) {
   );
 }
 
+function fmtSlotLabel(slot) {
+  if (!slot) return '—';
+  const label = `${String(slot.h).padStart(2, '0')}:${String(slot.m).padStart(2, '0')}`;
+  if (slot.h === 5 && slot.m === 0) return `${label} sáng`;
+  if (slot.h === 12 && slot.m === 30) return `${label} trưa`;
+  if (slot.h === 18 && slot.m === 0) return `${label} chiều`;
+  return label;
+}
+
+function slotToTimeValue(slot) {
+  return `${String(slot.h).padStart(2, '0')}:${String(slot.m).padStart(2, '0')}`;
+}
+
+function timeValueToSlot(value) {
+  const [hh, mm] = String(value || '0:0').split(':');
+  return { h: parseInt(hh, 10) || 0, m: parseInt(mm, 10) || 0 };
+}
+
+const DEFAULT_SYNC_SLOTS = [
+  { h: 5, m: 0 },
+  { h: 12, m: 30 },
+  { h: 18, m: 0 },
+];
+
 function ProductionBackupSyncContent() {
   const [tab, setTab] = useState('monitor');
   const [status, setStatus] = useState(null);
@@ -151,6 +179,9 @@ function ProductionBackupSyncContent() {
 
   const [form, setForm] = useState({
     schedule_enabled: false,
+    schedule_mode: 'slots',
+    sync_slots_vn: DEFAULT_SYNC_SLOTS,
+    verify_before_sync: true,
     interval_hours: 24,
     include_db: true,
     include_storage: true,
@@ -184,6 +215,11 @@ function ProductionBackupSyncContent() {
         setSettings(data.settings);
         setForm({
           schedule_enabled: !!data.settings.schedule_enabled,
+          schedule_mode: data.settings.schedule_mode || 'slots',
+          sync_slots_vn: data.settings.sync_slots_vn?.length
+            ? data.settings.sync_slots_vn
+            : (data.schedule?.sync_slots_vn || DEFAULT_SYNC_SLOTS),
+          verify_before_sync: data.settings.verify_before_sync !== false,
           interval_hours: data.settings.interval_hours ?? 24,
           include_db: data.settings.include_db !== false,
           include_storage: data.settings.include_storage !== false,
@@ -494,6 +530,10 @@ function ProductionBackupSyncContent() {
                   Cấu hình lịch tự động
                 </h2>
 
+                <p className="text-sm text-slate-600 bg-slate-50 rounded-lg px-3 py-2">
+                  Mỗi khung giờ VN: <strong>kiểm tra drift</strong> (đếm bảng) → <strong>đồng bộ lớn</strong> (DB + Storage) → kiểm tra lại sau sync.
+                </p>
+
                 <label className="flex items-center gap-3 cursor-pointer">
                   <input
                     type="checkbox"
@@ -501,23 +541,36 @@ function ProductionBackupSyncContent() {
                     onChange={(e) => setForm((f) => ({ ...f, schedule_enabled: e.target.checked }))}
                     className="rounded border-slate-300"
                   />
-                  <span className="text-sm">Bật đồng bộ tự động theo lịch</span>
+                  <span className="text-sm">Bật lịch tự động (3 lần/ngày)</span>
                 </label>
 
                 <div>
-                  <label className="block text-sm text-slate-600 mb-1">Chu kỳ (giờ)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={168}
-                    value={form.interval_hours}
-                    onChange={(e) => setForm((f) => ({ ...f, interval_hours: parseInt(e.target.value, 10) || 24 }))}
-                    className="w-32 border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                  />
-                  <p className="text-xs text-slate-400 mt-1">1–168 giờ (mặc định 24h = 1 lần/ngày)</p>
+                  <div className="text-sm font-medium text-slate-700 mb-2">Khung giờ đồng bộ (giờ VN)</div>
+                  <div className="space-y-2">
+                    {form.sync_slots_vn.map((slot, idx) => (
+                      <div key={idx} className="flex items-center gap-3">
+                        <input
+                          type="time"
+                          value={slotToTimeValue(slot)}
+                          onChange={(e) => {
+                            const next = [...form.sync_slots_vn];
+                            next[idx] = timeValueToSlot(e.target.value);
+                            setForm((f) => ({ ...f, sync_slots_vn: next }));
+                          }}
+                          className="border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                        />
+                        <span className="text-sm text-slate-500">{fmtSlotLabel(slot)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-slate-400 mt-2">Mặc định: 05:00 sáng · 12:30 trưa · 18:00 chiều</p>
                 </div>
 
                 <div className="flex flex-wrap gap-4">
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" checked={form.verify_before_sync} onChange={(e) => setForm((f) => ({ ...f, verify_before_sync: e.target.checked }))} />
+                    Kiểm tra drift trước sync
+                  </label>
                   <label className="flex items-center gap-2 text-sm cursor-pointer">
                     <input type="checkbox" checked={form.include_db} onChange={(e) => setForm((f) => ({ ...f, include_db: e.target.checked }))} />
                     Clone database
@@ -531,6 +584,12 @@ function ProductionBackupSyncContent() {
                     Kiểm tra sau sync
                   </label>
                 </div>
+
+                {settings?.last_run_slot && (
+                  <p className="text-xs text-slate-500">
+                    Lần chạy lịch gần nhất: slot {settings.last_run_slot} · {fmtDt(settings.last_run_at)}
+                  </p>
+                )}
 
                 {settings?.next_run_at && form.schedule_enabled && (
                   <p className="text-sm text-slate-500 flex items-center gap-1">
