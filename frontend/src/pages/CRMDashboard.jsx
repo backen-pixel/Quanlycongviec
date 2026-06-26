@@ -791,22 +791,30 @@ function dealDashboardKpiBucket(item, stagesDeal) {
   return classifyDealStageForDashboardKpi(st);
 }
 
-/** Deal trên pipeline đang mở — không tính cột Thắng / Thua / Hoàn thành DT. */
+/** Deal trên pipeline đang mở — không tính cột Thắng / Thua / Hủy / Hoàn thành DT. */
+function isLostOrCancelledPipelineStage(st) {
+  if (!st) return false;
+  if (st.is_lost || st.canonical_slug === 'lost' || st.deal_report_bucket === 'lost') return true;
+  const name = String(st.name || '').trim();
+  return /(hủy\s*deal|^\s*thua\s*\.?\s*$|chê\s*gi[aá]|khách\s*hủy|từ\s*chối|rớt|\blost\b|mất\s*deal)/i.test(name);
+}
+
 function dealCountsTowardPipelineEstimate(item, stagesDeal) {
   const st = resolveDealStageForKpi(item, stagesDeal);
-  if (st?.is_lost) return false;
+  if (isLostOrCancelledPipelineStage(st)) return false;
   if (dealIsWonStage(item, stagesDeal)) return false;
   if (dealIsRevenueCompletedStage(item, stagesDeal)) return false;
   return true;
 }
 
 function hasExplicitExpectedRevenueStage(stagesDeal) {
-  return Array.isArray(stagesDeal) && stagesDeal.some((s) => !!s?.counts_as_expected_revenue);
+  return Array.isArray(stagesDeal)
+    && stagesDeal.some((s) => !!s?.counts_as_expected_revenue && !isLostOrCancelledPipelineStage(s));
 }
 
 /**
  * Deal tính vào «Giá trị dự kiến» và «Giá trị kỳ vọng» (cùng phạm vi cột):
- *   - Nếu pipeline có >= 1 cột tick `counts_as_expected_revenue` → chỉ các cột đó.
+ *   - Nếu pipeline có >= 1 cột tick `counts_as_expected_revenue` → chỉ các cột đó (trừ Thua/Hủy).
  *   - Ngược lại → fallback `dealCountsTowardPipelineEstimate` (pipeline mở).
  */
 function dealCountsTowardExpectedValue(item, stagesDeal) {
@@ -814,6 +822,9 @@ function dealCountsTowardExpectedValue(item, stagesDeal) {
     return dealCountsTowardPipelineEstimate(item, stagesDeal);
   }
   const st = resolveDealStageForKpi(item, stagesDeal);
+  if (isLostOrCancelledPipelineStage(st)) return false;
+  if (dealIsWonStage(item, stagesDeal)) return false;
+  if (dealIsRevenueCompletedStage(item, stagesDeal)) return false;
   return !!st?.counts_as_expected_revenue;
 }
 

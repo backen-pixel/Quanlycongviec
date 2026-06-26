@@ -23,6 +23,9 @@ type ApiStage = {
   is_won?: boolean | null;
   is_lost?: boolean | null;
   counts_as_expected_revenue?: boolean | null;
+  counts_as_completed_revenue?: boolean | null;
+  canonical_slug?: string | null;
+  deal_report_bucket?: string | null;
 };
 type ApiLead = {
   id: string;
@@ -332,6 +335,9 @@ function mapApiStageFields(s: ApiStage, type: 'lead' | 'deal', i: number): CrmPi
     isWon: !!s.is_won,
     isLost: !!s.is_lost,
     countsAsExpectedRevenue: !!s.counts_as_expected_revenue,
+    countsAsCompletedRevenue: !!s.counts_as_completed_revenue,
+    canonicalSlug: s.canonical_slug || null,
+    dealReportBucket: s.deal_report_bucket || null,
   };
 }
 

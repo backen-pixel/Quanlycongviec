@@ -1,4 +1,5 @@
 import {
+  fetchCrmCompanies,
   fetchCrmStageCountsBatch,
   fetchPipelineStages,
   type CrmStageFetchOpts,
@@ -118,46 +119,19 @@ function hasStageValueData(values: Record<string, number>): boolean {
   return Object.values(values || {}).some((v) => (Number(v) || 0) > 0);
 }
 
-function resolveOpenPipelineValue(
-  snap: CrmReportHubSnapshot,
-  orgSummary: OrgOverviewReport['summary'],
-): number {
-  if (snap.openPipelineValue > 0 || hasStageValueData(snap.dealValues)) {
-    return snap.openPipelineValue;
-  }
-  return orgSummary.expected_value ?? orgSummary.pipeline_value ?? 0;
+/** Pipeline mở — chỉ dùng snapshot CRM Hub, không fallback cohort expected_value. */
+function resolveOpenPipelineValue(snap: CrmReportHubSnapshot): number {
+  return snap.openPipelineValue;
 }
 
 function resolveOpenWeightedValue(
   snap: CrmReportHubSnapshot,
-  orgSummary: OrgOverviewReport['summary'],
   openPipeline: number,
 ): number {
   if (snap.openWeightedPipelineValue > 0 || hasStageValueData(snap.dealWeightedValues)) {
     return snap.openWeightedPipelineValue;
   }
-  return orgSummary.weighted_value ?? openPipeline;
-}
-
-function buildHubSnapshot(
-  dealBatch: Awaited<ReturnType<typeof fetchCrmStageCountsBatch>>,
-  openBatch: Awaited<ReturnType<typeof fetchCrmStageCountsBatch>>,
-  dealStages: CrmPipelineStage[],
-): CrmReportHubSnapshot {
-  const openPipelineValue = sumCrmOpenPipelineValue(dealStages, openBatch.values);
-  const openWeightedPipelineValue = sumCrmOpenWeightedPipelineValue(
-    dealStages,
-    openBatch.weightedValues,
-  );
-  return {
-    dealTotal: sumCrmDealStatsCount(dealStages, dealBatch.counts),
-    dealCounts: dealBatch.counts,
-    dealValues: dealBatch.values,
-    dealWeightedValues: dealBatch.weightedValues,
-    openPipelineValue,
-    openWeightedPipelineValue,
-    dealStages,
-  };
+  return openPipeline;
 }
 
 /**
@@ -174,8 +148,8 @@ export function applyCrmHubSnapshotToReport(
   if (typeView === 'lead') return report;
 
   const cohortPipeline = report.summary.pipeline_value ?? 0;
-  const openPipeline = resolveOpenPipelineValue(snap, report.summary);
-  const openWeighted = resolveOpenWeightedValue(snap, report.summary, openPipeline);
+  const openPipeline = resolveOpenPipelineValue(snap);
+  const openWeighted = resolveOpenWeightedValue(snap, openPipeline);
   const summary = {
     ...report.summary,
     cohort_pipeline_value: cohortPipeline,
@@ -206,18 +180,136 @@ export function applyCrmHubSnapshotToReport(
   return next;
 }
 
+function mergeStageCountMaps(
+  target: Record<string, number>,
+  source: Record<string, number>,
+): void {
+  for (const [key, raw] of Object.entries(source || {})) {
+    target[key] = (Number(target[key]) || 0) + (Number(raw) || 0);
+  }
+}
+
+async function fetchDealPeriodSnapshot(
+  query: EmployeeReportQuery,
+  signal?: AbortSignal,
+): Promise<{
+  dealBatch: Awaited<ReturnType<typeof fetchCrmStageCountsBatch>>;
+  dealStages: CrmPipelineStage[];
+  dealTotal: number;
+}> {
+  const periodOpts = { ...buildReportStageFetchOpts(query), signal };
+  if (query.company_id) {
+    const [dealBatch, dealStages] = await Promise.all([
+      fetchCrmStageCountsBatch('deal', periodOpts),
+      fetchPipelineStages('deal', periodOpts),
+    ]);
+    return {
+      dealBatch,
+      dealStages,
+      dealTotal: sumCrmDealStatsCount(dealStages, dealBatch.counts),
+    };
+  }
+
+  const companies = await fetchCrmCompanies(signal);
+  const mergedCounts: Record<string, number> = {};
+  const mergedValues: Record<string, number> = {};
+  const mergedWeighted: Record<string, number> = {};
+  const dealStages: CrmPipelineStage[] = [];
+  let dealTotal = 0;
+  let total = 0;
+
+  for (const company of companies) {
+    const opts = { ...periodOpts, companyId: company.id };
+    const [dealBatch, stages] = await Promise.all([
+      fetchCrmStageCountsBatch('deal', opts),
+      fetchPipelineStages('deal', opts),
+    ]);
+    dealTotal += sumCrmDealStatsCount(stages, dealBatch.counts);
+    total += Number(dealBatch.total) || 0;
+    mergeStageCountMaps(mergedCounts, dealBatch.counts);
+    mergeStageCountMaps(mergedValues, dealBatch.values);
+    mergeStageCountMaps(mergedWeighted, dealBatch.weightedValues);
+    dealStages.push(...stages);
+  }
+
+  return {
+    dealBatch: {
+      counts: mergedCounts,
+      values: mergedValues,
+      weightedValues: mergedWeighted,
+      total,
+    },
+    dealStages,
+    dealTotal,
+  };
+}
+
+async function fetchOpenPipelineSnapshot(
+  query: EmployeeReportQuery,
+  signal?: AbortSignal,
+): Promise<{ openPipelineValue: number; openWeightedPipelineValue: number; openBatch: Awaited<ReturnType<typeof fetchCrmStageCountsBatch>> }> {
+  const openOpts = { ...buildReportOpenPipelineFetchOpts(query), signal };
+  if (query.company_id) {
+    const [openBatch, dealStages] = await Promise.all([
+      fetchCrmStageCountsBatch('deal', openOpts),
+      fetchPipelineStages('deal', openOpts),
+    ]);
+    return {
+      openPipelineValue: sumCrmOpenPipelineValue(dealStages, openBatch.values),
+      openWeightedPipelineValue: sumCrmOpenWeightedPipelineValue(dealStages, openBatch.weightedValues),
+      openBatch,
+    };
+  }
+
+  const companies = await fetchCrmCompanies(signal);
+  let openPipelineValue = 0;
+  let openWeightedPipelineValue = 0;
+  const mergedValues: Record<string, number> = {};
+  const mergedWeighted: Record<string, number> = {};
+  let total = 0;
+
+  for (const company of companies) {
+    const opts = { ...openOpts, companyId: company.id };
+    const [openBatch, dealStages] = await Promise.all([
+      fetchCrmStageCountsBatch('deal', opts),
+      fetchPipelineStages('deal', opts),
+    ]);
+    openPipelineValue += sumCrmOpenPipelineValue(dealStages, openBatch.values);
+    openWeightedPipelineValue += sumCrmOpenWeightedPipelineValue(dealStages, openBatch.weightedValues);
+    total += Number(openBatch.total) || 0;
+    mergeStageCountMaps(mergedValues, openBatch.values);
+    mergeStageCountMaps(mergedWeighted, openBatch.weightedValues);
+  }
+
+  return {
+    openPipelineValue,
+    openWeightedPipelineValue,
+    openBatch: {
+      counts: {},
+      values: mergedValues,
+      weightedValues: mergedWeighted,
+      total,
+    },
+  };
+}
+
 /** Snapshot Deal: counts theo kỳ + GT pipeline mở (không lọc ngày tạo). */
 export async function fetchCrmReportHubSnapshot(
   query: EmployeeReportQuery,
   signal?: AbortSignal,
 ): Promise<CrmReportHubSnapshot> {
-  const periodOpts = { ...buildReportStageFetchOpts(query), signal };
-  const openOpts = { ...buildReportOpenPipelineFetchOpts(query), signal };
-  const [dealBatch, openBatch, dealStages] = await Promise.all([
-    fetchCrmStageCountsBatch('deal', periodOpts),
-    fetchCrmStageCountsBatch('deal', openOpts),
-    fetchPipelineStages('deal', periodOpts),
+  const [periodSnap, openSnap] = await Promise.all([
+    fetchDealPeriodSnapshot(query, signal),
+    fetchOpenPipelineSnapshot(query, signal),
   ]);
 
-  return buildHubSnapshot(dealBatch, openBatch, dealStages);
+  return {
+    dealTotal: periodSnap.dealTotal,
+    dealCounts: periodSnap.dealBatch.counts,
+    dealValues: periodSnap.dealBatch.values,
+    dealWeightedValues: periodSnap.dealBatch.weightedValues,
+    openPipelineValue: openSnap.openPipelineValue,
+    openWeightedPipelineValue: openSnap.openWeightedPipelineValue,
+    dealStages: periodSnap.dealStages,
+  };
 }

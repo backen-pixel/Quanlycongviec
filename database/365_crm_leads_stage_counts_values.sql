@@ -1,5 +1,8 @@
 -- Bổ sung tổng estimated_value / weighted theo stage cho GET /crm/stage-counts
 -- (Pipeline mở trên app báo cáo — khớp CRM Hub).
+--
+-- ⚠️ Supabase SQL Editor: chọn TOÀN BỘ file (Ctrl+A) rồi Run.
+--    KHÔNG chạy riêng đoạn `grouped AS` / `filtered AS` — sẽ lỗi syntax.
 
 DROP FUNCTION IF EXISTS public.crm_leads_stage_counts(
   text, uuid, uuid, uuid, text, text, text, text, boolean, uuid[], uuid[]
@@ -110,7 +113,7 @@ BEGIN
       OR (TRIM(p_phone_filter) = 'no_phone' AND display_phone IS NULL)
     )
   ),
-  grouped AS (
+  stage_agg AS (
     SELECT
       stage_id,
       COUNT(*)::bigint AS cnt,
@@ -124,21 +127,21 @@ BEGIN
     COALESCE(
       (
         SELECT jsonb_object_agg(COALESCE(stage_id::text, '__none__'), cnt)
-        FROM grouped
+        FROM stage_agg
       ),
       '{}'::jsonb
     ),
     COALESCE(
       (
         SELECT jsonb_object_agg(COALESCE(stage_id::text, '__none__'), val_sum)
-        FROM grouped
+        FROM stage_agg
       ),
       '{}'::jsonb
     ),
     COALESCE(
       (
         SELECT jsonb_object_agg(COALESCE(stage_id::text, '__none__'), weighted_sum)
-        FROM grouped
+        FROM stage_agg
       ),
       '{}'::jsonb
     )

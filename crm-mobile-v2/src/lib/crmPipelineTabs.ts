@@ -5,6 +5,38 @@ function stageOrderIndex(stage: CrmPipelineStage): number {
   return Number.isFinite(ord) ? ord : 999;
 }
 
+/** Cột thua / hủy — khớp web CRM (is_lost, slug, tên cột). */
+const LOST_PIPELINE_STAGE_NAME_RE =
+  /(hủy\s*deal|^\s*thua\s*\.?\s*$|chê\s*gi[aá]|khách\s*hủy|từ\s*chối|rớt|\blost\b|mất\s*deal)/i;
+
+export function isLostOrCancelledPipelineStage(stage: CrmPipelineStage | null | undefined): boolean {
+  if (!stage) return false;
+  if (stage.isLost) return true;
+  if (stage.canonicalSlug === 'lost') return true;
+  if (stage.dealReportBucket === 'lost') return true;
+  const name = String(stage.name || '').trim();
+  return LOST_PIPELINE_STAGE_NAME_RE.test(name);
+}
+
+/** Cột đã chốt / hoàn thành — không thuộc pipeline mở. */
+export function isWonOrClosedPipelineStage(stage: CrmPipelineStage | null | undefined): boolean {
+  if (!stage) return false;
+  if (stage.isWon) return true;
+  if (stage.countsAsCompletedRevenue) return true;
+  const slug = stage.canonicalSlug || '';
+  if (slug === 'won' || slug === 'completed') return true;
+  if (stage.dealReportBucket === 'completed') return true;
+  return false;
+}
+
+/** Cột được cộng vào GT pipeline mở (không Thua, Hủy, Thắng, sau Thắng). */
+export function isOpenPipelineValueStage(stage: CrmPipelineStage | null | undefined): boolean {
+  if (!stage?.id) return false;
+  if (isLostOrCancelledPipelineStage(stage)) return false;
+  if (isWonOrClosedPipelineStage(stage)) return false;
+  return true;
+}
+
 /** Cột Thắng duy nhất — khớp web `resolveDealWonAnchorStage`. */
 export function resolveDealWonAnchorStage(stagesDeal: CrmPipelineStage[]): CrmPipelineStage | null {
   const won = [...stagesDeal]
@@ -70,21 +102,22 @@ export function preWonStagesForDealStats(
 const ORPHAN_STAGE_KEY = '__none__';
 
 function hasExplicitExpectedRevenueStage(stages: CrmPipelineStage[]): boolean {
-  return (stages || []).some((s) => !!s.countsAsExpectedRevenue);
+  return (stages || []).some((s) => !!s.countsAsExpectedRevenue && isOpenPipelineValueStage(s));
 }
 
 /**
- * Cột tính GT pipeline mở — khớp web `dealCountsTowardExpectedValue`.
- * Có tick counts_as_expected_revenue → chỉ các cột đó; ngược lại → pre-won mở (không thua).
+ * Cột tính GT pipeline mở — chỉ deal đang mở; loại Thua, Hủy, Chê giá, Khách hủy, Thắng.
  */
 export function expectedRevenueStagesForPipelineValue(
   dealStages: CrmPipelineStage[],
 ): CrmPipelineStage[] {
+  const openStages = (dealStages || []).filter(isOpenPipelineValueStage);
   if (hasExplicitExpectedRevenueStage(dealStages)) {
-    return (dealStages || []).filter((s) => !!s.countsAsExpectedRevenue && !s.isLost);
+    return openStages.filter((s) => !!s.countsAsExpectedRevenue);
   }
-  const { dealTabStages, wonStage, wonAnchorOrder } = splitDealStagesForCrmTabs(dealStages);
-  return preWonStagesForDealStats(dealTabStages, wonStage, wonAnchorOrder).filter((s) => !s.isLost);
+  const { dealTabStages, wonStage, wonAnchorOrder } = splitDealStagesForCrmTabs(openStages);
+  return preWonStagesForDealStats(dealTabStages, wonStage, wonAnchorOrder)
+    .filter(isOpenPipelineValueStage);
 }
 
 function sumStageMapForStages(
@@ -102,7 +135,7 @@ function sumStageMapForStages(
   return Math.round(total);
 }
 
-/** GT pipeline mở — Σ estimated_value deal ở cột dự kiến (khớp CRM Hub). */
+/** GT pipeline mở — Σ estimated_value deal ở cột đang mở (khớp CRM Hub). */
 export function sumCrmOpenPipelineValue(
   dealStages: CrmPipelineStage[],
   stageValues: Record<string, number>,
