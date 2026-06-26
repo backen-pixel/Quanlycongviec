@@ -22,34 +22,29 @@ const io = new Server(server, {
 });
 app.set('io', io);
 
-// ── Redis adapter (tùy chọn) — để scale Socket.IO nhiều instance ──
-// Tắt: REDIS_DISABLED=1 hoặc xóa REDIS_URL. Cài: npm i @socket.io/redis-adapter
+// ── Redis adapter (tùy chọn) — connect xong mới gắn; lỗi Redis không crash server ──
 if (config.redisUrl) {
-  try {
-    const { createAdapter } = require('@socket.io/redis-adapter');
-    const IORedis = require('ioredis');
-    const redisOpts = {
-      lazyConnect: true,
-      maxRetriesPerRequest: 2,
-      enableOfflineQueue: false,
-      connectTimeout: 5000,
-      retryStrategy(times) {
-        return Math.min(times * 500, 30_000);
-      },
-    };
-    const pubClient = new IORedis(config.redisUrl, redisOpts);
-    const subClient = pubClient.duplicate();
-    pubClient.on('error', (err) => console.warn('[redis:socket-pub]', err.message));
-    subClient.on('error', (err) => console.warn('[redis:socket-sub]', err.message));
-    pubClient.connect().catch((err) => console.warn('[redis:socket-pub] connect failed:', err.message));
-    subClient.connect().catch((err) => console.warn('[redis:socket-sub] connect failed:', err.message));
-    io.adapter(createAdapter(pubClient, subClient));
-    console.log('✅ Socket.IO Redis adapter enabled');
-  } catch (e) {
-    console.warn('⚠️ Redis adapter not enabled:', e.message);
-  }
+  void (async () => {
+    try {
+      const { createAdapter } = require('@socket.io/redis-adapter');
+      const IORedis = require('ioredis');
+      const { getRedisClientOptions } = require('./config/redisUrl');
+      const redisOpts = getRedisClientOptions();
+      const pubClient = new IORedis(config.redisUrl, redisOpts);
+      const subClient = pubClient.duplicate();
+      pubClient.on('error', (err) => console.warn('[redis:socket-pub]', err.message));
+      subClient.on('error', (err) => console.warn('[redis:socket-sub]', err.message));
+      await Promise.all([pubClient.connect(), subClient.connect()]);
+      io.adapter(createAdapter(pubClient, subClient));
+      console.log('✅ Socket.IO Redis adapter enabled');
+    } catch (e) {
+      console.warn('⚠️ Redis adapter skipped — Socket.IO in-memory:', e.message);
+    }
+  })();
 } else if (process.env.REDIS_DISABLED === '1') {
   console.log('[redis] Disabled (REDIS_DISABLED=1) — Socket.IO in-memory, single instance');
+} else if (process.env.REDIS_URL) {
+  console.warn('[redis] REDIS_URL set nhưng không parse được — Socket.IO in-memory');
 }
 
 setPresenceBroadcast((userId, last_ping_at) => {

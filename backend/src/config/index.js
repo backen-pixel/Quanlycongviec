@@ -1,4 +1,5 @@
 require('dotenv').config();
+const { resolveRedisUrl } = require('./redisUrl');
 
 module.exports = {
   port: parseInt(process.env.PORT || '4000'),
@@ -11,7 +12,7 @@ module.exports = {
   supabaseUrl: process.env.SUPABASE_URL,
   supabaseAnonKey: process.env.SUPABASE_ANON_KEY,
   supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
-  redisUrl: process.env.REDIS_DISABLED === '1' ? '' : (process.env.REDIS_URL || ''),
+  redisUrl: resolveRedisUrl(),
   supabaseDbUrl: process.env.SUPABASE_DB_URL || '',
   supabaseDbDirectUrl: process.env.SUPABASE_DB_DIRECT_URL || '',
   supabaseBackupUrl: process.env.SUPABASE_BACKUP_URL || '',
