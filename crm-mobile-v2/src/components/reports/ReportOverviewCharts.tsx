@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import type { OrgOverviewReport } from '../../api/employeeReport';
 import {
-  buildDealOutcomePie,
+  buildDealOutcomePieFromSummary,
   buildDealStackedRows,
   buildFirstStageSlaFromSummary,
   buildFunnelChart,
@@ -31,7 +31,7 @@ export default function ReportOverviewCharts({ report }: Props) {
   const timeline = useMemo(() => buildTimelineChart(report.timeline || []), [report.timeline]);
   const funnel = useMemo(() => buildFunnelChart(report.pipeline_funnel || []), [report.pipeline_funnel]);
   const regionBars = useMemo(() => buildRegionBarChart(report.by_region || []), [report.by_region]);
-  const dealPie = useMemo(() => buildDealOutcomePie(report.by_employee || []), [report.by_employee]);
+  const dealPie = useMemo(() => buildDealOutcomePieFromSummary(report.summary), [report.summary]);
   const employeeStacked = useMemo(
     () => buildDealStackedRows(report.by_employee || [], 'full_name', 8),
     [report.by_employee],

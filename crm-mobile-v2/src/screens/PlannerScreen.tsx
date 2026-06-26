@@ -15,6 +15,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   fetchPlannerSectionPage,
+  fetchPlannerSectionTotal,
   invalidatePlannerCache,
   setPlannerCache,
   type PlannerFetchOpts,
@@ -152,7 +153,7 @@ function PlannerSection({
         </View>
         <Text style={styles.sectionTitle}>{meta.label}</Text>
         <View style={[styles.countBadge, { backgroundColor: meta.color }]}>
-          <Text style={styles.countTxt}>{state.items.length}</Text>
+          <Text style={styles.countTxt}>{state.total}</Text>
         </View>
         {overdueCount > 0 ? <Text style={styles.sectionOverdue}>{overdueCount} quá hạn</Text> : null}
       </View>
@@ -205,7 +206,7 @@ function PlannerSection({
 
       {filterActive ? (
         <Text style={styles.filterHint}>
-          Hiển thị {filtered.length}/{state.items.length} đã tải
+          Hiển thị {filtered.length}/{state.items.length} đã tải · tổng {state.total}
           {state.hasMore ? ' · còn trên server' : ''}
         </Text>
       ) : null}
@@ -326,11 +327,14 @@ export default function PlannerScreen() {
     let leadResult = EMPTY_SECTION;
     let dealResult = EMPTY_SECTION;
 
-    const leadPromise = fetchPlannerSectionPage('lead', userId, 0, undefined, plannerOpts)
-      .then((page) => {
+    const leadPromise = Promise.all([
+      fetchPlannerSectionPage('lead', userId, 0, undefined, plannerOpts),
+      fetchPlannerSectionTotal('lead', userId, plannerOpts),
+    ])
+      .then(([page, listTotal]) => {
         leadResult = {
           items: page.items,
-          total: page.total,
+          total: listTotal,
           hasMore: page.hasMore,
           nextOffset: page.nextOffset,
         };
@@ -348,11 +352,14 @@ export default function PlannerScreen() {
         if (!ac.signal.aborted) setLeadsLoading(false);
       });
 
-    const dealPromise = fetchPlannerSectionPage('deal', userId, 0, undefined, plannerOpts)
-      .then((page) => {
+    const dealPromise = Promise.all([
+      fetchPlannerSectionPage('deal', userId, 0, undefined, plannerOpts),
+      fetchPlannerSectionTotal('deal', userId, plannerOpts),
+    ])
+      .then(([page, listTotal]) => {
         dealResult = {
           items: page.items,
-          total: page.total,
+          total: listTotal,
           hasMore: page.hasMore,
           nextOffset: page.nextOffset,
         };
@@ -414,10 +421,10 @@ export default function PlannerScreen() {
   const displayName = user?.full_name || user?.fullName || '';
 
   const summary = useMemo(() => ({
-    leads: leadState.items.length,
-    deals: dealState.items.length,
+    leads: leadState.total,
+    deals: dealState.total,
     overdue: overdueCount,
-  }), [leadState.items.length, dealState.items.length, overdueCount]);
+  }), [leadState.total, dealState.total, overdueCount]);
 
   const loadMoreLeads = useCallback(async () => {
     if (!userId || leadsLoadingMore || !leadState.hasMore) return;
@@ -429,7 +436,7 @@ export default function PlannerScreen() {
       const mergedItems = [...leadState.items, ...page.items];
       const merged: SectionState = {
         items: mergedItems,
-        total: mergedItems.length,
+        total: leadState.total,
         hasMore: page.hasMore,
         nextOffset: page.nextOffset,
       };
@@ -450,7 +457,7 @@ export default function PlannerScreen() {
       const mergedItems = [...dealState.items, ...page.items];
       const merged: SectionState = {
         items: mergedItems,
-        total: mergedItems.length,
+        total: dealState.total,
         hasMore: page.hasMore,
         nextOffset: page.nextOffset,
       };

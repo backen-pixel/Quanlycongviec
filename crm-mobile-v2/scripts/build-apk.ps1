@@ -4,8 +4,13 @@ $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 
 if (-not $env:JAVA_HOME) {
-  $jdk = 'C:\Program Files\Microsoft\jdk-17.0.16.8-hotspot'
-  if (Test-Path $jdk) { $env:JAVA_HOME = $jdk }
+  $candidates = @(
+    'C:\Program Files\Microsoft\jdk-17.0.19.10-hotspot',
+    'C:\Program Files\Microsoft\jdk-17.0.16.8-hotspot'
+  )
+  foreach ($jdk in $candidates) {
+    if (Test-Path $jdk) { $env:JAVA_HOME = $jdk; break }
+  }
 }
 if (-not $env:ANDROID_HOME) {
   $sdk = "$env:LOCALAPPDATA\Android\Sdk"

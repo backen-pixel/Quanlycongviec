@@ -14,9 +14,10 @@ type Point = {
 type Props = {
   data: Point[];
   height?: number;
+  mode?: 'full' | 'won-only';
 };
 
-export default function ReportTimelineChart({ data, height = 220 }: Props) {
+export default function ReportTimelineChart({ data, height = 220, mode = 'full' }: Props) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const { width: screenW } = useWindowDimensions();
@@ -26,12 +27,13 @@ export default function ReportTimelineChart({ data, height = 220 }: Props) {
   const plotH = Math.max(1, height - pad.top - pad.bottom);
 
   const maxCount = useMemo(() => {
+    if (mode === 'won-only') return 1;
     let m = 0;
     for (const d of data) {
       m = Math.max(m, d.lead_count || 0, d.deal_count || 0);
     }
     return niceMax(m);
-  }, [data]);
+  }, [data, mode]);
 
   const maxValue = useMemo(() => {
     let m = 0;
@@ -45,8 +47,8 @@ export default function ReportTimelineChart({ data, height = 220 }: Props) {
   const yCount = (v: number) => pad.top + plotH - (v / maxCount) * plotH;
   const yValue = (v: number) => pad.top + plotH - (v / maxValue) * plotH;
 
-  const leadPoints = data.map((d, i) => `${xAt(i)},${yCount(d.lead_count || 0)}`).join(' ');
-  const dealPoints = data.map((d, i) => `${xAt(i)},${yCount(d.deal_count || 0)}`).join(' ');
+  const leadPoints = mode === 'won-only' ? '' : data.map((d, i) => `${xAt(i)},${yCount(d.lead_count || 0)}`).join(' ');
+  const dealPoints = mode === 'won-only' ? '' : data.map((d, i) => `${xAt(i)},${yCount(d.deal_count || 0)}`).join(' ');
   const wonPoints = data.map((d, i) => `${xAt(i)},${yValue(d.won_value || 0)}`).join(' ');
 
   const labelStep = data.length <= 6 ? 1 : Math.ceil(data.length / 5);
@@ -58,10 +60,12 @@ export default function ReportTimelineChart({ data, height = 220 }: Props) {
           const y = pad.top + plotH * (1 - t);
           return (
             <G key={`g-${t}`}>
-              <Line x1={pad.left} y1={y} x2={width - pad.right} y2={y} stroke={CHART_COLORS.grid} strokeWidth={1} />
-              <SvgText x={pad.left - 6} y={y + 4} fontSize={9} fill={Colors.textFaint} textAnchor="end">
-                {formatAxisShort(maxCount * t)}
-              </SvgText>
+              <Line x1={pad.left} y1={y} x2={width - pad.right} y2={y} stroke={Colors.border} strokeWidth={1} />
+              {mode !== 'won-only' ? (
+                <SvgText x={pad.left - 6} y={y + 4} fontSize={9} fill={Colors.textFaint} textAnchor="end">
+                  {formatAxisShort(maxCount * t)}
+                </SvgText>
+              ) : null}
               <SvgText x={width - pad.right + 6} y={y + 4} fontSize={9} fill={Colors.textFaint} textAnchor="start">
                 {formatAxisShort(maxValue * t)}
               </SvgText>
@@ -69,9 +73,13 @@ export default function ReportTimelineChart({ data, height = 220 }: Props) {
           );
         })}
 
-        <Polyline points={leadPoints} fill="none" stroke={CHART_COLORS.lead} strokeWidth={2} />
-        <Polyline points={dealPoints} fill="none" stroke={CHART_COLORS.deal} strokeWidth={2} />
-        <Polyline points={wonPoints} fill="none" stroke={CHART_COLORS.wonValue} strokeWidth={2} strokeDasharray="5 4" />
+        {mode !== 'won-only' && leadPoints ? (
+          <Polyline points={leadPoints} fill="none" stroke={CHART_COLORS.lead} strokeWidth={2} />
+        ) : null}
+        {mode !== 'won-only' && dealPoints ? (
+          <Polyline points={dealPoints} fill="none" stroke={CHART_COLORS.deal} strokeWidth={2} />
+        ) : null}
+        <Polyline points={wonPoints} fill="none" stroke={CHART_COLORS.wonValue} strokeWidth={2} strokeDasharray={mode === 'won-only' ? undefined : '5 4'} />
 
         {data.map((d, i) => (i % labelStep === 0 || i === data.length - 1 ? (
           <SvgText
@@ -88,9 +96,13 @@ export default function ReportTimelineChart({ data, height = 220 }: Props) {
       </Svg>
 
       <View style={styles.legend}>
-        <LegendDot color={CHART_COLORS.lead} label="Lead" Colors={Colors} styles={styles} />
-        <LegendDot color={CHART_COLORS.deal} label="Deal" Colors={Colors} styles={styles} />
-        <LegendDot color={CHART_COLORS.wonValue} label="GT chốt" dashed Colors={Colors} styles={styles} />
+        {mode !== 'won-only' ? (
+          <>
+            <LegendDot color={CHART_COLORS.lead} label="Lead" Colors={Colors} styles={styles} />
+            <LegendDot color={CHART_COLORS.deal} label="Deal" Colors={Colors} styles={styles} />
+          </>
+        ) : null}
+        <LegendDot color={CHART_COLORS.wonValue} label="GT chốt" dashed={mode !== 'won-only'} Colors={Colors} styles={styles} />
       </View>
     </View>
   );

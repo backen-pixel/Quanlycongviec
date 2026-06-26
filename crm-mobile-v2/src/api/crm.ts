@@ -20,6 +20,9 @@ type ApiStage = {
   icon?: string | null;
   order_index?: number;
   pipeline_type?: string | null;
+  is_won?: boolean | null;
+  is_lost?: boolean | null;
+  counts_as_expected_revenue?: boolean | null;
 };
 type ApiLead = {
   id: string;
@@ -291,13 +294,7 @@ export async function fetchPipelineStages(
   const rows = Array.isArray(data) ? data : [];
   return rows
     .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
-    .map((s, i) => ({
-      id: String(s.id || ''),
-      name: s.name || 'Stage',
-      icon: s.icon || (type === 'lead' ? '📋' : '💼'),
-      color: s.color || '',
-      orderIndex: s.order_index ?? i,
-    }))
+    .map((s, i) => mapApiStageFields(s, type, i))
     .filter((s) => s.id);
 }
 
@@ -325,17 +322,24 @@ function crmListQueryParams(type: 'lead' | 'deal', opts?: CrmStageFetchOpts): Re
   return params;
 }
 
+function mapApiStageFields(s: ApiStage, type: 'lead' | 'deal', i: number): CrmPipelineStage {
+  return {
+    id: String(s.id || ''),
+    name: s.name || 'Stage',
+    icon: s.icon || (type === 'lead' ? '📋' : '💼'),
+    color: s.color || '',
+    orderIndex: s.order_index ?? i,
+    isWon: !!s.is_won,
+    isLost: !!s.is_lost,
+    countsAsExpectedRevenue: !!s.counts_as_expected_revenue,
+  };
+}
+
 function mapApiStages(rows: ApiStage[], type: 'lead' | 'deal'): CrmPipelineStage[] {
   const list = Array.isArray(rows) ? rows : [];
   return list
     .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
-    .map((s, i) => ({
-      id: String(s.id || ''),
-      name: s.name || 'Stage',
-      icon: s.icon || (type === 'lead' ? '📋' : '💼'),
-      color: s.color || '',
-      orderIndex: s.order_index ?? i,
-    }))
+    .map((s, i) => mapApiStageFields(s, type, i))
     .filter((s) => s.id);
 }
 
@@ -405,18 +409,32 @@ async function fetchStageCountsLegacy(
   return results;
 }
 
-/** Đếm tất cả cột pipeline trong 1 API call. */
+/** Đếm + tổng GT theo cột pipeline trong 1 API call. */
 export async function fetchCrmStageCountsBatch(
   type: 'lead' | 'deal',
   opts?: CrmStageFetchOpts,
-): Promise<{ counts: Record<string, number>; total: number }> {
+): Promise<{
+  counts: Record<string, number>;
+  values: Record<string, number>;
+  weightedValues: Record<string, number>;
+  total: number;
+}> {
   const params = crmListQueryParams(type, opts);
-  const { data } = await api.get<{ counts?: Record<string, number>; total?: number }>(
+  const { data } = await api.get<{
+    counts?: Record<string, number>;
+    values?: Record<string, number>;
+    weighted_values?: Record<string, number>;
+    total?: number;
+  }>(
     '/crm/stage-counts',
     { params, signal: opts?.signal },
   );
   const result = {
     counts: data?.counts && typeof data.counts === 'object' ? data.counts : {},
+    values: data?.values && typeof data.values === 'object' ? data.values : {},
+    weightedValues: data?.weighted_values && typeof data.weighted_values === 'object'
+      ? data.weighted_values
+      : {},
     total: typeof data?.total === 'number' ? data.total : 0,
   };
   setCrmTotalsCache(type, opts, result);
@@ -915,6 +933,27 @@ export type PlannerFetchOpts = {
   companyId?: string;
 };
 
+/** Bộ lọc Planner — khớp tab CRM «Của tôi» (assigned_to + có SĐT + công ty). */
+export function buildPlannerFetchOpts(userId: string, opts?: PlannerFetchOpts): CrmStageFetchOpts {
+  return {
+    assignedTo: userId,
+    companyId: opts?.companyId,
+    phoneFilter: 'has_phone',
+    lite: true,
+    signal: opts?.signal,
+  };
+}
+
+/** Tổng lead/deal cá nhân — cùng nguồn với badge CRM Hub. */
+export async function fetchPlannerSectionTotal(
+  type: 'lead' | 'deal',
+  userId: string,
+  opts?: PlannerFetchOpts,
+): Promise<number> {
+  const batch = await fetchCrmStageCountsBatch(type, buildPlannerFetchOpts(userId, opts));
+  return batch.total;
+}
+
 /** Một trang leads/deals cho Planner — server lọc assigned_to. */
 async function fetchPlannerPage(
   type: 'lead' | 'deal',
@@ -923,13 +962,8 @@ async function fetchPlannerPage(
   limit: number,
   opts?: PlannerFetchOpts,
 ): Promise<{ rows: ApiLead[]; hasMore: boolean; total: number; nextOffset: number }> {
-  const params: Record<string, unknown> = {
-    type,
-    limit,
-    offset,
-    assigned_to: userId,
-  };
-  if (opts?.companyId) params.company_id = opts.companyId;
+  const params: Record<string, unknown> = { type, limit, offset };
+  applyListParams(params, buildPlannerFetchOpts(userId, opts));
   const { data } = await api.get('/crm/leads', { params, signal: opts?.signal });
   return parsePayload(data, limit);
 }
@@ -1007,7 +1041,7 @@ export async function fetchPlannerSectionPage(
     .sort(plannerByDue);
   return {
     items,
-    total: items.length,
+    total: page.total,
     hasMore: page.hasMore,
     nextOffset: page.nextOffset,
   };

@@ -11,6 +11,8 @@ type Props = {
   rowHeight?: number;
   valueMode?: boolean;
   barColor?: string;
+  showPct?: boolean;
+  total?: number;
 };
 
 export default function ReportHorizontalBarChart({
@@ -18,6 +20,8 @@ export default function ReportHorizontalBarChart({
   rowHeight = 32,
   valueMode = false,
   barColor = CHART_COLORS.lead,
+  showPct = false,
+  total,
 }: Props) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
@@ -34,6 +38,8 @@ export default function ReportHorizontalBarChart({
     return niceMax(m);
   }, [data]);
 
+  const sumTotal = total ?? data.reduce((s, d) => s + (d.count ?? d.value ?? 0), 0);
+
   if (!data.length) return null;
 
   return (
@@ -44,6 +50,7 @@ export default function ReportHorizontalBarChart({
           const raw = d.value ?? d.count ?? 0;
           const barW = maxVal > 0 ? (raw / maxVal) * plotW : 0;
           const label = valueMode ? formatAxisShort(raw) : String(raw);
+          const pct = showPct && sumTotal > 0 ? Math.round((raw / sumTotal) * 100) : null;
           return (
             <G key={d.name + i}>
               <SvgText x={8} y={y + rowHeight / 2 + 4} fontSize={10} fill={Colors.textMuted}>
@@ -58,13 +65,14 @@ export default function ReportHorizontalBarChart({
                 fill={d.color || barColor}
               />
               <SvgText
-                x={pad.left + barW + 6}
+                x={width - pad.right}
                 y={y + rowHeight / 2 + 4}
                 fontSize={10}
                 fill={Colors.text}
                 fontWeight="600"
+                textAnchor="end"
               >
-                {label}
+                {pct != null ? `${label} (${pct}%)` : label}
               </SvgText>
             </G>
           );

@@ -4,7 +4,6 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
   Modal,
   Pressable,
   RefreshControl,
@@ -20,36 +19,37 @@ import {
   type EmployeeReportQuery,
   type EmployeeReportRow,
   type OrgOverviewReport,
-  type OrgReportRow,
 } from '../api/employeeReport';
+import {
+  applyCrmHubSnapshotToReport,
+  fetchCrmReportHubSnapshot,
+} from '../lib/crmReportHubSync';
 import { fetchCrmCompanies, fetchCrmCompanyRegions } from '../api/crm';
 import { formatApiError } from '../api/client';
-import FilterChipBar, { type FilterChipOption } from '../components/FilterChipBar';
 import EmployeeReportCard from '../components/reports/EmployeeReportCard';
-import ReportOrgRowCard from '../components/reports/ReportOrgRowCard';
-import ReportOverviewSummary from '../components/reports/ReportOverviewSummary';
-import ReportOverviewCharts, { ReportEmployeeListCharts, ReportRegionCharts } from '../components/reports/ReportOverviewCharts';
+import ReportFilterModal, { ReportDateRangeBar } from '../components/reports/ReportFilterModal';
+import ReportOverviewTab from '../components/reports/ReportOverviewTab';
+import ReportPerformanceTab from '../components/reports/ReportPerformanceTab';
+import ReportPipelineTab from '../components/reports/ReportPipelineTab';
+import ReportTabBar, { type ReportTabId } from '../components/reports/ReportTabBar';
 import { useAuth } from '../context/AuthContext';
 import { canViewEmployeeReport } from '../lib/employeeReportAccess';
-import { defaultMonthRange, formatViDateIso, shiftMonthRange } from '../lib/reportFormat';
+import {
+  defaultMonthRange,
+  getReportRangeForPreset,
+  shiftReportRange,
+  type ReportPeriodPreset,
+} from '../lib/reportFormat';
 import type { RootStackParamList } from '../navigation/types';
 import { Radii, useColors, type ThemeColors } from '../theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type TypeView = 'all' | 'lead' | 'deal';
-type ReportTab = 'overview' | 'company' | 'region' | 'employee';
 
 const TYPE_OPTIONS: { key: TypeView; label: string }[] = [
   { key: 'all', label: 'Tất cả' },
   { key: 'lead', label: 'Lead' },
   { key: 'deal', label: 'Deal' },
-];
-
-const TAB_OPTIONS: FilterChipOption<ReportTab>[] = [
-  { id: 'overview', label: 'Tổng quan', icon: 'stats-chart-outline' },
-  { id: 'company', label: 'Công ty', icon: 'business-outline' },
-  { id: 'region', label: 'Khu vực', icon: 'location-outline' },
-  { id: 'employee', label: 'Nhân viên', icon: 'people-outline' },
 ];
 
 function isAdminLike(role?: string | null): boolean {
@@ -75,8 +75,9 @@ export default function EmployeeReportScreen() {
   const showCompanyPicker = isAdminLike(user?.role);
 
   const [range, setRange] = useState(defaultMonthRange);
+  const [periodPreset, setPeriodPreset] = useState<ReportPeriodPreset>('month');
   const [typeView, setTypeView] = useState<TypeView>('all');
-  const [activeTab, setActiveTab] = useState<ReportTab>('overview');
+  const [activeTab, setActiveTab] = useState<ReportTabId>('overview');
   const [companyId, setCompanyId] = useState('');
   const [regionId, setRegionId] = useState('');
   const [search, setSearch] = useState('');
@@ -84,6 +85,13 @@ export default function EmployeeReportScreen() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [employeeModalOpen, setEmployeeModalOpen] = useState(false);
+
+  const applyPeriodFilter = useCallback((preset: ReportPeriodPreset, nextRange: { from: string; to: string }) => {
+    setPeriodPreset(preset);
+    setRange(nextRange);
+  }, []);
 
   const [companies, setCompanies] = useState<{ id: string; name: string }[]>([]);
   const [regions, setRegions] = useState<{ id: string; name: string }[]>([]);
@@ -136,8 +144,22 @@ export default function EmployeeReportScreen() {
     else setLoading(true);
     setError(null);
     try {
-      const res = await fetchOrgOverviewReport(query);
-      setReport(res);
+      const typeView = query.type || 'all';
+      const orgReport = await fetchOrgOverviewReport(query);
+      if (typeView === 'lead') {
+        setReport(orgReport);
+        return;
+      }
+      const hubSnap = await fetchCrmReportHubSnapshot(query);
+      let prevSnap = null;
+      if (orgReport.period_previous?.date_from && orgReport.period_previous?.date_to) {
+        prevSnap = await fetchCrmReportHubSnapshot({
+          ...query,
+          date_from: orgReport.period_previous.date_from,
+          date_to: orgReport.period_previous.date_to,
+        });
+      }
+      setReport(applyCrmHubSnapshotToReport(orgReport, hubSnap, typeView, prevSnap));
     } catch (e) {
       setError(formatApiError(e));
       setReport(null);
@@ -178,21 +200,9 @@ export default function EmployeeReportScreen() {
     });
   }, [report?.by_employee, search]);
 
-  const drillToCompany = (row: OrgReportRow) => {
-    if (!row.company_id) return;
-    if (!lockedCompanyId) setCompanyId(String(row.company_id));
-    setRegionId('');
-    setActiveTab('region');
-  };
-
-  const drillToRegion = (row: OrgReportRow) => {
-    if (row.company_id && !lockedCompanyId) setCompanyId(String(row.company_id));
-    if (row.region_id) setRegionId(String(row.region_id));
-    setActiveTab('employee');
-  };
-
   const openDetail = (row: EmployeeReportRow) => {
     if (!row.user_id) return;
+    setEmployeeModalOpen(false);
     navigation.navigate('EmployeeReportDetail', {
       userId: row.user_id,
       fullName: row.full_name,
@@ -206,124 +216,30 @@ export default function EmployeeReportScreen() {
     });
   };
 
-  const renderListHeader = () => (
-    <View style={styles.listHeader}>
-      <View style={styles.rangeRow}>
-        <Pressable style={styles.rangeBtn} onPress={() => setRange((r) => shiftMonthRange(r.from, r.to, -1))}>
-          <Ionicons name="chevron-back" size={18} color={Colors.text} />
-        </Pressable>
-        <Text style={styles.rangeLabel}>
-          {formatViDateIso(range.from)} – {formatViDateIso(range.to)}
-        </Text>
-        <Pressable style={styles.rangeBtn} onPress={() => setRange((r) => shiftMonthRange(r.from, r.to, 1))}>
-          <Ionicons name="chevron-forward" size={18} color={Colors.text} />
-        </Pressable>
-      </View>
-
-      <View style={styles.chips}>
-        {TYPE_OPTIONS.map((opt) => {
-          const active = typeView === opt.key;
-          return (
-            <Pressable
-              key={opt.key}
-              style={[styles.chip, active && styles.chipActive]}
-              onPress={() => setTypeView(opt.key)}
-            >
-              <Text style={[styles.chipText, active && styles.chipTextActive]}>{opt.label}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
-      <View style={styles.filterRow}>
-        {showCompanyPicker ? (
-          <Pressable style={styles.filterBtn} onPress={() => setCompanyPickerOpen(true)}>
-            <Ionicons name="business-outline" size={14} color={Colors.blue} />
-            <Text style={styles.filterBtnText} numberOfLines={1}>{companyLabel}</Text>
-            <Ionicons name="chevron-down" size={14} color={Colors.textFaint} />
-          </Pressable>
-        ) : lockedCompanyId ? (
-          <View style={[styles.filterBtn, styles.filterBtnLocked]}>
-            <Ionicons name="business-outline" size={14} color={Colors.textMuted} />
-            <Text style={styles.filterBtnTextMuted} numberOfLines={1}>{companyLabel}</Text>
-          </View>
-        ) : null}
-
-        {effectiveCompanyId ? (
-          <Pressable style={styles.filterBtn} onPress={() => setRegionPickerOpen(true)}>
-            <Ionicons name="location-outline" size={14} color={Colors.blue} />
-            <Text style={styles.filterBtnText} numberOfLines={1}>{regionLabel}</Text>
-            <Ionicons name="chevron-down" size={14} color={Colors.textFaint} />
-          </Pressable>
-        ) : null}
-      </View>
-
-      <FilterChipBar value={activeTab} options={TAB_OPTIONS} onChange={setActiveTab} />
-
-      {activeTab === 'employee' ? (
-        <View style={styles.searchWrap}>
-          <Ionicons name="search" size={16} color={Colors.textFaint} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Tìm tên, email, phòng ban…"
-            placeholderTextColor={Colors.textFaint}
-            value={search}
-            onChangeText={setSearch}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-        </View>
-      ) : null}
-
-      {error ? (
-        <View style={styles.errorBox}>
-          <Text style={styles.errorText}>{error}</Text>
-          <Pressable onPress={() => void load()}><Text style={styles.retry}>Thử lại</Text></Pressable>
-        </View>
-      ) : null}
-
-      {activeTab === 'overview' && report?.summary ? (
-        <ReportOverviewSummary summary={report.summary} />
-      ) : null}
-
-      {activeTab === 'overview' && report ? (
-        <ReportOverviewCharts report={report} />
-      ) : null}
-
-      {activeTab === 'region' && report ? (
-        <ReportRegionCharts report={report} />
-      ) : null}
-
-      {activeTab === 'employee' && report ? (
-        <ReportEmployeeListCharts report={report} />
-      ) : null}
-
-      {activeTab !== 'overview' ? (
-        <Text style={styles.subtitle}>{listSubtitle(activeTab, report, filteredEmployees.length)}</Text>
-      ) : (
-        <Text style={styles.subtitle}>Số liệu lead/deal theo ngày tạo · chọn tab để xem chi tiết</Text>
-      )}
-    </View>
-  );
-
-  const listData = useMemo(() => {
-    if (!report) return [] as Array<{ kind: 'company' | 'region' | 'employee'; row: OrgReportRow | EmployeeReportRow }>;
-    if (activeTab === 'company') {
-      return report.by_company.map((row) => ({ kind: 'company' as const, row }));
+  const renderTabContent = () => {
+    if (!report) return null;
+    if (activeTab === 'overview') return <ReportOverviewTab report={report} />;
+    if (activeTab === 'performance') {
+      return (
+        <ReportPerformanceTab
+          report={report}
+          onEmployeePress={openDetail}
+          onViewAllEmployees={() => setEmployeeModalOpen(true)}
+        />
+      );
     }
-    if (activeTab === 'region') {
-      return report.by_region.map((row) => ({ kind: 'region' as const, row }));
-    }
-    if (activeTab === 'employee') {
-      return filteredEmployees.map((row) => ({ kind: 'employee' as const, row }));
-    }
-    return [];
-  }, [report, activeTab, filteredEmployees]);
+    return <ReportPipelineTab report={report} />;
+  };
 
   if (!allowed) {
     return (
       <View style={[styles.root, { paddingTop: insets.top + 12 }]}>
-        <Header onBack={() => navigation.goBack()} title="Báo cáo CRM" Colors={Colors} styles={styles} />
+        <Header
+          onMenu={() => navigation.goBack()}
+          onFilter={() => setFilterOpen(true)}
+          Colors={Colors}
+          styles={styles}
+        />
         <View style={styles.centerBox}>
           <Ionicons name="lock-closed-outline" size={40} color={Colors.textFaint} />
           <Text style={styles.deniedTitle}>Không có quyền xem</Text>
@@ -335,155 +251,238 @@ export default function EmployeeReportScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      <Header onBack={() => navigation.goBack()} title="Báo cáo CRM" Colors={Colors} styles={styles} />
+      <Header
+        onMenu={() => navigation.goBack()}
+        onFilter={() => setFilterOpen(true)}
+        Colors={Colors}
+        styles={styles}
+      />
+
+      <View style={{ paddingHorizontal: 16 }}>
+        <ReportDateRangeBar
+          preset={periodPreset}
+          from={range.from}
+          to={range.to}
+          onShift={(delta) => setRange((r) => shiftReportRange(periodPreset, r.from, r.to, delta))}
+          onOpenFilter={() => setFilterOpen(true)}
+        />
+      </View>
 
       {loading && !refreshing && !report ? (
         <View style={styles.centerBox}>
-          <ActivityIndicator color={Colors.blue} size="large" />
+          <ActivityIndicator color={Colors.purple} size="large" />
         </View>
-      ) : activeTab === 'overview' ? (
+      ) : (
         <ScrollView
           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 24 }}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => void load({ refresh: true })} tintColor={Colors.blue} />
+            <RefreshControl refreshing={refreshing} onRefresh={() => void load({ refresh: true })} tintColor={Colors.purple} />
           }
+          showsVerticalScrollIndicator={false}
         >
-          {renderListHeader()}
+          <View style={styles.chips}>
+            {TYPE_OPTIONS.map((opt) => {
+              const active = typeView === opt.key;
+              return (
+                <Pressable
+                  key={opt.key}
+                  style={[styles.chip, active && styles.chipActive]}
+                  onPress={() => setTypeView(opt.key)}
+                >
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>{opt.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          {(showCompanyPicker || effectiveCompanyId) ? (
+            <View style={styles.filterRow}>
+              {showCompanyPicker ? (
+                <Pressable style={styles.filterBtn} onPress={() => setCompanyPickerOpen(true)}>
+                  <Ionicons name="business-outline" size={14} color={Colors.purple} />
+                  <Text style={styles.filterBtnText} numberOfLines={1}>{companyLabel}</Text>
+                  <Ionicons name="chevron-down" size={14} color={Colors.textFaint} />
+                </Pressable>
+              ) : lockedCompanyId ? (
+                <View style={[styles.filterBtn, styles.filterBtnLocked]}>
+                  <Ionicons name="business-outline" size={14} color={Colors.textMuted} />
+                  <Text style={styles.filterBtnTextMuted} numberOfLines={1}>{companyLabel}</Text>
+                </View>
+              ) : null}
+
+              {effectiveCompanyId ? (
+                <Pressable style={styles.filterBtn} onPress={() => setRegionPickerOpen(true)}>
+                  <Ionicons name="location-outline" size={14} color={Colors.purple} />
+                  <Text style={styles.filterBtnText} numberOfLines={1}>{regionLabel}</Text>
+                  <Ionicons name="chevron-down" size={14} color={Colors.textFaint} />
+                </Pressable>
+              ) : null}
+            </View>
+          ) : null}
+
+          <ReportTabBar value={activeTab} onChange={setActiveTab} />
+
+          {error ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{error}</Text>
+              <Pressable onPress={() => void load()}><Text style={styles.retry}>Thử lại</Text></Pressable>
+            </View>
+          ) : null}
+
+          <View style={styles.tabBody}>
+            {renderTabContent()}
+          </View>
         </ScrollView>
-      ) : (
-        <FlatList
-          data={listData}
-          keyExtractor={(item, idx) => {
-            if (item.kind === 'employee') return String((item.row as EmployeeReportRow).user_id);
-            const org = item.row as OrgReportRow;
-            if (item.kind === 'company') return `c-${org.company_id || idx}`;
-            return `r-${org.region_id || idx}`;
-          }}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 24 }}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => void load({ refresh: true })} tintColor={Colors.blue} />
-          }
-          ListHeaderComponent={renderListHeader}
-          ListEmptyComponent={
-            !loading ? (
-              <Text style={styles.empty}>{emptyLabel(activeTab)}</Text>
-            ) : null
-          }
-          renderItem={({ item }) => {
-            if (item.kind === 'company') {
-              return (
-                <ReportOrgRowCard
-                  row={item.row as OrgReportRow}
-                  variant="company"
-                  onPress={() => drillToCompany(item.row as OrgReportRow)}
-                />
-              );
-            }
-            if (item.kind === 'region') {
-              return (
-                <ReportOrgRowCard
-                  row={item.row as OrgReportRow}
-                  variant="region"
-                  onPress={() => drillToRegion(item.row as OrgReportRow)}
-                />
-              );
-            }
-            return (
-              <EmployeeReportCard
-                row={item.row as EmployeeReportRow}
-                onPress={() => openDetail(item.row as EmployeeReportRow)}
-              />
-            );
-          }}
-        />
       )}
 
-      <Modal visible={companyPickerOpen} transparent animationType="fade" onRequestClose={() => setCompanyPickerOpen(false)}>
-        <Pressable style={styles.modalBackdrop} onPress={() => setCompanyPickerOpen(false)}>
-          <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
-            <Text style={styles.modalTitle}>Chọn công ty</Text>
-            <ScrollView style={{ maxHeight: 360 }}>
-              {(isSystemAdmin(user) ? [{ id: '', name: 'Tất cả công ty' }] : []).concat(companies).map((c) => (
-                <Pressable
-                  key={c.id || 'all'}
-                  style={[styles.modalRow, (c.id || '') === (companyId || '') && styles.modalRowActive]}
-                  onPress={() => {
-                    setCompanyId(c.id);
-                    setRegionId('');
-                    setCompanyPickerOpen(false);
-                  }}
-                >
-                  <Text style={styles.modalRowText}>{c.name}</Text>
-                  {(c.id || '') === (companyId || '') ? (
-                    <Ionicons name="checkmark" size={18} color={Colors.blue} />
-                  ) : null}
-                </Pressable>
-              ))}
-            </ScrollView>
-          </View>
-        </Pressable>
-      </Modal>
+      <ReportFilterModal
+        visible={filterOpen}
+        preset={periodPreset}
+        from={range.from}
+        to={range.to}
+        onClose={() => setFilterOpen(false)}
+        onApply={applyPeriodFilter}
+        bottomInset={insets.bottom}
+      />
 
-      <Modal visible={regionPickerOpen} transparent animationType="fade" onRequestClose={() => setRegionPickerOpen(false)}>
-        <Pressable style={styles.modalBackdrop} onPress={() => setRegionPickerOpen(false)}>
-          <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
-            <Text style={styles.modalTitle}>Chọn khu vực</Text>
-            <ScrollView style={{ maxHeight: 360 }}>
-              {[{ id: '', name: 'Tất cả khu vực' }, ...regions].map((r) => (
-                <Pressable
-                  key={r.id || 'all'}
-                  style={[styles.modalRow, (r.id || '') === (regionId || '') && styles.modalRowActive]}
-                  onPress={() => {
-                    setRegionId(r.id);
-                    setRegionPickerOpen(false);
-                  }}
-                >
-                  <Text style={styles.modalRowText}>{r.name}</Text>
-                  {(r.id || '') === (regionId || '') ? (
-                    <Ionicons name="checkmark" size={18} color={Colors.blue} />
-                  ) : null}
-                </Pressable>
+      <PickerModal
+        visible={companyPickerOpen}
+        title="Chọn công ty"
+        items={(isSystemAdmin(user) ? [{ id: '', name: 'Tất cả công ty' }] : []).concat(companies)}
+        selectedId={companyId}
+        onSelect={(id) => {
+          setCompanyId(id);
+          setRegionId('');
+          setCompanyPickerOpen(false);
+        }}
+        onClose={() => setCompanyPickerOpen(false)}
+        insets={insets}
+        Colors={Colors}
+        styles={styles}
+      />
+
+      <PickerModal
+        visible={regionPickerOpen}
+        title="Chọn khu vực"
+        items={[{ id: '', name: 'Tất cả khu vực' }, ...regions]}
+        selectedId={regionId}
+        onSelect={(id) => {
+          setRegionId(id);
+          setRegionPickerOpen(false);
+        }}
+        onClose={() => setRegionPickerOpen(false)}
+        insets={insets}
+        Colors={Colors}
+        styles={styles}
+      />
+
+      <Modal visible={employeeModalOpen} transparent animationType="slide" onRequestClose={() => setEmployeeModalOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.employeeSheet, { paddingBottom: insets.bottom + 12, maxHeight: '88%' }]}>
+            <View style={styles.sheetHead}>
+              <Text style={styles.sheetTitle}>Nhân viên</Text>
+              <Pressable onPress={() => setEmployeeModalOpen(false)} hitSlop={8}>
+                <Ionicons name="close" size={22} color={Colors.textMuted} />
+              </Pressable>
+            </View>
+            <View style={styles.searchWrap}>
+              <Ionicons name="search" size={16} color={Colors.textFaint} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Tìm tên, email, phòng ban…"
+                placeholderTextColor={Colors.textFaint}
+                value={search}
+                onChangeText={setSearch}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {filteredEmployees.map((row) => (
+                <EmployeeReportCard
+                  key={row.user_id}
+                  row={row}
+                  onPress={() => openDetail(row)}
+                />
               ))}
+              {!filteredEmployees.length ? (
+                <Text style={styles.empty}>Chưa có dữ liệu nhân viên trong kỳ này</Text>
+              ) : null}
             </ScrollView>
           </View>
-        </Pressable>
+        </View>
       </Modal>
     </View>
   );
 }
 
-function listSubtitle(tab: ReportTab, report: OrgOverviewReport | null, employeeCount: number): string {
-  if (!report) return 'Đang tải…';
-  if (tab === 'company') return `${report.by_company.length} công ty · chạm để xem khu vực`;
-  if (tab === 'region') return `${report.by_region.length} khu vực · chạm để xem nhân viên`;
-  return `${employeeCount} nhân viên · chọn thẻ để xem chi tiết pipeline`;
-}
-
-function emptyLabel(tab: ReportTab): string {
-  if (tab === 'company') return 'Chưa có dữ liệu công ty trong kỳ này';
-  if (tab === 'region') return 'Chưa có dữ liệu khu vực trong kỳ này';
-  return 'Chưa có dữ liệu nhân viên trong kỳ này';
-}
-
 function Header({
-  title,
-  onBack,
+  onMenu,
+  onFilter,
   Colors,
   styles,
 }: {
-  title: string;
-  onBack: () => void;
+  onMenu: () => void;
+  onFilter: () => void;
   Colors: ThemeColors;
   styles: ReturnType<typeof makeStyles>;
 }) {
   return (
     <View style={styles.header}>
-      <Pressable style={styles.backBtn} onPress={onBack}>
-        <Ionicons name="arrow-back" size={22} color={Colors.text} />
+      <Pressable style={styles.iconBtn} onPress={onMenu}>
+        <Ionicons name="menu" size={22} color={Colors.text} />
       </Pressable>
-      <Text style={styles.headerTitle}>{title}</Text>
-      <View style={{ width: 40 }} />
+      <Text style={styles.headerTitle}>Báo cáo CRM</Text>
+      <Pressable style={styles.iconBtn} onPress={onFilter} accessibilityLabel="Bộ lọc">
+        <Ionicons name="funnel-outline" size={21} color={Colors.purple} />
+      </Pressable>
     </View>
+  );
+}
+
+function PickerModal({
+  visible,
+  title,
+  items,
+  selectedId,
+  onSelect,
+  onClose,
+  insets,
+  Colors,
+  styles,
+}: {
+  visible: boolean;
+  title: string;
+  items: { id: string; name: string }[];
+  selectedId: string;
+  onSelect: (id: string) => void;
+  onClose: () => void;
+  insets: { bottom: number };
+  Colors: ThemeColors;
+  styles: ReturnType<typeof makeStyles>;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.modalBackdrop} onPress={onClose}>
+        <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
+          <Text style={styles.modalTitle}>{title}</Text>
+          <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
+            {items.map((c) => (
+              <Pressable
+                key={c.id || 'all'}
+                style={[styles.modalRow, (c.id || '') === (selectedId || '') && styles.modalRowActive]}
+                onPress={() => onSelect(c.id)}
+              >
+                <Text style={styles.modalRowText}>{c.name}</Text>
+                {(c.id || '') === (selectedId || '') ? (
+                  <Ionicons name="checkmark" size={18} color={Colors.purple} />
+                ) : null}
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -495,7 +494,7 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     paddingHorizontal: 8,
     paddingBottom: 8,
   },
-  backBtn: {
+  iconBtn: {
     width: 40,
     height: 40,
     alignItems: 'center',
@@ -509,26 +508,7 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     fontSize: 18,
     fontWeight: '800',
   },
-  listHeader: { gap: 10, paddingBottom: 4 },
-  rangeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginTop: 4,
-  },
-  rangeBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: Radii.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.card,
-  },
-  rangeLabel: { color: Colors.text, fontSize: 14, fontWeight: '700', minWidth: 170, textAlign: 'center' },
-  chips: { flexDirection: 'row', gap: 8 },
+  chips: { flexDirection: 'row', gap: 8, marginBottom: 10 },
   chip: {
     paddingHorizontal: 12,
     paddingVertical: 7,
@@ -537,10 +517,10 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     borderColor: Colors.border,
     backgroundColor: Colors.card,
   },
-  chipActive: { backgroundColor: Colors.blueSoft, borderColor: Colors.blue },
+  chipActive: { backgroundColor: 'rgba(168,85,247,0.16)', borderColor: Colors.purple },
   chipText: { color: Colors.textMuted, fontSize: 12, fontWeight: '700' },
-  chipTextActive: { color: Colors.blue },
-  filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chipTextActive: { color: Colors.purple },
+  filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
   filterBtn: {
     flex: 1,
     minWidth: '46%',
@@ -557,20 +537,7 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   filterBtnLocked: { opacity: 0.85 },
   filterBtnText: { flex: 1, color: Colors.text, fontSize: 12, fontWeight: '700' },
   filterBtnTextMuted: { flex: 1, color: Colors.textMuted, fontSize: 12, fontWeight: '600' },
-  searchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.card,
-    borderRadius: Radii.lg,
-    paddingHorizontal: 12,
-    height: 42,
-  },
-  searchInput: { flex: 1, color: Colors.text, fontSize: 14, paddingVertical: 0 },
-  subtitle: { color: Colors.textMuted, fontSize: 12, marginBottom: 6 },
-  empty: { textAlign: 'center', color: Colors.textFaint, fontSize: 14, paddingVertical: 40 },
+  tabBody: { marginTop: 12 },
   centerBox: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 10 },
   deniedTitle: { color: Colors.text, fontSize: 17, fontWeight: '800' },
   deniedText: { color: Colors.textMuted, fontSize: 13, textAlign: 'center' },
@@ -580,12 +547,14 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     backgroundColor: Colors.redSoft,
     borderWidth: 1,
     borderColor: Colors.red,
+    marginBottom: 10,
   },
   errorText: { color: Colors.red, fontSize: 13 },
-  retry: { color: Colors.blue, fontWeight: '700', marginTop: 6, fontSize: 13 },
+  retry: { color: Colors.purple, fontWeight: '700', marginTop: 6, fontSize: 13 },
+  empty: { textAlign: 'center', color: Colors.textFaint, fontSize: 14, paddingVertical: 40 },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'flex-end',
   },
   modalSheet: {
@@ -610,6 +579,37 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: Colors.border,
   },
-  modalRowActive: { backgroundColor: Colors.blueSoft + '55' },
+  modalRowActive: { backgroundColor: 'rgba(168,85,247,0.12)' },
   modalRowText: { color: Colors.text, fontSize: 14, fontWeight: '600', flex: 1 },
+  employeeSheet: {
+    backgroundColor: Colors.bgElevated,
+    borderTopLeftRadius: Radii.xl,
+    borderTopRightRadius: Radii.xl,
+    paddingTop: 14,
+    paddingHorizontal: 16,
+  },
+  sheetHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  sheetTitle: {
+    color: Colors.text,
+    fontSize: 17,
+    fontWeight: '900',
+  },
+  searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.card,
+    borderRadius: Radii.lg,
+    paddingHorizontal: 12,
+    height: 42,
+    marginBottom: 10,
+  },
+  searchInput: { flex: 1, color: Colors.text, fontSize: 14, paddingVertical: 0 },
 });
