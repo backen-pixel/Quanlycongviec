@@ -59,6 +59,15 @@ router.get('/monitor', auth, monitorGate, async (req, res) => {
   }
 });
 
+router.get('/usage-analytics', auth, monitorGate, async (req, res) => {
+  try {
+    const days = parseInt(req.query.days, 10) || 14;
+    res.json(await require('../helpers/userUsageAnalytics').getSystemUsageAnalytics(days));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get('/settings', auth, monitorGate, async (req, res) => {
   try {
     res.json(await loadSettings());

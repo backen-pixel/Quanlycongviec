@@ -5,7 +5,7 @@ import { isSupabaseMonitorUnlocked } from '../lib/supabaseMonitorAuth';
 import SupabaseMonitorGate from '../components/SupabaseMonitorGate';
 import {
   Database, RefreshCw, Settings, Play, Loader2, CheckCircle2,
-  AlertTriangle, Clock, ArrowLeft, Server, Activity, HardDrive, Globe,
+  AlertTriangle, Clock, ArrowLeft, Server, Activity, HardDrive, Globe, Users, BarChart3,
 } from 'lucide-react';
 
 function fmtDt(iso) {
@@ -176,6 +176,9 @@ function ProductionBackupSyncContent() {
   const [saveLoading, setSaveLoading] = useState(false);
   const [verifyResult, setVerifyResult] = useState(null);
   const [monitorError, setMonitorError] = useState('');
+  const [usage, setUsage] = useState(null);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageDays, setUsageDays] = useState(14);
 
   const [form, setForm] = useState({
     schedule_enabled: false,
@@ -187,6 +190,18 @@ function ProductionBackupSyncContent() {
     include_storage: true,
     verify_after_sync: true,
   });
+
+  const loadUsage = useCallback(async (silent = false) => {
+    if (!silent) setUsageLoading(true);
+    try {
+      const { data } = await api.get('/production/backup-sync/usage-analytics', { params: { days: usageDays } });
+      setUsage(data);
+    } catch (e) {
+      console.error(e);
+      setUsage({ ok: false, error: e.response?.data?.error || e.message });
+    }
+    if (!silent) setUsageLoading(false);
+  }, [usageDays]);
 
   const loadMonitor = useCallback(async (silent = false) => {
     if (!silent) setMonitorLoading(true);
@@ -233,14 +248,20 @@ function ProductionBackupSyncContent() {
   }, []);
 
   useEffect(() => {
+    if (tab !== 'usage') return;
+    void loadUsage();
+  }, [tab, usageDays, loadUsage]);
+
+  useEffect(() => {
     void load();
     void loadMonitor();
     const poll = setInterval(() => {
       if (tab === 'monitor') void loadMonitor(true);
+      if (tab === 'usage') void loadUsage(true);
       if (status?.job?.running) void load();
     }, 15000);
     return () => clearInterval(poll);
-  }, [load, loadMonitor, tab, status?.job?.running]);
+  }, [load, loadMonitor, loadUsage, tab, status?.job?.running]);
 
   useEffect(() => {
     if (tab !== 'monitor') return;
@@ -308,7 +329,7 @@ function ProductionBackupSyncContent() {
             Backup Supabase — Giám sát &amp; đồng bộ
           </h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Giám sát primary/backup, kiểm tra drift, lịch clone, chạy đồng bộ
+            Giám sát primary/backup, phân tích giờ ít user, lịch clone, chạy đồng bộ
           </p>
         </div>
       </div>
@@ -334,6 +355,13 @@ function ProductionBackupSyncContent() {
           className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === 'schedule' ? 'border-teal-600 text-teal-700' : 'border-transparent text-slate-500'}`}
         >
           Lịch đồng bộ
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('usage')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === 'usage' ? 'border-teal-600 text-teal-700' : 'border-transparent text-slate-500'}`}
+        >
+          Phân tích sử dụng
         </button>
       </div>
 
@@ -518,6 +546,172 @@ function ProductionBackupSyncContent() {
                 <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
                   Lỗi lần chạy trước: {settings.last_run_error}
                 </div>
+              )}
+            </div>
+          )}
+
+          {tab === 'usage' && (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs text-slate-500 uppercase tracking-wide mb-1">Phân tích người dùng</div>
+                  <p className="text-sm text-slate-600">
+                    Khung giờ ít hoạt động nhất · gợi ý thời điểm chạy đồng bộ lớn
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={usageDays}
+                    onChange={(e) => setUsageDays(parseInt(e.target.value, 10))}
+                    className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm"
+                  >
+                    <option value={7}>7 ngày</option>
+                    <option value={14}>14 ngày</option>
+                    <option value={30}>30 ngày</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => loadUsage()}
+                    disabled={usageLoading}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-sm font-medium disabled:opacity-50"
+                  >
+                    {usageLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                    Làm mới
+                  </button>
+                </div>
+              </div>
+
+              {usageLoading && !usage ? (
+                <div className="flex items-center gap-2 text-slate-500 py-12 justify-center">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  Đang phân tích…
+                </div>
+              ) : !usage?.ok ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  {usage?.error || 'Không tải được dữ liệu phân tích'}
+                </div>
+              ) : (
+                <>
+                  <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="text-xs text-slate-500">Tổng thao tác</div>
+                      <div className="text-2xl font-bold text-slate-900 mt-1">{usage.summary?.total_actions?.toLocaleString('vi-VN') ?? '—'}</div>
+                      <div className="text-xs text-slate-400 mt-1">{usage.days} ngày qua</div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="text-xs text-slate-500">NV có hoạt động</div>
+                      <div className="text-2xl font-bold text-slate-900 mt-1">{usage.summary?.distinct_users ?? '—'}</div>
+                    </div>
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
+                      <div className="text-xs text-emerald-700">Giờ ít user nhất</div>
+                      <div className="text-2xl font-bold text-emerald-900 mt-1">
+                        {usage.summary?.quietest_hour?.label ?? '—'}
+                      </div>
+                      <div className="text-xs text-emerald-700 mt-1">
+                        {usage.summary?.quietest_hour?.actions ?? 0} thao tác
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="text-xs text-slate-500">Snapshot online</div>
+                      <div className="text-2xl font-bold text-slate-900 mt-1">{usage.summary?.snapshots_count ?? 0}</div>
+                      <div className="text-xs text-slate-400 mt-1">ghi mỗi giờ VN</div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <h2 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
+                      <BarChart3 className="w-5 h-5" />
+                      Hoạt động theo giờ (VN)
+                    </h2>
+                    <div className="flex items-end gap-0.5 h-32 mb-2">
+                      {(usage.hourly || []).map((h) => {
+                        const max = Math.max(...(usage.hourly || []).map((x) => x.actions), 1);
+                        const pct = Math.max(4, (h.actions / max) * 100);
+                        const quiet = usage.quietest_hours?.some((q) => q.hour_vn === h.hour_vn);
+                        return (
+                          <div key={h.hour_vn} className="flex-1 flex flex-col items-center gap-1 min-w-0" title={`${h.label}: ${h.actions} thao tác, ${h.users} NV`}>
+                            <div
+                              className={`w-full rounded-t ${quiet ? 'bg-emerald-500' : 'bg-teal-400'}`}
+                              style={{ height: `${pct}%` }}
+                            />
+                            <span className="text-[9px] text-slate-400 truncate w-full text-center">{h.hour_vn}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <p className="text-xs text-slate-500">Cột xanh lá = top giờ ít hoạt động (phù hợp chạy đồng bộ lớn)</p>
+                  </div>
+
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                      <h3 className="font-semibold text-slate-800 mb-3">Gợi ý khung giờ đồng bộ</h3>
+                      <ul className="space-y-2 text-sm">
+                        {(usage.summary?.recommended_sync_slots || []).map((s) => (
+                          <li key={s.label} className="flex justify-between text-slate-700">
+                            <span>{s.label} VN</span>
+                            <span className="text-slate-400">{s.actions} thao tác</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                      <h3 className="font-semibold text-slate-800 mb-3">Lịch đồng bộ hiện tại</h3>
+                      <ul className="space-y-2 text-sm">
+                        {(usage.sync_slot_analysis || []).map((s) => (
+                          <li key={s.slot} className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="font-medium">{s.slot}</span>
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${s.is_quiet ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                              {s.is_quiet ? 'Ít user' : 'Khá bận'}
+                            </span>
+                            <span className="text-slate-400 text-xs w-full">{s.activity_actions} thao tác/giờ · online TB {s.avg_online != null ? s.avg_online.toFixed(1) : '—'}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm overflow-x-auto">
+                    <h2 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
+                      <Users className="w-5 h-5" />
+                      Người dùng ({usage.users?.length || 0})
+                    </h2>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-slate-500 border-b">
+                          <th className="py-2 pr-3">Nhân viên</th>
+                          <th className="py-2 pr-3">Thao tác</th>
+                          <th className="py-2 pr-3">Giờ peak VN</th>
+                          <th className="py-2 pr-3">Module hay dùng</th>
+                          <th className="py-2">Online</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(usage.users || []).map((u) => (
+                          <tr key={u.user_id} className="border-b border-slate-50 last:border-0">
+                            <td className="py-2 pr-3">
+                              <div className="font-medium text-slate-800">{u.full_name || u.email || u.user_id}</div>
+                              {u.department && <div className="text-xs text-slate-400">{u.department}</div>}
+                            </td>
+                            <td className="py-2 pr-3">{u.actions?.toLocaleString('vi-VN')}</td>
+                            <td className="py-2 pr-3">
+                              {u.peak_hour_vn != null ? `${String(u.peak_hour_vn).padStart(2, '0')}:00` : '—'}
+                            </td>
+                            <td className="py-2 pr-3 text-xs text-slate-600">
+                              {(u.top_modules || []).map((m) => m.module).filter((m) => m !== '_none_').join(', ') || '—'}
+                            </td>
+                            <td className="py-2">
+                              {u.online ? (
+                                <span className="text-emerald-600 text-xs font-medium">Online</span>
+                              ) : (
+                                <span className="text-slate-400 text-xs">Offline</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
             </div>
           )}
