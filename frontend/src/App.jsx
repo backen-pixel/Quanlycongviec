@@ -88,6 +88,7 @@ const ProductionApprovalsPage = lazyWithRetry(() => import('./pages/ProductionAp
 const ProductionPipelineSettingsPage = lazyWithRetry(() => import('./pages/ProductionPipelineSettingsPage'));
 const WorkshopTaskTemplatesPage = lazyWithRetry(() => import('./pages/WorkshopTaskTemplatesPage'));
 const ProductionHandoverSettingsPage = lazyWithRetry(() => import('./pages/ProductionHandoverSettingsPage'));
+const ProductionBackupSyncPage = lazyWithRetry(() => import('./pages/ProductionBackupSyncPage'));
 const ProductionAssignmentsPage = lazyWithRetry(() => import('./pages/ProductionAssignmentsPage'));
 const ProductionRegionsPage = lazyWithRetry(() => import('./pages/ProductionRegionsPage'));
 const LogisticsDashboard = lazyWithRetry(() => import('./pages/LogisticsDashboard'));
@@ -338,6 +339,7 @@ export default function App() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/management" element={<ManagementDashboard />} />
             <Route path="/management/deals/:leadId" element={<UnifiedDealPage />} />
+            <Route path="/management/backup-sync" element={<ProductionBackupSyncPage />} />
             <Route path="/dashboard/classic" element={<DashboardClassic />} />
             <Route path="/social" element={<SocialFeedPage />} />
             <Route path="/social/u/:userId" element={<SocialProfilePage />} />

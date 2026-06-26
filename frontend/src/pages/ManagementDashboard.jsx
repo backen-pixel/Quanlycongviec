@@ -8,6 +8,7 @@ import {
   LayoutDashboard, Search, Filter, RefreshCw, Target, Factory, Truck,
   CheckSquare, AlertTriangle, ChevronRight, Building2, X, Calendar,
 } from 'lucide-react';
+import SupabaseMonitorButton from '../components/SupabaseMonitorButton';
 
 const PHASE_OPTIONS = [
   { value: '', label: 'Mọi giai đoạn' },
@@ -172,6 +173,7 @@ export default function ManagementDashboard() {
             <CheckSquare className="h-4 w-4" />
             Tổng hợp NV
           </Link>
+          {isAdmin && <SupabaseMonitorButton />}
         </div>
       </div>
 

@@ -6,6 +6,7 @@
  */
 const { processDueCrmAssignmentSchedules } = require('../helpers/crmAssignmentSchedule');
 const { enqueueBatchJob, listBatchJobs } = require('../helpers/batchQueue');
+const { runIfLeader } = require('../helpers/cronLeader');
 
 const RUN_INTERVAL_MS = 60 * 1000;
 const USE_QUEUE = process.env.CRM_ASSIGNMENT_SCHEDULE_USE_QUEUE !== '0';
@@ -64,8 +65,8 @@ function start(io) {
     console.log('[crm-assignment-schedule] Disabled (env)');
     return;
   }
-  setTimeout(() => { void runOnce(io); }, 45 * 1000);
-  setInterval(() => { void runOnce(io); }, RUN_INTERVAL_MS);
+  setTimeout(() => { void runIfLeader('crm-assignment-schedule', () => runOnce(io), { ttlSec: 55 }); }, 45 * 1000);
+  setInterval(() => { void runIfLeader('crm-assignment-schedule', () => runOnce(io), { ttlSec: 55 }); }, RUN_INTERVAL_MS);
   const mode = USE_QUEUE && process.env.BATCH_QUEUE_DISABLED !== '1' ? 'batch-queue' : 'direct';
   console.log(`[crm-assignment-schedule] Started — interval 1 phút (${mode})`);
 }

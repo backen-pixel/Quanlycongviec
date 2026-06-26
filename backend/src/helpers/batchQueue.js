@@ -7,6 +7,7 @@
 const { randomUUID } = require('crypto');
 const { supabase } = require('../config/supabase');
 const { getRedisIfReady } = require('../config/redis');
+const { runIfLeader } = require('./cronLeader');
 const { getBatchJobType } = require('./batchJobHandlers');
 const { assertBatchEnqueueAllowed, getJobCooldownMs, recordEnqueueForRateLimit } = require('./batchQueueRateLimit');
 
@@ -376,8 +377,9 @@ function startBatchQueueWorker() {
     return;
   }
   const intervalMs = Math.min(5000, Math.max(500, parseInt(process.env.BATCH_QUEUE_POLL_MS || '1000', 10) || 1000));
-  setTimeout(() => { void workerTick(); }, 30_000);
-  setInterval(() => { void workerTick(); }, intervalMs);
+  const ttlSec = Math.max(10, Math.ceil(intervalMs / 1000) + 5);
+  setTimeout(() => { void runIfLeader('batch-queue-worker', () => workerTick(), { ttlSec }); }, 30_000);
+  setInterval(() => { void runIfLeader('batch-queue-worker', () => workerTick(), { ttlSec }); }, intervalMs);
   console.log(`[batch-queue] Worker started — poll ${intervalMs}ms (Redis: ${getRedisIfReady() ? 'yes' : 'in-memory fallback'})`);
 }
 

@@ -11,6 +11,7 @@
  * Tích hợp: require('./jobs/crmKanbanDeadlineReminder').start(io)
  */
 const { supabase } = require('../config/supabase');
+const { runIfLeader } = require('../helpers/cronLeader');
 
 const RUN_INTERVAL_MS = 30 * 60 * 1000;
 const WARN_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -118,8 +119,8 @@ function start(io) {
     console.log('[crm-kanban-deadline] Disabled (env)');
     return;
   }
-  setTimeout(() => { void runOnce(io); }, 100 * 1000);
-  setInterval(() => { void runOnce(io); }, RUN_INTERVAL_MS);
+  setTimeout(() => { void runIfLeader('crm-kanban-deadline', () => runOnce(io), { ttlSec: 1700 }); }, 100 * 1000);
+  setInterval(() => { void runIfLeader('crm-kanban-deadline', () => runOnce(io), { ttlSec: 1700 }); }, RUN_INTERVAL_MS);
   console.log('[crm-kanban-deadline] Started — interval 30 phút');
 }
 

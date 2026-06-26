@@ -43,6 +43,12 @@ async function saveCallRingtoneBuffer(buffer, meta = {}) {
       upsert: true,
     });
     if (error) throw new Error(`Supabase Storage: ${error.message}`);
+    try {
+      const { replicateStorageUpload } = require('./supabaseReplication');
+      const { maybeLogFailbackStorage } = require('./supabaseFailback');
+      replicateStorageUpload({ bucket: BUCKET, storagePath: objectPath, buffer, mimetype: mime, upsert: true });
+      maybeLogFailbackStorage({ bucket: BUCKET, storagePath: objectPath, mimetype: mime, upsert: true });
+    } catch { /* ignore */ }
     const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(objectPath);
     const publicUrl = urlData?.publicUrl || null;
     if (!publicUrl) throw new Error('Không lấy được URL public từ Storage');

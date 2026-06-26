@@ -10,6 +10,16 @@ const api = axios.create({ baseURL: API_URL + '/api' });
 api.interceptors.request.use((c) => {
   const t = localStorage.getItem('token');
   if (t) c.headers.Authorization = `Bearer ${t}`;
+  const url = String(c.url || '');
+  if (url.includes('/production/backup-sync') && !url.endsWith('/unlock')) {
+    try {
+      const mt = sessionStorage.getItem('supabase_monitor_token');
+      const exp = Number(sessionStorage.getItem('supabase_monitor_exp') || 0);
+      if (mt && exp && Date.now() < exp) {
+        c.headers['X-Supabase-Monitor-Token'] = mt;
+      }
+    } catch { /* ignore */ }
+  }
   return c;
 });
 

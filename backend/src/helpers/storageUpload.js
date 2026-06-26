@@ -45,6 +45,24 @@ async function uploadBufferToStorage(buffer, {
     throw err;
   }
 
+  try {
+    const { replicateStorageUpload } = require('./supabaseReplication');
+    const { maybeLogFailbackStorage } = require('./supabaseFailback');
+    replicateStorageUpload({
+      bucket,
+      storagePath,
+      buffer,
+      mimetype: mimetype || 'application/octet-stream',
+      upsert: true,
+    });
+    maybeLogFailbackStorage({
+      bucket,
+      storagePath,
+      mimetype: mimetype || 'application/octet-stream',
+      upsert: true,
+    });
+  } catch { /* ignore */ }
+
   const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(storagePath);
   return {
     file_name: originalName,
