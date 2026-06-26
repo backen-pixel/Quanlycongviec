@@ -8,7 +8,8 @@ const config = require('../config');
 const TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // 12h
 
 function monitorPassword() {
-  return process.env.SUPABASE_MONITOR_PASSWORD || '140883';
+  const raw = String(process.env.SUPABASE_MONITOR_PASSWORD || '').trim();
+  return raw || '140883';
 }
 
 function verifyPassword(input) {

@@ -76,11 +76,26 @@ function CheckRow({ name, check }) {
 }
 
 function InstanceMonitorCard({ instance, isActive }) {
-  if (!instance?.configured) {
+  if (!instance) {
     return (
       <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5">
-        <h3 className="font-semibold text-slate-500 capitalize">{instance?.label || '—'}</h3>
-        <p className="text-sm text-slate-400 mt-2">Chưa cấu hình env</p>
+        <h3 className="font-semibold text-slate-500">—</h3>
+        <p className="text-sm text-slate-400 mt-2">Chưa tải được dữ liệu giám sát</p>
+      </div>
+    );
+  }
+  if (!instance.configured) {
+    return (
+      <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5">
+        <h3 className="font-semibold text-slate-500 capitalize">
+          {instance.label === 'primary' ? 'Primary (Chính)' : instance.label === 'backup' ? 'Backup (Dự phòng)' : instance.label}
+        </h3>
+        <p className="text-sm text-slate-400 mt-2">Chưa cấu hình env trên server</p>
+        <p className="text-xs text-slate-400 mt-1">
+          {instance.label === 'backup'
+            ? 'Cần SUPABASE_BACKUP_URL + SUPABASE_BACKUP_SERVICE_ROLE_KEY (+ DB URL)'
+            : 'Cần SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (+ SUPABASE_DB_URL)'}
+        </p>
       </div>
     );
   }
@@ -132,6 +147,7 @@ function ProductionBackupSyncContent() {
   const [runLoading, setRunLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
   const [verifyResult, setVerifyResult] = useState(null);
+  const [monitorError, setMonitorError] = useState('');
 
   const [form, setForm] = useState({
     schedule_enabled: false,
@@ -146,8 +162,16 @@ function ProductionBackupSyncContent() {
     try {
       const { data } = await api.get('/production/backup-sync/monitor');
       setMonitor(data);
+      setMonitorError('');
     } catch (e) {
       console.error(e);
+      const code = e.response?.data?.code;
+      const msg = e.response?.data?.error || e.message;
+      setMonitorError(
+        code === 'MONITOR_LOCKED'
+          ? 'Phiên giám sát hết hạn — nhập lại mật khẩu (140883).'
+          : `Không tải được giám sát: ${msg}`,
+      );
     }
     if (!silent) setMonitorLoading(false);
   }, []);
@@ -304,6 +328,12 @@ function ProductionBackupSyncContent() {
                   Làm mới
                 </button>
               </div>
+
+              {monitorError && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  {monitorError}
+                </div>
+              )}
 
               <div className="grid md:grid-cols-2 gap-4">
                 <InstanceMonitorCard
