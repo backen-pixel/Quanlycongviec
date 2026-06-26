@@ -3,15 +3,56 @@ import { resolveApiOrigin } from './apiOrigin';
 import { disconnectSocket } from './socket';
 import { resetClientSessionState } from './sessionReset';
 import { getSupabaseMonitorToken, clearSupabaseMonitorToken } from './supabaseMonitorAuth';
+import { getCachedActivityContext } from './deviceHeartbeat';
 
 const API_URL = resolveApiOrigin();
 
 const api = axios.create({ baseURL: API_URL + '/api' });
 
+function attachActivityContext(config) {
+  try {
+    if (typeof window === 'undefined') return config;
+    const ctx = getCachedActivityContext();
+    const method = String(config.method || 'get').toLowerCase();
+    if (method === 'get' || method === 'delete') {
+      config.params = {
+        ...(config.params || {}),
+        device_id: ctx.device_id,
+        device_name: ctx.device_name,
+        ...(ctx.geo_lat != null ? { geo_lat: ctx.geo_lat, geo_lng: ctx.geo_lng } : {}),
+      };
+      return config;
+    }
+    const data = config.data;
+    if (data instanceof FormData) {
+      if (ctx.device_id) data.set('device_id', ctx.device_id);
+      if (ctx.device_name) data.set('device_name', ctx.device_name);
+      if (ctx.geo_lat != null) {
+        data.set('geo_lat', String(ctx.geo_lat));
+        data.set('geo_lng', String(ctx.geo_lng));
+      }
+      return config;
+    }
+    const body = data && typeof data === 'object' ? { ...data } : {};
+    config.data = {
+      ...body,
+      device_id: ctx.device_id,
+      device_name: ctx.device_name,
+      ...(ctx.geo_lat != null ? { geo_lat: ctx.geo_lat, geo_lng: ctx.geo_lng } : {}),
+    };
+  } catch {
+    /* không chặn request nếu đọc thiết bị/vị trí lỗi */
+  }
+  return config;
+}
+
 api.interceptors.request.use((c) => {
   const t = localStorage.getItem('token');
   if (t) c.headers.Authorization = `Bearer ${t}`;
   const url = String(c.url || '');
+  if (url.includes('/production/backup-sync') || url.includes('/user-activity')) {
+    attachActivityContext(c);
+  }
   if (url.includes('/production/backup-sync') && !url.endsWith('/unlock')) {
     try {
       const mt = getSupabaseMonitorToken();
@@ -28,7 +69,10 @@ api.interceptors.response.use(r => r, (err) => {
     const sent = err.config?.headers?.['X-Supabase-Monitor-Token'];
     if (sent) clearSupabaseMonitorToken();
   }
-  if (err.response?.status === 401) {
+  const url = String(err.config?.url || '');
+  const isMonitorUnlock = url.includes('/production/backup-sync/unlock');
+  const isMonitorPasswordFail = err.response?.data?.code === 'MONITOR_PASSWORD_INVALID';
+  if (err.response?.status === 401 && !isMonitorUnlock && !isMonitorPasswordFail) {
     const code = err.response?.data?.code;
     const isMidnight = code === 'session_expired_midnight'
       || localStorage.getItem('logoutReason') === 'midnight';

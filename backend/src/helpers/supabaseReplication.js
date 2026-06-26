@@ -129,6 +129,37 @@ async function redisPush(job) {
   memQueue.push(job);
 }
 
+/** Đẩy job xuống cuối hàng — dùng khi FK chưa sẵn sàng, xử lý job khác trước. */
+async function redisPushTail(job) {
+  const redis = getRedisIfReady();
+  if (redis) {
+    await redis.rpush(REDIS_KEY, JSON.stringify(job));
+    return;
+  }
+  memQueue.unshift(job);
+}
+
+function isDeferrableReplicationError(err) {
+  const msg = String(err?.message || err || '');
+  return /→ 409\b|"code":"23503"|foreign key|is not present in table/i.test(msg);
+}
+
+async function requeueReplicationJob(job, err) {
+  const retry = (job.retry || 0) + 1;
+  if (retry > 8) {
+    console.warn('[supabase-replication] bỏ job sau 8 lần:', job.path || job.bucket, err?.message);
+    return;
+  }
+  const next = { ...job, retry, deferred_at: new Date().toISOString() };
+  if (isDeferrableReplicationError(err)) {
+    await redisPushTail(next);
+  } else if (getRedisIfReady()) {
+    await redisPush(next);
+  } else {
+    memQueue.push(next);
+  }
+}
+
 async function redisPop(timeoutSec = 1) {
   const redis = getRedisIfReady();
   if (redis) {
@@ -261,9 +292,7 @@ async function drainReplicationQueue({ maxJobs = 100, force = false } = {}) {
       failed += 1;
       _stats.failed += 1;
       _stats.last_error = e.message;
-      if (getRedisIfReady() && (job.retry || 0) < 5) {
-        await redisPush({ ...job, retry: (job.retry || 0) + 1 }).catch(() => {});
-      }
+      await requeueReplicationJob(job, e);
     }
   }
   return { processed, failed, remaining: await getQueueDepth() };
@@ -290,10 +319,8 @@ async function workerTickBatch() {
         if ((job.retry || 0) < 3) {
           console.warn('[supabase-replication] apply failed:', job.type, job.path || job.bucket, e.message);
         }
-        if (getRedisIfReady() && (job.retry || 0) < 5) {
-          await redisPush({ ...job, retry: (job.retry || 0) + 1 }).catch(() => {});
-        }
-        break;
+        await requeueReplicationJob(job, e);
+        if (!isDeferrableReplicationError(e)) break;
       }
     }
   } finally {

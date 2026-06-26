@@ -4,6 +4,7 @@
  */
 const { supabase } = require('../config/supabase');
 const { writeAuditLog, clientIp } = require('./auditLog');
+const { resolveActivityContext, missingDeviceGeoColumns } = require('./activityContext');
 
 const ACTION_LABELS = {
   monitor_unlock: 'Mở khóa trang giám sát (nhập mật khẩu)',
@@ -43,14 +44,21 @@ async function logSupabaseMonitorAction(req, opts = {}) {
     const action = String(opts.action || 'monitor_action').slice(0, 60);
     const label = String(opts.label || ACTION_LABELS[action] || action).slice(0, 400);
     const importance = Number.isInteger(opts.importance) ? opts.importance : 2;
+    const ctx = await resolveActivityContext(req, { userId, geocode: true });
     const meta = {
       ...(opts.metadata && typeof opts.metadata === 'object' ? opts.metadata : {}),
       monitor_action: action,
-      ip: clientIp(req),
+      ip: ctx.ip || clientIp(req),
+      user_agent: ctx.user_agent || null,
       user_name: req?.user?.full_name || req?.user?.name || null,
+      device_id: ctx.device_id || null,
+      device_name: ctx.device_name || null,
+      geo_lat: ctx.geo_lat ?? null,
+      geo_lng: ctx.geo_lng ?? null,
+      geo_address: ctx.geo_address || null,
     };
 
-    const { error } = await supabase.from('user_activity_log').insert({
+    const row = {
       user_id: userId,
       action_type: actionTypeFor(action),
       module: 'supabase_monitor',
@@ -59,7 +67,18 @@ async function logSupabaseMonitorAction(req, opts = {}) {
       label,
       metadata: meta,
       importance: Math.min(3, Math.max(1, importance)),
-    });
+      device_id: ctx.device_id || null,
+      device_name: ctx.device_name || null,
+      geo_lat: ctx.geo_lat ?? null,
+      geo_lng: ctx.geo_lng ?? null,
+      geo_address: ctx.geo_address || null,
+    };
+
+    let { error } = await supabase.from('user_activity_log').insert(row);
+    if (error && missingDeviceGeoColumns(error)) {
+      const { device_id: _d, device_name: _n, geo_lat: _lat, geo_lng: _lng, geo_address: _a, ...fallback } = row;
+      ({ error } = await supabase.from('user_activity_log').insert(fallback));
+    }
     if (error && !/user_activity_log|does not exist|42P01/i.test(String(error.message || ''))) {
       console.warn('[supabase-monitor-audit] activity insert:', error.message);
     }
@@ -82,13 +101,25 @@ async function getSupabaseMonitorActivityLog({ days = 30, limit = 80 } = {}) {
   const safeLimit = Math.min(200, Math.max(1, parseInt(limit, 10) || 80));
   const since = new Date(Date.now() - safeDays * 86400000).toISOString();
 
-  const { data, error } = await supabase
+  let data;
+  let error;
+  ({ data, error } = await supabase
     .from('user_activity_log')
-    .select('id, user_id, action_type, label, metadata, importance, created_at, user:users(id, full_name, email)')
+    .select('id, user_id, action_type, label, metadata, importance, created_at, device_id, device_name, geo_lat, geo_lng, geo_address, user:users(id, full_name, email)')
     .eq('module', 'supabase_monitor')
     .gte('created_at', since)
     .order('created_at', { ascending: false })
-    .limit(safeLimit);
+    .limit(safeLimit));
+
+  if (error && missingDeviceGeoColumns(error)) {
+    ({ data, error } = await supabase
+      .from('user_activity_log')
+      .select('id, user_id, action_type, label, metadata, importance, created_at, user:users(id, full_name, email)')
+      .eq('module', 'supabase_monitor')
+      .gte('created_at', since)
+      .order('created_at', { ascending: false })
+      .limit(safeLimit));
+  }
 
   if (error) {
     if (/user_activity_log|does not exist|42P01/i.test(String(error.message || ''))) {
@@ -100,17 +131,30 @@ async function getSupabaseMonitorActivityLog({ days = 30, limit = 80 } = {}) {
   return {
     ok: true,
     since,
-    items: (data || []).map((row) => ({
-      id: row.id,
-      at: row.created_at,
-      action_type: row.action_type,
-      label: row.label,
-      importance: row.importance,
-      metadata: row.metadata,
-      user: row.user
-        ? { id: row.user.id, name: row.user.full_name || row.user.email, email: row.user.email }
-        : { id: row.user_id, name: row.metadata?.user_name || '—' },
-    })),
+    items: (data || []).map((row) => {
+      const device_id = row.device_id || row.metadata?.device_id || null;
+      const device_name = row.device_name || row.metadata?.device_name || null;
+      const geo_lat = row.geo_lat ?? row.metadata?.geo_lat ?? null;
+      const geo_lng = row.geo_lng ?? row.metadata?.geo_lng ?? null;
+      const geo_address = row.geo_address || row.metadata?.geo_address || null;
+      return {
+        id: row.id,
+        at: row.created_at,
+        action_type: row.action_type,
+        label: row.label,
+        importance: row.importance,
+        metadata: row.metadata,
+        device: device_id || device_name
+          ? { id: device_id, name: device_name || device_id || '—' }
+          : null,
+        location: geo_lat != null && geo_lng != null
+          ? { lat: geo_lat, lng: geo_lng, address: geo_address }
+          : null,
+        user: row.user
+          ? { id: row.user.id, name: row.user.full_name || row.user.email, email: row.user.email }
+          : { id: row.user_id, name: row.metadata?.user_name || '—' },
+      };
+    }),
   };
 }
 

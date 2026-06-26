@@ -171,6 +171,53 @@ function warnMissingTable(err) {
   }
 }
 
+export async function getActivityContext(opts = {}) {
+  const { forceGeo = false } = opts;
+  const ua = window.navigator?.userAgent || '';
+  const base = {
+    device_id: getOrCreateDeviceId(),
+    device_name: detectDeviceName(),
+    platform: 'web',
+    os_name: detectOsName(ua),
+  };
+  let geo = readGeoCache();
+  if (geo && Date.now() - geo.at < GEO_CACHE_TTL_MS && isValidCoord(geo.lat, geo.lng)) {
+    return { ...base, geo_lat: geo.lat, geo_lng: geo.lng };
+  }
+  if (forceGeo) {
+    try {
+      const pos = await requestBrowserGeolocation();
+      const lat = Number(pos?.coords?.latitude);
+      const lng = Number(pos?.coords?.longitude);
+      if (isValidCoord(lat, lng)) {
+        writeGeoCache(lat, lng);
+        return { ...base, geo_lat: lat, geo_lng: lng };
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  const geoMeta = await getGeoMeta();
+  return { ...base, ...geoMeta };
+}
+
+/** Đọc nhanh từ cache (không chờ GPS) — dùng cho batch activity log. */
+export function getCachedActivityContext() {
+  const ua = window.navigator?.userAgent || '';
+  const cached = readGeoCache();
+  const geo =
+    cached && Date.now() - cached.at < GEO_CACHE_TTL_MS && isValidCoord(cached.lat, cached.lng)
+      ? { geo_lat: cached.lat, geo_lng: cached.lng }
+      : {};
+  return {
+    device_id: getOrCreateDeviceId(),
+    device_name: detectDeviceName(),
+    platform: 'web',
+    os_name: detectOsName(ua),
+    ...geo,
+  };
+}
+
 export async function sendDevicePing(opts = {}) {
   const { isLogin = false, forceGeo = false } = opts;
   const ua = window.navigator?.userAgent || '';

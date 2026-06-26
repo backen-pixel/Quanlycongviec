@@ -13,6 +13,7 @@
  */
 
 import api from './api';
+import { getCachedActivityContext } from './deviceHeartbeat';
 
 const BATCH_MS = 2000;
 const BATCH_MAX = 20;
@@ -69,9 +70,13 @@ function schedule() {
 
 function enqueue(entry) {
   if (disabled) return;
+  const ctx = getCachedActivityContext();
   queue.push({
     session_id: getSessionId(),
     path: typeof window !== 'undefined' ? window.location.pathname + window.location.search : null,
+    device_id: ctx.device_id,
+    device_name: ctx.device_name,
+    ...(ctx.geo_lat != null ? { geo_lat: ctx.geo_lat, geo_lng: ctx.geo_lng } : {}),
     ...entry,
   });
   if (queue.length >= BATCH_MAX) {
