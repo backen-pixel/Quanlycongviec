@@ -1069,6 +1069,11 @@ server.listen(config.port, () => {
   } catch (e) {
     console.warn('[supabase-backup-sync] Failed to start cron:', e.message);
   }
+  try {
+    require('./helpers/userUsageAnalytics').startUsageAnalyticsCron();
+  } catch (e) {
+    console.warn('[usage-analytics] Failed to start cron:', e.message);
+  }
 
   // Cron nhắc hạn deadline thẻ CRM (mỗi 30') — disable: CRM_KANBAN_DEADLINE_REMINDER_DISABLED=1
   try {
