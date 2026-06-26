@@ -143,4 +143,55 @@ router.post('/run', auth, monitorGate, async (req, res) => {
   }
 });
 
+/** Trạng thái lịch chuyển đổi đang chờ (đếm ngược). */
+router.get('/switch/pending', auth, monitorGate, async (req, res) => {
+  try {
+    const { getPendingSwitch } = require('../helpers/supabaseManualSwitch');
+    res.json({ pending: getPendingSwitch() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Chuẩn bị chuyển primary ↔ backup: kiểm tra + sync log + đếm ngược 15s. */
+router.post('/switch/prepare', auth, monitorGate, async (req, res) => {
+  const target = String(req.body?.target || '').toLowerCase();
+  if (target !== 'primary' && target !== 'backup') {
+    return res.status(400).json({ error: 'target phải là primary hoặc backup' });
+  }
+  try {
+    const { prepareManualSwitch } = require('../helpers/supabaseManualSwitch');
+    const userId = req.user?.userId || req.user?.id || 'admin';
+    const result = await prepareManualSwitch(target, userId);
+    if (!result.ok) return res.status(409).json(result);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/switch/cancel', auth, monitorGate, async (req, res) => {
+  try {
+    const { cancelManualSwitch } = require('../helpers/supabaseManualSwitch');
+    const userId = req.user?.userId || req.user?.id || 'admin';
+    res.json(cancelManualSwitch(req.body?.token, userId));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/switch/confirm', auth, monitorGate, async (req, res) => {
+  const token = String(req.body?.token || '');
+  if (!token) return res.status(400).json({ error: 'Thiếu token' });
+  try {
+    const { confirmManualSwitch } = require('../helpers/supabaseManualSwitch');
+    const userId = req.user?.userId || req.user?.id || 'admin';
+    const result = await confirmManualSwitch(token, userId);
+    if (result.too_early) return res.status(425).json(result);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;

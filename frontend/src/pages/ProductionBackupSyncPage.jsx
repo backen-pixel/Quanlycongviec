@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { isSupabaseMonitorUnlocked } from '../lib/supabaseMonitorAuth';
 import SupabaseMonitorGate from '../components/SupabaseMonitorGate';
+import SupabaseSwitchPanel from '../components/SupabaseSwitchPanel';
 import {
   Database, RefreshCw, Settings, Play, Loader2, CheckCircle2,
   AlertTriangle, Clock, ArrowLeft, Server, Activity, HardDrive, Globe, Users, BarChart3,
@@ -409,6 +410,14 @@ function ProductionBackupSyncContent() {
                   isActive={monitor?.active_target === 'backup'}
                 />
               </div>
+
+              <SupabaseSwitchPanel
+                activeTarget={monitor?.active_target || 'primary'}
+                onSwitched={() => {
+                  void loadMonitor();
+                  void load();
+                }}
+              />
 
               <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                 <h2 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
