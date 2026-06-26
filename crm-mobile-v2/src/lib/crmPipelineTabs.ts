@@ -111,11 +111,11 @@ function hasExplicitExpectedRevenueStage(stages: CrmPipelineStage[]): boolean {
 export function expectedRevenueStagesForPipelineValue(
   dealStages: CrmPipelineStage[],
 ): CrmPipelineStage[] {
-  const openStages = (dealStages || []).filter(isOpenPipelineValueStage);
-  if (hasExplicitExpectedRevenueStage(dealStages)) {
-    return openStages.filter((s) => !!s.countsAsExpectedRevenue);
+  const all = dealStages || [];
+  if (hasExplicitExpectedRevenueStage(all)) {
+    return all.filter((s) => !!s.countsAsExpectedRevenue && isOpenPipelineValueStage(s));
   }
-  const { dealTabStages, wonStage, wonAnchorOrder } = splitDealStagesForCrmTabs(openStages);
+  const { dealTabStages, wonStage, wonAnchorOrder } = splitDealStagesForCrmTabs(all);
   return preWonStagesForDealStats(dealTabStages, wonStage, wonAnchorOrder)
     .filter(isOpenPipelineValueStage);
 }

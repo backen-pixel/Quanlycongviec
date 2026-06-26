@@ -118,11 +118,11 @@ function hasExplicitExpectedRevenueStage(stages) {
 }
 
 function expectedRevenueStagesForPipelineValue(dealStages) {
-  const openStages = (dealStages || []).filter(isOpenPipelineValueStage);
-  if (hasExplicitExpectedRevenueStage(dealStages)) {
-    return openStages.filter((s) => !!s.counts_as_expected_revenue);
+  const all = dealStages || [];
+  if (hasExplicitExpectedRevenueStage(all)) {
+    return all.filter((s) => !!s.counts_as_expected_revenue && isOpenPipelineValueStage(s));
   }
-  const { dealTabStages, wonStage, wonAnchorOrder } = splitDealStagesForCrmTabs(openStages);
+  const { dealTabStages, wonStage, wonAnchorOrder } = splitDealStagesForCrmTabs(all);
   return preWonStagesForDealStats(dealTabStages, wonStage, wonAnchorOrder)
     .filter(isOpenPipelineValueStage);
 }
