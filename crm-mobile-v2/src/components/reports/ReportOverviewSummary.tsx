@@ -23,8 +23,8 @@ export default function ReportOverviewSummary({ summary }: Props) {
         <ReportMetricBlock label="Lead" value={summary.lead_count ?? 0} tone="blue" />
         <ReportMetricBlock label="Deal" value={summary.deal_count ?? 0} tone="cyan" />
         <ReportMetricBlock
-          label="Pipeline mở"
-          value={formatVndShort(summary.open_pipeline_value ?? summary.pipeline_value)}
+          label="Giá trị kỳ vọng"
+          value={formatVndShort(summary.open_pipeline_value ?? 0)}
           tone="indigo"
         />
         <ReportMetricBlock
@@ -33,10 +33,10 @@ export default function ReportOverviewSummary({ summary }: Props) {
           tone="slate"
         />
         <ReportMetricBlock label="Tỷ lệ chốt" value={`${summary.conversion_rate ?? 0}%`} tone="slate" />
-        <ReportMetricBlock label="Dự kiến (kỳ)" value={formatVndShort(summary.expected_value)} tone="emerald" />
+        <ReportMetricBlock label="Dự kiến (kỳ)" value={formatVndShort(summary.open_pipeline_raw_value ?? summary.expected_value)} tone="emerald" />
         <ReportMetricBlock
           label="Kỳ vọng (kỳ)"
-          value={formatVndShort(summary.weighted_value)}
+          value={formatVndShort(summary.open_pipeline_value ?? summary.weighted_value)}
           tone="amber"
         />
         <ReportMetricBlock label="Thắng" value={formatVndShort(summary.won_value)} tone="sky" />

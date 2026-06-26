@@ -27,6 +27,33 @@ function stageOrderIndex(stage) {
   return Number.isFinite(ord) ? ord : 999;
 }
 
+/** Gom stage theo pipeline — KPI «Tất cả công ty» phải tính riêng từng pipeline. */
+export function groupStagesByPipeline(stages) {
+  const map = new Map();
+  for (const s of stages || []) {
+    const pid = String(s?.pipeline_id || '__none__');
+    if (!map.has(pid)) map.set(pid, []);
+    map.get(pid).push(s);
+  }
+  return map;
+}
+
+export function resolveStagesForDeal(deal, stagesDeal, stagesByPipeline) {
+  const byId = new Map((stagesDeal || []).map((s) => [String(s.id), s]));
+  const st = deal?.stage_id ? byId.get(String(deal.stage_id)) : null;
+  const pid = String(st?.pipeline_id || deal?.pipeline_id || '__none__');
+  const grouped = stagesByPipeline || groupStagesByPipeline(stagesDeal);
+  return grouped.get(pid) || stagesDeal || [];
+}
+
+function wonAnchorForPipelineStages(stagesInPipe) {
+  const wonStage = resolveDealWonAnchorStage(stagesInPipe);
+  return {
+    wonStage,
+    wonAnchorOrder: wonStage ? stageOrderIndex(wonStage) : null,
+  };
+}
+
 /**
  * Cột Thắng duy nhất trên pipeline Deal — CHỈ `is_won` (Cài đặt Pipeline → nút «Cột Thắng»).
  * Không dùng `counts_as_won_revenue`: cờ đó chỉ để KPI «Doanh thu thắng» cộng thêm cột
@@ -104,6 +131,8 @@ export function preWonStagesForDealStats(dealTabStages, wonStage, wonAnchorOrder
  */
 export function filterDealsForDealTabStats(deals, { wonAnchorOrder, stagesDeal }) {
   const stageById = new Map((stagesDeal || []).map((s) => [String(s.id), s]));
+  const stagesByPipeline = groupStagesByPipeline(stagesDeal);
+  const multiPipeline = stagesByPipeline.size > 1;
   const out = [];
   for (const d of deals || []) {
     const st = d?.stage_id ? stageById.get(String(d.stage_id)) : null;
@@ -115,11 +144,14 @@ export function filterDealsForDealTabStats(deals, { wonAnchorOrder, stagesDeal }
       out.push(d);
       continue;
     }
-    if (wonAnchorOrder == null) {
+    const anchorOrder = multiPipeline
+      ? wonAnchorForPipelineStages(resolveStagesForDeal(d, stagesDeal, stagesByPipeline)).wonAnchorOrder
+      : wonAnchorOrder;
+    if (anchorOrder == null) {
       if (!st.is_won) out.push(d);
       continue;
     }
-    if (stageOrderIndex(st) < wonAnchorOrder) out.push(d);
+    if (stageOrderIndex(st) < anchorOrder) out.push(d);
   }
   return out;
 }
@@ -133,10 +165,14 @@ export function isDealTabWonColumnForMetrics(stage, pipelineType, wonStage) {
 export function partitionDealsForCrmTabs(deals, { wonAnchorOrder, stagesDeal }) {
   const dealTabDeals = [];
   const customerTabDeals = [];
-  if (wonAnchorOrder == null) {
+  const stageById = new Map((stagesDeal || []).map((s) => [String(s.id), s]));
+  const stagesByPipeline = groupStagesByPipeline(stagesDeal);
+  const multiPipeline = stagesByPipeline.size > 1;
+
+  if (!multiPipeline && wonAnchorOrder == null) {
     return { dealTabDeals: [...(deals || [])], customerTabDeals: [] };
   }
-  const stageById = new Map((stagesDeal || []).map((s) => [String(s.id), s]));
+
   for (const d of deals || []) {
     const sid = String(d?.stage_id || '');
     const st = sid ? stageById.get(sid) : null;
@@ -148,9 +184,16 @@ export function partitionDealsForCrmTabs(deals, { wonAnchorOrder, stagesDeal }) 
       dealTabDeals.push(d);
       continue;
     }
+    const anchorOrder = multiPipeline
+      ? wonAnchorForPipelineStages(resolveStagesForDeal(d, stagesDeal, stagesByPipeline)).wonAnchorOrder
+      : wonAnchorOrder;
+    if (anchorOrder == null) {
+      dealTabDeals.push(d);
+      continue;
+    }
     const order = stageOrderIndex(st);
-    if (order <= wonAnchorOrder) dealTabDeals.push(d);
-    if (order >= wonAnchorOrder) customerTabDeals.push(d);
+    if (order <= anchorOrder) dealTabDeals.push(d);
+    if (order >= anchorOrder) customerTabDeals.push(d);
   }
   return { dealTabDeals, customerTabDeals };
 }

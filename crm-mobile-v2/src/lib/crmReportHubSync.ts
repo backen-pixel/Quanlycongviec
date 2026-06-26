@@ -40,11 +40,13 @@ export function buildReportStageFetchOpts(query: EmployeeReportQuery): CrmStageF
   };
 }
 
-/** Pipeline mở snapshot — không lọc ngày tạo (GT đang chạy trên CRM). */
+/** Pipeline mở theo kỳ báo cáo — khớp CRM Hub (có SĐT + ngày tạo deal). */
 export function buildReportOpenPipelineFetchOpts(query: EmployeeReportQuery): CrmStageFetchOpts {
   return {
     companyId: query.company_id || undefined,
     regionId: query.region_id || undefined,
+    dateFrom: query.date_from || undefined,
+    dateTo: query.date_to || undefined,
     phoneFilter: 'has_phone',
     lite: true,
   };
@@ -119,8 +121,11 @@ function hasStageValueData(values: Record<string, number>): boolean {
   return Object.values(values || {}).some((v) => (Number(v) || 0) > 0);
 }
 
-/** Pipeline mở — chỉ dùng snapshot CRM Hub, không fallback cohort expected_value. */
+/** Giá trị kỳ vọng pipeline — weighted × xác suất, khớp CRM Hub «Giá trị kỳ vọng». */
 function resolveOpenPipelineValue(snap: CrmReportHubSnapshot): number {
+  if (snap.openWeightedPipelineValue > 0 || hasStageValueData(snap.dealWeightedValues)) {
+    return snap.openWeightedPipelineValue;
+  }
   return snap.openPipelineValue;
 }
 
@@ -128,16 +133,13 @@ function resolveOpenWeightedValue(
   snap: CrmReportHubSnapshot,
   openPipeline: number,
 ): number {
-  if (snap.openWeightedPipelineValue > 0 || hasStageValueData(snap.dealWeightedValues)) {
-    return snap.openWeightedPipelineValue;
-  }
   return openPipeline;
 }
 
 /**
  * Lead: giữ org-overview (khớp web BC theo ngày tạo).
  * Deal count/funnel: CRM Dashboard tab Deal.
- * Pipeline KPI: GT mở snapshot (khớp Hub), cohort GT giữ ở cohort_pipeline_value.
+ * Pipeline KPI: giá trị kỳ vọng weighted theo kỳ (khớp CRM Hub), GT thô giữ ở open_pipeline_raw_value.
  */
 export function applyCrmHubSnapshotToReport(
   report: OrgOverviewReport,
@@ -148,14 +150,19 @@ export function applyCrmHubSnapshotToReport(
   if (typeView === 'lead') return report;
 
   const cohortPipeline = report.summary.pipeline_value ?? 0;
-  const openPipeline = resolveOpenPipelineValue(snap);
-  const openWeighted = resolveOpenWeightedValue(snap, openPipeline);
+  const openWeighted = resolveOpenPipelineValue(snap);
+  const openRaw = snap.openPipelineValue;
+  const hubKvActive = openWeighted > 0 || hasStageValueData(snap.dealWeightedValues);
   const summary = {
     ...report.summary,
     cohort_pipeline_value: cohortPipeline,
-    open_pipeline_value: openPipeline,
+    open_pipeline_value: openWeighted,
+    open_pipeline_raw_value: openRaw,
     open_weighted_pipeline_value: openWeighted,
-    pipeline_value: openPipeline,
+    pipeline_value: hubKvActive ? openWeighted : (report.summary.pipeline_value ?? 0),
+    // Ghi đè org-overview weighted (~3,5 tỷ) bằng KV Hub theo cột CRM (~2,26 tỷ).
+    weighted_value: hubKvActive ? openWeighted : (report.summary.weighted_value ?? 0),
+    expected_value: hubKvActive ? openRaw : (report.summary.expected_value ?? 0),
     deal_count: snap.dealTotal,
     conversion_rate: reportConversionRate(
       reportClosedWonCount(report.summary),

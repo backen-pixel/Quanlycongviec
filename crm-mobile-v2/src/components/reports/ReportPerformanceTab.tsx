@@ -62,13 +62,11 @@ export default function ReportPerformanceTab({
               {formatVndShort(report.summary.expected_value)}
             </Text>
             <Text style={styles.revenueSub}>
-              Kỳ vọng có trọng số: {formatVndShort(report.summary.weighted_value)}
+              Kỳ vọng CRM Hub: {formatVndShort(report.summary.open_pipeline_value ?? report.summary.weighted_value)}
             </Text>
-            {(report.summary.open_weighted_pipeline_value ?? 0) > 0 ? (
+            {(report.summary.open_pipeline_raw_value ?? 0) > 0 ? (
               <Text style={styles.revenueSub}>
-                Pipeline mở (snapshot): {formatVndShort(report.summary.open_pipeline_value)}
-                {' · '}
-                Kỳ vọng: {formatVndShort(report.summary.open_weighted_pipeline_value)}
+                Dự kiến CRM Hub: {formatVndShort(report.summary.open_pipeline_raw_value)}
               </Text>
             ) : null}
             {trend ? (
