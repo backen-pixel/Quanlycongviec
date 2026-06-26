@@ -15,6 +15,7 @@
 const { supabase } = require('../config/supabase');
 const gdrive = require('../services/googleDrive');
 const config = require('../config');
+const { runIfLeader } = require('../helpers/cronLeader');
 
 let _timer = null;
 
@@ -142,8 +143,8 @@ function start() {
   }
   if (_timer) return;
   const interval = config.gdriveSyncIntervalMs;
-  _timer = setInterval(() => { void tick(); }, interval);
-  setTimeout(() => { void tick(); }, 30_000); // chạy lần đầu sau 30s
+  _timer = setInterval(() => { void runIfLeader('drive-sync', () => tick(), { ttlSec: Math.max(120, Math.round(interval / 1000) - 10) }); }, interval);
+  setTimeout(() => { void runIfLeader('drive-sync', () => tick(), { ttlSec: Math.max(120, Math.round(interval / 1000) - 10) }); }, 30_000); // chạy lần đầu sau 30s
   console.log(`[drive-sync] started (mỗi ${Math.round(interval / 1000)}s)`);
 }
 

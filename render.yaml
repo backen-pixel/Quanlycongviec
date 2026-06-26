@@ -25,5 +25,43 @@ services:
         sync: false
       - key: REDIS_URL
         sync: false
+      - key: SUPABASE_FAILOVER_ENABLED
+        sync: false
+      - key: SUPABASE_BACKUP_URL
+        sync: false
+      - key: SUPABASE_BACKUP_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_BACKUP_DB_URL
+        sync: false
+      - key: SUPABASE_BACKUP_DB_DIRECT_URL
+        sync: false
+      - key: SUPABASE_HEALTH_INTERVAL_MS
+        sync: false
+      - key: SUPABASE_FAIL_THRESHOLD
+        sync: false
+      - key: SUPABASE_AUTO_FAILBACK
+        sync: false
+      - key: SUPABASE_REPLICATION_ENABLED
+        sync: false
+      - key: SUPABASE_REPLICATION_SKIP_TABLES
+        sync: false
+      - key: SUPABASE_REPLICATION_LIGHT
+        sync: false
+      - key: SUPABASE_REPLICATION_STORAGE
+        sync: false
+      - key: SUPABASE_REPLICATION_IDLE_POLL_MS
+        sync: false
+      - key: SUPABASE_REPLICATION_BATCH_SIZE
+        sync: false
+      - key: SUPABASE_MONITOR_PASSWORD
+        sync: false
+      - key: SUPABASE_FAILBACK_SKIP_TABLES
+        sync: false
+      - key: SUPABASE_SWITCH_SYNC_ROUNDS
+        sync: false
+      - key: SUPABASE_SWITCH_SYNC_INTERVAL_MS
+        sync: false
+      - key: SUPABASE_SWITCH_SYNC_MAX_MS
+        sync: false
       - key: FCM_SA_JSON
         sync: false

@@ -10,6 +10,7 @@
  */
 const { supabase } = require('../config/supabase');
 const { buildAssignmentNotificationInsert } = require('../helpers/crmAssignmentNotifications');
+const { runIfLeader } = require('../helpers/cronLeader');
 
 const RUN_INTERVAL_MS = 30 * 60 * 1000;
 const DEDUP_WINDOW_MS = 4 * 60 * 60 * 1000;
@@ -119,8 +120,8 @@ function start(io) {
     return;
   }
   // Defer first run 90s để không tranh tài nguyên với startup
-  setTimeout(() => { void runOnce(io); }, 90 * 1000);
-  setInterval(() => { void runOnce(io); }, RUN_INTERVAL_MS);
+  setTimeout(() => { void runIfLeader('crm-assignment-reminder', () => runOnce(io), { ttlSec: 1700 }); }, 90 * 1000);
+  setInterval(() => { void runIfLeader('crm-assignment-reminder', () => runOnce(io), { ttlSec: 1700 }); }, RUN_INTERVAL_MS);
   console.log('[crm-assignment-reminder] Started — interval 30 phút');
 }
 

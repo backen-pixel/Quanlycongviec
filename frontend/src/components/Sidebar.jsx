@@ -12,7 +12,7 @@ import {
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, UsersRound,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
   BookOpen, FolderTree, Factory, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot, Download, UserMinus,
-  Sigma, Calculator, FileUp, History as HistoryIcon, HardDrive,
+  Sigma, Calculator, FileUp, History as HistoryIcon, HardDrive, Database,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
@@ -88,6 +88,7 @@ const MENU_GROUPS = [
       { to: '/settings/ai-chat-bot', icon: Bot, label: 'AI Bot trong chat' },
       { to: '/settings/app-updates', icon: Smartphone, label: 'Cập nhật App' },
       { to: '/settings/request-monitor', icon: Activity, label: 'Theo dõi Request' },
+      { to: '/management/backup-sync', icon: Database, label: 'Giám sát Supabase' },
       // { to: '/templates', icon: ClipboardList, label: 'Dự án mẫu' },
       // { to: '/stage-groups', icon: FolderKanban, label: 'Nhóm quy trình' },
     ]

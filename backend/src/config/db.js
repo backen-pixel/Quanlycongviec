@@ -3,6 +3,7 @@
  * session pool (5432) cho multi-statement tx khi cần.
  *
  * Disable: PG_POOL_DISABLED=1 → pgQuery trả null, caller fallback Supabase REST.
+ * Failover: khi active target = backup → dùng SUPABASE_BACKUP_DB_URL / DIRECT.
  */
 
 const { Pool } = require('pg');
@@ -11,6 +12,28 @@ const PG_DISABLED = process.env.PG_POOL_DISABLED === '1';
 
 let _pool = null;
 let _sessionPool = null;
+let _poolUrl = null;
+let _sessionPoolUrl = null;
+
+function _activeDbUrl() {
+  try {
+    const { getActiveTarget, isFailoverEnabled } = require('./supabaseRouter');
+    if (isFailoverEnabled() && getActiveTarget() === 'backup' && process.env.SUPABASE_BACKUP_DB_URL) {
+      return process.env.SUPABASE_BACKUP_DB_URL;
+    }
+  } catch { /* ignore */ }
+  return process.env.SUPABASE_DB_URL || '';
+}
+
+function _activeDbDirectUrl() {
+  try {
+    const { getActiveTarget, isFailoverEnabled } = require('./supabaseRouter');
+    if (isFailoverEnabled() && getActiveTarget() === 'backup' && process.env.SUPABASE_BACKUP_DB_DIRECT_URL) {
+      return process.env.SUPABASE_BACKUP_DB_DIRECT_URL;
+    }
+  } catch { /* ignore */ }
+  return process.env.SUPABASE_DB_DIRECT_URL || '';
+}
 
 function _buildPool(connectionString, maxDefault) {
   if (!connectionString) return null;
@@ -29,24 +52,51 @@ function _buildPool(connectionString, maxDefault) {
   return pool;
 }
 
+function resetPools() {
+  if (_pool) {
+    _pool.end().catch(() => {});
+    _pool = null;
+    _poolUrl = null;
+  }
+  if (_sessionPool) {
+    _sessionPool.end().catch(() => {});
+    _sessionPool = null;
+    _sessionPoolUrl = null;
+  }
+}
+
 function getPool() {
   if (PG_DISABLED) return null;
-  if (!_pool && process.env.SUPABASE_DB_URL) {
-    _pool = _buildPool(process.env.SUPABASE_DB_URL, 10);
+  const url = _activeDbUrl();
+  if (!url) return null;
+  if (_pool && _poolUrl !== url) {
+    _pool.end().catch(() => {});
+    _pool = null;
+  }
+  if (!_pool) {
+    _poolUrl = url;
+    _pool = _buildPool(url, 10);
   }
   return _pool;
 }
 
 function getSessionPool() {
   if (PG_DISABLED) return null;
-  if (!_sessionPool && process.env.SUPABASE_DB_DIRECT_URL) {
-    _sessionPool = _buildPool(process.env.SUPABASE_DB_DIRECT_URL, 4);
+  const url = _activeDbDirectUrl();
+  if (!url) return getPool();
+  if (_sessionPool && _sessionPoolUrl !== url) {
+    _sessionPool.end().catch(() => {});
+    _sessionPool = null;
+  }
+  if (!_sessionPool) {
+    _sessionPoolUrl = url;
+    _sessionPool = _buildPool(url, 4);
   }
   return _sessionPool;
 }
 
 function isPgEnabled() {
-  return !PG_DISABLED && !!(process.env.SUPABASE_DB_URL || process.env.SUPABASE_DB_DIRECT_URL);
+  return !PG_DISABLED && !!(_activeDbUrl() || _activeDbDirectUrl());
 }
 
 /**
@@ -103,4 +153,5 @@ module.exports = {
   isPgEnabled,
   pgQuery,
   pgSessionQuery,
+  resetPools,
 };

@@ -180,15 +180,39 @@ app.use('/uploads/messenger-chat', async (req, res, next) => {
 app.get('/', (_, res) => res.json({ app: 'TuBep Pro API', status: 'ok' }));
 const { getStatus: getRedisStatus, getRedis: _initRedis } = require('./config/redis');
 const { isPgEnabled } = require('./config/db');
+const { getHealthStatus, isSystemHealthy } = require('./config/supabaseRouter');
 _initRedis(); // khởi tạo kết nối nền nếu có REDIS_URL
-app.get('/api/health', (_, res) => res.json({
-  status: 'ok',
-  time: new Date().toISOString(),
-  uptime: process.uptime(),
-  redis: getRedisStatus(),
-  pg_pool: isPgEnabled() ? 'enabled' : 'disabled',
-  response_cache: process.env.RESPONSE_CACHE_DISABLED === '1' ? 'disabled' : 'enabled',
-}));
+app.get('/api/health', async (_, res) => {
+  const supabaseHealth = getHealthStatus();
+  const ok = isSystemHealthy();
+  let replication = null;
+  let failback = null;
+  let switch_sync = null;
+  try {
+    const { getReplicationStatus, getQueueDepth } = require('./helpers/supabaseReplication');
+    replication = { ...getReplicationStatus(), queue_depth: await getQueueDepth() };
+  } catch { /* ignore */ }
+  try {
+    const { getFailbackStatus, getPendingCount } = require('./helpers/supabaseFailback');
+    const { getLastSwitchSyncRun, switchSyncConfig } = require('./helpers/supabaseSwitchSync');
+    failback = { ...getFailbackStatus(), pending: await getPendingCount() };
+    switch_sync = { config: switchSyncConfig(), last_run: getLastSwitchSyncRun() };
+  } catch { /* ignore */ }
+  const body = {
+    status: ok ? 'ok' : 'degraded',
+    time: new Date().toISOString(),
+    uptime: process.uptime(),
+    redis: getRedisStatus(),
+    pg_pool: isPgEnabled() ? 'enabled' : 'disabled',
+    response_cache: process.env.RESPONSE_CACHE_DISABLED === '1' ? 'disabled' : 'enabled',
+    supabase: supabaseHealth,
+    replication,
+    failback,
+    switch_sync,
+  };
+  if (!ok) return res.status(503).json(body);
+  return res.json(body);
+});
 
 // ─── Request Metrics (admin only) ───────────────────────────────────────────
 const jwt_verify = require('jsonwebtoken');
@@ -273,6 +297,7 @@ zaloRouter._ioRef = io;
 app.use('/api/zalo', zaloRouter);
 // Inject io reference for realtime fb_message events
 app.use('/api/production', require('./routes/production'));
+try { app.use('/api/production/backup-sync', require('./routes/productionBackupSync')); } catch (e) { console.warn('⚠️ production backup-sync route failed:', e.message); }
 app.use('/api/logistics', require('./routes/logistics'));
 app.use('/api/accounting', require('./routes/accounting'));
 app.use('/api/workshop', require('./routes/workshopTypes'));
@@ -290,6 +315,7 @@ try { app.use('/api/integrations/stringee', require('./routes/stringee')); } cat
 try { app.use('/api/calc', require('./routes/calc')); } catch (e) { console.warn('⚠️ Calc (Tính toán) route failed to load:', e.message); }
 try { app.use('/api/drive', require('./routes/drive')); } catch (e) { console.warn('⚠️ Drive route failed to load:', e.message); }
 try { app.use('/api/batch-jobs', require('./routes/batchJobs')); } catch (e) { console.warn('⚠️ Batch jobs route failed to load:', e.message); }
+try { app.use('/api/admin/supabase', require('./routes/supabaseOps')); } catch (e) { console.warn('⚠️ Supabase ops route failed to load:', e.message); }
 
 // ─── Serve Frontend (SPA) in production ──
 const frontendDist = path.join(__dirname, '../../frontend/dist');
@@ -1020,6 +1046,19 @@ server.listen(config.port, () => {
     startBatchQueueWorker();
   } catch (e) {
     console.warn('[batch-queue] Failed to start:', e.message);
+  }
+
+  // Supabase primary→backup replication — disable: SUPABASE_REPLICATION_DISABLED=1
+  try {
+    require('./helpers/supabaseReplication').startReplicationWorker();
+  } catch (e) {
+    console.warn('[supabase-replication] Failed to start:', e.message);
+  }
+
+  try {
+    require('./helpers/supabaseBackupSync').startBackupSyncCron();
+  } catch (e) {
+    console.warn('[supabase-backup-sync] Failed to start cron:', e.message);
   }
 
   // Cron nhắc hạn deadline thẻ CRM (mỗi 30') — disable: CRM_KANBAN_DEADLINE_REMINDER_DISABLED=1

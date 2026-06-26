@@ -29,9 +29,23 @@ async function uploadVoiceFromTempFile(supabase, localFilePath, userId, mimeType
         upsert: false,
       });
       if (e2) throw e2;
+      try {
+        const { replicateStorageUpload } = require('./supabaseReplication');
+        const { maybeLogFailbackStorage } = require('./supabaseFailback');
+        replicateStorageUpload({ bucket, storagePath: objectPath, buffer: buf, mimetype: mimeType, upsert: false });
+        maybeLogFailbackStorage({ bucket, storagePath: objectPath, mimetype: mimeType, upsert: false });
+      } catch { /* ignore */ }
     } catch (e3) {
       throw error || e3;
     }
+  } else {
+    try {
+      const buf = fs.readFileSync(localFilePath);
+      const { replicateStorageUpload } = require('./supabaseReplication');
+      const { maybeLogFailbackStorage } = require('./supabaseFailback');
+      replicateStorageUpload({ bucket, storagePath: objectPath, buffer: buf, mimetype: mimeType, upsert: false });
+      maybeLogFailbackStorage({ bucket, storagePath: objectPath, mimetype: mimeType, upsert: false });
+    } catch { /* ignore */ }
   }
 
   try {

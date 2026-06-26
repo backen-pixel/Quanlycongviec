@@ -20,6 +20,7 @@
 
 const { supabase } = require('../config/supabase');
 const { runScheduleSend } = require('../helpers/aiBotSender');
+const { runIfLeader } = require('../helpers/cronLeader');
 
 const TICK_MS = 60 * 1000;
 const VN_TZ = 'Asia/Ho_Chi_Minh';
@@ -160,9 +161,9 @@ function start(io) {
   );
 
   setTimeout(() => {
-    tick(io).catch((e) => console.error('[ai-bot-cron] tick lỗi:', e.message));
+    runIfLeader('ai-chat-bot', () => tick(io), { ttlSec: 55 }).catch((e) => console.error('[ai-bot-cron] tick lỗi:', e.message));
     timer = setInterval(() => {
-      tick(io).catch((e) => console.error('[ai-bot-cron] tick lỗi:', e.message));
+      runIfLeader('ai-chat-bot', () => tick(io), { ttlSec: 55 }).catch((e) => console.error('[ai-bot-cron] tick lỗi:', e.message));
     }, TICK_MS);
   }, Math.max(msToNextMinute, 1000));
 }
