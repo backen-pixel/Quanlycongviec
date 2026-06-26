@@ -12,14 +12,21 @@ import type {
 } from '../api/employeeReport';
 import { reportClosedWonCount } from './reportMetrics';
 import {
+  crmCustomerTabConversionRate,
   dealStatsStagesForFunnel,
+  sumCrmCustomerTabDealCount,
   sumCrmDealStatsCount,
   sumCrmOpenPipelineValue,
   sumCrmOpenWeightedPipelineValue,
 } from './crmPipelineTabs';
 
 export type CrmReportHubSnapshot = {
+  /** Tab Deal — pre-won + thua (không dùng làm mẫu số tỷ lệ chốt). */
   dealTotal: number;
+  /** Tab KH — Thắng + sau Thắng. */
+  customerTabDealCount: number;
+  /** Tổng deal kỳ (stage-counts total, có SĐT + ngày tạo). */
+  dealPeriodTotal: number;
   dealCounts: Record<string, number>;
   dealValues: Record<string, number>;
   dealWeightedValues: Record<string, number>;
@@ -95,28 +102,6 @@ function mergeFunnelForAllView(
   return [...leadRows, ...buildDealFunnelFromSnapshot(snap)];
 }
 
-function reportConversionRate(closedCount: number, dealCount: number): number {
-  if (!dealCount) return 0;
-  return Math.round((closedCount / dealCount) * 1000) / 10;
-}
-
-function patchCompareCount(
-  report: OrgOverviewReport,
-  key: 'deal_count',
-  current: number,
-  previous: number,
-): OrgOverviewReport {
-  const delta = current - previous;
-  const pct = previous !== 0
-    ? Math.round((delta / previous) * 1000) / 10
-    : (current > 0 ? 100 : null);
-  const compare = {
-    ...(report.compare || {}),
-    [key]: { previous, delta, pct },
-  };
-  return { ...report, compare };
-}
-
 function hasStageValueData(values: Record<string, number>): boolean {
   return Object.values(values || {}).some((v) => (Number(v) || 0) > 0);
 }
@@ -138,14 +123,14 @@ function resolveOpenWeightedValue(
 
 /**
  * Lead: giữ org-overview (khớp web BC theo ngày tạo).
- * Deal count/funnel: CRM Dashboard tab Deal.
+ * Funnel Deal: CRM Dashboard tab Deal.
+ * Tỷ lệ chốt: tab KH (Thắng + sau Thắng) / tổng deal kỳ org-overview — khớp BC web.
  * Pipeline KPI: giá trị kỳ vọng weighted theo kỳ (khớp CRM Hub), GT thô giữ ở open_pipeline_raw_value.
  */
 export function applyCrmHubSnapshotToReport(
   report: OrgOverviewReport,
   snap: CrmReportHubSnapshot,
   typeView: 'all' | 'lead' | 'deal' = 'all',
-  prevSnap?: CrmReportHubSnapshot | null,
 ): OrgOverviewReport {
   if (typeView === 'lead') return report;
 
@@ -153,6 +138,14 @@ export function applyCrmHubSnapshotToReport(
   const openWeighted = resolveOpenPipelineValue(snap);
   const openRaw = snap.openPipelineValue;
   const hubKvActive = openWeighted > 0 || hasStageValueData(snap.dealWeightedValues);
+  const orgDealCount = Number(report.summary.deal_count) || 0;
+  const closedCount = reportClosedWonCount(report.summary);
+  /** «Tất cả công ty»: DEAL khớp CRM Hub tab Deal (có SĐT, trước Thắng + thua). */
+  const allCompaniesScope = !report.company_id;
+  const hubDealCount = snap.dealTotal > 0 ? snap.dealTotal : 0;
+  const dealCount = allCompaniesScope && hubDealCount > 0
+    ? hubDealCount
+    : orgDealCount;
   const summary = {
     ...report.summary,
     cohort_pipeline_value: cohortPipeline,
@@ -163,28 +156,22 @@ export function applyCrmHubSnapshotToReport(
     // Ghi đè org-overview weighted (~3,5 tỷ) bằng KV Hub theo cột CRM (~2,26 tỷ).
     weighted_value: hubKvActive ? openWeighted : (report.summary.weighted_value ?? 0),
     expected_value: hubKvActive ? openRaw : (report.summary.expected_value ?? 0),
-    deal_count: snap.dealTotal,
-    conversion_rate: reportConversionRate(
-      reportClosedWonCount(report.summary),
-      snap.dealTotal,
-    ),
+    deal_count: dealCount,
+    // Tỷ lệ chốt: tab KH / tổng deal kỳ — mẫu số khớp cột DEAL hiển thị.
+    conversion_rate: allCompaniesScope && hubDealCount > 0
+      ? crmCustomerTabConversionRate(closedCount, dealCount)
+      : (report.summary.conversion_rate ?? crmCustomerTabConversionRate(closedCount, orgDealCount)),
   };
 
   const pipeline_funnel = typeView === 'deal'
     ? buildDealFunnelFromSnapshot(snap)
     : mergeFunnelForAllView(report.pipeline_funnel || [], snap);
 
-  let next: OrgOverviewReport = {
+  return {
     ...report,
     summary,
     pipeline_funnel,
   };
-
-  if (prevSnap) {
-    next = patchCompareCount(next, 'deal_count', snap.dealTotal, prevSnap.dealTotal);
-  }
-
-  return next;
 }
 
 function mergeStageCountMaps(
@@ -203,6 +190,8 @@ async function fetchDealPeriodSnapshot(
   dealBatch: Awaited<ReturnType<typeof fetchCrmStageCountsBatch>>;
   dealStages: CrmPipelineStage[];
   dealTotal: number;
+  customerTabDealCount: number;
+  dealPeriodTotal: number;
 }> {
   const periodOpts = { ...buildReportStageFetchOpts(query), signal };
   if (query.company_id) {
@@ -214,6 +203,8 @@ async function fetchDealPeriodSnapshot(
       dealBatch,
       dealStages,
       dealTotal: sumCrmDealStatsCount(dealStages, dealBatch.counts),
+      customerTabDealCount: sumCrmCustomerTabDealCount(dealStages, dealBatch.counts),
+      dealPeriodTotal: Number(dealBatch.total) || 0,
     };
   }
 
@@ -223,7 +214,8 @@ async function fetchDealPeriodSnapshot(
   const mergedWeighted: Record<string, number> = {};
   const dealStages: CrmPipelineStage[] = [];
   let dealTotal = 0;
-  let total = 0;
+  let customerTabDealCount = 0;
+  let dealPeriodTotal = 0;
 
   for (const company of companies) {
     const opts = { ...periodOpts, companyId: company.id };
@@ -232,7 +224,8 @@ async function fetchDealPeriodSnapshot(
       fetchPipelineStages('deal', opts),
     ]);
     dealTotal += sumCrmDealStatsCount(stages, dealBatch.counts);
-    total += Number(dealBatch.total) || 0;
+    customerTabDealCount += sumCrmCustomerTabDealCount(stages, dealBatch.counts);
+    dealPeriodTotal += Number(dealBatch.total) || 0;
     mergeStageCountMaps(mergedCounts, dealBatch.counts);
     mergeStageCountMaps(mergedValues, dealBatch.values);
     mergeStageCountMaps(mergedWeighted, dealBatch.weightedValues);
@@ -244,10 +237,12 @@ async function fetchDealPeriodSnapshot(
       counts: mergedCounts,
       values: mergedValues,
       weightedValues: mergedWeighted,
-      total,
+      total: dealPeriodTotal,
     },
     dealStages,
     dealTotal,
+    customerTabDealCount,
+    dealPeriodTotal,
   };
 }
 
@@ -312,6 +307,8 @@ export async function fetchCrmReportHubSnapshot(
 
   return {
     dealTotal: periodSnap.dealTotal,
+    customerTabDealCount: periodSnap.customerTabDealCount,
+    dealPeriodTotal: periodSnap.dealPeriodTotal,
     dealCounts: periodSnap.dealBatch.counts,
     dealValues: periodSnap.dealBatch.values,
     dealWeightedValues: periodSnap.dealBatch.weightedValues,

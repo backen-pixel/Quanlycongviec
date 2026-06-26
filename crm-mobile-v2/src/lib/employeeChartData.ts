@@ -2,6 +2,7 @@ import type { EmployeePipelineRow, EmployeeReportRow, EmployeeTimelineRow } from
 import type { DealStackedRow, PieSegment } from './reportChartData';
 import { STACK_COLORS, truncLabel } from './reportChartData';
 import { formatViDateIso } from './reportFormat';
+import { reportClosedWonCount } from './reportMetrics';
 
 export function buildEmployeeTimelineChart(timeline: EmployeeTimelineRow[]) {
   return (timeline || []).map((d) => ({
@@ -33,7 +34,7 @@ export function buildEmployeeDealOutcomePie(
   summary: Record<string, number | null | undefined> | undefined,
   row?: Partial<EmployeeReportRow>,
 ): PieSegment[] {
-  const won = summary?.won_deal_count ?? row?.won_deal_count ?? 0;
+  const won = reportClosedWonCount(summary) || reportClosedWonCount(row);
   const lost = summary?.lost_deal_count ?? row?.lost_deal_count ?? 0;
   const deals = summary?.deal_count ?? row?.deal_count ?? 0;
   const open = Math.max(0, Number(deals) - Number(won) - Number(lost));
