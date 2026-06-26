@@ -153,7 +153,7 @@ router.get('/switch/pending', auth, monitorGate, async (req, res) => {
   }
 });
 
-/** Chuẩn bị chuyển primary ↔ backup: kiểm tra + sync log + đếm ngược 15s. */
+/** Chuẩn bị: kiểm tra + sync — chỉ trả token khi đồng bộ 100%. */
 router.post('/switch/prepare', auth, monitorGate, async (req, res) => {
   const target = String(req.body?.target || '').toLowerCase();
   if (target !== 'primary' && target !== 'backup') {
@@ -167,6 +167,19 @@ router.post('/switch/prepare', auth, monitorGate, async (req, res) => {
     res.json(result);
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+/** Sau thông báo 100% — bắt đầu đếm ngược 15s. */
+router.post('/switch/start-countdown', auth, monitorGate, async (req, res) => {
+  const prepareToken = String(req.body?.prepare_token || '');
+  if (!prepareToken) return res.status(400).json({ error: 'Thiếu prepare_token' });
+  try {
+    const { startSwitchCountdown } = require('../helpers/supabaseManualSwitch');
+    const userId = req.user?.userId || req.user?.id || 'admin';
+    res.json(await startSwitchCountdown(prepareToken, userId));
+  } catch (e) {
+    res.status(409).json({ error: e.message });
   }
 });
 

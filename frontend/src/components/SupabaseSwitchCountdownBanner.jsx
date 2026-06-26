@@ -13,20 +13,35 @@ function labelTarget(t) {
  */
 export default function SupabaseSwitchCountdownBanner() {
   const [countdown, setCountdown] = useState(null);
+  const [syncReady, setSyncReady] = useState(null);
 
-  const clear = useCallback(() => setCountdown(null), []);
+  const clear = useCallback(() => {
+    setCountdown(null);
+    setSyncReady(null);
+  }, []);
 
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return undefined;
 
+    const onSyncReady = (payload) => {
+      setSyncReady({
+        message: payload?.message || 'Đã đồng bộ dữ liệu thành công 100%',
+        target: payload?.target,
+        at: Date.now(),
+      });
+      setTimeout(() => setSyncReady(null), 3000);
+    };
+
     const onStart = (payload) => {
+      if (!payload?.sync_verified_100) return;
       const switchAt = payload?.switch_at ? new Date(payload.switch_at).getTime() : Date.now() + 15000;
       setCountdown({
         from: payload?.from,
         target: payload?.target,
         switchAt,
         message: payload?.message,
+        syncVerified: true,
       });
     };
 
@@ -37,11 +52,13 @@ export default function SupabaseSwitchCountdownBanner() {
 
     const onCancel = () => clear();
 
+    socket.on('supabase:switch-sync-ready', onSyncReady);
     socket.on('supabase:switch-countdown', onStart);
     socket.on('supabase:switch-done', onDone);
     socket.on('supabase:switch-cancelled', onCancel);
 
     return () => {
+      socket.off('supabase:switch-sync-ready', onSyncReady);
       socket.off('supabase:switch-countdown', onStart);
       socket.off('supabase:switch-done', onDone);
       socket.off('supabase:switch-cancelled', onCancel);
@@ -62,9 +79,23 @@ export default function SupabaseSwitchCountdownBanner() {
     return () => clearInterval(id);
   }, [countdown?.switchAt, countdown?.done]);
 
-  if (!countdown) return null;
+  if (!countdown && !syncReady) return null;
 
-  const remaining = countdown.remaining ?? 0;
+  const remaining = countdown?.remaining ?? 0;
+
+  if (syncReady && !countdown) {
+    return (
+      <div
+        className="fixed top-0 left-0 right-0 z-[200] px-4 py-3 shadow-lg flex items-center justify-center gap-3 text-sm font-medium bg-emerald-600 text-white"
+        role="status"
+      >
+        <Database className="w-5 h-5 shrink-0" />
+        <span>{syncReady.message}</span>
+      </div>
+    );
+  }
+
+  if (!countdown) return null;
 
   return (
     <div
@@ -84,6 +115,9 @@ export default function SupabaseSwitchCountdownBanner() {
         <>
           <AlertTriangle className="w-5 h-5 shrink-0 animate-pulse" />
           <span>
+            {countdown.syncVerified && (
+              <span className="font-semibold">Đã đồng bộ 100% · </span>
+            )}
             {countdown.message || `Chuyển sang ${labelTarget(countdown.target)} sau ${remaining}s`}
             {' '}
             <strong className="text-lg tabular-nums">{remaining}</strong>s
