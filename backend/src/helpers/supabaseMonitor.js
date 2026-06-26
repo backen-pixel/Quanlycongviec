@@ -5,11 +5,6 @@ const { fetch: undiciFetch } = require('undici');
 const { Pool } = require('pg');
 const config = require('../config');
 const { supabaseDispatcher } = require('../config/httpAgents');
-const {
-  isPgAuthBackoffActive,
-  getPgAuthBackoffUntil,
-  notePgAuthFailure,
-} = require('../config/db');
 
 function trimBase(url) {
   return String(url || '').replace(/\/+$/, '');
@@ -98,7 +93,6 @@ async function queryStorageBucketStatsViaPg(connectionString) {
       })),
     };
   } catch (e) {
-    notePgAuthFailure(e);
     return { source: 'postgres', error: e.message, buckets: null };
   } finally {
     await pool.end().catch(() => {});
@@ -185,6 +179,17 @@ async function probeStorage(base, key, dbUrl) {
   }
 }
 
+function classifyPgProbeError(err) {
+  const msg = String(err?.message || err || '');
+  if (err?.code === '28P01' || /password authentication failed/i.test(msg)) {
+    return { error: 'password_auth_failed', message: 'Sai mật khẩu DB — cập nhật URL trên Render' };
+  }
+  if (err?.code === 'XX000' || /ECIRCUITBREAKER/i.test(msg)) {
+    return { error: 'circuit_breaker', message: 'Supabase tạm khóa kết nối — thử lại sau vài phút' };
+  }
+  return { error: 'connect_failed', message: msg.slice(0, 200) || 'Không kết nối được PostgreSQL' };
+}
+
 async function probeDb(connectionString) {
   if (!connectionString) {
     return { ok: false, configured: false, error: 'not_configured' };
@@ -197,15 +202,6 @@ async function probeDb(connectionString) {
       mode: 'rest_only',
       latency_ms: 0,
       note: 'PG_POOL_DISABLED — dùng Supabase REST',
-    };
-  }
-  if (isPgAuthBackoffActive()) {
-    return {
-      ok: false,
-      configured: true,
-      error: 'auth_backoff',
-      retry_after: new Date(getPgAuthBackoffUntil()).toISOString(),
-      skipped: true,
     };
   }
   const start = Date.now();
@@ -236,12 +232,13 @@ async function probeDb(connectionString) {
       postgres_version: String(row.version || '').split(' ').slice(0, 2).join(' '),
     };
   } catch (e) {
-    notePgAuthFailure(e);
+    const classified = classifyPgProbeError(e);
     return {
       ok: false,
       configured: true,
       latency_ms: Date.now() - start,
-      error: e.message,
+      error: classified.error,
+      error_detail: classified.message,
     };
   } finally {
     await pool.end().catch(() => {});

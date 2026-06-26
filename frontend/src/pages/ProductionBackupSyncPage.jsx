@@ -105,6 +105,15 @@ function formatCheckError(check, label) {
   if (check.error === 'auth_backoff') {
     return 'Tạm dừng PG (sai mật khẩu) — kiểm tra DB URL trên Render';
   }
+  if (check.error === 'password_auth_failed') {
+    return check.error_detail || 'Sai mật khẩu DB — cập nhật SUPABASE_DB_URL trên Render';
+  }
+  if (check.error === 'circuit_breaker') {
+    return check.error_detail || 'Supabase tạm khóa kết nối — thử lại sau';
+  }
+  if (check.error === 'connect_failed' && check.error_detail) {
+    return check.error_detail;
+  }
   if (check.skipped && check.mode === 'rest_only') {
     return 'Bỏ qua (PG_POOL_DISABLED)';
   }

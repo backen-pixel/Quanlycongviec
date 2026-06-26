@@ -120,6 +120,112 @@ function backupHeaders(orig) {
   };
 }
 
+function primaryHeaders() {
+  const key = config.supabaseServiceKey;
+  return {
+    apikey: key,
+    authorization: `Bearer ${key}`,
+  };
+}
+
+function parseFkMissingFromError(errOrText) {
+  const text = String(errOrText?.message || errOrText || '');
+  const m = text.match(/Key \(([^)]+)\)=\(([^)]+)\) is not present in table "([^"]+)"/);
+  if (!m) return null;
+  return { childColumn: m[1], parentId: m[2], parentTable: m[3] };
+}
+
+function parseJsonBody(body) {
+  if (body == null || body === '') return null;
+  try {
+    return JSON.parse(body);
+  } catch {
+    return null;
+  }
+}
+
+function collectFkValues(body, column) {
+  const parsed = parseJsonBody(body);
+  if (!parsed) return [];
+  const rows = Array.isArray(parsed) ? parsed : [parsed];
+  return [...new Set(rows.map((r) => r?.[column]).filter(Boolean))];
+}
+
+/** Bảng con → cột FK cần có trên backup trước khi ghi. */
+const REPLICATION_PARENT_DEPS = {
+  facebook_messages: ['contact_id'],
+};
+
+async function backupRowExists(table, id) {
+  const backupBase = trimBase(config.supabaseBackupUrl);
+  const res = await undiciFetch(
+    `${backupBase}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}&select=id`,
+    { headers: backupHeaders({}), dispatcher: supabaseDispatcher },
+  );
+  if (!res.ok) return false;
+  const rows = await res.json().catch(() => []);
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+async function fetchPrimaryRow(table, id) {
+  const primaryBase = trimBase(config.supabaseUrl);
+  const res = await undiciFetch(
+    `${primaryBase}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}&select=*`,
+    { headers: primaryHeaders(), dispatcher: supabaseDispatcher },
+  );
+  if (!res.ok) return null;
+  const rows = await res.json().catch(() => []);
+  return Array.isArray(rows) && rows.length ? rows[0] : null;
+}
+
+async function postRowToBackup(table, row, depth = 0) {
+  const backupBase = trimBase(config.supabaseBackupUrl);
+  const res = await undiciFetch(`${backupBase}/rest/v1/${table}`, {
+    method: 'POST',
+    headers: {
+      ...backupHeaders({}),
+      'content-type': 'application/json',
+      prefer: 'resolution=merge-duplicates,return=minimal',
+    },
+    body: JSON.stringify(row),
+    dispatcher: supabaseDispatcher,
+  });
+  if (res.ok) return;
+  const text = await res.text().catch(() => '');
+  const fk = parseFkMissingFromError(text);
+  if (fk && depth < 4) {
+    await ensureRowOnBackup(fk.parentTable, fk.parentId, depth + 1);
+    return postRowToBackup(table, row, depth + 1);
+  }
+  throw new Error(`backup upsert ${table} → ${res.status} ${text.slice(0, 200)}`);
+}
+
+async function ensureRowOnBackup(table, id, depth = 0) {
+  if (!table || !id || depth > 4) return;
+  if (await backupRowExists(table, id)) return;
+  const row = await fetchPrimaryRow(table, id);
+  if (!row) return;
+  await postRowToBackup(table, row, depth);
+}
+
+async function ensureReplicationParents(job) {
+  if (job.type !== 'rest' || !job.body) return;
+  const table = restTableFromPath(job.path);
+  const deps = REPLICATION_PARENT_DEPS[table];
+  if (!deps?.length) return;
+  for (const column of deps) {
+    const ids = collectFkValues(job.body, column);
+    for (const id of ids) {
+      const parentTable = column.endsWith('_id') ? column.slice(0, -3) + 's' : null;
+      // contact_id → facebook_contacts (không theo quy tắc cắt _id)
+      const resolvedTable = table === 'facebook_messages' && column === 'contact_id'
+        ? 'facebook_contacts'
+        : parentTable;
+      if (resolvedTable) await ensureRowOnBackup(resolvedTable, id);
+    }
+  }
+}
+
 async function redisPush(job) {
   const redis = getRedisIfReady();
   if (redis) {
@@ -146,8 +252,8 @@ function isDeferrableReplicationError(err) {
 
 async function requeueReplicationJob(job, err) {
   const retry = (job.retry || 0) + 1;
-  if (retry > 8) {
-    console.warn('[supabase-replication] bỏ job sau 8 lần:', job.path || job.bucket, err?.message);
+  if (retry > 12) {
+    console.warn('[supabase-replication] bỏ job sau 12 lần:', job.path || job.bucket, err?.message);
     return;
   }
   const next = { ...job, retry, deferred_at: new Date().toISOString() };
@@ -232,6 +338,7 @@ function replicateStorageUpload({ bucket, storagePath, mimetype, upsert = true }
 }
 
 async function applyRestJob(job) {
+  await ensureReplicationParents(job);
   const backupBase = trimBase(config.supabaseBackupUrl);
   const url = backupBase + job.path;
   const headers = backupHeaders(job.headers || {});
@@ -246,6 +353,19 @@ async function applyRestJob(job) {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
+    const fk = parseFkMissingFromError(text);
+    if (fk) {
+      await ensureRowOnBackup(fk.parentTable, fk.parentId);
+      const retry = await undiciFetch(url, {
+        method: job.method,
+        headers,
+        body: job.body ?? undefined,
+        dispatcher: supabaseDispatcher,
+      });
+      if (retry.ok) return;
+      const retryText = await retry.text().catch(() => '');
+      throw new Error(`backup ${job.method} ${job.path} → ${retry.status} ${retryText.slice(0, 200)}`);
+    }
     throw new Error(`backup ${job.method} ${job.path} → ${res.status} ${text.slice(0, 200)}`);
   }
 }
