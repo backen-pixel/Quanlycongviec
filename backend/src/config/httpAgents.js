@@ -7,11 +7,12 @@ const http = require('http');
 const https = require('https');
 const axios = require('axios');
 const { Agent: UndiciAgent } = require('undici');
+const { bindUndiciAgentSafety } = require('./networkProcessGuard');
 
 const supabaseKeepAliveMs = parseInt(process.env.SUPABASE_KEEPALIVE_MS || '30000', 10);
 
 /** Pool cho Supabase REST (@supabase/supabase-js qua undici fetch). */
-const supabaseDispatcher = new UndiciAgent({
+const supabaseDispatcher = bindUndiciAgentSafety(new UndiciAgent({
   connect: { family: 4, timeout: 15_000 },
   keepAliveTimeout: supabaseKeepAliveMs,
   keepAliveMaxTimeout: 600_000,
@@ -19,10 +20,10 @@ const supabaseDispatcher = new UndiciAgent({
   connections: 64,
   headersTimeout: 30_000,
   bodyTimeout: 60_000,
-});
+}), 'undici:supabase');
 
 /** Pool cho external APIs (Facebook Graph, Zalo, MISA, Stringee, …). */
-const externalDispatcher = new UndiciAgent({
+const externalDispatcher = bindUndiciAgentSafety(new UndiciAgent({
   connect: { timeout: 15_000 },
   keepAliveTimeout: 10_000,
   keepAliveMaxTimeout: 120_000,
@@ -30,7 +31,7 @@ const externalDispatcher = new UndiciAgent({
   connections: 32,
   headersTimeout: 30_000,
   bodyTimeout: 120_000,
-});
+}), 'undici:external');
 
 const httpKeepAliveAgent = new http.Agent({ keepAlive: true, maxSockets: 32, keepAliveMsecs: 10_000 });
 const httpsKeepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 32, keepAliveMsecs: 10_000 });

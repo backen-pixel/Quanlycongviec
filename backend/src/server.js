@@ -5,11 +5,13 @@ const morgan = require('morgan');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const http = require('http');
+require('dotenv').config();
+const { installNetworkProcessGuard } = require('./config/networkProcessGuard');
+installNetworkProcessGuard();
 const { externalAxios } = require('./config/httpAgents');
+const config = require('./config');
 const jwt = require('jsonwebtoken');
 const { Server } = require('socket.io');
-require('dotenv').config();
-const config = require('./config');
 const { recordUserPing, setPresenceBroadcast } = require('./helpers/userPresence');
 const { isAdminLike } = require('./helpers/adminRole');
 
@@ -23,6 +25,7 @@ const io = new Server(server, {
 app.set('io', io);
 try {
   require('./helpers/supabaseManualSwitch').setSwitchIo(io);
+  require('./helpers/supabaseBackupSync').setBackupSyncIo(io);
 } catch { /* ignore */ }
 
 // ── Redis adapter (tùy chọn) — connect xong mới gắn; lỗi Redis không crash server ──
@@ -995,6 +998,14 @@ app.set('pushNotification', async (userId, notification) => {
 
 // Export để các route khác có thể dùng cùng logic (filter list/count)
 app.set('isProjectModuleNotification', isProjectModuleNotification);
+
+const { isTransientNetworkError } = require('./config/networkProcessGuard');
+server.on('clientError', (err, socket) => {
+  if (!isTransientNetworkError(err)) {
+    console.warn('[http] clientError:', err.message);
+  }
+  try { socket?.destroy(); } catch { /* ignore */ }
+});
 
 server.listen(config.port, () => {
   console.log(`🚀 TuBep Pro Backend: http://localhost:${config.port}/api`);

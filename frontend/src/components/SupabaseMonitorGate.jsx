@@ -1,13 +1,38 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Database, Lock, Loader2 } from 'lucide-react';
 import api from '../lib/api';
-import { setSupabaseMonitorToken, isSupabaseMonitorUnlocked } from '../lib/supabaseMonitorAuth';
+import {
+  setSupabaseMonitorToken,
+  clearSupabaseMonitorToken,
+  SUPABASE_MONITOR_UNLOCK_EVENT,
+  SUPABASE_MONITOR_LOCK_EVENT,
+} from '../lib/supabaseMonitorAuth';
 
 export default function SupabaseMonitorGate({ children }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [unlocked, setUnlocked] = useState(() => isSupabaseMonitorUnlocked());
+  const [unlocked, setUnlocked] = useState(false);
+
+  useEffect(() => {
+    clearSupabaseMonitorToken();
+    setUnlocked(false);
+    return () => {
+      clearSupabaseMonitorToken();
+    };
+  }, []);
+
+  const onUnlock = useCallback(() => setUnlocked(true), []);
+  const onLock = useCallback(() => setUnlocked(false), []);
+
+  useEffect(() => {
+    window.addEventListener(SUPABASE_MONITOR_UNLOCK_EVENT, onUnlock);
+    window.addEventListener(SUPABASE_MONITOR_LOCK_EVENT, onLock);
+    return () => {
+      window.removeEventListener(SUPABASE_MONITOR_UNLOCK_EVENT, onUnlock);
+      window.removeEventListener(SUPABASE_MONITOR_LOCK_EVENT, onLock);
+    };
+  }, [onUnlock, onLock]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -16,8 +41,9 @@ export default function SupabaseMonitorGate({ children }) {
     try {
       const { data } = await api.post('/production/backup-sync/unlock', { password });
       if (data?.token) {
-        setSupabaseMonitorToken(data.token, data.expires_in_ms);
+        setSupabaseMonitorToken(data.token);
         setUnlocked(true);
+        setPassword('');
       } else {
         setError('Không nhận được token');
       }
@@ -37,7 +63,9 @@ export default function SupabaseMonitorGate({ children }) {
             <Database className="w-6 h-6" />
           </div>
           <h2 className="text-lg font-bold text-slate-900">Giám sát Supabase</h2>
-          <p className="text-sm text-slate-500 mt-1">Nhập mật khẩu để truy cập</p>
+          <p className="text-sm text-slate-500 mt-1">
+            Nhập mật khẩu mỗi khi vào trang này — kể cả khi load lại trình duyệt hoặc quay lại từ trang khác.
+          </p>
         </div>
         <form onSubmit={submit} className="space-y-3">
           <div className="relative">
@@ -46,8 +74,9 @@ export default function SupabaseMonitorGate({ children }) {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Mật khẩu"
-              autoComplete="off"
+              placeholder="Mật khẩu giám sát"
+              autoComplete="current-password"
+              autoFocus
               className="w-full pl-10 pr-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
             />
           </div>

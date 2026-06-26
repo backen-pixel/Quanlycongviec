@@ -24,6 +24,8 @@ module.exports = {
   supabaseFailThreshold: Math.max(1, parseInt(process.env.SUPABASE_FAIL_THRESHOLD || '3', 10)),
   supabaseAutoFailback: process.env.SUPABASE_AUTO_FAILBACK === '1',
   supabaseReplicationEnabled: process.env.SUPABASE_REPLICATION_ENABLED === '1',
+  /** Ghi log thay đổi khi chuyển DB (Primary queue + Backup failback_log) — không bật failover tự động. */
+  supabaseSwitchLogEnabled: process.env.SUPABASE_SWITCH_LOG_ENABLED === '1',
   pgPoolDisabled: process.env.PG_POOL_DISABLED === '1',
   responseCacheDisabled: process.env.RESPONSE_CACHE_DISABLED === '1',
   // URL gốc của frontend web — dùng để tạo deep-link trong tin nhắn AI / push.

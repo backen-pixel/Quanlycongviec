@@ -98,7 +98,7 @@ async function buildProjectDealBundle(projectId, opts = {}) {
     .from('crm_leads')
     .select(`
       id, code, title, type, budget, estimated_value, company_id, project_id,
-      stage:crm_pipeline_stages(id, name, color, icon, is_won),
+      stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won),
       customer:customers(id, full_name, phone)
     `)
     .eq('project_id', projectId)

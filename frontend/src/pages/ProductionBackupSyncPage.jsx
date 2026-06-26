@@ -1,13 +1,22 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
-import { isSupabaseMonitorUnlocked } from '../lib/supabaseMonitorAuth';
+import { logClick } from '../lib/activityLogger';
 import SupabaseMonitorGate from '../components/SupabaseMonitorGate';
 import SupabaseSwitchPanel from '../components/SupabaseSwitchPanel';
 import {
   Database, RefreshCw, Settings, Play, Loader2, CheckCircle2,
-  AlertTriangle, Clock, ArrowLeft, Server, Activity, HardDrive, Globe, Users, BarChart3,
+  AlertTriangle, Clock, ArrowLeft, Server, Activity, HardDrive, Globe, Users, BarChart3, ClipboardList, ScrollText,
 } from 'lucide-react';
+
+const TAB_LABELS = {
+  monitor: 'Giám sát',
+  check: 'Kiểm tra drift',
+  schedule: 'Lịch đồng bộ',
+  usage: 'Phân tích sử dụng',
+  audit: 'Nhật ký truy cập',
+  'update-log': 'Cập nhật log',
+};
 
 function fmtDt(iso) {
   if (!iso) return '—';
@@ -124,15 +133,61 @@ function InstanceMonitorCard({ instance, isActive }) {
       <CheckRow name="REST API" check={c.rest} />
       <CheckRow name="PostgreSQL" check={c.db} />
       <CheckRow name="Storage" check={c.storage} />
-      {c.db?.table_count != null && (
-        <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-2 gap-2 text-xs text-slate-500">
-          <div>Bảng public: <strong className="text-slate-700">{c.db.table_count}</strong></div>
-          <div>Dung lượng DB: <strong className="text-slate-700">{fmtBytes(c.db.db_size_bytes)}</strong></div>
-          {c.storage?.bucket_count != null && (
-            <div>Storage buckets: <strong className="text-slate-700">{c.storage.bucket_count}</strong></div>
+      {(c.db?.table_count != null || c.storage?.buckets?.length > 0) && (
+        <div className="mt-3 pt-3 border-t border-slate-100 space-y-3 text-xs text-slate-500">
+          {c.db?.table_count != null && (
+            <div className="grid grid-cols-2 gap-2">
+              <div>Bảng public: <strong className="text-slate-700">{c.db.table_count}</strong></div>
+              <div>Dung lượng DB: <strong className="text-slate-700">{fmtBytes(c.db.db_size_bytes)}</strong></div>
+              {c.db?.postgres_version && (
+                <div className="col-span-2 truncate" title={c.db.postgres_version}>PG: {c.db.postgres_version}</div>
+              )}
+            </div>
           )}
-          {c.db?.postgres_version && (
-            <div className="col-span-2 truncate" title={c.db.postgres_version}>PG: {c.db.postgres_version}</div>
+          {c.storage?.buckets?.length > 0 && (
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="font-medium text-slate-600 flex items-center gap-1">
+                  <HardDrive className="w-3 h-3" />
+                  Dung lượng bucket
+                </span>
+                {c.storage.total_size_bytes != null && (
+                  <span className="text-slate-700 font-semibold">
+                    Tổng {fmtBytes(c.storage.total_size_bytes)}
+                    {c.storage.total_object_count != null && (
+                      <span className="text-slate-400 font-normal"> · {c.storage.total_object_count.toLocaleString('vi-VN')} file</span>
+                    )}
+                  </span>
+                )}
+              </div>
+              <ul className="rounded-lg border border-slate-100 divide-y divide-slate-100 overflow-hidden">
+                {c.storage.buckets.map((b) => (
+                  <li key={b.name} className="flex items-center justify-between gap-2 px-2 py-1.5 bg-slate-50/50">
+                    <span className="font-mono text-slate-800 truncate" title={b.name}>{b.name}</span>
+                    <span className="shrink-0 text-right tabular-nums">
+                      {b.error ? (
+                        <span className="text-red-600" title={b.error}>Lỗi</span>
+                      ) : (
+                        <>
+                          <strong className="text-slate-700">{fmtBytes(b.size_bytes)}</strong>
+                          {b.object_count != null && (
+                            <span className="text-slate-400 ml-1">({b.object_count.toLocaleString('vi-VN')} file)</span>
+                          )}
+                        </>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {c.storage.stats_source && (
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Nguồn: {c.storage.stats_source === 'postgres' ? 'PostgreSQL storage.objects' : 'Storage API (bucket đồng bộ)'}
+                </p>
+              )}
+            </div>
+          )}
+          {!c.storage?.buckets?.length && c.storage?.bucket_count != null && (
+            <div>Storage buckets: <strong className="text-slate-700">{c.storage.bucket_count}</strong></div>
           )}
         </div>
       )}
@@ -165,8 +220,162 @@ const DEFAULT_SYNC_SLOTS = [
   { h: 18, m: 0 },
 ];
 
+const DEFAULT_USAGE_FILTERS = {
+  user_id: '',
+  department_id: '',
+  module: '',
+  action_type: '',
+  weekday: '',
+  hour_from: '',
+  hour_to: '',
+  min_importance: '1',
+};
+
+const ACTION_TYPE_LABELS = {
+  view: 'Xem trang',
+  filter: 'Lọc',
+  search: 'Tìm kiếm',
+  sort: 'Sắp xếp',
+  navigate: 'Điều hướng',
+  click: 'Click',
+  create: 'Tạo mới',
+  update: 'Cập nhật',
+  delete: 'Xóa',
+  export: 'Xuất file',
+  open_modal: 'Mở modal',
+  submit_form: 'Gửi form',
+  chat_open: 'Mở chat',
+  chat_send: 'Gửi tin nhắn',
+};
+
+function usageFilterParams(days, filters) {
+  const p = { days };
+  for (const [k, v] of Object.entries(filters)) {
+    if (v != null && v !== '') p[k] = v;
+  }
+  return p;
+}
+
+function hasActiveUsageFilters(filters) {
+  return Object.entries(filters).some(([k, v]) => k !== 'min_importance' && v !== '' && v != null)
+    || filters.min_importance !== '1';
+}
+
+function UpdateLogStatusBadge({ applied, error }) {
+  if (error) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 border border-red-200">
+        Lỗi
+      </span>
+    );
+  }
+  if (applied) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200">
+        Đã replay
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">
+      Chờ replay
+    </span>
+  );
+}
+
+function UpdateLogPanel({ title, direction, description, enabled, statsLine, pendingCount, error, loading, items, showApplied }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
+      <div>
+        <h3 className="font-semibold text-slate-800 flex items-center gap-2">
+          <ScrollText className="w-4 h-4 text-teal-700" />
+          {title}
+        </h3>
+        <p className="text-xs text-teal-700 font-medium mt-0.5">{direction}</p>
+        <p className="text-xs text-slate-500 mt-1">{description}</p>
+      </div>
+      <div className="flex flex-wrap gap-2 text-xs">
+        <span className={`px-2 py-1 rounded-md ${enabled ? 'bg-emerald-50 text-emerald-800' : 'bg-slate-100 text-slate-600'}`}>
+          Ghi log: {enabled ? 'Bật' : 'Tắt'}
+        </span>
+        {pendingCount != null && (
+          <span className="px-2 py-1 rounded-md bg-amber-50 text-amber-900">
+            Chờ replay: <strong>{pendingCount}</strong>
+          </span>
+        )}
+        {statsLine && (
+          <span className="px-2 py-1 rounded-md bg-slate-50 text-slate-600">{statsLine}</span>
+        )}
+      </div>
+      {error && (
+        <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
+      )}
+      {loading && !items?.length ? (
+        <div className="flex items-center gap-2 text-slate-500 py-6 justify-center text-sm">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Đang tải log…
+        </div>
+      ) : (
+        <div className="overflow-x-auto max-h-[420px] overflow-y-auto border border-slate-100 rounded-lg">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-slate-50">
+              <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
+                <th className="py-2 px-3 font-medium">Thời gian</th>
+                <th className="py-2 px-3 font-medium">Loại</th>
+                <th className="py-2 px-3 font-medium">Thao tác</th>
+                {showApplied && <th className="py-2 px-3 font-medium">Trạng thái</th>}
+                {showApplied && <th className="py-2 px-3 font-medium">Replay lúc</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {!items?.length ? (
+                <tr>
+                  <td colSpan={showApplied ? 5 : 3} className="py-8 text-center text-slate-400 text-xs">
+                    {enabled ? 'Chưa có bản ghi log — mọi ghi DB/Storage qua backend sẽ được ghi tự động.' : 'Bật SUPABASE_SWITCH_LOG_ENABLED=1 và SUPABASE_REPLICATION_ENABLED=1 trong backend/.env rồi restart server.'}
+                  </td>
+                </tr>
+              ) : (
+                items.map((row) => (
+                  <tr key={row.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/80">
+                    <td className="py-2 px-3 text-xs text-slate-600 whitespace-nowrap">
+                      {fmtDt(row.enqueued_at || row.created_at)}
+                    </td>
+                    <td className="py-2 px-3 text-xs text-slate-500 uppercase">{row.type || row.job_type}</td>
+                    <td className="py-2 px-3 font-mono text-xs text-slate-800 break-all max-w-[280px]">
+                      {row.summary || row.path || row.storage_path || '—'}
+                      {row.retry > 0 && (
+                        <span className="ml-1 text-amber-600">retry {row.retry}</span>
+                      )}
+                    </td>
+                    {showApplied && (
+                      <td className="py-2 px-3">
+                        <UpdateLogStatusBadge applied={row.applied_to_primary} error={row.error} />
+                      </td>
+                    )}
+                    {showApplied && (
+                      <td className="py-2 px-3 text-xs text-slate-500 whitespace-nowrap">
+                        {row.applied_at ? fmtDt(row.applied_at) : '—'}
+                      </td>
+                    )}
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProductionBackupSyncContent() {
   const [tab, setTab] = useState('monitor');
+  const enteredRef = useRef(false);
+  const [auditLog, setAuditLog] = useState(null);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [updateLogs, setUpdateLogs] = useState(null);
+  const [updateLogsLoading, setUpdateLogsLoading] = useState(false);
+  const [updateLogsPendingOnly, setUpdateLogsPendingOnly] = useState(false);
   const [status, setStatus] = useState(null);
   const [monitor, setMonitor] = useState(null);
   const [settings, setSettings] = useState(null);
@@ -180,6 +389,8 @@ function ProductionBackupSyncContent() {
   const [usage, setUsage] = useState(null);
   const [usageLoading, setUsageLoading] = useState(false);
   const [usageDays, setUsageDays] = useState(14);
+  const [usageFilters, setUsageFilters] = useState(DEFAULT_USAGE_FILTERS);
+  const [filterOptions, setFilterOptions] = useState(null);
 
   const [form, setForm] = useState({
     schedule_enabled: false,
@@ -192,17 +403,74 @@ function ProductionBackupSyncContent() {
     verify_after_sync: true,
   });
 
+  const loadAuditLog = useCallback(async (silent = false) => {
+    if (!silent) setAuditLoading(true);
+    try {
+      const { data } = await api.get('/production/backup-sync/activity-log', { params: { days: 30, limit: 100 } });
+      setAuditLog(data);
+    } catch (e) {
+      setAuditLog({ ok: false, error: e.response?.data?.error || e.message, items: [] });
+    }
+    if (!silent) setAuditLoading(false);
+  }, []);
+
+  const loadUpdateLogs = useCallback(async (silent = false) => {
+    if (!silent) setUpdateLogsLoading(true);
+    try {
+      const { data } = await api.get('/production/backup-sync/update-logs', {
+        params: {
+          limit: 100,
+          pending_only: updateLogsPendingOnly ? '1' : '0',
+        },
+      });
+      setUpdateLogs(data);
+    } catch (e) {
+      setUpdateLogs({
+        error: e.response?.data?.error || e.message,
+        primary_log: { items: [] },
+        backup_log: { items: [] },
+      });
+    }
+    if (!silent) setUpdateLogsLoading(false);
+  }, [updateLogsPendingOnly]);
+
+  useEffect(() => {
+    if (enteredRef.current) return;
+    enteredRef.current = true;
+    logClick({
+      module: 'supabase_monitor',
+      feature: 'backup_sync',
+      label: 'Vào trang Giám sát Supabase',
+      metadata: { action: 'monitor_enter' },
+    });
+  }, []);
+
+  const selectTab = (next) => {
+    setTab(next);
+    logClick({
+      module: 'supabase_monitor',
+      feature: 'backup_sync',
+      label: `Tab ${TAB_LABELS[next] || next}`,
+      metadata: { tab: next },
+    });
+    if (next === 'audit') void loadAuditLog();
+    if (next === 'update-log') void loadUpdateLogs();
+  };
+
   const loadUsage = useCallback(async (silent = false) => {
     if (!silent) setUsageLoading(true);
     try {
-      const { data } = await api.get('/production/backup-sync/usage-analytics', { params: { days: usageDays } });
+      const { data } = await api.get('/production/backup-sync/usage-analytics', {
+        params: usageFilterParams(usageDays, usageFilters),
+      });
       setUsage(data);
+      if (data?.filter_options) setFilterOptions(data.filter_options);
     } catch (e) {
       console.error(e);
       setUsage({ ok: false, error: e.response?.data?.error || e.message });
     }
     if (!silent) setUsageLoading(false);
-  }, [usageDays]);
+  }, [usageDays, usageFilters]);
 
   const loadMonitor = useCallback(async (silent = false) => {
     if (!silent) setMonitorLoading(true);
@@ -251,7 +519,19 @@ function ProductionBackupSyncContent() {
   useEffect(() => {
     if (tab !== 'usage') return;
     void loadUsage();
-  }, [tab, usageDays, loadUsage]);
+  }, [tab, usageDays, usageFilters, loadUsage]);
+
+  useEffect(() => {
+    if (tab !== 'audit') return;
+    void loadAuditLog();
+  }, [tab, loadAuditLog]);
+
+  useEffect(() => {
+    if (tab !== 'update-log') return undefined;
+    void loadUpdateLogs(true);
+    const id = setInterval(() => void loadUpdateLogs(true), 15000);
+    return () => clearInterval(id);
+  }, [tab, loadUpdateLogs, updateLogsPendingOnly]);
 
   useEffect(() => {
     void load();
@@ -259,10 +539,11 @@ function ProductionBackupSyncContent() {
     const poll = setInterval(() => {
       if (tab === 'monitor') void loadMonitor(true);
       if (tab === 'usage') void loadUsage(true);
+      if (tab === 'update-log') void loadUpdateLogs(true);
       if (status?.job?.running) void load();
     }, 15000);
     return () => clearInterval(poll);
-  }, [load, loadMonitor, loadUsage, tab, status?.job?.running]);
+  }, [load, loadMonitor, loadUsage, loadUpdateLogs, tab, status?.job?.running]);
 
   useEffect(() => {
     if (tab !== 'monitor') return;
@@ -338,31 +619,47 @@ function ProductionBackupSyncContent() {
       <div className="flex gap-2 border-b border-slate-200">
         <button
           type="button"
-          onClick={() => setTab('monitor')}
+          onClick={() => selectTab('monitor')}
           className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === 'monitor' ? 'border-teal-600 text-teal-700' : 'border-transparent text-slate-500'}`}
         >
           Giám sát
         </button>
         <button
           type="button"
-          onClick={() => setTab('check')}
+          onClick={() => selectTab('check')}
           className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === 'check' ? 'border-teal-600 text-teal-700' : 'border-transparent text-slate-500'}`}
         >
           Kiểm tra drift
         </button>
         <button
           type="button"
-          onClick={() => setTab('schedule')}
+          onClick={() => selectTab('schedule')}
           className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === 'schedule' ? 'border-teal-600 text-teal-700' : 'border-transparent text-slate-500'}`}
         >
           Lịch đồng bộ
         </button>
         <button
           type="button"
-          onClick={() => setTab('usage')}
+          onClick={() => selectTab('usage')}
           className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === 'usage' ? 'border-teal-600 text-teal-700' : 'border-transparent text-slate-500'}`}
         >
           Phân tích sử dụng
+        </button>
+        <button
+          type="button"
+          onClick={() => selectTab('audit')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px inline-flex items-center gap-1.5 ${tab === 'audit' ? 'border-teal-600 text-teal-700' : 'border-transparent text-slate-500'}`}
+        >
+          <ClipboardList className="w-4 h-4" />
+          Nhật ký
+        </button>
+        <button
+          type="button"
+          onClick={() => selectTab('update-log')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px inline-flex items-center gap-1.5 ${tab === 'update-log' ? 'border-teal-600 text-teal-700' : 'border-transparent text-slate-500'}`}
+        >
+          <ScrollText className="w-4 h-4" />
+          Cập nhật log
         </button>
       </div>
 
@@ -561,33 +858,159 @@ function ProductionBackupSyncContent() {
 
           {tab === 'usage' && (
             <div className="space-y-4">
-              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <div className="text-xs text-slate-500 uppercase tracking-wide mb-1">Phân tích người dùng</div>
-                  <p className="text-sm text-slate-600">
-                    Khung giờ ít hoạt động nhất · gợi ý thời điểm chạy đồng bộ lớn
-                  </p>
+              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-xs text-slate-500 uppercase tracking-wide mb-1">Phân tích hành vi người dùng</div>
+                    <p className="text-sm text-slate-600">
+                      Lọc theo NV, phòng ban, module, loại thao tác · khung giờ ít user
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={usageDays}
+                      onChange={(e) => setUsageDays(parseInt(e.target.value, 10))}
+                      className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm"
+                    >
+                      <option value={7}>7 ngày</option>
+                      <option value={14}>14 ngày</option>
+                      <option value={30}>30 ngày</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => loadUsage()}
+                      disabled={usageLoading}
+                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-sm font-medium disabled:opacity-50"
+                    >
+                      {usageLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                      Làm mới
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <select
-                    value={usageDays}
-                    onChange={(e) => setUsageDays(parseInt(e.target.value, 10))}
-                    className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm"
-                  >
-                    <option value={7}>7 ngày</option>
-                    <option value={14}>14 ngày</option>
-                    <option value={30}>30 ngày</option>
-                  </select>
-                  <button
-                    type="button"
-                    onClick={() => loadUsage()}
-                    disabled={usageLoading}
-                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-sm font-medium disabled:opacity-50"
-                  >
-                    {usageLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                    Làm mới
-                  </button>
+
+                <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2 border-t border-slate-100">
+                  <label className="text-xs text-slate-600">
+                    Nhân viên
+                    <select
+                      value={usageFilters.user_id}
+                      onChange={(e) => setUsageFilters((f) => ({ ...f, user_id: e.target.value }))}
+                      className="mt-1 w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm"
+                    >
+                      <option value="">Tất cả</option>
+                      {(filterOptions?.users || []).map((u) => (
+                        <option key={u.id} value={u.id}>{u.full_name || u.email || u.id}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-xs text-slate-600">
+                    Phòng ban
+                    <select
+                      value={usageFilters.department_id}
+                      onChange={(e) => setUsageFilters((f) => ({ ...f, department_id: e.target.value }))}
+                      className="mt-1 w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm"
+                    >
+                      <option value="">Tất cả</option>
+                      {(filterOptions?.departments || []).map((d) => (
+                        <option key={d.id} value={d.id}>{d.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-xs text-slate-600">
+                    Module
+                    <select
+                      value={usageFilters.module}
+                      onChange={(e) => setUsageFilters((f) => ({ ...f, module: e.target.value }))}
+                      className="mt-1 w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm"
+                    >
+                      <option value="">Tất cả</option>
+                      {(filterOptions?.modules || usage?.filter_options?.modules || []).map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-xs text-slate-600">
+                    Loại thao tác
+                    <select
+                      value={usageFilters.action_type}
+                      onChange={(e) => setUsageFilters((f) => ({ ...f, action_type: e.target.value }))}
+                      className="mt-1 w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm"
+                    >
+                      <option value="">Tất cả</option>
+                      {(filterOptions?.action_types || usage?.filter_options?.action_types || []).map((a) => (
+                        <option key={a} value={a}>{ACTION_TYPE_LABELS[a] || a}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-xs text-slate-600">
+                    Thứ (VN)
+                    <select
+                      value={usageFilters.weekday}
+                      onChange={(e) => setUsageFilters((f) => ({ ...f, weekday: e.target.value }))}
+                      className="mt-1 w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm"
+                    >
+                      <option value="">Cả tuần</option>
+                      <option value="1">Thứ 2</option>
+                      <option value="2">Thứ 3</option>
+                      <option value="3">Thứ 4</option>
+                      <option value="4">Thứ 5</option>
+                      <option value="5">Thứ 6</option>
+                      <option value="6">Thứ 7</option>
+                      <option value="7">Chủ nhật</option>
+                    </select>
+                  </label>
+                  <label className="text-xs text-slate-600">
+                    Giờ từ (VN)
+                    <select
+                      value={usageFilters.hour_from}
+                      onChange={(e) => setUsageFilters((f) => ({ ...f, hour_from: e.target.value }))}
+                      className="mt-1 w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm"
+                    >
+                      <option value="">—</option>
+                      {Array.from({ length: 24 }, (_, h) => (
+                        <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-xs text-slate-600">
+                    Giờ đến (VN)
+                    <select
+                      value={usageFilters.hour_to}
+                      onChange={(e) => setUsageFilters((f) => ({ ...f, hour_to: e.target.value }))}
+                      className="mt-1 w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm"
+                    >
+                      <option value="">—</option>
+                      {Array.from({ length: 24 }, (_, h) => (
+                        <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-xs text-slate-600">
+                    Mức quan trọng ≥
+                    <select
+                      value={usageFilters.min_importance}
+                      onChange={(e) => setUsageFilters((f) => ({ ...f, min_importance: e.target.value }))}
+                      className="mt-1 w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm"
+                    >
+                      <option value="0">Tất cả (kể cả xem list)</option>
+                      <option value="1">Bình thường trở lên</option>
+                      <option value="2">Quan trọng (CRUD/export)</option>
+                      <option value="3">Critical only</option>
+                    </select>
+                  </label>
                 </div>
+
+                {hasActiveUsageFilters(usageFilters) && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-teal-700 bg-teal-50 px-2 py-1 rounded-full">Đang lọc dữ liệu</span>
+                    <button
+                      type="button"
+                      onClick={() => setUsageFilters(DEFAULT_USAGE_FILTERS)}
+                      className="text-slate-500 hover:text-slate-800 underline"
+                    >
+                      Xóa bộ lọc
+                    </button>
+                  </div>
+                )}
               </div>
 
               {usageLoading && !usage ? (
@@ -649,6 +1072,53 @@ function ProductionBackupSyncContent() {
                       })}
                     </div>
                     <p className="text-xs text-slate-500">Cột xanh lá = top giờ ít hoạt động (phù hợp chạy đồng bộ lớn)</p>
+                  </div>
+
+                  {(usage.by_weekday?.length > 0) && (
+                    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                      <h2 className="font-semibold text-slate-800 mb-3">Hoạt động theo thứ (VN)</h2>
+                      <div className="flex items-end gap-2 h-24">
+                        {usage.by_weekday.map((d) => {
+                          const max = Math.max(...usage.by_weekday.map((x) => x.actions), 1);
+                          const pct = Math.max(4, (d.actions / max) * 100);
+                          return (
+                            <div key={d.weekday} className="flex-1 flex flex-col items-center gap-1" title={`${d.label}: ${d.actions} thao tác`}>
+                              <div className="w-full bg-indigo-400 rounded-t" style={{ height: `${pct}%` }} />
+                              <span className="text-[10px] text-slate-500">{d.label}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid md:grid-cols-2 gap-4">
+                    {(usage.by_action_type?.length > 0) && (
+                      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                        <h3 className="font-semibold text-slate-800 mb-3">Loại thao tác</h3>
+                        <ul className="space-y-1.5 text-sm max-h-48 overflow-y-auto">
+                          {usage.by_action_type.map((a) => (
+                            <li key={a.action_type} className="flex justify-between gap-2">
+                              <span className="text-slate-700">{ACTION_TYPE_LABELS[a.action_type] || a.action_type}</span>
+                              <span className="text-slate-400 shrink-0">{a.actions?.toLocaleString('vi-VN')}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {(usage.by_module?.length > 0) && (
+                      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                        <h3 className="font-semibold text-slate-800 mb-3">Module</h3>
+                        <ul className="space-y-1.5 text-sm max-h-48 overflow-y-auto">
+                          {usage.by_module.map((m) => (
+                            <li key={m.module} className="flex justify-between gap-2">
+                              <span className="text-slate-700">{m.module === '_none_' ? '(không module)' : m.module}</span>
+                              <span className="text-slate-400 shrink-0">{m.actions?.toLocaleString('vi-VN')}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid md:grid-cols-2 gap-4">
@@ -722,6 +1192,168 @@ function ProductionBackupSyncContent() {
                   </div>
                 </>
               )}
+            </div>
+          )}
+
+          {tab === 'audit' && (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                  <div>
+                    <h2 className="font-semibold text-slate-800 flex items-center gap-2">
+                      <ClipboardList className="w-5 h-5 text-teal-700" />
+                      Nhật ký truy cập &amp; thao tác
+                    </h2>
+                    <p className="text-sm text-slate-500 mt-1">
+                      Ai đã mở khóa trang, chạy đồng bộ, chuyển DB, đổi lịch… (30 ngày gần nhất)
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => loadAuditLog()}
+                    disabled={auditLoading}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-sm font-medium disabled:opacity-50"
+                  >
+                    {auditLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                    Làm mới
+                  </button>
+                </div>
+
+                {auditLog?.error === 'missing_table' && (
+                  <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    Chưa có bảng user_activity_log — chạy migration database/235_user_activity_log.sql
+                  </p>
+                )}
+
+                {auditLoading && !auditLog?.items?.length ? (
+                  <div className="flex items-center gap-2 text-slate-500 py-8 justify-center">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Đang tải nhật ký…
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
+                          <th className="py-2 pr-3 font-medium">Thời gian</th>
+                          <th className="py-2 pr-3 font-medium">Nhân viên</th>
+                          <th className="py-2 pr-3 font-medium">Thao tác</th>
+                          <th className="py-2 font-medium">IP</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(auditLog?.items || []).length === 0 ? (
+                          <tr>
+                            <td colSpan={4} className="py-8 text-center text-slate-400">
+                              Chưa có bản ghi — thao tác trên trang này sẽ được ghi nhận tự động.
+                            </td>
+                          </tr>
+                        ) : (
+                          auditLog.items.map((row) => (
+                            <tr key={row.id} className="border-b border-slate-100 last:border-0">
+                              <td className="py-2.5 pr-3 text-xs text-slate-600 whitespace-nowrap">{fmtDt(row.at)}</td>
+                              <td className="py-2.5 pr-3">
+                                <div className="font-medium text-slate-800">{row.user?.name || '—'}</div>
+                                {row.user?.email && (
+                                  <div className="text-xs text-slate-400 truncate max-w-[160px]">{row.user.email}</div>
+                                )}
+                              </td>
+                              <td className="py-2.5 pr-3 text-slate-700">{row.label || row.metadata?.monitor_action || '—'}</td>
+                              <td className="py-2.5 text-xs text-slate-500 font-mono">{row.metadata?.ip || '—'}</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {tab === 'update-log' && (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-semibold text-slate-800 flex items-center gap-2">
+                    <ScrollText className="w-5 h-5 text-teal-700" />
+                    Log cập nhật 2 Database
+                  </h2>
+                  <p className="text-sm text-slate-500 mt-1">
+                    Primary: queue replication · Backup: bảng failback_log · Tự refresh 15s
+                  </p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Đang dùng: <strong>{updateLogs?.active_target === 'backup' ? 'Backup' : 'Primary'}</strong>
+                    {' · '}
+                    Cập nhật: {fmtDt(updateLogs?.checked_at)}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="inline-flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={updateLogsPendingOnly}
+                      onChange={(e) => setUpdateLogsPendingOnly(e.target.checked)}
+                      className="rounded border-slate-300"
+                    />
+                    Backup: chỉ chờ replay
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => loadUpdateLogs()}
+                    disabled={updateLogsLoading}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-sm font-medium disabled:opacity-50"
+                  >
+                    {updateLogsLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                    Làm mới
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid lg:grid-cols-2 gap-4">
+                <UpdateLogPanel
+                  title="Log Primary (Chính)"
+                  direction={updateLogs?.primary_log?.direction || 'Chính → Dự phòng'}
+                  description={updateLogs?.primary_log?.description || ''}
+                  enabled={updateLogs?.primary_log?.enabled}
+                  pendingCount={updateLogs?.primary_log?.queue_depth}
+                  statsLine={
+                    updateLogs?.primary_log?.stats
+                      ? `Đã áp dụng: ${updateLogs.primary_log.stats.applied ?? 0} · Lỗi: ${updateLogs.primary_log.stats.failed ?? 0}`
+                      : null
+                  }
+                  error={updateLogs?.primary_log?.error}
+                  loading={updateLogsLoading}
+                  items={updateLogs?.primary_log?.items}
+                  showApplied={false}
+                />
+                <UpdateLogPanel
+                  title="Log Backup (Dự phòng)"
+                  direction={updateLogs?.backup_log?.direction || 'Dự phòng → Chính'}
+                  description={updateLogs?.backup_log?.description || ''}
+                  enabled={updateLogs?.backup_log?.enabled}
+                  pendingCount={updateLogs?.backup_log?.pending}
+                  statsLine={
+                    updateLogs?.backup_log?.stats
+                      ? `Đã replay: ${updateLogs.backup_log.stats.replayed ?? 0} · Lỗi: ${updateLogs.backup_log.stats.replay_failed ?? 0}`
+                      : null
+                  }
+                  error={updateLogs?.backup_log?.error}
+                  loading={updateLogsLoading}
+                  items={updateLogs?.backup_log?.items}
+                  showApplied
+                />
+              </div>
+
+              <p className="text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">
+                Primary: queue job chờ replay · Backup: bảng <code className="text-xs">supabase_failback_log</code>.
+                {' '}
+                Env: <code className="text-xs">SUPABASE_SWITCH_LOG_ENABLED=1</code>
+                {' + '}
+                <code className="text-xs">SUPABASE_REPLICATION_ENABLED=1</code>
+                {' '}
+                (chạy migration 379 trên Backup nếu chưa có bảng log).
+              </p>
             </div>
           )}
 
@@ -815,7 +1447,7 @@ function ProductionBackupSyncContent() {
               <div className="rounded-xl border border-teal-200 bg-teal-50/50 p-5 shadow-sm">
                 <h2 className="font-semibold text-slate-800 mb-2">Chạy đồng bộ ngay</h2>
                 <p className="text-sm text-slate-600 mb-4">
-                  Clone DB + Storage từ primary sang backup. Job chạy nền — có thể mất vài phút đến vài chục phút.
+                  Đồng bộ incremental: log replication → chỉ bảng lệch → Storage chỉ file mới/khác (không clone full DB trừ khi bật SUPABASE_BACKUP_ALLOW_FULL_CLONE=1).
                 </p>
                 <button
                   type="button"
