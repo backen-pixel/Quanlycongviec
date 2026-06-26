@@ -31,7 +31,7 @@ function _maybeRequireIoredis() {
 
 function getRedis() {
   if (_client) return _client;
-  if (!config.redisUrl) {
+  if (!config.redisUrl || process.env.REDIS_DISABLED === '1') {
     _status = 'disabled';
     return null;
   }
