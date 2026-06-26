@@ -6692,6 +6692,17 @@ r.get('/leads/picker', async (req, res) => {
   }
 });
 
+function parseCrmStageCountsNumericMap(obj, keepNone) {
+  const out = {};
+  if (!obj || typeof obj !== 'object') return out;
+  for (const [k, val] of Object.entries(obj)) {
+    if (!keepNone && k === '__none__') continue;
+    const n = Number(val);
+    if (!Number.isNaN(n)) out[String(k)] = n;
+  }
+  return out;
+}
+
 function parseCrmStageCountsRpc(raw) {
   let v = raw;
   if (typeof v === 'string') {
@@ -6704,14 +6715,15 @@ function parseCrmStageCountsRpc(raw) {
   if (!v || typeof v !== 'object') return null;
   const total = Number(v.total);
   if (Number.isNaN(total)) return null;
-  const countsObj = v.counts && typeof v.counts === 'object' ? v.counts : {};
-  const counts = {};
-  for (const [k, val] of Object.entries(countsObj)) {
-    if (k === '__none__') continue;
-    const n = Number(val);
-    if (!Number.isNaN(n)) counts[String(k)] = n;
-  }
-  return { total, counts };
+  const counts = parseCrmStageCountsNumericMap(v.counts, false);
+  const values = parseCrmStageCountsNumericMap(v.values, true);
+  const weightedValues = parseCrmStageCountsNumericMap(v.weighted_values, true);
+  return {
+    total,
+    counts,
+    values,
+    weightedValues,
+  };
 }
 
 async function invokeCrmLeadsStageCountsRpc(rpcParams) {
@@ -6918,7 +6930,12 @@ r.get('/stage-counts', responseCache({ ttl: 90, scope: 'user', tags: ['crm:list'
 
     const parsed = await invokeCrmLeadsStageCountsRpc(rpcParams);
     if (parsed) {
-      return res.json({ total: parsed.total, counts: parsed.counts });
+      return res.json({
+        total: parsed.total,
+        counts: parsed.counts,
+        values: parsed.values,
+        weighted_values: parsed.weightedValues,
+      });
     }
 
     const counts = {};

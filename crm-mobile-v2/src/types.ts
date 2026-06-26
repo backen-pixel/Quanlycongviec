@@ -86,6 +86,9 @@ export type CrmPipelineStage = {
   isWon?: boolean;
   isLost?: boolean;
   countsAsExpectedRevenue?: boolean;
+  countsAsCompletedRevenue?: boolean;
+  canonicalSlug?: string | null;
+  dealReportBucket?: string | null;
 };
 
 export type CrmKanbanItem = {
