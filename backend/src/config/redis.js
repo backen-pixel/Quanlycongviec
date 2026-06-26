@@ -8,6 +8,7 @@
  */
 
 const config = require('./index');
+const { getRedisClientOptions } = require('./redisUrl');
 
 let _client = null;
 let _status = 'disabled'; // 'disabled' | 'connecting' | 'ok' | 'down'
@@ -42,16 +43,7 @@ function getRedis() {
   }
 
   _status = 'connecting';
-  const client = new Redis(config.redisUrl, {
-    lazyConnect: true,
-    maxRetriesPerRequest: 2,
-    enableOfflineQueue: false,
-    connectTimeout: 5000,
-    retryStrategy(times) {
-      // backoff tối đa 30s; vẫn cố retry để khi Redis hồi lại không cần restart
-      return Math.min(times * 500, 30_000);
-    },
-  });
+  const client = new Redis(config.redisUrl, getRedisClientOptions());
 
   client.on('ready', () => {
     _status = 'ok';
