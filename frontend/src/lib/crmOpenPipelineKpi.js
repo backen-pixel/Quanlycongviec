@@ -46,12 +46,15 @@ function hasExplicitExpectedRevenueStage(stages) {
 
 /** Cột tính GT dự kiến / kỳ vọng — theo từng pipeline (một công ty). */
 export function expectedRevenueStagesForPipelineValue(dealStages) {
-  const openStages = (dealStages || []).filter(isOpenPipelineValueStage);
-  if (hasExplicitExpectedRevenueStage(dealStages)) {
-    return openStages.filter((s) => !!s.counts_as_expected_revenue);
+  const all = dealStages || [];
+  if (hasExplicitExpectedRevenueStage(all)) {
+    return all.filter((s) => !!s.counts_as_expected_revenue && isOpenPipelineValueStage(s));
   }
-  const { dealTabStages, wonStage, wonAnchorOrder } = splitDealStagesForCrmTabs(openStages);
-  return preWonStagesForDealStats(dealTabStages, wonStage, wonAnchorOrder).filter(isOpenPipelineValueStage);
+  // Phải split trên TOÀN BỘ stage (có cột Thắng) — nếu chỉ truyền openStages sẽ mất mốc Thắng
+  // và cộng nhầm SX/Lắp đặt/Hoàn thành (VPThành +~1 tỷ).
+  const { dealTabStages, wonStage, wonAnchorOrder } = splitDealStagesForCrmTabs(all);
+  return preWonStagesForDealStats(dealTabStages, wonStage, wonAnchorOrder)
+    .filter(isOpenPipelineValueStage);
 }
 
 function sumStageMapForStages(stages, stageMap, includeOrphan) {
