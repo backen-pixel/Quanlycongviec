@@ -35,7 +35,7 @@ const CARD_W = 132;
 const CARD_GAP = 10;
 
 function pipelineDisplayValue(summary: OrgReportRow): number {
-  return summary.open_pipeline_value ?? summary.pipeline_value ?? 0;
+  return summary.open_pipeline_value ?? 0;
 }
 
 function buildCards(summary: OrgReportRow): KpiCard[] {
@@ -58,10 +58,10 @@ function buildCards(summary: OrgReportRow): KpiCard[] {
     },
     {
       key: 'pipeline',
-      label: 'PIPELINE MỞ',
+      label: 'KỲ VỌNG',
       value: formatVndShort(pipelineDisplayValue(summary)),
       hideCompare: true,
-      sub: 'Deal dự kiến · khớp CRM',
+      sub: 'Deal có SĐT · kỳ đã chọn',
       bg: 'rgba(168,85,247,0.18)',
       border: 'rgba(168,85,247,0.42)',
       accent: '#C084FC',

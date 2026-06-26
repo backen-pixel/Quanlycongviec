@@ -27,6 +27,8 @@ export type EmployeeReportRow = {
   cohort_pipeline_value?: number;
   /** GT pipeline mở — deal ở cột dự kiến, snapshot CRM Hub. */
   open_pipeline_value?: number;
+  /** GT dự kiến chưa trọng số (snapshot Hub). */
+  open_pipeline_raw_value?: number;
   open_weighted_pipeline_value?: number;
   quote_deal_count?: number;
   quote_value?: number;

@@ -1936,8 +1936,15 @@ function orgReportDealIsCompleted(st, stagesInPipe) {
   return classifyDealStageForStaffReport(st, slug) === 'project_completed';
 }
 
+function orgReportStageIsLostOrCancelled(st) {
+  if (!st) return false;
+  if (st.is_lost || st.canonical_slug === 'lost' || st.deal_report_bucket === 'lost') return true;
+  const name = String(st.name || '').trim();
+  return /(hủy\s*deal|^\s*thua\s*\.?\s*$|chê\s*gi[aá]|khách\s*hủy|từ\s*chối|rớt|\blost\b|mất\s*deal)/i.test(name);
+}
+
 function orgReportDealCountsExpected(st, stagesInPipe) {
-  if (!st || st.is_lost) return false;
+  if (!st || orgReportStageIsLostOrCancelled(st)) return false;
   const slug = st.canonical_slug || null;
   if (pipelineHasExplicitExpected(stagesInPipe)) return !!st.counts_as_expected_revenue;
   if (st.is_won) return false;

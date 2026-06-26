@@ -851,19 +851,58 @@ function dealWeightedValue(item, stagesDeal) {
   return Math.round((val * pct) / 100);
 }
 
+function groupDealStagesByPipeline(stagesDeal) {
+  const map = new Map();
+  for (const s of stagesDeal || []) {
+    const pid = String(s?.pipeline_id || '__none__');
+    if (!map.has(pid)) map.set(pid, []);
+    map.get(pid).push(s);
+  }
+  return map;
+}
+
+function resolveDealPipelineStages(deal, stagesDeal, stagesByPipeline) {
+  const st = resolveDealStageForKpi(deal, stagesDeal);
+  const pid = String(st?.pipeline_id || deal?.pipeline_id || '__none__');
+  return stagesByPipeline.get(pid) || stagesDeal || [];
+}
+
+/** KV/Dự kiến theo pipeline của từng deal — tránh gộp sai khi «Tất cả công ty». */
+function dealCountsTowardExpectedValueScoped(deal, kpiStages, fullStages) {
+  const ks = kpiStages || fullStages;
+  if (!hasExplicitExpectedRevenueStage(ks)) {
+    return dealCountsTowardPipelineEstimate(deal, fullStages);
+  }
+  const st = resolveDealStageForKpi(deal, fullStages);
+  if (isLostOrCancelledPipelineStage(st)) return false;
+  if (dealIsWonStage(deal, fullStages)) return false;
+  if (dealIsRevenueCompletedStage(deal, fullStages)) return false;
+  return !!st?.counts_as_expected_revenue;
+}
+
 /** KPI dashboard Deal/KH — tính trên tập deal + stages đã lọc theo tab. */
 function computeDashboardDealKpis(kpiDeals, kpiStages, stagesDeal, kpiTotal) {
-  const won = (kpiDeals || []).filter((d) => dealIsWonStage(d, stagesDeal));
+  const stagesByPipeline = groupDealStagesByPipeline(stagesDeal);
+  const kpiStagesByPipeline = groupDealStagesByPipeline(kpiStages);
+  const fullCtx = (d) => resolveDealPipelineStages(d, stagesDeal, stagesByPipeline);
+  const kpiCtx = (d) => {
+    const full = fullCtx(d);
+    const st = resolveDealStageForKpi(d, stagesDeal);
+    const pid = String(st?.pipeline_id || d?.pipeline_id || '__none__');
+    return kpiStagesByPipeline.get(pid) || full;
+  };
+
+  const won = (kpiDeals || []).filter((d) => dealIsWonStage(d, fullCtx(d)));
   const wonValue = won.reduce((s, l) => s + (Number(l.estimated_value) || 0), 0);
-  const revenueCompleted = (kpiDeals || []).filter((d) => dealIsRevenueCompletedStage(d, stagesDeal));
+  const revenueCompleted = (kpiDeals || []).filter((d) => dealIsRevenueCompletedStage(d, fullCtx(d)));
   const completedRevenueValue = revenueCompleted.reduce((s, l) => s + (Number(l.estimated_value) || 0), 0);
-  const forecastDeals = (kpiDeals || []).filter((d) => dealCountsTowardExpectedValue(d, kpiStages));
+  const forecastDeals = (kpiDeals || []).filter((d) => dealCountsTowardExpectedValueScoped(d, kpiCtx(d), fullCtx(d)));
   const pipeline_estimated_value = forecastDeals.reduce(
     (s, d) => s + (Number(d.estimated_value) || 0),
     0,
   );
   const expected_value = forecastDeals.reduce(
-    (s, d) => s + dealWeightedValue(d, kpiStages),
+    (s, d) => s + dealWeightedValue(d, kpiCtx(d)),
     0,
   );
 
@@ -872,7 +911,7 @@ function computeDashboardDealKpis(kpiDeals, kpiStages, stagesDeal, kpiTotal) {
   let project_active = 0;
   let project_completed = 0;
   for (const d of kpiDeals || []) {
-    const bucket = dealDashboardKpiBucket(d, stagesDeal);
+    const bucket = dealDashboardKpiBucket(d, fullCtx(d));
     if (bucket === 'pre_contract') deal_processing += 1;
     else if (bucket === 'lost') deal_lost += 1;
     else if (bucket === 'implementation') project_active += 1;
