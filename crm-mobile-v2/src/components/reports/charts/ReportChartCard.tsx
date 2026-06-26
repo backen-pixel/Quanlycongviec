@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Radii, Shadow, useColors, type ThemeColors } from '../../../theme';
 
 type Props = {
@@ -8,6 +8,8 @@ type Props = {
   children: React.ReactNode;
   empty?: boolean;
   emptyText?: string;
+  actionLabel?: string;
+  onAction?: () => void;
 };
 
 export default function ReportChartCard({
@@ -16,14 +18,25 @@ export default function ReportChartCard({
   children,
   empty = false,
   emptyText = 'Chưa có dữ liệu',
+  actionLabel,
+  onAction,
 }: Props) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
 
   return (
     <View style={styles.card}>
-      <Text style={styles.title}>{title}</Text>
-      {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+      <View style={styles.head}>
+        <View style={styles.headText}>
+          <Text style={styles.title}>{title}</Text>
+          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+        </View>
+        {actionLabel && onAction ? (
+          <Pressable onPress={onAction} hitSlop={8}>
+            <Text style={styles.action}>{actionLabel}</Text>
+          </Pressable>
+        ) : null}
+      </View>
       {empty ? (
         <Text style={styles.empty}>{emptyText}</Text>
       ) : (
@@ -43,6 +56,14 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     marginBottom: 12,
     ...Shadow.card,
   },
+  head: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 8,
+  },
+  headText: { flex: 1 },
   title: {
     color: Colors.text,
     fontSize: 15,
@@ -51,8 +72,13 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   subtitle: {
     color: Colors.textMuted,
     fontSize: 12,
-    marginTop: 4,
-    marginBottom: 8,
+    marginTop: 3,
+  },
+  action: {
+    color: Colors.purple,
+    fontSize: 12,
+    fontWeight: '800',
+    paddingTop: 2,
   },
   empty: {
     color: Colors.textFaint,

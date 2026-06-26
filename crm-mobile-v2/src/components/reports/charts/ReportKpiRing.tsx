@@ -7,9 +7,10 @@ type Props = {
   pct: number;
   label?: string;
   subtitle?: string;
+  ringColor?: string;
 };
 
-export default function ReportKpiRing({ pct, label = 'Chốt deal', subtitle }: Props) {
+export default function ReportKpiRing({ pct, label = 'Chốt deal', subtitle, ringColor }: Props) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const p = Math.min(100, Math.max(0, Number(pct) || 0));
@@ -20,7 +21,7 @@ export default function ReportKpiRing({ pct, label = 'Chốt deal', subtitle }: 
   const cy = size / 2;
   const circ = 2 * Math.PI * r;
   const offset = circ - (p / 100) * circ;
-  const color = p >= 80 ? '#059669' : p >= 50 ? '#0284c7' : p >= 25 ? '#d97706' : '#e11d48';
+  const color = ringColor ?? (p >= 80 ? '#059669' : p >= 50 ? Colors.purple : p >= 25 ? '#d97706' : '#e11d48');
 
   return (
     <View style={styles.wrap}>

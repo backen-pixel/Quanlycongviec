@@ -22,10 +22,23 @@ export default function ReportOverviewSummary({ summary }: Props) {
       <View style={styles.grid}>
         <ReportMetricBlock label="Lead" value={summary.lead_count ?? 0} tone="blue" />
         <ReportMetricBlock label="Deal" value={summary.deal_count ?? 0} tone="cyan" />
-        <ReportMetricBlock label="Pipeline" value={formatVndShort(summary.pipeline_value)} tone="indigo" />
+        <ReportMetricBlock
+          label="Pipeline mở"
+          value={formatVndShort(summary.open_pipeline_value ?? summary.pipeline_value)}
+          tone="indigo"
+        />
+        <ReportMetricBlock
+          label="GT tạo trong kỳ"
+          value={formatVndShort(summary.cohort_pipeline_value ?? summary.pipeline_value)}
+          tone="slate"
+        />
         <ReportMetricBlock label="Tỷ lệ chốt" value={`${summary.conversion_rate ?? 0}%`} tone="slate" />
-        <ReportMetricBlock label="Dự kiến" value={formatVndShort(summary.expected_value)} tone="emerald" />
-        <ReportMetricBlock label="Kỳ vọng" value={formatVndShort(summary.weighted_value)} tone="amber" />
+        <ReportMetricBlock label="Dự kiến (kỳ)" value={formatVndShort(summary.expected_value)} tone="emerald" />
+        <ReportMetricBlock
+          label="Kỳ vọng (kỳ)"
+          value={formatVndShort(summary.weighted_value)}
+          tone="amber"
+        />
         <ReportMetricBlock label="Thắng" value={formatVndShort(summary.won_value)} tone="sky" />
         <ReportMetricBlock label="Hoàn thành" value={formatVndShort(summary.completed_value)} tone="violet" />
         <ReportMetricBlock label="Quá hạn" value={overdueLabel} tone="rose" />

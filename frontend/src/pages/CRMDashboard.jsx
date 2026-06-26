@@ -214,13 +214,22 @@ function getCrmOpenTaskDeadlineTone(deadlineIso) {
   return { level: 'ok', remainingMs, deadlineTs };
 }
 
+/** YYYY-MM-DD theo giờ local — tránh lệch ngày khi dùng toISOString() (UTC) ở VN UTC+7. */
+function isoLocalDate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 // ── HELPER: tính khoảng thời gian ──
 function getDateRange(preset) {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   switch (preset) {
     case 'today': {
-      return { from: today.toISOString().split('T')[0], to: today.toISOString().split('T')[0] };
+      const d = isoLocalDate(today);
+      return { from: d, to: d };
     }
     case 'this_week': {
       const dayOfWeek = today.getDay();
@@ -228,7 +237,7 @@ function getDateRange(preset) {
       monday.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
       const sunday = new Date(monday);
       sunday.setDate(monday.getDate() + 6);
-      return { from: monday.toISOString().split('T')[0], to: sunday.toISOString().split('T')[0] };
+      return { from: isoLocalDate(monday), to: isoLocalDate(sunday) };
     }
     case 'last_week': {
       const dayOfWeek = today.getDay();
@@ -238,23 +247,23 @@ function getDateRange(preset) {
       lastMonday.setDate(thisMonday.getDate() - 7);
       const lastSunday = new Date(lastMonday);
       lastSunday.setDate(lastMonday.getDate() + 6);
-      return { from: lastMonday.toISOString().split('T')[0], to: lastSunday.toISOString().split('T')[0] };
+      return { from: isoLocalDate(lastMonday), to: isoLocalDate(lastSunday) };
     }
     case 'this_month': {
       const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
       const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      return { from: firstDay.toISOString().split('T')[0], to: lastDay.toISOString().split('T')[0] };
+      return { from: isoLocalDate(firstDay), to: isoLocalDate(lastDay) };
     }
     case 'last_month': {
       const firstDay = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       const lastDay = new Date(now.getFullYear(), now.getMonth(), 0);
-      return { from: firstDay.toISOString().split('T')[0], to: lastDay.toISOString().split('T')[0] };
+      return { from: isoLocalDate(firstDay), to: isoLocalDate(lastDay) };
     }
     case 'this_quarter': {
       const qMonth = Math.floor(now.getMonth() / 3) * 3;
       const firstDay = new Date(now.getFullYear(), qMonth, 1);
       const lastDay = new Date(now.getFullYear(), qMonth + 3, 0);
-      return { from: firstDay.toISOString().split('T')[0], to: lastDay.toISOString().split('T')[0] };
+      return { from: isoLocalDate(firstDay), to: isoLocalDate(lastDay) };
     }
     case 'this_year': {
       return { from: `${now.getFullYear()}-01-01`, to: `${now.getFullYear()}-12-31` };
@@ -447,7 +456,6 @@ function formatCrmPipelineTabCount(total, fallbackLen) {
 const CRM_KANBAN_LEAD_QUERY = { kanban: '1', lite: '1', skip_deadline: '1' };
 /** Trì hoãn pipeline/tab không active — ngắn để tab Deal/Lead kia không trống quá lâu. */
 const CRM_INACTIVE_PIPELINE_DEFER_MS = 400;
-const CRM_PHONE_TOTALS_DEFER_MS = 3500;
 
 function crmDashboardUsesLegacyListFilters({ filterLeadType, filterReferrer, filterCustomerCompany }) {
   return !!(
@@ -2405,7 +2413,7 @@ export default function CRMDashboard() {
       if (customDateTo) dateParams.date_to = customDateTo;
       const co = dashboardScopeCompanyId || filterCompany;
       const buildCountParams = (phone_filter) => {
-        const p = { type, ...dateParams, limit: 1, offset: 0 };
+        const p = { type, ...dateParams, limit: 1, offset: 0, ...resolveCrmRegionFilterParams(filterRegion) };
         if (filterAssignee) p.assigned_to = filterAssignee;
         if (co) p.company_id = co;
         if (filterLeadType) p.lead_type_id = filterLeadType;
@@ -2441,12 +2449,18 @@ export default function CRMDashboard() {
       customDateTo,
       filterAssignee,
       filterCompany,
+      filterRegion,
       filterLeadType,
       filterReferrer,
       filterCustomerCompany,
       dashboardScopeCompanyId,
     ],
   );
+
+  useEffect(() => {
+    void refreshPipelinePhoneTotalsForType('lead');
+    void refreshPipelinePhoneTotalsForType('deal');
+  }, [refreshPipelinePhoneTotalsForType]);
 
   const refreshAfterNewLeadOrDeal = useCallback(
     (type) => {
@@ -2802,9 +2816,7 @@ export default function CRMDashboard() {
             }
           });
         })();
-        window.setTimeout(() => {
-          if (!isStale()) void refreshPipelinePhoneTotalsForType(type);
-        }, CRM_PHONE_TOTALS_DEFER_MS);
+        void refreshPipelinePhoneTotalsForType(type);
         if (type === 'lead') {
           void (async () => {
             const { minimal: _dropMinimal, ...dashKpiParams } = dashListParams;
@@ -3531,9 +3543,30 @@ export default function CRMDashboard() {
 
   const leadKpiTotalCount = useMemo(() => {
     if (kpiUsesClientOnlyFilters) return leads.length;
+    const pt = pipelinePhoneTotals.lead;
+    if (filterPhone === 'no_phone') {
+      if (typeof pt?.noPhone === 'number') return pt.noPhone;
+    } else if (typeof pt?.all === 'number') {
+      // Khớp Báo cáo CRM / org-overview — mọi lead tạo trong kỳ (Kanban vẫn có thể lọc Có SĐT)
+      return pt.all;
+    }
     const t = loadMoreState.leadTotal;
     return typeof t === 'number' ? t : leads.length;
-  }, [kpiUsesClientOnlyFilters, leads.length, loadMoreState.leadTotal]);
+  }, [kpiUsesClientOnlyFilters, leads.length, loadMoreState.leadTotal, pipelinePhoneTotals.lead, filterPhone]);
+
+  /** Ghi chú khi KPI tổng ≠ số thẻ Kanban (lọc SĐT mặc định). */
+  const leadKpiSublabel = useMemo(() => {
+    if (kpiUsesClientOnlyFilters) return 'Sau lọc (trên bản ghi đã tải)';
+    if (filterPhone === 'has_phone') {
+      const shown = pipelinePhoneTotals.lead?.hasPhone;
+      const total = leadKpiTotalCount;
+      if (typeof shown === 'number' && typeof total === 'number' && shown !== total) {
+        return `Kanban: ${shown.toLocaleString('vi-VN')} có SĐT`;
+      }
+    }
+    if (filterPhone === 'no_phone') return 'Chưa có SĐT';
+    return undefined;
+  }, [kpiUsesClientOnlyFilters, filterPhone, pipelinePhoneTotals.lead?.hasPhone, leadKpiTotalCount]);
 
   const dealMergedKpiTotalCount = useMemo(() => {
     if (kpiUsesClientOnlyFilters) return deals.length;
@@ -5875,7 +5908,7 @@ export default function CRMDashboard() {
               iconColor="text-blue-600"
               label="Tổng Lead"
               value={leadKpiTotalCount}
-              sublabel={kpiUsesClientOnlyFilters ? 'Sau lọc (trên bản ghi đã tải)' : undefined}
+              sublabel={leadKpiSublabel}
               trend={null}
             />
             <KPICard

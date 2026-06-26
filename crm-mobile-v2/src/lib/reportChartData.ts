@@ -1,6 +1,10 @@
 import type { FirstStageSla, LeadTypeReportRow } from '../api/employeeReport';
 import type { EmployeeReportRow, OrgReportRow, ReportPipelineFunnelRow, ReportTimelineRow } from '../api/employeeReport';
 import { formatViDateIso } from './reportFormat';
+import {
+  reportClosedWonCount,
+  reportOpenDealCount,
+} from './reportMetrics';
 
 export const STACK_COLORS = {
   won: '#059669',
@@ -69,13 +73,14 @@ export function buildDealStackedRows(
     .filter((r) => (r.deal_count || 0) > 0)
     .slice(0, max)
     .map((r) => {
-      const open = Math.max(0, (r.deal_count || 0) - (r.won_deal_count || 0) - (r.lost_deal_count || 0));
+      const closed = reportClosedWonCount(r);
+      const open = reportOpenDealCount(r);
       const name = nameKey === 'full_name'
         ? truncLabel((r as EmployeeReportRow).full_name, 14)
         : truncLabel((r as OrgReportRow).region_name, 14);
       return {
         name,
-        won: r.won_deal_count || 0,
+        won: closed,
         completed: 0,
         lost: r.lost_deal_count || 0,
         open,
@@ -85,14 +90,27 @@ export function buildDealStackedRows(
 
 export type PieSegment = { name: string; value: number; color: string };
 
+/** Donut kết quả deal — lấy từ summary (toàn phạm vi, khớp BC web). */
+export function buildDealOutcomePieFromSummary(summary: OrgReportRow): PieSegment[] {
+  const closed = reportClosedWonCount(summary);
+  const lost = summary.lost_deal_count || 0;
+  const open = reportOpenDealCount(summary);
+  return [
+    { name: 'Đã chốt', value: closed, color: STACK_COLORS.won },
+    { name: 'Thua', value: lost, color: STACK_COLORS.lost },
+    { name: 'Đang mở', value: open, color: STACK_COLORS.open },
+  ].filter((x) => x.value > 0);
+}
+
+/** Donut theo tổng NV (fallback khi không có summary). */
 export function buildDealOutcomePie(byEmployee: EmployeeReportRow[]): PieSegment[] {
   let won = 0;
   let lost = 0;
   let open = 0;
   for (const r of byEmployee || []) {
-    won += r.won_deal_count || 0;
+    won += reportClosedWonCount(r);
     lost += r.lost_deal_count || 0;
-    open += Math.max(0, (r.deal_count || 0) - (r.won_deal_count || 0) - (r.lost_deal_count || 0));
+    open += reportOpenDealCount(r);
   }
   return [
     { name: 'Đã chốt', value: won, color: STACK_COLORS.won },
@@ -123,7 +141,7 @@ export function buildFirstStageSlaPie(sla: FirstStageSla | null | undefined): Pi
   ].filter((x) => x.value > 0);
 }
 
-export function buildFirstStageSlaFromSummary(summary: Record<string, number | null | undefined> | undefined): FirstStageSla | null {
+export function buildFirstStageSlaFromSummary(summary: Partial<OrgReportRow> | null | undefined): FirstStageSla | null {
   const open = Number(summary?.first_stage_open_count ?? 0);
   if (!open) return null;
   return {

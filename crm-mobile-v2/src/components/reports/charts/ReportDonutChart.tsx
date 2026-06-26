@@ -7,6 +7,7 @@ import { useColors, type ThemeColors } from '../../../theme';
 type Props = {
   segments: PieSegment[];
   size?: number;
+  layout?: 'stack' | 'side';
 };
 
 function polar(cx: number, cy: number, r: number, angleDeg: number) {
@@ -36,11 +37,11 @@ function donutSegment(
   ].join(' ');
 }
 
-export default function ReportDonutChart({ segments, size = 180 }: Props) {
+export default function ReportDonutChart({ segments, size = 180, layout = 'stack' }: Props) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const { width: screenW } = useWindowDimensions();
-  const chartSize = Math.min(size, screenW - 80);
+  const chartSize = layout === 'side' ? Math.min(140, screenW * 0.38) : Math.min(size, screenW - 80);
   const cx = chartSize / 2;
   const cy = chartSize / 2;
   const rOuter = chartSize * 0.38;
@@ -61,11 +62,11 @@ export default function ReportDonutChart({ segments, size = 180 }: Props) {
   });
 
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, layout === 'side' && styles.wrapSide]}>
       <Svg width={chartSize} height={chartSize}>
         {arcs.map(({ seg, path, labelPos, pct }) => (
           <G key={seg.name}>
-            <Path d={path} fill={seg.color} stroke="#fff" strokeWidth={2} />
+            <Path d={path} fill={seg.color} stroke={Colors.card} strokeWidth={2} />
             {pct >= 8 ? (
               <SvgText
                 x={labelPos.x}
@@ -88,14 +89,18 @@ export default function ReportDonutChart({ segments, size = 180 }: Props) {
         </SvgText>
       </Svg>
 
-      <View style={styles.legend}>
-        {segments.map((seg) => (
-          <View key={seg.name} style={styles.legendItem}>
-            <View style={[styles.dot, { backgroundColor: seg.color }]} />
-            <Text style={styles.legendText}>{seg.name}</Text>
-            <Text style={styles.legendVal}>{seg.value}</Text>
-          </View>
-        ))}
+      <View style={[styles.legend, layout === 'side' && styles.legendSide]}>
+        {segments.map((seg) => {
+          const pct = Math.round((seg.value / total) * 100);
+          return (
+            <View key={seg.name} style={styles.legendItem}>
+              <View style={[styles.dot, { backgroundColor: seg.color }]} />
+              <Text style={styles.legendText}>{seg.name}</Text>
+              <Text style={styles.legendVal}>{seg.value}</Text>
+              <Text style={styles.legendPct}>({pct}%)</Text>
+            </View>
+          );
+        })}
       </View>
     </View>
   );
@@ -103,9 +108,21 @@ export default function ReportDonutChart({ segments, size = 180 }: Props) {
 
 const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   wrap: { alignItems: 'center' },
+  wrapSide: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
   legend: { width: '100%', marginTop: 8, gap: 6 },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  legendSide: {
+    flex: 1,
+    marginTop: 0,
+    justifyContent: 'center',
+  },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   dot: { width: 10, height: 10, borderRadius: 5 },
   legendText: { flex: 1, color: Colors.textMuted, fontSize: 12, fontWeight: '600' },
   legendVal: { color: Colors.text, fontSize: 12, fontWeight: '800' },
+  legendPct: { color: Colors.textFaint, fontSize: 11, fontWeight: '700', minWidth: 36, textAlign: 'right' },
 });

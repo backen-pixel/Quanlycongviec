@@ -191,7 +191,12 @@ r.get('/stage-counts', responseCache({ ttl: 90, scope: 'user', tags: ['crm:list'
 
     const parsed = await invokeCrmLeadsStageCountsRpc(rpcParams);
     if (parsed) {
-      return res.json({ total: parsed.total, counts: parsed.counts });
+      return res.json({
+        total: parsed.total,
+        counts: parsed.counts,
+        values: parsed.values,
+        weighted_values: parsed.weightedValues,
+      });
     }
 
     const counts = {};

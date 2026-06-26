@@ -12,19 +12,37 @@ export type EmployeeReportRow = {
   lost_deal_count?: number;
   lost_lead_count?: number;
   won_value?: number;
+  won_or_later_deal_count?: number;
+  won_or_later_value?: number;
   expected_value?: number;
   weighted_value?: number;
+  completed_deal_count?: number;
   completed_value?: number;
   overdue_count?: number;
   overdue_rate_pct?: number | null;
   kpi_ledger_net?: number;
   conversion_rate?: number;
   pipeline_value?: number;
+  /** GT hồ sơ tạo trong kỳ (BC org-overview gốc). */
+  cohort_pipeline_value?: number;
+  /** GT pipeline mở — deal ở cột dự kiến, snapshot CRM Hub. */
+  open_pipeline_value?: number;
+  open_weighted_pipeline_value?: number;
+  quote_deal_count?: number;
+  quote_value?: number;
+  quote_win_rate_pct?: number | null;
+  quote_close_value_rate_pct?: number | null;
+  deal_close_value_rate_pct?: number | null;
+  cancel_rate_pct?: number | null;
+  monthly_growth_pct?: number | null;
   reception_eligible_count?: number;
   reception_overdue_count?: number;
   reception_overdue_rate_pct?: number | null;
   first_stage_on_time_rate_pct?: number | null;
   first_stage_overdue_rate_pct?: number | null;
+  first_stage_open_count?: number;
+  first_stage_on_time_count?: number;
+  first_stage_overdue_count?: number;
 };
 
 export type EmployeePipelineRow = {
@@ -123,10 +141,24 @@ export type ReportPipelineFunnelRow = {
   value?: number;
 };
 
+export type OrgReportCompareMetric = {
+  previous?: number;
+  delta?: number;
+  pct?: number | null;
+};
+
+export type OrgReportCompare = Record<string, OrgReportCompareMetric>;
+
 export type OrgOverviewReport = {
   date_from: string;
   date_to: string;
   summary: OrgReportRow;
+  compare?: OrgReportCompare | null;
+  period_previous?: {
+    date_from: string;
+    date_to: string;
+    summary?: OrgReportRow;
+  } | null;
   timeline: ReportTimelineRow[];
   pipeline_funnel: ReportPipelineFunnelRow[];
   by_company: OrgReportRow[];
@@ -140,6 +172,8 @@ export async function fetchOrgOverviewReport(params: EmployeeReportQuery): Promi
     date_from: string;
     date_to: string;
     summary?: OrgReportRow;
+    compare?: OrgReportCompare | null;
+    period_previous?: OrgOverviewReport['period_previous'];
     timeline?: ReportTimelineRow[];
     pipeline_funnel?: ReportPipelineFunnelRow[];
     by_company?: OrgReportRow[];
@@ -159,6 +193,8 @@ export async function fetchOrgOverviewReport(params: EmployeeReportQuery): Promi
     date_from: data.date_from,
     date_to: data.date_to,
     summary: data.summary ?? { user_id: null, full_name: 'Tổng' },
+    compare: data.compare ?? null,
+    period_previous: data.period_previous ?? null,
     timeline: data.timeline || [],
     pipeline_funnel: data.pipeline_funnel || [],
     by_company: data.by_company || [],

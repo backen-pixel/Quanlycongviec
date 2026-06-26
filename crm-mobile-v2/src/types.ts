@@ -83,6 +83,9 @@ export type CrmPipelineStage = {
   icon: string;
   color: string;
   orderIndex: number;
+  isWon?: boolean;
+  isLost?: boolean;
+  countsAsExpectedRevenue?: boolean;
 };
 
 export type CrmKanbanItem = {
