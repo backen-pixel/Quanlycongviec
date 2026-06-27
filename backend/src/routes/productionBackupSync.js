@@ -14,6 +14,7 @@ const {
   verifyBackup,
   runBackupSync,
   getFullStatus,
+  getSyncRunHistory,
   isJobRunning,
 } = require('../helpers/supabaseBackupSync');
 const { getSupabaseMonitorReport } = require('../helpers/supabaseMonitor');
@@ -61,6 +62,15 @@ router.get('/activity-log', auth, monitorGate, async (req, res) => {
     const days = parseInt(req.query.days, 10) || 30;
     const limit = parseInt(req.query.limit, 10) || 80;
     res.json(await getSupabaseMonitorActivityLog({ days, limit }));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/history', auth, monitorGate, async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit, 10) || 30;
+    res.json(await getSyncRunHistory({ limit }));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

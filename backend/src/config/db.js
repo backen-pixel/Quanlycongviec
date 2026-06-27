@@ -7,7 +7,7 @@
  */
 
 const { Pool } = require('pg');
-const { buildPgPoolConfig } = require('./pgConnection');
+const { buildPgPoolConfig, normalizeSupabasePoolerUrl, primaryProjectRef, backupProjectRef } = require('./pgConnection');
 
 const PG_DISABLED = process.env.PG_POOL_DISABLED === '1';
 const PG_AUTH_BACKOFF_MS = parseInt(process.env.PG_AUTH_BACKOFF_MS || String(10 * 60 * 1000), 10);
@@ -22,10 +22,13 @@ function _activeDbUrl() {
   try {
     const { getActiveTarget, isFailoverEnabled } = require('./supabaseRouter');
     if (isFailoverEnabled() && getActiveTarget() === 'backup' && process.env.SUPABASE_BACKUP_DB_URL) {
-      return process.env.SUPABASE_BACKUP_DB_URL;
+      return normalizeSupabasePoolerUrl(process.env.SUPABASE_BACKUP_DB_URL, backupProjectRef());
     }
   } catch { /* ignore */ }
-  return process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || '';
+  return normalizeSupabasePoolerUrl(
+    process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || '',
+    primaryProjectRef(),
+  );
 }
 
 function _activeDbDirectUrl() {

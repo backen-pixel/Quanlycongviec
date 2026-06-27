@@ -8,16 +8,41 @@ function projectRefFromSupabaseUrl(url) {
   return m ? m[1].toLowerCase() : '';
 }
 
+/** Lấy project ref từ URI Postgres (pooler user postgres.ref hoặc host db.ref.supabase.co). */
+function projectRefFromPgUrl(url) {
+  if (!url) return '';
+  try {
+    const u = new URL(url);
+    if (u.username.startsWith('postgres.')) {
+      return u.username.slice('postgres.'.length).split('.')[0].toLowerCase();
+    }
+    const m = u.hostname.match(/^db\.([a-z0-9]+)\.supabase\.co$/i);
+    if (m) return m[1].toLowerCase();
+  } catch {
+    /* ignore */
+  }
+  return '';
+}
+
 function primaryProjectRef() {
-  return process.env.PRIMARY_PROJECT_REF
+  return (
+    process.env.PRIMARY_PROJECT_REF
     || projectRefFromSupabaseUrl(process.env.SUPABASE_URL)
-    || '';
+    || projectRefFromPgUrl(process.env.SUPABASE_DB_URL)
+    || projectRefFromPgUrl(process.env.SUPABASE_DB_DIRECT_URL)
+    || projectRefFromPgUrl(process.env.DATABASE_URL)
+    || ''
+  ).toLowerCase();
 }
 
 function backupProjectRef() {
-  return process.env.BACKUP_PROJECT_REF
+  return (
+    process.env.BACKUP_PROJECT_REF
     || projectRefFromSupabaseUrl(process.env.SUPABASE_BACKUP_URL)
-    || '';
+    || projectRefFromPgUrl(process.env.SUPABASE_BACKUP_DB_URL)
+    || projectRefFromPgUrl(process.env.SUPABASE_BACKUP_DB_DIRECT_URL)
+    || ''
+  ).toLowerCase();
 }
 
 /** Pooler Supavisor bắt buộc user postgres.{project_ref} — luôn ghi đè trên pooler. */
@@ -89,6 +114,68 @@ function resolveBackupDbUrl(mode = 'probe') {
   const direct = process.env.SUPABASE_BACKUP_DB_DIRECT_URL || '';
   if (mode === 'session') return direct || pool;
   return resolvePgProbeUrl(direct, pool);
+}
+
+function resolvePrimaryDbProbeInputs() {
+  const pool = normalizeSupabasePoolerUrl(
+    process.env.SUPABASE_DB_URL || '',
+    primaryProjectRef(),
+  ) || normalizeSupabasePoolerUrl(process.env.DATABASE_URL || '', primaryProjectRef());
+  return {
+    pool,
+    direct: process.env.SUPABASE_DB_DIRECT_URL || '',
+    projectRef: primaryProjectRef(),
+  };
+}
+
+function resolveBackupDbProbeInputs() {
+  return {
+    pool: normalizeSupabasePoolerUrl(
+      process.env.SUPABASE_BACKUP_DB_URL || '',
+      backupProjectRef(),
+    ),
+    direct: process.env.SUPABASE_BACKUP_DB_DIRECT_URL || '',
+    projectRef: backupProjectRef(),
+  };
+}
+
+function listPrimaryPgProbeCandidates() {
+  const { pool, direct } = resolvePrimaryDbProbeInputs();
+  return listPgProbeCandidates(direct, pool);
+}
+
+function listBackupPgProbeCandidates() {
+  const { pool, direct } = resolveBackupDbProbeInputs();
+  return listPgProbeCandidates(direct, pool);
+}
+
+/**
+ * Thử lần lượt các URL probe (6543 → session 5432 → direct nếu bật).
+ * @returns {Promise<{ pool: import('pg').Pool, url: string }>}
+ */
+async function connectPgWithProbeCandidates(candidateUrls, { label = 'PG', onLog } = {}) {
+  const { Pool } = require('pg');
+  const urls = [...new Set((candidateUrls || []).filter(Boolean))];
+  if (!urls.length) {
+    throw new Error(`${label}: chưa cấu hình SUPABASE_DB_URL / SUPABASE_BACKUP_DB_URL`);
+  }
+  let lastErr;
+  for (const url of urls) {
+    onLog?.(`${label}: thử ${describePgTarget(url)}`);
+    const pool = new Pool({ ...buildPgPoolConfig(url), max: 2 });
+    try {
+      await pool.query('SELECT 1');
+      onLog?.(`${label}: OK qua ${describePgTarget(url)}`);
+      return { pool, url };
+    } catch (e) {
+      lastErr = e;
+      await pool.end().catch(() => {});
+    }
+  }
+  const hint = /password authentication failed for user "postgres"/i.test(String(lastErr?.message || ''))
+    ? ` — trên pooler cần user postgres.{project_ref}, không phải postgres`
+    : '';
+  throw new Error(`${lastErr?.message || 'Không kết nối PG'}${hint}`);
 }
 
 /** Session pooler (5432) — dùng cho pg_dump trên Render (không có IPv6 tới db.*). */
@@ -207,6 +294,8 @@ module.exports = {
   resolvePgProbeUrl,
   resolvePrimaryDbUrl,
   resolveBackupDbUrl,
+  resolvePrimaryDbProbeInputs,
+  resolveBackupDbProbeInputs,
   resolvePrimaryDbDumpUrl,
   resolveBackupDbDumpUrl,
   toSessionPoolerUrl,
@@ -214,9 +303,13 @@ module.exports = {
   primaryProjectRef,
   backupProjectRef,
   projectRefFromSupabaseUrl,
+  projectRefFromPgUrl,
   parsePgConnectionUrl,
   pgCliEnv,
   listPgProbeCandidates,
+  listPrimaryPgProbeCandidates,
+  listBackupPgProbeCandidates,
+  connectPgWithProbeCandidates,
   ipv4Lookup,
   buildPgPoolConfig,
   classifyPgError,
