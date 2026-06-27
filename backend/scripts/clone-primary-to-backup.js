@@ -60,9 +60,15 @@ function findPgBin(name) {
 }
 
 function runPgDump(connectionUrl, outFile) {
+  const { parsePgConnectionUrl, pgCliEnv } = require('../src/config/pgConnection');
+  const { host, port, user, database } = parsePgConnectionUrl(connectionUrl);
+  console.log(`[clone] pg_dump ${user}@${host}:${port}/${database}`);
   const pgDump = findPgBin('pg_dump');
   const args = [
-    connectionUrl,
+    '-h', host,
+    '-p', port,
+    '-U', user,
+    '-d', database,
     '-n', 'public',
     '--no-owner',
     '--no-acl',
@@ -70,16 +76,22 @@ function runPgDump(connectionUrl, outFile) {
     '-f', outFile,
   ];
   const r = spawnSync(pgDump, args, {
-    env: { ...process.env, PGSSLMODE: 'require' },
+    env: pgCliEnv(connectionUrl),
     stdio: 'inherit',
   });
   if (r.status !== 0) throw new Error(`pg_dump failed (exit ${r.status})`);
 }
 
 function runPgRestore(connectionUrl, dumpFile) {
+  const { parsePgConnectionUrl, pgCliEnv } = require('../src/config/pgConnection');
+  const { host, port, user, database } = parsePgConnectionUrl(connectionUrl);
+  console.log(`[clone] pg_restore → ${user}@${host}:${port}/${database}`);
   const pgRestore = findPgBin('pg_restore');
   const args = [
-    '-d', connectionUrl,
+    '-h', host,
+    '-p', port,
+    '-U', user,
+    '-d', database,
     '--no-owner',
     '--no-acl',
     '--clean',
@@ -88,10 +100,23 @@ function runPgRestore(connectionUrl, dumpFile) {
     dumpFile,
   ];
   const r = spawnSync(pgRestore, args, {
-    env: { ...process.env, PGSSLMODE: 'require' },
+    env: pgCliEnv(connectionUrl),
     stdio: 'inherit',
   });
   if (r.status !== 0) throw new Error(`pg_restore failed (exit ${r.status})`);
+}
+
+async function testPgConnect(label, connectionUrl) {
+  const { Client } = require('pg');
+  const { buildPgPoolConfig } = require('../src/config/pgConnection');
+  const client = new Client(buildPgPoolConfig(connectionUrl));
+  await client.connect();
+  try {
+    const { rows } = await client.query('SELECT current_user AS u');
+    console.log(`[clone] ${label}: kết nối OK (${rows[0]?.u})`);
+  } finally {
+    await client.end().catch(() => {});
+  }
 }
 
 async function verifyCounts(primaryUrl, backupUrl) {
@@ -145,6 +170,9 @@ async function main() {
   } else {
     console.log('[clone] Dùng mật khẩu từ SUPABASE_DB_URL / SUPABASE_BACKUP_DB_URL (session pooler cho dump/restore)');
   }
+
+  await testPgConnect('Primary DB', primaryDumpUrl);
+  await testPgConnect('Backup DB', backupDumpUrl);
 
   console.log('[clone] pg_dump primary →', dumpFile);
   runPgDump(primaryDumpUrl, dumpFile);

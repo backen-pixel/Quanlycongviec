@@ -3,6 +3,58 @@
  */
 const dns = require('dns');
 
+function projectRefFromSupabaseUrl(url) {
+  const m = String(url || '').match(/https?:\/\/([a-z0-9]+)\.supabase\.co/i);
+  return m ? m[1].toLowerCase() : '';
+}
+
+function primaryProjectRef() {
+  return process.env.PRIMARY_PROJECT_REF
+    || projectRefFromSupabaseUrl(process.env.SUPABASE_URL)
+    || '';
+}
+
+function backupProjectRef() {
+  return process.env.BACKUP_PROJECT_REF
+    || projectRefFromSupabaseUrl(process.env.SUPABASE_BACKUP_URL)
+    || '';
+}
+
+/** Pooler Supavisor bắt buộc user postgres.{project_ref} — không phải postgres. */
+function normalizeSupabasePoolerUrl(connectionUrl, projectRef = '') {
+  if (!connectionUrl) return '';
+  try {
+    const u = new URL(connectionUrl);
+    if (!u.hostname.includes('pooler.supabase.com')) return connectionUrl;
+    let ref = String(projectRef || '').trim();
+    if (!ref && u.username.startsWith('postgres.')) {
+      ref = u.username.slice('postgres.'.length);
+    }
+    if (ref && u.username === 'postgres') {
+      u.username = `postgres.${ref}`;
+    }
+    return u.toString();
+  } catch {
+    return connectionUrl;
+  }
+}
+
+function parsePgConnectionUrl(connectionUrl) {
+  const u = new URL(connectionUrl);
+  return {
+    host: u.hostname,
+    port: u.port || '5432',
+    user: decodeURIComponent(u.username || 'postgres'),
+    password: decodeURIComponent(u.password || ''),
+    database: (u.pathname || '/postgres').replace(/^\//, '') || 'postgres',
+  };
+}
+
+function pgCliEnv(connectionUrl) {
+  const { password } = parsePgConnectionUrl(connectionUrl);
+  return { ...process.env, PGPASSWORD: password, PGSSLMODE: 'require' };
+}
+
 function resolvePgProbeUrl(directUrl, poolUrl) {
   if (process.env.PG_MONITOR_USE_DIRECT === '1') {
     return directUrl || poolUrl || '';
@@ -11,14 +63,20 @@ function resolvePgProbeUrl(directUrl, poolUrl) {
 }
 
 function resolvePrimaryDbUrl(mode = 'probe') {
-  const pool = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || '';
+  const pool = normalizeSupabasePoolerUrl(
+    process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || '',
+    primaryProjectRef(),
+  );
   const direct = process.env.SUPABASE_DB_DIRECT_URL || process.env.DATABASE_URL || '';
   if (mode === 'session') return direct || pool;
   return resolvePgProbeUrl(direct, pool);
 }
 
 function resolveBackupDbUrl(mode = 'probe') {
-  const pool = process.env.SUPABASE_BACKUP_DB_URL || '';
+  const pool = normalizeSupabasePoolerUrl(
+    process.env.SUPABASE_BACKUP_DB_URL || '',
+    backupProjectRef(),
+  );
   const direct = process.env.SUPABASE_BACKUP_DB_DIRECT_URL || '';
   if (mode === 'session') return direct || pool;
   return resolvePgProbeUrl(direct, pool);
@@ -26,29 +84,34 @@ function resolveBackupDbUrl(mode = 'probe') {
 
 /** Session pooler (5432) — dùng cho pg_dump trên Render (không có IPv6 tới db.*). */
 function toSessionPoolerUrl(poolUrl) {
-  if (!poolUrl || !poolUrl.includes('pooler.supabase.com:6543')) return '';
-  return poolUrl.replace('pooler.supabase.com:6543', 'pooler.supabase.com:5432');
+  if (!poolUrl || !poolUrl.includes('pooler.supabase.com')) return '';
+  if (poolUrl.includes('pooler.supabase.com:5432')) return poolUrl;
+  if (poolUrl.includes('pooler.supabase.com:6543')) {
+    return poolUrl.replace('pooler.supabase.com:6543', 'pooler.supabase.com:5432');
+  }
+  return '';
 }
 
 function resolvePrimaryDbDumpUrl() {
   if (process.env.PG_DUMP_USE_DIRECT === '1') {
     return process.env.SUPABASE_DB_DIRECT_URL || process.env.DATABASE_URL || '';
   }
-  return toSessionPoolerUrl(process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || '')
-    || process.env.SUPABASE_DB_DIRECT_URL
-    || process.env.SUPABASE_DB_URL
-    || process.env.DATABASE_URL
-    || '';
+  const pool = normalizeSupabasePoolerUrl(
+    process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || '',
+    primaryProjectRef(),
+  );
+  return toSessionPoolerUrl(pool) || pool || '';
 }
 
 function resolveBackupDbDumpUrl() {
   if (process.env.PG_DUMP_USE_DIRECT === '1') {
     return process.env.SUPABASE_BACKUP_DB_DIRECT_URL || '';
   }
-  return toSessionPoolerUrl(process.env.SUPABASE_BACKUP_DB_URL || '')
-    || process.env.SUPABASE_BACKUP_DB_DIRECT_URL
-    || process.env.SUPABASE_BACKUP_DB_URL
-    || '';
+  const pool = normalizeSupabasePoolerUrl(
+    process.env.SUPABASE_BACKUP_DB_URL || '',
+    backupProjectRef(),
+  );
+  return toSessionPoolerUrl(pool) || pool || '';
 }
 
 /** Thử lần lượt pool 6543 → session pooler 5432 → direct (nếu bật). */
@@ -103,6 +166,12 @@ module.exports = {
   resolvePrimaryDbDumpUrl,
   resolveBackupDbDumpUrl,
   toSessionPoolerUrl,
+  normalizeSupabasePoolerUrl,
+  primaryProjectRef,
+  backupProjectRef,
+  projectRefFromSupabaseUrl,
+  parsePgConnectionUrl,
+  pgCliEnv,
   listPgProbeCandidates,
   ipv4Lookup,
   buildPgPoolConfig,
