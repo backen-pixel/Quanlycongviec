@@ -74,6 +74,30 @@ function canReplicate() {
   return isReplicationConfigured() && isActivePrimary();
 }
 
+/** Retry REST backup một lần sau khi cấp GRANT nếu 403/42501. */
+async function backupFetchWithGrantRetry(fetchFn) {
+  let res = await fetchFn();
+  if (res.ok) return { res, text: '' };
+  let text = await res.text().catch(() => '');
+  const permissionDenied = (res.status === 403 || res.status === 401)
+    && /42501|permission denied|Grant the required privileges/i.test(text);
+  if (!permissionDenied) return { res, text };
+  try {
+    const { applyBackupSchemaGrants } = require('./backupSchemaGrants');
+    await applyBackupSchemaGrants({
+      force: true,
+      onLog: (m) => console.warn('[replication]', m),
+    });
+  } catch (e) {
+    console.warn('[replication] grants failed:', e.message);
+    return { res, text };
+  }
+  res = await fetchFn();
+  if (res.ok) return { res, text: '' };
+  text = await res.text().catch(() => '');
+  return { res, text };
+}
+
 function extractHeaders(init) {
   if (!init?.headers) return {};
   const h = init.headers;
@@ -476,7 +500,7 @@ async function upsertFacebookContactOnBackup(row, depth = 0) {
 
   const rowToWrite = await ensureFacebookContactParents(row, depth);
 
-  const upsertRes = await undiciFetch(
+  const upsertRes = await backupFetchWithGrantRetry(() => undiciFetch(
     `${backupBase}/rest/v1/facebook_contacts?on_conflict=page_id,psid`,
     {
       method: 'POST',
@@ -488,7 +512,7 @@ async function upsertFacebookContactOnBackup(row, depth = 0) {
       body: JSON.stringify(rowToWrite),
       dispatcher: supabaseDispatcher,
     },
-  );
+  )).then(({ res }) => res);
 
   if (upsertRes.ok) {
     const saved = await upsertRes.json().catch(() => null);
@@ -575,7 +599,7 @@ async function postRowToBackup(table, row, depth = 0) {
   }
   const payload = stripRowForBackupReplication(table, row);
   const backupBase = trimBase(config.supabaseBackupUrl);
-  const res = await undiciFetch(`${backupBase}/rest/v1/${table}`, {
+  const res = await backupFetchWithGrantRetry(() => undiciFetch(`${backupBase}/rest/v1/${table}`, {
     method: 'POST',
     headers: {
       ...backupHeaders({}),
@@ -584,7 +608,7 @@ async function postRowToBackup(table, row, depth = 0) {
     },
     body: JSON.stringify(payload),
     dispatcher: supabaseDispatcher,
-  });
+  })).then(({ res: r }) => r);
   if (res.ok) return;
   const text = await res.text().catch(() => '');
   const fk = parseFkMissingFromError(text);
@@ -658,7 +682,8 @@ async function redisPushTail(job) {
 
 function isDeferrableReplicationError(err) {
   const msg = String(err?.message || err || '');
-  return /→ 409\b|"code":"23503"|foreign key|is not present in table|PGRST116|→ 406\b|→ 404\b|contains 0 rows|"code":"23505"|duplicate key/i.test(msg);
+  return /→ 409\b|42501|permission denied|Grant the required privileges/i.test(msg)
+    || /"code":"23503"|foreign key|is not present in table|PGRST116|→ 406\b|→ 404\b|contains 0 rows|"code":"23505"|duplicate key/i.test(msg);
 }
 
 async function requeueReplicationJob(job, err) {
@@ -782,55 +807,54 @@ async function applyRestJob(job) {
     });
   }
 
-  let res = await doFetch();
-  if (!res.ok) {
-    let text = await res.text().catch(() => '');
+  let { res, text } = await backupFetchWithGrantRetry(doFetch);
+  if (res.ok) return;
+  if (!text) text = await res.text().catch(() => '');
+  if (method === 'DELETE' && (res.status === 404 || /PGRST116|0 rows/i.test(text))) {
+    return;
+  }
+  const fk = parseFkMissingFromError(text);
+  const missingRow = isMissingRowReplicationError(text);
+  if (fk || missingRow) {
+    if (missingRow) {
+      const missingTable = restTableFromPath(path);
+      const id = extractEqFilterId(path, 'id');
+      if (missingTable && id) await ensureRowOnBackup(missingTable, id);
+    }
+    if (fk) await ensureRowOnBackup(fk.parentTable, fk.parentId);
+    res = await doFetch();
+    if (res.ok) return;
+    text = await res.text().catch(() => '');
     if (method === 'DELETE' && (res.status === 404 || /PGRST116|0 rows/i.test(text))) {
       return;
     }
-    const fk = parseFkMissingFromError(text);
-    const missingRow = isMissingRowReplicationError(text);
-    if (fk || missingRow) {
-      if (missingRow) {
-        const missingTable = restTableFromPath(path);
-        const id = extractEqFilterId(path, 'id');
-        if (missingTable && id) await ensureRowOnBackup(missingTable, id);
-      }
-      if (fk) await ensureRowOnBackup(fk.parentTable, fk.parentId);
-      res = await doFetch();
-      if (res.ok) return;
-      text = await res.text().catch(() => '');
-      if (method === 'DELETE' && (res.status === 404 || /PGRST116|0 rows/i.test(text))) {
-        return;
-      }
-    }
-    if (
-      method === 'POST'
-      && table === 'crm_leads'
-      && (res.status === 409 || /23505|duplicate key/i.test(text))
-    ) {
-      const parsed = parseJsonBody(body);
-      const rows = parsed ? (Array.isArray(parsed) ? parsed : [parsed]) : [];
-      let ok = rows.length > 0;
-      for (const row of rows) {
-        if (!row || typeof row !== 'object') continue;
-        try {
-          await upsertCrmLeadOnBackup(row, 0);
-        } catch {
-          ok = false;
-        }
-      }
-      if (ok && rows.length) return;
-    }
-    if (
-      method === 'POST'
-      && (res.status === 409 || /23505|duplicate key/i.test(text))
-      && await retryDuplicateUpsertOnBackup(table, path, body)
-    ) {
-      return;
-    }
-    throw new Error(`backup ${method} ${path} → ${res.status} ${text.slice(0, 200)}`);
   }
+  if (
+    method === 'POST'
+    && table === 'crm_leads'
+    && (res.status === 409 || /23505|duplicate key/i.test(text))
+  ) {
+    const parsed = parseJsonBody(body);
+    const rows = parsed ? (Array.isArray(parsed) ? parsed : [parsed]) : [];
+    let ok = rows.length > 0;
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') continue;
+      try {
+        await upsertCrmLeadOnBackup(row, 0);
+      } catch {
+        ok = false;
+      }
+    }
+    if (ok && rows.length) return;
+  }
+  if (
+    method === 'POST'
+    && (res.status === 409 || /23505|duplicate key/i.test(text))
+    && await retryDuplicateUpsertOnBackup(table, path, body)
+  ) {
+    return;
+  }
+  throw new Error(`backup ${method} ${path} → ${res.status} ${text.slice(0, 200)}`);
 }
 
 async function applyStorageJob(job) {
