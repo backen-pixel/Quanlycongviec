@@ -63,7 +63,7 @@ export default function ScopeFilterBar({
             value={companyId}
             onChange={(e) => setCompanyId?.(e.target.value)}
             disabled={metaLoading}
-            className="mt-0.5 w-full h-9 px-2 rounded-lg border border-slate-200 text-sm bg-white disabled:opacity-50"
+            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm disabled:opacity-50 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
           >
             <option value="">{companyAllowAll ? emptyCompanyLabel : (emptyCompanyLabel || '— Chọn công ty —')}</option>
             {companies.map((c) => (
@@ -87,7 +87,7 @@ export default function ScopeFilterBar({
               metaLoading ||
               (departmentDisabledWithoutCompany && !companyId)
             }
-            className="mt-0.5 w-full h-9 px-2 rounded-lg border border-slate-200 text-sm bg-white disabled:opacity-50"
+            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm disabled:opacity-50 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
           >
             <option value="">Tất cả</option>
             {departmentsForCompany.map((d) => (

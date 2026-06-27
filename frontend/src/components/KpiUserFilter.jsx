@@ -19,6 +19,7 @@ export default function KpiUserFilter({
   showSearch = true,
   compact = false,
   lockCompanyId = null,
+  className = '',
 }) {
   const { companyId = '', departmentId = '', q = '' } = value || {};
   const effectiveCompanyId = lockCompanyId || companyId;
@@ -96,6 +97,7 @@ export default function KpiUserFilter({
         </div>
         <ScopeFilterBar
           scope={{ ...scope, showCompany: false }}
+          className={className}
           searchPlaceholder="Tìm theo tên / email…"
           departmentDisabledWithoutCompany={!effectiveCompanyId}
         />
@@ -106,7 +108,7 @@ export default function KpiUserFilter({
   return (
     <ScopeFilterBar
       scope={scope}
-      className={compact ? '' : ''}
+      className={className}
       searchPlaceholder="Tìm theo tên / email…"
       departmentDisabledWithoutCompany={!effectiveCompanyId}
     />

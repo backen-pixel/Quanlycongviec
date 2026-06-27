@@ -14,13 +14,11 @@ import {
   ChevronUp,
   Download,
   FileText,
-  Layers,
   MapPin,
   RefreshCw,
   TrendingDown,
   TrendingUp,
   Users,
-  Wallet,
 } from 'lucide-react';
 import {
   Bar,
@@ -1221,92 +1219,90 @@ export default function CrmOrgOverviewReport() {
         </div>
       </div>
 
-      <div className="rounded-2xl bg-white border border-slate-200 shadow-sm p-4 md:p-5 space-y-4">
-        <div className="flex flex-col gap-1 min-w-[min(100%,280px)]">
-          <span className="text-xs font-semibold text-gray-600 flex items-center gap-1.5">
-            <CalendarRange className="w-4 h-4 text-indigo-500" />
-            Kỳ báo cáo
-          </span>
-          <button
-            type="button"
-            onClick={() => setRangePickerOpen(true)}
-            className="flex items-center gap-2 px-3 py-2.5 rounded-xl border border-indigo-200 bg-white text-sm text-left max-w-md hover:border-indigo-400"
-          >
-            <span className="tabular-nums font-medium">
-              {formatViDate(dateFrom)} → {formatViDate(dateTo)}
+      <div className="rounded-2xl bg-white border border-slate-200 shadow-sm p-4 md:p-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 items-end">
+          <label className="block min-w-0">
+            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide flex items-center gap-1">
+              <CalendarRange className="w-3.5 h-3.5 text-indigo-500" />
+              Kỳ báo cáo
             </span>
-          </button>
-        </div>
+            <button
+              type="button"
+              onClick={() => setRangePickerOpen(true)}
+              className="mt-1 flex w-full items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-left hover:border-indigo-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            >
+              <span className="tabular-nums font-medium truncate">
+                {formatViDate(dateFrom)} → {formatViDate(dateTo)}
+              </span>
+              <ChevronDown className="w-4 h-4 shrink-0 text-slate-400" />
+            </button>
+          </label>
 
-        <div className="flex flex-col gap-1.5">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">Phân loại</span>
-          <div className="inline-flex rounded-xl border border-indigo-200 bg-white p-1 shadow-sm w-fit">
-            {[
-              { id: 'all', label: 'Cả hai', icon: Layers },
-              { id: 'lead', label: 'Chỉ Lead', icon: TrendingUp },
-              { id: 'deal', label: 'Chỉ Deal', icon: Wallet },
-            ].map((opt) => {
-              const Icon = opt.icon;
-              const active = typeView === opt.id;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => setTypeView(opt.id)}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold ${
-                    active ? 'text-white bg-indigo-600 shadow' : 'text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  <Icon className="w-3.5 h-3.5" />
-                  {opt.label}
-                </button>
-              );
-            })}
+          <label className="block min-w-0">
+            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Phân loại</span>
+            <select
+              value={typeView}
+              onChange={(e) => setTypeView(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            >
+              <option value="all">Cả hai (Lead + Deal)</option>
+              <option value="lead">Chỉ Lead</option>
+              <option value="deal">Chỉ Deal</option>
+            </select>
+          </label>
+
+          <div className="min-w-0 sm:col-span-2 lg:col-span-2">
+            <KpiUserFilter
+              value={filter}
+              onChange={handleFilterChange}
+              showSearch={false}
+              className="grid-cols-1 sm:grid-cols-2 gap-3"
+            />
+          </div>
+
+          <label className="block min-w-0">
+            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Khu vực</span>
+            <select
+              value={regionId}
+              onChange={(e) => setRegionId(e.target.value)}
+              disabled={!filter.companyId}
+              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm disabled:opacity-50 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            >
+              <option value="">Tất cả khu vực</option>
+              {companyRegions.map((r) => (
+                <option key={r.id} value={r.id}>{r.name}{r.code ? ` (${r.code})` : ''}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block min-w-0">
+            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Nhân viên</span>
+            <select
+              value={filter.userId}
+              onChange={(e) => handleFilterChange({ userId: e.target.value })}
+              disabled={!filter.companyId || loadingEmployees}
+              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm disabled:opacity-50 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            >
+              <option value="">{loadingEmployees ? 'Đang tải…' : 'Tất cả nhân viên'}</option>
+              {companyEmployees.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.full_name || u.email || u.id}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="min-w-0 sm:col-span-2 lg:col-span-1 xl:col-span-1">
+            <button
+              type="button"
+              onClick={load}
+              disabled={loading}
+              className="w-full px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 text-white text-sm font-semibold shadow-md disabled:opacity-50 hover:from-indigo-700 hover:to-blue-700"
+            >
+              Áp dụng bộ lọc
+            </button>
           </div>
         </div>
-
-        <KpiUserFilter value={filter} onChange={handleFilterChange} />
-
-        <label className="block max-w-xs">
-          <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Nhân viên</span>
-          <select
-            value={filter.userId}
-            onChange={(e) => handleFilterChange({ userId: e.target.value })}
-            disabled={!filter.companyId || loadingEmployees}
-            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm disabled:opacity-50"
-          >
-            <option value="">{loadingEmployees ? 'Đang tải…' : 'Tất cả nhân viên'}</option>
-            {companyEmployees.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.full_name || u.email || u.id}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="block max-w-xs">
-          <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Khu vực</span>
-          <select
-            value={regionId}
-            onChange={(e) => setRegionId(e.target.value)}
-            disabled={!filter.companyId}
-            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm disabled:opacity-50"
-          >
-            <option value="">Tất cả khu vực</option>
-            {companyRegions.map((r) => (
-              <option key={r.id} value={r.id}>{r.name}{r.code ? ` (${r.code})` : ''}</option>
-            ))}
-          </select>
-        </label>
-
-        <button
-          type="button"
-          onClick={load}
-          disabled={loading}
-          className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 text-white text-sm font-semibold shadow-md disabled:opacity-50"
-        >
-          Áp dụng bộ lọc
-        </button>
       </div>
 
       <DateRangePickerPopover
