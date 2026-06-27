@@ -2586,10 +2586,11 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           const onProgress = makeAxiosUploadProgressHandler(file.size, (stats) => {
             setUploadState((prev) => (prev ? mergeUploadProgressState(prev, stats) : prev));
           });
-          await api.post(`/messenger/groups/${groupId}/chat/upload`, fd, {
+          const { data: uploaded } = await api.post(`/messenger/groups/${groupId}/chat/upload`, fd, {
             headers: { 'Content-Type': 'multipart/form-data' },
             onUploadProgress: onProgress,
           });
+          if (uploaded?.id) mergeIncomingChat(uploaded);
           setUploadState((prev) => (prev ? { ...prev, percent: 100 } : prev));
         }
       } else {
