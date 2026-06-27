@@ -342,27 +342,120 @@ async function fetchBackupContactIdByNaturalKey(pageId, psid) {
   return Array.isArray(rows) && rows.length ? rows[0].id : null;
 }
 
-/** Upsert facebook_contacts theo (page_id, psid) — tránh 409 khi backup có uuid khác primary. */
-async function ensureCrmLeadOnBackup(leadId, depth = 0) {
-  if (!leadId || depth > 6) return;
-  if (await backupRowExists('crm_leads', leadId)) return;
-  const row = await fetchPrimaryRow('crm_leads', leadId);
-  if (!row) return;
+async function fetchBackupLeadIdByCode(code, type = 'lead') {
+  if (!code) return null;
+  const backupBase = trimBase(config.supabaseBackupUrl);
+  let url = `${backupBase}/rest/v1/crm_leads?code=eq.${encodeURIComponent(code)}&select=id,type&limit=1`;
+  if (type) url += `&type=eq.${encodeURIComponent(type)}`;
+  const res = await undiciFetch(url, { headers: backupHeaders({}), dispatcher: supabaseDispatcher });
+  if (!res.ok) return null;
+  const rows = await res.json().catch(() => []);
+  return Array.isArray(rows) && rows.length ? rows[0].id : null;
+}
+
+/** Upsert crm_leads — lead có code unique: merge theo code nếu backup uuid khác primary. */
+async function upsertCrmLeadOnBackup(row, depth = 0) {
+  if (!row) return null;
   for (const col of REPLICATION_PARENT_DEPS.crm_leads || []) {
     const pid = row[col];
     if (!pid) continue;
     const parentTable = resolveParentTableForColumn(col);
     if (parentTable) await ensureRowOnBackup(parentTable, pid, depth + 1);
   }
-  await postRowToBackup('crm_leads', row, depth);
+
+  const payload = stripRowForBackupReplication('crm_leads', row);
+  const backupBase = trimBase(config.supabaseBackupUrl);
+  const isLeadWithCode = row.type === 'lead' && row.code;
+
+  async function patchLeadById(backupId, patchBody) {
+    const { id, created_at, ...patch } = patchBody;
+    const patchRes = await undiciFetch(
+      `${backupBase}/rest/v1/crm_leads?id=eq.${encodeURIComponent(backupId)}`,
+      {
+        method: 'PATCH',
+        headers: {
+          ...backupHeaders({}),
+          'content-type': 'application/json',
+          prefer: 'return=representation',
+        },
+        body: JSON.stringify(patch),
+        dispatcher: supabaseDispatcher,
+      },
+    );
+    if (patchRes.ok) {
+      const patched = await patchRes.json().catch(() => null);
+      const patchedRow = Array.isArray(patched) ? patched[0] : patched;
+      return patchedRow?.id || backupId;
+    }
+    const patchText = await patchRes.text().catch(() => '');
+    const patchFk = parseFkMissingFromError(patchText);
+    if (patchFk && depth < 6) {
+      await ensureRowOnBackup(patchFk.parentTable, patchFk.parentId, depth + 1);
+      return upsertCrmLeadOnBackup(row, depth + 1);
+    }
+    return null;
+  }
+
+  if (isLeadWithCode) {
+    const existingByCode = await fetchBackupLeadIdByCode(row.code, 'lead');
+    if (existingByCode) {
+      const patchedId = await patchLeadById(existingByCode, payload);
+      if (patchedId) return patchedId;
+    }
+  }
+
+  const res = await undiciFetch(`${backupBase}/rest/v1/crm_leads`, {
+    method: 'POST',
+    headers: {
+      ...backupHeaders({}),
+      'content-type': 'application/json',
+      prefer: 'resolution=merge-duplicates,return=representation',
+    },
+    body: JSON.stringify(payload),
+    dispatcher: supabaseDispatcher,
+  });
+
+  if (res.ok) {
+    const saved = await res.json().catch(() => null);
+    const savedRow = Array.isArray(saved) ? saved[0] : saved;
+    return savedRow?.id || row.id || null;
+  }
+
+  const text = await res.text().catch(() => '');
+  const fk = parseFkMissingFromError(text);
+  if (fk && depth < 6) {
+    await ensureRowOnBackup(fk.parentTable, fk.parentId, depth + 1);
+    return upsertCrmLeadOnBackup(row, depth + 1);
+  }
+
+  if ((res.status === 409 || /23505|duplicate key/i.test(text)) && isLeadWithCode) {
+    const existingByCode = await fetchBackupLeadIdByCode(row.code, 'lead');
+    if (existingByCode) {
+      const patchedId = await patchLeadById(existingByCode, payload);
+      if (patchedId) return patchedId;
+    }
+  }
+
+  throw new Error(`backup upsert crm_leads → ${res.status} ${text.slice(0, 200)}`);
+}
+
+/** Upsert facebook_contacts theo (page_id, psid) — tránh 409 khi backup có uuid khác primary. */
+async function ensureCrmLeadOnBackup(leadId, depth = 0) {
+  if (!leadId || depth > 6) return null;
+  if (await backupRowExists('crm_leads', leadId)) return leadId;
+  const row = await fetchPrimaryRow('crm_leads', leadId);
+  if (!row) return null;
+  return upsertCrmLeadOnBackup(row, depth);
 }
 
 async function ensureFacebookContactParents(row, depth = 0) {
   if (!row || depth > 5) return row;
   let next = row;
   if (row.lead_id) {
-    await ensureCrmLeadOnBackup(row.lead_id, depth);
-    if (!(await backupRowExists('crm_leads', row.lead_id))) {
+    const backupLeadId = await ensureCrmLeadOnBackup(row.lead_id, depth);
+    if (backupLeadId) {
+      next = { ...next, lead_id: backupLeadId };
+    } else {
       next = { ...next, lead_id: null };
     }
   }
@@ -474,6 +567,10 @@ async function remapFacebookMessagesBodyForBackup(body) {
 async function postRowToBackup(table, row, depth = 0) {
   if (table === 'facebook_contacts') {
     await upsertFacebookContactOnBackup(row, depth);
+    return;
+  }
+  if (table === 'crm_leads') {
+    await upsertCrmLeadOnBackup(row, depth);
     return;
   }
   const payload = stripRowForBackupReplication(table, row);
@@ -706,6 +803,24 @@ async function applyRestJob(job) {
       if (method === 'DELETE' && (res.status === 404 || /PGRST116|0 rows/i.test(text))) {
         return;
       }
+    }
+    if (
+      method === 'POST'
+      && table === 'crm_leads'
+      && (res.status === 409 || /23505|duplicate key/i.test(text))
+    ) {
+      const parsed = parseJsonBody(body);
+      const rows = parsed ? (Array.isArray(parsed) ? parsed : [parsed]) : [];
+      let ok = rows.length > 0;
+      for (const row of rows) {
+        if (!row || typeof row !== 'object') continue;
+        try {
+          await upsertCrmLeadOnBackup(row, 0);
+        } catch {
+          ok = false;
+        }
+      }
+      if (ok && rows.length) return;
     }
     if (
       method === 'POST'
