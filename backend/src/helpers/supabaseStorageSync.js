@@ -9,7 +9,7 @@ const BUCKETS = (process.env.STORAGE_SYNC_BUCKETS || 'attachments,app-releases,g
   .map((s) => s.trim())
   .filter(Boolean);
 
-const CONCURRENCY = Math.max(1, parseInt(process.env.STORAGE_SYNC_CONCURRENCY || '6', 10));
+const CONCURRENCY = Math.max(1, parseInt(process.env.STORAGE_SYNC_CONCURRENCY || '10', 10));
 
 function clients() {
   if (!config.supabaseUrl || !config.supabaseServiceKey) {
@@ -207,6 +207,13 @@ async function runStorageSync({ from, to, onLog } = {}) {
   log(`[storage] Hoàn tất: copied=${totals.copied} skip=${totals.skip_exists} errors=${totals.errors}`);
   if (totals.errors > 0) {
     throw new Error(`Đồng bộ storage lỗi ${totals.errors} file`);
+  }
+
+  const skipVerify = process.env.STORAGE_SYNC_SKIP_VERIFY === '1'
+    || (totals.copied === 0 && totals.errors === 0);
+  if (skipVerify) {
+    log('[storage] Bỏ qua verify (không có file mới — tiết kiệm thời gian)');
+    return { ok: true, verify: null, stats: totals, verify_skipped: true };
   }
 
   const verify = await verifyStorageSync(from, to);

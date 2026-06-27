@@ -24,7 +24,7 @@ const DEFAULT_SETTINGS = {
   schedule_enabled: process.env.SUPABASE_BACKUP_SYNC_SCHEDULE_ENABLED === '1',
   schedule_mode: 'slots',
   sync_slots_vn: DEFAULT_SYNC_SLOTS_VN,
-  verify_before_sync: true,
+  verify_before_sync: false,
   interval_hours: 24,
   include_db: true,
   include_storage: true,
@@ -533,8 +533,6 @@ async function runBackupSync({
         appendLog('Incremental chưa đủ — clone full DB (SUPABASE_BACKUP_ALLOW_FULL_CLONE=1)…');
         await runScript('clone-primary-to-backup.js');
         lastDbMode = 'full_clone';
-        appendLog('Fix grants backup…');
-        await runScript('fix-backup-schema-grants.js');
       } else if (!inc.ok) {
         const names = (inc.drifted || []).map((r) => r.table).filter(Boolean).join(', ');
         throw new Error(
@@ -752,7 +750,7 @@ async function bootstrapScheduleIfEmpty() {
       schedule_enabled: process.env.SUPABASE_BACKUP_SYNC_SCHEDULE_ENABLED === '1',
       schedule_mode: 'slots',
       sync_slots_vn: getEffectiveSyncSlots({}),
-      verify_before_sync: true,
+      verify_before_sync: false,
       include_db: true,
       include_storage: true,
       verify_after_sync: true,

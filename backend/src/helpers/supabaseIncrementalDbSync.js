@@ -31,7 +31,7 @@ function runScript(scriptName, args, onLog) {
   });
 }
 
-async function getDriftState(onLog) {
+async function getDriftState(onLog, { onlyTables = null } = {}) {
   const {
     connectPgWithProbeCandidates,
     listPrimaryPgProbeCandidates,
@@ -40,6 +40,7 @@ async function getDriftState(onLog) {
     backupProjectRef,
     withPgCircuitBreakerRetry,
   } = require('../config/pgConnection');
+  const { compareTableCounts } = require('./pgDriftCheck');
 
   const primaryCandidates = listPrimaryPgProbeCandidates();
   const backupCandidates = listBackupPgProbeCandidates();
@@ -66,36 +67,20 @@ async function getDriftState(onLog) {
       onLog: log,
     });
     try {
-      const { rows: tableRows } = await pPool.query(`
-        SELECT table_name
-        FROM information_schema.tables
-        WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
-        ORDER BY table_name
-      `);
-      const rows = [];
-      for (const { table_name: table } of tableRows) {
-        let primaryCount = null;
-        let backupCount = null;
-        let error = null;
-        try {
-          const [p, b] = await Promise.all([
-            pPool.query(`SELECT COUNT(*)::bigint AS n FROM public.${table}`),
-            bPool.query(`SELECT COUNT(*)::bigint AS n FROM public.${table}`),
-          ]);
-          primaryCount = Number(p.rows[0]?.n || 0);
-          backupCount = Number(b.rows[0]?.n || 0);
-        } catch (e) {
-          error = e.message;
-        }
-        rows.push({
-          table,
-          primary: primaryCount,
-          backup: backupCount,
-          drift: primaryCount != null && backupCount != null ? primaryCount - backupCount : null,
-          ok: primaryCount != null && backupCount != null && primaryCount === backupCount,
-          error,
-        });
+      let tableNames = onlyTables;
+      if (!tableNames?.length) {
+        const { rows: tableRows } = await pPool.query(`
+          SELECT table_name
+          FROM information_schema.tables
+          WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+          ORDER BY table_name
+        `);
+        tableNames = tableRows.map((r) => r.table_name);
       }
+      if (onlyTables?.length) {
+        log(`Drift nhanh: kiểm tra ${tableNames.length} bảng (song song)…`);
+      }
+      const rows = await compareTableCounts(pPool, bPool, tableNames);
       return {
         verify: {
           checked_at: new Date().toISOString(),
@@ -124,11 +109,13 @@ async function drainReplicationLog(onLog) {
       return { skipped: true, processed: 0, remaining: 0 };
     }
     onLog?.('Áp dụng log replication (chỉ thay đổi mới ghi vào queue)…');
+    const maxJobs = Math.max(50, parseInt(process.env.SUPABASE_BACKUP_REPLICATION_MAX_JOBS || '500', 10));
+    const maxRounds = Math.max(5, parseInt(process.env.SUPABASE_BACKUP_REPLICATION_MAX_ROUNDS || '80', 10));
     let processed = 0;
-    for (let round = 0; round < 50; round += 1) {
+    for (let round = 0; round < maxRounds; round += 1) {
       const remainingBefore = await getQueueDepth();
       if (remainingBefore === 0) break;
-      const r = await drainReplicationQueue({ maxJobs: 200 });
+      const r = await drainReplicationQueue({ maxJobs });
       processed += r.processed || 0;
       onLog?.(`Replication vòng ${round + 1}: áp ${r.processed} job, còn ${r.remaining}`);
       if ((r.processed || 0) === 0) break;
@@ -276,7 +263,7 @@ async function runIncrementalDbSyncPrimaryToBackup({ onLog } = {}) {
     };
   }
 
-  state = await getDriftState(log).catch((e) => ({
+  state = await getDriftState(log, { onlyTables: tables }).catch((e) => ({
     verify: null,
     drifted: tables.map((t) => ({ table: t })),
     all_ok: false,
