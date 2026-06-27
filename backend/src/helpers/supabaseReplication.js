@@ -222,7 +222,112 @@ async function fetchPrimaryRow(table, id) {
   return Array.isArray(rows) && rows.length ? rows[0] : null;
 }
 
+async function fetchBackupContactIdByNaturalKey(pageId, psid) {
+  const backupBase = trimBase(config.supabaseBackupUrl);
+  const res = await undiciFetch(
+    `${backupBase}/rest/v1/facebook_contacts?page_id=eq.${encodeURIComponent(pageId)}&psid=eq.${encodeURIComponent(psid)}&select=id`,
+    { headers: backupHeaders({}), dispatcher: supabaseDispatcher },
+  );
+  if (!res.ok) return null;
+  const rows = await res.json().catch(() => []);
+  return Array.isArray(rows) && rows.length ? rows[0].id : null;
+}
+
+/** Upsert facebook_contacts theo (page_id, psid) — tránh 409 khi backup có uuid khác primary. */
+async function upsertFacebookContactOnBackup(row, depth = 0) {
+  const backupBase = trimBase(config.supabaseBackupUrl);
+  const pageId = row?.page_id;
+  const psid = row?.psid;
+  if (!pageId || !psid) return null;
+
+  const upsertRes = await undiciFetch(
+    `${backupBase}/rest/v1/facebook_contacts?on_conflict=page_id,psid`,
+    {
+      method: 'POST',
+      headers: {
+        ...backupHeaders({}),
+        'content-type': 'application/json',
+        prefer: 'resolution=merge-duplicates,return=representation',
+      },
+      body: JSON.stringify(row),
+      dispatcher: supabaseDispatcher,
+    },
+  );
+
+  if (upsertRes.ok) {
+    const saved = await upsertRes.json().catch(() => null);
+    const savedRow = Array.isArray(saved) ? saved[0] : saved;
+    return savedRow?.id || row.id || null;
+  }
+
+  const text = await upsertRes.text().catch(() => '');
+  const fk = parseFkMissingFromError(text);
+  if (fk && depth < 4) {
+    await ensureRowOnBackup(fk.parentTable, fk.parentId, depth + 1);
+    return upsertFacebookContactOnBackup(row, depth + 1);
+  }
+
+  if (upsertRes.status === 409 || /23505|duplicate key/i.test(text)) {
+    const { id, created_at, ...patch } = row;
+    const patchRes = await undiciFetch(
+      `${backupBase}/rest/v1/facebook_contacts?page_id=eq.${encodeURIComponent(pageId)}&psid=eq.${encodeURIComponent(psid)}`,
+      {
+        method: 'PATCH',
+        headers: {
+          ...backupHeaders({}),
+          'content-type': 'application/json',
+          prefer: 'return=representation',
+        },
+        body: JSON.stringify(patch),
+        dispatcher: supabaseDispatcher,
+      },
+    );
+    if (patchRes.ok) {
+      const patched = await patchRes.json().catch(() => null);
+      const patchedRow = Array.isArray(patched) ? patched[0] : patched;
+      return patchedRow?.id || (await fetchBackupContactIdByNaturalKey(pageId, psid));
+    }
+    const patchText = await patchRes.text().catch(() => '');
+    throw new Error(`backup upsert facebook_contacts → ${patchRes.status} ${patchText.slice(0, 200)}`);
+  }
+
+  throw new Error(`backup upsert facebook_contacts → ${upsertRes.status} ${text.slice(0, 200)}`);
+}
+
+async function ensureFacebookContactOnBackup(primaryContactId, depth = 0) {
+  if (!primaryContactId || depth > 4) return null;
+  const row = await fetchPrimaryRow('facebook_contacts', primaryContactId);
+  if (!row) return null;
+  return upsertFacebookContactOnBackup(row, depth);
+}
+
+async function remapFacebookMessagesBodyForBackup(body) {
+  if (body == null || body === '') return body;
+  const parsed = parseJsonBody(body);
+  if (!parsed) return body;
+  const isArray = Array.isArray(parsed);
+  const rows = isArray ? parsed : [parsed];
+  const out = [];
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') {
+      out.push(row);
+      continue;
+    }
+    if (row.contact_id) {
+      const backupContactId = await ensureFacebookContactOnBackup(row.contact_id);
+      out.push(backupContactId ? { ...row, contact_id: backupContactId } : row);
+    } else {
+      out.push(row);
+    }
+  }
+  return JSON.stringify(isArray ? out : out[0]);
+}
+
 async function postRowToBackup(table, row, depth = 0) {
+  if (table === 'facebook_contacts') {
+    await upsertFacebookContactOnBackup(row, depth);
+    return;
+  }
   const backupBase = trimBase(config.supabaseBackupUrl);
   const res = await undiciFetch(`${backupBase}/rest/v1/${table}`, {
     method: 'POST',
@@ -246,6 +351,10 @@ async function postRowToBackup(table, row, depth = 0) {
 
 async function ensureRowOnBackup(table, id, depth = 0) {
   if (!table || !id || depth > 4) return;
+  if (table === 'facebook_contacts') {
+    await ensureFacebookContactOnBackup(id, depth);
+    return;
+  }
   if (await backupRowExists(table, id)) return;
   const row = await fetchPrimaryRow(table, id);
   if (!row) return;
@@ -302,7 +411,7 @@ async function redisPushTail(job) {
 
 function isDeferrableReplicationError(err) {
   const msg = String(err?.message || err || '');
-  return /→ 409\b|"code":"23503"|foreign key|is not present in table|PGRST116|→ 406\b|→ 404\b|contains 0 rows/i.test(msg);
+  return /→ 409\b|"code":"23503"|foreign key|is not present in table|PGRST116|→ 406\b|→ 404\b|contains 0 rows|"code":"23505"|duplicate key/i.test(msg);
 }
 
 async function requeueReplicationJob(job, err) {
@@ -395,13 +504,18 @@ function replicateStorageUpload({ bucket, storagePath, mimetype, upsert = true }
 async function applyRestJob(job) {
   const path = sanitizeReplicationRestPath(job.path);
   const method = String(job.method || 'GET').toUpperCase();
+  const table = restTableFromPath(path);
   const headers = sanitizeReplicationHeaders(backupHeaders(job.headers || {}));
-  if (job.body != null) {
+  let body = job.body ?? undefined;
+  if (body != null && table === 'facebook_messages') {
+    body = await remapFacebookMessagesBodyForBackup(body);
+  }
+  if (body != null) {
     headers['content-type'] = headers['content-type'] || 'application/json';
   }
   headers.prefer = headers.prefer || 'return=minimal';
 
-  const prepared = { ...job, path };
+  const prepared = { ...job, path, body };
   await ensureReplicationParents(prepared);
   await ensureReplicationTargetRow(prepared);
 
@@ -412,7 +526,7 @@ async function applyRestJob(job) {
     return undiciFetch(url, {
       method: job.method,
       headers,
-      body: job.body ?? undefined,
+      body: body ?? undefined,
       dispatcher: supabaseDispatcher,
     });
   }
