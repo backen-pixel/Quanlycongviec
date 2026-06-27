@@ -149,6 +149,7 @@ async function main() {
     resolveBackupDbDumpUrl,
     resolvePrimaryDbUrl,
     resolveBackupDbUrl,
+    describePgTarget,
   } = require('../src/config/pgConnection');
 
   const primaryDumpUrl = resolvePrimaryDbDumpUrl();
@@ -156,6 +157,9 @@ async function main() {
   if (!primaryDumpUrl || !backupDumpUrl) {
     throw new Error('Thiếu SUPABASE_DB_URL / SUPABASE_BACKUP_DB_URL (pooler 6543) trên Render');
   }
+
+  console.log('[clone] Primary target:', describePgTarget(primaryDumpUrl));
+  console.log('[clone] Backup target:', describePgTarget(backupDumpUrl));
 
   const useEnvCredentials = process.env.SUPABASE_CLONE_SKIP_PASSWORD_RESET === '1'
     || !!(process.env.SUPABASE_DB_URL && process.env.SUPABASE_BACKUP_DB_URL);
@@ -195,6 +199,13 @@ async function main() {
 }
 
 main().catch((e) => {
+  const { primaryProjectRef, backupProjectRef, isPgPasswordAuthError } = require('../src/config/pgConnection');
   console.error('[clone]', e.message);
+  if (isPgPasswordAuthError(e)) {
+    console.error(
+      `[clone] Render env: SUPABASE_DB_URL user=postgres.${primaryProjectRef()} | `
+      + `SUPABASE_BACKUP_DB_URL user=postgres.${backupProjectRef()} — mật khẩu lấy từ Supabase Dashboard → Settings → Database`,
+    );
+  }
   process.exit(1);
 });
