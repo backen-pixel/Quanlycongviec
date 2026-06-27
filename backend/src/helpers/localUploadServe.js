@@ -90,11 +90,20 @@ async function resolveUploadDownloadSource(urlPath) {
   return null;
 }
 
-async function sendUploadDownloadResponse(res, resolved, downloadName) {
+function isInlineMediaName(name) {
+  const ext = path.extname(String(name || '')).toLowerCase();
+  return new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.mp4', '.webm', '.mov', '.mp3', '.wav', '.ogg', '.m4a']).has(ext);
+}
+
+async function sendUploadDownloadResponse(res, resolved, downloadName, { inline = false } = {}) {
   const name = downloadName || resolved.basename || 'download';
+  const useInline = inline || isInlineMediaName(name);
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
+  res.setHeader(
+    'Content-Disposition',
+    `${useInline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(name)}`,
+  );
 
   if (resolved.kind === 'storage' && resolved.storage) {
     try {
