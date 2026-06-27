@@ -7,7 +7,7 @@ import SupabaseMonitorGate from '../components/SupabaseMonitorGate';
 import SupabaseSwitchPanel from '../components/SupabaseSwitchPanel';
 import {
   Database, RefreshCw, Settings, Play, Loader2, CheckCircle2,
-  AlertTriangle, Clock, ArrowLeft, Server, Activity, HardDrive, Globe, Users, BarChart3, ClipboardList, ScrollText,
+  AlertTriangle, Clock, ArrowLeft, Server, Activity, HardDrive, Globe, Users, BarChart3, ClipboardList, ScrollText, History,
 } from 'lucide-react';
 
 const TAB_LABELS = {
@@ -17,7 +17,26 @@ const TAB_LABELS = {
   usage: 'Phân tích sử dụng',
   audit: 'Nhật ký truy cập',
   'update-log': 'Cập nhật log',
+  history: 'Lịch sử đồng bộ',
 };
+
+function fmtDurationMs(startIso, endIso) {
+  if (!startIso || !endIso) return '—';
+  const ms = new Date(endIso).getTime() - new Date(startIso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  const m = Math.floor(ms / 60_000);
+  const s = Math.round((ms % 60_000) / 1000);
+  return `${m}m ${s}s`;
+}
+
+function fmtTriggeredBy(value) {
+  if (!value) return '—';
+  if (value === 'cron') return 'Lịch tự động';
+  if (value === 'bootstrap') return 'Hệ thống';
+  if (String(value).startsWith('switch:')) return 'Chuyển DB';
+  return String(value);
+}
 
 function fmtDt(iso) {
   if (!iso) return '—';
@@ -26,6 +45,23 @@ function fmtDt(iso) {
   } catch {
     return iso;
   }
+}
+
+function SyncRunStatusBadge({ status }) {
+  if (status === 'success') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200">
+        <CheckCircle2 className="w-3 h-3" />
+        Thành công
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 border border-red-200">
+      <AlertTriangle className="w-3 h-3" />
+      Lỗi
+    </span>
+  );
 }
 
 function verifyRowsLookStale(rows, checkedAt) {
@@ -434,6 +470,9 @@ function ProductionBackupSyncContent() {
   const [updateLogs, setUpdateLogs] = useState(null);
   const [updateLogsLoading, setUpdateLogsLoading] = useState(false);
   const [updateLogsPendingOnly, setUpdateLogsPendingOnly] = useState(false);
+  const [syncHistory, setSyncHistory] = useState(null);
+  const [syncHistoryLoading, setSyncHistoryLoading] = useState(false);
+  const [expandedHistoryId, setExpandedHistoryId] = useState(null);
   const [status, setStatus] = useState(null);
   const [monitor, setMonitor] = useState(null);
   const [settings, setSettings] = useState(null);
@@ -471,6 +510,17 @@ function ProductionBackupSyncContent() {
       setAuditLog({ ok: false, error: e.response?.data?.error || e.message, items: [] });
     }
     if (!silent) setAuditLoading(false);
+  }, []);
+
+  const loadSyncHistory = useCallback(async (silent = false) => {
+    if (!silent) setSyncHistoryLoading(true);
+    try {
+      const { data } = await api.get('/production/backup-sync/history', { params: { limit: 50 } });
+      setSyncHistory(data);
+    } catch (e) {
+      setSyncHistory({ error: e.response?.data?.error || e.message, items: [], total: 0 });
+    }
+    if (!silent) setSyncHistoryLoading(false);
   }, []);
 
   const loadUpdateLogs = useCallback(async (silent = false) => {
@@ -515,6 +565,7 @@ function ProductionBackupSyncContent() {
     });
     if (next === 'audit') void loadAuditLog();
     if (next === 'update-log') void loadUpdateLogs();
+    if (next === 'history') void loadSyncHistory();
   };
 
   const loadUsage = useCallback(async (silent = false) => {
@@ -594,16 +645,22 @@ function ProductionBackupSyncContent() {
   }, [tab, loadUpdateLogs, updateLogsPendingOnly]);
 
   useEffect(() => {
+    if (tab !== 'history') return;
+    void loadSyncHistory();
+  }, [tab, loadSyncHistory]);
+
+  useEffect(() => {
     void load();
     void loadMonitor();
     const poll = setInterval(() => {
       if (tab === 'monitor') void loadMonitor(true);
       if (tab === 'usage') void loadUsage(true);
       if (tab === 'update-log') void loadUpdateLogs(true);
+      if (tab === 'history') void loadSyncHistory(true);
       if (status?.job?.running) void load();
     }, 15000);
     return () => clearInterval(poll);
-  }, [load, loadMonitor, loadUsage, loadUpdateLogs, tab, status?.job?.running]);
+  }, [load, loadMonitor, loadUsage, loadUpdateLogs, loadSyncHistory, tab, status?.job?.running]);
 
   useEffect(() => {
     if (tab !== 'monitor') return;
@@ -736,6 +793,14 @@ function ProductionBackupSyncContent() {
         >
           <ClipboardList className="w-4 h-4" />
           Nhật ký
+        </button>
+        <button
+          type="button"
+          onClick={() => selectTab('history')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px inline-flex items-center gap-1.5 ${tab === 'history' ? 'border-teal-600 text-teal-700' : 'border-transparent text-slate-500'}`}
+        >
+          <History className="w-4 h-4" />
+          Lịch sử
         </button>
         <button
           type="button"
@@ -1380,6 +1445,96 @@ function ProductionBackupSyncContent() {
                         )}
                       </tbody>
                     </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {tab === 'history' && (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                  <div>
+                    <h2 className="font-semibold text-slate-800 flex items-center gap-2">
+                      <History className="w-5 h-5 text-teal-700" />
+                      Lịch sử đồng bộ Primary → Backup
+                    </h2>
+                    <p className="text-sm text-slate-500 mt-1">
+                      Các lần chạy thủ công và lịch tự động — lưu tối đa 50 lần gần nhất kèm log chi tiết.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => loadSyncHistory()}
+                    disabled={syncHistoryLoading}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-sm font-medium disabled:opacity-50"
+                  >
+                    {syncHistoryLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                    Làm mới
+                  </button>
+                </div>
+
+                {syncHistory?.error && (
+                  <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">
+                    {syncHistory.error}
+                  </p>
+                )}
+
+                {syncHistoryLoading && !syncHistory?.items?.length ? (
+                  <div className="flex items-center gap-2 text-slate-500 py-8 justify-center">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Đang tải lịch sử…
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {(syncHistory?.items || []).length === 0 ? (
+                      <p className="text-sm text-slate-500 py-8 text-center">
+                        Chưa có lần đồng bộ nào được ghi — chạy đồng bộ hoặc đợi lịch tự động.
+                      </p>
+                    ) : (
+                      (syncHistory.items || []).map((run) => {
+                        const expanded = expandedHistoryId === run.id;
+                        const parts = (run.sync_parts || []).join(' + ')
+                          || [run.include_db !== false && 'DB', run.include_storage !== false && 'Storage'].filter(Boolean).join(' + ');
+                        return (
+                          <div key={run.id} className="border border-slate-200 rounded-lg overflow-hidden">
+                            <button
+                              type="button"
+                              onClick={() => setExpandedHistoryId(expanded ? null : run.id)}
+                              className="w-full text-left px-4 py-3 bg-slate-50/80 hover:bg-slate-100 transition-colors"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <SyncRunStatusBadge status={run.status} />
+                                  <span className="text-sm font-medium text-slate-800">{fmtDt(run.started_at)}</span>
+                                  {run.slot && (
+                                    <span className="text-xs bg-blue-50 text-blue-800 px-2 py-0.5 rounded-full">
+                                      Slot {run.slot}
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-xs text-slate-500">
+                                  {fmtDurationMs(run.started_at, run.finished_at)} · {fmtTriggeredBy(run.triggered_by)}
+                                </span>
+                              </div>
+                              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                                <span>{parts || '—'}</span>
+                                {run.db_mode && <span>DB: {run.db_mode}</span>}
+                                {run.error && <span className="text-red-600 truncate max-w-full">{run.error}</span>}
+                              </div>
+                            </button>
+                            {expanded && (
+                              <div className="px-4 py-3 border-t border-slate-100 bg-white">
+                                <pre className="text-xs text-slate-700 max-h-64 overflow-auto whitespace-pre-wrap font-mono leading-relaxed">
+                                  {(run.log || []).map((l) => `[${fmtDt(l.at)}] ${l.line}`).join('\n') || 'Không có log.'}
+                                </pre>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
                   </div>
                 )}
               </div>

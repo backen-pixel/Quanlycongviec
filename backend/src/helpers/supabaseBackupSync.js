@@ -3,9 +3,8 @@
  */
 const { spawn } = require('child_process');
 const path = require('path');
-const { Pool } = require('pg');
 const { supabase } = require('../config/supabase');
-const { resolvePrimaryDbUrl, resolveBackupDbUrl, buildPgPoolConfig } = require('../config/pgConnection');
+const { resolvePrimaryDbUrl, resolveBackupDbUrl } = require('../config/pgConnection');
 const { getAppSettingValue, invalidateAppSettingKey } = require('./appSettingsCache');
 const { runIfLeader } = require('./cronLeader');
 
@@ -39,7 +38,11 @@ const DEFAULT_SETTINGS = {
   last_verify_rows: [],
   last_cron_slots: null,
   next_run_at: null,
+  run_history: [],
 };
+
+const MAX_RUN_HISTORY = 50;
+const MAX_LOG_LINES_PER_RUN = 80;
 
 let _jobRunning = false;
 let _jobLog = [];
@@ -213,6 +216,53 @@ function appendLog(line) {
   }
 }
 
+function buildRunHistoryEntry({
+  startedAt,
+  finishedAt,
+  status,
+  error = null,
+  userId = null,
+  runSlot = null,
+  includeDb = true,
+  includeStorage = true,
+  verifyAfter = true,
+  verifyBefore = false,
+  dbMode = null,
+}) {
+  return {
+    id: `${startedAt}-${status}`,
+    started_at: startedAt,
+    finished_at: finishedAt,
+    status,
+    error: error ? String(error).slice(0, 500) : null,
+    slot: runSlot || null,
+    triggered_by: userId || null,
+    include_db: !!includeDb,
+    include_storage: !!includeStorage,
+    verify_after: !!verifyAfter,
+    verify_before: !!verifyBefore,
+    db_mode: dbMode || null,
+    sync_parts: [...(_jobSyncParts || [])],
+    log: _jobLog.slice(-MAX_LOG_LINES_PER_RUN).map((l) => ({ at: l.at, line: l.line })),
+  };
+}
+
+function appendRunHistoryToSettings(settings, entry) {
+  const history = Array.isArray(settings.run_history) ? settings.run_history : [];
+  history.unshift(entry);
+  if (history.length > MAX_RUN_HISTORY) settings.run_history = history.slice(0, MAX_RUN_HISTORY);
+  else settings.run_history = history;
+}
+
+async function getSyncRunHistory({ limit = 30 } = {}) {
+  const s = await loadSettings();
+  const items = Array.isArray(s.run_history) ? s.run_history : [];
+  return {
+    items: items.slice(0, Math.min(limit, MAX_RUN_HISTORY)),
+    total: items.length,
+  };
+}
+
 async function loadSettings() {
   const raw = await getAppSettingValue(SETTINGS_KEY, null);
   const merged = { ...DEFAULT_SETTINGS, ...(raw && typeof raw === 'object' ? raw : {}) };
@@ -277,11 +327,14 @@ async function countRowsRest(client, table) {
 }
 
 async function verifyBackupViaPg() {
-  const { primary, backup } = dbUrls();
-  const pPool = new Pool(buildPgPoolConfig(primary));
-  const bPool = new Pool(buildPgPoolConfig(backup));
+  const {
+    connectPgWithProbeCandidates,
+    listPrimaryPgProbeCandidates,
+    listBackupPgProbeCandidates,
+  } = require('../config/pgConnection');
+  const { pool: pPool } = await connectPgWithProbeCandidates(listPrimaryPgProbeCandidates(), { label: 'Verify primary' });
+  const { pool: bPool } = await connectPgWithProbeCandidates(listBackupPgProbeCandidates(), { label: 'Verify backup' });
   try {
-    await Promise.all([pPool.query('SELECT 1'), bPool.query('SELECT 1')]);
     const rows = [];
     for (const table of VERIFY_TABLES) {
       const [primaryCount, backupCount] = await Promise.all([
@@ -427,6 +480,7 @@ async function runBackupSync({
   if (runSlot) appendLog(`Lịch VN ${runSlot}`);
 
   const settings = await loadSettings();
+  let lastDbMode = null;
   try {
     if (verifyBefore) {
       appendLog('Kiểm tra drift primary vs backup…');
@@ -440,6 +494,7 @@ async function runBackupSync({
       appendLog('Đồng bộ DB incremental (log thay đổi + bảng lệch, không clone full)…');
       const { runIncrementalDbSyncPrimaryToBackup } = require('./supabaseIncrementalDbSync');
       const inc = await runIncrementalDbSyncPrimaryToBackup({ onLog: appendLog });
+      lastDbMode = inc.mode || null;
       if (inc.ok) {
         appendLog(`DB OK (${inc.mode})`);
       } else if (inc.auth_failed) {
@@ -495,6 +550,18 @@ async function runBackupSync({
     if (settings.schedule_enabled) {
       settings.next_run_at = computeNextRunAt(settings);
     }
+    appendRunHistoryToSettings(settings, buildRunHistoryEntry({
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      status: 'success',
+      userId,
+      runSlot,
+      includeDb,
+      includeStorage,
+      verifyAfter,
+      verifyBefore,
+      dbMode: lastDbMode,
+    }));
 
     const { error: saveErr } = await supabase.from('app_settings').upsert(
       { key: SETTINGS_KEY, value: settings, updated_at: new Date().toISOString() },
@@ -514,6 +581,19 @@ async function runBackupSync({
     settings.last_run_status = 'failed';
     settings.last_run_error = String(e.message || e).slice(0, 500);
     settings.last_run_by = userId || null;
+    appendRunHistoryToSettings(settings, buildRunHistoryEntry({
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      status: 'failed',
+      error: e.message,
+      userId,
+      runSlot,
+      includeDb,
+      includeStorage,
+      verifyAfter,
+      verifyBefore,
+      dbMode: lastDbMode,
+    }));
     try {
       const { error: failSaveErr } = await supabase.from('app_settings').upsert(
         { key: SETTINGS_KEY, value: settings, updated_at: new Date().toISOString() },
@@ -573,6 +653,7 @@ async function getFullStatus() {
       running: _jobRunning,
       log: _jobLog.slice(-30),
     },
+    run_history_count: Array.isArray(settings.run_history) ? settings.run_history.length : 0,
     schedule: {
       mode: settings.schedule_mode || 'slots',
       sync_slots_vn: getEffectiveSyncSlots(settings),
@@ -672,6 +753,7 @@ module.exports = {
   verifyBackup,
   runBackupSync,
   getFullStatus,
+  getSyncRunHistory,
   startBackupSyncCron,
   isJobRunning: () => _jobRunning,
   getJobLog,

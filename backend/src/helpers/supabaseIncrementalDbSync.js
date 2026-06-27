@@ -32,23 +32,19 @@ function runScript(scriptName, args, onLog) {
 }
 
 async function getDriftState(onLog) {
-  const { Pool } = require('pg');
   const {
-    resolvePrimaryDbUrl,
-    resolveBackupDbUrl,
-    buildPgPoolConfig,
+    connectPgWithProbeCandidates,
+    listPrimaryPgProbeCandidates,
+    listBackupPgProbeCandidates,
+    primaryProjectRef,
+    backupProjectRef,
     withPgCircuitBreakerRetry,
   } = require('../config/pgConnection');
 
-  function dbUrls() {
-    return {
-      primary: resolvePrimaryDbUrl('probe'),
-      backup: resolveBackupDbUrl('probe'),
-    };
-  }
+  const primaryCandidates = listPrimaryPgProbeCandidates();
+  const backupCandidates = listBackupPgProbeCandidates();
 
-  const { primary, backup } = dbUrls();
-  if (!primary || !backup) {
+  if (!primaryCandidates.length && !backupCandidates.length) {
     const { verifyBackup } = require('./supabaseBackupSync');
     const verify = await verifyBackup();
     return {
@@ -61,10 +57,15 @@ async function getDriftState(onLog) {
   const log = (line) => { if (line && onLog) onLog(String(line)); };
 
   return withPgCircuitBreakerRetry(async () => {
-    const pPool = new Pool({ ...buildPgPoolConfig(primary), max: 2 });
-    const bPool = new Pool({ ...buildPgPoolConfig(backup), max: 2 });
+    const { pool: pPool } = await connectPgWithProbeCandidates(primaryCandidates, {
+      label: `Primary (ref=${primaryProjectRef() || '?'})`,
+      onLog: log,
+    });
+    const { pool: bPool } = await connectPgWithProbeCandidates(backupCandidates, {
+      label: `Backup (ref=${backupProjectRef() || '?'})`,
+      onLog: log,
+    });
     try {
-      await Promise.all([pPool.query('SELECT 1'), bPool.query('SELECT 1')]);
       const { rows: tableRows } = await pPool.query(`
         SELECT table_name
         FROM information_schema.tables
@@ -167,9 +168,12 @@ async function runIncrementalDbSyncPrimaryToBackup({ onLog } = {}) {
   if (state.auth_failed) {
     const repOk = (replication.remaining === 0 || replication.remaining == null);
     const { primaryProjectRef, backupProjectRef } = require('../config/pgConnection');
+    const pRef = primaryProjectRef();
+    const bRef = backupProjectRef();
     log(
-      `Sai mật khẩu/user DB pooler — Render cần user postgres.${primaryProjectRef()} và postgres.${backupProjectRef()}, mật khẩu khớp Supabase Dashboard.`,
+      `Sai mật khẩu/user DB pooler — Render cần user postgres.${pRef || 'PRIMARY_REF'} và postgres.${bRef || 'BACKUP_REF'}, mật khẩu khớp Supabase Dashboard.`,
     );
+    log('Gợi ý: SUPABASE_DB_URL dạng postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-....pooler.supabase.com:6543/postgres (không dùng user postgres trên pooler).');
     return {
       ok: repOk,
       mode: repOk ? 'log_only_auth_skip' : 'auth_failed',
