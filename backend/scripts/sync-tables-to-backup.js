@@ -96,8 +96,47 @@ async function sortTablesByDependencies(tables, primaryUrl) {
   }
 }
 
-function syncOneTable(primaryUrl, backupUrl, table) {
+async function countPublicTables(connectionUrl) {
+  const { Client } = require('pg');
+  const { buildPgPoolConfig } = require('../src/config/pgConnection');
+  const client = new Client(buildPgPoolConfig(connectionUrl));
+  await client.connect();
+  try {
+    const { rows } = await client.query(`
+      SELECT COUNT(*)::int AS n
+      FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+    `);
+    return Number(rows[0]?.n || 0);
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
+async function tableExistsOnBackup(backupUrl, table) {
+  const { Client } = require('pg');
+  const { buildPgPoolConfig } = require('../src/config/pgConnection');
+  const client = new Client(buildPgPoolConfig(backupUrl));
+  await client.connect();
+  try {
+    const { rows } = await client.query(`
+      SELECT 1
+      FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = $1 AND table_type = 'BASE TABLE'
+      LIMIT 1
+    `, [table]);
+    return rows.length > 0;
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
+async function syncOneTable(primaryUrl, backupUrl, table) {
   const { parsePgConnectionUrl } = require('../src/config/pgConnection');
+  const exists = await tableExistsOnBackup(backupUrl, table);
+  if (!exists) {
+    throw new Error(`Bảng public.${table} chưa có trên backup — cần clone full trước`);
+  }
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const dumpFile = path.join(OUT_DIR, `table_${table}_${Date.now()}.dump`);
   const pgDump = findPgBin('pg_dump');
@@ -157,6 +196,10 @@ async function main() {
   if (!primaryUrl || !backupUrl) {
     throw new Error('Thiếu SUPABASE_DB_* / SUPABASE_BACKUP_DB_* trong backend/.env');
   }
+  const backupTables = await countPublicTables(backupUrl);
+  if (backupTables < 50) {
+    throw new Error(`Backup chỉ có ${backupTables} bảng public — cần clone full trước (schema chưa đầy đủ)`);
+  }
   let tables = parseTablesArg();
   try {
     tables = await sortTablesByDependencies(tables, primaryUrl);
@@ -165,7 +208,7 @@ async function main() {
   }
   console.log(`[sync-table] Incremental ${tables.length} bảng → backup`);
   for (const table of tables) {
-    syncOneTable(primaryUrl, backupUrl, table);
+    await syncOneTable(primaryUrl, backupUrl, table);
   }
   console.log('[sync-table] Hoàn tất');
 }
