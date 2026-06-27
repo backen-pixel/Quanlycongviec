@@ -12,13 +12,13 @@ export function isCrmDealSidePipelineTab(pipelineType) {
 
 export function crmPipelineTabEntityLabel(pipelineType) {
   if (pipelineType === 'lead') return 'lead';
-  if (pipelineType === 'customer') return 'khách hàng';
+  if (pipelineType === 'customer') return 'đơn hàng';
   return 'deal';
 }
 
 export function crmPipelineTabTitle(pipelineType) {
   if (pipelineType === 'lead') return 'Lead';
-  if (pipelineType === 'customer') return 'Khách hàng';
+  if (pipelineType === 'customer') return 'Đơn hàng';
   return 'Deal';
 }
 

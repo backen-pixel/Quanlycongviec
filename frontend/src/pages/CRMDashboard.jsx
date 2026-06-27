@@ -3954,7 +3954,7 @@ export default function CRMDashboard() {
     }
     if (isCrmCustomerPipelineTab(pipelineType)) {
       return [
-        `${Number(customerKpiTotalCount ?? 0).toLocaleString('vi-VN')} KH`,
+        `${Number(customerKpiTotalCount ?? 0).toLocaleString('vi-VN')} đơn hàng`,
         `${Number(customerKpisFromFilters.project_active ?? 0).toLocaleString('vi-VN')} triển khai`,
         `DT thắng ${formatVND(customerKpisFromFilters.won_value)}`,
         `DT HT ${formatVND(customerKpisFromFilters.completed_revenue_value)}`,
@@ -5095,9 +5095,9 @@ export default function CRMDashboard() {
               <button
                 type="button"
                 onClick={() => switchTab('customer')}
-                className={`rounded-full font-medium transition-all duration-200 flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs min-w-[5rem] ${pipelineType === 'customer' ? 'bg-white text-cyan-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                className={`rounded-full font-medium transition-all duration-200 flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs min-w-[6.5rem] ${pipelineType === 'customer' ? 'bg-white text-cyan-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
               >
-                👤 KH{customerTabCountLabel != null ? ` (${customerTabCountLabel})` : ''}{' '}
+                📦 Đơn hàng{customerTabCountLabel != null ? ` (${customerTabCountLabel})` : ''}{' '}
                 {pinnedTab === 'customer' && <Pin className="h-3 w-3 text-amber-500 rotate-45" />}
               </button>
             )}
@@ -5509,15 +5509,15 @@ export default function CRMDashboard() {
                   {hasCustomerTab && (
                     <>
                       <div className="my-3 border-t border-gray-100" />
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2">Tab Deal / Khách hàng</p>
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2">Tab Deal / Đơn hàng</p>
                       <p className="text-[11px] text-gray-500 leading-snug mb-2">
-                        Gộp: một tab Deal toàn pipeline. Tách: tab Deal riêng + tab KH (Thắng &amp; sau Thắng).
-                        {isAdmin ? ' Admin mặc định Tách KH.' : ' Mặc định Gộp — bấm Tách KH khi cần.'}
+                        Gộp: một tab Deal toàn pipeline. Tách: tab Deal riêng + tab Đơn hàng (Thắng &amp; sau Thắng).
+                        {isAdmin ? ' Admin mặc định Tách đơn hàng.' : ' Mặc định Gộp — bấm Tách đơn hàng khi cần.'}
                       </p>
                       <div
                         className="inline-flex w-full rounded-lg border border-gray-200 bg-gray-100 p-0.5"
                         role="group"
-                        aria-label="Gộp hoặc tách tab Deal và Khách hàng"
+                        aria-label="Gộp hoặc tách tab Deal và Đơn hàng"
                       >
                         <button
                           type="button"
@@ -5539,7 +5539,7 @@ export default function CRMDashboard() {
                               : 'text-gray-600 hover:text-gray-900'
                           }`}
                         >
-                          Tách KH
+                          Tách đơn hàng
                         </button>
                       </div>
                     </>
@@ -6074,7 +6074,7 @@ export default function CRMDashboard() {
               icon={<Users className="h-3 w-3" />}
               iconBgColor="bg-cyan-100"
               iconColor="text-cyan-700"
-              label="Tổng KH"
+              label="Tổng đơn hàng"
               value={customerKpisFromFilters.total_deals}
               sublabel={
                 kpiUsesClientOnlyFilters
