@@ -34,18 +34,66 @@ function findPgBin(name) {
   return name;
 }
 
-function run(cmd, args, label, connectionUrl) {
-  const { pgCliEnv } = require('../src/config/pgConnection');
+function run(cmd, args, label, connectionUrl, envMode = 'default') {
+  const { pgCliEnv, pgRestoreEnv } = require('../src/config/pgConnection');
+  const env = envMode === 'restore'
+    ? pgRestoreEnv(connectionUrl)
+    : pgCliEnv(connectionUrl);
   const r = spawnSync(cmd, args, {
     stdio: 'inherit',
     shell: false,
-    env: connectionUrl ? pgCliEnv(connectionUrl) : process.env,
+    env: connectionUrl ? env : process.env,
   });
   if (r.status !== 0) throw new Error(`${label} failed (exit ${r.status})`);
 }
 
 function quoteIdent(name) {
   return `"${String(name).replace(/"/g, '""')}"`;
+}
+
+/** Sắp bảng cha trước con (FK nội bộ danh sách) — tránh lỗi khi replica role bị hạn chế. */
+async function sortTablesByDependencies(tables, primaryUrl) {
+  const set = new Set(tables);
+  if (set.size <= 1) return tables;
+  const { Client } = require('pg');
+  const { buildPgPoolConfig } = require('../src/config/pgConnection');
+  const client = new Client(buildPgPoolConfig(primaryUrl));
+  await client.connect();
+  try {
+    const { rows } = await client.query(`
+      SELECT tc.table_name AS child, ccu.table_name AS parent
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.constraint_column_usage ccu
+        ON ccu.constraint_name = tc.constraint_name
+       AND ccu.table_schema = tc.table_schema
+      WHERE tc.constraint_type = 'FOREIGN KEY'
+        AND tc.table_schema = 'public'
+        AND tc.table_name = ANY($1::text[])
+        AND ccu.table_name = ANY($1::text[])
+    `, [tables]);
+    const deps = new Map();
+    for (const t of tables) deps.set(t, new Set());
+    for (const { child, parent } of rows) {
+      if (child === parent) continue;
+      if (deps.has(child) && deps.has(parent)) deps.get(child).add(parent);
+    }
+    const sorted = [];
+    const temp = new Set();
+    const perm = new Set();
+    function visit(n) {
+      if (perm.has(n)) return;
+      if (temp.has(n)) return;
+      temp.add(n);
+      for (const p of deps.get(n) || []) visit(p);
+      temp.delete(n);
+      perm.add(n);
+      sorted.push(n);
+    }
+    for (const t of tables) visit(t);
+    return sorted;
+  } finally {
+    await client.end().catch(() => {});
+  }
 }
 
 function syncOneTable(primaryUrl, backupUrl, table) {
@@ -78,10 +126,11 @@ function syncOneTable(primaryUrl, backupUrl, table) {
     '-p', backup.port,
     '-U', backup.user,
     '-d', backup.database,
-    '-c', `TRUNCATE TABLE public.${quoteIdent(table)} RESTART IDENTITY CASCADE`,
-  ], `truncate ${table}`, backupUrl);
+    '-v', 'ON_ERROR_STOP=1',
+    '-c', `SET session_replication_role = replica; TRUNCATE TABLE public.${quoteIdent(table)} RESTART IDENTITY; SET session_replication_role = DEFAULT;`,
+  ], `truncate ${table}`, backupUrl, 'restore');
 
-  console.log(`[sync-table] ${table}: restore data vào backup…`);
+  console.log(`[sync-table] ${table}: restore data vào backup (tắt trigger/FK tạm)…`);
   run(pgRestore, [
     '-h', backup.host,
     '-p', backup.port,
@@ -92,13 +141,13 @@ function syncOneTable(primaryUrl, backupUrl, table) {
     '--no-acl',
     '--single-transaction',
     dumpFile,
-  ], `pg_restore ${table}`, backupUrl);
+  ], `pg_restore ${table}`, backupUrl, 'restore');
 
   try { fs.unlinkSync(dumpFile); } catch { /* ignore */ }
   console.log(`[sync-table] ${table}: xong`);
 }
 
-function main() {
+async function main() {
   const {
     resolvePrimaryDbDumpUrl,
     resolveBackupDbDumpUrl,
@@ -108,7 +157,12 @@ function main() {
   if (!primaryUrl || !backupUrl) {
     throw new Error('Thiếu SUPABASE_DB_* / SUPABASE_BACKUP_DB_* trong backend/.env');
   }
-  const tables = parseTablesArg();
+  let tables = parseTablesArg();
+  try {
+    tables = await sortTablesByDependencies(tables, primaryUrl);
+  } catch (e) {
+    console.warn(`[sync-table] Không sắp thứ tự FK: ${e.message} — dùng thứ tự gốc`);
+  }
   console.log(`[sync-table] Incremental ${tables.length} bảng → backup`);
   for (const table of tables) {
     syncOneTable(primaryUrl, backupUrl, table);
@@ -116,4 +170,7 @@ function main() {
   console.log('[sync-table] Hoàn tất');
 }
 
-main();
+main().catch((e) => {
+  console.error(e.message);
+  process.exit(1);
+});

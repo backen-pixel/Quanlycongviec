@@ -82,10 +82,34 @@ function runPgDump(connectionUrl, outFile) {
   if (r.status !== 0) throw new Error(`pg_dump failed (exit ${r.status})`);
 }
 
-function runPgRestore(connectionUrl, dumpFile) {
+function runPsqlSql(connectionUrl, sql, label) {
   const { parsePgConnectionUrl, pgCliEnv } = require('../src/config/pgConnection');
   const { host, port, user, database } = parsePgConnectionUrl(connectionUrl);
-  console.log(`[clone] pg_restore → ${user}@${host}:${port}/${database}`);
+  const psql = findPgBin('psql');
+  const r = spawnSync(psql, [
+    '-h', host,
+    '-p', port,
+    '-U', user,
+    '-d', database,
+    '-v', 'ON_ERROR_STOP=1',
+    '-c', sql,
+  ], {
+    env: pgCliEnv(connectionUrl),
+    stdio: 'inherit',
+  });
+  if (r.status !== 0) throw new Error(`${label} failed (exit ${r.status})`);
+}
+
+/** Xóa schema public (CASCADE gồm extension) — tránh pg_restore --clean lỗi pg_trgm. */
+function wipePublicSchema(connectionUrl) {
+  console.log('[clone] Xóa schema public trên backup (CASCADE)…');
+  runPsqlSql(connectionUrl, 'DROP SCHEMA IF EXISTS public CASCADE;', 'drop public schema');
+}
+
+function runPgRestore(connectionUrl, dumpFile) {
+  const { parsePgConnectionUrl, pgRestoreEnv } = require('../src/config/pgConnection');
+  const { host, port, user, database } = parsePgConnectionUrl(connectionUrl);
+  console.log('[clone] pg_restore →', `${user}@${host}:${port}/${database}`, '(không --clean; tắt trigger tạm)');
   const pgRestore = findPgBin('pg_restore');
   const args = [
     '-h', host,
@@ -94,13 +118,11 @@ function runPgRestore(connectionUrl, dumpFile) {
     '-d', database,
     '--no-owner',
     '--no-acl',
-    '--clean',
-    '--if-exists',
     '--single-transaction',
     dumpFile,
   ];
   const r = spawnSync(pgRestore, args, {
-    env: pgCliEnv(connectionUrl),
+    env: pgRestoreEnv(connectionUrl),
     stdio: 'inherit',
   });
   if (r.status !== 0) throw new Error(`pg_restore failed (exit ${r.status})`);
@@ -186,7 +208,9 @@ async function main() {
   console.log('[clone] pg_dump primary →', dumpFile);
   runPgDump(primaryDumpUrl, dumpFile);
 
-  console.log('[clone] pg_restore vào backup (clean + if-exists)…');
+  wipePublicSchema(backupDumpUrl);
+
+  console.log('[clone] pg_restore vào backup (schema mới từ dump)…');
   runPgRestore(backupDumpUrl, dumpFile);
 
   console.log('[clone] Verify row counts…');
