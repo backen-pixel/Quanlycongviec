@@ -127,8 +127,8 @@ function syncOneTable(primaryUrl, backupUrl, table) {
     '-U', backup.user,
     '-d', backup.database,
     '-v', 'ON_ERROR_STOP=1',
-    '-c', `SET session_replication_role = replica; TRUNCATE TABLE public.${quoteIdent(table)} RESTART IDENTITY; SET session_replication_role = DEFAULT;`,
-  ], `truncate ${table}`, backupUrl, 'restore');
+    '-c', `SET session_replication_role = replica; DELETE FROM public.${quoteIdent(table)}; SET session_replication_role = DEFAULT;`,
+  ], `clear ${table}`, backupUrl, 'restore');
 
   console.log(`[sync-table] ${table}: restore data vào backup (tắt trigger/FK tạm)…`);
   run(pgRestore, [
