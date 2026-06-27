@@ -1559,6 +1559,7 @@ export default function CrmFollowUpCarePage() {
 
       {wonAssignModal && (() => {
         const wonLead = leads.find((l) => String(l.id) === String(wonAssignLeadId));
+        const wonLeadCustomerId = wonLead?.customer_id || wonLead?.customer?.id || null;
         return (
           <div
             className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
@@ -1590,7 +1591,7 @@ export default function CrmFollowUpCarePage() {
                       )}
                     </p>
                   )}
-                  {!wonLead.customer_id && (
+                  {!wonLeadCustomerId && (
                     <p className="text-xs text-red-500 mt-0.5 font-medium">
                       ⛔ Chưa liên kết khách hàng — cần vào chi tiết Lead để thêm trước
                     </p>
@@ -1667,7 +1668,7 @@ export default function CrmFollowUpCarePage() {
                 <button
                   type="button"
                   onClick={() => void handleWonAssignConvert()}
-                  disabled={wonAssigning || !wonAssignUser || !wonAssignRegion || !wonLead?.customer_id}
+                  disabled={wonAssigning || !wonAssignUser || !wonAssignRegion || !wonLeadCustomerId}
                   className="flex-1 h-10 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {wonAssigning ? (

@@ -154,7 +154,51 @@ function collectFkValues(body, column) {
 /** Bảng con → cột FK cần có trên backup trước khi ghi. */
 const REPLICATION_PARENT_DEPS = {
   facebook_messages: ['contact_id'],
+  crm_leads: ['customer_id', 'stage_id', 'source_id', 'assigned_to'],
 };
+
+const REPLICATION_STRIP_QUERY = new Set(['select', 'order', 'limit', 'offset', 'columns']);
+
+function sanitizeReplicationRestPath(path) {
+  try {
+    const u = new URL(String(path || ''), 'http://local');
+    for (const key of [...u.searchParams.keys()]) {
+      if (REPLICATION_STRIP_QUERY.has(key.toLowerCase())) u.searchParams.delete(key);
+    }
+    const qs = u.searchParams.toString();
+    return u.pathname + (qs ? `?${qs}` : '');
+  } catch {
+    return String(path || '').replace(/([?&])select=[^&]*/gi, '$1').replace(/\?&/, '?').replace(/\?$/, '');
+  }
+}
+
+function sanitizeReplicationHeaders(headers = {}) {
+  const h = { ...headers };
+  const preferKey = Object.keys(h).find((k) => k.toLowerCase() === 'prefer');
+  const prefer = preferKey ? String(h[preferKey]).toLowerCase() : '';
+  if (prefer.includes('return=representation') || prefer.includes('return=headers-only')) {
+    if (preferKey) delete h[preferKey];
+    h.prefer = 'return=minimal';
+  }
+  return h;
+}
+
+function extractEqFilterId(path, column = 'id') {
+  try {
+    const u = new URL(String(path || ''), 'http://local');
+    const raw = u.searchParams.get(column);
+    if (!raw) return null;
+    const m = String(raw).match(/^eq\.(.+)$/);
+    return m ? decodeURIComponent(m[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function isMissingRowReplicationError(errOrText) {
+  const text = String(errOrText?.message || errOrText || '');
+  return /→ 406\b|PGRST116|contains 0 rows|→ 404\b|"code":"PGRST116"/i.test(text);
+}
 
 async function backupRowExists(table, id) {
   const backupBase = trimBase(config.supabaseBackupUrl);
@@ -208,19 +252,30 @@ async function ensureRowOnBackup(table, id, depth = 0) {
   await postRowToBackup(table, row, depth);
 }
 
+async function ensureReplicationTargetRow(job) {
+  const method = String(job.method || '').toUpperCase();
+  if (!['PATCH', 'PUT', 'DELETE'].includes(method)) return;
+  const path = sanitizeReplicationRestPath(job.path);
+  const table = restTableFromPath(path);
+  if (!table) return;
+  const id = extractEqFilterId(path, 'id');
+  if (id) await ensureRowOnBackup(table, id);
+}
+
 async function ensureReplicationParents(job) {
   if (job.type !== 'rest' || !job.body) return;
-  const table = restTableFromPath(job.path);
+  const table = restTableFromPath(sanitizeReplicationRestPath(job.path));
   const deps = REPLICATION_PARENT_DEPS[table];
   if (!deps?.length) return;
   for (const column of deps) {
     const ids = collectFkValues(job.body, column);
     for (const id of ids) {
-      const parentTable = column.endsWith('_id') ? column.slice(0, -3) + 's' : null;
-      // contact_id → facebook_contacts (không theo quy tắc cắt _id)
-      const resolvedTable = table === 'facebook_messages' && column === 'contact_id'
-        ? 'facebook_contacts'
-        : parentTable;
+      let resolvedTable = null;
+      if (table === 'facebook_messages' && column === 'contact_id') resolvedTable = 'facebook_contacts';
+      else if (column === 'customer_id') resolvedTable = 'customers';
+      else if (column === 'stage_id') resolvedTable = 'crm_pipeline_stages';
+      else if (column === 'source_id') resolvedTable = 'crm_sources';
+      else if (column === 'assigned_to') resolvedTable = 'users';
       if (resolvedTable) await ensureRowOnBackup(resolvedTable, id);
     }
   }
@@ -247,7 +302,7 @@ async function redisPushTail(job) {
 
 function isDeferrableReplicationError(err) {
   const msg = String(err?.message || err || '');
-  return /→ 409\b|"code":"23503"|foreign key|is not present in table/i.test(msg);
+  return /→ 409\b|"code":"23503"|foreign key|is not present in table|PGRST116|→ 406\b|→ 404\b|contains 0 rows/i.test(msg);
 }
 
 async function requeueReplicationJob(job, err) {
@@ -303,8 +358,8 @@ function maybeEnqueueRestReplication(originalUrl, init, response) {
     id: randomUUID(),
     type: 'rest',
     method,
-    path: rel,
-    headers: extractHeaders(init),
+    path: sanitizeReplicationRestPath(rel),
+    headers: sanitizeReplicationHeaders(extractHeaders(init)),
     body: body != null ? (Buffer.isBuffer(body) ? body.toString('utf8') : body) : null,
     enqueued_at: new Date().toISOString(),
   };
@@ -338,35 +393,53 @@ function replicateStorageUpload({ bucket, storagePath, mimetype, upsert = true }
 }
 
 async function applyRestJob(job) {
-  await ensureReplicationParents(job);
-  const backupBase = trimBase(config.supabaseBackupUrl);
-  const url = backupBase + job.path;
-  const headers = backupHeaders(job.headers || {});
+  const path = sanitizeReplicationRestPath(job.path);
+  const method = String(job.method || 'GET').toUpperCase();
+  const headers = sanitizeReplicationHeaders(backupHeaders(job.headers || {}));
   if (job.body != null) {
     headers['content-type'] = headers['content-type'] || 'application/json';
   }
-  const res = await undiciFetch(url, {
-    method: job.method,
-    headers,
-    body: job.body ?? undefined,
-    dispatcher: supabaseDispatcher,
-  });
+  headers.prefer = headers.prefer || 'return=minimal';
+
+  const prepared = { ...job, path };
+  await ensureReplicationParents(prepared);
+  await ensureReplicationTargetRow(prepared);
+
+  const backupBase = trimBase(config.supabaseBackupUrl);
+  const url = backupBase + path;
+
+  async function doFetch() {
+    return undiciFetch(url, {
+      method: job.method,
+      headers,
+      body: job.body ?? undefined,
+      dispatcher: supabaseDispatcher,
+    });
+  }
+
+  let res = await doFetch();
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    const fk = parseFkMissingFromError(text);
-    if (fk) {
-      await ensureRowOnBackup(fk.parentTable, fk.parentId);
-      const retry = await undiciFetch(url, {
-        method: job.method,
-        headers,
-        body: job.body ?? undefined,
-        dispatcher: supabaseDispatcher,
-      });
-      if (retry.ok) return;
-      const retryText = await retry.text().catch(() => '');
-      throw new Error(`backup ${job.method} ${job.path} → ${retry.status} ${retryText.slice(0, 200)}`);
+    let text = await res.text().catch(() => '');
+    if (method === 'DELETE' && (res.status === 404 || /PGRST116|0 rows/i.test(text))) {
+      return;
     }
-    throw new Error(`backup ${job.method} ${job.path} → ${res.status} ${text.slice(0, 200)}`);
+    const fk = parseFkMissingFromError(text);
+    const missingRow = isMissingRowReplicationError(text);
+    if (fk || missingRow) {
+      if (missingRow) {
+        const table = restTableFromPath(path);
+        const id = extractEqFilterId(path, 'id');
+        if (table && id) await ensureRowOnBackup(table, id);
+      }
+      if (fk) await ensureRowOnBackup(fk.parentTable, fk.parentId);
+      res = await doFetch();
+      if (res.ok) return;
+      text = await res.text().catch(() => '');
+      if (method === 'DELETE' && (res.status === 404 || /PGRST116|0 rows/i.test(text))) {
+        return;
+      }
+    }
+    throw new Error(`backup ${method} ${path} → ${res.status} ${text.slice(0, 200)}`);
   }
 }
 

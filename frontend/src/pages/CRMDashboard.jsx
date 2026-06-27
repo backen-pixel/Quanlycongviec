@@ -6610,6 +6610,7 @@ export default function CRMDashboard() {
       {/* Modal chọn người phụ trách khi kéo Lead sang cột Thắng */}
       {wonAssignModal && (() => {
         const wonLead = allLeads.find(l => l.id === wonAssignLeadId);
+        const wonLeadCustomerId = wonLead?.customer_id || wonLead?.customer?.id || null;
         return (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { if (!wonAssigning) { setWonAssignModal(false); setWonAssignError(''); } }}>
             <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm" onClick={e => e.stopPropagation()}>
@@ -6630,7 +6631,7 @@ export default function CRMDashboard() {
                       {!wonLead.customer.phone && <span className="ml-2 text-amber-500">⚠️ Chưa có SĐT</span>}
                     </p>
                   )}
-                  {!wonLead.customer_id && (
+                  {!wonLeadCustomerId && (
                     <p className="text-xs text-red-500 mt-0.5 font-medium">⛔ Chưa liên kết khách hàng — cần vào chi tiết Lead để thêm trước</p>
                   )}
                 </div>
@@ -6698,7 +6699,7 @@ export default function CRMDashboard() {
                 </button>
                 <button
                   onClick={handleWonAssignConvert}
-                  disabled={wonAssigning || !wonAssignUser || !wonAssignRegion || !wonLead?.customer_id}
+                  disabled={wonAssigning || !wonAssignUser || !wonAssignRegion || !wonLeadCustomerId}
                   className="flex-1 h-10 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {wonAssigning ? (

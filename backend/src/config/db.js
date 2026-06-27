@@ -7,6 +7,7 @@
  */
 
 const { Pool } = require('pg');
+const { buildPgPoolConfig } = require('./pgConnection');
 
 const PG_DISABLED = process.env.PG_POOL_DISABLED === '1';
 const PG_AUTH_BACKOFF_MS = parseInt(process.env.PG_AUTH_BACKOFF_MS || String(10 * 60 * 1000), 10);
@@ -39,15 +40,13 @@ function _activeDbDirectUrl() {
 
 function _buildPool(connectionString, maxDefault) {
   if (!connectionString) return null;
-  const pool = new Pool({
-    connectionString,
+  const pool = new Pool(buildPgPoolConfig(connectionString, {
     max: parseInt(process.env.PG_POOL_MAX || String(maxDefault), 10),
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,
-    ssl: { rejectUnauthorized: false },
     statement_timeout: 15_000,
     query_timeout: 15_000,
-  });
+  }));
   pool.on('error', (err) => {
     console.warn('[pg-pool]', err.message);
   });
@@ -125,7 +124,7 @@ function isPgEnabled() {
   return !PG_DISABLED && !!(_activeDbUrl() || _activeDbDirectUrl());
 }
 
-const PG_FALLBACK_CODES = new Set(['28P01', '3D000', 'ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'XX000']);
+const PG_FALLBACK_CODES = new Set(['28P01', '3D000', 'ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'ENETUNREACH', 'XX000']);
 
 function isPgConnectionError(err) {
   if (!err) return false;
