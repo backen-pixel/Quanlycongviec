@@ -175,12 +175,81 @@ function sanitizeReplicationRestPath(path) {
 function sanitizeReplicationHeaders(headers = {}) {
   const h = { ...headers };
   const preferKey = Object.keys(h).find((k) => k.toLowerCase() === 'prefer');
-  const prefer = preferKey ? String(h[preferKey]).toLowerCase() : '';
-  if (prefer.includes('return=representation') || prefer.includes('return=headers-only')) {
-    if (preferKey) delete h[preferKey];
-    h.prefer = 'return=minimal';
+  const prefer = preferKey ? String(h[preferKey]) : '';
+  const parts = prefer.split(',').map((s) => s.trim()).filter(Boolean);
+  const hasMerge = parts.some((p) => p.toLowerCase() === 'resolution=merge-duplicates');
+  const filtered = parts.filter((p) => {
+    const low = p.toLowerCase();
+    return low !== 'return=representation' && low !== 'return=headers-only';
+  });
+  if (!filtered.some((p) => p.toLowerCase().startsWith('return='))) {
+    filtered.push('return=minimal');
   }
+  if (hasMerge && !filtered.some((p) => p.toLowerCase() === 'resolution=merge-duplicates')) {
+    filtered.unshift('resolution=merge-duplicates');
+  }
+  if (filtered.length) h.prefer = filtered.join(',');
+  else if (preferKey) delete h.prefer;
   return h;
+}
+
+function parseOnConflictColumns(path) {
+  try {
+    const u = new URL(String(path || ''), 'http://local');
+    const raw = u.searchParams.get('on_conflict');
+    if (!raw) return null;
+    return raw.split(',').map((s) => s.trim()).filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
+function ensureUpsertPrefer(headers, path, method) {
+  if (method !== 'POST' || !parseOnConflictColumns(path)?.length) return headers;
+  const prefer = String(headers.prefer || '');
+  if (/resolution=merge-duplicates/i.test(prefer)) return headers;
+  const parts = prefer.split(',').map((s) => s.trim()).filter(Boolean);
+  parts.unshift('resolution=merge-duplicates');
+  return { ...headers, prefer: parts.join(',') };
+}
+
+async function patchBackupRowByConflictColumns(table, columns, row) {
+  if (!table || !columns?.length || !row || typeof row !== 'object') return false;
+  const backupBase = trimBase(config.supabaseBackupUrl);
+  const filters = columns.map((col) => {
+    const val = row[col];
+    if (val == null) return null;
+    return `${col}=eq.${encodeURIComponent(String(val))}`;
+  }).filter(Boolean);
+  if (filters.length !== columns.length) return false;
+  const { id, created_at, ...patch } = row;
+  const res = await undiciFetch(
+    `${backupBase}/rest/v1/${table}?${filters.join('&')}`,
+    {
+      method: 'PATCH',
+      headers: {
+        ...backupHeaders({}),
+        'content-type': 'application/json',
+        prefer: 'return=minimal',
+      },
+      body: JSON.stringify(patch),
+      dispatcher: supabaseDispatcher,
+    },
+  );
+  return res.ok;
+}
+
+async function retryDuplicateUpsertOnBackup(table, path, body) {
+  const conflictCols = parseOnConflictColumns(path);
+  if (!table || !conflictCols?.length) return false;
+  const parsed = parseJsonBody(body);
+  if (!parsed) return false;
+  const rows = Array.isArray(parsed) ? parsed : [parsed];
+  for (const row of rows) {
+    const ok = await patchBackupRowByConflictColumns(table, conflictCols, row);
+    if (!ok) return false;
+  }
+  return true;
 }
 
 function extractEqFilterId(path, column = 'id') {
@@ -505,7 +574,8 @@ async function applyRestJob(job) {
   const path = sanitizeReplicationRestPath(job.path);
   const method = String(job.method || 'GET').toUpperCase();
   const table = restTableFromPath(path);
-  const headers = sanitizeReplicationHeaders(backupHeaders(job.headers || {}));
+  let headers = sanitizeReplicationHeaders(backupHeaders(job.headers || {}));
+  headers = ensureUpsertPrefer(headers, path, method);
   let body = job.body ?? undefined;
   if (body != null && table === 'facebook_messages') {
     body = await remapFacebookMessagesBodyForBackup(body);
@@ -541,9 +611,9 @@ async function applyRestJob(job) {
     const missingRow = isMissingRowReplicationError(text);
     if (fk || missingRow) {
       if (missingRow) {
-        const table = restTableFromPath(path);
+        const missingTable = restTableFromPath(path);
         const id = extractEqFilterId(path, 'id');
-        if (table && id) await ensureRowOnBackup(table, id);
+        if (missingTable && id) await ensureRowOnBackup(missingTable, id);
       }
       if (fk) await ensureRowOnBackup(fk.parentTable, fk.parentId);
       res = await doFetch();
@@ -552,6 +622,13 @@ async function applyRestJob(job) {
       if (method === 'DELETE' && (res.status === 404 || /PGRST116|0 rows/i.test(text))) {
         return;
       }
+    }
+    if (
+      method === 'POST'
+      && (res.status === 409 || /23505|duplicate key/i.test(text))
+      && await retryDuplicateUpsertOnBackup(table, path, body)
+    ) {
+      return;
     }
     throw new Error(`backup ${method} ${path} → ${res.status} ${text.slice(0, 200)}`);
   }
@@ -751,6 +828,7 @@ function startReplicationWorker() {
 
 module.exports = {
   canReplicate,
+  isReplicationConfigured,
   maybeEnqueueRestReplication,
   replicateStorageUpload,
   startReplicationWorker,

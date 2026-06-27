@@ -71,9 +71,9 @@ function syncOneTable(primaryUrl, backupUrl, table) {
   run(pgRestore, [
     '-d', backupUrl,
     '--data-only',
-    '--disable-triggers',
     '--no-owner',
     '--no-acl',
+    '--single-transaction',
     dumpFile,
   ], `pg_restore ${table}`);
 
