@@ -101,15 +101,50 @@ function runPsqlSql(connectionUrl, sql, label) {
 }
 
 /** Xóa schema public (CASCADE gồm extension) — tránh pg_restore --clean lỗi pg_trgm. */
-function wipePublicSchema(connectionUrl) {
-  console.log('[clone] Xóa schema public trên backup (CASCADE)…');
-  runPsqlSql(connectionUrl, 'DROP SCHEMA IF EXISTS public CASCADE;', 'drop public schema');
+async function listExtensions(connectionUrl) {
+  const { Client } = require('pg');
+  const { buildPgPoolConfig } = require('../src/config/pgConnection');
+  const client = new Client(buildPgPoolConfig(connectionUrl));
+  await client.connect();
+  try {
+    const { rows } = await client.query(`
+      SELECT e.extname, n.nspname AS schema
+      FROM pg_extension e
+      JOIN pg_namespace n ON n.oid = e.extnamespace
+      ORDER BY e.extname
+    `);
+    return rows;
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
+function prepareBackupSchemaForRestore(connectionUrl, extensions) {
+  const extInPublic = (extensions || []).filter((e) => e.schema === 'public');
+  const forcePublic = ['pg_trgm', 'pgcrypto', 'uuid-ossp'];
+  const lines = [
+    'DROP SCHEMA IF EXISTS public CASCADE;',
+    'CREATE SCHEMA public;',
+    'GRANT ALL ON SCHEMA public TO postgres;',
+    'GRANT ALL ON SCHEMA public TO public;',
+    'GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;',
+  ];
+  for (const extname of forcePublic) {
+    lines.push(`CREATE EXTENSION IF NOT EXISTS "${extname}" WITH SCHEMA public;`);
+  }
+  for (const { extname } of extInPublic) {
+    if (!forcePublic.includes(extname)) {
+      lines.push(`CREATE EXTENSION IF NOT EXISTS "${extname}" WITH SCHEMA public;`);
+    }
+  }
+  console.log('[clone] Chuẩn bị schema public + extension trên backup…');
+  runPsqlSql(connectionUrl, lines.join('\n'), 'prepare backup schema');
 }
 
 function runPgRestore(connectionUrl, dumpFile) {
   const { parsePgConnectionUrl, pgRestoreEnv } = require('../src/config/pgConnection');
   const { host, port, user, database } = parsePgConnectionUrl(connectionUrl);
-  console.log('[clone] pg_restore →', `${user}@${host}:${port}/${database}`, '(không --clean; tắt trigger tạm)');
+  console.log('[clone] pg_restore →', `${user}@${host}:${port}/${database}`, '(tắt trigger tạm; không single-transaction)');
   const pgRestore = findPgBin('pg_restore');
   const args = [
     '-h', host,
@@ -118,7 +153,6 @@ function runPgRestore(connectionUrl, dumpFile) {
     '-d', database,
     '--no-owner',
     '--no-acl',
-    '--single-transaction',
     dumpFile,
   ];
   const r = spawnSync(pgRestore, args, {
@@ -208,7 +242,9 @@ async function main() {
   console.log('[clone] pg_dump primary →', dumpFile);
   runPgDump(primaryDumpUrl, dumpFile);
 
-  wipePublicSchema(backupDumpUrl);
+  const extensions = await listExtensions(primaryDumpUrl);
+  console.log('[clone] Extensions primary:', extensions.map((e) => `${e.extname}@${e.schema}`).join(', ') || '(none)');
+  prepareBackupSchemaForRestore(backupDumpUrl, extensions);
 
   console.log('[clone] pg_restore vào backup (schema mới từ dump)…');
   runPgRestore(backupDumpUrl, dumpFile);
