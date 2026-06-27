@@ -191,6 +191,7 @@ import { ThemeProvider, useTheme } from './components/ThemeProvider';
 import { CrmNotesFabProvider } from './context/CrmNotesFabContext';
 import { MessengerDockProvider } from './context/MessengerDockContext';
 import { CallProvider, CallOverlay } from './calling';
+import MessengerDock from './components/MessengerDock';
 import DriveTransferPanel from './components/drive/DriveTransferPanel';
 import SupabaseSyncBubble from './components/SupabaseSyncBubble';
 import CopyToastHost from './components/CopyToastHost';
@@ -503,6 +504,7 @@ export default function App() {
         </Routes>
         
         <CopyToastHost />
+        <MessengerDock />
         <DriveTransferPanel />
         <SupabaseSyncBubble />
         </ThemeProvider>
