@@ -759,6 +759,19 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
 
   const [contactFilter, setContactFilter] = useState('all'); // all | has_phone | no_phone | has_lead
 
+  const contactFilterOptions = useMemo(() => {
+    const hasPhone = (c) => !!(c.display_phone || c.phone || c.customer?.phone);
+    return [
+      { key: 'all', label: 'Tất cả', count: contacts.length },
+      { key: 'has_phone', label: '📞 Có SĐT', count: contacts.filter(hasPhone).length },
+      { key: 'no_phone', label: '❌ Chưa có SĐT', count: contacts.filter((c) => !hasPhone(c)).length },
+      { key: 'has_lead', label: '🏷 Có Lead', count: contacts.filter((c) => c.lead).length },
+      { key: 'no_lead', label: '🔔 Chưa có Lead', count: contacts.filter((c) => !c.lead).length },
+      { key: 'lead_has_phone', label: '✅ Lead + SĐT', count: contacts.filter((c) => c.lead && hasPhone(c)).length },
+      { key: 'lead_no_phone', label: '⚠️ Lead chưa có SĐT', count: contacts.filter((c) => c.lead && !hasPhone(c)).length },
+    ];
+  }, [contacts]);
+
   const formatTime = (d) => new Date(d).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
 
   const filteredContacts = contacts.filter(c => {
@@ -788,7 +801,7 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
   }, [messages]);
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="flex h-full min-h-0 min-w-0 overflow-hidden">
       {/* ── LEFT: Contact list ── */}
       <div className={`w-80 border-r bg-white flex flex-col shrink-0 ${selected ? 'hidden md:flex' : 'flex'}`}>
         <div className="p-3 border-b bg-gray-50 space-y-2">
@@ -797,13 +810,33 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm kiếm khách hàng..."
               className="w-full pl-9 pr-3 py-2.5 text-sm border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
           </div>
-          <div className="flex items-center justify-between gap-2 text-[11px]">
-            <div className="text-gray-500">Đang xem {contacts.length}/{contactMeta.total || 0}</div>
-            <select value={contactLimit} onChange={e => setContactLimit(Number(e.target.value))} className="border border-gray-200 rounded-lg px-2 py-1 bg-white text-gray-700">
+          <div className="flex items-center gap-2">
+            <select
+              value={contactFilter}
+              onChange={(e) => setContactFilter(e.target.value)}
+              className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-[11px] text-gray-700"
+              aria-label="Lọc hội thoại"
+            >
+              {contactFilterOptions.map((f) => (
+                <option key={f.key} value={f.key}>
+                  {f.label} ({f.count})
+                </option>
+              ))}
+            </select>
+            <select
+              value={contactLimit}
+              onChange={(e) => setContactLimit(Number(e.target.value))}
+              className="shrink-0 w-[72px] border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-[11px] text-gray-700"
+              aria-label="Giới hạn tải contact"
+            >
               <option value={1000}>1000</option>
               <option value={2000}>2000</option>
               <option value={5000}>5000</option>
             </select>
+          </div>
+          <div className="text-[11px] text-gray-500">
+            Hiển thị {filteredContacts.length}/{contacts.length}
+            {contactMeta.total ? ` · Tổng ${contactMeta.total}` : ''}
           </div>
           {pages.length > 1 && (
             <PageSelector
@@ -813,24 +846,6 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
               pageStats={pageStats}
             />
           )}
-          <div className="flex gap-1 flex-wrap text-[11px]">
-            {[
-              { key: 'all',           label: 'Tất cả',              count: contacts.length },
-              { key: 'has_phone',     label: '📞 Có SĐT',           count: contacts.filter(c => c.display_phone || c.phone || c.customer?.phone).length },
-              { key: 'no_phone',      label: '❌ Chưa có SĐT',       count: contacts.filter(c => !(c.display_phone || c.phone || c.customer?.phone)).length },
-              { key: 'has_lead',      label: '🏷 Có Lead',           count: contacts.filter(c => c.lead).length },
-              { key: 'no_lead',       label: '🔔 Chưa có Lead',     count: contacts.filter(c => !c.lead).length },
-              { key: 'lead_has_phone',label: '✅ Lead + SĐT',        count: contacts.filter(c => c.lead && (c.display_phone || c.phone || c.customer?.phone)).length },
-              { key: 'lead_no_phone', label: '⚠️ Lead chưa có SĐT', count: contacts.filter(c => c.lead && !(c.display_phone || c.phone || c.customer?.phone)).length },
-            ].map(f => (
-              <button key={f.key} onClick={() => setContactFilter(f.key)}
-                className={`px-2 py-1 rounded-lg cursor-pointer transition whitespace-nowrap ${
-                  contactFilter === f.key ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-500 hover:bg-gray-100'
-                }`}>
-                {f.label} ({f.count})
-              </button>
-            ))}
-          </div>
         </div>
         <div className="flex-1 overflow-y-auto">
           {filteredContacts.map(c => (
@@ -895,7 +910,7 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
       </div>
 
       {/* ── RIGHT: Chat area ── */}
-      <div className={`flex-1 flex flex-col bg-gray-50 min-h-0 ${!selected ? 'hidden md:flex' : 'flex'}`}>
+      <div className={`flex-1 flex flex-col bg-gray-50 min-h-0 min-w-0 overflow-hidden ${!selected ? 'hidden md:flex' : 'flex'}`}>
         {selected ? (
           <>
             {/* Chat header */}
@@ -963,13 +978,13 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
             </div>
 
             {/* Messages + khung tin soạn sẵn (chat-style) */}
-            <div className="flex flex-1 min-h-0 overflow-hidden flex-row">
-              <div className="flex-1 min-w-0 overflow-y-auto px-4 py-3 space-y-2">
+            <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden flex-row">
+              <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden px-4 py-3 space-y-2">
                 {uniqueMessages.map((m, i) => {
                   const isOut = m.direction === 'outbound';
                   const showDate = i === 0 || new Date(m.created_at).toDateString() !== new Date(uniqueMessages[i - 1]?.created_at).toDateString();
                   return (
-                    <div key={m.id}>
+                    <div key={m.id} className="min-w-0">
                       {showDate && (
                         <div className="flex justify-center my-3">
                           <span className="text-[10px] text-gray-400 bg-white px-3 py-1 rounded-full shadow-sm border">
@@ -977,8 +992,8 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
                           </span>
                         </div>
                       )}
-                      <div className={`flex ${isOut ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm ${
+                      <div className={`flex min-w-0 ${isOut ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[min(75%,100%)] min-w-0 w-fit rounded-2xl px-4 py-2.5 shadow-sm overflow-hidden ${
                           isOut ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-br-md' : 'bg-white text-gray-800 rounded-bl-md border border-gray-100'
                         }`}>
                           {m.attachment_url && (m.message_type === 'image' || m.attachment_type === 'image') && (
@@ -1011,13 +1026,13 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
                               href={m.attachment_url}
                               target="_blank"
                               rel="noreferrer"
-                              className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg mb-1 transition ${isOut ? 'bg-blue-400/30 hover:bg-blue-400/50' : 'bg-gray-50 hover:bg-gray-100'}`}
+                              className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg mb-1 transition min-w-0 max-w-full break-all [overflow-wrap:anywhere] ${isOut ? 'bg-blue-400/30 hover:bg-blue-400/50' : 'bg-gray-50 hover:bg-gray-100'}`}
                             >
                               <File size={16} /> Tệp đính kèm
                             </a>
                           )}
                           {m.content && m.content !== '[image]' && m.content !== '[audio]' && m.content !== '[video]' && m.content !== '[file]' && (
-                            <p className="text-[13px] leading-relaxed whitespace-pre-wrap break-words">{m.content}</p>
+                            <p className="text-[13px] leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{m.content}</p>
                           )}
                           <p className={`text-[10px] mt-1 ${isOut ? 'text-blue-200' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
                         </div>
@@ -1080,7 +1095,7 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
                             }`}
                           >
                             <p className="text-[11px] font-semibold text-gray-900">{c.title}</p>
-                            <p className="text-[13px] text-gray-700 whitespace-pre-wrap break-words mt-1 leading-relaxed">{c.text}</p>
+                            <p className="text-[13px] text-gray-700 whitespace-pre-wrap break-words [overflow-wrap:anywhere] mt-1 leading-relaxed">{c.text}</p>
                             <div className="flex flex-wrap gap-1.5 mt-2">
                               <button
                                 type="button"
@@ -1199,7 +1214,7 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
                   Đang tải lên...
                 </div>
               )}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 min-w-0">
                 {/* Image button */}
                 <button onClick={() => imageInputRef.current?.click()} disabled={uploading}
                   className="p-2.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl cursor-pointer transition disabled:opacity-40" title="Gửi hình ảnh">
@@ -1262,7 +1277,7 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
                   onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendReply()}
                   placeholder={recording ? '🎙 Đang ghi âm...' : 'Nhập tin nhắn...'}
                   disabled={recording}
-                  className="flex-1 px-4 py-2.5 border border-gray-200 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 disabled:opacity-40" />
+                  className="flex-1 min-w-0 px-4 py-2.5 border border-gray-200 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 disabled:opacity-40" />
 
                 {/* Send button */}
                 <button onClick={sendReply} disabled={sending || !reply.trim() || recording}
