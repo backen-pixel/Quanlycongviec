@@ -31,9 +31,14 @@ function runScript(scriptName, args, onLog) {
   });
 }
 
-async function getDriftState() {
+async function getDriftState(onLog) {
   const { Pool } = require('pg');
-  const { resolvePrimaryDbUrl, resolveBackupDbUrl, buildPgPoolConfig } = require('../config/pgConnection');
+  const {
+    resolvePrimaryDbUrl,
+    resolveBackupDbUrl,
+    buildPgPoolConfig,
+    withPgCircuitBreakerRetry,
+  } = require('../config/pgConnection');
 
   function dbUrls() {
     return {
@@ -53,52 +58,57 @@ async function getDriftState() {
     };
   }
 
-  const pPool = new Pool(buildPgPoolConfig(primary));
-  const bPool = new Pool(buildPgPoolConfig(backup));
-  try {
-    const { rows: tableRows } = await pPool.query(`
-      SELECT table_name
-      FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
-      ORDER BY table_name
-    `);
-    const rows = [];
-    for (const { table_name: table } of tableRows) {
-      let primaryCount = null;
-      let backupCount = null;
-      let error = null;
-      try {
-        const [p, b] = await Promise.all([
-          pPool.query(`SELECT COUNT(*)::bigint AS n FROM public.${table}`),
-          bPool.query(`SELECT COUNT(*)::bigint AS n FROM public.${table}`),
-        ]);
-        primaryCount = Number(p.rows[0]?.n || 0);
-        backupCount = Number(b.rows[0]?.n || 0);
-      } catch (e) {
-        error = e.message;
+  const log = (line) => { if (line && onLog) onLog(String(line)); };
+
+  return withPgCircuitBreakerRetry(async () => {
+    const pPool = new Pool({ ...buildPgPoolConfig(primary), max: 2 });
+    const bPool = new Pool({ ...buildPgPoolConfig(backup), max: 2 });
+    try {
+      await Promise.all([pPool.query('SELECT 1'), bPool.query('SELECT 1')]);
+      const { rows: tableRows } = await pPool.query(`
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+        ORDER BY table_name
+      `);
+      const rows = [];
+      for (const { table_name: table } of tableRows) {
+        let primaryCount = null;
+        let backupCount = null;
+        let error = null;
+        try {
+          const [p, b] = await Promise.all([
+            pPool.query(`SELECT COUNT(*)::bigint AS n FROM public.${table}`),
+            bPool.query(`SELECT COUNT(*)::bigint AS n FROM public.${table}`),
+          ]);
+          primaryCount = Number(p.rows[0]?.n || 0);
+          backupCount = Number(b.rows[0]?.n || 0);
+        } catch (e) {
+          error = e.message;
+        }
+        rows.push({
+          table,
+          primary: primaryCount,
+          backup: backupCount,
+          drift: primaryCount != null && backupCount != null ? primaryCount - backupCount : null,
+          ok: primaryCount != null && backupCount != null && primaryCount === backupCount,
+          error,
+        });
       }
-      rows.push({
-        table,
-        primary: primaryCount,
-        backup: backupCount,
-        drift: primaryCount != null && backupCount != null ? primaryCount - backupCount : null,
-        ok: primaryCount != null && backupCount != null && primaryCount === backupCount,
-        error,
-      });
-    }
-    return {
-      verify: {
-        checked_at: new Date().toISOString(),
-        rows,
+      return {
+        verify: {
+          checked_at: new Date().toISOString(),
+          rows,
+          all_ok: rows.every((r) => r.ok),
+        },
+        drifted: rows.filter((r) => r.table && !r.ok),
         all_ok: rows.every((r) => r.ok),
-      },
-      drifted: rows.filter((r) => r.table && !r.ok),
-      all_ok: rows.every((r) => r.ok),
-    };
-  } finally {
-    await pPool.end().catch(() => {});
-    await bPool.end().catch(() => {});
-  }
+      };
+    } finally {
+      await pPool.end().catch(() => {});
+      await bPool.end().catch(() => {});
+    }
+  }, { label: 'Drift PG', onWait: log });
 }
 
 async function drainReplicationLog(onLog) {
@@ -141,10 +151,35 @@ async function runIncrementalDbSyncPrimaryToBackup({ onLog } = {}) {
 
   const replication = await drainReplicationLog(log);
 
-  let state = await getDriftState().catch((e) => {
+  let state = await getDriftState(log).catch((e) => {
+    const { isPgCircuitBreakerError } = require('../config/pgConnection');
     log(`Không kiểm tra drift DB: ${e.message}`);
-    return { verify: null, drifted: [], all_ok: false, error: e.message };
+    return {
+      verify: null,
+      drifted: [],
+      all_ok: false,
+      error: e.message,
+      circuit_breaker: isPgCircuitBreakerError(e),
+    };
   });
+
+  if (state.circuit_breaker) {
+    const repOk = (replication.remaining === 0 || replication.remaining == null);
+    log(
+      repOk
+        ? 'Replication queue đã hết — PG tạm khóa (ECIRCUITBREAKER). Bỏ qua clone; thử lại sau 10–15 phút.'
+        : 'PG tạm khóa (ECIRCUITBREAKER) — đợi 10–15 phút rồi chạy lại (không clone ngay).',
+    );
+    return {
+      ok: repOk,
+      mode: repOk ? 'log_only_circuit_breaker' : 'circuit_breaker',
+      verify: state.verify,
+      replication,
+      circuit_breaker: true,
+      full_clone_required: false,
+      error: state.error,
+    };
+  }
 
   if (state.all_ok) {
     log('DB đã khớp — bỏ qua clone full (0 bảng cần sync)');
@@ -185,7 +220,7 @@ async function runIncrementalDbSyncPrimaryToBackup({ onLog } = {}) {
     };
   }
 
-  state = await getDriftState().catch((e) => ({
+  state = await getDriftState(log).catch((e) => ({
     verify: null,
     drifted: tables.map((t) => ({ table: t })),
     all_ok: false,

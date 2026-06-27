@@ -442,6 +442,11 @@ async function runBackupSync({
       const inc = await runIncrementalDbSyncPrimaryToBackup({ onLog: appendLog });
       if (inc.ok) {
         appendLog(`DB OK (${inc.mode})`);
+      } else if (inc.circuit_breaker) {
+        throw new Error(
+          inc.error
+            || 'Supabase tạm khóa PG (ECIRCUITBREAKER). Đợi 10–15 phút rồi chạy lại — không spam clone/pg_dump.',
+        );
       } else if (inc.full_clone_required && process.env.SUPABASE_BACKUP_ALLOW_FULL_CLONE === '1') {
         appendLog('Incremental chưa đủ — clone full DB (SUPABASE_BACKUP_ALLOW_FULL_CLONE=1)…');
         await runScript('clone-primary-to-backup.js');
