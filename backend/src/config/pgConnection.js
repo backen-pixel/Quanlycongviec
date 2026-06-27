@@ -84,9 +84,25 @@ function parsePgConnectionUrl(connectionUrl) {
   };
 }
 
-function pgCliEnv(connectionUrl) {
+function mergePgOptions(base, extra) {
+  const b = String(base || '').trim();
+  const e = String(extra || '').trim();
+  if (!b) return e;
+  if (!e) return b;
+  return `${b} ${e}`;
+}
+
+function pgCliEnv(connectionUrl, opts = {}) {
   const { password } = parsePgConnectionUrl(connectionUrl);
-  return { ...process.env, PGPASSWORD: password, PGSSLMODE: 'require' };
+  const env = { ...process.env, PGPASSWORD: password, PGSSLMODE: 'require' };
+  const pgOptions = mergePgOptions(process.env.PGOPTIONS, opts.pgOptions);
+  if (pgOptions) env.PGOPTIONS = pgOptions;
+  return env;
+}
+
+/** Tắt trigger + FK check khi pg_restore data-only (tránh trigger CRM cập nhật bảng chưa sync). */
+function pgRestoreEnv(connectionUrl) {
+  return pgCliEnv(connectionUrl, { pgOptions: '-c session_replication_role=replica' });
 }
 
 function resolvePgProbeUrl(directUrl, poolUrl) {
@@ -306,6 +322,7 @@ module.exports = {
   projectRefFromPgUrl,
   parsePgConnectionUrl,
   pgCliEnv,
+  pgRestoreEnv,
   listPgProbeCandidates,
   listPrimaryPgProbeCandidates,
   listBackupPgProbeCandidates,
