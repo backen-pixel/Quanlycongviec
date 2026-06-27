@@ -2014,6 +2014,8 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   const syncReadTimerRef = useRef(null);
   const { user } = useAuth();
   const { registerMessengerGroupPresence, markGroupRead } = useMessengerDock();
+  const { startCall, startGroupCall, session: callSession } = useCall();
+  const callBusy = !!(callSession && isActiveState(callSession.state));
   const onMessagesChangeRef = useRef(onMessagesChange);
   onMessagesChangeRef.current = onMessagesChange;
   const historyLoadedRef = useRef(false);
@@ -2665,8 +2667,6 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     setTimeout(() => setHighlightId(null), 1600);
   }, []);
 
-  const { startCall, startGroupCall, session: callSession } = useCall();
-  const callBusy = !!(callSession && isActiveState(callSession.state));
   const handleCallLogCallBack = useCallback(
     (target) => {
       if (!target || callBusy) return;

@@ -75,7 +75,7 @@ export default function ReportPipelineTab({ report }: Props) {
 
       <ReportChartCard
         title="Tiến độ KPI"
-        subtitle={`Tỷ lệ chốt deal: ${summary.conversion_rate ?? 0}% · ${reportClosedWonCount(summary)}/${summary.deal_count ?? 0} deal`}
+        subtitle={`Tỷ lệ chốt: ${summary.conversion_rate ?? 0}% · ${reportClosedWonCount(summary)}/${summary.deal_count ?? 0} deal (Thắng+ / tổng kỳ)`}
       >
         <View style={styles.kpiRow}>
           <ReportKpiRing pct={kpiPct} label="GT chốt/TH" ringColor={Colors.purple} />

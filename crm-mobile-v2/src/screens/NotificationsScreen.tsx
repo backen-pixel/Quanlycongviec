@@ -1,5 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
@@ -95,13 +96,15 @@ export default function NotificationsScreen() {
   const abortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(
-    async (isRefresh = false) => {
+    async (opts?: { refresh?: boolean; silent?: boolean }) => {
+      const isRefresh = opts?.refresh ?? false;
+      const silent = opts?.silent ?? false;
       abortRef.current?.abort();
       const ac = new AbortController();
       abortRef.current = ac;
-      if (isRefresh) setRefreshing(true);
-      else setLoading(true);
-      setError('');
+      if (isRefresh && !silent) setRefreshing(true);
+      else if (!silent) setLoading(true);
+      if (!silent) setError('');
       try {
         const list = await fetchNotifications({ channel: tab, onlyUnread, signal: ac.signal });
         if (!ac.signal.aborted) setItems(list);
@@ -112,8 +115,10 @@ export default function NotificationsScreen() {
         }
       } finally {
         if (!ac.signal.aborted) {
-          setLoading(false);
-          setRefreshing(false);
+          if (!silent) {
+            setLoading(false);
+            setRefreshing(false);
+          }
         }
       }
     },
@@ -124,6 +129,12 @@ export default function NotificationsScreen() {
     useCallback(() => {
       void load();
       return () => abortRef.current?.abort();
+    }, [load]),
+  );
+
+  useCrmRealtimeRefresh(
+    useCallback(() => {
+      void load({ refresh: true, silent: true });
     }, [load]),
   );
 
@@ -218,7 +229,7 @@ export default function NotificationsScreen() {
         <View style={styles.center}>
           <Ionicons name="cloud-offline-outline" size={36} color={Colors.textFaint} />
           <Text style={styles.errTxt}>{error}</Text>
-          <Pressable style={styles.retryBtn} onPress={() => void load(true)}>
+          <Pressable style={styles.retryBtn} onPress={() => void load({ refresh: true })}>
             <Text style={styles.retryTxt}>Thử lại</Text>
           </Pressable>
         </View>
@@ -229,7 +240,7 @@ export default function NotificationsScreen() {
           contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
           stickySectionHeadersEnabled={false}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={Colors.blue} />
+            <RefreshControl refreshing={refreshing} onRefresh={() => void load({ refresh: true })} tintColor={Colors.blue} />
           }
           ListEmptyComponent={
             <View style={styles.center}>

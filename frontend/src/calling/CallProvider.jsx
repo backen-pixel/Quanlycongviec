@@ -13,7 +13,14 @@ import { getIceServers } from './turnConfig';
 import { CALL_TIMEOUT_MS, RECONNECT_TIMEOUT_MS, isActiveState } from './callState';
 import { useGroupCall } from './useGroupCall';
 
-const CallCtx = createContext(null);
+export const CallCtx = createContext(null);
+
+/** Giữ context cuộc gọi khi render qua createPortal (MessengerDock). */
+export function CallPortalBridge({ children }) {
+  const value = useContext(CallCtx);
+  if (!value) return children;
+  return <CallCtx.Provider value={value}>{children}</CallCtx.Provider>;
+}
 
 function genCallId() {
   return `call_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;

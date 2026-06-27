@@ -34,6 +34,7 @@ import {
   type MentionPickerItem,
 } from '../../lib/crmCommentMentions';
 import { colorFromName, initialsFromName } from '../../lib/media';
+import { subscribeAppSocket } from '../../lib/appSocket';
 import { Radii, Spacing, useColors, type ThemeColors } from '../../theme';
 import Avatar from '../Avatar';
 import CrmCommentBody from './CrmCommentBody';
@@ -165,6 +166,38 @@ export default function LeadCommentsTab({ leadId }: { leadId: string }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    return subscribeAppSocket((socket) => {
+      socket.emit('join:lead', leadId);
+      const handler = (payload?: { lead_id?: string; action?: string; comment?: LeadComment; comment_id?: string | number }) => {
+        if (String(payload?.lead_id) !== String(leadId)) return;
+        const action = payload?.action || 'created';
+        if (action === 'deleted') {
+          setItems((prev) => prev.filter((c) => String(c.id) !== String(payload?.comment_id)));
+          return;
+        }
+        const row = payload?.comment;
+        if (!row?.id) return;
+        if (action === 'updated') {
+          setItems((prev) =>
+            prev.map((c) =>
+              String(c.id) === String(row.id)
+                ? { ...c, ...row, reactions: row.reactions ?? c.reactions }
+                : c,
+            ),
+          );
+          return;
+        }
+        setItems((prev) => upsertComment(prev, row));
+      };
+      socket.on('lead:comment', handler);
+      return () => {
+        socket.emit('leave:lead', leadId);
+        socket.off('lead:comment', handler);
+      };
+    });
+  }, [leadId]);
 
   const byParent = useMemo(() => groupCommentsByParent(items), [items]);
   const flatRows = useMemo(() => flattenCommentTree(byParent), [byParent]);

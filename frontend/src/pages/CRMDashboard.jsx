@@ -283,6 +283,16 @@ const TIME_PRESETS = [
 /** Mặc định lọc thời gian CRM — tháng hiện tại (không tải toàn bộ lịch sử). */
 const CRM_DEFAULT_TIME_PRESET = 'this_month';
 
+/** Giá trị lọc SĐT gửi API — `all` / rỗng = không lọc theo SĐT. */
+function resolveCrmPhoneFilterForApi(filterPhone) {
+  if (filterPhone === 'has_phone' || filterPhone === 'no_phone') return filterPhone;
+  return undefined;
+}
+
+function isCrmPhoneFilterRestricted(filterPhone) {
+  return filterPhone === 'has_phone' || filterPhone === 'no_phone';
+}
+
 /** Bộ lọc CRM đang bật — không tính khoảng thời gian. */
 function snapshotHasActiveFiltersExceptTime(snap) {
   if (!snap) return false;
@@ -297,6 +307,7 @@ function snapshotHasActiveFiltersExceptTime(snap) {
     || snap.filterReferrer
     || snap.filterCustomerCompany
     || snap.filterPhone === 'no_phone'
+    || snap.filterPhone === 'has_phone'
     || snap.showOrphanDealColumn
   );
 }
@@ -1014,11 +1025,10 @@ export default function CRMDashboard() {
   const [crmReferrers, setCrmReferrers] = useState([]);
   const companyFilterFromLsRef = useRef(false);
   const leadTypeFilterFromLsRef = useRef(false);
-  // Mặc định luôn chỉ hiện lead đã có SĐT; không phục hồi giá trị '' (tất cả)
   const [filterPhone, setFilterPhone] = useState(() => {
     if (snapshotHasProperty(P, 'filterPhone')) {
       const v = P.filterPhone;
-      if (v === 'no_phone' || v === 'has_phone') return v;
+      if (v === 'no_phone' || v === 'has_phone' || v === 'all') return v;
     }
     return 'has_phone';
   });
@@ -1960,7 +1970,7 @@ export default function CRMDashboard() {
         if (customDateTo) dateParams.date_to = customDateTo;
         const common = {
           type,
-          phone_filter: filterPhone || undefined,
+          phone_filter: resolveCrmPhoneFilterForApi(filterPhone),
           ...dateParams,
           ...CRM_KANBAN_LEAD_QUERY,
           limit: pageLimit,
@@ -2200,7 +2210,7 @@ export default function CRMDashboard() {
       const dateParams = {};
       if (customDateFrom) dateParams.date_from = customDateFrom;
       if (customDateTo) dateParams.date_to = customDateTo;
-      const common = { type, phone_filter: filterPhone || undefined, ...dateParams, ...resolveCrmRegionFilterParams(filterRegion) };
+      const common = { type, phone_filter: resolveCrmPhoneFilterForApi(filterPhone), ...dateParams, ...resolveCrmRegionFilterParams(filterRegion) };
       if (filterAssignee) common.assigned_to = filterAssignee;
       if (filterCompany) common.company_id = filterCompany;
       if (filterLeadType) common.lead_type_id = filterLeadType;
@@ -2756,7 +2766,7 @@ export default function CRMDashboard() {
       if (customDateTo) dateParams.date_to = customDateTo;
 
       const buildKanbanCommon = (type) => {
-        const common = { type, phone_filter: filterPhone || undefined, ...dateParams, ...resolveCrmRegionFilterParams(filterRegion) };
+        const common = { type, phone_filter: resolveCrmPhoneFilterForApi(filterPhone), ...dateParams, ...resolveCrmRegionFilterParams(filterRegion) };
         if (filterAssignee) common.assigned_to = filterAssignee;
         if (resolvedCompanyId) common.company_id = resolvedCompanyId;
         if (filterLeadType) common.lead_type_id = filterLeadType;
@@ -2771,11 +2781,12 @@ export default function CRMDashboard() {
         return fetchCrmKanbanRowsPage(api, buildKanbanCommon(type), { offset, limit });
       };
 
+      const phoneFilterApi = resolveCrmPhoneFilterForApi(filterPhone);
       const dashListParams = {
         light: '1',
         minimal: '1',
         ...dateParams,
-        ...(filterPhone ? { phone_filter: filterPhone } : {}),
+        ...(phoneFilterApi ? { phone_filter: phoneFilterApi } : {}),
         ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}),
         ...(filterAssignee ? { assigned_to: filterAssignee } : {}),
         ...resolveCrmRegionFilterParams(filterRegion),
@@ -3273,7 +3284,7 @@ export default function CRMDashboard() {
     if (snapshotHasProperty(snap, 'filterCustomerCompany')) setFilterCustomerCompany(snap.filterCustomerCompany ?? '');
     if (snapshotHasProperty(snap, 'filterPhone')) {
       const v = snap.filterPhone;
-      if (v === 'no_phone' || v === 'has_phone') setFilterPhone(v);
+      if (v === 'no_phone' || v === 'has_phone' || v === 'all') setFilterPhone(v);
     }
     if (snapshotHasProperty(snap, 'showOrphanDealColumn')) setShowOrphanDealColumn(!!snap.showOrphanDealColumn);
     if (snapshotHasProperty(snap, 'dealKhSplit')) setDealKhSplitEnabled(!!snap.dealKhSplit);
@@ -3504,8 +3515,26 @@ export default function CRMDashboard() {
     hasPhoneNumber,
   ]);
 
-  const leads = useMemo(() => filterItemsForPipeline(allLeads, 'lead'), [allLeads, filterItemsForPipeline]);
-  const deals = useMemo(() => filterItemsForPipeline(allDeals, 'deal'), [allDeals, filterItemsForPipeline]);
+  /**
+   * Admin «Tất cả công ty» — Kanban/KPI chỉ deal/lead thuộc khối CRM (`/companies?for_module=crm`).
+   * Tránh cộng deal công ty ngoài CRM (vd. HCB) vào tab Deal khi stage không thuộc pipeline CRM.
+   */
+  const restrictToCrmModuleCompanies = useCallback((items) => {
+    if (dashboardScopeCompanyId || filterCompany) return items;
+    if (!isAdmin) return items;
+    const ids = new Set((companies || []).map((c) => String(c.id)).filter(Boolean));
+    if (!ids.size) return items;
+    return (items || []).filter((row) => ids.has(String(row.company_id || '')));
+  }, [dashboardScopeCompanyId, filterCompany, isAdmin, companies]);
+
+  const leads = useMemo(
+    () => restrictToCrmModuleCompanies(filterItemsForPipeline(allLeads, 'lead')),
+    [allLeads, filterItemsForPipeline, restrictToCrmModuleCompanies],
+  );
+  const deals = useMemo(
+    () => restrictToCrmModuleCompanies(filterItemsForPipeline(allDeals, 'deal')),
+    [allDeals, filterItemsForPipeline, restrictToCrmModuleCompanies],
+  );
 
   const { dealTabDeals, customerTabDeals } = useMemo(
     () => partitionDealsForCrmTabs(deals, { wonAnchorOrder, stagesDeal }),
@@ -3578,8 +3607,11 @@ export default function CRMDashboard() {
     const pt = pipelinePhoneTotals.lead;
     if (filterPhone === 'no_phone') {
       if (typeof pt?.noPhone === 'number') return pt.noPhone;
+    } else if (filterPhone === 'has_phone') {
+      if (typeof pt?.hasPhone === 'number') return pt.hasPhone;
+    } else if (filterPhone === 'all' && typeof pt?.all === 'number') {
+      return pt.all;
     } else if (typeof pt?.all === 'number') {
-      // Khớp Báo cáo CRM / org-overview — mọi lead tạo trong kỳ (Kanban vẫn có thể lọc Có SĐT)
       return pt.all;
     }
     const t = loadMoreState.leadTotal;
@@ -3597,6 +3629,7 @@ export default function CRMDashboard() {
       }
     }
     if (filterPhone === 'no_phone') return 'Chưa có SĐT';
+    if (filterPhone === 'all') return 'Có & chưa có SĐT';
     return undefined;
   }, [kpiUsesClientOnlyFilters, filterPhone, pipelinePhoneTotals.lead?.hasPhone, leadKpiTotalCount]);
 
@@ -3667,7 +3700,7 @@ export default function CRMDashboard() {
           companies,
           dateFrom: customDateFrom || undefined,
           dateTo: customDateTo || undefined,
-          phoneFilter: filterPhone || undefined,
+          phoneFilter: resolveCrmPhoneFilterForApi(filterPhone),
           assignedTo: filterAssignee || undefined,
           regionId: filterRegion || undefined,
         });
@@ -4913,7 +4946,9 @@ export default function CRMDashboard() {
       push('customerCo', label, () => setFilterCustomerCompany(''));
     }
     if (filterPhone === 'no_phone') {
-      push('phone', 'Chưa có SĐT', () => setFilterPhone('has_phone'));
+      push('phone', 'Chưa có SĐT', () => setFilterPhone('all'));
+    } else if (filterPhone === 'has_phone') {
+      push('phone', 'Có SĐT', () => setFilterPhone('all'));
     }
     if (timePreset) {
       push('time', `Thời gian: ${TIME_PRESETS.find((p) => p.key === timePreset)?.label || timePreset}`, () => handleTimePresetChange(''));
@@ -4960,7 +4995,7 @@ export default function CRMDashboard() {
       filterSource,
       filterStage,
       filterLeadType,
-      filterPhone === 'no_phone',
+      filterPhone === 'no_phone' || filterPhone === 'has_phone',
       showOrphanDealColumn,
     ].filter(Boolean).length,
     display: timePreset ? 1 : 0,
@@ -5300,7 +5335,7 @@ export default function CRMDashboard() {
                 onClick={openCrmFilterModal}
                 aria-expanded={showAdvSearch}
                 className={`relative h-7 w-7 flex items-center justify-center rounded-lg border transition-all duration-200 cursor-pointer ${
-                  showAdvSearch || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterRegion || filterLeadType || filterReferrer || filterCustomerCompany || filterPhone
+                  showAdvSearch || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterRegion || filterLeadType || filterReferrer || filterCustomerCompany || isCrmPhoneFilterRestricted(filterPhone)
                     ? 'bg-violet-200 text-violet-800 border-violet-400 shadow-md ring-2 ring-violet-200/60'
                     : 'bg-violet-50 text-violet-600 border-violet-200 hover:bg-violet-100 hover:text-violet-800 hover:border-violet-300 hover:shadow-sm'
                 }`}
@@ -5308,7 +5343,7 @@ export default function CRMDashboard() {
                 aria-label="Bộ lọc"
               >
                 <Filter className="h-3.5 w-3.5" />
-                {(filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterRegion || filterLeadType || filterReferrer || filterCustomerCompany || filterPhone === 'no_phone' || showOrphanDealColumn || timePreset) && (
+                {(filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterRegion || filterLeadType || filterReferrer || filterCustomerCompany || isCrmPhoneFilterRestricted(filterPhone) || showOrphanDealColumn || timePreset) && (
                   <span className="absolute top-0.5 right-0.5 h-1.5 w-1.5 rounded-full bg-violet-600 ring-2 ring-white" />
                 )}
               </button>
@@ -5839,9 +5874,12 @@ export default function CRMDashboard() {
                       ? 'border-emerald-300 bg-emerald-50/70 text-emerald-800'
                       : filterPhone === 'no_phone'
                         ? 'border-red-300 bg-red-50/70 text-red-800'
-                        : ''
+                        : filterPhone === 'all'
+                          ? 'border-slate-300 bg-slate-50/80 text-slate-700'
+                          : ''
                   }`}
                 >
+                  <option value="all">Tất cả</option>
                   <option value="has_phone">Có SĐT</option>
                   <option value="no_phone">Chưa có SĐT</option>
                 </select>

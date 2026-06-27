@@ -164,7 +164,7 @@ export function sumCrmOpenWeightedPipelineValue(
   return sumStageMapForStages(stages, stageWeightedValues, includeOrphan);
 }
 
-/** Tổng Deal KPI — khớp CRM Dashboard tab Deal (pre-won + thua + chưa có GD). */
+/** Tổng Deal KPI — cột pre-won + thua + chưa có GD (pipeline hiện tại). */
 export function sumCrmDealStatsCount(
   dealStages: CrmPipelineStage[],
   dealCounts: Record<string, number>,
@@ -174,6 +174,37 @@ export function sumCrmDealStatsCount(
   let total = Number(dealCounts[ORPHAN_STAGE_KEY] ?? 0) || 0;
   for (const stage of statsStages) {
     total += Number(dealCounts[stage.id] ?? 0) || 0;
+  }
+  return total;
+}
+
+/**
+ * Tổng Deal KPI tab Deal trên CRM Hub — khớp web `filterDealsForDealTabStats` + stage-counts.
+ * Gồm deal pre-Thắng + thua + stage lạ (stage_id không thuộc pipeline công ty, vd. import FB).
+ * Loại cột Thắng và sau Thắng của pipeline đang xem.
+ */
+export function sumCrmDealHubKpiCount(
+  dealStages: CrmPipelineStage[],
+  dealCounts: Record<string, number>,
+): number {
+  const { dealTabStages, wonStage, wonAnchorOrder, postWonStages } = splitDealStagesForCrmTabs(dealStages);
+  const statsStages = preWonStagesForDealStats(dealTabStages, wonStage, wonAnchorOrder);
+  const statsIds = new Set(statsStages.map((s) => String(s.id)));
+  const knownPipelineIds = new Set((dealStages || []).map((s) => String(s.id)));
+  const excludeIds = new Set<string>([
+    ...postWonStages.map((s) => String(s.id)),
+    ...(wonStage ? [String(wonStage.id)] : []),
+  ]);
+
+  let total = Number(dealCounts[ORPHAN_STAGE_KEY] ?? 0) || 0;
+  for (const [sid, raw] of Object.entries(dealCounts || {})) {
+    if (sid === ORPHAN_STAGE_KEY) continue;
+    const cnt = Number(raw) || 0;
+    if (cnt <= 0) continue;
+    if (excludeIds.has(sid)) continue;
+    if (statsIds.has(sid) || !knownPipelineIds.has(sid)) {
+      total += cnt;
+    }
   }
   return total;
 }

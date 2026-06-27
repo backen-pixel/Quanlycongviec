@@ -184,9 +184,10 @@ r.get('/stage-counts', responseCache({ ttl: 90, scope: 'user', tags: ['crm:list'
     );
     const stageIds = stages.map((s) => s.id).filter(Boolean);
     const filterParams = buildCrmLeadsRpcFilterParams(mergedQuery, type, rpcAssigneeStrict, rpcRegionIds);
+    // Không lọc p_pipeline_stage_ids — gồm deal gắn stage pipeline công ty khác (vd. Metalla import FB).
     const rpcParams = {
       ...filterParams,
-      p_pipeline_stage_ids: stageIds.length ? stageIds : null,
+      p_pipeline_stage_ids: null,
     };
 
     const parsed = await invokeCrmLeadsStageCountsRpc(rpcParams);

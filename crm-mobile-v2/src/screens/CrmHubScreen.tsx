@@ -17,6 +17,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import Avatar from '../components/Avatar';
 import ColumnPickerModal from '../components/ColumnPickerModal';
 import CrmFilterSheet from '../components/CrmFilterSheet';
@@ -674,7 +675,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     const ac = new AbortController();
     abortByModeRef.current[which] = ac;
     loadingModeRef.current[which] = true;
-    if (isRefresh) setRefreshing(true);
+    if (isRefresh && !silent) setRefreshing(true);
     else if (!silent) setLoadingByMode((p) => ({ ...p, [which]: true }));
     if (!silent) setError('');
 
@@ -835,6 +836,15 @@ export default function CrmHubScreen({ navigation, route }: Props) {
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []),
+  );
+
+  useCrmRealtimeRefresh(
+    useCallback(() => {
+      if (!canLoadCrmRef.current) return;
+      void loadBootstrapRef.current('leads', true, undefined, true);
+      void loadBootstrapRef.current('deals', true, undefined, true);
+    }, []),
+    canLoadCrm,
   );
 
   const hubStages = hub.stages;

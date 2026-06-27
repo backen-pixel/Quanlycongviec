@@ -22,6 +22,7 @@ import { FileActionsProvider } from './src/context/FileActionsContext';
 import { CallProvider } from './src/context/CallContext';
 import { CallScreen, IncomingCallBridge } from './src/calling';
 import { CreateMenuProvider } from './src/context/CreateMenuContext';
+import { CrmRealtimeProvider } from './src/context/CrmRealtimeProvider';
 import { MessengerProvider } from './src/context/MessengerContext';
 import { MessengerRealtimeProvider } from './src/context/MessengerRealtimeContext';
 import RootNavigator from './src/navigation/RootNavigator';
@@ -119,6 +120,7 @@ function Gate() {
   return (
     <CreateMenuProvider>
       <MessengerRealtimeProvider>
+        <CrmRealtimeProvider>
         <MessengerProvider>
           <CallProvider>
             <FileActionsProvider>
@@ -142,6 +144,7 @@ function Gate() {
             </FileActionsProvider>
           </CallProvider>
         </MessengerProvider>
+        </CrmRealtimeProvider>
       </MessengerRealtimeProvider>
     </CreateMenuProvider>
   );

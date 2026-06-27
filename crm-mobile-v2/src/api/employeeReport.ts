@@ -122,6 +122,10 @@ export type OrgReportRow = EmployeeReportRow & {
   open_count?: number;
   completed_deal_count?: number;
   pipeline_value?: number;
+  /** Tab Deal CRM Hub (có SĐT) — chỉ tham chiếu KPI Kanban, không dùng cho tỷ lệ chốt. */
+  hub_deal_kpi?: number;
+  /** Deal có SĐT gộp mọi công ty — stage-counts global, khớp Hub sau gộp (296). */
+  deal_has_phone_total?: number;
 };
 
 export type ReportTimelineRow = {
