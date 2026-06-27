@@ -112,6 +112,7 @@ function mapRemoteActive(active) {
     phase: active.phase || null,
     steps: active.steps || [],
     syncParts: active.sync_parts || [],
+    startedBy: active.started_by || null,
     status,
     logs,
     progress: estimateProgress(logs, status, active.steps),
@@ -215,7 +216,7 @@ export function hydrateSupabaseSyncFromStatus(job) {
   });
 }
 
-export function hydrateFromPublicStatus(data) {
+export function hydrateFromPublicStatus(data, currentUserId = null) {
   const active = data?.active;
   if (!active) {
     if (state.active?.status === 'running' && data?.pending_countdown) {
@@ -224,6 +225,15 @@ export function hydrateFromPublicStatus(data) {
     if (state.active?.status === 'running' && !data?.pending_countdown) {
       finishSupabaseSync({ ok: state.active.status !== 'error' });
     }
+    return;
+  }
+
+  if (
+    active.started_by
+    && currentUserId
+    && String(active.started_by) !== String(currentUserId)
+  ) {
+    if (state.active?.status === 'running') clearSupabaseSync();
     return;
   }
 

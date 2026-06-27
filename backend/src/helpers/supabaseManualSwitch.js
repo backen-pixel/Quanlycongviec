@@ -133,6 +133,8 @@ function getPrepareActivityPublic() {
     const { userId, ...safe } = _prepareActivity;
     return {
       ...safe,
+      type: 'switch_prepare',
+      started_by: userId || null,
       log: (_prepareActivity.log || []).slice(-80),
       steps: (_prepareActivity.steps || []).slice(-20),
     };
@@ -140,10 +142,20 @@ function getPrepareActivityPublic() {
   return null;
 }
 
-function getPublicSyncActivity() {
+function getPublicSyncActivity(requestingUserId = null) {
   const { getBackupJobPublicSnapshot } = require('./supabaseBackupSync');
-  const backup = getBackupJobPublicSnapshot();
-  const prepare = getPrepareActivityPublic();
+  const reqId = requestingUserId != null ? String(requestingUserId) : '';
+
+  function visibleToRequester(activity, ownerId) {
+    if (!activity || !reqId) return null;
+    if (!ownerId || ownerId === 'cron') return null;
+    return String(ownerId) === reqId ? activity : null;
+  }
+
+  const backupRaw = getBackupJobPublicSnapshot();
+  const backup = visibleToRequester(backupRaw, backupRaw?.started_by);
+  const prepareRaw = getPrepareActivityPublic();
+  const prepare = visibleToRequester(prepareRaw, _prepareActivity?.userId);
   const pending = getPublicPendingSwitch();
   let active = null;
   if (prepare?.running) active = prepare;
@@ -192,9 +204,38 @@ function verifySignedToken(token) {
   return payload;
 }
 
-function broadcast(event, data) {
+const USER_SCOPED_SYNC_EVENTS = new Set([
+  'supabase:switch-prepare-start',
+  'supabase:switch-prepare-update',
+  'supabase:switch-full-sync-start',
+  'supabase:switch-full-sync-progress',
+  'supabase:switch-full-sync-done',
+  'supabase:switch-full-sync-error',
+]);
+
+function resolveSwitchBroadcastUserId(data = {}) {
+  if (data.userId) return data.userId;
+  if (_prepareActivity?.userId) return _prepareActivity.userId;
+  if (_pending?.userId) return _pending.userId;
+  return null;
+}
+
+function isUserScopedSyncActor(userId) {
+  if (!userId) return false;
+  const id = String(userId);
+  if (id === 'cron' || id === 'admin') return false;
+  return !id.startsWith('switch:');
+}
+
+function broadcast(event, data = {}) {
   if (!_ioRef) return;
   try {
+    if (USER_SCOPED_SYNC_EVENTS.has(event)) {
+      const userId = resolveSwitchBroadcastUserId(data);
+      if (!isUserScopedSyncActor(userId)) return;
+      _ioRef.to(`user:${String(userId)}`).emit(event, { ...data, userId: String(userId) });
+      return;
+    }
     _ioRef.emit(event, data);
   } catch (e) {
     console.warn('[supabase-switch]', event, e.message);
@@ -241,6 +282,7 @@ async function runPostSwitchSync(from, target, userId) {
     post_sync: true,
     sync_mode: 'log',
     message: `Đang replay log thay đổi (${direction})…`,
+    userId,
     at: new Date().toISOString(),
   });
 
@@ -250,6 +292,7 @@ async function runPostSwitchSync(from, target, userId) {
       line,
       from,
       target,
+      userId,
       at: new Date().toISOString(),
     });
   };
@@ -272,6 +315,7 @@ async function runPostSwitchSync(from, target, userId) {
       sync_mode: 'log',
       remaining: result.remaining,
       processed: result.processed,
+      userId,
       at: new Date().toISOString(),
     });
   } catch (e) {
@@ -281,6 +325,7 @@ async function runPostSwitchSync(from, target, userId) {
       from,
       target,
       post_sync: true,
+      userId,
       at: new Date().toISOString(),
     });
   }
@@ -384,6 +429,7 @@ async function runAutoFullSyncForSwitch(from, target, userId, { needDb = true, n
     target,
     direction,
     message: `Đang đồng bộ ${parts.join(' + ') || 'dữ liệu'} (${direction})…`,
+    userId,
     at: new Date().toISOString(),
   });
 
@@ -402,6 +448,7 @@ async function runAutoFullSyncForSwitch(from, target, userId, { needDb = true, n
       line,
       from,
       target,
+      userId,
       at: new Date().toISOString(),
     });
   };
@@ -468,6 +515,7 @@ async function runAutoFullSyncForSwitch(from, target, userId, { needDb = true, n
     from,
     target,
     direction,
+    userId,
     at: new Date().toISOString(),
   });
 }
