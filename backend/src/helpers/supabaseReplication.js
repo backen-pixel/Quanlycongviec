@@ -157,6 +157,30 @@ const REPLICATION_PARENT_DEPS = {
   crm_leads: ['customer_id', 'stage_id', 'source_id', 'assigned_to'],
 };
 
+/** Cột GENERATED ALWAYS — không gửi khi replicate sang backup. */
+const REPLICATION_STRIP_COLUMNS = {
+  crm_leads: ['weighted_value', 'info_complete'],
+};
+
+function stripRowForBackupReplication(table, row) {
+  if (!row || typeof row !== 'object') return row;
+  const cols = REPLICATION_STRIP_COLUMNS[table];
+  if (!cols?.length) return row;
+  const out = { ...row };
+  for (const col of cols) delete out[col];
+  return out;
+}
+
+function stripReplicationBody(table, body) {
+  if (body == null || body === '') return body;
+  const parsed = parseJsonBody(body);
+  if (!parsed) return body;
+  const isArray = Array.isArray(parsed);
+  const rows = isArray ? parsed : [parsed];
+  const out = rows.map((r) => stripRowForBackupReplication(table, r));
+  return JSON.stringify(isArray ? out : out[0]);
+}
+
 const REPLICATION_STRIP_QUERY = new Set(['select', 'order', 'limit', 'offset', 'columns']);
 
 function sanitizeReplicationRestPath(path) {
@@ -232,7 +256,7 @@ async function patchBackupRowByConflictColumns(table, columns, row) {
         'content-type': 'application/json',
         prefer: 'return=minimal',
       },
-      body: JSON.stringify(patch),
+      body: JSON.stringify(stripRowForBackupReplication(table, patch)),
       dispatcher: supabaseDispatcher,
     },
   );
@@ -397,6 +421,7 @@ async function postRowToBackup(table, row, depth = 0) {
     await upsertFacebookContactOnBackup(row, depth);
     return;
   }
+  const payload = stripRowForBackupReplication(table, row);
   const backupBase = trimBase(config.supabaseBackupUrl);
   const res = await undiciFetch(`${backupBase}/rest/v1/${table}`, {
     method: 'POST',
@@ -405,7 +430,7 @@ async function postRowToBackup(table, row, depth = 0) {
       'content-type': 'application/json',
       prefer: 'resolution=merge-duplicates,return=minimal',
     },
-    body: JSON.stringify(row),
+    body: JSON.stringify(payload),
     dispatcher: supabaseDispatcher,
   });
   if (res.ok) return;
@@ -579,6 +604,9 @@ async function applyRestJob(job) {
   let body = job.body ?? undefined;
   if (body != null && table === 'facebook_messages') {
     body = await remapFacebookMessagesBodyForBackup(body);
+  }
+  if (body != null && table) {
+    body = stripReplicationBody(table, body);
   }
   if (body != null) {
     headers['content-type'] = headers['content-type'] || 'application/json';
