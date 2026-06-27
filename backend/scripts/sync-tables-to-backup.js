@@ -176,9 +176,9 @@ async function syncOneTable(primaryUrl, backupUrl, table) {
     '-U', backup.user,
     '-d', backup.database,
     '--data-only',
+    '--disable-triggers',
     '--no-owner',
     '--no-acl',
-    '--single-transaction',
     dumpFile,
   ], `pg_restore ${table}`, backupUrl, 'restore');
 
