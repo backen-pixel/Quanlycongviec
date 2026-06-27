@@ -1,8 +1,9 @@
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useState } from 'react';
 import { fetchNotificationCounts } from '../api/notifications';
+import { useCrmRealtimeRefresh } from './useCrmRealtimeRefresh';
 
-/** Số thông báo chưa đọc (đồng bộ web qua /dashboard). Tự làm mới khi màn hình được focus. */
+/** Số thông báo chưa đọc — refresh khi focus + realtime CRM/notification. */
 export function useUnreadNotificationCount(): number {
   const [count, setCount] = useState(0);
 
@@ -17,6 +18,8 @@ export function useUnreadNotificationCount(): number {
       refresh();
     }, [refresh]),
   );
+
+  useCrmRealtimeRefresh(refresh);
 
   return count;
 }

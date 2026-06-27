@@ -12,6 +12,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import { fetchLeadDetail, type LeadDetailRow } from '../api/leadDetail';
+import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import {
   LeadCommentsTab,
   LeadDocumentsTab,
@@ -64,22 +65,30 @@ export default function LeadDealDetailScreen({ route, navigation }: Props) {
 
   const tabs = useMemo(() => buildTabs(lead), [lead]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const row = await fetchLeadDetail(leadId);
       setLead(row);
     } catch (e) {
-      setError(formatApiError(e));
+      if (!silent) setError(formatApiError(e));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [leadId]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useCrmRealtimeRefresh(
+    useCallback(() => {
+      void load(true);
+    }, [load]),
+  );
 
   useEffect(() => {
     if (!lead) return;

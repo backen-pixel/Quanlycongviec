@@ -1,5 +1,6 @@
 import {
   fetchCrmCompanies,
+  fetchCrmListRowsAll,
   fetchCrmStageCountsBatch,
   fetchPipelineStages,
   type CrmStageFetchOpts,
@@ -10,18 +11,18 @@ import type {
   OrgOverviewReport,
   ReportPipelineFunnelRow,
 } from '../api/employeeReport';
-import { reportClosedWonCount } from './reportMetrics';
 import {
-  crmCustomerTabConversionRate,
   dealStatsStagesForFunnel,
   sumCrmCustomerTabDealCount,
-  sumCrmDealStatsCount,
+  sumCrmDealHubKpiCount,
   sumCrmOpenPipelineValue,
   sumCrmOpenWeightedPipelineValue,
 } from './crmPipelineTabs';
 
 export type CrmReportHubSnapshot = {
-  /** Tab Deal — pre-won + thua (không dùng làm mẫu số tỷ lệ chốt). */
+  /** Lead tạo trong kỳ — mọi lead (không lọc SĐT), khớp CRM Hub «Tổng Lead». */
+  leadTotal: number;
+  /** Tab Deal — pre-won + thua + stage lạ (có SĐT), khớp CRM Hub «Tổng deal». */
   dealTotal: number;
   /** Tab KH — Thắng + sau Thắng. */
   customerTabDealCount: number;
@@ -35,15 +36,22 @@ export type CrmReportHubSnapshot = {
   dealStages: CrmPipelineStage[];
 };
 
-/** Bộ lọc deal theo kỳ — khớp CRM Hub (RPC stage-counts + ngày tạo). */
-export function buildReportStageFetchOpts(query: EmployeeReportQuery): CrmStageFetchOpts {
+/** Lead KPI Hub — tạo trong kỳ, không lọc SĐT (khớp pipelinePhoneTotals.lead.all). */
+export function buildReportLeadFetchOpts(query: EmployeeReportQuery): CrmStageFetchOpts {
   return {
     companyId: query.company_id || undefined,
     regionId: query.region_id || undefined,
     dateFrom: query.date_from || undefined,
     dateTo: query.date_to || undefined,
-    phoneFilter: 'has_phone',
     lite: true,
+  };
+}
+
+/** Deal KPI Hub — có SĐT + ngày tạo (khớp dealStatsDeals trên web). */
+export function buildReportStageFetchOpts(query: EmployeeReportQuery): CrmStageFetchOpts {
+  return {
+    ...buildReportLeadFetchOpts(query),
+    phoneFilter: 'has_phone',
   };
 }
 
@@ -122,10 +130,11 @@ function resolveOpenWeightedValue(
 }
 
 /**
- * Lead: giữ org-overview (khớp web BC theo ngày tạo).
- * Funnel Deal: CRM Dashboard tab Deal.
- * Tỷ lệ chốt: tab KH (Thắng + sau Thắng) / tổng deal kỳ org-overview — khớp BC web.
- * Pipeline KPI: giá trị kỳ vọng weighted theo kỳ (khớp CRM Hub), GT thô giữ ở open_pipeline_raw_value.
+ * Lead + Deal KPI: snapshot CRM Hub (stage-counts).
+ * Funnel Deal: cột thống kê tab Deal.
+ * Tỷ lệ chốt: giữ org-overview (Chốt SL / tổng deal kỳ — cùng cohort).
+ * hub_deal_kpi: tab Deal Hub (có SĐT) — tham chiếu Kanban, không thay mẫu số chốt.
+ * Pipeline KPI: giá trị kỳ vọng weighted theo kỳ (khớp CRM Hub).
  */
 export function applyCrmHubSnapshotToReport(
   report: OrgOverviewReport,
@@ -138,29 +147,22 @@ export function applyCrmHubSnapshotToReport(
   const openWeighted = resolveOpenPipelineValue(snap);
   const openRaw = snap.openPipelineValue;
   const hubKvActive = openWeighted > 0 || hasStageValueData(snap.dealWeightedValues);
-  const orgDealCount = Number(report.summary.deal_count) || 0;
-  const closedCount = reportClosedWonCount(report.summary);
-  /** «Tất cả công ty»: DEAL khớp CRM Hub tab Deal (có SĐT, trước Thắng + thua). */
-  const allCompaniesScope = !report.company_id;
-  const hubDealCount = snap.dealTotal > 0 ? snap.dealTotal : 0;
-  const dealCount = allCompaniesScope && hubDealCount > 0
-    ? hubDealCount
-    : orgDealCount;
+  const orgLeadCount = Number(report.summary.lead_count) || 0;
+  const leadCount = snap.leadTotal > 0 ? snap.leadTotal : orgLeadCount;
   const summary = {
     ...report.summary,
+    lead_count: leadCount,
+    hub_deal_kpi: snap.dealTotal,
+    /** Deal có SĐT gộp tất cả công ty — khớp stage-counts global (296). */
+    deal_has_phone_total: snap.dealPeriodTotal,
     cohort_pipeline_value: cohortPipeline,
     open_pipeline_value: openWeighted,
     open_pipeline_raw_value: openRaw,
     open_weighted_pipeline_value: openWeighted,
     pipeline_value: hubKvActive ? openWeighted : (report.summary.pipeline_value ?? 0),
-    // Ghi đè org-overview weighted (~3,5 tỷ) bằng KV Hub theo cột CRM (~2,26 tỷ).
     weighted_value: hubKvActive ? openWeighted : (report.summary.weighted_value ?? 0),
     expected_value: hubKvActive ? openRaw : (report.summary.expected_value ?? 0),
-    deal_count: dealCount,
-    // Tỷ lệ chốt: tab KH / tổng deal kỳ — mẫu số khớp cột DEAL hiển thị.
-    conversion_rate: allCompaniesScope && hubDealCount > 0
-      ? crmCustomerTabConversionRate(closedCount, dealCount)
-      : (report.summary.conversion_rate ?? crmCustomerTabConversionRate(closedCount, orgDealCount)),
+    // deal_count + conversion_rate: giữ nguyên từ org-overview (cohort chuẩn BC web).
   };
 
   const pipeline_funnel = typeView === 'deal'
@@ -183,6 +185,66 @@ function mergeStageCountMaps(
   }
 }
 
+type DealStageRow = { stage_id?: string | null; stage?: { id?: string }; company_id?: string | null };
+
+function buildDealCountsFromLeadRows(rows: DealStageRow[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const row of rows) {
+    const sid = String(row.stage?.id || row.stage_id || '');
+    const key = sid || '__none__';
+    counts[key] = (Number(counts[key]) || 0) + 1;
+  }
+  return counts;
+}
+
+/**
+ * Tổng Deal KPI tab Deal — khớp web `dealStatsDeals` / `filterDealsForDealTabStats`.
+ * Dùng GET /crm/leads (không lọc stage pipeline) để gồm deal cross-pipeline (vd. Metalla +4).
+ */
+async function fetchDealHubKpiTotal(
+  query: EmployeeReportQuery,
+  companies: { id: string }[],
+  signal?: AbortSignal,
+): Promise<number> {
+  const periodOpts = { ...buildReportStageFetchOpts(query), signal, lite: true as const };
+  const crmIdSet = new Set(companies.map((c) => c.id));
+  const allRows = await fetchCrmListRowsAll('deal', periodOpts);
+  const crmRows = query.company_id
+    ? allRows.filter((r) => String(r.company_id || '') === String(query.company_id))
+    : allRows.filter((r) => crmIdSet.has(String(r.company_id || '')));
+
+  if (query.company_id) {
+    const stages = await fetchPipelineStages('deal', { ...periodOpts, companyId: query.company_id });
+    return sumCrmDealHubKpiCount(stages, buildDealCountsFromLeadRows(crmRows));
+  }
+
+  let total = 0;
+  for (const company of companies) {
+    const coRows = crmRows.filter((r) => String(r.company_id || '') === company.id);
+    const stages = await fetchPipelineStages('deal', { ...periodOpts, companyId: company.id });
+    total += sumCrmDealHubKpiCount(stages, buildDealCountsFromLeadRows(coRows));
+  }
+  return total;
+}
+
+async function fetchLeadPeriodTotal(
+  query: EmployeeReportQuery,
+  signal?: AbortSignal,
+): Promise<number> {
+  const leadOpts = { ...buildReportLeadFetchOpts(query), signal };
+  if (query.company_id) {
+    const batch = await fetchCrmStageCountsBatch('lead', leadOpts);
+    return Number(batch.total) || 0;
+  }
+  /**
+   * «Tất cả công ty» — khớp CRM Hub `pipelinePhoneTotals.lead.all`:
+   * GET /crm/leads không truyền company_id → gồm lead chưa gán công ty (company_id null).
+   * Không cộng riêng từng công ty CRM (thiếu ~16 lead orphan).
+   */
+  const batch = await fetchCrmStageCountsBatch('lead', leadOpts);
+  return Number(batch.total) || 0;
+}
+
 async function fetchDealPeriodSnapshot(
   query: EmployeeReportQuery,
   signal?: AbortSignal,
@@ -194,28 +256,35 @@ async function fetchDealPeriodSnapshot(
   dealPeriodTotal: number;
 }> {
   const periodOpts = { ...buildReportStageFetchOpts(query), signal };
+  const companies = query.company_id ? [] : await fetchCrmCompanies(signal);
+  const dealTotalPromise = fetchDealHubKpiTotal(
+    query,
+    query.company_id ? [{ id: query.company_id }] : companies,
+    signal,
+  );
+
   if (query.company_id) {
-    const [dealBatch, dealStages] = await Promise.all([
+    const [dealBatch, dealStages, dealTotal] = await Promise.all([
       fetchCrmStageCountsBatch('deal', periodOpts),
       fetchPipelineStages('deal', periodOpts),
+      dealTotalPromise,
     ]);
     return {
       dealBatch,
       dealStages,
-      dealTotal: sumCrmDealStatsCount(dealStages, dealBatch.counts),
+      dealTotal,
       customerTabDealCount: sumCrmCustomerTabDealCount(dealStages, dealBatch.counts),
       dealPeriodTotal: Number(dealBatch.total) || 0,
     };
   }
 
-  const companies = await fetchCrmCompanies(signal);
   const mergedCounts: Record<string, number> = {};
   const mergedValues: Record<string, number> = {};
   const mergedWeighted: Record<string, number> = {};
   const dealStages: CrmPipelineStage[] = [];
-  let dealTotal = 0;
   let customerTabDealCount = 0;
-  let dealPeriodTotal = 0;
+  /** Global stage-counts — khớp CRM Hub `pipelinePhoneTotals.deal.hasPhone` (296). */
+  const globalBatchPromise = fetchCrmStageCountsBatch('deal', periodOpts);
 
   for (const company of companies) {
     const opts = { ...periodOpts, companyId: company.id };
@@ -223,14 +292,15 @@ async function fetchDealPeriodSnapshot(
       fetchCrmStageCountsBatch('deal', opts),
       fetchPipelineStages('deal', opts),
     ]);
-    dealTotal += sumCrmDealStatsCount(stages, dealBatch.counts);
     customerTabDealCount += sumCrmCustomerTabDealCount(stages, dealBatch.counts);
-    dealPeriodTotal += Number(dealBatch.total) || 0;
     mergeStageCountMaps(mergedCounts, dealBatch.counts);
     mergeStageCountMaps(mergedValues, dealBatch.values);
     mergeStageCountMaps(mergedWeighted, dealBatch.weightedValues);
     dealStages.push(...stages);
   }
+
+  const [dealTotal, globalBatch] = await Promise.all([dealTotalPromise, globalBatchPromise]);
+  const dealPeriodTotal = Number(globalBatch.total) || 0;
 
   return {
     dealBatch: {
@@ -295,17 +365,19 @@ async function fetchOpenPipelineSnapshot(
   };
 }
 
-/** Snapshot Deal: counts theo kỳ + GT pipeline mở (không lọc ngày tạo). */
+/** Snapshot CRM Hub: Lead + Deal theo kỳ, GT pipeline mở. */
 export async function fetchCrmReportHubSnapshot(
   query: EmployeeReportQuery,
   signal?: AbortSignal,
 ): Promise<CrmReportHubSnapshot> {
-  const [periodSnap, openSnap] = await Promise.all([
+  const [leadTotal, periodSnap, openSnap] = await Promise.all([
+    fetchLeadPeriodTotal(query, signal),
     fetchDealPeriodSnapshot(query, signal),
     fetchOpenPipelineSnapshot(query, signal),
   ]);
 
   return {
+    leadTotal,
     dealTotal: periodSnap.dealTotal,
     customerTabDealCount: periodSnap.customerTabDealCount,
     dealPeriodTotal: periodSnap.dealPeriodTotal,

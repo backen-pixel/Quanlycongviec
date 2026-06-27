@@ -1,5 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -298,21 +299,25 @@ export default function PlannerScreen() {
     }
   }, [user?.company_id]);
 
-  const load = useCallback(async (isRefresh = false) => {
+  const load = useCallback(async (opts?: { refresh?: boolean; silent?: boolean }) => {
     if (!userId) return;
+    const isRefresh = opts?.refresh ?? false;
+    const silent = opts?.silent ?? false;
     if (loadingRef.current && !isRefresh) return;
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
     loadingRef.current = true;
 
-    setLeadsLoading(true);
-    setDealsLoading(true);
+    if (!silent) {
+      setLeadsLoading(true);
+      setDealsLoading(true);
+    }
     if (isRefresh) {
       invalidatePlannerCache(userId);
-      setRefreshing(true);
+      if (!silent) setRefreshing(true);
     }
-    setError('');
+    if (!silent) setError('');
 
     const companyId = await resolvePlannerCompanyId();
     if (ac.signal.aborted) {
@@ -349,7 +354,7 @@ export default function PlannerScreen() {
         }
       })
       .finally(() => {
-        if (!ac.signal.aborted) setLeadsLoading(false);
+        if (!silent && !ac.signal.aborted) setLeadsLoading(false);
       });
 
     const dealPromise = Promise.all([
@@ -374,7 +379,7 @@ export default function PlannerScreen() {
         }
       })
       .finally(() => {
-        if (!ac.signal.aborted) setDealsLoading(false);
+        if (!silent && !ac.signal.aborted) setDealsLoading(false);
       });
 
     await Promise.all([leadPromise, dealPromise]);
@@ -385,7 +390,7 @@ export default function PlannerScreen() {
       setPlannerCache(userId, { leads: leadResult.items, deals: dealResult.items });
     }
     loadingRef.current = false;
-    setRefreshing(false);
+    if (!silent) setRefreshing(false);
   }, [userId, resolvePlannerCompanyId]);
 
   useEffect(() => {
@@ -406,6 +411,13 @@ export default function PlannerScreen() {
       void load();
       return () => abortRef.current?.abort();
     }, [load]),
+  );
+
+  useCrmRealtimeRefresh(
+    useCallback(() => {
+      void load({ refresh: true, silent: true });
+    }, [load]),
+    Boolean(userId),
   );
 
   const overdueCount =
@@ -474,7 +486,7 @@ export default function PlannerScreen() {
         contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: 120 }}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={Colors.blue} />
+          <RefreshControl refreshing={refreshing} onRefresh={() => void load({ refresh: true })} tintColor={Colors.blue} />
         }
       >
         <View style={styles.header}>
@@ -541,7 +553,7 @@ export default function PlannerScreen() {
             <View style={styles.errBox}>
               <Ionicons name="cloud-offline-outline" size={32} color={Colors.textFaint} />
               <Text style={styles.errTxt}>{error}</Text>
-              <Pressable style={styles.retryBtn} onPress={() => void load(true)}>
+              <Pressable style={styles.retryBtn} onPress={() => void load({ refresh: true })}>
                 <Text style={styles.retryTxt}>Thử lại</Text>
               </Pressable>
             </View>

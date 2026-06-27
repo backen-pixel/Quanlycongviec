@@ -11,7 +11,6 @@ import {
 import type { OrgReportCompare, OrgReportRow } from '../../api/employeeReport';
 import { compareTrendUp, formatComparePct, getCompareMetric } from '../../lib/reportCompare';
 import { formatVndShort } from '../../lib/reportFormat';
-import { reportClosedWonCount } from '../../lib/reportMetrics';
 import { Radii, useColors, type ThemeColors } from '../../theme';
 
 type KpiCard = {
@@ -40,12 +39,35 @@ function pipelineDisplayValue(summary: OrgReportRow): number {
   return summary.open_pipeline_value ?? 0;
 }
 
+function dealKpiDisplay(summary: OrgReportRow, companyId?: string | null): { value: string; sub: string } {
+  const hub = summary.hub_deal_kpi;
+  if (companyId && hub != null && hub >= 0) {
+    return {
+      value: String(hub),
+      sub: 'Tab Deal · có SĐT · khớp CRM Hub',
+    };
+  }
+  const merged = summary.deal_has_phone_total;
+  if (!companyId && merged != null && merged >= 0) {
+    return {
+      value: String(merged),
+      sub: 'Deal có SĐT · gộp tất cả công ty',
+    };
+  }
+  return {
+    value: String(summary.deal_count ?? 0),
+    sub: 'Deal tạo trong kỳ · mọi công ty',
+  };
+}
+
 function buildCards(summary: OrgReportRow, companyId?: string | null): KpiCard[] {
+  const dealKpi = dealKpiDisplay(summary, companyId);
   return [
     {
       key: 'lead',
       label: 'LEAD',
       value: String(summary.lead_count ?? 0),
+      sub: 'Tạo trong kỳ · khớp CRM Hub',
       bg: 'rgba(47,107,255,0.22)',
       border: 'rgba(47,107,255,0.45)',
       accent: '#5B8CFF',
@@ -53,9 +75,9 @@ function buildCards(summary: OrgReportRow, companyId?: string | null): KpiCard[]
     {
       key: 'deal',
       label: 'DEAL',
-      value: String(summary.deal_count ?? 0),
+      value: dealKpi.value,
       hideCompare: true,
-      sub: companyId ? 'Tạo trong kỳ' : 'Tab Deal · có SĐT · khớp CRM Hub',
+      sub: dealKpi.sub,
       bg: 'rgba(34,197,94,0.18)',
       border: 'rgba(34,197,94,0.42)',
       accent: '#34D399',
@@ -70,28 +92,12 @@ function buildCards(summary: OrgReportRow, companyId?: string | null): KpiCard[]
       border: 'rgba(168,85,247,0.42)',
       accent: '#C084FC',
     },
-    {
-      key: 'conversion',
-      label: 'TỶ LỆ CHỐT',
-      value: `${summary.conversion_rate ?? 0}%`,
-      bg: 'rgba(249,115,22,0.18)',
-      border: 'rgba(249,115,22,0.42)',
-      accent: '#FB923C',
-    },
   ];
-}
-
-function conversionSub(summary: OrgReportRow): string {
-  const closed = reportClosedWonCount(summary);
-  const deals = summary.deal_count ?? 0;
-  if (!deals) return '';
-  return `${closed}/${deals} deal`;
 }
 
 const COMPARE_KEYS: Record<string, string> = {
   lead: 'lead_count',
   deal: 'deal_count',
-  conversion: 'conversion_rate',
 };
 
 export default function ReportKpiCarousel({ summary, compare, companyId }: Props) {
@@ -123,8 +129,7 @@ export default function ReportKpiCarousel({ summary, compare, companyId }: Props
           const cmp = card.hideCompare ? null : getCompareMetric(compare, compareKey);
           const trend = card.hideCompare ? null : formatComparePct(cmp?.pct, cmp?.delta, compareKey);
           const up = card.hideCompare ? null : compareTrendUp(cmp?.pct, cmp?.delta);
-          const sub = card.sub
-            || (card.key === 'conversion' ? conversionSub(summary) : null);
+          const sub = card.sub || null;
           return (
             <View
               key={card.key}

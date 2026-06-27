@@ -21,6 +21,7 @@ import {
 import { isMessengerCallLogMessage } from '../lib/messengerCallLog';
 import { messengerThreadKey } from '../lib/messengerHubStorage';
 import { useRelativeTimeTick } from '../hooks/useRelativeTimeTick';
+import { CallPortalBridge } from '../calling/CallProvider';
 import MessengerQuickChatDock, {
   QUICK_CHAT_DOCK_VISUAL_W,
   QUICK_CHAT_PANEL_W,
@@ -812,5 +813,5 @@ export default function MessengerDock() {
   );
 
   if (!uid) return null;
-  return createPortal(ui, document.body);
+  return createPortal(<CallPortalBridge>{ui}</CallPortalBridge>, document.body);
 }

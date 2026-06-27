@@ -18,7 +18,9 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { api } from '../api/client';
+import { invalidateCrmHubCache, invalidatePlannerCache } from '../api/crm';
 import { navigate } from '../navigation/navigationRef';
+import { emitCrmRealtime } from './crmRealtimeBus';
 
 const FCM_TOKEN_KEY = 'crmv2_fcm_push_token_v1';
 
@@ -112,6 +114,18 @@ export function configurePushNotifications(): void {
         | Record<string, unknown>
         | undefined;
       handleNotificationData(data);
+    } catch {
+      /* bỏ qua */
+    }
+  });
+  Notifications.addNotificationReceivedListener((notification) => {
+    try {
+      const data = notification?.request?.content?.data as Record<string, unknown> | undefined;
+      const type = String(data?.type || '').toLowerCase();
+      if (type === 'incoming_call' || type === 'messenger_chat') return;
+      invalidateCrmHubCache();
+      invalidatePlannerCache();
+      emitCrmRealtime({ reason: 'notification', detail: data });
     } catch {
       /* bỏ qua */
     }

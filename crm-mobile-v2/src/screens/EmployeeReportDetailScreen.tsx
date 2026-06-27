@@ -20,6 +20,7 @@ import {
   type LeadTypeReportRow,
 } from '../api/employeeReport';
 import { formatApiError } from '../api/client';
+import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import Avatar from '../components/Avatar';
 import EmployeeReportCharts from '../components/reports/EmployeeReportCharts';
 import ReportMetricBlock from '../components/reports/ReportMetricBlock';
@@ -58,9 +59,11 @@ export default function EmployeeReportDetailScreen() {
   const [byLeadType, setByLeadType] = useState<LeadTypeReportRow[]>([]);
   const [firstStageSla, setFirstStageSla] = useState<FirstStageSla | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const data = await fetchEmployeePipelineDetail(userId, {
         date_from: dateFrom,
@@ -75,15 +78,21 @@ export default function EmployeeReportDetailScreen() {
       setByLeadType(data.by_lead_type || []);
       setFirstStageSla(data.first_stage_sla || null);
     } catch (e) {
-      setError(formatApiError(e));
+      if (!silent) setError(formatApiError(e));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [userId, dateFrom, dateTo, typeView, companyId, regionId]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useCrmRealtimeRefresh(
+    useCallback(() => {
+      void load(true);
+    }, [load]),
+  );
 
   const conversionRate = useMemo(() => {
     const deals = Number(summary.deal_count ?? 0);

@@ -1,6 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -164,13 +165,15 @@ export default function TasksScreen() {
     return () => ac.abort();
   }, [companyQuery, user?.company_id]);
 
-  const load = useCallback(async (isRefresh = false) => {
+  const load = useCallback(async (opts?: { refresh?: boolean; silent?: boolean }) => {
+    const isRefresh = opts?.refresh ?? false;
+    const silent = opts?.silent ?? false;
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
-    if (isRefresh) setRefreshing(true);
-    else setLoading(true);
-    setError('');
+    if (isRefresh && !silent) setRefreshing(true);
+    else if (!silent) setLoading(true);
+    if (!silent) setError('');
     try {
       const assigneeId = assigneeFilter || (!showAssigneePicker && uid ? uid : undefined);
       const list = await fetchCrmAssignments({
@@ -188,8 +191,10 @@ export default function TasksScreen() {
       }
     } finally {
       if (!ac.signal.aborted) {
-        setLoading(false);
-        setRefreshing(false);
+        if (!silent) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     }
   }, [assigneeFilter, companyQuery, priorityFilter, search, showAssigneePicker, uid]);
@@ -198,6 +203,12 @@ export default function TasksScreen() {
     useCallback(() => {
       void load();
       return () => abortRef.current?.abort();
+    }, [load]),
+  );
+
+  useCrmRealtimeRefresh(
+    useCallback(() => {
+      void load({ refresh: true, silent: true });
     }, [load]),
   );
 
@@ -460,7 +471,7 @@ export default function TasksScreen() {
           ListHeaderComponent={listHeader}
           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 24 }}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={Colors.blue} />
+            <RefreshControl refreshing={refreshing} onRefresh={() => void load({ refresh: true })} tintColor={Colors.blue} />
           }
           ListEmptyComponent={
             <View style={styles.emptyBox}>

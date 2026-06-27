@@ -35,6 +35,7 @@ import ReportTabBar, { type ReportTabId } from '../components/reports/ReportTabB
 import { useAuth } from '../context/AuthContext';
 import { defaultCompanyIdForUser, isSystemWideAdmin } from '../lib/crmDefaultCompany';
 import { canViewEmployeeReport } from '../lib/employeeReportAccess';
+import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import {
   defaultMonthRange,
   getReportRangeForPreset,
@@ -146,16 +147,23 @@ export default function EmployeeReportScreen() {
     if (!ok) setRegionId('');
   }, [regions, regionId]);
 
-  const load = useCallback(async (opts?: { refresh?: boolean }) => {
+  const load = useCallback(async (opts?: { refresh?: boolean; silent?: boolean }) => {
     if (!allowed) return;
-    if (opts?.refresh) setRefreshing(true);
-    else setLoading(true);
+    if (opts?.refresh && !opts?.silent) setRefreshing(true);
+    else if (!opts?.silent) setLoading(true);
     setError(null);
     try {
       const typeView = query.type || 'all';
       const orgReport = await fetchOrgOverviewReport(query);
       if (typeView === 'lead') {
-        setReport(orgReport);
+        const hubSnap = await fetchCrmReportHubSnapshot(query);
+        setReport({
+          ...orgReport,
+          summary: {
+            ...orgReport.summary,
+            lead_count: hubSnap.leadTotal > 0 ? hubSnap.leadTotal : (orgReport.summary.lead_count ?? 0),
+          },
+        });
         return;
       }
       const hubSnap = await fetchCrmReportHubSnapshot(query);
@@ -164,8 +172,10 @@ export default function EmployeeReportScreen() {
       setError(formatApiError(e));
       setReport(null);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (!opts?.silent) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [allowed, query]);
 
@@ -173,6 +183,13 @@ export default function EmployeeReportScreen() {
     useCallback(() => {
       void load();
     }, [load]),
+  );
+
+  useCrmRealtimeRefresh(
+    useCallback(() => {
+      void load({ refresh: true, silent: true });
+    }, [load]),
+    allowed,
   );
 
   const companyLabel = useMemo(() => {
@@ -299,7 +316,7 @@ export default function EmployeeReportScreen() {
             <View style={styles.scopeHint}>
               <Ionicons name="information-circle-outline" size={16} color={Colors.amber} />
               <Text style={styles.scopeHintText}>
-                Đang xem tất cả công ty — số chốt là tổng mọi công ty trong kỳ. Chọn 1 công ty để so với BC web / CRM Hub từng công ty.
+                Tất cả công ty — Deal KPI (có SĐT) hiện trên carousel; chọn từng công ty để xem tab Deal Hub.
               </Text>
             </View>
           ) : null}

@@ -479,6 +479,27 @@ export async function fetchCrmListTotal(
   return parsePayload(data, 1).total;
 }
 
+const LIST_ALL_PAGE_SIZE = 500;
+
+/** Tải toàn bộ lead/deal theo bộ lọc (phân trang) — dùng KPI Deal khớp CRM Hub. */
+export async function fetchCrmListRowsAll(
+  type: 'lead' | 'deal',
+  opts?: CrmStageFetchOpts,
+): Promise<Array<{ stage_id?: string | null; stage?: { id?: string }; company_id?: string | null }>> {
+  const rows: Array<{ stage_id?: string | null; stage?: { id?: string }; company_id?: string | null }> = [];
+  let offset = 0;
+  while (true) {
+    const params: Record<string, unknown> = { type, limit: LIST_ALL_PAGE_SIZE, offset, lite: '1' };
+    applyListParams(params, opts);
+    const { data } = await api.get('/crm/leads', { params, signal: opts?.signal });
+    const page = parsePayload(data, LIST_ALL_PAGE_SIZE);
+    rows.push(...page.rows);
+    if (!page.hasMore || page.rows.length === 0) break;
+    offset = page.nextOffset;
+  }
+  return rows;
+}
+
 /** Tải một trang bản ghi của cột (đã lọc phân loại). */
 export async function fetchCrmStagePage(
   type: 'lead' | 'deal',
