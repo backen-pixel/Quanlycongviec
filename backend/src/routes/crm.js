@@ -41,7 +41,7 @@ const {
   notifyNewCrmAssignmentAssignees,
   resolveAssignmentIdForTask,
 } = require('../helpers/crmAssignmentNotifications');
-const { emitNotifyBadge } = require('../helpers/notifyBadge');
+const { fetchOrgActivityFeed } = require('../helpers/orgActivityFeed');
 const { emitCrmTaskChanged } = require('../helpers/crmTaskRealtime');
 const { normalizeTemplateChecklistForCrmTask } = require('../helpers/templateChecklistNormalize');
 const { resolveExecutorCompanyId, isExecutorColumnError } = require('../helpers/crossCompanyWorkspace');
@@ -2830,6 +2830,52 @@ r.get('/reports/org-overview', async (req, res) => {
     });
   } catch (e) {
     console.error('GET /crm/reports/org-overview:', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
+/** GET /crm/reports/org-activity-feed — hoạt động CRM thực theo sự kiện (stage, tạo mới, ghi chú…) */
+r.get('/reports/org-activity-feed', async (req, res) => {
+  try {
+    const roleNorm = normalizeCrmUserRole(req.user?.role);
+    if (!STAFF_LEAD_DEAL_REPORT_ROLES.has(roleNorm)) {
+      res.status(403).json({ error: 'Không có quyền xem báo cáo này' });
+      return;
+    }
+    const scope = await resolveCrmReportScope(req, res);
+    if (!scope) return;
+    const { effectiveCompanyId, explicitRegionId } = scope;
+    const { df, dt } = parseCrmReportDateRange(req);
+    const rawType = String(req.query.type || 'all').toLowerCase();
+    const typeView = rawType === 'lead' || rawType === 'deal' ? rawType : 'all';
+    const dealAssigneeOnly =
+      req.user?.userId && !userSeesAllCrmDealsForScope(req.user) ? req.user.userId : null;
+    const leadAssigneeOnly =
+      req.user?.userId && !userSeesAllCrmLeadsForScope(req.user) ? req.user.userId : null;
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '30', 10) || 30, 1), 100);
+    const sinceRaw = req.query.since && String(req.query.since).trim() ? String(req.query.since).trim() : null;
+
+    const items = await fetchOrgActivityFeed(req, {
+      effectiveCompanyId,
+      explicitRegionId,
+      df,
+      dt,
+      typeView,
+      leadAssigneeOnly,
+      dealAssigneeOnly,
+      limit,
+      since: sinceRaw,
+    });
+
+    res.json({
+      date_from: df,
+      date_to: dt,
+      company_id: effectiveCompanyId || null,
+      region_id: explicitRegionId || null,
+      items,
+    });
+  } catch (e) {
+    console.error('GET /crm/reports/org-activity-feed:', e);
     res.status(500).json({ error: e.message || 'Lỗi' });
   }
 });

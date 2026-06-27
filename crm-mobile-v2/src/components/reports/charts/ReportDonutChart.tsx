@@ -67,7 +67,7 @@ export default function ReportDonutChart({ segments, size = 180, layout = 'stack
         {arcs.map(({ seg, path, labelPos, pct }) => (
           <G key={seg.name}>
             <Path d={path} fill={seg.color} stroke={Colors.card} strokeWidth={2} />
-            {pct >= 8 ? (
+            {pct >= 10 && labelPos.y >= 16 && labelPos.y <= chartSize - 16 ? (
               <SvgText
                 x={labelPos.x}
                 y={labelPos.y + 4}

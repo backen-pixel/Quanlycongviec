@@ -1,11 +1,10 @@
-/** Công ty mặc định khi mở CRM / báo cáo — khớp CrmHubScreen. */
+/** Công ty mặc định khi mở CRM / báo cáo — ưu tiên company user, không thì công ty đầu danh sách. */
 export function defaultCompanyIdForUser(
   user: { company_id?: string | null } | null | undefined,
   companies: { id: string }[],
 ): string {
   if (user?.company_id) return String(user.company_id);
-  if (companies.length === 1) return companies[0]?.id || '';
-  return '';
+  return companies[0]?.id || '';
 }
 
 /** Admin hệ thống (không gắn company_id) — được chọn «Tất cả công ty». */

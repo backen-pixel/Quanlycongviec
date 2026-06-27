@@ -113,6 +113,28 @@ export type EmployeeReportQuery = {
   region_id?: string;
 };
 
+export type OrgActivityFeedApiItem = {
+  id: string;
+  event_type: string;
+  occurred_at: string;
+  lead_id?: string | null;
+  lead_type?: string | null;
+  lead_title?: string | null;
+  lead_code?: string | null;
+  actor_name?: string | null;
+  title: string;
+  subtitle: string;
+  value?: string;
+  badge: string;
+  badge_tone: string;
+};
+
+export type OrgActivityFeedResponse = {
+  date_from: string;
+  date_to: string;
+  items: OrgActivityFeedApiItem[];
+};
+
 export type OrgReportRow = EmployeeReportRow & {
   company_id?: string | null;
   company_name?: string | null;
@@ -207,6 +229,29 @@ export async function fetchOrgOverviewReport(params: EmployeeReportQuery): Promi
     by_region: data.by_region || [],
     by_employee: (data.by_employee || []).filter((r) => r.user_id),
     by_lead_type: data.by_lead_type || [],
+  };
+}
+
+export async function fetchOrgActivityFeed(
+  params: EmployeeReportQuery,
+  opts?: { limit?: number; since?: string; signal?: AbortSignal },
+): Promise<OrgActivityFeedResponse> {
+  const { data } = await api.get<OrgActivityFeedResponse>('/crm/reports/org-activity-feed', {
+    params: {
+      date_from: params.date_from,
+      date_to: params.date_to,
+      limit: opts?.limit ?? 30,
+      ...(params.type && params.type !== 'all' ? { type: params.type } : {}),
+      ...(params.company_id ? { company_id: params.company_id } : {}),
+      ...(params.region_id ? { region_id: params.region_id } : {}),
+      ...(opts?.since ? { since: opts.since } : {}),
+    },
+    signal: opts?.signal,
+  });
+  return {
+    date_from: data.date_from,
+    date_to: data.date_to,
+    items: data.items || [],
   };
 }
 

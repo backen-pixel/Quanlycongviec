@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Svg, { G, Line, Polyline, Text as SvgText } from 'react-native-svg';
-import { CHART_COLORS, formatAxisShort, niceMax } from '../../../lib/reportChartData';
+import { CHART_COLORS, formatAxisShort, formatAxisTy, niceMax } from '../../../lib/reportChartData';
 import { useColors, type ThemeColors } from '../../../theme';
 
 type Point = {
@@ -67,19 +67,19 @@ export default function ReportTimelineChart({ data, height = 220, mode = 'full' 
                 </SvgText>
               ) : null}
               <SvgText x={width - pad.right + 6} y={y + 4} fontSize={9} fill={Colors.textFaint} textAnchor="start">
-                {formatAxisShort(maxValue * t)}
+                {mode === 'won-only' ? formatAxisTy(maxValue * t) : formatAxisTy(maxValue * t)}
               </SvgText>
             </G>
           );
         })}
 
         {mode !== 'won-only' && leadPoints ? (
-          <Polyline points={leadPoints} fill="none" stroke={CHART_COLORS.lead} strokeWidth={2} />
+          <Polyline points={leadPoints} fill="none" stroke={CHART_COLORS.lead} strokeWidth={2.5} />
         ) : null}
         {mode !== 'won-only' && dealPoints ? (
-          <Polyline points={dealPoints} fill="none" stroke={CHART_COLORS.deal} strokeWidth={2} />
+          <Polyline points={dealPoints} fill="none" stroke={CHART_COLORS.deal} strokeWidth={2.5} />
         ) : null}
-        <Polyline points={wonPoints} fill="none" stroke={CHART_COLORS.wonValue} strokeWidth={2} strokeDasharray={mode === 'won-only' ? undefined : '5 4'} />
+        <Polyline points={wonPoints} fill="none" stroke={CHART_COLORS.wonValue} strokeWidth={2} strokeDasharray={mode === 'won-only' ? undefined : '6 4'} />
 
         {data.map((d, i) => (i % labelStep === 0 || i === data.length - 1 ? (
           <SvgText

@@ -19,6 +19,7 @@ import ReportStackedBarChart from './charts/ReportStackedBarChart';
 import ReportTimelineChart from './charts/ReportTimelineChart';
 import ReportVerticalBarChart from './charts/ReportVerticalBarChart';
 import ReportLeadTypeList from './ReportLeadTypeList';
+import { formatVndShort } from '../../lib/reportFormat';
 import { useColors, type ThemeColors } from '../../theme';
 
 type Props = {
@@ -80,7 +81,7 @@ export default function ReportOverviewCharts({ report }: Props) {
         empty={regionBars.length === 0}
         emptyText="Chưa có dữ liệu khu vực"
       >
-        <ReportVerticalBarChart data={regionBars} />
+        <ReportVerticalBarChart data={regionBars} valueFormatter={formatVndShort} showBarLabels />
       </ReportChartCard>
 
       <ReportChartCard

@@ -17,8 +17,8 @@ type Props = {
   height?: number;
 };
 
-const LEAD_VALUE_COLOR = '#a5b4fc';
-const DEAL_VALUE_COLOR = '#059669';
+const LEAD_VALUE_COLOR = CHART_COLORS.leadValue;
+const DEAL_VALUE_COLOR = CHART_COLORS.dealValue;
 
 export default function ReportEmployeeTimelineChart({ data, height = 240 }: Props) {
   const Colors = useColors();
@@ -72,10 +72,10 @@ export default function ReportEmployeeTimelineChart({ data, height = 240 }: Prop
           );
         })}
 
-        <Polyline points={leadPoints} fill="none" stroke={CHART_COLORS.lead} strokeWidth={2} />
-        <Polyline points={dealPoints} fill="none" stroke={CHART_COLORS.deal} strokeWidth={2} />
-        <Polyline points={leadValuePoints} fill="none" stroke={LEAD_VALUE_COLOR} strokeWidth={2} strokeDasharray="4 4" />
-        <Polyline points={dealValuePoints} fill="none" stroke={DEAL_VALUE_COLOR} strokeWidth={2} />
+        <Polyline points={leadPoints} fill="none" stroke={CHART_COLORS.lead} strokeWidth={2.5} />
+        <Polyline points={dealPoints} fill="none" stroke={CHART_COLORS.deal} strokeWidth={2.5} />
+        <Polyline points={leadValuePoints} fill="none" stroke={LEAD_VALUE_COLOR} strokeWidth={2} strokeDasharray="6 4" />
+        <Polyline points={dealValuePoints} fill="none" stroke={DEAL_VALUE_COLOR} strokeWidth={2.5} strokeDasharray="2 3" />
 
         {data.map((d, i) => (i % labelStep === 0 || i === data.length - 1 ? (
           <SvgText key={d.label + i} x={xAt(i)} y={height - 8} fontSize={9} fill={Colors.textMuted} textAnchor="middle">
@@ -87,8 +87,8 @@ export default function ReportEmployeeTimelineChart({ data, height = 240 }: Prop
       <View style={styles.legend}>
         <LegendDot color={CHART_COLORS.lead} label="Lead" Colors={Colors} styles={styles} />
         <LegendDot color={CHART_COLORS.deal} label="Deal" Colors={Colors} styles={styles} />
-        <LegendDot color={LEAD_VALUE_COLOR} label="GT Lead" dashed Colors={Colors} styles={styles} />
-        <LegendDot color={DEAL_VALUE_COLOR} label="GT Deal" Colors={Colors} styles={styles} />
+        <LegendDot color={CHART_COLORS.leadValue} label="GT Lead" dashed Colors={Colors} styles={styles} />
+        <LegendDot color={CHART_COLORS.dealValue} label="GT Deal" dashed Colors={Colors} styles={styles} />
       </View>
     </View>
   );
