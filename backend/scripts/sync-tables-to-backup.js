@@ -82,8 +82,12 @@ function syncOneTable(primaryUrl, backupUrl, table) {
 }
 
 function main() {
-  const primaryUrl = process.env.SUPABASE_DB_DIRECT_URL || process.env.SUPABASE_DB_URL;
-  const backupUrl = process.env.SUPABASE_BACKUP_DB_DIRECT_URL || process.env.SUPABASE_BACKUP_DB_URL;
+  const {
+    resolvePrimaryDbDumpUrl,
+    resolveBackupDbDumpUrl,
+  } = require('../src/config/pgConnection');
+  const primaryUrl = resolvePrimaryDbDumpUrl();
+  const backupUrl = resolveBackupDbDumpUrl();
   if (!primaryUrl || !backupUrl) {
     throw new Error('Thiếu SUPABASE_DB_* / SUPABASE_BACKUP_DB_* trong backend/.env');
   }

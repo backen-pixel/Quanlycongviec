@@ -28,6 +28,13 @@ function fmtDt(iso) {
   }
 }
 
+function verifyRowsLookStale(rows, checkedAt) {
+  if (!rows?.length) return true;
+  if (rows.some((r) => /ENETUNREACH|ipv6_unreachable/i.test(String(r.error || '')))) return true;
+  if (!checkedAt) return true;
+  return Date.now() - new Date(checkedAt).getTime() > 30 * 60 * 1000;
+}
+
 function fmtAuditDevice(row) {
   const name = row.device?.name || row.metadata?.device_name;
   const id = row.device?.id || row.metadata?.device_id;
@@ -436,6 +443,7 @@ function ProductionBackupSyncContent() {
   const [runLoading, setRunLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
   const [verifyResult, setVerifyResult] = useState(null);
+  const autoVerifyAttempted = useRef(false);
   const [monitorError, setMonitorError] = useState('');
   const [usage, setUsage] = useState(null);
   const [usageLoading, setUsageLoading] = useState(false);
@@ -614,6 +622,28 @@ function ProductionBackupSyncContent() {
     setVerifyLoading(false);
   };
 
+  useEffect(() => {
+    if (tab !== 'check') {
+      autoVerifyAttempted.current = false;
+      return;
+    }
+    if (autoVerifyAttempted.current || verifyLoading || status?.job?.running || !settings) return;
+    const rows = settings.last_verify_rows || [];
+    if (!verifyRowsLookStale(rows, settings.last_verify_at)) return;
+    autoVerifyAttempted.current = true;
+    void (async () => {
+      setVerifyLoading(true);
+      try {
+        const { data } = await api.post('/production/backup-sync/verify');
+        setVerifyResult(data);
+        await load();
+      } catch (e) {
+        console.error(e);
+      }
+      setVerifyLoading(false);
+    })();
+  }, [tab, settings, verifyLoading, status?.job?.running, load]);
+
   const runSync = async () => {
     if (!window.confirm('Chạy đồng bộ primary → backup? Có thể mất vài phút.')) return;
     setRunLoading(true);
@@ -649,6 +679,8 @@ function ProductionBackupSyncContent() {
   const backupOk = supa?.backup?.healthy === true;
   const activeTarget = supa?.active_target || supa?.active || 'primary';
   const verifyRows = verifyResult?.rows || settings?.last_verify_rows || [];
+  const verifyCheckedAt = verifyResult?.checked_at || settings?.last_verify_at;
+  const verifyStale = verifyRowsLookStale(verifyRows, verifyCheckedAt);
   const jobRunning = status?.job?.running;
 
   return (
@@ -846,8 +878,16 @@ function ProductionBackupSyncContent() {
                   </button>
                 </div>
                 <p className="text-xs text-slate-500 mb-3">
-                  Lần kiểm tra cuối: {fmtDt(settings?.last_verify_at || verifyResult?.checked_at)}
+                  Lần kiểm tra cuối: {fmtDt(verifyCheckedAt)}
+                  {verifyResult?.source && (
+                    <span className="ml-2 text-teal-700">· nguồn: {verifyResult.source === 'rest' ? 'REST' : 'PostgreSQL'}</span>
+                  )}
                 </p>
+                {verifyStale && !verifyLoading && (
+                  <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    Dữ liệu cũ hoặc lỗi mạng trước đó — đang tự kiểm tra lại hoặc bấm &quot;Kiểm tra ngay&quot;.
+                  </div>
+                )}
                 {verifyRows.length > 0 ? (
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
