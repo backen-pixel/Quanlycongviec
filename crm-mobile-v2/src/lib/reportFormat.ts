@@ -27,6 +27,22 @@ export function formatViDateIso(iso?: string | null): string {
   return `${m[3]}/${m[2]}/${m[1]}`;
 }
 
+/** Thời gian tương đối — dùng cho feed hoạt động realtime. */
+export function formatRelativeTimeVi(iso?: string | null): string {
+  if (!iso) return '';
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return '';
+  const diffSec = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (diffSec < 45) return 'Vừa xong';
+  const mins = Math.floor(diffSec / 60);
+  if (mins < 60) return `${mins} phút trước`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} giờ trước`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} ngày trước`;
+  return formatViDateIso(iso);
+}
+
 export function defaultMonthRange(): { from: string; to: string } {
   return getReportRangeForPreset('month');
 }

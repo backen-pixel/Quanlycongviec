@@ -10,6 +10,9 @@ type Props = {
   emptyText?: string;
   actionLabel?: string;
   onAction?: () => void;
+  headerRight?: React.ReactNode;
+  footer?: React.ReactNode;
+  compact?: boolean;
 };
 
 export default function ReportChartCard({
@@ -20,28 +23,35 @@ export default function ReportChartCard({
   emptyText = 'Chưa có dữ liệu',
   actionLabel,
   onAction,
+  headerRight,
+  footer,
+  compact = false,
 }: Props) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
 
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, compact && styles.cardCompact]}>
       <View style={styles.head}>
         <View style={styles.headText}>
           <Text style={styles.title}>{title}</Text>
           {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
         </View>
-        {actionLabel && onAction ? (
-          <Pressable onPress={onAction} hitSlop={8}>
-            <Text style={styles.action}>{actionLabel}</Text>
-          </Pressable>
-        ) : null}
+        <View style={styles.headActions}>
+          {headerRight}
+          {actionLabel && onAction ? (
+            <Pressable onPress={onAction} hitSlop={8}>
+              <Text style={styles.action}>{actionLabel}</Text>
+            </Pressable>
+          ) : null}
+        </View>
       </View>
       {empty ? (
         <Text style={styles.empty}>{emptyText}</Text>
       ) : (
         children
       )}
+      {footer && !empty ? footer : null}
     </View>
   );
 }
@@ -56,12 +66,20 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     marginBottom: 12,
     ...Shadow.card,
   },
+  cardCompact: {
+    padding: 12,
+  },
   head: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 8,
     marginBottom: 8,
+  },
+  headActions: {
+    alignItems: 'flex-end',
+    gap: 6,
+    flexShrink: 0,
   },
   headText: { flex: 1 },
   title: {

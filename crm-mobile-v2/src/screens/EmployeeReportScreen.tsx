@@ -20,14 +20,11 @@ import {
   type EmployeeReportRow,
   type OrgOverviewReport,
 } from '../api/employeeReport';
-import {
-  applyCrmHubSnapshotToReport,
-  fetchCrmReportHubSnapshot,
-} from '../lib/crmReportHubSync';
 import { fetchCrmCompanies, fetchCrmCompanyRegions } from '../api/crm';
 import { formatApiError } from '../api/client';
 import EmployeeReportCard from '../components/reports/EmployeeReportCard';
-import ReportFilterModal, { ReportDateRangeBar } from '../components/reports/ReportFilterModal';
+import ReportFiltersPanel from '../components/reports/ReportFiltersPanel';
+import ReportFilterModal from '../components/reports/ReportFilterModal';
 import ReportOverviewTab from '../components/reports/ReportOverviewTab';
 import ReportPerformanceTab from '../components/reports/ReportPerformanceTab';
 import ReportPipelineTab from '../components/reports/ReportPipelineTab';
@@ -38,8 +35,8 @@ import { canViewEmployeeReport } from '../lib/employeeReportAccess';
 import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import {
   defaultMonthRange,
+  formatReportRangeLabel,
   getReportRangeForPreset,
-  shiftReportRange,
   type ReportPeriodPreset,
 } from '../lib/reportFormat';
 import type { RootStackParamList } from '../navigation/types';
@@ -48,11 +45,11 @@ import { Radii, useColors, type ThemeColors } from '../theme';
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type TypeView = 'all' | 'lead' | 'deal';
 
-const TYPE_OPTIONS: { key: TypeView; label: string }[] = [
-  { key: 'all', label: 'Tất cả' },
-  { key: 'lead', label: 'Lead' },
-  { key: 'deal', label: 'Deal' },
-];
+const TAB_TITLES: Record<ReportTabId, string> = {
+  overview: 'Báo cáo CRM',
+  performance: 'Hiệu suất',
+  pipeline: 'Pipeline',
+};
 
 function isAdminLike(role?: string | null): boolean {
   const r = String(role || '').trim().toLowerCase();
@@ -88,6 +85,7 @@ export default function EmployeeReportScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [employeeModalOpen, setEmployeeModalOpen] = useState(false);
 
   const applyPeriodFilter = useCallback((preset: ReportPeriodPreset, nextRange: { from: string; to: string }) => {
@@ -153,21 +151,8 @@ export default function EmployeeReportScreen() {
     else if (!opts?.silent) setLoading(true);
     setError(null);
     try {
-      const typeView = query.type || 'all';
       const orgReport = await fetchOrgOverviewReport(query);
-      if (typeView === 'lead') {
-        const hubSnap = await fetchCrmReportHubSnapshot(query);
-        setReport({
-          ...orgReport,
-          summary: {
-            ...orgReport.summary,
-            lead_count: hubSnap.leadTotal > 0 ? hubSnap.leadTotal : (orgReport.summary.lead_count ?? 0),
-          },
-        });
-        return;
-      }
-      const hubSnap = await fetchCrmReportHubSnapshot(query);
-      setReport(applyCrmHubSnapshotToReport(orgReport, hubSnap, typeView));
+      setReport(orgReport);
     } catch (e) {
       setError(formatApiError(e));
       setReport(null);
@@ -193,12 +178,12 @@ export default function EmployeeReportScreen() {
   );
 
   const companyLabel = useMemo(() => {
-    if (!effectiveCompanyId) return isSystemAdmin(user) ? 'Tất cả công ty' : 'Chọn công ty';
+    if (!effectiveCompanyId) return 'Chọn công ty';
     const found = companies.find((c) => c.id === effectiveCompanyId);
     if (found) return found.name;
     if (lockedCompanyId) return 'Công ty của bạn';
     return 'Đã chọn';
-  }, [effectiveCompanyId, companies, lockedCompanyId, user]);
+  }, [effectiveCompanyId, companies, lockedCompanyId]);
 
   const regionLabel = useMemo(() => {
     if (!regionId) return 'Tất cả khu vực';
@@ -235,7 +220,14 @@ export default function EmployeeReportScreen() {
 
   const renderTabContent = () => {
     if (!report) return null;
-    if (activeTab === 'overview') return <ReportOverviewTab report={report} />;
+    if (activeTab === 'overview') {
+      return (
+        <ReportOverviewTab
+          report={report}
+          onViewPerformance={() => setActiveTab('performance')}
+        />
+      );
+    }
     if (activeTab === 'performance') {
       return (
         <ReportPerformanceTab
@@ -245,15 +237,17 @@ export default function EmployeeReportScreen() {
         />
       );
     }
-    return <ReportPipelineTab report={report} />;
+    return <ReportPipelineTab report={report} activityQuery={query} />;
   };
 
   if (!allowed) {
     return (
       <View style={[styles.root, { paddingTop: insets.top + 12 }]}>
         <Header
+          title={TAB_TITLES[activeTab]}
           onMenu={() => navigation.goBack()}
-          onFilter={() => setFilterOpen(true)}
+          filtersExpanded={filtersExpanded}
+          onToggleFilters={() => setFiltersExpanded((v) => !v)}
           Colors={Colors}
           styles={styles}
         />
@@ -269,20 +263,28 @@ export default function EmployeeReportScreen() {
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <Header
+        title={TAB_TITLES[activeTab]}
         onMenu={() => navigation.goBack()}
-        onFilter={() => setFilterOpen(true)}
+        filtersExpanded={filtersExpanded}
+        onToggleFilters={() => setFiltersExpanded((v) => !v)}
         Colors={Colors}
         styles={styles}
       />
 
-      <View style={{ paddingHorizontal: 16 }}>
-        <ReportDateRangeBar
-          preset={periodPreset}
-          from={range.from}
-          to={range.to}
-          onShift={(delta) => setRange((r) => shiftReportRange(periodPreset, r.from, r.to, delta))}
-          onOpenFilter={() => setFilterOpen(true)}
+      <View style={{ paddingHorizontal: 16, paddingTop: 4 }}>
+        <ReportFiltersPanel
+          expanded={filtersExpanded}
+          dateLabel={formatReportRangeLabel(periodPreset, range.from, range.to)}
+          companyLabel={companyLabel}
+          regionLabel={regionLabel}
+          showCompany={showCompanyPicker || !!lockedCompanyId}
+          showRegion={!!effectiveCompanyId}
+          onDatePress={() => setFilterOpen(true)}
+          onCompanyPress={showCompanyPicker ? () => setCompanyPickerOpen(true) : undefined}
+          onRegionPress={effectiveCompanyId ? () => setRegionPickerOpen(true) : undefined}
         />
+
+        <ReportTabBar value={activeTab} onChange={setActiveTab} />
       </View>
 
       {loading && !refreshing && !report ? (
@@ -297,57 +299,6 @@ export default function EmployeeReportScreen() {
           }
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.chips}>
-            {TYPE_OPTIONS.map((opt) => {
-              const active = typeView === opt.key;
-              return (
-                <Pressable
-                  key={opt.key}
-                  style={[styles.chip, active && styles.chipActive]}
-                  onPress={() => setTypeView(opt.key)}
-                >
-                  <Text style={[styles.chipText, active && styles.chipTextActive]}>{opt.label}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          {!effectiveCompanyId && isSystemAdmin(user) ? (
-            <View style={styles.scopeHint}>
-              <Ionicons name="information-circle-outline" size={16} color={Colors.amber} />
-              <Text style={styles.scopeHintText}>
-                Tất cả công ty — Deal KPI (có SĐT) hiện trên carousel; chọn từng công ty để xem tab Deal Hub.
-              </Text>
-            </View>
-          ) : null}
-
-          {(showCompanyPicker || effectiveCompanyId) ? (
-            <View style={styles.filterRow}>
-              {showCompanyPicker ? (
-                <Pressable style={styles.filterBtn} onPress={() => setCompanyPickerOpen(true)}>
-                  <Ionicons name="business-outline" size={14} color={Colors.purple} />
-                  <Text style={styles.filterBtnText} numberOfLines={1}>{companyLabel}</Text>
-                  <Ionicons name="chevron-down" size={14} color={Colors.textFaint} />
-                </Pressable>
-              ) : lockedCompanyId ? (
-                <View style={[styles.filterBtn, styles.filterBtnLocked]}>
-                  <Ionicons name="business-outline" size={14} color={Colors.textMuted} />
-                  <Text style={styles.filterBtnTextMuted} numberOfLines={1}>{companyLabel}</Text>
-                </View>
-              ) : null}
-
-              {effectiveCompanyId ? (
-                <Pressable style={styles.filterBtn} onPress={() => setRegionPickerOpen(true)}>
-                  <Ionicons name="location-outline" size={14} color={Colors.purple} />
-                  <Text style={styles.filterBtnText} numberOfLines={1}>{regionLabel}</Text>
-                  <Ionicons name="chevron-down" size={14} color={Colors.textFaint} />
-                </Pressable>
-              ) : null}
-            </View>
-          ) : null}
-
-          <ReportTabBar value={activeTab} onChange={setActiveTab} />
-
           {error ? (
             <View style={styles.errorBox}>
               <Text style={styles.errorText}>{error}</Text>
@@ -443,13 +394,17 @@ export default function EmployeeReportScreen() {
 }
 
 function Header({
+  title,
   onMenu,
-  onFilter,
+  filtersExpanded,
+  onToggleFilters,
   Colors,
   styles,
 }: {
+  title: string;
   onMenu: () => void;
-  onFilter: () => void;
+  filtersExpanded: boolean;
+  onToggleFilters: () => void;
   Colors: ThemeColors;
   styles: ReturnType<typeof makeStyles>;
 }) {
@@ -458,9 +413,17 @@ function Header({
       <Pressable style={styles.iconBtn} onPress={onMenu}>
         <Ionicons name="menu" size={22} color={Colors.text} />
       </Pressable>
-      <Text style={styles.headerTitle}>Báo cáo CRM</Text>
-      <Pressable style={styles.iconBtn} onPress={onFilter} accessibilityLabel="Bộ lọc">
-        <Ionicons name="funnel-outline" size={21} color={Colors.purple} />
+      <Text style={styles.headerTitle}>{title}</Text>
+      <Pressable
+        style={[styles.iconBtn, filtersExpanded && styles.iconBtnActive]}
+        onPress={onToggleFilters}
+        accessibilityLabel="Bộ lọc"
+      >
+        <Ionicons
+          name={filtersExpanded ? 'funnel' : 'funnel-outline'}
+          size={21}
+          color={filtersExpanded ? Colors.purple : Colors.text}
+        />
       </Pressable>
     </View>
   );
@@ -527,6 +490,9 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     justifyContent: 'center',
     borderRadius: Radii.md,
   },
+  iconBtnActive: {
+    backgroundColor: 'rgba(168,85,247,0.14)',
+  },
   headerTitle: {
     flex: 1,
     textAlign: 'center',
@@ -534,48 +500,7 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     fontSize: 18,
     fontWeight: '800',
   },
-  chips: { flexDirection: 'row', gap: 8, marginBottom: 10 },
-  chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.card,
-  },
-  chipActive: { backgroundColor: 'rgba(168,85,247,0.16)', borderColor: Colors.purple },
-  chipText: { color: Colors.textMuted, fontSize: 12, fontWeight: '700' },
-  chipTextActive: { color: Colors.purple },
-  scopeHint: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    marginBottom: 10,
-    padding: 10,
-    borderRadius: Radii.md,
-    backgroundColor: Colors.amberSoft,
-    borderWidth: 1,
-    borderColor: Colors.amber,
-  },
-  scopeHintText: { flex: 1, color: Colors.textMuted, fontSize: 12, lineHeight: 17 },
-  filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
-  filterBtn: {
-    flex: 1,
-    minWidth: '46%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.card,
-    borderRadius: Radii.lg,
-    paddingHorizontal: 10,
-    height: 40,
-  },
-  filterBtnLocked: { opacity: 0.85 },
-  filterBtnText: { flex: 1, color: Colors.text, fontSize: 12, fontWeight: '700' },
-  filterBtnTextMuted: { flex: 1, color: Colors.textMuted, fontSize: 12, fontWeight: '600' },
-  tabBody: { marginTop: 12 },
+  tabBody: { marginTop: 4 },
   centerBox: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 10 },
   deniedTitle: { color: Colors.text, fontSize: 17, fontWeight: '800' },
   deniedText: { color: Colors.textMuted, fontSize: 13, textAlign: 'center' },

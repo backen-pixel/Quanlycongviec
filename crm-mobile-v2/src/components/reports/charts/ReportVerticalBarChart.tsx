@@ -1,8 +1,8 @@
 import React, { useMemo } from 'react';
-import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { View, useWindowDimensions } from 'react-native';
 import Svg, { G, Line, Rect, Text as SvgText } from 'react-native-svg';
 import { CHART_COLORS, formatAxisShort, niceMax } from '../../../lib/reportChartData';
-import { useColors, type ThemeColors } from '../../../theme';
+import { useColors } from '../../../theme';
 
 type Item = { name: string; value: number; color?: string };
 
@@ -11,6 +11,7 @@ type Props = {
   height?: number;
   valueFormatter?: (v: number) => string;
   barColor?: string;
+  showBarLabels?: boolean;
 };
 
 export default function ReportVerticalBarChart({
@@ -18,12 +19,12 @@ export default function ReportVerticalBarChart({
   height = 220,
   valueFormatter = formatAxisShort,
   barColor = CHART_COLORS.pipeline,
+  showBarLabels = true,
 }: Props) {
   const Colors = useColors();
-  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const { width: screenW } = useWindowDimensions();
   const width = screenW - 32 - 28;
-  const pad = { top: 12, right: 8, bottom: 44, left: 36 };
+  const pad = { top: showBarLabels ? 22 : 12, right: 8, bottom: 44, left: 36 };
   const plotW = Math.max(1, width - pad.left - pad.right);
   const plotH = Math.max(1, height - pad.top - pad.bottom);
 
@@ -57,8 +58,21 @@ export default function ReportVerticalBarChart({
           const h = maxVal > 0 ? (d.value / maxVal) * plotH : 0;
           const x = pad.left + i * (barW + gap);
           const y = pad.top + plotH - h;
+          const label = valueFormatter(d.value);
           return (
             <G key={d.name + i}>
+              {showBarLabels && d.value > 0 ? (
+                <SvgText
+                  x={x + barW / 2}
+                  y={Math.max(pad.top + 10, y - 4)}
+                  fontSize={8}
+                  fontWeight="700"
+                  fill={Colors.text}
+                  textAnchor="middle"
+                >
+                  {label}
+                </SvgText>
+              ) : null}
               <Rect
                 x={x}
                 y={y}
@@ -80,11 +94,6 @@ export default function ReportVerticalBarChart({
           );
         })}
       </Svg>
-      <Text style={styles.hint}>Giá trị pipeline theo khu vực</Text>
     </View>
   );
 }
-
-const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
-  hint: { color: Colors.textFaint, fontSize: 10, textAlign: 'center', marginTop: 2 },
-});
