@@ -153,9 +153,25 @@ function collectFkValues(body, column) {
 
 /** Bảng con → cột FK cần có trên backup trước khi ghi. */
 const REPLICATION_PARENT_DEPS = {
-  facebook_messages: ['contact_id'],
-  crm_leads: ['customer_id', 'stage_id', 'source_id', 'assigned_to'],
+  facebook_contacts: ['lead_id', 'customer_id'],
+  facebook_messages: ['contact_id', 'lead_id', 'customer_id'],
+  crm_leads: ['customer_id', 'stage_id', 'source_id', 'assigned_to', 'lead_owner_id'],
 };
+
+function resolveParentTableForColumn(column) {
+  const map = {
+    contact_id: 'facebook_contacts',
+    customer_id: 'customers',
+    lead_id: 'crm_leads',
+    stage_id: 'crm_pipeline_stages',
+    source_id: 'crm_sources',
+    assigned_to: 'users',
+    lead_owner_id: 'users',
+    company_id: 'companies',
+    created_by: 'users',
+  };
+  return map[column] || null;
+}
 
 /** Cột GENERATED ALWAYS — không gửi khi replicate sang backup. */
 const REPLICATION_STRIP_COLUMNS = {
@@ -327,11 +343,45 @@ async function fetchBackupContactIdByNaturalKey(pageId, psid) {
 }
 
 /** Upsert facebook_contacts theo (page_id, psid) — tránh 409 khi backup có uuid khác primary. */
+async function ensureCrmLeadOnBackup(leadId, depth = 0) {
+  if (!leadId || depth > 6) return;
+  if (await backupRowExists('crm_leads', leadId)) return;
+  const row = await fetchPrimaryRow('crm_leads', leadId);
+  if (!row) return;
+  for (const col of REPLICATION_PARENT_DEPS.crm_leads || []) {
+    const pid = row[col];
+    if (!pid) continue;
+    const parentTable = resolveParentTableForColumn(col);
+    if (parentTable) await ensureRowOnBackup(parentTable, pid, depth + 1);
+  }
+  await postRowToBackup('crm_leads', row, depth);
+}
+
+async function ensureFacebookContactParents(row, depth = 0) {
+  if (!row || depth > 5) return row;
+  let next = row;
+  if (row.lead_id) {
+    await ensureCrmLeadOnBackup(row.lead_id, depth);
+    if (!(await backupRowExists('crm_leads', row.lead_id))) {
+      next = { ...next, lead_id: null };
+    }
+  }
+  if (row.customer_id) {
+    await ensureRowOnBackup('customers', row.customer_id, depth);
+    if (!(await backupRowExists('customers', row.customer_id))) {
+      next = { ...next, customer_id: null };
+    }
+  }
+  return next;
+}
+
 async function upsertFacebookContactOnBackup(row, depth = 0) {
   const backupBase = trimBase(config.supabaseBackupUrl);
   const pageId = row?.page_id;
   const psid = row?.psid;
   if (!pageId || !psid) return null;
+
+  const rowToWrite = await ensureFacebookContactParents(row, depth);
 
   const upsertRes = await undiciFetch(
     `${backupBase}/rest/v1/facebook_contacts?on_conflict=page_id,psid`,
@@ -342,7 +392,7 @@ async function upsertFacebookContactOnBackup(row, depth = 0) {
         'content-type': 'application/json',
         prefer: 'resolution=merge-duplicates,return=representation',
       },
-      body: JSON.stringify(row),
+      body: JSON.stringify(rowToWrite),
       dispatcher: supabaseDispatcher,
     },
   );
@@ -355,13 +405,13 @@ async function upsertFacebookContactOnBackup(row, depth = 0) {
 
   const text = await upsertRes.text().catch(() => '');
   const fk = parseFkMissingFromError(text);
-  if (fk && depth < 4) {
+  if (fk && depth < 6) {
     await ensureRowOnBackup(fk.parentTable, fk.parentId, depth + 1);
     return upsertFacebookContactOnBackup(row, depth + 1);
   }
 
   if (upsertRes.status === 409 || /23505|duplicate key/i.test(text)) {
-    const { id, created_at, ...patch } = row;
+    const { id, created_at, ...patch } = rowToWrite;
     const patchRes = await undiciFetch(
       `${backupBase}/rest/v1/facebook_contacts?page_id=eq.${encodeURIComponent(pageId)}&psid=eq.${encodeURIComponent(psid)}`,
       {
@@ -381,6 +431,11 @@ async function upsertFacebookContactOnBackup(row, depth = 0) {
       return patchedRow?.id || (await fetchBackupContactIdByNaturalKey(pageId, psid));
     }
     const patchText = await patchRes.text().catch(() => '');
+    const patchFk = parseFkMissingFromError(patchText);
+    if (patchFk && depth < 6) {
+      await ensureRowOnBackup(patchFk.parentTable, patchFk.parentId, depth + 1);
+      return upsertFacebookContactOnBackup(row, depth + 1);
+    }
     throw new Error(`backup upsert facebook_contacts → ${patchRes.status} ${patchText.slice(0, 200)}`);
   }
 
@@ -444,9 +499,13 @@ async function postRowToBackup(table, row, depth = 0) {
 }
 
 async function ensureRowOnBackup(table, id, depth = 0) {
-  if (!table || !id || depth > 4) return;
+  if (!table || !id || depth > 6) return;
   if (table === 'facebook_contacts') {
     await ensureFacebookContactOnBackup(id, depth);
+    return;
+  }
+  if (table === 'crm_leads') {
+    await ensureCrmLeadOnBackup(id, depth);
     return;
   }
   if (await backupRowExists(table, id)) return;
@@ -473,12 +532,9 @@ async function ensureReplicationParents(job) {
   for (const column of deps) {
     const ids = collectFkValues(job.body, column);
     for (const id of ids) {
-      let resolvedTable = null;
-      if (table === 'facebook_messages' && column === 'contact_id') resolvedTable = 'facebook_contacts';
-      else if (column === 'customer_id') resolvedTable = 'customers';
-      else if (column === 'stage_id') resolvedTable = 'crm_pipeline_stages';
-      else if (column === 'source_id') resolvedTable = 'crm_sources';
-      else if (column === 'assigned_to') resolvedTable = 'users';
+      const resolvedTable = (table === 'facebook_messages' && column === 'contact_id')
+        ? 'facebook_contacts'
+        : resolveParentTableForColumn(column);
       if (resolvedTable) await ensureRowOnBackup(resolvedTable, id);
     }
   }
