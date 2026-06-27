@@ -159,6 +159,36 @@ function classifyPgError(err) {
   return { error: 'connect_failed', message: msg.slice(0, 200) || 'Không kết nối được PostgreSQL' };
 }
 
+function isPgCircuitBreakerError(err) {
+  const msg = String(err?.message || err || '');
+  return err?.code === 'XX000' || /ECIRCUITBREAKER|circuit breaker|too many authentication failures/i.test(msg);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => { setTimeout(resolve, ms); });
+}
+
+/** Retry PG connect khi Supabase ECIRCUITBREAKER (quá nhiều lần auth fail trước đó). */
+async function withPgCircuitBreakerRetry(fn, { label = 'PG', onWait } = {}) {
+  const waits = [0, 45_000, 90_000, 120_000];
+  let lastErr;
+  for (let i = 0; i < waits.length; i += 1) {
+    if (waits[i] > 0) {
+      const sec = Math.round(waits[i] / 1000);
+      onWait?.(`${label}: ECIRCUITBREAKER — đợi ${sec}s rồi thử lại (${i + 1}/${waits.length})…`);
+      await sleep(waits[i]);
+    }
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      if (!isPgCircuitBreakerError(e)) throw e;
+    }
+  }
+  const classified = classifyPgError(lastErr);
+  throw new Error(classified.message || lastErr?.message || 'ECIRCUITBREAKER');
+}
+
 module.exports = {
   resolvePgProbeUrl,
   resolvePrimaryDbUrl,
@@ -176,4 +206,7 @@ module.exports = {
   ipv4Lookup,
   buildPgPoolConfig,
   classifyPgError,
+  isPgCircuitBreakerError,
+  sleep,
+  withPgCircuitBreakerRetry,
 };

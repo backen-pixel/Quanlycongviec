@@ -108,15 +108,20 @@ function runPgRestore(connectionUrl, dumpFile) {
 
 async function testPgConnect(label, connectionUrl) {
   const { Client } = require('pg');
-  const { buildPgPoolConfig } = require('../src/config/pgConnection');
-  const client = new Client(buildPgPoolConfig(connectionUrl));
-  await client.connect();
-  try {
-    const { rows } = await client.query('SELECT current_user AS u');
-    console.log(`[clone] ${label}: kết nối OK (${rows[0]?.u})`);
-  } finally {
-    await client.end().catch(() => {});
-  }
+  const { buildPgPoolConfig, withPgCircuitBreakerRetry } = require('../src/config/pgConnection');
+  await withPgCircuitBreakerRetry(async () => {
+    const client = new Client(buildPgPoolConfig(connectionUrl));
+    await client.connect();
+    try {
+      const { rows } = await client.query('SELECT current_user AS u');
+      console.log(`[clone] ${label}: kết nối OK (${rows[0]?.u})`);
+    } finally {
+      await client.end().catch(() => {});
+    }
+  }, {
+    label,
+    onWait: (msg) => console.log(`[clone] ${msg}`),
+  });
 }
 
 async function verifyCounts(primaryUrl, backupUrl) {
