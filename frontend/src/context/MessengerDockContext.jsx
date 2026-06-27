@@ -4,7 +4,6 @@ import { messengerThreadKey, messengerUnreadKey, messengerUnreadGroupKey } from 
 import { alertIncomingNotification } from '../lib/notificationAlert';
 import { isNotificationTypeEnabled } from '../lib/notificationPrefsCache';
 import api from '../lib/api';
-import MessengerDock from '../components/MessengerDock';
 
 function showBrowserChatNotification({ title, body, tag }) {
   if (typeof window === 'undefined' || typeof Notification === 'undefined') return;
@@ -792,7 +791,6 @@ export function MessengerDockProvider({ children }) {
   return (
     <MessengerDockContext.Provider value={value}>
       {children}
-      <MessengerDock />
     </MessengerDockContext.Provider>
   );
 }
