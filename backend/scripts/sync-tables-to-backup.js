@@ -34,8 +34,13 @@ function findPgBin(name) {
   return name;
 }
 
-function run(cmd, args, label) {
-  const r = spawnSync(cmd, args, { stdio: 'inherit', shell: false });
+function run(cmd, args, label, connectionUrl) {
+  const { pgCliEnv } = require('../src/config/pgConnection');
+  const r = spawnSync(cmd, args, {
+    stdio: 'inherit',
+    shell: false,
+    env: connectionUrl ? pgCliEnv(connectionUrl) : process.env,
+  });
   if (r.status !== 0) throw new Error(`${label} failed (exit ${r.status})`);
 }
 
@@ -44,38 +49,50 @@ function quoteIdent(name) {
 }
 
 function syncOneTable(primaryUrl, backupUrl, table) {
+  const { parsePgConnectionUrl } = require('../src/config/pgConnection');
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const dumpFile = path.join(OUT_DIR, `table_${table}_${Date.now()}.dump`);
   const pgDump = findPgBin('pg_dump');
   const psql = findPgBin('psql');
   const pgRestore = findPgBin('pg_restore');
+  const primary = parsePgConnectionUrl(primaryUrl);
+  const backup = parsePgConnectionUrl(backupUrl);
 
   console.log(`[sync-table] ${table}: dump data-only từ primary…`);
   run(pgDump, [
-    primaryUrl,
+    '-h', primary.host,
+    '-p', primary.port,
+    '-U', primary.user,
+    '-d', primary.database,
     '-t', `public.${table}`,
     '--data-only',
     '--no-owner',
     '--no-acl',
     '-F', 'c',
     '-f', dumpFile,
-  ], `pg_dump ${table}`);
+  ], `pg_dump ${table}`, primaryUrl);
 
   console.log(`[sync-table] ${table}: xóa dữ liệu cũ trên backup…`);
   run(psql, [
-    backupUrl,
+    '-h', backup.host,
+    '-p', backup.port,
+    '-U', backup.user,
+    '-d', backup.database,
     '-c', `TRUNCATE TABLE public.${quoteIdent(table)} RESTART IDENTITY CASCADE`,
-  ], `truncate ${table}`);
+  ], `truncate ${table}`, backupUrl);
 
   console.log(`[sync-table] ${table}: restore data vào backup…`);
   run(pgRestore, [
-    '-d', backupUrl,
+    '-h', backup.host,
+    '-p', backup.port,
+    '-U', backup.user,
+    '-d', backup.database,
     '--data-only',
     '--no-owner',
     '--no-acl',
     '--single-transaction',
     dumpFile,
-  ], `pg_restore ${table}`);
+  ], `pg_restore ${table}`, backupUrl);
 
   try { fs.unlinkSync(dumpFile); } catch { /* ignore */ }
   console.log(`[sync-table] ${table}: xong`);
