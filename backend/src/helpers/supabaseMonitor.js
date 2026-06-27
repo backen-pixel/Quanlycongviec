@@ -10,6 +10,7 @@ const {
   resolveBackupDbUrl,
   buildPgPoolConfig,
   classifyPgError,
+  listPgProbeCandidates,
 } = require('../config/pgConnection');
 
 function trimBase(url) {
@@ -183,11 +184,36 @@ async function probeStorage(base, key, dbUrl) {
   }
 }
 
-async function probeDb(connectionString) {
-  if (!connectionString) {
+async function probeDbViaRest(base, key) {
+  if (!base || !key) return null;
+  const start = Date.now();
+  try {
+    const { createClient } = require('@supabase/supabase-js');
+    const client = createClient(trimBase(base), key, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const { count, error } = await client.from('users').select('id', { count: 'exact', head: true });
+    if (error) throw error;
+    return {
+      ok: true,
+      configured: true,
+      mode: 'rest_fallback',
+      latency_ms: Date.now() - start,
+      note: 'PG pool lỗi — kiểm tra qua REST (service role)',
+      user_count: Number(count || 0),
+    };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+async function probeDb(connectionString, restProbe = null) {
+  if (!connectionString && !restProbe?.url) {
     return { ok: false, configured: false, error: 'not_configured' };
   }
   if (process.env.PG_POOL_DISABLED === '1') {
+    const rest = await probeDbViaRest(restProbe?.url, restProbe?.key);
+    if (rest?.ok) return { ...rest, skipped: true };
     return {
       ok: true,
       configured: false,
@@ -197,43 +223,65 @@ async function probeDb(connectionString) {
       note: 'PG_POOL_DISABLED — dùng Supabase REST',
     };
   }
+
+  const candidates = listPgProbeCandidates(
+    restProbe?.directUrl || '',
+    restProbe?.poolUrl || connectionString,
+  );
   const start = Date.now();
-  const pool = new Pool(buildPgPoolConfig(connectionString, {
-    max: 1,
-    connectionTimeoutMillis: 5000,
-    query_timeout: 8000,
-    statement_timeout: 8000,
-  }));
-  try {
-    const { rows } = await pool.query(`
-      SELECT
-        current_database() AS db,
-        version() AS version,
-        (SELECT COUNT(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE') AS table_count,
-        pg_database_size(current_database()) AS db_size_bytes
-    `);
-    const row = rows[0] || {};
-    return {
-      ok: true,
-      configured: true,
-      latency_ms: Date.now() - start,
-      database: row.db,
-      table_count: row.table_count,
-      db_size_bytes: Number(row.db_size_bytes || 0),
-      postgres_version: String(row.version || '').split(' ').slice(0, 2).join(' '),
-    };
-  } catch (e) {
-    const classified = classifyPgError(e);
-    return {
-      ok: false,
-      configured: true,
-      latency_ms: Date.now() - start,
-      error: classified.error,
-      error_detail: classified.message,
-    };
-  } finally {
-    await pool.end().catch(() => {});
+  let lastErr = null;
+
+  for (const url of candidates) {
+    const pool = new Pool(buildPgPoolConfig(url, {
+      max: 1,
+      connectionTimeoutMillis: 5000,
+      query_timeout: 8000,
+      statement_timeout: 8000,
+    }));
+    try {
+      const { rows } = await pool.query(`
+        SELECT
+          current_database() AS db,
+          version() AS version,
+          (SELECT COUNT(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE') AS table_count,
+          pg_database_size(current_database()) AS db_size_bytes
+      `);
+      const row = rows[0] || {};
+      return {
+        ok: true,
+        configured: true,
+        latency_ms: Date.now() - start,
+        database: row.db,
+        table_count: row.table_count,
+        db_size_bytes: Number(row.db_size_bytes || 0),
+        postgres_version: String(row.version || '').split(' ').slice(0, 2).join(' '),
+        connection_mode: url.includes(':6543') ? 'pooler_tx' : url.includes('pooler') ? 'pooler_session' : 'direct',
+      };
+    } catch (e) {
+      lastErr = e;
+    } finally {
+      await pool.end().catch(() => {});
+    }
   }
+
+  const rest = await probeDbViaRest(restProbe?.url, restProbe?.key);
+  if (rest?.ok) {
+    const classified = classifyPgError(lastErr);
+    return {
+      ...rest,
+      pg_error: classified.error,
+      pg_error_detail: classified.message,
+    };
+  }
+
+  const classified = classifyPgError(lastErr);
+  return {
+    ok: false,
+    configured: true,
+    latency_ms: Date.now() - start,
+    error: classified.error,
+    error_detail: classified.message,
+  };
 }
 
 async function probeInstance({ label, url, serviceKey, dbUrl }) {
@@ -256,7 +304,16 @@ async function probeInstance({ label, url, serviceKey, dbUrl }) {
     probeAuthHealth(base, serviceKey),
     probeRest(base, serviceKey),
     probeStorage(base, serviceKey, dbUrl),
-    probeDb(dbUrl),
+    probeDb(dbUrl, {
+      url: base,
+      key: serviceKey,
+      poolUrl: label === 'primary'
+        ? (process.env.SUPABASE_DB_URL || process.env.DATABASE_URL)
+        : process.env.SUPABASE_BACKUP_DB_URL,
+      directUrl: label === 'primary'
+        ? process.env.SUPABASE_DB_DIRECT_URL
+        : process.env.SUPABASE_BACKUP_DB_DIRECT_URL,
+    }),
   ]);
 
   const checks = { auth, rest, storage, db };

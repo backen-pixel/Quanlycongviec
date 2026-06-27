@@ -249,45 +249,113 @@ async function countRows(pool, table) {
   return Number(rows[0]?.n || 0);
 }
 
-async function verifyBackup() {
+function getBackupRestClient() {
+  const { createClient } = require('@supabase/supabase-js');
+  const config = require('../config');
+  return createClient(config.supabaseBackupUrl, config.supabaseBackupServiceKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
+
+async function countRowsRest(client, table) {
+  const { count, error } = await client.from(table).select('id', { count: 'exact', head: true });
+  if (error) throw error;
+  return Number(count || 0);
+}
+
+async function verifyBackupViaPg() {
   const { primary, backup } = dbUrls();
-  if (!primary || !backup) {
-    throw new Error('Thiếu SUPABASE_DB_* hoặc SUPABASE_BACKUP_DB_* trong env');
-  }
   const pPool = new Pool(buildPgPoolConfig(primary));
   const bPool = new Pool(buildPgPoolConfig(backup));
   try {
+    await Promise.all([pPool.query('SELECT 1'), bPool.query('SELECT 1')]);
     const rows = [];
     for (const table of VERIFY_TABLES) {
-      let primaryCount = null;
-      let backupCount = null;
-      let error = null;
-      try {
-        [primaryCount, backupCount] = await Promise.all([
-          countRows(pPool, table),
-          countRows(bPool, table),
-        ]);
-      } catch (e) {
-        error = e.message;
-      }
+      const [primaryCount, backupCount] = await Promise.all([
+        countRows(pPool, table),
+        countRows(bPool, table),
+      ]);
       rows.push({
         table,
         primary: primaryCount,
         backup: backupCount,
-        drift: primaryCount != null && backupCount != null ? primaryCount - backupCount : null,
-        ok: primaryCount != null && backupCount != null && primaryCount === backupCount,
-        error,
+        drift: primaryCount - backupCount,
+        ok: primaryCount === backupCount,
+        error: null,
       });
     }
-    return {
-      checked_at: new Date().toISOString(),
-      rows,
-      all_ok: rows.every((r) => r.ok),
-    };
+    return rows;
   } finally {
     await pPool.end().catch(() => {});
     await bPool.end().catch(() => {});
   }
+}
+
+async function verifyBackupViaRest() {
+  const { supabase } = require('../config/supabase');
+  const backupClient = getBackupRestClient();
+  const rows = [];
+  for (const table of VERIFY_TABLES) {
+    const [primaryCount, backupCount] = await Promise.all([
+      countRowsRest(supabase, table),
+      countRowsRest(backupClient, table),
+    ]);
+    rows.push({
+      table,
+      primary: primaryCount,
+      backup: backupCount,
+      drift: primaryCount - backupCount,
+      ok: primaryCount === backupCount,
+      error: null,
+    });
+  }
+  return rows;
+}
+
+async function verifyBackup() {
+  const { primary, backup } = dbUrls();
+  if ((!primary && !process.env.SUPABASE_URL) || (!backup && !process.env.SUPABASE_BACKUP_URL)) {
+    throw new Error('Thiếu SUPABASE_DB_* hoặc SUPABASE_BACKUP_DB_* trong env');
+  }
+  let rows = [];
+  let source = 'postgres';
+  let pgError = null;
+  try {
+    rows = await verifyBackupViaPg();
+  } catch (e) {
+    pgError = e.message;
+    try {
+      rows = await verifyBackupViaRest();
+      source = 'rest';
+    } catch (restErr) {
+      const errRows = [];
+      for (const table of VERIFY_TABLES) {
+        errRows.push({
+          table,
+          primary: null,
+          backup: null,
+          drift: null,
+          ok: false,
+          error: pgError || e.message,
+        });
+      }
+      return {
+        checked_at: new Date().toISOString(),
+        rows: errRows,
+        all_ok: false,
+        source: 'postgres',
+        pg_error: pgError || e.message,
+        rest_error: restErr.message,
+      };
+    }
+  }
+  return {
+    checked_at: new Date().toISOString(),
+    rows,
+    all_ok: rows.every((r) => r.ok),
+    source,
+    pg_error: source === 'rest' ? pgError : null,
+  };
 }
 
 function runScript(scriptName, args = []) {
