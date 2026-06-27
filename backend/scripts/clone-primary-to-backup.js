@@ -286,6 +286,13 @@ async function main() {
     resolveBackupDbUrl('probe') || backupDumpUrl,
   );
 
+  console.log('[clone] Fix grants service_role…');
+  const { applyBackupSchemaGrants } = require('../src/helpers/backupSchemaGrants');
+  await applyBackupSchemaGrants({
+    force: true,
+    onLog: (m) => console.log(`[clone] ${m}`),
+  });
+
   console.log('[clone] Hoàn tất.');
 }
 

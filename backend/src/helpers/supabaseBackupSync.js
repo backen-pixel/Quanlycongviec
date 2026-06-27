@@ -491,6 +491,13 @@ async function runBackupSync({
     }
 
     if (includeDb) {
+      appendLog('Cấp quyền REST service_role trên backup (nếu cần)…');
+      try {
+        const { applyBackupSchemaGrants } = require('./backupSchemaGrants');
+        await applyBackupSchemaGrants({ onLog: appendLog, force: true });
+      } catch (e) {
+        appendLog(`Cảnh báo grants: ${e.message} — vẫn tiếp tục đồng bộ`);
+      }
       appendLog('Đồng bộ DB incremental (log thay đổi + bảng lệch, không clone full)…');
       const { runIncrementalDbSyncPrimaryToBackup } = require('./supabaseIncrementalDbSync');
       const inc = await runIncrementalDbSyncPrimaryToBackup({ onLog: appendLog });
