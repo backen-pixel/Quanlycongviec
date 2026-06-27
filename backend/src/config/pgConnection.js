@@ -20,7 +20,7 @@ function backupProjectRef() {
     || '';
 }
 
-/** Pooler Supavisor bắt buộc user postgres.{project_ref} — không phải postgres. */
+/** Pooler Supavisor bắt buộc user postgres.{project_ref} — luôn ghi đè trên pooler. */
 function normalizeSupabasePoolerUrl(connectionUrl, projectRef = '') {
   if (!connectionUrl) return '';
   try {
@@ -28,14 +28,23 @@ function normalizeSupabasePoolerUrl(connectionUrl, projectRef = '') {
     if (!u.hostname.includes('pooler.supabase.com')) return connectionUrl;
     let ref = String(projectRef || '').trim();
     if (!ref && u.username.startsWith('postgres.')) {
-      ref = u.username.slice('postgres.'.length);
+      ref = u.username.slice('postgres.'.length).split('@')[0].split('.')[0];
     }
-    if (ref && u.username === 'postgres') {
+    if (ref) {
       u.username = `postgres.${ref}`;
     }
     return u.toString();
   } catch {
     return connectionUrl;
+  }
+}
+
+function describePgTarget(connectionUrl) {
+  try {
+    const { user, host, port, database } = parsePgConnectionUrl(connectionUrl);
+    return `${user}@${host}:${port}/${database}`;
+  } catch {
+    return '(invalid url)';
   }
 }
 
@@ -64,10 +73,10 @@ function resolvePgProbeUrl(directUrl, poolUrl) {
 
 function resolvePrimaryDbUrl(mode = 'probe') {
   const pool = normalizeSupabasePoolerUrl(
-    process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || '',
+    process.env.SUPABASE_DB_URL || '',
     primaryProjectRef(),
-  );
-  const direct = process.env.SUPABASE_DB_DIRECT_URL || process.env.DATABASE_URL || '';
+  ) || normalizeSupabasePoolerUrl(process.env.DATABASE_URL || '', primaryProjectRef());
+  const direct = process.env.SUPABASE_DB_DIRECT_URL || '';
   if (mode === 'session') return direct || pool;
   return resolvePgProbeUrl(direct, pool);
 }
@@ -164,6 +173,11 @@ function isPgCircuitBreakerError(err) {
   return err?.code === 'XX000' || /ECIRCUITBREAKER|circuit breaker|too many authentication failures/i.test(msg);
 }
 
+function isPgPasswordAuthError(err) {
+  const msg = String(err?.message || err || '');
+  return err?.code === '28P01' || /password authentication failed/i.test(msg);
+}
+
 function sleep(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
 }
@@ -207,6 +221,8 @@ module.exports = {
   buildPgPoolConfig,
   classifyPgError,
   isPgCircuitBreakerError,
+  isPgPasswordAuthError,
+  describePgTarget,
   sleep,
   withPgCircuitBreakerRetry,
 };

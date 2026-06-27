@@ -442,6 +442,15 @@ async function runBackupSync({
       const inc = await runIncrementalDbSyncPrimaryToBackup({ onLog: appendLog });
       if (inc.ok) {
         appendLog(`DB OK (${inc.mode})`);
+      } else if (inc.auth_failed) {
+        if (inc.ok) {
+          appendLog('Replication queue OK — bỏ qua drift/clone (sửa SUPABASE_DB_* trên Render rồi chạy lại để verify).');
+        } else {
+          throw new Error(
+            inc.error
+              || 'Sai mật khẩu DB pooler — Supabase Dashboard → Database → reset password, cập nhật 4 URL trên Render.',
+          );
+        }
       } else if (inc.circuit_breaker) {
         throw new Error(
           inc.error

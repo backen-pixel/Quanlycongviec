@@ -152,7 +152,7 @@ async function runIncrementalDbSyncPrimaryToBackup({ onLog } = {}) {
   const replication = await drainReplicationLog(log);
 
   let state = await getDriftState(log).catch((e) => {
-    const { isPgCircuitBreakerError } = require('../config/pgConnection');
+    const { isPgCircuitBreakerError, isPgPasswordAuthError } = require('../config/pgConnection');
     log(`Không kiểm tra drift DB: ${e.message}`);
     return {
       verify: null,
@@ -160,8 +160,26 @@ async function runIncrementalDbSyncPrimaryToBackup({ onLog } = {}) {
       all_ok: false,
       error: e.message,
       circuit_breaker: isPgCircuitBreakerError(e),
+      auth_failed: isPgPasswordAuthError(e),
     };
   });
+
+  if (state.auth_failed) {
+    const repOk = (replication.remaining === 0 || replication.remaining == null);
+    const { primaryProjectRef, backupProjectRef } = require('../config/pgConnection');
+    log(
+      `Sai mật khẩu/user DB pooler — Render cần user postgres.${primaryProjectRef()} và postgres.${backupProjectRef()}, mật khẩu khớp Supabase Dashboard.`,
+    );
+    return {
+      ok: repOk,
+      mode: repOk ? 'log_only_auth_skip' : 'auth_failed',
+      verify: state.verify,
+      replication,
+      auth_failed: true,
+      full_clone_required: false,
+      error: state.error,
+    };
+  }
 
   if (state.circuit_breaker) {
     const repOk = (replication.remaining === 0 || replication.remaining == null);
@@ -193,7 +211,8 @@ async function runIncrementalDbSyncPrimaryToBackup({ onLog } = {}) {
       mode: 'verify_failed',
       verify: state.verify,
       replication,
-      full_clone_required: true,
+      full_clone_required: !state.auth_failed,
+      auth_failed: !!state.auth_failed,
       error: state.error,
     };
   }
