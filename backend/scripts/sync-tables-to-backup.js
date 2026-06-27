@@ -169,6 +169,16 @@ async function syncOneTable(primaryUrl, backupUrl, table) {
     '-c', `SET session_replication_role = replica; DELETE FROM public.${quoteIdent(table)}; SET session_replication_role = DEFAULT;`,
   ], `clear ${table}`, backupUrl, 'restore');
 
+  console.log(`[sync-table] ${table}: tắt trigger user trước restore…`);
+  run(psql, [
+    '-h', backup.host,
+    '-p', backup.port,
+    '-U', backup.user,
+    '-d', backup.database,
+    '-v', 'ON_ERROR_STOP=1',
+    '-c', `ALTER TABLE public.${quoteIdent(table)} DISABLE TRIGGER USER;`,
+  ], `disable triggers ${table}`, backupUrl, 'restore');
+
   console.log(`[sync-table] ${table}: restore data vào backup (tắt trigger/FK tạm)…`);
   run(pgRestore, [
     '-h', backup.host,
@@ -176,11 +186,19 @@ async function syncOneTable(primaryUrl, backupUrl, table) {
     '-U', backup.user,
     '-d', backup.database,
     '--data-only',
-    '--disable-triggers',
     '--no-owner',
     '--no-acl',
     dumpFile,
   ], `pg_restore ${table}`, backupUrl, 'restore');
+
+  run(psql, [
+    '-h', backup.host,
+    '-p', backup.port,
+    '-U', backup.user,
+    '-d', backup.database,
+    '-v', 'ON_ERROR_STOP=1',
+    '-c', `ALTER TABLE public.${quoteIdent(table)} ENABLE TRIGGER USER;`,
+  ], `enable triggers ${table}`, backupUrl, 'restore');
 
   try { fs.unlinkSync(dumpFile); } catch { /* ignore */ }
   console.log(`[sync-table] ${table}: xong`);
