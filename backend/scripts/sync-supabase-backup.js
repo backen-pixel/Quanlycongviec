@@ -19,9 +19,18 @@ const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const {
+  resolvePrimaryDbDumpUrl,
+  resolveBackupDbDumpUrl,
+  resolvePrimaryDbUrl,
+  resolveBackupDbUrl,
+  buildPgPoolConfig,
+} = require('../src/config/pgConnection');
 
-const PRIMARY_URL = process.env.SUPABASE_DB_DIRECT_URL || process.env.SUPABASE_DB_URL || process.env.DATABASE_URL;
-const BACKUP_URL = process.env.SUPABASE_BACKUP_DB_DIRECT_URL || process.env.SUPABASE_BACKUP_DB_URL;
+const PRIMARY_URL = resolvePrimaryDbDumpUrl();
+const BACKUP_URL = resolveBackupDbDumpUrl();
+const VERIFY_PRIMARY_URL = resolvePrimaryDbUrl('probe');
+const VERIFY_BACKUP_URL = resolveBackupDbUrl('probe');
 
 const VERIFY_TABLES = ['users', 'crm_leads', 'projects', 'companies'];
 
@@ -41,8 +50,8 @@ async function verify() {
   if (!PRIMARY_URL || !BACKUP_URL) {
     throw new Error('Thiếu SUPABASE_DB_* và SUPABASE_BACKUP_DB_* trong .env');
   }
-  const primary = new Pool({ connectionString: PRIMARY_URL, ssl: { rejectUnauthorized: false } });
-  const backup = new Pool({ connectionString: BACKUP_URL, ssl: { rejectUnauthorized: false } });
+  const primary = new Pool(buildPgPoolConfig(VERIFY_PRIMARY_URL));
+  const backup = new Pool(buildPgPoolConfig(VERIFY_BACKUP_URL));
   try {
     console.log('Bảng          Primary    Backup     Drift');
     console.log('─────────────────────────────────────────');

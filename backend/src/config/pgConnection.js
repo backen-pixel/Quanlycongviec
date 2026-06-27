@@ -24,6 +24,46 @@ function resolveBackupDbUrl(mode = 'probe') {
   return resolvePgProbeUrl(direct, pool);
 }
 
+/** Session pooler (5432) — dùng cho pg_dump trên Render (không có IPv6 tới db.*). */
+function toSessionPoolerUrl(poolUrl) {
+  if (!poolUrl || !poolUrl.includes('pooler.supabase.com:6543')) return '';
+  return poolUrl.replace('pooler.supabase.com:6543', 'pooler.supabase.com:5432');
+}
+
+function resolvePrimaryDbDumpUrl() {
+  if (process.env.PG_DUMP_USE_DIRECT === '1') {
+    return process.env.SUPABASE_DB_DIRECT_URL || process.env.DATABASE_URL || '';
+  }
+  return toSessionPoolerUrl(process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || '')
+    || process.env.SUPABASE_DB_DIRECT_URL
+    || process.env.SUPABASE_DB_URL
+    || process.env.DATABASE_URL
+    || '';
+}
+
+function resolveBackupDbDumpUrl() {
+  if (process.env.PG_DUMP_USE_DIRECT === '1') {
+    return process.env.SUPABASE_BACKUP_DB_DIRECT_URL || '';
+  }
+  return toSessionPoolerUrl(process.env.SUPABASE_BACKUP_DB_URL || '')
+    || process.env.SUPABASE_BACKUP_DB_DIRECT_URL
+    || process.env.SUPABASE_BACKUP_DB_URL
+    || '';
+}
+
+/** Thử lần lượt pool 6543 → session pooler 5432 → direct (nếu bật). */
+function listPgProbeCandidates(directUrl, poolUrl) {
+  const urls = [];
+  const preferred = resolvePgProbeUrl(directUrl, poolUrl);
+  if (preferred) urls.push(preferred);
+  const sessionPool = toSessionPoolerUrl(poolUrl);
+  if (sessionPool && !urls.includes(sessionPool)) urls.push(sessionPool);
+  if (process.env.PG_MONITOR_USE_DIRECT === '1' && directUrl && !urls.includes(directUrl)) {
+    urls.push(directUrl);
+  }
+  return urls;
+}
+
 /** Ép IPv4 — tránh ENETUNREACH khi hostname resolve ra IPv6 trên server không có IPv6. */
 function ipv4Lookup(hostname, options, callback) {
   dns.lookup(hostname, { ...(options || {}), family: 4 }, callback);
@@ -60,6 +100,10 @@ module.exports = {
   resolvePgProbeUrl,
   resolvePrimaryDbUrl,
   resolveBackupDbUrl,
+  resolvePrimaryDbDumpUrl,
+  resolveBackupDbDumpUrl,
+  toSessionPoolerUrl,
+  listPgProbeCandidates,
   ipv4Lookup,
   buildPgPoolConfig,
   classifyPgError,
