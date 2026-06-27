@@ -121,30 +121,44 @@ async function listExtensions(connectionUrl) {
 
 function prepareBackupSchemaForRestore(connectionUrl, extensions) {
   const extInPublic = (extensions || []).filter((e) => e.schema === 'public');
-  const forcePublic = ['pg_trgm', 'pgcrypto', 'uuid-ossp'];
   const lines = [
     'DROP SCHEMA IF EXISTS public CASCADE;',
     'CREATE SCHEMA public;',
     'GRANT ALL ON SCHEMA public TO postgres;',
     'GRANT ALL ON SCHEMA public TO public;',
     'GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;',
+    'CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;',
   ];
-  for (const extname of forcePublic) {
-    lines.push(`CREATE EXTENSION IF NOT EXISTS "${extname}" WITH SCHEMA public;`);
-  }
   for (const { extname } of extInPublic) {
-    if (!forcePublic.includes(extname)) {
+    if (extname !== 'pg_trgm') {
       lines.push(`CREATE EXTENSION IF NOT EXISTS "${extname}" WITH SCHEMA public;`);
     }
   }
-  console.log('[clone] Chuẩn bị schema public + extension trên backup…');
+  console.log('[clone] Chuẩn bị schema public + pg_trgm trên backup…');
   runPsqlSql(connectionUrl, lines.join('\n'), 'prepare backup schema');
 }
 
-function runPgRestore(connectionUrl, dumpFile) {
+async function countPublicTables(connectionUrl) {
+  const { Client } = require('pg');
+  const { buildPgPoolConfig } = require('../src/config/pgConnection');
+  const client = new Client(buildPgPoolConfig(connectionUrl));
+  await client.connect();
+  try {
+    const { rows } = await client.query(`
+      SELECT COUNT(*)::int AS n
+      FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+    `);
+    return Number(rows[0]?.n || 0);
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
+async function runPgRestore(connectionUrl, dumpFile) {
   const { parsePgConnectionUrl, pgRestoreEnv } = require('../src/config/pgConnection');
   const { host, port, user, database } = parsePgConnectionUrl(connectionUrl);
-  console.log('[clone] pg_restore →', `${user}@${host}:${port}/${database}`, '(tắt trigger tạm; không single-transaction)');
+  console.log('[clone] pg_restore →', `${user}@${host}:${port}/${database}`, '(tắt trigger tạm)');
   const pgRestore = findPgBin('pg_restore');
   const args = [
     '-h', host,
@@ -157,9 +171,26 @@ function runPgRestore(connectionUrl, dumpFile) {
   ];
   const r = spawnSync(pgRestore, args, {
     env: pgRestoreEnv(connectionUrl),
-    stdio: 'inherit',
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
-  if (r.status !== 0) throw new Error(`pg_restore failed (exit ${r.status})`);
+  if (r.stdout) process.stdout.write(r.stdout);
+  if (r.stderr) process.stderr.write(r.stderr);
+
+  const tableCount = await countPublicTables(connectionUrl);
+  console.log(`[clone] Backup có ${tableCount} bảng public sau pg_restore`);
+  const minTables = Math.max(50, parseInt(process.env.SUPABASE_CLONE_MIN_TABLES || '200', 10));
+  if (tableCount < minTables) {
+    throw new Error(`pg_restore không đủ bảng trên backup (${tableCount} < ${minTables}) — exit ${r.status}`);
+  }
+  if (r.status !== 0) {
+    const out = `${r.stdout || ''}\n${r.stderr || ''}`;
+    if (/schema "public" already exists/i.test(out)) {
+      console.log('[clone] pg_restore exit', r.status, '(CREATE SCHEMA public trùng — bỏ qua, verify OK)');
+      return;
+    }
+    throw new Error(`pg_restore failed (exit ${r.status})`);
+  }
 }
 
 async function testPgConnect(label, connectionUrl) {
@@ -247,7 +278,7 @@ async function main() {
   prepareBackupSchemaForRestore(backupDumpUrl, extensions);
 
   console.log('[clone] pg_restore vào backup (schema mới từ dump)…');
-  runPgRestore(backupDumpUrl, dumpFile);
+  await runPgRestore(backupDumpUrl, dumpFile);
 
   console.log('[clone] Verify row counts…');
   await verifyCounts(

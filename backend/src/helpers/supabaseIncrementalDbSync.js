@@ -221,6 +221,39 @@ async function runIncrementalDbSyncPrimaryToBackup({ onLog } = {}) {
     };
   }
 
+  const incrementalMax = Math.max(
+    10,
+    parseInt(process.env.SUPABASE_BACKUP_INCREMENTAL_MAX_TABLES || '40', 10),
+  );
+  const missingOnBackup = (state.drifted || []).filter(
+    (r) => r.error && /does not exist/i.test(String(r.error)),
+  );
+  if (missingOnBackup.length > 0) {
+    const names = missingOnBackup.map((r) => r.table).slice(0, 8).join(', ');
+    log(`Backup thiếu schema (${missingOnBackup.length} bảng, vd. ${names}) — cần clone full DB`);
+    return {
+      ok: false,
+      mode: 'full_clone_required',
+      verify: state.verify,
+      drifted: state.drifted,
+      replication,
+      full_clone_required: true,
+      error: 'Backup thiếu bảng — cần clone full',
+    };
+  }
+  if (tables.length > incrementalMax) {
+    log(`Drift ${tables.length} bảng — vượt ngưỡng incremental (${incrementalMax}) → clone full DB`);
+    return {
+      ok: false,
+      mode: 'full_clone_required',
+      verify: state.verify,
+      drifted: state.drifted,
+      replication,
+      full_clone_required: true,
+      error: `Drift ${tables.length} bảng — cần clone full`,
+    };
+  }
+
   log(`Drift ${tables.length} bảng [${tables.join(', ')}] — sync incremental (data-only, không clone cả DB)`);
   for (const row of state.drifted) {
     if (row.primary != null && row.backup != null) {
