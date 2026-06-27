@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * Clone schema + data primary → backup qua pg_dump/pg_restore + Supabase Management API.
+ * Clone schema + data primary → backup qua pg_dump/pg_restore.
  *
- * Env: SUPABASE_ACCESS_TOKEN, PRIMARY_PROJECT_REF, BACKUP_PROJECT_REF
+ * Env: SUPABASE_DB_URL, SUPABASE_BACKUP_DB_URL (pooler 6543 — script tự dùng session pooler 5432 cho dump/restore)
+ * Optional: SUPABASE_ACCESS_TOKEN + PRIMARY/BACKUP_PROJECT_REF nếu cần đặt mật khẩu tạm (local dev)
  */
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 
@@ -58,13 +59,10 @@ function findPgBin(name) {
   return name;
 }
 
-function runPgDump(host, password, outFile) {
+function runPgDump(connectionUrl, outFile) {
   const pgDump = findPgBin('pg_dump');
   const args = [
-    '-h', host,
-    '-p', '5432',
-    '-U', 'postgres',
-    '-d', 'postgres',
+    connectionUrl,
     '-n', 'public',
     '--no-owner',
     '--no-acl',
@@ -72,43 +70,36 @@ function runPgDump(host, password, outFile) {
     '-f', outFile,
   ];
   const r = spawnSync(pgDump, args, {
-    env: { ...process.env, PGPASSWORD: password },
+    env: { ...process.env, PGSSLMODE: 'require' },
     stdio: 'inherit',
   });
   if (r.status !== 0) throw new Error(`pg_dump failed (exit ${r.status})`);
 }
 
-function runPgRestore(host, password, dumpFile, emptyTarget = true) {
+function runPgRestore(connectionUrl, dumpFile) {
   const pgRestore = findPgBin('pg_restore');
   const args = [
-    '-h', host,
-    '-p', '5432',
-    '-U', 'postgres',
-    '-d', 'postgres',
+    '-d', connectionUrl,
     '--no-owner',
     '--no-acl',
-    '--disable-triggers',
-    ...(emptyTarget ? [] : ['--clean', '--if-exists']),
+    '--clean',
+    '--if-exists',
+    '--single-transaction',
     dumpFile,
   ];
   const r = spawnSync(pgRestore, args, {
-    env: { ...process.env, PGPASSWORD: password },
+    env: { ...process.env, PGSSLMODE: 'require' },
     stdio: 'inherit',
   });
   if (r.status !== 0) throw new Error(`pg_restore failed (exit ${r.status})`);
 }
 
-async function verifyCounts(primaryHost, backupHost, password) {
+async function verifyCounts(primaryUrl, backupUrl) {
   const { Client } = require('pg');
+  const { buildPgPoolConfig } = require('../src/config/pgConnection');
   const tables = ['users', 'crm_leads', 'projects', 'companies', 'notifications'];
-  const pc = new Client({
-    host: primaryHost, port: 5432, user: 'postgres', password, database: 'postgres',
-    ssl: { rejectUnauthorized: false },
-  });
-  const bc = new Client({
-    host: backupHost, port: 5432, user: 'postgres', password, database: 'postgres',
-    ssl: { rejectUnauthorized: false },
-  });
+  const pc = new Client(buildPgPoolConfig(primaryUrl));
+  const bc = new Client(buildPgPoolConfig(backupUrl));
   await pc.connect();
   await bc.connect();
   console.log('\nVerify:');
@@ -123,45 +114,51 @@ async function verifyCounts(primaryHost, backupHost, password) {
 }
 
 async function main() {
-  if (!TOKEN) throw new Error('Thiếu SUPABASE_ACCESS_TOKEN');
+  const {
+    resolvePrimaryDbDumpUrl,
+    resolveBackupDbDumpUrl,
+    resolvePrimaryDbUrl,
+    resolveBackupDbUrl,
+  } = require('../src/config/pgConnection');
 
-  const primaryHost = `db.${PRIMARY_REF}.supabase.co`;
-  const backupHost = `db.${BACKUP_REF}.supabase.co`;
-  const clonePassword = process.env.CLONE_DB_PASSWORD || crypto.randomBytes(18).toString('base64url');
+  const primaryDumpUrl = resolvePrimaryDbDumpUrl();
+  const backupDumpUrl = resolveBackupDbDumpUrl();
+  if (!primaryDumpUrl || !backupDumpUrl) {
+    throw new Error('Thiếu SUPABASE_DB_URL / SUPABASE_BACKUP_DB_URL (pooler 6543) trên Render');
+  }
+
+  const useEnvCredentials = process.env.SUPABASE_CLONE_SKIP_PASSWORD_RESET === '1'
+    || !!(process.env.SUPABASE_DB_URL && process.env.SUPABASE_BACKUP_DB_URL);
 
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const dumpFile = path.join(OUT_DIR, `full_${Date.now()}.dump`);
 
-  console.log('[clone] Kiểm tra kết nối primary (Management API)…');
-  const chk = await mgmtQuery(PRIMARY_REF, 'SELECT current_user AS u');
-  console.log('[clone] Primary user:', chk[0]?.u);
-
-  console.log('[clone] Đặt mật khẩu DB tạm cho primary + backup (REST API không bị ảnh hưởng)…');
-  await setDbPassword(PRIMARY_REF, clonePassword);
-  await setDbPassword(BACKUP_REF, clonePassword);
+  if (!useEnvCredentials) {
+    if (!TOKEN) throw new Error('Thiếu SUPABASE_ACCESS_TOKEN hoặc SUPABASE_DB_URL/SUPABASE_BACKUP_DB_URL');
+    const clonePassword = process.env.CLONE_DB_PASSWORD || crypto.randomBytes(18).toString('base64url');
+    console.log('[clone] Kiểm tra kết nối primary (Management API)…');
+    const chk = await mgmtQuery(PRIMARY_REF, 'SELECT current_user AS u');
+    console.log('[clone] Primary user:', chk[0]?.u);
+    console.log('[clone] Đặt mật khẩu DB tạm cho primary + backup…');
+    await setDbPassword(PRIMARY_REF, clonePassword);
+    await setDbPassword(BACKUP_REF, clonePassword);
+  } else {
+    console.log('[clone] Dùng mật khẩu từ SUPABASE_DB_URL / SUPABASE_BACKUP_DB_URL (session pooler cho dump/restore)');
+  }
 
   console.log('[clone] pg_dump primary →', dumpFile);
-  runPgDump(primaryHost, clonePassword, dumpFile);
+  runPgDump(primaryDumpUrl, dumpFile);
 
-  console.log('[clone] pg_restore vào backup…');
-  runPgRestore(backupHost, clonePassword, dumpFile);
+  console.log('[clone] pg_restore vào backup (clean + if-exists)…');
+  runPgRestore(backupDumpUrl, dumpFile);
 
   console.log('[clone] Verify row counts…');
-  await verifyCounts(primaryHost, backupHost, clonePassword);
+  await verifyCounts(
+    resolvePrimaryDbUrl('probe') || primaryDumpUrl,
+    resolveBackupDbUrl('probe') || backupDumpUrl,
+  );
 
-  const credFile = path.join(OUT_DIR, '_clone_db_credentials.txt');
-  fs.writeFileSync(credFile, [
-    `# Generated ${new Date().toISOString()}`,
-    `PRIMARY_DB_HOST=${primaryHost}`,
-    `BACKUP_DB_HOST=${backupHost}`,
-    `CLONE_DB_PASSWORD=${clonePassword}`,
-    `SUPABASE_BACKUP_DB_URL=postgresql://postgres.${BACKUP_REF}:${encodeURIComponent(clonePassword)}@aws-1-ap-south-1.pooler.supabase.com:6543/postgres`,
-    `SUPABASE_BACKUP_DB_DIRECT_URL=postgresql://postgres:${encodeURIComponent(clonePassword)}@${backupHost}:5432/postgres`,
-    '',
-    '# Thêm 2 dòng SUPABASE_BACKUP_DB_* vào backend/.env và Render env',
-  ].join('\n'), 'utf8');
-
-  console.log('[clone] Hoàn tất. Credentials:', credFile);
+  console.log('[clone] Hoàn tất.');
 }
 
 main().catch((e) => {
