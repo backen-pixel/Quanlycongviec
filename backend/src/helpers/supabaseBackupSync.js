@@ -228,7 +228,10 @@ function buildRunHistoryEntry({
   verifyAfter = true,
   verifyBefore = false,
   dbMode = null,
+  verifyResult = null,
 }) {
+  const verifyRows = verifyResult?.rows || [];
+  const driftRows = verifyRows.filter((r) => r.table && r.ok === false);
   return {
     id: `${startedAt}-${status}`,
     started_at: startedAt,
@@ -243,6 +246,14 @@ function buildRunHistoryEntry({
     verify_before: !!verifyBefore,
     db_mode: dbMode || null,
     sync_parts: [...(_jobSyncParts || [])],
+    verify_all_ok: verifyResult?.all_ok ?? null,
+    verify_drift_count: driftRows.length,
+    verify_summary: driftRows.slice(0, 12).map((r) => ({
+      table: r.table,
+      primary: r.primary,
+      backup: r.backup,
+      drift: r.drift,
+    })),
     log: _jobLog.slice(-MAX_LOG_LINES_PER_RUN).map((l) => ({ at: l.at, line: l.line })),
   };
 }
@@ -521,6 +532,7 @@ async function runBackupSync({
       } else if (inc.full_clone_required && process.env.SUPABASE_BACKUP_ALLOW_FULL_CLONE === '1') {
         appendLog('Incremental chưa đủ — clone full DB (SUPABASE_BACKUP_ALLOW_FULL_CLONE=1)…');
         await runScript('clone-primary-to-backup.js');
+        lastDbMode = 'full_clone';
         appendLog('Fix grants backup…');
         await runScript('fix-backup-schema-grants.js');
       } else if (!inc.ok) {
@@ -547,20 +559,28 @@ async function runBackupSync({
       verifyResult = await verifyBackup();
       settings.last_verify_at = verifyResult.checked_at;
       settings.last_verify_rows = verifyResult.rows;
+      const driftN = (verifyResult.rows || []).filter((r) => r.table && !r.ok).length;
+      if (verifyResult.all_ok) {
+        appendLog('Verify drift: OK (khớp)');
+      } else {
+        appendLog(`Verify drift: còn ${driftN} bảng lệch — xem tab Kiểm tra drift`);
+      }
     }
 
+    const runStatus = verifyResult && verifyResult.all_ok === false ? 'success_with_warnings' : 'success';
     settings.last_run_at = startedAt;
-    settings.last_run_status = 'success';
+    settings.last_run_status = runStatus;
     settings.last_run_error = null;
     settings.last_run_by = userId || null;
     settings.last_run_slot = runSlot;
     if (settings.schedule_enabled) {
       settings.next_run_at = computeNextRunAt(settings);
     }
+    appendLog('Hoàn tất.');
     appendRunHistoryToSettings(settings, buildRunHistoryEntry({
       startedAt,
       finishedAt: new Date().toISOString(),
-      status: 'success',
+      status: runStatus,
       userId,
       runSlot,
       includeDb,
@@ -568,6 +588,7 @@ async function runBackupSync({
       verifyAfter,
       verifyBefore,
       dbMode: lastDbMode,
+      verifyResult,
     }));
 
     const { error: saveErr } = await supabase.from('app_settings').upsert(
@@ -576,13 +597,13 @@ async function runBackupSync({
     );
     if (saveErr) throw saveErr;
     invalidateAppSettingKey(SETTINGS_KEY);
-    appendLog('Hoàn tất.');
     broadcastBackupSync('supabase:backup-sync-done', {
       ok: true,
       userId: _jobStartedBy,
       at: new Date().toISOString(),
+      status: runStatus,
     });
-    return { ok: true, started_at: startedAt, finished_at: new Date().toISOString(), verify: verifyResult };
+    return { ok: true, started_at: startedAt, finished_at: new Date().toISOString(), verify: verifyResult, status: runStatus };
   } catch (e) {
     settings.last_run_at = startedAt;
     settings.last_run_status = 'failed';
