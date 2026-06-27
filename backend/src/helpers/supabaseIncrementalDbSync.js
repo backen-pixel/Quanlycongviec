@@ -33,11 +33,12 @@ function runScript(scriptName, args, onLog) {
 
 async function getDriftState() {
   const { Pool } = require('pg');
+  const { resolvePrimaryDbUrl, resolveBackupDbUrl, buildPgPoolConfig } = require('../config/pgConnection');
 
   function dbUrls() {
     return {
-      primary: process.env.SUPABASE_DB_DIRECT_URL || process.env.SUPABASE_DB_URL || process.env.DATABASE_URL,
-      backup: process.env.SUPABASE_BACKUP_DB_DIRECT_URL || process.env.SUPABASE_BACKUP_DB_URL,
+      primary: resolvePrimaryDbUrl('probe'),
+      backup: resolveBackupDbUrl('probe'),
     };
   }
 
@@ -52,8 +53,8 @@ async function getDriftState() {
     };
   }
 
-  const pPool = new Pool({ connectionString: primary, ssl: { rejectUnauthorized: false } });
-  const bPool = new Pool({ connectionString: backup, ssl: { rejectUnauthorized: false } });
+  const pPool = new Pool(buildPgPoolConfig(primary));
+  const bPool = new Pool(buildPgPoolConfig(backup));
   try {
     const { rows: tableRows } = await pPool.query(`
       SELECT table_name

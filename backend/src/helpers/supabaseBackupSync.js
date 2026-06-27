@@ -5,6 +5,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const { Pool } = require('pg');
 const { supabase } = require('../config/supabase');
+const { resolvePrimaryDbUrl, resolveBackupDbUrl, buildPgPoolConfig } = require('../config/pgConnection');
 const { getAppSettingValue, invalidateAppSettingKey } = require('./appSettingsCache');
 const { runIfLeader } = require('./cronLeader');
 
@@ -238,8 +239,8 @@ async function saveSettings(patch, userId) {
 
 function dbUrls() {
   return {
-    primary: process.env.SUPABASE_DB_DIRECT_URL || process.env.SUPABASE_DB_URL || process.env.DATABASE_URL,
-    backup: process.env.SUPABASE_BACKUP_DB_DIRECT_URL || process.env.SUPABASE_BACKUP_DB_URL,
+    primary: resolvePrimaryDbUrl('probe'),
+    backup: resolveBackupDbUrl('probe'),
   };
 }
 
@@ -253,8 +254,8 @@ async function verifyBackup() {
   if (!primary || !backup) {
     throw new Error('Thiếu SUPABASE_DB_* hoặc SUPABASE_BACKUP_DB_* trong env');
   }
-  const pPool = new Pool({ connectionString: primary, ssl: { rejectUnauthorized: false } });
-  const bPool = new Pool({ connectionString: backup, ssl: { rejectUnauthorized: false } });
+  const pPool = new Pool(buildPgPoolConfig(primary));
+  const bPool = new Pool(buildPgPoolConfig(backup));
   try {
     const rows = [];
     for (const table of VERIFY_TABLES) {

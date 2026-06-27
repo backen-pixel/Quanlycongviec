@@ -5,6 +5,12 @@ const { fetch: undiciFetch } = require('undici');
 const { Pool } = require('pg');
 const config = require('../config');
 const { supabaseDispatcher } = require('../config/httpAgents');
+const {
+  resolvePrimaryDbUrl,
+  resolveBackupDbUrl,
+  buildPgPoolConfig,
+  classifyPgError,
+} = require('../config/pgConnection');
 
 function trimBase(url) {
   return String(url || '').replace(/\/+$/, '');
@@ -65,14 +71,12 @@ async function probeRest(base, key) {
 async function queryStorageBucketStatsViaPg(connectionString) {
   if (!connectionString || process.env.PG_POOL_DISABLED === '1') return null;
   const start = Date.now();
-  const pool = new Pool({
-    connectionString,
-    ssl: { rejectUnauthorized: false },
+  const pool = new Pool(buildPgPoolConfig(connectionString, {
     max: 1,
     connectionTimeoutMillis: 5000,
     query_timeout: 15000,
     statement_timeout: 15000,
-  });
+  }));
   try {
     const { rows } = await pool.query(`
       SELECT
@@ -179,17 +183,6 @@ async function probeStorage(base, key, dbUrl) {
   }
 }
 
-function classifyPgProbeError(err) {
-  const msg = String(err?.message || err || '');
-  if (err?.code === '28P01' || /password authentication failed/i.test(msg)) {
-    return { error: 'password_auth_failed', message: 'Sai mật khẩu DB — cập nhật URL trên Render' };
-  }
-  if (err?.code === 'XX000' || /ECIRCUITBREAKER/i.test(msg)) {
-    return { error: 'circuit_breaker', message: 'Supabase tạm khóa kết nối — thử lại sau vài phút' };
-  }
-  return { error: 'connect_failed', message: msg.slice(0, 200) || 'Không kết nối được PostgreSQL' };
-}
-
 async function probeDb(connectionString) {
   if (!connectionString) {
     return { ok: false, configured: false, error: 'not_configured' };
@@ -205,14 +198,12 @@ async function probeDb(connectionString) {
     };
   }
   const start = Date.now();
-  const pool = new Pool({
-    connectionString,
-    ssl: { rejectUnauthorized: false },
+  const pool = new Pool(buildPgPoolConfig(connectionString, {
     max: 1,
     connectionTimeoutMillis: 5000,
     query_timeout: 8000,
     statement_timeout: 8000,
-  });
+  }));
   try {
     const { rows } = await pool.query(`
       SELECT
@@ -232,7 +223,7 @@ async function probeDb(connectionString) {
       postgres_version: String(row.version || '').split(' ').slice(0, 2).join(' '),
     };
   } catch (e) {
-    const classified = classifyPgProbeError(e);
+    const classified = classifyPgError(e);
     return {
       ok: false,
       configured: true,
@@ -290,14 +281,6 @@ async function probeInstance({ label, url, serviceKey, dbUrl }) {
   };
 }
 
-function resolveDbProbeUrl(directUrl, poolUrl) {
-  // Dev/local: pooler (6543) thường ổn hơn direct db.*.supabase.co (IPv6 hay timeout).
-  if (process.env.PG_MONITOR_USE_DIRECT === '1') {
-    return directUrl || poolUrl || '';
-  }
-  return poolUrl || directUrl || '';
-}
-
 async function getSupabaseMonitorReport() {
   const {
     runHealthCheck,
@@ -318,19 +301,13 @@ async function getSupabaseMonitorReport() {
       label: 'primary',
       url: config.supabaseUrl,
       serviceKey: config.supabaseServiceKey,
-      dbUrl: resolveDbProbeUrl(
-        process.env.SUPABASE_DB_DIRECT_URL,
-        process.env.SUPABASE_DB_URL || process.env.DATABASE_URL,
-      ),
+      dbUrl: resolvePrimaryDbUrl('probe'),
     }),
     probeInstance({
       label: 'backup',
       url: config.supabaseBackupUrl,
       serviceKey: config.supabaseBackupServiceKey,
-      dbUrl: resolveDbProbeUrl(
-        process.env.SUPABASE_BACKUP_DB_DIRECT_URL,
-        process.env.SUPABASE_BACKUP_DB_URL,
-      ),
+      dbUrl: resolveBackupDbUrl('probe'),
     }),
   ]);
 
