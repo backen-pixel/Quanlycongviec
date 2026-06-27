@@ -127,6 +127,10 @@ function SupabaseSyncBubbleInner() {
 
   const { active } = useSupabaseSync();
 
+  const { user } = useAuth();
+
+  const currentUserId = user?.id || user?.userId || null;
+
   const [minimized, setMinimized] = useState(false);
 
   const [dismissed, setDismissed] = useState(false);
@@ -181,11 +185,17 @@ function SupabaseSyncBubbleInner() {
 
     const socket = getSocket();
 
-    if (!socket) return undefined;
+    if (!socket || !currentUserId) return undefined;
+
+
+
+    const isMine = (payload) => !payload?.userId || String(payload.userId) === String(currentUserId);
 
 
 
     const onBackupStart = (payload) => {
+
+      if (!isMine(payload)) return;
 
       startSupabaseSync({
 
@@ -208,6 +218,8 @@ function SupabaseSyncBubbleInner() {
 
     const onBackupProgress = (payload) => {
 
+      if (!isMine(payload)) return;
+
       if (payload?.line) appendSupabaseSyncLog(payload.line, payload.at);
 
     };
@@ -216,6 +228,8 @@ function SupabaseSyncBubbleInner() {
 
     const onBackupDone = (payload) => {
 
+      if (!isMine(payload)) return;
+
       finishSupabaseSync({ ok: payload?.ok !== false, error: payload?.error, at: payload?.at });
 
     };
@@ -223,6 +237,7 @@ function SupabaseSyncBubbleInner() {
 
 
     const onSwitchPrepareStart = (payload) => {
+      if (!isMine(payload)) return;
       startSupabaseSync({
         type: 'switch',
         title: 'Chuẩn bị chuyển database',
@@ -236,6 +251,7 @@ function SupabaseSyncBubbleInner() {
     };
 
     const onSwitchPrepareUpdate = (payload) => {
+      if (!isMine(payload)) return;
       if (!payload) return;
       startSupabaseSync({
         type: 'switch',
@@ -252,6 +268,7 @@ function SupabaseSyncBubbleInner() {
     };
 
     const onSwitchStart = (payload) => {
+      if (!isMine(payload)) return;
       startSupabaseSync({
         type: 'switch',
         title: payload?.post_sync ? 'Đồng bộ sau chuyển database' : 'Chuẩn bị chuyển database',
@@ -268,13 +285,17 @@ function SupabaseSyncBubbleInner() {
 
     const onSwitchProgress = (payload) => {
 
+      if (!isMine(payload)) return;
+
       if (payload?.line) appendSupabaseSyncLog(payload.line, payload.at);
 
     };
 
 
 
-    const onSwitchDone = () => {
+    const onSwitchDone = (payload) => {
+
+      if (!isMine(payload)) return;
 
       finishSupabaseSync({ ok: true });
 
@@ -283,6 +304,8 @@ function SupabaseSyncBubbleInner() {
 
 
     const onSwitchError = (payload) => {
+
+      if (!isMine(payload)) return;
 
       finishSupabaseSync({ ok: false, error: payload?.error, at: payload?.at });
 
@@ -328,11 +351,13 @@ function SupabaseSyncBubbleInner() {
 
     };
 
-  }, []);
+  }, [currentUserId]);
 
 
 
   useEffect(() => {
+
+    if (!currentUserId) return undefined;
 
     let cancelled = false;
 
@@ -344,7 +369,7 @@ function SupabaseSyncBubbleInner() {
 
         if (cancelled) return;
 
-        hydrateFromPublicStatus(data);
+        hydrateFromPublicStatus(data, currentUserId);
 
       } catch { /* ignore */ }
 
@@ -358,7 +383,7 @@ function SupabaseSyncBubbleInner() {
 
     return () => { cancelled = true; clearInterval(id); };
 
-  }, [running, active?.id]);
+  }, [running, active?.id, currentUserId]);
 
 
 

@@ -48,6 +48,7 @@ let _jobFinishedAt = null;
 let _jobLastOk = true;
 let _jobLastError = null;
 let _jobSyncParts = ['DB', 'Storage'];
+let _jobStartedBy = null;
 let _logListener = null;
 let _ioRef = null;
 
@@ -55,10 +56,20 @@ function setBackupSyncIo(io) {
   _ioRef = io || null;
 }
 
-function broadcastBackupSync(event, data) {
+function isUserScopedSyncActor(userId) {
+  if (!userId) return false;
+  const id = String(userId);
+  if (id === 'cron' || id === 'admin') return false;
+  return !id.startsWith('switch:');
+}
+
+function broadcastBackupSync(event, data = {}) {
   if (!_ioRef) return;
   try {
-    _ioRef.emit(event, data);
+    const userId = data.userId || _jobStartedBy;
+    if (!isUserScopedSyncActor(userId)) return;
+    const payload = { ...data, userId: String(userId) };
+    _ioRef.to(`user:${String(userId)}`).emit(event, payload);
   } catch { /* ignore */ }
 }
 
@@ -84,6 +95,7 @@ function getBackupJobPublicSnapshot() {
     status: _jobRunning ? null : (_jobLastOk ? 'done' : 'error'),
     title: 'Đồng bộ Supabase Backup',
     direction: 'primary→backup',
+    started_by: _jobStartedBy,
     message: _jobLog.length
       ? _jobLog[_jobLog.length - 1].line
       : 'Đang đồng bộ backup Primary → Backup…',
@@ -196,6 +208,7 @@ function appendLog(line) {
       line: s,
       at: new Date().toISOString(),
       log_count: _jobLog.length,
+      userId: _jobStartedBy,
     });
   }
 }
@@ -399,6 +412,7 @@ async function runBackupSync({
   _jobLastOk = true;
   const startedAt = new Date().toISOString();
   _jobStartedAt = startedAt;
+  _jobStartedBy = isUserScopedSyncActor(userId) ? String(userId) : null;
   const parts = [];
   if (includeDb) parts.push('DB');
   if (includeStorage) parts.push('Storage/bucket');
@@ -406,7 +420,7 @@ async function runBackupSync({
   appendLog('Bắt đầu đồng bộ backup…');
   broadcastBackupSync('supabase:backup-sync-start', {
     message: 'Đang đồng bộ Primary → Backup…',
-    userId: userId || null,
+    userId: _jobStartedBy,
     slot: runSlot,
     at: startedAt,
   });
@@ -477,6 +491,7 @@ async function runBackupSync({
     appendLog('Hoàn tất.');
     broadcastBackupSync('supabase:backup-sync-done', {
       ok: true,
+      userId: _jobStartedBy,
       at: new Date().toISOString(),
     });
     return { ok: true, started_at: startedAt, finished_at: new Date().toISOString(), verify: verifyResult };
@@ -499,6 +514,7 @@ async function runBackupSync({
     broadcastBackupSync('supabase:backup-sync-done', {
       ok: false,
       error: _jobLastError,
+      userId: _jobStartedBy,
       at: new Date().toISOString(),
     });
     throw e;

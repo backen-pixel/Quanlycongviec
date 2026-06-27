@@ -209,11 +209,12 @@ router.post('/run', auth, monitorGate, async (req, res) => {
   }
 });
 
-/** Trạng thái đồng bộ — mọi user đăng nhập (bong bóng tiến trình toàn app). */
+/** Trạng thái đồng bộ — chỉ người khởi chạy (bong bóng tiến trình). */
 router.get('/sync/public-status', auth, async (req, res) => {
   try {
     const { getPublicSyncActivity } = require('../helpers/supabaseManualSwitch');
-    res.json(getPublicSyncActivity());
+    const userId = req.user?.userId || req.user?.id;
+    res.json(getPublicSyncActivity(userId));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
