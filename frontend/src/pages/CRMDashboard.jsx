@@ -5105,18 +5105,18 @@ export default function CRMDashboard() {
         }`}
       >
         <div className="flex items-center gap-2 min-w-0">
-          <div data-tour="pipeline-tabs" className="inline-flex gap-1 bg-white/60 border border-slate-200/80 rounded-full p-1 shrink-0 shadow-inner">
+          <div data-tour="pipeline-tabs" className="inline-flex gap-1 bg-slate-200/80 border border-slate-300/70 rounded-full p-1 shrink-0 shadow-inner">
             <button
               type="button"
               onClick={() => switchTab('lead')}
               className={`rounded-full font-semibold transition-all duration-200 flex items-center justify-center gap-1 px-3 py-1.5 text-xs min-w-[4.5rem] ${
                 pipelineType === 'lead'
                   ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/25 ring-2 ring-blue-300/60'
-                  : 'text-slate-600 hover:bg-blue-50 hover:text-blue-700'
+                  : 'bg-slate-100/90 text-slate-700 hover:bg-white hover:text-blue-700 hover:shadow-sm'
               }`}
             >
               💼 Leads{leadTabCountLabel != null ? ` (${leadTabCountLabel})` : ''}{' '}
-              {pinnedTab === 'lead' && <Pin className={`h-3 w-3 rotate-45 ${pipelineType === 'lead' ? 'text-amber-200 fill-amber-200' : 'text-amber-500'}`} />}
+              {pinnedTab === 'lead' && <Pin className={`h-3 w-3 rotate-45 ${pipelineType === 'lead' ? 'text-amber-200 fill-amber-200' : 'text-amber-600 fill-amber-500'}`} />}
             </button>
             <button
               type="button"
@@ -5124,11 +5124,11 @@ export default function CRMDashboard() {
               className={`rounded-full font-semibold transition-all duration-200 flex items-center justify-center gap-1 px-3 py-1.5 text-xs min-w-[4.5rem] ${
                 pipelineType === 'deal'
                   ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-500/25 ring-2 ring-emerald-300/60'
-                  : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-700'
+                  : 'bg-slate-100/90 text-slate-700 hover:bg-white hover:text-emerald-700 hover:shadow-sm'
               }`}
             >
               🎯 Deals{dealTabCountLabel != null ? ` (${dealTabCountLabel})` : ''}{' '}
-              {pinnedTab === 'deal' && <Pin className={`h-3 w-3 rotate-45 ${pipelineType === 'deal' ? 'text-amber-200 fill-amber-200' : 'text-amber-500'}`} />}
+              {pinnedTab === 'deal' && <Pin className={`h-3 w-3 rotate-45 ${pipelineType === 'deal' ? 'text-amber-200 fill-amber-200' : 'text-amber-600 fill-amber-500'}`} />}
             </button>
             {showCustomerTab && (
               <button
@@ -5137,11 +5137,11 @@ export default function CRMDashboard() {
                 className={`rounded-full font-semibold transition-all duration-200 flex items-center justify-center gap-1 px-3 py-1.5 text-xs min-w-[6.5rem] ${
                   pipelineType === 'customer'
                     ? 'bg-gradient-to-r from-cyan-600 to-sky-600 text-white shadow-md shadow-cyan-500/25 ring-2 ring-cyan-300/60'
-                    : 'text-slate-600 hover:bg-cyan-50 hover:text-cyan-700'
+                    : 'bg-slate-100/90 text-slate-700 hover:bg-white hover:text-cyan-700 hover:shadow-sm'
                 }`}
               >
                 📦 Đơn hàng{customerTabCountLabel != null ? ` (${customerTabCountLabel})` : ''}{' '}
-                {pinnedTab === 'customer' && <Pin className={`h-3 w-3 rotate-45 ${pipelineType === 'customer' ? 'text-amber-200 fill-amber-200' : 'text-amber-500'}`} />}
+                {pinnedTab === 'customer' && <Pin className={`h-3 w-3 rotate-45 ${pipelineType === 'customer' ? 'text-amber-200 fill-amber-200' : 'text-amber-600 fill-amber-500'}`} />}
               </button>
             )}
           </div>
@@ -5152,11 +5152,11 @@ export default function CRMDashboard() {
             aria-label={pinnedTab === pipelineType ? 'Bỏ ghim tab' : 'Ghim tab'}
             className={`${ctrlH} w-9 shrink-0 rounded-lg font-medium transition-all cursor-pointer flex items-center justify-center ${
               pinnedTab === pipelineType
-                ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 border border-amber-300'
-                : 'bg-white text-gray-500 hover:bg-gray-50 hover:text-gray-700 border border-gray-200'
+                ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 border-2 border-amber-400 shadow-sm shadow-amber-200/50'
+                : 'bg-amber-50 text-amber-600 hover:bg-amber-100 hover:text-amber-700 border-2 border-amber-300/80 shadow-sm hover:border-amber-400 hover:shadow-amber-200/40'
             }`}
           >
-            <Pin className={`h-4 w-4 ${pinnedTab === pipelineType ? 'rotate-45 fill-amber-500' : ''}`} />
+            <Pin className={`h-4 w-4 ${pinnedTab === pipelineType ? 'rotate-45 fill-amber-500 text-amber-700' : 'text-amber-600'}`} />
           </button>
           {overdueItems.length > 0 && (
             <div className="relative shrink-0" ref={overduePopoverRef}>
