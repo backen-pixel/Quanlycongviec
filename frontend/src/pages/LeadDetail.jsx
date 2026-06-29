@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { markCrmPipelineCardFocus, notifyCrmLeadSeenByCurrentUser, saveCrmPipelineSnapshot, loadCrmPipelineSnapshot, persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
 import {
@@ -1346,8 +1346,15 @@ export default function LeadDetail() {
       )}
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button onClick={() => { persistCrmPipelineUiNow(); if (lead?.type === 'deal') localStorage.setItem('crm_pinned_tab', 'deal'); markCrmPipelineCardFocus(id); navigate('/crm/dashboard'); }} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
+        <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            title="Quay lại Kanban CRM"
+            onClick={() => { persistCrmPipelineUiNow(); if (lead?.type === 'deal') localStorage.setItem('crm_pinned_tab', 'deal'); markCrmPipelineCardFocus(id); navigate('/crm/dashboard'); }}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 hover:border-slate-300 hover:shadow-md hover:text-indigo-600 transition-all cursor-pointer"
+          >
+            <ArrowLeft className="h-5 w-5" strokeWidth={2.25} />
+          </button>
           {/* Per-user flags: ghim + đã tương tác (manual toggle) */}
           <button
             type="button"
@@ -1363,10 +1370,10 @@ export default function LeadDetail() {
                 alert(e?.response?.data?.error || 'Lỗi cập nhật ghim');
               }
             }}
-            className={`p-2 rounded-lg cursor-pointer border ${
+            className={`inline-flex h-10 w-10 items-center justify-center rounded-xl cursor-pointer border shadow-sm transition-all ${
               lead?.is_pinned
-                ? 'bg-amber-50 border-amber-300 text-amber-600 hover:bg-amber-100'
-                : 'border-gray-200 text-gray-500 hover:bg-gray-100 hover:text-amber-600'
+                ? 'bg-amber-100 border-amber-400 text-amber-700 shadow-amber-200/60 ring-2 ring-amber-300/50 hover:bg-amber-200'
+                : 'bg-amber-50 border-amber-200 text-amber-600 hover:bg-amber-100 hover:border-amber-300 hover:shadow-md'
             }`}
           >
             <Pin className={`h-5 w-5 ${lead?.is_pinned ? 'rotate-45 fill-amber-500' : ''}`} strokeWidth={2.25} />
@@ -1385,10 +1392,10 @@ export default function LeadDetail() {
                 alert(e?.response?.data?.error || 'Lỗi cập nhật trạng thái tương tác');
               }
             }}
-            className={`p-2 rounded-lg cursor-pointer border ${
+            className={`inline-flex h-10 w-10 items-center justify-center rounded-xl cursor-pointer border shadow-sm transition-all ${
               lead?.is_interacted
-                ? 'bg-blue-50 border-blue-300 text-blue-600 hover:bg-blue-100'
-                : 'border-gray-200 text-gray-500 hover:bg-gray-100 hover:text-blue-600'
+                ? 'bg-blue-100 border-blue-400 text-blue-700 shadow-blue-200/60 ring-2 ring-blue-300/50 hover:bg-blue-200'
+                : 'bg-sky-50 border-sky-200 text-sky-600 hover:bg-sky-100 hover:border-sky-300 hover:shadow-md'
             }`}
           >
             <CheckCircle2 className={`h-5 w-5 ${lead?.is_interacted ? 'fill-blue-500 text-white' : ''}`} strokeWidth={2.25} />
