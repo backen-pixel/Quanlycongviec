@@ -88,6 +88,49 @@ main .bg-white {
   -webkit-backdrop-filter: blur(10px) saturate(160%);
 }
 
+/* Panel cần nền trắng đặc (popup Tùy chỉnh, bộ lọc…) — ghi đè glass dashboard */
+.ui-solid-white,
+main .ui-solid-white,
+main .ui-solid-white.bg-white,
+main .ui-solid-white .bg-white {
+  background-color: #ffffff !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+main .ui-solid-white input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]):not([type="range"]):not([type="submit"]):not([type="button"]),
+main .ui-solid-white select,
+main .ui-solid-white textarea {
+  background-color: #ffffff !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Kanban — màu cột/thẻ cố định, không glass khi đổi theme */
+.ui-kanban-fixed,
+main .ui-kanban-fixed {
+  isolation: isolate;
+}
+main .ui-kanban-fixed .bg-white,
+main .ui-kanban-fixed [class*='!bg-white'],
+main .ui-kanban-fixed [class*='bg-white']:not([class*='bg-white/']) {
+  background-color: #ffffff !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+main .ui-kanban-fixed .kanban-column-surface {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* Vùng thẻ Kanban (xưởng + CRM) — trắng trong suốt cố định, không theo màu cột */
+main .ui-kanban-fixed .kanban-cards-body {
+  background-color: rgba(255, 255, 255, 0.38) !important;
+  backdrop-filter: blur(10px) saturate(150%);
+  -webkit-backdrop-filter: blur(10px) saturate(150%);
+}
+main .ui-kanban-fixed .kanban-cards-body.kanban-cards-body--drop {
+  background-color: rgba(255, 255, 255, 0.52) !important;
+}
+
 /* Input / select / textarea trong dashboard — glass nhẹ hơn để giữ chữ sắc nét */
 main input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]):not([type="range"]):not([type="submit"]):not([type="button"]),
 main select,

@@ -42,11 +42,8 @@ export function AuthProvider({ children }) {
         const parsed = JSON.parse(u);
         syncCrmSessionUserOnLogin(parsed?.id);
         setUser(parsed);
-        const s = connectSocket();
-        setSocket(s);
       } catch {}
-      // Refresh user info (avatar, profile…) — cache localStorage có thể đã cũ
-      // (avatar mới upload sau khi login → tránh phải đăng xuất rồi đăng nhập lại).
+      // Xác thực token trước khi mở socket — tránh connect_error "server error" khi token hết hạn.
       (async () => {
         try {
           const { data } = await api.get('/auth/me');
@@ -55,7 +52,15 @@ export function AuthProvider({ children }) {
             localStorage.setItem('user', JSON.stringify(merged));
             setUser(merged);
           }
-        } catch (_) { /* token hết hạn / mạng lỗi — bỏ qua, giữ cache cũ */ }
+          const s = connectSocket();
+          setSocket(s);
+        } catch (err) {
+          // 401 → interceptor đã logout. Mạng lỗi → vẫn thử socket với token cache.
+          if (err?.response?.status !== 401) {
+            const s = connectSocket();
+            setSocket(s);
+          }
+        }
       })();
     }
     setLoading(false);
@@ -74,7 +79,7 @@ export function AuthProvider({ children }) {
     const sessionId = auth.session_id || fallbackSessionId
       || `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
     syncCrmSessionUserOnLogin(auth.user?.id);
-    localStorage.setItem('token', auth.token);
+    localStorage.setItem('token', String(auth.token || '').trim().replace(/^Bearer\s+/i, ''));
     localStorage.setItem('user', JSON.stringify(auth.user));
     localStorage.setItem('session_id', sessionId);
     localStorage.setItem('login_ts', String(Date.now()));

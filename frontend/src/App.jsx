@@ -215,6 +215,7 @@ function ProtectedLayout() {
   const { user, loading } = useAuth();
   const location = useLocation();
   const { loading: moduleAccessLoading, crmOnly } = useModuleAccess();
+  const { activeAnimatedScene } = useTheme() || {};
   useActivityRouteTracker(!!user);
 
   useEffect(() => {
@@ -269,8 +270,6 @@ function ProtectedLayout() {
 
   const fullscreenPages = ['/projects/create', '/crm/messenger'];
   const isFullscreen = fullscreenPages.some((p) => location.pathname.startsWith(p));
-  // Scene động canvas (rain/stars/snow/raindrops) lấy từ ThemeProvider context
-  const { activeAnimatedScene } = useTheme() || {};
 
   return (
     <CrmNotesFabProvider>

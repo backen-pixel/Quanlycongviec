@@ -21,6 +21,14 @@ const server = http.createServer(app);
 // Vẫn bắt buộc JWT trong `io.use`; CORS ở đây chỉ cho phép upgrade WebSocket.
 const io = new Server(server, {
   cors: { origin: true, methods: ['GET', 'POST'], credentials: true },
+  // Render / reverse proxy: polling trước rồi upgrade WS; tăng timeout tránh ngắt sớm khi cold start.
+  pingTimeout: 60_000,
+  pingInterval: 25_000,
+  connectTimeout: 45_000,
+  allowUpgrades: true,
+});
+io.engine.on('connection_error', (err) => {
+  console.warn('[socket] engine:', err.code, err.message);
 });
 app.set('io', io);
 try {
@@ -441,13 +449,22 @@ function syncPendingIncomingCalls(userId, socket) {
 }
 
 // ─── Socket.IO with Auth ──
+const { extractSocketToken, verifySocketToken } = require('./helpers/socketAuth');
 io.use((socket, next) => {
-  const token = socket.handshake.auth?.token;
-  if (!token) return next(new Error('No token'));
+  const token = extractSocketToken(socket);
+  if (!token) {
+    console.warn('[socket] auth: missing token from', socket.handshake.address);
+    const err = new Error('no_token');
+    err.data = { code: 'no_token' };
+    return next(err);
+  }
   try {
-    socket.user = jwt.verify(token, config.jwtSecret);
+    socket.user = verifySocketToken(token);
     next();
-  } catch { next(new Error('Invalid token')); }
+  } catch (e) {
+    console.warn('[socket] auth failed:', e?.name || 'Error', e?.message);
+    next(e);
+  }
 });
 
 io.on('connection', (socket) => {
