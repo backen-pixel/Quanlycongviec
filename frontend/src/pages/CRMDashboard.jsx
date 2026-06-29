@@ -96,6 +96,9 @@ import { CrmCommentMentionComposer } from '../components/crmCommentMentionUi';
 import { resolveMentionIdsFromContent } from '../lib/crmCommentMentions';
 import { KanbanBoardEdgeScrollChrome } from '../lib/kanbanEdgeScrollControls';
 import { useKanbanColumnTheme, UI_KANBAN_FIXED_CLASS, KANBAN_CARDS_BODY_CLASS } from '../lib/kanbanColumnTheme';
+import AnchoredDropdownMenu from '../components/AnchoredDropdownMenu';
+import SearchInlineFilterChips, { SearchClearButton } from '../components/SearchInlineFilterChips';
+import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
 import { CrmDashboardLoader, CrmDashboardLoaderCompact } from '../components/CrmDashboardLoader';
 import { createCrmLoadProgressController } from '../lib/crmDashboardLoadProgress';
 import { isClickOutside } from '../lib/domUtils';
@@ -379,6 +382,16 @@ const KANBAN_PAGE_SIZE = 500;
 const KANBAN_DEFAULT_LOAD_LIMIT = '500';
 /** Trần khi chọn «Tải tất cả» — tránh vòng lặp API vô hạn. */
 const KANBAN_LOAD_ALL_MAX = 5000;
+
+const CRM_VIEW_MODES = [
+  { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
+  { id: 'list', icon: List, label: 'Danh sách' },
+  { id: 'planner', icon: Users, label: 'Planner' },
+  { id: 'deadline', icon: Clock, label: 'Deadline' },
+  { id: 'comments', icon: MessageSquare, label: 'Bình luận' },
+  { id: 'calendar', icon: Calendar, label: 'Lịch' },
+];
+const CRM_ALT_VIEW_MODES = CRM_VIEW_MODES.filter((v) => v.id !== 'kanban');
 
 function normalizeStoredKanbanLoadLimit(raw) {
   const s = String(raw ?? '').trim().toLowerCase();
@@ -1211,7 +1224,9 @@ export default function CRMDashboard() {
     return KANBAN_DEFAULT_COLUMN_SCROLL_MODE;
   });
   const [showKanbanSettings, setShowKanbanSettings] = useState(false);
-  const kanbanSettingsRef = useRef(null);
+  const kanbanSettingsTriggerRef = useRef(null);
+  const [showViewModeMenu, setShowViewModeMenu] = useState(false);
+  const viewModeTriggerRef = useRef(null);
 
   /** Tổng số lead/deal theo SĐT từ API (limit=1, chỉ đọc `total`) — không phụ thuộc mức tải Kanban; theo NV + ngày trên server */
   const [pipelinePhoneTotals, setPipelinePhoneTotals] = useState({ lead: null, deal: null });
@@ -3948,36 +3963,46 @@ export default function CRMDashboard() {
 
   const kpis = currentData?.kpis || {};
 
-  const kpiCollapsedSummary = useMemo(() => {
+  const kpiCollapsedSegments = useMemo(() => {
     const kpiPts = formatKpiLedgerNet(kpiLedgerMonthNetSumVisible);
+    const kpiSeg = { key: 'kpi', label: 'KPI', value: kpiPts, tone: 'kpi' };
     if (pipelineType === 'lead') {
-      return `${Number(leadKpiTotalCount ?? 0).toLocaleString('vi-VN')} lead · ${Number(leadActiveCount ?? 0).toLocaleString('vi-VN')} đang xử lý · KPI ${kpiPts}`;
+      return [
+        { key: 'total', label: 'Lead', value: Number(leadKpiTotalCount ?? 0).toLocaleString('vi-VN'), tone: 'count' },
+        { key: 'active', label: 'Đang xử lý', value: Number(leadActiveCount ?? 0).toLocaleString('vi-VN'), tone: 'processing' },
+        kpiSeg,
+      ];
     }
     if (isCrmCustomerPipelineTab(pipelineType)) {
       return [
-        `${Number(customerKpiTotalCount ?? 0).toLocaleString('vi-VN')} đơn hàng`,
-        `${Number(customerKpisFromFilters.project_active ?? 0).toLocaleString('vi-VN')} triển khai`,
-        `DT thắng ${formatVND(customerKpisFromFilters.won_value)}`,
-        `DT HT ${formatVND(customerKpisFromFilters.completed_revenue_value)}`,
-        `KPI ${kpiPts}`,
-      ].join(' · ');
+        { key: 'total', label: 'Đơn hàng', value: Number(customerKpiTotalCount ?? 0).toLocaleString('vi-VN'), tone: 'count' },
+        { key: 'active', label: 'Đang triển khai', value: Number(customerKpisFromFilters.project_active ?? 0).toLocaleString('vi-VN'), tone: 'processing' },
+        { key: 'won', label: 'Doanh thu thắng', value: formatVND(customerKpisFromFilters.won_value), tone: 'won' },
+        { key: 'completed', label: 'Doanh thu hoàn thành', value: formatVND(customerKpisFromFilters.completed_revenue_value), tone: 'completed' },
+        kpiSeg,
+      ];
     }
     if (pipelineType === 'deal' && !dealKhSplitEnabled) {
       return [
-        `${Number(mergedDealKpisForDisplay.total_deals ?? 0).toLocaleString('vi-VN')} deal`,
-        `DT thắng ${formatVND(mergedDealKpisForDisplay.won_value)}`,
-        `Dự kiến ${formatVND(mergedDealKpisForDisplay.pipeline_estimated_value)}`,
-        `KPI ${kpiPts}`,
-      ].join(' · ');
+        { key: 'total', label: 'Deal', value: Number(mergedDealKpisForDisplay.total_deals ?? 0).toLocaleString('vi-VN'), tone: 'count' },
+        { key: 'won', label: 'Doanh thu thắng', value: formatVND(mergedDealKpisForDisplay.won_value), tone: 'won' },
+        { key: 'forecast', label: 'Doanh thu dự kiến', value: formatVND(mergedDealKpisForDisplay.pipeline_estimated_value), tone: 'forecast' },
+        kpiSeg,
+      ];
     }
     return [
-      `${Number(dealSalesKpisForDisplay.total_deals ?? 0).toLocaleString('vi-VN')} deal`,
-      `${Number(dealSalesKpisForDisplay.deal_processing ?? 0).toLocaleString('vi-VN')} xử lý`,
-      `Dự kiến ${formatVND(dealSalesKpisForDisplay.pipeline_estimated_value)}`,
-      `KV ${formatVND(dealSalesKpisForDisplay.expected_value)}`,
-      `KPI ${kpiPts}`,
-    ].join(' · ');
+      { key: 'total', label: 'Deal', value: Number(dealSalesKpisForDisplay.total_deals ?? 0).toLocaleString('vi-VN'), tone: 'count' },
+      { key: 'active', label: 'Đang xử lý', value: Number(dealSalesKpisForDisplay.deal_processing ?? 0).toLocaleString('vi-VN'), tone: 'processing' },
+      { key: 'forecast', label: 'Doanh thu dự kiến', value: formatVND(dealSalesKpisForDisplay.pipeline_estimated_value), tone: 'forecast' },
+      { key: 'expected', label: 'Doanh thu kỳ vọng', value: formatVND(dealSalesKpisForDisplay.expected_value), tone: 'expected' },
+      kpiSeg,
+    ];
   }, [pipelineType, dealKhSplitEnabled, dealSalesKpisForDisplay, mergedDealKpisForDisplay, customerKpisFromFilters, leadKpiTotalCount, leadActiveCount, customerKpiTotalCount, kpiLedgerMonthNetSumVisible]);
+
+  const kpiCollapsedSummary = useMemo(
+    () => kpiCollapsedSegments.map((s) => `${s.label} ${s.value}`).join(' · '),
+    [kpiCollapsedSegments],
+  );
 
   const toggleKpiPanel = useCallback(() => {
     setKpiPanelOpen((open) => {
@@ -4038,17 +4063,6 @@ export default function CRMDashboard() {
     showOrphanDealColumn,
     dealKhSplitEnabled,
   ]);
-
-  useEffect(() => {
-    if (!showKanbanSettings) return undefined;
-    const onDocClick = (e) => {
-      if (isClickOutside(kanbanSettingsRef.current, e)) {
-        setShowKanbanSettings(false);
-      }
-    };
-    document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
-  }, [showKanbanSettings]);
 
   useEffect(() => {
     if (!showOverduePopover) return undefined;
@@ -5078,34 +5092,56 @@ export default function CRMDashboard() {
           </div>
         </div>
       )}
-      {/* Header — tab Leads/Deals + đồng bộ + thùng rác + thêm */}
-      <div className="flex items-center justify-between gap-2 flex-wrap">
+      {/* Panel điều khiển CRM — pipeline, tìm kiếm, KPI */}
+      <div className="ui-solid-white rounded-2xl border border-slate-200/90 bg-white shadow-md overflow-hidden ring-1 ring-slate-900/[0.04]">
+      {/* Vùng 1 — tab pipeline & hành động */}
+      <div
+        className={`flex items-center justify-between gap-2 flex-wrap px-3 py-2.5 sm:px-4 border-b border-slate-200/70 bg-gradient-to-r ${
+          pipelineType === 'lead'
+            ? 'from-blue-50/95 via-white to-indigo-50/70'
+            : isCrmCustomerPipelineTab(pipelineType)
+              ? 'from-cyan-50/95 via-white to-sky-50/70'
+              : 'from-emerald-50/95 via-white to-teal-50/70'
+        }`}
+      >
         <div className="flex items-center gap-2 min-w-0">
-          <div data-tour="pipeline-tabs" className="inline-flex gap-0.5 bg-gray-200 rounded-full p-0.5 shrink-0">
+          <div data-tour="pipeline-tabs" className="inline-flex gap-1 bg-white/60 border border-slate-200/80 rounded-full p-1 shrink-0 shadow-inner">
             <button
               type="button"
               onClick={() => switchTab('lead')}
-              className={`rounded-full font-medium transition-all duration-200 flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs min-w-[4.5rem] ${pipelineType === 'lead' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+              className={`rounded-full font-semibold transition-all duration-200 flex items-center justify-center gap-1 px-3 py-1.5 text-xs min-w-[4.5rem] ${
+                pipelineType === 'lead'
+                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/25 ring-2 ring-blue-300/60'
+                  : 'text-slate-600 hover:bg-blue-50 hover:text-blue-700'
+              }`}
             >
               💼 Leads{leadTabCountLabel != null ? ` (${leadTabCountLabel})` : ''}{' '}
-              {pinnedTab === 'lead' && <Pin className="h-3 w-3 text-amber-500 rotate-45" />}
+              {pinnedTab === 'lead' && <Pin className={`h-3 w-3 rotate-45 ${pipelineType === 'lead' ? 'text-amber-200 fill-amber-200' : 'text-amber-500'}`} />}
             </button>
             <button
               type="button"
               onClick={() => switchTab('deal')}
-              className={`rounded-full font-medium transition-all duration-200 flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs min-w-[4.5rem] ${pipelineType === 'deal' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+              className={`rounded-full font-semibold transition-all duration-200 flex items-center justify-center gap-1 px-3 py-1.5 text-xs min-w-[4.5rem] ${
+                pipelineType === 'deal'
+                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-500/25 ring-2 ring-emerald-300/60'
+                  : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-700'
+              }`}
             >
               🎯 Deals{dealTabCountLabel != null ? ` (${dealTabCountLabel})` : ''}{' '}
-              {pinnedTab === 'deal' && <Pin className="h-3 w-3 text-amber-500 rotate-45" />}
+              {pinnedTab === 'deal' && <Pin className={`h-3 w-3 rotate-45 ${pipelineType === 'deal' ? 'text-amber-200 fill-amber-200' : 'text-amber-500'}`} />}
             </button>
             {showCustomerTab && (
               <button
                 type="button"
                 onClick={() => switchTab('customer')}
-                className={`rounded-full font-medium transition-all duration-200 flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs min-w-[6.5rem] ${pipelineType === 'customer' ? 'bg-white text-cyan-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                className={`rounded-full font-semibold transition-all duration-200 flex items-center justify-center gap-1 px-3 py-1.5 text-xs min-w-[6.5rem] ${
+                  pipelineType === 'customer'
+                    ? 'bg-gradient-to-r from-cyan-600 to-sky-600 text-white shadow-md shadow-cyan-500/25 ring-2 ring-cyan-300/60'
+                    : 'text-slate-600 hover:bg-cyan-50 hover:text-cyan-700'
+                }`}
               >
                 📦 Đơn hàng{customerTabCountLabel != null ? ` (${customerTabCountLabel})` : ''}{' '}
-                {pinnedTab === 'customer' && <Pin className="h-3 w-3 text-amber-500 rotate-45" />}
+                {pinnedTab === 'customer' && <Pin className={`h-3 w-3 rotate-45 ${pipelineType === 'customer' ? 'text-amber-200 fill-amber-200' : 'text-amber-500'}`} />}
               </button>
             )}
           </div>
@@ -5247,8 +5283,8 @@ export default function CRMDashboard() {
         </div>
       </div>
 
-      {/* Toolbar: tìm kiếm + chế độ xem + tùy chỉnh */}
-      <div className={compactLeadUi ? 'space-y-2' : 'space-y-3'}>
+      {/* Vùng 2 — tìm kiếm, chế độ xem, bộ lọc nhanh */}
+      <div className={`border-b border-violet-100/80 bg-gradient-to-r from-violet-50/75 via-white to-fuchsia-50/40 ${compactLeadUi ? 'space-y-2 px-3 py-2' : 'space-y-2.5 px-3 py-2.5 sm:px-4'}`}>
         <div className="flex flex-wrap items-center gap-1.5">
           <div
             className={`group/search flex items-center shrink-0 w-full sm:flex-1 sm:min-w-[280px] md:min-w-[360px] max-w-[520px] rounded-xl border-2 transition-all duration-200 ${
@@ -5268,30 +5304,15 @@ export default function CRMDashboard() {
                 }`}
               />
               {!showAdvSearch && crmInlineFilterChips.length > 0 && (
-                <div
-                  className={`flex items-center gap-1 shrink-0 max-w-[min(58%,13rem)] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden transition-opacity ${
-                    searchFocused ? 'opacity-55' : searchText.trim() ? 'opacity-45' : 'opacity-80'
-                  }`}
-                  aria-label="Bộ lọc đang áp dụng"
-                >
-                  {crmInlineFilterChips.map((chip) => (
-                    <span
-                      key={chip.key}
-                      className="inline-flex items-center gap-0.5 shrink-0 pl-1.5 pr-0.5 py-0.5 rounded-md bg-white/45 border border-violet-200/45 text-[10px] font-medium text-violet-900/70 backdrop-blur-[1px]"
-                    >
-                      <span className="max-w-[5.5rem] truncate">{chip.label}</span>
-                      <button
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => { chip.onClear(); void load({ silent: true }); }}
-                        className="p-0.5 rounded hover:bg-violet-100/70 text-violet-600/65 hover:text-violet-900 cursor-pointer"
-                        aria-label={`Bỏ lọc ${chip.label}`}
-                      >
-                        <X className="h-2.5 w-2.5" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
+                <SearchInlineFilterChips
+                  chips={crmInlineFilterChips}
+                  opacityClass={
+                    searchFocused ? 'opacity-40' : searchText.trim() ? 'opacity-35' : 'opacity-45 group-hover/search:opacity-100'
+                  }
+                  onClearChip={(chip) => { chip.onClear(); void load({ silent: true }); }}
+                  onClearAll={resetCrmFilters}
+                  showClearAll={crmInlineFilterChips.length > 1}
+                />
               )}
               <input
                 type="text"
@@ -5306,27 +5327,8 @@ export default function CRMDashboard() {
                 }
                 className={`flex-1 min-w-[4.5rem] ${ctrlH} bg-transparent border-0 ${ctrlTxt} font-medium text-slate-900 placeholder:text-violet-500/45 focus:outline-none focus:ring-0 rounded-l-xl ${searchText ? 'pr-7' : ''}`}
               />
-              {!showAdvSearch && crmInlineFilterChips.length > 1 && (
-                <button
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={resetCrmFilters}
-                  className="shrink-0 text-[9px] font-medium text-violet-700/50 hover:text-red-600 px-0.5 cursor-pointer whitespace-nowrap"
-                  title="Xóa tất cả bộ lọc"
-                >
-                  Xóa
-                </button>
-              )}
               {searchText && (
-                <button
-                  type="button"
-                  onMouseDown={e => e.preventDefault()}
-                  onClick={() => { setSearchText(''); setSearchFocused(false); }}
-                  className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded-md text-violet-400 hover:text-violet-700 hover:bg-violet-200/60 cursor-pointer transition-colors"
-                  aria-label="Xóa tìm kiếm"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
+                <SearchClearButton onClick={() => { setSearchText(''); setSearchFocused(false); }} />
               )}
               {searchFocused && searchText.trim().length >= 2 && activeItems.length > 0 && activeItems.length <= 10 && (
                 <div className="absolute top-[calc(100%+8px)] left-0 right-0 z-50 overflow-hidden rounded-xl border-2 border-violet-200 bg-white shadow-xl shadow-violet-500/15 ring-1 ring-violet-100 animate-fade-in max-h-80 overflow-y-auto [scrollbar-width:thin]">
@@ -5397,31 +5399,64 @@ export default function CRMDashboard() {
           </div>
 
           <div className="flex items-center gap-0.5 flex-wrap min-w-0">
-            {[
-              { id: 'kanban', icon: LayoutGrid, label: 'Kaban' },
-              { id: 'list', icon: List, label: 'Danh sách' },
-              { id: 'planner', icon: Users, label: 'Planner' },
-              { id: 'deadline', icon: Clock, label: 'Deadline' },
-              { id: 'comments', icon: MessageSquare, label: 'Bình luận' },
-              { id: 'calendar', icon: Calendar, label: 'Lịch' },
-            ].map((v) => (
+            <div className="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-white border border-gray-200 shadow-inner shrink-0">
               <button
-                key={v.id}
                 type="button"
-                onClick={() => setViewMode(v.id)}
-                className={`${ctrlH} px-2.5 rounded-lg ${ctrlTxt} font-medium flex items-center gap-1 cursor-pointer transition-all border shrink-0 ${
-                  viewMode === v.id
-                    ? 'bg-violet-100 text-violet-700 border-violet-300 shadow-sm'
-                    : 'bg-white text-slate-600 border-gray-200 hover:bg-gray-50 hover:border-gray-300'
+                onClick={() => setViewMode('kanban')}
+                className={`${ctrlH} px-2.5 rounded-md ${ctrlTxt} font-medium flex items-center gap-1 cursor-pointer transition-all shrink-0 ${
+                  viewMode === 'kanban'
+                    ? 'bg-violet-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-gray-100 hover:text-slate-900'
                 }`}
               >
-                <v.icon className="h-3.5 w-3.5" />
-                {v.label}
+                <LayoutGrid className="h-3.5 w-3.5" />
+                Kanban
               </button>
-            ))}
+              <div className="relative">
+                <button
+                  ref={viewModeTriggerRef}
+                  type="button"
+                  onClick={() => setShowViewModeMenu((v) => !v)}
+                  className={`${ctrlH} px-2 sm:px-2.5 rounded-md ${ctrlTxt} font-medium flex items-center gap-1 cursor-pointer transition-all shrink-0 ${
+                    viewMode !== 'kanban'
+                      ? 'bg-violet-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:bg-gray-100 hover:text-slate-900'
+                  }`}
+                  title="Chế độ xem khác"
+                  aria-expanded={showViewModeMenu}
+                >
+                  {(() => {
+                    const active = CRM_ALT_VIEW_MODES.find((v) => v.id === viewMode);
+                    const Icon = active?.icon || List;
+                    return (
+                      <>
+                        <Icon className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline max-w-[5.5rem] truncate">
+                          {active?.label || 'Thêm'}
+                        </span>
+                        <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${showViewModeMenu ? 'rotate-180' : ''}`} />
+                      </>
+                    );
+                  })()}
+                </button>
+                <ViewModeDropdownMenu
+                  open={showViewModeMenu}
+                  onClose={() => setShowViewModeMenu(false)}
+                  anchorRef={viewModeTriggerRef}
+                  modes={CRM_ALT_VIEW_MODES}
+                  activeId={viewMode}
+                  theme="violet"
+                  onSelect={(id) => {
+                    setViewMode(id);
+                    setShowViewModeMenu(false);
+                  }}
+                />
+              </div>
+            </div>
             <AssignedTasksToolbarButton compact={compactLeadUi} />
-            <div className="relative" ref={kanbanSettingsRef}>
+            <div className="relative">
               <button
+                ref={kanbanSettingsTriggerRef}
                 type="button"
                 onClick={() => setShowKanbanSettings((v) => !v)}
                 className={`${ctrlH} px-2.5 rounded-lg ${ctrlTxt} font-medium flex items-center gap-1 cursor-pointer transition-colors border shrink-0 ${
@@ -5436,8 +5471,13 @@ export default function CRMDashboard() {
                 <Settings className="h-3.5 w-3.5" />
                 Tùy chỉnh
               </button>
-              {showKanbanSettings && (
-                <div className="ui-solid-white absolute right-0 top-full mt-1.5 z-[120] w-[min(100vw-1.5rem,18rem)] rounded-xl border border-gray-200 bg-white p-3 shadow-xl">
+              <AnchoredDropdownMenu
+                open={showKanbanSettings}
+                onClose={() => setShowKanbanSettings(false)}
+                anchorRef={kanbanSettingsTriggerRef}
+                className="rounded-xl border-gray-200 p-3 w-[min(100vw-1.5rem,18rem)] max-h-[min(80vh,32rem)] overflow-y-auto"
+                align="right"
+              >
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2.5">Cuộn cột Kanban</p>
                   <div className="space-y-2">
                     <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-gray-100 bg-white px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-violet-400 has-[:checked]:bg-white has-[:checked]:shadow-sm">
@@ -5590,8 +5630,7 @@ export default function CRMDashboard() {
                       </div>
                     </>
                   )}
-                </div>
-              )}
+              </AnchoredDropdownMenu>
             </div>
           </div>
         </div>
@@ -5984,16 +6023,16 @@ export default function CRMDashboard() {
         )}
       </div>
 
-      {/* KPI — thu gọn / mở rộng */}
+      {/* Vùng 3 — KPI */}
       <section
         data-tour="crm-kpis"
-        className="rounded-xl border-2 border-violet-200 bg-gradient-to-b from-violet-50/90 via-white to-white shadow-md shadow-violet-500/10 ring-1 ring-violet-100/80 overflow-hidden"
+        className="bg-gradient-to-b from-amber-50/35 via-white to-violet-50/25"
       >
         <button
           type="button"
           onClick={toggleKpiPanel}
           aria-expanded={kpiPanelOpen}
-          className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left cursor-pointer transition-colors hover:bg-violet-50/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300 focus-visible:ring-inset"
+          className="w-full flex items-center gap-2.5 px-3 py-2.5 sm:px-4 text-left cursor-pointer transition-colors hover:bg-amber-50/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300 focus-visible:ring-inset border-b border-violet-100/60"
         >
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-violet-700 border border-violet-200/80 shadow-sm">
             <BarChart3 className="h-4 w-4" aria-hidden />
@@ -6001,14 +6040,18 @@ export default function CRMDashboard() {
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-bold text-violet-950 tracking-tight">
               Tổng quan KPI
-              <span className="ml-1.5 text-[11px] font-semibold text-violet-600/90">
+              <span className={`ml-1.5 text-[11px] font-semibold ${
+                pipelineType === 'lead'
+                  ? 'text-blue-600'
+                  : isCrmCustomerPipelineTab(pipelineType)
+                    ? 'text-cyan-600'
+                    : 'text-emerald-600'
+              }`}>
                 · {crmPipelineTabTitle(pipelineType)}
               </span>
             </span>
             {!kpiPanelOpen && (
-              <span className="block text-[11px] font-medium text-violet-700/85 truncate mt-0.5" title={kpiCollapsedSummary}>
-                {kpiCollapsedSummary}
-              </span>
+              <CrmKpiSummaryStrip segments={kpiCollapsedSegments} title={kpiCollapsedSummary} />
             )}
           </span>
           <span className="shrink-0 flex items-center gap-1 text-[11px] font-semibold text-violet-600">
@@ -6021,7 +6064,7 @@ export default function CRMDashboard() {
 
         {kpiPanelOpen && (
           <div
-            className={`border-t border-violet-100/90 px-2 pb-2 pt-2 overflow-visible grid items-stretch gap-2 ${
+            className={`border-t border-violet-100/70 bg-white/40 px-2 sm:px-3 pb-2 pt-2 overflow-visible grid items-stretch gap-2 ${
               pipelineType === 'lead'
                 ? 'grid-cols-2 sm:grid-cols-3 xl:grid-cols-4'
                 : pipelineType === 'deal' && !dealKhSplitEnabled
@@ -6268,6 +6311,7 @@ export default function CRMDashboard() {
           </div>
         )}
       </section>
+      </div>
 
       {crmShowFullLoader ? (
         <CrmDashboardLoader
@@ -7147,6 +7191,34 @@ function DealCountSummaryKpiCard({
         </div>
       </div>
     </div>
+  );
+}
+
+// Dải KPI thu gọn — mỗi chỉ số một màu
+function CrmKpiSummaryStrip({ segments, title }) {
+  const toneClass = {
+    count: 'bg-slate-200/90 text-slate-900 border-slate-400/80 shadow-sm',
+    processing: 'bg-emerald-100 text-emerald-950 border-emerald-400/90 shadow-sm',
+    won: 'bg-green-100 text-green-950 border-green-500/90 shadow-sm',
+    forecast: 'bg-blue-100 text-blue-950 border-blue-500/90 shadow-sm',
+    expected: 'bg-fuchsia-100 text-fuchsia-950 border-fuchsia-500/90 shadow-sm',
+    completed: 'bg-teal-100 text-teal-950 border-teal-500/90 shadow-sm',
+    kpi: 'bg-amber-100 text-amber-950 border-amber-500/90 shadow-sm',
+  };
+  return (
+    <span className="flex flex-wrap items-center gap-1.5 mt-1.5 min-w-0" title={title}>
+      {segments.map((seg, i) => (
+        <span key={seg.key} className="inline-flex items-center gap-1.5 min-w-0 max-w-full">
+          {i > 0 && <span className="text-slate-400 text-xs select-none shrink-0 font-bold" aria-hidden>·</span>}
+          <span
+            className={`inline-flex items-baseline gap-1.5 rounded-lg border px-2 py-1 text-xs min-w-0 max-w-full ${toneClass[seg.tone] || toneClass.count}`}
+          >
+            <span className="font-semibold shrink-0">{seg.label}</span>
+            <span className="font-bold tabular-nums truncate">{seg.value}</span>
+          </span>
+        </span>
+      ))}
+    </span>
   );
 }
 

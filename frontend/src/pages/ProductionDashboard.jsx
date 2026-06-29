@@ -29,7 +29,7 @@ import {
 import {
   CheckCircle2, Search, X, Calendar, Plus,
   Factory, Users, LayoutGrid, List,
-  CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Layers, Trash2, MessageSquare, Pin, Building2, ArrowRightLeft, Settings,
+  CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Layers, Trash2, MessageSquare, Pin, Building2, ArrowRightLeft, Settings, ChevronDown,
 } from 'lucide-react';
 import { ProductionListView, ProductionPlannerView, ProductionCalendarView, ProductionCommentsView, ProductionDeadlineView } from '../components/ProductionViews';
 import WorkshopPipelineKanbanScroll, { useWorkshopKanbanScrollLayout } from '../components/WorkshopPipelineKanbanScroll';
@@ -58,10 +58,23 @@ import { DashboardLoader } from '../components/DashboardLoader';
 import { createCrmLoadProgressController } from '../lib/crmDashboardLoadProgress';
 import { isClickOutside } from '../lib/domUtils';
 import { getCrmDeadlineUrgencyFromIso, getCrmDeadlineUrgencyBadgeClass } from '../lib/crmLeadDeadlineDisplay';
+import AnchoredDropdownMenu from '../components/AnchoredDropdownMenu';
+import SearchInlineFilterChips, { SearchClearButton } from '../components/SearchInlineFilterChips';
+import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
 
 const INTAKE_BUCKET = 'won_pending';
 
 const WS_DASH_VIEW_MODES = ['kanban', 'list', 'planner', 'deadline', 'comments', 'calendar'];
+
+const SX_VIEW_MODES = [
+  { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
+  { id: 'list', icon: List, label: 'Danh sách' },
+  { id: 'planner', icon: Users, label: 'Planner' },
+  { id: 'deadline', icon: Clock, label: 'Deadline' },
+  { id: 'comments', icon: MessageSquare, label: 'Bình luận' },
+  { id: 'calendar', icon: Calendar, label: 'Lịch' },
+];
+const SX_ALT_VIEW_MODES = SX_VIEW_MODES.filter((v) => v.id !== 'kanban');
 
 const LS_SX = 'sx_dash_filters_v1';
 const LS_SX_FILTER_PANEL_POS = 'sx_filter_panel_pos';
@@ -336,7 +349,9 @@ export default function ProductionDashboard() {
   const [deadlineBusy, setDeadlineBusy] = useState(false);
   const [showNewDeal, setShowNewDeal] = useState(false);
   const [showKanbanSettings, setShowKanbanSettings] = useState(false);
-  const kanbanSettingsRef = useRef(null);
+  const kanbanSettingsTriggerRef = useRef(null);
+  const [showViewModeMenu, setShowViewModeMenu] = useState(false);
+  const viewModeTriggerRef = useRef(null);
   const [kanbanColumnScrollMode, setKanbanColumnScrollMode] = useState(() => {
     const fromP = P0?.kanbanColumnScrollMode;
     if (fromP && KANBAN_COLUMN_SCROLL_MODES.includes(fromP)) return fromP;
@@ -805,17 +820,6 @@ export default function ProductionDashboard() {
     filterRegion, filterPhone, filterWorkTypeId, searchQuery, priorityFilter, stageFilter, viewMode, sortBy,
     showOrphanColumn, showAdvFilter, sxFilterTab, kanbanColumnScrollMode,
   ]);
-
-  useEffect(() => {
-    if (!showKanbanSettings) return undefined;
-    const onDown = (e) => {
-      if (isClickOutside(kanbanSettingsRef.current, e)) {
-        setShowKanbanSettings(false);
-      }
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [showKanbanSettings]);
 
   // Đóng menu sắp xếp khi click ra ngoài
   useEffect(() => {
@@ -1996,6 +2000,11 @@ export default function ProductionDashboard() {
 
   const activeSxFilterCount = activeSxFilterChips.length;
 
+  const sxInlineFilterChips = useMemo(
+    () => activeSxFilterChips.filter((c) => c.key !== 'search'),
+    [activeSxFilterChips],
+  );
+
   const sxFilterTabCounts = useMemo(() => ({
     employee: staffFilterActiveCount
       + (filterDealCompany && showDealCompanyFilter ? 1 : 0)
@@ -2025,306 +2034,332 @@ export default function ProductionDashboard() {
 
   return (
     <div className="space-y-3">
-      {/* Header — gọn nhẹ, view-mode buttons outlined */}
-      <div className="flex items-end justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-xl md:text-2xl font-bold text-gray-900 flex items-center gap-1.5">
-            <Factory className="h-5 w-5 text-blue-600" />
-            Quản lý sản xuất
-          </h1>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap shrink-0">
-          {loading && !firstLoaded && (
-            <span className="inline-flex items-center gap-1.5 shrink-0 rounded-full border border-emerald-200/80 bg-emerald-50/90 px-2.5 py-1 text-xs font-semibold text-emerald-800">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60 animate-ping" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-600" />
-              </span>
-              Đang tải…
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => setShowNewDeal(true)}
-            className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium inline-flex items-center gap-2 cursor-pointer text-sm shrink-0"
-            title="Tạo deal mới và đưa vào cột Chờ vào xưởng"
-          >
-            <Plus className="h-4 w-4" />
-            Tạo deal
-          </button>
-          <AssignedTasksToolbarButton to="/sx/assignments" variant="outlined" className="!h-9" />
-          {[
-            { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
-            { id: 'list', icon: List, label: 'Danh sách' },
-            { id: 'planner', icon: Users, label: 'Planner' },
-            { id: 'deadline', icon: Clock, label: 'Deadline' },
-            { id: 'comments', icon: MessageSquare, label: 'Bình luận' },
-            { id: 'calendar', icon: Calendar, label: 'Lịch' },
-          ].map((v) => (
-            <button
-              key={v.id}
-              type="button"
-              onClick={() => setViewMode(v.id)}
-              className={`h-9 px-3 rounded-lg border text-sm font-medium inline-flex items-center gap-1.5 cursor-pointer transition-colors ${
-                viewMode === v.id
-                  ? 'border-blue-500 bg-blue-50 text-blue-700'
-                  : 'border-gray-200 bg-white hover:bg-gray-50'
-              }`}
-              style={viewMode === v.id ? undefined : { color: '#000000' }}
-            >
-              <v.icon className="h-3.5 w-3.5" />
-              {v.label}
-            </button>
-          ))}
-          {viewMode === 'kanban' && (
-            <div className="relative" ref={kanbanSettingsRef}>
+      {/* Panel điều khiển xưởng SX — hành động, KPI, tìm kiếm */}
+      <div className="ui-solid-white rounded-2xl border border-slate-200/90 bg-white shadow-md overflow-hidden ring-1 ring-slate-900/[0.04]">
+        {/* Hành động + tìm kiếm + chế độ xem */}
+        <div className="border-b border-slate-200/80 bg-gradient-to-r from-indigo-50/70 via-white to-sky-50/60">
+          <div className="flex flex-col gap-2 px-3 py-2.5 sm:px-4 lg:flex-row lg:items-center lg:gap-3">
+            <div className="flex flex-wrap items-center gap-2 min-w-0 shrink-0">
+              {loading && !firstLoaded && (
+                <span className="inline-flex items-center gap-1.5 shrink-0 rounded-full border border-emerald-200/80 bg-emerald-50/90 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60 animate-ping" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-600" />
+                  </span>
+                  Đang tải…
+                </span>
+              )}
               <button
                 type="button"
-                onClick={() => setShowKanbanSettings((v) => !v)}
-                className={`h-9 px-3 rounded-lg border text-sm font-medium inline-flex items-center gap-1.5 cursor-pointer transition-colors shrink-0 ${
-                  showKanbanSettings || kanbanColumnScrollMode === 'per-column'
-                    ? 'border-blue-500 bg-white text-blue-700 shadow-sm'
-                    : 'border-gray-200 bg-white hover:bg-gray-50'
-                }`}
-                title="Tùy chỉnh cuộn Kanban"
+                onClick={() => setShowNewDeal(true)}
+                className="h-8 px-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold inline-flex items-center gap-1.5 cursor-pointer text-sm shrink-0 shadow-sm shadow-indigo-500/20"
+                title="Tạo deal mới và đưa vào cột Chờ vào xưởng"
               >
-                <Settings className="h-3.5 w-3.5" />
-                Tùy chỉnh
+                <Plus className="h-3.5 w-3.5" />
+                Tạo deal
               </button>
-              {showKanbanSettings && (
-                <div className="ui-solid-white absolute right-0 top-full mt-1.5 z-[120] w-[min(100vw-1.5rem,18rem)] rounded-xl border border-gray-200 bg-white p-3 shadow-xl">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2.5">Cuộn cột Kanban</p>
-                  <div className="space-y-2">
-                    <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-gray-100 bg-white px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-blue-400 has-[:checked]:bg-white has-[:checked]:shadow-sm">
-                      <input
-                        type="radio"
-                        name="sx-kanban-column-scroll"
-                        className="mt-0.5 shrink-0"
-                        checked={kanbanColumnScrollMode === 'unified'}
-                        onChange={() => {
-                          setKanbanColumnScrollMode('unified');
-                          try { localStorage.setItem(LS_SX_KANBAN_COLUMN_SCROLL, 'unified'); } catch { /* ignore */ }
-                        }}
-                      />
-                      <span className="min-w-0">
-                        <span className="block text-xs font-semibold text-gray-800">Cuộn chung tất cả cột</span>
-                        <span className="block text-[11px] text-gray-500 leading-snug mt-0.5">Kéo một lần, mọi cột cuộn cùng chiều dọc (mặc định).</span>
-                      </span>
-                    </label>
-                    <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-gray-100 bg-white px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-blue-400 has-[:checked]:bg-white has-[:checked]:shadow-sm">
-                      <input
-                        type="radio"
-                        name="sx-kanban-column-scroll"
-                        className="mt-0.5 shrink-0"
-                        checked={kanbanColumnScrollMode === 'per-column'}
-                        onChange={() => {
-                          setKanbanColumnScrollMode('per-column');
-                          try { localStorage.setItem(LS_SX_KANBAN_COLUMN_SCROLL, 'per-column'); } catch { /* ignore */ }
-                        }}
-                      />
-                      <span className="min-w-0">
-                        <span className="block text-xs font-semibold text-gray-800">Cuộn riêng từng cột</span>
-                        <span className="block text-[11px] text-gray-500 leading-snug mt-0.5">Mỗi cột có thanh cuộn dọc riêng; cuộn ngang giữa các cột.</span>
-                      </span>
-                    </label>
-                  </div>
+              <AssignedTasksToolbarButton to="/sx/assignments" variant="outlined" className="!h-8 !rounded-lg !text-sm" />
+            </div>
+
+            {/* Tìm kiếm — giữa toolbar, chiếm phần trống còn lại */}
+            <div className="flex items-center gap-2 flex-1 min-w-0 order-2 lg:order-none">
+              <div
+                className={`group/search flex items-center flex-1 min-w-0 max-w-none lg:max-w-[22rem] xl:max-w-[26rem] rounded-lg border transition-all duration-200 ${
+                  searchFocused
+                    ? 'border-violet-400 bg-white shadow-md shadow-violet-500/15 ring-2 ring-violet-200/60'
+                    : searchQuery.trim()
+                      ? 'border-violet-300 bg-violet-50/90 shadow-sm ring-1 ring-violet-200/40'
+                      : sxInlineFilterChips.length && !showAdvFilter
+                        ? 'border-violet-200 bg-violet-50/50 shadow-sm ring-1 ring-violet-100/60'
+                        : 'border-violet-200/90 bg-white/80 hover:border-violet-300 hover:bg-white hover:shadow-sm'
+                }`}
+              >
+                <div className="relative flex-1 min-w-0 flex items-center gap-1 pl-8 pr-1">
+                  <Search
+                    className={`absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none transition-colors duration-200 ${
+                      searchFocused || searchQuery.trim() ? 'text-violet-600' : 'text-violet-500'
+                    }`}
+                  />
+                  {!showAdvFilter && sxInlineFilterChips.length > 0 && (
+                    <SearchInlineFilterChips
+                      chips={sxInlineFilterChips}
+                      opacityClass={
+                        searchFocused ? 'opacity-40' : searchQuery.trim() ? 'opacity-35' : 'opacity-45 group-hover/search:opacity-100'
+                      }
+                      onClearChip={(chip) => chip.onClear()}
+                      onClearAll={clearAllFilters}
+                      showClearAll={sxInlineFilterChips.length > 1}
+                    />
+                  )}
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onFocus={() => setSearchFocused(true)}
+                    onBlur={() => setTimeout(() => setSearchFocused(false), 180)}
+                    placeholder="Tìm mã TB, tên khách, SĐT…"
+                    className={`flex-1 min-w-[4.5rem] h-8 bg-transparent border-0 text-xs font-medium text-slate-900 placeholder:text-violet-500/60 focus:outline-none focus:ring-0 rounded-l-lg ${searchQuery ? 'pr-7' : ''}`}
+                  />
+                  {searchQuery && (
+                    <SearchClearButton onClick={() => { setSearchQuery(''); setSearchFocused(false); }} />
+                  )}
+                </div>
+                <div className="shrink-0 pr-1 pl-0.5">
+                  <button
+                    type="button"
+                    onClick={openSxFilterPanel}
+                    aria-expanded={showAdvFilter}
+                    className={`relative h-6 w-6 flex items-center justify-center rounded-md border transition-all duration-200 cursor-pointer ${
+                      showAdvFilter || sxFilterPanelActive
+                        ? 'bg-violet-200 text-violet-800 border-violet-400 shadow-sm ring-1 ring-violet-200/60'
+                        : 'bg-violet-50 text-violet-600 border-violet-200 hover:bg-violet-100 hover:text-violet-800 hover:border-violet-300'
+                    }`}
+                    title={showAdvFilter ? 'Thu gọn bộ lọc' : 'Bộ lọc nâng cao'}
+                    aria-label="Bộ lọc"
+                  >
+                    <Filter className="h-3 w-3" />
+                    {activeSxFilterCount > 0 && (
+                      <span className="absolute top-0 right-0 h-1.5 w-1.5 rounded-full bg-violet-600 ring-1 ring-white" />
+                    )}
+                  </button>
+                </div>
+              </div>
+              <span className="hidden md:inline text-[10px] text-slate-500 shrink-0 tabular-nums whitespace-nowrap">
+                <strong className="text-slate-700">{projects.length}</strong>
+                {' / '}
+                <strong className="text-indigo-700">{filteredCardCount}</strong>
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5 sm:justify-end shrink-0 order-3 lg:order-none">
+              <div className="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-white/90 border border-slate-200 shadow-inner">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('kanban')}
+                  className={`h-7 px-2.5 sm:px-3 rounded-md text-xs font-semibold inline-flex items-center gap-1 cursor-pointer transition-all ${
+                    viewMode === 'kanban'
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Kanban</span>
+                </button>
+                <div className="relative">
+                  <button
+                    ref={viewModeTriggerRef}
+                    type="button"
+                    onClick={() => setShowViewModeMenu((v) => !v)}
+                    className={`h-7 px-2 sm:px-2.5 rounded-md text-xs font-semibold inline-flex items-center gap-1 cursor-pointer transition-all ${
+                      viewMode !== 'kanban'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                    }`}
+                    title="Chế độ xem khác"
+                    aria-expanded={showViewModeMenu}
+                  >
+                    {(() => {
+                      const active = SX_ALT_VIEW_MODES.find((v) => v.id === viewMode);
+                      const Icon = active?.icon || List;
+                      return (
+                        <>
+                          <Icon className="h-3.5 w-3.5" />
+                          <span className="hidden sm:inline max-w-[5.5rem] truncate">
+                            {active?.label || 'Thêm'}
+                          </span>
+                          <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${showViewModeMenu ? 'rotate-180' : ''}`} />
+                        </>
+                      );
+                    })()}
+                  </button>
+                  <ViewModeDropdownMenu
+                    open={showViewModeMenu}
+                    onClose={() => setShowViewModeMenu(false)}
+                    anchorRef={viewModeTriggerRef}
+                    modes={SX_ALT_VIEW_MODES}
+                    activeId={viewMode}
+                    theme="indigo"
+                    onSelect={(id) => {
+                      setViewMode(id);
+                      setShowViewModeMenu(false);
+                    }}
+                  />
+                </div>
+              </div>
+              {viewMode === 'kanban' && (
+                <div className="relative">
+                  <button
+                    ref={kanbanSettingsTriggerRef}
+                    type="button"
+                    onClick={() => setShowKanbanSettings((v) => !v)}
+                    className={`h-8 px-2.5 rounded-lg border text-xs font-semibold inline-flex items-center gap-1 cursor-pointer transition-colors shrink-0 ${
+                      showKanbanSettings || kanbanColumnScrollMode === 'per-column'
+                        ? 'border-indigo-400 bg-indigo-50 text-indigo-700 shadow-sm'
+                        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                    }`}
+                    title="Tùy chỉnh cuộn Kanban"
+                  >
+                    <Settings className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Tùy chỉnh</span>
+                  </button>
+                  <AnchoredDropdownMenu
+                    open={showKanbanSettings}
+                    onClose={() => setShowKanbanSettings(false)}
+                    anchorRef={kanbanSettingsTriggerRef}
+                    className="rounded-xl border-gray-200 p-3 w-[min(100vw-1.5rem,18rem)]"
+                    align="right"
+                  >
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2.5">Cuộn cột Kanban</p>
+                    <div className="space-y-2">
+                      <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-gray-100 bg-white px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-blue-400 has-[:checked]:bg-white has-[:checked]:shadow-sm">
+                        <input
+                          type="radio"
+                          name="sx-kanban-column-scroll"
+                          className="mt-0.5 shrink-0"
+                          checked={kanbanColumnScrollMode === 'unified'}
+                          onChange={() => {
+                            setKanbanColumnScrollMode('unified');
+                            try { localStorage.setItem(LS_SX_KANBAN_COLUMN_SCROLL, 'unified'); } catch { /* ignore */ }
+                          }}
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-xs font-semibold text-gray-800">Cuộn chung tất cả cột</span>
+                          <span className="block text-[11px] text-gray-500 leading-snug mt-0.5">Kéo một lần, mọi cột cuộn cùng chiều dọc (mặc định).</span>
+                        </span>
+                      </label>
+                      <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-gray-100 bg-white px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-blue-400 has-[:checked]:bg-white has-[:checked]:shadow-sm">
+                        <input
+                          type="radio"
+                          name="sx-kanban-column-scroll"
+                          className="mt-0.5 shrink-0"
+                          checked={kanbanColumnScrollMode === 'per-column'}
+                          onChange={() => {
+                            setKanbanColumnScrollMode('per-column');
+                            try { localStorage.setItem(LS_SX_KANBAN_COLUMN_SCROLL, 'per-column'); } catch { /* ignore */ }
+                          }}
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-xs font-semibold text-gray-800">Cuộn riêng từng cột</span>
+                          <span className="block text-[11px] text-gray-500 leading-snug mt-0.5">Mỗi cột có thanh cuộn dọc riêng; cuộn ngang giữa các cột.</span>
+                        </span>
+                      </label>
+                    </div>
+                  </AnchoredDropdownMenu>
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Lọc nhanh — chỉ hiện khi cần, gọn một dòng */}
+          {(showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0) || (companyForTypes && workTypes.length > 0) ? (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 pb-2 sm:px-4 border-t border-slate-200/50 pt-1.5">
+              {showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0 && (
+                <div className="flex items-center gap-1.5 overflow-x-auto max-w-full min-w-0 shrink scrollbar-thin scrollbar-thumb-violet-200">
+                  <span className="text-[10px] font-semibold text-violet-700/80 shrink-0 uppercase tracking-wide">SX tại</span>
+                  {[{ id: '', name: 'Tất cả' }, ...sxWorkshopFilterOptions].map((c) => {
+                    const active = filterSxWorkshopCompany === c.id;
+                    return (
+                      <button
+                        key={c.id || 'all-sx'}
+                        type="button"
+                        onClick={() => {
+                          if (active) return;
+                          setFilterSxWorkshopCompany(c.id);
+                          setFilterWorkTypeId('');
+                        }}
+                        className={`shrink-0 h-7 px-2 rounded-full text-[10px] font-semibold border transition-all cursor-pointer whitespace-nowrap ${
+                          active
+                            ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm'
+                            : 'bg-white border-violet-200 text-slate-600 hover:border-indigo-300 hover:text-indigo-700 hover:bg-indigo-50'
+                        }`}
+                      >
+                        {active && <span className="mr-0.5">✓</span>}
+                        {c.id === '' ? 'Tất cả' : (c.short_name || c.name)}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {companyForTypes && workTypes.length > 0 && (
+                <div
+                  className={`inline-flex items-center gap-1 h-7 px-2 rounded-lg border shrink-0 ${
+                    filterWorkTypeId === 'none'
+                      ? 'border-amber-300 bg-amber-50'
+                      : filterWorkTypeId
+                        ? 'border-teal-300 bg-teal-50'
+                        : 'border-violet-200 bg-white'
+                  }`}
+                  title="Phân loại dự án xưởng"
+                >
+                  <Layers className={`h-3 w-3 shrink-0 ${
+                    filterWorkTypeId === 'none' ? 'text-amber-600'
+                    : filterWorkTypeId ? 'text-teal-700' : 'text-violet-500'
+                  }`} />
+                  <select
+                    value={filterWorkTypeId}
+                    onChange={(e) => setFilterWorkTypeId(e.target.value)}
+                    className={`h-6 text-[11px] bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[11rem] font-semibold ${
+                      filterWorkTypeId === 'none' ? 'text-amber-700'
+                      : filterWorkTypeId ? 'text-teal-800' : 'text-slate-700'
+                    }`}
+                  >
+                    <option value="">Phân loại: Tất cả</option>
+                    <option value="none">Chưa phân loại</option>
+                    {workTypes.map((wt) => (
+                      <option key={wt.id} value={wt.id}>{wt.name}</option>
+                    ))}
+                  </select>
+                  {filterWorkTypeId && (
+                    <button
+                      type="button"
+                      onClick={() => setFilterWorkTypeId('')}
+                      className="p-0.5 rounded hover:bg-white/70 cursor-pointer"
+                      title="Bỏ phân loại"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              )}
+              <span className="text-[10px] text-slate-500 ml-auto shrink-0 tabular-nums md:hidden">
+                {projects.length} / {filteredCardCount} thẻ
+              </span>
+            </div>
+          ) : (
+            <div className="flex md:hidden justify-end px-3 pb-2 sm:px-4">
+              <span className="text-[10px] text-slate-500 tabular-nums">
+                {projects.length} / {filteredCardCount} thẻ
+              </span>
+            </div>
           )}
         </div>
-      </div>
 
-      {/* KPI — tổng quan dự án + công nợ / đã thu theo cột pipeline */}
-      {(() => {
-        const total = scopeKpis.total;
-        return (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-2">
-            <KPICard accent="bg-violet-500" label="Tổng dự án" value={total} descriptor={total > 0 ? `${total} dự án` : '—'} />
-            <KPICard
-              accent="bg-teal-500"
-              label="Đang sản xuất"
-              value={scopeKpis.producing}
-              descriptor={scopeKpis.producing > 0 ? `${scopeKpis.producing} dự án` : '—'}
-            />
-            <KPICard
-              accent="bg-slate-500"
-              label="Chờ vận chuyển"
-              value={scopeKpis.awaiting_delivery}
-              descriptor={scopeKpis.awaiting_delivery > 0 ? 'ở cột bàn giao VC' : '—'}
-            />
-            <KPICard
-              accent="bg-blue-500"
-              label="Đã vận chuyển"
-              value={scopeKpis.shipped}
-              descriptor={scopeKpis.shipped > 0 ? 'đang / đã giao' : '—'}
-            />
-            <KPICard
-              accent="bg-red-500"
-              label="Quá hạn"
-              value={scopeKpis.overdue}
-              descriptor={scopeKpis.overdue > 0 ? 'cần xử lý' : 'không có'}
-              valueTone={scopeKpis.overdue > 0 ? 'danger' : undefined}
-            />
+        {/* KPI */}
+        <div className="px-3 py-2 sm:px-4 border-b border-slate-100 bg-slate-50/40">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-1.5 sm:gap-2">
+            <KPICard accent="bg-violet-500" label="Tổng dự án" value={scopeKpis.total} descriptor={scopeKpis.total > 0 ? `${scopeKpis.total} dự án` : '—'} />
+            <KPICard accent="bg-teal-500" label="Đang sản xuất" value={scopeKpis.producing} descriptor={scopeKpis.producing > 0 ? `${scopeKpis.producing} dự án` : '—'} />
+            <KPICard accent="bg-slate-500" label="Chờ vận chuyển" value={scopeKpis.awaiting_delivery} descriptor={scopeKpis.awaiting_delivery > 0 ? 'ở cột bàn giao VC' : '—'} />
+            <KPICard accent="bg-blue-500" label="Đã vận chuyển" value={scopeKpis.shipped} descriptor={scopeKpis.shipped > 0 ? 'đang / đã giao' : '—'} />
+            <KPICard accent="bg-red-500" label="Quá hạn" value={scopeKpis.overdue} descriptor={scopeKpis.overdue > 0 ? 'cần xử lý' : 'không có'} valueTone={scopeKpis.overdue > 0 ? 'danger' : undefined} />
             <KPICard
               accent="bg-amber-500"
               label="Công nợ"
-              value={(scopeKpis.debt_count > 0 || scopeKpis.debt_revenue_value > 0)
-                ? formatVND(scopeKpis.debt_revenue_value || 0)
-                : '—'}
-              descriptor={scopeKpis.debt_count > 0
-                ? `${scopeKpis.debt_count} dự án · đã công, chưa thu`
-                : 'đã công, chưa thu'}
+              value={(scopeKpis.debt_count > 0 || scopeKpis.debt_revenue_value > 0) ? formatVND(scopeKpis.debt_revenue_value || 0) : '—'}
+              descriptor={scopeKpis.debt_count > 0 ? `${scopeKpis.debt_count} dự án · đã công, chưa thu` : 'đã công, chưa thu'}
             />
             <KPICard
               accent="bg-emerald-600"
               label="Đã thu"
-              value={(scopeKpis.collected_count > 0 || scopeKpis.collected_revenue_value > 0)
-                ? formatVND(scopeKpis.collected_revenue_value || 0)
-                : '—'}
-              descriptor={scopeKpis.collected_count > 0
-                ? `${scopeKpis.collected_count} dự án · theo cột pipeline`
-                : 'theo cột pipeline'}
+              value={(scopeKpis.collected_count > 0 || scopeKpis.collected_revenue_value > 0) ? formatVND(scopeKpis.collected_revenue_value || 0) : '—'}
+              descriptor={scopeKpis.collected_count > 0 ? `${scopeKpis.collected_count} dự án · theo cột pipeline` : 'theo cột pipeline'}
             />
           </div>
-        );
-      })()}
-
-      {/* Toolbar — tìm kiếm + bộ lọc nổi (đồng bộ CRM) */}
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <div
-            className={`group/search flex items-center shrink-0 w-full sm:w-[280px] md:w-[340px] max-w-[360px] rounded-xl border-2 transition-all duration-200 ${
-              searchFocused
-                ? 'border-violet-400 bg-white shadow-lg shadow-violet-500/20 ring-2 ring-violet-200/70'
-                : searchQuery.trim()
-                  ? 'border-violet-300 bg-violet-50/90 shadow-md shadow-violet-500/10 ring-1 ring-violet-200/50'
-                  : 'border-violet-200 bg-violet-50/70 hover:border-violet-300 hover:bg-violet-50 hover:shadow-md hover:shadow-violet-500/10'
-            }`}
-          >
-            <div className="relative flex-1 min-w-0">
-              <Search
-                className={`absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 pointer-events-none transition-colors duration-200 ${
-                  searchFocused || searchQuery.trim() ? 'text-violet-600' : 'text-violet-500'
-                }`}
-              />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onFocus={() => setSearchFocused(true)}
-                onBlur={() => setTimeout(() => setSearchFocused(false), 180)}
-                placeholder="Tìm mã TB, tên khách, SĐT…"
-                className="w-full h-9 pl-9 pr-8 bg-transparent border-0 text-xs font-medium text-slate-900 placeholder:text-violet-500/65 focus:outline-none focus:ring-0 rounded-l-xl"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => { setSearchQuery(''); setSearchFocused(false); }}
-                  className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded-md text-violet-400 hover:text-violet-700 hover:bg-violet-200/60 cursor-pointer transition-colors"
-                  aria-label="Xóa tìm kiếm"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-            <div className="shrink-0 pr-1.5 pl-0.5">
-              <button
-                type="button"
-                onClick={openSxFilterPanel}
-                aria-expanded={showAdvFilter}
-                className={`relative h-7 w-7 flex items-center justify-center rounded-lg border transition-all duration-200 cursor-pointer ${
-                  showAdvFilter || sxFilterPanelActive
-                    ? 'bg-violet-200 text-violet-800 border-violet-400 shadow-md ring-2 ring-violet-200/60'
-                    : 'bg-violet-50 text-violet-600 border-violet-200 hover:bg-violet-100 hover:text-violet-800 hover:border-violet-300 hover:shadow-sm'
-                }`}
-                title={showAdvFilter ? 'Thu gọn bộ lọc' : 'Bộ lọc nâng cao'}
-                aria-label="Bộ lọc"
-              >
-                <Filter className="h-3.5 w-3.5" />
-                {activeSxFilterCount > 0 && (
-                  <span className="absolute top-0.5 right-0.5 h-1.5 w-1.5 rounded-full bg-violet-600 ring-2 ring-white" />
-                )}
-              </button>
-            </div>
-          </div>
-
-          {showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0 && (
-            <div className="flex items-center gap-1.5 overflow-x-auto max-w-full shrink-0 pb-0.5 scrollbar-thin scrollbar-thumb-violet-200">
-              <span className="text-[11px] font-semibold text-violet-700/80 shrink-0">SX tại:</span>
-              {[{ id: '', name: 'Tất cả' }, ...sxWorkshopFilterOptions].map((c) => {
-                const active = filterSxWorkshopCompany === c.id;
-                return (
-                  <button
-                    key={c.id || 'all-sx'}
-                    type="button"
-                    onClick={() => {
-                      if (active) return;
-                      setFilterSxWorkshopCompany(c.id);
-                      setFilterWorkTypeId('');
-                    }}
-                    className={`shrink-0 h-8 px-2.5 rounded-full text-[11px] font-semibold border transition-all cursor-pointer whitespace-nowrap ${
-                      active
-                        ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm'
-                        : 'bg-white border-violet-200 text-slate-600 hover:border-indigo-300 hover:text-indigo-700 hover:bg-indigo-50'
-                    }`}
-                  >
-                    {active && <span className="mr-1">✓</span>}
-                    {c.id === '' ? 'Tất cả' : (c.short_name || c.name)}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {companyForTypes && workTypes.length > 0 && (
-            <div
-              className={`inline-flex items-center gap-1 h-9 px-2 rounded-lg border shrink-0 ${
-                filterWorkTypeId === 'none'
-                  ? 'border-amber-300 bg-amber-50'
-                  : filterWorkTypeId
-                    ? 'border-teal-300 bg-teal-50'
-                    : 'border-violet-200 bg-white'
-              }`}
-              title="Phân loại dự án xưởng"
-            >
-              <Layers className={`h-3.5 w-3.5 shrink-0 ${
-                filterWorkTypeId === 'none' ? 'text-amber-600'
-                : filterWorkTypeId ? 'text-teal-700' : 'text-violet-500'
-              }`} />
-              <select
-                value={filterWorkTypeId}
-                onChange={(e) => setFilterWorkTypeId(e.target.value)}
-                className={`h-8 text-xs bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[12rem] font-semibold ${
-                  filterWorkTypeId === 'none' ? 'text-amber-700'
-                  : filterWorkTypeId ? 'text-teal-800' : 'text-slate-700'
-                }`}
-              >
-                <option value="">Phân loại: Tất cả</option>
-                <option value="none">Chưa phân loại</option>
-                {workTypes.map((wt) => (
-                  <option key={wt.id} value={wt.id}>{wt.name}</option>
-                ))}
-              </select>
-              {filterWorkTypeId && (
-                <button
-                  type="button"
-                  onClick={() => setFilterWorkTypeId('')}
-                  className="p-1 rounded hover:bg-white/70 cursor-pointer"
-                  title="Bỏ phân loại"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </div>
-          )}
-
-          <span className="text-[11px] text-gray-500 ml-auto shrink-0">
-            Tải: <strong>{projects.length}</strong>
-            {' · '}<strong className="text-blue-700">{filteredCardCount}</strong> thẻ sau lọc
-          </span>
         </div>
+      </div>
+
+      {/* Chip lọc / panel nâng cao */}
+      <div className="space-y-2">
 {!showAdvFilter && showCustomDate && (
           <div className="flex flex-wrap items-center gap-3 bg-violet-50 border border-violet-200 rounded-xl p-3 shadow-sm">
             <span className="text-xs font-bold text-violet-600 uppercase flex items-center gap-1.5">
@@ -2369,33 +2404,6 @@ export default function ProductionDashboard() {
               </button>
             </span>
           </div>
-        )}
-
-        {!showAdvFilter && activeSxFilterCount > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            {activeSxFilterChips.map((chip) => (
-              <span
-                key={chip.key}
-                className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-violet-100 border border-violet-300 text-[11px] font-semibold text-violet-900 shadow-sm"
-              >
-                <span className="max-w-[12rem] truncate">{chip.label}</span>
-                <button
-                  type="button"
-                  onClick={chip.onClear}
-                  className="p-0.5 rounded-full hover:bg-violet-200 text-violet-600 cursor-pointer"
-                  aria-label={`Bỏ lọc ${chip.label}`}
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
-            ))}
-            <button
-              type="button"
-              onClick={clearAllFilters}
-              className="text-[11px] font-medium text-slate-500 hover:text-red-600 cursor-pointer px-1"
-            >
-              Xóa tất cả
-            </button>          </div>
         )}
 
         {showAdvFilter && (
@@ -2884,19 +2892,18 @@ export default function ProductionDashboard() {
   );
 }
 
-// KPI Card — thanh màu mảnh ở trên + label / value / descriptor (giống mockup)
+// KPI Card — nổi bật trong panel xưởng SX
 function KPICard({ accent = 'bg-blue-500', label, value, descriptor, valueTone }) {
   const isDanger = valueTone === 'danger';
   const isWarning = valueTone === 'warning';
-  const valueClass = isDanger ? 'text-red-600' : isWarning ? 'text-amber-600' : '';
-  const valueStyle = !isDanger && !isWarning ? { color: '#000000' } : undefined;
+  const valueClass = isDanger ? 'text-red-600' : isWarning ? 'text-amber-600' : 'text-slate-900';
   return (
-    <div className="relative min-w-0 rounded-lg border border-gray-200 bg-white shadow-sm hover:shadow-md transition-shadow overflow-hidden">
-      <div className={`h-[3px] w-full ${accent}`} />
-      <div className="px-3 py-2 flex flex-col gap-0.5">
-        <p className="text-[11px] text-gray-500 font-medium truncate" title={label}>{label}</p>
-        <p className={`text-2xl font-bold leading-none tabular-nums ${valueClass}`} style={valueStyle}>{value}</p>
-        {descriptor && <p className="text-[11px] text-gray-400 truncate" title={descriptor}>{descriptor}</p>}
+    <div className="relative min-w-0 rounded-xl border border-slate-200/90 bg-white shadow-sm hover:shadow-md hover:-translate-y-px transition-all overflow-hidden">
+      <div className={`h-1 w-full ${accent}`} />
+      <div className="px-2.5 py-1.5 sm:px-3 sm:py-2 flex flex-col gap-0.5">
+        <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-wide truncate" title={label}>{label}</p>
+        <p className={`text-base sm:text-lg font-bold leading-none tabular-nums ${valueClass}`}>{value}</p>
+        {descriptor && <p className="text-[10px] text-slate-400 truncate" title={descriptor}>{descriptor}</p>}
       </div>
     </div>
   );
