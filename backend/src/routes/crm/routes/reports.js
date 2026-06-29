@@ -294,6 +294,8 @@ function emptyStaffLeadDealAgg() {
     quote_value: 0,
     won_or_later_deal_count: 0,
     won_or_later_value: 0,
+    customer_order_count: 0,
+    customer_order_value: 0,
   };
 }
 
@@ -549,6 +551,7 @@ function orgReportCompareSummary(current, previous) {
   const metrics = [
     'lead_count', 'deal_count', 'pipeline_value', 'won_deal_count', 'won_value',
     'quote_deal_count', 'quote_value', 'won_or_later_deal_count', 'won_or_later_value',
+    'customer_order_count', 'customer_order_value',
     'expected_value', 'weighted_value', 'completed_deal_count', 'completed_value',
     'overdue_count', 'kpi_ledger_net', 'reception_overdue_count',
   ];
@@ -652,6 +655,22 @@ function buildWonStageOrderByPipeline(stageMap) {
     }
   }
   return byPipe;
+}
+
+function orgReportDealSplitBuckets(st, wonStageOrderByPipe) {
+  if (!st) return { inDealTab: true, inCustomerTab: false };
+  if (st.is_lost || st.canonical_slug === 'lost' || st.deal_report_bucket === 'lost') {
+    return { inDealTab: true, inCustomerTab: false };
+  }
+  const pid = st.pipeline_id ? String(st.pipeline_id) : null;
+  const ordRaw = Number(st.order_index);
+  const ord = Number.isFinite(ordRaw) ? ordRaw : 999;
+  const anchor = pid ? wonStageOrderByPipe?.[pid] : null;
+  if (!Number.isFinite(anchor)) return { inDealTab: true, inCustomerTab: false };
+  return {
+    inDealTab: ord < anchor,
+    inCustomerTab: ord >= anchor,
+  };
 }
 
 function orgReportDealIsClosedWon(st, wonStageOrderByPipe, stagesInPipe) {
@@ -893,7 +912,7 @@ function orgReportDealCloseValueRatePct(m) {
 }
 
 function aggregateOrgReportRows(leadRows, dealRows, stageMap, opts = {}) {
-  const { slaMinutes = 15 } = opts;
+  const { slaMinutes = 15, dealKhSplit = false } = opts;
   const pipelineStagesMap = buildPipelineStagesMap(stageMap);
   const firstStageByPipe = buildFirstStageIdByPipeline(stageMap);
   const quotedStageOrderByPipe = buildQuotedStageOrderByPipeline(stageMap);
@@ -963,7 +982,7 @@ function aggregateOrgReportRows(leadRows, dealRows, stageMap, opts = {}) {
 
     if (ck) {
       if (!timelineMap[ck]) {
-        timelineMap[ck] = { date: ck, lead_count: 0, deal_count: 0, won_value: 0, pipeline_value: 0 };
+        timelineMap[ck] = { date: ck, lead_count: 0, deal_count: 0, customer_order_count: 0, won_value: 0, pipeline_value: 0 };
       }
       timelineMap[ck].lead_count += 1;
       timelineMap[ck].pipeline_value += v;
@@ -978,6 +997,9 @@ function aggregateOrgReportRows(leadRows, dealRows, stageMap, opts = {}) {
     const ext = orgReportExtendedDealMetrics(l, st, stagesInPipe);
     const isQuotedOrAfter = orgReportDealIsQuotedOrAfter(st, quotedStageOrderByPipe);
     const isClosedWon = orgReportDealIsClosedWon(st, wonStageOrderByPipe, stagesInPipe);
+    const splitBuckets = dealKhSplit
+      ? orgReportDealSplitBuckets(st, wonStageOrderByPipe)
+      : { inDealTab: true, inCustomerTab: false };
     const dealPatch = {
       value: ext.value,
       isWon: isClosedWon,
@@ -990,6 +1012,8 @@ function aggregateOrgReportRows(leadRows, dealRows, stageMap, opts = {}) {
       quote_value: isQuotedOrAfter ? ext.value : 0,
       won_or_later_deal_count: isClosedWon ? 1 : 0,
       won_or_later_value: isClosedWon ? ext.value : 0,
+      inDealTab: splitBuckets.inDealTab,
+      inCustomerTab: splitBuckets.inCustomerTab,
     };
     const ck = orgReportDayKey(l);
     const uid = orgReportOwnerId(l) || UNASSIGNED;
@@ -1022,9 +1046,12 @@ function aggregateOrgReportRows(leadRows, dealRows, stageMap, opts = {}) {
 
     if (ck) {
       if (!timelineMap[ck]) {
-        timelineMap[ck] = { date: ck, lead_count: 0, deal_count: 0, won_value: 0, pipeline_value: 0 };
+        timelineMap[ck] = { date: ck, lead_count: 0, deal_count: 0, customer_order_count: 0, won_value: 0, pipeline_value: 0 };
       }
-      timelineMap[ck].deal_count += 1;
+      timelineMap[ck].deal_count += dealKhSplit ? (splitBuckets.inDealTab ? 1 : 0) : 1;
+      if (dealKhSplit && splitBuckets.inCustomerTab) {
+        timelineMap[ck].customer_order_count = (timelineMap[ck].customer_order_count || 0) + 1;
+      }
       timelineMap[ck].pipeline_value += v;
       if (isClosedWon) timelineMap[ck].won_value += v;
     }
@@ -1092,18 +1119,24 @@ function orgReportBumpMetrics(target, patchLead, patchDeal) {
     if (leadLost) target.lost_lead_count += 1;
   }
   if (patchDeal) {
-    target.deal_count += 1;
-    target.deal_pipeline_value += patchDeal.value;
+    if (patchDeal.inDealTab) {
+      target.deal_count += 1;
+      target.deal_pipeline_value += patchDeal.value;
+      if (patchDeal.isLost) {
+        target.lost_deal_count += 1;
+        target.lost_value += patchDeal.value;
+      }
+      target.expected_value += patchDeal.expected_value || 0;
+      target.weighted_value += patchDeal.weighted_value || 0;
+    }
+    if (patchDeal.inCustomerTab) {
+      target.customer_order_count += 1;
+      target.customer_order_value += patchDeal.value || 0;
+    }
     if (patchDeal.isWon) {
       target.won_deal_count += 1;
       target.won_value += patchDeal.value;
     }
-    if (patchDeal.isLost) {
-      target.lost_deal_count += 1;
-      target.lost_value += patchDeal.value;
-    }
-    target.expected_value += patchDeal.expected_value || 0;
-    target.weighted_value += patchDeal.weighted_value || 0;
     target.completed_deal_count += patchDeal.completed_deal_count || 0;
     target.completed_value += patchDeal.completed_value || 0;
     target.quote_deal_count += patchDeal.quote_deal_count || 0;
@@ -1131,6 +1164,10 @@ async function computeOrgOverviewReportData(req, res) {
     const typeView = rawType === 'lead' || rawType === 'deal' ? rawType : 'all';
     const skipLeads = typeView === 'deal';
     const skipDeals = typeView === 'lead';
+
+    const dealKhSplit = req.query.deal_kh_split === '1'
+      || req.query.deal_kh_split === 'true'
+      || String(req.query.deal_kh_split || '').toLowerCase() === 'yes';
 
     const dealAssigneeOnly =
       req.user?.userId && !userSeesAllCrmDealsForScope(req.user) ? req.user.userId : null;
@@ -1188,7 +1225,7 @@ async function computeOrgOverviewReportData(req, res) {
       orgReportReceptionSlaMinutes(effectiveCompanyId),
     ]);
 
-    const aggOpts = { slaMinutes: receptionSlaMinutes };
+    const aggOpts = { slaMinutes: receptionSlaMinutes, dealKhSplit };
     const aggregated = aggregateOrgReportRows(leadRows, dealRows, stageMap, aggOpts);
     const {
       summary,
@@ -1409,6 +1446,7 @@ async function computeOrgOverviewReportData(req, res) {
       effectiveCompanyId,
       explicitRegionId,
       typeView,
+      dealKhSplit,
       summary,
       kpi_ledger_period_start: kpiPeriodStart,
       period_previous,
@@ -1487,6 +1525,7 @@ r.get('/reports/org-overview', async (req, res) => {
       region_id: data.explicitRegionId || null,
       basis: 'created_at',
       type: data.typeView || 'all',
+      deal_kh_split: !!data.dealKhSplit,
       summary: data.summary,
       period_previous: data.period_previous,
       compare: data.compare,
