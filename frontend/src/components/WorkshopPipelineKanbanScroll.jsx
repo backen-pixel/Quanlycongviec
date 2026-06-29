@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, useCallback, createContext, useContext } from 'react';
+import { UI_KANBAN_FIXED_CLASS } from '../lib/kanbanColumnTheme';
 import {
   KanbanBoardEdgeScrollChrome,
 } from '../lib/kanbanEdgeScrollControls';
@@ -187,7 +188,7 @@ export default function WorkshopPipelineKanbanScroll({
 
   return (
     <WorkshopKanbanScrollContext.Provider value={{ columnScrollMaxH: scrollMaxH }}>
-      <div ref={kanbanWrapRef} className="relative">
+      <div ref={kanbanWrapRef} className={`relative ${UI_KANBAN_FIXED_CLASS}`}>
       <KanbanBoardEdgeScrollChrome
         wrapRef={kanbanWrapRef}
         remeasureToken={remeasureToken}
@@ -230,7 +231,7 @@ export default function WorkshopPipelineKanbanScroll({
       >
         {children}
       </div>
-      <div className="flex flex-wrap items-center gap-3 px-3 py-2 mt-1 border-t border-gray-100 bg-white text-[11px] text-gray-600 rounded-b-lg">
+      <div className="flex flex-wrap items-center gap-3 px-3 py-2 mt-1 border-t border-gray-100 bg-white text-[11px] text-gray-600 rounded-b-lg ui-solid-white">
         <span className="font-semibold text-gray-500 mr-1">Chú thích:</span>
         <span className="inline-flex items-center gap-1.5">
           <span className="inline-block h-3 w-5 rounded border border-gray-300 bg-white" aria-hidden />

@@ -95,13 +95,13 @@ export default function WorkshopDashboardFilterPanel({
   return (
     <div
       ref={panelRef}
-      className="fixed z-[75] max-sm:left-4 max-sm:right-4 max-sm:bottom-4 max-sm:top-auto w-[min(100vw-2rem,400px)] max-h-[min(calc(100vh-5rem),620px)] flex flex-col rounded-xl border-2 border-violet-300 bg-gradient-to-b from-violet-50 via-white to-white shadow-2xl shadow-violet-500/20 ring-1 ring-violet-200/80 overflow-hidden animate-fade-in"
+      className="ui-solid-white fixed z-[75] max-sm:left-4 max-sm:right-4 max-sm:bottom-4 max-sm:top-auto w-[min(100vw-2rem,400px)] max-h-[min(calc(100vh-5rem),620px)] flex flex-col rounded-xl border border-gray-200 bg-white shadow-2xl overflow-hidden animate-fade-in"
       style={position ? { left: position.x, top: position.y } : { top: '4.5rem', right: '1rem' }}
       role="region"
       aria-label="Bộ lọc sản xuất"
     >
       <div
-        className="shrink-0 px-3 pt-2.5 pb-2 border-b border-violet-200/80 bg-gradient-to-r from-violet-100/95 to-violet-50/70 cursor-grab active:cursor-grabbing select-none"
+        className="shrink-0 px-3 pt-2.5 pb-2 border-b border-gray-200 bg-white cursor-grab active:cursor-grabbing select-none"
         onMouseDown={onDragStart}
       >
         <div className="flex items-center gap-2">
@@ -119,7 +119,7 @@ export default function WorkshopDashboardFilterPanel({
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
-        <div className="mt-2 flex p-0.5 rounded-lg bg-violet-100/90 border border-violet-200/60 gap-0.5">
+        <div className="mt-2 flex p-0.5 rounded-lg bg-gray-50 border border-gray-200 gap-0.5">
           {tabs.map((t) => (
             <button
               key={t.id}
@@ -147,7 +147,7 @@ export default function WorkshopDashboardFilterPanel({
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto px-3 py-1 bg-white/60 [scrollbar-width:thin]">
+      <div className="flex-1 min-h-0 overflow-y-auto px-3 py-1 bg-white [scrollbar-width:thin]">
         {(canPickCompany && workshopCompanyPickerList.length > 0 || showDealCompanyFilter || (showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0)) && (
           <div className="py-2 border-b border-violet-100/80">
             <div className="rounded-lg border border-violet-200 bg-violet-50/50 p-3 space-y-2">
@@ -442,7 +442,7 @@ export default function WorkshopDashboardFilterPanel({
         )}
       </div>
 
-      <div className="shrink-0 border-t border-violet-200/80 bg-violet-50/90 px-3 py-2">
+      <div className="shrink-0 border-t border-gray-200 bg-white px-3 py-2">
         <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"

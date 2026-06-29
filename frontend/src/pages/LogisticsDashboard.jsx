@@ -23,6 +23,7 @@ import {
 import { LogisticsListView, LogisticsPlannerView, LogisticsCalendarView } from '../components/LogisticsViews';
 import NewLogisticsProjectModal from '../components/NewLogisticsProjectModal';
 import WorkshopPipelineKanbanScroll from '../components/WorkshopPipelineKanbanScroll';
+import { useKanbanColumnTheme } from '../lib/kanbanColumnTheme';
 import WorkshopStaffFilterPanel from '../components/WorkshopStaffFilterPanel';
 import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
@@ -961,7 +962,7 @@ function KPICard({ icon, iconBgColor, iconColor, label, value }) {
 }
 
 // Kanban Stage Column
-function KanbanStageCard({ stage, items, onMoveStage, onDelete, calculateDays, selectedIds, onToggleSelect }) {
+function KanbanStageCard({ stage, items, onMoveStage, onDelete, calculateDays, selectedIds, onToggleSelect, columnIndex = 0 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
   const [columnMaxH, setColumnMaxH] = useState('70vh');
@@ -978,7 +979,7 @@ function KanbanStageCard({ stage, items, onMoveStage, onDelete, calculateDays, s
     return () => window.removeEventListener('resize', measure);
   }, []);
 
-  const stageColor = stage.color || '#f97316';
+  const columnTheme = useKanbanColumnTheme(columnIndex);
   return (
     <div
       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setIsOverColumn(true); }}
@@ -986,22 +987,37 @@ function KanbanStageCard({ stage, items, onMoveStage, onDelete, calculateDays, s
       onDrop={(e) => { e.preventDefault(); setIsOverColumn(false); const pid = e.dataTransfer.getData('projectId'); if (pid) onMoveStage(pid, stage); }}
       className={`flex-shrink-0 w-80 rounded-lg overflow-hidden transition-all duration-200 ${isOverColumn ? 'ring-2 ring-orange-500 ring-dashed' : ''}`}
     >
-      <div className="h-1.5 w-full" style={{ backgroundColor: stageColor }} />
-      <div className={`bg-white/40 backdrop-blur-md border border-white/40 border-t-0 p-4 transition-all ${isOverColumn ? 'bg-orange-100/60' : ''}`}>
+      <div
+        className="p-4 border-b transition-all kanban-column-surface"
+        style={{
+          backgroundColor: isOverColumn ? columnTheme.dropBg : columnTheme.headerBg,
+          borderColor: columnTheme.border,
+          boxShadow: columnTheme.headerShadow,
+        }}
+      >
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="text-lg shrink-0">{stage.icon || '📦'}</span>
-            <h3 className="font-semibold truncate" style={{ color: '#000000' }}>{stage.name}</h3>
+            <h3 className="font-semibold truncate kanban-stage-title" style={{ color: '#000000' }}>{stage.name}</h3>
           </div>
-          <span className="px-2 py-1 bg-white/60 text-gray-800 text-xs font-bold rounded backdrop-blur-sm">{items.length}</span>
+          <span
+            className="px-2 py-1 text-xs font-bold rounded tabular-nums"
+            style={{
+              backgroundColor: columnTheme.badgeBg,
+              color: columnTheme.accent,
+              border: `1px solid ${columnTheme.badgeBorder}`,
+            }}
+          >
+            {items.length}
+          </span>
         </div>
-        <p className="text-xs" style={{ color: '#374151' }}>
+        <p className="text-xs text-force-black" style={{ color: '#374151' }}>
           Giá trị: {formatVND(items.reduce((sum, p) => sum + (Number(p.estimated_value) || 0), 0))}
         </p>
       </div>
       <div
         ref={containerRef}
-        className={`bg-white/25 backdrop-blur-md border border-white/40 border-t-0 p-3 space-y-3 overflow-y-auto transition-all ${isOverColumn ? 'bg-orange-100/50' : ''}`}
+        className="bg-white/25 backdrop-blur-md border border-white/40 border-t-0 p-3 space-y-3 overflow-y-auto transition-all"
         style={{ maxHeight: columnMaxH, minHeight: '200px' }}
       >
         {items.length === 0 ? (
@@ -1184,9 +1200,10 @@ function KanbanView({ pipeline, onMoveStage, onDelete, calculateDays, selectedId
   return (
     <WorkshopPipelineKanbanScroll cardSelector="[data-vc-kanban-card]">
       <div className="flex gap-0 min-w-max">
-        {pipeline.map((stage) => (
+        {pipeline.map((stage, columnIndex) => (
           <KanbanStageCard
             key={stage.id || stage.slug}
+            columnIndex={columnIndex}
             stage={stage}
             items={stage.items}
             onMoveStage={onMoveStage}

@@ -95,6 +95,7 @@ import { logFilter } from '../lib/activityLogger';
 import { CrmCommentMentionComposer } from '../components/crmCommentMentionUi';
 import { resolveMentionIdsFromContent } from '../lib/crmCommentMentions';
 import { KanbanBoardEdgeScrollChrome } from '../lib/kanbanEdgeScrollControls';
+import { useKanbanColumnTheme, UI_KANBAN_FIXED_CLASS, KANBAN_CARDS_BODY_CLASS } from '../lib/kanbanColumnTheme';
 import { CrmDashboardLoader, CrmDashboardLoaderCompact } from '../components/CrmDashboardLoader';
 import { createCrmLoadProgressController } from '../lib/crmDashboardLoadProgress';
 import { isClickOutside } from '../lib/domUtils';
@@ -4985,6 +4986,12 @@ export default function CRMDashboard() {
 
   const activeCrmFilterCount = activeCrmFilterChips.length;
 
+  /** Chip lọc hiển thị trên thanh tìm kiếm (không gồm chip trùng ô tìm). */
+  const crmInlineFilterChips = useMemo(
+    () => activeCrmFilterChips.filter((c) => c.key !== 'search'),
+    [activeCrmFilterChips],
+  );
+
   const crmFilterTabCounts = useMemo(() => ({
     employee: [
       filterCompany,
@@ -5244,20 +5251,48 @@ export default function CRMDashboard() {
       <div className={compactLeadUi ? 'space-y-2' : 'space-y-3'}>
         <div className="flex flex-wrap items-center gap-1.5">
           <div
-            className={`group/search flex items-center shrink-0 w-full sm:w-[280px] md:w-[340px] max-w-[360px] rounded-xl border-2 transition-all duration-200 ${
+            className={`group/search flex items-center shrink-0 w-full sm:flex-1 sm:min-w-[280px] md:min-w-[360px] max-w-[520px] rounded-xl border-2 transition-all duration-200 ${
               searchFocused
                 ? 'border-violet-400 bg-white shadow-lg shadow-violet-500/20 ring-2 ring-violet-200/70'
                 : searchText.trim()
                   ? 'border-violet-300 bg-violet-50/90 shadow-md shadow-violet-500/10 ring-1 ring-violet-200/50'
-                  : 'border-violet-200 bg-violet-50/70 hover:border-violet-300 hover:bg-violet-50 hover:shadow-md hover:shadow-violet-500/10'
+                  : crmInlineFilterChips.length && !showAdvSearch
+                    ? 'border-violet-200 bg-violet-50/50 shadow-sm ring-1 ring-violet-100/60'
+                    : 'border-violet-200 bg-violet-50/70 hover:border-violet-300 hover:bg-violet-50 hover:shadow-md hover:shadow-violet-500/10'
             }`}
           >
-            <div className="relative flex-1 min-w-0">
+            <div className="relative flex-1 min-w-0 flex items-center gap-1 pl-9 pr-1">
               <Search
                 className={`absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 pointer-events-none transition-colors duration-200 ${
                   searchFocused || searchText.trim() ? 'text-violet-600' : 'text-violet-500'
                 }`}
               />
+              {!showAdvSearch && crmInlineFilterChips.length > 0 && (
+                <div
+                  className={`flex items-center gap-1 shrink-0 max-w-[min(58%,13rem)] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden transition-opacity ${
+                    searchFocused ? 'opacity-55' : searchText.trim() ? 'opacity-45' : 'opacity-80'
+                  }`}
+                  aria-label="Bộ lọc đang áp dụng"
+                >
+                  {crmInlineFilterChips.map((chip) => (
+                    <span
+                      key={chip.key}
+                      className="inline-flex items-center gap-0.5 shrink-0 pl-1.5 pr-0.5 py-0.5 rounded-md bg-white/45 border border-violet-200/45 text-[10px] font-medium text-violet-900/70 backdrop-blur-[1px]"
+                    >
+                      <span className="max-w-[5.5rem] truncate">{chip.label}</span>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => { chip.onClear(); void load({ silent: true }); }}
+                        className="p-0.5 rounded hover:bg-violet-100/70 text-violet-600/65 hover:text-violet-900 cursor-pointer"
+                        aria-label={`Bỏ lọc ${chip.label}`}
+                      >
+                        <X className="h-2.5 w-2.5" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
               <input
                 type="text"
                 value={searchText}
@@ -5269,8 +5304,19 @@ export default function CRMDashboard() {
                     ? 'Tìm lead, tên, SĐT, mã…'
                     : (isCrmCustomerPipelineTab(pipelineType) ? 'Tìm khách hàng, deal, SĐT, mã…' : 'Tìm deal, tên, SĐT, mã…')
                 }
-                className={`w-full ${ctrlH} pl-9 pr-8 bg-transparent border-0 ${ctrlTxt} font-medium text-slate-900 placeholder:text-violet-500/65 focus:outline-none focus:ring-0 rounded-l-xl`}
+                className={`flex-1 min-w-[4.5rem] ${ctrlH} bg-transparent border-0 ${ctrlTxt} font-medium text-slate-900 placeholder:text-violet-500/45 focus:outline-none focus:ring-0 rounded-l-xl ${searchText ? 'pr-7' : ''}`}
               />
+              {!showAdvSearch && crmInlineFilterChips.length > 1 && (
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={resetCrmFilters}
+                  className="shrink-0 text-[9px] font-medium text-violet-700/50 hover:text-red-600 px-0.5 cursor-pointer whitespace-nowrap"
+                  title="Xóa tất cả bộ lọc"
+                >
+                  Xóa
+                </button>
+              )}
               {searchText && (
                 <button
                   type="button"
@@ -5391,7 +5437,7 @@ export default function CRMDashboard() {
                 Tùy chỉnh
               </button>
               {showKanbanSettings && (
-                <div className="absolute right-0 top-full mt-1.5 z-40 w-[min(100vw-1.5rem,18rem)] rounded-xl border border-gray-200 bg-white p-3 shadow-lg ring-1 ring-gray-100">
+                <div className="ui-solid-white absolute right-0 top-full mt-1.5 z-[120] w-[min(100vw-1.5rem,18rem)] rounded-xl border border-gray-200 bg-white p-3 shadow-xl">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2.5">Cuộn cột Kanban</p>
                   <div className="space-y-2">
                     <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-gray-100 bg-white px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-violet-400 has-[:checked]:bg-white has-[:checked]:shadow-sm">
@@ -5438,10 +5484,10 @@ export default function CRMDashboard() {
                         key={v}
                         type="button"
                         onClick={() => applyKanbanLoadLimit(v)}
-                        className={`rounded-md px-1.5 py-1.5 text-[11px] font-semibold transition-all cursor-pointer ${
+                        className={`rounded-md px-1.5 py-1.5 text-[11px] font-semibold transition-all cursor-pointer border ${
                           kanbanLoadLimitPreset === v
-                            ? 'bg-violet-600 text-white shadow-sm'
-                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                            ? 'bg-violet-600 text-white border-violet-600 shadow-sm'
+                            : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
                         }`}
                       >
                         {Number(v).toLocaleString('vi-VN')}
@@ -5452,10 +5498,10 @@ export default function CRMDashboard() {
                     <button
                       type="button"
                       onClick={() => applyKanbanLoadLimit('all')}
-                      className={`rounded-md px-1.5 py-1.5 text-[11px] font-semibold transition-all cursor-pointer ${
+                      className={`rounded-md px-1.5 py-1.5 text-[11px] font-semibold transition-all cursor-pointer border ${
                         kanbanLoadLimitPreset === 'all'
-                          ? 'bg-violet-600 text-white shadow-sm'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                          ? 'bg-violet-600 text-white border-violet-600 shadow-sm'
+                          : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
                       }`}
                     >
                       Tất cả
@@ -5470,10 +5516,10 @@ export default function CRMDashboard() {
                             : '1000',
                         );
                       }}
-                      className={`rounded-md px-1.5 py-1.5 text-[11px] font-semibold transition-all cursor-pointer ${
+                      className={`rounded-md px-1.5 py-1.5 text-[11px] font-semibold transition-all cursor-pointer border ${
                         kanbanLoadLimitPreset === 'custom' || kanbanLoadCustomOpen
-                          ? 'bg-violet-600 text-white shadow-sm'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                          ? 'bg-violet-600 text-white border-violet-600 shadow-sm'
+                          : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
                       }`}
                     >
                       Tùy chỉnh
@@ -5492,7 +5538,7 @@ export default function CRMDashboard() {
                           if (e.key === 'Enter') applyKanbanLoadCustomDraft();
                         }}
                         placeholder={`1 – ${KANBAN_LOAD_ALL_MAX.toLocaleString('vi-VN')}`}
-                        className="min-w-0 flex-1 h-8 rounded-md border border-gray-200 px-2 text-xs tabular-nums focus:border-violet-400 focus:ring-1 focus:ring-violet-200 outline-none"
+                        className="min-w-0 flex-1 h-8 rounded-md border border-gray-200 bg-white px-2 text-xs tabular-nums focus:border-violet-400 focus:ring-1 focus:ring-violet-200 outline-none"
                       />
                       <button
                         type="button"
@@ -5515,7 +5561,7 @@ export default function CRMDashboard() {
                         {isAdmin ? ' Admin mặc định Tách đơn hàng.' : ' Mặc định Gộp — bấm Tách đơn hàng khi cần.'}
                       </p>
                       <div
-                        className="inline-flex w-full rounded-lg border border-gray-200 bg-gray-100 p-0.5"
+                        className="inline-flex w-full rounded-lg border border-gray-200 bg-white p-0.5"
                         role="group"
                         aria-label="Gộp hoặc tách tab Deal và Đơn hàng"
                       >
@@ -5590,52 +5636,11 @@ export default function CRMDashboard() {
           onClose={() => setShowDateRangePicker(false)}
         />
 
-        {/* ── ACTIVE TIME FILTER BADGE ── */}
-        {timePreset && timePreset !== 'custom' && !showAdvSearch && (
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-100 text-purple-700 rounded-lg text-xs font-medium border border-purple-200">
-              <Clock className="h-3 w-3" />
-              {timeFilterLabel}
-              <button onClick={() => handleTimePresetChange('')} className="ml-1 hover:text-purple-900 cursor-pointer">
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          </div>
-        )}
-
-        {!showAdvSearch && activeCrmFilterCount > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            {activeCrmFilterChips.map((chip) => (
-              <span
-                key={chip.key}
-                className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-violet-100 border border-violet-300 text-[11px] font-semibold text-violet-900 shadow-sm"
-              >
-                <span className="max-w-[12rem] truncate">{chip.label}</span>
-                <button
-                  type="button"
-                  onClick={() => { chip.onClear(); void load({ silent: true }); }}
-                  className="p-0.5 rounded-full hover:bg-violet-100 text-violet-600 cursor-pointer"
-                  aria-label={`Bỏ lọc ${chip.label}`}
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
-            ))}
-            <button
-              type="button"
-              onClick={resetCrmFilters}
-              className="text-[11px] font-medium text-slate-500 hover:text-red-600 cursor-pointer px-1"
-            >
-              Xóa tất cả
-            </button>
-          </div>
-        )}
-
         {/* Bộ lọc — panel nổi (không chặn thao tác trang) */}
         {showAdvSearch && (
           <div
             ref={filterPanelRef}
-            className="fixed z-[75] max-sm:left-4 max-sm:right-4 max-sm:bottom-4 max-sm:top-auto w-[min(100vw-2rem,400px)] max-h-[min(calc(100vh-5rem),620px)] flex flex-col rounded-xl border-2 border-violet-300 bg-gradient-to-b from-violet-50 via-white to-white shadow-2xl shadow-violet-500/20 ring-1 ring-violet-200/80 overflow-hidden animate-fade-in"
+            className="ui-solid-white fixed z-[75] max-sm:left-4 max-sm:right-4 max-sm:bottom-4 max-sm:top-auto w-[min(100vw-2rem,400px)] max-h-[min(calc(100vh-5rem),620px)] flex flex-col rounded-xl border border-gray-200 bg-white shadow-2xl overflow-hidden animate-fade-in"
             style={filterPanelPos
               ? { left: filterPanelPos.x, top: filterPanelPos.y }
               : { top: '4.5rem', right: '1rem' }}
@@ -5644,7 +5649,7 @@ export default function CRMDashboard() {
           >
             {/* Header — kéo để di chuyển */}
             <div
-              className="shrink-0 px-3 pt-2.5 pb-2 border-b border-violet-200/80 bg-gradient-to-r from-violet-100/95 to-violet-50/70 cursor-grab active:cursor-grabbing select-none"
+              className="shrink-0 px-3 pt-2.5 pb-2 border-b border-gray-200 bg-white cursor-grab active:cursor-grabbing select-none"
               onMouseDown={beginFilterPanelDrag}
             >
               <div className="flex items-center gap-2">
@@ -5662,7 +5667,7 @@ export default function CRMDashboard() {
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
-              <div className="mt-2 flex p-0.5 rounded-lg bg-violet-100/90 border border-violet-200/60 gap-0.5">
+              <div className="mt-2 flex p-0.5 rounded-lg bg-gray-50 border border-gray-200 gap-0.5">
                   {crmFilterTabs.map((tab) => (
                     <button
                       key={tab.id}
@@ -5688,7 +5693,7 @@ export default function CRMDashboard() {
                 </div>
               </div>
 
-              <div className="flex-1 min-h-0 overflow-y-auto px-3 py-1 bg-white/60 [scrollbar-width:thin]">
+              <div className="flex-1 min-h-0 overflow-y-auto px-3 py-1 bg-white [scrollbar-width:thin]">
             {/* Tab: Nhân viên */}
             {crmFilterTab === 'employee' && (
               <div className="py-2.5 space-y-2.5">
@@ -5951,7 +5956,7 @@ export default function CRMDashboard() {
               </div>
 
               {/* Footer */}
-              <div className="shrink-0 border-t border-violet-200/80 bg-violet-50/90 px-3 py-2">
+              <div className="shrink-0 border-t border-gray-200 bg-white px-3 py-2">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <button
                     type="button"
@@ -7677,11 +7682,12 @@ const KanbanStageCard = memo(function KanbanStageCard({
   columnScrollMaxH,
   onColumnScrollNearEnd,
   pipelineStages,
+  columnIndex = 0,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
 
-  const stageColor = stage.color || '#e5e7eb';
+  const columnTheme = useKanbanColumnTheme(columnIndex);
   const columnItemIds = (items || []).map((i) => i.id);
   const columnStagesCtx = [stage];
   const columnRawValue = (items || []).reduce((sum, item) => sum + (Number(item.estimated_value) || 0), 0);
@@ -7741,20 +7747,23 @@ const KanbanStageCard = memo(function KanbanStageCard({
       onDragOver={handleColumnDragOver}
       onDragLeave={handleColumnDragLeave}
       onDrop={handleColumnDrop}
-      className={`flex flex-col flex-shrink-0 rounded-lg transition-all duration-200 ${
+      className={`flex flex-col flex-shrink-0 rounded-lg overflow-hidden transition-all duration-200 kanban-column-surface ${
         compact ? 'w-[15rem] max-[380px]:w-[13.5rem]' : 'w-[17rem] max-[420px]:w-[15rem]'
       } ${perColumnScroll ? 'h-full self-stretch' : ''} ${isOverColumn ? 'ring-2 ring-blue-500 ring-dashed' : ''}`}
-      style={perColumnScroll && columnScrollMaxH ? { height: columnScrollMaxH, maxHeight: columnScrollMaxH } : undefined}
+      style={{
+        ...(perColumnScroll && columnScrollMaxH ? { height: columnScrollMaxH, maxHeight: columnScrollMaxH } : {}),
+      }}
     >
-      {/* Sticky header khi cuộn chung; cố định trên khi cuộn riêng từng cột */}
+      {/* Sticky header — nền theo màu stage */}
       <div className={`${perColumnScroll ? 'shrink-0' : 'sticky top-0'} z-20 overflow-hidden rounded-t-lg`}>
         <div
-          className="h-1.5 w-full"
-          style={{ backgroundColor: stageColor }}
-        />
-        <div className={`bg-white border border-gray-200 border-t-0 transition-all ${
-          compact ? 'p-2' : 'p-3'
-        } ${isOverColumn ? 'bg-blue-50' : ''}`}>
+          className={`border-b transition-all kanban-column-surface ${compact ? 'p-2' : 'p-3'}`}
+          style={{
+            backgroundColor: isOverColumn ? columnTheme.dropBg : columnTheme.headerBg,
+            borderColor: columnTheme.border,
+            boxShadow: columnTheme.headerShadow,
+          }}
+        >
         <div className={`flex items-start justify-between gap-2 ${compact ? 'mb-1' : 'mb-2'}`}>
           <div className="flex flex-col gap-0.5 min-w-0 flex-1">
             <div className="flex items-center gap-1.5 min-w-0">
@@ -7790,7 +7799,14 @@ const KanbanStageCard = memo(function KanbanStageCard({
                   : <CheckSquare className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} strokeWidth={2.2} />}
               </button>
             )}
-            <span className={`px-2 py-1 bg-gray-100 text-gray-700 font-bold rounded ${compact ? 'text-[10px]' : 'text-xs'}`}>
+            <span
+              className={`px-2 py-1 font-bold rounded ${compact ? 'text-[10px]' : 'text-xs'}`}
+              style={{
+                backgroundColor: columnTheme.badgeBg,
+                color: columnTheme.accent,
+                border: `1px solid ${columnTheme.badgeBorder}`,
+              }}
+            >
               {totalInColumn}
             </span>
           </div>
@@ -7821,11 +7837,11 @@ const KanbanStageCard = memo(function KanbanStageCard({
       <div
         ref={containerRef}
         onScroll={perColumnScroll ? handleCardsScroll : undefined}
-        className={`border border-white/30 border-t-0 rounded-b-lg transition-all ${
+        className={`rounded-b-lg transition-all ${KANBAN_CARDS_BODY_CLASS} ${
+          isOverColumn ? 'kanban-cards-body--drop' : ''
+        } ${
           compact ? 'p-1.5 space-y-1.5' : 'p-2.5 space-y-2'
-        } ${perColumnScroll ? 'flex-1 min-h-0 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]' : 'flex-1'} ${
-          isOverColumn ? 'bg-blue-50/60' : ''
-        }`}
+        } ${perColumnScroll ? 'flex-1 min-h-0 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]' : 'flex-1'}`}
         style={perColumnScroll ? undefined : { minHeight: compact ? '160px' : '180px' }}
       >
         {totalInColumn === 0 ? (
@@ -8620,7 +8636,7 @@ function KanbanView({
   };
 
   return (
-    <div ref={kanbanWrapRef} className="relative">
+    <div ref={kanbanWrapRef} className={`relative ${UI_KANBAN_FIXED_CLASS}`}>
       <KanbanBoardEdgeScrollChrome
         wrapRef={kanbanWrapRef}
         remeasureToken={remeasureToken}
@@ -8643,9 +8659,10 @@ function KanbanView({
         }}
       >
         <div className={`flex min-w-max items-stretch ${compact ? 'gap-1.5' : 'gap-2.5'} ${perColumnScroll ? 'h-full' : ''}`}>
-          {pipeline.map((stage) => (
+          {pipeline.map((stage, columnIndex) => (
             <KanbanStageCard
               key={stage.id}
+              columnIndex={columnIndex}
               stage={stage}
               items={stage.items}
               onMoveStage={onMoveStage}

@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { getSocket } from '../lib/socket';
@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { ProductionListView, ProductionPlannerView, ProductionCalendarView, ProductionCommentsView, ProductionDeadlineView } from '../components/ProductionViews';
 import WorkshopPipelineKanbanScroll, { useWorkshopKanbanScrollLayout } from '../components/WorkshopPipelineKanbanScroll';
+import { useKanbanColumnTheme, UI_KANBAN_FIXED_CLASS, KANBAN_CARDS_BODY_CLASS } from '../lib/kanbanColumnTheme';
 import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
 import WorkshopDashboardFilterPanel, { SX_FILTER_TABS_META } from '../components/WorkshopDashboardFilterPanel';
 import KanbanCardQuickMove from '../components/KanbanCardQuickMove';
@@ -2091,7 +2092,7 @@ export default function ProductionDashboard() {
                 Tùy chỉnh
               </button>
               {showKanbanSettings && (
-                <div className="absolute right-0 top-full mt-1.5 z-40 w-[min(100vw-1.5rem,18rem)] rounded-xl border border-gray-200 bg-white p-3 shadow-lg ring-1 ring-gray-100">
+                <div className="ui-solid-white absolute right-0 top-full mt-1.5 z-[120] w-[min(100vw-1.5rem,18rem)] rounded-xl border border-gray-200 bg-white p-3 shadow-xl">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2.5">Cuộn cột Kanban</p>
                   <div className="space-y-2">
                     <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-gray-100 bg-white px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-blue-400 has-[:checked]:bg-white has-[:checked]:shadow-sm">
@@ -2248,32 +2249,6 @@ export default function ProductionDashboard() {
               </button>
             </div>
           </div>
-
-          {canPickCompany && workshopCompanyPickerList.length > 0 && (
-            <div className="flex items-center gap-1.5 overflow-x-auto max-w-full shrink-0 pb-0.5 scrollbar-thin scrollbar-thumb-violet-200">
-              {(isAdmin ? [{ id: '', name: 'Tất cả' }, ...workshopCompanyPickerList] : workshopCompanyPickerList).map((c) => {
-                const active = filterCompany === c.id;
-                return (
-                  <button
-                    key={c.id || 'all'}
-                    type="button"
-                    onClick={() => {
-                      if (active) return;
-                      handleStaffFilterCompanyChange(c.id);
-                    }}
-                    className={`shrink-0 h-9 px-3 rounded-full text-xs font-semibold border transition-all cursor-pointer whitespace-nowrap ${
-                      active
-                        ? 'bg-violet-600 border-violet-600 text-white shadow-sm'
-                        : 'bg-white border-violet-200 text-slate-600 hover:border-violet-400 hover:text-violet-700 hover:bg-violet-50'
-                    }`}
-                  >
-                    {active && <span className="mr-1">✓</span>}
-                    {c.id === '' ? 'Tất cả xưởng' : (c.short_name || c.name)}
-                  </button>
-                );
-              })}
-            </div>
-          )}
 
           {showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0 && (
             <div className="flex items-center gap-1.5 overflow-x-auto max-w-full shrink-0 pb-0.5 scrollbar-thin scrollbar-thumb-violet-200">
@@ -2944,10 +2919,11 @@ function KanbanStageCard({
   onOpenDeadline,
   onTogglePin,
   columnScrollMode = 'unified',
+  columnIndex = 0,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const { columnScrollMaxH } = useWorkshopKanbanScrollLayout();
-  const stageColor = stage.color || '#94a3b8';
+  const columnTheme = useKanbanColumnTheme(columnIndex);
   const totalValue = items.reduce((sum, p) => sum + resolveSxProjectValue(p), 0);
   const perColumnScroll = columnScrollMode === 'per-column';
 
@@ -2971,15 +2947,21 @@ function KanbanStageCard({
       onDragOver={handleColumnDragOver}
       onDragLeave={handleColumnDragLeave}
       onDrop={handleColumnDrop}
-      className={`flex flex-col flex-shrink-0 w-[15rem] max-[400px]:w-[13.5rem] transition-all duration-200 ${
+      className={`flex flex-col flex-shrink-0 w-[15rem] max-[400px]:w-[13.5rem] rounded-lg overflow-hidden transition-all duration-200 kanban-column-surface ${
         perColumnScroll ? 'h-full self-stretch' : ''
-      } ${isOverColumn ? 'ring-2 ring-blue-400 ring-dashed rounded-lg' : ''}`}
-      style={perColumnScroll && columnScrollMaxH ? { height: columnScrollMaxH, maxHeight: columnScrollMaxH } : undefined}
+      } ${isOverColumn ? 'ring-2 ring-blue-400 ring-dashed' : ''}`}
+      style={{
+        ...(perColumnScroll && columnScrollMaxH ? { height: columnScrollMaxH, maxHeight: columnScrollMaxH } : {}),
+      }}
     >
-      {/* Header — sticky khi cuộn chung; cố định trên khi cuộn riêng từng cột */}
+      {/* Header — nền theo màu stage (không viền trên) */}
       <div
-        className={`${perColumnScroll ? 'shrink-0' : 'sticky top-0'} z-10 bg-gray-200/95 backdrop-blur supports-[backdrop-filter]:bg-gray-200/85 px-2 py-2.5 border-b rounded-t-md transition-colors ${isOverColumn ? 'bg-blue-100/90 border-blue-300' : 'border-gray-300/70'}`}
-        style={{ borderTop: `8px solid ${stageColor}` }}
+        className={`${perColumnScroll ? 'shrink-0' : 'sticky top-0'} z-10 px-2 py-2.5 border-b rounded-t-md transition-colors kanban-column-surface`}
+        style={{
+          backgroundColor: isOverColumn ? columnTheme.dropBg : columnTheme.headerBg,
+          borderColor: columnTheme.border,
+          boxShadow: columnTheme.headerShadow,
+        }}
       >
         <div className="flex flex-nowrap items-center gap-1 min-w-0">
           <h3
@@ -2993,9 +2975,9 @@ function KanbanStageCard({
           <span
             className="inline-flex items-center justify-center min-w-[24px] h-[22px] px-1.5 rounded-md text-[13px] font-bold tabular-nums leading-none"
             style={{
-              backgroundColor: `${stageColor}22`,
-              color: stageColor,
-              border: `1px solid ${stageColor}55`,
+              backgroundColor: columnTheme.badgeBg,
+              color: columnTheme.accent,
+              border: `1px solid ${columnTheme.badgeBorder}`,
             }}
             title={`${items.length} đơn`}
           >
@@ -3043,9 +3025,11 @@ function KanbanStageCard({
 
       {/* Cards container */}
       <div
-        className={`flex-1 px-1 pt-1.5 pb-2.5 space-y-1.5 transition-colors ${
+        className={`flex-1 px-1 pt-1.5 pb-2.5 space-y-1.5 transition-colors ${KANBAN_CARDS_BODY_CLASS} ${
+          isOverColumn ? 'kanban-cards-body--drop' : ''
+        } ${
           perColumnScroll ? 'min-h-0 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]' : ''
-        } ${isOverColumn ? 'bg-blue-50/60 rounded-b-lg' : ''}`}
+        }`}
         style={perColumnScroll ? undefined : { minHeight: '180px' }}
       >
         {items.length === 0 ? (
@@ -3585,10 +3569,11 @@ function KanbanView({
       columnScrollMode={columnScrollMode}
       remeasureToken={remeasureToken}
     >
-      <div className={`flex min-w-max items-stretch gap-1 ${perColumnScroll ? 'h-full' : ''}`}>
-        {pipeline.map((stage) => (
+      <div className={`flex min-w-max items-stretch gap-1 ${perColumnScroll ? 'h-full' : ''} ${UI_KANBAN_FIXED_CLASS}`}>
+        {pipeline.map((stage, columnIndex) => (
           <KanbanStageCard
             key={stage.id || stage.slug}
+            columnIndex={columnIndex}
             stage={stage}
             items={stage.items}
             onMoveStage={onMoveStage}

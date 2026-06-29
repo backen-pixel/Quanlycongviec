@@ -56,7 +56,10 @@ function shouldAttachActivityContext(url, method) {
 
 api.interceptors.request.use((c) => {
   const t = localStorage.getItem('token');
-  if (t) c.headers.Authorization = `Bearer ${t}`;
+  if (t) {
+    const clean = String(t).trim().replace(/^Bearer\s+/i, '');
+    if (clean) c.headers.Authorization = `Bearer ${clean}`;
+  }
   const url = String(c.url || '');
   const method = String(c.method || 'get');
   if (shouldAttachActivityContext(url, method)) {

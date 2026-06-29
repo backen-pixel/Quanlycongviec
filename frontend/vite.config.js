@@ -48,6 +48,13 @@ export default defineConfig({
   },
   server: {
     proxy: {
+      '/socket.io': {
+        target: 'http://localhost:4000',
+        ws: true,
+        changeOrigin: true,
+        timeout: 120_000,
+        proxyTimeout: 120_000,
+      },
       '/api': {
         target: 'http://localhost:4000',
         // Giám sát Supabase probe storage ~15–25s — tránh proxy cắt sớm

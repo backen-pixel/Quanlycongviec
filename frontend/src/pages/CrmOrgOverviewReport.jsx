@@ -3,7 +3,6 @@ import api from '../lib/api';
 import { formatVND, formatKpiLedgerNet } from '../lib/utils';
 import { loadXlsx } from '../lib/xlsxLoader';
 import { downloadOrgEmployeeExcel } from '../lib/crmOrgEmployeeExcelExport';
-import KpiUserFilter from '../components/KpiUserFilter';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import EmployeeReportPanel, { LeadTypeBreakdownChart, FirstStageSlaChart } from '../components/crm/EmployeeReportPanel';
 import { useAuth } from '../lib/auth';
@@ -117,6 +116,14 @@ function formatVNDShort(n) {
   return String(Math.round(num));
 }
 
+/** Số tiền KPI: đầy đủ, có thể xuống dòng tại dấu chấm nhóm nghìn. */
+function formatVNDKpi(n) {
+  return formatVND(n ?? 0).replace(/\./g, '.\u200b');
+}
+
+const REPORT_FILTER_SELECT_CLS =
+  'h-9 min-w-[6.5rem] max-w-[12rem] flex-1 sm:flex-none sm:max-w-[10rem] rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 disabled:opacity-50';
+
 function pctLabel(value, detail) {
   const v = Number(value);
   if (!Number.isFinite(v)) return '—';
@@ -170,66 +177,214 @@ function ChartEmpty({ label = 'Chưa có dữ liệu' }) {
   return <p className="text-sm text-slate-500 py-10 text-center">{label}</p>;
 }
 
-function QuoteCloseValueBarChart({ data, title, layout = 'vertical' }) {
-  if (!data?.length) return null;
-  const vertical = layout === 'vertical';
+function QuoteCloseValueBarChart({ data, title }) {
+  const rows = useMemo(() => {
+    if (!data?.length) return [];
+    const maxQuote = Math.max(...data.map((d) => d['GT báo giá'] || 0), 1);
+    return data.map((row, idx) => {
+      const quote = row['GT báo giá'] || 0;
+      const closed = row['GT chốt'] || 0;
+      const rate = quote > 0
+        ? Math.round((closed / quote) * 100)
+        : Math.round(Number(row['GT chốt/BG']) || 0);
+      return {
+        ...row,
+        rank: idx + 1,
+        quote,
+        closed,
+        rate,
+        quotePct: Math.min(100, (quote / maxQuote) * 100),
+        closedPct: Math.min(100, (closed / maxQuote) * 100),
+      };
+    });
+  }, [data]);
+
+  if (!rows.length) return null;
+
+  const rateBadgeClass = (rate) => {
+    if (rate >= 50) return 'bg-emerald-100 text-emerald-800 ring-emerald-200/80';
+    if (rate >= 25) return 'bg-amber-100 text-amber-900 ring-amber-200/80';
+    return 'bg-slate-100 text-slate-600 ring-slate-200/80';
+  };
+
   return (
-    <div className="rounded-xl border border-amber-100 bg-amber-50/20 p-4">
-      {title && <p className="text-sm font-bold text-slate-800 mb-3">{title}</p>}
-      <div className={vertical ? 'h-72' : 'h-56'}>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart
-            data={data}
-            layout={vertical ? 'vertical' : 'horizontal'}
-            margin={vertical ? { left: 4, right: 72, top: 4, bottom: 4 } : { left: 8, right: 8, bottom: 48, top: 4 }}
-          >
-            <CartesianGrid strokeDasharray="3 3" horizontal={!vertical} vertical={vertical} />
-            {vertical ? (
-              <>
-                <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => `${Math.round(v / 1e6)}M`} />
-                <YAxis type="category" dataKey="name" width={92} tick={{ fontSize: 10 }} />
-              </>
-            ) : (
-              <>
-                <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-22} textAnchor="end" height={52} />
-                <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `${Math.round(v / 1e6)}M`} />
-              </>
-            )}
-            <RechartsTooltip formatter={(v, n) => [formatVND(v), n]} />
-            <Bar dataKey="GT báo giá" fill="#f59e0b" radius={vertical ? [0, 4, 4, 0] : [4, 4, 0, 0]}>
-              <LabelList dataKey="_gtBaoGiaLabel" position="right" style={{ fontSize: 10, fill: '#92400e' }} />
-            </Bar>
-            <Bar dataKey="GT chốt" fill="#059669" radius={vertical ? [0, 4, 4, 0] : [4, 4, 0, 0]}>
-              <LabelList dataKey="_gtChotLabel" position="right" style={{ fontSize: 10, fill: '#065f46' }} />
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+    <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50/80 to-indigo-50/30 p-4 md:p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+        <div className="min-w-0">
+          {title && <p className="text-sm font-bold text-slate-900">{title}</p>}
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-x-3 gap-y-1 text-[10px] font-semibold">
+          <span className="inline-flex items-center gap-1.5 text-amber-900">
+            <span className="h-2 w-6 rounded-full bg-gradient-to-r from-amber-300 to-amber-500" aria-hidden />
+            GT báo giá
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-emerald-900">
+            <span className="h-2 w-6 rounded-full bg-gradient-to-r from-emerald-400 to-teal-500" aria-hidden />
+            GT chốt
+          </span>
+        </div>
       </div>
+
+      <ul className="space-y-2.5 max-h-[320px] overflow-y-auto pr-0.5 [scrollbar-width:thin]">
+        {rows.map((row) => (
+          <li
+            key={`${row.rank}-${row.name}`}
+            className="rounded-xl border border-white/80 bg-white/95 p-3 shadow-sm ring-1 ring-slate-100/80"
+          >
+            <div className="flex items-center justify-between gap-2 mb-2.5">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-[11px] font-bold text-white tabular-nums shadow-sm">
+                  {row.rank}
+                </span>
+                <span className="text-sm font-semibold text-slate-800 truncate" title={row.name}>
+                  {row.name}
+                </span>
+              </div>
+              <span
+                className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums ring-1 ${rateBadgeClass(row.rate)}`}
+                title="GT chốt / GT báo giá"
+              >
+                {row.rate}% chốt/BG
+              </span>
+            </div>
+
+            <div className="space-y-2">
+              <div className="grid grid-cols-[3.25rem_minmax(0,1fr)_3.5rem] items-center gap-2">
+                <span className="text-[10px] font-semibold text-amber-800">Báo giá</span>
+                <div className="relative h-3 rounded-full bg-slate-100 overflow-hidden" title={formatVND(row.quote)}>
+                  <div
+                    className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 transition-[width] duration-500"
+                    style={{ width: `${row.quotePct}%` }}
+                  />
+                </div>
+                <span className="text-right text-[10px] font-bold tabular-nums text-amber-900">
+                  {row._gtBaoGiaLabel}
+                </span>
+              </div>
+              <div className="grid grid-cols-[3.25rem_minmax(0,1fr)_3.5rem] items-center gap-2">
+                <span className="text-[10px] font-semibold text-emerald-800">Chốt</span>
+                <div className="relative h-3 rounded-full bg-slate-100 overflow-hidden" title={formatVND(row.closed)}>
+                  <div
+                    className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-emerald-400 via-emerald-500 to-teal-500 transition-[width] duration-500"
+                    style={{ width: `${row.closedPct}%` }}
+                  />
+                </div>
+                <span className="text-right text-[10px] font-bold tabular-nums text-emerald-900">
+                  {row._gtChotLabel}
+                </span>
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
 
 function QuoteCloseCountBarChart({ data, title }) {
-  if (!data?.length) return null;
+  const rows = useMemo(() => {
+    if (!data?.length) return [];
+    const maxBg = Math.max(...data.map((d) => d['Tổng BG'] || 0), 1);
+    return data.map((row, idx) => {
+      const bg = row['Tổng BG'] || 0;
+      const closed = row['Chốt SL'] || 0;
+      const pending = Math.max(0, bg - closed);
+      const winRate = bg > 0 ? Math.round((closed / bg) * 100) : 0;
+      return {
+        ...row,
+        rank: idx + 1,
+        bg,
+        closed,
+        pending,
+        winRate,
+        barWidthPct: Math.min(100, (bg / maxBg) * 100),
+        closedShare: bg > 0 ? (closed / bg) * 100 : 0,
+      };
+    });
+  }, [data]);
+
+  if (!rows.length) return null;
+
+  const winBadgeClass = (rate) => {
+    if (rate >= 50) return 'bg-teal-100 text-teal-900 ring-teal-200/80';
+    if (rate >= 25) return 'bg-cyan-100 text-cyan-900 ring-cyan-200/80';
+    return 'bg-slate-100 text-slate-600 ring-slate-200/80';
+  };
+
   return (
-    <div className="rounded-xl border border-emerald-100 bg-emerald-50/20 p-4">
-      {title && <p className="text-sm font-bold text-slate-800 mb-3">{title}</p>}
-      <div className="h-72">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} layout="vertical" margin={{ left: 4, right: 56 }}>
-            <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-            <XAxis type="number" tick={{ fontSize: 10 }} allowDecimals={false} />
-            <YAxis type="category" dataKey="name" width={92} tick={{ fontSize: 10 }} />
-            <RechartsTooltip formatter={(v, n) => [`${v} deal`, n]} />
-            <Bar dataKey="Tổng BG" fill="#fb923c" radius={[0, 4, 4, 0]}>
-              <LabelList dataKey="Tổng BG" position="right" style={{ fontSize: 10, fill: '#9a3412' }} />
-            </Bar>
-            <Bar dataKey="Chốt SL" fill="#10b981" radius={[0, 4, 4, 0]}>
-              <LabelList dataKey="Chốt SL" position="right" style={{ fontSize: 10, fill: '#065f46' }} />
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+    <div className="rounded-2xl border border-teal-200/80 bg-gradient-to-br from-white via-teal-50/40 to-cyan-50/50 p-4 md:p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+        <div className="min-w-0">
+          {title && <p className="text-sm font-bold text-slate-900">{title}</p>}
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-x-3 gap-y-1 text-[10px] font-semibold">
+          <span className="inline-flex items-center gap-1.5 text-emerald-900">
+            <span className="h-2.5 w-2.5 rounded-sm bg-emerald-500" aria-hidden />
+            Chốt SL
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-orange-900">
+            <span className="h-2.5 w-2.5 rounded-sm bg-orange-300" aria-hidden />
+            BG chưa chốt
+          </span>
+        </div>
       </div>
+
+      <ul className="space-y-2 max-h-[320px] overflow-y-auto pr-0.5 [scrollbar-width:thin]">
+        {rows.map((row) => (
+          <li
+            key={`${row.rank}-${row.name}`}
+            className="rounded-xl border border-teal-100/90 bg-white/95 px-3 py-2.5 shadow-sm ring-1 ring-teal-50"
+          >
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-teal-600 text-[10px] font-bold text-white tabular-nums">
+                  {row.rank}
+                </span>
+                <span className="text-sm font-semibold text-slate-800 truncate" title={row.name}>
+                  {row.name}
+                </span>
+              </div>
+              <span
+                className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums ring-1 ${winBadgeClass(row.winRate)}`}
+                title={`${row.closed}/${row.bg} deal chốt/BG`}
+              >
+                {row.winRate}% chốt
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1 h-4 min-w-0">
+                <div
+                  className="relative h-full rounded-lg bg-slate-100/80 overflow-hidden"
+                  style={{ width: `${row.barWidthPct}%`, minWidth: row.bg > 0 ? '2.5rem' : 0 }}
+                  title={`${row.bg} deal BG · ${row.closed} chốt · ${row.pending} chưa chốt`}
+                >
+                  {row.closed > 0 && (
+                    <div
+                      className="absolute inset-y-0 left-0 bg-gradient-to-r from-emerald-500 to-teal-500"
+                      style={{ width: `${row.closedShare}%` }}
+                    />
+                  )}
+                  {row.pending > 0 && (
+                    <div
+                      className="absolute inset-y-0 bg-orange-200/90"
+                      style={{ left: `${row.closedShare}%`, width: `${100 - row.closedShare}%` }}
+                    />
+                  )}
+                </div>
+              </div>
+              <div className="shrink-0 text-right tabular-nums leading-tight">
+                <p className="text-[11px] font-bold text-slate-800">
+                  <span className="text-orange-700">{row.bg}</span>
+                  <span className="text-slate-400 font-normal mx-0.5">/</span>
+                  <span className="text-emerald-700">{row.closed}</span>
+                </p>
+                <p className="text-[9px] text-slate-500 font-medium">BG / chốt</p>
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -447,33 +602,52 @@ function EmployeeRatesCombinedPieChart({ rows, title, entityLabel = 'đơn vị'
         <p className="text-xs text-slate-500 mb-3">{singleName}</p>
       )}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-center">
-        <div className="h-72 min-h-[280px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={pieData}
-                cx="50%"
-                cy="50%"
-                innerRadius="42%"
-                outerRadius="72%"
-                paddingAngle={2}
-                dataKey="value"
-                nameKey="name"
-                label={({ name, value, percent }) => {
-                  if (percent < 0.04) return '';
-                  return `${name}\n${value} (${Math.round(percent * 100)}%)`;
-                }}
-                labelLine={{ stroke: '#94a3b8', strokeWidth: 1 }}
-              >
-                {pieData.map((entry) => (
-                  <Cell key={entry.name} fill={entry.color} stroke="#fff" strokeWidth={2} />
-                ))}
-              </Pie>
-              <RechartsTooltip
-                formatter={(v, n) => [`${v} (${totalPie ? Math.round((v / totalPie) * 1000) / 10 : 0}%)`, n]}
-              />
-            </PieChart>
-          </ResponsiveContainer>
+        <div className="min-h-[280px] flex flex-col">
+          <div className="h-52 shrink-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
+                <Pie
+                  data={pieData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius="40%"
+                  outerRadius="68%"
+                  paddingAngle={2}
+                  dataKey="value"
+                  nameKey="name"
+                  label={false}
+                >
+                  {pieData.map((entry) => (
+                    <Cell key={entry.name} fill={entry.color} stroke="#fff" strokeWidth={2} />
+                  ))}
+                </Pie>
+                <RechartsTooltip
+                  formatter={(v, n) => [`${v} (${totalPie ? Math.round((v / totalPie) * 1000) / 10 : 0}%)`, n]}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <ul className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1.5 text-[11px] leading-snug">
+            {pieData.map((entry) => {
+              const pct = totalPie ? Math.round((entry.value / totalPie) * 100) : 0;
+              return (
+                <li key={entry.name} className="flex items-start gap-1.5 min-w-0">
+                  <span
+                    className="mt-1 w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: entry.color }}
+                    aria-hidden
+                  />
+                  <span className="min-w-0">
+                    <span className="font-medium text-slate-800">{entry.name}</span>
+                    <span className="text-slate-600 tabular-nums">
+                      {' '}
+                      · {entry.value} ({pct}%)
+                    </span>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div className="rounded-lg border border-violet-200 bg-violet-50/80 px-3 py-2.5">
@@ -503,6 +677,24 @@ function EmployeeRatesCombinedPieChart({ rows, title, entityLabel = 'đơn vị'
   );
 }
 
+function renderQuoteFunnelPieLabel(props) {
+  const { name, value, percent, x, y, textAnchor } = props;
+  if (percent < 0.03) return null;
+  return (
+    <text
+      x={x}
+      y={y}
+      textAnchor={textAnchor}
+      dominantBaseline="central"
+      fill="#64748b"
+      fontSize={10}
+      fontWeight={500}
+    >
+      {`${name}: ${value} (${Math.round(percent * 100)}%)`}
+    </text>
+  );
+}
+
 function QuoteFunnelPieChart({ data, title }) {
   if (!data?.length) return null;
   return (
@@ -510,17 +702,17 @@ function QuoteFunnelPieChart({ data, title }) {
       {title && <p className="text-sm font-bold text-slate-800 mb-3">{title}</p>}
       <div className="h-56 flex items-center justify-center">
         <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
+          <PieChart margin={{ top: 8, right: 12, bottom: 8, left: 12 }}>
             <Pie
               data={data}
               cx="50%"
               cy="50%"
               innerRadius={44}
-              outerRadius={72}
+              outerRadius={68}
               paddingAngle={2}
               dataKey="value"
               nameKey="name"
-              label={({ name, value, percent }) => `${name}: ${value} (${Math.round(percent * 100)}%)`}
+              label={renderQuoteFunnelPieLabel}
               labelLine={{ stroke: '#94a3b8', strokeWidth: 1 }}
             >
               {data.map((entry) => (
@@ -653,17 +845,27 @@ function KpiCard({ label, value, sub, accent = 'border-blue-300 bg-blue-50', com
   const up = (pct ?? c?.delta ?? 0) > 0;
   const down = (pct ?? c?.delta ?? 0) < 0;
   return (
-    <div className={`rounded-xl border p-4 shadow-sm ${accent}`}>
-      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-600">{label}</p>
-      <p className="mt-1 text-2xl font-extrabold tabular-nums text-slate-900">{value}</p>
+    <div className={`@container rounded-xl border p-3 sm:p-4 shadow-sm min-w-0 overflow-hidden ${accent}`}>
+      <p className="text-[11px] font-bold uppercase tracking-wide text-slate-600 line-clamp-2 leading-tight" title={label}>
+        {label}
+      </p>
+      <p className="mt-1 font-extrabold tabular-nums text-slate-900 leading-snug [overflow-wrap:anywhere] text-[length:clamp(0.9375rem,5.8cqi,1.625rem)]">
+        {value}
+      </p>
       {showTrend && (
-        <p className={`mt-1 text-xs font-semibold inline-flex items-center gap-0.5 ${up ? 'text-emerald-700' : down ? 'text-red-600' : 'text-slate-500'}`}>
-          {up ? <TrendingUp className="w-3.5 h-3.5" /> : down ? <TrendingDown className="w-3.5 h-3.5" /> : null}
-          {pct != null ? `${pct > 0 ? '+' : ''}${pct}%` : compareKey === 'conversion_rate' ? `${c.delta > 0 ? '+' : ''}${c.delta} điểm` : `${c.delta > 0 ? '+' : ''}${c.delta}`}
-          <span className="text-slate-400 font-normal ml-0.5">vs kỳ trước</span>
+        <p className={`mt-1 text-[10px] font-semibold inline-flex flex-wrap items-center gap-x-0.5 gap-y-0 max-w-full ${up ? 'text-emerald-700' : down ? 'text-red-600' : 'text-slate-500'}`}>
+          {up ? <TrendingUp className="w-3 h-3 shrink-0" /> : down ? <TrendingDown className="w-3 h-3 shrink-0" /> : null}
+          <span className="whitespace-nowrap">
+            {pct != null ? `${pct > 0 ? '+' : ''}${pct}%` : compareKey === 'conversion_rate' ? `${c.delta > 0 ? '+' : ''}${c.delta} điểm` : `${c.delta > 0 ? '+' : ''}${c.delta}`}
+          </span>
+          <span className="text-slate-400 font-normal">vs kỳ trước</span>
         </p>
       )}
-      {sub && <p className="mt-0.5 text-xs text-slate-600">{sub}</p>}
+      {sub && (
+        <p className="mt-0.5 text-[10px] text-slate-500 line-clamp-2 leading-snug break-words" title={sub}>
+          {sub}
+        </p>
+      )}
     </div>
   );
 }
@@ -908,8 +1110,21 @@ export default function CrmOrgOverviewReport() {
   const [companyRegions, setCompanyRegions] = useState([]);
   const [companyEmployees, setCompanyEmployees] = useState([]);
   const [loadingEmployees, setLoadingEmployees] = useState(false);
+  const [companies, setCompanies] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [loadingDepts, setLoadingDepts] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [employeeExcelLoading, setEmployeeExcelLoading] = useState(false);
+
+  const activeFilterCount = useMemo(() => {
+    let n = 0;
+    if (typeView !== 'all') n += 1;
+    if (filter.companyId) n += 1;
+    if (filter.departmentId) n += 1;
+    if (regionId) n += 1;
+    if (filter.userId) n += 1;
+    return n;
+  }, [typeView, filter.companyId, filter.departmentId, regionId, filter.userId]);
 
   const handleFilterChange = useCallback((next) => {
     setFilter((prev) => {
@@ -918,9 +1133,11 @@ export default function CrmOrgOverviewReport() {
       return {
         ...prev,
         ...next,
+        departmentId: companyChanged ? '' : (next.departmentId ?? prev.departmentId),
         userId: companyChanged || deptChanged ? '' : (next.userId ?? prev.userId),
       };
     });
+    if (next.companyId !== undefined) setRegionId('');
   }, []);
 
   const reportQueryParams = useMemo(
@@ -957,6 +1174,36 @@ export default function CrmOrgOverviewReport() {
       });
     return () => { cancel = true; };
   }, []);
+
+  useEffect(() => {
+    api
+      .get('/companies')
+      .then((r) => setCompanies(r.data?.companies || r.data || []))
+      .catch(() => setCompanies([]));
+  }, []);
+
+  useEffect(() => {
+    if (!filter.companyId) {
+      setDepartments([]);
+      return undefined;
+    }
+    let cancel = false;
+    setLoadingDepts(true);
+    api
+      .get('/departments', { params: { company_id: filter.companyId } })
+      .then((r) => {
+        if (cancel) return;
+        const list = r.data?.departments || r.data || [];
+        setDepartments(Array.isArray(list) ? list : []);
+      })
+      .catch(() => {
+        if (!cancel) setDepartments([]);
+      })
+      .finally(() => {
+        if (!cancel) setLoadingDepts(false);
+      });
+    return () => { cancel = true; };
+  }, [filter.companyId]);
 
   useEffect(() => {
     if (!filter.companyId) {
@@ -1334,33 +1581,25 @@ export default function CrmOrgOverviewReport() {
 
   return (
     <div className="min-w-0 max-w-[1600px] mx-auto space-y-5 pb-8 p-4 md:p-6">
-      <div className="rounded-2xl bg-white border border-slate-200 shadow-sm px-5 py-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="rounded-xl bg-white border border-slate-200 shadow-sm px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-indigo-600">Báo cáo CRM · Tổ chức</p>
-            <h1 className="mt-1 text-2xl md:text-3xl font-bold text-slate-900 flex items-center gap-3">
-              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-50 ring-1 ring-indigo-100">
-                <BarChart3 className="w-6 h-6 text-indigo-600" />
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-indigo-600">Báo cáo CRM · Tổ chức</p>
+            <h1 className="mt-0.5 text-lg md:text-xl font-bold text-slate-900 flex items-center gap-2">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 ring-1 ring-indigo-100">
+                <BarChart3 className="w-4 h-4 text-indigo-600" />
               </span>
               Báo cáo theo công ty / khu vực / NV
             </h1>
-            <p className="mt-2 text-sm text-slate-600 max-w-2xl leading-relaxed">
-              Số liệu lead/deal theo <strong className="text-slate-900">ngày tạo</strong>. Click dòng công ty hoặc khu vực để drill-down.
-              {periodPrevious?.date_from && (
-                <span className="block mt-1 text-slate-500 text-xs">
-                  So sánh với kỳ trước: {formatViDate(periodPrevious.date_from)} → {formatViDate(periodPrevious.date_to)}
-                </span>
-              )}
-            </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
               onClick={() => load(new AbortController().signal)}
               disabled={loading}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-medium"
             >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
               Tải lại
             </button>
             <button
@@ -1369,7 +1608,7 @@ export default function CrmOrgOverviewReport() {
               disabled={pdfLoading || !displayData}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold shadow-sm disabled:opacity-50"
             >
-              <FileText className="w-4 h-4" />
+              <FileText className="w-3.5 h-3.5" />
               {pdfLoading ? 'Đang tạo PDF…' : 'Xuất PDF'}
             </button>
             <button
@@ -1378,133 +1617,105 @@ export default function CrmOrgOverviewReport() {
               disabled={!displayData}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold disabled:opacity-40"
             >
-              <Download className="w-4 h-4" />
+              <Download className="w-3.5 h-3.5" />
               Xuất Excel
             </button>
           </div>
         </div>
       </div>
 
-      <div className="rounded-2xl bg-white border border-slate-200 shadow-sm p-4 md:p-5">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 items-end">
-          <label className="block min-w-0">
-            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide flex items-center gap-1">
-              <CalendarRange className="w-3.5 h-3.5 text-indigo-500" />
-              Kỳ báo cáo
+      <div className="sticky top-0 z-30 ui-solid-white bg-white pb-1 -mx-4 px-4 md:-mx-6 md:px-6 pt-1 border-b border-slate-200/90 shadow-[0_4px_12px_-8px_rgba(15,23,42,0.25)]">
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm ui-solid-white">
+          <button
+            type="button"
+            onClick={() => setRangePickerOpen(true)}
+            className="inline-flex items-center gap-1.5 h-9 max-w-full rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-800 hover:border-indigo-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 ui-solid-white shrink-0"
+            title="Kỳ báo cáo"
+          >
+            <CalendarRange className="w-3.5 h-3.5 shrink-0 text-indigo-500" />
+            <span className="tabular-nums truncate">
+              {formatViDate(dateFrom)} → {formatViDate(dateTo)}
             </span>
+            <ChevronDown className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+          </button>
+
+          <select
+            value={typeView}
+            onChange={(e) => setTypeView(e.target.value)}
+            className={`${REPORT_FILTER_SELECT_CLS} shrink-0 max-w-[11rem]`}
+            aria-label="Phân loại"
+          >
+            <option value="all">Cả hai (Lead + Deal)</option>
+            <option value="lead">Chỉ Lead</option>
+            <option value="deal">Chỉ Deal</option>
+          </select>
+
+          <select
+            value={filter.companyId}
+            onChange={(e) => handleFilterChange({ companyId: e.target.value })}
+            className={REPORT_FILTER_SELECT_CLS}
+            aria-label="Công ty"
+          >
+            <option value="">Tất cả công ty</option>
+            {companies.map((c) => (
+              <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+            ))}
+          </select>
+
+          <select
+            value={filter.departmentId}
+            onChange={(e) => handleFilterChange({ departmentId: e.target.value })}
+            disabled={!filter.companyId || loadingDepts}
+            className={REPORT_FILTER_SELECT_CLS}
+            aria-label="Phòng ban"
+          >
+            <option value="">Tất cả phòng ban</option>
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
+
+          <select
+            value={regionId}
+            onChange={(e) => setRegionId(e.target.value)}
+            disabled={!filter.companyId}
+            className={REPORT_FILTER_SELECT_CLS}
+            aria-label="Khu vực"
+          >
+            <option value="">Tất cả khu vực</option>
+            {companyRegions.map((r) => (
+              <option key={r.id} value={r.id}>{r.name}{r.code ? ` (${r.code})` : ''}</option>
+            ))}
+          </select>
+
+          <select
+            value={filter.userId}
+            onChange={(e) => handleFilterChange({ userId: e.target.value })}
+            disabled={!filter.companyId || loadingEmployees}
+            className={REPORT_FILTER_SELECT_CLS}
+            aria-label="Nhân viên"
+          >
+            <option value="">{loadingEmployees ? 'Đang tải…' : 'Tất cả nhân viên'}</option>
+            {companyEmployees.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.full_name || u.email || u.id}
+              </option>
+            ))}
+          </select>
+
+          {activeFilterCount > 0 && (
             <button
               type="button"
-              onClick={() => setRangePickerOpen(true)}
-              className="mt-1 flex w-full items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-left hover:border-indigo-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+              onClick={() => {
+                setTypeView('all');
+                handleFilterChange({ companyId: '', departmentId: '', userId: '' });
+                setRegionId('');
+              }}
+              className="h-9 shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600 hover:bg-slate-50 ui-solid-white"
             >
-              <span className="tabular-nums font-medium truncate">
-                {formatViDate(dateFrom)} → {formatViDate(dateTo)}
-              </span>
-              <ChevronDown className="w-4 h-4 shrink-0 text-slate-400" />
+              Xóa lọc
             </button>
-          </label>
-
-          <label className="block min-w-0">
-            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Phân loại</span>
-            <select
-              value={typeView}
-              onChange={(e) => setTypeView(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-            >
-              <option value="all">Cả hai (Lead + Deal)</option>
-              <option value="lead">Chỉ Lead</option>
-              <option value="deal">Chỉ Deal</option>
-            </select>
-          </label>
-
-          {hasCustomerTab && typeView !== 'lead' && (
-            <div className="block min-w-0 sm:col-span-2 lg:col-span-1">
-              <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Deal / Đơn hàng</span>
-              <p className="text-[10px] text-slate-500 mt-1 mb-1.5 leading-snug">
-                Gộp: một số Deal. Tách: Deal pipeline + Đơn hàng (Thắng &amp; sau Thắng).
-              </p>
-              <div
-                className="inline-flex w-full rounded-xl border border-slate-200 bg-slate-100 p-0.5"
-                role="group"
-                aria-label="Gộp hoặc tách Deal và Đơn hàng"
-              >
-                <button
-                  type="button"
-                  onClick={() => applyDealKhSplit(false)}
-                  className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-semibold transition-all ${
-                    !dealKhSplitEnabled
-                      ? 'bg-white text-emerald-700 shadow-sm'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Gộp
-                </button>
-                <button
-                  type="button"
-                  onClick={() => applyDealKhSplit(true)}
-                  className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-semibold transition-all ${
-                    dealKhSplitEnabled
-                      ? 'bg-white text-cyan-700 shadow-sm'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Tách đơn hàng
-                </button>
-              </div>
-            </div>
           )}
-
-          <div className="min-w-0 sm:col-span-2 lg:col-span-2">
-            <KpiUserFilter
-              value={filter}
-              onChange={handleFilterChange}
-              showSearch={false}
-              className="grid-cols-1 sm:grid-cols-2 gap-3"
-            />
-          </div>
-
-          <label className="block min-w-0">
-            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Khu vực</span>
-            <select
-              value={regionId}
-              onChange={(e) => setRegionId(e.target.value)}
-              disabled={!filter.companyId}
-              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm disabled:opacity-50 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-            >
-              <option value="">Tất cả khu vực</option>
-              {companyRegions.map((r) => (
-                <option key={r.id} value={r.id}>{r.name}{r.code ? ` (${r.code})` : ''}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="block min-w-0">
-            <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Nhân viên</span>
-            <select
-              value={filter.userId}
-              onChange={(e) => handleFilterChange({ userId: e.target.value })}
-              disabled={!filter.companyId || loadingEmployees}
-              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm disabled:opacity-50 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-            >
-              <option value="">{loadingEmployees ? 'Đang tải…' : 'Tất cả nhân viên'}</option>
-              {companyEmployees.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.full_name || u.email || u.id}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <div className="min-w-0 sm:col-span-2 lg:col-span-1 xl:col-span-1">
-            <button
-              type="button"
-              onClick={() => load(new AbortController().signal)}
-              disabled={loading}
-              className="w-full px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 text-white text-sm font-semibold shadow-md disabled:opacity-50 hover:from-indigo-700 hover:to-blue-700"
-            >
-              Áp dụng bộ lọc
-            </button>
-          </div>
         </div>
       </div>
 
@@ -1533,7 +1744,7 @@ export default function CrmOrgOverviewReport() {
         </div>
       ) : displayData ? (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 [&>*]:min-w-0">
             <KpiCard
               label="Quá hạn SLA"
               value={summary.overdue_count ?? 0}
@@ -1568,21 +1779,21 @@ export default function CrmOrgOverviewReport() {
             />
             <KpiCard
               label="Giá trị dự kiến"
-              value={formatVND(summary.expected_value ?? 0)}
+              value={formatVNDKpi(summary.expected_value ?? 0)}
               compare={compare}
               compareKey="expected_value"
               accent="border-emerald-200 bg-gradient-to-br from-emerald-50 to-white"
             />
             <KpiCard
               label="Giá trị kỳ vọng"
-              value={formatVND(summary.weighted_value ?? 0)}
+              value={formatVNDKpi(summary.weighted_value ?? 0)}
               compare={compare}
               compareKey="weighted_value"
               accent="border-amber-200 bg-gradient-to-br from-amber-50 to-white"
             />
             <KpiCard
               label="GT chốt đơn"
-              value={formatVND(reportClosedWonValue(summary))}
+              value={formatVNDKpi(reportClosedWonValue(summary))}
               compare={compare}
               compareKey="won_or_later_value"
               sub={`${reportClosedWonCount(summary)} deal · thắng + sau thắng + hoàn thành`}
@@ -1590,7 +1801,7 @@ export default function CrmOrgOverviewReport() {
             />
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 [&>*]:min-w-0">
             <KpiCard label="Lead" value={summary.lead_count ?? 0} compare={compare} compareKey="lead_count" accent="border-blue-200 bg-blue-50" />
             <KpiCard
               label={dealKhSplitActive ? 'Deal (pipeline)' : 'Deal'}
@@ -1612,7 +1823,7 @@ export default function CrmOrgOverviewReport() {
             )}
             <KpiCard
               label="Pipeline"
-              value={formatVND(summary.pipeline_value ?? 0)}
+              value={formatVNDKpi(summary.pipeline_value ?? 0)}
               compare={compare}
               compareKey="pipeline_value"
               accent="border-indigo-200 bg-indigo-50"
@@ -1644,7 +1855,7 @@ export default function CrmOrgOverviewReport() {
                 BG = deal ở cột Báo giá trở về sau · Chốt = thắng + sau thắng + hoàn thành (cùng một chỉ số) · Tăng trưởng so với kỳ trước
               </p>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-8 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-8 gap-3 [&>*]:min-w-0">
             <KpiCard
               label="Tổng báo giá"
               value={summary.quote_deal_count ?? 0}
@@ -1654,7 +1865,7 @@ export default function CrmOrgOverviewReport() {
             />
             <KpiCard
               label="GT báo giá"
-              value={formatVND(summary.quote_value ?? 0)}
+              value={formatVNDKpi(summary.quote_value ?? 0)}
               compare={compare}
               compareKey="quote_value"
               accent="border-orange-200 bg-orange-50"
@@ -1668,7 +1879,7 @@ export default function CrmOrgOverviewReport() {
             />
             <KpiCard
               label="Giá trị chốt"
-              value={formatVND(reportClosedWonValue(summary))}
+              value={formatVNDKpi(reportClosedWonValue(summary))}
               compare={compare}
               compareKey="won_or_later_value"
               accent="border-green-200 bg-green-50"
