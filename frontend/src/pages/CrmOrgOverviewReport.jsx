@@ -5,6 +5,13 @@ import { loadXlsx } from '../lib/xlsxLoader';
 import KpiUserFilter from '../components/KpiUserFilter';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import EmployeeReportPanel, { LeadTypeBreakdownChart, FirstStageSlaChart } from '../components/crm/EmployeeReportPanel';
+import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
+import {
+  readStoredDealKhSplitPreference,
+  splitDealStagesForCrmTabs,
+  storeDealKhSplitPreference,
+} from '../lib/crmPipelineTabs';
 import {
   BarChart3,
   Building2,
@@ -731,7 +738,7 @@ const QUOTE_CLOSE_COLS = [
   },
 ];
 
-const METRIC_COLS = [
+const METRIC_COLS_BASE = [
   { key: 'lead_count', label: 'Lead', align: 'right' },
   { key: 'deal_count', label: 'Deal', align: 'right' },
   {
@@ -817,12 +824,39 @@ const METRIC_COLS = [
   { key: 'lost_deal_count', label: 'Thua', align: 'right' },
 ];
 
+function buildMetricCols(dealKhSplit) {
+  const dealCol = {
+    key: 'deal_count',
+    label: dealKhSplit ? 'Deal (pipeline)' : 'Deal',
+    align: 'right',
+  };
+  const orderCols = dealKhSplit
+    ? [{
+      key: 'customer_order_count',
+      label: 'Đơn hàng',
+      align: 'right',
+      render: (r) => r.customer_order_count ?? 0,
+    }]
+    : [];
+  const head = METRIC_COLS_BASE.map((c) => (c.key === 'deal_count' ? dealCol : c));
+  const insertAt = head.findIndex((c) => c.key === 'deal_count') + 1;
+  return [
+    ...head.slice(0, insertAt),
+    ...orderCols,
+    ...head.slice(insertAt),
+  ];
+}
+
 export default function CrmOrgOverviewReport() {
+  const { user } = useAuth();
+  const isAdmin = isAdminLike(user);
   const [dateFrom, setDateFrom] = useState(() => defaultMonthRange().from);
   const [dateTo, setDateTo] = useState(() => defaultMonthRange().to);
   const [filter, setFilter] = useState({ companyId: '', departmentId: '', userId: '', q: '' });
   const [regionId, setRegionId] = useState('');
   const [typeView, setTypeView] = useState('all');
+  const [dealKhSplitEnabled, setDealKhSplitEnabled] = useState(() => readStoredDealKhSplitPreference(isAdmin));
+  const [hasCustomerTab, setHasCustomerTab] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -850,13 +884,35 @@ export default function CrmOrgOverviewReport() {
       date_from: dateFrom,
       date_to: dateTo,
       ...(typeView !== 'all' ? { type: typeView } : {}),
+      ...(dealKhSplitEnabled ? { deal_kh_split: '1' } : {}),
       ...(filter.companyId ? { company_id: filter.companyId } : {}),
       ...(regionId ? { region_id: regionId } : {}),
       ...(filter.departmentId ? { department_id: filter.departmentId } : {}),
       ...(filter.userId ? { assigned_to: filter.userId } : {}),
     }),
-    [dateFrom, dateTo, typeView, filter.companyId, filter.departmentId, filter.userId, regionId],
+    [dateFrom, dateTo, typeView, dealKhSplitEnabled, filter.companyId, filter.departmentId, filter.userId, regionId],
   );
+
+  const applyDealKhSplit = useCallback((enabled) => {
+    setDealKhSplitEnabled(enabled);
+    storeDealKhSplitPreference(enabled);
+  }, []);
+
+  useEffect(() => {
+    let cancel = false;
+    api
+      .get('/crm/pipeline-stages', { params: { pipeline_type: 'deal' } })
+      .then((r) => {
+        if (cancel) return;
+        const stages = Array.isArray(r.data) ? r.data : [];
+        const { postWonStages } = splitDealStagesForCrmTabs(stages);
+        setHasCustomerTab(postWonStages.length > 0);
+      })
+      .catch(() => {
+        if (!cancel) setHasCustomerTab(false);
+      });
+    return () => { cancel = true; };
+  }, []);
 
   useEffect(() => {
     if (!filter.companyId) {
@@ -936,6 +992,8 @@ export default function CrmOrgOverviewReport() {
   const summary = data?.summary || {};
   const compare = data?.compare || null;
   const periodPrevious = data?.period_previous || null;
+  const dealKhSplitActive = !!(data?.deal_kh_split ?? dealKhSplitEnabled);
+  const metricCols = useMemo(() => buildMetricCols(dealKhSplitActive), [dealKhSplitActive]);
 
   const timelineChart = useMemo(
     () => (data?.timeline || []).map((d) => ({
@@ -1251,6 +1309,43 @@ export default function CrmOrgOverviewReport() {
             </select>
           </label>
 
+          {hasCustomerTab && typeView !== 'lead' && (
+            <div className="block min-w-0 sm:col-span-2 lg:col-span-1">
+              <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Deal / Đơn hàng</span>
+              <p className="text-[10px] text-slate-500 mt-1 mb-1.5 leading-snug">
+                Gộp: một số Deal. Tách: Deal pipeline + Đơn hàng (Thắng &amp; sau Thắng).
+              </p>
+              <div
+                className="inline-flex w-full rounded-xl border border-slate-200 bg-slate-100 p-0.5"
+                role="group"
+                aria-label="Gộp hoặc tách Deal và Đơn hàng"
+              >
+                <button
+                  type="button"
+                  onClick={() => applyDealKhSplit(false)}
+                  className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-semibold transition-all ${
+                    !dealKhSplitEnabled
+                      ? 'bg-white text-emerald-700 shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Gộp
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyDealKhSplit(true)}
+                  className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-semibold transition-all ${
+                    dealKhSplitEnabled
+                      ? 'bg-white text-cyan-700 shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Tách đơn hàng
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="min-w-0 sm:col-span-2 lg:col-span-2">
             <KpiUserFilter
               value={filter}
@@ -1389,7 +1484,24 @@ export default function CrmOrgOverviewReport() {
 
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
             <KpiCard label="Lead" value={summary.lead_count ?? 0} compare={compare} compareKey="lead_count" accent="border-blue-200 bg-blue-50" />
-            <KpiCard label="Deal" value={summary.deal_count ?? 0} compare={compare} compareKey="deal_count" accent="border-cyan-200 bg-cyan-50" />
+            <KpiCard
+              label={dealKhSplitActive ? 'Deal (pipeline)' : 'Deal'}
+              value={summary.deal_count ?? 0}
+              compare={compare}
+              compareKey="deal_count"
+              accent="border-cyan-200 bg-cyan-50"
+              sub={dealKhSplitActive ? 'Trước cột Thắng + Thua' : undefined}
+            />
+            {dealKhSplitActive && (
+              <KpiCard
+                label="Đơn hàng"
+                value={summary.customer_order_count ?? 0}
+                compare={compare}
+                compareKey="customer_order_count"
+                sub={formatVND(summary.customer_order_value ?? 0)}
+                accent="border-teal-200 bg-teal-50"
+              />
+            )}
             <KpiCard
               label="Pipeline"
               value={formatVND(summary.pipeline_value ?? 0)}
@@ -1679,7 +1791,7 @@ export default function CrmOrgOverviewReport() {
                     columns={[
                       { key: 'region_name', label: 'Khu vực', bold: true },
                       { key: 'company_name', label: 'Công ty' },
-                      ...METRIC_COLS,
+                      ...metricCols,
                     ]}
                     rows={(data.by_region || []).map((r) => ({ ...r, _key: r.region_id || r.region_name }))}
                     onRowClick={drillToRegion}
@@ -1735,7 +1847,7 @@ export default function CrmOrgOverviewReport() {
                           return '—';
                         },
                       },
-                      ...METRIC_COLS,
+                      ...metricCols,
                     ]}
                     rows={(data.by_lead_type || []).map((r) => ({ ...r, _key: r.lead_type_id || r.lead_type_name }))}
                   />
@@ -1754,7 +1866,7 @@ export default function CrmOrgOverviewReport() {
                           <span>{r.source_icon ? `${r.source_icon} ` : ''}{r.source_name}</span>
                         ),
                       },
-                      ...METRIC_COLS,
+                      ...metricCols,
                     ]}
                     rows={(data.by_source || []).map((r) => ({ ...r, _key: r.source_id || r.source_name }))}
                   />
@@ -1780,7 +1892,7 @@ export default function CrmOrgOverviewReport() {
                         </span>
                       ),
                     },
-                    ...METRIC_COLS,
+                    ...metricCols,
                   ]}
                   rows={(data.by_company || []).map((r) => ({ ...r, _key: r.company_id || r.company_name }))}
                   onRowClick={drillToCompany}
@@ -1810,7 +1922,7 @@ export default function CrmOrgOverviewReport() {
                       ),
                     },
                     { key: 'company_name', label: 'Công ty' },
-                    ...METRIC_COLS,
+                    ...metricCols,
                   ]}
                   rows={(data.by_region || []).map((r) => ({ ...r, _key: r.region_id || r.region_name }))}
                   onRowClick={drillToRegion}
@@ -1848,7 +1960,7 @@ export default function CrmOrgOverviewReport() {
                     columns={[
                       { key: 'full_name', label: 'Nhân viên', bold: true },
                       { key: 'department_name', label: 'Phòng ban' },
-                      ...METRIC_COLS,
+                      ...metricCols,
                     ]}
                     rows={(data.by_employee || [])
                       .filter((r) => r.user_id)
