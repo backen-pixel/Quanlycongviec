@@ -15,6 +15,12 @@ const {
 const { effectivePipelineStageSlaDays } = require('../../../helpers/crmPipelineSla');
 const { pipeStaffLeadDealSummaryPdf, pipeStaffPipelineDetailPdf } = require('../../../helpers/staffLeadDealReportPdf');
 const { pipeOrgOverviewReportPdf } = require('../../../helpers/orgOverviewReportPdf');
+const {
+  crmReportCreatedAtFromIso,
+  crmReportCreatedAtToIso,
+  crmReportDayKeyVn,
+  crmReportAsOfMs,
+} = require('../../../helpers/crmReportDateBounds');
 const { userIsAdmin, scopedAdminCompanyId, requireUserCompanyId } = require('../shared/requestScope');
 const { STAFF_LEAD_DEAL_REPORT_ROLES } = require('../shared/reportRoles');
 
@@ -77,8 +83,10 @@ async function fetchCrmLeadsForOrgReportBatched(type, {
         q = q.eq('assigned_to', assigned_to_user);
       }
     }
-    if (date_from) q = q.gte('created_at', date_from);
-    if (date_to) q = q.lte('created_at', date_to + 'T23:59:59.999Z');
+    const createdFrom = crmReportCreatedAtFromIso(date_from);
+    const createdTo = crmReportCreatedAtToIso(date_to);
+    if (createdFrom) q = q.gte('created_at', createdFrom);
+    if (createdTo) q = q.lte('created_at', createdTo);
     const { data, error } = await q.range(from, from + pageSize - 1);
     if (error) throw error;
     const chunk = data || [];
@@ -242,6 +250,42 @@ async function sumCrmKpiLedgerNetByUserIds(userIds, periodStart, periodType = 'm
   return sums;
 }
 
+async function sumCrmKpiLedgerNetByUserIdsInDateRange(userIds, dateFromYmd, dateToYmd) {
+  const sums = Object.create(null);
+  const fromIso = crmReportCreatedAtFromIso(dateFromYmd);
+  const toIso = crmReportCreatedAtToIso(dateToYmd);
+  if (!userIds?.length || !fromIso || !toIso) return sums;
+  const uniq = [...new Set(userIds.map((x) => String(x)))];
+  const CHUNK = 80;
+  for (let i = 0; i < uniq.length; i += CHUNK) {
+    const part = uniq.slice(i, i + CHUNK);
+    let from = 0;
+    const PAGE = 1000;
+    for (;;) {
+      const { data, error } = await supabase
+        .from('crm_kpi_ledger')
+        .select('user_id, points')
+        .in('user_id', part)
+        .gte('occurred_at', fromIso)
+        .lte('occurred_at', toIso)
+        .range(from, from + PAGE - 1);
+      if (error) throw error;
+      const rows = data || [];
+      for (const r of rows) {
+        if (!r.user_id) continue;
+        const k = String(r.user_id);
+        sums[k] = (sums[k] || 0) + Number(r.points || 0);
+      }
+      if (rows.length < PAGE) break;
+      from += PAGE;
+    }
+  }
+  for (const k of Object.keys(sums)) {
+    sums[k] = Math.round(sums[k] * 100) / 100;
+  }
+  return sums;
+}
+
 /** Lead/deal của đúng một user — dùng BC chi tiết theo pipeline (tránh trần 1000 dòng). */
 async function fetchCrmLeadsForUserDetailBatched(userId, type, { company_id, region_id, date_from, date_to, req }, pageSize = 1000) {
   const rows = [];
@@ -256,8 +300,10 @@ async function fetchCrmLeadsForUserDetailBatched(userId, type, { company_id, reg
     if (region_id) q = q.eq('region_id', region_id);
     if (req) q = applyCrmLeadRegionFilterToQuery(q, req);
     q = q.or(`assigned_to.eq.${userId},lead_owner_id.eq.${userId}`);
-    if (date_from) q = q.gte('created_at', date_from);
-    if (date_to) q = q.lte('created_at', date_to + 'T23:59:59.999Z');
+    const createdFrom = crmReportCreatedAtFromIso(date_from);
+    const createdTo = crmReportCreatedAtToIso(date_to);
+    if (createdFrom) q = q.gte('created_at', createdFrom);
+    if (createdTo) q = q.lte('created_at', createdTo);
     const { data, error } = await q.range(from, from + pageSize - 1);
     if (error) throw error;
     const chunk = data || [];
@@ -510,10 +556,7 @@ async function computeStaffLeadDealReportData(req, res) {
 }
 
 function orgReportDayKey(row) {
-  const raw = row?.created_at;
-  if (!raw) return null;
-  const m = String(raw).match(/^(\d{4}-\d{2}-\d{2})/);
-  return m ? m[1] : null;
+  return crmReportDayKeyVn(row?.created_at);
 }
 
 function orgReportOwnerId(row) {
@@ -1225,7 +1268,7 @@ async function computeOrgOverviewReportData(req, res) {
       orgReportReceptionSlaMinutes(effectiveCompanyId),
     ]);
 
-    const aggOpts = { slaMinutes: receptionSlaMinutes, dealKhSplit };
+    const aggOpts = { slaMinutes: receptionSlaMinutes, dealKhSplit, asOfMs: crmReportAsOfMs(dt) };
     const aggregated = aggregateOrgReportRows(leadRows, dealRows, stageMap, aggOpts);
     const {
       summary,
@@ -1318,10 +1361,9 @@ async function computeOrgOverviewReportData(req, res) {
     const srcById = Object.fromEntries((sourcesRes.data || []).map((s) => [String(s.id), s]));
     const leadTypeById = Object.fromEntries((leadTypesRes.data || []).map((t) => [String(t.id), t]));
 
-    const kpiPeriodStart = orgReportKpiPeriodStart(df);
     let kpiByUser = {};
     try {
-      kpiByUser = await sumCrmKpiLedgerNetByUserIds(userIds, kpiPeriodStart);
+      kpiByUser = await sumCrmKpiLedgerNetByUserIdsInDateRange(userIds, df, dt);
     } catch (e) {
       console.warn('[crm/org-overview] kpi ledger by user:', e.message);
     }
@@ -1448,7 +1490,7 @@ async function computeOrgOverviewReportData(req, res) {
       typeView,
       dealKhSplit,
       summary,
-      kpi_ledger_period_start: kpiPeriodStart,
+      kpi_ledger_basis: 'occurred_at_range',
       period_previous,
       compare,
       timeline,
@@ -1526,6 +1568,7 @@ r.get('/reports/org-overview', async (req, res) => {
       basis: 'created_at',
       type: data.typeView || 'all',
       deal_kh_split: !!data.dealKhSplit,
+      kpi_ledger_basis: data.kpi_ledger_basis || 'occurred_at_range',
       summary: data.summary,
       period_previous: data.period_previous,
       compare: data.compare,

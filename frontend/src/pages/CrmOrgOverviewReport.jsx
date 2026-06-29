@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../lib/api';
 import { formatVND, formatKpiLedgerNet } from '../lib/utils';
 import { loadXlsx } from '../lib/xlsxLoader';
+import { downloadOrgEmployeeExcel } from '../lib/crmOrgEmployeeExcelExport';
 import KpiUserFilter from '../components/KpiUserFilter';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import EmployeeReportPanel, { LeadTypeBreakdownChart, FirstStageSlaChart } from '../components/crm/EmployeeReportPanel';
@@ -64,8 +65,32 @@ function reportCancelLostTotal(r) {
 }
 
 function reportCancelTotalCount(r) {
-  return (r?.lead_count ?? 0) + (r?.deal_count ?? 0);
+  return (r?.lead_count ?? 0) + (r?.deal_count ?? 0) + (r?.customer_order_count ?? 0);
 }
+
+const DEAL_ONLY_METRIC_KEYS = new Set([
+  'deal_count',
+  'customer_order_count',
+  'conversion_rate',
+  'deal_close_value_rate_pct',
+  'quote_deal_count',
+  'quote_value',
+  'won_or_later_deal_count',
+  'won_or_later_value',
+  'quote_win_rate_pct',
+  'monthly_growth_pct',
+  'expected_value',
+  'weighted_value',
+  'overdue_count',
+  'first_stage_on_time_rate_pct',
+  'pipeline_value',
+  'lost_deal_count',
+]);
+
+const LEAD_ONLY_METRIC_KEYS = new Set([
+  'lead_count',
+  'reception_overdue_count',
+]);
 
 function buildDealStackedRows(items, nameKey, max = 12) {
   return (items || [])
@@ -824,13 +849,13 @@ const METRIC_COLS_BASE = [
   { key: 'lost_deal_count', label: 'Thua', align: 'right' },
 ];
 
-function buildMetricCols(dealKhSplit) {
+function buildMetricCols(dealKhSplit, typeView = 'all') {
   const dealCol = {
     key: 'deal_count',
     label: dealKhSplit ? 'Deal (pipeline)' : 'Deal',
     align: 'right',
   };
-  const orderCols = dealKhSplit
+  const orderCols = dealKhSplit && typeView !== 'lead'
     ? [{
       key: 'customer_order_count',
       label: 'Đơn hàng',
@@ -840,11 +865,29 @@ function buildMetricCols(dealKhSplit) {
     : [];
   const head = METRIC_COLS_BASE.map((c) => (c.key === 'deal_count' ? dealCol : c));
   const insertAt = head.findIndex((c) => c.key === 'deal_count') + 1;
-  return [
+  let cols = [
     ...head.slice(0, insertAt),
     ...orderCols,
     ...head.slice(insertAt),
   ];
+  if (typeView === 'lead') {
+    cols = cols.filter((c) => !DEAL_ONLY_METRIC_KEYS.has(c.key));
+  } else if (typeView === 'deal') {
+    cols = cols.filter((c) => !LEAD_ONLY_METRIC_KEYS.has(c.key));
+  }
+  return cols;
+}
+
+function filtersMatchResponse(params, response) {
+  if (!response) return false;
+  if (response.date_from !== params.date_from || response.date_to !== params.date_to) return false;
+  if ((response.type || 'all') !== (params.type || 'all')) return false;
+  if (!!response.deal_kh_split !== !!params.deal_kh_split) return false;
+  if (String(response.company_id || '') !== String(params.company_id || '')) return false;
+  if (String(response.region_id || '') !== String(params.region_id || '')) return false;
+  if (String(response.department_id || '') !== String(params.department_id || '')) return false;
+  if (String(response.assigned_to || '') !== String(params.assigned_to || '')) return false;
+  return true;
 }
 
 export default function CrmOrgOverviewReport() {
@@ -866,6 +909,7 @@ export default function CrmOrgOverviewReport() {
   const [companyEmployees, setCompanyEmployees] = useState([]);
   const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [employeeExcelLoading, setEmployeeExcelLoading] = useState(false);
 
   const handleFilterChange = useCallback((next) => {
     setFilter((prev) => {
@@ -883,7 +927,7 @@ export default function CrmOrgOverviewReport() {
     () => ({
       date_from: dateFrom,
       date_to: dateTo,
-      ...(typeView !== 'all' ? { type: typeView } : {}),
+      type: typeView,
       ...(dealKhSplitEnabled ? { deal_kh_split: '1' } : {}),
       ...(filter.companyId ? { company_id: filter.companyId } : {}),
       ...(regionId ? { region_id: regionId } : {}),
@@ -971,13 +1015,19 @@ export default function CrmOrgOverviewReport() {
     if (!ok) setRegionId('');
   }, [companyRegions, regionId]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal) => {
+    const params = reportQueryParams;
     setLoading(true);
     setErr(null);
     try {
-      const { data: res } = await api.get('/crm/reports/org-overview', { params: reportQueryParams });
+      const { data: res } = await api.get('/crm/reports/org-overview', {
+        params,
+        signal,
+      });
+      if (!filtersMatchResponse(params, res)) return;
       setData(res);
     } catch (e) {
+      if (e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError') return;
       setErr(e.response?.data?.error || e.message);
       setData(null);
     } finally {
@@ -986,25 +1036,32 @@ export default function CrmOrgOverviewReport() {
   }, [reportQueryParams]);
 
   useEffect(() => {
-    load();
+    const controller = new AbortController();
+    load(controller.signal);
+    return () => controller.abort();
   }, [load]);
 
-  const summary = data?.summary || {};
-  const compare = data?.compare || null;
-  const periodPrevious = data?.period_previous || null;
-  const dealKhSplitActive = !!(data?.deal_kh_split ?? dealKhSplitEnabled);
-  const metricCols = useMemo(() => buildMetricCols(dealKhSplitActive), [dealKhSplitActive]);
+  const dataInSync = filtersMatchResponse(reportQueryParams, data);
+  const displayData = dataInSync ? data : null;
+  const summary = displayData?.summary || {};
+  const compare = displayData?.compare || null;
+  const periodPrevious = displayData?.period_previous || null;
+  const dealKhSplitActive = !!(displayData?.deal_kh_split ?? dealKhSplitEnabled);
+  const metricCols = useMemo(
+    () => buildMetricCols(dealKhSplitActive, typeView),
+    [dealKhSplitActive, typeView],
+  );
 
   const timelineChart = useMemo(
-    () => (data?.timeline || []).map((d) => ({
+    () => (displayData?.timeline || []).map((d) => ({
       ...d,
       label: formatViDate(d.date),
     })),
-    [data],
+    [displayData],
   );
 
   const funnelChart = useMemo(
-    () => (data?.pipeline_funnel || [])
+    () => (displayData?.pipeline_funnel || [])
       .filter((s) => (s.count || 0) > 0)
       .slice(0, 12)
       .map((s) => ({
@@ -1012,33 +1069,33 @@ export default function CrmOrgOverviewReport() {
         count: s.count || 0,
         value: s.value || 0,
       })),
-    [data],
+    [displayData],
   );
 
   const regionBarChart = useMemo(
-    () => (data?.by_region || [])
+    () => (displayData?.by_region || [])
       .slice(0, 10)
       .map((r) => ({
         name: truncLabel(r.region_name, 16),
         value: r.pipeline_value ?? 0,
       })),
-    [data],
+    [displayData],
   );
 
   const leadTypeBarChart = useMemo(
-    () => (data?.by_lead_type || [])
-      .filter((r) => (r.lead_count || 0) + (r.deal_count || 0) > 0)
+    () => (displayData?.by_lead_type || [])
+      .filter((r) => (r.lead_count || 0) + (r.deal_count || 0) + (r.customer_order_count || 0) > 0)
       .slice(0, 12)
       .map((r) => ({
         name: truncLabel(r.lead_type_name, 16),
         Lead: r.lead_count ?? 0,
-        Deal: r.deal_count ?? 0,
+        Deal: (r.deal_count ?? 0) + (r.customer_order_count ?? 0),
       })),
-    [data],
+    [displayData],
   );
 
   const firstStageSla = useMemo(() => {
-    const s = data?.summary;
+    const s = displayData?.summary;
     if (!s?.first_stage_open_count) return null;
     return {
       open_count: s.first_stage_open_count,
@@ -1047,33 +1104,34 @@ export default function CrmOrgOverviewReport() {
       on_time_rate_pct: s.first_stage_on_time_rate_pct,
       overdue_rate_pct: s.first_stage_overdue_rate_pct,
     };
-  }, [data]);
+  }, [displayData]);
 
   const employeeStacked = useMemo(
-    () => buildDealStackedRows(data?.by_employee, 'full_name', 12),
-    [data],
+    () => buildDealStackedRows(displayData?.by_employee, 'full_name', 12),
+    [displayData],
   );
 
   const regionStacked = useMemo(
-    () => buildDealStackedRows(data?.by_region, 'region_name', 10),
-    [data],
+    () => buildDealStackedRows(displayData?.by_region, 'region_name', 10),
+    [displayData],
   );
 
   const dealOutcomePie = useMemo(() => {
     let won = 0;
     let lost = 0;
     let open = 0;
-    for (const r of data?.by_employee || []) {
+    for (const r of displayData?.by_employee || []) {
+      const totalDeals = (r.deal_count || 0) + (r.customer_order_count || 0);
       won += reportClosedWonCount(r);
       lost += r.lost_deal_count || 0;
-      open += Math.max(0, (r.deal_count || 0) - reportClosedWonCount(r) - (r.lost_deal_count || 0));
+      open += Math.max(0, totalDeals - reportClosedWonCount(r) - (r.lost_deal_count || 0));
     }
     return [
       { name: 'Đã chốt', value: won, color: '#059669' },
       { name: 'Thua', value: lost, color: '#e11d48' },
       { name: 'Đang mở', value: open, color: '#0284c7' },
     ].filter((x) => x.value > 0);
-  }, [data]);
+  }, [displayData]);
 
   const quoteFunnelPie = useMemo(() => {
     const quoted = summary.quote_deal_count ?? 0;
@@ -1103,7 +1161,7 @@ export default function CrmOrgOverviewReport() {
   }, [summary, periodPrevious]);
 
   const exportExcel = async () => {
-    if (!data) return;
+    if (!displayData) return;
     const XLSX = await loadXlsx();
     const wb = XLSX.utils.book_new();
     const sheet = (name, rows, mapFn) => {
@@ -1124,7 +1182,7 @@ export default function CrmOrgOverviewReport() {
       'Ty le huy %': r.cancel_rate_pct ?? null,
       'Tang truong thang %': r.monthly_growth_pct ?? null,
     }));
-    sheet('Cong ty', data.by_company, (r) => ({
+    sheet('Cong ty', displayData.by_company, (r) => ({
       'Cong ty': r.company_name,
       Lead: r.lead_count,
       Deal: r.deal_count,
@@ -1132,7 +1190,7 @@ export default function CrmOrgOverviewReport() {
       Chot: r.won_deal_count,
       'GT chot': r.won_value,
     }));
-    sheet('Khu vuc', data.by_region, (r) => ({
+    sheet('Khu vuc', displayData.by_region, (r) => ({
       'Khu vuc': r.region_name,
       'Cong ty': r.company_name,
       Lead: r.lead_count,
@@ -1140,7 +1198,7 @@ export default function CrmOrgOverviewReport() {
       Pipeline: r.pipeline_value,
       Chot: r.won_deal_count,
     }));
-    sheet('Nhan vien', data.by_employee, (r) => ({
+    sheet('Nhan vien', displayData.by_employee, (r) => ({
       'Nhan vien': r.full_name,
       'Phong ban': r.department_name,
       Lead: r.lead_count,
@@ -1158,7 +1216,7 @@ export default function CrmOrgOverviewReport() {
       'Tang truong thang %': r.monthly_growth_pct,
       'QH tiep nhan %': r.reception_overdue_rate_pct,
     }));
-    sheet('Phan loai', data.by_lead_type, (r) => ({
+    sheet('Phan loai', displayData.by_lead_type, (r) => ({
       'Phan loai': r.lead_type_name,
       'Ap dung': r.applies_to,
       Lead: r.lead_count,
@@ -1167,6 +1225,45 @@ export default function CrmOrgOverviewReport() {
       'QH tiep nhan %': r.reception_overdue_rate_pct,
     }));
     XLSX.writeFile(wb, `crm-bc-to-chuc_${dateFrom}_${dateTo}.xlsx`);
+  };
+
+  const exportEmployeeExcel = async () => {
+    if (!displayData) return;
+    setEmployeeExcelLoading(true);
+    try {
+      const employees = (displayData.by_employee || []).filter((r) => r.user_id);
+      if (!employees.length) {
+        setErr('Chưa có dữ liệu nhân viên để xuất');
+        return;
+      }
+      const employeeIds = employees.map((r) => r.user_id).join(',');
+      const surveyRes = await api.get('/crm/reports/org-overview/survey-visits', {
+        params: {
+          date_from: dateFrom,
+          date_to: dateTo,
+          type: typeView,
+          employee_ids: employeeIds,
+          ...(dealKhSplitEnabled ? { deal_kh_split: '1' } : {}),
+          ...(filter.companyId ? { company_id: filter.companyId } : {}),
+          ...(regionId ? { region_id: regionId } : {}),
+          ...(filter.departmentId ? { department_id: filter.departmentId } : {}),
+          ...(filter.userId ? { assigned_to: filter.userId } : {}),
+        },
+      });
+      await downloadOrgEmployeeExcel({
+        employees,
+        metricCols,
+        surveyRows: surveyRes.data?.rows || [],
+        dateFrom,
+        dateTo,
+        typeLabel: typeViewLabel,
+        periodLabel: reportPeriodLabel,
+      });
+    } catch (e) {
+      setErr(e.response?.data?.error || e.message || 'Lỗi xuất Excel nhân viên');
+    } finally {
+      setEmployeeExcelLoading(false);
+    }
   };
 
   const downloadPdf = async () => {
@@ -1217,12 +1314,23 @@ export default function CrmOrgOverviewReport() {
     () => ({
       date_from: dateFrom,
       date_to: dateTo,
+      type: typeView,
+      ...(dealKhSplitEnabled ? { deal_kh_split: '1' } : {}),
       ...(filter.companyId ? { company_id: filter.companyId } : {}),
       ...(regionId ? { region_id: regionId } : {}),
+      ...(filter.departmentId ? { department_id: filter.departmentId } : {}),
       ...(filter.userId ? { assigned_to: filter.userId } : {}),
     }),
-    [dateFrom, dateTo, filter.companyId, regionId, filter.userId],
+    [dateFrom, dateTo, typeView, dealKhSplitEnabled, filter.companyId, filter.departmentId, filter.userId, regionId],
   );
+
+  const typeViewLabel = typeView === 'lead' ? 'Chỉ Lead' : typeView === 'deal' ? 'Chỉ Deal' : 'Lead + Deal';
+
+  const reportPeriodLabel = useMemo(() => {
+    const from = displayData?.date_from || dateFrom;
+    const to = displayData?.date_to || dateTo;
+    return `${formatViDate(from)} → ${formatViDate(to)}`;
+  }, [displayData?.date_from, displayData?.date_to, dateFrom, dateTo]);
 
   return (
     <div className="min-w-0 max-w-[1600px] mx-auto space-y-5 pb-8 p-4 md:p-6">
@@ -1248,7 +1356,7 @@ export default function CrmOrgOverviewReport() {
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={load}
+              onClick={() => load(new AbortController().signal)}
               disabled={loading}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium"
             >
@@ -1258,7 +1366,7 @@ export default function CrmOrgOverviewReport() {
             <button
               type="button"
               onClick={downloadPdf}
-              disabled={pdfLoading || !data}
+              disabled={pdfLoading || !displayData}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold shadow-sm disabled:opacity-50"
             >
               <FileText className="w-4 h-4" />
@@ -1267,7 +1375,7 @@ export default function CrmOrgOverviewReport() {
             <button
               type="button"
               onClick={exportExcel}
-              disabled={!data}
+              disabled={!displayData}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold disabled:opacity-40"
             >
               <Download className="w-4 h-4" />
@@ -1390,7 +1498,7 @@ export default function CrmOrgOverviewReport() {
           <div className="min-w-0 sm:col-span-2 lg:col-span-1 xl:col-span-1">
             <button
               type="button"
-              onClick={load}
+              onClick={() => load(new AbortController().signal)}
               disabled={loading}
               className="w-full px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 text-white text-sm font-semibold shadow-md disabled:opacity-50 hover:from-indigo-700 hover:to-blue-700"
             >
@@ -1418,12 +1526,12 @@ export default function CrmOrgOverviewReport() {
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{err}</div>
       )}
 
-      {loading && !data ? (
+      {loading && !displayData ? (
         <div className="flex flex-col items-center justify-center py-16 gap-3">
           <div className="animate-spin h-10 w-10 border-4 border-indigo-600 border-t-transparent rounded-full" />
           <p className="text-sm text-slate-600">Đang tải báo cáo…</p>
         </div>
-      ) : data ? (
+      ) : displayData ? (
         <>
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
             <KpiCard
@@ -1445,17 +1553,17 @@ export default function CrmOrgOverviewReport() {
               compareKey="reception_overdue_count"
               sub={
                 summary.reception_eligible_count
-                  ? `${summary.reception_overdue_count ?? 0}/${summary.reception_eligible_count} lead · SLA ${data?.reception_sla_minutes ?? 15} phút`
+                  ? `${summary.reception_overdue_count ?? 0}/${summary.reception_eligible_count} lead · SLA ${displayData?.reception_sla_minutes ?? 15} phút`
                   : 'Chưa có lead trong kỳ'
               }
               accent="border-orange-200 bg-gradient-to-br from-orange-50 to-white"
             />
             <KpiCard
-              label="Điểm KPI (tháng)"
+              label="Điểm KPI"
               value={formatKpiLedgerNet(summary.kpi_ledger_net ?? 0)}
               compare={compare}
               compareKey="kpi_ledger_net"
-              sub={data?.kpi_ledger_period_start ? `Kỳ ${formatViDate(data.kpi_ledger_period_start)}` : 'Sổ cái CRM'}
+              sub={`${reportPeriodLabel} · sổ cái occurred_at trên lead/deal trong kỳ`}
               accent="border-indigo-200 bg-gradient-to-br from-indigo-50 to-white"
             />
             <KpiCard
@@ -1653,7 +1761,7 @@ export default function CrmOrgOverviewReport() {
                 className="lg:col-span-2"
               >
                 <QuoteCloseChartsGrid
-                  rows={(data.by_employee || []).filter((r) => r.user_id)}
+                  rows={(displayData.by_employee || []).filter((r) => r.user_id)}
                   nameKey="full_name"
                   entityLabel="nhân viên"
                   combinedRatesPie
@@ -1665,7 +1773,7 @@ export default function CrmOrgOverviewReport() {
                     { key: 'department_name', label: 'Phòng ban' },
                     ...QUOTE_CLOSE_COLS,
                   ]}
-                  rows={(data.by_employee || [])
+                  rows={(displayData.by_employee || [])
                     .filter((r) => r.user_id)
                     .map((r) => ({ ...r, _key: r.user_id }))}
                   emptyLabel="Chưa có dữ liệu nhân viên trong kỳ"
@@ -1767,7 +1875,7 @@ export default function CrmOrgOverviewReport() {
                       { key: 'count', label: 'SL', align: 'right' },
                       { key: 'value', label: 'Giá trị', align: 'right', render: (r) => formatVND(r.value || 0) },
                     ]}
-                    rows={(data.pipeline_funnel || []).map((r, i) => ({ ...r, _key: r.stage_id || i }))}
+                    rows={(displayData.pipeline_funnel || []).map((r, i) => ({ ...r, _key: r.stage_id || i }))}
                   />
                 </CollapsibleDataList>
               </Section>
@@ -1793,7 +1901,7 @@ export default function CrmOrgOverviewReport() {
                       { key: 'company_name', label: 'Công ty' },
                       ...metricCols,
                     ]}
-                    rows={(data.by_region || []).map((r) => ({ ...r, _key: r.region_id || r.region_name }))}
+                    rows={(displayData.by_region || []).map((r) => ({ ...r, _key: r.region_id || r.region_name }))}
                     onRowClick={drillToRegion}
                   />
                 </CollapsibleDataList>
@@ -1849,7 +1957,7 @@ export default function CrmOrgOverviewReport() {
                       },
                       ...metricCols,
                     ]}
-                    rows={(data.by_lead_type || []).map((r) => ({ ...r, _key: r.lead_type_id || r.lead_type_name }))}
+                    rows={(displayData.by_lead_type || []).map((r) => ({ ...r, _key: r.lead_type_id || r.lead_type_name }))}
                   />
                 </CollapsibleDataList>
               </Section>
@@ -1868,7 +1976,7 @@ export default function CrmOrgOverviewReport() {
                       },
                       ...metricCols,
                     ]}
-                    rows={(data.by_source || []).map((r) => ({ ...r, _key: r.source_id || r.source_name }))}
+                    rows={(displayData.by_source || []).map((r) => ({ ...r, _key: r.source_id || r.source_name }))}
                   />
                 </CollapsibleDataList>
               </Section>
@@ -1877,7 +1985,7 @@ export default function CrmOrgOverviewReport() {
 
           {activeTab === 'company' && (
             <Section title="Theo công ty" subtitle="Click dòng để xem khu vực">
-              <QuoteCloseChartsGrid rows={data.by_company || []} nameKey="company_name" entityLabel="công ty" />
+              <QuoteCloseChartsGrid rows={displayData.by_company || []} nameKey="company_name" entityLabel="công ty" />
               <CollapsibleDataList label="bảng số liệu theo công ty">
                 <MetricTable
                   columns={[
@@ -1894,7 +2002,7 @@ export default function CrmOrgOverviewReport() {
                     },
                     ...metricCols,
                   ]}
-                  rows={(data.by_company || []).map((r) => ({ ...r, _key: r.company_id || r.company_name }))}
+                  rows={(displayData.by_company || []).map((r) => ({ ...r, _key: r.company_id || r.company_name }))}
                   onRowClick={drillToCompany}
                 />
               </CollapsibleDataList>
@@ -1903,7 +2011,7 @@ export default function CrmOrgOverviewReport() {
 
           {activeTab === 'region' && (
             <Section title="Theo khu vực" subtitle="Click dòng để xem nhân viên">
-              <QuoteCloseChartsGrid rows={data.by_region || []} nameKey="region_name" entityLabel="khu vực" />
+              <QuoteCloseChartsGrid rows={displayData.by_region || []} nameKey="region_name" entityLabel="khu vực" />
               {regionStacked.length > 0 && (
                 <DealStackedBarChart data={regionStacked} title="Deal theo khu vực (chốt / thua / mở)" />
               )}
@@ -1924,7 +2032,7 @@ export default function CrmOrgOverviewReport() {
                     { key: 'company_name', label: 'Công ty' },
                     ...metricCols,
                   ]}
-                  rows={(data.by_region || []).map((r) => ({ ...r, _key: r.region_id || r.region_name }))}
+                  rows={(displayData.by_region || []).map((r) => ({ ...r, _key: r.region_id || r.region_name }))}
                   onRowClick={drillToRegion}
                 />
               </CollapsibleDataList>
@@ -1939,7 +2047,7 @@ export default function CrmOrgOverviewReport() {
                 className="lg:col-span-2"
               >
                 <QuoteCloseChartsGrid
-                  rows={(data.by_employee || []).filter((r) => r.user_id)}
+                  rows={(displayData.by_employee || []).filter((r) => r.user_id)}
                   nameKey="full_name"
                   entityLabel="nhân viên"
                   combinedRatesPie
@@ -1947,11 +2055,25 @@ export default function CrmOrgOverviewReport() {
               </Section>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                <LeadTypeBreakdownChart rows={data.by_lead_type || []} />
+                <LeadTypeBreakdownChart rows={displayData.by_lead_type || []} />
                 <FirstStageSlaChart sla={firstStageSla} />
               </div>
 
-              <Section title="Bảng tổng hợp nhân viên" subtitle="Lead/deal, quá hạn tiếp nhận và SLA cột đầu pipeline (lead/deal đang mở ở cột 1)">
+              <Section
+                title="Bảng tổng hợp nhân viên"
+                subtitle={`Kỳ ${reportPeriodLabel} · ${typeViewLabel} · Lead/deal theo ngày tạo · KPI theo occurred_at trên cùng cohort`}
+                actions={(
+                  <button
+                    type="button"
+                    onClick={exportEmployeeExcel}
+                    disabled={employeeExcelLoading || !(displayData.by_employee || []).some((r) => r.user_id)}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold shadow-sm disabled:opacity-40"
+                  >
+                    <Download className="w-4 h-4" />
+                    {employeeExcelLoading ? 'Đang xuất…' : 'Xuất Excel'}
+                  </button>
+                )}
+              >
                 {employeeStacked.length > 0 && (
                   <DealStackedBarChart data={employeeStacked} title="Deal theo nhân viên (chốt / thua / mở)" />
                 )}
@@ -1962,7 +2084,7 @@ export default function CrmOrgOverviewReport() {
                       { key: 'department_name', label: 'Phòng ban' },
                       ...metricCols,
                     ]}
-                    rows={(data.by_employee || [])
+                    rows={(displayData.by_employee || [])
                       .filter((r) => r.user_id)
                       .map((r) => ({ ...r, _key: r.user_id }))}
                   />
@@ -1973,15 +2095,15 @@ export default function CrmOrgOverviewReport() {
                 <div className="px-5 pt-5 pb-3 border-b border-slate-100">
                   <h2 className="text-base font-bold text-slate-900">Chi tiết từng nhân viên</h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Chọn thẻ nhân viên để xem biểu đồ pipeline · SLA tiếp nhận: {data?.reception_sla_minutes ?? 15} phút
+                    Chọn thẻ nhân viên để xem biểu đồ pipeline · SLA tiếp nhận: {displayData?.reception_sla_minutes ?? 15} phút
                   </p>
                 </div>
                 <div className="p-4 md:p-5 min-w-0">
                   <EmployeeReportPanel
-                    employees={data.by_employee || []}
+                    employees={displayData.by_employee || []}
                     queryParams={pipelineQueryParams}
                     typeView={typeView}
-                    receptionSlaMinutes={data?.reception_sla_minutes ?? 15}
+                    receptionSlaMinutes={displayData?.reception_sla_minutes ?? 15}
                     preferRowMetrics
                   />
                 </div>
@@ -1994,12 +2116,15 @@ export default function CrmOrgOverviewReport() {
   );
 }
 
-function Section({ title, subtitle, children, className = '' }) {
+function Section({ title, subtitle, children, className = '', actions }) {
   return (
     <div className={`rounded-2xl bg-white border border-slate-200 p-5 shadow-sm space-y-4 ${className}`}>
-      <div>
-        <h2 className="text-base font-bold text-slate-900">{title}</h2>
-        {subtitle && <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-bold text-slate-900">{title}</h2>
+          {subtitle && <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>}
+        </div>
+        {actions}
       </div>
       {children}
     </div>
