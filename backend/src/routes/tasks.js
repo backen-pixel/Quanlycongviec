@@ -14,6 +14,7 @@ const {
   updateProjectTask,
   deleteProjectTask,
 } = require('../helpers/projectTaskMutations');
+const { assertDealResponsible, assertFileAttachmentMutation, logProjectFileActivity } = require('../helpers/projectFileActivity');
 
 const r = Router();
 r.use(auth);
@@ -448,6 +449,8 @@ r.get('/:id/attachments', async (req, res) => {
 
 r.post('/:id/attachments/bulk', async (req, res) => {
   try {
+    const { data: taskRow } = await supabase.from('tasks').select('project_id').eq('id', req.params.id).maybeSingle();
+    if (!(await assertDealResponsible(req, res, { projectId: taskRow?.project_id }))) return;
     const items = (req.body.items || []).map((f) => {
       const row = {
         entity_type: 'task', entity_id: req.params.id,
@@ -462,13 +465,40 @@ r.post('/:id/attachments/bulk', async (req, res) => {
     if (!items.length) return res.status(400).json({ error: 'Không có file' });
     const { data, error } = await supabase.from('file_attachments').insert(items).select();
     if (error) throw error;
+
+    const { data: task } = await supabase.from('tasks').select('id, title, project_id').eq('id', req.params.id).maybeSingle();
+    for (const att of data || []) {
+      await logProjectFileActivity(req, {
+        projectId: task?.project_id,
+        action: 'uploaded',
+        fileName: att.file_name,
+        fileUrl: att.file_url,
+        taskTitle: task?.title,
+      });
+    }
     res.status(201).json({ attachments: data });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 
 r.delete('/:taskId/attachments/:attId', async (req, res) => {
   try {
+    const { data: att } = await supabase
+      .from('file_attachments')
+      .select('id, file_name, uploaded_by, entity_id')
+      .eq('id', req.params.attId)
+      .eq('entity_type', 'task')
+      .maybeSingle();
+    if (!att) return res.status(404).json({ error: 'Không tìm thấy file' });
+    if (!assertFileAttachmentMutation(req, res, att)) return;
+
+    const { data: task } = await supabase.from('tasks').select('id, title, project_id').eq('id', req.params.taskId).maybeSingle();
     await supabase.from('file_attachments').delete().eq('id', req.params.attId).eq('entity_type', 'task');
+    await logProjectFileActivity(req, {
+      projectId: task?.project_id,
+      action: 'deleted',
+      fileName: att.file_name,
+      taskTitle: task?.title,
+    });
     res.json({ message: 'Đã xóa' });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });

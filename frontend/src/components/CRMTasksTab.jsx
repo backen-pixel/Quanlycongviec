@@ -5,6 +5,7 @@ import api from '../lib/api';
 import { connectSocket, getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
+import { isDealResponsibleUser } from '../lib/fileOwnership';
 import { fetchPipelineStagesById, filterSxPipelineStagesForWorkshopType, sortAndDedupePipelineStages } from '../lib/crmPipelineStages';
 import { formatDateTime, formatVND } from '../lib/utils';
 import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetimeLocal';
@@ -461,8 +462,10 @@ export default function CRMTasksTab({
   embeddedWorkshopTypeId = null,
   /** Mở & cuộn tới nhiệm vụ từ liên kết Giao việc (?crm_task=) */
   focusTaskId = null,
+  dealResponsible = null,
 }) {
   const { user } = useAuth();
+  const canManageDeal = isDealResponsibleUser(user, dealResponsible);
   const isAdmin = isAdminLike(user);
   const [tasks, setTasks] = useState([]);
   const isSxStageSlug = useMemo(() => (slug) => String(slug || '').startsWith('sx_'), []);
@@ -2488,7 +2491,9 @@ export default function CRMTasksTab({
     );
   };
 
-  const renderAttachmentActionButtons = (taskId, att, checklistId = null, { lightboxAtts = null } = {}) => (
+  const renderAttachmentActionButtons = (taskId, att, checklistId = null, { lightboxAtts = null } = {}) => {
+    const canManage = canManageDeal;
+    return (
     <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
       {att.file_url && (
         isImageAtt(att) ? (
@@ -2511,24 +2516,29 @@ export default function CRMTasksTab({
           </FilePreviewOpenLink>
         )
       )}
-      <button
-        type="button"
-        onClick={() => replaceAttachmentFile(taskId, att.id, checklistId)}
-        className="text-[10px] font-medium text-blue-600 hover:text-blue-800 px-1.5 py-0.5 rounded hover:bg-blue-50 cursor-pointer"
-        title="Thay thế file"
-      >
-        Thay thế
-      </button>
-      <button
-        type="button"
-        onClick={() => deleteAttachment(taskId, att.id)}
-        className="text-[10px] font-medium text-red-500 hover:text-red-700 px-1.5 py-0.5 rounded hover:bg-red-50 cursor-pointer"
-        title="Xóa file"
-      >
-        Xóa
-      </button>
+      {canManage && (
+        <>
+          <button
+            type="button"
+            onClick={() => replaceAttachmentFile(taskId, att.id, checklistId)}
+            className="text-[10px] font-medium text-blue-600 hover:text-blue-800 px-1.5 py-0.5 rounded hover:bg-blue-50 cursor-pointer"
+            title="Thay thế file"
+          >
+            Thay thế
+          </button>
+          <button
+            type="button"
+            onClick={() => deleteAttachment(taskId, att.id)}
+            className="text-[10px] font-medium text-red-500 hover:text-red-700 px-1.5 py-0.5 rounded hover:bg-red-50 cursor-pointer"
+            title="Xóa file"
+          >
+            Xóa
+          </button>
+        </>
+      )}
     </div>
-  );
+    );
+  };
 
   const renderChecklistAttachmentList = (taskId, ckAtts, checklistId = null) => {
     const fileAtts = filterChecklistFileAtts(ckAtts);

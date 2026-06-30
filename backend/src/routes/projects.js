@@ -24,6 +24,7 @@ const {
 } = require('../helpers/documentShareScope');
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('../helpers/projectCode');
 const { ensureDealLeadDocumentsForModuleTransition } = require('../helpers/ensureDealLeadDocumentsForModuleTransition');
+const { assertDealResponsible, assertFileAttachmentMutation, assertLeadDocumentOwner, logProjectFileActivity, logDealStageChangeComment, logDealDeadlineChangeComment, logDealActivityComment } = require('../helpers/projectFileActivity');
 
 const r = Router();
 r.use(auth);
@@ -1856,6 +1857,22 @@ r.put('/:id', requirePermission('projects', 'edit'), async (req, res) => {
         'project', data.id);
     }
 
+    // Ghi lịch sử thay đổi người phụ trách SX
+    try {
+      if (b.production_person_id !== undefined && String(b.production_person_id || '') !== String(old?.production_person_id || '')) {
+        const { data: _actor } = await supabase.from('users').select('full_name').eq('id', req.user.userId).maybeSingle();
+        let newName = 'Không ai';
+        if (b.production_person_id) {
+          const { data: nu } = await supabase.from('users').select('full_name').eq('id', b.production_person_id).maybeSingle();
+          newName = nu?.full_name || 'Nhân viên';
+        }
+        await logDealActivityComment(req, {
+          projectId: req.params.id,
+          body: `👤 ${_actor?.full_name || 'Người dùng'} đã thay đổi người phụ trách Sản xuất thành «${newName}».`,
+        });
+      }
+    } catch (_) {}
+
     let production_staff = data.production_staff || [];
     if (!production_staff.length) {
       try {
@@ -2817,6 +2834,7 @@ r.get('/:id/documents', async (req, res) => {
 
 r.post('/:id/documents/bulk', async (req, res) => {
   try {
+    if (!(await assertDealResponsible(req, res, { projectId: req.params.id }))) return;
     const baseItems = (req.body.items || []).map(f => ({
       entity_type: 'project', entity_id: req.params.id,
       file_name: f.original_name || f.file_name,
@@ -2831,6 +2849,14 @@ r.post('/:id/documents/bulk', async (req, res) => {
       ({ data, error } = await supabase.from('file_attachments').insert(baseItems).select());
     }
     if (error) throw error;
+    for (const doc of data || []) {
+      await logProjectFileActivity(req, {
+        projectId: req.params.id,
+        action: 'uploaded',
+        fileName: doc.file_name,
+        fileUrl: doc.file_url,
+      });
+    }
     res.status(201).json({ documents: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
@@ -2866,10 +2892,18 @@ r.put('/:id/documents/:docId/share-crm', async (req, res) => {
       return res.status(400).json({ error: 'Loại file không hỗ trợ chia sẻ CRM' });
     }
 
+    if (!assertFileAttachmentMutation(req, res, fileRow)) return;
+
     const shared = req.body?.shared_to_crm !== undefined
       ? !!req.body.shared_to_crm
       : !fileRow.shared_to_crm;
     const result = await setWorkshopFileSharedToCrm(fileRow, shared);
+    await logProjectFileActivity(req, {
+      projectId,
+      action: shared ? 'shared_crm' : 'unshared_crm',
+      fileName: fileRow.file_name,
+      fileUrl: fileRow.file_url,
+    });
     res.json(result);
   } catch (e) {
     console.error('PUT /projects/:id/documents/:docId/share-crm:', e);
@@ -2886,13 +2920,14 @@ r.delete('/:id/documents/:docId', async (req, res) => {
     const docId = req.params.docId;
     const { data: fileRow, error: fetchErr } = await supabase
       .from('file_attachments')
-      .select('id, entity_type, entity_id')
+      .select('id, entity_type, entity_id, file_name, uploaded_by')
       .eq('id', docId)
       .maybeSingle();
     if (fetchErr) throw fetchErr;
     if (!fileRow || fileRow.entity_type !== 'project' || String(fileRow.entity_id) !== String(projectId)) {
       return res.status(404).json({ error: 'Không tìm thấy tài liệu' });
     }
+    if (!assertFileAttachmentMutation(req, res, fileRow)) return;
 
     const { removeLeadDocumentForWorkshopFile } = require('../helpers/syncWorkshopFileToLeadDocument');
     await removeLeadDocumentForWorkshopFile(docId);
@@ -2908,6 +2943,11 @@ r.delete('/:id/documents/:docId', async (req, res) => {
     if (!deleted?.length) {
       return res.status(404).json({ error: 'Không xóa được tài liệu' });
     }
+    await logProjectFileActivity(req, {
+      projectId,
+      action: 'deleted',
+      fileName: fileRow.file_name,
+    });
     res.json({ message: 'Đã xóa' });
   } catch (e) {
     console.error('DELETE /projects/:id/documents/:docId:', e.message);
@@ -2922,7 +2962,7 @@ r.delete('/:id/lead-documents/:docId', async (req, res) => {
     const docId = req.params.docId;
     const { data: doc, error: docErr } = await supabase
       .from('lead_documents')
-      .select('id, lead_id, project_id, source_attachment_id, source_file_attachment_id')
+      .select('id, lead_id, project_id, source_attachment_id, source_file_attachment_id, created_by, file_name, name')
       .eq('id', docId)
       .maybeSingle();
     if (docErr) throw docErr;
@@ -2930,6 +2970,9 @@ r.delete('/:id/lead-documents/:docId', async (req, res) => {
     if (!doc.project_id || String(doc.project_id) !== String(projectId)) {
       return res.status(404).json({ error: 'Tài liệu không thuộc dự án này' });
     }
+    if (!(await assertLeadDocumentOwner(req, res, doc))) return;
+
+    const deletedFileName = doc.file_name || doc.name || 'tài liệu';
 
     if (req.query.permanent !== 'true') {
       try {
@@ -2960,6 +3003,12 @@ r.delete('/:id/lead-documents/:docId', async (req, res) => {
       if (!mirrorDeleted?.length) {
         return res.status(404).json({ error: 'Không xóa được tài liệu' });
       }
+      await logProjectFileActivity(req, {
+        projectId,
+        leadId: doc.lead_id,
+        action: 'deleted',
+        fileName: deletedFileName,
+      });
       return res.json({ success: true, via: 'workshop_file' });
     }
 
@@ -2977,6 +3026,12 @@ r.delete('/:id/lead-documents/:docId', async (req, res) => {
     if (!deleted?.length) {
       return res.status(404).json({ error: 'Không xóa được tài liệu' });
     }
+    await logProjectFileActivity(req, {
+      projectId,
+      leadId: doc.lead_id,
+      action: 'deleted',
+      fileName: deletedFileName,
+    });
     res.json({ success: true });
   } catch (e) {
     console.error('DELETE /projects/:id/lead-documents/:docId:', e.message);

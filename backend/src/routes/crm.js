@@ -137,6 +137,7 @@ const {
   resolveProductionHandoverResponsibleUserId,
 } = require('../helpers/productionHandoverSettings');
 const { ensureDealLeadDocumentsForModuleTransition } = require('../helpers/ensureDealLeadDocumentsForModuleTransition');
+const { assertDealResponsible, assertLeadDocumentOwner, logProjectFileActivity, logDealStageChangeComment, logDealDeadlineChangeComment, logDealActivityComment } = require('../helpers/projectFileActivity');
 const { getLeadDocumentFieldsFromCrmTask, getDefaultCrmAttachmentShare } = require('../helpers/crmTaskLeadDocumentMeta');
 const {
   findChecklistItem,
@@ -9129,6 +9130,35 @@ r.put('/leads/:id', async (req, res) => {
       }
     } catch (_) {}
 
+    // Ghi lịch sử thay đổi người phụ trách
+    try {
+      const ownerChanged = Object.prototype.hasOwnProperty.call(req.body, 'assigned_to')
+        || Object.prototype.hasOwnProperty.call(req.body, 'lead_owner_id');
+      if (ownerChanged) {
+        const newOwnerId = safeBody.assigned_to || safeBody.lead_owner_id;
+        const prevOwnerId = oldLead?.assigned_to || oldLead?.lead_owner_id;
+        if (String(newOwnerId || '') !== String(prevOwnerId || '')) {
+          const { data: actor } = await supabase.from('users').select('full_name').eq('id', req.user.userId).maybeSingle();
+          const actorName = actor?.full_name || 'Người dùng';
+          let newName = 'Không ai';
+          if (newOwnerId) {
+            const { data: nu } = await supabase.from('users').select('full_name').eq('id', newOwnerId).maybeSingle();
+            newName = nu?.full_name || 'Nhân viên';
+          }
+          let prevName = '';
+          if (prevOwnerId) {
+            const { data: pu } = await supabase.from('users').select('full_name').eq('id', prevOwnerId).maybeSingle();
+            prevName = pu?.full_name || 'Nhân viên';
+          }
+          const fromPart = prevName ? ` (trước: ${prevName})` : '';
+          await logDealActivityComment(req, {
+            leadId: id,
+            body: `👤 ${actorName} đã thay đổi người phụ trách CRM thành «${newName}»${fromPart}.`,
+          });
+        }
+      }
+    } catch (_) {}
+
     emitCrmDashboardChanged(req, { type: data?.type || oldLead?.type, company_id: data?.company_id || oldLead?.company_id, lead_id: id, action: 'updated' });
     res.json(data);
   } catch (e) {
@@ -9515,6 +9545,7 @@ r.post('/leads/:id/documents', async (req, res) => {
 // BULK add documents (nhiều files 1 request)
 r.post('/leads/:id/documents/bulk', async (req, res) => {
   try {
+    if (!(await assertDealResponsible(req, res, { leadId: req.params.id }))) return;
     const items = req.body.items;
     if (!items?.length) return res.status(400).json({ error: 'Không có file' });
 
@@ -9534,6 +9565,15 @@ r.post('/leads/:id/documents/bulk', async (req, res) => {
       .insert(rows)
       .select('*, creator:users!lead_documents_created_by_fkey(id, full_name)');
     if (error) throw error;
+    for (const doc of data || []) {
+      await logProjectFileActivity(req, {
+        projectId: lead?.project_id,
+        leadId: req.params.id,
+        action: 'uploaded',
+        fileName: doc.file_name || doc.name,
+        fileUrl: doc.file_url,
+      });
+    }
     res.status(201).json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -9542,7 +9582,7 @@ r.post('/leads/:id/documents/bulk', async (req, res) => {
 r.delete('/leads/:id/documents/:docId', async (req, res) => {
   try {
     const { data: doc, error: docErr } = await supabase.from('lead_documents')
-      .select('id, lead_id, source_attachment_id, source_file_attachment_id')
+      .select('id, lead_id, project_id, source_attachment_id, source_file_attachment_id, created_by, file_name, name')
       .eq('id', req.params.docId)
       .maybeSingle();
     if (docErr) throw docErr;
@@ -9550,6 +9590,9 @@ r.delete('/leads/:id/documents/:docId', async (req, res) => {
     if (doc.lead_id && String(doc.lead_id) !== String(req.params.id)) {
       return res.status(404).json({ error: 'Tài liệu không thuộc deal này' });
     }
+    if (!(await assertLeadDocumentOwner(req, res, doc))) return;
+
+    const deletedFileName = doc.file_name || doc.name || 'tài liệu';
 
     // Snapshot vào Thùng rác trước khi xóa thật (trừ khi permanent=true)
     if (req.query.permanent !== 'true') {
@@ -9580,6 +9623,12 @@ r.delete('/leads/:id/documents/:docId', async (req, res) => {
       if (!mirrorDeleted?.length) {
         return res.status(404).json({ error: 'Không xóa được tài liệu' });
       }
+      await logProjectFileActivity(req, {
+        projectId: doc.project_id,
+        leadId: doc.lead_id || req.params.id,
+        action: 'deleted',
+        fileName: deletedFileName,
+      });
       return res.json({ success: true, via: 'workshop_file' });
     }
 
@@ -9602,6 +9651,12 @@ r.delete('/leads/:id/documents/:docId', async (req, res) => {
     if (!deleted?.length) {
       return res.status(404).json({ error: 'Không xóa được tài liệu' });
     }
+    await logProjectFileActivity(req, {
+      projectId: doc.project_id,
+      leadId: doc.lead_id || req.params.id,
+      action: 'deleted',
+      fileName: deletedFileName,
+    });
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -9624,6 +9679,13 @@ r.get('/projects/:projectId/documents', async (req, res) => {
 // Update document visibility
 r.put('/documents/:docId/visibility', async (req, res) => {
   try {
+    const { data: before } = await supabase.from('lead_documents')
+      .select('id, lead_id, project_id, created_by, file_name, name, source_file_attachment_id, source_attachment_id')
+      .eq('id', req.params.docId)
+      .maybeSingle();
+    if (!before) return res.status(404).json({ error: 'Không tìm thấy tài liệu' });
+    if (!(await assertLeadDocumentOwner(req, res, before))) return;
+
     const { allowed_departments, allowed_companies, shared_to_workshop, allowed_share_modules } = req.body;
     const update = {
       allowed_departments: allowed_departments || null,
@@ -9643,6 +9705,13 @@ r.put('/documents/:docId/visibility', async (req, res) => {
       .eq('id', req.params.docId)
       .select('*').single();
     if (error) throw error;
+    await logProjectFileActivity(req, {
+      projectId: before.project_id,
+      leadId: before.lead_id,
+      action: 'visibility_updated',
+      fileName: before.file_name || before.name,
+      fileUrl: before.file_url,
+    });
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -10086,6 +10155,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
         .eq('id', req.params.id)
         .single());
     }
+    if (!(await assertDealResponsible(req, res, { leadId: req.params.id, projectId: lead?.project_id }))) return;
     
     let { data: stage } = await supabase
       .from('crm_pipeline_stages')
@@ -10412,6 +10482,21 @@ r.patch('/leads/:id/stage', async (req, res) => {
 
     emitCrmDashboardChanged(req, { type: lead?.type, company_id: lead?.company_id, lead_id: req.params.id, action: 'stage_changed', stage_id });
 
+    if (isStageChange && stage?.name) {
+      await logDealStageChangeComment(req, {
+        leadId: req.params.id,
+        projectId: responseLead?.project_id || lead?.project_id,
+        stageName: stage.name,
+      });
+    }
+    if (hasDeadlineInput && parsedDeadlineTs) {
+      await logDealDeadlineChangeComment(req, {
+        leadId: req.params.id,
+        projectId: responseLead?.project_id || lead?.project_id,
+        newDeadlineAt: new Date(parsedDeadlineTs).toISOString(),
+      });
+    }
+
     // CRM → SX: Sale kéo deal sang cột «Sản xuất» (sync_role) → gán Kanban xưởng + bổ sung nhiệm vụ SX thiếu
     if (lead?.type === 'deal' && stage?.sync_role === 'sx_production') {
       const pidForSx = projectAutoCreated?.project_id || responseLead?.project_id || lead?.project_id;
@@ -10488,6 +10573,7 @@ r.patch('/leads/:id/deadline', async (req, res) => {
       .eq('id', leadId)
       .maybeSingle();
     if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead/deal' });
+    if (!(await assertDealResponsible(req, res, { leadId, projectId: lead.project_id }))) return;
 
     const { data: leadStage } = lead.stage_id
       ? await supabase
@@ -10554,6 +10640,15 @@ r.patch('/leads/:id/deadline', async (req, res) => {
     });
 
     emitCrmDashboardChanged(req, { type: lead.type, company_id: lead.company_id, lead_id: leadId, action: 'deadline_changed' });
+
+    const { data: leadProj } = await supabase.from('crm_leads').select('project_id').eq('id', leadId).maybeSingle();
+    await logDealDeadlineChangeComment(req, {
+      leadId,
+      projectId: leadProj?.project_id,
+      newDeadlineAt: newIso,
+      cleared: !newIso,
+    });
+
     res.json({ ok: true, kanban_deadline_at: newIso, kanban_deadline_reason: reason || null });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -14265,6 +14360,13 @@ r.post('/leads/:id/tasks', async (req, res) => {
       action: 'created',
       task: result.data,
     });
+    try {
+      const { data: _actor } = await supabase.from('users').select('full_name').eq('id', req.user.userId).maybeSingle();
+      await logDealActivityComment(req, {
+        leadId: req.params.id,
+        body: `📋 ${_actor?.full_name || 'Người dùng'} đã tạo nhiệm vụ «${result.data?.title || req.body.title || 'Không tên'}».`,
+      });
+    } catch (_) {}
     return res.status(result.status).json(result.data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -14380,6 +14482,15 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
     if (error) throw error;
     await applyAssigneesToInsertedCrmTasks(data, assigneeIdsList, req);
     if (data?.length) await attachAssigneesToCrmTasks(data);
+    try {
+      if (data?.length) {
+        const { data: _actor } = await supabase.from('users').select('full_name').eq('id', req.user.userId).maybeSingle();
+        await logDealActivityComment(req, {
+          leadId: req.params.id,
+          body: `📋 ${_actor?.full_name || 'Người dùng'} đã tạo ${data.length} nhiệm vụ từ bộ mẫu.`,
+        });
+      }
+    } catch (_) {}
     res.status(201).json({ tasks: data, count: data.length, skipped });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -14710,6 +14821,16 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
       task: data,
     });
 
+    try {
+      if (b.status === 'completed') {
+        const { data: _actor } = await supabase.from('users').select('full_name').eq('id', req.user.userId).maybeSingle();
+        await logDealActivityComment(req, {
+          leadId: req.params.leadId,
+          body: `✅ ${_actor?.full_name || 'Người dùng'} đã hoàn thành nhiệm vụ «${data.title || ''}».`,
+        });
+      }
+    } catch (_) {}
+
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -14733,6 +14854,11 @@ r.post('/leads/:leadId/tasks/:taskId/restore-checklist', async (req, res) => {
 // DELETE task
 r.delete('/leads/:leadId/tasks/:taskId', async (req, res) => {
   try {
+    let taskTitle = '';
+    try {
+      const { data: t } = await supabase.from('crm_tasks').select('title').eq('id', req.params.taskId).maybeSingle();
+      taskTitle = t?.title || '';
+    } catch (_) {}
     const result = await deleteCrmLeadTask(req, req.params.taskId);
     if (result.error) return res.status(result.status || 500).json({ error: result.error });
     await emitCrmTaskChanged(req, {
@@ -14740,6 +14866,13 @@ r.delete('/leads/:leadId/tasks/:taskId', async (req, res) => {
       taskId: req.params.taskId,
       action: 'deleted',
     });
+    try {
+      const { data: _actor } = await supabase.from('users').select('full_name').eq('id', req.user.userId).maybeSingle();
+      await logDealActivityComment(req, {
+        leadId: req.params.leadId,
+        body: `🗑️ ${_actor?.full_name || 'Người dùng'} đã xóa nhiệm vụ «${taskTitle || 'Không tên'}».`,
+      });
+    } catch (_) {}
     return res.json(result.data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -15035,6 +15168,8 @@ r.get('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
 // BULK ADD attachments (nhiều files 1 request)
 r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
   try {
+    const { data: leadForAccess } = await supabase.from('crm_leads').select('project_id').eq('id', req.params.leadId).maybeSingle();
+    if (!(await assertDealResponsible(req, res, { leadId: req.params.leadId, projectId: leadForAccess?.project_id }))) return;
     const items = req.body.items; // [{name, doc_type, file_url, file_name, file_size, mime_type}]
     if (!items?.length) return res.status(400).json({ error: 'Không có file' });
 
@@ -15118,6 +15253,14 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
       } catch (syncErr) {
         console.warn('[bulk attach] sync→assignment:', syncErr.message);
       }
+      await logProjectFileActivity(req, {
+        projectId: leadForShare?.project_id,
+        leadId: req.params.leadId,
+        action: 'uploaded',
+        fileName: att.file_name || att.name,
+        fileUrl: att.file_url,
+        taskTitle: task?.title,
+      });
     }
 
     res.status(201).json(data || []);
@@ -15208,6 +15351,15 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
       console.warn('[attach] sync→assignment:', syncErr.message);
     }
 
+    await logProjectFileActivity(req, {
+      projectId: leadForShare?.project_id,
+      leadId: req.params.leadId,
+      action: 'uploaded',
+      fileName: data.file_name || data.name,
+      fileUrl: data.file_url,
+      taskTitle: taskForShare?.title,
+    });
+
     res.status(201).json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -15216,10 +15368,15 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
 r.delete('/leads/:leadId/tasks/:taskId/attachments/:attId', async (req, res) => {
   try {
     const { data: attBefore } = await supabase.from('crm_task_attachments')
-      .select('id, source_assignment_file_id')
+      .select('id, source_assignment_file_id, created_by, file_name, name, lead_id, task:crm_tasks(id, title, project_id)')
       .eq('id', req.params.attId)
       .eq('task_id', req.params.taskId)
       .maybeSingle();
+    if (!attBefore) return res.status(404).json({ error: 'Không tìm thấy file' });
+    if (!(await assertDealResponsible(req, res, {
+      leadId: attBefore.lead_id || req.params.leadId,
+      projectId: attBefore.task?.project_id,
+    }))) return;
 
     // Snapshot vào Thùng rác trước khi xóa thật (trừ khi permanent=true)
     if (req.query.permanent !== 'true') {
@@ -15246,6 +15403,13 @@ r.delete('/leads/:leadId/tasks/:taskId/attachments/:attId', async (req, res) => 
     const { error } = await supabase.from('crm_task_attachments')
       .delete().eq('id', req.params.attId).eq('task_id', req.params.taskId);
     if (error) throw error;
+    await logProjectFileActivity(req, {
+      projectId: attBefore.task?.project_id,
+      leadId: attBefore.lead_id || req.params.leadId,
+      action: 'deleted',
+      fileName: attBefore.file_name || attBefore.name,
+      taskTitle: attBefore.task?.title,
+    });
     await emitCrmTaskChanged(req, {
       leadId: req.params.leadId,
       taskId: req.params.taskId,

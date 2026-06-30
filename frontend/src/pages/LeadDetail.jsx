@@ -17,6 +17,7 @@ import { downloadCrmLeadDocumentsZip } from '../lib/crmDocumentsZipDownload';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { canUserDeleteCrmLeadDeal } from '../lib/crmPipelineDeletePermission';
+import { isDealResponsibleUser } from '../lib/fileOwnership';
 import api from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { formatVND, formatDate } from '../lib/utils';
@@ -1203,6 +1204,7 @@ export default function LeadDetail() {
     type: lead.type,
     user,
   });
+  const canManageDeal = isDealResponsibleUser(user, lead);
 
   const deleteDocument = async (docId) => {
     if (!confirm('Xóa tài liệu?')) return;
@@ -1894,6 +1896,7 @@ export default function LeadDetail() {
                   refreshKey={crmTasksRefreshKey}
                   sxTemplateCompanyId={lead?.sx_template_company_id || null}
                   linkedProjectId={lead?.project_id || null}
+                  dealResponsible={lead}
                 />
                 <div className="mt-6">
                   <UnifiedTaskHistoryWidget
@@ -1975,7 +1978,7 @@ export default function LeadDetail() {
                       </p>
                       <div className="space-y-2 max-h-96 overflow-y-auto">
                         {orphanSyncedLeadDocs.map((doc) => (
-                          <DocumentRow key={doc.id} doc={doc} onDelete={() => deleteDocument(doc.id)} onOpenImage={openDocImage} />
+                          <DocumentRow key={doc.id} doc={doc} onDelete={() => deleteDocument(doc.id)} onOpenImage={openDocImage} canManageDeal={canManageDeal} />
                         ))}
                       </div>
                     </div>
@@ -1997,7 +2000,7 @@ export default function LeadDetail() {
                     ) : (
                       <div className="space-y-2 max-h-96 overflow-y-auto">
                         {manualLeadDocs.map((doc) => (
-                          <DocumentRow key={doc.id} doc={doc} onDelete={() => deleteDocument(doc.id)} onOpenImage={openDocImage} />
+                          <DocumentRow key={doc.id} doc={doc} onDelete={() => deleteDocument(doc.id)} onOpenImage={openDocImage} canManageDeal={canManageDeal} />
                         ))}
                       </div>
                     )}
@@ -2611,7 +2614,7 @@ function getFileIcon(name) {
   return map[ext] || '📄';
 }
 
-function DocumentRow({ doc, onDelete, onOpenImage, readOnlyWorkshop = false }) {
+function DocumentRow({ doc, onDelete, onOpenImage, readOnlyWorkshop = false, canManageDeal = false }) {
   const [expanded, setExpanded] = useState(false);
   const [showVis, setShowVis] = useState(false);
   const [companies, setCompanies] = useState([]);
@@ -2733,7 +2736,7 @@ function DocumentRow({ doc, onDelete, onOpenImage, readOnlyWorkshop = false }) {
           )}
           {hasExtra && <ChevronDown className={`h-3 w-3 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />}
         </div>
-        {!readOnlyWorkshop && (
+        {!readOnlyWorkshop && canManageDeal && (
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); openVisibility(); }}
@@ -2743,7 +2746,7 @@ function DocumentRow({ doc, onDelete, onOpenImage, readOnlyWorkshop = false }) {
             ⚙️
           </button>
         )}
-        {!readOnlyWorkshop && onDelete && (
+        {!readOnlyWorkshop && onDelete && canManageDeal && (
           <button onClick={onDelete} className="p-1 hover:bg-red-100 text-red-500 rounded ml-1 cursor-pointer">
             <Trash2 className="h-3.5 w-3.5" />
           </button>

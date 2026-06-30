@@ -12,6 +12,8 @@ import {
 } from 'lucide-react';
 import UploadProgressBubble from './UploadProgressBubble';
 import { mergeUploadProgressState, uploadSingleFileWithProgress, formatUploadProgressMeta } from '../lib/uploadProgressEta';
+import { useAuth } from '../lib/auth';
+import { isDealResponsibleUser } from '../lib/fileOwnership';
 
 const PRIORITY_COLORS = { low: 'bg-gray-100 text-gray-600', medium: 'bg-blue-100 text-blue-700', high: 'bg-orange-100 text-orange-700', urgent: 'bg-red-100 text-red-700' };
 const PRIORITY_LABELS = { low: 'Thấp', medium: 'TB', high: 'Cao', urgent: 'Gấp' };
@@ -32,7 +34,10 @@ export default function ProductionTasksTab({
   onReload,
   /** 'production' | 'logistics' — lọc đính kèm & gắn mặc định khi upload */
   shareModule = 'production',
+  dealResponsible = null,
 }) {
+  const { user } = useAuth();
+  const canManageDeal = isDealResponsibleUser(user, dealResponsible);
   const [tasks, setTasks] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -283,7 +288,9 @@ export default function ProductionTasksTab({
     att.mime_type?.startsWith('image/') || att.doc_type === 'image' ||
     /\.(jpe?g|png|gif|webp|bmp|svg)$/i.test(att.file_name || att.original_name || '');
 
-  const renderAttachmentActionButtons = (taskId, att) => (
+  const renderAttachmentActionButtons = (taskId, att) => {
+    if (!canManageDeal) return null;
+    return (
     <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
       <button
         type="button"
@@ -302,7 +309,8 @@ export default function ProductionTasksTab({
         Xóa
       </button>
     </div>
-  );
+    );
+  };
 
   const renderCollapsedAttachments = (atts, taskId) => {
     const files = (atts || []).filter((a) => a.file_url);

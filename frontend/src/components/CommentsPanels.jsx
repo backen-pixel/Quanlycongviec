@@ -14,6 +14,53 @@ import { handleCommentFilePaste } from '../lib/chatClipboard';
 
 const REACTION_PICKER = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
+const SYSTEM_COMMENT_PREFIXES = ['🔄', '⏰', '📎', '👤', '📋', '✅', '🗑️', '🔀', '🚚'];
+
+function isSystemComment(body) {
+  if (!body) return false;
+  const trimmed = body.trim();
+  return SYSTEM_COMMENT_PREFIXES.some((p) => trimmed.startsWith(p));
+}
+
+function isImageFileName(name) {
+  return /\.(jpg|jpeg|png|gif|webp|bmp|svg|heic|heif)$/i.test(name || '');
+}
+
+function extractSystemFileLink(text) {
+  if (!text) return null;
+  const m = text.match(/«([^»|]+)\|([^»]+)»/);
+  if (!m) return null;
+  return { label: m[1], url: m[2] };
+}
+
+function renderSystemCommentBody(text) {
+  if (!text) return null;
+  const parts = [];
+  const regex = /«([^»]+)»/g;
+  let lastIdx = 0;
+  let m;
+  while ((m = regex.exec(text)) !== null) {
+    if (m.index > lastIdx) parts.push(text.slice(lastIdx, m.index));
+    const inner = m[1];
+    const pipeIdx = inner.indexOf('|');
+    if (pipeIdx > 0 && pipeIdx < inner.length - 1) {
+      const label = inner.slice(0, pipeIdx);
+      const url = inner.slice(pipeIdx + 1);
+      parts.push(
+        <a key={m.index} href={pubUrl(url)} target="_blank" rel="noopener noreferrer"
+          className="font-semibold text-blue-600 hover:underline">
+          {`«${label}»`}
+        </a>,
+      );
+    } else {
+      parts.push(<strong key={m.index} className="font-semibold text-[#050505]">{`«${inner}»`}</strong>);
+    }
+    lastIdx = m.index + m[0].length;
+  }
+  if (lastIdx < text.length) parts.push(text.slice(lastIdx));
+  return parts;
+}
+
 function normalizeCommentAttachment(att) {
   if (!att) return null;
   const url = att.file_url || att.url || '';
@@ -460,6 +507,42 @@ function CommentThread({
   const renderBranch = (parentKey, depth) => {
     const list = commentsByParent.get(parentKey) || [];
     return list.map((c) => {
+      const bodyText = getBody(c) || '';
+      const isSys = isSystemComment(bodyText);
+
+      if (isSys && depth === 0) {
+        const fileLink = extractSystemFileLink(bodyText);
+        const hasImagePreview = fileLink && isImageFileName(fileLink.label);
+        return (
+          <div key={c.id} className="flex flex-col items-center py-1.5 gap-1">
+            <div className="inline-flex items-center gap-1.5 rounded-full bg-[#e4e6eb]/70 px-3 py-1 max-w-[90%]">
+              <span className="text-[12px] leading-relaxed text-[#65676b] text-center break-words whitespace-pre-wrap">
+                {renderSystemCommentBody(bodyText)}
+              </span>
+              <span className="shrink-0 text-[10px] text-[#65676b]/60 ml-1" title={formatCrmCommentFullDateTime(c.created_at)}>
+                {formatCrmFbRelativeTime(c.created_at)}
+              </span>
+            </div>
+            {hasImagePreview && (
+              <a href={pubUrl(fileLink.url)} target="_blank" rel="noopener noreferrer" className="block mt-1">
+                <img
+                  src={pubUrl(fileLink.url)}
+                  alt={fileLink.label}
+                  className="max-h-40 max-w-[260px] rounded-lg border border-[#e4e6eb] object-cover hover:opacity-90 transition-opacity"
+                />
+              </a>
+            )}
+            {fileLink && !hasImagePreview && (
+              <a href={pubUrl(fileLink.url)} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 mt-0.5 px-2.5 py-1 rounded-lg border border-[#e4e6eb] bg-white hover:bg-gray-50 transition-colors text-[12px] text-blue-600">
+                <Paperclip size={13} className="text-[#65676b]" />
+                <span className="truncate max-w-[200px]">{fileLink.label}</span>
+              </a>
+            )}
+          </div>
+        );
+      }
+
       const showCornerRx = editingId !== c.id && (c.reactions?.summary || []).some((s) => s.count > 0);
       return (
         <div key={c.id} className={depth > 0 ? 'ml-5 border-l border-[#ccd0d5] pl-2.5 pt-0.5' : ''}>
