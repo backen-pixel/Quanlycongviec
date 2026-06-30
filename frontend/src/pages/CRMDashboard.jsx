@@ -1050,7 +1050,7 @@ export default function CRMDashboard() {
   const [showOrphanDealColumn, setShowOrphanDealColumn] = useState(() => !!P?.showOrphanDealColumn);
   /** Popover danh sách lead/deal quá hạn (icon cạnh nút Ghim) */
   const [showOverduePopover, setShowOverduePopover] = useState(false);
-  const overduePopoverRef = useRef(null);
+  const overdueTriggerRef = useRef(null);
   const [showAdvSearch, setShowAdvSearch] = useState(() => !!P?.showAdvSearch);
   const [crmFilterTab, setCrmFilterTab] = useState('employee');
   const [filterPanelPos, setFilterPanelPos] = useState(() => readStoredCrmFilterPanelPos());
@@ -4064,17 +4064,6 @@ export default function CRMDashboard() {
     dealKhSplitEnabled,
   ]);
 
-  useEffect(() => {
-    if (!showOverduePopover) return undefined;
-    const onDocClick = (e) => {
-      if (isClickOutside(overduePopoverRef.current, e)) {
-        setShowOverduePopover(false);
-      }
-    };
-    document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
-  }, [showOverduePopover]);
-
   const persistPipelineUi = useCallback(() => {
     saveCrmPipelineSnapshot(buildPipelineUiSnapshot());
   }, [buildPipelineUiSnapshot]);
@@ -5159,8 +5148,9 @@ export default function CRMDashboard() {
             <Pin className={`h-4 w-4 ${pinnedTab === pipelineType ? 'rotate-45 fill-amber-500 text-amber-700' : 'text-amber-600'}`} />
           </button>
           {overdueItems.length > 0 && (
-            <div className="relative shrink-0" ref={overduePopoverRef}>
+            <div className="relative shrink-0">
               <button
+                ref={overdueTriggerRef}
                 type="button"
                 onClick={() => setShowOverduePopover((v) => !v)}
                 aria-label={`${overdueItems.length} ${crmPipelineTabEntityLabel(pipelineType)} quá hạn`}
@@ -5177,58 +5167,62 @@ export default function CRMDashboard() {
                   {overdueItems.length > 99 ? '99+' : overdueItems.length}
                 </span>
               </button>
-              {showOverduePopover && (
-                <div className="absolute left-0 top-full mt-1.5 z-50 w-[min(calc(100vw-2rem),340px)] rounded-xl border border-red-200 bg-white shadow-xl shadow-red-500/15 overflow-hidden">
-                  <div className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-red-50 to-orange-50 border-b border-red-100">
-                    <AlertTriangle className="h-4 w-4 text-red-600 shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-bold text-red-800">
-                        {overdueItems.length} {crmPipelineTabEntityLabel(pipelineType)} quá hạn
-                      </p>
-                      <p className="text-[10px] text-red-600/80">NV CRM hoặc SLA cột · bấm mã để mở</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setShowOverduePopover(false)}
-                      className="p-1 rounded-lg text-red-500 hover:bg-red-100 cursor-pointer"
-                      aria-label="Đóng"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
+              <AnchoredDropdownMenu
+                open={showOverduePopover}
+                onClose={() => setShowOverduePopover(false)}
+                anchorRef={overdueTriggerRef}
+                align="left"
+                className="rounded-xl border-red-200 w-[min(calc(100vw-2rem),340px)] overflow-hidden p-0 shadow-xl shadow-red-500/20"
+              >
+                <div className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-red-50 to-orange-50 border-b border-red-100">
+                  <AlertTriangle className="h-4 w-4 text-red-600 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold text-red-800">
+                      {overdueItems.length} {crmPipelineTabEntityLabel(pipelineType)} quá hạn
+                    </p>
+                    <p className="text-[10px] text-red-600/80">NV CRM hoặc SLA cột · bấm mã để mở</p>
                   </div>
-                  <div className="p-2 flex flex-wrap gap-1 max-h-[220px] overflow-y-auto [scrollbar-width:thin]">
-                    {overdueItems.slice(0, 50).map((it) => {
-                      const days = Math.floor(it.overdueMs / 86400000);
-                      const hours = Math.floor((it.overdueMs % 86400000) / 3600000);
-                      const overdueLabel = days > 0 ? `${days}d` : `${hours}h`;
-                      const tip = [
-                        it.title && `📌 ${it.title}`,
-                        it.customerName && `👤 ${it.customerName}`,
-                        it.assigneeName && `🤝 ${it.assigneeName}`,
-                        `📂 ${it.stageName}`,
-                        `⏱️ Quá hạn ${days > 0 ? `${days} ngày` : `${hours} giờ`}`,
-                      ].filter(Boolean).join('\n');
-                      return (
-                        <button
-                          key={it.id}
-                          type="button"
-                          title={tip}
-                          onClick={() => focusOverdueItem(it)}
-                          className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 border border-red-200 rounded-md text-[10px] font-mono font-semibold text-red-700 hover:bg-red-100 hover:border-red-300 transition cursor-pointer"
-                        >
-                          <span>{it.code}</span>
-                          <span className="font-sans font-normal text-red-500">{overdueLabel}</span>
-                        </button>
-                      );
-                    })}
-                    {overdueItems.length > 50 && (
-                      <span className="inline-flex items-center px-2 py-1 text-[10px] text-red-600/80 italic">
-                        +{overdueItems.length - 50} mã khác…
-                      </span>
-                    )}
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowOverduePopover(false)}
+                    className="p-1 rounded-lg text-red-500 hover:bg-red-100 cursor-pointer"
+                    aria-label="Đóng"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
                 </div>
-              )}
+                <div className="p-2 flex flex-wrap gap-1 max-h-[min(50vh,280px)] overflow-y-auto [scrollbar-width:thin] bg-white">
+                  {overdueItems.slice(0, 50).map((it) => {
+                    const days = Math.floor(it.overdueMs / 86400000);
+                    const hours = Math.floor((it.overdueMs % 86400000) / 3600000);
+                    const overdueLabel = days > 0 ? `${days}d` : `${hours}h`;
+                    const tip = [
+                      it.title && `📌 ${it.title}`,
+                      it.customerName && `👤 ${it.customerName}`,
+                      it.assigneeName && `🤝 ${it.assigneeName}`,
+                      `📂 ${it.stageName}`,
+                      `⏱️ Quá hạn ${days > 0 ? `${days} ngày` : `${hours} giờ`}`,
+                    ].filter(Boolean).join('\n');
+                    return (
+                      <button
+                        key={it.id}
+                        type="button"
+                        title={tip}
+                        onClick={() => focusOverdueItem(it)}
+                        className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 border border-red-200 rounded-md text-[10px] font-mono font-semibold text-red-700 hover:bg-red-100 hover:border-red-300 transition cursor-pointer"
+                      >
+                        <span>{it.code}</span>
+                        <span className="font-sans font-normal text-red-500">{overdueLabel}</span>
+                      </button>
+                    );
+                  })}
+                  {overdueItems.length > 50 && (
+                    <span className="inline-flex items-center px-2 py-1 text-[10px] text-red-600/80 italic">
+                      +{overdueItems.length - 50} mã khác…
+                    </span>
+                  )}
+                </div>
+              </AnchoredDropdownMenu>
             </div>
           )}
         </div>
