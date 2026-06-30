@@ -4743,8 +4743,10 @@ export default function CRMDashboard() {
 
   // UI compact dùng chung cho cả Lead lẫn Deal — kích thước header/control giống nhau giữa 2 tab.
   const compactLeadUi = true;
-  const ctrlH = compactLeadUi ? 'h-9' : 'h-10';
-  const ctrlTxt = compactLeadUi ? 'text-xs' : 'text-sm';
+  const ctrlH = 'h-8';
+  const ctrlIcon = 'h-7 w-7';
+  const ctrlTxt = 'text-xs';
+  const toolbarBtn = `${ctrlH} px-2 rounded-md ${ctrlTxt} font-medium inline-flex items-center gap-1 cursor-pointer transition-colors shrink-0`;
   const filterFieldCls = 'h-8 w-full min-w-0 px-2.5 bg-white border border-violet-200 rounded-md text-xs font-medium text-slate-800 shadow-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-300/80 focus:border-violet-400 transition-shadow';
   const filterSelectCls = `${filterFieldCls} cursor-pointer appearance-none pr-7`;
   const filterLabelCls = 'text-[10px] font-semibold text-violet-800/90 uppercase tracking-wide mb-1 block';
@@ -5028,7 +5030,7 @@ export default function CRMDashboard() {
   ]), [crmFilterTabCounts]);
 
   return (
-    <div className={`min-h-screen ${compactLeadUi ? 'space-y-3' : 'space-y-6'}`}>
+    <div className={`min-h-screen ${compactLeadUi ? 'space-y-2' : 'space-y-6'}`}>
       {/* Auto-create project banner */}
       {autoCreateStatus === 'loading' && (
         <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl p-4 text-white shadow-lg flex items-center gap-4">
@@ -5082,55 +5084,49 @@ export default function CRMDashboard() {
         </div>
       )}
       {/* Panel điều khiển CRM — pipeline, tìm kiếm, KPI */}
-      <div className="ui-solid-white rounded-2xl border border-slate-200/90 bg-white shadow-md overflow-hidden ring-1 ring-slate-900/[0.04]">
-      {/* Vùng 1 — tab pipeline & hành động */}
-      <div
-        className={`flex items-center justify-between gap-2 flex-wrap px-3 py-2.5 sm:px-4 border-b border-slate-200/70 bg-gradient-to-r ${
-          pipelineType === 'lead'
-            ? 'from-blue-50/95 via-white to-indigo-50/70'
-            : isCrmCustomerPipelineTab(pipelineType)
-              ? 'from-cyan-50/95 via-white to-sky-50/70'
-              : 'from-emerald-50/95 via-white to-teal-50/70'
-        }`}
-      >
-        <div className="flex items-center gap-2 min-w-0">
-          <div data-tour="pipeline-tabs" className="inline-flex gap-1 bg-slate-200/80 border border-slate-300/70 rounded-full p-1 shrink-0 shadow-inner">
+      <div className="ui-solid-white rounded-xl border border-slate-200/90 bg-white shadow-sm overflow-hidden">
+      {/* Header — tab + hành động + tìm kiếm + chế độ xem */}
+      <div className="border-b border-slate-200/60">
+      {/* Hàng 1 — tab pipeline & hành động */}
+      <div className="flex items-center justify-between gap-1.5 flex-wrap px-2.5 py-1 sm:px-3 bg-slate-50/50">
+        <div className="flex items-center gap-1 min-w-0">
+          <div data-tour="pipeline-tabs" className="inline-flex gap-px p-0.5 bg-slate-200/60 border border-slate-300/50 rounded-lg shrink-0">
             <button
               type="button"
               onClick={() => switchTab('lead')}
-              className={`rounded-full font-semibold transition-all duration-200 flex items-center justify-center gap-1 px-3 py-1.5 text-xs min-w-[4.5rem] ${
+              className={`rounded-md font-semibold transition-colors flex items-center gap-1 px-2 py-1 text-[11px] whitespace-nowrap ${
                 pipelineType === 'lead'
-                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/25 ring-2 ring-blue-300/60'
-                  : 'bg-slate-100/90 text-slate-700 hover:bg-white hover:text-blue-700 hover:shadow-sm'
+                  ? 'bg-white text-blue-700 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
               }`}
             >
-              💼 Leads{leadTabCountLabel != null ? ` (${leadTabCountLabel})` : ''}{' '}
-              {pinnedTab === 'lead' && <Pin className={`h-3 w-3 rotate-45 ${pipelineType === 'lead' ? 'text-amber-200 fill-amber-200' : 'text-amber-600 fill-amber-500'}`} />}
+              Leads{leadTabCountLabel != null ? ` ${leadTabCountLabel}` : ''}
+              {pinnedTab === 'lead' && <Pin className={`h-3 w-3 rotate-45 ${pipelineType === 'lead' ? 'text-amber-500 fill-amber-400' : 'text-amber-600 fill-amber-500'}`} />}
             </button>
             <button
               type="button"
               onClick={() => switchTab('deal')}
-              className={`rounded-full font-semibold transition-all duration-200 flex items-center justify-center gap-1 px-3 py-1.5 text-xs min-w-[4.5rem] ${
+              className={`rounded-md font-semibold transition-colors flex items-center gap-1 px-2 py-1 text-[11px] whitespace-nowrap ${
                 pipelineType === 'deal'
-                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-500/25 ring-2 ring-emerald-300/60'
-                  : 'bg-slate-100/90 text-slate-700 hover:bg-white hover:text-emerald-700 hover:shadow-sm'
+                  ? 'bg-white text-emerald-700 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
               }`}
             >
-              🎯 Deals{dealTabCountLabel != null ? ` (${dealTabCountLabel})` : ''}{' '}
-              {pinnedTab === 'deal' && <Pin className={`h-3 w-3 rotate-45 ${pipelineType === 'deal' ? 'text-amber-200 fill-amber-200' : 'text-amber-600 fill-amber-500'}`} />}
+              Deals{dealTabCountLabel != null ? ` ${dealTabCountLabel}` : ''}
+              {pinnedTab === 'deal' && <Pin className={`h-3 w-3 rotate-45 ${pipelineType === 'deal' ? 'text-amber-500 fill-amber-400' : 'text-amber-600 fill-amber-500'}`} />}
             </button>
             {showCustomerTab && (
               <button
                 type="button"
                 onClick={() => switchTab('customer')}
-                className={`rounded-full font-semibold transition-all duration-200 flex items-center justify-center gap-1 px-3 py-1.5 text-xs min-w-[6.5rem] ${
+                className={`rounded-md font-semibold transition-colors flex items-center gap-1 px-2 py-1 text-[11px] whitespace-nowrap ${
                   pipelineType === 'customer'
-                    ? 'bg-gradient-to-r from-cyan-600 to-sky-600 text-white shadow-md shadow-cyan-500/25 ring-2 ring-cyan-300/60'
-                    : 'bg-slate-100/90 text-slate-700 hover:bg-white hover:text-cyan-700 hover:shadow-sm'
+                    ? 'bg-white text-cyan-700 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                 }`}
               >
-                📦 Đơn hàng{customerTabCountLabel != null ? ` (${customerTabCountLabel})` : ''}{' '}
-                {pinnedTab === 'customer' && <Pin className={`h-3 w-3 rotate-45 ${pipelineType === 'customer' ? 'text-amber-200 fill-amber-200' : 'text-amber-600 fill-amber-500'}`} />}
+                Đơn hàng{customerTabCountLabel != null ? ` ${customerTabCountLabel}` : ''}
+                {pinnedTab === 'customer' && <Pin className={`h-3 w-3 rotate-45 ${pipelineType === 'customer' ? 'text-amber-500 fill-amber-400' : 'text-amber-600 fill-amber-500'}`} />}
               </button>
             )}
           </div>
@@ -5139,13 +5135,13 @@ export default function CRMDashboard() {
             onClick={() => togglePinTab(pipelineType)}
             title={pinnedTab === pipelineType ? `Bỏ ghim tab ${crmPipelineTabTitle(pipelineType)}` : `Ghim tab ${crmPipelineTabTitle(pipelineType)} — mở CRM sẽ vào thẳng`}
             aria-label={pinnedTab === pipelineType ? 'Bỏ ghim tab' : 'Ghim tab'}
-            className={`${ctrlH} w-9 shrink-0 rounded-lg font-medium transition-all cursor-pointer flex items-center justify-center ${
+            className={`${ctrlIcon} shrink-0 rounded-md font-medium transition-colors cursor-pointer flex items-center justify-center border ${
               pinnedTab === pipelineType
-                ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 border-2 border-amber-400 shadow-sm shadow-amber-200/50'
-                : 'bg-amber-50 text-amber-600 hover:bg-amber-100 hover:text-amber-700 border-2 border-amber-300/80 shadow-sm hover:border-amber-400 hover:shadow-amber-200/40'
+                ? 'bg-amber-50 text-amber-700 border-amber-300'
+                : 'bg-white text-slate-500 border-slate-200 hover:border-amber-300 hover:text-amber-600'
             }`}
           >
-            <Pin className={`h-4 w-4 ${pinnedTab === pipelineType ? 'rotate-45 fill-amber-500 text-amber-700' : 'text-amber-600'}`} />
+            <Pin className={`h-3.5 w-3.5 ${pinnedTab === pipelineType ? 'rotate-45 fill-amber-500' : ''}`} />
           </button>
           {overdueItems.length > 0 && (
             <div className="relative shrink-0">
@@ -5156,14 +5152,14 @@ export default function CRMDashboard() {
                 aria-label={`${overdueItems.length} ${crmPipelineTabEntityLabel(pipelineType)} quá hạn`}
                 aria-expanded={showOverduePopover}
                 title={`${overdueItems.length} ${crmPipelineTabEntityLabel(pipelineType)} quá hạn — bấm để xem danh sách`}
-                className={`relative ${ctrlH} w-9 rounded-lg flex items-center justify-center cursor-pointer border-2 transition-all ${
+                className={`relative ${ctrlIcon} rounded-md flex items-center justify-center cursor-pointer border transition-colors ${
                   showOverduePopover
-                    ? 'bg-red-600 border-red-700 text-white shadow-lg shadow-red-500/40 scale-105'
-                    : 'bg-gradient-to-br from-red-500 to-orange-500 border-red-400 text-white shadow-md shadow-red-500/35 hover:shadow-red-500/50 hover:scale-105 animate-pulse'
+                    ? 'bg-red-600 border-red-700 text-white'
+                    : 'bg-red-50 border-red-200 text-red-600 hover:bg-red-100'
                 }`}
               >
-                <AlertTriangle className="h-4 w-4" strokeWidth={2.5} />
-                <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-0.5 rounded-full bg-white text-red-600 text-[10px] font-extrabold flex items-center justify-center border-2 border-red-500 shadow-sm tabular-nums leading-none">
+                <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2.5} />
+                <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-0.5 rounded-full bg-red-600 text-white text-[8px] font-bold flex items-center justify-center tabular-nums leading-none">
                   {overdueItems.length > 99 ? '99+' : overdueItems.length}
                 </span>
               </button>
@@ -5226,12 +5222,12 @@ export default function CRMDashboard() {
             </div>
           )}
         </div>
-        <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+        <div className="flex items-center gap-1 shrink-0 ml-auto">
           {crmShowFullLoader ? (
-            <span className={`inline-flex items-center gap-1.5 shrink-0 rounded-full border border-violet-200/80 bg-violet-50/90 px-2.5 py-1 ${compactLeadUi ? 'text-[10px]' : 'text-xs'}`}>
-              <span className="relative flex h-2 w-2">
+            <span className="inline-flex items-center gap-1 shrink-0 rounded-full border border-violet-200/80 bg-violet-50/90 px-1.5 py-0.5 text-[10px]">
+              <span className="relative flex h-1.5 w-1.5">
                 <span className="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-60 animate-ping" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-600" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-violet-600" />
               </span>
               <span className="font-semibold text-violet-800 whitespace-nowrap">Đang tải…</span>
             </span>
@@ -5239,11 +5235,11 @@ export default function CRMDashboard() {
             <CrmDashboardLoaderCompact progress={crmLoadProgressDisplay} label="Đồng bộ" />
           ) : lastSyncAt ? (
             <span
-              className={`inline-flex items-center gap-1.5 text-gray-500 shrink-0 ${compactLeadUi ? 'text-[10px]' : 'text-xs'}`}
+              className="inline-flex items-center gap-1 text-slate-500 shrink-0 text-[10px]"
               title="Tự cập nhật realtime qua Socket.IO + đồng bộ ngầm mỗi 15s"
             >
-              <span className={`inline-block rounded-full ${syncing ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500'} ${compactLeadUi ? 'h-1.5 w-1.5' : 'h-2 w-2'}`} />
-              <span className="whitespace-nowrap">
+              <span className={`inline-block rounded-full ${syncing ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500'} h-1.5 w-1.5`} />
+              <span className="whitespace-nowrap hidden lg:inline">
                 {syncing ? 'Đang đồng bộ…' : `Cập nhật ${lastSyncAt.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}`}
               </span>
             </span>
@@ -5251,11 +5247,11 @@ export default function CRMDashboard() {
           <button
             type="button"
             onClick={() => navigate('/admin/trash?tab=crm')}
-            className={`${ctrlH} w-9 shrink-0 border border-gray-200 text-gray-500 hover:bg-red-50 hover:text-red-600 hover:border-red-200 rounded-lg flex items-center justify-center cursor-pointer transition-all duration-200`}
+            className={`${ctrlIcon} shrink-0 border border-slate-200 text-slate-500 hover:bg-red-50 hover:text-red-600 hover:border-red-200 rounded-md flex items-center justify-center cursor-pointer transition-colors`}
             title="Thùng rác — lead/deal đã xóa"
             aria-label="Thùng rác"
           >
-            <Trash2 className="h-4 w-4" />
+            <Trash2 className="h-3.5 w-3.5" />
           </button>
           <button
             type="button"
@@ -5263,38 +5259,35 @@ export default function CRMDashboard() {
             onClick={() => (pipelineType === 'lead' ? setShowNewLead(true) : setShowNewDeal(true))}
             disabled={isCrmCustomerPipelineTab(pipelineType)}
             title={isCrmCustomerPipelineTab(pipelineType) ? 'Thêm deal mới ở tab Deal' : undefined}
-            className={`group ${ctrlH} shrink-0 pl-2 pr-3.5 rounded-xl font-semibold flex items-center gap-2 cursor-pointer transition-all duration-200 text-white shadow-md hover:shadow-lg hover:scale-[1.02] active:scale-[0.98] ${
+            className={`${ctrlH} shrink-0 px-2.5 rounded-md font-semibold flex items-center gap-1 cursor-pointer transition-colors text-white shadow-sm ${
               pipelineType === 'lead'
-                ? 'bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-600 shadow-blue-500/30 hover:shadow-blue-500/45'
-                : 'bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 shadow-emerald-500/30 hover:shadow-emerald-500/45'
+                ? 'bg-blue-600 hover:bg-blue-700'
+                : 'bg-emerald-600 hover:bg-emerald-700'
             }`}
           >
-            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/20 ring-1 ring-white/30 group-hover:bg-white/25 transition-colors">
-              <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
-            </span>
+            <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
             <span className={ctrlTxt}>Thêm {pipelineType === 'lead' ? 'Lead' : 'Deal'}</span>
           </button>
         </div>
       </div>
 
-      {/* Vùng 2 — tìm kiếm, chế độ xem, bộ lọc nhanh */}
-      <div className={`border-b border-violet-100/80 bg-gradient-to-r from-violet-50/75 via-white to-fuchsia-50/40 ${compactLeadUi ? 'space-y-2 px-3 py-2' : 'space-y-2.5 px-3 py-2.5 sm:px-4'}`}>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <div
-            className={`group/search flex items-center shrink-0 w-full sm:flex-1 sm:min-w-[280px] md:min-w-[360px] max-w-[520px] rounded-xl border-2 transition-all duration-200 ${
+      {/* Hàng 2 — tìm kiếm & công cụ */}
+      <div className="flex flex-wrap items-center gap-1 px-2.5 py-1 sm:px-3 border-t border-slate-200/50">
+        <div
+            className={`group/search flex items-center shrink-0 flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem] rounded-md border transition-colors ${
               searchFocused
-                ? 'border-violet-400 bg-white shadow-lg shadow-violet-500/20 ring-2 ring-violet-200/70'
+                ? 'border-violet-400 bg-white ring-1 ring-violet-200/60'
                 : searchText.trim()
-                  ? 'border-violet-300 bg-violet-50/90 shadow-md shadow-violet-500/10 ring-1 ring-violet-200/50'
+                  ? 'border-violet-300 bg-violet-50/80'
                   : crmInlineFilterChips.length && !showAdvSearch
-                    ? 'border-violet-200 bg-violet-50/50 shadow-sm ring-1 ring-violet-100/60'
-                    : 'border-violet-200 bg-violet-50/70 hover:border-violet-300 hover:bg-violet-50 hover:shadow-md hover:shadow-violet-500/10'
+                    ? 'border-violet-200 bg-violet-50/40'
+                    : 'border-slate-200 bg-white hover:border-slate-300'
             }`}
           >
-            <div className="relative flex-1 min-w-0 flex items-center gap-1 pl-9 pr-1">
+            <div className="relative flex-1 min-w-0 flex items-center gap-1 pl-7 pr-1">
               <Search
-                className={`absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 pointer-events-none transition-colors duration-200 ${
-                  searchFocused || searchText.trim() ? 'text-violet-600' : 'text-violet-500'
+                className={`absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none transition-colors ${
+                  searchFocused || searchText.trim() ? 'text-violet-600' : 'text-slate-400'
                 }`}
               />
               {!showAdvSearch && crmInlineFilterChips.length > 0 && (
@@ -5319,7 +5312,7 @@ export default function CRMDashboard() {
                     ? 'Tìm lead, tên, SĐT, mã…'
                     : (isCrmCustomerPipelineTab(pipelineType) ? 'Tìm khách hàng, deal, SĐT, mã…' : 'Tìm deal, tên, SĐT, mã…')
                 }
-                className={`flex-1 min-w-[4.5rem] ${ctrlH} bg-transparent border-0 ${ctrlTxt} font-medium text-slate-900 placeholder:text-violet-500/45 focus:outline-none focus:ring-0 rounded-l-xl ${searchText ? 'pr-7' : ''}`}
+                className={`flex-1 min-w-[3.5rem] ${ctrlH} bg-transparent border-0 ${ctrlTxt} font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-0 ${searchText ? 'pr-7' : ''}`}
               />
               {searchText && (
                 <SearchClearButton onClick={() => { setSearchText(''); setSearchFocused(false); }} />
@@ -5371,50 +5364,50 @@ export default function CRMDashboard() {
                 </div>
               )}
             </div>
-            <div className="shrink-0 pr-1.5 pl-0.5">
+            <div className="shrink-0 pr-1">
               <button
                 type="button"
                 onClick={openCrmFilterModal}
                 aria-expanded={showAdvSearch}
-                className={`relative h-7 w-7 flex items-center justify-center rounded-lg border transition-all duration-200 cursor-pointer ${
+                className={`relative h-6 w-6 flex items-center justify-center rounded border transition-colors cursor-pointer ${
                   showAdvSearch || filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterRegion || filterLeadType || filterReferrer || filterCustomerCompany || isCrmPhoneFilterRestricted(filterPhone)
-                    ? 'bg-violet-200 text-violet-800 border-violet-400 shadow-md ring-2 ring-violet-200/60'
-                    : 'bg-violet-50 text-violet-600 border-violet-200 hover:bg-violet-100 hover:text-violet-800 hover:border-violet-300 hover:shadow-sm'
+                    ? 'bg-violet-100 text-violet-700 border-violet-300'
+                    : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100 hover:text-slate-700'
                 }`}
                 title={showAdvSearch ? 'Thu gọn bộ lọc' : 'Bộ lọc nâng cao'}
                 aria-label="Bộ lọc"
               >
-                <Filter className="h-3.5 w-3.5" />
+                <Filter className="h-3 w-3" />
                 {(filterAssignee || filterAssigneeName || filterCompany || filterSource || filterStage || filterRegion || filterLeadType || filterReferrer || filterCustomerCompany || isCrmPhoneFilterRestricted(filterPhone) || showOrphanDealColumn || timePreset) && (
-                  <span className="absolute top-0.5 right-0.5 h-1.5 w-1.5 rounded-full bg-violet-600 ring-2 ring-white" />
+                  <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-violet-600 ring-1 ring-white" />
                 )}
               </button>
             </div>
           </div>
 
-          <div className="flex items-center gap-0.5 flex-wrap min-w-0">
-            <div className="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-white border border-gray-200 shadow-inner shrink-0">
+          <div className="flex items-center gap-0.5 shrink-0 ml-auto pl-1 border-l border-slate-200/80">
+            <div className="inline-flex items-center gap-px p-0.5 rounded-md bg-slate-100 border border-slate-200/80">
               <button
                 type="button"
                 onClick={() => setViewMode('kanban')}
-                className={`${ctrlH} px-2.5 rounded-md ${ctrlTxt} font-medium flex items-center gap-1 cursor-pointer transition-all shrink-0 ${
+                className={`${toolbarBtn} ${
                   viewMode === 'kanban'
-                    ? 'bg-violet-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:bg-gray-100 hover:text-slate-900'
+                    ? 'bg-white text-violet-700 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <LayoutGrid className="h-3.5 w-3.5" />
-                Kanban
+                <span className="hidden md:inline">Kanban</span>
               </button>
               <div className="relative">
                 <button
                   ref={viewModeTriggerRef}
                   type="button"
                   onClick={() => setShowViewModeMenu((v) => !v)}
-                  className={`${ctrlH} px-2 sm:px-2.5 rounded-md ${ctrlTxt} font-medium flex items-center gap-1 cursor-pointer transition-all shrink-0 ${
+                  className={`${toolbarBtn} ${
                     viewMode !== 'kanban'
-                      ? 'bg-violet-600 text-white shadow-sm'
-                      : 'text-slate-600 hover:bg-gray-100 hover:text-slate-900'
+                      ? 'bg-white text-violet-700 shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
                   }`}
                   title="Chế độ xem khác"
                   aria-expanded={showViewModeMenu}
@@ -5425,7 +5418,7 @@ export default function CRMDashboard() {
                     return (
                       <>
                         <Icon className="h-3.5 w-3.5" />
-                        <span className="hidden sm:inline max-w-[5.5rem] truncate">
+                        <span className="hidden md:inline max-w-[5rem] truncate">
                           {active?.label || 'Thêm'}
                         </span>
                         <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${showViewModeMenu ? 'rotate-180' : ''}`} />
@@ -5447,23 +5440,23 @@ export default function CRMDashboard() {
                 />
               </div>
             </div>
-            <AssignedTasksToolbarButton compact={compactLeadUi} />
+            <AssignedTasksToolbarButton compact={compactLeadUi} variant="outlined" className="!rounded-md !px-2" />
             <div className="relative">
               <button
                 ref={kanbanSettingsTriggerRef}
                 type="button"
                 onClick={() => setShowKanbanSettings((v) => !v)}
-                className={`${ctrlH} px-2.5 rounded-lg ${ctrlTxt} font-medium flex items-center gap-1 cursor-pointer transition-colors border shrink-0 ${
+                className={`${toolbarBtn} border ${
                   showKanbanSettings
                     || kanbanColumnScrollMode === 'per-column'
                     || kanbanLoadLimit !== KANBAN_DEFAULT_LOAD_LIMIT
-                    ? 'bg-white text-violet-700 border-violet-400 shadow-sm'
-                    : 'bg-white text-slate-600 border-gray-200 hover:bg-gray-50'
+                    ? 'bg-white text-violet-700 border-violet-300'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                 }`}
                 title="Tùy chỉnh hiển thị"
               >
                 <Settings className="h-3.5 w-3.5" />
-                Tùy chỉnh
+                <span className="hidden lg:inline">Tùy chỉnh</span>
               </button>
               <AnchoredDropdownMenu
                 open={showKanbanSettings}
@@ -5628,24 +5621,25 @@ export default function CRMDashboard() {
             </div>
           </div>
         </div>
+      </div>
 
-        {/* ── CUSTOM DATE RANGE PICKER ── */}
+      {/* Phụ — chọn ngày tùy chỉnh */}
         {showCustomDate && !showAdvSearch && (
-          <div className="flex flex-wrap items-center gap-3 bg-purple-50 border border-purple-200 rounded-xl p-3 shadow-sm">
-            <span className="text-xs font-bold text-purple-600 uppercase flex items-center gap-1.5">
-              <Calendar className="h-3.5 w-3.5" /> Khoảng thời gian:
+          <div className="flex flex-wrap items-center gap-2 mx-2.5 my-1 sm:mx-3 bg-purple-50/80 border border-purple-200/80 rounded-md px-2 py-1.5">
+            <span className="text-[10px] font-semibold text-purple-700 uppercase flex items-center gap-1">
+              <Calendar className="h-3 w-3" /> Khoảng thời gian
             </span>
             <button
               type="button"
               onClick={() => setShowDateRangePicker(true)}
-              className="h-9 px-3 bg-white border border-purple-200 rounded-lg text-sm hover:bg-purple-50 cursor-pointer"
+              className={`${ctrlH} px-2 bg-white border border-purple-200 rounded-md ${ctrlTxt} hover:bg-purple-50 cursor-pointer`}
               title="Chọn khoảng ngày"
             >
-              {customDateFrom && customDateTo ? `${customDateFrom} → ${customDateTo}` : 'Chọn ngày bắt đầu/kết thúc'}
+              {customDateFrom && customDateTo ? `${customDateFrom} → ${customDateTo}` : 'Chọn ngày'}
             </button>
             <button
               onClick={() => { handleTimePresetChange(''); }}
-              className="h-9 px-3 bg-white text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-lg text-sm transition cursor-pointer border border-gray-200"
+              className={`${ctrlH} px-2 bg-white text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded-md ${ctrlTxt} transition cursor-pointer border border-slate-200`}
             >
               Hủy
             </button>
@@ -6015,44 +6009,39 @@ export default function CRMDashboard() {
               </div>
           </div>
         )}
-      </div>
 
-      {/* Vùng 3 — KPI */}
+      {/* KPI */}
       <section
         data-tour="crm-kpis"
-        className="bg-gradient-to-b from-amber-50/35 via-white to-violet-50/25"
+        className="border-t border-slate-200/60 bg-slate-50/30"
       >
         <button
           type="button"
           onClick={toggleKpiPanel}
           aria-expanded={kpiPanelOpen}
-          className="w-full flex items-center gap-2.5 px-3 py-2.5 sm:px-4 text-left cursor-pointer transition-colors hover:bg-amber-50/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300 focus-visible:ring-inset border-b border-violet-100/60"
+          className="w-full flex items-center gap-1.5 px-2.5 py-1 sm:px-3 text-left cursor-pointer transition-colors hover:bg-slate-100/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300 focus-visible:ring-inset"
         >
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-violet-700 border border-violet-200/80 shadow-sm">
-            <BarChart3 className="h-4 w-4" aria-hidden />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-sm font-bold text-violet-950 tracking-tight">
-              Tổng quan KPI
-              <span className={`ml-1.5 text-[11px] font-semibold ${
-                pipelineType === 'lead'
-                  ? 'text-blue-600'
-                  : isCrmCustomerPipelineTab(pipelineType)
-                    ? 'text-cyan-600'
-                    : 'text-emerald-600'
-              }`}>
-                · {crmPipelineTabTitle(pipelineType)}
-              </span>
+          <BarChart3 className="h-3.5 w-3.5 shrink-0 text-violet-600" aria-hidden />
+          <span className="text-[11px] font-semibold text-slate-800 shrink-0 whitespace-nowrap">
+            KPI
+            <span className={`ml-1 font-medium ${
+              pipelineType === 'lead'
+                ? 'text-blue-600'
+                : isCrmCustomerPipelineTab(pipelineType)
+                  ? 'text-cyan-600'
+                  : 'text-emerald-600'
+            }`}>
+              · {crmPipelineTabTitle(pipelineType)}
             </span>
-            {!kpiPanelOpen && (
-              <CrmKpiSummaryStrip segments={kpiCollapsedSegments} title={kpiCollapsedSummary} />
-            )}
           </span>
-          <span className="shrink-0 flex items-center gap-1 text-[11px] font-semibold text-violet-600">
-            {kpiPanelOpen ? 'Thu gọn' : 'Mở rộng'}
+          {!kpiPanelOpen && (
+            <CrmKpiSummaryStrip segments={kpiCollapsedSegments} title={kpiCollapsedSummary} />
+          )}
+          <span className="shrink-0 ml-auto flex items-center gap-0.5 text-[10px] font-medium text-slate-500">
+            <span className="hidden sm:inline">{kpiPanelOpen ? 'Thu gọn' : 'Mở rộng'}</span>
             {kpiPanelOpen
-              ? <ChevronUp className="h-4 w-4" aria-hidden />
-              : <ChevronDown className="h-4 w-4" aria-hidden />}
+              ? <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+              : <ChevronDown className="h-3.5 w-3.5" aria-hidden />}
           </span>
         </button>
 
@@ -7188,31 +7177,47 @@ function DealCountSummaryKpiCard({
   );
 }
 
-// Dải KPI thu gọn — mỗi chỉ số một màu
+// Dải KPI thu gọn — một hàng, chia đều
 function CrmKpiSummaryStrip({ segments, title }) {
   const toneClass = {
-    count: 'bg-slate-200/90 text-slate-900 border-slate-400/80 shadow-sm',
-    processing: 'bg-emerald-100 text-emerald-950 border-emerald-400/90 shadow-sm',
-    won: 'bg-green-100 text-green-950 border-green-500/90 shadow-sm',
-    forecast: 'bg-blue-100 text-blue-950 border-blue-500/90 shadow-sm',
-    expected: 'bg-fuchsia-100 text-fuchsia-950 border-fuchsia-500/90 shadow-sm',
-    completed: 'bg-teal-100 text-teal-950 border-teal-500/90 shadow-sm',
-    kpi: 'bg-amber-100 text-amber-950 border-amber-500/90 shadow-sm',
+    count: 'text-slate-700',
+    processing: 'text-emerald-700',
+    won: 'text-green-700',
+    forecast: 'text-blue-700',
+    expected: 'text-fuchsia-700',
+    completed: 'text-teal-700',
+    kpi: 'text-amber-700',
   };
+  const toneBg = {
+    count: 'bg-slate-100/80',
+    processing: 'bg-emerald-50',
+    won: 'bg-green-50',
+    forecast: 'bg-blue-50',
+    expected: 'bg-fuchsia-50',
+    completed: 'bg-teal-50',
+    kpi: 'bg-amber-50',
+  };
+  if (!segments?.length) return null;
   return (
-    <span className="flex flex-wrap items-center gap-1.5 mt-1.5 min-w-0" title={title}>
-      {segments.map((seg, i) => (
-        <span key={seg.key} className="inline-flex items-center gap-1.5 min-w-0 max-w-full">
-          {i > 0 && <span className="text-slate-400 text-xs select-none shrink-0 font-bold" aria-hidden>·</span>}
-          <span
-            className={`inline-flex items-baseline gap-1.5 rounded-lg border px-2 py-1 text-xs min-w-0 max-w-full ${toneClass[seg.tone] || toneClass.count}`}
-          >
-            <span className="font-semibold shrink-0">{seg.label}</span>
-            <span className="font-bold tabular-nums truncate">{seg.value}</span>
+    <div
+      className="flex-1 min-w-0 grid gap-px mx-1"
+      style={{ gridTemplateColumns: `repeat(${segments.length}, minmax(0, 1fr))` }}
+      title={title}
+    >
+      {segments.map((seg) => (
+        <div
+          key={seg.key}
+          className={`flex flex-col items-center justify-center rounded px-1 py-0.5 min-w-0 ${toneBg[seg.tone] || toneBg.count}`}
+        >
+          <span className="text-[8px] font-medium text-slate-500 uppercase tracking-wide truncate max-w-full leading-none">
+            {seg.label}
           </span>
-        </span>
+          <span className={`text-[11px] font-bold tabular-nums truncate max-w-full leading-tight ${toneClass[seg.tone] || toneClass.count}`}>
+            {seg.value}
+          </span>
+        </div>
       ))}
-    </span>
+    </div>
   );
 }
 
