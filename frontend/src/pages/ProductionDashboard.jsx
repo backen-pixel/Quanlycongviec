@@ -2132,6 +2132,47 @@ export default function ProductionDashboard() {
             </div>
 
             <div className="flex flex-wrap items-center gap-1.5 sm:justify-end shrink-0 order-3 lg:order-none">
+              {companyForTypes && workTypes.length > 0 && (
+                <div
+                  className={`inline-flex items-center gap-1 h-7 px-2 rounded-lg border shrink-0 ${
+                    filterWorkTypeId === 'none'
+                      ? 'border-amber-300 bg-amber-50'
+                      : filterWorkTypeId
+                        ? 'border-teal-300 bg-teal-50'
+                        : 'border-violet-200 bg-white'
+                  }`}
+                  title="Phân loại dự án xưởng"
+                >
+                  <Layers className={`h-3 w-3 shrink-0 ${
+                    filterWorkTypeId === 'none' ? 'text-amber-600'
+                    : filterWorkTypeId ? 'text-teal-700' : 'text-violet-500'
+                  }`} />
+                  <select
+                    value={filterWorkTypeId}
+                    onChange={(e) => setFilterWorkTypeId(e.target.value)}
+                    className={`h-6 text-[11px] bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[11rem] font-semibold ${
+                      filterWorkTypeId === 'none' ? 'text-amber-700'
+                      : filterWorkTypeId ? 'text-teal-800' : 'text-slate-700'
+                    }`}
+                  >
+                    <option value="">Phân loại: Tất cả</option>
+                    <option value="none">Chưa phân loại</option>
+                    {workTypes.map((wt) => (
+                      <option key={wt.id} value={wt.id}>{wt.name}</option>
+                    ))}
+                  </select>
+                  {filterWorkTypeId && (
+                    <button
+                      type="button"
+                      onClick={() => setFilterWorkTypeId('')}
+                      className="p-0.5 rounded hover:bg-white/70 cursor-pointer"
+                      title="Bỏ phân loại"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              )}
               <div className="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-white/90 border border-slate-200 shadow-inner">
                 <button
                   type="button"
@@ -2250,77 +2291,34 @@ export default function ProductionDashboard() {
             </div>
           </div>
 
-          {/* Lọc nhanh — chỉ hiện khi cần, gọn một dòng */}
-          {(showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0) || (companyForTypes && workTypes.length > 0) ? (
+          {/* Lọc nhanh SX tại — chỉ hiện khi cần */}
+          {showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0 ? (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 pb-2 sm:px-4 border-t border-slate-200/50 pt-1.5">
-              {showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0 && (
-                <div className="flex items-center gap-1.5 overflow-x-auto max-w-full min-w-0 shrink scrollbar-thin scrollbar-thumb-violet-200">
-                  <span className="text-[10px] font-semibold text-violet-700/80 shrink-0 uppercase tracking-wide">SX tại</span>
-                  {[{ id: '', name: 'Tất cả' }, ...sxWorkshopFilterOptions].map((c) => {
-                    const active = filterSxWorkshopCompany === c.id;
-                    return (
-                      <button
-                        key={c.id || 'all-sx'}
-                        type="button"
-                        onClick={() => {
-                          if (active) return;
-                          setFilterSxWorkshopCompany(c.id);
-                          setFilterWorkTypeId('');
-                        }}
-                        className={`shrink-0 h-7 px-2 rounded-full text-[10px] font-semibold border transition-all cursor-pointer whitespace-nowrap ${
-                          active
-                            ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm'
-                            : 'bg-white border-violet-200 text-slate-600 hover:border-indigo-300 hover:text-indigo-700 hover:bg-indigo-50'
-                        }`}
-                      >
-                        {active && <span className="mr-0.5">✓</span>}
-                        {c.id === '' ? 'Tất cả' : (c.short_name || c.name)}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-              {companyForTypes && workTypes.length > 0 && (
-                <div
-                  className={`inline-flex items-center gap-1 h-7 px-2 rounded-lg border shrink-0 ${
-                    filterWorkTypeId === 'none'
-                      ? 'border-amber-300 bg-amber-50'
-                      : filterWorkTypeId
-                        ? 'border-teal-300 bg-teal-50'
-                        : 'border-violet-200 bg-white'
-                  }`}
-                  title="Phân loại dự án xưởng"
-                >
-                  <Layers className={`h-3 w-3 shrink-0 ${
-                    filterWorkTypeId === 'none' ? 'text-amber-600'
-                    : filterWorkTypeId ? 'text-teal-700' : 'text-violet-500'
-                  }`} />
-                  <select
-                    value={filterWorkTypeId}
-                    onChange={(e) => setFilterWorkTypeId(e.target.value)}
-                    className={`h-6 text-[11px] bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[11rem] font-semibold ${
-                      filterWorkTypeId === 'none' ? 'text-amber-700'
-                      : filterWorkTypeId ? 'text-teal-800' : 'text-slate-700'
-                    }`}
-                  >
-                    <option value="">Phân loại: Tất cả</option>
-                    <option value="none">Chưa phân loại</option>
-                    {workTypes.map((wt) => (
-                      <option key={wt.id} value={wt.id}>{wt.name}</option>
-                    ))}
-                  </select>
-                  {filterWorkTypeId && (
+              <div className="flex items-center gap-1.5 overflow-x-auto max-w-full min-w-0 shrink scrollbar-thin scrollbar-thumb-violet-200">
+                <span className="text-[10px] font-semibold text-violet-700/80 shrink-0 uppercase tracking-wide">SX tại</span>
+                {[{ id: '', name: 'Tất cả' }, ...sxWorkshopFilterOptions].map((c) => {
+                  const active = filterSxWorkshopCompany === c.id;
+                  return (
                     <button
+                      key={c.id || 'all-sx'}
                       type="button"
-                      onClick={() => setFilterWorkTypeId('')}
-                      className="p-0.5 rounded hover:bg-white/70 cursor-pointer"
-                      title="Bỏ phân loại"
+                      onClick={() => {
+                        if (active) return;
+                        setFilterSxWorkshopCompany(c.id);
+                        setFilterWorkTypeId('');
+                      }}
+                      className={`shrink-0 h-7 px-2 rounded-full text-[10px] font-semibold border transition-all cursor-pointer whitespace-nowrap ${
+                        active
+                          ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm'
+                          : 'bg-white border-violet-200 text-slate-600 hover:border-indigo-300 hover:text-indigo-700 hover:bg-indigo-50'
+                      }`}
                     >
-                      <X className="h-3 w-3" />
+                      {active && <span className="mr-0.5">✓</span>}
+                      {c.id === '' ? 'Tất cả' : (c.short_name || c.name)}
                     </button>
-                  )}
-                </div>
-              )}
+                  );
+                })}
+              </div>
               <span className="text-[10px] text-slate-500 ml-auto shrink-0 tabular-nums md:hidden">
                 {projects.length} / {filteredCardCount} thẻ
               </span>
