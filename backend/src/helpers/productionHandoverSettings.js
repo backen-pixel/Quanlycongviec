@@ -59,14 +59,7 @@ async function assignProductionCompanyDealResponsibility({ dealId, productionCom
     }
 
     if (primaryId) {
-      await supabase
-        .from('crm_leads')
-        .update({
-          assigned_to: primaryId,
-          lead_owner_id: primaryId,
-          updated_at: now,
-        })
-        .eq('id', dealId);
+      // Chỉ gán production_person_id trên project — KHÔNG ghi đè assigned_to/lead_owner_id trên deal CRM
       await supabase
         .from('projects')
         .update({ production_person_id: primaryId, updated_at: now })
@@ -78,15 +71,7 @@ async function assignProductionCompanyDealResponsibility({ dealId, productionCom
   const responsibleUserId = await resolveProductionHandoverResponsibleUserId(productionCompanyId);
   if (!responsibleUserId) return { responsibleUserId: null };
 
-  await supabase
-    .from('crm_leads')
-    .update({
-      assigned_to: responsibleUserId,
-      lead_owner_id: responsibleUserId,
-      updated_at: now,
-    })
-    .eq('id', dealId);
-
+  // Chỉ gán production_person_id trên project — giữ nguyên người phụ trách CRM trên deal
   if (projectId) {
     await supabase
       .from('projects')

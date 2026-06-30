@@ -1,0 +1,267 @@
+const { supabase } = require('../config/supabase');
+const { isAdminLike } = require('./adminRole');
+
+const PROJECT_COMMENT_SELECT = '*, user:users!project_comments_user_id_fkey(id,full_name,avatar)';
+
+function getRequestUserId(req) {
+  return req.user?.userId || req.user?.id || null;
+}
+
+function formatDeadlineVi(iso) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleString('vi-VN', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return String(iso);
+  }
+}
+
+async function resolveDealRow(leadId, projectId) {
+  if (leadId) {
+    const { data } = await supabase
+      .from('crm_leads')
+      .select('id, assigned_to, lead_owner_id, project_id, title')
+      .eq('id', leadId)
+      .maybeSingle();
+    if (data) {
+      // Bổ sung production_person_id từ project (nếu có) để check quyền cho người SX
+      if (data.project_id) {
+        try {
+          const { data: proj } = await supabase
+            .from('projects')
+            .select('production_person_id')
+            .eq('id', data.project_id)
+            .maybeSingle();
+          if (proj?.production_person_id) data.production_person_id = proj.production_person_id;
+        } catch (_) {}
+      }
+      return data;
+    }
+  }
+  if (projectId) {
+    const { data } = await supabase
+      .from('crm_leads')
+      .select('id, assigned_to, lead_owner_id, project_id, title')
+      .eq('project_id', projectId)
+      .eq('type', 'deal')
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (data) {
+      // Bổ sung production_person_id từ project
+      try {
+        const { data: proj } = await supabase
+          .from('projects')
+          .select('production_person_id')
+          .eq('id', projectId)
+          .maybeSingle();
+        if (proj?.production_person_id) data.production_person_id = proj.production_person_id;
+      } catch (_) {}
+      return data;
+    }
+    const { data: proj } = await supabase
+      .from('projects')
+      .select('id, production_person_id')
+      .eq('id', projectId)
+      .maybeSingle();
+    if (proj?.production_person_id) {
+      return {
+        id: null,
+        assigned_to: null,
+        lead_owner_id: null,
+        production_person_id: proj.production_person_id,
+        project_id: projectId,
+        title: null,
+      };
+    }
+  }
+  return null;
+}
+
+function isDealResponsibleUser(req, dealRow) {
+  if (isAdminLike(req.user)) return true;
+  const uid = getRequestUserId(req);
+  if (!uid || !dealRow) return false;
+  const crmOwner = dealRow.assigned_to || dealRow.lead_owner_id;
+  if (crmOwner != null && String(crmOwner) === String(uid)) return true;
+  if (dealRow.production_person_id != null && String(dealRow.production_person_id) === String(uid)) return true;
+  return false;
+}
+
+async function assertDealResponsible(req, res, { leadId, projectId } = {}) {
+  const dealRow = await resolveDealRow(leadId, projectId);
+  if (!dealRow) {
+    res.status(403).json({ error: 'Không xác định được người phụ trách deal' });
+    return false;
+  }
+  if (!isDealResponsibleUser(req, dealRow)) {
+    res.status(403).json({ error: 'Chỉ người phụ trách deal mới được thao tác' });
+    return false;
+  }
+  return true;
+}
+
+async function resolveProjectLeadId(projectId) {
+  const row = await resolveDealRow(null, projectId);
+  return row?.id || null;
+}
+
+async function logDealActivityComment(req, { leadId, projectId, body }) {
+  try {
+    const uid = getRequestUserId(req);
+    if (!uid || !body) return;
+
+    const dealRow = await resolveDealRow(leadId, projectId);
+    const resolvedLeadId = dealRow?.id || leadId || null;
+    const resolvedProjectId = projectId || dealRow?.project_id || null;
+    const io = req.app?.get?.('io');
+
+    if (resolvedLeadId) {
+      const { data, error } = await supabase
+        .from('crm_lead_comments')
+        .insert({ lead_id: resolvedLeadId, user_id: uid, body })
+        .select('id, lead_id, user_id, parent_id, body, attachments, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
+        .single();
+      if (!error && data && io) {
+        io.to(`lead:${resolvedLeadId}`).emit('lead:comment', {
+          lead_id: resolvedLeadId,
+          action: 'created',
+          comment: { ...data, reactions: { summary: [], mine: null } },
+        });
+      }
+      return;
+    }
+
+    if (resolvedProjectId) {
+      const { data, error } = await supabase
+        .from('project_comments')
+        .insert({ project_id: resolvedProjectId, user_id: uid, content: body, attachments: [] })
+        .select(PROJECT_COMMENT_SELECT)
+        .single();
+      if (!error && data && io) {
+        const evt = { project_id: resolvedProjectId, action: 'created', comment: data };
+        io.to(`project:${resolvedProjectId}`).emit('project:comment', evt);
+        io.emit('project:comment', evt);
+      }
+    }
+  } catch (e) {
+    console.warn('[logDealActivityComment]', e.message);
+  }
+}
+
+const ACTION_LABELS = {
+  uploaded: 'đã tải lên',
+  deleted: 'đã xóa',
+  updated: 'đã cập nhật',
+  shared_crm: 'đã bật chia sẻ CRM',
+  unshared_crm: 'đã tắt chia sẻ CRM',
+  visibility_updated: 'đã đổi quyền xem',
+  replaced: 'đã thay thế',
+};
+
+async function logProjectFileActivity(req, {
+  projectId,
+  leadId,
+  action,
+  fileName,
+  fileUrl,
+  taskTitle,
+  extra,
+}) {
+  const uid = getRequestUserId(req);
+  if (!uid) return;
+  const { data: user } = await supabase.from('users').select('full_name').eq('id', uid).maybeSingle();
+  const userName = user?.full_name || 'Người dùng';
+  const actionLabel = ACTION_LABELS[action] || action;
+  const safeName = fileName
+    ? (fileUrl ? `«${fileName}|${fileUrl}»` : `«${fileName}»`)
+    : 'tài liệu';
+  const taskPart = taskTitle ? ` (nhiệm vụ: ${taskTitle})` : '';
+  const extraPart = extra ? ` — ${extra}` : '';
+  const body = `📎 ${userName} ${actionLabel} ${safeName}${taskPart}${extraPart}`;
+  await logDealActivityComment(req, { leadId, projectId, body });
+}
+
+async function logDealStageChangeComment(req, { leadId, projectId, stageName }) {
+  const uid = getRequestUserId(req);
+  if (!uid) return;
+  const { data: user } = await supabase.from('users').select('full_name').eq('id', uid).maybeSingle();
+  const userName = user?.full_name || 'Người dùng';
+  const label = stageName || 'giai đoạn mới';
+  await logDealActivityComment(req, {
+    leadId,
+    projectId,
+    body: `🔄 ${userName} đã thay đổi giai đoạn thành «${label}».`,
+  });
+}
+
+async function logDealDeadlineChangeComment(req, { leadId, projectId, newDeadlineAt, cleared = false }) {
+  const uid = getRequestUserId(req);
+  if (!uid) return;
+  const { data: user } = await supabase.from('users').select('full_name').eq('id', uid).maybeSingle();
+  const userName = user?.full_name || 'Người dùng';
+  const when = cleared ? '— (đã xóa hạn)' : formatDeadlineVi(newDeadlineAt);
+  await logDealActivityComment(req, {
+    leadId,
+    projectId,
+    body: `⏰ ${userName} đã thay đổi hạn chót thành ${when}.`,
+  });
+}
+
+async function assertFileAttachmentMutation(req, res, fileRow) {
+  if (!fileRow) {
+    res.status(404).json({ error: 'Không tìm thấy file' });
+    return false;
+  }
+  if (fileRow.entity_type === 'project') {
+    return assertDealResponsible(req, res, { projectId: fileRow.entity_id });
+  }
+  if (fileRow.entity_type === 'task') {
+    const { data: task } = await supabase
+      .from('tasks')
+      .select('project_id')
+      .eq('id', fileRow.entity_id)
+      .maybeSingle();
+    return assertDealResponsible(req, res, { projectId: task?.project_id });
+  }
+  if (fileRow.lead_id) {
+    return assertDealResponsible(req, res, { leadId: fileRow.lead_id });
+  }
+  return assertDealResponsible(req, res, {});
+}
+
+async function assertLeadDocumentOwner(req, res, doc) {
+  return assertDealResponsible(req, res, {
+    leadId: doc?.lead_id,
+    projectId: doc?.project_id,
+  });
+}
+
+async function assertFileOwner(req, res, row) {
+  return assertDealResponsible(req, res, {
+    leadId: row?.lead_id,
+    projectId: row?.project_id || (row?.entity_type === 'project' ? row?.entity_id : null),
+  });
+}
+
+module.exports = {
+  getRequestUserId,
+  formatDeadlineVi,
+  resolveDealRow,
+  isDealResponsibleUser,
+  assertDealResponsible,
+  assertFileAttachmentMutation,
+  assertLeadDocumentOwner,
+  assertFileOwner,
+  logDealActivityComment,
+  logProjectFileActivity,
+  logDealStageChangeComment,
+  logDealDeadlineChangeComment,
+  resolveProjectLeadId,
+};

@@ -47,6 +47,7 @@ import { buildSxPipelineStageMeta, resolveSxProjectDeposit, resolveSxProjectRema
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
 import DriveAttachments from '../components/drive/DriveAttachments';
 import { driveLinksCountByEntity } from '../lib/drive';
+import { isDealResponsibleUser } from '../lib/fileOwnership';
 
 /** Cùng tên tab với LeadDetail (chi tiết deal) — bỏ facebook và calls */
 const DEAL_TAB_KEYS = new Set(['tasks', 'shared-workspace', 'documents', 'notes', 'comments', 'team', 'approvals', 'incidents']);
@@ -604,7 +605,8 @@ function buildCrmSharedDocSections(docs, taskMetaMap, stageSlugLabelMap = {}) {
 
 /** Khối tài liệu CRM — mỗi file một dòng, nhóm theo giai đoạn → nhiệm vụ */
 function CrmSharedDocumentsPanel({
-  docs, workshopModule, crmLeadId, dealLabel, onVisibilitySaved, onDeleteDocument, taskMetaMap = {}, stageSlugLabelMap = {}, onOpenImage,
+  docs, workshopModule, crmLeadId, dealLabel, onVisibilitySaved,   onDeleteDocument, taskMetaMap = {}, stageSlugLabelMap = {}, onOpenImage,
+  canManageDeal = false,
 }) {
   const { taskSections, manualDocs } = useMemo(
     () => buildCrmSharedDocSections(docs, taskMetaMap, stageSlugLabelMap),
@@ -676,10 +678,11 @@ function CrmSharedDocumentsPanel({
                                   nested
                                   workshopModule={workshopModule}
                                   onVisibilitySaved={onVisibilitySaved}
-                                  onDelete={onDeleteDocument ? () => onDeleteDocument(doc) : undefined}
+                                  onDelete={onDeleteDocument && canManageDeal ? () => onDeleteDocument(doc) : undefined}
                                   stageSlugLabelMap={stageSlugLabelMap}
                                   taskMetaMap={taskMetaMap}
                                   onOpenImage={onOpenImage}
+                                  canManageDeal={canManageDeal}
                                 />
                               </div>
                             ))}
@@ -707,10 +710,11 @@ function CrmSharedDocumentsPanel({
                   crmPresentation
                   workshopModule={workshopModule}
                   onVisibilitySaved={onVisibilitySaved}
-                  onDelete={onDeleteDocument ? () => onDeleteDocument(doc) : undefined}
+                  onDelete={onDeleteDocument && canManageDeal ? () => onDeleteDocument(doc) : undefined}
                   stageSlugLabelMap={stageSlugLabelMap}
                   taskMetaMap={taskMetaMap}
                   onOpenImage={onOpenImage}
+                  canManageDeal={canManageDeal}
                 />
               ))}
             </div>
@@ -746,12 +750,12 @@ function FileDownloadButton({ rawRef, fileName, className = 'hover:underline tex
 }
 
 /** File đính kèm nhiệm vụ — xem ảnh inline, không cần tải */
-function TaskFileRow({ file, onOpenImage, projectId = null, enableShareToCrm = false, onShareToCrmSaved = null }) {
+function TaskFileRow({ file, onOpenImage, projectId = null, enableShareToCrm = false, onShareToCrmSaved = null, canManageDeal = false }) {
   const [showCrmShare, setShowCrmShare] = useState(false);
   const [sharedToCrm, setSharedToCrm] = useState(file.shared_to_crm === true);
   const [savingCrmShare, setSavingCrmShare] = useState(false);
   const isSharedToCrm = file.shared_to_crm === true;
-  const canShareCrm = enableShareToCrm && projectId && file.id && onShareToCrmSaved;
+  const canShareCrm = enableShareToCrm && projectId && file.id && onShareToCrmSaved && canManageDeal;
 
   const rawRef = file.file_url || '';
   const href = rawRef ? pubUrl(rawRef) : '';
@@ -857,7 +861,7 @@ function TaskFileRow({ file, onOpenImage, projectId = null, enableShareToCrm = f
 function DocRow({
   doc, onDelete, workshopModule, onVisibilitySaved, crmPresentation = false, nested = false,
   stageSlugLabelMap = {}, taskMetaMap = {}, onOpenImage, workshopProjectId = null, onShareToCrmSaved = null,
-  enableShareToCrm = false,
+  enableShareToCrm = false, canManageDeal = false,
 }) {
   const [expanded, setExpanded] = useState(false);
   const [showVis, setShowVis] = useState(false);
@@ -880,8 +884,9 @@ function DocRow({
   const isImage = isFile && isUploadImageFile(mime, fileName || doc.file_url || doc.file_path || '');
   const isVideo = isFile && (mime.startsWith('video/') || /\.(mp4|mov|webm|avi|mkv)$/i.test(fileName || doc.file_url || ''));
   const hasExtra = doc.notes || isImage || isVideo;
-  const crmShareUi = typeof doc.shared_to_workshop === 'boolean' && doc.id && onVisibilitySaved;
-  const workshopCrmShareUi = enableShareToCrm && doc.id && workshopProjectId && onShareToCrmSaved;
+  const canManage = canManageDeal;
+  const crmShareUi = typeof doc.shared_to_workshop === 'boolean' && doc.id && onVisibilitySaved && canManage;
+  const workshopCrmShareUi = enableShareToCrm && doc.id && workshopProjectId && onShareToCrmSaved && canManage;
   const isSharedToCrm = doc.shared_to_crm === true;
   const showCrmMeta = crmPresentation || crmShareUi;
   const resolvedStageBadge = doc.crm_stage_slug || doc.crm_stage_group_label
@@ -2372,6 +2377,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     ? (project.vc_kanban_column_id || project.current_stage_id || project.current_stage?.id)
     : resolveSxKanbanCurrentStageId(project, safePipelineStages);
   const primaryCrmDeal = project.crmDeals?.[0];
+  const canManageDeal = isDealResponsibleUser(user, primaryCrmDeal);
   const crmLeadId = resolveSxProjectLeadId({
     crm_lead_id: project.crm_lead_id,
     crm_deals: project.crmDeals || project.crm_deals,
@@ -2744,6 +2750,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     embeddedSxKanbanStages={project?.sxKanbanStages || null}
                     embeddedWorkshopTypeId={project?.workshop_type_id || project?.workshop_type?.id || null}
                     sxTemplateCompanyId={project?.company_id || project?.company?.id || null}
+                    dealResponsible={primaryCrmDeal}
                   />
                 ) : scopedWorkshopTasksForTab.length > 0 ? (
                   <WorkshopTasksFallbackPanel
@@ -2837,6 +2844,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     onVisibilitySaved={refreshProjectSilently}
                     onDeleteDocument={deleteCrmDocument}
                     onOpenImage={openDocImage}
+                    canManageDeal={canManageDeal}
                   />
 
                   {/* Production-native documents */}
@@ -2858,8 +2866,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                             enableShareToCrm={!!crmLeadId}
                             workshopProjectId={crmLeadId ? (project?.id || id) : null}
                             onShareToCrmSaved={() => loadProjectDocs(project?.id || id)}
-                            onDelete={() => deleteProjectDocument(doc.id)}
+                            onDelete={canManageDeal ? () => deleteProjectDocument(doc.id) : undefined}
                             onOpenImage={openDocImage}
+                            canManageDeal={canManageDeal}
                           />
                         ))}
                       </div>
@@ -2879,6 +2888,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                             enableShareToCrm={!!crmLeadId}
                             onShareToCrmSaved={() => loadTaskFiles(project?.id || id)}
                             onOpenImage={openDocImage}
+                            canManageDeal={canManageDeal}
                           />
                         ))}
                       </div>

@@ -104,6 +104,12 @@ const {
   isLeadDocSharedToWorkshop: isDocSharedToWorkshop,
 } = require('../helpers/documentShareScope');
 const { ensureDealLeadDocumentsForProjectId } = require('../helpers/ensureDealLeadDocumentsForModuleTransition');
+const {
+  assertDealResponsible,
+  logDealStageChangeComment,
+  logDealDeadlineChangeComment,
+  logDealActivityComment,
+} = require('../helpers/projectFileActivity');
 const { validateProductionCompanyId } = require('../helpers/productionCompanyGate');
 const {
   assignProductionCompanyDealResponsibility,
@@ -1939,6 +1945,7 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
+    if (!(await assertDealResponsible(req, res, { projectId: id }))) return;
 
     /** Kéo về cột «Chờ vào xưởng» — không có workflow_stage_id trên cột intake */
     if (move_to_intake === true || move_to_intake === 'true') {
@@ -2368,6 +2375,9 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     const io = req.app.get('io');
     if (io) io.emit('project:stage_changed', updated);
 
+    const stageLabel = updated?.current_stage?.name || 'giai đoạn mới';
+    await logDealStageChangeComment(req, { projectId: id, stageName: stageLabel });
+
     res.json({
       project: {
         ...updated,
@@ -2525,6 +2535,7 @@ r.patch('/projects/:id/kanban-deadline', requirePermission('projects', 'edit'), 
       .eq('id', id)
       .maybeSingle();
     if (!project) return res.status(404).json({ error: 'Không tìm thấy dự án' });
+    if (!(await assertDealResponsible(req, res, { projectId: id }))) return;
 
     const raw = req.body?.sx_kanban_deadline_at ?? req.body?.kanban_deadline_at;
     const clearing = raw === null || raw === '';
@@ -2560,6 +2571,12 @@ r.patch('/projects/:id/kanban-deadline', requirePermission('projects', 'edit'), 
       }
       throw upErr;
     }
+
+    await logDealDeadlineChangeComment(req, {
+      projectId: id,
+      newDeadlineAt: newIso,
+      cleared: !newIso,
+    });
 
     res.json({ ok: true, sx_kanban_deadline_at: newIso, sx_kanban_deadline_reason: reason || null });
   } catch (e) {
@@ -2669,6 +2686,14 @@ r.patch('/projects/:id/switch-workshop-type', requirePermission('projects', 'edi
         .maybeSingle();
       workshopType = wtRow || null;
     }
+
+    try {
+      const { data: _actor } = await supabase.from('users').select('full_name').eq('id', userId).maybeSingle();
+      await logDealActivityComment(req, {
+        projectId: id,
+        body: `🔀 ${_actor?.full_name || 'Người dùng'} đã chuyển phân loại xưởng sang «${workshopType?.name || 'Phân loại mới'}» (cột ${firstCol.name}).`,
+      });
+    } catch (_) {}
 
     const { data: updated } = await supabase
       .from('projects')
@@ -3011,6 +3036,14 @@ r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), asyn
     } catch (notifErr) {
       console.warn('[production/handover-vc] notify VC:', notifErr.message);
     }
+
+    try {
+      const { data: _actor } = await supabase.from('users').select('full_name').eq('id', userId).maybeSingle();
+      await logDealActivityComment(req, {
+        projectId: id,
+        body: `🚚 ${_actor?.full_name || 'Người dùng'} đã bàn giao dự án sang module Vận chuyển.`,
+      });
+    } catch (_) {}
 
     const { data: updated } = await supabase
       .from('projects')
