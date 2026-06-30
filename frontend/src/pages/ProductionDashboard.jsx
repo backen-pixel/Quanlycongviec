@@ -352,6 +352,7 @@ export default function ProductionDashboard() {
   const kanbanSettingsTriggerRef = useRef(null);
   const [showViewModeMenu, setShowViewModeMenu] = useState(false);
   const viewModeTriggerRef = useRef(null);
+  const searchBoxRef = useRef(null);
   const [kanbanColumnScrollMode, setKanbanColumnScrollMode] = useState(() => {
     const fromP = P0?.kanbanColumnScrollMode;
     if (fromP && KANBAN_COLUMN_SCROLL_MODES.includes(fromP)) return fromP;
@@ -1188,6 +1189,17 @@ export default function ProductionDashboard() {
 
   const filteredCardCount = allVisibleProjectIds.length;
 
+  const sxSearchSuggestItems = useMemo(() => {
+    const q = searchQuery.trim();
+    if (q.length < 2) return [];
+    return filteredKanbanPipeline.flatMap((s) => s.items || []).slice(0, 10);
+  }, [filteredKanbanPipeline, searchQuery]);
+
+  const sxSearchSuggestOpen = searchFocused
+    && searchQuery.trim().length >= 2
+    && sxSearchSuggestItems.length > 0
+    && sxSearchSuggestItems.length <= 10;
+
   const refreshProjectCommentsIndex = useCallback(async (ids = allVisibleProjectIds) => {
     const uniqIds = [...new Set((ids || []).map((x) => String(x || '').trim()).filter(Boolean))];
     if (!uniqIds.length) {
@@ -1412,6 +1424,31 @@ export default function ProductionDashboard() {
     }, 500);
     return () => clearTimeout(t);
   }, [loading, viewMode, filteredKanbanPipeline]);
+
+  const focusSxSearchResult = useCallback((projectId) => {
+    setSearchFocused(false);
+
+    const pulse = (el) => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      el.classList.add('ring-2', 'ring-indigo-500', 'ring-offset-2', 'rounded-lg', 'transition-shadow');
+      window.setTimeout(() => {
+        el.classList.remove('ring-2', 'ring-indigo-500', 'ring-offset-2', 'rounded-lg', 'transition-shadow');
+      }, 2200);
+    };
+
+    if (viewMode !== 'kanban') {
+      setViewMode('kanban');
+      markWorkshopPipelineCardFocus(projectId, 'sx');
+      return;
+    }
+
+    const el = document.querySelector(`[data-sx-kanban-card="${projectId}"]`);
+    if (el) {
+      pulse(el);
+      return;
+    }
+    markWorkshopPipelineCardFocus(projectId, 'sx');
+  }, [viewMode]);
 
   const scopeKpis = useMemo(() => {
     const list = scopeProjects;
@@ -2064,6 +2101,7 @@ export default function ProductionDashboard() {
             {/* Tìm kiếm — giữa toolbar, chiếm phần trống còn lại */}
             <div className="flex items-center gap-2 flex-1 min-w-0 order-2 lg:order-none">
               <div
+                ref={searchBoxRef}
                 className={`group/search flex items-center flex-1 min-w-0 max-w-none lg:max-w-[22rem] xl:max-w-[26rem] rounded-lg border transition-all duration-200 ${
                   searchFocused
                     ? 'border-violet-400 bg-white shadow-md shadow-violet-500/15 ring-2 ring-violet-200/60'
@@ -2104,6 +2142,48 @@ export default function ProductionDashboard() {
                     <SearchClearButton onClick={() => { setSearchQuery(''); setSearchFocused(false); }} />
                   )}
                 </div>
+                <AnchoredDropdownMenu
+                  open={sxSearchSuggestOpen}
+                  onClose={() => setSearchFocused(false)}
+                  anchorRef={searchBoxRef}
+                  align="left"
+                  matchAnchorWidth
+                  className="rounded-xl border-2 border-violet-200 p-0 overflow-hidden max-h-80 overflow-y-auto [scrollbar-width:thin] animate-fade-in shadow-xl shadow-violet-500/15 ring-1 ring-violet-100"
+                >
+                  <div className="px-3 py-2 border-b border-violet-100 bg-gradient-to-r from-violet-50 to-violet-100/60">
+                    <p className="text-[11px] font-semibold text-violet-800">
+                      <span className="font-bold text-violet-700">{sxSearchSuggestItems.length}</span>
+                      {' '}kết quả cho &ldquo;{searchQuery}&rdquo;
+                    </p>
+                  </div>
+                  {sxSearchSuggestItems.map((project) => (
+                    <button
+                      key={project.id}
+                      type="button"
+                      className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-violet-50/80 transition-colors cursor-pointer border-b border-slate-50 last:border-0 group/item text-left"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => focusSxSearchResult(project.id)}
+                    >
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[10px] font-mono font-semibold text-slate-500 group-hover/item:bg-indigo-100 group-hover/item:text-indigo-700 transition-colors">
+                        {(project.code || '?').slice(0, 2)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-mono text-slate-400">{project.code}</span>
+                          <p className="text-sm font-medium text-slate-900 truncate">{project.name}</p>
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          {project.customer?.phone && (
+                            <span className="text-[10px] text-emerald-600">📞 {project.customer.phone}</span>
+                          )}
+                          {project.customer?.full_name && (
+                            <span className="text-[10px] text-slate-500 truncate max-w-[8rem]">👤 {project.customer.full_name}</span>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </AnchoredDropdownMenu>
                 <div className="shrink-0 pr-1 pl-0.5">
                   <button
                     type="button"

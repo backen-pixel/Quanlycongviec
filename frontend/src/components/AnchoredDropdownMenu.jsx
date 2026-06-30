@@ -11,20 +11,28 @@ export default function AnchoredDropdownMenu({
   className = '',
   minWidth,
   fitContent = false,
+  matchAnchorWidth = false,
   children,
 }) {
   const menuRef = useRef(null);
-  const [pos, setPos] = useState({ top: 0, left: 0, ready: false });
+  const [pos, setPos] = useState({ top: 0, left: 0, width: undefined, ready: false });
 
   const updatePosition = useCallback(() => {
     const anchor = anchorRef?.current;
     if (!anchor) return;
     const rect = anchor.getBoundingClientRect();
-    const menuW = menuRef.current?.offsetWidth || (minWidth ? parseFloat(minWidth) * 16 : 168);
+    const menuW = matchAnchorWidth
+      ? rect.width
+      : (menuRef.current?.offsetWidth || (minWidth ? parseFloat(minWidth) * 16 : 168));
     let left = align === 'right' ? rect.right - menuW : rect.left;
     left = Math.max(8, Math.min(left, window.innerWidth - menuW - 8));
-    setPos({ top: rect.bottom + 4, left, ready: true });
-  }, [anchorRef, align, minWidth]);
+    setPos({
+      top: rect.bottom + 4,
+      left,
+      width: matchAnchorWidth ? rect.width : undefined,
+      ready: true,
+    });
+  }, [anchorRef, align, minWidth, matchAnchorWidth]);
 
   useLayoutEffect(() => {
     if (!open) {
@@ -67,8 +75,9 @@ export default function AnchoredDropdownMenu({
       style={{
         top: pos.top,
         left: pos.left,
+        width: pos.width,
         visibility: pos.ready ? 'visible' : 'hidden',
-        minWidth: minWidth || undefined,
+        minWidth: pos.width ? undefined : (minWidth || undefined),
       }}
       role="menu"
       onMouseDown={(e) => e.stopPropagation()}

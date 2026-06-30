@@ -1051,6 +1051,7 @@ export default function CRMDashboard() {
   /** Popover danh sách lead/deal quá hạn (icon cạnh nút Ghim) */
   const [showOverduePopover, setShowOverduePopover] = useState(false);
   const overdueTriggerRef = useRef(null);
+  const searchBoxRef = useRef(null);
   const [showAdvSearch, setShowAdvSearch] = useState(() => !!P?.showAdvSearch);
   const [crmFilterTab, setCrmFilterTab] = useState('employee');
   const [filterPanelPos, setFilterPanelPos] = useState(() => readStoredCrmFilterPanelPos());
@@ -3921,6 +3922,32 @@ export default function CRMDashboard() {
     setShowOverduePopover(false);
   }, [navigate, pipelineType]);
 
+  const focusCrmSearchResult = useCallback((itemId) => {
+    persistCrmPipelineUiNow();
+    setSearchFocused(false);
+
+    const pulse = (el) => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      el.classList.add('ring-2', 'ring-violet-500', 'ring-offset-2', 'rounded-lg', 'transition-shadow');
+      window.setTimeout(() => {
+        el.classList.remove('ring-2', 'ring-violet-500', 'ring-offset-2', 'rounded-lg', 'transition-shadow');
+      }, 2200);
+    };
+
+    if (viewMode !== 'kanban') {
+      setViewMode('kanban');
+      markCrmPipelineCardFocus(itemId);
+      return;
+    }
+
+    const el = document.querySelector(`[data-crm-pipeline-card="${itemId}"]`);
+    if (el) {
+      pulse(el);
+      return;
+    }
+    markCrmPipelineCardFocus(itemId);
+  }, [viewMode, persistCrmPipelineUiNow]);
+
   const listViewPipelineId = useMemo(() => {
     if (!dashboardScopeCompanyId) return '';
     return resolvePipelineIdForCompany(dashboardScopeCompanyId) || '';
@@ -5274,6 +5301,7 @@ export default function CRMDashboard() {
       {/* Hàng 2 — tìm kiếm & công cụ */}
       <div className="flex flex-wrap items-center gap-1 px-2.5 py-1 sm:px-3 border-t border-slate-200/50">
         <div
+            ref={searchBoxRef}
             className={`group/search flex items-center shrink-0 flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem] rounded-md border transition-colors ${
               searchFocused
                 ? 'border-violet-400 bg-white ring-1 ring-violet-200/60'
@@ -5317,53 +5345,55 @@ export default function CRMDashboard() {
               {searchText && (
                 <SearchClearButton onClick={() => { setSearchText(''); setSearchFocused(false); }} />
               )}
-              {searchFocused && searchText.trim().length >= 2 && activeItems.length > 0 && activeItems.length <= 10 && (
-                <div className="absolute top-[calc(100%+8px)] left-0 right-0 z-50 overflow-hidden rounded-xl border-2 border-violet-200 bg-white shadow-xl shadow-violet-500/15 ring-1 ring-violet-100 animate-fade-in max-h-80 overflow-y-auto [scrollbar-width:thin]">
-                  <div className="px-3 py-2 border-b border-violet-100 bg-gradient-to-r from-violet-50 to-violet-100/60">
-                    <p className="text-[11px] font-semibold text-violet-800">
-                      <span className="font-bold text-violet-700">{activeItems.length}</span>
-                      {' '}kết quả cho &ldquo;{searchText}&rdquo;
-                    </p>
-                  </div>
-                  {activeItems.map(item => (
-                    <Link key={item.id} to={`/crm/leads/${item.id}`}
-                      className="flex items-center gap-3 px-3 py-2.5 hover:bg-violet-50/80 transition-colors cursor-pointer border-b border-slate-50 last:border-0 group/item"
-                      data-crm-pipeline-card={item.id}
-                      onMouseDown={e => e.preventDefault()}
-                      onClick={() => {
-                        persistCrmPipelineUiNow();
-                        markCrmPipelineCardFocus(item.id);
-                        setSearchText('');
-                        setSearchFocused(false);
-                      }}>
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[10px] font-mono font-semibold text-slate-500 group-hover/item:bg-violet-100 group-hover/item:text-violet-700 transition-colors">
-                        {(item.code || '?').slice(0, 2)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-mono text-slate-400">{item.code}</span>
-                          <p className="text-sm font-medium text-slate-900 truncate">{item.title}</p>
-                          {item.is_new_for_current_user && (
-                            <span className="shrink-0 text-[9px] font-bold uppercase text-white bg-rose-500 px-1.5 py-0.5 rounded-full">Mới</span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                          {item.customer?.phone && <span className="text-[10px] text-emerald-600">📞 {item.customer.phone}</span>}
-                          {item.customer?.full_name && <span className="text-[10px] text-slate-500 truncate max-w-[8rem]">👤 {item.customer.full_name}</span>}
-                          {item.assignee?.full_name && <span className="text-[10px] text-violet-600 truncate max-w-[8rem]">🤝 {item.assignee.full_name}</span>}
-                          {(item.production_staff?.length > 1) && (
-                            <span className="text-[10px] text-indigo-600" title={(item.production_staff || []).map((u) => u.full_name).join(', ')}>
-                              🏭 {item.production_staff.length} NV
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <ChevronRight className="h-3.5 w-3.5 text-slate-300 group-hover/item:text-violet-400 transition-colors shrink-0" />
-                    </Link>
-                  ))}
-                </div>
-              )}
             </div>
+            <AnchoredDropdownMenu
+              open={searchFocused && searchText.trim().length >= 2 && activeItems.length > 0 && activeItems.length <= 10}
+              onClose={() => setSearchFocused(false)}
+              anchorRef={searchBoxRef}
+              align="left"
+              matchAnchorWidth
+              className="rounded-xl border-2 border-violet-200 p-0 overflow-hidden max-h-80 overflow-y-auto [scrollbar-width:thin] animate-fade-in shadow-xl shadow-violet-500/15 ring-1 ring-violet-100"
+            >
+              <div className="px-3 py-2 border-b border-violet-100 bg-gradient-to-r from-violet-50 to-violet-100/60">
+                <p className="text-[11px] font-semibold text-violet-800">
+                  <span className="font-bold text-violet-700">{activeItems.length}</span>
+                  {' '}kết quả cho &ldquo;{searchText}&rdquo;
+                </p>
+              </div>
+              {activeItems.map(item => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-violet-50/80 transition-colors cursor-pointer border-b border-slate-50 last:border-0 group/item text-left"
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={() => focusCrmSearchResult(item.id)}
+                >
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[10px] font-mono font-semibold text-slate-500 group-hover/item:bg-violet-100 group-hover/item:text-violet-700 transition-colors">
+                    {(item.code || '?').slice(0, 2)}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono text-slate-400">{item.code}</span>
+                      <p className="text-sm font-medium text-slate-900 truncate">{item.title}</p>
+                      {item.is_new_for_current_user && (
+                        <span className="shrink-0 text-[9px] font-bold uppercase text-white bg-rose-500 px-1.5 py-0.5 rounded-full">Mới</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                      {item.customer?.phone && <span className="text-[10px] text-emerald-600">📞 {item.customer.phone}</span>}
+                      {item.customer?.full_name && <span className="text-[10px] text-slate-500 truncate max-w-[8rem]">👤 {item.customer.full_name}</span>}
+                      {item.assignee?.full_name && <span className="text-[10px] text-violet-600 truncate max-w-[8rem]">🤝 {item.assignee.full_name}</span>}
+                      {(item.production_staff?.length > 1) && (
+                        <span className="text-[10px] text-indigo-600" title={(item.production_staff || []).map((u) => u.full_name).join(', ')}>
+                          🏭 {item.production_staff.length} NV
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <ChevronRight className="h-3.5 w-3.5 text-slate-300 group-hover/item:text-violet-400 transition-colors shrink-0" />
+                </button>
+              ))}
+            </AnchoredDropdownMenu>
             <div className="shrink-0 pr-1">
               <button
                 type="button"
