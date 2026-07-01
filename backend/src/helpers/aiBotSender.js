@@ -333,6 +333,11 @@ async function buildChannelContextPayload(memberIds, opts = {}) {
         slaWindowEndMs = now;
         slaWindowLabel = '7 ngày gần đây';
         break;
+      case 'last_14d':
+        slaWindowStartMs = todayStartMs - 14 * dayMs;
+        slaWindowEndMs = now;
+        slaWindowLabel = '14 ngày gần đây';
+        break;
       case 'last_30d':
         slaWindowStartMs = todayStartMs - 30 * dayMs;
         slaWindowEndMs = now;
@@ -351,11 +356,19 @@ async function buildChannelContextPayload(memberIds, opts = {}) {
         break;
     }
   }
+  const fmtVnDate = (ms) => {
+    const d = new Date(ms);
+    return new Intl.DateTimeFormat('vi-VN', {
+      timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit', year: 'numeric',
+    }).format(d);
+  };
   const slaWindow = {
     scope,
     label: slaWindowLabel,
     from: new Date(slaWindowStartMs).toISOString(),
     to: new Date(slaWindowEndMs).toISOString(),
+    from_display: fmtVnDate(slaWindowStartMs),
+    to_display: fmtVnDate(slaWindowEndMs),
   };
 
   // Schema giúp LLM biết các field nào tồn tại (dùng cho playbook custom/_pep_talk).
@@ -546,14 +559,13 @@ async function buildChannelContextPayload(memberIds, opts = {}) {
   /* Lead/Deal HẾT HẠN: expected_close_date < hôm nay, chưa đóng */
   let leadsExpired = [];
   try {
-    const todayStartIso = startOfTodayIso;
     const { data } = await supabase
       .from('crm_leads')
       .select('id, code, title, estimated_value, assigned_to, expected_close_date, type, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, is_won, is_lost)')
       .in('assigned_to', ids)
       .is('actual_close_date', null)
       .not('expected_close_date', 'is', null)
-      .lt('expected_close_date', todayStartIso.slice(0, 10))
+      .lt('expected_close_date', todayVnStr)
       .order('expected_close_date', { ascending: true })
       .limit(80);
     (data || []).forEach((l) => {
@@ -601,6 +613,7 @@ async function buildChannelContextPayload(memberIds, opts = {}) {
       openLeads.push(...data);
       if (data.length < PAGE) break;
     }
+    const olderBreached = [];
     openLeads.forEach((l) => {
       if (l.stage?.is_won || l.stage?.is_lost) return;
       const slaDays = effectivePipelineStageSlaDays(l.stage?.sla_days);
@@ -632,8 +645,20 @@ async function buildChannelContextPayload(memberIds, opts = {}) {
           ...baseItem,
           hours_left: Math.max(0, Math.round((dueMs - now) / 3600000)),
         });
+      } else if (dueMs < slaWindowStartMs && dueMs <= now) {
+        olderBreached.push({
+          ...baseItem,
+          hours_overdue: Math.max(0, Math.round((now - dueMs) / 3600000)),
+          breached_at: new Date(dueMs).toISOString(),
+        });
       }
     });
+    // Khi window (today/yesterday) không có SLA mới vi phạm, bổ sung các SLA cũ còn mở
+    // để nhân viên vẫn thấy cảnh báo lead/deal đang quá SLA.
+    if (!slaBreachedToday.length && olderBreached.length) {
+      olderBreached.sort((a, b) => (a.hours_overdue || 0) - (b.hours_overdue || 0));
+      slaBreachedToday.push(...olderBreached.slice(0, 15));
+    }
     slaBreachedToday.sort((a, b) => (b.hours_overdue || 0) - (a.hours_overdue || 0));
     slaDueToday.sort((a, b) => (a.hours_left || 0) - (b.hours_left || 0));
   } catch { /* ignore */ }
