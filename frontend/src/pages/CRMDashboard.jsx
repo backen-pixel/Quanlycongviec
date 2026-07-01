@@ -1032,6 +1032,7 @@ export default function CRMDashboard() {
   const {
     highlightId: kanbanSearchHighlightId,
     triggerHighlight: triggerKanbanSearchHighlight,
+    clearHighlight: clearKanbanSearchHighlight,
   } = useKanbanSearchHighlight('data-crm-pipeline-card', {
     hitClass: CRM_KANBAN_SEARCH_HIT_CLASS,
   });
@@ -3976,12 +3977,14 @@ export default function CRMDashboard() {
 
     if (viewMode !== 'kanban') {
       setViewMode('kanban');
-      markCrmPipelineCardFocus(itemId);
-      return;
     }
-
-    triggerKanbanSearchHighlight(itemId);
+    triggerKanbanSearchHighlight(itemId, { persist: true });
   }, [viewMode, persistCrmPipelineUiNow, triggerKanbanSearchHighlight]);
+
+  useEffect(() => {
+    if (searchText.trim()) return;
+    clearKanbanSearchHighlight();
+  }, [searchText, clearKanbanSearchHighlight]);
 
   const listViewPipelineId = useMemo(() => {
     if (!dashboardScopeCompanyId) return '';
@@ -7879,15 +7882,15 @@ const KanbanStageCard = memo(function KanbanStageCard({
       onDragOver={handleColumnDragOver}
       onDragLeave={handleColumnDragLeave}
       onDrop={handleColumnDrop}
-      className={`flex flex-col flex-shrink-0 rounded-lg overflow-hidden transition-all duration-200 kanban-column-surface ${
+      className={`flex flex-col flex-shrink-0 rounded-lg transition-all duration-200 kanban-column-surface ${
         compact ? 'w-[15rem] max-[380px]:w-[13.5rem]' : 'w-[17rem] max-[420px]:w-[15rem]'
-      } ${perColumnScroll ? 'h-full self-stretch' : ''} ${isOverColumn ? 'ring-2 ring-blue-500 ring-dashed' : ''}`}
+      } ${perColumnScroll ? 'h-full self-stretch overflow-hidden' : 'overflow-visible kanban-unified-scroll-column'} ${isOverColumn ? 'ring-2 ring-blue-500 ring-dashed' : ''}`}
       style={{
         ...(perColumnScroll && columnScrollMaxH ? { height: columnScrollMaxH, maxHeight: columnScrollMaxH } : {}),
       }}
     >
-      {/* Sticky header — nền theo màu stage */}
-      <div className={`${perColumnScroll ? 'shrink-0' : 'sticky top-0'} z-20 overflow-hidden rounded-t-lg`}>
+      {/* Sticky header — nền theo màu stage (cuộn chung: dính top vùng scroll) */}
+      <div className={`${perColumnScroll ? 'shrink-0' : 'sticky top-0 kanban-column-header-sticky'} z-20 overflow-hidden rounded-t-lg`}>
         <div
           className={`border-b transition-all kanban-column-surface ${compact ? 'p-2' : 'p-3'}`}
           style={{

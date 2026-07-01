@@ -316,6 +316,7 @@ export default function ProductionDashboard() {
   const {
     highlightId: kanbanSearchHighlightId,
     triggerHighlight: triggerKanbanSearchHighlight,
+    clearHighlight: clearKanbanSearchHighlight,
   } = useKanbanSearchHighlight('data-sx-kanban-card', {
     hitClass: SX_KANBAN_SEARCH_HIT_CLASS,
   });
@@ -1429,12 +1430,14 @@ export default function ProductionDashboard() {
 
     if (viewMode !== 'kanban') {
       setViewMode('kanban');
-      markWorkshopPipelineCardFocus(projectId, 'sx');
-      return;
     }
-
-    triggerKanbanSearchHighlight(projectId);
+    triggerKanbanSearchHighlight(projectId, { persist: true });
   }, [viewMode, triggerKanbanSearchHighlight]);
+
+  useEffect(() => {
+    if (searchQuery.trim()) return;
+    clearKanbanSearchHighlight();
+  }, [searchQuery, clearKanbanSearchHighlight]);
 
   const scopeKpis = useMemo(() => {
     const list = scopeProjects;
@@ -3033,16 +3036,16 @@ function KanbanStageCard({
       onDragOver={handleColumnDragOver}
       onDragLeave={handleColumnDragLeave}
       onDrop={handleColumnDrop}
-      className={`flex flex-col flex-shrink-0 w-[15rem] max-[400px]:w-[13.5rem] rounded-lg overflow-hidden transition-all duration-200 kanban-column-surface ${
-        perColumnScroll ? 'h-full self-stretch' : ''
+      className={`flex flex-col flex-shrink-0 w-[15rem] max-[400px]:w-[13.5rem] rounded-lg transition-all duration-200 kanban-column-surface ${
+        perColumnScroll ? 'h-full self-stretch overflow-hidden' : 'overflow-visible kanban-unified-scroll-column'
       } ${isOverColumn ? 'ring-2 ring-blue-400 ring-dashed' : ''}`}
       style={{
         ...(perColumnScroll && columnScrollMaxH ? { height: columnScrollMaxH, maxHeight: columnScrollMaxH } : {}),
       }}
     >
-      {/* Header — nền theo màu stage (không viền trên) */}
+      {/* Header — nền theo màu stage; cuộn chung: dính top vùng scroll */}
       <div
-        className={`${perColumnScroll ? 'shrink-0' : 'sticky top-0'} z-10 px-2 py-2.5 border-b rounded-t-md transition-colors kanban-column-surface`}
+        className={`${perColumnScroll ? 'shrink-0' : 'sticky top-0 kanban-column-header-sticky'} z-10 px-2 py-2.5 border-b rounded-t-md transition-colors kanban-column-surface`}
         style={{
           backgroundColor: isOverColumn ? columnTheme.dropBg : columnTheme.headerBg,
           borderColor: columnTheme.border,
