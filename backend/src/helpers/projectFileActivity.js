@@ -33,6 +33,22 @@ async function fetchProductionStaffIds(projectId) {
   } catch (_) { return []; }
 }
 
+async function fetchLeadMemberUserIds(leadId) {
+  if (!leadId) return [];
+  try {
+    const { data } = await supabase
+      .from('lead_members')
+      .select('user_id')
+      .eq('lead_id', leadId);
+    return (data || []).map((r) => String(r.user_id)).filter(Boolean);
+  } catch (_) { return []; }
+}
+
+async function enrichWithLeadMembers(row) {
+  if (!row?.id) return;
+  row._member_ids = await fetchLeadMemberUserIds(row.id);
+}
+
 async function enrichWithProductionInfo(row, projectId) {
   const pid = projectId || row?.project_id;
   if (!pid) return;
@@ -56,6 +72,7 @@ async function resolveDealRow(leadId, projectId) {
       .maybeSingle();
     if (data) {
       await enrichWithProductionInfo(data, projectId);
+      await enrichWithLeadMembers(data);
       return data;
     }
   }
@@ -70,6 +87,7 @@ async function resolveDealRow(leadId, projectId) {
       .maybeSingle();
     if (data) {
       await enrichWithProductionInfo(data, projectId);
+      await enrichWithLeadMembers(data);
       return data;
     }
     const { data: proj } = await supabase
@@ -101,6 +119,93 @@ function isDealResponsibleUser(req, dealRow) {
   if (dealRow.production_person_id != null && String(dealRow.production_person_id) === uidStr) return true;
   if (Array.isArray(dealRow._staff_ids) && dealRow._staff_ids.includes(uidStr)) return true;
   return false;
+}
+
+async function isDealLeadMemberUser(req, dealRow) {
+  const uid = getRequestUserId(req);
+  if (!uid || !dealRow?.id) return false;
+  const uidStr = String(uid);
+  if (!Array.isArray(dealRow._member_ids)) {
+    dealRow._member_ids = await fetchLeadMemberUserIds(dealRow.id);
+  }
+  return dealRow._member_ids.includes(uidStr);
+}
+
+async function canMutateProductionKanban(req, dealRow) {
+  if (isDealResponsibleUser(req, dealRow)) return true;
+  return isDealLeadMemberUser(req, dealRow);
+}
+
+async function userCanMutateProductionProjectKanban(userId, projectId, user = null) {
+  if (!userId || !projectId) return false;
+  const dealRow = await resolveDealRow(null, projectId);
+  if (!dealRow) return false;
+  return canMutateProductionKanban({ user: user || { userId } }, dealRow);
+}
+
+async function assertProductionKanbanMutation(req, res, { leadId, projectId } = {}) {
+  const dealRow = await resolveDealRow(leadId, projectId);
+  if (!dealRow) {
+    res.status(403).json({ error: 'Không xác định được deal của dự án' });
+    return false;
+  }
+  if (!(await canMutateProductionKanban(req, dealRow))) {
+    res.status(403).json({ error: 'Chỉ thành viên hoặc người phụ trách deal mới được thao tác' });
+    return false;
+  }
+  return true;
+}
+
+/** Cho phép `projects edit` hoặc thành viên deal (lead_members) thao tác Kanban SX. */
+function requireProductionKanbanEdit() {
+  const { checkPermission } = require('../middleware/newPermission');
+  return async (req, res, next) => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized - no user ID' });
+      }
+      if (await checkPermission(userId, 'projects', 'edit', null, req.user)) return next();
+      const projectId = req.params?.id || req.params?.projectId;
+      if (projectId && await userCanMutateProductionProjectKanban(userId, projectId, req.user)) {
+        return next();
+      }
+      return res.status(403).json({
+        error: 'Không có quyền thực hiện hành động này',
+        message: 'Vui lòng liên hệ quản trị viên nếu bạn cần quyền này',
+      });
+    } catch (e) {
+      console.error('requireProductionKanbanEdit:', e);
+      return res.status(500).json({ error: 'Lỗi hệ thống khi kiểm tra quyền' });
+    }
+  };
+}
+
+/** PUT /projects/:id — chỉ cho lead_members sửa workshop_type_id (kéo cột «Chưa phân loại»). */
+function requireProjectEditOrSxKanbanWorkshopType() {
+  const { checkPermission } = require('../middleware/newPermission');
+  return async (req, res, next) => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized - no user ID' });
+      }
+      if (await checkPermission(userId, 'projects', 'edit', null, req.user)) return next();
+      const b = req.body || {};
+      const keys = Object.keys(b).filter((k) => b[k] !== undefined);
+      const onlyWorkshopType = keys.length > 0 && keys.every((k) => k === 'workshop_type_id');
+      if (onlyWorkshopType && await userCanMutateProductionProjectKanban(userId, req.params.id, req.user)) {
+        return next();
+      }
+      return res.status(403).json({
+        error: 'Không có quyền thực hiện hành động này',
+        message: 'Vui lòng liên hệ quản trị viên nếu bạn cần quyền này',
+      });
+    } catch (e) {
+      console.error('requireProjectEditOrSxKanbanWorkshopType:', e);
+      return res.status(500).json({ error: 'Lỗi hệ thống khi kiểm tra quyền' });
+    }
+  };
 }
 
 async function assertDealResponsible(req, res, { leadId, projectId } = {}) {
@@ -264,7 +369,12 @@ module.exports = {
   formatDeadlineVi,
   resolveDealRow,
   isDealResponsibleUser,
+  canMutateProductionKanban,
+  userCanMutateProductionProjectKanban,
   assertDealResponsible,
+  assertProductionKanbanMutation,
+  requireProductionKanbanEdit,
+  requireProjectEditOrSxKanbanWorkshopType,
   assertFileAttachmentMutation,
   assertLeadDocumentOwner,
   assertFileOwner,

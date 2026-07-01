@@ -24,7 +24,7 @@ const {
 } = require('../helpers/documentShareScope');
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('../helpers/projectCode');
 const { ensureDealLeadDocumentsForModuleTransition } = require('../helpers/ensureDealLeadDocumentsForModuleTransition');
-const { assertDealResponsible, assertFileAttachmentMutation, assertLeadDocumentOwner, logProjectFileActivity, logDealStageChangeComment, logDealDeadlineChangeComment, logDealActivityComment } = require('../helpers/projectFileActivity');
+const { assertDealResponsible, assertFileAttachmentMutation, assertLeadDocumentOwner, logProjectFileActivity, logDealStageChangeComment, logDealDeadlineChangeComment, logDealActivityComment, requireProjectEditOrSxKanbanWorkshopType } = require('../helpers/projectFileActivity');
 
 const r = Router();
 r.use(auth);
@@ -1773,7 +1773,7 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
 });
 
 // ─── UPDATE PROJECT ──
-r.put('/:id', requirePermission('projects', 'edit'), async (req, res) => {
+r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
   try {
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };

@@ -105,7 +105,8 @@ const {
 } = require('../helpers/documentShareScope');
 const { ensureDealLeadDocumentsForProjectId } = require('../helpers/ensureDealLeadDocumentsForModuleTransition');
 const {
-  assertDealResponsible,
+  assertProductionKanbanMutation,
+  requireProductionKanbanEdit,
   logDealStageChangeComment,
   logDealDeadlineChangeComment,
   logDealActivityComment,
@@ -1930,7 +1931,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
 // ─── PATCH /production/projects/:id/stage ──
 // Tối ưu: song song truy vấn validation, cache allowed stages; trả JSON ngay sau khi ghi DB,
 // đồng bộ CRM / handover / thông báo / socket chạy nền (setImmediate) để giảm thời gian HTTP.
-r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req, res) => {
+r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) => {
   try {
     const { id } = req.params;
     const { stage_id, move_to_intake } = req.body;
@@ -1945,7 +1946,7 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
-    if (!(await assertDealResponsible(req, res, { projectId: id }))) return;
+    if (!(await assertProductionKanbanMutation(req, res, { projectId: id }))) return;
 
     /** Kéo về cột «Chờ vào xưởng» — không có workflow_stage_id trên cột intake */
     if (move_to_intake === true || move_to_intake === 'true') {
@@ -2526,7 +2527,7 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
 
 // ─── PATCH /production/projects/:id/kanban-deadline ──
 /** Đặt/sửa deadline thẻ Kanban SX (kèm lý do nếu đã có deadline). */
-r.patch('/projects/:id/kanban-deadline', requirePermission('projects', 'edit'), async (req, res) => {
+r.patch('/projects/:id/kanban-deadline', requireProductionKanbanEdit(), async (req, res) => {
   try {
     const { id } = req.params;
     const { data: project } = await supabase
@@ -2535,7 +2536,7 @@ r.patch('/projects/:id/kanban-deadline', requirePermission('projects', 'edit'), 
       .eq('id', id)
       .maybeSingle();
     if (!project) return res.status(404).json({ error: 'Không tìm thấy dự án' });
-    if (!(await assertDealResponsible(req, res, { projectId: id }))) return;
+    if (!(await assertProductionKanbanMutation(req, res, { projectId: id }))) return;
 
     const raw = req.body?.sx_kanban_deadline_at ?? req.body?.kanban_deadline_at;
     const clearing = raw === null || raw === '';
@@ -2586,7 +2587,7 @@ r.patch('/projects/:id/kanban-deadline', requirePermission('projects', 'edit'), 
 
 // ─── PATCH /production/projects/:id/switch-workshop-type ─────────────────
 // Chuyển phân loại xưởng khi thẻ vào cột được đánh dấu is_switch_workshop_type
-r.patch('/projects/:id/switch-workshop-type', requirePermission('projects', 'edit'), async (req, res) => {
+r.patch('/projects/:id/switch-workshop-type', requireProductionKanbanEdit(), async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.userId;
@@ -2747,7 +2748,7 @@ r.patch('/projects/:id/switch-workshop-type', requirePermission('projects', 'edi
 
 // ─── PATCH /production/projects/:id/handover-vc ───────────────────────────
 // Bàn giao thủ công từ SX sang module Vận chuyển
-r.patch('/projects/:id/handover-vc', requirePermission('projects', 'edit'), async (req, res) => {
+r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.userId;
