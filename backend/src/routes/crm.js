@@ -2920,8 +2920,12 @@ async function computeOrgOverviewReportData(req, res) {
       if (prevAgg?.employeeMap) pruneDept(prevAgg.employeeMap);
     }
 
-    // --- Đếm deal thắng thiếu bằng chứng (không có file đính kèm) ---
+    // --- Đếm deal thắng thiếu bằng chứng ---
+    // Logic: deal thắng có task bắt buộc evidence (completion_requires_file_or_note hoặc
+    // required_evidence_file_types) → nếu task chưa completed hoặc completed thiếu minh chứng
+    // → deal tính là thiếu bằng chứng.
     try {
+      const { evaluateRequiredEvidenceTypes } = require('../helpers/evidenceFileTypes');
       const wonStageOrderByPipe = buildWonStageOrderByPipeline(stageMap);
       const pipelineStagesMap2 = buildPipelineStagesMap(stageMap);
       const wonDealIds = dealRows
@@ -2933,26 +2937,70 @@ async function computeOrgOverviewReportData(req, res) {
         .map((l) => l.id);
       if (wonDealIds.length) {
         const BATCH = 200;
-        const leadIdsWithDocs = new Set();
+        const dealsWithMissingEvidence = new Set();
         for (let i = 0; i < wonDealIds.length; i += BATCH) {
           const batch = wonDealIds.slice(i, i + BATCH);
-          const [docRes, attRes] = await Promise.all([
-            supabase.from('lead_documents').select('lead_id').in('lead_id', batch).not('file_url', 'is', null),
-            supabase.from('crm_task_attachments').select('lead_id').in('lead_id', batch).not('file_url', 'is', null),
-          ]);
-          for (const d of docRes.data || []) leadIdsWithDocs.add(String(d.lead_id));
-          for (const a of attRes.data || []) leadIdsWithDocs.add(String(a.lead_id));
+          const { data: evidenceTasks } = await supabase
+            .from('crm_tasks')
+            .select('id, lead_id, status, notes, completion_requires_file_or_note, required_evidence_file_types')
+            .in('lead_id', batch)
+            .or('completion_requires_file_or_note.eq.true,required_evidence_file_types.neq.[]');
+          if (!evidenceTasks?.length) continue;
+
+          // Task chưa completed → tự động thiếu bằng chứng
+          for (const t of evidenceTasks) {
+            if (t.status !== 'completed') {
+              dealsWithMissingEvidence.add(String(t.lead_id));
+            }
+          }
+          // Task completed → check evidence đủ chưa
+          const completedTasks = evidenceTasks.filter((t) => t.status === 'completed'
+            && !dealsWithMissingEvidence.has(String(t.lead_id)));
+          if (completedTasks.length) {
+            const taskIds = completedTasks.map((t) => t.id);
+            const attByTask = {};
+            const ATT_BATCH = 200;
+            for (let j = 0; j < taskIds.length; j += ATT_BATCH) {
+              const attBatch = taskIds.slice(j, j + ATT_BATCH);
+              const { data: atts } = await supabase
+                .from('crm_task_attachments')
+                .select('task_id, file_url, file_name, mime_type, notes, doc_type')
+                .in('task_id', attBatch);
+              for (const a of atts || []) {
+                if (!attByTask[a.task_id]) attByTask[a.task_id] = [];
+                attByTask[a.task_id].push(a);
+              }
+            }
+            for (const t of completedTasks) {
+              if (dealsWithMissingEvidence.has(String(t.lead_id))) continue;
+              const required = (Array.isArray(t.required_evidence_file_types) && t.required_evidence_file_types.length)
+                ? t.required_evidence_file_types : null;
+              const attachments = attByTask[t.id] || [];
+              let ok = false;
+              if (required) {
+                ok = evaluateRequiredEvidenceTypes(required, { taskNotes: t.notes, attachments }).ok;
+              } else {
+                ok = (t.notes != null && String(t.notes).trim() !== '')
+                  || attachments.some((a) =>
+                    (a.file_url && String(a.file_url).trim()) || (a.notes != null && String(a.notes).trim()));
+              }
+              if (!ok) dealsWithMissingEvidence.add(String(t.lead_id));
+            }
+          }
         }
+        const bumpNoEvidence = (bucket) => {
+          bucket.no_evidence_deal_count = (bucket.no_evidence_deal_count || 0) + 1;
+        };
         for (const l of dealRows) {
           if (!wonDealIds.includes(l.id)) continue;
-          if (leadIdsWithDocs.has(String(l.id))) continue;
+          if (!dealsWithMissingEvidence.has(String(l.id))) continue;
           const uid = orgReportOwnerId(l) || UNASSIGNED;
           const cid = l.company_id ? String(l.company_id) : NONE_COMPANY;
           const rid = l.region_id ? String(l.region_id) : NONE_REGION;
-          summary.no_evidence_deal_count = (summary.no_evidence_deal_count || 0) + 1;
-          ensureBucket(employeeMap, uid).no_evidence_deal_count = (ensureBucket(employeeMap, uid).no_evidence_deal_count || 0) + 1;
-          ensureBucket(companyMap, cid).no_evidence_deal_count = (ensureBucket(companyMap, cid).no_evidence_deal_count || 0) + 1;
-          ensureBucket(regionMap, rid).no_evidence_deal_count = (ensureBucket(regionMap, rid).no_evidence_deal_count || 0) + 1;
+          bumpNoEvidence(summary);
+          bumpNoEvidence(ensureBucket(employeeMap, uid));
+          bumpNoEvidence(ensureBucket(companyMap, cid));
+          bumpNoEvidence(ensureBucket(regionMap, rid));
         }
       }
     } catch (evErr) {
