@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+/** Thời gian highlight ngắn (quay lại từ chi tiết, không gắn với ô tìm). */
 export const KANBAN_SEARCH_HIT_MS = 3500;
 
 export const CRM_KANBAN_SEARCH_HIT_CLASS = 'crm-kanban-search-hit';
@@ -58,12 +59,15 @@ export function useKanbanSearchHighlight(dataAttr, { hitClass, durationMs = KANB
   const [highlightId, setHighlightId] = useState(null);
   const timerRef = useRef(null);
   const domElRef = useRef(null);
+  const onDoneRef = useRef(null);
 
   const clearHighlight = useCallback(() => {
     if (timerRef.current) {
       window.clearTimeout(timerRef.current);
       timerRef.current = null;
     }
+    onDoneRef.current?.();
+    onDoneRef.current = null;
     if (domElRef.current && hitClass) {
       removeDomHitClass(domElRef.current, hitClass);
       domElRef.current = null;
@@ -71,9 +75,15 @@ export function useKanbanSearchHighlight(dataAttr, { hitClass, durationMs = KANB
     setHighlightId(null);
   }, [hitClass]);
 
-  const triggerHighlight = useCallback((id, { onDone } = {}) => {
+  const triggerHighlight = useCallback((id, { onDone, persist = false } = {}) => {
     if (id == null || id === '') return;
     const sid = String(id);
+
+    if (timerRef.current) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    onDoneRef.current = null;
 
     if (domElRef.current && hitClass) {
       removeDomHitClass(domElRef.current, hitClass);
@@ -81,16 +91,21 @@ export function useKanbanSearchHighlight(dataAttr, { hitClass, durationMs = KANB
     }
 
     setHighlightId(sid);
-    if (timerRef.current) window.clearTimeout(timerRef.current);
-    timerRef.current = window.setTimeout(() => {
-      timerRef.current = null;
-      if (domElRef.current && hitClass) {
-        removeDomHitClass(domElRef.current, hitClass);
-        domElRef.current = null;
-      }
-      setHighlightId(null);
-      onDone?.();
-    }, durationMs);
+
+    if (!persist) {
+      onDoneRef.current = typeof onDone === 'function' ? onDone : null;
+      timerRef.current = window.setTimeout(() => {
+        timerRef.current = null;
+        if (domElRef.current && hitClass) {
+          removeDomHitClass(domElRef.current, hitClass);
+          domElRef.current = null;
+        }
+        setHighlightId(null);
+        const done = onDoneRef.current;
+        onDoneRef.current = null;
+        done?.();
+      }, durationMs);
+    }
 
     const attemptScroll = (tryNum = 0) => {
       const el = findKanbanCard(dataAttr, sid);
