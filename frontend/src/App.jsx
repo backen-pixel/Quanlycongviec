@@ -270,6 +270,7 @@ function ProtectedLayout() {
 
   const fullscreenPages = ['/projects/create', '/crm/messenger'];
   const isFullscreen = fullscreenPages.some((p) => location.pathname.startsWith(p));
+  const compactKanbanChrome = /^\/(crm\/(dashboard|pipeline)|sx\/(dashboard|pipeline))/.test(location.pathname);
 
   return (
     <CrmNotesFabProvider>
@@ -297,7 +298,7 @@ function ProtectedLayout() {
               {isFullscreen ? (
                 <Suspense fallback={<PageLoader />}><Outlet /></Suspense>
               ) : (
-                <div className="p-6 w-full max-w-full">
+                <div className={`px-6 pb-6 w-full max-w-full ${compactKanbanChrome ? 'pt-3' : 'pt-6'}`}>
                   <Suspense fallback={<PageLoader />}><Outlet /></Suspense>
                 </div>
               )}
