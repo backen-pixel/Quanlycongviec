@@ -22,6 +22,31 @@ function formatDeadlineVi(iso) {
   }
 }
 
+async function fetchProductionStaffIds(projectId) {
+  if (!projectId) return [];
+  try {
+    const { data } = await supabase
+      .from('project_production_staff')
+      .select('user_id')
+      .eq('project_id', projectId);
+    return (data || []).map((r) => String(r.user_id)).filter(Boolean);
+  } catch (_) { return []; }
+}
+
+async function enrichWithProductionInfo(row, projectId) {
+  const pid = projectId || row?.project_id;
+  if (!pid) return;
+  try {
+    const { data: proj } = await supabase
+      .from('projects')
+      .select('production_person_id')
+      .eq('id', pid)
+      .maybeSingle();
+    if (proj?.production_person_id) row.production_person_id = proj.production_person_id;
+  } catch (_) {}
+  row._staff_ids = await fetchProductionStaffIds(pid);
+}
+
 async function resolveDealRow(leadId, projectId) {
   if (leadId) {
     const { data } = await supabase
@@ -30,17 +55,7 @@ async function resolveDealRow(leadId, projectId) {
       .eq('id', leadId)
       .maybeSingle();
     if (data) {
-      // Bổ sung production_person_id từ project (nếu có) để check quyền cho người SX
-      if (data.project_id) {
-        try {
-          const { data: proj } = await supabase
-            .from('projects')
-            .select('production_person_id')
-            .eq('id', data.project_id)
-            .maybeSingle();
-          if (proj?.production_person_id) data.production_person_id = proj.production_person_id;
-        } catch (_) {}
-      }
+      await enrichWithProductionInfo(data, projectId);
       return data;
     }
   }
@@ -54,15 +69,7 @@ async function resolveDealRow(leadId, projectId) {
       .limit(1)
       .maybeSingle();
     if (data) {
-      // Bổ sung production_person_id từ project
-      try {
-        const { data: proj } = await supabase
-          .from('projects')
-          .select('production_person_id')
-          .eq('id', projectId)
-          .maybeSingle();
-        if (proj?.production_person_id) data.production_person_id = proj.production_person_id;
-      } catch (_) {}
+      await enrichWithProductionInfo(data, projectId);
       return data;
     }
     const { data: proj } = await supabase
@@ -70,16 +77,16 @@ async function resolveDealRow(leadId, projectId) {
       .select('id, production_person_id')
       .eq('id', projectId)
       .maybeSingle();
-    if (proj?.production_person_id) {
-      return {
-        id: null,
-        assigned_to: null,
-        lead_owner_id: null,
-        production_person_id: proj.production_person_id,
-        project_id: projectId,
-        title: null,
-      };
-    }
+    const staffIds = await fetchProductionStaffIds(projectId);
+    return {
+      id: null,
+      assigned_to: null,
+      lead_owner_id: null,
+      production_person_id: proj?.production_person_id || null,
+      _staff_ids: staffIds,
+      project_id: projectId,
+      title: null,
+    };
   }
   return null;
 }
@@ -88,9 +95,11 @@ function isDealResponsibleUser(req, dealRow) {
   if (isAdminLike(req.user)) return true;
   const uid = getRequestUserId(req);
   if (!uid || !dealRow) return false;
+  const uidStr = String(uid);
   const crmOwner = dealRow.assigned_to || dealRow.lead_owner_id;
-  if (crmOwner != null && String(crmOwner) === String(uid)) return true;
-  if (dealRow.production_person_id != null && String(dealRow.production_person_id) === String(uid)) return true;
+  if (crmOwner != null && String(crmOwner) === uidStr) return true;
+  if (dealRow.production_person_id != null && String(dealRow.production_person_id) === uidStr) return true;
+  if (Array.isArray(dealRow._staff_ids) && dealRow._staff_ids.includes(uidStr)) return true;
   return false;
 }
 
