@@ -984,7 +984,7 @@ async function fetchCrmLeadsForOrgReportBatched(type, {
   for (;;) {
     let q = supabase
       .from('crm_leads')
-      .select('id, stage_id, estimated_value, probability, type, assigned_to, lead_owner_id, company_id, region_id, created_at, source_id, stage_entered_at, first_touch_time, lead_type_id')
+      .select('id, stage_id, estimated_value, probability, type, assigned_to, lead_owner_id, company_id, region_id, created_at, source_id, stage_entered_at, first_touch_time, lead_type_id, kanban_deadline_at')
       .eq('type', type)
       .is('parent_lead_id', null);
     if (company_id) {
@@ -1882,6 +1882,10 @@ function emptyStaffLeadDealAgg() {
     won_or_later_value: 0,
     customer_order_count: 0,
     customer_order_value: 0,
+    delivered_deal_count: 0,
+    on_time_deal_count: 0,
+    late_deal_count: 0,
+    no_evidence_deal_count: 0,
   };
 }
 
@@ -2636,6 +2640,31 @@ function aggregateOrgReportRows(leadRows, dealRows, stageMap, opts = {}) {
     orgReportBumpFirstStageMetrics(ensureBucket(sourceMap, sid), l, stageMap, firstStageByPipe, asOfMs);
     orgReportBumpFirstStageMetrics(ensureBucket(leadTypeMap, leadTypeKeyForRow(l)), l, stageMap, firstStageByPipe, asOfMs);
 
+    if (isClosedWon) {
+      const bumpDelivery = (bucket) => {
+        bucket.delivered_deal_count = (bucket.delivered_deal_count || 0) + 1;
+        const deadline = l.kanban_deadline_at;
+        const wonAt = l.stage_entered_at || l.created_at;
+        if (deadline && wonAt) {
+          const dMs = new Date(deadline).getTime();
+          const wMs = new Date(wonAt).getTime();
+          if (wMs <= dMs) {
+            bucket.on_time_deal_count = (bucket.on_time_deal_count || 0) + 1;
+          } else {
+            bucket.late_deal_count = (bucket.late_deal_count || 0) + 1;
+          }
+        } else {
+          bucket.on_time_deal_count = (bucket.on_time_deal_count || 0) + 1;
+        }
+      };
+      bumpDelivery(summary);
+      bumpDelivery(ensureBucket(companyMap, cid));
+      bumpDelivery(ensureBucket(regionMap, rid));
+      bumpDelivery(ensureBucket(employeeMap, uid));
+      bumpDelivery(ensureBucket(sourceMap, sid));
+      bumpDelivery(ensureBucket(leadTypeMap, leadTypeKeyForRow(l)));
+    }
+
     if (l.stage_id) {
       orgReportBumpMetrics(ensureBucket(funnelMap, String(l.stage_id)), null, dealPatch);
     }
@@ -2667,6 +2696,9 @@ function aggregateOrgReportRows(leadRows, dealRows, stageMap, opts = {}) {
     reception_overdue_rate_pct: orgReportReceptionOverdueRatePct(summary),
     ...orgReportAttachFirstStageRates(summary),
     cancel_rate_pct: orgReportCancelRatePct(summary),
+    on_time_rate_pct: (summary.delivered_deal_count || 0) > 0
+      ? Math.round(((summary.on_time_deal_count || 0) / summary.delivered_deal_count) * 100)
+      : null,
   };
 
   return {
@@ -2888,6 +2920,45 @@ async function computeOrgOverviewReportData(req, res) {
       if (prevAgg?.employeeMap) pruneDept(prevAgg.employeeMap);
     }
 
+    // --- Đếm deal thắng thiếu bằng chứng (không có file đính kèm) ---
+    try {
+      const wonStageOrderByPipe = buildWonStageOrderByPipeline(stageMap);
+      const pipelineStagesMap2 = buildPipelineStagesMap(stageMap);
+      const wonDealIds = dealRows
+        .filter((l) => {
+          const st = l.stage_id ? stageMap[l.stage_id] : null;
+          const pid = st?.pipeline_id ? String(st.pipeline_id) : '__none__';
+          return orgReportDealIsClosedWon(st, wonStageOrderByPipe, pipelineStagesMap2[pid] || []);
+        })
+        .map((l) => l.id);
+      if (wonDealIds.length) {
+        const BATCH = 200;
+        const leadIdsWithDocs = new Set();
+        for (let i = 0; i < wonDealIds.length; i += BATCH) {
+          const batch = wonDealIds.slice(i, i + BATCH);
+          const [docRes, attRes] = await Promise.all([
+            supabase.from('lead_documents').select('lead_id').in('lead_id', batch).not('file_url', 'is', null),
+            supabase.from('crm_task_attachments').select('lead_id').in('lead_id', batch).not('file_url', 'is', null),
+          ]);
+          for (const d of docRes.data || []) leadIdsWithDocs.add(String(d.lead_id));
+          for (const a of attRes.data || []) leadIdsWithDocs.add(String(a.lead_id));
+        }
+        for (const l of dealRows) {
+          if (!wonDealIds.includes(l.id)) continue;
+          if (leadIdsWithDocs.has(String(l.id))) continue;
+          const uid = orgReportOwnerId(l) || UNASSIGNED;
+          const cid = l.company_id ? String(l.company_id) : NONE_COMPANY;
+          const rid = l.region_id ? String(l.region_id) : NONE_REGION;
+          summary.no_evidence_deal_count = (summary.no_evidence_deal_count || 0) + 1;
+          ensureBucket(employeeMap, uid).no_evidence_deal_count = (ensureBucket(employeeMap, uid).no_evidence_deal_count || 0) + 1;
+          ensureBucket(companyMap, cid).no_evidence_deal_count = (ensureBucket(companyMap, cid).no_evidence_deal_count || 0) + 1;
+          ensureBucket(regionMap, rid).no_evidence_deal_count = (ensureBucket(regionMap, rid).no_evidence_deal_count || 0) + 1;
+        }
+      }
+    } catch (evErr) {
+      console.warn('[crm/org-overview] evidence check:', evErr.message);
+    }
+
     const reportLeadIds = [...leadRows, ...dealRows].map((r) => r.id).filter(Boolean);
     const prevReportLeadIds = [...prevLeadRows, ...prevDealRows].map((r) => r.id).filter(Boolean);
     const kpiLedgerOpts = { companyId: effectiveCompanyId || null };
@@ -2987,6 +3058,9 @@ async function computeOrgOverviewReportData(req, res) {
           reception_overdue_rate_pct: orgReportReceptionOverdueRatePct(m),
           ...orgReportAttachFirstStageRates(m),
           cancel_rate_pct: orgReportCancelRatePct(m),
+          on_time_rate_pct: (m.delivered_deal_count || 0) > 0
+            ? Math.round(((m.on_time_deal_count || 0) / m.delivered_deal_count) * 100)
+            : null,
           ...labelFn(key, m),
         };
       })

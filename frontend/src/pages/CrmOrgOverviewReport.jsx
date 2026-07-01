@@ -71,6 +71,11 @@ const DEAL_ONLY_METRIC_KEYS = new Set([
   'deal_count',
   'customer_order_count',
   'won_vs_total',
+  'delivered_deal_count',
+  'on_time_deal_count',
+  'late_deal_count',
+  'no_evidence_deal_count',
+  'on_time_rate_pct',
   'conversion_rate',
   'deal_close_value_rate_pct',
   'quote_deal_count',
@@ -841,6 +846,69 @@ function WonVsTotalDealChart({ employees }) {
   );
 }
 
+function DeliveryPerformanceChart({ employees }) {
+  const rows = useMemo(() => {
+    return (employees || [])
+      .filter((r) => r.user_id && (r.delivered_deal_count || 0) > 0)
+      .map((r) => ({
+        name: truncLabel(r.full_name, 14),
+        onTime: r.on_time_deal_count || 0,
+        late: r.late_deal_count || 0,
+        noEvidence: r.no_evidence_deal_count || 0,
+        total: r.delivered_deal_count || 0,
+        rate: r.on_time_rate_pct != null ? r.on_time_rate_pct : 0,
+      }))
+      .sort((a, b) => b.rate - a.rate || b.total - a.total)
+      .slice(0, 12);
+  }, [employees]);
+
+  if (!rows.length) return null;
+
+  return (
+    <div className="rounded-xl border border-slate-200 p-4 bg-slate-50/30">
+      <p className="text-sm font-bold text-slate-800 mb-3">Hiệu suất giao hàng theo nhân viên</p>
+      <div style={{ height: Math.max(200, rows.length * 36 + 40) }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={rows} layout="vertical" margin={{ left: 4, right: 70 }}>
+            <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+            <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
+            <YAxis type="category" dataKey="name" width={96} tick={{ fontSize: 10 }} />
+            <RechartsTooltip
+              formatter={(v, n) => {
+                const labels = { onTime: 'Đúng hạn', late: 'Trễ hạn', noEvidence: 'Thiếu BC' };
+                return [v, labels[n] || n];
+              }}
+            />
+            <Legend
+              wrapperStyle={{ fontSize: 11 }}
+              formatter={(v) => {
+                const labels = { onTime: 'Đúng hạn', late: 'Trễ hạn', noEvidence: 'Thiếu BC' };
+                return labels[v] || v;
+              }}
+            />
+            <Bar dataKey="onTime" name="onTime" stackId="delivery" fill="#059669" />
+            <Bar dataKey="late" name="late" stackId="delivery" fill="#e11d48" />
+            <Bar dataKey="noEvidence" name="noEvidence" stackId="delivery" fill="#f59e0b" radius={[0, 4, 4, 0]}>
+              <LabelList
+                content={({ x, y, width, height, index }) => {
+                  const r = rows[index];
+                  if (!r) return null;
+                  const barEnd = x + width;
+                  return (
+                    <text x={barEnd + 4} y={y + height / 2} dy={4} fontSize={10} fill="#374151">
+                      {`${r.rate}%`}
+                    </text>
+                  );
+                }}
+              />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
 function DealStackedBarChart({ data, title }) {
   if (!data?.length) return null;
   return (
@@ -1034,6 +1102,42 @@ const METRIC_COLS_BASE = [
       const total = r.deal_count ?? 0;
       return `${won}/${total}`;
     },
+  },
+  {
+    key: 'delivered_deal_count',
+    label: 'Giao tháng',
+    align: 'right',
+    render: (r) => r.delivered_deal_count ?? 0,
+  },
+  {
+    key: 'on_time_deal_count',
+    label: 'Đúng hạn (A)',
+    align: 'right',
+    render: (r) => r.on_time_deal_count ?? 0,
+  },
+  {
+    key: 'late_deal_count',
+    label: 'Trễ hạn',
+    align: 'right',
+    render: (r) => {
+      const n = r.late_deal_count ?? 0;
+      return n > 0 ? <span className="text-red-600 font-semibold">{n}</span> : '0';
+    },
+  },
+  {
+    key: 'no_evidence_deal_count',
+    label: 'Thiếu BC (B)',
+    align: 'right',
+    render: (r) => {
+      const n = r.no_evidence_deal_count ?? 0;
+      return n > 0 ? <span className="text-amber-600 font-semibold">{n}</span> : '0';
+    },
+  },
+  {
+    key: 'on_time_rate_pct',
+    label: 'Tỷ lệ đúng hạn',
+    align: 'right',
+    render: (r) => (r.on_time_rate_pct == null ? '—' : `${r.on_time_rate_pct}%`),
   },
   {
     key: 'conversion_rate',
@@ -2357,6 +2461,7 @@ export default function CrmOrgOverviewReport() {
                 {employeeStacked.length > 0 && (
                   <DealStackedBarChart data={employeeStacked} title="Deal theo nhân viên (chốt / thua / mở)" />
                 )}
+                <DeliveryPerformanceChart employees={displayData.by_employee || []} />
                 <CollapsibleDataList label="bảng số liệu nhân viên" defaultOpen>
                   <MetricTable
                     columns={[
