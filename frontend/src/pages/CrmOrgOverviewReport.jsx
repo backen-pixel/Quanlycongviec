@@ -70,6 +70,7 @@ function reportCancelTotalCount(r) {
 const DEAL_ONLY_METRIC_KEYS = new Set([
   'deal_count',
   'customer_order_count',
+  'won_vs_total',
   'conversion_rate',
   'deal_close_value_rate_pct',
   'quote_deal_count',
@@ -784,6 +785,62 @@ function QuoteCloseChartsGrid({ rows, nameKey, entityLabel = 'đơn vị', combi
   );
 }
 
+function WonVsTotalDealChart({ employees }) {
+  const rows = useMemo(() => {
+    return (employees || [])
+      .filter((r) => r.user_id && (r.deal_count || 0) > 0)
+      .map((r) => {
+        const won = reportClosedWonCount(r);
+        const total = r.deal_count || 0;
+        const rate = total > 0 ? Math.round((won / total) * 100) : 0;
+        return {
+          name: truncLabel(r.full_name, 14),
+          won,
+          total,
+          rate,
+        };
+      })
+      .sort((a, b) => b.rate - a.rate || b.won - a.won)
+      .slice(0, 12);
+  }, [employees]);
+
+  if (!rows.length) return null;
+
+  return (
+    <Section title="Deal thắng / tổng deal" subtitle="Tỷ lệ deal thắng trên tổng deal theo nhân viên">
+      <div style={{ height: Math.max(200, rows.length * 36 + 40) }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={rows} layout="vertical" margin={{ left: 4, right: 60 }}>
+            <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+            <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
+            <YAxis type="category" dataKey="name" width={96} tick={{ fontSize: 10 }} />
+            <RechartsTooltip
+              formatter={(v, n, props) => {
+                const r = props.payload;
+                if (n === 'won') return [`${r.won}/${r.total} (${r.rate}%)`, 'Thắng/Tổng'];
+                return [v, n];
+              }}
+            />
+            <Bar dataKey="won" name="Deal thắng" fill="#059669" radius={[0, 4, 4, 0]}>
+              <LabelList
+                content={({ x, y, width, height, index }) => {
+                  const r = rows[index];
+                  if (!r) return null;
+                  return (
+                    <text x={x + width + 4} y={y + height / 2} dy={4} fontSize={10} fill="#374151">
+                      {`${r.won}/${r.total} (${r.rate}%)`}
+                    </text>
+                  );
+                }}
+              />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </Section>
+  );
+}
+
 function DealStackedBarChart({ data, title }) {
   if (!data?.length) return null;
   return (
@@ -968,6 +1025,16 @@ const QUOTE_CLOSE_COLS = [
 const METRIC_COLS_BASE = [
   { key: 'lead_count', label: 'Lead', align: 'right' },
   { key: 'deal_count', label: 'Deal', align: 'right' },
+  {
+    key: 'won_vs_total',
+    label: 'Thắng/Tổng',
+    align: 'right',
+    render: (r) => {
+      const won = reportClosedWonCount(r);
+      const total = r.deal_count ?? 0;
+      return `${won}/${total}`;
+    },
+  },
   {
     key: 'conversion_rate',
     label: 'Tỷ lệ chốt/tổng deal',
@@ -2062,6 +2129,8 @@ export default function CrmOrgOverviewReport() {
                   <DealStackedBarChart data={employeeStacked.slice(0, 8)} title="Top NV — phân bổ deal" />
                 )}
               </Section>
+
+              <WonVsTotalDealChart employees={displayData?.by_employee || []} />
 
               <Section title="Phễu pipeline" subtitle="Số lead/deal theo giai đoạn">
                 {funnelChart.length > 0 ? (
