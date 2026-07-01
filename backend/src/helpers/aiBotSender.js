@@ -193,10 +193,10 @@ async function loadChannelMemberIds(channelType, channelId) {
       .filter((u) => u.id !== AI_BOT_USER_ID)
       .map((u) => ({ id: u.id, full_name: u.full_name }));
   }
-  // group
+  // group — chỉ định FK vì bảng có 2 FK tới users (user_id + added_by)
   const { data } = await supabase
     .from('messenger_group_members')
-    .select('user_id, user:users(id, full_name, is_active)')
+    .select('user_id, user:users!messenger_group_members_user_id_fkey(id, full_name, is_active)')
     .eq('group_id', channelId);
   return (data || [])
     .map((m) => m.user)
