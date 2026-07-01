@@ -40,6 +40,19 @@ async function syncExternalCatalogVptLinks(workshopCompanyId) {
   const vptId = await resolveVptCompanyId();
   if (!vptId) return;
 
+  const { data: canonical } = await supabase
+    .from('production_external_companies')
+    .select('id')
+    .eq('production_company_id', coId)
+    .eq('linked_company_id', vptId)
+    .limit(1)
+    .maybeSingle();
+
+  if (canonical?.id) {
+    await ensureWorkshopClientCompanyLink(coId, vptId);
+    return;
+  }
+
   const { data: rows } = await supabase
     .from('production_external_companies')
     .select('id, name, linked_company_id')
@@ -55,8 +68,7 @@ async function syncExternalCatalogVptLinks(workshopCompanyId) {
       .eq('id', row.id)
       .is('linked_company_id', null);
     if (error?.code === '23505') {
-      // Đã có dòng khác cùng xưởng trỏ VPT — bỏ qua
-      continue;
+      break;
     }
   }
 
@@ -143,13 +155,16 @@ async function listProductionClientCompanies(workshopCompanyId) {
     if (!clientId) {
       clientId = await resolveCrmCompanyIdFromExternalName(ext.name);
       if (clientId) {
-        try {
-          await supabase
-            .from('production_external_companies')
-            .update({ linked_company_id: clientId })
-            .eq('id', ext.id)
-            .is('linked_company_id', null);
-        } catch { /* ignore unique conflict */ }
+        const { error: linkUpdErr } = await supabase
+          .from('production_external_companies')
+          .update({ linked_company_id: clientId })
+          .eq('id', ext.id)
+          .is('linked_company_id', null);
+        if (linkUpdErr?.code === '23505') {
+          // Đã có dòng khác cùng xưởng trỏ clientId — bỏ qua, vẫn addCrmId bên dưới.
+        } else if (linkUpdErr && !linkUpdErr.message?.includes('does not exist')) {
+          console.warn('[productionClientCompanies] link external:', linkUpdErr.message);
+        }
       }
     }
     if (clientId) {
@@ -210,16 +225,41 @@ async function ensureWorkshopClientCompanyLink(workshopCompanyId, clientCompanyI
   const wId = String(workshopCompanyId || '').trim();
   const cId = String(clientCompanyId || '').trim();
   if (!wId || !cId || wId === cId) return null;
+
+  const { data: existing } = await supabase
+    .from('production_workshop_client_companies')
+    .select('id, is_active')
+    .eq('production_company_id', wId)
+    .eq('client_company_id', cId)
+    .maybeSingle();
+
+  if (existing?.id) {
+    if (existing.is_active === false) {
+      await supabase
+        .from('production_workshop_client_companies')
+        .update({ is_active: true })
+        .eq('id', existing.id);
+    }
+    return existing.id;
+  }
+
   const { data, error } = await supabase
     .from('production_workshop_client_companies')
-    .upsert(
-      { production_company_id: wId, client_company_id: cId, is_active: true },
-      { onConflict: 'production_company_id,client_company_id' },
-    )
+    .insert({ production_company_id: wId, client_company_id: cId, is_active: true })
     .select('id')
     .maybeSingle();
+
   if (error) {
     if (error.message?.includes('does not exist')) return null;
+    if (error.code === '23505') {
+      const { data: dup } = await supabase
+        .from('production_workshop_client_companies')
+        .select('id')
+        .eq('production_company_id', wId)
+        .eq('client_company_id', cId)
+        .maybeSingle();
+      return dup?.id || null;
+    }
     throw error;
   }
   return data?.id || null;
