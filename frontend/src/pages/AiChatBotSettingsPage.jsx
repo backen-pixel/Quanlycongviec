@@ -48,6 +48,7 @@ const TIME_SCOPES = [
   { id: 'today', label: 'Hôm nay (00:00 → lúc chạy)' },
   { id: 'yesterday', label: 'Hôm qua (cả ngày)' },
   { id: 'last_7d', label: '7 ngày gần đây' },
+  { id: 'last_14d', label: '14 ngày gần đây' },
   { id: 'last_30d', label: '30 ngày gần đây' },
   { id: 'custom', label: 'Tuỳ chỉnh (lùi N ngày)' },
 ];
