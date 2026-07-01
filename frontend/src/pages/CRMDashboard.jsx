@@ -18,7 +18,6 @@ import { ListView, PlannerView, DeadlineView, CommentsView } from '../components
 import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
 import KanbanCardQuickMove from '../components/KanbanCardQuickMove';
 import KanbanCardOptionsMenu from '../components/KanbanCardOptionsMenu';
-import { resolveCrmLeadKanbanScheduleSource } from '../lib/crmLeadDeadlineDisplay';
 import EmployeePicker from '../components/EmployeePicker';
 import NewDealModal from '../components/NewDealModal';
 import {
@@ -92,6 +91,8 @@ import {
   formatCrmRemainingMs,
   getCrmDeadlineUrgencyBadgeClass,
   getCrmDeadlineUrgencyFromIso,
+  getCrmDeadlineUrgencyFromTs,
+  getPipelineStageSlaDeadlineTs,
   shouldHideCrmKanbanDeadlineOnCard,
 } from '../lib/crmLeadDeadlineDisplay';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
@@ -8074,41 +8075,75 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
   }, [searchHighlighted]);
 
   const hideColumnDeadline = shouldHideCrmKanbanDeadlineOnCard(item, stage);
-  const slaTone = getPipelineStageSlaTone(item.stage_entered_at, stage);
-  const taskTone = getCrmOpenTaskDeadlineTone(item.crm_next_open_task_deadline);
-  // Deadline thủ công (kanban_deadline_at) ưu tiên cao nhất cho «còn/quá hạn».
-  const manualDeadlineTone = getCrmOpenTaskDeadlineTone(item.kanban_deadline_at);
-  const scheduleResolved = resolveCrmLeadKanbanScheduleSource(item, stage);
-  // Ưu tiên: deadline thẻ → hạn NV CRM mở → SLA cột.
-  const scheduleSource = manualDeadlineTone ? 'deadline' : (taskTone ? 'task' : 'sla');
-  const cardToneLevel = hideColumnDeadline ? 'ok' : (manualDeadlineTone || taskTone || slaTone).level;
-  const scheduleTone = hideColumnDeadline ? null : (manualDeadlineTone || taskTone || slaTone);
+  const scheduleBlocked = hideColumnDeadline || stage?.is_won || stage?.is_lost || stage?.counts_as_completed_revenue;
 
-  // SLA badge phía bên phải giá trị tiền
-  const slaBadge = (() => {
-    if (hideColumnDeadline) return null;
-    if (!scheduleTone?.deadlineTs || stage?.is_won || stage?.is_lost || stage?.counts_as_completed_revenue) return null;
-    const deadlineDateLabel = formatDate(new Date(scheduleTone.deadlineTs).toISOString());
+  /** Một nguồn hạn duy nhất: deadline thẻ → NV CRM → chốt dự kiến → SLA cột. */
+  const unifiedSchedule = (() => {
+    if (scheduleBlocked) return null;
+    const readIso = (iso, source) => {
+      if (iso == null || iso === '') return null;
+      const ts = new Date(iso).getTime();
+      if (Number.isNaN(ts)) return null;
+      return { source, deadlineTs: ts, iso };
+    };
+    const manual = readIso(item.kanban_deadline_at, 'deadline');
+    if (manual) return manual;
+    const task = readIso(item.crm_next_open_task_deadline, 'task');
+    if (task) return task;
+    const expected = readIso(item.expected_close_date, 'expected_close');
+    if (expected) return expected;
+    const slaTs = getPipelineStageSlaDeadlineTs(item.stage_entered_at, stage);
+    if (slaTs != null) return { source: 'sla', deadlineTs: slaTs, iso: null };
+    return null;
+  })();
+
+  const scheduleUrgency = unifiedSchedule
+    ? getCrmDeadlineUrgencyFromTs(unifiedSchedule.deadlineTs)
+    : { level: 'ok', remainingMs: null, deadlineTs: null };
+  const cardToneLevel = scheduleUrgency.level;
+
+  const scheduleBadge = (() => {
+    if (!unifiedSchedule?.deadlineTs) return null;
+    const deadlineDateLabel = formatDate(new Date(unifiedSchedule.deadlineTs).toISOString());
     const isOverdue = cardToneLevel === 'overdue';
     const tonePalette = getCrmDeadlineUrgencyBadgeClass(cardToneLevel);
     const sourceLabel =
-      scheduleSource === 'deadline' ? 'Deadline thẻ'
-      : scheduleSource === 'task' ? 'NV CRM mở'
+      unifiedSchedule.source === 'deadline' ? 'Deadline thẻ'
+      : unifiedSchedule.source === 'task' ? 'NV CRM mở'
+      : unifiedSchedule.source === 'expected_close' ? 'Chốt dự kiến'
       : 'SLA cột';
     const isUrgent = cardToneLevel === 'overdue' || cardToneLevel === 'soon';
-    return (
-      <span
-        className={`shrink-0 inline-flex items-center gap-1 rounded-md border tabular-nums leading-none ${
-          isUrgent ? 'px-2 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[10px] font-semibold'
-        } ${tonePalette}`}
-        title={[
-          `Hạn: ${deadlineDateLabel}`,
-          `Nguồn: ${sourceLabel}`,
-          isOverdue ? 'Đã quá hạn' : '',
-        ].filter(Boolean).join('\n')}
-      >
+    const badgeCls = `shrink-0 inline-flex items-center gap-1 rounded-md border tabular-nums leading-none ${
+      isUrgent ? 'px-2 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[10px] font-semibold'
+    } ${tonePalette}`;
+    const badgeTitle = [
+      `Hạn: ${deadlineDateLabel}`,
+      `Nguồn: ${sourceLabel}`,
+      isOverdue ? 'Đã quá hạn' : '',
+      unifiedSchedule.source === 'deadline' ? 'Bấm để sửa deadline thẻ' : '',
+    ].filter(Boolean).join('\n');
+    const badgeContent = (
+      <>
         <Clock className={isUrgent ? 'h-3.5 w-3.5' : 'h-3 w-3'} strokeWidth={2.6} />
         {isOverdue ? <>Quá hạn {deadlineDateLabel}</> : <>Hạn {deadlineDateLabel}</>}
+      </>
+    );
+    if (unifiedSchedule.source === 'deadline' && typeof onOpenDeadline === 'function') {
+      return (
+        <button
+          type="button"
+          data-kanban-deadline-btn
+          onClick={(ev) => { ev.stopPropagation(); onOpenDeadline(item); }}
+          className={`${badgeCls} hover:opacity-90 cursor-pointer transition-opacity`}
+          title={badgeTitle}
+        >
+          {badgeContent}
+        </button>
+      );
+    }
+    return (
+      <span className={badgeCls} title={badgeTitle}>
+        {badgeContent}
       </span>
     );
   })();
@@ -8116,10 +8151,6 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
   const assigneeUser = item.assignee || item.lead_owner || null;
   const leadTypeLabel = resolveLeadTypeOnCard(item, leadTypes);
   const isDealCard = isCrmDealSidePipelineTab(pipelineType) || item.type === 'deal';
-  const dealPct = isDealCard ? dealProbabilityPercent(item, [stage]) : null;
-  const dealExpectedOnCard = isDealCard && (Number(item.estimated_value) || 0) > 0
-    ? dealWeightedValue(item, [stage])
-    : 0;
   const cardEstimatedValue = Number(item.estimated_value) || 0;
   const hasCardValue = cardEstimatedValue > 0;
   const canEditValue = typeof onSaveEstimatedValue === 'function';
@@ -8282,10 +8313,15 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
       )}
 
       <div className={`${compact ? 'p-2' : 'p-2.5'} space-y-1.5`}>
-        {/* 1. Header: mã + ngày tạo (NỔI BẬT) + cảnh báo + badge MỚI */}
+        {/* 1. Header: mã + ngày tạo (Lead: luôn hiện; Deal: chỉ khi hover) + badge MỚI */}
         <div className={`flex items-center gap-1 min-w-0 ${canMergeSelect ? 'pr-14' : 'pr-10'}`}>
-          <span className="font-mono text-[11px] font-semibold text-slate-500 truncate">{item.code}</span>
-          {item.created_at && (
+          <span
+            className="font-mono text-[11px] font-semibold text-slate-500 truncate"
+            title={item.created_at && isDealCard ? `Tạo deal: ${formatDate(item.created_at)}` : undefined}
+          >
+            {item.code}
+          </span>
+          {item.created_at && !isDealCard && (
             <span
               className="shrink-0 inline-flex items-center gap-0.5 rounded-md border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-indigo-700"
               title={`Tạo ${crmPipelineTabEntityLabel(pipelineType)}: ${formatDate(item.created_at)}`}
@@ -8294,11 +8330,14 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
               {formatDate(item.created_at)}
             </span>
           )}
-          {!hideColumnDeadline && cardToneLevel === 'overdue' && (
-            <AlertTriangle className="h-3.5 w-3.5 text-red-600 shrink-0 animate-pulse" aria-hidden />
-          )}
-          {!hideColumnDeadline && cardToneLevel === 'soon' && (
-            <AlertTriangle className="h-3.5 w-3.5 text-orange-500 shrink-0" aria-hidden />
+          {item.created_at && isDealCard && (
+            <span
+              className="shrink-0 inline-flex items-center gap-0.5 rounded-md border border-indigo-200/80 bg-indigo-50/90 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-indigo-600 opacity-0 group-hover/card:opacity-100 transition-opacity"
+              title={`Tạo deal: ${formatDate(item.created_at)}`}
+            >
+              <Calendar className="h-3 w-3" strokeWidth={2.4} />
+              {formatDate(item.created_at)}
+            </span>
           )}
           {item.is_new_for_current_user && (
             <span className="ml-auto shrink-0 inline-flex items-center rounded bg-rose-500 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white leading-none">
@@ -8389,28 +8428,15 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
               <span className="text-[11px] text-slate-400 italic">Chưa định giá</span>
             )}
           </div>
-          {isDealCard && dealPct != null && !editingValue && (
-            <span
-              className="shrink-0 inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-bold tabular-nums text-violet-700"
-              title={`Xác suất chốt ${dealPct}%${dealExpectedOnCard > 0 ? ` · Giá trị kỳ vọng ${formatVND(dealExpectedOnCard)}` : ''}`}
-            >
-              {dealPct}%
-            </span>
-          )}
         </div>
-        {isDealCard && dealExpectedOnCard > 0 && !editingValue && (
-          <p className="text-[10px] font-semibold tabular-nums text-violet-600 leading-none">
-            KV {formatVND(dealExpectedOnCard)}
-          </p>
-        )}
-        {/* Badge hạn — full width khi quá hạn / sắp quá hạn để dễ nhìn */}
-        {slaBadge && (
+        {/* Badge hạn — một dòng duy nhất (deadline thẻ / NV / chốt dự kiến / SLA) */}
+        {scheduleBadge && (
           <div className={`flex ${cardToneLevel === 'overdue' || cardToneLevel === 'soon' ? 'w-full' : 'justify-end'}`}>
-            {slaBadge}
+            {scheduleBadge}
           </div>
         )}
 
-        {/* 4. KH + SĐT: 2 cột (NỔI BẬT — tên KH đậm, SĐT mono lớn) */}
+        {/* 4. KH + SĐT */}
         {(item.customer?.full_name || item.customer?.phone) && (
           <div className="flex items-center justify-between gap-2">
             {item.customer?.full_name ? (
@@ -8426,10 +8452,10 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
               <a
                 href={`tel:${item.customer.phone}`}
                 onClick={(ev) => ev.stopPropagation()}
-                className="shrink-0 inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 font-mono text-[12px] font-bold tabular-nums text-emerald-700 hover:bg-emerald-100 transition-colors"
+                className="shrink-0 inline-flex items-center gap-1 font-mono text-[11px] tabular-nums text-slate-900 hover:text-slate-700 transition-colors"
                 title={`Gọi ${item.customer.phone}`}
               >
-                <Phone className="h-3 w-3" strokeWidth={2.4} />
+                <Phone className="h-3 w-3 shrink-0 text-slate-500" strokeWidth={2.2} />
                 {item.customer.phone}
               </a>
             )}
@@ -8464,42 +8490,6 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
             {deliveryDateBadge}
           </div>
         )}
-
-        {/* 6b. Deadline thẻ (kanban_deadline_at) — bấm để sửa; ẩn khi đã tick «tương tác» */}
-        {!hideColumnDeadline && typeof onOpenDeadline === 'function' && item.kanban_deadline_at && (() => {
-          const ts = new Date(item.kanban_deadline_at).getTime();
-          if (Number.isNaN(ts)) return null;
-          const { level } = getCrmDeadlineUrgencyFromIso(item.kanban_deadline_at);
-          const tone = `${getCrmDeadlineUrgencyBadgeClass(level)} hover:opacity-90 cursor-pointer`;
-          const urgent = level === 'overdue' || level === 'soon';
-          return (
-            <button
-              type="button"
-              data-kanban-deadline-btn
-              onClick={(ev) => { ev.stopPropagation(); onOpenDeadline(item); }}
-              className={`inline-flex items-center gap-1 rounded-md border transition-opacity ${urgent ? 'px-2 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[10px] font-semibold'} ${tone}`}
-              title={`Deadline thẻ — bấm để sửa (${formatDate(item.kanban_deadline_at)})`}
-            >
-              <Clock className="h-3 w-3" strokeWidth={2.4} />
-              Deadline: {formatDate(item.kanban_deadline_at)}
-            </button>
-          );
-        })()}
-
-        {/* 7. Deadline kỳ vọng (expected_close_date) — ẩn khi đã tick «tương tác» */}
-        {!hideColumnDeadline && item.expected_close_date && (() => {
-          const { level } = getCrmDeadlineUrgencyFromIso(item.expected_close_date);
-          const tone = level === 'ok'
-            ? 'bg-purple-50 text-purple-700 border-purple-200 font-medium'
-            : getCrmDeadlineUrgencyBadgeClass(level);
-          const urgent = level === 'overdue' || level === 'soon';
-          return (
-            <div className={`inline-flex items-center gap-1 rounded-md border ${urgent ? 'px-2 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[10px]'} ${tone}`}>
-              <Calendar className="h-3 w-3" />
-              Deadline: {formatDate(item.expected_close_date)}
-            </div>
-          );
-        })()}
 
         {/* 8. Lý do hủy/thua — cột is_lost: gợi ý nhỏ, ô đầy đủ khi hover */}
         {item.lost_reason && stage?.is_lost && (
