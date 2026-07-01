@@ -8024,7 +8024,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
   );
 });
 
-// Kanban Item Card - MISA style (redesign: header gọn, value lớn, footer phụ trách + actions)
+// Kanban Item Card — meta · tiêu đề · ngữ cảnh · giá trị · khách · footer
 const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipelineStages, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline, onSaveEstimatedValue, searchHighlighted = false }) {
   const navigate = useNavigate();
   const cardRef = useRef(null);
@@ -8178,8 +8178,8 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
     }
   };
 
-  // Badge SX/VC (giữ logic cũ, gói thành biến)
-  const sxVcBadge = (() => {
+  // Chip SX/VC — gọn, một dòng
+  const sxVcChip = (() => {
     const vcStage = item.vc_pipeline_stage;
     const sxStage = item.sx_pipeline_stage;
     const hasProject = !!item.project_id;
@@ -8199,62 +8199,61 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
     const label = isVC ? 'VC' : 'SX';
     const defaultColor = isVC ? '#ea580c' : '#0369a1';
     const isPlaceholder = !vcStage && !sxStage;
+    const companyHint = activeStage?.company?.short_name || activeStage?.company?.name;
     return (
-      <div
-        className={`flex items-center gap-1.5 rounded-md px-1.5 py-1 ${isPlaceholder ? 'border-dashed' : ''}`}
-        title={isPlaceholder ? 'Chưa có giai đoạn xưởng — chờ bàn giao Sản xuất hoặc cấu hình pipeline xưởng' : (activeStage?.company?.short_name || activeStage?.company?.name || undefined)}
+      <span
+        className={`inline-flex items-center gap-1 max-w-full rounded border px-1.5 py-0.5 text-[10px] font-medium truncate ${isPlaceholder ? 'border-dashed' : ''}`}
+        title={[
+          isPlaceholder ? 'Chưa có giai đoạn xưởng' : activeStage.name,
+          companyHint,
+        ].filter(Boolean).join(' · ')}
         style={{
           backgroundColor: activeStage.color ? `${activeStage.color}12` : (isVC ? '#fff7ed' : '#f0f9ff'),
-          border: `1px ${isPlaceholder ? 'dashed' : 'solid'} ${activeStage.color ? `${activeStage.color}50` : (isVC ? '#fed7aa' : '#bae6fd')}`,
-          opacity: isPlaceholder ? 0.9 : 1,
+          borderColor: activeStage.color ? `${activeStage.color}45` : (isVC ? '#fed7aa' : '#bae6fd'),
+          color: activeStage.color || defaultColor,
         }}
       >
-        <span className="text-[11px] shrink-0">{icon}</span>
-        <span className="text-[9px] font-bold uppercase tracking-wide shrink-0"
-          style={{ color: activeStage.color || defaultColor }}>{label}</span>
-        <span className="text-[11px] font-semibold truncate"
-          style={{ color: activeStage.color || defaultColor }}>
-          {activeStage.name}
-          {(activeStage?.company?.short_name || activeStage?.company?.name) && (
-            <span className="text-[10px] font-normal opacity-75 ml-1">
-              · {activeStage.company.short_name || activeStage.company.name}
-            </span>
-          )}
-        </span>
-      </div>
+        <span className="shrink-0">{icon}</span>
+        <span className="font-bold shrink-0">{label}</span>
+        <span className="truncate">{activeStage.name}</span>
+      </span>
     );
   })();
 
-  // Badge lịch đặt/giao từ linked_project
-  const orderDateBadge = (() => {
-    const od = item.linked_project?.order_date;
-    if (!od) return null;
-    return (
-      <div className="flex items-center gap-1.5 rounded-md border px-1.5 py-1 text-[11px] font-medium bg-slate-50 border-slate-200 text-slate-700">
-        <span>🛒</span>
-        <span className="truncate">Đặt: {formatDate(od)}</span>
-      </div>
-    );
-  })();
+  const orderDateChip = item.linked_project?.order_date ? (
+    <span
+      className="inline-flex items-center gap-0.5 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 tabular-nums"
+      title={`Ngày đặt: ${formatDate(item.linked_project.order_date)}`}
+    >
+      Đặt {formatDate(item.linked_project.order_date)}
+    </span>
+  ) : null;
 
-  const deliveryDateBadge = (() => {
+  const deliveryDateChip = (() => {
     const pd = item.linked_project?.delivery_date || item.linked_project?.production_deadline;
     if (!pd) return null;
     const isOverdue = new Date(pd) < new Date();
     const isSoon = !isOverdue && new Date(pd) < new Date(Date.now() + 3 * 86400000);
     const tone = isOverdue ? 'bg-red-50 border-red-200 text-red-700'
-      : isSoon ? 'bg-amber-50 border-amber-200 text-amber-700'
+      : isSoon ? 'bg-amber-50 border-amber-200 text-amber-800'
       : 'bg-teal-50 border-teal-200 text-teal-700';
     return (
-      <div className={`flex items-center gap-1.5 rounded-md border px-1.5 py-1 text-[11px] font-medium ${tone}`}>
-        <span>🚚</span>
-        <span className="truncate">
-          Giao: {formatDate(pd)}
-          {isOverdue ? ' ⚠️' : isSoon ? ' ⚡' : ''}
-        </span>
-      </div>
+      <span
+        className={`inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 text-[10px] font-medium tabular-nums ${tone}`}
+        title={`Ngày giao: ${formatDate(pd)}`}
+      >
+        Giao {formatDate(pd)}
+      </span>
     );
   })();
+
+  const companyLabel = showCompanyOnCard
+    ? (item.company?.short_name || item.company?.name || null)
+    : null;
+  const regionLabel = item.crm_region?.name || null;
+  const contextMetaLine = [companyLabel, regionLabel].filter(Boolean).join(' · ');
+  const hasContextChips = !!(sxVcChip || orderDateChip || deliveryDateChip);
+  const createdDateLabel = item.created_at ? formatDate(item.created_at) : null;
 
   return (
     <div
@@ -8312,70 +8311,81 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
         </button>
       )}
 
-      <div className={`${compact ? 'p-2' : 'p-2.5'} space-y-1.5`}>
-        {/* 1. Header: mã + ngày tạo (Lead: luôn hiện; Deal: chỉ khi hover) + badge MỚI */}
-        <div className={`flex items-center gap-1 min-w-0 ${canMergeSelect ? 'pr-14' : 'pr-10'}`}>
-          <span
-            className="font-mono text-[11px] font-semibold text-slate-500 truncate"
-            title={item.created_at && isDealCard ? `Tạo deal: ${formatDate(item.created_at)}` : undefined}
-          >
-            {item.code}
-          </span>
-          {item.created_at && !isDealCard && (
+      <div className={`${compact ? 'p-2' : 'p-2.5'} flex flex-col gap-1.5`}>
+        {/* Hàng meta: mã · ngày · hạn nhẹ · Mới */}
+        <div className={`flex items-center gap-1.5 min-w-0 ${canMergeSelect ? 'pr-6' : ''}`}>
+          <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5 min-w-0 flex-1">
             <span
-              className="shrink-0 inline-flex items-center gap-0.5 rounded-md border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-indigo-700"
-              title={`Tạo ${crmPipelineTabEntityLabel(pipelineType)}: ${formatDate(item.created_at)}`}
+              className="font-mono text-[10px] font-semibold text-slate-500 shrink-0"
+              title={createdDateLabel && isDealCard ? `Tạo deal: ${createdDateLabel}` : undefined}
             >
-              <Calendar className="h-3 w-3" strokeWidth={2.4} />
-              {formatDate(item.created_at)}
+              {item.code}
             </span>
-          )}
-          {item.created_at && isDealCard && (
-            <span
-              className="shrink-0 inline-flex items-center gap-0.5 rounded-md border border-indigo-200/80 bg-indigo-50/90 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-indigo-600 opacity-0 group-hover/card:opacity-100 transition-opacity"
-              title={`Tạo deal: ${formatDate(item.created_at)}`}
-            >
-              <Calendar className="h-3 w-3" strokeWidth={2.4} />
-              {formatDate(item.created_at)}
-            </span>
-          )}
+            {createdDateLabel && (
+              <>
+                <span className="text-slate-300 text-[10px] select-none" aria-hidden>·</span>
+                <span
+                  className={`text-[10px] text-slate-400 tabular-nums shrink-0 ${
+                    isDealCard ? 'opacity-0 group-hover/card:opacity-100 transition-opacity' : ''
+                  }`}
+                  title={`Tạo ${crmPipelineTabEntityLabel(pipelineType)}: ${createdDateLabel}`}
+                >
+                  {createdDateLabel}
+                </span>
+              </>
+            )}
+          </div>
           {item.is_new_for_current_user && (
-            <span className="ml-auto shrink-0 inline-flex items-center rounded bg-rose-500 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white leading-none">
+            <span className="shrink-0 inline-flex items-center rounded bg-rose-500 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white leading-none">
               Mới
             </span>
           )}
         </div>
 
-        {/* 2. Tiêu đề */}
-        <p
+        {/* Tiêu đề — trọng tâm thẻ */}
+        <h4
           title={item.title}
-          className={`font-medium text-slate-800 leading-snug ${compact ? 'text-[12px] line-clamp-2' : 'text-[13px] line-clamp-2'}`}
+          className={`font-semibold text-slate-900 leading-snug ${compact ? 'text-[12px] line-clamp-2' : 'text-[13px] line-clamp-2'}`}
         >
-          {item.title || <span className="italic text-slate-400">(Không tiêu đề)</span>}
-        </p>
+          {item.title || <span className="italic font-normal text-slate-400">(Không tiêu đề)</span>}
+        </h4>
 
-        {/* 2b. Loại Lead/Deal (phân loại sản phẩm) */}
-        {leadTypeLabel && (
-          <span
-            className="inline-flex items-center max-w-full rounded-md border px-1.5 py-0.5 text-[10px] font-semibold truncate"
-            style={{
-              backgroundColor: leadTypeLabel.color ? `${leadTypeLabel.color}14` : '#f5f3ff',
-              borderColor: leadTypeLabel.color ? `${leadTypeLabel.color}45` : '#ddd6fe',
-              color: leadTypeLabel.color || '#6d28d9',
-            }}
-            title={`Loại ${crmPipelineTabTitle(pipelineType)}: ${leadTypeLabel.name}`}
-          >
-            {leadTypeLabel.name}
-          </span>
+        {/* Phân loại + công ty / khu vực — một dòng phụ */}
+        {(leadTypeLabel || contextMetaLine) && (
+          <div className="flex flex-wrap items-center gap-1 min-w-0">
+            {leadTypeLabel && (
+              <span
+                className="inline-flex items-center max-w-full rounded border px-1.5 py-0.5 text-[10px] font-semibold truncate shrink-0"
+                style={{
+                  backgroundColor: leadTypeLabel.color ? `${leadTypeLabel.color}14` : '#f5f3ff',
+                  borderColor: leadTypeLabel.color ? `${leadTypeLabel.color}45` : '#ddd6fe',
+                  color: leadTypeLabel.color || '#6d28d9',
+                }}
+                title={`Loại ${crmPipelineTabTitle(pipelineType)}: ${leadTypeLabel.name}`}
+              >
+                {leadTypeLabel.name}
+              </span>
+            )}
+            {contextMetaLine && (
+              <span
+                className="inline-flex items-center gap-1 min-w-0 text-[10px] text-slate-500 truncate"
+                title={contextMetaLine}
+              >
+                {companyLabel && <Building2 className="h-3 w-3 shrink-0 text-indigo-400" strokeWidth={2.2} />}
+                {!companyLabel && regionLabel && <MapPin className="h-3 w-3 shrink-0 text-rose-400" strokeWidth={2.2} />}
+                <span className="truncate">{contextMetaLine}</span>
+              </span>
+            )}
+          </div>
         )}
 
-        {/* 3. Giá trị tiền (lớn, xanh) — nhập/sửa trực tiếp trên thẻ */}
+        {/* Giá trị — khối nổi bật */}
         <div
           data-kanban-value-zone
-          className="flex items-center justify-between gap-2 min-w-0"
+          className="rounded-md border border-emerald-100/90 bg-emerald-50/40 px-2 py-1.5 min-w-0"
           onClick={(ev) => ev.stopPropagation()}
         >
-          <div className="flex items-center gap-1 min-w-0 flex-1">
+          <div className="flex items-center gap-1 min-w-0">
             {editingValue ? (
               <input
                 ref={valueInputRef}
@@ -8390,13 +8400,13 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
                 }}
                 onBlur={() => { commitValueEdit(); }}
                 placeholder="Giá trị (VNĐ)"
-                className={`min-w-0 flex-1 rounded-md border border-emerald-300 bg-white px-2 py-1 font-mono tabular-nums text-emerald-700 outline-none focus:ring-2 focus:ring-emerald-400/60 ${
+                className={`min-w-0 flex-1 rounded border border-emerald-300 bg-white px-2 py-1 font-mono tabular-nums text-emerald-700 outline-none focus:ring-2 focus:ring-emerald-400/60 ${
                   compact ? 'text-[12px]' : 'text-[13px]'
                 }`}
               />
             ) : hasCardValue ? (
               <>
-                <p className={`font-bold tabular-nums leading-none text-emerald-600 min-w-0 truncate ${compact ? 'text-[15px]' : 'text-[16px]'}`}>
+                <p className={`font-bold tabular-nums leading-none text-emerald-700 min-w-0 truncate flex-1 ${compact ? 'text-[14px]' : 'text-[15px]'}`}>
                   {formatVND(cardEstimatedValue)}
                 </p>
                 {canEditValue && (
@@ -8404,10 +8414,10 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
                     type="button"
                     onClick={startEditValue}
                     disabled={valueSaving}
-                    className="shrink-0 flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors cursor-pointer disabled:opacity-40"
+                    className="shrink-0 flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:text-emerald-600 hover:bg-white/80 transition-colors cursor-pointer disabled:opacity-40"
                     title="Sửa giá trị"
                   >
-                    <Pencil className="h-3.5 w-3.5" strokeWidth={2.2} />
+                    <Pencil className="h-3 w-3" strokeWidth={2.2} />
                   </button>
                 )}
               </>
@@ -8416,7 +8426,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
                 type="button"
                 onClick={startEditValue}
                 disabled={valueSaving}
-                className={`inline-flex items-center gap-1 rounded-md border border-dashed border-emerald-300 bg-emerald-50/60 px-2 py-1 font-medium text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer disabled:opacity-40 ${
+                className={`inline-flex items-center gap-1 rounded border border-dashed border-emerald-300 bg-white/70 px-2 py-0.5 font-medium text-emerald-700 hover:bg-white transition-colors cursor-pointer disabled:opacity-40 ${
                   compact ? 'text-[11px]' : 'text-[12px]'
                 }`}
                 title="Nhập giá trị thẻ"
@@ -8429,69 +8439,43 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
             )}
           </div>
         </div>
-        {/* Badge hạn — một dòng duy nhất (deadline thẻ / NV / chốt dự kiến / SLA) */}
+
         {scheduleBadge && (
-          <div className={`flex ${cardToneLevel === 'overdue' || cardToneLevel === 'soon' ? 'w-full' : 'justify-end'}`}>
-            {scheduleBadge}
-          </div>
+          <div className="w-full min-w-0 flex">{scheduleBadge}</div>
         )}
 
-        {/* 4. KH + SĐT */}
+        {/* Khách hàng — một dòng gọn */}
         {(item.customer?.full_name || item.customer?.phone) && (
-          <div className="flex items-center justify-between gap-2">
-            {item.customer?.full_name ? (
-              <span
-                className="inline-flex items-center gap-1 min-w-0 truncate text-[12px] font-semibold text-slate-800"
-                title={item.customer.full_name}
-              >
-                <User className="h-3.5 w-3.5 shrink-0 text-blue-500" strokeWidth={2.4} />
-                <span className="truncate">{item.customer.full_name}</span>
-              </span>
-            ) : <span />}
+          <p className="text-[11px] leading-snug min-w-0 truncate" title={[item.customer?.full_name, item.customer?.phone].filter(Boolean).join(' · ')}>
+            {item.customer?.full_name && (
+              <span className="font-medium text-slate-800">{item.customer.full_name}</span>
+            )}
+            {item.customer?.full_name && item.customer?.phone && (
+              <span className="text-slate-300 mx-1.5" aria-hidden>·</span>
+            )}
             {item.customer?.phone && (
               <a
                 href={`tel:${item.customer.phone}`}
                 onClick={(ev) => ev.stopPropagation()}
-                className="shrink-0 inline-flex items-center gap-1 font-mono text-[11px] tabular-nums text-slate-900 hover:text-slate-700 transition-colors"
+                className="font-mono tabular-nums text-slate-700 hover:text-slate-900 transition-colors"
                 title={`Gọi ${item.customer.phone}`}
               >
-                <Phone className="h-3 w-3 shrink-0 text-slate-500" strokeWidth={2.2} />
                 {item.customer.phone}
               </a>
             )}
+          </p>
+        )}
+
+        {/* SX/VC · lịch đặt/giao */}
+        {hasContextChips && (
+          <div className="flex flex-wrap gap-1 min-w-0">
+            {sxVcChip}
+            {orderDateChip}
+            {deliveryDateChip}
           </div>
         )}
 
-        {/* 5. Công ty (khi xem tất cả công ty) + Khu vực CRM */}
-        {showCompanyOnCard && (item.company?.short_name || item.company?.name) && (
-          <div className="text-[11px] text-slate-600">
-            <span className="inline-flex items-center gap-1 min-w-0 truncate max-w-full">
-              <Building2 className="h-3 w-3 shrink-0 text-indigo-500" />
-              <span className="truncate font-medium text-indigo-800">
-                {item.company.short_name || item.company.name}
-              </span>
-            </span>
-          </div>
-        )}
-        {item.crm_region?.name && (
-          <div className="text-[11px] text-slate-600">
-            <span className="inline-flex items-center gap-1 min-w-0 truncate max-w-full">
-              <MapPin className="h-3 w-3 shrink-0 text-rose-400" />
-              <span className="truncate">{item.crm_region.name}</span>
-            </span>
-          </div>
-        )}
-
-        {/* 6. Hàng badge phụ: SX/VC + lịch đặt/giao (nếu có) */}
-        {(sxVcBadge || orderDateBadge || deliveryDateBadge) && (
-          <div className="flex flex-wrap gap-1.5 pt-0.5">
-            {sxVcBadge}
-            {orderDateBadge}
-            {deliveryDateBadge}
-          </div>
-        )}
-
-        {/* 8. Lý do hủy/thua — cột is_lost: gợi ý nhỏ, ô đầy đủ khi hover */}
+        {/* Lý do hủy/thua */}
         {item.lost_reason && stage?.is_lost && (
           <>
             <span className="inline-flex items-center gap-1 text-[10px] font-medium text-red-600/85 group-hover/card:hidden">
@@ -8511,8 +8495,8 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
           </div>
         )}
 
-        {/* 9. Footer: avatar + tên phụ trách (trái) + cụm actions (phải) */}
-        <div className="flex items-center justify-between gap-2 pt-1.5 mt-1 border-t border-slate-100">
+        {/* Footer: phụ trách + thao tác */}
+        <div className="flex items-center justify-between gap-2 pt-1.5 mt-0.5 border-t border-slate-100">
           <div className="flex items-center gap-1.5 min-w-0">
             {assigneeUser ? (
               <>
