@@ -34,6 +34,11 @@ import {
   snapshotHasProperty,
 } from '../lib/crmPipelineStorage';
 import {
+  CRM_KANBAN_SEARCH_HIT_CLASS,
+  CRM_KANBAN_SEARCH_HIT_TW,
+  useKanbanSearchHighlight,
+} from '../lib/kanbanCardSearchHighlight';
+import {
   buildCrmDashboardCacheKey,
   getCrmDashboardCache,
   saveCrmDashboardCache,
@@ -1023,6 +1028,13 @@ export default function CRMDashboard() {
   });
   const [searchText, setSearchText] = useState(() => P?.searchText ?? '');
   const [searchFocused, setSearchFocused] = useState(false);
+  const [searchSuggestDismissed, setSearchSuggestDismissed] = useState(false);
+  const {
+    highlightId: kanbanSearchHighlightId,
+    triggerHighlight: triggerKanbanSearchHighlight,
+  } = useKanbanSearchHighlight('data-crm-pipeline-card', {
+    hitClass: CRM_KANBAN_SEARCH_HIT_CLASS,
+  });
   const [filterAssignee, setFilterAssignee] = useState(() => P?.filterAssignee ?? '');
   /** Gõ tên để thu hẹp danh sách trong dropdown NV */
   const [assigneeListSearch, setAssigneeListSearch] = useState(() => P?.assigneeListSearch ?? '');
@@ -1052,6 +1064,7 @@ export default function CRMDashboard() {
   const [showOverduePopover, setShowOverduePopover] = useState(false);
   const overdueTriggerRef = useRef(null);
   const searchBoxRef = useRef(null);
+  const searchInputRef = useRef(null);
   const [showAdvSearch, setShowAdvSearch] = useState(() => !!P?.showAdvSearch);
   const [crmFilterTab, setCrmFilterTab] = useState('employee');
   const [filterPanelPos, setFilterPanelPos] = useState(() => readStoredCrmFilterPanelPos());
@@ -1645,6 +1658,7 @@ export default function CRMDashboard() {
     }
     if (veryFreshCacheHit) {
       // Cache rất tươi: thanh tiến trình tối thiểu, không gọi API
+      setFirstLoading(false);
       setSyncing(true);
       setLastSyncAt(new Date());
       crmLoadProgressCtrlRef.current?.start();
@@ -2743,14 +2757,23 @@ export default function CRMDashboard() {
 
     if (silent && !background) setSyncing(true);
     if (!background) startCrmLoadProgress();
+    const loadTimeoutId = !background
+      ? window.setTimeout(() => {
+          if (loadSeqRef.current !== mySeq) return;
+          console.warn('[CRM] load timeout — tắt loader an toàn');
+          setFirstLoading(false);
+          setSyncing(false);
+          resetCrmLoadProgress();
+        }, 90000)
+      : null;
     const markLoadComplete = () => {
       if (background || isStale()) return;
-      finishCrmLoadProgress(() => {
-        if (loadSeqRef.current !== mySeq) return;
-        setFirstLoading(false);
-        setSyncing(false);
-        setLastSyncAt(new Date());
-      });
+      if (loadTimeoutId) window.clearTimeout(loadTimeoutId);
+      // Dữ liệu đã sẵn sàng — tắt loader ngay (không chờ animation %).
+      setFirstLoading(false);
+      setSyncing(false);
+      setLastSyncAt(new Date());
+      finishCrmLoadProgress();
     };
     try {
       let resolvedCompanyId = filterCompany;
@@ -2995,8 +3018,7 @@ export default function CRMDashboard() {
         api.get('/crm/pipeline-stages', { params: activeStagesParams }).catch(() => ({ data: [] })),
       ]);
       if (isStale()) {
-        if (silent) setSyncing(false);
-        resetCrmLoadProgress();
+        if (loadTimeoutId) window.clearTimeout(loadTimeoutId);
         return;
       }
 
@@ -3155,17 +3177,15 @@ export default function CRMDashboard() {
       }
     } catch (e) {
       console.error(e);
+      if (loadTimeoutId) window.clearTimeout(loadTimeoutId);
       if (!background && !isStale()) {
         resetCrmLoadProgress();
-        if (silent) setSyncing(false);
         setFirstLoading(false);
+        setSyncing(false);
       }
     }
     if (isStale()) {
-      if (!background) {
-        if (silent) setSyncing(false);
-        resetCrmLoadProgress();
-      }
+      if (loadTimeoutId) window.clearTimeout(loadTimeoutId);
       return;
     }
     try {
@@ -3395,7 +3415,7 @@ export default function CRMDashboard() {
   const deferredAssigneeName = useDeferredValue(filterAssigneeName);
 
   /** pipelineKind: 'lead' | 'deal' — một người phụ trách (assigned_to đồng bộ lead_owner) */
-  const filterItemsForPipeline = useCallback((items, _pipelineKind) => {
+  const filterItemsForPipeline = useCallback((items, _pipelineKind, textQueryOverride) => {
     let result = items;
 
     // Company filter
@@ -3475,7 +3495,7 @@ export default function CRMDashboard() {
     // Phone filter đã được ưu tiên xử lý ở backend để không bị phụ thuộc vào 500 bản ghi đầu.
 
     // Text search - tìm trong tên, mã, SĐT, mô tả, tên KH, email
-    const q = deferredSearchText.trim().toLowerCase();
+    const q = (textQueryOverride !== undefined ? String(textQueryOverride) : deferredSearchText).trim().toLowerCase();
     if (q) {
       result = result.filter((l) => {
         // So khớp bằng nhiều `indexOf` rời nhau, dừng sớm khi tìm thấy → nhanh hơn
@@ -3585,6 +3605,31 @@ export default function CRMDashboard() {
     ? customerTabDeals
     : dealKanbanDeals;
   const activeItems = pipelineType === 'lead' ? leads : activeDeals;
+
+  /** Gợi ý tìm kiếm — dùng searchText tức thì (không deferred), tối đa 10 dòng trong dropdown */
+  const crmSearchSuggestMatches = useMemo(() => {
+    const q = searchText.trim();
+    if (q.length < 2) return [];
+    const filteredDeals = restrictToCrmModuleCompanies(filterItemsForPipeline(allDeals, 'deal', searchText));
+    const { dealTabDeals, customerTabDeals } = partitionDealsForCrmTabs(filteredDeals, { wonAnchorOrder, stagesDeal });
+    if (pipelineType === 'lead') {
+      return restrictToCrmModuleCompanies(filterItemsForPipeline(allLeads, 'lead', searchText));
+    }
+    if (isCrmCustomerPipelineTab(pipelineType)) return customerTabDeals;
+    return dealKhSplitEnabled ? dealTabDeals : filteredDeals;
+  }, [
+    searchText, pipelineType, allLeads, allDeals, filterItemsForPipeline, restrictToCrmModuleCompanies,
+    dealKhSplitEnabled, wonAnchorOrder, stagesDeal,
+  ]);
+
+  const crmSearchSuggestItems = useMemo(
+    () => crmSearchSuggestMatches.slice(0, 10),
+    [crmSearchSuggestMatches],
+  );
+
+  const crmSearchSuggestOpen = searchText.trim().length >= 2
+    && crmSearchSuggestItems.length > 0
+    && !searchSuggestDismissed;
 
   useEffect(() => {
     if (isCrmCustomerPipelineTab(pipelineType) && !showCustomerTab) {
@@ -3906,7 +3951,8 @@ export default function CRMDashboard() {
   }, [viewMode, pipelineType, activeItems, activeStages]);
 
   const focusOverdueItem = useCallback((it) => {
-    const el = document.querySelector(`[data-crm-pipeline-card="${it.id}"]`);
+    const el = document.querySelector(`.ui-kanban-fixed [data-crm-pipeline-card="${it.id}"]`)
+      || document.querySelector(`[data-crm-pipeline-card="${it.id}"]`);
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
       el.classList.add('ring-2', 'ring-red-500', 'ring-offset-2');
@@ -3924,15 +3970,9 @@ export default function CRMDashboard() {
 
   const focusCrmSearchResult = useCallback((itemId) => {
     persistCrmPipelineUiNow();
+    setSearchSuggestDismissed(true);
     setSearchFocused(false);
-
-    const pulse = (el) => {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
-      el.classList.add('ring-2', 'ring-violet-500', 'ring-offset-2', 'rounded-lg', 'transition-shadow');
-      window.setTimeout(() => {
-        el.classList.remove('ring-2', 'ring-violet-500', 'ring-offset-2', 'rounded-lg', 'transition-shadow');
-      }, 2200);
-    };
+    searchInputRef.current?.blur();
 
     if (viewMode !== 'kanban') {
       setViewMode('kanban');
@@ -3940,13 +3980,8 @@ export default function CRMDashboard() {
       return;
     }
 
-    const el = document.querySelector(`[data-crm-pipeline-card="${itemId}"]`);
-    if (el) {
-      pulse(el);
-      return;
-    }
-    markCrmPipelineCardFocus(itemId);
-  }, [viewMode, persistCrmPipelineUiNow]);
+    triggerKanbanSearchHighlight(itemId);
+  }, [viewMode, persistCrmPipelineUiNow, triggerKanbanSearchHighlight]);
 
   const listViewPipelineId = useMemo(() => {
     if (!dashboardScopeCompanyId) return '';
@@ -4129,31 +4164,12 @@ export default function CRMDashboard() {
   }, [buildPipelineUiSnapshot, isAdmin, isCompanyScopedAdmin, filterCompany, filterLeadType]);
 
   useEffect(() => {
+    if (viewMode !== 'kanban') return;
     if (dataLead == null && dataDeal == null) return;
     const id = peekCrmPipelineCardFocus();
     if (!id) return;
-    const pulse = (el) => {
-      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      el.classList.add('ring-2', 'ring-blue-500', 'ring-offset-2', 'rounded-lg', 'transition-shadow');
-      window.setTimeout(() => {
-        el.classList.remove('ring-2', 'ring-blue-500', 'ring-offset-2', 'rounded-lg', 'transition-shadow');
-      }, 2200);
-      clearCrmPipelineCardFocus();
-    };
-    const tryOnce = () => {
-      const el = document.querySelector(`[data-crm-pipeline-card="${id}"]`);
-      if (el) {
-        pulse(el);
-        return true;
-      }
-      return false;
-    };
-    if (tryOnce()) return undefined;
-    const t = window.setTimeout(() => {
-      if (!tryOnce()) clearCrmPipelineCardFocus();
-    }, 500);
-    return () => clearTimeout(t);
-  }, [dataLead, dataDeal, viewMode, pipelineType, currentPipeline]);
+    triggerKanbanSearchHighlight(id, { onDone: clearCrmPipelineCardFocus });
+  }, [viewMode, dataLead, dataDeal, triggerKanbanSearchHighlight]);
 
   const applyKanbanStageChange = useCallback(
     async (leadId, newStageId, extraData = {}, opts = {}) => {
@@ -5330,10 +5346,18 @@ export default function CRMDashboard() {
                 />
               )}
               <input
+                ref={searchInputRef}
                 type="text"
                 value={searchText}
-                onChange={e => setSearchText(e.target.value)}
-                onFocus={() => setSearchFocused(true)}
+                onChange={(e) => {
+                  setSearchText(e.target.value);
+                  setSearchFocused(true);
+                  setSearchSuggestDismissed(false);
+                }}
+                onFocus={() => {
+                  setSearchFocused(true);
+                  setSearchSuggestDismissed(false);
+                }}
                 onBlur={() => setTimeout(() => setSearchFocused(false), 180)}
                 placeholder={
                   pipelineType === 'lead'
@@ -5343,12 +5367,12 @@ export default function CRMDashboard() {
                 className={`flex-1 min-w-[3.5rem] ${ctrlH} bg-transparent border-0 ${ctrlTxt} font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-0 ${searchText ? 'pr-7' : ''}`}
               />
               {searchText && (
-                <SearchClearButton onClick={() => { setSearchText(''); setSearchFocused(false); }} />
+                <SearchClearButton onClick={() => { setSearchText(''); setSearchFocused(false); setSearchSuggestDismissed(false); }} />
               )}
             </div>
             <AnchoredDropdownMenu
-              open={searchFocused && searchText.trim().length >= 2 && activeItems.length > 0 && activeItems.length <= 10}
-              onClose={() => setSearchFocused(false)}
+              open={crmSearchSuggestOpen}
+              onClose={() => setSearchSuggestDismissed(true)}
               anchorRef={searchBoxRef}
               align="left"
               matchAnchorWidth
@@ -5356,11 +5380,16 @@ export default function CRMDashboard() {
             >
               <div className="px-3 py-2 border-b border-violet-100 bg-gradient-to-r from-violet-50 to-violet-100/60">
                 <p className="text-[11px] font-semibold text-violet-800">
-                  <span className="font-bold text-violet-700">{activeItems.length}</span>
+                  <span className="font-bold text-violet-700">{crmSearchSuggestMatches.length}</span>
                   {' '}kết quả cho &ldquo;{searchText}&rdquo;
+                  {crmSearchSuggestMatches.length > 10 && (
+                    <span className="block text-[10px] font-normal text-violet-600/90 mt-0.5">
+                      Hiển thị 10 kết quả đầu — chọn để cuộn tới thẻ trên Kanban
+                    </span>
+                  )}
                 </p>
               </div>
-              {activeItems.map(item => (
+              {crmSearchSuggestItems.map(item => (
                 <button
                   key={item.id}
                   type="button"
@@ -6475,6 +6504,7 @@ export default function CRMDashboard() {
               onLoadMore={handleLoadMore}
               scrollLoad={kanbanScrollLoad}
               columnScrollMode={kanbanColumnScrollMode}
+              searchHighlightId={kanbanSearchHighlightId}
             />
             {/* Chú thích màu sắc thẻ Kanban — chỉ hiện sau khi load xong dữ liệu */}
             {!crmMainContentLoading && (
@@ -7784,6 +7814,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
   onColumnScrollNearEnd,
   pipelineStages,
   columnIndex = 0,
+  searchHighlightId = null,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
@@ -7956,7 +7987,11 @@ const KanbanStageCard = memo(function KanbanStageCard({
             <div
               key={item.id}
               className="crm-kanban-card-slot"
-              style={{ contentVisibility: 'auto', containIntrinsicSize: '0 118px' }}
+              style={
+                String(searchHighlightId) === String(item.id)
+                  ? { contentVisibility: 'visible' }
+                  : { contentVisibility: 'auto', containIntrinsicSize: '0 118px' }
+              }
             >
               <KanbanCard
                 item={item}
@@ -7975,6 +8010,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
                 onToggleInteracted={onToggleInteracted}
                 onOpenDeadline={onOpenDeadline}
                 onSaveEstimatedValue={onSaveEstimatedValue}
+                searchHighlighted={String(searchHighlightId) === String(item.id)}
               />
             </div>
           ))
@@ -7985,8 +8021,9 @@ const KanbanStageCard = memo(function KanbanStageCard({
 });
 
 // Kanban Item Card - MISA style (redesign: header gọn, value lớn, footer phụ trách + actions)
-const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipelineStages, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline, onSaveEstimatedValue }) {
+const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipelineStages, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline, onSaveEstimatedValue, searchHighlighted = false }) {
   const navigate = useNavigate();
+  const cardRef = useRef(null);
   const [editingValue, setEditingValue] = useState(false);
   const [valueDraft, setValueDraft] = useState('');
   const [valueSaving, setValueSaving] = useState(false);
@@ -8027,6 +8064,11 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
   const stageColor = stage.color || '#94a3b8';
   const selectedForMerge = mergeSelectedIds && mergeSelectedIds.some((x) => String(x) === String(item.id));
   const canMergeSelect = typeof onToggleMergeSelect === 'function';
+
+  useEffect(() => {
+    if (!searchHighlighted || !cardRef.current) return;
+    cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+  }, [searchHighlighted]);
 
   const hideColumnDeadline = shouldHideCrmKanbanDeadlineOnCard(item, stage);
   const slaTone = getPipelineStageSlaTone(item.stage_entered_at, stage);
@@ -8182,6 +8224,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
 
   return (
     <div
+      ref={cardRef}
       data-crm-pipeline-card={item.id}
       draggable={!dealDragLocked}
       onDragStart={handleDragStart}
@@ -8200,7 +8243,9 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
         }
         openLeadDetail();
       }}
-      className={`relative overflow-hidden rounded-lg border border-gray-200 !bg-white transition-[box-shadow,transform,z-index] duration-150 group/card hover:-translate-y-0.5 hover:shadow-md ${
+      className={`relative rounded-lg border border-gray-200 !bg-white transition-[box-shadow,transform,z-index,background-color,border-color] duration-150 group/card hover:-translate-y-0.5 hover:shadow-md ${
+        searchHighlighted ? `${CRM_KANBAN_SEARCH_HIT_TW} ${CRM_KANBAN_SEARCH_HIT_CLASS}` : 'overflow-hidden'
+      } ${
         dealDragLocked ? 'cursor-default' : 'cursor-pointer'
       } ${stage?.is_lost && item.lost_reason ? 'hover:z-20' : ''} ${selectedForMerge ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
       style={{ borderTop: `3px solid ${stageColor}` }}
@@ -8581,6 +8626,7 @@ function KanbanView({
   onLoadMore,
   scrollLoad,
   columnScrollMode = 'unified',
+  searchHighlightId = null,
 }) {
   const kanbanHScrollRef = useRef(null);
   const kanbanWrapRef = useRef(null);
@@ -8786,6 +8832,7 @@ function KanbanView({
               columnScrollMode={columnScrollMode}
               columnScrollMaxH={scrollMaxH}
               onColumnScrollNearEnd={perColumnScroll ? tryLoadMore : undefined}
+              searchHighlightId={searchHighlightId}
             />
           ))}
           {scrollLoad?.hasMore && (

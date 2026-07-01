@@ -94,6 +94,11 @@ export function createCrmLoadProgressController(setProgress) {
 
   return {
     start() {
+      if (pendingOnDone) {
+        const done = pendingOnDone;
+        pendingOnDone = null;
+        done();
+      }
       seq += 1;
       const mySeq = seq;
       cancelFrame();
@@ -116,6 +121,11 @@ export function createCrmLoadProgressController(setProgress) {
     },
 
     reset() {
+      if (pendingOnDone) {
+        const done = pendingOnDone;
+        pendingOnDone = null;
+        done();
+      }
       seq += 1;
       cancelFrame();
       displayed = 0;

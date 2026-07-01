@@ -43,6 +43,11 @@ import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
 } from '../lib/workshopPipelineStorage';
 import {
+  SX_KANBAN_SEARCH_HIT_CLASS,
+  SX_KANBAN_SEARCH_HIT_TW,
+  useKanbanSearchHighlight,
+} from '../lib/kanbanCardSearchHighlight';
+import {
   buildSxPipelineStageMeta,
   computeSxRevenueKpis,
   resolveSxProjectValue,
@@ -307,6 +312,13 @@ export default function ProductionDashboard() {
   const [sxFilterTab, setSxFilterTab] = useState(() => P0?.sxFilterTab || 'employee');
   const [filterPanelPos, setFilterPanelPos] = useState(() => readStoredSxFilterPanelPos());
   const [searchFocused, setSearchFocused] = useState(false);
+  const [searchSuggestDismissed, setSearchSuggestDismissed] = useState(false);
+  const {
+    highlightId: kanbanSearchHighlightId,
+    triggerHighlight: triggerKanbanSearchHighlight,
+  } = useKanbanSearchHighlight('data-sx-kanban-card', {
+    hitClass: SX_KANBAN_SEARCH_HIT_CLASS,
+  });
   const filterPanelRef = useRef(null);
   const filterPanelDragRef = useRef(null);
   const [filterWorkTypeId, setFilterWorkTypeId] = useState(() => P0?.filterWorkTypeId ?? '');
@@ -353,6 +365,7 @@ export default function ProductionDashboard() {
   const [showViewModeMenu, setShowViewModeMenu] = useState(false);
   const viewModeTriggerRef = useRef(null);
   const searchBoxRef = useRef(null);
+  const searchInputRef = useRef(null);
   const [kanbanColumnScrollMode, setKanbanColumnScrollMode] = useState(() => {
     const fromP = P0?.kanbanColumnScrollMode;
     if (fromP && KANBAN_COLUMN_SCROLL_MODES.includes(fromP)) return fromP;
@@ -1189,16 +1202,20 @@ export default function ProductionDashboard() {
 
   const filteredCardCount = allVisibleProjectIds.length;
 
-  const sxSearchSuggestItems = useMemo(() => {
+  const sxSearchSuggestMatches = useMemo(() => {
     const q = searchQuery.trim();
     if (q.length < 2) return [];
-    return filteredKanbanPipeline.flatMap((s) => s.items || []).slice(0, 10);
+    return filteredKanbanPipeline.flatMap((s) => s.items || []);
   }, [filteredKanbanPipeline, searchQuery]);
 
-  const sxSearchSuggestOpen = searchFocused
-    && searchQuery.trim().length >= 2
+  const sxSearchSuggestItems = useMemo(
+    () => sxSearchSuggestMatches.slice(0, 10),
+    [sxSearchSuggestMatches],
+  );
+
+  const sxSearchSuggestOpen = searchQuery.trim().length >= 2
     && sxSearchSuggestItems.length > 0
-    && sxSearchSuggestItems.length <= 10;
+    && !searchSuggestDismissed;
 
   const refreshProjectCommentsIndex = useCallback(async (ids = allVisibleProjectIds) => {
     const uniqIds = [...new Set((ids || []).map((x) => String(x || '').trim()).filter(Boolean))];
@@ -1402,39 +1419,13 @@ export default function ProductionDashboard() {
       setViewMode('kanban');
       return;
     }
-    const pulse = (el) => {
-      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      el.classList.add('ring-2', 'ring-teal-500', 'ring-offset-2', 'rounded-lg', 'transition-shadow');
-      window.setTimeout(() => {
-        el.classList.remove('ring-2', 'ring-teal-500', 'ring-offset-2', 'rounded-lg', 'transition-shadow');
-      }, 2200);
-      clearWorkshopPipelineCardFocus('sx');
-    };
-    const tryOnce = () => {
-      const el = document.querySelector(`[data-sx-kanban-card="${id}"]`);
-      if (el) {
-        pulse(el);
-        return true;
-      }
-      return false;
-    };
-    if (tryOnce()) return undefined;
-    const t = window.setTimeout(() => {
-      if (!tryOnce()) clearWorkshopPipelineCardFocus('sx');
-    }, 500);
-    return () => clearTimeout(t);
-  }, [loading, viewMode, filteredKanbanPipeline]);
+    triggerKanbanSearchHighlight(id, { onDone: () => clearWorkshopPipelineCardFocus('sx') });
+  }, [loading, viewMode, filteredKanbanPipeline, triggerKanbanSearchHighlight]);
 
   const focusSxSearchResult = useCallback((projectId) => {
+    setSearchSuggestDismissed(true);
     setSearchFocused(false);
-
-    const pulse = (el) => {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
-      el.classList.add('ring-2', 'ring-indigo-500', 'ring-offset-2', 'rounded-lg', 'transition-shadow');
-      window.setTimeout(() => {
-        el.classList.remove('ring-2', 'ring-indigo-500', 'ring-offset-2', 'rounded-lg', 'transition-shadow');
-      }, 2200);
-    };
+    searchInputRef.current?.blur();
 
     if (viewMode !== 'kanban') {
       setViewMode('kanban');
@@ -1442,13 +1433,8 @@ export default function ProductionDashboard() {
       return;
     }
 
-    const el = document.querySelector(`[data-sx-kanban-card="${projectId}"]`);
-    if (el) {
-      pulse(el);
-      return;
-    }
-    markWorkshopPipelineCardFocus(projectId, 'sx');
-  }, [viewMode]);
+    triggerKanbanSearchHighlight(projectId);
+  }, [viewMode, triggerKanbanSearchHighlight]);
 
   const scopeKpis = useMemo(() => {
     const list = scopeProjects;
@@ -2130,21 +2116,29 @@ export default function ProductionDashboard() {
                     />
                   )}
                   <input
+                    ref={searchInputRef}
                     type="text"
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onFocus={() => setSearchFocused(true)}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setSearchFocused(true);
+                      setSearchSuggestDismissed(false);
+                    }}
+                    onFocus={() => {
+                      setSearchFocused(true);
+                      setSearchSuggestDismissed(false);
+                    }}
                     onBlur={() => setTimeout(() => setSearchFocused(false), 180)}
                     placeholder="Tìm mã TB, tên khách, SĐT…"
                     className={`flex-1 min-w-[4.5rem] h-8 bg-transparent border-0 text-xs font-medium text-slate-900 placeholder:text-violet-500/60 focus:outline-none focus:ring-0 rounded-l-lg ${searchQuery ? 'pr-7' : ''}`}
                   />
                   {searchQuery && (
-                    <SearchClearButton onClick={() => { setSearchQuery(''); setSearchFocused(false); }} />
+                    <SearchClearButton onClick={() => { setSearchQuery(''); setSearchFocused(false); setSearchSuggestDismissed(false); }} />
                   )}
                 </div>
                 <AnchoredDropdownMenu
                   open={sxSearchSuggestOpen}
-                  onClose={() => setSearchFocused(false)}
+                  onClose={() => setSearchSuggestDismissed(true)}
                   anchorRef={searchBoxRef}
                   align="left"
                   matchAnchorWidth
@@ -2152,8 +2146,13 @@ export default function ProductionDashboard() {
                 >
                   <div className="px-3 py-2 border-b border-violet-100 bg-gradient-to-r from-violet-50 to-violet-100/60">
                     <p className="text-[11px] font-semibold text-violet-800">
-                      <span className="font-bold text-violet-700">{sxSearchSuggestItems.length}</span>
+                      <span className="font-bold text-violet-700">{sxSearchSuggestMatches.length}</span>
                       {' '}kết quả cho &ldquo;{searchQuery}&rdquo;
+                      {sxSearchSuggestMatches.length > 10 && (
+                        <span className="block text-[10px] font-normal text-violet-600/90 mt-0.5">
+                          Hiển thị 10 kết quả đầu — chọn để cuộn tới thẻ trên Kanban
+                        </span>
+                      )}
                     </p>
                   </div>
                   {sxSearchSuggestItems.map((project) => (
@@ -2641,7 +2640,8 @@ export default function ProductionDashboard() {
             }}
             onOpenDeadline={openDeadlineFromCard}
             onTogglePin={togglePinFlag}
-            remeasureToken={showAdvFilter ? 'adv-on' : 'adv-off'} />
+            remeasureToken={showAdvFilter ? 'adv-on' : 'adv-off'}
+            searchHighlightId={kanbanSearchHighlightId} />
         )}
 
         {viewMode === 'list' && <ProductionListView pipeline={filteredKanbanPipeline} calculateDays={calculateDays} />}
@@ -3005,6 +3005,7 @@ function KanbanStageCard({
   onTogglePin,
   columnScrollMode = 'unified',
   columnIndex = 0,
+  searchHighlightId = null,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const { columnScrollMaxH } = useWorkshopKanbanScrollLayout();
@@ -3129,7 +3130,8 @@ function KanbanStageCard({
               isSelected={selectedIds?.has(item.id)} onToggleSelect={onToggleSelect}
               onHandoverVC={onHandoverVC} onOpenKanbanComment={onOpenKanbanComment}
               workTypes={workTypes} onSetWorkType={onSetWorkType} onOpenDeadline={onOpenDeadline}
-              onTogglePin={onTogglePin} />
+              onTogglePin={onTogglePin}
+              searchHighlighted={String(searchHighlightId) === String(item.id)} />
           ))
         )}
       </div>
@@ -3138,8 +3140,9 @@ function KanbanStageCard({
 }
 
 // ── KANBAN ITEM CARD (y hệt CRM KanbanCard) ─────────────────────────────────
-function KanbanCard({ item, stage, onMoveStage, pipelineStages, calculateDays, isSelected, onToggleSelect, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline, onTogglePin }) {
+function KanbanCard({ item, stage, onMoveStage, pipelineStages, calculateDays, isSelected, onToggleSelect, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline, onTogglePin, searchHighlighted = false }) {
   const navigate = useNavigate();
+  const cardRef = useRef(null);
   const [handingOver, setHandingOver] = useState(false);
   const sxLeadId = resolveSxProjectLeadId(item);
   const projectValue = resolveSxProjectValue(item);
@@ -3221,8 +3224,14 @@ function KanbanCard({ item, stage, onMoveStage, pipelineStages, calculateDays, i
     ? 'border-red-300'
     : 'border-gray-200';
 
+  useEffect(() => {
+    if (!searchHighlighted || !cardRef.current) return;
+    cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+  }, [searchHighlighted]);
+
   return (
     <div
+      ref={cardRef}
       data-sx-kanban-card={item.id}
       draggable={!lockedInVc}
       onDragStart={handleDragStart}
@@ -3232,7 +3241,9 @@ function KanbanCard({ item, stage, onMoveStage, pipelineStages, calculateDays, i
         markWorkshopPipelineCardFocus(item.id, 'sx');
         navigate(`/sx/projects/${item.id}`);
       }}
-      className={`relative !bg-white rounded-lg border overflow-hidden px-2.5 pt-2.5 pb-2 transition-all duration-200 group hover:shadow-md ${
+      className={`relative !bg-white rounded-lg border px-2.5 pt-2.5 pb-2 transition-all duration-200 group hover:shadow-md ${
+        searchHighlighted ? `${SX_KANBAN_SEARCH_HIT_TW} ${SX_KANBAN_SEARCH_HIT_CLASS}` : 'overflow-hidden'
+      } ${
         lockedInVc ? 'cursor-default' : 'cursor-pointer'
       } ${
         isSelected
@@ -3641,6 +3652,7 @@ function KanbanView({
   onTogglePin,
   remeasureToken,
   columnScrollMode = 'unified',
+  searchHighlightId = null,
 }) {
   const pipelineStages = useMemo(
     () => (pipeline || []).map(({ items, ...stage }) => stage),
@@ -3674,6 +3686,7 @@ function KanbanView({
             onOpenDeadline={onOpenDeadline}
             onTogglePin={onTogglePin}
             columnScrollMode={columnScrollMode}
+            searchHighlightId={searchHighlightId}
           />
         ))}
       </div>
