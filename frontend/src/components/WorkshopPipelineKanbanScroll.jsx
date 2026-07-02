@@ -9,6 +9,18 @@ const MIN_STEP = 5;
 const MAX_STEP = 34;
 const NUDGE_PX = 280;
 
+const DEFAULT_LEFT_TITLE = 'Giữ chuột trên mép để cuộn chậm sang trái — bấm để cuộn nhanh — kéo thẻ tới mép để tự cuộn';
+const DEFAULT_RIGHT_TITLE = 'Giữ chuột trên mép để cuộn chậm sang phải — bấm để cuộn nhanh — kéo thẻ tới mép để tự cuộn';
+
+function assignRef(targetRef, node) {
+  if (!targetRef) return;
+  if (typeof targetRef === 'function') {
+    targetRef(node);
+    return;
+  }
+  targetRef.current = node;
+}
+
 /** Chiều cao vùng cuộn Kanban — dùng cho cột khi `per-column`. */
 export const WorkshopKanbanScrollContext = createContext({ columnScrollMaxH: null });
 
@@ -17,18 +29,26 @@ export function useWorkshopKanbanScrollLayout() {
 }
 
 /**
- * Vùng mép hai bên (mũi tên) + tự cuộn ngang khi kéo thẻ tới sát mép / bấm để nudge.
+ * Vùng mép hai bên (mũi tên) + tự cuộn ngang khi kéo thẻ tới sát mép / bấm để nudge / giữ chuột để cuộn chậm.
  * @param {string} cardSelector — selector cho `Element.closest` khi bắt drag (vd: '[data-sx-kanban-card]')
+ * @param {(event: DragEvent) => boolean} [isDragCardTarget] — tùy chọn, ưu tiên hơn cardSelector
  * @param {'unified'|'per-column'|'off'} columnScrollMode — cuộn dọc chung / riêng từng cột / tắt
  * @param {boolean} enableViewportScroll — legacy: true = unified
  * @param {number|string} remeasureToken — token đổi khi cần đo lại chiều cao vùng cuộn
+ * @param {boolean} showLegend — chú thích màu thẻ SX ở chân board
+ * @param {import('react').RefObject<HTMLElement|null>|((node: HTMLElement|null) => void)} [scrollContainerRef]
  */
 export default function WorkshopPipelineKanbanScroll({
   cardSelector,
+  isDragCardTarget,
   children,
   columnScrollMode,
   enableViewportScroll = false,
   remeasureToken,
+  showLegend = true,
+  scrollContainerRef,
+  leftTitle = DEFAULT_LEFT_TITLE,
+  rightTitle = DEFAULT_RIGHT_TITLE,
 }) {
   const resolvedScrollMode = columnScrollMode ?? (enableViewportScroll ? 'unified' : 'off');
   const perColumnScroll = resolvedScrollMode === 'per-column';
@@ -41,6 +61,11 @@ export default function WorkshopPipelineKanbanScroll({
   const [isDraggingCard, setIsDraggingCard] = useState(false);
   const [scrollMaxH, setScrollMaxH] = useState('70vh');
   const [quickChatDockRightInset, setQuickChatDockRightInset] = useState(0);
+
+  const setScrollContainerRef = useCallback((node) => {
+    kanbanHScrollRef.current = node;
+    assignRef(scrollContainerRef, node);
+  }, [scrollContainerRef]);
 
   const stopScrollLoop = useCallback(() => {
     if (scrollRafRef.current) {
@@ -133,6 +158,13 @@ export default function WorkshopPipelineKanbanScroll({
   useEffect(() => {
     const isOurCard = (e) => {
       if (!e?.target) return false;
+      if (typeof isDragCardTarget === 'function') {
+        try {
+          return isDragCardTarget(e);
+        } catch {
+          return false;
+        }
+      }
       try {
         return !!e.target.closest?.(cardSelector);
       } catch {
@@ -173,7 +205,7 @@ export default function WorkshopPipelineKanbanScroll({
       document.removeEventListener('dragover', onDragOver, true);
       stopScrollLoop();
     };
-  }, [cardSelector, endDrag, scheduleScrollLoop, stopScrollLoop, quickChatDockRightInset]);
+  }, [cardSelector, isDragCardTarget, endDrag, scheduleScrollLoop, stopScrollLoop, quickChatDockRightInset]);
 
   const nudge = (dir) => {
     const sc = kanbanHScrollRef.current;
@@ -191,13 +223,14 @@ export default function WorkshopPipelineKanbanScroll({
       <div ref={kanbanWrapRef} className={`relative ${UI_KANBAN_FIXED_CLASS}`}>
       <KanbanBoardEdgeScrollChrome
         wrapRef={kanbanWrapRef}
+        scrollRef={kanbanHScrollRef}
         remeasureToken={remeasureToken}
         isDraggingCard={isDraggingCard}
         onNudgeLeft={() => nudge('left')}
         onNudgeRight={() => nudge('right')}
         onRightInsetChange={setQuickChatDockRightInset}
-        leftTitle="Kéo thẻ tới mép này để tự cuộn cột bên trái — hoặc bấm (khi không kéo) để cuộn nhanh"
-        rightTitle="Kéo thẻ tới mép này để tự cuộn cột bên phải — hoặc bấm (khi không kéo) để cuộn nhanh"
+        leftTitle={leftTitle}
+        rightTitle={rightTitle}
       />
 
       {/* Vùng mép nhận dragover khi đang kéo thẻ — kích hoạt auto-scroll */}
@@ -220,7 +253,7 @@ export default function WorkshopPipelineKanbanScroll({
       />
 
       <div
-        ref={kanbanHScrollRef}
+        ref={setScrollContainerRef}
         className={`overscroll-y-contain pb-4 [scrollbar-gutter:stable] [overflow-anchor:none] ${
           perColumnScroll ? 'overflow-x-auto overflow-y-hidden' : unifiedScroll ? 'overflow-auto' : 'overflow-x-auto'
         }`}
@@ -231,6 +264,7 @@ export default function WorkshopPipelineKanbanScroll({
       >
         {children}
       </div>
+      {showLegend ? (
       <div className="flex flex-wrap items-center gap-3 px-3 py-2 mt-1 border-t border-gray-100 bg-white text-[11px] text-gray-600 rounded-b-lg ui-solid-white">
         <span className="font-semibold text-gray-500 mr-1">Chú thích:</span>
         <span className="inline-flex items-center gap-1.5">
@@ -246,6 +280,7 @@ export default function WorkshopPipelineKanbanScroll({
           Quá hạn
         </span>
       </div>
+      ) : null}
       </div>
     </WorkshopKanbanScrollContext.Provider>
   );

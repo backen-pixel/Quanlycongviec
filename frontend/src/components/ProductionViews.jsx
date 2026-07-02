@@ -716,11 +716,12 @@ function PlannerBoardShell({ children }) {
     <div ref={wrapRef} className="relative">
       <KanbanBoardEdgeScrollChrome
         wrapRef={wrapRef}
+        scrollRef={scrollRef}
         isDraggingCard={dragging}
         onNudgeLeft={() => nudge('left')}
         onNudgeRight={() => nudge('right')}
-        leftTitle="Cuộn nhanh sang trái"
-        rightTitle="Cuộn nhanh sang phải"
+        leftTitle="Giữ chuột để cuộn chậm sang trái — bấm để cuộn nhanh"
+        rightTitle="Giữ chuột để cuộn chậm sang phải — bấm để cuộn nhanh"
       />
       <div ref={scrollRef} className="overflow-x-auto pb-4 [scrollbar-gutter:stable]">
         <div className="flex min-w-max gap-3">{children}</div>
