@@ -235,24 +235,9 @@ main .ui-kanban-fixed .kanban-unified-scroll-column .kanban-column-empty--scroll
 }
 
 /* Kanban — đường kẻ dọc đứt khúc bên trái mỗi cột (Bitrix-style, CRM + SX) */
-main .ui-kanban-fixed .kanban-board-column-rails .kanban-column-rail {
-  position: relative;
-}
-
-main .ui-kanban-fixed .kanban-board-column-rails .kanban-column-rail::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 0;
-  border-left: 1px dashed rgba(148, 163, 184, 0.72);
-  pointer-events: none;
-  z-index: 6;
-}
-
-main .ui-kanban-fixed .kanban-board-column-rails .kanban-column-rail:not(:first-child)::before {
-  left: calc(var(--kanban-col-gap, 0.25rem) / -2);
+main .kanban-board-column-rails > .kanban-column-rail {
+  border-left: 1px dashed rgba(100, 116, 139, 0.92) !important;
+  box-sizing: border-box;
 }
 
 /* Input / select / textarea — nền trắng đặc */

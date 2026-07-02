@@ -31,12 +31,13 @@ export default function KanbanColumnVirtualList({
   const gap = compact ? GAP_COMPACT : GAP_DEFAULT;
   const estimateSize = compact ? ESTIMATE_COMPACT : ESTIMATE_DEFAULT;
   const itemCount = items?.length || 0;
-  const shouldVirtualize = itemCount >= threshold;
-  const useBoardScroll = shouldVirtualize && !!boardScrollRef;
+  /** Cuộn chung — không virtualize theo board (tránh lệch layout khi cột có nhiều thẻ). */
+  const isUnifiedBoardScroll = !!boardScrollRef;
+  const shouldVirtualize = itemCount >= threshold && !isUnifiedBoardScroll;
+  const useBoardScroll = false;
 
   const getScrollElement = () => {
     if (!shouldVirtualize) return null;
-    if (boardScrollRef) return boardScrollRef.current;
     return columnScrollRef?.current ?? null;
   };
 
