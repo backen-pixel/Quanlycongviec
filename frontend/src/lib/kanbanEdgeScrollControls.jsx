@@ -1,7 +1,5 @@
-import { useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { KANBAN_EDGE_SCROLL_Z_INDEX } from '../components/MessengerQuickChatDock';
 
 export const MESSENGER_QUICK_CHAT_DOCK_SELECTOR = '[data-messenger-quick-chat-dock]';
 export const MESSENGER_QUICK_CHAT_DOCK_REGION_SELECTOR = '[data-messenger-quick-chat-dock-region]';
@@ -13,6 +11,9 @@ const DOCK_LAYOUT_POLL_MS = 120;
 const DOCK_MOTION_MS = 520;
 const RIGHT_GAP_PX = 8;
 const DOCK_MOTION_EASE = 'cubic-bezier(0.33, 1, 0.68, 1)';
+const HOVER_SCROLL_MIN_STEP = 3;
+const HOVER_SCROLL_MAX_STEP = 11;
+const HOVER_SCROLL_RAMP_MS = 900;
 
 function edgeButtonWidth() {
   if (typeof window === 'undefined') return EDGE_BTN_W_MD;
@@ -164,11 +165,68 @@ export function useKanbanEdgeScrollLayout(wrapRef, remeasureToken) {
   return { rect, rightInset };
 }
 
+function prefersReducedMotion() {
+  if (typeof window === 'undefined') return false;
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/** Cuộn ngang chậm/mượt khi giữ chuột trên nút mép (kiểu Bitrix). */
+export function useKanbanEdgeButtonHoverScroll(scrollRef, { disabled = false } = {}) {
+  const rafRef = useRef(0);
+  const directionRef = useRef(null);
+  const startedAtRef = useRef(0);
+
+  const stopHoverScroll = useCallback(() => {
+    directionRef.current = null;
+    startedAtRef.current = 0;
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+    }
+  }, []);
+
+  const tick = useCallback(() => {
+    rafRef.current = 0;
+    const direction = directionRef.current;
+    if (!direction || disabled) return;
+
+    const sc = scrollRef?.current;
+    if (!sc) return;
+
+    const maxLeft = Math.max(0, sc.scrollWidth - sc.clientWidth);
+    const elapsed = startedAtRef.current ? performance.now() - startedAtRef.current : 0;
+    const ramp = prefersReducedMotion() ? 1 : Math.min(1, elapsed / HOVER_SCROLL_RAMP_MS);
+    const easedRamp = ramp * ramp;
+    const step = HOVER_SCROLL_MIN_STEP + easedRamp * (HOVER_SCROLL_MAX_STEP - HOVER_SCROLL_MIN_STEP);
+    const delta = direction === 'right' ? step : -step;
+    const before = sc.scrollLeft;
+    sc.scrollLeft = Math.max(0, Math.min(maxLeft, before + delta));
+
+    if (sc.scrollLeft !== before && directionRef.current) {
+      rafRef.current = requestAnimationFrame(tick);
+    }
+  }, [scrollRef, disabled]);
+
+  const startHoverScroll = useCallback((direction) => {
+    if (disabled) return;
+    directionRef.current = direction;
+    startedAtRef.current = performance.now();
+    if (!rafRef.current) {
+      rafRef.current = requestAnimationFrame(tick);
+    }
+  }, [disabled, tick]);
+
+  useEffect(() => () => stopHoverScroll(), [stopHoverScroll]);
+
+  return { startHoverScroll, stopHoverScroll };
+}
+
 /**
- * Gradient mép + nút portal (tự lùi khi thanh chat nhanh mở/ghim).
+ * Gradient mép + nút cuộn absolute (cùng vùng bấm với mũi tên hiển thị).
  */
 export function KanbanBoardEdgeScrollChrome({
   wrapRef,
+  scrollRef,
   remeasureToken,
   isDraggingCard,
   onNudgeLeft,
@@ -178,109 +236,83 @@ export function KanbanBoardEdgeScrollChrome({
   bottomClass = 'bottom-4',
   onRightInsetChange,
 }) {
-  const { rect, rightInset } = useKanbanEdgeScrollLayout(wrapRef, remeasureToken);
+  const { rightInset } = useKanbanEdgeScrollLayout(wrapRef, remeasureToken);
   const dragging = !!isDraggingCard;
-  const rightStyle = rightInset > 0 ? { right: rightInset } : { right: 0 };
+  const rightStyle = rightInset > 0 ? { right: rightInset } : undefined;
+  const [hoverSide, setHoverSide] = useState(null);
+  const { startHoverScroll, stopHoverScroll } = useKanbanEdgeButtonHoverScroll(scrollRef, { disabled: dragging });
 
   useEffect(() => {
     onRightInsetChange?.(rightInset);
   }, [rightInset, onRightInsetChange]);
 
+  useEffect(() => {
+    if (dragging) {
+      setHoverSide(null);
+      stopHoverScroll();
+    }
+  }, [dragging, stopHoverScroll]);
+
+  const edgeActive = (side) => dragging || hoverSide === side;
+  const edgeOpacity = (side) => (edgeActive(side) ? 'opacity-100' : 'opacity-40');
+
+  const clickBtnBase = `absolute top-0 ${bottomClass} z-[30] w-10 border-0 bg-transparent p-0 sm:w-12 ${
+    dragging ? 'pointer-events-none cursor-default' : 'cursor-pointer'
+  }`;
+
+  const bindHoverScroll = (side) => ({
+    onMouseEnter: () => {
+      if (dragging || !scrollRef) return;
+      setHoverSide(side);
+      startHoverScroll(side);
+    },
+    onMouseLeave: () => {
+      setHoverSide((prev) => (prev === side ? null : prev));
+      stopHoverScroll();
+    },
+  });
+
   return (
     <>
       <div
-        className={`pointer-events-none absolute left-0 top-0 ${bottomClass} z-20 flex w-12 items-stretch sm:w-14`}
+        className={`pointer-events-none absolute left-0 top-0 ${bottomClass} z-[28] flex w-12 items-stretch sm:w-14`}
         aria-hidden
       >
         <div
-          className={`flex w-full items-center justify-center bg-gradient-to-r from-slate-200/95 via-slate-100/40 to-transparent pl-0.5 transition-opacity duration-200 ${
-            dragging ? 'opacity-100' : 'opacity-40'
-          }`}
+          className={`flex w-full items-center justify-center bg-gradient-to-r from-slate-200/95 via-slate-100/40 to-transparent pl-0.5 transition-opacity duration-200 ${edgeOpacity('left')}`}
         >
           <ChevronLeft className="h-9 w-9 text-slate-600 drop-shadow sm:h-10 sm:w-10" strokeWidth={2.25} aria-hidden />
         </div>
       </div>
       <div
-        className={`pointer-events-none absolute top-0 ${bottomClass} z-20 flex w-12 items-stretch sm:w-14 motion-reduce:transition-none transition-[right] duration-[520ms] ease-[cubic-bezier(0.33,1,0.68,1)]`}
-        style={rightStyle}
+        className={`pointer-events-none absolute top-0 ${bottomClass} z-[28] flex w-12 items-stretch sm:w-14 motion-reduce:transition-none transition-[right] duration-[520ms] ease-[cubic-bezier(0.33,1,0.68,1)]`}
+        style={rightStyle ?? { right: 0 }}
         aria-hidden
       >
         <div
-          className={`ml-auto flex w-full items-center justify-center bg-gradient-to-l from-slate-200/95 via-slate-100/40 to-transparent pr-0.5 transition-opacity duration-200 ${
-            dragging ? 'opacity-100' : 'opacity-40'
-          }`}
+          className={`ml-auto flex w-full items-center justify-center bg-gradient-to-l from-slate-200/95 via-slate-100/40 to-transparent pr-0.5 transition-opacity duration-200 ${edgeOpacity('right')}`}
         >
           <ChevronRight className="h-9 w-9 text-slate-600 drop-shadow sm:h-10 sm:w-10" strokeWidth={2.25} aria-hidden />
         </div>
       </div>
-      <KanbanScrollEdgeClickPortals
-        rect={rect}
-        rightGapPx={rightInset}
-        isDraggingCard={dragging}
-        onNudgeLeft={onNudgeLeft}
-        onNudgeRight={onNudgeRight}
-        leftTitle={leftTitle}
-        rightTitle={rightTitle}
-      />
-    </>
-  );
-}
 
-/**
- * Nút mép trái/phải render qua portal (fixed, z-index trên thanh chat nhanh).
- * Chỉ nhận click — gradient/mũi tên vẫn vẽ trong Kanban.
- */
-export function KanbanScrollEdgeClickPortals({
-  rect,
-  rightGapPx = 0,
-  isDraggingCard,
-  onNudgeLeft,
-  onNudgeRight,
-  leftTitle,
-  rightTitle,
-}) {
-  if (!rect || typeof document === 'undefined') return null;
-
-  const width = edgeButtonWidth();
-  const height = Math.max(0, rect.height - BOTTOM_INSET_PX);
-  const dragging = !!isDraggingCard;
-  const gap = Math.max(0, rightGapPx);
-
-  const baseStyle = {
-    position: 'fixed',
-    top: rect.top,
-    height,
-    width,
-    zIndex: KANBAN_EDGE_SCROLL_Z_INDEX,
-    border: 0,
-    padding: 0,
-    margin: 0,
-    background: 'transparent',
-    transition: `left ${DOCK_MOTION_MS}ms ${DOCK_MOTION_EASE}`,
-  };
-
-  return createPortal(
-    <>
       <button
         type="button"
-        style={{ ...baseStyle, left: rect.left }}
-        className={dragging ? 'pointer-events-none cursor-default' : 'cursor-pointer'}
+        className={`${clickBtnBase} left-0`}
         title={leftTitle}
         aria-label={leftTitle}
         onClick={onNudgeLeft}
+        {...bindHoverScroll('left')}
       />
       <button
         type="button"
-        style={{
-          ...baseStyle,
-          left: Math.max(rect.left, rect.right - width - gap),
-        }}
-        className={dragging ? 'pointer-events-none cursor-default' : 'cursor-pointer'}
+        className={`${clickBtnBase} motion-reduce:transition-none transition-[right] duration-[520ms] ease-[cubic-bezier(0.33,1,0.68,1)]`}
+        style={rightStyle ?? { right: 0 }}
         title={rightTitle}
         aria-label={rightTitle}
         onClick={onNudgeRight}
+        {...bindHoverScroll('right')}
       />
-    </>,
-    document.body,
+    </>
   );
 }

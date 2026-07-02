@@ -21,7 +21,7 @@ import {
   Plus, X, Trash2, MessageSquare, GripVertical, Search, Edit2, Settings as SettingsIcon,
   CheckSquare, Eye, Clock,
 } from 'lucide-react';
-import { KanbanBoardEdgeScrollChrome } from '../lib/kanbanEdgeScrollControls';
+import WorkshopPipelineKanbanScroll from './WorkshopPipelineKanbanScroll';
 
 function formatVND(v) {
   if (!v) return '0đ';
@@ -326,92 +326,19 @@ function PlannerByOwner({ allItems, pipelineType, navigate, onGoPersonal }) {
   );
 }
 
-// ── Kanban board shell (horizontal scroll + edge auto-scroll khi kéo) ───────
+// ── Kanban board shell (horizontal scroll + mép cuộn hover/nudge/kéo thẻ) ───────
 function KanbanBoardShell({ children }) {
-  const scrollRef = useRef(null);
-  const wrapRef = useRef(null);
-  const draggingRef = useRef(false);
-  const rafRef = useRef(0);
-  const pointerRef = useRef({ x: 0, y: 0 });
-  const [dragging, setDragging] = useState(false);
-
-  useEffect(() => {
-    const onDragStart = (e) => {
-      if (e.target?.closest?.('[data-crm-pipeline-card]')) {
-        draggingRef.current = true;
-        setDragging(true);
-      }
-    };
-    const onDragEnd = () => {
-      draggingRef.current = false;
-      setDragging(false);
-      if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0; }
-    };
-    const EDGE = 56, MIN = 5, MAX = 34;
-    const tick = () => {
-      rafRef.current = 0;
-      if (!draggingRef.current) return;
-      const sc = scrollRef.current, wrap = wrapRef.current;
-      if (!sc || !wrap) return;
-      const r = wrap.getBoundingClientRect();
-      const x = pointerRef.current.x;
-      const innerL = r.left + EDGE, innerR = r.right - EDGE;
-      let delta = 0;
-      if (x < innerL) { const t = Math.min(1, (innerL - x) / EDGE); delta = -(MIN + t * t * (MAX - MIN)); }
-      else if (x > innerR) { const t = Math.min(1, (x - innerR) / EDGE); delta = (MIN + t * t * (MAX - MIN)); }
-      if (delta !== 0) {
-        const maxL = Math.max(0, sc.scrollWidth - sc.clientWidth);
-        const before = sc.scrollLeft;
-        sc.scrollLeft = Math.max(0, Math.min(maxL, before + delta));
-        if (sc.scrollLeft !== before && (x < innerL || x > innerR)) {
-          rafRef.current = requestAnimationFrame(tick);
-        }
-      }
-    };
-    const onDragOver = (e) => {
-      pointerRef.current = { x: e.clientX, y: e.clientY };
-      if (!draggingRef.current) return;
-      const wrap = wrapRef.current; if (!wrap) return;
-      const r = wrap.getBoundingClientRect();
-      const innerL = r.left + EDGE, innerR = r.right - EDGE;
-      if ((e.clientX < innerL || e.clientX > innerR) && !rafRef.current) {
-        rafRef.current = requestAnimationFrame(tick);
-      }
-    };
-    document.addEventListener('dragstart', onDragStart, true);
-    document.addEventListener('dragend', onDragEnd, true);
-    document.addEventListener('dragover', onDragOver, true);
-    return () => {
-      document.removeEventListener('dragstart', onDragStart, true);
-      document.removeEventListener('dragend', onDragEnd, true);
-      document.removeEventListener('dragover', onDragOver, true);
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    };
-  }, []);
-
-  const nudge = (dir) => {
-    const sc = scrollRef.current;
-    if (!sc) return;
-    const w = 280;
-    sc.scrollLeft = Math.max(0, Math.min(sc.scrollWidth - sc.clientWidth, sc.scrollLeft + (dir === 'right' ? w : -w)));
-  };
-
   return (
-    <div ref={wrapRef} className="relative">
-      <KanbanBoardEdgeScrollChrome
-        wrapRef={wrapRef}
-        isDraggingCard={dragging}
-        onNudgeLeft={() => nudge('left')}
-        onNudgeRight={() => nudge('right')}
-        leftTitle="Cuộn nhanh sang trái (hoặc kéo thẻ tới mép để tự cuộn)"
-        rightTitle="Cuộn nhanh sang phải (hoặc kéo thẻ tới mép để tự cuộn)"
-      />
-      <div ref={scrollRef} className="overflow-x-auto pb-4 [scrollbar-gutter:stable]">
-        <div className="flex min-w-max gap-3">
-          {children}
-        </div>
+    <WorkshopPipelineKanbanScroll
+      cardSelector="[data-crm-pipeline-card]"
+      showLegend={false}
+      leftTitle="Giữ chuột để cuộn chậm sang trái — bấm để cuộn nhanh"
+      rightTitle="Giữ chuột để cuộn chậm sang phải — bấm để cuộn nhanh"
+    >
+      <div className="flex min-w-max gap-3">
+        {children}
       </div>
-    </div>
+    </WorkshopPipelineKanbanScroll>
   );
 }
 

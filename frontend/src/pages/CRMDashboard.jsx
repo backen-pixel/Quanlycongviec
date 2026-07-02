@@ -18,6 +18,7 @@ import { ListView, PlannerView, DeadlineView, CommentsView } from '../components
 import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
 import KanbanCardQuickMove from '../components/KanbanCardQuickMove';
 import KanbanCardOptionsMenu from '../components/KanbanCardOptionsMenu';
+import KanbanColumnVirtualList, { CRM_KANBAN_VIRTUAL_THRESHOLD } from '../components/KanbanColumnVirtualList';
 import EmployeePicker from '../components/EmployeePicker';
 import NewDealModal from '../components/NewDealModal';
 import {
@@ -100,7 +101,7 @@ import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import { logFilter } from '../lib/activityLogger';
 import { CrmCommentMentionComposer } from '../components/crmCommentMentionUi';
 import { resolveMentionIdsFromContent } from '../lib/crmCommentMentions';
-import { KanbanBoardEdgeScrollChrome } from '../lib/kanbanEdgeScrollControls';
+import WorkshopPipelineKanbanScroll, { useWorkshopKanbanScrollLayout } from '../components/WorkshopPipelineKanbanScroll';
 import { useKanbanColumnTheme, UI_KANBAN_FIXED_CLASS, KANBAN_CARDS_BODY_CLASS } from '../lib/kanbanColumnTheme';
 import AnchoredDropdownMenu from '../components/AnchoredDropdownMenu';
 import SearchInlineFilterChips, { SearchClearButton } from '../components/SearchInlineFilterChips';
@@ -7814,14 +7815,17 @@ const KanbanStageCard = memo(function KanbanStageCard({
   explicitExpectedKv,
   wonStage,
   columnScrollMode = 'unified',
-  columnScrollMaxH,
+  columnScrollMaxH: columnScrollMaxHProp,
   onColumnScrollNearEnd,
   pipelineStages,
   columnIndex = 0,
   searchHighlightId = null,
+  boardScrollRef = null,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
+  const { columnScrollMaxH: layoutScrollMaxH } = useWorkshopKanbanScrollLayout();
+  const columnScrollMaxH = columnScrollMaxHProp ?? layoutScrollMaxH;
 
   const columnTheme = useKanbanColumnTheme(columnIndex);
   const columnItemIds = (items || []).map((i) => i.id);
@@ -7846,6 +7850,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
   const isVirtualColumn = !!stage?.__virtual;
   const totalInColumn = items?.length || 0;
   const perColumnScroll = columnScrollMode === 'per-column';
+  const virtualizeCards = totalInColumn >= CRM_KANBAN_VIRTUAL_THRESHOLD;
 
   const handleCardsScroll = (e) => {
     if (!perColumnScroll || !onColumnScrollNearEnd) return;
@@ -7976,7 +7981,9 @@ const KanbanStageCard = memo(function KanbanStageCard({
         className={`rounded-b-lg transition-all ${KANBAN_CARDS_BODY_CLASS} ${
           isOverColumn ? 'kanban-cards-body--drop' : ''
         } ${
-          compact ? 'p-1.5 space-y-1.5' : 'p-2.5 space-y-2'
+          virtualizeCards
+            ? (compact ? 'p-1.5' : 'p-2.5')
+            : (compact ? 'p-1.5 space-y-1.5' : 'p-2.5 space-y-2')
         } ${perColumnScroll ? 'flex-1 min-h-0 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]' : 'flex-1'}`}
         style={perColumnScroll ? undefined : { minHeight: compact ? '160px' : '180px' }}
       >
@@ -7987,16 +7994,13 @@ const KanbanStageCard = memo(function KanbanStageCard({
             </p>
           </div>
         ) : (
-          (items || []).map((item) => (
-            <div
-              key={item.id}
-              className="crm-kanban-card-slot"
-              style={
-                String(searchHighlightId) === String(item.id)
-                  ? { contentVisibility: 'visible' }
-                  : { contentVisibility: 'auto', containIntrinsicSize: '0 118px' }
-              }
-            >
+          <KanbanColumnVirtualList
+            items={items || []}
+            columnScrollRef={containerRef}
+            boardScrollRef={perColumnScroll ? null : boardScrollRef}
+            compact={compact}
+            searchHighlightId={searchHighlightId}
+            renderCard={(item) => (
               <KanbanCard
                 item={item}
                 stage={stage}
@@ -8016,8 +8020,8 @@ const KanbanStageCard = memo(function KanbanStageCard({
                 onSaveEstimatedValue={onSaveEstimatedValue}
                 searchHighlighted={String(searchHighlightId) === String(item.id)}
               />
-            </div>
-          ))
+            )}
+          />
         )}
       </div>
     </div>
@@ -8606,20 +8610,20 @@ function KanbanView({
   searchHighlightId = null,
 }) {
   const kanbanHScrollRef = useRef(null);
-  const kanbanWrapRef = useRef(null);
   const kanbanLoadSentinelRef = useRef(null);
   const loadMoreCooldownRef = useRef(false);
-  const pipelineDraggingRef = useRef(false);
-  const scrollRafRef = useRef(0);
-  const lastPointerRef = useRef({ x: 0, y: 0 });
-  const [isDraggingCard, setIsDraggingCard] = useState(false);
-  const [scrollMaxH, setScrollMaxH] = useState('70vh');
-  const [quickChatDockRightInset, setQuickChatDockRightInset] = useState(0);
   const perColumnScroll = columnScrollMode === 'per-column';
   const pipelineStages = useMemo(
     () => (quickMoveStages?.length ? quickMoveStages : (pipeline || []).map(({ items, ...stage }) => stage)),
     [quickMoveStages, pipeline],
   );
+
+  const isCrmPipelineDragTarget = useCallback((e) => {
+    const t = e.target;
+    if (t?.closest?.('[data-kanban-comment-btn]')) return false;
+    if (t?.closest?.('[data-kanban-deadline-btn]')) return false;
+    return !!t?.closest?.('[data-crm-pipeline-card]');
+  }, []);
 
   const tryLoadMore = useCallback(() => {
     if (loadMoreCooldownRef.current || !scrollLoad?.hasMore || scrollLoad?.loading || !onLoadMore) return;
@@ -8645,187 +8649,58 @@ function KanbanView({
     return () => obs.disconnect();
   }, [perColumnScroll, scrollLoad?.hasMore, scrollLoad?.loading, tryLoadMore]);
 
-  // Chiều cao Kanban cố định ~3 card mỗi cột (~720px). Không phụ thuộc viewport
-  // để bố cục đồng nhất trên mọi màn hình; phần còn lại scroll trong cột.
-  // Trên màn rất nhỏ thì co lại = viewport - 120 để không tràn ra ngoài.
-  useEffect(() => {
-    const measure = () => {
-      const el = kanbanHScrollRef.current;
-      if (!el) return;
-      const TARGET = 720;
-      const maxByViewport = Math.max(360, window.innerHeight - 120);
-      setScrollMaxH(`${Math.min(TARGET, maxByViewport)}px`);
-    };
-    const raf = requestAnimationFrame(measure);
-    const t = setTimeout(measure, 120);
-    window.addEventListener('resize', measure);
-    return () => {
-      cancelAnimationFrame(raf);
-      clearTimeout(t);
-      window.removeEventListener('resize', measure);
-    };
-  }, [remeasureToken, columnScrollMode]);
-
-  useEffect(() => {
-    const isOurCard = (e) => {
-      const t = e.target;
-      if (t?.closest?.('[data-kanban-comment-btn]')) return false;
-      if (t?.closest?.('[data-kanban-deadline-btn]')) return false;
-      return !!t?.closest?.('[data-crm-pipeline-card]');
-    };
-
-    const onDragStart = (e) => {
-      if (isOurCard(e)) {
-        pipelineDraggingRef.current = true;
-        setIsDraggingCard(true);
-      }
-    };
-    const onDragEnd = () => {
-      pipelineDraggingRef.current = false;
-      setIsDraggingCard(false);
-      if (scrollRafRef.current) {
-        cancelAnimationFrame(scrollRafRef.current);
-        scrollRafRef.current = 0;
-      }
-    };
-
-    const EDGE_ZONE_PX = 56;
-    const MIN_STEP = 5;
-    const MAX_STEP = 34;
-
-    const runScroll = () => {
-      scrollRafRef.current = 0;
-      if (!pipelineDraggingRef.current) return;
-      const sc = kanbanHScrollRef.current;
-      const wrap = kanbanWrapRef.current;
-      if (!sc || !wrap) return;
-      const { x } = lastPointerRef.current;
-      const r = wrap.getBoundingClientRect();
-      const innerLeft = r.left + EDGE_ZONE_PX;
-      const innerRight = r.right - EDGE_ZONE_PX - quickChatDockRightInset;
-      let delta = 0;
-      if (x < innerLeft) {
-        const t = Math.min(1, (innerLeft - x) / EDGE_ZONE_PX);
-        const step = MIN_STEP + t * t * (MAX_STEP - MIN_STEP);
-        delta = -step;
-      } else if (x > innerRight) {
-        const t = Math.min(1, (x - innerRight) / EDGE_ZONE_PX);
-        const step = MIN_STEP + t * t * (MAX_STEP - MIN_STEP);
-        delta = step;
-      }
-      if (delta !== 0) {
-        const maxLeft = Math.max(0, sc.scrollWidth - sc.clientWidth);
-        const before = sc.scrollLeft;
-        sc.scrollLeft = Math.max(0, Math.min(maxLeft, before + delta));
-        const moved = sc.scrollLeft !== before;
-        const inZone = x < innerLeft || x > innerRight;
-        if (inZone && moved) {
-          scrollRafRef.current = requestAnimationFrame(runScroll);
-        }
-      }
-    };
-
-    const onDragOver = (e) => {
-      lastPointerRef.current = { x: e.clientX, y: e.clientY };
-      if (!pipelineDraggingRef.current) return;
-      e.preventDefault();
-      const wrap = kanbanWrapRef.current;
-      if (!wrap) return;
-      const r = wrap.getBoundingClientRect();
-      const innerLeft = r.left + EDGE_ZONE_PX;
-      const innerRight = r.right - EDGE_ZONE_PX - quickChatDockRightInset;
-      if (e.clientX < innerLeft || e.clientX > innerRight) {
-        if (!scrollRafRef.current) {
-          scrollRafRef.current = requestAnimationFrame(runScroll);
-        }
-      }
-    };
-
-    document.addEventListener('dragstart', onDragStart, true);
-    document.addEventListener('dragend', onDragEnd, true);
-    document.addEventListener('dragover', onDragOver, true);
-    return () => {
-      document.removeEventListener('dragstart', onDragStart, true);
-      document.removeEventListener('dragend', onDragEnd, true);
-      document.removeEventListener('dragover', onDragOver, true);
-      if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current);
-    };
-  }, [quickChatDockRightInset]);
-
-  const nudge = (dir) => {
-    const sc = kanbanHScrollRef.current;
-    if (!sc) return;
-    const w = 280;
-    sc.scrollLeft = Math.max(0, Math.min(sc.scrollWidth - sc.clientWidth, sc.scrollLeft + (dir === 'right' ? w : -w)));
-  };
-
   return (
-    <div ref={kanbanWrapRef} className={`relative ${UI_KANBAN_FIXED_CLASS}`}>
-      <KanbanBoardEdgeScrollChrome
-        wrapRef={kanbanWrapRef}
-        remeasureToken={remeasureToken}
-        isDraggingCard={isDraggingCard}
-        onNudgeLeft={() => nudge('left')}
-        onNudgeRight={() => nudge('right')}
-        onRightInsetChange={setQuickChatDockRightInset}
-        leftTitle="Kéo thẻ tới mép này để tự cuộn sang cột bên trái — hoặc bấm (khi không kéo) để cuộn nhanh"
-        rightTitle="Kéo thẻ tới mép này để tự cuộn sang cột bên phải — hoặc bấm (khi không kéo) để cuộn nhanh"
-      />
-
-      <div
-        ref={kanbanHScrollRef}
-        className={`overscroll-y-contain pb-4 [scrollbar-gutter:stable] [overflow-anchor:none] ${
-          perColumnScroll ? 'overflow-x-auto overflow-y-hidden' : 'overflow-auto'
-        }`}
-        style={{
-          ...(perColumnScroll ? { height: scrollMaxH } : { maxHeight: scrollMaxH }),
-          WebkitOverflowScrolling: 'touch',
-        }}
-      >
-        <div className={`flex min-w-max items-stretch ${compact ? 'gap-1.5' : 'gap-2.5'} ${perColumnScroll ? 'h-full' : ''}`}>
-          {pipeline.map((stage, columnIndex) => (
-            <KanbanStageCard
-              key={stage.id}
-              columnIndex={columnIndex}
-              stage={stage}
-              items={stage.items}
-              onMoveStage={onMoveStage}
-              pipelineStages={pipelineStages}
-              pipelineType={pipelineType}
-              mergeSelectedIds={mergeSelectedIds}
-              onToggleMergeSelect={onToggleMergeSelect}
-              onToggleSelectAllInColumn={onToggleSelectAllInColumn}
-              compact={compact}
-              showCompanyOnCard={showCompanyOnCard}
-              leadTypes={leadTypes}
-              kpiLedgerPeriodStart={kpiLedgerPeriodStart}
-              onOpenKanbanComment={onOpenKanbanComment}
-              onTogglePin={onTogglePin}
-              onToggleInteracted={onToggleInteracted}
-              onOpenDeadline={onOpenDeadline}
-              onSaveEstimatedValue={onSaveEstimatedValue}
-              explicitExpectedKv={explicitExpectedKv}
-              wonStage={wonStage}
-              columnScrollMode={columnScrollMode}
-              columnScrollMaxH={scrollMaxH}
-              onColumnScrollNearEnd={perColumnScroll ? tryLoadMore : undefined}
-              searchHighlightId={searchHighlightId}
-            />
-          ))}
-          {scrollLoad?.hasMore && (
-            <div
-              ref={kanbanLoadSentinelRef}
-              className="flex-shrink-0 w-8 self-stretch flex items-end justify-center pb-6"
-              aria-hidden
-            >
-              {scrollLoad.loading && (
-                <span className="animate-spin inline-block w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full" />
-              )}
-            </div>
-          )}
-        </div>
+    <WorkshopPipelineKanbanScroll
+      cardSelector="[data-crm-pipeline-card]"
+      isDragCardTarget={isCrmPipelineDragTarget}
+      columnScrollMode={columnScrollMode}
+      remeasureToken={remeasureToken}
+      showLegend={false}
+      scrollContainerRef={kanbanHScrollRef}
+    >
+      <div className={`flex min-w-max items-stretch ${compact ? 'gap-1.5' : 'gap-2.5'} ${perColumnScroll ? 'h-full' : ''}`}>
+        {pipeline.map((stage, columnIndex) => (
+          <KanbanStageCard
+            key={stage.id}
+            columnIndex={columnIndex}
+            stage={stage}
+            items={stage.items}
+            onMoveStage={onMoveStage}
+            pipelineStages={pipelineStages}
+            pipelineType={pipelineType}
+            mergeSelectedIds={mergeSelectedIds}
+            onToggleMergeSelect={onToggleMergeSelect}
+            onToggleSelectAllInColumn={onToggleSelectAllInColumn}
+            compact={compact}
+            showCompanyOnCard={showCompanyOnCard}
+            leadTypes={leadTypes}
+            kpiLedgerPeriodStart={kpiLedgerPeriodStart}
+            onOpenKanbanComment={onOpenKanbanComment}
+            onTogglePin={onTogglePin}
+            onToggleInteracted={onToggleInteracted}
+            onOpenDeadline={onOpenDeadline}
+            onSaveEstimatedValue={onSaveEstimatedValue}
+            explicitExpectedKv={explicitExpectedKv}
+            wonStage={wonStage}
+            columnScrollMode={columnScrollMode}
+            onColumnScrollNearEnd={perColumnScroll ? tryLoadMore : undefined}
+            searchHighlightId={searchHighlightId}
+            boardScrollRef={perColumnScroll ? null : kanbanHScrollRef}
+          />
+        ))}
+        {scrollLoad?.hasMore && (
+          <div
+            ref={kanbanLoadSentinelRef}
+            className="flex-shrink-0 w-8 self-stretch flex items-end justify-center pb-6"
+            aria-hidden
+          >
+            {scrollLoad.loading && (
+              <span className="animate-spin inline-block w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full" />
+            )}
+          </div>
+        )}
       </div>
-    </div>
+    </WorkshopPipelineKanbanScroll>
   );
 }
 
