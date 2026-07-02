@@ -22,6 +22,9 @@ export const KANBAN_BOARD_COLUMN_RAILS_CLASS = 'kanban-board-column-rails';
 /** Cột Kanban — có đường kẻ dọc đứt khúc bên trái. */
 export const KANBAN_COLUMN_RAIL_CLASS = 'kanban-column-rail';
 
+/** Dòng «Giá trị» / tổng cột trên header Kanban — chữ xám đậm. */
+export const KANBAN_COLUMN_VALUE_METRIC_CLASS = 'kanban-column-value-metric';
+
 /** Thẻ Kanban pipeline (CRM + SX). */
 export const KANBAN_PIPELINE_CARD_CLASS = 'kanban-pipeline-card';
 

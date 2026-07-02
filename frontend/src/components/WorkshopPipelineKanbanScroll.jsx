@@ -226,6 +226,30 @@ export default function WorkshopPipelineKanbanScroll({
     );
   };
 
+  useEffect(() => {
+    const el = kanbanHScrollRef.current;
+    if (!el || (!unifiedScroll && !perColumnScroll)) return undefined;
+
+    const onWheel = (e) => {
+      const absX = Math.abs(e.deltaX);
+      const absY = Math.abs(e.deltaY);
+      if (absX < 2 || absX <= absY * 0.85) return;
+
+      const maxLeft = Math.max(0, el.scrollWidth - el.clientWidth);
+      if (maxLeft < 1) return;
+
+      const next = el.scrollLeft + e.deltaX;
+      const clamped = Math.max(0, Math.min(maxLeft, next));
+      if (clamped === el.scrollLeft) return;
+
+      e.preventDefault();
+      el.scrollLeft = clamped;
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [unifiedScroll, perColumnScroll, remeasureToken]);
+
   const rightEdgeStyle = quickChatDockRightInset > 0 ? { right: quickChatDockRightInset } : undefined;
 
   return (
@@ -265,7 +289,7 @@ export default function WorkshopPipelineKanbanScroll({
 
       <div
         ref={setScrollContainerRef}
-        className={`${KANBAN_H_SCROLL_MAIN_CLASS} overscroll-y-contain pb-4 [scrollbar-gutter:stable] [overflow-anchor:none] ${
+        className={`${KANBAN_H_SCROLL_MAIN_CLASS} overscroll-behavior-contain pb-4 [scrollbar-gutter:stable] [overflow-anchor:none] ${
           perColumnScroll ? 'overflow-x-auto overflow-y-hidden' : unifiedScroll ? 'overflow-auto' : 'overflow-x-auto'
         }`}
         style={{
