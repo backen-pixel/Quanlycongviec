@@ -33,7 +33,7 @@ import {
 } from 'lucide-react';
 import { ProductionListView, ProductionPlannerView, ProductionCalendarView, ProductionCommentsView, ProductionDeadlineView } from '../components/ProductionViews';
 import WorkshopPipelineKanbanScroll, { useWorkshopKanbanScrollLayout } from '../components/WorkshopPipelineKanbanScroll';
-import { useKanbanColumnTheme, UI_KANBAN_FIXED_CLASS, KANBAN_BOARD_COLUMN_RAILS_CLASS, KANBAN_COLUMN_RAIL_CLASS, KANBAN_CARDS_BODY_CLASS, KANBAN_CARDS_BODY_EMPTY_PIN_CLASS, KANBAN_COLUMN_EMPTY_CLASS, KANBAN_COLUMN_EMPTY_PIN_CLASS, KANBAN_PIPELINE_CARD_CLASS, getKanbanPipelineCardBorderStyle, useKanbanEmptyPlaceholderStickyTop } from '../lib/kanbanColumnTheme';
+import { useKanbanColumnTheme, UI_KANBAN_FIXED_CLASS, KANBAN_BOARD_COLUMN_RAILS_CLASS, KANBAN_COLUMN_RAIL_CLASS, KANBAN_COLUMN_VALUE_METRIC_CLASS, KANBAN_CARDS_BODY_CLASS, KANBAN_CARDS_BODY_EMPTY_PIN_CLASS, KANBAN_COLUMN_EMPTY_CLASS, KANBAN_COLUMN_EMPTY_PIN_CLASS, KANBAN_PIPELINE_CARD_CLASS, getKanbanPipelineCardBorderStyle, useKanbanEmptyPlaceholderStickyTop } from '../lib/kanbanColumnTheme';
 import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
 import WorkshopDashboardFilterPanel, { SX_FILTER_TABS_META } from '../components/WorkshopDashboardFilterPanel';
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
@@ -1179,19 +1179,31 @@ export default function ProductionDashboard() {
     const hasOrphans = scopeProjects.some(isOrphan);
     const includeOrphan = hasOrphans && (showOrphanColumn || filterWorkTypeId === 'none');
 
+    const buckets = new Map(baseStages.map((s) => [String(s.id), []]));
+    const orphanItems = [];
+
+    for (const project of scopeProjects) {
+      if (includeOrphan && isOrphan(project)) {
+        orphanItems.push(project);
+        continue;
+      }
+      const colId = resolveColumnId(project);
+      if (!colId) continue;
+      const bucket = buckets.get(String(colId));
+      if (bucket) bucket.push(project);
+    }
+
+    for (const items of buckets.values()) {
+      items.sort(sortSxItems);
+    }
+    orphanItems.sort(sortSxItems);
+
     const baseColumns = baseStages.map((stage) => ({
       ...stage,
-      items: scopeProjects
-        .filter((project) => {
-          if (includeOrphan && isOrphan(project)) return false;
-          return resolveColumnId(project) === stage.id;
-        })
-        .sort(sortSxItems),
+      items: buckets.get(String(stage.id)) || [],
     }));
 
     if (!includeOrphan) return baseColumns;
-
-    const orphanItems = scopeProjects.filter(isOrphan).sort(sortSxItems);
     const orphanCol = {
       id: '__orphan_no_type__',
       __virtual: true,
@@ -1376,8 +1388,12 @@ export default function ProductionDashboard() {
     if (!socket) return undefined;
     let timer = null;
     const schedule = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => loadRef.current?.({ silent: true }), 800);
+      timer = setTimeout(() => {
+        if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+        loadRef.current?.({ silent: true });
+      }, 2000);
     };
     const onStage = () => schedule();
     const onTask = () => schedule();
@@ -3179,7 +3195,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
             </div>
           );
         })()}
-        <p className="text-[11px] text-gray-500 tabular-nums mt-0.5 font-medium">
+        <p className={`text-[11px] tabular-nums mt-0.5 ${KANBAN_COLUMN_VALUE_METRIC_CLASS}`}>
           {totalValue > 0 ? formatVND(totalValue) : '0đ'}
         </p>
       </div>
@@ -3299,7 +3315,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
 
   useEffect(() => {
     if (!searchHighlighted || !cardRef.current) return;
-    cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+    cardRef.current.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
   }, [searchHighlighted]);
 
   return (

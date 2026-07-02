@@ -18,7 +18,7 @@ import { ListView, PlannerView, DeadlineView, CommentsView } from '../components
 import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
 import KanbanCardQuickMove from '../components/KanbanCardQuickMove';
 import KanbanCardOptionsMenu from '../components/KanbanCardOptionsMenu';
-import KanbanColumnVirtualList, { CRM_KANBAN_VIRTUAL_THRESHOLD } from '../components/KanbanColumnVirtualList';
+import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import EmployeePicker from '../components/EmployeePicker';
 import NewDealModal from '../components/NewDealModal';
 import {
@@ -111,6 +111,7 @@ import {
   KANBAN_COLUMN_EMPTY_PIN_CLASS,
   KANBAN_BOARD_COLUMN_RAILS_CLASS,
   KANBAN_COLUMN_RAIL_CLASS,
+  KANBAN_COLUMN_VALUE_METRIC_CLASS,
   KANBAN_PIPELINE_CARD_CLASS,
   getKanbanPipelineCardBorderStyle,
   useKanbanEmptyPlaceholderStickyTop,
@@ -3972,7 +3973,7 @@ export default function CRMDashboard() {
     const el = document.querySelector(`.ui-kanban-fixed [data-crm-pipeline-card="${it.id}"]`)
       || document.querySelector(`[data-crm-pipeline-card="${it.id}"]`);
     if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      el.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
       el.classList.add('ring-2', 'ring-red-500', 'ring-offset-2');
       setTimeout(() => {
         el.classList.remove('ring-2', 'ring-red-500', 'ring-offset-2');
@@ -4739,7 +4740,7 @@ export default function CRMDashboard() {
    * Kết hợp socket 'crm:dashboard_changed' (patch từng thẻ) để cập nhật < 1s.
    */
   useEffect(() => {
-    const POLL_MS = 15_000;
+    const POLL_MS = 30_000;
     let intervalId = null;
     const clearInt = () => {
       if (intervalId) {
@@ -7848,7 +7849,6 @@ const KanbanStageCard = memo(function KanbanStageCard({
   const isVirtualColumn = !!stage?.__virtual;
   const totalInColumn = items?.length || 0;
   const perColumnScroll = columnScrollMode === 'per-column';
-  const virtualizeCards = totalInColumn >= CRM_KANBAN_VIRTUAL_THRESHOLD;
   const pinEmptyPlaceholder = !perColumnScroll && totalInColumn === 0;
   const emptyPlaceholderTop = useKanbanEmptyPlaceholderStickyTop(headerRef, pinEmptyPlaceholder);
 
@@ -7861,7 +7861,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
         <>
           <span>Dự kiến: {formatVND(columnRawValue)}</span>
           <span className="mx-1 text-gray-300">·</span>
-          <span className="text-violet-700 font-medium">KV: {formatVND(columnExpectedValue)}</span>
+          <span className="font-medium">KV: {formatVND(columnExpectedValue)}</span>
         </>
       );
     }
@@ -7877,6 +7877,8 @@ const KanbanStageCard = memo(function KanbanStageCard({
     }
     return null;
   })();
+  const stageDescription = String(stage.description || '').trim();
+  const showStageDescription = stageDescription !== '' && !columnMetricLine;
 
   const handleCardsScroll = (e) => {
     if (!perColumnScroll || !onColumnScrollNearEnd) return;
@@ -7909,6 +7911,34 @@ const KanbanStageCard = memo(function KanbanStageCard({
     }
   };
 
+  const renderCard = useCallback((item) => (
+    <KanbanCard
+      item={item}
+      stage={stage}
+      columnAccent={columnTheme.accent}
+      onMoveStage={onMoveStage}
+      pipelineStages={pipelineStages}
+      pipelineType={pipelineType}
+      mergeSelectedIds={mergeSelectedIds}
+      onToggleMergeSelect={onToggleMergeSelect}
+      compact={compact}
+      showCompanyOnCard={showCompanyOnCard}
+      leadTypes={leadTypes}
+      kpiLedgerPeriodStart={kpiLedgerPeriodStart}
+      onOpenKanbanComment={onOpenKanbanComment}
+      onTogglePin={onTogglePin}
+      onToggleInteracted={onToggleInteracted}
+      onOpenDeadline={onOpenDeadline}
+      onSaveEstimatedValue={onSaveEstimatedValue}
+      searchHighlighted={String(searchHighlightId) === String(item.id)}
+    />
+  ), [
+    stage, columnTheme.accent, onMoveStage, pipelineStages, pipelineType, mergeSelectedIds,
+    onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart,
+    onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline, onSaveEstimatedValue,
+    searchHighlightId,
+  ]);
+
   return (
     <div
       onDragOver={handleColumnDragOver}
@@ -7937,12 +7967,12 @@ const KanbanStageCard = memo(function KanbanStageCard({
               <span className={compact ? 'text-base shrink-0' : 'text-lg shrink-0'}>{stage.icon || '📌'}</span>
               <h3 className={`font-semibold truncate ${compact ? 'text-sm' : ''}`} style={{ color: '#000000' }}>{stage.name}</h3>
             </div>
-            {String(stage.description || '').trim() !== '' && (
+            {showStageDescription && (
               <p
                 className={`text-gray-500 leading-snug pl-0.5 ${compact ? 'text-[10px] line-clamp-2' : 'text-[11px] line-clamp-3'}`}
-                title={String(stage.description).trim()}
+                title={stageDescription}
               >
-                {String(stage.description).trim()}
+                {stageDescription}
               </p>
             )}
           </div>
@@ -7979,7 +8009,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
           </div>
         </div>
         {columnMetricLine ? (
-          <p className={compact ? 'text-[10px] text-gray-500' : 'text-xs text-gray-500'}>
+          <p className={`${compact ? 'text-[10px]' : 'text-xs'} tabular-nums ${KANBAN_COLUMN_VALUE_METRIC_CLASS}`}>
             {columnMetricLine}
           </p>
         ) : null}
@@ -8018,28 +8048,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
             boardScrollRef={perColumnScroll ? null : boardScrollRef}
             compact={compact}
             searchHighlightId={searchHighlightId}
-            renderCard={(item) => (
-              <KanbanCard
-                item={item}
-                stage={stage}
-                columnAccent={columnTheme.accent}
-                onMoveStage={onMoveStage}
-                pipelineStages={pipelineStages}
-                pipelineType={pipelineType}
-                mergeSelectedIds={mergeSelectedIds}
-                onToggleMergeSelect={onToggleMergeSelect}
-                compact={compact}
-                showCompanyOnCard={showCompanyOnCard}
-                leadTypes={leadTypes}
-                kpiLedgerPeriodStart={kpiLedgerPeriodStart}
-                onOpenKanbanComment={onOpenKanbanComment}
-                onTogglePin={onTogglePin}
-                onToggleInteracted={onToggleInteracted}
-                onOpenDeadline={onOpenDeadline}
-                onSaveEstimatedValue={onSaveEstimatedValue}
-                searchHighlighted={String(searchHighlightId) === String(item.id)}
-              />
-            )}
+            renderCard={renderCard}
           />
         )}
       </div>
@@ -8095,7 +8104,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
 
   useEffect(() => {
     if (!searchHighlighted || !cardRef.current) return;
-    cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+    cardRef.current.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
   }, [searchHighlighted]);
 
   const hideColumnDeadline = shouldHideCrmKanbanDeadlineOnCard(item, stage);

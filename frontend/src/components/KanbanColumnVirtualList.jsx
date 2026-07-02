@@ -1,8 +1,8 @@
-import { useRef, useEffect, useLayoutEffect, useState } from 'react';
+import { useRef, useEffect, useLayoutEffect, useState, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 /** Bật virtualize khi cột có ít nhất N thẻ. */
-export const CRM_KANBAN_VIRTUAL_THRESHOLD = 10;
+export const CRM_KANBAN_VIRTUAL_THRESHOLD = 8;
 /** Alias dùng chung CRM / SX / VC. */
 export const KANBAN_VIRTUAL_THRESHOLD = CRM_KANBAN_VIRTUAL_THRESHOLD;
 
@@ -31,51 +31,67 @@ export default function KanbanColumnVirtualList({
   const gap = compact ? GAP_COMPACT : GAP_DEFAULT;
   const estimateSize = compact ? ESTIMATE_COMPACT : ESTIMATE_DEFAULT;
   const itemCount = items?.length || 0;
-  /** Cuộn chung — không virtualize theo board (tránh lệch layout khi cột có nhiều thẻ). */
-  const isUnifiedBoardScroll = !!boardScrollRef;
-  const shouldVirtualize = itemCount >= threshold && !isUnifiedBoardScroll;
-  const useBoardScroll = false;
-
-  const getScrollElement = () => {
-    if (!shouldVirtualize) return null;
-    return columnScrollRef?.current ?? null;
-  };
+  const boardScrollMode = !!boardScrollRef;
+  const shouldVirtualize = itemCount >= threshold;
+  const useBoardScroll = boardScrollMode && shouldVirtualize;
 
   const [scrollMargin, setScrollMargin] = useState(0);
+  const scrollMarginRef = useRef(0);
+
+  const measureScrollMargin = useCallback(() => {
+    if (!useBoardScroll) return;
+    const scrollEl = boardScrollRef.current;
+    const listEl = listRootRef.current;
+    if (!scrollEl || !listEl) return;
+    const next = Math.max(0, Math.round(
+      listEl.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top + scrollEl.scrollTop,
+    ));
+    if (next !== scrollMarginRef.current) {
+      scrollMarginRef.current = next;
+      setScrollMargin(next);
+    }
+  }, [useBoardScroll, boardScrollRef]);
 
   useLayoutEffect(() => {
     if (!useBoardScroll) {
+      scrollMarginRef.current = 0;
       setScrollMargin(0);
       return undefined;
     }
+    measureScrollMargin();
     const scrollEl = boardScrollRef.current;
-    const listEl = listRootRef.current;
-    if (!scrollEl || !listEl) return undefined;
-
-    const update = () => {
-      const sRect = scrollEl.getBoundingClientRect();
-      const lRect = listEl.getBoundingClientRect();
-      setScrollMargin(lRect.top - sRect.top + scrollEl.scrollTop);
+    if (!scrollEl) return undefined;
+    const lastScrollTopRef = { current: scrollEl.scrollTop };
+    const onBoardScroll = () => {
+      const st = scrollEl.scrollTop;
+      if (st !== lastScrollTopRef.current) {
+        lastScrollTopRef.current = st;
+        measureScrollMargin();
+      }
     };
-
-    update();
-    const ro = new ResizeObserver(update);
+    const ro = new ResizeObserver(() => measureScrollMargin());
     ro.observe(scrollEl);
-    ro.observe(listEl);
-    scrollEl.addEventListener('scroll', update, { passive: true });
-    window.addEventListener('resize', update);
+    if (listRootRef.current) ro.observe(listRootRef.current);
+    scrollEl.addEventListener('scroll', onBoardScroll, { passive: true });
+    window.addEventListener('resize', measureScrollMargin);
     return () => {
       ro.disconnect();
-      scrollEl.removeEventListener('scroll', update);
-      window.removeEventListener('resize', update);
+      scrollEl.removeEventListener('scroll', onBoardScroll);
+      window.removeEventListener('resize', measureScrollMargin);
     };
-  }, [useBoardScroll, boardScrollRef, itemCount]);
+  }, [useBoardScroll, boardScrollRef, itemCount, measureScrollMargin]);
+
+  const getScrollElement = useCallback(() => {
+    if (!shouldVirtualize) return null;
+    if (useBoardScroll) return boardScrollRef.current;
+    return columnScrollRef?.current ?? null;
+  }, [shouldVirtualize, useBoardScroll, boardScrollRef, columnScrollRef]);
 
   const virtualizer = useVirtualizer({
     count: shouldVirtualize ? itemCount : 0,
     getScrollElement,
     estimateSize: () => estimateSize + gap,
-    overscan: compact ? 4 : 6,
+    overscan: compact ? 3 : 4,
     scrollMargin: useBoardScroll ? scrollMargin : 0,
     getItemKey: (index) => items[index]?.id ?? index,
   });
@@ -84,53 +100,53 @@ export default function KanbanColumnVirtualList({
     if (!shouldVirtualize || searchHighlightId == null || searchHighlightId === '') return;
     const idx = items.findIndex((it) => String(it.id) === String(searchHighlightId));
     if (idx < 0) return;
-    virtualizer.scrollToIndex(idx, { align: 'center', behavior: 'smooth' });
+    virtualizer.scrollToIndex(idx, { align: 'center', behavior: 'auto' });
   }, [searchHighlightId, items, shouldVirtualize, virtualizer]);
 
   if (!itemCount) return null;
 
-  if (!shouldVirtualize) {
-    return items.map((item, index) => (
-      <div
-        key={item.id}
-        className={CRM_KANBAN_CARD_SLOT_CLASS}
-        style={{ marginBottom: index < itemCount - 1 ? gap : 0 }}
-      >
-        {renderCard(item)}
-      </div>
-    ));
-  }
-
-  const virtualItems = virtualizer.getVirtualItems();
+  const virtualItems = shouldVirtualize ? virtualizer.getVirtualItems() : null;
 
   return (
     <div
       ref={listRootRef}
       className="relative w-full"
-      style={{ height: virtualizer.getTotalSize() }}
+      style={shouldVirtualize ? { height: virtualizer.getTotalSize() } : undefined}
     >
-      {virtualItems.map((v) => {
-        const item = items[v.index];
-        if (!item) return null;
-        return (
+      {shouldVirtualize ? (
+        virtualItems.map((v) => {
+          const item = items[v.index];
+          if (!item) return null;
+          return (
+            <div
+              key={item.id}
+              data-index={v.index}
+              ref={virtualizer.measureElement}
+              className={CRM_KANBAN_CARD_SLOT_CLASS}
+              style={{
+                position: 'absolute',
+                top: v.start,
+                left: 0,
+                width: '100%',
+                paddingBottom: gap,
+                boxSizing: 'border-box',
+              }}
+            >
+              {renderCard(item)}
+            </div>
+          );
+        })
+      ) : (
+        items.map((item, index) => (
           <div
             key={item.id}
-            data-index={v.index}
-            ref={virtualizer.measureElement}
             className={CRM_KANBAN_CARD_SLOT_CLASS}
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '100%',
-              transform: `translateY(${v.start}px)`,
-              paddingBottom: gap,
-            }}
+            style={{ marginBottom: index < itemCount - 1 ? gap : 0 }}
           >
             {renderCard(item)}
           </div>
-        );
-      })}
+        ))
+      )}
     </div>
   );
 }

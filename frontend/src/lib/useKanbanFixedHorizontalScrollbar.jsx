@@ -58,6 +58,7 @@ export function useKanbanFixedHorizontalScrollbar(mainScrollRef, wrapRef, remeas
   const barDraggingRef = useRef(false);
   const showRef = useRef(false);
   const trackWidthRef = useRef(0);
+  const measureRafRef = useRef(0);
   const [showBar, setShowBar] = useState(false);
   const [trackWidth, setTrackWidth] = useState(0);
 
@@ -70,7 +71,7 @@ export function useKanbanFixedHorizontalScrollbar(mainScrollRef, wrapRef, remeas
     }
   }, []);
 
-  const measure = useCallback(() => {
+  const measureNow = useCallback(() => {
     const main = mainScrollRef.current;
     const wrap = wrapRef.current;
     if (!main || !wrap) {
@@ -85,7 +86,6 @@ export function useKanbanFixedHorizontalScrollbar(mainScrollRef, wrapRef, remeas
     const scrollWidth = main.scrollWidth;
     const clientWidth = main.clientWidth;
     const hasOverflow = scrollWidth > clientWidth + 1;
-    // Luôn hiện khi board tràn ngang — không ẩn khi cuộn dọc trang
     const show = hasOverflow;
 
     if (show !== showRef.current) {
@@ -112,6 +112,14 @@ export function useKanbanFixedHorizontalScrollbar(mainScrollRef, wrapRef, remeas
     syncBarFromMain(main);
   }, [mainScrollRef, wrapRef, syncBarFromMain]);
 
+  const measure = useCallback(() => {
+    if (measureRafRef.current) return;
+    measureRafRef.current = requestAnimationFrame(() => {
+      measureRafRef.current = 0;
+      measureNow();
+    });
+  }, [measureNow]);
+
   useEffect(() => {
     const main = mainScrollRef.current;
     if (!main) return undefined;
@@ -121,6 +129,7 @@ export function useKanbanFixedHorizontalScrollbar(mainScrollRef, wrapRef, remeas
       syncFromRef.current = 'main';
       syncBarFromMain(main);
       syncFromRef.current = null;
+      measure();
     };
 
     main.addEventListener('scroll', onMainScroll, { passive: true });
@@ -136,10 +145,14 @@ export function useKanbanFixedHorizontalScrollbar(mainScrollRef, wrapRef, remeas
     window.visualViewport?.addEventListener('resize', onWindow);
     window.visualViewport?.addEventListener('scroll', onWindow);
 
-    measure();
-    const t = window.setTimeout(measure, 120);
+    measureNow();
+    const t = window.setTimeout(measureNow, 200);
 
     return () => {
+      if (measureRafRef.current) {
+        cancelAnimationFrame(measureRafRef.current);
+        measureRafRef.current = 0;
+      }
       main.removeEventListener('scroll', onMainScroll);
       ro.disconnect();
       window.removeEventListener('resize', onWindow);
@@ -148,7 +161,7 @@ export function useKanbanFixedHorizontalScrollbar(mainScrollRef, wrapRef, remeas
       window.visualViewport?.removeEventListener('scroll', onWindow);
       window.clearTimeout(t);
     };
-  }, [mainScrollRef, wrapRef, measure, syncBarFromMain, ...remeasureDeps]);
+  }, [mainScrollRef, wrapRef, measure, measureNow, syncBarFromMain, ...remeasureDeps]);
 
   const onFixedBarScroll = useCallback(() => {
     const main = mainScrollRef.current;
