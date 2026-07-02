@@ -6497,7 +6497,7 @@ export default function CRMDashboard() {
 
           {/* Kanban View */}
           {viewMode === 'kanban' && (
-          <div data-tour="kanban-pipeline" className="rounded-xl overflow-hidden">
+          <div data-tour="kanban-pipeline" className="rounded-xl">
             <KanbanView
               pipeline={kanbanPipelineForView}
               onMoveStage={handleMoveStage}
@@ -6518,7 +6518,7 @@ export default function CRMDashboard() {
               onToggleInteracted={toggleInteractedFlag}
               onOpenDeadline={openDeadlineFromCard}
               onSaveEstimatedValue={saveEstimatedValueFromCard}
-              remeasureToken={showAdvSearch ? 1 : 0}
+              remeasureToken={`${showAdvSearch ? 1 : 0}:${timePreset}:${customDateFrom}:${customDateTo}`}
               explicitExpectedKv={explicitExpectedKvStages}
               wonStage={dealKhSplitEnabled && pipelineType === 'deal' ? wonStage : null}
               onLoadMore={handleLoadMore}
@@ -7852,6 +7852,32 @@ const KanbanStageCard = memo(function KanbanStageCard({
   const pinEmptyPlaceholder = !perColumnScroll && totalInColumn === 0;
   const emptyPlaceholderTop = useKanbanEmptyPlaceholderStickyTop(headerRef, pinEmptyPlaceholder);
 
+  const columnMetricLine = (() => {
+    if (pipelineType === 'lead') {
+      return <>Giá trị: {formatVND(columnRawValue)}</>;
+    }
+    if (showColumnForecastKpis) {
+      return (
+        <>
+          <span>Dự kiến: {formatVND(columnRawValue)}</span>
+          <span className="mx-1 text-gray-300">·</span>
+          <span className="text-violet-700 font-medium">KV: {formatVND(columnExpectedValue)}</span>
+        </>
+      );
+    }
+    if (isWonColumnExcludedFromDealMetrics && totalInColumn > 0) {
+      return <span className="text-amber-700/80">Đã chốt — không tính pipeline</span>;
+    }
+    if (isCrmCustomerPipelineTab(pipelineType) && totalInColumn > 0) {
+      return (
+        <span className={isCustomerWonColumn ? 'text-amber-700 font-medium' : ''}>
+          {isCustomerWonColumn ? 'DT thắng' : 'Giá trị'}: {formatVND(columnRawValue)}
+        </span>
+      );
+    }
+    return null;
+  })();
+
   const handleCardsScroll = (e) => {
     if (!perColumnScroll || !onColumnScrollNearEnd) return;
     const el = e.currentTarget;
@@ -7952,25 +7978,11 @@ const KanbanStageCard = memo(function KanbanStageCard({
             </span>
           </div>
         </div>
-        <p className={compact ? 'text-[10px] text-gray-500' : 'text-xs text-gray-500'}>
-          {pipelineType === 'lead' ? (
-            <>Giá trị: {formatVND(columnRawValue)}</>
-          ) : showColumnForecastKpis ? (
-            <>
-              <span>Dự kiến: {formatVND(columnRawValue)}</span>
-              <span className="mx-1 text-gray-300">·</span>
-              <span className="text-violet-700 font-medium">KV: {formatVND(columnExpectedValue)}</span>
-            </>
-          ) : isWonColumnExcludedFromDealMetrics && totalInColumn > 0 ? (
-            <span className="text-amber-700/80">Đã chốt — không tính pipeline</span>
-          ) : isCrmCustomerPipelineTab(pipelineType) && totalInColumn > 0 ? (
-            <>
-              <span className={isCustomerWonColumn ? 'text-amber-700 font-medium' : ''}>
-                {isCustomerWonColumn ? 'DT thắng' : 'Giá trị'}: {formatVND(columnRawValue)}
-              </span>
-            </>
-          ) : null}
-        </p>
+        {columnMetricLine ? (
+          <p className={compact ? 'text-[10px] text-gray-500' : 'text-xs text-gray-500'}>
+            {columnMetricLine}
+          </p>
+        ) : null}
         </div>
       </div>
 
@@ -7983,7 +7995,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
         } ${
           pinEmptyPlaceholder ? KANBAN_CARDS_BODY_EMPTY_PIN_CLASS : ''
         } ${
-          compact ? 'p-1.5' : 'p-2.5'
+          compact ? 'px-1.5 pt-1 pb-1.5' : 'px-2.5 pt-1 pb-2.5'
         } ${perColumnScroll ? 'flex-1 min-h-0 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]' : 'flex-1'}`}
         style={perColumnScroll ? undefined : { minHeight: compact ? '160px' : '180px' }}
       >
@@ -8659,6 +8671,12 @@ function KanbanView({
     obs.observe(sentinel);
     return () => obs.disconnect();
   }, [perColumnScroll, scrollLoad?.hasMore, scrollLoad?.loading, tryLoadMore]);
+
+  useEffect(() => {
+    const root = kanbanHScrollRef.current;
+    if (!root) return;
+    root.scrollTop = 0;
+  }, [remeasureToken]);
 
   return (
     <WorkshopPipelineKanbanScroll
