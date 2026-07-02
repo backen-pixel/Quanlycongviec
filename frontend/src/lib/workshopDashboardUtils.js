@@ -36,6 +36,9 @@ export const WS_KANBAN_LOAD_OPTIONS = [
   { value: 'all', label: 'Tải tất cả' },
 ];
 
+/** Trần tải project Kanban SX/VC — tránh parse JSON quá lớn trên client. */
+export const WS_KANBAN_LOAD_ALL_MAX = 3000;
+
 /** @param {string|undefined} iso - created_at */
 export function workshopCreatedInRange(iso, from, to) {
   if (!from || !to) return true;
@@ -51,7 +54,7 @@ export function workshopCreatedInRange(iso, from, to) {
  * @param {{ companyId?: string, workshopTypeId?: string, sxWorkshopCompanyId?: string, maxRecords: number, pageSize?: number, bustCache?: boolean }} opt
  */
 export async function fetchWorkshopProjectPages(api, path, { companyId, workshopTypeId, sxWorkshopCompanyId, dealCompanyId, maxRecords, pageSize = 500, bustCache = false }) {
-  const cap = Math.min(Math.max(maxRecords, 1), 5000);
+  const cap = Math.min(Math.max(maxRecords, 1), WS_KANBAN_LOAD_ALL_MAX);
   const all = [];
   let page = 1;
   let totalFromApi = null;

@@ -3,11 +3,13 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 
 /** Bật virtualize khi cột có ít nhất N thẻ. */
 export const CRM_KANBAN_VIRTUAL_THRESHOLD = 10;
+/** Alias dùng chung CRM / SX / VC. */
+export const KANBAN_VIRTUAL_THRESHOLD = CRM_KANBAN_VIRTUAL_THRESHOLD;
 
 export const CRM_KANBAN_CARD_SLOT_CLASS = 'crm-kanban-card-slot';
 
-const GAP_COMPACT = 6;
-const GAP_DEFAULT = 8;
+const GAP_COMPACT = 8;
+const GAP_DEFAULT = 10;
 const ESTIMATE_COMPACT = 118;
 const ESTIMATE_DEFAULT = 132;
 
@@ -87,8 +89,12 @@ export default function KanbanColumnVirtualList({
   if (!itemCount) return null;
 
   if (!shouldVirtualize) {
-    return items.map((item) => (
-      <div key={item.id} className={CRM_KANBAN_CARD_SLOT_CLASS}>
+    return items.map((item, index) => (
+      <div
+        key={item.id}
+        className={CRM_KANBAN_CARD_SLOT_CLASS}
+        style={{ marginBottom: index < itemCount - 1 ? gap : 0 }}
+      >
         {renderCard(item)}
       </div>
     ));

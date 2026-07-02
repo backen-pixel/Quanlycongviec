@@ -1,11 +1,67 @@
-import { useMemo } from 'react';
+import { useMemo, useState, useLayoutEffect } from 'react';
 import { useTheme } from '../components/ThemeProvider';
 
 /** Class bọc vùng Kanban — tắt glass theme trên thẻ/cột. */
 export const UI_KANBAN_FIXED_CLASS = 'ui-kanban-fixed';
 
-/** Vùng danh sách thẻ — trắng trong suốt cố định (xưởng + CRM). */
+/** Vùng danh sách thẻ — trong suốt, không blur (xưởng + CRM). */
 export const KANBAN_CARDS_BODY_CLASS = 'kanban-cards-body';
+
+/** Placeholder cột trống — nền xám mờ nhẹ, icon + chữ nổi bật hơn. */
+export const KANBAN_COLUMN_EMPTY_CLASS = 'kanban-column-empty';
+
+/** Placeholder trống dính dưới header khi cuộn board chung (không có thẻ). */
+export const KANBAN_COLUMN_EMPTY_PIN_CLASS = 'kanban-column-empty--scroll-pinned';
+
+/** Vùng thẻ cột trống — cho phép sticky placeholder trong cuộn chung. */
+export const KANBAN_CARDS_BODY_EMPTY_PIN_CLASS = 'kanban-cards-body--empty-pinned';
+
+/** Hàng cột Kanban — đường kẻ dọc đứt khúc giữa các cột (Bitrix-style). */
+export const KANBAN_BOARD_COLUMN_RAILS_CLASS = 'kanban-board-column-rails';
+
+/** Cột Kanban — có đường kẻ dọc đứt khúc bên trái. */
+export const KANBAN_COLUMN_RAIL_CLASS = 'kanban-column-rail';
+
+/** Thẻ Kanban pipeline (CRM + SX). */
+export const KANBAN_PIPELINE_CARD_CLASS = 'kanban-pipeline-card';
+
+/** Viền thẻ — 4px trái theo màu cột, cạnh còn lại xám (hoặc tone cảnh báo). */
+export function getKanbanPipelineCardBorderStyle(columnAccent, tone = 'default') {
+  const accent = columnAccent || '#94a3b8';
+  const side = tone === 'overdue' ? '#fca5a5' : tone === 'selected' ? '#93c5fd' : '#e5e7eb';
+  return {
+    borderLeft: `4px solid ${accent}`,
+    borderTop: `1px solid ${side}`,
+    borderRight: `1px solid ${side}`,
+    borderBottom: `1px solid ${side}`,
+  };
+}
+
+/**
+ * Đo chiều cao header cột — dùng làm `top` cho placeholder trống khi cuộn dọc board.
+ * @param {import('react').RefObject<HTMLElement|null>} headerRef
+ * @param {boolean} enabled
+ */
+export function useKanbanEmptyPlaceholderStickyTop(headerRef, enabled) {
+  const [topPx, setTopPx] = useState(56);
+
+  useLayoutEffect(() => {
+    if (!enabled) return undefined;
+    const el = headerRef.current;
+    if (!el) return undefined;
+
+    const measure = () => {
+      setTopPx(Math.ceil(el.getBoundingClientRect().height));
+    };
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [headerRef, enabled]);
+
+  return topPx;
+}
 
 /** Bảng màu cố định theo thứ tự cột (cột 0, 1, 2…). */
 const ZONE_PALETTE = [

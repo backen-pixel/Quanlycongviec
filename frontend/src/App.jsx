@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Suspense, Component, useEffect } from 'react';
 import { AuthProvider, useAuth } from './lib/auth';
-import { lazyWithRetry, clearChunkReloadFlag, isChunkLoadErrorMessage } from './lib/lazyWithRetry';
+import { lazyWithRetry, isChunkLoadErrorMessage } from './lib/lazyWithRetry';
 
 class ErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null, errorInfo: null }; }
@@ -278,7 +278,7 @@ function ProtectedLayout() {
         <SupabaseSwitchCountdownBanner />
         <div className="flex h-screen bg-[var(--color-page-bg)] relative">
           <div className="absolute inset-0 pointer-events-none z-0"
-            style={{ backgroundImage: 'var(--bg-image, none)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed' }} />
+            style={{ backgroundImage: 'var(--bg-image, none)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'scroll' }} />
           <div className="absolute inset-0 pointer-events-none z-0"
             style={{ backgroundColor: 'var(--bg-overlay, rgba(0,0,0,0))' }} />
           {activeAnimatedScene && (
@@ -317,18 +317,12 @@ function DefaultRedirect() {
   return <Navigate to={pinned} replace />;
 }
 
-function ChunkReloadInit() {
-  useEffect(() => { clearChunkReloadFlag(); }, []);
-  return null;
-}
-
 export default function App() {
   return (
     <ErrorBoundary>
     <AuthProvider>
       <BrowserRouter>
         <SharedProviders>
-        <ChunkReloadInit />
         <MessengerDockProvider>
         <CallProvider>
         <ThemeProvider>

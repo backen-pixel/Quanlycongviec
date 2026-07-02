@@ -1,8 +1,9 @@
 import { lazy } from 'react';
 
 const RELOAD_KEY = 'vite_chunk_reload';
+const RELOAD_COOLDOWN_MS = 30_000;
 
-/** Xóa cờ sau khi app tải thành công (gọi một lần ở App). */
+/** Xóa cờ sau khi lazy chunk tải thành công (gọi từ lazyWithRetry). */
 export function clearChunkReloadFlag() {
   try {
     sessionStorage.removeItem(RELOAD_KEY);
@@ -16,27 +17,34 @@ function isChunkLoadError(err) {
     || msg.includes('Failed to fetch dynamically imported module')
     || msg.includes('Importing a module script failed')
     || msg.includes('error loading dynamically imported module')
+    || msg.includes('Failed to parse source for import analysis')
   );
 }
 
 /**
- * lazy() + tự reload 1 lần khi chunk JS 404 sau deploy mới (hash đổi).
+ * lazy() + tự reload tối đa 1 lần / 30s khi chunk JS lỗi sau deploy hoặc lỗi biên dịch dev.
  */
 export function lazyWithRetry(importFactory) {
   return lazy(() =>
-    importFactory().catch((err) => {
-      if (isChunkLoadError(err)) {
-        try {
-          if (!sessionStorage.getItem(RELOAD_KEY)) {
-            sessionStorage.setItem(RELOAD_KEY, '1');
-            window.location.reload();
-            return new Promise(() => {});
-          }
-          sessionStorage.removeItem(RELOAD_KEY);
-        } catch { /* ignore */ }
-      }
-      throw err;
-    }),
+    importFactory()
+      .then((mod) => {
+        clearChunkReloadFlag();
+        return mod;
+      })
+      .catch((err) => {
+        if (isChunkLoadError(err)) {
+          try {
+            const last = Number(sessionStorage.getItem(RELOAD_KEY) || 0);
+            const now = Date.now();
+            if (!last || now - last > RELOAD_COOLDOWN_MS) {
+              sessionStorage.setItem(RELOAD_KEY, String(now));
+              window.location.reload();
+              return new Promise(() => {});
+            }
+          } catch { /* ignore */ }
+        }
+        throw err;
+      }),
   );
 }
 

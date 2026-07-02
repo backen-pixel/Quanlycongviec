@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue, memo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -11,7 +11,7 @@ import {
 import { getSocket } from '../lib/socket';
 import { formatVND, formatDate } from '../lib/utils';
 import {
-  getWorkshopDateRange, WS_TIME_PRESETS, WS_KANBAN_LOAD_OPTIONS,
+  getWorkshopDateRange, WS_TIME_PRESETS, WS_KANBAN_LOAD_OPTIONS, WS_KANBAN_LOAD_ALL_MAX,
   workshopCreatedInRange, fetchWorkshopProjectPages,
 } from '../lib/workshopDashboardUtils';
 import {
@@ -23,7 +23,8 @@ import {
 import { LogisticsListView, LogisticsPlannerView, LogisticsCalendarView } from '../components/LogisticsViews';
 import NewLogisticsProjectModal from '../components/NewLogisticsProjectModal';
 import WorkshopPipelineKanbanScroll from '../components/WorkshopPipelineKanbanScroll';
-import { useKanbanColumnTheme } from '../lib/kanbanColumnTheme';
+import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
+import { useKanbanColumnTheme, KANBAN_CARDS_BODY_CLASS } from '../lib/kanbanColumnTheme';
 import WorkshopStaffFilterPanel from '../components/WorkshopStaffFilterPanel';
 import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
@@ -160,8 +161,8 @@ export default function LogisticsDashboard() {
         ...(companyParam ? { company_id: companyParam } : {}),
         ...(filterWorkTypeId ? { workshop_type_id: filterWorkTypeId } : {}),
       };
-      const maxRecords = kanbanLoadKey === 'all' ? 5000
-        : Math.min(parseInt(kanbanLoadKey, 10) || 500, 5000);
+      const maxRecords = kanbanLoadKey === 'all' ? WS_KANBAN_LOAD_ALL_MAX
+        : Math.min(parseInt(kanbanLoadKey, 10) || 500, WS_KANBAN_LOAD_ALL_MAX);
       const [dashRes, projectList] = await Promise.all([
         api.get('/logistics/dashboard', { params: dashQ }).catch(() => ({ data: { kpis: {}, pipeline: [] } })),
         fetchWorkshopProjectPages(api, '/logistics/projects', {
@@ -962,10 +963,21 @@ function KPICard({ icon, iconBgColor, iconColor, label, value }) {
 }
 
 // Kanban Stage Column
-function KanbanStageCard({ stage, items, onMoveStage, onDelete, calculateDays, selectedIds, onToggleSelect, columnIndex = 0 }) {
+const KanbanStageCard = memo(function KanbanStageCard({ stage, items, onMoveStage, onDelete, calculateDays, selectedIds, onToggleSelect, columnIndex = 0 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
   const [columnMaxH, setColumnMaxH] = useState('70vh');
+
+  const renderCard = useCallback((item) => (
+    <KanbanCard
+      item={item}
+      stage={stage}
+      calculateDays={calculateDays}
+      isSelected={selectedIds?.has(item.id)}
+      onToggleSelect={onToggleSelect}
+      onDelete={onDelete}
+    />
+  ), [stage, calculateDays, selectedIds, onToggleSelect, onDelete]);
 
   useEffect(() => {
     const measure = () => {
@@ -1017,7 +1029,9 @@ function KanbanStageCard({ stage, items, onMoveStage, onDelete, calculateDays, s
       </div>
       <div
         ref={containerRef}
-        className="bg-white/25 backdrop-blur-md border border-white/40 border-t-0 p-3 space-y-3 overflow-y-auto transition-all"
+        className={`border border-white/30 border-t-0 p-2 transition-all overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable] ${KANBAN_CARDS_BODY_CLASS} ${
+          isOverColumn ? 'kanban-cards-body--drop' : ''
+        }`}
         style={{ maxHeight: columnMaxH, minHeight: '200px' }}
       >
         {items.length === 0 ? (
@@ -1025,18 +1039,19 @@ function KanbanStageCard({ stage, items, onMoveStage, onDelete, calculateDays, s
             <p className="text-sm">{isOverColumn ? '⬇️ Thả vào đây' : '📥 Kéo dự án vào đây'}</p>
           </div>
         ) : (
-          items.map((item) => (
-            <KanbanCard key={item.id} item={item} stage={stage} calculateDays={calculateDays}
-              isSelected={selectedIds?.has(item.id)} onToggleSelect={onToggleSelect} onDelete={onDelete} />
-          ))
+          <KanbanColumnVirtualList
+            items={items}
+            columnScrollRef={containerRef}
+            renderCard={renderCard}
+          />
         )}
       </div>
     </div>
   );
-}
+});
 
 // Kanban Card
-function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, onDelete }) {
+const KanbanCard = memo(function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, onDelete }) {
   const navigate = useNavigate();
   const handleDragStart = (e) => {
     if (e.target.closest?.('[data-workshop-bulk-checkbox]')) {
@@ -1193,13 +1208,13 @@ function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, on
       )}
     </div>
   );
-}
+});
 
 // Kanban View Container
 function KanbanView({ pipeline, onMoveStage, onDelete, calculateDays, selectedIds, onToggleSelect }) {
   return (
     <WorkshopPipelineKanbanScroll cardSelector="[data-vc-kanban-card]">
-      <div className="flex gap-0 min-w-max">
+      <div className={`flex gap-0 min-w-max ui-kanban-fixed`}>
         {pipeline.map((stage, columnIndex) => (
           <KanbanStageCard
             key={stage.id || stage.slug}

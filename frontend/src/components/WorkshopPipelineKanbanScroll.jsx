@@ -3,6 +3,10 @@ import { UI_KANBAN_FIXED_CLASS } from '../lib/kanbanColumnTheme';
 import {
   KanbanBoardEdgeScrollChrome,
 } from '../lib/kanbanEdgeScrollControls';
+import {
+  KANBAN_H_SCROLL_MAIN_CLASS,
+  useKanbanFixedHorizontalScrollbar,
+} from '../lib/useKanbanFixedHorizontalScrollbar';
 
 const EDGE_ZONE_PX = 56;
 const MIN_STEP = 5;
@@ -45,7 +49,7 @@ export default function WorkshopPipelineKanbanScroll({
   columnScrollMode,
   enableViewportScroll = false,
   remeasureToken,
-  showLegend = true,
+  showLegend = false,
   scrollContainerRef,
   leftTitle = DEFAULT_LEFT_TITLE,
   rightTitle = DEFAULT_RIGHT_TITLE,
@@ -66,6 +70,12 @@ export default function WorkshopPipelineKanbanScroll({
     kanbanHScrollRef.current = node;
     assignRef(scrollContainerRef, node);
   }, [scrollContainerRef]);
+
+  const { fixedScrollbarPortal } = useKanbanFixedHorizontalScrollbar(
+    kanbanHScrollRef,
+    kanbanWrapRef,
+    [resolvedScrollMode, remeasureToken, quickChatDockRightInset],
+  );
 
   const stopScrollLoop = useCallback(() => {
     if (scrollRafRef.current) {
@@ -141,8 +151,8 @@ export default function WorkshopPipelineKanbanScroll({
     const measure = () => {
       const el = kanbanHScrollRef.current;
       if (!el) return;
-      const TARGET = 720;
-      const maxByViewport = Math.max(360, window.innerHeight - 120);
+      const TARGET = 1180;
+      const maxByViewport = Math.max(480, window.innerHeight - 60);
       setScrollMaxH(`${Math.min(TARGET, maxByViewport)}px`);
     };
     const raf = requestAnimationFrame(measure);
@@ -220,6 +230,7 @@ export default function WorkshopPipelineKanbanScroll({
 
   return (
     <WorkshopKanbanScrollContext.Provider value={{ columnScrollMaxH: scrollMaxH }}>
+      {fixedScrollbarPortal}
       <div ref={kanbanWrapRef} className={`relative ${UI_KANBAN_FIXED_CLASS}`}>
       <KanbanBoardEdgeScrollChrome
         wrapRef={kanbanWrapRef}
@@ -254,7 +265,7 @@ export default function WorkshopPipelineKanbanScroll({
 
       <div
         ref={setScrollContainerRef}
-        className={`overscroll-y-contain pb-4 [scrollbar-gutter:stable] [overflow-anchor:none] ${
+        className={`${KANBAN_H_SCROLL_MAIN_CLASS} overscroll-y-contain pb-4 [scrollbar-gutter:stable] [overflow-anchor:none] ${
           perColumnScroll ? 'overflow-x-auto overflow-y-hidden' : unifiedScroll ? 'overflow-auto' : 'overflow-x-auto'
         }`}
         style={{
