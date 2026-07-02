@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { getSocket } from '../lib/socket';
@@ -24,7 +24,7 @@ import { CrmCommentMentionComposer } from '../components/crmCommentMentionUi';
 import { resolveMentionIdsFromContent } from '../lib/crmCommentMentions';
 import {
   getWorkshopDateRange, WS_TIME_PRESETS,
-  workshopCreatedInRange, fetchWorkshopProjectPages,
+  workshopCreatedInRange, fetchWorkshopProjectPages, WS_KANBAN_LOAD_ALL_MAX,
 } from '../lib/workshopDashboardUtils';
 import {
   CheckCircle2, Search, X, Calendar, Plus,
@@ -33,9 +33,10 @@ import {
 } from 'lucide-react';
 import { ProductionListView, ProductionPlannerView, ProductionCalendarView, ProductionCommentsView, ProductionDeadlineView } from '../components/ProductionViews';
 import WorkshopPipelineKanbanScroll, { useWorkshopKanbanScrollLayout } from '../components/WorkshopPipelineKanbanScroll';
-import { useKanbanColumnTheme, UI_KANBAN_FIXED_CLASS, KANBAN_CARDS_BODY_CLASS } from '../lib/kanbanColumnTheme';
+import { useKanbanColumnTheme, UI_KANBAN_FIXED_CLASS, KANBAN_BOARD_COLUMN_RAILS_CLASS, KANBAN_COLUMN_RAIL_CLASS, KANBAN_CARDS_BODY_CLASS, KANBAN_CARDS_BODY_EMPTY_PIN_CLASS, KANBAN_COLUMN_EMPTY_CLASS, KANBAN_COLUMN_EMPTY_PIN_CLASS, KANBAN_PIPELINE_CARD_CLASS, getKanbanPipelineCardBorderStyle, useKanbanEmptyPlaceholderStickyTop } from '../lib/kanbanColumnTheme';
 import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
 import WorkshopDashboardFilterPanel, { SX_FILTER_TABS_META } from '../components/WorkshopDashboardFilterPanel';
+import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import KanbanCardQuickMove from '../components/KanbanCardQuickMove';
 import KanbanCardOptionsMenu from '../components/KanbanCardOptionsMenu';
 import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
@@ -323,6 +324,8 @@ export default function ProductionDashboard() {
   const filterPanelRef = useRef(null);
   const filterPanelDragRef = useRef(null);
   const [filterWorkTypeId, setFilterWorkTypeId] = useState(() => P0?.filterWorkTypeId ?? '');
+  const filterWorkTypeIdRef = useRef(filterWorkTypeId);
+  filterWorkTypeIdRef.current = filterWorkTypeId;
   const [workTypes, setWorkTypes] = useState([]);
   /** Công ty mà danh sách `workTypes` hiện tại thuộc về — chống dùng nhầm loại của công ty cũ khi đổi công ty. */
   const [workTypesCompanyId, setWorkTypesCompanyId] = useState('');
@@ -494,6 +497,7 @@ export default function ProductionDashboard() {
   }, [resolvedDealCompanyPick, showDealCompanyFilter, user?.company_id, dealCompanyOptions, companies]);
 
   const deferredPersonName = useDeferredValue(filterPersonName);
+  const deferredSearchQuery = useDeferredValue(searchQuery);
 
   const handleStaffFilterCompanyChange = useCallback((companyId) => {
     onStaffFilterCompanyChange(companyId);
@@ -546,7 +550,7 @@ export default function ProductionDashboard() {
 
   const canPickProductionCreateCompany = crossWorkshopViewer || isDealParticipantProductionViewer(user) || isAccountingUser(user);
 
-  const sxLoadProgressDisplay = (loading || syncing)
+  const sxLoadProgressDisplay = (loading && !firstLoaded)
     ? Math.max(0, Math.min(100, sxLoadProgress))
     : 0;
 
@@ -577,17 +581,20 @@ export default function ProductionDashboard() {
       ? opts.sxWorkshopCompanyId
       : (showVptSxWorkshopFilter && filterSxWorkshopCompany ? filterSxWorkshopCompany : undefined);
     if (silent) setSyncing(true);
-    else setLoading(true);
-    sxLoadProgressCtrlRef.current?.start();
+    else {
+      setLoading(true);
+      sxLoadProgressCtrlRef.current?.start();
+    }
     const markLoadComplete = () => {
       if (isStale()) return;
+      if (silent) {
+        setSyncing(false);
+        return;
+      }
       sxLoadProgressCtrlRef.current?.finish(() => {
         if (isStale()) return;
-        if (silent) setSyncing(false);
-        else {
-          setLoading(false);
-          setFirstLoaded(true);
-        }
+        setLoading(false);
+        setFirstLoaded(true);
       });
     };
     try {
@@ -597,18 +604,19 @@ export default function ProductionDashboard() {
         ...(fetchSxWorkshopId ? { sx_workshop_company_id: fetchSxWorkshopId } : {}),
       };
       const cacheHeaders = bustCache ? { headers: { 'x-no-cache': '1' } } : {};
-      const maxRecords = kanbanLoadKey === 'all' ? 5000
-        : Math.min(parseInt(kanbanLoadKey, 10) || 500, 5000);
+      const maxRecords = kanbanLoadKey === 'all' ? WS_KANBAN_LOAD_ALL_MAX
+        : Math.min(parseInt(kanbanLoadKey, 10) || 500, WS_KANBAN_LOAD_ALL_MAX);
+      const workshopTypeFilter = opts.workshopTypeId !== undefined
+        ? (opts.workshopTypeId ? String(opts.workshopTypeId) : undefined)
+        : (filterWorkTypeIdRef.current ? String(filterWorkTypeIdRef.current) : undefined);
 
-      // KHÔNG truyền workshop_type_id ở fetch chính — filter loại làm phía client để
-      // đổi loại không reload toàn trang. Pipeline columns được refetch silent ở
-      // useEffect bên dưới khi filterWorkTypeId đổi.
       const [dashRes, projectList] = await Promise.all([
         api.get('/production/dashboard', { params: dashQ, ...cacheHeaders }).catch(() => ({ data: { kpis: {}, pipeline: [] } })),
         fetchWorkshopProjectPages(api, '/production/projects', {
           companyId: fetchCompanyId,
           dealCompanyId: fetchDealCompanyId,
           sxWorkshopCompanyId: fetchSxWorkshopId,
+          workshopTypeId: workshopTypeFilter,
           maxRecords,
           pageSize: 500,
           bustCache,
@@ -623,13 +631,43 @@ export default function ProductionDashboard() {
     } catch (e) {
       console.error(e);
       if (!isStale()) {
-        sxLoadProgressCtrlRef.current?.reset();
-        setSyncing(false);
-        setLoading(false);
-        setFirstLoaded(true);
+        if (silent) setSyncing(false);
+        else {
+          sxLoadProgressCtrlRef.current?.reset();
+          setLoading(false);
+          setFirstLoaded(true);
+        }
       }
     }
   }, [companyParam, dealCompanyParam, kanbanLoadKey, showVptSxWorkshopFilter, filterSxWorkshopCompany]);
+
+  const dataLoadReady = workTypesCompanyId === companyForTypes
+    && (workTypes.length === 0 || !!filterWorkTypeId);
+
+  useEffect(() => {
+    if (!dataLoadReady) return;
+    load();
+  }, [
+    dataLoadReady,
+    load,
+    companyParam,
+    dealCompanyParam,
+    kanbanLoadKey,
+    showVptSxWorkshopFilter,
+    filterSxWorkshopCompany,
+  ]);
+
+  const prevWorkTypeForReloadRef = useRef(filterWorkTypeId);
+  useEffect(() => {
+    if (workTypesCompanyId !== companyForTypes) return;
+    const prev = prevWorkTypeForReloadRef.current;
+    prevWorkTypeForReloadRef.current = filterWorkTypeId;
+    if (prev === filterWorkTypeId) return;
+    // Lần gán phân loại mặc định đầu tiên — load() chính đã xử lý qua dataLoadReady.
+    if (!prev && filterWorkTypeId) return;
+    if (!filterWorkTypeId) return;
+    load({ silent: true, bustCache: true });
+  }, [filterWorkTypeId, load, workTypesCompanyId, companyForTypes]);
 
   const handleNewDealCreated = useCallback(async (created) => {
     const projectId = created?.project_id;
@@ -720,8 +758,6 @@ export default function ProductionDashboard() {
       return [optimistic, ...prev];
     });
   }, [load, pipeline, workTypes, companyParam, dealCompanyParam, filterCompany, filterWorkTypeId, companies, user, showVptSxWorkshopFilter, filterSxWorkshopCompany, canPickProductionCreateCompany]);
-
-  useEffect(() => { load(); }, [load]);
 
   /**
    * Nguồn DUY NHẤT của cột Kanban (`pipeline`). Luôn lọc theo phân loại đang chọn —
@@ -1176,8 +1212,8 @@ export default function ProductionDashboard() {
       ...stage,
       items: prioritizePinnedProjects(sortProjectsBy(
         stage.items.filter((project) => {
-          if (searchQuery) {
-            const q = searchQuery.toLowerCase();
+          if (deferredSearchQuery) {
+            const q = deferredSearchQuery.toLowerCase();
             const hit = project.code?.toLowerCase().includes(q)
               || project.name?.toLowerCase().includes(q)
               || project.notes?.toLowerCase().includes(q)
@@ -1194,7 +1230,7 @@ export default function ProductionDashboard() {
     }));
     filteredKanbanPipelineRef.current = result;
     return result;
-  }, [kanbanPipeline, searchQuery, priorityFilter, stageFilter, sortBy]);
+  }, [kanbanPipeline, deferredSearchQuery, priorityFilter, stageFilter, sortBy]);
 
   const allVisibleProjectIds = useMemo(
     () => filteredKanbanPipeline.flatMap((s) => (s.items || []).map((x) => x.id)).filter(Boolean),
@@ -2056,7 +2092,7 @@ export default function ProductionDashboard() {
     || filterPersonName || stageFilter || filterWorkTypeId || priorityFilter || filterPhone
     || timePreset || showOrphanColumn || searchQuery.trim();
 
-  const sxMainContentLoading = (loading && !firstLoaded) || syncing;
+  const sxMainContentLoading = loading && !firstLoaded;
 
   return (
     <div className="space-y-3">
@@ -2073,6 +2109,12 @@ export default function ProductionDashboard() {
                     <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-600" />
                   </span>
                   Đang tải…
+                </span>
+              )}
+              {syncing && firstLoaded && (
+                <span className="inline-flex items-center gap-1.5 shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                  <Loader2 className="h-3 w-3 animate-spin text-emerald-600" />
+                  Đang cập nhật…
                 </span>
               )}
               <button
@@ -2606,7 +2648,7 @@ export default function ProductionDashboard() {
       )}
 
 
-      <div className="relative min-h-[min(420px,calc(100vh-280px))]">
+      <div className="relative min-h-[min(700px,calc(100vh-128px))]">
         {sxMainContentLoading ? (
           <DashboardLoader
             variant="production"
@@ -2991,7 +3033,7 @@ function KPICard({ accent = 'bg-blue-500', label, value, descriptor, valueTone }
 }
 
 // ── KANBAN STAGE CARD — header tối giản (dot + tên + count + total) ────────
-function KanbanStageCard({
+const KanbanStageCard = memo(function KanbanStageCard({
   stage,
   items,
   onMoveStage,
@@ -3009,12 +3051,41 @@ function KanbanStageCard({
   columnScrollMode = 'unified',
   columnIndex = 0,
   searchHighlightId = null,
+  boardScrollRef = null,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
+  const containerRef = useRef(null);
+  const headerRef = useRef(null);
   const { columnScrollMaxH } = useWorkshopKanbanScrollLayout();
   const columnTheme = useKanbanColumnTheme(columnIndex);
   const totalValue = items.reduce((sum, p) => sum + resolveSxProjectValue(p), 0);
   const perColumnScroll = columnScrollMode === 'per-column';
+  const pinEmptyPlaceholder = !perColumnScroll && items.length === 0;
+  const emptyPlaceholderTop = useKanbanEmptyPlaceholderStickyTop(headerRef, pinEmptyPlaceholder);
+
+  const renderCard = useCallback((item) => (
+    <KanbanCard
+      item={item}
+      stage={stage}
+      onMoveStage={onMoveStage}
+      pipelineStages={pipelineStages}
+      calculateDays={calculateDays}
+      isSelected={selectedIds?.has(item.id)}
+      onToggleSelect={onToggleSelect}
+      onHandoverVC={onHandoverVC}
+      onOpenKanbanComment={onOpenKanbanComment}
+      workTypes={workTypes}
+      onSetWorkType={onSetWorkType}
+      onOpenDeadline={onOpenDeadline}
+      onTogglePin={onTogglePin}
+      columnAccent={columnTheme.accent}
+      searchHighlighted={String(searchHighlightId) === String(item.id)}
+    />
+  ), [
+    stage, onMoveStage, pipelineStages, calculateDays, selectedIds, onToggleSelect,
+    onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline,
+    onTogglePin, searchHighlightId, columnTheme.accent,
+  ]);
 
   const handleColumnDragOver = (e) => {
     e.preventDefault();
@@ -3036,8 +3107,8 @@ function KanbanStageCard({
       onDragOver={handleColumnDragOver}
       onDragLeave={handleColumnDragLeave}
       onDrop={handleColumnDrop}
-      className={`flex flex-col flex-shrink-0 w-[15rem] max-[400px]:w-[13.5rem] rounded-lg transition-all duration-200 kanban-column-surface ${
-        perColumnScroll ? 'h-full self-stretch overflow-hidden' : 'overflow-visible kanban-unified-scroll-column'
+      className={`flex flex-col flex-shrink-0 w-[15rem] max-[400px]:w-[13.5rem] rounded-lg transition-all duration-200 kanban-column-surface ${KANBAN_COLUMN_RAIL_CLASS} ${
+        perColumnScroll ? 'h-full self-stretch overflow-x-visible overflow-y-hidden' : 'overflow-visible kanban-unified-scroll-column'
       } ${isOverColumn ? 'ring-2 ring-blue-400 ring-dashed' : ''}`}
       style={{
         ...(perColumnScroll && columnScrollMaxH ? { height: columnScrollMaxH, maxHeight: columnScrollMaxH } : {}),
@@ -3045,6 +3116,7 @@ function KanbanStageCard({
     >
       {/* Header — nền theo màu stage; cuộn chung: dính top vùng scroll */}
       <div
+        ref={headerRef}
         className={`${perColumnScroll ? 'shrink-0' : 'sticky top-0 kanban-column-header-sticky'} z-10 px-2 py-2.5 border-b rounded-t-md transition-colors kanban-column-surface`}
         style={{
           backgroundColor: isOverColumn ? columnTheme.dropBg : columnTheme.headerBg,
@@ -3114,36 +3186,41 @@ function KanbanStageCard({
 
       {/* Cards container */}
       <div
-        className={`flex-1 px-1 pt-1.5 pb-2.5 space-y-1.5 transition-colors ${KANBAN_CARDS_BODY_CLASS} ${
+        ref={containerRef}
+        className={`flex-1 px-1 pt-1.5 pb-2.5 transition-colors ${KANBAN_CARDS_BODY_CLASS} ${
           isOverColumn ? 'kanban-cards-body--drop' : ''
+        } ${
+          pinEmptyPlaceholder ? KANBAN_CARDS_BODY_EMPTY_PIN_CLASS : ''
         } ${
           perColumnScroll ? 'min-h-0 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]' : ''
         }`}
         style={perColumnScroll ? undefined : { minHeight: '180px' }}
       >
         {items.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-32 text-gray-400 gap-1.5">
-            <Layers className="h-6 w-6 opacity-50" />
-            <p className="text-xs">{isOverColumn ? 'Thả vào đây' : 'Chưa có dự án'}</p>
+          <div
+            className={`${KANBAN_COLUMN_EMPTY_CLASS}${isOverColumn ? ' kanban-column-empty--drop' : ''}${pinEmptyPlaceholder ? ` ${KANBAN_COLUMN_EMPTY_PIN_CLASS}` : ''}`}
+            style={pinEmptyPlaceholder ? { top: emptyPlaceholderTop } : undefined}
+          >
+            <Layers aria-hidden />
+            <p>{isOverColumn ? 'Thả vào đây' : 'Chưa có dự án'}</p>
           </div>
         ) : (
-          items.map((item) => (
-            <KanbanCard key={item.id} item={item} stage={stage} onMoveStage={onMoveStage} pipelineStages={pipelineStages}
-              calculateDays={calculateDays}
-              isSelected={selectedIds?.has(item.id)} onToggleSelect={onToggleSelect}
-              onHandoverVC={onHandoverVC} onOpenKanbanComment={onOpenKanbanComment}
-              workTypes={workTypes} onSetWorkType={onSetWorkType} onOpenDeadline={onOpenDeadline}
-              onTogglePin={onTogglePin}
-              searchHighlighted={String(searchHighlightId) === String(item.id)} />
-          ))
+          <KanbanColumnVirtualList
+            items={items}
+            columnScrollRef={containerRef}
+            boardScrollRef={perColumnScroll ? null : boardScrollRef}
+            compact={false}
+            searchHighlightId={searchHighlightId}
+            renderCard={renderCard}
+          />
         )}
       </div>
     </div>
   );
-}
+});
 
 // ── KANBAN ITEM CARD (y hệt CRM KanbanCard) ─────────────────────────────────
-function KanbanCard({ item, stage, onMoveStage, pipelineStages, calculateDays, isSelected, onToggleSelect, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline, onTogglePin, searchHighlighted = false }) {
+const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveStage, pipelineStages, calculateDays, isSelected, onToggleSelect, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline, onTogglePin, searchHighlighted = false }) {
   const navigate = useNavigate();
   const cardRef = useRef(null);
   const [handingOver, setHandingOver] = useState(false);
@@ -3214,18 +3291,11 @@ function KanbanCard({ item, stage, onMoveStage, pipelineStages, calculateDays, i
   const customerInitials = getInitials(item.customer?.full_name || item.name || '');
   const progress = item.sx_pipeline_percent != null ? Math.max(0, Math.min(100, Number(item.sx_pipeline_percent) || 0)) : null;
 
-  const statusStripClass = manualDlLevel === 'overdue' || columnSlaTone?.level === 'overdue'
-    ? 'bg-red-500'
-    : manualDlLevel === 'soon' || columnSlaTone?.level === 'soon'
-      ? 'bg-amber-500'
-      : manualDlLevel === 'warn' || columnSlaTone?.level === 'warn'
-        ? 'bg-yellow-400'
-        : slaOverdue
-          ? 'bg-orange-400'
-          : 'bg-gray-200';
-  const cardBorderToneClass = (manualDlLevel === 'overdue' || columnSlaTone?.level === 'overdue')
-    ? 'border-red-300'
-    : 'border-gray-200';
+  const cardBorderTone = (manualDlLevel === 'overdue' || columnSlaTone?.level === 'overdue')
+    ? 'overdue'
+    : isSelected
+      ? 'selected'
+      : 'default';
 
   useEffect(() => {
     if (!searchHighlighted || !cardRef.current) return;
@@ -3244,23 +3314,18 @@ function KanbanCard({ item, stage, onMoveStage, pipelineStages, calculateDays, i
         markWorkshopPipelineCardFocus(item.id, 'sx');
         navigate(`/sx/projects/${item.id}`);
       }}
-      className={`relative !bg-white rounded-lg border px-2.5 pt-2.5 pb-2 transition-all duration-200 group hover:shadow-md ${
+      className={`relative !bg-white rounded-lg px-2.5 pt-2.5 pb-2 transition-all duration-200 group hover:shadow-md ${KANBAN_PIPELINE_CARD_CLASS} ${
         searchHighlighted ? `${SX_KANBAN_SEARCH_HIT_TW} ${SX_KANBAN_SEARCH_HIT_CLASS}` : 'overflow-hidden'
       } ${
         lockedInVc ? 'cursor-default' : 'cursor-pointer'
       } ${
-        isSelected
-          ? 'ring-2 ring-blue-400 ring-offset-1 border-blue-200'
-          : cardBorderToneClass
+        isSelected ? 'ring-2 ring-blue-400 ring-offset-1' : ''
       }`}
-      style={{ backgroundColor: '#ffffff' }}
+      style={{
+        backgroundColor: '#ffffff',
+        ...getKanbanPipelineCardBorderStyle(columnAccent, cardBorderTone),
+      }}
     >
-      {/* Thanh trạng thái 3px trên đầu — nhận biết deadline khi lướt */}
-      <span
-        aria-hidden
-        className={`pointer-events-none absolute top-0 left-0 right-0 h-[3px] ${statusStripClass}`}
-      />
-
       {onToggleSelect && (
         <label
           data-workshop-bulk-checkbox
@@ -3637,7 +3702,7 @@ function KanbanCard({ item, stage, onMoveStage, pipelineStages, calculateDays, i
       )}
     </div>
   );
-}
+});
 
 // ── KANBAN VIEW CONTAINER (y hệt CRM KanbanView) ─────────────────────────────
 function KanbanView({
@@ -3662,14 +3727,20 @@ function KanbanView({
     [pipeline],
   );
   const perColumnScroll = columnScrollMode === 'per-column';
+  const boardScrollRef = useRef(null);
 
   return (
     <WorkshopPipelineKanbanScroll
       cardSelector="[data-sx-kanban-card]"
       columnScrollMode={columnScrollMode}
       remeasureToken={remeasureToken}
+      scrollContainerRef={boardScrollRef}
+      showLegend={false}
     >
-      <div className={`flex min-w-max items-stretch gap-1 ${perColumnScroll ? 'h-full' : ''} ${UI_KANBAN_FIXED_CLASS}`}>
+      <div
+        className={`flex min-w-max items-stretch gap-1 ${KANBAN_BOARD_COLUMN_RAILS_CLASS} ${perColumnScroll ? 'h-full' : ''} ${UI_KANBAN_FIXED_CLASS}`}
+        style={{ '--kanban-col-gap': '0.25rem' }}
+      >
         {pipeline.map((stage, columnIndex) => (
           <KanbanStageCard
             key={stage.id || stage.slug}
@@ -3690,6 +3761,7 @@ function KanbanView({
             onTogglePin={onTogglePin}
             columnScrollMode={columnScrollMode}
             searchHighlightId={searchHighlightId}
+            boardScrollRef={perColumnScroll ? null : boardScrollRef}
           />
         ))}
       </div>

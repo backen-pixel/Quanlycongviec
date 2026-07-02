@@ -12,7 +12,7 @@ import {
   FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical,
   Zap, CheckCircle2, TrendingUp, TrendingDown, AlertTriangle, Building2, Rocket, Pin,
   Clock, List, LayoutGrid, GitMerge, UserCheck, Trash2, CheckSquare, BarChart3,
-  MessageSquare, MinusSquare, Settings, Pencil, RotateCcw, Save, Briefcase, XCircle,
+  MessageSquare, MinusSquare, Settings, Pencil, RotateCcw, Save, Briefcase, XCircle, Layers,
 } from 'lucide-react';
 import { ListView, PlannerView, DeadlineView, CommentsView } from '../components/CRMViews';
 import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
@@ -102,7 +102,19 @@ import { logFilter } from '../lib/activityLogger';
 import { CrmCommentMentionComposer } from '../components/crmCommentMentionUi';
 import { resolveMentionIdsFromContent } from '../lib/crmCommentMentions';
 import WorkshopPipelineKanbanScroll, { useWorkshopKanbanScrollLayout } from '../components/WorkshopPipelineKanbanScroll';
-import { useKanbanColumnTheme, UI_KANBAN_FIXED_CLASS, KANBAN_CARDS_BODY_CLASS } from '../lib/kanbanColumnTheme';
+import {
+  useKanbanColumnTheme,
+  UI_KANBAN_FIXED_CLASS,
+  KANBAN_CARDS_BODY_CLASS,
+  KANBAN_CARDS_BODY_EMPTY_PIN_CLASS,
+  KANBAN_COLUMN_EMPTY_CLASS,
+  KANBAN_COLUMN_EMPTY_PIN_CLASS,
+  KANBAN_BOARD_COLUMN_RAILS_CLASS,
+  KANBAN_COLUMN_RAIL_CLASS,
+  KANBAN_PIPELINE_CARD_CLASS,
+  getKanbanPipelineCardBorderStyle,
+  useKanbanEmptyPlaceholderStickyTop,
+} from '../lib/kanbanColumnTheme';
 import AnchoredDropdownMenu from '../components/AnchoredDropdownMenu';
 import SearchInlineFilterChips, { SearchClearButton } from '../components/SearchInlineFilterChips';
 import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
@@ -379,7 +391,7 @@ function applyCrmTimePresetToState(preset) {
   };
 }
 
-const KANBAN_LOAD_PRESET_VALUES = ['500', '1500', '3000'];
+const KANBAN_LOAD_PRESET_VALUES = ['500', '1000', '2000'];
 const KANBAN_COLUMN_SCROLL_MODES = ['unified', 'per-column'];
 const KANBAN_DEFAULT_COLUMN_SCROLL_MODE = 'unified';
 const LS_CRM_KANBAN_COLUMN_SCROLL = 'crm_kanban_column_scroll_mode';
@@ -388,7 +400,7 @@ const KANBAN_PAGE_SIZE = 500;
 /** Mặc định trần auto-load khi cuộn (chọn «Tải tất cả» để vượt trần). */
 const KANBAN_DEFAULT_LOAD_LIMIT = '500';
 /** Trần khi chọn «Tải tất cả» — tránh vòng lặp API vô hạn. */
-const KANBAN_LOAD_ALL_MAX = 5000;
+const KANBAN_LOAD_ALL_MAX = 3000;
 
 const CRM_VIEW_MODES = [
   { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
@@ -1119,6 +1131,8 @@ export default function CRMDashboard() {
   // True khi đang load lần đầu (chưa có dữ liệu trên dashboard).
   // Hiển thị banner "Đang tải dữ liệu…" thay vì màn trắng.
   const [firstLoading, setFirstLoading] = useState(true);
+  const firstLoadingRef = useRef(true);
+  firstLoadingRef.current = firstLoading;
   /** 0 = ẩn; 1–100 khi đang load CRM (100 = xong, rồi reset). */
   const [crmLoadProgress, setCrmLoadProgress] = useState(0);
   const [viewMode, setViewMode] = useState(() => {
@@ -1660,14 +1674,9 @@ export default function CRMDashboard() {
       /* cache hydrate lỗi — fallback về fetch bình thường */
     }
     if (veryFreshCacheHit) {
-      // Cache rất tươi: thanh tiến trình tối thiểu, không gọi API
+      // Cache rất tươi: hiển thị ngay, không gọi API / không reset thanh tiến trình
       setFirstLoading(false);
-      setSyncing(true);
       setLastSyncAt(new Date());
-      crmLoadProgressCtrlRef.current?.start();
-      crmLoadProgressCtrlRef.current?.finish(() => {
-        setSyncing(false);
-      });
       return undefined;
     }
     if (loadDebounceTimerRef.current) clearTimeout(loadDebounceTimerRef.current);
@@ -2696,7 +2705,7 @@ export default function CRMDashboard() {
     syncing,
   ]);
 
-  const crmMainContentLoading = firstLoading || syncing;
+  const crmMainContentLoading = firstLoading;
 
   /** Tab Lead/Deal đang xem — cần có cột pipeline mới render được thẻ Kanban. */
   const crmActiveTabStagesReady = useMemo(
@@ -2704,11 +2713,11 @@ export default function CRMDashboard() {
     [pipelineType, stagesLead.length, stagesDeal.length],
   );
 
-  /** Loader toàn màn khi tab hiện tại chưa có cột; overlay khi đã có cột (đồng bộ ngầm). */
-  const crmShowFullLoader = crmMainContentLoading && !crmActiveTabStagesReady && !companyHasNoPipeline;
-  const crmShowLoaderOverlay = crmMainContentLoading && crmActiveTabStagesReady;
+  /** Loader toàn màn khi tab hiện tại chưa có cột; overlay chỉ lần tải đầu (không khi đồng bộ ngầm). */
+  const crmShowFullLoader = firstLoading && !crmActiveTabStagesReady && !companyHasNoPipeline;
+  const crmShowLoaderOverlay = firstLoading && crmActiveTabStagesReady;
 
-  const crmLoadProgressDisplay = (firstLoading || syncing)
+  const crmLoadProgressDisplay = firstLoading
     ? Math.max(0, Math.min(100, crmLoadProgress))
     : 0;
 
@@ -2758,9 +2767,10 @@ export default function CRMDashboard() {
       isStale = () => mySeq !== loadSeqRef.current;
     }
 
+    const shouldTrackProgress = !background && (!silent || firstLoadingRef.current);
     if (silent && !background) setSyncing(true);
-    if (!background) startCrmLoadProgress();
-    const loadTimeoutId = !background
+    if (shouldTrackProgress) startCrmLoadProgress();
+    const loadTimeoutId = shouldTrackProgress
       ? window.setTimeout(() => {
           if (loadSeqRef.current !== mySeq) return;
           console.warn('[CRM] load timeout — tắt loader an toàn');
@@ -2772,11 +2782,16 @@ export default function CRMDashboard() {
     const markLoadComplete = () => {
       if (background || isStale()) return;
       if (loadTimeoutId) window.clearTimeout(loadTimeoutId);
-      // Dữ liệu đã sẵn sàng — tắt loader ngay (không chờ animation %).
-      setFirstLoading(false);
       setSyncing(false);
       setLastSyncAt(new Date());
-      finishCrmLoadProgress();
+      if (shouldTrackProgress) {
+        finishCrmLoadProgress(() => {
+          if (isStale()) return;
+          setFirstLoading(false);
+        });
+      } else {
+        setFirstLoading(false);
+      }
     };
     try {
       let resolvedCompanyId = filterCompany;
@@ -3182,7 +3197,7 @@ export default function CRMDashboard() {
       console.error(e);
       if (loadTimeoutId) window.clearTimeout(loadTimeoutId);
       if (!background && !isStale()) {
-        resetCrmLoadProgress();
+        if (shouldTrackProgress) resetCrmLoadProgress();
         setFirstLoading(false);
         setSyncing(false);
       }
@@ -5279,8 +5294,8 @@ export default function CRMDashboard() {
               </span>
               <span className="font-semibold text-violet-800 whitespace-nowrap">Đang tải…</span>
             </span>
-          ) : crmMainContentLoading ? (
-            <CrmDashboardLoaderCompact progress={crmLoadProgressDisplay} label="Đồng bộ" />
+          ) : firstLoading ? (
+            <CrmDashboardLoaderCompact progress={crmLoadProgressDisplay} label="Đang tải" />
           ) : lastSyncAt ? (
             <span
               className="inline-flex items-center gap-1 text-slate-500 shrink-0 text-[10px]"
@@ -6394,7 +6409,7 @@ export default function CRMDashboard() {
           )}
         </div>
       ) : (
-        <div className="relative min-h-[min(420px,calc(100vh-280px))]">
+        <div className="relative min-h-[min(700px,calc(100vh-128px))]">
           {crmShowLoaderOverlay && (
             <div
               className="absolute inset-0 z-20 flex items-start justify-center pt-4 sm:pt-8 bg-white/65 backdrop-blur-[2px] rounded-xl"
@@ -6511,24 +6526,6 @@ export default function CRMDashboard() {
               columnScrollMode={kanbanColumnScrollMode}
               searchHighlightId={kanbanSearchHighlightId}
             />
-            {/* Chú thích màu sắc thẻ Kanban — chỉ hiện sau khi load xong dữ liệu */}
-            {!crmMainContentLoading && (
-              <div className="flex flex-wrap items-center gap-3 px-3 py-2 border-t border-gray-100 bg-white text-[11px] text-gray-600">
-                <span className="font-semibold text-gray-500 mr-1">Chú thích badge hạn:</span>
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="inline-block h-3.5 px-1.5 rounded border border-emerald-200 bg-emerald-50 text-[9px] text-emerald-700" aria-hidden>Còn</span>
-                  Còn hạn
-                </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="inline-block h-3.5 px-1.5 rounded border border-orange-500 bg-orange-500 text-[9px] text-white" aria-hidden>Sắp</span>
-                  Sắp tới hạn
-                </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="inline-block h-3.5 px-1.5 rounded border border-red-600 bg-red-600 text-[9px] text-white" aria-hidden>Quá</span>
-                  Quá hạn
-                </span>
-              </div>
-            )}
             {/* Tải thêm khi cuộn — trạng thái + nút tải hết */}
             {kanbanLoadLimit !== 'all' && kanbanScrollLoad.hasMore && (
                 <div className="flex items-center justify-center gap-3 py-3 border-t border-gray-100 bg-gray-50/50 rounded-b-xl">
@@ -7824,6 +7821,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
+  const headerRef = useRef(null);
   const { columnScrollMaxH: layoutScrollMaxH } = useWorkshopKanbanScrollLayout();
   const columnScrollMaxH = columnScrollMaxHProp ?? layoutScrollMaxH;
 
@@ -7851,6 +7849,8 @@ const KanbanStageCard = memo(function KanbanStageCard({
   const totalInColumn = items?.length || 0;
   const perColumnScroll = columnScrollMode === 'per-column';
   const virtualizeCards = totalInColumn >= CRM_KANBAN_VIRTUAL_THRESHOLD;
+  const pinEmptyPlaceholder = !perColumnScroll && totalInColumn === 0;
+  const emptyPlaceholderTop = useKanbanEmptyPlaceholderStickyTop(headerRef, pinEmptyPlaceholder);
 
   const handleCardsScroll = (e) => {
     if (!perColumnScroll || !onColumnScrollNearEnd) return;
@@ -7888,15 +7888,15 @@ const KanbanStageCard = memo(function KanbanStageCard({
       onDragOver={handleColumnDragOver}
       onDragLeave={handleColumnDragLeave}
       onDrop={handleColumnDrop}
-      className={`flex flex-col flex-shrink-0 rounded-lg transition-all duration-200 kanban-column-surface ${
+      className={`flex flex-col flex-shrink-0 rounded-lg transition-all duration-200 kanban-column-surface ${KANBAN_COLUMN_RAIL_CLASS} ${
         compact ? 'w-[15rem] max-[380px]:w-[13.5rem]' : 'w-[17rem] max-[420px]:w-[15rem]'
-      } ${perColumnScroll ? 'h-full self-stretch overflow-hidden' : 'overflow-visible kanban-unified-scroll-column'} ${isOverColumn ? 'ring-2 ring-blue-500 ring-dashed' : ''}`}
+      } ${perColumnScroll ? 'h-full self-stretch overflow-x-visible overflow-y-hidden' : 'overflow-visible kanban-unified-scroll-column'} ${isOverColumn ? 'ring-2 ring-blue-500 ring-dashed' : ''}`}
       style={{
         ...(perColumnScroll && columnScrollMaxH ? { height: columnScrollMaxH, maxHeight: columnScrollMaxH } : {}),
       }}
     >
       {/* Sticky header — nền theo màu stage (cuộn chung: dính top vùng scroll) */}
-      <div className={`${perColumnScroll ? 'shrink-0' : 'sticky top-0 kanban-column-header-sticky'} z-20 overflow-hidden rounded-t-lg`}>
+      <div ref={headerRef} className={`${perColumnScroll ? 'shrink-0' : 'sticky top-0 kanban-column-header-sticky'} z-20 overflow-hidden rounded-t-lg`}>
         <div
           className={`border-b transition-all kanban-column-surface ${compact ? 'p-2' : 'p-3'}`}
           style={{
@@ -7981,16 +7981,22 @@ const KanbanStageCard = memo(function KanbanStageCard({
         className={`rounded-b-lg transition-all ${KANBAN_CARDS_BODY_CLASS} ${
           isOverColumn ? 'kanban-cards-body--drop' : ''
         } ${
-          virtualizeCards
-            ? (compact ? 'p-1.5' : 'p-2.5')
-            : (compact ? 'p-1.5 space-y-1.5' : 'p-2.5 space-y-2')
+          pinEmptyPlaceholder ? KANBAN_CARDS_BODY_EMPTY_PIN_CLASS : ''
+        } ${
+          compact ? 'p-1.5' : 'p-2.5'
         } ${perColumnScroll ? 'flex-1 min-h-0 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]' : 'flex-1'}`}
         style={perColumnScroll ? undefined : { minHeight: compact ? '160px' : '180px' }}
       >
         {totalInColumn === 0 ? (
-          <div className="flex items-center justify-center h-full text-gray-400">
-            <p className="text-sm flex items-center gap-1">
-              {isOverColumn ? '⬇️ Thả vào đây' : '📥 Kéo lead vào đây'}
+          <div
+            className={`${KANBAN_COLUMN_EMPTY_CLASS}${isOverColumn ? ' kanban-column-empty--drop' : ''}${compact ? ' kanban-column-empty--compact' : ''}${pinEmptyPlaceholder ? ` ${KANBAN_COLUMN_EMPTY_PIN_CLASS}` : ''}`}
+            style={pinEmptyPlaceholder ? { top: emptyPlaceholderTop } : undefined}
+          >
+            <Layers aria-hidden />
+            <p>
+              {isOverColumn
+                ? 'Thả vào đây'
+                : (pipelineType === 'lead' ? 'Kéo lead vào đây' : 'Kéo deal vào đây')}
             </p>
           </div>
         ) : (
@@ -8004,6 +8010,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
               <KanbanCard
                 item={item}
                 stage={stage}
+                columnAccent={columnTheme.accent}
                 onMoveStage={onMoveStage}
                 pipelineStages={pipelineStages}
                 pipelineType={pipelineType}
@@ -8029,7 +8036,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
 });
 
 // Kanban Item Card — meta · tiêu đề · ngữ cảnh · giá trị · khách · footer
-const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipelineStages, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline, onSaveEstimatedValue, searchHighlighted = false }) {
+const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveStage, pipelineStages, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline, onSaveEstimatedValue, searchHighlighted = false }) {
   const navigate = useNavigate();
   const cardRef = useRef(null);
   const [editingValue, setEditingValue] = useState(false);
@@ -8072,6 +8079,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
   const stageColor = stage.color || '#94a3b8';
   const selectedForMerge = mergeSelectedIds && mergeSelectedIds.some((x) => String(x) === String(item.id));
   const canMergeSelect = typeof onToggleMergeSelect === 'function';
+  const cardBorderTone = selectedForMerge ? 'selected' : 'default';
 
   useEffect(() => {
     if (!searchHighlighted || !cardRef.current) return;
@@ -8280,12 +8288,15 @@ const KanbanCard = memo(function KanbanCard({ item, stage, onMoveStage, pipeline
         }
         openLeadDetail();
       }}
-      className={`relative rounded-lg border border-gray-200 !bg-white transition-[box-shadow,transform,z-index,background-color,border-color] duration-150 group/card hover:-translate-y-0.5 hover:shadow-md ${
+      className={`relative rounded-lg !bg-white transition-[box-shadow,transform,z-index,background-color,border-color] duration-150 group/card hover:-translate-y-0.5 hover:shadow-md ${KANBAN_PIPELINE_CARD_CLASS} ${
         searchHighlighted ? `${CRM_KANBAN_SEARCH_HIT_TW} ${CRM_KANBAN_SEARCH_HIT_CLASS}` : 'overflow-hidden'
       } ${
         dealDragLocked ? 'cursor-default' : 'cursor-pointer'
       } ${stage?.is_lost && item.lost_reason ? 'hover:z-20' : ''} ${selectedForMerge ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
-      style={{ borderTop: `3px solid ${stageColor}` }}
+      style={{
+        backgroundColor: '#ffffff',
+        ...getKanbanPipelineCardBorderStyle(columnAccent, cardBorderTone),
+      }}
     >
       {typeof item.kpi_ledger_month_net === 'number' && !stage?.is_lost && (
         <KpiKanbanLedgerBadge
@@ -8658,7 +8669,10 @@ function KanbanView({
       showLegend={false}
       scrollContainerRef={kanbanHScrollRef}
     >
-      <div className={`flex min-w-max items-stretch ${compact ? 'gap-1.5' : 'gap-2.5'} ${perColumnScroll ? 'h-full' : ''}`}>
+      <div
+        className={`flex min-w-max items-stretch ${KANBAN_BOARD_COLUMN_RAILS_CLASS} ${compact ? 'gap-1.5' : 'gap-2.5'} ${perColumnScroll ? 'h-full' : ''}`}
+        style={{ '--kanban-col-gap': compact ? '0.375rem' : '0.625rem' }}
+      >
         {pipeline.map((stage, columnIndex) => (
           <KanbanStageCard
             key={stage.id}
