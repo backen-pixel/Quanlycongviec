@@ -1821,6 +1821,37 @@ export default function CrmOrgOverviewReport() {
             <option value="deal">Chỉ Deal</option>
           </select>
 
+          {hasCustomerTab && (
+            <div
+              className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 shrink-0"
+              role="group"
+              aria-label="Gộp hoặc tách đơn hàng"
+            >
+              <button
+                type="button"
+                onClick={() => applyDealKhSplit(false)}
+                className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-all cursor-pointer ${
+                  !dealKhSplitEnabled
+                    ? 'bg-indigo-50 text-indigo-700 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Gộp
+              </button>
+              <button
+                type="button"
+                onClick={() => applyDealKhSplit(true)}
+                className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-all cursor-pointer ${
+                  dealKhSplitEnabled
+                    ? 'bg-cyan-50 text-cyan-700 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Tách đơn hàng
+              </button>
+            </div>
+          )}
+
           <select
             value={filter.companyId}
             onChange={(e) => handleFilterChange({ companyId: e.target.value })}
