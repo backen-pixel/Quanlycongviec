@@ -582,7 +582,7 @@ export default function ProductionDashboard() {
       : (showVptSxWorkshopFilter && filterSxWorkshopCompany ? filterSxWorkshopCompany : undefined);
     if (silent) setSyncing(true);
     else {
-      setLoading(true);
+    setLoading(true);
       sxLoadProgressCtrlRef.current?.start();
     }
     const markLoadComplete = () => {
@@ -634,7 +634,7 @@ export default function ProductionDashboard() {
         if (silent) setSyncing(false);
         else {
           sxLoadProgressCtrlRef.current?.reset();
-          setLoading(false);
+    setLoading(false);
           setFirstLoaded(true);
         }
       }
@@ -1087,7 +1087,7 @@ export default function ProductionDashboard() {
     const reason = window.prompt(`Xóa ${count} dự án đã chọn?\n\nDự án sẽ được chuyển vào Thùng rác — admin có thể khôi phục.\nNhập lý do (không bắt buộc):`, '');
     if (reason === null) return;
     setBulkDeleting(true);
-    clearSelection();
+      clearSelection();
     setProjects((prev) => prev.filter((p) => !idsToDelete.includes(p.id)));
     try {
       const results = await Promise.allSettled(
@@ -1226,17 +1226,17 @@ export default function ProductionDashboard() {
         stage.items.filter((project) => {
           if (deferredSearchQuery) {
             const q = deferredSearchQuery.toLowerCase();
-            const hit = project.code?.toLowerCase().includes(q)
-              || project.name?.toLowerCase().includes(q)
-              || project.notes?.toLowerCase().includes(q)
-              || project.customer?.full_name?.toLowerCase().includes(q)
-              || String(project.customer?.phone || '').toLowerCase().includes(q);
-            if (!hit) return false;
-          }
-          if (priorityFilter && project.priority !== priorityFilter) return false;
-          if (stageFilter && project.sx_kanban_column_id !== stageFilter) return false;
-          return true;
-        }),
+          const hit = project.code?.toLowerCase().includes(q)
+            || project.name?.toLowerCase().includes(q)
+            || project.notes?.toLowerCase().includes(q)
+            || project.customer?.full_name?.toLowerCase().includes(q)
+            || String(project.customer?.phone || '').toLowerCase().includes(q);
+          if (!hit) return false;
+        }
+        if (priorityFilter && project.priority !== priorityFilter) return false;
+        if (stageFilter && project.sx_kanban_column_id !== stageFilter) return false;
+        return true;
+      }),
         sortBy,
       )),
     }));
@@ -1285,9 +1285,9 @@ export default function ProductionDashboard() {
 
       const fetchIndexChunks = async (urlPrefix, idList) => {
         const out = {};
-        const chunks = [];
+      const chunks = [];
         for (let i = 0; i < idList.length; i += 200) chunks.push(idList.slice(i, i + 200));
-        const maps = await Promise.all(
+      const maps = await Promise.all(
           chunks.map((chunk) => api.get(`${urlPrefix}${chunk.join(',')}`).then((r) => r.data || {}).catch(() => ({}))),
         );
         maps.forEach((m) => Object.assign(out, m || {}));
@@ -1788,8 +1788,8 @@ export default function ProductionDashboard() {
         ? (pipeline.find((s) => String(s.id) === String(resolvedSxCol)) || targetCol)
         : targetCol;
       setProjects((prev) => prev.map((p) => (String(p.id) === String(projectId)
-        ? {
-            ...p,
+          ? {
+              ...p,
             status: updated?.status ?? 'shipping',
             current_stage_id: updated?.current_stage_id ?? null,
             current_stage: updated?.current_stage ?? null,
@@ -1800,8 +1800,8 @@ export default function ProductionDashboard() {
             logistics_person_id: updated?.logistics_person_id ?? p.logistics_person_id,
             delivery_team_id: updated?.delivery_team_id ?? p.delivery_team_id,
             installation_team_id: updated?.installation_team_id ?? p.installation_team_id,
-          }
-        : p)));
+            }
+          : p)));
       scheduleCrmBadgeRefresh(projectId);
     } catch (e) {
       console.error(e);
@@ -2133,7 +2133,7 @@ export default function ProductionDashboard() {
                   Đang cập nhật…
                 </span>
               )}
-              <button
+          <button
                 type="button"
                 onClick={() => setShowNewDeal(true)}
                 className="h-8 px-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold inline-flex items-center gap-1.5 cursor-pointer text-sm shrink-0 shadow-sm shadow-indigo-500/20"
@@ -2141,9 +2141,9 @@ export default function ProductionDashboard() {
               >
                 <Plus className="h-3.5 w-3.5" />
                 Tạo deal
-              </button>
+          </button>
               <AssignedTasksToolbarButton to="/sx/assignments" variant="outlined" className="!h-8 !rounded-lg !text-sm" />
-            </div>
+      </div>
 
             {/* Tìm kiếm — giữa toolbar, chiếm phần trống còn lại */}
             <div className="flex items-center gap-2 flex-1 min-w-0 order-2 lg:order-none">
@@ -2196,7 +2196,7 @@ export default function ProductionDashboard() {
                   {searchQuery && (
                     <SearchClearButton onClick={() => { setSearchQuery(''); setSearchFocused(false); setSearchSuggestDismissed(false); }} />
                   )}
-                </div>
+            </div>
                 <AnchoredDropdownMenu
                   open={sxSearchSuggestOpen}
                   onClose={() => setSearchSuggestDismissed(true)}
@@ -2215,11 +2215,11 @@ export default function ProductionDashboard() {
                         </span>
                       )}
                     </p>
-                  </div>
+          </div>
                   {sxSearchSuggestItems.map((project) => (
-                    <button
+          <button
                       key={project.id}
-                      type="button"
+            type="button"
                       className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-violet-50/80 transition-colors cursor-pointer border-b border-slate-50 last:border-0 group/item text-left"
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => focusSxSearchResult(project.id)}
@@ -2260,8 +2260,8 @@ export default function ProductionDashboard() {
                     <Filter className="h-3 w-3" />
                     {activeSxFilterCount > 0 && (
                       <span className="absolute top-0 right-0 h-1.5 w-1.5 rounded-full bg-violet-600 ring-1 ring-white" />
-                    )}
-                  </button>
+            )}
+          </button>
                 </div>
               </div>
               <span className="hidden md:inline text-[10px] text-slate-500 shrink-0 tabular-nums whitespace-nowrap">
@@ -2302,15 +2302,15 @@ export default function ProductionDashboard() {
                     ))}
                   </select>
                   {filterWorkTypeId && (
-                    <button
-                      type="button"
+            <button
+              type="button"
                       onClick={() => setFilterWorkTypeId('')}
                       className="p-0.5 rounded hover:bg-white/70 cursor-pointer"
                       title="Bỏ phân loại"
-                    >
+            >
                       <X className="h-3 w-3" />
-                    </button>
-                  )}
+            </button>
+          )}
                 </div>
               )}
               <div className="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-white/90 border border-slate-200 shadow-inner">
@@ -2347,7 +2347,7 @@ export default function ProductionDashboard() {
                           <Icon className="h-3.5 w-3.5" />
                           <span className="hidden sm:inline max-w-[5.5rem] truncate">
                             {active?.label || 'Thêm'}
-                          </span>
+          </span>
                           <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${showViewModeMenu ? 'rotate-180' : ''}`} />
                         </>
                       );
@@ -2365,7 +2365,7 @@ export default function ProductionDashboard() {
                       setShowViewModeMenu(false);
                     }}
                   />
-                </div>
+        </div>
               </div>
               {viewMode === 'kanban' && (
                 <div className="relative">
@@ -2393,7 +2393,7 @@ export default function ProductionDashboard() {
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2.5">Cuộn cột Kanban</p>
                     <div className="space-y-2">
                       <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-gray-100 bg-white px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-blue-400 has-[:checked]:bg-white has-[:checked]:shadow-sm">
-                        <input
+              <input
                           type="radio"
                           name="sx-kanban-column-scroll"
                           className="mt-0.5 shrink-0"
@@ -2429,7 +2429,7 @@ export default function ProductionDashboard() {
                 </div>
               )}
             </div>
-          </div>
+            </div>
 
           {/* Lọc nhanh SX tại — chỉ hiện khi cần */}
           {showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0 ? (
@@ -2458,18 +2458,18 @@ export default function ProductionDashboard() {
                     </button>
                   );
                 })}
-              </div>
+                </div>
               <span className="text-[10px] text-slate-500 ml-auto shrink-0 tabular-nums md:hidden">
                 {projects.length} / {filteredCardCount} thẻ
               </span>
-            </div>
+              </div>
           ) : (
             <div className="flex md:hidden justify-end px-3 pb-2 sm:px-4">
               <span className="text-[10px] text-slate-500 tabular-nums">
                 {projects.length} / {filteredCardCount} thẻ
               </span>
-            </div>
-          )}
+                </div>
+              )}
         </div>
 
         {/* KPI */}
@@ -2518,7 +2518,7 @@ export default function ProductionDashboard() {
             >
               Hủy
             </button>
-          </div>
+              </div>
         )}
         <DateRangePickerPopover
           open={showDateRangePicker}
@@ -2541,7 +2541,7 @@ export default function ProductionDashboard() {
                 <X className="h-3 w-3" />
               </button>
             </span>
-          </div>
+            </div>
         )}
 
         {showAdvFilter && (
@@ -2559,26 +2559,26 @@ export default function ProductionDashboard() {
               storeSxFilterPanelPos(null);
             }}
             hasCustomPosition={!!filterPanelPos}
-            isAdmin={isAdmin}
-            isCompanyScopedAdmin={isCompanyScopedAdmin}
-            userCompanyId={userCompanyId}
-            companies={companies}
-            filterCompany={filterCompany}
-            onCompanyChange={handleStaffFilterCompanyChange}
-            dashboardScopeCompanyId={dashboardScopeCompanyId}
-            companyRegions={companyRegions}
-            filterRegion={filterRegion}
-            setFilterRegion={setFilterRegion}
-            assigneeListSearch={assigneeListSearch}
-            setAssigneeListSearch={setAssigneeListSearch}
-            filterPersonId={filterPersonId}
-            setFilterPersonId={setFilterPersonId}
-            setFilterPersonName={setFilterPersonName}
-            employeeOptionsForSelect={employeeOptionsForSelect}
-            companyDepts={companyDepts}
-            filterPersonName={filterPersonName}
-            employeeFilterListByRegion={employeeFilterListByRegion}
-            companyEmployees={companyEmployees}
+              isAdmin={isAdmin}
+              isCompanyScopedAdmin={isCompanyScopedAdmin}
+              userCompanyId={userCompanyId}
+              companies={companies}
+              filterCompany={filterCompany}
+              onCompanyChange={handleStaffFilterCompanyChange}
+              dashboardScopeCompanyId={dashboardScopeCompanyId}
+              companyRegions={companyRegions}
+              filterRegion={filterRegion}
+              setFilterRegion={setFilterRegion}
+              assigneeListSearch={assigneeListSearch}
+              setAssigneeListSearch={setAssigneeListSearch}
+              filterPersonId={filterPersonId}
+              setFilterPersonId={setFilterPersonId}
+              setFilterPersonName={setFilterPersonName}
+              employeeOptionsForSelect={employeeOptionsForSelect}
+              companyDepts={companyDepts}
+              filterPersonName={filterPersonName}
+              employeeFilterListByRegion={employeeFilterListByRegion}
+              companyEmployees={companyEmployees}
             canPickCompany={canPickCompany}
             workshopCompanyPickerList={workshopCompanyPickerList}
             showAllWorkshopOption={isAdmin}
@@ -2674,9 +2674,9 @@ export default function ProductionDashboard() {
           />
         ) : (
           <>
-        {viewMode === 'kanban' && (
-          <KanbanView pipeline={filteredKanbanPipeline} onMoveStage={handleMoveStage} calculateDays={calculateDays}
-            selectedIds={selectedIds} onToggleSelect={toggleSelect} onSelectColumn={selectColumn}
+      {viewMode === 'kanban' && (
+        <KanbanView pipeline={filteredKanbanPipeline} onMoveStage={handleMoveStage} calculateDays={calculateDays}
+          selectedIds={selectedIds} onToggleSelect={toggleSelect} onSelectColumn={selectColumn}
             onHandoverVC={openHandoverModal}
             onOpenKanbanComment={(item) => { setKanbanCommentItem(item); setKanbanCommentBody(''); }}
             workTypes={workTypes}
@@ -2703,23 +2703,23 @@ export default function ProductionDashboard() {
             onTogglePin={togglePinFlag}
             remeasureToken={showAdvFilter ? 'adv-on' : 'adv-off'}
             searchHighlightId={kanbanSearchHighlightId} />
-        )}
+      )}
 
-        {viewMode === 'list' && <ProductionListView pipeline={filteredKanbanPipeline} calculateDays={calculateDays} />}
+      {viewMode === 'list' && <ProductionListView pipeline={filteredKanbanPipeline} calculateDays={calculateDays} />}
 
-        {viewMode === 'planner' && <ProductionPlannerView pipeline={filteredKanbanPipeline} />}
+      {viewMode === 'planner' && <ProductionPlannerView pipeline={filteredKanbanPipeline} />}
 
         {viewMode === 'deadline' && <ProductionDeadlineView pipeline={filteredKanbanPipeline} />}
 
-        {viewMode === 'calendar' && <ProductionCalendarView pipeline={filteredKanbanPipeline} />}
+      {viewMode === 'calendar' && <ProductionCalendarView pipeline={filteredKanbanPipeline} />}
 
-        {viewMode === 'comments' && (
-          <ProductionCommentsView
-            pipeline={filteredKanbanPipeline}
-            commentsIndex={commentsIndex}
-            onRefreshIndex={() => refreshProjectCommentsIndex()}
-          />
-        )}
+      {viewMode === 'comments' && (
+        <ProductionCommentsView
+          pipeline={filteredKanbanPipeline}
+          commentsIndex={commentsIndex}
+          onRefreshIndex={() => refreshProjectCommentsIndex()}
+        />
+      )}
           </>
         )}
       </div>
@@ -3160,7 +3160,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
           >
             {items.length}
           </span>
-          {stage.is_handover_to_logistics && (
+            {stage.is_handover_to_logistics && (
             <span className="px-1 py-0.5 bg-orange-100 text-orange-600 text-[9px] font-bold rounded shrink-0">→VC</span>
           )}
           {stage.is_switch_workshop_type && (
@@ -3172,16 +3172,16 @@ const KanbanStageCard = memo(function KanbanStageCard({
           {stage.counts_as_collected_revenue && (
             <span className="px-1 py-0.5 bg-emerald-100 text-emerald-700 text-[9px] font-bold rounded shrink-0" title="Cột tính «Đã thu tiền»">💰Thu</span>
           )}
-          {onSelectColumn && items.length > 0 && (
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onSelectColumn(stage.id); }}
+            {onSelectColumn && items.length > 0 && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onSelectColumn(stage.id); }}
               className="px-1 py-0.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50 rounded cursor-pointer whitespace-nowrap"
-              title="Chọn tất cả dự án trong cột này"
-            >
-              Chọn cột
-            </button>
-          )}
+                title="Chọn tất cả dự án trong cột này"
+              >
+                Chọn cột
+              </button>
+            )}
           </div>
         </div>
         {/* Mô tả phân loại — gắn với workshop_type của cột */}
@@ -3444,7 +3444,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
               >
                 <Truck className="h-2.5 w-2.5 shrink-0" strokeWidth={2.4} />
                 Giao: {formatDate(item.delivery_date)}
-              </span>
+            </span>
             );
           })()}
         </div>
@@ -3484,14 +3484,14 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
           {showCompleted && (
             <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal-50 text-teal-800 border border-teal-200">
               ✓ Đã công
-            </span>
-          )}
+                </span>
+              )}
           {showCollected && (
             <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
               💰 Đã thu tiền
             </span>
-          )}
-        </div>
+        )}
+      </div>
         );
       })()}
 
@@ -3538,7 +3538,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
             <span className="inline-flex items-center gap-1 truncate min-w-0" title={companyName}>
               <Factory className="h-3 w-3 text-gray-400 shrink-0" />
               <span className="truncate">{companyName}</span>
-            </span>
+        </span>
           )}
           {externalCompanyName && (
             <span className="inline-flex items-center gap-1 truncate min-w-0 text-indigo-700" title={`Công ty bên ngoài: ${externalCompanyName}`}>
@@ -3613,7 +3613,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
                     style={{ backgroundColor: u.is_primary ? '#4f46e5' : stageColor }}
                   >
                     {getInitials(u.full_name)}
-                  </div>
+            </div>
                 )
               ))}
               {staffList.length > 2 && (
@@ -3632,7 +3632,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
                 title={assignee.full_name}
               >
                 {getInitials(assignee.full_name)}
-              </div>
+            </div>
             )
           ) : (
             <span className="h-5 w-5 rounded-full bg-gray-100 text-gray-400 text-[10px] flex items-center justify-center shrink-0" title="Chưa có người phụ trách">?</span>

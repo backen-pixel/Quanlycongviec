@@ -82,7 +82,6 @@ export default function Login() {
             filter: 'blur(10px)',
           }}
         />
-        {/* concentric rings (subtle) */}
         <svg
           className="pointer-events-none absolute top-1/3 -right-24 opacity-[0.07]"
           width="520"

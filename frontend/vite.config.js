@@ -81,9 +81,13 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined;
-          // Chỉ tách các gói rất nặng; phần còn lại để Vite gom — tránh vòng vendor ↔ vendor-react (gây màn trắng prod).
           if (id.includes('xlsx')) return 'vendor-xlsx';
+          if (id.includes('exceljs')) return 'vendor-exceljs';
           if (id.includes('recharts') || id.includes('d3-')) return 'vendor-charts';
+          if (id.includes('/three') || id.includes('node_modules/three')) return 'vendor-three';
+          if (id.includes('socket.io-client')) return 'vendor-socket';
+          if (id.includes('leaflet')) return 'vendor-leaflet';
+          if (id.includes('@hello-pangea/dnd') || id.includes('@dnd-kit')) return 'vendor-dnd';
           return undefined;
         },
       },
