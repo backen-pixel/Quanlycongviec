@@ -2234,17 +2234,13 @@ function orgReportDealCountsExpected(st, stagesInPipe) {
 function buildWonStageOrderByPipeline(stageMap) {
   const byPipe = {};
   for (const st of Object.values(stageMap || {})) {
-    if (!st?.pipeline_id || st.pipeline_type !== 'deal') continue;
+    if (!st?.pipeline_id) continue;
     if (st.is_lost || st.canonical_slug === 'lost' || st.deal_report_bucket === 'lost') continue;
+    if (!st.is_won) continue;
     const pid = String(st.pipeline_id);
     const ord = Number(st.order_index);
     const order = Number.isFinite(ord) ? ord : 999;
-    const isWonAnchor = !!st.is_won
-      || !!st.counts_as_won_revenue
-      || st.canonical_slug === 'contract_signed'
-      || st.deal_report_bucket === 'won';
-    if (!isWonAnchor) continue;
-    if (!Number.isFinite(byPipe[pid]) || order < byPipe[pid]) {
+    if (!Number.isFinite(byPipe[pid]) || order > byPipe[pid]) {
       byPipe[pid] = order;
     }
   }
