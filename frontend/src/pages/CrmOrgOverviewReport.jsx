@@ -1095,11 +1095,11 @@ const METRIC_COLS_BASE = [
   { key: 'deal_count', label: 'Deal', align: 'right' },
   {
     key: 'won_vs_total',
-    label: 'Thắng/Tổng',
+    label: 'Chốt/Tổng',
     align: 'right',
     render: (r) => {
       const won = reportClosedWonCount(r);
-      const total = r.deal_count ?? 0;
+      const total = (r.deal_count ?? 0) + (r.customer_order_count ?? 0);
       return `${won}/${total}`;
     },
   },
