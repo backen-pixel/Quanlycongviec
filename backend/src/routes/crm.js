@@ -2639,20 +2639,18 @@ function aggregateOrgReportRows(leadRows, dealRows, stageMap, opts = {}) {
     {
       const bumpDelivery = (bucket) => {
         bucket.delivered_deal_count = (bucket.delivered_deal_count || 0) + 1;
-        if (isClosedWon) {
-          const deadline = l.kanban_deadline_at;
-          const wonAt = l.stage_entered_at || l.created_at;
-          if (deadline && wonAt) {
-            const dMs = new Date(deadline).getTime();
-            const wMs = new Date(wonAt).getTime();
-            if (wMs <= dMs) {
-              bucket.on_time_deal_count = (bucket.on_time_deal_count || 0) + 1;
-            } else {
-              bucket.late_deal_count = (bucket.late_deal_count || 0) + 1;
-            }
-          } else {
+        const deadline = l.kanban_deadline_at;
+        const enteredAt = l.stage_entered_at || l.created_at;
+        if (deadline && enteredAt) {
+          const dMs = new Date(deadline).getTime();
+          const wMs = new Date(enteredAt).getTime();
+          if (wMs <= dMs) {
             bucket.on_time_deal_count = (bucket.on_time_deal_count || 0) + 1;
+          } else {
+            bucket.late_deal_count = (bucket.late_deal_count || 0) + 1;
           }
+        } else {
+          bucket.on_time_deal_count = (bucket.on_time_deal_count || 0) + 1;
         }
       };
       bumpDelivery(summary);
@@ -2918,26 +2916,18 @@ async function computeOrgOverviewReportData(req, res) {
       if (prevAgg?.employeeMap) pruneDept(prevAgg.employeeMap);
     }
 
-    // --- Đếm deal thắng thiếu bằng chứng ---
-    // Logic: deal thắng có task bắt buộc evidence (completion_requires_file_or_note hoặc
+    // --- Đếm deal thiếu bằng chứng ---
+    // Logic: deal có task bắt buộc evidence (completion_requires_file_or_note hoặc
     // required_evidence_file_types) → nếu task chưa completed hoặc completed thiếu minh chứng
     // → deal tính là thiếu bằng chứng.
     try {
       const { evaluateRequiredEvidenceTypes } = require('../helpers/evidenceFileTypes');
-      const wonStageOrderByPipe = buildWonStageOrderByPipeline(stageMap);
-      const pipelineStagesMap2 = buildPipelineStagesMap(stageMap);
-      const wonDealIds = dealRows
-        .filter((l) => {
-          const st = l.stage_id ? stageMap[l.stage_id] : null;
-          const pid = st?.pipeline_id ? String(st.pipeline_id) : '__none__';
-          return orgReportDealIsClosedWon(st, wonStageOrderByPipe, pipelineStagesMap2[pid] || []);
-        })
-        .map((l) => l.id);
-      if (wonDealIds.length) {
+      const allDealIds = dealRows.map((l) => l.id).filter(Boolean);
+      if (allDealIds.length) {
         const BATCH = 200;
         const dealsWithMissingEvidence = new Set();
-        for (let i = 0; i < wonDealIds.length; i += BATCH) {
-          const batch = wonDealIds.slice(i, i + BATCH);
+        for (let i = 0; i < allDealIds.length; i += BATCH) {
+          const batch = allDealIds.slice(i, i + BATCH);
           const { data: evidenceTasks } = await supabase
             .from('crm_tasks')
             .select('id, lead_id, status, notes, completion_requires_file_or_note, required_evidence_file_types')
@@ -2990,7 +2980,6 @@ async function computeOrgOverviewReportData(req, res) {
           bucket.no_evidence_deal_count = (bucket.no_evidence_deal_count || 0) + 1;
         };
         for (const l of dealRows) {
-          if (!wonDealIds.includes(l.id)) continue;
           if (!dealsWithMissingEvidence.has(String(l.id))) continue;
           const uid = orgReportOwnerId(l) || UNASSIGNED;
           const cid = l.company_id ? String(l.company_id) : NONE_COMPANY;
@@ -5031,6 +5020,7 @@ r.put('/pipeline-stages/:id', async (req, res) => {
       if (b[f] !== undefined) update[f] = (f === 'send_zalo_on_enter' || f === 'create_event_on_enter') ? !!b[f] : b[f];
     });
     if (b.requires_deadline !== undefined) update.requires_deadline = !!b.requires_deadline;
+    if (b.show_sx_transfer !== undefined) update.show_sx_transfer = !!b.show_sx_transfer;
     if (b.allow_revert_to_lead !== undefined) update.allow_revert_to_lead = !!b.allow_revert_to_lead;
     if (b.counts_as_won_revenue !== undefined) {
       update.counts_as_won_revenue = b.counts_as_won_revenue == null ? null : !!b.counts_as_won_revenue;

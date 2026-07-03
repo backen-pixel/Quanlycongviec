@@ -12,7 +12,7 @@ import {
   FileText, ShoppingCart, Receipt, ArrowRight, Eye, Percent, GripVertical,
   Zap, CheckCircle2, TrendingUp, TrendingDown, AlertTriangle, Building2, Rocket, Pin,
   Clock, List, LayoutGrid, GitMerge, UserCheck, Trash2, CheckSquare, BarChart3,
-  MessageSquare, MinusSquare, Settings, Pencil, RotateCcw, Save, Briefcase, XCircle, Layers,
+  MessageSquare, MinusSquare, Settings, Pencil, RotateCcw, Save, Briefcase, XCircle, Layers, Factory,
 } from 'lucide-react';
 import { ListView, PlannerView, DeadlineView, CommentsView } from '../components/CRMViews';
 import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
@@ -6519,6 +6519,12 @@ export default function CRMDashboard() {
               onToggleInteracted={toggleInteractedFlag}
               onOpenDeadline={openDeadlineFromCard}
               onSaveEstimatedValue={saveEstimatedValueFromCard}
+              onOpenSxTransfer={(deal) => {
+                const pref = isAdmin ? findDefaultAdminCrmCompanyPhucDat(productionCompaniesForSx) : '';
+                setDealAutoCreatePick(deal.id);
+                setDealAutoCreateCompanyId(filterCompany || (deal.company_id ? String(deal.company_id) : '') || pref);
+                setDealAutoCreatePickError('');
+              }}
               remeasureToken={`${showAdvSearch ? 1 : 0}:${timePreset}:${customDateFrom}:${customDateTo}`}
               explicitExpectedKv={explicitExpectedKvStages}
               wonStage={dealKhSplitEnabled && pipelineType === 'deal' ? wonStage : null}
@@ -7810,6 +7816,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
   onToggleInteracted,
   onOpenDeadline,
   onSaveEstimatedValue,
+  onOpenSxTransfer,
   explicitExpectedKv,
   wonStage,
   columnScrollMode = 'unified',
@@ -7930,13 +7937,14 @@ const KanbanStageCard = memo(function KanbanStageCard({
       onToggleInteracted={onToggleInteracted}
       onOpenDeadline={onOpenDeadline}
       onSaveEstimatedValue={onSaveEstimatedValue}
+      onOpenSxTransfer={onOpenSxTransfer}
       searchHighlighted={String(searchHighlightId) === String(item.id)}
     />
   ), [
     stage, columnTheme.accent, onMoveStage, pipelineStages, pipelineType, mergeSelectedIds,
     onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart,
     onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline, onSaveEstimatedValue,
-    searchHighlightId,
+    onOpenSxTransfer, searchHighlightId,
   ]);
 
   return (
@@ -8057,7 +8065,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
 });
 
 // Kanban Item Card — meta · tiêu đề · ngữ cảnh · giá trị · khách · footer
-const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveStage, pipelineStages, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline, onSaveEstimatedValue, searchHighlighted = false }) {
+const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveStage, pipelineStages, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline, onSaveEstimatedValue, onOpenSxTransfer, searchHighlighted = false }) {
   const navigate = useNavigate();
   const cardRef = useRef(null);
   const [editingValue, setEditingValue] = useState(false);
@@ -8080,6 +8088,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
     if (
       e.target.closest?.('[data-kanban-select-zone]') ||
       e.target.closest?.('[data-kanban-comment-btn]') ||
+      e.target.closest?.('[data-kanban-sx-btn]') ||
       e.target.closest?.('[data-kanban-flag-btn]') ||
       e.target.closest?.('[data-kanban-options-menu]') ||
       e.target.closest?.('[data-kanban-value-zone]') ||
@@ -8300,6 +8309,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
           ev.target.closest?.('[data-kanban-flag-btn]')
           || ev.target.closest?.('[data-kanban-options-menu]')
           || ev.target.closest?.('[data-kanban-comment-btn]')
+          || ev.target.closest?.('[data-kanban-sx-btn]')
           || ev.target.closest?.('[data-kanban-deadline-btn]')
           || ev.target.closest?.('[data-kanban-select-zone]')
           || ev.target.closest?.('[data-kanban-value-zone]')
@@ -8560,6 +8570,17 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
             )}
           </div>
           <div className="flex items-center gap-0.5 shrink-0 rounded-full border border-indigo-100 bg-white px-1 py-0.5 shadow-sm">
+            {typeof onOpenSxTransfer === 'function' && pipelineType === 'deal' && stage?.show_sx_transfer && !item.project_id && (
+              <button
+                type="button"
+                data-kanban-sx-btn
+                title="Chuyển sang Sản xuất"
+                onClick={(ev) => { ev.stopPropagation(); onOpenSxTransfer(item); }}
+                className="flex h-6 w-6 items-center justify-center rounded-full text-teal-500 hover:text-teal-700 hover:bg-teal-100 transition-colors cursor-pointer"
+              >
+                <Factory className="h-3.5 w-3.5" strokeWidth={2.2} />
+              </button>
+            )}
             {typeof onMoveStage === 'function' && Array.isArray(pipelineStages) && pipelineStages.length > 1 && (
               <KanbanCardQuickMove
                 stages={pipelineStages}
@@ -8600,6 +8621,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   prev.item?.id === next.item?.id
   && prev.item?.updated_at === next.item?.updated_at
   && prev.item?.stage_id === next.item?.stage_id
+  && prev.item?.project_id === next.item?.project_id
   && prev.item?.is_pinned === next.item?.is_pinned
   && prev.item?.is_interacted === next.item?.is_interacted
   && prev.item?.is_new_for_current_user === next.item?.is_new_for_current_user
@@ -8633,6 +8655,7 @@ function KanbanView({
   onToggleInteracted,
   onOpenDeadline,
   onSaveEstimatedValue,
+  onOpenSxTransfer,
   remeasureToken,
   explicitExpectedKv,
   wonStage,
@@ -8653,6 +8676,7 @@ function KanbanView({
   const isCrmPipelineDragTarget = useCallback((e) => {
     const t = e.target;
     if (t?.closest?.('[data-kanban-comment-btn]')) return false;
+    if (t?.closest?.('[data-kanban-sx-btn]')) return false;
     if (t?.closest?.('[data-kanban-deadline-btn]')) return false;
     return !!t?.closest?.('[data-crm-pipeline-card]');
   }, []);
@@ -8721,6 +8745,7 @@ function KanbanView({
             onToggleInteracted={onToggleInteracted}
             onOpenDeadline={onOpenDeadline}
             onSaveEstimatedValue={onSaveEstimatedValue}
+            onOpenSxTransfer={onOpenSxTransfer}
             explicitExpectedKv={explicitExpectedKv}
             wonStage={wonStage}
             columnScrollMode={columnScrollMode}

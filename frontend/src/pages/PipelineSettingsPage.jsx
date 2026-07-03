@@ -729,6 +729,16 @@ export default function PipelineSettingsPage() {
     }
   };
 
+  const toggleShowSxTransfer = async (stage) => {
+    if (stage.pipeline_type !== 'deal') return;
+    try {
+      await api.put(`/crm/pipeline-stages/${stage.id}`, { show_sx_transfer: !stage.show_sx_transfer });
+      load();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi');
+    }
+  };
+
   const visiblePipelines = useMemo(() => {
     if (!isAdmin) return pipelines || [];
     if (!selectedCompanyId) return pipelines || [];
@@ -1153,6 +1163,21 @@ export default function PipelineSettingsPage() {
                   >
                     <Trophy className="h-3 w-3" />
                     {s.is_won ? 'Cột Thắng' : 'Thắng'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleShowSxTransfer(s)}
+                    className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                      s.show_sx_transfer
+                        ? 'bg-teal-600 text-white border-teal-700'
+                        : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-teal-300 hover:text-teal-700'
+                    }`}
+                    title={s.show_sx_transfer
+                      ? 'Đang hiện nút Chuyển sang Sản xuất trên thẻ deal ở cột này. Nhấn để tắt.'
+                      : 'Bật để hiện nút Chuyển sang Sản xuất trên mỗi thẻ deal ở cột này'}
+                  >
+                    <Factory className="h-3 w-3" />
+                    {s.show_sx_transfer ? 'Chuyển SX' : 'SX'}
                   </button>
                   <button
                     type="button"

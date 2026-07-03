@@ -408,6 +408,8 @@ async function getSupabaseMonitorReport() {
       replication_enabled: process.env.SUPABASE_REPLICATION_ENABLED === '1'
         || process.env.SUPABASE_SWITCH_LOG_ENABLED === '1',
       switch_log_enabled: process.env.SUPABASE_SWITCH_LOG_ENABLED === '1',
+      auto_failover_enabled: process.env.SUPABASE_AUTO_FAILOVER === '1',
+      auto_failback_enabled: process.env.SUPABASE_AUTO_FAILBACK === '1',
       replication_light: process.env.SUPABASE_REPLICATION_LIGHT === '1',
       pg_pool: process.env.PG_POOL_DISABLED === '1' ? 'disabled' : 'enabled',
     },

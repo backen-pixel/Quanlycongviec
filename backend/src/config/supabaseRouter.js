@@ -2,7 +2,8 @@
  * Supabase router — primary/backup failover với state đồng bộ qua Redis (multi-instance).
  *
  * Env:
- *   SUPABASE_FAILOVER_ENABLED=1
+ *   SUPABASE_FAILOVER_ENABLED=1 — backup client + chuyển DB thủ công
+ *   SUPABASE_AUTO_FAILOVER=1     — tự chuyển khi probe/fetch lỗi (mặc định tắt)
  *   SUPABASE_BACKUP_URL, SUPABASE_BACKUP_SERVICE_ROLE_KEY
  *   SUPABASE_HEALTH_INTERVAL_MS (default 15000)
  *   SUPABASE_FAIL_THRESHOLD (default 3)
@@ -43,6 +44,11 @@ function isFailoverEnabled() {
     && config.supabaseBackupUrl
     && config.supabaseBackupServiceKey
   );
+}
+
+/** Chuyển DB tự động (health_probe / runtime_fetch) — tách khỏi failover thủ công. */
+function isAutoFailoverEnabled() {
+  return isFailoverEnabled() && config.supabaseAutoFailoverEnabled === true;
 }
 
 function isRetryableFetchError(err) {
@@ -158,7 +164,7 @@ async function sharedFetch(url, init) {
     }
   }
 
-  if (isFailoverEnabled() && _activeTarget === 'primary') {
+  if (isAutoFailoverEnabled() && _activeTarget === 'primary') {
     const primary = trimBase(config.supabaseUrl);
     const backup = trimBase(config.supabaseBackupUrl);
     if (backup && String(url).startsWith(primary)) {
@@ -272,6 +278,7 @@ function getHealthStatus() {
     ..._health,
     active: _activeTarget,
     failover_enabled: isFailoverEnabled(),
+    auto_failover_enabled: isAutoFailoverEnabled(),
   };
 }
 
@@ -309,7 +316,13 @@ async function runHealthCheck() {
   if (!primary.healthy) {
     _primaryFailStreak += 1;
     _recoveryStreak = 0;
-    if (_primaryFailStreak >= threshold && backup.configured && backup.healthy && _activeTarget !== 'backup') {
+    if (
+      isAutoFailoverEnabled()
+      && _primaryFailStreak >= threshold
+      && backup.configured
+      && backup.healthy
+      && _activeTarget !== 'backup'
+    ) {
       await setActiveTarget('backup', 'health_probe');
     }
   } else {
@@ -352,7 +365,9 @@ function startHealthChecker() {
   void runHealthCheck();
   _healthTimer = setInterval(() => { void runHealthCheck(); }, config.supabaseHealthIntervalMs);
   if (_healthTimer.unref) _healthTimer.unref();
-  console.log(`[supabase-health] Probe mỗi ${config.supabaseHealthIntervalMs}ms (failover=${isFailoverEnabled() ? 'on' : 'off'})`);
+  console.log(
+    `[supabase-health] Probe mỗi ${config.supabaseHealthIntervalMs}ms (failover=${isFailoverEnabled() ? 'on' : 'off'}, auto=${isAutoFailoverEnabled() ? 'on' : 'off'})`,
+  );
 }
 
 module.exports = {
@@ -364,6 +379,7 @@ module.exports = {
   runHealthCheck,
   startHealthChecker,
   isFailoverEnabled,
+  isAutoFailoverEnabled,
   isSystemHealthy,
   getBackupClient,
   getPrimaryClient,

@@ -1092,12 +1092,17 @@ const QUOTE_CLOSE_COLS = [
 
 const METRIC_COLS_BASE = [
   { key: 'lead_count', label: 'Lead', align: 'right' },
-  { key: 'deal_count', label: 'Deal', align: 'right' },
+  {
+    key: 'deal_count',
+    label: 'Deal',
+    align: 'right',
+    render: (r) => (r.deal_count ?? 0) + (r.customer_order_count ?? 0),
+  },
   {
     key: 'delivered_deal_count',
     label: 'Số Deal\ntiếp nhận',
     align: 'right',
-    render: (r) => r.delivered_deal_count ?? 0,
+    render: (r) => (r.deal_count ?? 0) + (r.customer_order_count ?? 0),
   },
   {
     key: 'won_vs_total',
@@ -1219,11 +1224,19 @@ const METRIC_COLS_BASE = [
 ];
 
 function buildMetricCols(dealKhSplit, typeView = 'all') {
-  const dealCol = {
-    key: 'deal_count',
-    label: dealKhSplit ? 'Deal (pipeline)' : 'Deal',
-    align: 'right',
-  };
+  const dealCol = dealKhSplit
+    ? {
+      key: 'deal_count',
+      label: 'Deal (pipeline)',
+      align: 'right',
+      render: (r) => r.deal_count ?? 0,
+    }
+    : {
+      key: 'deal_count',
+      label: 'Deal',
+      align: 'right',
+      render: (r) => (r.deal_count ?? 0) + (r.customer_order_count ?? 0),
+    };
   const orderCols = dealKhSplit && typeView !== 'lead'
     ? [{
       key: 'customer_order_count',
@@ -1259,14 +1272,30 @@ function filtersMatchResponse(params, response) {
   return true;
 }
 
+const LS_ORG_REPORT = 'crm_org_report_filters_v1';
+function readOrgReportPersisted() {
+  try {
+    const raw = localStorage.getItem(LS_ORG_REPORT);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    return d && typeof d === 'object' ? d : null;
+  } catch { return null; }
+}
+
 export default function CrmOrgOverviewReport() {
   const { user } = useAuth();
   const isAdmin = isAdminLike(user);
-  const [dateFrom, setDateFrom] = useState(() => defaultMonthRange().from);
-  const [dateTo, setDateTo] = useState(() => defaultMonthRange().to);
-  const [filter, setFilter] = useState({ companyId: '', departmentId: '', userId: '', q: '' });
-  const [regionId, setRegionId] = useState('');
-  const [typeView, setTypeView] = useState('all');
+  const P0 = useMemo(() => readOrgReportPersisted(), []);
+  const [dateFrom, setDateFrom] = useState(() => P0?.dateFrom || defaultMonthRange().from);
+  const [dateTo, setDateTo] = useState(() => P0?.dateTo || defaultMonthRange().to);
+  const [filter, setFilter] = useState(() => ({
+    companyId: P0?.companyId || '',
+    departmentId: P0?.departmentId || '',
+    userId: P0?.userId || '',
+    q: '',
+  }));
+  const [regionId, setRegionId] = useState(() => P0?.regionId || '');
+  const [typeView, setTypeView] = useState(() => P0?.typeView || 'all');
   const [dealKhSplitEnabled, setDealKhSplitEnabled] = useState(() => readStoredDealKhSplitPreference(isAdmin));
   const [hasCustomerTab, setHasCustomerTab] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
@@ -1325,6 +1354,16 @@ export default function CrmOrgOverviewReport() {
     setDealKhSplitEnabled(enabled);
     storeDealKhSplitPreference(enabled);
   }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_ORG_REPORT, JSON.stringify({
+        dateFrom, dateTo, typeView,
+        companyId: filter.companyId, departmentId: filter.departmentId,
+        userId: filter.userId, regionId,
+      }));
+    } catch { /* ignore */ }
+  }, [dateFrom, dateTo, typeView, filter.companyId, filter.departmentId, filter.userId, regionId]);
 
   useEffect(() => {
     let cancel = false;
@@ -1585,6 +1624,8 @@ export default function CrmOrgOverviewReport() {
     sheet('Tom tat', [summary], (r) => ({
       Lead: r.lead_count ?? 0,
       Deal: r.deal_count ?? 0,
+      'So Deal tiep nhan': r.delivered_deal_count ?? 0,
+      'So Deal ky HD thanh cong': reportClosedWonCount(r),
       Pipeline: r.pipeline_value ?? 0,
       'Ty le chot/tong deal %': r.conversion_rate ?? 0,
       'Ty le chot/tong deal GT %': r.deal_close_value_rate_pct ?? null,
@@ -1617,8 +1658,9 @@ export default function CrmOrgOverviewReport() {
       'Phong ban': r.department_name,
       Lead: r.lead_count,
       Deal: r.deal_count,
+      'So Deal tiep nhan': r.delivered_deal_count ?? 0,
+      'So Deal ky HD thanh cong': reportClosedWonCount(r),
       Pipeline: r.pipeline_value,
-      Chot: r.won_deal_count,
       'Bao gia SL': r.quote_deal_count,
       'GT bao gia': r.quote_value,
       'Chot SL': reportClosedWonCount(r),

@@ -2205,10 +2205,12 @@ export default function CRMTasksTab({
     if (!skipConfirm && !confirm('Xóa đính kèm này?')) return;
     try {
       await api.delete(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/${attId}`);
-      loadAttachments({ id: taskId });
       bumpTaskAttachmentCount(taskId, -1);
       notifyArtifactsSynced(taskId);
-    } catch (e) { alert('Lỗi'); }
+    } catch (e) {
+      if (e.response?.status !== 404) { alert('Lỗi xóa'); return; }
+    }
+    loadAttachments({ id: taskId });
   };
 
   const uploadOneRawFile = async (file) => {
