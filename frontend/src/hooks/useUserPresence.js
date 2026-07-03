@@ -23,6 +23,7 @@ export function useUserPresence(userIds, { enabled = true, pollMs = DEFAULT_POLL
     let cancelled = false;
 
     const tick = async () => {
+      if (document.hidden) return;
       try {
         const { data } = await api.post('/users/presence', { user_ids: ids });
         if (!cancelled) setPresenceByUser(normalizePresenceMap(data?.presence || {}));
@@ -32,12 +33,17 @@ export function useUserPresence(userIds, { enabled = true, pollMs = DEFAULT_POLL
     };
 
     void tick();
-    const interval = setInterval(tick, pollMs);
-    document.addEventListener('visibilitychange', tick);
+    const interval = setInterval(() => {
+      if (!document.hidden) void tick();
+    }, pollMs);
+    const onVisible = () => {
+      if (!document.hidden) void tick();
+    };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       cancelled = true;
       clearInterval(interval);
-      document.removeEventListener('visibilitychange', tick);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, [enabled, idsKey, pollMs]);
 

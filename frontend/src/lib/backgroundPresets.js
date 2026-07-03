@@ -1,5 +1,5 @@
 /**
- * Bộ 20 preset hình nền cho toàn ứng dụng.
+ * Bộ 21 preset hình nền cho toàn ứng dụng.
  *
  * Mỗi preset có các trường:
  * - id              unique key (lưu xuống theme.bgPreset)
@@ -8,7 +8,7 @@
  * - type            'gradient' | 'image' | 'animated'
  * - gradient        CSS background (gradient) — khi type='gradient'
  * - image           URL ảnh 4K hot-link (Unsplash) — khi type='image'
- * - scene           tên scene canvas (rain | stars | snow | raindrops | sparks | meteors)
+ * - scene           tên scene canvas (rain | stars | snow | raindrops | earth) hoặc WebGL earth
  * - sceneOpts       props tuỳ scene (vd. intensity, color, speed)
  * - baseGradient    gradient nền tĩnh phía sau canvas (animated) — đảm bảo nhìn đẹp trước khi canvas ready
  * - textTheme       'light' | 'dark' — bộ màu chữ tự áp dụng
@@ -278,6 +278,28 @@ export const BACKGROUND_PRESETS = [
     accent: '#06b6d4',
     sidebar: '#02212a',
     thumb: 'linear-gradient(135deg, #052e3a, #094354, #0d5469)',
+  },
+  {
+    id: 'anim-earth-milkyway',
+    name: '🌍 Trái Đất & Ngân hà',
+    category: 'animated',
+    type: 'animated',
+    scene: 'earth',
+    sceneOpts: {
+      camera: {
+        initialDistance: 4.15,
+        orbitSpeedRadPerSec: 0.02,
+        alignWithSun: true,
+      },
+      earth: {
+        radius: 0.44,
+      },
+    },
+    baseGradient: 'radial-gradient(ellipse at 28% 18%, #142850 0%, #0a1530 52%, #060818 100%)',
+    textTheme: 'light',
+    accent: '#60a5fa',
+    sidebar: '#06091a',
+    thumb: 'radial-gradient(ellipse at 35% 25%, #284878 0%, #142040 45%, #0a1530 100%)',
   },
 ];
 

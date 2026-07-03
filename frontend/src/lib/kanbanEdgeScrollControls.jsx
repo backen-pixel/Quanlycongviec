@@ -254,9 +254,13 @@ export function KanbanBoardEdgeScrollChrome({
   }, [dragging, stopHoverScroll]);
 
   const edgeActive = (side) => dragging || hoverSide === side;
-  const edgeOpacity = (side) => (edgeActive(side) ? 'opacity-100' : 'opacity-40');
+  const chevronTone = (side) => (
+    edgeActive(side)
+      ? 'text-slate-700/90 opacity-100'
+      : 'text-slate-600/70 opacity-45'
+  );
 
-  const clickBtnBase = `absolute top-0 ${bottomClass} z-[30] w-10 border-0 bg-transparent p-0 sm:w-12 ${
+  const clickBtnBase = `kanban-edge-scroll-btn absolute top-0 ${bottomClass} z-[30] w-10 border-0 bg-transparent p-0 sm:w-12 ${
     dragging ? 'pointer-events-none cursor-default' : 'cursor-pointer'
   }`;
 
@@ -275,24 +279,28 @@ export function KanbanBoardEdgeScrollChrome({
   return (
     <>
       <div
-        className={`pointer-events-none absolute left-0 top-0 ${bottomClass} z-[28] flex w-12 items-stretch sm:w-14`}
+        className={`kanban-edge-scroll-chrome pointer-events-none absolute left-0 top-0 ${bottomClass} z-[28] flex w-12 items-stretch sm:w-14`}
         aria-hidden
       >
-        <div
-          className={`flex w-full items-center justify-center bg-gradient-to-r from-slate-200/95 via-slate-100/40 to-transparent pl-0.5 transition-opacity duration-200 ${edgeOpacity('left')}`}
-        >
-          <ChevronLeft className="h-9 w-9 text-slate-600 drop-shadow sm:h-10 sm:w-10" strokeWidth={2.25} aria-hidden />
+        <div className="flex w-full items-center justify-center bg-transparent pl-0.5 transition-opacity duration-200">
+          <ChevronLeft
+            className={`h-9 w-9 drop-shadow-[0_0_4px_rgba(255,255,255,0.85)] transition-opacity duration-200 sm:h-10 sm:w-10 ${chevronTone('left')}`}
+            strokeWidth={2.25}
+            aria-hidden
+          />
         </div>
       </div>
       <div
-        className={`pointer-events-none absolute top-0 ${bottomClass} z-[28] flex w-12 items-stretch sm:w-14 motion-reduce:transition-none transition-[right] duration-[520ms] ease-[cubic-bezier(0.33,1,0.68,1)]`}
+        className={`kanban-edge-scroll-chrome pointer-events-none absolute top-0 ${bottomClass} z-[28] flex w-12 items-stretch sm:w-14 motion-reduce:transition-none transition-[right] duration-[520ms] ease-[cubic-bezier(0.33,1,0.68,1)]`}
         style={rightStyle ?? { right: 0 }}
         aria-hidden
       >
-        <div
-          className={`ml-auto flex w-full items-center justify-center bg-gradient-to-l from-slate-200/95 via-slate-100/40 to-transparent pr-0.5 transition-opacity duration-200 ${edgeOpacity('right')}`}
-        >
-          <ChevronRight className="h-9 w-9 text-slate-600 drop-shadow sm:h-10 sm:w-10" strokeWidth={2.25} aria-hidden />
+        <div className="ml-auto flex w-full items-center justify-center bg-transparent pr-0.5 transition-opacity duration-200">
+          <ChevronRight
+            className={`h-9 w-9 drop-shadow-[0_0_4px_rgba(255,255,255,0.85)] transition-opacity duration-200 sm:h-10 sm:w-10 ${chevronTone('right')}`}
+            strokeWidth={2.25}
+            aria-hidden
+          />
         </div>
       </div>
 

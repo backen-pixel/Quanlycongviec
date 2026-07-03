@@ -1442,7 +1442,7 @@ async function fetchCrmLeadsForUserDetailBatched(userId, type, { company_id, reg
     if (company_id) q = q.eq('company_id', company_id);
     if (region_id) q = q.eq('region_id', region_id);
     if (req) q = applyCrmLeadRegionFilterToQuery(q, req);
-    q = q.or(`assigned_to.eq.${userId},lead_owner_id.eq.${userId}`);
+      q = q.or(`assigned_to.eq.${userId},lead_owner_id.eq.${userId}`);
     const createdFrom = crmReportCreatedAtFromIso(date_from);
     const createdTo = crmReportCreatedAtToIso(date_to);
     if (createdFrom) q = q.gte('created_at', createdFrom);
@@ -1951,11 +1951,11 @@ async function computeStaffLeadDealReportData(req, res) {
     const skipLeads = typeView === 'deal';
     const skipDeals = typeView === 'lead';
     const fetchOpts = {
-      company_id: effectiveCompanyId || undefined,
+        company_id: effectiveCompanyId || undefined,
       region_id: explicitRegionId || undefined,
-      date_from: df,
-      date_to: dt,
-      req,
+        date_from: df,
+        date_to: dt,
+        req,
     };
     const [leadRows, dealRows] = await Promise.all([
       skipLeads ? Promise.resolve([]) : fetchCrmLeadsForDashboardBatched('lead', {
@@ -4246,28 +4246,28 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
       wonCountLight = lightStats.wonCount;
     } else {
       leads = await fetchCrmLeadsForDashboardBatched(type, {
-        company_id: effectiveCompanyId || undefined,
+      company_id: effectiveCompanyId || undefined,
         region_id: explicitRegionId || undefined,
-        date_from,
-        date_to,
-        assigned_to_only,
-        req,
-      });
+      date_from,
+      date_to,
+      assigned_to_only,
+      req,
+    });
       stageStats = (stages || []).map((s) => {
         const stageLeads = (leads || []).filter((l) => l.stage_id === s.id);
-        const probPct = (l) => {
-          const raw = l.probability;
-          const fallback = s.default_probability;
-          const p = raw != null && raw !== '' ? Number(raw) : (fallback != null && fallback !== '' ? Number(fallback) : 0);
-          return Number.isFinite(p) ? Math.max(0, Math.min(100, p)) : 0;
-        };
-        return {
-          ...s,
-          count: stageLeads.length,
-          value: stageLeads.reduce((sum, l) => sum + (l.estimated_value || 0), 0),
-          weighted: stageLeads.reduce((sum, l) => sum + (l.estimated_value || 0) * probPct(l) / 100, 0),
-        };
-      });
+      const probPct = (l) => {
+        const raw = l.probability;
+        const fallback = s.default_probability;
+        const p = raw != null && raw !== '' ? Number(raw) : (fallback != null && fallback !== '' ? Number(fallback) : 0);
+        return Number.isFinite(p) ? Math.max(0, Math.min(100, p)) : 0;
+      };
+      return {
+        ...s,
+        count: stageLeads.length,
+        value: stageLeads.reduce((sum, l) => sum + (l.estimated_value || 0), 0),
+        weighted: stageLeads.reduce((sum, l) => sum + (l.estimated_value || 0) * probPct(l) / 100, 0),
+      };
+    });
       totalItems = (leads || []).length;
     }
 
@@ -4276,10 +4276,10 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
       : (leads || []).map((l) => l.id).filter(Boolean);
     let overdue_tasks = 0;
     if (!minimal) {
-      try {
-        overdue_tasks = await countOpenOverdueCrmTasksForLeadIds(leadIdsScope);
-      } catch (e) {
-        console.warn('[crm/dashboard] overdue_tasks count:', e.message);
+    try {
+      overdue_tasks = await countOpenOverdueCrmTasksForLeadIds(leadIdsScope);
+    } catch (e) {
+      console.warn('[crm/dashboard] overdue_tasks count:', e.message);
       }
     }
 
@@ -4289,14 +4289,14 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
       : defaultKpiLedgerMonthStartYmd();
     let ledgerNetByLead = {};
     if (!minimal) {
-      try {
-        if (leadIdsScope.length) {
-          ledgerNetByLead = await sumCrmKpiLedgerNetByLeadIds(leadIdsScope, ledgerPeriodStart, 'monthly', {
-            userId: assigned_to_only || null,
-          });
-        }
-      } catch (e) {
-        console.warn('[crm/dashboard] kpi ledger sums:', e.message);
+    try {
+      if (leadIdsScope.length) {
+        ledgerNetByLead = await sumCrmKpiLedgerNetByLeadIds(leadIdsScope, ledgerPeriodStart, 'monthly', {
+          userId: assigned_to_only || null,
+        });
+      }
+    } catch (e) {
+      console.warn('[crm/dashboard] kpi ledger sums:', e.message);
       }
     }
     const kpiLedgerMonthNetSum = Math.round(
@@ -4308,8 +4308,8 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
       ? { length: wonCountLight || 0 }
       : (leads || []).filter((l) => {
           const st = (stages || []).find((s) => s.id === l.stage_id);
-          return st?.is_won;
-        });
+      return st?.is_won;
+    });
     const totalValue = canUseLight ? 0 : (leads || []).reduce((s, l) => s + (l.estimated_value || 0), 0);
     const wonValue = canUseLight
       ? 0
@@ -4321,24 +4321,24 @@ r.get('/dashboard', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }
       let conversionRate = 0;
       let nDeals = 0;
       if (!minimal) {
-        const uid = req.user?.userId;
-        let allLeadsQ = supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'lead');
-        let dealsConvertedQ = supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal');
-        if (effectiveCompanyId) {
-          allLeadsQ = allLeadsQ.eq('company_id', effectiveCompanyId);
-          dealsConvertedQ = dealsConvertedQ.eq('company_id', effectiveCompanyId);
-        }
-        allLeadsQ = applyCrmLeadRegionFilterToQuery(allLeadsQ, req);
-        dealsConvertedQ = applyCrmLeadRegionFilterToQuery(dealsConvertedQ, req);
-        if (uid && !userSeesAllCrmLeadsForScope(req.user)) {
-          allLeadsQ = allLeadsQ.or(`assigned_to.eq.${uid},lead_owner_id.eq.${uid}`);
-        }
-        if (uid && !userSeesAllCrmDealsForScope(req.user)) {
-          dealsConvertedQ = dealsConvertedQ.eq('assigned_to', uid);
-        }
-        const { count: allLeadsCount } = await allLeadsQ;
-        const { count: dealsConvertedCount } = await dealsConvertedQ;
-        const nLeads = allLeadsCount ?? 0;
+      const uid = req.user?.userId;
+      let allLeadsQ = supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'lead');
+      let dealsConvertedQ = supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal');
+      if (effectiveCompanyId) {
+        allLeadsQ = allLeadsQ.eq('company_id', effectiveCompanyId);
+        dealsConvertedQ = dealsConvertedQ.eq('company_id', effectiveCompanyId);
+      }
+      allLeadsQ = applyCrmLeadRegionFilterToQuery(allLeadsQ, req);
+      dealsConvertedQ = applyCrmLeadRegionFilterToQuery(dealsConvertedQ, req);
+      if (uid && !userSeesAllCrmLeadsForScope(req.user)) {
+        allLeadsQ = allLeadsQ.or(`assigned_to.eq.${uid},lead_owner_id.eq.${uid}`);
+      }
+      if (uid && !userSeesAllCrmDealsForScope(req.user)) {
+        dealsConvertedQ = dealsConvertedQ.eq('assigned_to', uid);
+      }
+      const { count: allLeadsCount } = await allLeadsQ;
+      const { count: dealsConvertedCount } = await dealsConvertedQ;
+      const nLeads = allLeadsCount ?? 0;
         nDeals = dealsConvertedCount ?? 0;
         conversionRate = nLeads > 0 ? Math.round((nDeals / nLeads) * 100) : 0;
       }
@@ -6214,7 +6214,7 @@ const SCAN_DUP_LITE_SELECT = 'id, customer_id, assigned_to, source_id, updated_a
 async function fetchCrmLeadsLiteForDuplicateScan({ uid, seeAllLeads, seeAllDeals }) {
   const liteRows = [];
   const PAGE = 1000;
-  if (seeAllLeads && seeAllDeals) {
+    if (seeAllLeads && seeAllDeals) {
     for (let from = 0; ; from += PAGE) {
       const { data, error } = await supabase.from('crm_leads')
         .select(SCAN_DUP_LITE_SELECT)
@@ -6239,9 +6239,9 @@ async function fetchCrmLeadsLiteForDuplicateScan({ uid, seeAllLeads, seeAllDeals
     return rows;
   };
   let leadQ = supabase.from('crm_leads').select(SCAN_DUP_LITE_SELECT).eq('type', 'lead').order('created_at', { ascending: false });
-  if (!seeAllLeads) leadQ = leadQ.or(`assigned_to.eq.${uid},lead_owner_id.eq.${uid}`);
+      if (!seeAllLeads) leadQ = leadQ.or(`assigned_to.eq.${uid},lead_owner_id.eq.${uid}`);
   let dealQ = supabase.from('crm_leads').select(SCAN_DUP_LITE_SELECT).eq('type', 'deal').order('created_at', { ascending: false });
-  if (!seeAllDeals) dealQ = dealQ.eq('assigned_to', uid);
+      if (!seeAllDeals) dealQ = dealQ.eq('assigned_to', uid);
   const [leadRows, dealRows] = await Promise.all([fetchBatched(leadQ), fetchBatched(dealQ)]);
   return [...leadRows, ...dealRows];
 }
@@ -6279,27 +6279,27 @@ async function hydrateScanDuplicateLeads(leadIds, scanSelect) {
     leads.push(...(data || []));
   }
   return leads.sort(
-    (a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at),
-  );
-}
+        (a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at),
+      );
+    }
 
 function buildScanDuplicateGroups(leads, leadFbMap) {
-  const byCombo = {};
+    const byCombo = {};
   for (const l of leads || []) {
     if (!l.customer_id || !l.assigned_to || !l.source_id) continue;
-    const key = `${l.customer_id}_${l.assigned_to}_${l.source_id}`;
-    if (!byCombo[key]) byCombo[key] = [];
-    byCombo[key].push({ ...l, fb_contacts: leadFbMap[l.id] || [] });
+      const key = `${l.customer_id}_${l.assigned_to}_${l.source_id}`;
+      if (!byCombo[key]) byCombo[key] = [];
+      byCombo[key].push({ ...l, fb_contacts: leadFbMap[l.id] || [] });
   }
-  const groups = [];
+    const groups = [];
   for (const key of Object.keys(byCombo)) {
     if (byCombo[key].length <= 1) continue;
     groups.push({
-      reason: 'combo_match',
+          reason: 'combo_match',
       key,
-      customer: byCombo[key][0].customer,
-      assignee: byCombo[key][0].assignee,
-      source: byCombo[key][0].source,
+          customer: byCombo[key][0].customer,
+          assignee: byCombo[key][0].assignee,
+          source: byCombo[key][0].source,
       leads: byCombo[key].sort(
         (a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at),
       ),
@@ -6980,13 +6980,13 @@ async function attachCrmNextOpenTaskDeadline(rows) {
   const taskRows = (
     await Promise.all(
       idChunks.map(async (chunk) => {
-        const { data, error } = await supabase
-          .from('crm_tasks')
-          .select('id, lead_id, deadline, created_at, updated_at')
-          .in('lead_id', chunk)
-          .in('status', ['pending', 'in_progress']);
-        if (error) {
-          console.warn('[crm] attachCrmNextOpenTaskDeadline:', error.message);
+    const { data, error } = await supabase
+      .from('crm_tasks')
+      .select('id, lead_id, deadline, created_at, updated_at')
+      .in('lead_id', chunk)
+      .in('status', ['pending', 'in_progress']);
+    if (error) {
+      console.warn('[crm] attachCrmNextOpenTaskDeadline:', error.message);
           return [];
         }
         return data || [];
@@ -9751,13 +9751,13 @@ r.delete('/leads/:id/documents/:docId', async (req, res) => {
       });
       return res.json({ success: true, via: 'workshop_file' });
     }
-
+    
     // Xóa task attachment liên kết (nếu có)
     if (doc.source_attachment_id) {
       await supabase.from('crm_task_attachments')
         .delete().eq('id', doc.source_attachment_id);
     }
-
+    
     // Xóa lead_documents liên kết ngược (nếu doc này là source cho attachment)
     await supabase.from('crm_task_attachments')
       .delete().eq('source_document_id', req.params.docId);
@@ -12533,7 +12533,7 @@ r.post('/invoices', async (req, res) => {
     const iCoWrite = enforceCommercialDocCompanyOnWrite(req, res, invCo, 'Hóa đơn');
     if (!iCoWrite.ok) return;
     invCo = iCoWrite.companyId;
-
+    
     const { data: inv, error } = await supabase.from('invoices').insert({
       code,
       company_id: invCo,

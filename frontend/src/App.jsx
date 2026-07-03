@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
-import { Suspense, Component, useEffect } from 'react';
+import { Suspense, lazy, Component, useEffect } from 'react';
 import { AuthProvider, useAuth } from './lib/auth';
 import { lazyWithRetry, isChunkLoadErrorMessage } from './lib/lazyWithRetry';
 
@@ -50,7 +50,9 @@ class ErrorBoundary extends Component {
   }
 }
 import Sidebar from './components/Sidebar';
-import AnimatedBackground from './components/AnimatedBackground';
+
+const AnimatedBackground = lazy(() => import('./components/AnimatedBackground'));
+const EarthExperienceBackground = lazy(() => import('./components/EarthExperienceBackground.jsx'));
 import Login from './pages/Login';
 
 const Dashboard = lazyWithRetry(() => import('./pages/ManagementDashboard'));
@@ -282,11 +284,22 @@ function ProtectedLayout() {
           <div className="absolute inset-0 pointer-events-none z-0"
             style={{ backgroundColor: 'var(--bg-overlay, rgba(0,0,0,0))' }} />
           {activeAnimatedScene && (
-            <AnimatedBackground
-              key={activeAnimatedScene.id}
-              scene={activeAnimatedScene.scene}
-              opts={activeAnimatedScene.opts}
-            />
+            activeAnimatedScene.scene === 'earth' ? (
+              <Suspense fallback={null}>
+                <EarthExperienceBackground
+                  key={activeAnimatedScene.id}
+                  opts={activeAnimatedScene.opts}
+                />
+              </Suspense>
+            ) : (
+              <Suspense fallback={null}>
+                <AnimatedBackground
+                  key={activeAnimatedScene.id}
+                  scene={activeAnimatedScene.scene}
+                  opts={activeAnimatedScene.opts}
+                />
+              </Suspense>
+            )
           )}
           <Sidebar />
           <div className="flex-1 flex flex-col min-w-0 relative z-10">

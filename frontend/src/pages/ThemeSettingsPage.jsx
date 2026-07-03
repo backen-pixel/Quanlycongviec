@@ -3,7 +3,7 @@ import { useTheme } from '../components/ThemeProvider';
 import { useAuth } from '../lib/auth';
 import {
   Upload, Check, Palette, Image as ImageIcon, SlidersHorizontal, Trash2, Eye,
-  CloudUpload, CloudDownload, Loader2, Layers, ChevronDown, ChevronUp, Type, RotateCcw,
+  CloudUpload, CloudDownload, Loader2, Layers, Type, RotateCcw, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import {
   BACKGROUND_PRESETS, CATEGORY_LABELS, TEXT_PALETTES, findPreset,
@@ -17,6 +17,9 @@ const SIDEBAR_STYLE_OPTIONS = [
 
 const CATEGORIES = ['aurora', 'minimal', 'pastel', 'landscape', 'animated'];
 
+/** Số ô hiển thị khi lưới đang thu gọn (≈ 1 hàng desktop). */
+const COLLAPSED_GRID_COUNT = 7;
+
 export default function ThemeSettingsPage() {
   const { user } = useAuth();
   const {
@@ -29,15 +32,30 @@ export default function ThemeSettingsPage() {
   const [pushing, setPushing] = useState(false);
   const [pulling, setPulling] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
-  const [expanded, setExpanded] = useState(false); // false = chỉ hiện 1 dòng
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [gridExpanded, setGridExpanded] = useState(false);
 
   const activePreset = useMemo(() => findPreset(theme.bgPreset), [theme.bgPreset]);
   const filteredPresets = useMemo(
     () => (activeTab === 'all' ? BACKGROUND_PRESETS : BACKGROUND_PRESETS.filter((p) => p.category === activeTab)),
     [activeTab],
   );
-  // Đổi tab → reset trạng thái thu gọn
-  useEffect(() => { setExpanded(false); }, [activeTab]);
+
+  const visiblePresets = useMemo(() => {
+    if (gridExpanded || filteredPresets.length <= COLLAPSED_GRID_COUNT) {
+      return filteredPresets;
+    }
+    const activeId = activePreset?.id;
+    const inTab = activeId && filteredPresets.some((p) => p.id === activeId);
+    if (!inTab) {
+      return filteredPresets.slice(0, COLLAPSED_GRID_COUNT);
+    }
+    const head = filteredPresets.filter((p) => p.id !== activeId).slice(0, COLLAPSED_GRID_COUNT - 1);
+    const active = filteredPresets.find((p) => p.id === activeId);
+    return active ? [active, ...head] : filteredPresets.slice(0, COLLAPSED_GRID_COUNT);
+  }, [filteredPresets, gridExpanded, activePreset?.id]);
+
+  useEffect(() => { setGridExpanded(false); }, [activeTab]);
 
   const handleUpload = (e) => {
     const file = e.target.files?.[0];
@@ -73,7 +91,7 @@ export default function ThemeSettingsPage() {
           <Palette className="h-6 w-6" /> Giao diện & Hình nền
         </h1>
         <p className="text-sm text-gray-500 mt-1">
-          Chọn 1 trong 20 hình nền 4K / nền động — màu chữ tự động chỉnh để dễ đọc trên mọi nền.
+          Chọn 1 trong 21 hình nền 4K / nền động — màu chữ tự động chỉnh để dễ đọc trên mọi nền.
         </p>
 
         <div className="flex flex-wrap gap-3 mt-4 items-center">
@@ -132,141 +150,158 @@ export default function ThemeSettingsPage() {
       </div>
 
       {/* GỘP: Background gallery + Upload */}
-      <div className="bg-white rounded-xl border p-5">
-        <div className="flex items-start justify-between gap-3 mb-3">
-          <div>
+      <div className="bg-white rounded-xl border p-4">
+        <div className="flex items-center gap-3">
+          <BackgroundPreviewThumb
+            preset={activePreset}
+            bgImage={theme.bgImage}
+            bgOverlay={theme.bgOverlay}
+          />
+          <div className="flex-1 min-w-0">
             <h2 className="text-base font-bold text-gray-900 flex items-center gap-2">
-              <ImageIcon className="h-4 w-4" /> Chọn hình nền
+              <ImageIcon className="h-4 w-4 shrink-0" /> Chọn hình nền
             </h2>
-            <p className="text-xs text-gray-500 mt-1">
-              Cực quang, Tối giản, Pastel, Phong cảnh 4K hoặc Nền động (mưa, sao, tuyết, giọt nước…).
-              Màu chữ sẽ tự đổi để không bị chìm trên nền.
+            <p className="text-xs text-gray-500 mt-0.5 truncate">
+              {activePreset
+                ? `Đang dùng: ${activePreset.name}`
+                : theme.bgImage
+                  ? 'Đang dùng ảnh tự tải'
+                  : 'Chưa chọn — đang dùng nền mặc định'}
             </p>
           </div>
-          {(activePreset || theme.bgImage) && (
-            <button
-              type="button"
-              onClick={clearBackground}
-              className="shrink-0 h-8 px-3 inline-flex items-center gap-1.5 text-xs font-medium border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer"
-            >
-              <Trash2 className="h-3.5 w-3.5" /> Xoá nền hiện tại
-            </button>
-          )}
-        </div>
-
-        {/* Tabs */}
-        <div className="flex flex-wrap gap-0 mb-4 border-b border-gray-200">
-          {[
-            { id: 'all', label: `🗂️ Tất cả (${BACKGROUND_PRESETS.length})` },
-            ...CATEGORIES.map((c) => ({
-              id: c,
-              label: `${CATEGORY_LABELS[c]} (${BACKGROUND_PRESETS.filter((p) => p.category === c).length})`,
-            })),
-            { id: 'upload', label: '⬆️ Tải ảnh riêng' },
-          ].map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setActiveTab(t.id)}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-t-md transition-colors cursor-pointer -mb-px border-b-2 ${
-                activeTab === t.id
-                  ? 'text-blue-700 border-blue-600 bg-blue-50/50'
-                  : 'text-gray-500 border-transparent hover:text-gray-700 hover:bg-gray-50'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        {activeTab === 'upload' ? (
-          <div className="flex flex-wrap gap-4 items-start">
-            <div
-              className="w-64 h-40 rounded-xl border-2 border-dashed border-gray-300 overflow-hidden relative flex items-center justify-center bg-gray-50"
-              style={theme.bgImage ? { backgroundImage: `url(${theme.bgImage})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
-            >
-              {!theme.bgImage && (
-                <div className="text-center">
-                  <ImageIcon className="h-8 w-8 text-gray-300 mx-auto mb-2" />
-                  <p className="text-xs text-gray-400">Chưa có hình nền tự tải</p>
-                </div>
-              )}
-              {theme.bgImage && <div className="absolute inset-0" style={{ backgroundColor: theme.bgOverlay }} />}
-            </div>
-            <div className="flex-1 space-y-3 min-w-[200px]">
-              <input type="file" ref={fileRef} accept="image/*" onChange={handleUpload} className="hidden" />
+          <div className="flex shrink-0 items-center gap-2">
+            {(activePreset || theme.bgImage) && (
               <button
                 type="button"
-                onClick={() => fileRef.current?.click()}
-                className="h-10 px-5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer"
+                onClick={clearBackground}
+                className="h-7 px-2.5 inline-flex items-center gap-1 text-[11px] font-medium border border-rose-200 text-rose-600 rounded-md hover:bg-rose-50 cursor-pointer"
               >
-                <Upload className="h-4 w-4" /> {uploading ? 'Đang tải…' : 'Chọn hình từ máy'}
+                <Trash2 className="h-3 w-3" /> Xoá
               </button>
-              {theme.bgImage && (
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">
-                    <SlidersHorizontal className="h-3 w-3 inline mr-1" />
-                    Độ phủ tối (giúp chữ rõ hơn): {Math.round(overlayVal * 100)}%
-                  </label>
-                  <input
-                    type="range"
-                    min="0"
-                    max="0.8"
-                    step="0.02"
-                    value={overlayVal}
-                    onChange={(e) => setOverlayOpacity(parseFloat(e.target.value))}
-                    className="w-full accent-blue-600"
-                  />
-                </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setPickerOpen((v) => !v)}
+              className="h-8 px-3 inline-flex items-center gap-1 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg cursor-pointer"
+            >
+              {pickerOpen ? (
+                <>
+                  <ChevronUp className="h-3.5 w-3.5" /> Thu gọn
+                </>
+              ) : (
+                <>
+                  <ChevronDown className="h-3.5 w-3.5" /> Chọn / đổi
+                </>
               )}
-              <p className="text-[11px] text-gray-400">Hỗ trợ JPG / PNG / WebP. Khuyến nghị ≥ 1920×1080.</p>
-            </div>
+            </button>
           </div>
-        ) : (
-          <div className="space-y-3">
-            {/* Layout: thu gọn = 1 dòng cuộn ngang; mở rộng = grid full */}
-            {expanded ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                {filteredPresets.map((preset) => (
-                  <PresetTile
-                    key={preset.id}
-                    preset={preset}
-                    active={activePreset?.id === preset.id}
-                    onClick={() => setBgPreset(preset.id)}
-                  />
-                ))}
+        </div>
+
+        {pickerOpen && (
+          <div className="mt-3 pt-3 border-t border-gray-100">
+            <p className="text-[11px] text-gray-400 mb-2">
+              21 nền 4K / động — màu chữ tự chỉnh theo nền.
+            </p>
+
+            {/* Tabs — cuộn ngang gọn */}
+            <div className="flex gap-1 overflow-x-auto pb-2 mb-3 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+              {[
+                { id: 'all', label: `Tất cả (${BACKGROUND_PRESETS.length})` },
+                ...CATEGORIES.map((c) => ({
+                  id: c,
+                  label: `${CATEGORY_LABELS[c]} (${BACKGROUND_PRESETS.filter((p) => p.category === c).length})`,
+                })),
+                { id: 'upload', label: 'Tải ảnh riêng' },
+              ].map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setActiveTab(t.id)}
+                  className={`shrink-0 px-2.5 py-1 text-[11px] font-semibold rounded-full transition-colors cursor-pointer whitespace-nowrap ${
+                    activeTab === t.id
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {activeTab === 'upload' ? (
+              <div className="flex flex-wrap gap-4 items-start">
+                <div
+                  className="w-48 h-32 rounded-lg border-2 border-dashed border-gray-300 overflow-hidden relative flex items-center justify-center bg-gray-50"
+                  style={theme.bgImage ? { backgroundImage: `url(${theme.bgImage})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
+                >
+                  {!theme.bgImage && (
+                    <div className="text-center">
+                      <ImageIcon className="h-7 w-7 text-gray-300 mx-auto mb-1" />
+                      <p className="text-[11px] text-gray-400">Chưa có ảnh</p>
+                    </div>
+                  )}
+                  {theme.bgImage && <div className="absolute inset-0" style={{ backgroundColor: theme.bgOverlay }} />}
+                </div>
+                <div className="flex-1 space-y-3 min-w-[200px]">
+                  <input type="file" ref={fileRef} accept="image/*" onChange={handleUpload} className="hidden" />
+                  <button
+                    type="button"
+                    onClick={() => fileRef.current?.click()}
+                    className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer"
+                  >
+                    <Upload className="h-4 w-4" /> {uploading ? 'Đang tải…' : 'Chọn hình từ máy'}
+                  </button>
+                  {theme.bgImage && (
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">
+                        <SlidersHorizontal className="h-3 w-3 inline mr-1" />
+                        Độ phủ tối: {Math.round(overlayVal * 100)}%
+                      </label>
+                      <input
+                        type="range"
+                        min="0"
+                        max="0.8"
+                        step="0.02"
+                        value={overlayVal}
+                        onChange={(e) => setOverlayOpacity(parseFloat(e.target.value))}
+                        className="w-full accent-blue-600"
+                      />
+                    </div>
+                  )}
+                  <p className="text-[11px] text-gray-400">JPG / PNG / WebP · khuyến nghị ≥ 1920×1080</p>
+                </div>
               </div>
             ) : (
-              <div className="flex gap-3 overflow-x-auto pb-2 [scrollbar-width:thin] snap-x snap-mandatory">
-                {filteredPresets.map((preset) => (
-                  <div key={preset.id} className="shrink-0 w-44 snap-start">
+              <div className="space-y-2">
+                <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-7 gap-2">
+                  {visiblePresets.map((preset) => (
                     <PresetTile
+                      key={preset.id}
                       preset={preset}
                       active={activePreset?.id === preset.id}
                       onClick={() => setBgPreset(preset.id)}
                     />
+                  ))}
+                </div>
+                {filteredPresets.length > COLLAPSED_GRID_COUNT && (
+                  <div className="flex justify-center pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setGridExpanded((v) => !v)}
+                      className="inline-flex items-center gap-1 h-7 px-3 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-full cursor-pointer"
+                    >
+                      {gridExpanded ? (
+                        <>
+                          <ChevronUp className="h-3 w-3" /> Thu gọn danh sách
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown className="h-3 w-3" /> Xem tất cả ({filteredPresets.length} hình)
+                        </>
+                      )}
+                    </button>
                   </div>
-                ))}
-              </div>
-            )}
-
-            {filteredPresets.length > 4 && (
-              <div className="flex justify-center">
-                <button
-                  type="button"
-                  onClick={() => setExpanded((v) => !v)}
-                  className="inline-flex items-center gap-1.5 h-8 px-4 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-full cursor-pointer transition-colors"
-                >
-                  {expanded ? (
-                    <>
-                      <ChevronUp className="h-3.5 w-3.5" /> Thu gọn
-                    </>
-                  ) : (
-                    <>
-                      <ChevronDown className="h-3.5 w-3.5" /> Xem thêm ({filteredPresets.length} hình)
-                    </>
-                  )}
-                </button>
+                )}
               </div>
             )}
           </div>
@@ -559,7 +594,37 @@ function TextColorSection({ theme, activePreset, onApply }) {
   );
 }
 
-/** Ô preview của 1 background preset. */
+/** Thumbnail nhỏ nền đang dùng (thu gọn). */
+function BackgroundPreviewThumb({ preset, bgImage, bgOverlay }) {
+  if (bgImage) {
+    return (
+      <div
+        className="relative shrink-0 w-12 h-12 rounded-lg border border-gray-200 overflow-hidden"
+        style={{ backgroundImage: `url(${bgImage})`, backgroundSize: 'cover', backgroundPosition: 'center' }}
+      >
+        <div className="absolute inset-0" style={{ backgroundColor: bgOverlay }} />
+      </div>
+    );
+  }
+
+  const bg = preset?.thumb || preset?.gradient || preset?.baseGradient || preset?.image;
+  const isUrl = typeof bg === 'string' && (bg.startsWith('http') || bg.startsWith('data:'));
+
+  return (
+    <div
+      className="shrink-0 w-12 h-12 rounded-lg border border-gray-200 overflow-hidden"
+      style={
+        preset
+          ? (isUrl
+            ? { backgroundImage: `url(${bg})`, backgroundSize: 'cover', backgroundPosition: 'center' }
+            : { background: bg })
+          : { background: 'linear-gradient(135deg, #e5e7eb, #f3f4f6)' }
+      }
+    />
+  );
+}
+
+/** Ô preview của 1 background preset — vuông, đồng kích thước, tên overlay trên ảnh. */
 function PresetTile({ preset, active, onClick }) {
   const isImage = preset.type === 'image';
   const isAnimated = preset.type === 'animated';
@@ -570,39 +635,42 @@ function PresetTile({ preset, active, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      title={preset.name}
-      className={`group relative rounded-xl border-2 overflow-hidden transition-all cursor-pointer text-left bg-white ${
-        active ? 'border-blue-500 ring-2 ring-blue-200 shadow-md' : 'border-gray-200 hover:border-gray-300 hover:shadow'
+      title={`${preset.name} — ${CATEGORY_LABELS[preset.category]}`}
+      className={`group relative aspect-square w-full rounded-lg border overflow-hidden transition-all cursor-pointer ${
+        active
+          ? 'border-blue-500 ring-2 ring-blue-300 ring-offset-1 shadow-sm'
+          : 'border-gray-200 hover:border-blue-300 hover:shadow-sm'
       }`}
     >
       <div
-        className="h-28 w-full relative"
+        className="absolute inset-0"
         style={
           isUrl
             ? { backgroundImage: `url(${bg})`, backgroundSize: 'cover', backgroundPosition: 'center' }
             : { background: bg }
         }
-      >
-        {isAnimated && (
-          <span className="absolute top-1.5 right-1.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-black/65 text-white text-[9px] font-bold rounded-full backdrop-blur-sm">
-            ✨ ĐỘNG
-          </span>
-        )}
-        {isImage && (
-          <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 bg-black/65 text-white text-[9px] font-bold rounded-full backdrop-blur-sm">
-            4K
-          </span>
-        )}
-        {/* Gradient mờ ở đáy để chữ tile rõ hơn */}
-        <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-black/40 to-transparent pointer-events-none" />
+      />
+
+      {isAnimated && (
+        <span className="absolute top-1 right-1 px-1 py-px bg-black/60 text-white text-[8px] font-bold rounded leading-none">
+          {preset.scene === 'earth' ? '3D' : 'ĐỘNG'}
+        </span>
+      )}
+      {isImage && (
+        <span className="absolute top-1 right-1 px-1 py-px bg-black/60 text-white text-[8px] font-bold rounded leading-none">
+          4K
+        </span>
+      )}
+
+      <div className="absolute inset-x-0 bottom-0 px-1.5 pt-4 pb-1 bg-gradient-to-t from-black/75 via-black/35 to-transparent pointer-events-none">
+        <p className="text-[10px] font-medium text-white leading-tight line-clamp-2 text-left">
+          {preset.name}
+        </p>
       </div>
-      <div className="px-2.5 py-2">
-        <p className="text-xs font-semibold text-gray-800 truncate">{preset.name}</p>
-        <p className="text-[10px] text-gray-400 mt-0.5">{CATEGORY_LABELS[preset.category]}</p>
-      </div>
+
       {active && (
-        <span className="absolute top-1.5 left-1.5 inline-flex items-center justify-center h-5 w-5 rounded-full bg-blue-500 text-white shadow-md">
-          <Check className="h-3 w-3" strokeWidth={3} />
+        <span className="absolute top-1 left-1 inline-flex items-center justify-center h-4 w-4 rounded-full bg-blue-500 text-white shadow">
+          <Check className="h-2.5 w-2.5" strokeWidth={3} />
         </span>
       )}
     </button>
