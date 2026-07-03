@@ -2636,21 +2636,23 @@ function aggregateOrgReportRows(leadRows, dealRows, stageMap, opts = {}) {
     orgReportBumpFirstStageMetrics(ensureBucket(sourceMap, sid), l, stageMap, firstStageByPipe, asOfMs);
     orgReportBumpFirstStageMetrics(ensureBucket(leadTypeMap, leadTypeKeyForRow(l)), l, stageMap, firstStageByPipe, asOfMs);
 
-    if (isClosedWon) {
+    {
       const bumpDelivery = (bucket) => {
         bucket.delivered_deal_count = (bucket.delivered_deal_count || 0) + 1;
-        const deadline = l.kanban_deadline_at;
-        const wonAt = l.stage_entered_at || l.created_at;
-        if (deadline && wonAt) {
-          const dMs = new Date(deadline).getTime();
-          const wMs = new Date(wonAt).getTime();
-          if (wMs <= dMs) {
-            bucket.on_time_deal_count = (bucket.on_time_deal_count || 0) + 1;
+        if (isClosedWon) {
+          const deadline = l.kanban_deadline_at;
+          const wonAt = l.stage_entered_at || l.created_at;
+          if (deadline && wonAt) {
+            const dMs = new Date(deadline).getTime();
+            const wMs = new Date(wonAt).getTime();
+            if (wMs <= dMs) {
+              bucket.on_time_deal_count = (bucket.on_time_deal_count || 0) + 1;
+            } else {
+              bucket.late_deal_count = (bucket.late_deal_count || 0) + 1;
+            }
           } else {
-            bucket.late_deal_count = (bucket.late_deal_count || 0) + 1;
+            bucket.on_time_deal_count = (bucket.on_time_deal_count || 0) + 1;
           }
-        } else {
-          bucket.on_time_deal_count = (bucket.on_time_deal_count || 0) + 1;
         }
       };
       bumpDelivery(summary);
@@ -2692,8 +2694,8 @@ function aggregateOrgReportRows(leadRows, dealRows, stageMap, opts = {}) {
     reception_overdue_rate_pct: orgReportReceptionOverdueRatePct(summary),
     ...orgReportAttachFirstStageRates(summary),
     cancel_rate_pct: orgReportCancelRatePct(summary),
-    on_time_rate_pct: (summary.delivered_deal_count || 0) > 0
-      ? Math.round(((summary.on_time_deal_count || 0) / summary.delivered_deal_count) * 100)
+    on_time_rate_pct: ((summary.on_time_deal_count || 0) + (summary.late_deal_count || 0)) > 0
+      ? Math.round(((summary.on_time_deal_count || 0) / ((summary.on_time_deal_count || 0) + (summary.late_deal_count || 0))) * 100)
       : null,
   };
 
@@ -3102,8 +3104,8 @@ async function computeOrgOverviewReportData(req, res) {
           reception_overdue_rate_pct: orgReportReceptionOverdueRatePct(m),
           ...orgReportAttachFirstStageRates(m),
           cancel_rate_pct: orgReportCancelRatePct(m),
-          on_time_rate_pct: (m.delivered_deal_count || 0) > 0
-            ? Math.round(((m.on_time_deal_count || 0) / m.delivered_deal_count) * 100)
+          on_time_rate_pct: ((m.on_time_deal_count || 0) + (m.late_deal_count || 0)) > 0
+            ? Math.round(((m.on_time_deal_count || 0) / ((m.on_time_deal_count || 0) + (m.late_deal_count || 0))) * 100)
             : null,
           ...labelFn(key, m),
         };
