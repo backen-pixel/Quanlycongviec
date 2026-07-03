@@ -1022,7 +1022,7 @@ function MetricTable({ columns, rows, onRowClick, emptyLabel = 'Chưa có dữ l
         <thead>
           <tr className="text-[11px] font-bold uppercase tracking-wide text-slate-600">
             {columns.map((c) => (
-              <th key={c.key} className={`py-2 px-2 ${c.align === 'right' ? 'text-right' : 'text-left'}`}>
+              <th key={c.key} className={`py-2 px-2 whitespace-pre-line ${c.align === 'right' ? 'text-right' : 'text-left'}`}>
                 {c.label}
               </th>
             ))}
@@ -1094,20 +1094,16 @@ const METRIC_COLS_BASE = [
   { key: 'lead_count', label: 'Lead', align: 'right' },
   { key: 'deal_count', label: 'Deal', align: 'right' },
   {
-    key: 'won_vs_total',
-    label: 'Chốt/Tổng',
-    align: 'right',
-    render: (r) => {
-      const won = reportClosedWonCount(r);
-      const total = (r.deal_count ?? 0) + (r.customer_order_count ?? 0);
-      return `${won}/${total}`;
-    },
-  },
-  {
     key: 'delivered_deal_count',
-    label: 'Giao tháng',
+    label: 'Số Deal\ntiếp nhận',
     align: 'right',
     render: (r) => r.delivered_deal_count ?? 0,
+  },
+  {
+    key: 'won_vs_total',
+    label: 'Số Deal\nký HĐ thành công',
+    align: 'right',
+    render: (r) => reportClosedWonCount(r),
   },
   {
     key: 'on_time_deal_count',
