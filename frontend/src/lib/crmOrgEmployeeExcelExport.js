@@ -14,6 +14,8 @@ const VND_KEYS = new Set([
 const INT_KEYS = new Set([
   'lead_count', 'deal_count', 'customer_order_count', 'quote_deal_count',
   'won_or_later_deal_count', 'lost_deal_count', 'overdue_count', 'reception_overdue_count',
+  'delivered_deal_count', 'won_vs_total',
+  'on_time_deal_count', 'late_deal_count', 'no_evidence_deal_count',
 ]);
 
 // ── Sheet name constants ─────────────────────────────────────────────────────
@@ -49,8 +51,15 @@ function cellKind(key) {
   return 'text';
 }
 
+function totalDealCount(row) {
+  return (row.deal_count ?? 0) + (row.customer_order_count ?? 0);
+}
+
 function rawEmployeeValue(col, row) {
   const k = col.key;
+  if (k === 'deal_count') return col.label?.includes('pipeline') ? (row.deal_count ?? 0) : totalDealCount(row);
+  if (k === 'delivered_deal_count') return totalDealCount(row);
+  if (k === 'won_vs_total') return closedWonCount(row);
   if (k === 'won_or_later_deal_count') return closedWonCount(row);
   if (k === 'won_or_later_value') return closedWonValue(row);
   if (k === 'pipeline_value') return row.pipeline_value ?? (row.lead_pipeline_value || 0) + (row.deal_pipeline_value || 0);
@@ -85,7 +94,7 @@ function rawEmployeeValue(col, row) {
 
 // ── KPI score helpers (dùng cho cached result values) ────────────────────────
 function kpiProgressScore(r) {
-  const total = r.delivered_deal_count || 0;
+  const total = (r.deal_count || 0) + (r.customer_order_count || 0);
   const onTime = r.on_time_deal_count || 0;
   const late = r.late_deal_count || 0;
   const noEv = r.no_evidence_deal_count || 0;
@@ -280,14 +289,15 @@ export async function downloadOrgEmployeeExcel({
   kpiEmployees.forEach((r, i) => {
     const er = DATA_ROW + i;
     const row = s2.getRow(er);
+    const totalDelivered = (r.deal_count || 0) + (r.customer_order_count || 0);
     row.getCell(1).value = i + 1;
     row.getCell(2).value = r.full_name || '';
-    row.getCell(3).value = r.delivered_deal_count || 0;
+    row.getCell(3).value = totalDelivered;
     row.getCell(4).value = r.on_time_deal_count || 0;
     row.getCell(5).value = r.late_deal_count || 0;
     row.getCell(6).value = r.no_evidence_deal_count || 0;
     // G = Tỷ lệ = IF(C>0, D/C, 0)
-    row.getCell(7).value = { formula: `IF(C${er}>0,D${er}/C${er},0)`, result: (r.delivered_deal_count || 0) > 0 ? (r.on_time_deal_count || 0) / (r.delivered_deal_count || 0) : 0 };
+    row.getCell(7).value = { formula: `IF(C${er}>0,D${er}/C${er},0)`, result: totalDelivered > 0 ? (r.on_time_deal_count || 0) / totalDelivered : 0 };
     row.getCell(7).numFmt = '0.0%';
     // H = Điểm = MAX(0, G*20 - E - F)
     row.getCell(8).value = { formula: `MAX(0,G${er}*20-E${er}-F${er})`, result: kpiProgressScore(r) };
@@ -350,12 +360,13 @@ export async function downloadOrgEmployeeExcel({
   kpiEmployees.forEach((r, i) => {
     const er = DATA_ROW + i;
     const row = s4.getRow(er);
+    const totalDeals = (r.deal_count || 0) + (r.customer_order_count || 0);
     row.getCell(1).value = i + 1;
     row.getCell(2).value = r.full_name || '';
-    row.getCell(3).value = r.deal_count || 0;
+    row.getCell(3).value = totalDeals;
     row.getCell(4).value = closedWonCount(r);
     // E = IF(C>0, D/C, 0)
-    row.getCell(5).value = { formula: `IF(C${er}>0,D${er}/C${er},0)`, result: (r.deal_count || 0) > 0 ? closedWonCount(r) / (r.deal_count || 0) : 0 };
+    row.getCell(5).value = { formula: `IF(C${er}>0,D${er}/C${er},0)`, result: totalDeals > 0 ? closedWonCount(r) / totalDeals : 0 };
     row.getCell(5).numFmt = '0.0%';
     // F = E * 20
     row.getCell(6).value = { formula: `E${er}*20`, result: kpiConversionScore(r) };

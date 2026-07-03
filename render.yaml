@@ -32,7 +32,9 @@ services:
       - key: REDIS_DISABLED
         sync: false
       - key: SUPABASE_FAILOVER_ENABLED
-        sync: false
+        value: "0"
+      - key: SUPABASE_AUTO_FAILOVER
+        value: "0"
       - key: SUPABASE_BACKUP_URL
         sync: false
       - key: SUPABASE_BACKUP_SERVICE_ROLE_KEY
@@ -46,7 +48,7 @@ services:
       - key: SUPABASE_FAIL_THRESHOLD
         sync: false
       - key: SUPABASE_AUTO_FAILBACK
-        sync: false
+        value: "0"
       - key: SUPABASE_REPLICATION_ENABLED
         sync: false
       - key: SUPABASE_REPLICATION_SKIP_TABLES

@@ -38,9 +38,11 @@ r.get('/project-types', requirePermission('projects', 'view'), async (req, res) 
       const cid = requireUserCompanyId(req, res);
       if (!cid) return;
       if (companyId && String(companyId) !== String(cid)) {
-        return res.status(403).json({ error: 'Không có quyền xem loại của công ty khác' });
+        // Cho phép xem phân loại SX của công ty khác (chọn công ty SX khi tạo dự án)
+        // Chỉ trả danh sách read-only, không cho sửa/xóa
+      } else {
+        companyId = cid;
       }
-      companyId = cid;
     } else {
       if (!companyId) return res.json([]);
     }

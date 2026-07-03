@@ -20,7 +20,10 @@ module.exports = {
   supabaseBackupServiceKey: process.env.SUPABASE_BACKUP_SERVICE_ROLE_KEY || process.env.SUPABASE_BACKUP_SECRET_KEY || '',
   supabaseBackupDbUrl: process.env.SUPABASE_BACKUP_DB_URL || '',
   supabaseBackupDbDirectUrl: process.env.SUPABASE_BACKUP_DB_DIRECT_URL || '',
+  /** Backup client + chuyển DB thủ công (trang Giám sát). Không bật chuyển tự động một mình. */
   supabaseFailoverEnabled: process.env.SUPABASE_FAILOVER_ENABLED === '1',
+  /** Tự chuyển Primary↔Backup khi probe/fetch lỗi — mặc định tắt; chỉ bật khi =1. */
+  supabaseAutoFailoverEnabled: process.env.SUPABASE_AUTO_FAILOVER === '1',
   supabaseHealthIntervalMs: Math.max(5000, parseInt(process.env.SUPABASE_HEALTH_INTERVAL_MS || '15000', 10)),
   supabaseFailThreshold: Math.max(1, parseInt(process.env.SUPABASE_FAIL_THRESHOLD || '3', 10)),
   supabaseAutoFailback: process.env.SUPABASE_AUTO_FAILBACK === '1',

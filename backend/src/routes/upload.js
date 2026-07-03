@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
+const { assertFileAttachmentMutation } = require('../helpers/projectFileActivity');
 const { sanitizeStorageFilename, isInvalidStorageKeyError } = require('../helpers/storageFilename');
 
 const MB = 1024 * 1024;
@@ -433,7 +434,10 @@ r.get('/:entity_type/:entity_id', async (req, res) => {
 r.delete('/:id', async (req, res) => {
   try {
     const { data: file } = await supabase.from('file_attachments')
-      .select('storage_path').eq('id', req.params.id).single();
+      .select('id, storage_path, uploaded_by, entity_type, entity_id')
+      .eq('id', req.params.id).single();
+    if (!file) return res.status(404).json({ error: 'Không tìm thấy file' });
+    if (!await assertFileAttachmentMutation(req, res, file)) return;
     if (file?.storage_path) {
       await supabase.storage.from(BUCKET).remove([file.storage_path]);
     }
