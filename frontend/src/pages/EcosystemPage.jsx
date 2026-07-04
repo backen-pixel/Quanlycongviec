@@ -1,15 +1,20 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import Modal from '../components/Modal';
 import EcosystemSetupWizard from '../components/EcosystemSetupWizard';
 import EcosystemListView from '../components/EcosystemListView';
+import EcosystemOrgChart from '../components/EcosystemOrgChart';
+import {
+  buildBranchFilterOptions,
+  filterEcosystemTreeByBranch,
+} from '../lib/ecosystemTreeFilter';
 import { Link } from 'react-router-dom';
 import {
   Plus, ChevronRight, ChevronDown, Users, Trash2, Layers,
   Edit, Shield, FolderKanban, Network, Save, X, UserPlus, Crown, User,
   ArrowDownRight, Copy, FileText, ChevronUp, ZoomIn, ZoomOut, Maximize2, Move,
-  List, GitBranch, HelpCircle, Puzzle,
+  List, GitBranch, HelpCircle, Puzzle, Filter, UnfoldVertical, FoldVertical,
 } from 'lucide-react';
 
 const RL = { director: 'Giám đốc', manager: 'Quản lý', team_lead: 'Trưởng nhóm', member: 'Nhân viên' };
@@ -27,6 +32,11 @@ export default function EcosystemPage() {
   const [showCreate, setShowCreate] = useState(null);
   const [allUsers, setAllUsers] = useState([]);
   const [viewMode, setViewMode] = useState('list'); // 'list' | 'diagram'
+  const [branchFilter, setBranchFilter] = useState('all');
+  const [diagramMaxDepth, setDiagramMaxDepth] = useState('all');
+  const [diagramCompact, setDiagramCompact] = useState(false);
+  const [diagramExpandTick, setDiagramExpandTick] = useState(0);
+  const [diagramCollapseTick, setDiagramCollapseTick] = useState(0);
   const [showWizard, setShowWizard] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const isAdmin = ['admin', 'manager'].includes(user?.role);
@@ -46,6 +56,21 @@ export default function EcosystemPage() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  const branchFilterOptions = useMemo(() => buildBranchFilterOptions(tree), [tree]);
+  const filteredTree = useMemo(
+    () => filterEcosystemTreeByBranch(tree, branchFilter),
+    [tree, branchFilter],
+  );
+
+  useEffect(() => {
+    if (branchFilter === 'all') return;
+    const ids = new Set([
+      ...branchFilterOptions.divisions.map((d) => d.id),
+      ...branchFilterOptions.companies.map((c) => c.id),
+    ]);
+    if (!ids.has(branchFilter)) setBranchFilter('all');
+  }, [branchFilter, branchFilterOptions]);
+
   if (loading) return <div className="flex items-center justify-center py-20"><div className="animate-spin h-8 w-8 border-4 border-blue-200 border-t-blue-600 rounded-full" /></div>;
 
   // Show wizard for first-time setup
@@ -62,62 +87,7 @@ export default function EcosystemPage() {
   }
 
   return (
-    <div className="space-y-5">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <Network className="h-6 w-6 text-blue-600" /> Cấu Trúc Công Ty
-          </h1>
-          <p className="text-xs text-gray-500 mt-0.5">{units.length} đơn vị · {levels.length} cấp bậc</p>
-        </div>
-        
-        <div className="flex items-center gap-2 flex-wrap">
-          {isAdmin && (
-            <Link
-              to="/ecosystem/modules"
-              className="h-9 px-3 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-800 text-sm font-medium flex items-center gap-2 hover:bg-indigo-100"
-            >
-              <Puzzle className="h-4 w-4" />
-              Module &amp; Khối
-            </Link>
-          )}
-
-          {/* View mode toggle */}
-          <div className="flex bg-gray-100 rounded-lg p-1">
-            <button
-              onClick={() => setViewMode('list')}
-              className={`px-3 py-1.5 rounded text-sm font-medium transition flex items-center gap-1.5 ${
-                viewMode === 'list' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              <List className="h-4 w-4" />
-              Danh sách
-            </button>
-            <button
-              onClick={() => setViewMode('diagram')}
-              className={`px-3 py-1.5 rounded text-sm font-medium transition flex items-center gap-1.5 ${
-                viewMode === 'diagram' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              <GitBranch className="h-4 w-4" />
-              Sơ đồ
-            </button>
-          </div>
-
-          {/* Add button */}
-          {isAdmin && (
-            <button
-              onClick={() => units.length === 0 ? setShowWizard(true) : setShowCreate('root')}
-              className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-blue-700 cursor-pointer"
-            >
-              <Plus className="h-4 w-4" />
-              {units.length === 0 ? 'Bắt đầu thiết lập' : 'Thêm gốc'}
-            </button>
-          )}
-        </div>
-      </div>
-
+    <div className={tree.length > 0 ? '-mx-6 -mb-6 space-y-3' : 'space-y-3'}>
       {/* Guide Panel */}
       {showGuide && (
         <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-xl p-5">
@@ -150,7 +120,7 @@ export default function EcosystemPage() {
               </div>
               <ul className="space-y-1 text-xs text-gray-600">
                 <li>• Xem cấu trúc trực quan bằng sơ đồ</li>
-                <li>• Kéo để di chuyển, Ctrl+Scroll để zoom</li>
+                <li>• Kéo để di chuyển, cuộn chuột để zoom</li>
                 <li>• Thấy rõ quan hệ giữa các đơn vị</li>
                 <li>• Phù hợp với desktop và overview</li>
               </ul>
@@ -191,23 +161,54 @@ export default function EcosystemPage() {
         </div>
       )}
 
-      {/* Content */}
+      {/* Content — toolbar + vùng xem full height */}
       {tree.length > 0 ? (
-        viewMode === 'list' ? (
-          <EcosystemListView
-            tree={tree}
-            onSelect={setSelectedUnit}
-            onAddChild={setShowCreate}
+        <div className="flex flex-col rounded-2xl rounded-b-none border border-slate-200/80 border-b-0 overflow-hidden bg-white shadow-sm h-[calc(100dvh-1.5rem)] min-h-[520px]">
+          <EcosystemToolbar
             isAdmin={isAdmin}
-            allUsers={allUsers}
+            viewMode={viewMode}
+            setViewMode={setViewMode}
+            unitsCount={units.length}
+            branchFilter={branchFilter}
+            setBranchFilter={setBranchFilter}
+            branchFilterOptions={branchFilterOptions}
+            diagramMaxDepth={diagramMaxDepth}
+            setDiagramMaxDepth={setDiagramMaxDepth}
+            diagramCompact={diagramCompact}
+            setDiagramCompact={setDiagramCompact}
+            onDiagramExpandAll={() => setDiagramExpandTick((n) => n + 1)}
+            onDiagramCollapseAll={() => setDiagramCollapseTick((n) => n + 1)}
+            onAddRoot={() => (units.length === 0 ? setShowWizard(true) : setShowCreate('root'))}
           />
-        ) : (
-          <ZoomableCanvas>
-            <div className="min-w-fit flex flex-col items-center p-8">
-              {tree.map(root => <OrgChart key={root.id} node={root} onSelect={setSelectedUnit} onAddChild={setShowCreate} isAdmin={isAdmin} />)}
-            </div>
-          </ZoomableCanvas>
-        )
+          <div className="flex-1 min-h-0 overflow-hidden">
+            {viewMode === 'list' ? (
+              <div className="h-full overflow-y-auto">
+                <EcosystemListView
+                  tree={filteredTree}
+                  onSelect={setSelectedUnit}
+                  onAddChild={setShowCreate}
+                  isAdmin={isAdmin}
+                  allUsers={allUsers}
+                />
+              </div>
+            ) : (
+              <ZoomableCanvas key={`${branchFilter}-${diagramMaxDepth}-${diagramCompact}`}>
+                <div className="flex justify-center min-w-max mx-auto py-8 px-6">
+                  <EcosystemOrgChart
+                    tree={filteredTree}
+                    onSelect={setSelectedUnit}
+                    onAddChild={setShowCreate}
+                    isAdmin={isAdmin}
+                    maxDepth={diagramMaxDepth === 'all' ? null : Number(diagramMaxDepth)}
+                    compact={diagramCompact}
+                    expandAllSignal={diagramExpandTick}
+                    collapseAllSignal={diagramCollapseTick}
+                  />
+                </div>
+              </ZoomableCanvas>
+            )}
+          </div>
+        </div>
       ) : (
         <div className="text-center py-20 bg-white rounded-2xl border">
           <Network className="h-14 w-14 mx-auto mb-4 text-gray-200" />
@@ -230,6 +231,157 @@ export default function EcosystemPage() {
   );
 }
 
+function EcosystemToolbar({
+  isAdmin,
+  viewMode,
+  setViewMode,
+  unitsCount,
+  branchFilter,
+  setBranchFilter,
+  branchFilterOptions,
+  diagramMaxDepth,
+  setDiagramMaxDepth,
+  diagramCompact,
+  setDiagramCompact,
+  onDiagramExpandAll,
+  onDiagramCollapseAll,
+  onAddRoot,
+}) {
+  const { divisions, companies } = branchFilterOptions;
+  const hasBranchFilters = divisions.length > 0 || companies.length > 0;
+
+  return (
+    <div className="shrink-0 flex items-center justify-between gap-2 flex-wrap px-3 py-2.5 border-b border-slate-200/80 bg-white/95 backdrop-blur-sm">
+      <div className="flex items-center gap-2 flex-wrap min-w-0 flex-1">
+        {hasBranchFilters && (
+          <label className="inline-flex items-center gap-1.5 min-w-0">
+            <Filter className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+            <select
+              value={branchFilter}
+              onChange={(e) => setBranchFilter(e.target.value)}
+              className="h-8 max-w-[min(100%,14rem)] pl-2 pr-7 rounded-lg border border-slate-200 bg-white text-xs text-slate-700 focus:ring-2 focus:ring-blue-500 focus:border-transparent truncate"
+              title="Lọc theo Khối hoặc Công ty"
+            >
+              <option value="all">Tất cả nhánh</option>
+              {divisions.length > 0 && (
+                <optgroup label="Khối">
+                  {divisions.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.shortName || d.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {companies.length > 0 && (
+                <optgroup label="Công ty">
+                  {companies.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+          </label>
+        )}
+        {viewMode === 'diagram' && (
+          <>
+            <select
+              value={diagramMaxDepth}
+              onChange={(e) => setDiagramMaxDepth(e.target.value)}
+              className="h-8 pl-2 pr-7 rounded-lg border border-slate-200 bg-white text-xs text-slate-700 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              title="Giới hạn số cấp hiển thị"
+            >
+              <option value="all">Tất cả cấp</option>
+              <option value="2">2 cấp</option>
+              <option value="3">3 cấp</option>
+              <option value="4">4 cấp</option>
+              <option value="5">5 cấp</option>
+            </select>
+            <div className="flex items-center rounded-lg border border-slate-200 bg-white p-0.5">
+              <button
+                type="button"
+                onClick={onDiagramExpandAll}
+                className="h-7 px-2 rounded-md text-xs text-slate-600 hover:bg-slate-50 flex items-center gap-1 cursor-pointer"
+                title="Mở tất cả nhánh"
+              >
+                <UnfoldVertical className="h-3.5 w-3.5" />
+                <span className="hidden md:inline">Mở hết</span>
+              </button>
+              <button
+                type="button"
+                onClick={onDiagramCollapseAll}
+                className="h-7 px-2 rounded-md text-xs text-slate-600 hover:bg-slate-50 flex items-center gap-1 cursor-pointer"
+                title="Thu tất cả nhánh"
+              >
+                <FoldVertical className="h-3.5 w-3.5" />
+                <span className="hidden md:inline">Thu hết</span>
+              </button>
+            </div>
+            <label className="inline-flex items-center gap-1.5 h-8 px-2 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={diagramCompact}
+                onChange={(e) => setDiagramCompact(e.target.checked)}
+                className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              Gọn
+            </label>
+          </>
+        )}
+        {viewMode === 'diagram' && (
+          <p className="text-[11px] text-slate-500 hidden xl:block truncate">
+            Kéo di chuyển · Cuộn chuột zoom · Bấm chip con để thu/mở nhánh
+          </p>
+        )}
+      </div>
+      <div className="flex items-center gap-2 flex-wrap ml-auto">
+        {isAdmin && (
+          <Link
+            to="/ecosystem/modules"
+            className="h-8 px-2.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-800 text-xs font-medium flex items-center gap-1.5 hover:bg-indigo-100"
+          >
+            <Puzzle className="h-3.5 w-3.5" />
+            Module &amp; Khối
+          </Link>
+        )}
+        <div className="flex bg-slate-100 rounded-lg p-0.5">
+          <button
+            type="button"
+            onClick={() => setViewMode('list')}
+            className={`px-2.5 py-1 rounded-md text-xs font-medium transition flex items-center gap-1 ${
+              viewMode === 'list' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <List className="h-3.5 w-3.5" />
+            Danh sách
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('diagram')}
+            className={`px-2.5 py-1 rounded-md text-xs font-medium transition flex items-center gap-1 ${
+              viewMode === 'diagram' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <GitBranch className="h-3.5 w-3.5" />
+            Sơ đồ
+          </button>
+        </div>
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={onAddRoot}
+            className="h-8 px-3 bg-blue-600 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 hover:bg-blue-700 cursor-pointer"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {unitsCount === 0 ? 'Bắt đầu thiết lập' : 'Thêm gốc'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ═══ ZOOMABLE CANVAS ═══ */
 function ZoomableCanvas({ children }) {
   const containerRef = useRef(null);
@@ -242,10 +394,8 @@ function ZoomableCanvas({ children }) {
   const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
   const handleWheel = useCallback((e) => {
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      setZoom(z => clamp(z - e.deltaY * 0.002, 0.2, 2));
-    }
+    e.preventDefault();
+    setZoom((z) => clamp(z - e.deltaY * 0.002, 0.2, 2));
   }, []);
 
   useEffect(() => {
@@ -275,66 +425,37 @@ function ZoomableCanvas({ children }) {
   const resetView = () => { setZoom(0.85); setPan({ x: 0, y: 0 }); };
 
   return (
-    <div className="relative">
+    <div className="relative h-full w-full">
       {/* Zoom controls */}
       <div className="absolute top-2 right-2 z-20 flex items-center gap-1 bg-white/90 backdrop-blur rounded-xl border shadow-sm px-1.5 py-1">
-        <button onClick={zoomOut} className="w-7 h-7 rounded-lg hover:bg-gray-100 flex items-center justify-center cursor-pointer" title="Thu nhỏ"><ZoomOut className="h-3.5 w-3.5 text-gray-600" /></button>
+        <button type="button" onClick={zoomOut} className="w-7 h-7 rounded-lg hover:bg-gray-100 flex items-center justify-center cursor-pointer" title="Thu nhỏ"><ZoomOut className="h-3.5 w-3.5 text-gray-600" /></button>
         <span className="text-[10px] font-mono text-gray-500 w-10 text-center">{Math.round(zoom * 100)}%</span>
-        <button onClick={zoomIn} className="w-7 h-7 rounded-lg hover:bg-gray-100 flex items-center justify-center cursor-pointer" title="Phóng to"><ZoomIn className="h-3.5 w-3.5 text-gray-600" /></button>
+        <button type="button" onClick={zoomIn} className="w-7 h-7 rounded-lg hover:bg-gray-100 flex items-center justify-center cursor-pointer" title="Phóng to"><ZoomIn className="h-3.5 w-3.5 text-gray-600" /></button>
         <div className="w-px h-4 bg-gray-200 mx-0.5" />
-        <button onClick={resetView} className="w-7 h-7 rounded-lg hover:bg-gray-100 flex items-center justify-center cursor-pointer" title="Reset"><Maximize2 className="h-3.5 w-3.5 text-gray-600" /></button>
-      </div>
-
-      {/* Hint */}
-      <div className="absolute bottom-2 left-2 z-20 text-[9px] text-gray-400 bg-white/80 backdrop-blur rounded-lg px-2 py-1 flex items-center gap-1.5">
-        <Move className="h-3 w-3" /> Kéo để di chuyển · Ctrl+Scroll để zoom
+        <button type="button" onClick={resetView} className="w-7 h-7 rounded-lg hover:bg-gray-100 flex items-center justify-center cursor-pointer" title="Reset"><Maximize2 className="h-3.5 w-3.5 text-gray-600" /></button>
       </div>
 
       {/* Canvas */}
-      <div ref={containerRef}
-        className="overflow-hidden rounded-2xl border bg-gray-50/50 bg-[radial-gradient(circle,#e5e7eb_1px,transparent_1px)] bg-[size:20px_20px]"
-        style={{ height: 'calc(100vh - 200px)', minHeight: 400, cursor: dragging ? 'grabbing' : 'grab' }}
-        onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}>
-        <div style={{
-          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-          transformOrigin: 'top center',
-          transition: dragging ? 'none' : 'transform 0.15s ease',
-          willChange: 'transform',
-        }}>
+      <div
+        ref={containerRef}
+        className="h-full w-full overflow-hidden bg-[#f8fafc] bg-[radial-gradient(ellipse_at_top,#e0e7ff33,transparent_55%),radial-gradient(circle,#cbd5e140_1px,transparent_1px)] bg-[size:auto,20px_20px]"
+        style={{ cursor: dragging ? 'grabbing' : 'grab' }}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={onMouseUp}
+        onMouseLeave={onMouseUp}
+      >
+        <div
+          style={{
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            transformOrigin: 'top center',
+            transition: dragging ? 'none' : 'transform 0.15s ease',
+            willChange: 'transform',
+          }}
+        >
           {children}
         </div>
       </div>
-    </div>
-  );
-}
-
-/* ═══ ORG CHART ═══ */
-function OrgChart({ node, onSelect, onAddChild, isAdmin }) {
-  const [collapsed, setCollapsed] = useState(false);
-  const has = node.children?.length > 0;
-  const c = node.level?.color || '#6b7280';
-  return (
-    <div className="flex flex-col items-center">
-      <div onClick={() => onSelect(node.id)} className="relative bg-white rounded-xl border-2 shadow-sm hover:shadow-lg transition-all cursor-pointer group min-w-[170px] max-w-[220px]" style={{ borderColor: c + '60' }}>
-        <div className="h-1.5 rounded-t-[10px]" style={{ backgroundColor: c }} />
-        <div className="p-3 text-center">
-          <div className="text-2xl mb-1">{node.level?.icon || '📋'}</div>
-          <h3 className="text-xs font-bold text-gray-900 truncate">{node.name}</h3>
-          <div className="inline-flex items-center gap-1 text-[9px] px-2 py-0.5 rounded-full mt-1 font-medium" style={{ backgroundColor: c + '15', color: c }}>{node.level?.name}</div>
-          {node.code && <div className="text-[9px] text-gray-400 font-mono mt-0.5">{node.code}</div>}
-          {node.company && <div className="text-[8px] text-green-600 mt-0.5">🔗 {node.company.name}</div>}
-          {node.member_count > 0 && <div className="flex items-center justify-center gap-1 mt-1 text-[10px] text-gray-500"><Users className="h-3 w-3" /> {node.member_count}</div>}
-          {node.stage_groups?.length > 0 && <div className="flex flex-wrap justify-center gap-0.5 mt-1">{node.stage_groups.map(g => <span key={g.id} className="text-[8px] px-1 py-0.5 rounded-full" style={{ backgroundColor: g.color + '15', color: g.color }}>{g.icon}</span>)}</div>}
-        </div>
-        {isAdmin && <button onClick={e => { e.stopPropagation(); onAddChild(node.id); }} className="absolute -bottom-3 left-1/2 -translate-x-1/2 w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer hover:bg-blue-700 shadow-md z-10"><Plus className="h-3 w-3" /></button>}
-        {has && <button onClick={e => { e.stopPropagation(); setCollapsed(!collapsed); }} className="absolute -bottom-3 right-2 w-5 h-5 bg-gray-100 border rounded-full flex items-center justify-center cursor-pointer hover:bg-gray-200 z-10">{collapsed ? <ChevronDown className="h-2.5 w-2.5 text-gray-500" /> : <ChevronUp className="h-2.5 w-2.5 text-gray-500" />}</button>}
-      </div>
-      {has && !collapsed && <>
-        <div className="w-px h-5 bg-gray-300" />
-        {node.children.length > 1 && <div className="h-px bg-gray-300" style={{ width: Math.max(40, (node.children.length - 1) * 200) }} />}
-        <div className="flex gap-3">{node.children.map(ch => <div key={ch.id} className="flex flex-col items-center"><div className="w-px h-5 bg-gray-300" /><OrgChart node={ch} onSelect={onSelect} onAddChild={onAddChild} isAdmin={isAdmin} /></div>)}</div>
-      </>}
-      {has && collapsed && <div className="mt-2 text-[9px] text-gray-400">{node.children.length} con ▼</div>}
     </div>
   );
 }
