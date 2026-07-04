@@ -54,6 +54,7 @@ import Sidebar from './components/Sidebar';
 const AnimatedBackground = lazy(() => import('./components/AnimatedBackground'));
 const EarthExperienceBackground = lazy(() => import('./components/EarthExperienceBackground.jsx'));
 import Login from './pages/Login';
+import ModulesLandingPage from './pages/ModulesLandingPage';
 
 const Dashboard = lazyWithRetry(() => import('./pages/ManagementDashboard'));
 const ManagementDashboard = lazyWithRetry(() => import('./pages/ManagementDashboard'));
@@ -343,6 +344,7 @@ export default function App() {
         
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/modules" element={<ModulesLandingPage />} />
           <Route path="/privacy" element={<Suspense fallback={<PageLoader />}><PrivacyPage /></Suspense>} />
           <Route element={<ProtectedLayout />}>
             <Route path="/" element={<DefaultRedirect />} />
