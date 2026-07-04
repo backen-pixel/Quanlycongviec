@@ -299,7 +299,7 @@ r.get('/channel-filters', requireAdmin, async (_req, res) => {
 
 /* ─────────────────── PLAYBOOKS (mẫu nội dung AI) ─────────────────── */
 
-const VALID_DATA_SOURCES = ['channel_context', 'kpi', 'none', 'company_report'];
+const VALID_DATA_SOURCES = ['channel_context', 'kpi', 'none', 'company_report', 'company_daily', 'org_overview', 'reminder'];
 
 function validatePlaybook(body, { allowMissingPrompt = false } = {}) {
   const errors = [];
@@ -545,6 +545,11 @@ function buildRow(body, userId) {
     ? body.recipient_user_ids.filter(Boolean)
     : null;
 
+  const scheduleKind = body.schedule_kind === 'reminder' ? 'reminder' : 'report';
+  const reminderRecurrence = ['once', 'daily', 'monthly', 'yearly'].includes(body.reminder_recurrence)
+    ? body.reminder_recurrence
+    : null;
+
   return {
     channel_type: body.channel_type,
     channel_id: body.channel_id,
@@ -567,6 +572,12 @@ function buildRow(body, userId) {
     conversation_enabled: body.conversation_enabled === true,
     conversation_ttl_minutes: Math.max(5, Math.min(1440, parseInt(body.conversation_ttl_minutes, 10) || 60)),
     personal_scope_only: body.personal_scope_only === true,
+    schedule_kind: scheduleKind,
+    reminder_text: body.reminder_text ? String(body.reminder_text).trim().slice(0, 500) : null,
+    reminder_recurrence: reminderRecurrence,
+    run_once_date: body.run_once_date || null,
+    recurrence_day: body.recurrence_day != null ? parseInt(body.recurrence_day, 10) : null,
+    recurrence_month: body.recurrence_month != null ? parseInt(body.recurrence_month, 10) : null,
     created_by: userId || null,
     updated_at: new Date().toISOString(),
   };
@@ -784,7 +795,17 @@ const {
   rebuildUserMemory,
   rebuildAllActiveUsers,
   getUserLearnedFacts,
+  listAllUserFacts,
+  deleteUserFact,
+  teachUserFact,
 } = require('../helpers/aiUserMemory');
+
+const {
+  listAllBotSkills,
+  upsertBotSkillAdmin,
+  deleteBotSkillAdmin,
+  toggleBotSkillAdmin,
+} = require('../helpers/aiBotSkills');
 
 /** POST /memory/rebuild — rebuild fact cho mọi user có activity 7 ngày */
 r.post('/memory/rebuild', requireAdmin, async (req, res) => {
@@ -814,6 +835,194 @@ r.post('/memory/rebuild/:userId', requireAdmin, async (req, res) => {
 r.get('/memory/:userId/facts', requireAdmin, async (req, res) => {
   try {
     const data = await getUserLearnedFacts(req.params.userId);
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** GET /memory — liệt kê fact (admin, ?user_id=) */
+r.get('/memory', requireAdmin, async (req, res) => {
+  try {
+    const data = await listAllUserFacts({
+      user_id: req.query.user_id || null,
+      limit: parseInt(req.query.limit, 10) || 150,
+    });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** POST /memory/facts — dạy fact thủ công */
+r.post('/memory/facts', requireAdmin, async (req, res) => {
+  try {
+    const { user_id: userId, fact, fact_type: factType } = req.body || {};
+    if (!userId || !fact) return res.status(400).json({ error: 'Thiếu user_id hoặc fact' });
+    const validTypes = ['habit', 'preference', 'context', 'correction', 'automation'];
+    const ft = validTypes.includes(factType) ? factType : 'preference';
+    await teachUserFact(userId, fact, ft);
+    res.status(201).json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** DELETE /memory/facts/:id */
+r.delete('/memory/facts/:id', requireAdmin, async (req, res) => {
+  try {
+    await deleteUserFact(req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* ─────────────────── BOT SKILLS (kỹ năng user dạy) ─────────────────── */
+
+r.get('/skills', requireAdmin, async (req, res) => {
+  try {
+    const data = await listAllBotSkills({
+      user_id: req.query.user_id || null,
+      limit: parseInt(req.query.limit, 10) || 100,
+    });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.post('/skills', requireAdmin, async (req, res) => {
+  try {
+    const skill = await upsertBotSkillAdmin(req.body);
+    res.status(201).json({ skill });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+r.put('/skills/:id', requireAdmin, async (req, res) => {
+  try {
+    const skill = await upsertBotSkillAdmin(req.body, req.params.id);
+    res.json({ skill });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+r.patch('/skills/:id/toggle', requireAdmin, async (req, res) => {
+  try {
+    const skill = await toggleBotSkillAdmin(req.params.id, req.body?.enabled !== false);
+    res.json({ skill });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.delete('/skills/:id', requireAdmin, async (req, res) => {
+  try {
+    await deleteBotSkillAdmin(req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** GET /skills/library — đọc skill từ file JSON */
+r.get('/skills/library', requireAdmin, async (req, res) => {
+  try {
+    const { listLibrarySkills } = require('../helpers/aiBotSkillLibrary');
+    res.json(listLibrarySkills({ enabled_only: req.query.enabled_only === '1' }));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** POST /skills/library/reload — tải lại file JSON */
+r.post('/skills/library/reload', requireAdmin, async (_req, res) => {
+  try {
+    const { loadSkillLibrary } = require('../helpers/aiBotSkillLibrary');
+    const lib = loadSkillLibrary(true);
+    res.json({ ok: true, loaded_at: lib.loadedAt, files: lib.files, total: lib.skills.length, errors: lib.errors });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** GET /skills/library/file/:name — đọc nội dung file JSON */
+r.get('/skills/library/file/:name', requireAdmin, async (req, res) => {
+  try {
+    const { readLibraryFile } = require('../helpers/aiBotSkillLibrary');
+    res.json(readLibraryFile(req.params.name));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+/** PUT /skills/library/file/:name — lưu file JSON (Skill editor) */
+r.put('/skills/library/file/:name', requireAdmin, async (req, res) => {
+  try {
+    const { saveLibraryFile } = require('../helpers/aiBotSkillLibrary');
+    const result = saveLibraryFile(req.params.name, req.body?.content);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+/* ─────────────────── SKILL WORKSHOP ─────────────────── */
+
+r.get('/proposals', requireAdmin, async (req, res) => {
+  try {
+    const { listSkillProposals } = require('../helpers/aiBotSkillWorkshop');
+    const data = await listSkillProposals({
+      status: req.query.status || null,
+      user_id: req.query.user_id || null,
+      limit: parseInt(req.query.limit, 10) || 50,
+    });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.post('/proposals/:id/approve', requireAdmin, async (req, res) => {
+  try {
+    const { approveSkillProposal } = require('../helpers/aiBotSkillWorkshop');
+    const result = await approveSkillProposal(req.params.id, {
+      sender_user_id: req.user.userId,
+      schedule_id: req.body?.schedule_id || null,
+    }, { note: req.body?.note || null });
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+r.post('/proposals/:id/reject', requireAdmin, async (req, res) => {
+  try {
+    const { rejectSkillProposal } = require('../helpers/aiBotSkillWorkshop');
+    const result = await rejectSkillProposal(req.params.id, {
+      sender_user_id: req.user.userId,
+    }, { note: req.body?.note || null });
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+/* ─────────────────── TASK FLOWS ─────────────────── */
+
+r.get('/task-flows', requireAdmin, async (req, res) => {
+  try {
+    const { listTaskFlows } = require('../helpers/aiBotTaskFlow');
+    const data = await listTaskFlows({
+      status: req.query.status || null,
+      channelKind: req.query.channel_type || null,
+      channelId: req.query.channel_id || null,
+      userId: req.query.user_id || null,
+      limit: parseInt(req.query.limit, 10) || 50,
+    });
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });

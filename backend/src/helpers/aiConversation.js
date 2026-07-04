@@ -15,7 +15,13 @@ const {
   resolveTimeRange,
   isDirectWithBot,
   vnDateYmd,
+  findUsersByName,
 } = require('./aiReportTools');
+const {
+  mergeSessionContext,
+  updateSessionFromToolResult,
+  formatSessionBlockForPrompt,
+} = require('./aiChatSessionContext');
 const {
   loadUserFactsForPrompt,
   formatFactsForPrompt,
@@ -37,18 +43,35 @@ QUY TẮC TUYỆT ĐỐI:
 2. KHÔNG được trả về số 0 trừ khi đã gọi tool và tool trả 0 thật.
 3. Trước khi trả lời câu hỏi liên quan đến số liệu PHẢI gọi tool tương ứng.
 
+★ CẤU TRÚC PHẢN HỒI (bong bóng chat — theo thứ tự):
+1. 🎯 *Yêu cầu* — 1 dòng tóm tắt user hỏi gì (vd "Báo cáo nhân viên Vũ PD tháng 6")
+2. 👤 *Nhân vật chính* HOẶC 🏢 phạm vi — 1 NV cụ thể / công ty / "tất cả NV"
+3. 🗓 *Thời gian* — kỳ báo cáo rõ ràng
+4. ━━━ nội dung số liệu (in nguyên result.text từ tool format_*)
+
+★ CÂU HỎI KẾ TIẾP (follow-up):
+- User hỏi ngắn: "còn deal?", "thua bao nhiêu", "chi tiết ĐH" → GIỮ NGUYÊN nhân vật + kỳ từ NGỮ CẢNH PHIÊN (context.session_context).
+- KHÔNG đổi sang NV/kỳ khác trừ khi user nói rõ tên mới hoặc tháng mới.
+- Tool format_* tự nhận name/time từ session — không cần user nhắc lại.
+
+★ TẤT CẢ NHÂN VIÊN (danh sách / xếp hạng / báo cáo NV công ty):
+- **format_all_employees_report_text** — danh sách đánh số sạch, tách Deal/PL/ĐH, có tổng cuối.
+- DÙNG KHI: "tất cả NV", "danh sách nhân viên", "xếp hạng NV", "báo cáo từng NV tháng N".
+- AI CHỈ in nguyên result.text — CẤM tự compose từ get_employee_breakdown.
+
 CÁCH MAPPING CÂU HỎI → TOOLS:
 
 ▶ DỮ LIỆU TOÀN HỆ THỐNG (cross-company):
 - "công ty X có bao nhiêu lead/deal …" → get_company_lead_summary(company_id, time_scope)
-- "nhân viên Y có bao nhiêu lead [kỳ] / Y báo cáo [kỳ] / Y làm gì [kỳ]" → DÙNG NGAY get_employee_activity_report(name='Y', time_scope=...) — KHÔNG cần biết company_id. Nó tự đa cty, có sẵn org context và toàn bộ summary đầy đủ.
+- "nhân viên Y có bao nhiêu lead [kỳ] / Y báo cáo [kỳ] / Y làm gì [kỳ]" → **format_employee_activity_report_text(name='Y', date_from/date_to hoặc time_scope)** — tách Deal / Đơn hàng như BC tổ chức. AI CHỈ in result.text.
 - "ai là [tên] / [tên] thuộc phòng nào / cty nào / khu vực nào / đang giữ bao nhiêu lead / KPI bao nhiêu" → get_user_profile_card(name='...'). Response có organization.department/company/regions[], leads.{open_count,open_value,lead_open,deal_open}, tasks.{pending,overdue}, kpi_month.net_points, presence.{online,last_ping_at}.
 - "phòng X có những ai / Cty Y có bao nhiêu NV / khu vực Z ai phụ trách / liệt kê NV phòng/cty/khu vực" → list_employees_in_scope(department_id|company_id|region_id). Cần biết id trước thì gọi find_users_by_name hoặc list_companies_in_scope.
 - "tổ chức / cơ cấu của NV X" → get_user_profile_card → đọc organization.
-- "[tên] làm gì hôm nay / tuần này / tháng này / hôm qua" → get_employee_activity_report(name='[tên]', time_scope=...). KHÔNG dùng get_employee_breakdown khi user hỏi về 1 NV cụ thể (breakdown là cho cả công ty).
-- "báo cáo cá nhân [tên] / [tên] đã chốt deal nào / [tên] xử lý bao nhiêu lead [kỳ]" → get_employee_activity_report. Mặc định time_scope='today' nếu user không nói rõ; "tuần này"→'last_7d', "tháng này"→'this_month', "tháng trước"→'last_month'.
-- "tôi đã làm gì [kỳ] / hôm nay tôi xử lý gì" (DM) → get_employee_activity_report (tự dùng ctx_user_id, không cần name).
-- "ai làm tốt nhất / xếp hạng NV cty X" → get_employee_breakdown (không filter), tự rank
+- "[tên] làm gì hôm nay / tuần này / tháng này / hôm qua" → format_employee_activity_report_text(name='[tên]', time_scope=...).
+- "báo cáo cá nhân [tên] / [tên] đã chốt deal nào / [tên] xử lý bao nhiêu lead [kỳ]" → format_employee_activity_report_text. Mặc định time_scope='today' nếu user không nói rõ; "tuần này"→'last_7d', "tháng này"→'this_month', "tháng trước"→'last_month'.
+- "tháng N" (vd "tháng 6"): KHÔNG dùng last_30d. Cách 1: N = tháng hiện tại → time_scope='this_month'; N = tháng hiện tại − 1 → time_scope='last_month'. Cách 2 (ưu tiên): truyền date_from='YYYY-N-01', date_to=ngày cuối tháng N (vd "tháng 6/2026" → date_from='2026-06-01', date_to='2026-06-30').
+- "tôi đã làm gì [kỳ] / hôm nay tôi xử lý gì" (DM) → format_employee_activity_report_text (tự dùng ctx_user_id, không cần name).
+- "ai làm tốt nhất / xếp hạng NV cty X / báo cáo tất cả NV" → **format_all_employees_report_text(company_id, time_scope|date_from/date_to)**
 - "NV nào có lead nào / ai có lead gì hôm nay / liệt kê lead theo NV / chi tiết lead từng NV cty X" → get_employee_leads_drill(company_id, time_scope='today'). Mặc định liệt kê lead mới tạo trong kỳ + code/title/value/link.
 - "ai đang giữ deal nào / NV X đang giữ những lead/deal gì" → get_employee_leads_drill(company_id, include_open_holdings=true). Có thể truyền user_filter_ids=[X] để chỉ xem 1 người.
 - "lead quá hạn cty X" → get_overdue_breakdown
@@ -79,6 +102,7 @@ CÁCH MAPPING CÂU HỎI → TOOLS:
 - "tháng này có gì / 30 ngày tới" → get_channel_work_context(focus='tasks_month')
 - "lead VIP / lead giá trị cao chưa chốt" → get_channel_work_context(focus='vip_leads')
 - "lead/deal hết hạn / đã quá expected_close_date" → get_channel_work_context(focus='leads_expired')
+- "lead/deal sắp hết hạn / hết hạn ngày mai / còn 1 ngày nữa hết hạn" → get_channel_work_context(focus='leads_expiring_tomorrow')
 - "khoá sổ cuối ngày / hôm nay làm xong gì" → get_channel_work_context(focus='done_today') + focus='overdue'
 - "cần chăm sóc lại / CSKH" → get_channel_work_context(focus='cskh_needed')
 - "KPI tháng / ai top / ai âm điểm / xếp hạng KPI" → get_channel_kpi_summary
@@ -87,9 +111,66 @@ CÁCH MAPPING CÂU HỎI → TOOLS:
 - "7 ngày qua" → 'last_7d'; "30 ngày qua" → 'last_30d'; "hôm qua" → 'yesterday'; "hôm nay" → 'today'.
 - "1","2","tất cả","cty Phúc Đạt"… → list_companies_in_scope rồi map sang company_id.
 
+▶ TỰ ĐỘNG HÓA / LỊCH BOT / KỸ NĂNG (cần quyền admin — tạo lịch gửi tin theo giờ):
+- "gửi báo cáo … lúc 8h sáng / 12h trưa / 6h chiều mỗi ngày" → **manage_ai_bot_schedule(action='preview', report_type=org_overview|company_daily, …)** — KHÔNG create trực tiếp.
+- User thường: **manage_skill_proposals(propose)** → admin duyệt Workshop. Admin chat: preview → user OK → backend tự tạo.
+- "duyệt/từ chối đề xuất" → manage_skill_proposals(approve/reject) hoặc slash /duyet /tu-choi.
+- Lệnh nhanh (bypass LLM): /help /bc org /bc nv /lịch /skill /workshop /nhớ.
+- CRUD lịch trong chat (admin): /lich list · /lich tao preview+OK · /lich xem|gui|sua|bat|tat|lich-su|xoa [giờ|mã] · hoặc manage_ai_bot_schedule(action=…).
+- "xem lịch bot / danh sách lịch" → manage_ai_bot_schedule(list) hoặc /lich
+- "chi tiết lịch / lịch 16:01" → get hoặc /lich xem 16:01
+- "gửi thử / chạy ngay lịch" → run_now hoặc /lich gui 16:01
+- "sửa lịch / đổi giờ" → update(run_times) hoặc /lich sua 16:01 8h — nếu giờ mới đã qua hôm nay (VN) hệ thống từ chối, hiện chi tiết lịch + gợi ý giờ mới
+- "bật/tắt lịch" → toggle hoặc /lich bat|tat [giờ]
+- "lịch sử chạy / lần cuối lỗi" → runs hoặc /lich lich-su [giờ]
+- "báo cáo doanh thu / BC tổ chức cty X phòng KD" → **format_org_employee_tab_report_text**, company_name, department_name='kinh doanh'.
+- "báo cáo công ty nhanh / lead deal hôm nay" → report_type='company_daily'.
+- "tạo lịch bot báo cáo …" → preview báo cáo (org_overview / company_daily), có company + department + run_times.
+- "nhắc / thông báo / nhắc việc" → report_type='reminder'. Nếu thiếu nội dung bot TỰ HỎI «Nội dung nhắc là gì?» — user trả lời tên ngắn (vd «mua đồ») cũng được. Preview hiện đúng tin nhắn → OK mới tạo.
+- "nhắc mua đồ abc ngày 10/6/2026 lúc 9h" / "thông báo hàng tháng ngày 1" → preview reminder hoặc /lich nhac 9h mua đồ abc ngày 10/6/2026
+- "nhắc … 5h sáng và 5h chiều mỗi ngày" → preview reminder, run_times=['5h sáng','5h chiều'], recurrence='daily'
+- "admin hệ thống / khoa IT cũng nhận báo cáo" → manage_ai_bot_schedule(preview, notify_system_admins=true, notify_team='khoa it'). Hệ thống gửi thêm bản copy qua DM bot.
+- "xem lịch bot / lịch tự động của tôi" → manage_ai_bot_schedule(action='list', mine_only=true) hoặc /lich
+- "tắt/bật/xóa/sửa lịch bot" → manage_ai_bot_schedule(toggle/update/delete) hoặc slash /lich bat|tat|sua|xoa. Xóa theo giờ: /lich xoa 16:01. KHÔNG tự bịa "Đã xóa" — bắt buộc gọi tool hoặc slash.
+- "lưu kỹ năng / nhớ yêu cầu này" → manage_bot_skills(action='save').
+- "kỹ năng bot / bạn học được gì" → manage_bot_skills(action='list') + get_user_learned_facts.
+- "skill json / kỹ năng file / tải lại skill" → manage_bot_skills(action='list_library' hoặc 'reload_library').
+- "chạy skill phucdat_kd_org_3slots" / "áp dụng skill JSON …" → manage_ai_bot_schedule(action='preview_skill', skill_code='...') rồi apply_skill để tạo lịch.
+- File JSON: backend/data/ai-bot-skills/*.json — sửa file → reload_library → apply_skill.
+- QUY TRÌNH Skill Workshop: propose/preview → hỏi OK/huủ → backend TỰ tạo (admin) hoặc chờ duyệt UI (user thường).
+- Admin quản lý tại Cài đặt → AI Chat Bot → tab «Kỹ năng & Trí nhớ» → Workshop / Task Flow / Thư viện JSON.
+
+▶ BÁO CÁO THEO TỔ CHỨC (trang «Báo cáo theo tổ chức» — cơ sở created_at, khớp dashboard BC tổ chức):
+- "báo cáo tổ chức / BC tổ chức / theo tổ chức / tổng quan công ty [kỳ] / org overview" → **format_org_overview_report_text**
+- "tỉ lệ chốt / conversion / pipeline value / giá trị pipeline / KPI sổ cái / so với kỳ trước / tiếp nhận trễ / theo khu vực (số liệu BC)" → format_org_overview_report_text
+- Tham số: company_id (optional, mặc định theo quyền user + last_company_id), region_id, department_id, assigned_to, time_scope, type='all'|'lead'|'deal'
+- Cần raw JSON → get_org_overview_report
+- AI CHỈ in nguyên result.text — KHÔNG tự compose từ get_company_lead_summary
+
+▶ TAB NHÂN VIÊN — BC tổ chức (cột Deal, tiếp nhận, Ký HĐ, BG, KPI… — KHÁC báo cáo nhanh bot):
+- "báo cáo công ty X phòng kinh doanh [kỳ]", "BC phòng KD tháng 6", "tab nhân viên BC tổ chức", "số liệu NV theo BC tổ chức" → **format_org_employee_tab_report_text**
+- "báo cáo doanh thu / BC tổ chức cty X phòng KD" (lịch bot org_overview) → format_org_employee_tab_report_text với company_name + department_name='kinh doanh'
+- Tham số: company_id hoặc company_name, department_name (vd 'kinh doanh'), time_scope hoặc date_from/date_to (tháng 6/2026 → date_from='2026-06-01', date_to='2026-06-30')
+- AI CHỈ in nguyên result.text
+
+KHÁC format_company_report_text (báo cáo nhanh bot — lead MỚI, chuyển deal, thắng/thua theo ngày đóng + stage history):
+- "lead mới hôm nay / chuyển deal hôm nay / thắng thua hôm nay / báo cáo sáng bot" → format_company_report_text
+
 CẤU TRÚC TRẢ LỜI (TỐI ƯU CHO BONG BÓNG CHAT HẸP — DỌC, NGẮN DÒNG):
 
-★ Báo cáo 1 CÔNG TY / 1 PHÒNG BAN / 1 NHÓM NV (bất kỳ scope nào cần "tổng quan + theo NV"):
+★ Báo cáo TỔ CHỨC (BC theo công ty / khu vực / phòng — khớp trang org overview):
+- BẮT BUỘC gọi **format_org_overview_report_text** với time_scope khớp từ ngữ user
+- company_id nếu user chỉ rõ cty hoặc dùng last_company_id
+- region_id / department_id / assigned_to khi user lọc cụ thể
+- AI CHỈ in nguyên result.text
+
+★ Báo cáo TAB NHÂN VIÊN (BC tổ chức — cột Deal, tiếp nhận, Ký HĐ, BG, KPI từng NV):
+- BẮT BUỘC gọi **format_org_employee_tab_report_text** khi user hỏi báo cáo phòng ban / kinh doanh / tab NV BC tổ chức
+- company_name hoặc company_id + department_name (vd 'kinh doanh') + time_scope hoặc date_from/date_to
+- Tháng cụ thể: "tháng 6" → date_from/date_to của tháng 6 năm hiện tại (hoặc năm user nói)
+- AI CHỈ in nguyên result.text
+
+★ Báo cáo 1 CÔNG TY / 1 PHÒNG BAN / 1 NHÓM NV (báo cáo NHANH — lead mới, chuyển deal, thắng/thua trong kỳ):
 - BẮT BUỘC gọi tool **format_company_report_text** với:
   • company_id (luôn luôn — resolve từ last_company_id hoặc list_companies_in_scope)
   • time_scope (today / yesterday / last_7d / last_30d / this_month / last_month — KHÔNG được suy diễn, phải khớp đúng từ ngữ user dùng: "hôm nay"→today, "hôm qua"→yesterday, "tuần này"→last_7d, "tháng này"→this_month, "tháng trước"→last_month)
@@ -100,9 +181,11 @@ CẤU TRÚC TRẢ LỜI (TỐI ƯU CHO BONG BÓNG CHAT HẸP — DỌC, NGẮN D
 - TUYỆT ĐỐI CẤM tự compose từ get_company_lead_summary + get_employee_breakdown rồi format tay — đây là bug nghiêm trọng (AI sẽ giấu NV, đặt nhầm giá trị tiền, in full digits). Nếu tool trả lỗi, báo lỗi cho user thay vì tự bịa.
 
 Mapping "phòng/khối X [kỳ]":
-- CÁCH NHANH NHẤT: gọi thẳng **format_company_report_text(company_id=last_company_id, department_name='kinh doanh', time_scope='this_month')** — tool sẽ tự ILIKE resolve department_id. Nếu match >1 hoặc 0, tool trả về text gợi ý chọn lại.
+- BC tab Nhân viên (cột Deal, BG, KPI — khớp trang BC tổ chức): **format_org_employee_tab_report_text(company_name=..., department_name='kinh doanh', date_from/date_to hoặc time_scope)**
+- Báo cáo nhanh hoạt động (lead MỚI, chuyển deal, xử lý, quá hạn chi tiết): **format_company_report_text(company_id=last_company_id, department_name='kinh doanh', time_scope='this_month')**
+- Nếu user không nói rõ loại nhưng nhắc "phòng kinh doanh / BC tổ chức / tab nhân viên / Deal tiếp nhận / Ký HĐ" → format_org_employee_tab_report_text
+- Nếu user nhắc "lead mới / chuyển deal / báo cáo sáng / xử lý / im lặng" → format_company_report_text
 - Nếu user yêu cầu liệt kê các phòng có sẵn ("cty này có phòng nào", "danh sách phòng ban") → gọi list_departments_in_company(company_id).
-- "phòng kinh doanh tháng này ra sao / khối KD hôm nay" → format_company_report_text(company_id=last_company_id, department_name='kinh doanh', time_scope=...).
 - TUYỆT ĐỐI không tự bịa "không có nhân viên nào" — phải gọi tool và đọc field text trả về. Nếu tool báo lỗi/không có data, in chính xác message của tool.
 
 Mẫu output text mà tool trả về (THAM KHẢO):
@@ -136,8 +219,11 @@ Quy tắc giá trị tiền (dùng helper rút gọn): <1M = "Xk", <1B = "Xtr" /
 - Nếu user không hỏi chi tiết: vẫn in 3-5 dòng đầu để sếp thấy nhanh đâu là rủi ro lớn nhất.
 
 ★ Báo cáo 1 NHÂN VIÊN cụ thể:
-- BẮT BUỘC dùng tool **get_employee_activity_report** (KHÔNG được dùng get_employee_breakdown filter 1 user — tool đó là cho cả công ty).
-- BẮT BUỘC dùng FULL format ở mục "★ Hoạt động 1 NV trong kỳ (get_employee_activity_report)" bên dưới (có 🏷 Phòng, 👔 Position, 📍 KV, 💰 giá trị, 📂 Đang giữ, 🏬 Theo cty, 🏆 Deal đã thắng, 🆕 Lead mới top, 🔁 Stage chuyển nhiều nhất).
+- BẮT BUỘC gọi **format_employee_activity_report_text** (KHÔNG tự compose từ get_employee_activity_report).
+- Tool trả text đã tách **Deal pipeline** (trước cột Thắng) vs **Đơn hàng** (từ cột Thắng) — khớp BC tổ chức.
+- Ví dụ: Deal 17 · Pipeline 11 · ĐH 6 · Chốt 6.
+- AI CHỈ in nguyên result.text.
+- Cần raw JSON → get_employee_activity_report (có summary.new_deal_pipeline_count, new_customer_order_count, won_or_later_count).
 - TUYỆT ĐỐI không cắt gọn thành 4 dòng "Lead mới / Deal mới / Đã xử lý / Quá hạn". Sếp đã yêu cầu format đầy đủ — phải hiển thị đủ 11 dòng + section "Theo công ty" + "Deal đã thắng".
 - Chỉ ẨN dòng/section nào DATA THỰC SỰ TRỐNG (vd. companies=[] thì bỏ "🏬 Theo công ty"; won_items=[] thì bỏ "🏆 Deal đã thắng"; regions=[] thì bỏ "📍 KV").
 - Nếu summary tất cả = 0 và holding cũng = 0: in 1 dòng "Trong kỳ này, NV không có hoạt động được ghi nhận." (sau header tổ chức).
@@ -171,6 +257,8 @@ Quy tắc giá trị tiền (dùng helper rút gọn): <1M = "Xk", <1B = "Xtr" /
 ━━━━━━━━━━━━━
 ⚠️ Quá hạn: *X*
 ⏰ Sắp hạn 72h: Y
+🔴 Lead trễ hạn: E
+⏳ Sắp hết hạn ngày mai: M
 📌 Lead mở: Z
 💎 VIP treo: V
 ☎️ CSKH cần chăm: C
@@ -494,12 +582,17 @@ function buildChatMessages(history, userText, ctx) {
   return msgs.slice(-12);
 }
 
-async function buildSystemPromptWithMemory(basePrompt, senderUserId) {
-  if (!senderUserId) return basePrompt;
+async function buildSystemPromptWithMemory(basePrompt, senderUserId, skillSnapshotBlock = '') {
+  const { formatLibraryForPrompt } = require('./aiBotSkills');
+  let prompt = basePrompt;
+  const libBlock = formatLibraryForPrompt(10);
+  if (libBlock) prompt = `${prompt}\n\n${libBlock}`;
+  if (skillSnapshotBlock) prompt = `${prompt}\n\n${skillSnapshotBlock}`;
+  if (!senderUserId) return prompt;
   const facts = await loadUserFactsForPrompt(senderUserId);
-  if (!facts.length) return basePrompt;
+  if (!facts.length) return prompt;
   markFactsUsed(facts.map((f) => f.id)).catch(() => {});
-  return `${basePrompt}\n\n${formatFactsForPrompt(facts)}`;
+  return `${prompt}\n\n${formatFactsForPrompt(facts)}`;
 }
 
 /** User dạy bot trực tiếp: "nhớ giúp: ..." */
@@ -517,6 +610,7 @@ async function tryCaptureUserTeaching(senderUserId, text) {
 async function runOpenAiToolsLoop({ apiKey, system, messages, toolCtx }) {
   let currentMessages = [{ role: 'system', content: system }, ...messages];
   let lastCompanyId = toolCtx.last_company_id || null;
+  let sessionContext = { ...(toolCtx.session_context || {}) };
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i += 1) {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -545,7 +639,7 @@ async function runOpenAiToolsLoop({ apiKey, system, messages, toolCtx }) {
     if (!toolCalls?.length) {
       const text = choice.content?.trim();
       if (!text) throw new Error('OpenAI không có nội dung');
-      return { text: text.slice(0, 1900), last_company_id: lastCompanyId };
+      return { text: text.slice(0, 1900), last_company_id: lastCompanyId, session_context: sessionContext };
     }
 
     currentMessages.push(choice);
@@ -561,9 +655,16 @@ async function runOpenAiToolsLoop({ apiKey, system, messages, toolCtx }) {
 
       let result;
       try {
-        result = await executeTool(fnName, args, toolCtx);
+        result = await executeTool(fnName, args, { ...toolCtx, session_context: sessionContext });
+        sessionContext = updateSessionFromToolResult(sessionContext, fnName, args, result);
         if (fnName === 'get_company_lead_summary' && args.company_id) {
           lastCompanyId = args.company_id;
+        }
+        if (args.company_id && !lastCompanyId) {
+          lastCompanyId = args.company_id;
+        }
+        if (result?.company_id) {
+          lastCompanyId = result.company_id;
         }
       } catch (e) {
         result = { error: e.message };
@@ -649,10 +750,18 @@ async function handleIncomingMessage({ messageRow, channelKind, channelId, io })
     const history = await loadRecentMessages(channelKind, channelId, 10);
     const userText = String(messageRow.content || '').trim();
 
+    const sessionContext = await mergeSessionContext({
+      stored: openConv?.session_context || {},
+      userText,
+      companies,
+      findUsersByName,
+    });
+
     const toolCtx = {
       schedule_id: schedule.id,
       days_offset: schedule.time_scope_days_offset ?? 0,
-      last_company_id: openConv?.last_company_id || null,
+      last_company_id: openConv?.last_company_id || sessionContext.company_id || null,
+      session_context: sessionContext,
       companies,
       time_scope: schedule.time_scope || 'today',
       period_label: range.label_vn,
@@ -660,10 +769,71 @@ async function handleIncomingMessage({ messageRow, channelKind, channelId, io })
       sender_user_id: senderId,
       channel_kind: channelKind,
       channel_id: channelId,
+      io,
     };
+
+    const { tryHandlePendingReminderContent, tryHandlePendingScheduleConfirmation } = require('./aiBotSchedulePending');
+    const reminderContentReply = await tryHandlePendingReminderContent({
+      userText,
+      senderUserId: senderId,
+      channelKind,
+      channelId,
+      toolCtx,
+    });
+    if (reminderContentReply.handled) {
+      const channelInfo =
+        channelKind === 'group'
+          ? { kind: 'group', id: channelId, name: 'Nhóm chat' }
+          : { kind: 'department', id: channelId, name: 'Phòng ban' };
+      await postBotReply({ channelKind, channelId, content: reminderContentReply.text, io, channelInfo });
+      return;
+    }
+
+    const pendingReply = await tryHandlePendingScheduleConfirmation({
+      userText,
+      senderUserId: senderId,
+      channelKind,
+      channelId,
+      toolCtx,
+    });
+    if (pendingReply.handled) {
+      const channelInfo =
+        channelKind === 'group'
+          ? { kind: 'group', id: channelId, name: 'Nhóm chat' }
+          : { kind: 'department', id: channelId, name: 'Phòng ban' };
+      await postBotReply({ channelKind, channelId, content: pendingReply.text, io, channelInfo });
+      return;
+    }
+
+    const { tryHandleScheduleDeleteCommand } = require('./aiBotSkills');
+    const deleteReply = await tryHandleScheduleDeleteCommand({ userText, toolCtx });
+    if (deleteReply.handled) {
+      const channelInfo =
+        channelKind === 'group'
+          ? { kind: 'group', id: channelId, name: 'Nhóm chat' }
+          : { kind: 'department', id: channelId, name: 'Phòng ban' };
+      await postBotReply({ channelKind, channelId, content: deleteReply.text, io, channelInfo });
+      return;
+    }
+
+    const { executeSlashCommand } = require('./aiBotSlashCommands');
+    const slashReply = await executeSlashCommand(userText, toolCtx);
+    if (slashReply.handled) {
+      const channelInfo =
+        channelKind === 'group'
+          ? { kind: 'group', id: channelId, name: 'Nhóm chat' }
+          : { kind: 'department', id: channelId, name: 'Phòng ban' };
+      await postBotReply({ channelKind, channelId, content: slashReply.text, io, channelInfo });
+      return;
+    }
+
+    const { ensureSkillSnapshot, formatSnapshotForPrompt } = require('./aiBotSkillSnapshot');
+    const { snapshot: skillSnapshot } = await ensureSkillSnapshot(channelKind, channelId, openConv);
+    const skillSnapshotBlock = formatSnapshotForPrompt(skillSnapshot);
 
     const todayVn = vnDateYmd();
     const [yy, mm, dd] = todayVn.split('-');
+    const sessionBlock = formatSessionBlockForPrompt(sessionContext);
     const chatMessages = buildChatMessages(
       history.filter((m) => m.id !== messageRow.id),
       userText,
@@ -675,6 +845,7 @@ async function handleIncomingMessage({ messageRow, channelKind, channelId, io })
         current_month_vn: `${parseInt(mm, 10)}/${yy}`,
         companies: companies.map((c) => ({ id: c.id, short_name: c.short_name })),
         last_company_id: toolCtx.last_company_id,
+        session_context: sessionContext,
       },
     );
 
@@ -687,7 +858,11 @@ async function handleIncomingMessage({ messageRow, channelKind, channelId, io })
     const stopTyping = startBotTyping({ channelKind, channelId, io });
     try {
       if (apiKey) {
-        const systemWithMemory = await buildSystemPromptWithMemory(SYSTEM_PROMPT, senderId);
+        const systemWithMemory = await buildSystemPromptWithMemory(
+          sessionBlock ? `${SYSTEM_PROMPT}\n\n${sessionBlock}` : SYSTEM_PROMPT,
+          senderId,
+          skillSnapshotBlock,
+        );
         const result = await runOpenAiToolsLoop({
           apiKey,
           system: systemWithMemory,
@@ -695,10 +870,23 @@ async function handleIncomingMessage({ messageRow, channelKind, channelId, io })
           toolCtx,
         });
         replyText = result.text;
-        if (result.last_company_id && openConv?.id) {
+        if (openConv?.id && (result.last_company_id || result.session_context)) {
+          const { data: freshConv } = await supabase
+            .from('ai_chat_bot_conversations')
+            .select('session_context')
+            .eq('id', openConv.id)
+            .maybeSingle();
+          const patch = {};
+          if (result.last_company_id) patch.last_company_id = result.last_company_id;
+          if (result.session_context) {
+            patch.session_context = {
+              ...(freshConv?.session_context || openConv.session_context || {}),
+              ...result.session_context,
+            };
+          }
           await supabase
             .from('ai_chat_bot_conversations')
-            .update({ last_company_id: result.last_company_id })
+            .update(patch)
             .eq('id', openConv.id);
         }
       } else {

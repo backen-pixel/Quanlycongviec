@@ -389,6 +389,14 @@ const LEAD_SELECT = `
   stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, is_won, is_lost, pipeline_type, canonical_slug)
 `;
 
+const EMPLOYEE_LEAD_SELECT = `
+  id, code, title, type, company_id, assigned_to, created_at, actual_close_date,
+  expected_close_date, estimated_value, stage_id,
+  stage:crm_pipeline_stages!crm_leads_stage_id_fkey(
+    id, name, is_won, is_lost, pipeline_type, canonical_slug, order_index, pipeline_id, deal_report_bucket
+  )
+`;
+
 /** Lead tạo TRONG KỲ (cho new_leads). Có filter created_at → an toàn dưới 1000. */
 async function fetchLeadsCreatedInRange(companyId, fromIso, toIso, assigneeIds = null) {
   let q = supabase
@@ -405,10 +413,10 @@ async function fetchLeadsCreatedInRange(companyId, fromIso, toIso, assigneeIds =
   return data || [];
 }
 
-/** Lead CLOSE TRONG KỲ (cho won/lost). actual_close_date là DATE. */
+/** Lead CLOSE TRONG KỲ (cho won/lost). actual_close_date là DATE (theo lịch VN). */
 async function fetchLeadsClosedInRange(companyId, fromIso, toIso, assigneeIds = null) {
-  const fromYmd = fromIso.slice(0, 10);
-  const toYmd = toIso.slice(0, 10);
+  const fromYmd = vnDateYmd(new Date(fromIso));
+  const toYmd = vnDateYmd(new Date(toIso));
   let q = supabase
     .from('crm_leads')
     .select(LEAD_SELECT)
@@ -1548,6 +1556,9 @@ async function getEmployeeActivityReport({
   name,
   time_scope: timeScope,
   days_offset: daysOffset,
+  date_from: dateFrom,
+  date_to: dateTo,
+  deal_kh_split: dealKhSplitParam,
   ctx_user_id,
   top_per_list = 5,
 } = {}) {
@@ -1567,12 +1578,21 @@ async function getEmployeeActivityReport({
   if (!uid) return { error: 'Thiếu user_id hoặc name' };
 
   const safeTop = Math.min(Math.max(Number(top_per_list) || 5, 1), 20);
-  const range = resolveTimeRange(timeScope || 'today', daysOffset ?? 0);
+  let range;
+  if (dateFrom && dateTo) {
+    range = {
+      from_iso: new Date(`${dateFrom}T00:00:00+07:00`).toISOString(),
+      to_iso: new Date(`${dateTo}T23:59:59.999+07:00`).toISOString(),
+      label_vn: `tháng ${parseInt(dateFrom.slice(5, 7), 10)}/${dateFrom.slice(0, 4)} (${dateFrom} → ${dateTo})`,
+    };
+  } else {
+    range = resolveTimeRange(timeScope || 'today', daysOffset ?? 0);
+  }
   const { from_iso: fromIso, to_iso: toIso } = range;
   const fromMs = new Date(fromIso).getTime();
   const toMs = new Date(toIso).getTime();
-  const fromYmd = fromIso.slice(0, 10);
-  const toYmd = toIso.slice(0, 10);
+  const fromYmd = vnDateYmd(new Date(fromIso));
+  const toYmd = vnDateYmd(new Date(toIso));
   const nowIso = new Date().toISOString();
 
   // 1) Profile + org context
@@ -1588,7 +1608,7 @@ async function getEmployeeActivityReport({
   // 2) Lead/Deal mới tạo trong kỳ — đa cty
   const { data: createdLeads = [] } = await supabase
     .from('crm_leads')
-    .select(LEAD_SELECT)
+    .select(EMPLOYEE_LEAD_SELECT)
     .eq('assigned_to', uid)
     .gte('created_at', fromIso)
     .lte('created_at', toIso)
@@ -1598,7 +1618,7 @@ async function getEmployeeActivityReport({
   // 3) Lead đã close trong kỳ (won/lost)
   const { data: closedLeads = [] } = await supabase
     .from('crm_leads')
-    .select(LEAD_SELECT)
+    .select(EMPLOYEE_LEAD_SELECT)
     .eq('assigned_to', uid)
     .gte('actual_close_date', fromYmd)
     .lte('actual_close_date', toYmd)
@@ -1626,7 +1646,7 @@ async function getEmployeeActivityReport({
   // 6) Lead đang giữ (open)
   const { data: openLeads = [] } = await supabase
     .from('crm_leads')
-    .select(LEAD_SELECT)
+    .select(EMPLOYEE_LEAD_SELECT)
     .eq('assigned_to', uid)
     .is('actual_close_date', null)
     .order('estimated_value', { ascending: false, nullsFirst: false })
@@ -1672,6 +1692,31 @@ async function getEmployeeActivityReport({
     if (l.type === 'deal') dealOpen += 1; else leadOpen += 1;
   }
 
+  const {
+    loadDealKhSplitContext,
+    aggregateDealKhSplitMetrics,
+    aggregateOpenDealKhSplitMetrics,
+  } = require('./crmDealKhSplit');
+  const dealKhSplit = dealKhSplitParam !== false;
+  const allDealRows = [
+    ...createdLeads.filter((l) => l.type === 'deal'),
+    ...openLeadFiltered.filter((l) => l.type === 'deal'),
+  ];
+  const { stageMap, wonStageOrderByPipe, dealKhSplitAvailable } = await loadDealKhSplitContext(allDealRows);
+  const useKhSplit = dealKhSplit && dealKhSplitAvailable;
+  const khCreated = aggregateDealKhSplitMetrics(
+    createdLeads.filter((l) => l.type === 'deal'),
+    stageMap,
+    wonStageOrderByPipe,
+    useKhSplit,
+  );
+  const khOpen = aggregateOpenDealKhSplitMetrics(
+    openLeadFiltered.filter((l) => l.type === 'deal'),
+    stageMap,
+    wonStageOrderByPipe,
+    useKhSplit,
+  );
+
   // Đếm cty mà NV có hoạt động trong kỳ
   const companyAgg = new Map();
   const addCompany = (cid, bucket) => {
@@ -1700,17 +1745,25 @@ async function getEmployeeActivityReport({
     .sort((a, b) => (b.new_leads + b.new_deals + b.stage_moves) - (a.new_leads + a.new_deals + a.stage_moves));
 
   // Items lists (top)
-  const newItems = createdLeads.slice(0, safeTop).map((l) => ({
-    code: l.code,
-    title: l.title,
-    type: l.type || 'lead',
-    value: Number(l.estimated_value) || 0,
-    company_id: l.company_id,
-    company_name: companyNameMap.get(l.company_id) || null,
-    stage_name: l.stage?.name || null,
-    created_at: l.created_at,
-    link: leadDetailUrl(l.id),
-  }));
+  const newItems = createdLeads.slice(0, safeTop).map((l) => {
+    const item = {
+      code: l.code,
+      title: l.title,
+      type: l.type || 'lead',
+      value: Number(l.estimated_value) || 0,
+      company_id: l.company_id,
+      company_name: companyNameMap.get(l.company_id) || null,
+      stage_name: l.stage?.name || null,
+      created_at: l.created_at,
+      link: leadDetailUrl(l.id),
+    };
+    if (useKhSplit && l.type === 'deal') {
+      const { classifyDealRowForKhSplit } = require('./crmDealKhSplit');
+      const c = classifyDealRowForKhSplit(l, stageMap, wonStageOrderByPipe, true);
+      item.deal_bucket = c.inCustomerTab ? 'customer_order' : 'deal_pipeline';
+    }
+    return item;
+  });
 
   const wonItems = closedLeads.filter((l) => isWonStage(l.stage))
     .sort((a, b) => (Number(b.estimated_value) || 0) - (Number(a.estimated_value) || 0))
@@ -1726,8 +1779,9 @@ async function getEmployeeActivityReport({
     }));
 
   const stageMovesAgg = new Map();
+  const { formatStageTransitionLabel } = require('./crmStageSlugLabels');
   for (const h of history) {
-    const key = `${h.from_canonical_slug || '∅'} → ${h.to_canonical_slug || '∅'}`;
+    const key = formatStageTransitionLabel(h.from_canonical_slug, h.to_canonical_slug);
     stageMovesAgg.set(key, (stageMovesAgg.get(key) || 0) + 1);
   }
   const topStageMoves = [...stageMovesAgg.entries()]
@@ -1758,6 +1812,17 @@ async function getEmployeeActivityReport({
       new_deal_count: newDealCount,
       new_total_value: newTotalValue,
       new_total_value_text: fmtMoneyShort(newTotalValue),
+      deal_kh_split: useKhSplit,
+      new_deal_total: useKhSplit ? khCreated.new_deal_total : newDealCount,
+      new_deal_pipeline_count: useKhSplit ? khCreated.new_deal_pipeline_count : newDealCount,
+      new_deal_pipeline_value: useKhSplit ? khCreated.new_deal_pipeline_value : 0,
+      new_deal_pipeline_value_text: fmtMoneyShort(useKhSplit ? khCreated.new_deal_pipeline_value : 0),
+      new_customer_order_count: useKhSplit ? khCreated.new_customer_order_count : 0,
+      new_customer_order_value: useKhSplit ? khCreated.new_customer_order_value : 0,
+      new_customer_order_value_text: fmtMoneyShort(useKhSplit ? khCreated.new_customer_order_value : 0),
+      won_or_later_count: useKhSplit ? khCreated.won_or_later_count : wonCount,
+      won_or_later_value: useKhSplit ? khCreated.won_or_later_value : wonValue,
+      won_or_later_value_text: fmtMoneyShort(useKhSplit ? khCreated.won_or_later_value : wonValue),
       stage_moves: history.length,
       won_count: wonCount,
       won_value: wonValue,
@@ -1772,6 +1837,12 @@ async function getEmployeeActivityReport({
       holding_open_value_text: fmtMoneyShort(openHoldValue),
       holding_lead_open: leadOpen,
       holding_deal_open: dealOpen,
+      holding_deal_pipeline_count: useKhSplit ? khOpen.holding_deal_pipeline_count : dealOpen,
+      holding_customer_order_count: useKhSplit ? khOpen.holding_customer_order_count : 0,
+      holding_deal_pipeline_value: useKhSplit ? khOpen.holding_deal_pipeline_value : 0,
+      holding_deal_pipeline_value_text: fmtMoneyShort(useKhSplit ? khOpen.holding_deal_pipeline_value : 0),
+      holding_customer_order_value: useKhSplit ? khOpen.holding_customer_order_value : 0,
+      holding_customer_order_value_text: fmtMoneyShort(useKhSplit ? khOpen.holding_customer_order_value : 0),
     },
     companies,
     new_items: newItems,
@@ -1779,6 +1850,127 @@ async function getEmployeeActivityReport({
     top_stage_transitions: topStageMoves,
     generated_at: nowIso,
   };
+}
+
+/** Text chat-bubble — báo cáo 1 NV, tách Deal / Đơn hàng như BC tổ chức. */
+async function formatEmployeeActivityReportText(params = {}) {
+  const data = await getEmployeeActivityReport(params);
+  if (data.error === 'multiple_matches') {
+    const lines = [`⚠️ ${data.message}`, ''];
+    (data.matches || []).slice(0, 5).forEach((m, i) => {
+      lines.push(`${i + 1}. ${m.full_name} · ${m.department_name || '—'} · ${m.company_name || '—'}`);
+    });
+    return { text: lines.join('\n').slice(0, 1900) };
+  }
+  if (data.error) return { text: `⚠️ ${data.error}` };
+
+  const s = data.summary || {};
+  const org = data.organization || {};
+  const requestLabel = params.request_label || params.last_request || 'Báo cáo hoạt động';
+  const lines = [];
+
+  lines.push(`🎯 *${String(requestLabel).slice(0, 80)}*`);
+  lines.push(`👤 *${data.user?.full_name || 'NV'}*`);
+  if (org.company?.short_name || org.company?.name) {
+    lines.push(`🏢 ${org.company.short_name || org.company.name}`);
+  }
+  if (org.department?.name) lines.push(`🏷 ${org.department.name}`);
+  if (data.user?.position || data.user?.role) lines.push(`👔 ${data.user.position || data.user.role}`);
+  if (org.regions?.length) lines.push(`📍 ${org.regions.map((r) => r.name).join(', ')}`);
+  lines.push(`🗓 ${data.period}`);
+  lines.push('────────────────────');
+  lines.push('');
+  lines.push('📊 *Tổng quan*');
+  lines.push(`🆕 Lead mới · *${fmtInt(s.new_lead_count || 0)}*`);
+
+  if (s.deal_kh_split) {
+    lines.push(
+      `🤝 Deal · *${fmtInt(s.new_deal_total || s.new_deal_count || 0)}*`
+      + ` · Pipeline *${fmtInt(s.new_deal_pipeline_count || 0)}*`
+      + ` · ĐH *${fmtInt(s.new_customer_order_count || 0)}*`
+      + (s.new_total_value > 0 ? ` · 💰*${s.new_total_value_text}*` : ''),
+    );
+    if (s.new_deal_pipeline_value > 0 || s.new_customer_order_value > 0) {
+      lines.push(`   ↳ Pipeline ${s.new_deal_pipeline_value_text} · ĐH ${s.new_customer_order_value_text}`);
+    }
+    if (s.won_or_later_count > 0 || s.won_or_later_value > 0) {
+      lines.push(`✅ Chốt (≥ Thắng) · *${fmtInt(s.won_or_later_count || 0)}* · 💰*${s.won_or_later_value_text}*`);
+    }
+  } else {
+    lines.push(
+      `🤝 Deal mới · *${fmtInt(s.new_deal_count || 0)}*`
+      + (s.new_total_value > 0 ? ` · 💰*${s.new_total_value_text}*` : ''),
+    );
+    if (s.won_count > 0 || s.won_value > 0) {
+      lines.push(`✅ Chốt thắng · *${fmtInt(s.won_count || 0)}* · 💰*${s.won_value_text}*`);
+    }
+  }
+
+  lines.push(`🔄 Stage chuyển · *${fmtInt(s.stage_moves || 0)}*`);
+  lines.push(`❌ Thua · *${fmtInt(s.lost_count || 0)}*`);
+
+  if (s.task_done_in_range > 0 || s.task_pending > 0 || s.task_overdue > 0) {
+    lines.push(
+      `✓ Task xong · *${fmtInt(s.task_done_in_range || 0)}*`
+      + (s.task_done_late_in_range > 0 ? ` (trễ ${s.task_done_late_in_range})` : ''),
+    );
+    if (s.task_pending > 0 || s.task_overdue > 0) {
+      lines.push(`⚠️ Task còn · *${fmtInt(s.task_pending || 0)}* chờ · *${fmtInt(s.task_overdue || 0)}* quá hạn`);
+    }
+  }
+
+  if (s.holding_open_count > 0) {
+    if (s.deal_kh_split) {
+      lines.push(
+        `📂 Đang giữ · *${fmtInt(s.holding_open_count || 0)}*`
+        + ` (${fmtInt(s.holding_lead_open || 0)} lead · Pipeline ${fmtInt(s.holding_deal_pipeline_count || 0)} · ĐH ${fmtInt(s.holding_customer_order_count || 0)})`
+        + ` · 💰*${s.holding_open_value_text}*`,
+      );
+    } else {
+      lines.push(`📂 Đang giữ · *${fmtInt(s.holding_open_count || 0)}* · 💰*${s.holding_open_value_text}*`);
+    }
+  }
+
+  if (data.companies?.length) {
+    lines.push('', '🏬 *Theo công ty*');
+    data.companies.slice(0, 5).forEach((c) => {
+      const parts = [];
+      if (c.new_leads) parts.push(`${c.new_leads} lead`);
+      if (c.new_deals) parts.push(`${c.new_deals} deal`);
+      if (c.stage_moves) parts.push(`${c.stage_moves} chuyển stage`);
+      if (c.won) parts.push(`✅${c.won}`);
+      if (c.lost) parts.push(`❌${c.lost}`);
+      lines.push(`• ${c.company_name}: ${parts.join(' · ') || '—'}`);
+    });
+    if (data.companies.length > 5) lines.push(`… +${data.companies.length - 5} công ty`);
+  }
+
+  if (data.won_items?.length) {
+    lines.push('', '🏆 *Deal đã thắng*');
+    data.won_items.slice(0, 5).forEach((w) => {
+      lines.push(`• [${w.code}] ${shortName(w.title)} · ${fmtMoneyShort(w.value)}`);
+    });
+  }
+
+  if (data.new_items?.length) {
+    lines.push('', '🆕 *Mới trong kỳ*');
+    data.new_items.slice(0, 5).forEach((n) => {
+      const bucket = n.deal_bucket === 'customer_order' ? 'ĐH' : (n.type === 'deal' ? 'Deal' : 'Lead');
+      lines.push(`• [${n.code}] ${shortName(n.title)} · ${bucket}${n.value > 0 ? ` · ${fmtMoneyShort(n.value)}` : ''}`);
+    });
+  }
+
+  if (data.top_stage_transitions?.length) {
+    lines.push('', '🔁 *Chuyển stage nhiều nhất*');
+    data.top_stage_transitions
+      .filter((t) => t.transition !== 'Không rõ → Không rõ')
+      .slice(0, 5)
+      .forEach((t) => {
+        lines.push(`• ${t.transition} · *${t.count}* lần`);
+      });
+  }
+
+  return { text: lines.join('\n').slice(0, 1900), user_id: data.user?.id, period_label: data.period };
 }
 
 /**
@@ -2228,7 +2420,7 @@ function pickArr(payload, key, limit) {
 /**
  * Trả "payload kênh" giống các playbook daily_brief / overdue / vip / tasks_due_week / tasks_due_month / end_of_day.
  * Hỗ trợ filter scope qua focus = 'overdue' | 'due_soon' | 'tasks_week' | 'tasks_month'
- *   | 'leads_open' | 'leads_expired' | 'vip_leads' | 'done_today' | 'cskh_needed' | 'all'.
+ *   | 'leads_open' | 'leads_expired' | 'leads_expiring_tomorrow' | 'vip_leads' | 'done_today' | 'cskh_needed' | 'all'.
  */
 async function getChannelWorkContext({
   channel_type,
@@ -2277,7 +2469,7 @@ async function getChannelWorkContext({
 
   const wants = new Set(
     focus === 'all'
-      ? ['overdue', 'due_soon', 'tasks_week', 'tasks_month', 'leads_open', 'leads_expired', 'vip_leads', 'done_today', 'cskh_needed']
+      ? ['overdue', 'due_soon', 'tasks_week', 'tasks_month', 'leads_open', 'leads_expired', 'leads_expiring_tomorrow', 'vip_leads', 'done_today', 'cskh_needed']
       : [focus],
   );
 
@@ -2293,7 +2485,14 @@ async function getChannelWorkContext({
   if (wants.has('tasks_week')) result.tasks_due_this_week = lim('tasks_due_this_week');
   if (wants.has('tasks_month')) result.tasks_due_this_month = lim('tasks_due_this_month');
   if (wants.has('leads_open')) result.leads_open = lim('leads_open');
-  if (wants.has('leads_expired')) result.leads_expired = lim('leads_expired');
+  if (wants.has('leads_expired')) {
+    result.leads_expired = lim('leads_expired');
+    result.total_leads_expired = payload.leads_expired?.length || 0;
+  }
+  if (wants.has('leads_expiring_tomorrow')) {
+    result.leads_expiring_tomorrow = lim('leads_expiring_tomorrow');
+    result.total_leads_expiring_tomorrow = payload.leads_expiring_tomorrow?.length || 0;
+  }
   if (wants.has('vip_leads')) result.vip_leads = lim('vip_leads');
   if (wants.has('done_today')) result.tasks_done_today = lim('tasks_done_today');
   if (wants.has('cskh_needed')) result.cskh_needed = lim('cskh_needed');
@@ -2739,6 +2938,94 @@ const OPENAI_TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'format_org_overview_report_text',
+      description:
+        'TRẢ VỀ TEXT đã format (chat-bubble) cho BÁO CÁO THEO TỔ CHỨC — cùng logic trang «Báo cáo theo tổ chức» (GET /crm/reports/org-overview). '
+        + 'Cơ sở created_at. Metrics: lead/deal/đơn hàng, pipeline value, đã chốt, huỷ/thua, tỉ lệ chốt, SLA quá hạn, tiếp nhận trễ, KPI sổ cái, top NV, so kỳ trước. '
+        + 'DÙNG KHI user hỏi: "báo cáo tổ chức", "BC theo tổ chức", "tổng quan công ty tháng này", "tỉ lệ chốt", "pipeline value", "KPI sổ cái", "so với kỳ trước", "theo khu vực". '
+        + 'KHÔNG dùng cho "lead mới hôm nay / chuyển deal hôm nay" (dùng format_company_report_text). '
+        + 'KHÔNG dùng khi cần cột tab Nhân viên (Deal, tiếp nhận, Ký HĐ, BG, KPI…) — dùng format_org_employee_tab_report_text. '
+        + 'AI CHỈ in nguyên result.text.',
+      parameters: {
+        type: 'object',
+        properties: {
+          company_id: { type: 'string', description: 'UUID công ty (optional — mặc định theo quyền user / last_company_id)' },
+          region_id: { type: 'string', description: 'Lọc theo khu vực' },
+          department_id: { type: 'string', description: 'Lọc theo phòng ban' },
+          assigned_to: { type: 'string', description: 'Lọc theo 1 NV (user_id)' },
+          time_scope: { type: 'string', enum: TIME_SCOPE_ENUM },
+          days_offset: { type: 'integer' },
+          date_from: { type: 'string', description: 'YYYY-MM-DD (override time_scope)' },
+          date_to: { type: 'string', description: 'YYYY-MM-DD (override time_scope)' },
+          type: { type: 'string', enum: ['all', 'lead', 'deal'], description: 'Tab Lead / Deal / Tất cả' },
+          compare: { type: 'boolean', description: 'So sánh kỳ trước (mặc định true)' },
+          deal_kh_split: { type: 'boolean', description: 'Tách Deal / Đơn hàng (mặc định theo công ty)' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'format_org_employee_tab_report_text',
+      description:
+        'TRẢ VỀ TEXT tab NHÂN VIÊN trang «Báo cáo theo tổ chức» — cùng cột bảng NV: Deal, Số Deal tiếp nhận, Ký HĐ thành công, '
+        + 'Đúng hạn (A), Trễ hạn, Tỷ lệ chốt/tổng deal, Chốt/tổng deal (GT), Tỷ lệ hủy, Tổng BG, GT báo giá, Chốt SL, GT chốt, '
+        + 'Tỷ lệ chốt/BG, Tăng trưởng, Dự kiến, Kỳ vọng, Điểm KPI. Cơ sở created_at. '
+        + 'DÙNG KHI: "báo cáo phòng kinh doanh tháng 6", "BC tổ chức tab nhân viên", "báo cáo công ty X phòng KD", '
+        + '"số liệu NV theo BC tổ chức", "Deal tiếp nhận / Ký HĐ / BG / KPI từng NV". '
+        + 'KHÔNG dùng cho báo cáo nhanh lead MỚI / chuyển deal hôm nay (format_company_report_text). '
+        + 'Truyền company_name hoặc company_id + department_name (vd "kinh doanh") + time_scope hoặc date_from/date_to. '
+        + 'AI CHỈ in nguyên result.text.',
+      parameters: {
+        type: 'object',
+        properties: {
+          company_id: { type: 'string' },
+          company_name: { type: 'string', description: 'Tên công ty — tool tự ILIKE resolve company_id' },
+          region_id: { type: 'string' },
+          department_id: { type: 'string' },
+          department_name: { type: 'string', description: 'vd "kinh doanh", "KD"' },
+          assigned_to: { type: 'string' },
+          time_scope: { type: 'string', enum: TIME_SCOPE_ENUM },
+          days_offset: { type: 'integer' },
+          date_from: { type: 'string', description: 'YYYY-MM-DD (vd tháng 6: 2026-06-01)' },
+          date_to: { type: 'string', description: 'YYYY-MM-DD (vd tháng 6: 2026-06-30)' },
+          type: { type: 'string', enum: ['all', 'lead', 'deal'] },
+          deal_kh_split: { type: 'boolean' },
+          top_n: { type: 'integer', description: 'Số NV tối đa (mặc định 15, max 25)' },
+          only_with_activity: { type: 'boolean', description: 'Chỉ NV có số liệu trong kỳ (mặc định true)' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_org_overview_report',
+      description:
+        'JSON báo cáo tổ chức (org-overview) — cùng API trang BC tổ chức. Dùng khi cần raw data: summary, compare, by_employee, by_region. '
+        + 'Cơ sở created_at. Tham số giống format_org_overview_report_text.',
+      parameters: {
+        type: 'object',
+        properties: {
+          company_id: { type: 'string' },
+          region_id: { type: 'string' },
+          department_id: { type: 'string' },
+          assigned_to: { type: 'string' },
+          time_scope: { type: 'string', enum: TIME_SCOPE_ENUM },
+          days_offset: { type: 'integer' },
+          date_from: { type: 'string' },
+          date_to: { type: 'string' },
+          type: { type: 'string', enum: ['all', 'lead', 'deal'] },
+          compare: { type: 'boolean' },
+          deal_kh_split: { type: 'boolean' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'get_employee_leads_drill',
       description:
         'Drill chi tiết: TỪNG NV của công ty có những LEAD/DEAL nào trong kỳ. '
@@ -2978,7 +3265,55 @@ const OPENAI_TOOL_DEFINITIONS = [
           name: { type: 'string', description: 'Hoặc tên — match nhiều sẽ trả matches[].' },
           time_scope: { type: 'string', enum: TIME_SCOPE_ENUM },
           days_offset: { type: 'integer' },
+          date_from: { type: 'string', description: 'YYYY-MM-DD — override time_scope (vd tháng 6 → 2026-06-01)' },
+          date_to: { type: 'string', description: 'YYYY-MM-DD — override time_scope (vd tháng 6 → 2026-06-30)' },
+          deal_kh_split: { type: 'boolean', description: 'Tách Deal pipeline / Đơn hàng (mặc định true — khớp BC tổ chức)' },
           top_per_list: { type: 'integer', description: 'Top item mỗi list (mặc định 5, max 20)' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'format_employee_activity_report_text',
+      description:
+        'TRẢ VỀ TEXT báo cáo 1 NV — tách Deal / Đơn hàng giống trang BC tổ chức. '
+        + 'Hiển thị: Deal tổng · Pipeline (trước cột Thắng) · ĐH (từ cột Thắng) · Chốt · đang giữ. '
+        + 'DÙNG KHI hỏi báo cáo cá nhân / NV X tháng N. AI CHỈ in nguyên result.text.',
+      parameters: {
+        type: 'object',
+        properties: {
+          user_id: { type: 'string' },
+          name: { type: 'string' },
+          time_scope: { type: 'string', enum: TIME_SCOPE_ENUM },
+          days_offset: { type: 'integer' },
+          date_from: { type: 'string' },
+          date_to: { type: 'string' },
+          deal_kh_split: { type: 'boolean' },
+          top_per_list: { type: 'integer' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'format_all_employees_report_text',
+      description:
+        'TRẢ VỀ TEXT danh sách TẤT CẢ nhân viên trong công ty/phòng — đánh số, tách Deal/PL/ĐH, KPI. '
+        + 'DÙNG KHI: "báo cáo tất cả NV", "danh sách nhân viên tháng N", "xếp hạng NV", "ai làm tốt". '
+        + 'AI CHỈ in nguyên result.text — KHÔNG tự liệt kê từ get_employee_breakdown.',
+      parameters: {
+        type: 'object',
+        properties: {
+          company_id: { type: 'string' },
+          department_id: { type: 'string' },
+          region_id: { type: 'string' },
+          time_scope: { type: 'string', enum: TIME_SCOPE_ENUM },
+          date_from: { type: 'string' },
+          date_to: { type: 'string' },
+          deal_kh_split: { type: 'boolean' },
         },
       },
     },
@@ -3055,15 +3390,15 @@ const OPENAI_TOOL_DEFINITIONS = [
       name: 'get_channel_work_context',
       description:
         'Lấy dữ liệu công việc của THÀNH VIÊN KÊNH HIỆN TẠI (giống các playbook daily_brief/overdue/vip_lead/end_of_day/tasks_due_week/month): '
-        + 'task quá hạn, sắp hạn, lead đang mở, lead VIP, lead hết hạn, CSKH cần chăm, task đã hoàn thành hôm nay. '
-        + 'Dùng cho mọi câu hỏi loại "hôm nay phải làm gì", "ai quá hạn", "VIP còn treo", "tuần này có gì", "khoá sổ cuối ngày".',
+        + 'task quá hạn, sắp hạn, lead đang mở, lead VIP, lead hết hạn, lead sắp hết hạn ngày mai, CSKH cần chăm, task đã hoàn thành hôm nay. '
+        + 'Dùng cho mọi câu hỏi loại "hôm nay phải làm gì", "ai quá hạn", "VIP còn treo", "lead sắp hết hạn ngày mai", "tuần này có gì", "khoá sổ cuối ngày".',
       parameters: {
         type: 'object',
         properties: {
           focus: {
             type: 'string',
             enum: ['all', 'overdue', 'due_soon', 'tasks_week', 'tasks_month',
-              'leads_open', 'leads_expired', 'vip_leads', 'done_today', 'cskh_needed'],
+              'leads_open', 'leads_expired', 'leads_expiring_tomorrow', 'vip_leads', 'done_today', 'cskh_needed'],
             description: 'Lọc loại dữ liệu (mặc định all). Chọn đúng focus để response gọn nhẹ.',
           },
           member_user_ids: {
@@ -3131,14 +3466,148 @@ const OPENAI_TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'manage_ai_bot_schedule',
+      description:
+        'CRUD lịch gửi tin AI tự động (ai_chat_bot_schedules). '
+        + 'action: list|get|preview|create|update|delete|toggle|run_now|runs. '
+        + 'Resolve lịch theo schedule_id, mã 8 ký tự, hoặc giờ (16:01) trong kênh hiện tại. '
+        + 'Dùng khi user: "tạo/sửa/xóa/bật/tắt lịch bot", "gửi thử", "xem lịch sử chạy", "danh sách lịch". '
+        + 'LUÔN action=preview trước — KHÔNG action=create trực tiếp (create chỉ sau user OK). '
+        + 'Nhắc việc/thông báo: report_type=reminder + reminder_text — KHÔNG dùng org_overview. '
+        + 'Preview hiển thị đúng tin nhắn sẽ gửi — user OK mới tạo. Trả lời in nguyên result.text.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: ['list', 'get', 'preview', 'create', 'update', 'delete', 'toggle', 'run_now', 'runs', 'apply_skill', 'preview_skill'],
+            description: 'get=chi tiết; run_now=gửi thử ngay; runs=lịch sử chạy.',
+          },
+          skill_code: { type: 'string', description: 'Mã skill trong backend/data/ai-bot-skills/*.json' },
+          schedule_id: { type: 'string', description: 'UUID lịch (update/delete/toggle/get/run_now).' },
+          schedule_id_prefix: { type: 'string', description: '8+ ký tự đầu UUID — thay schedule_id khi user gõ mã ngắn.' },
+          title: { type: 'string' },
+          report_type: {
+            type: 'string',
+            enum: ['org_overview', 'company_daily', 'company_report', 'reminder', 'daily_brief', 'overdue', 'kpi', 'lead_deadline', 'vip_leads', 'end_of_day', 'tasks_week', 'tasks_month'],
+            description: 'org_overview=BC tổ chức; company_daily=báo cáo nhanh; reminder=nhắc việc/thông báo.',
+          },
+          reminder_text: { type: 'string', description: 'Nội dung nhắc — vd "mua đồ abc"' },
+          message: { type: 'string', description: 'Alias reminder_text' },
+          run_date: { type: 'string', description: 'Ngày một lần YYYY-MM-DD hoặc 10/6/2026' },
+          recurrence: {
+            type: 'string',
+            enum: ['once', 'daily', 'monthly', 'yearly'],
+            description: 'once=một lần; daily=mỗi ngày; monthly=mỗi tháng (recurrence_day); yearly=hàng năm (day+month)',
+          },
+          recurrence_day: { type: 'integer', description: 'Ngày trong tháng 1-31 (monthly/yearly)' },
+          recurrence_month: { type: 'integer', description: 'Tháng 1-12 (yearly)' },
+          company_id: { type: 'string' },
+          company_name: { type: 'string', description: 'Tên cty (ABC, Phúc Đạt…) — resolve từ list_companies_in_scope.' },
+          department_id: { type: 'string' },
+          department_name: { type: 'string', description: 'vd "kinh doanh", "KD".' },
+          notify_system_admins: { type: 'boolean', description: 'Gửi thêm bản copy qua DM bot tới admin hệ thống.' },
+          notify_team: { type: 'string', description: 'Gửi thêm DM cho team, vd "khoa it".' },
+          broadcast_user_ids: { type: 'array', items: { type: 'string' }, description: 'UUID user nhận thêm bản copy (tuỳ chọn).' },
+          recipient_user_ids: { type: 'array', items: { type: 'string' }, description: 'Alias broadcast_user_ids khi personal_scope_only=false.' },
+          run_times: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Giờ VN: ["08:00","12:00","18:00"] hoặc ["8h","12h trưa","6h chiều"].',
+          },
+          time_scope: {
+            type: 'string',
+            enum: ['today', 'yesterday', 'last_7d', 'last_30d', 'this_month', 'last_month', 'custom'],
+          },
+          channel_type: { type: 'string', enum: ['department', 'group'] },
+          channel_id: { type: 'string', description: 'Mặc định = kênh chat hiện tại.' },
+          weekdays: { type: 'array', items: { type: 'integer' }, description: '1=T2…7=CN. Bỏ trống = mọi ngày.' },
+          enabled: { type: 'boolean' },
+          note: { type: 'string' },
+          instruction: { type: 'string', description: 'Câu user dạy — lưu vào bộ nhớ.' },
+          mine_only: { type: 'boolean', description: 'list/get/...: chỉ lịch do user tạo (mặc định true).' },
+          limit: { type: 'integer', description: 'runs: số dòng lịch sử (mặc định 8).' },
+          dry_run: { type: 'boolean', description: 'create: true = preview (action preview cũng được).' },
+        },
+        required: ['action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'manage_bot_skills',
+      description:
+        'Quản lý kỹ năng DB (ai_bot_user_skills) + thư viện JSON (backend/data/ai-bot-skills/). '
+        + 'list_library/reload_library cho file JSON; save/delete cho DB.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['list', 'list_library', 'reload_library', 'save', 'delete'] },
+          enabled_only: { type: 'boolean', description: 'list_library: chỉ skill enabled' },
+          skill_id: { type: 'string' },
+          title: { type: 'string' },
+          instruction: { type: 'string' },
+          summary: { type: 'string' },
+          report_type: { type: 'string' },
+          company_name: { type: 'string' },
+          department_name: { type: 'string' },
+          run_times: { type: 'array', items: { type: 'string' } },
+          schedule_id: { type: 'string' },
+          skill_type: { type: 'string', enum: ['scheduled_report', 'preference', 'instruction'] },
+          limit: { type: 'integer' },
+        },
+        required: ['action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'manage_skill_proposals',
+      description:
+        'Skill Workshop — đề xuất/duyệt/từ chối kỹ năng & lịch bot. '
+        + 'User thường: action=propose. Admin: approve/reject/list.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: ['list', 'propose', 'approve', 'reject'],
+          },
+          proposal_id: { type: 'string', description: 'UUID đề xuất (approve/reject).' },
+          status: { type: 'string', enum: ['pending', 'approved', 'rejected'] },
+          mine_only: { type: 'boolean' },
+          note: { type: 'string', description: 'Ghi chú khi duyệt/từ chối.' },
+          report_type: { type: 'string' },
+          company_name: { type: 'string' },
+          department_name: { type: 'string' },
+          run_times: { type: 'array', items: { type: 'string' } },
+          time_scope: { type: 'string' },
+          title: { type: 'string' },
+          instruction: { type: 'string' },
+          limit: { type: 'integer' },
+        },
+        required: ['action'],
+      },
+    },
+  },
 ];
 
 async function executeTool(name, args, ctx = {}) {
+  const { applySessionToToolArgs } = require('./aiChatSessionContext');
+  const sessionArgs = applySessionToToolArgs(args, ctx.session_context);
   const merged = {
-    ...args,
-    schedule_id: args.schedule_id || ctx.schedule_id,
-    personal_recipient_user_id: args.personal_recipient_user_id || ctx.personal_recipient_user_id || null,
+    ...sessionArgs,
+    schedule_id: sessionArgs.schedule_id || ctx.schedule_id,
+    personal_recipient_user_id: sessionArgs.personal_recipient_user_id || ctx.personal_recipient_user_id || null,
   };
+  if (ctx.session_context?.last_request && !merged.request_label) {
+    merged.request_label = ctx.session_context.last_request;
+  }
   switch (name) {
     case 'list_companies_in_scope':
       return listCompaniesInScope(merged);
@@ -3159,6 +3628,30 @@ async function executeTool(name, args, ctx = {}) {
     case 'format_company_report_text': {
       const text = await formatCompanyReportText(merged);
       return { text, company_id: merged.company_id };
+    }
+    case 'format_org_overview_report_text': {
+      const { formatOrgOverviewReportText } = require('./orgOverviewReportAi');
+      return formatOrgOverviewReportText({
+        ...merged,
+        company_id: merged.company_id || ctx.last_company_id || undefined,
+        ctx_user_id: ctx.sender_user_id || ctx.personal_recipient_user_id || null,
+      });
+    }
+    case 'format_org_employee_tab_report_text': {
+      const { formatOrgEmployeeTabReportText } = require('./orgOverviewReportAi');
+      return formatOrgEmployeeTabReportText({
+        ...merged,
+        company_id: merged.company_id || ctx.last_company_id || undefined,
+        ctx_user_id: ctx.sender_user_id || ctx.personal_recipient_user_id || null,
+      });
+    }
+    case 'get_org_overview_report': {
+      const { getOrgOverviewReport } = require('./orgOverviewReportAi');
+      return getOrgOverviewReport({
+        ...merged,
+        company_id: merged.company_id || ctx.last_company_id || undefined,
+        ctx_user_id: ctx.sender_user_id || ctx.personal_recipient_user_id || null,
+      });
     }
     case 'list_departments_in_company':
       return listDepartmentsInCompany(args);
@@ -3227,11 +3720,36 @@ async function executeTool(name, args, ctx = {}) {
       });
     case 'get_employee_activity_report':
       return getEmployeeActivityReport({
-        ...args,
-        ctx_user_id: toolCtx?.sender_user_id,
+        ...merged,
+        ctx_user_id: ctx.sender_user_id || ctx.personal_recipient_user_id || null,
       });
+    case 'format_employee_activity_report_text':
+      return formatEmployeeActivityReportText({
+        ...merged,
+        ctx_user_id: ctx.sender_user_id || ctx.personal_recipient_user_id || null,
+      });
+    case 'format_all_employees_report_text': {
+      const { formatAllEmployeesReportText } = require('./orgOverviewReportAi');
+      return formatAllEmployeesReportText({
+        ...merged,
+        company_id: merged.company_id || ctx.last_company_id || undefined,
+        ctx_user_id: ctx.sender_user_id || ctx.personal_recipient_user_id || null,
+      });
+    }
     case 'list_employees_in_scope':
       return listEmployeesInScope(args);
+    case 'manage_ai_bot_schedule': {
+      const { manageAiBotSchedule } = require('./aiBotSkills');
+      return manageAiBotSchedule({ ...args, channel_id: args.channel_id || ctx.channel_id }, { ...ctx, io: ctx.io });
+    }
+    case 'manage_bot_skills': {
+      const { manageBotSkills } = require('./aiBotSkills');
+      return manageBotSkills(args, ctx);
+    }
+    case 'manage_skill_proposals': {
+      const { manageSkillProposals } = require('./aiBotSkillWorkshop');
+      return manageSkillProposals(args, ctx);
+    }
     default:
       return { error: `Unknown tool: ${name}` };
   }
@@ -3257,6 +3775,9 @@ module.exports = {
   VN_TZ,
   AI_BOT_USER_ID,
   vnDateYmd,
+  fmtInt,
+  fmtMoneyShort,
+  shortName,
   resolveTimeRange,
   resolveAssigneeIds,
   getDmRecipientUserId,
@@ -3274,6 +3795,7 @@ module.exports = {
   formatLeadDealRiskText,
   getUserProfileCard,
   getEmployeeActivityReport,
+  formatEmployeeActivityReportText,
   listEmployeesInScope,
   loadUserOrgContext,
   getChannelWorkContext,

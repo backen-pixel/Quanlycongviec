@@ -86,12 +86,12 @@ const corsMainApp = cors({
 const corsExternalApi = cors({
   origin: true,
   credentials: false,
-  allowedHeaders: ['Content-Type', 'Accept', 'X-Api-Key'],
+  allowedHeaders: ['Content-Type', 'Accept', 'X-Api-Key', 'X-User-Id'],
   methods: ['GET', 'POST', 'OPTIONS'],
   maxAge: CORS_PREFLIGHT_MAX_AGE,
 });
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/external')) {
+  if (req.path.startsWith('/api/external') || req.path.startsWith('/api/mcp')) {
     return corsExternalApi(req, res, next);
   }
   return corsMainApp(req, res, next);
@@ -111,7 +111,7 @@ app.use(morgan(isProd ? 'tiny' : 'dev'));
 // Upload routes need large bodies; everything else stays small to bound memory.
 const UPLOAD_BODY_LIMIT = '256mb';
 const STANDARD_BODY_LIMIT = '2mb';
-const largeBodyRoutes = ['/api/upload', '/api/voice-recordings', '/api/external', '/api/messenger'];
+const largeBodyRoutes = ['/api/upload', '/api/voice-recordings', '/api/external', '/api/mcp', '/api/messenger'];
 
 /** Zalo OA webhook — giữ rawBody để verify X-ZEvent-Signature */
 app.use('/api/zalo/webhook', express.raw({ type: '*/*', limit: '1mb' }), (req, res, next) => {
@@ -155,6 +155,7 @@ const externalLimiter = rateLimit({
 });
 app.use('/api/auth', authLimiter);
 app.use('/api/external', externalLimiter);
+app.use('/api/mcp', externalLimiter);
 
 // Friendly JSON parse error — đặc biệt cho /api/external/* (webhook bên thứ 3)
 app.use((err, req, res, next) => {
@@ -297,6 +298,7 @@ app.use('/api/company-templates', require('./routes/companyTemplates'));
 app.use('/api/flows', require('./routes/flows'));
 app.use('/api/company-processes', require('./routes/companyProcesses'));
 app.use('/api/permissions', require('./routes/permissions'));
+app.use('/api/platform', require('./routes/platform'));
 app.use('/api/crm/executive', require('./routes/executiveKpi'));
 app.use('/api/crm/deal-performance', require('./routes/dealScores'));
 app.use('/api/kpi', require('./routes/kpi'));
@@ -327,6 +329,7 @@ app.use('/api/workshop', require('./routes/workshopTypes'));
 app.use('/api/workshop-teams', require('./routes/workshopTeams'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/external', require('./routes/external'));
+try { app.use('/api/mcp', require('./routes/mcp')); } catch (e) { console.warn('⚠️ MCP route failed to load:', e.message); }
 try { app.use('/api/turn', require('./routes/turn')); } catch (e) { console.warn('⚠️ TURN route failed to load:', e.message); }
 try { app.use('/api/push', require('./routes/push')); } catch (e) { console.warn('⚠️ Push route failed to load:', e.message); }
 try { app.use('/api/devices', require('./routes/devices')); } catch (e) { console.warn('⚠️ Devices route failed to load:', e.message); }
@@ -450,6 +453,7 @@ function syncPendingIncomingCalls(userId, socket) {
 
 // ─── Socket.IO with Auth ──
 const { extractSocketToken, verifySocketToken } = require('./helpers/socketAuth');
+const { attachSocketTenantContext, guardedJoin } = require('./helpers/socketTenantGuard');
 io.use((socket, next) => {
   const token = extractSocketToken(socket);
   if (!token) {
@@ -471,6 +475,13 @@ io.on('connection', (socket) => {
   const userId = socket.user?.userId || socket.user?.id;
   console.log('🔌 Connected:', socket.id, '| User:', socket.user?.fullName);
 
+  void attachSocketTenantContext(socket).then(() => {
+    const tid = socket.tenantContext?.tenantId;
+    if (tid && socket.tenantContext?.enforced) {
+      socket.join(`tenant:${tid}`);
+    }
+  });
+
   // Join personal room for targeted notifications
   if (userId) {
     socket.join(`user:${userId}`);
@@ -490,13 +501,13 @@ io.on('connection', (socket) => {
     void recordUserPing(uid).catch(() => {});
   });
 
-  socket.on('join:project', (id) => socket.join(`project:${id}`));
+  socket.on('join:project', (id) => guardedJoin(socket, `project:${id}`, 'project', id));
   socket.on('leave:project', (id) => id && socket.leave(`project:${id}`));
-  socket.on('join:lead', (id) => socket.join(`lead:${id}`));
+  socket.on('join:lead', (id) => guardedJoin(socket, `lead:${id}`, 'lead', id));
   socket.on('leave:lead', (id) => socket.leave(`lead:${id}`));
   socket.on('join:messenger_group', (id) => id && socket.join(`messenger_group:${id}`));
   socket.on('leave:messenger_group', (id) => id && socket.leave(`messenger_group:${id}`));
-  socket.on('join:dept', (id) => socket.join(`dept:${id}`));
+  socket.on('join:dept', (id) => guardedJoin(socket, `dept:${id}`, 'dept', id));
   socket.on('leave:dept', (id) => socket.leave(`dept:${id}`));
 
   /* ── Typing indicator: client phát mỗi 2-3s khi đang gõ, server relay sang

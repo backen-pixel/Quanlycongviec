@@ -8,6 +8,7 @@ const {
   isCrmProductionAdmin,
 } = require('./adminRole');
 const { isAccountingUser } = require('./accountingScope');
+const { isPlatformAdmin, tenantFeatureEnabled } = require('./tenantScope');
 
 const PRODUCTION_STAFF_MODULES = new Set(['tasks', 'production', 'projects']);
 const CRM_PRODUCTION_DUAL_MODULES = new Set(['crm', 'production', 'tasks', 'projects', 'customers']);
@@ -70,6 +71,11 @@ function invalidateEcosystemModuleScopeCache(moduleKey) {
  */
 async function userHasEcosystemModuleAccess(user, moduleKey) {
   if (!moduleKey || moduleKey === 'core') return true;
+  if (isPlatformAdmin(user)) return true;
+  if (user?.tenant_id) {
+    const ok = await tenantFeatureEnabled(user.tenant_id, moduleKey);
+    if (!ok) return false;
+  }
   if (isAdminLike(user)) return true;
   if (isAccountingUser(user) && ACCOUNTING_VIEW_MODULES.has(String(moduleKey))) return true;
   if (isCrmProductionAdmin(user) && CRM_PRODUCTION_DUAL_MODULES.has(String(moduleKey))) return true;
@@ -101,7 +107,7 @@ async function userHasEcosystemModuleAccess(user, moduleKey) {
 }
 
 async function buildMyModuleAccessMap(user) {
-  if (isSystemAdmin(user)) {
+  if (isPlatformAdmin(user) || isSystemAdmin(user)) {
     return { allowAll: true, modules: null };
   }
   const modules = {};

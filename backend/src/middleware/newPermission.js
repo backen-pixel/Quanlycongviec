@@ -7,6 +7,7 @@
 const { supabase } = require('../config/supabase');
 const {
   isAdminLike,
+  isPlatformAdmin,
   isProductionStaff,
   isProductionAdmin,
   isLogisticsAdmin,
@@ -26,6 +27,7 @@ function permissionFailOpen() {
 // ─────────────────────────────────────────────────────────────
 async function checkPermission(userId, resource, action, ecosystemUnitId = null, user = null) {
   try {
+    if (user && isPlatformAdmin(user)) return true;
     if (user && isAdminLike(user)) return true;
     const resKey = String(resource);
     if (WORKSHOP_MODULE_RESOURCES.has(resKey)) {

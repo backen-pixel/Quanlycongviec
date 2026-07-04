@@ -39,6 +39,7 @@ function resolveScopeKey(req, scope) {
     case 'role':
       return u.role ? `r:${u.role}` : null;
     case 'company':
+      if (req.tenantContext?.enforced && u.tenant_id) return `t:${u.tenant_id}`;
       return u.company_id ? `c:${u.company_id}` : (u.userId ? `u:${u.userId}` : null);
     case 'global':
       return 'g';

@@ -47,22 +47,23 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(BUILD_VERSION),
   },
   server: {
+    host: true,
     proxy: {
       '/socket.io': {
-        target: 'http://localhost:4000',
+        target: 'http://127.0.0.1:4000',
         ws: true,
         changeOrigin: true,
         timeout: 120_000,
         proxyTimeout: 120_000,
       },
       '/api': {
-        target: 'http://localhost:4000',
+        target: 'http://127.0.0.1:4000',
         // Giám sát Supabase probe storage ~15–25s — tránh proxy cắt sớm
         timeout: 120_000,
         proxyTimeout: 120_000,
       },
       '/uploads': {
-        target: 'http://localhost:4000',
+        target: 'http://127.0.0.1:4000',
         bypass(req) {
           // Ảnh tĩnh release-notes nằm trong frontend/public — không proxy sang backend
           if (req.url?.startsWith('/uploads/release-notes/')) return req.url;

@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const config = require('../config');
 const { supabase } = require('../config/supabase');
 const { logAuthEvent } = require('../helpers/authEventLog');
+const { attachTenantContext, guardTenantCompanyParams } = require('./tenantGate');
 
 const VN_TZ = 'Asia/Ho_Chi_Minh';
 
@@ -26,6 +27,7 @@ function isStaleAcrossMidnight(payload) {
 const COMPANY_CACHE_MS = 60_000;
 const _companyCache = new Map(); // userId -> { company_id, at }
 const _regionCache = new Map(); // userId -> { crm_region_ids, at }
+const _tenantCache = new Map(); // userId -> { tenant_id, at }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -50,6 +52,27 @@ async function resolveCrmRegionIdsForUser(userId) {
   } catch {
     _regionCache.set(key, { crm_region_ids: [], at: now });
     return [];
+  }
+}
+
+async function resolveTenantIdForUser(userId) {
+  if (!userId || !isUuidLike(userId)) return null;
+  const key = String(userId);
+  const hit = _tenantCache.get(key);
+  const now = Date.now();
+  if (hit && now - hit.at < COMPANY_CACHE_MS) return hit.tenant_id || null;
+  try {
+    const { data: u } = await supabase
+      .from('users')
+      .select('tenant_id')
+      .eq('id', userId)
+      .maybeSingle();
+    const tenant_id = u?.tenant_id || null;
+    _tenantCache.set(key, { tenant_id, at: now });
+    return tenant_id;
+  } catch {
+    _tenantCache.set(key, { tenant_id: null, at: now });
+    return null;
   }
 }
 
@@ -82,6 +105,17 @@ async function resolveCompanyIdForUser(userId) {
   }
 }
 
+function completeAuth(req, res, next) {
+  attachTenantContext(req)
+    .then(() => guardTenantCompanyParams(req, res, next))
+    .catch((err) => {
+      if (err?.statusCode === 403) {
+        return res.status(403).json({ error: err.message, code: err.code || 'tenant_inactive' });
+      }
+      return next(err);
+    });
+}
+
 function auth(req, res, next) {
   const h = req.headers.authorization;
   if (!h || !h.startsWith('Bearer ')) return res.status(401).json({ error: 'Chưa đăng nhập' });
@@ -105,15 +139,16 @@ function auth(req, res, next) {
     const isSystemToken = req.user.role === 'system';
     const needCompany = req.user.company_id == null;
     const needRegions = !Array.isArray(req.user.crm_region_ids);
+    const needTenant = req.user.tenant_id == null && req.user.role !== 'platform_admin';
     if (isSystemToken) {
       if (needRegions) req.user.crm_region_ids = [];
-      next();
+      completeAuth(req, res, next);
       return;
     }
-    if (needCompany || needRegions) {
+    if (needCompany || needRegions || needTenant) {
       if (!isUuidLike(uid)) {
         if (needRegions) req.user.crm_region_ids = [];
-        next();
+        completeAuth(req, res, next);
         return;
       }
       Promise.resolve()
@@ -125,12 +160,16 @@ function auth(req, res, next) {
           if (needRegions) {
             req.user.crm_region_ids = await resolveCrmRegionIdsForUser(uid);
           }
+          if (needTenant) {
+            const tid = await resolveTenantIdForUser(uid);
+            if (tid) req.user.tenant_id = tid;
+          }
         })
-        .then(() => next())
-        .catch(() => next());
+        .then(() => completeAuth(req, res, next))
+        .catch(() => completeAuth(req, res, next));
       return;
     }
-    next();
+    completeAuth(req, res, next);
   } catch {
     let partial = null;
     try {

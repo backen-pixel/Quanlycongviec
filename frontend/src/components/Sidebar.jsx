@@ -1,7 +1,7 @@
 import { NavLink, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
 import { useAuth } from '../lib/auth';
-import { isAdminLike, isCrmModuleAdmin, isStrictAdmin, isWorkProductionModuleAdmin, canAccessCrmSocialInbox } from '../lib/adminRole';
+import { isAdminLike, isPlatformAdmin, isCrmModuleAdmin, isStrictAdmin, isWorkProductionModuleAdmin, canAccessCrmSocialInbox } from '../lib/adminRole';
 import NotificationCenter from './NotificationCenter';
 import SidebarTooltip from './SidebarTooltip';
 import { getInitials, avatarColor } from '../lib/utils';
@@ -12,7 +12,7 @@ import {
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, UsersRound,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
   BookOpen, FolderTree, Factory, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot, Download, UserMinus,
-  Sigma, Calculator, FileUp, History as HistoryIcon, HardDrive, Database,
+  Sigma, Calculator, FileUp, History as HistoryIcon, HardDrive, Database, Globe, CreditCard,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
@@ -28,8 +28,22 @@ import SidebarModuleCycleButton from './SidebarModuleCycleButton';
 import { APP_MODULE_DEFINITIONS } from '../lib/appSwitcherModules';
 import { preloadModuleIconsFromModules } from '../lib/moduleIconPreload';
 
-// Reorganized menu structure - 4 groups
+// Reorganized menu structure - 4 groups + platform admin group
 const MENU_GROUPS = [
+  {
+    id: 'platform',
+    title: 'Nền tảng SaaS',
+    emoji: '🌐',
+    platformAdminOnly: true,
+    items: [
+      { to: '/platform', icon: LayoutDashboard, label: 'Tổng quan SaaS' },
+      { to: '/platform/tenants', icon: Globe, label: 'Hệ sinh thái' },
+      { to: '/platform/users', icon: Users, label: 'Users toàn nền tảng' },
+      { to: '/platform/billing', icon: CreditCard, label: 'Gói thuê bao' },
+      { to: '/platform/tier-features', icon: Puzzle, label: 'Tính năng theo gói' },
+      { to: '/platform/stats', icon: BarChart3, label: 'Thống kê chi tiết' },
+    ],
+  },
   {
     id: 'overview',
     title: '1. Tổng quan',
@@ -89,6 +103,7 @@ const MENU_GROUPS = [
       { to: '/settings/app-updates', icon: Smartphone, label: 'Cập nhật App' },
       { to: '/settings/request-monitor', icon: Activity, label: 'Theo dõi Request' },
       { to: '/management/backup-sync', icon: Database, label: 'Giám sát Supabase' },
+      { to: '/management/mcp-api', icon: Bot, label: 'MCP API báo cáo', adminOnly: true },
       // { to: '/templates', icon: ClipboardList, label: 'Dự án mẫu' },
       // { to: '/stage-groups', icon: FolderKanban, label: 'Nhóm quy trình' },
     ]
@@ -222,6 +237,7 @@ const CRM_MENU_BOTTOM_GROUPS = [
       { to: '/knowledge', icon: GraduationCap, label: 'Kiến thức' },
       { to: '/guide', icon: BookOpen, label: 'Hướng dẫn sử dụng', adminOnly: true },
       { to: '/settings/api-keys', icon: Key, label: 'API Key tích hợp', adminOnly: true },
+      { to: '/management/mcp-api', icon: Bot, label: 'MCP API báo cáo', adminOnly: true },
       { to: '/settings/app-updates', icon: Smartphone, label: 'Cập nhật App', adminOnly: true },
     ],
   },
@@ -460,13 +476,14 @@ function SideLink({ to, icon: Icon, label, collapsed, end, badge, moduleContext 
   );
 }
 
-function MenuGroup({ group, collapsed, isAdmin, isWorkModuleAdmin, isStrictAdminUser, isExecutive, canAccessModule, canAccessSocialInbox, userRole, updatesUnread = 0, assignmentsUnread = 0, sxAssignmentsUnread = 0, socialUnread = 0 }) {
+function MenuGroup({ group, collapsed, isAdmin, isPlatformAdminUser, isWorkModuleAdmin, isStrictAdminUser, isExecutive, canAccessModule, canAccessSocialInbox, userRole, updatesUnread = 0, assignmentsUnread = 0, sxAssignmentsUnread = 0, socialUnread = 0 }) {
   const [open, setOpen] = useState(true);
   const moduleContext = resolveGroupModuleContext(group);
   const moduleAdmin = (moduleContext === 'work' || moduleContext === 'sx')
     ? (isWorkModuleAdmin ?? isAdmin)
     : isAdmin;
 
+  if (group.platformAdminOnly && !isPlatformAdminUser) return null;
   if (group.moduleKey && canAccessModule && !canAccessModule(group.moduleKey)) return null;
   if (group.adminOnly && !moduleAdmin) return null;
 
@@ -561,6 +578,7 @@ export default function Sidebar() {
   }, [location.pathname]);
 
   const isAdmin = isAdminLike(user) || user?.role === 'manager';
+  const isPlatformAdminUser = isPlatformAdmin(user);
   const isWorkModuleAdmin = isWorkProductionModuleAdmin(user);
   const isStrictAdminUser = isStrictAdmin(user);
   /** Sidebar CRM: admin CRM (hệ thống, sales_admin, admin CRM+SX) thấy đủ mục cài đặt CRM. */
@@ -684,6 +702,7 @@ export default function Sidebar() {
                 group={CRM_MENU_TOP_GROUP}
                 collapsed={collapsed}
                 isAdmin={isAdmin}
+                isPlatformAdminUser={isPlatformAdminUser}
                 isWorkModuleAdmin={isWorkModuleAdmin}
                 isStrictAdminUser={isStrictAdminUser}
                 isExecutive={isExecutive}
@@ -706,6 +725,7 @@ export default function Sidebar() {
                     group={group}
                     collapsed={collapsed}
                     isAdmin={isCrmMenuAdmin}
+                    isPlatformAdminUser={isPlatformAdminUser}
                     isWorkModuleAdmin={isWorkModuleAdmin}
                     isStrictAdminUser={isStrictAdminUser}
                     isExecutive={isExecutive}
@@ -728,6 +748,7 @@ export default function Sidebar() {
                 group={group}
                 collapsed={collapsed}
                 isAdmin={isAdmin}
+                isPlatformAdminUser={isPlatformAdminUser}
                 isWorkModuleAdmin={isWorkModuleAdmin}
                 isStrictAdminUser={isStrictAdminUser}
                 isExecutive={isExecutive}

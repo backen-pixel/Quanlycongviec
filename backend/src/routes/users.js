@@ -11,6 +11,9 @@ const { getCurrentLocationForUser } = require('../helpers/userCurrentLocation');
 const { parseScopeFromQuery } = require('../helpers/scopeQueryParams');
 const { pgUsersActivityStats } = require('../helpers/pgHotQueries');
 const { responseCache, invalidateTags } = require('../middleware/responseCache');
+const { enforceTenantContext } = require('../middleware/tenantGate');
+const { addTenantFilter, companyInTenantContext } = require('../helpers/tenantScope');
+const { checkUserLimit } = require('../helpers/tenantLimits');
 
 const USER_OPTIONAL_NULLABLE_FIELDS = [
   'position', 'date_of_birth', 'hire_date', 'address', 'emergency_contact', 'salary', 'notes', 'skills',
@@ -38,6 +41,21 @@ function mapUserWriteError(error) {
 
 const r = Router();
 r.use(auth);
+r.use(enforceTenantContext);
+
+async function assertUserInRequestTenant(req, res, userId) {
+  if (!req.tenantContext?.enforced) return true;
+  const { data } = await supabase.from('users').select('tenant_id').eq('id', userId).maybeSingle();
+  if (String(data?.tenant_id || '') !== String(req.tenantContext.tenantId)) {
+    res.status(403).json({ error: 'Không có quyền truy cập người dùng này' });
+    return false;
+  }
+  return true;
+}
+
+function applyUserTenantFilter(q, req) {
+  return addTenantFilter(q, req.user);
+}
 
 r.use((req, res, next) => {
   if (req.method === 'GET') return next();
@@ -387,6 +405,9 @@ r.get('/', async (req, res) => {
     // Dùng cho EmployeePicker khi truyền companyId prop
     if (company_id && !company_unit_id && !ecosystem_unit_id) {
       try {
+        if (!companyInTenantContext(req, company_id)) {
+          return res.status(403).json({ error: 'Không có quyền truy cập công ty này' });
+        }
         const { data: depts } = await supabase.from('departments')
           .select('id').eq('company_id', company_id).eq('is_active', true);
         const deptIds = (depts || []).map(d => d.id);
@@ -395,6 +416,7 @@ r.get('/', async (req, res) => {
         let q = supabase.from('users')
           .select('id, full_name, email, phone, avatar, role, department_id, position')
           .in('department_id', deptIds);
+        q = applyUserTenantFilter(q, req);
         if (!include_inactive) q = q.neq('is_active', false);
         if (role) q = q.eq('role', role);
         if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
@@ -416,6 +438,9 @@ r.get('/', async (req, res) => {
         
         const resolvedCompanyId = unit?.company_id;
         if (!resolvedCompanyId) return res.json({ users: [], company_id: null });
+        if (!companyInTenantContext(req, resolvedCompanyId)) {
+          return res.status(403).json({ error: 'Không có quyền truy cập công ty này' });
+        }
 
         const { data: depts } = await supabase.from('departments')
           .select('id').eq('company_id', resolvedCompanyId).eq('is_active', true);
@@ -425,6 +450,7 @@ r.get('/', async (req, res) => {
         let q = supabase.from('users')
           .select('id, full_name, email, phone, avatar, role, department_id, position')
           .in('department_id', deptIds);
+        q = applyUserTenantFilter(q, req);
         if (!include_inactive) q = q.neq('is_active', false);
         if (role) q = q.eq('role', role);
         if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
@@ -481,6 +507,16 @@ r.get('/', async (req, res) => {
           .not('company_id', 'is', null);
 
         const companyIds = [...new Set((unitsWithCompanies || []).map(u => u.company_id).filter(Boolean))];
+
+        if (req.tenantContext?.enforced) {
+          const allowed = new Set(req.tenantCompanyIds || []);
+          const filtered = companyIds.filter((id) => allowed.has(String(id)));
+          if (!filtered.length && companyIds.length) {
+            return res.status(403).json({ error: 'Không có quyền truy cập đơn vị này' });
+          }
+          companyIds.length = 0;
+          companyIds.push(...filtered);
+        }
 
         if (!companyIds.length) {
           // No companies found → try ecosystem_unit_members (for teams/depts)
@@ -541,6 +577,7 @@ r.get('/', async (req, res) => {
     let data = null, error = null;
 
     let q = supabase.from('users').select(fullCols);
+    q = applyUserTenantFilter(q, req);
     if (!include_inactive) q = q.neq('is_active', false);
     if (role) q = q.eq('role', role);
     if (department_id === 'none') q = q.is('department_id', null);
@@ -548,6 +585,9 @@ r.get('/', async (req, res) => {
     
     // Company filter: need to get departments first, then filter users
     if (company_id) {
+      if (!companyInTenantContext(req, company_id)) {
+        return res.status(403).json({ error: 'Không có quyền truy cập công ty này' });
+      }
       const { data: companyDepts } = await supabase
         .from('departments')
         .select('id')
@@ -569,6 +609,7 @@ r.get('/', async (req, res) => {
     if (error) {
       console.warn('Users full select failed, trying basic+dept:', error.message);
       let q2 = supabase.from('users').select(basicCols);
+      q2 = applyUserTenantFilter(q2, req);
       if (!include_inactive) q2 = q2.neq('is_active', false);
       if (role) q2 = q2.eq('role', role);
       if (department_id === 'none') q2 = q2.is('department_id', null);
@@ -580,6 +621,7 @@ r.get('/', async (req, res) => {
     if (error) {
       console.warn('Users basic+dept select failed, trying no-dept:', error.message);
       let q3 = supabase.from('users').select(basicColsNoDept);
+      q3 = applyUserTenantFilter(q3, req);
       if (!include_inactive) q3 = q3.neq('is_active', false);
       if (role) q3 = q3.eq('role', role);
       if (department_id === 'none') q3 = q3.is('department_id', null);
@@ -607,6 +649,7 @@ r.get('/', async (req, res) => {
 // ═══ GET STAFF DETAIL ═══
 r.get('/:id', async (req, res) => {
   try {
+    if (!(await assertUserInRequestTenant(req, res, req.params.id))) return;
     // Defensive: try full columns, fallback to basic
     let user = null;
     const { data: u1, error: e1 } = await supabase.from('users').select(`
@@ -665,6 +708,10 @@ r.post('/', async (req, res) => {
     if (!['admin', 'manager'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Chỉ admin/quản lý được tạo nhân viên' });
     }
+    if (req.tenantContext?.enforced) {
+      const limit = await checkUserLimit(req.tenantContext.tenantId);
+      if (!limit.ok) return res.status(400).json({ error: limit.error });
+    }
     const password = b.password || 'tubep123';
     const hash = await bcrypt.hash(password, 12);
 
@@ -675,6 +722,7 @@ r.post('/', async (req, res) => {
       department_id: b.department_id || null,
       team_id: b.team_id || null,
     };
+    if (req.user?.tenant_id) insertObj.tenant_id = req.user.tenant_id;
     if (b.avatar !== undefined && b.avatar != null && String(b.avatar).trim()) {
       insertObj.avatar = String(b.avatar).trim();
     }
@@ -765,6 +813,7 @@ r.put('/:id', async (req, res) => {
   try {
     const b = req.body;
     const targetId = req.params.id;
+    if (!(await assertUserInRequestTenant(req, res, targetId))) return;
     const { data: beforeOrg } = await supabase
       .from('users')
       .select('department_id, team_id, drive_module')

@@ -22,7 +22,8 @@
     "storage:sync-backup": "node scripts/sync-storage-to-backup.js",
     "storage:sync-backup:dry": "node scripts/sync-storage-to-backup.js --dry-run",
     "ota:publish": "node scripts/publish-ota.js",
-    "test:cache": "node tests/response-cache-smoke.js"
+    "test:cache": "node tests/response-cache-smoke.js",
+    "test:tenant": "node tests/tenant-isolation-smoke.js"
   },
   "keywords": [],
   "author": "",

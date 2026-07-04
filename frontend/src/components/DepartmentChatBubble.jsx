@@ -7,6 +7,7 @@ import { useAuth } from '../lib/auth';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import { getInitials, avatarColor } from '../lib/utils';
 import UploadProgressBubble from './UploadProgressBubble';
+import AiBotReportContent, { isAiBotReportContent } from './AiBotReportContent';
 import { makeAxiosUploadProgressHandler, mergeUploadProgressState } from '../lib/uploadProgressEta';
 
 // Inline: [label](url) markdown link + bare http(s) URL
@@ -164,6 +165,8 @@ export default function DepartmentChatBubble({ deptId, socket, fillParent }) {
         ) : (
           messages.map((m, i) => {
             const isMe = String(m.sender_id) === String(uid);
+            const isBot = !!m.sender?.is_bot || m.is_system === true;
+            const isReport = isBot && isAiBotReportContent(m.content);
             const showAvatar = i === 0 || messages[i - 1]?.sender_id !== m.sender_id;
             const senderName = m.sender?.full_name || 'Thành viên';
             return (
@@ -178,19 +181,30 @@ export default function DepartmentChatBubble({ deptId, socket, fillParent }) {
                     </div>
                   )}
                 </div>
-                <div className={`max-w-[78%] min-w-0 ${isMe ? 'items-end' : 'items-start'}`}>
+                <div className={`min-w-0 ${isReport ? 'max-w-[min(92%,400px)]' : 'max-w-[78%]'} ${isMe ? 'items-end' : 'items-start'}`}>
                   {!isMe && showAvatar && (
-                    <p className="text-[9px] font-medium mb-0.5 text-slate-500">{senderName}</p>
+                    <p className="text-[9px] font-medium mb-0.5 text-slate-500 flex items-center gap-1">
+                      {senderName}
+                      {isBot && (
+                        <span className="px-1 py-0.5 rounded-full bg-indigo-500 text-white text-[7px] font-bold">BOT</span>
+                      )}
+                    </p>
                   )}
                   <div
                     className={`relative min-w-0 max-w-full rounded-2xl px-2.5 py-1.5 text-[12px] leading-snug shadow-sm overflow-hidden ${
-                      isMe
-                        ? 'bg-gradient-to-br from-sky-500 to-cyan-600 text-white rounded-tr-md'
-                        : 'bg-white text-slate-800 rounded-tl-md border border-slate-100'
+                      isReport
+                        ? 'bg-gradient-to-br from-indigo-50 to-purple-50 text-gray-900 rounded-tl-md border border-indigo-200'
+                        : isMe
+                          ? 'bg-gradient-to-br from-sky-500 to-cyan-600 text-white rounded-tr-md'
+                          : 'bg-white text-slate-800 rounded-tl-md border border-slate-100'
                     }`}
                   >
                     {m.content ? (
-                      <p className="whitespace-pre-wrap break-words">{renderTextWithLinks(m.content, isMe)}</p>
+                      isReport ? (
+                        <AiBotReportContent text={m.content} />
+                      ) : (
+                        <p className="whitespace-pre-wrap break-words">{renderTextWithLinks(m.content, isMe)}</p>
+                      )
                     ) : null}
                     {Array.isArray(m.attachments) && m.attachments.length > 0 && (
                       <div className="mt-1 space-y-1">

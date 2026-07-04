@@ -29,6 +29,7 @@ import { driveShareToLeadChat, driveShareToMessengerChat } from '../lib/drive';
 import UploadFileLightbox, { collectUploadLightboxItems, findUploadLightboxIndex } from './UploadFileLightbox';
 import { buildMessengerMessagePreview } from '../lib/messengerPreview';
 import GroupSenderName from './GroupSenderName';
+import AiBotReportContent, { isAiBotReportContent } from './AiBotReportContent';
 import MessengerCallLogCard from './MessengerCallLogCard';
 import { useCall } from '../calling/CallProvider';
 import { isActiveState } from '../calling/callState';
@@ -1912,8 +1913,11 @@ function mentionAllPickerMatchesQuery(frag) {
 // Inline tokens: @mention (gồm @Tất cả), [label](url) markdown, bare http(s) URL
 const INLINE_TOKEN_RE = /(@(?:tất\s*cả|[^\s\n@]+)|\[[^\]]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s]+)/gi;
 
-function renderMessengerTextContent(content, isMe, viewerUserId) {
+function renderMessengerTextContent(content, isMe, viewerUserId, { isBot = false } = {}) {
   if (!content) return null;
+  if (isBot && isAiBotReportContent(content)) {
+    return <AiBotReportContent text={content} />;
+  }
   const callParsed = parseCallLogPayload(content);
   if (callParsed) {
     const line = formatCallLogLine(callParsed, viewerUserId);
@@ -2944,7 +2948,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                     </div>
                   )
                 )}
-                <div className="max-w-[78%] min-w-0">
+                <div className={`min-w-0 ${isBot && isAiBotReportContent(contentStr) ? 'max-w-[min(92%,440px)]' : 'max-w-[78%]'}`}>
                   {recalled ? (
                     <div
                       className={`flex items-center gap-2 px-3 py-2 rounded-2xl border text-[13px] italic text-slate-500 ${
@@ -3004,8 +3008,8 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                             />
                           )}
                           {parent && <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} isGroupChat={isGroupChat} />}
-                          <div className="text-[13.5px] leading-relaxed whitespace-pre-wrap break-words">
-                            {renderMessengerTextContent(m.content, isMe, uid)}
+                          <div className={isBot && isAiBotReportContent(contentStr) ? 'break-words' : 'text-[13.5px] leading-relaxed whitespace-pre-wrap break-words'}>
+                            {renderMessengerTextContent(m.content, isMe, uid, { isBot })}
                           </div>
                           {renderAttachmentsGrouped(m, { alignEnd: isMe, isMe })}
                         </div>
@@ -3083,8 +3087,8 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                             </p>
                           )}
                           {parent && <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} isGroupChat={isGroupChat} />}
-                          <div className="text-[13.5px] leading-relaxed whitespace-pre-wrap break-words">
-                            {renderMessengerTextContent(m.content, isMe, uid)}
+                          <div className={isBot && isAiBotReportContent(contentStr) ? 'break-words' : 'text-[13.5px] leading-relaxed whitespace-pre-wrap break-words'}>
+                            {renderMessengerTextContent(m.content, isMe, uid, { isBot })}
                           </div>
                           {renderAttachmentsGrouped(m, { alignEnd: isMe, isMe })}
                         </div>

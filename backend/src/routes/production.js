@@ -57,6 +57,7 @@ const {
   ensureMissingSxTasksForLead,
 } = require('../helpers/projectOrderFulfillment');
 const { assertSxKanbanAdvanceAllowed } = require('../helpers/workshopStageAdvanceGate');
+const { applyProjectTenantScope, assertRowCompanyInTenant } = require('../helpers/tenantScope');
 
 /** Kế toán / deal_company_id: lọc deal theo công ty CRM; company_id = xưởng SX. */
 async function applyParticipantOnlyProductionScope(
@@ -1273,6 +1274,8 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
         tasks(id, status)
       `, { count: 'exact' });
 
+    query = applyProjectTenantScope(query, req);
+
     if (String(sx_intake) === '1') {
       if (!wonIds.length) {
         return res.json({ projects: [], total: 0, page: parsedPage, totalPages: 0 });
@@ -1641,6 +1644,8 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
         hint: 'Không có dự án với id này, và không có crm_leads trùng id. Copy đúng projects.id từ danh sách dự án hoặc từ deal.project_id sau khi đã liên kết.',
       });
     }
+
+    if (!assertRowCompanyInTenant(req, res, project)) return;
 
     const inSxScope = wonSet.has(project.id);
 
