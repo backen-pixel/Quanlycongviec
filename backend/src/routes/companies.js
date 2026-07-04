@@ -6,9 +6,17 @@ const { syncCompanyToEcosystem } = require('../helpers/ecosystemSync');
 const { getRestrictedDivisionIdsForModule, KNOWN_MODULE_KEYS } = require('../helpers/ecosystemModuleScope');
 const { isCrmCompanyAdminUser } = require('../helpers/crmAccessRoles');
 const { responseCache, invalidateTags } = require('../middleware/responseCache');
+const { enforceTenantContext } = require('../middleware/tenantGate');
+const { addTenantFilter, companyInTenantContext, invalidateTenantCache } = require('../helpers/tenantScope');
+const { checkCompanyLimit } = require('../helpers/tenantLimits');
 
 const r = Router();
 r.use(auth);
+r.use(enforceTenantContext);
+
+function denyCompanyAccess(res) {
+  return res.status(403).json({ error: 'Không có quyền truy cập công ty này' });
+}
 
 r.use((req, res, next) => {
   if (req.method === 'GET') return next();
@@ -77,6 +85,7 @@ r.get('/', responseCache({ ttl: 120, scope: 'company', tags: ['orgtree'] }), asy
       .select('*')
       .or('is_active.eq.true,is_active.is.null')
       .order('name');
+    q = addTenantFilter(q, req.user);
     if (search) q = q.or(`name.ilike.%${search}%,short_name.ilike.%${search}%`);
 
     // Filter by a specific division (Khối): include junction links too
@@ -121,8 +130,10 @@ r.get('/', responseCache({ ttl: 120, scope: 'company', tags: ['orgtree'] }), asy
     if (req.user?.company_id && (mod === 'production' || mod === 'logistics')) {
       const ownId = String(req.user.company_id);
       if (!list.some((c) => c && String(c.id) === ownId)) {
-        const { data: ownCo } = await supabase.from('companies').select('*').eq('id', ownId).maybeSingle();
-        if (ownCo) list = [ownCo, ...list];
+        if (companyInTenantContext(req, ownId)) {
+          const { data: ownCo } = await supabase.from('companies').select('*').eq('id', ownId).maybeSingle();
+          if (ownCo) list = [ownCo, ...list];
+        }
       }
     }
     // Admin CRM theo công ty: CRM khóa 1 công ty; SX/VC vẫn hiện đủ xưởng trong khối
@@ -150,6 +161,7 @@ r.get('/my/list', responseCache({ ttl: 120, scope: 'user', tags: ['orgtree'] }),
 // ═══ GET COMPANY DETAIL ═══
 r.get('/:id', async (req, res) => {
   try {
+    if (!companyInTenantContext(req, req.params.id)) return denyCompanyAccess(res);
     const { data, error } = await supabase.from('companies').select('*').eq('id', req.params.id).single();
     if (error) throw error;
     const companyRow = await companyWithDivisionFields(data);
@@ -176,6 +188,10 @@ r.get('/:id', async (req, res) => {
 r.post('/', async (req, res) => {
   try {
     if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (req.tenantContext?.enforced) {
+      const limit = await checkCompanyLimit(req.tenantContext.tenantId);
+      if (!limit.ok) return res.status(400).json({ error: limit.error });
+    }
     const b = req.body;
     const rawIds = Array.isArray(b.division_unit_ids)
       ? b.division_unit_ids.map((x) => String(x).trim()).filter(Boolean)
@@ -186,12 +202,15 @@ r.post('/', async (req, res) => {
       || b.division_unit_id
       || null;
 
-    const { data, error } = await supabase.from('companies').insert({
+    const insertRow = {
       name: b.name, short_name: b.short_name || null,
       tax_code: b.tax_code || null, address: b.address || null,
       phone: b.phone || null, email: b.email || null, logo_url: b.logo_url || null,
       division_unit_id: primaryDiv,
-    }).select().single();
+    };
+    if (req.user?.tenant_id) insertRow.tenant_id = req.user.tenant_id;
+
+    const { data, error } = await supabase.from('companies').insert(insertRow).select().single();
     if (error) throw error;
 
     if (rawIds.length) {
@@ -205,6 +224,7 @@ r.post('/', async (req, res) => {
 
     const { data: fresh } = await supabase.from('companies').select('*').eq('id', data.id).single();
     const company = await companyWithDivisionFields(fresh);
+    if (req.user?.tenant_id) invalidateTenantCache(req.user.tenant_id);
     res.status(201).json({ company });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
@@ -213,6 +233,7 @@ r.post('/', async (req, res) => {
 r.put('/:id', async (req, res) => {
   try {
     if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!companyInTenantContext(req, req.params.id)) return denyCompanyAccess(res);
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
     ['name', 'short_name', 'tax_code', 'address', 'phone', 'email', 'logo_url', 'is_active'].forEach(f => {
@@ -247,6 +268,7 @@ r.put('/:id', async (req, res) => {
 // ═══ GET EMPLOYEES OF A COMPANY (for project assignment dropdown) ═══
 r.get('/:id/employees', async (req, res) => {
   try {
+    if (!companyInTenantContext(req, req.params.id)) return denyCompanyAccess(res);
     const { data, error } = await supabase.from('user_companies')
       .select('user:users(id,full_name,email,phone,avatar,role,is_active)')
       .eq('company_id', req.params.id);
@@ -260,6 +282,7 @@ r.get('/:id/employees', async (req, res) => {
 r.post('/:id/employees', async (req, res) => {
   try {
     if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!companyInTenantContext(req, req.params.id)) return denyCompanyAccess(res);
     const { user_id, is_primary } = req.body;
     const { data, error } = await supabase.from('user_companies').insert({
       user_id, company_id: req.params.id, is_primary: is_primary || false,
@@ -276,6 +299,7 @@ r.post('/:id/employees', async (req, res) => {
 r.delete('/:companyId/employees/:userId', async (req, res) => {
   try {
     if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!companyInTenantContext(req, req.params.companyId)) return denyCompanyAccess(res);
     await supabase.from('user_companies').delete()
       .eq('company_id', req.params.companyId).eq('user_id', req.params.userId);
     res.json({ message: 'Đã xóa' });
@@ -286,6 +310,7 @@ r.delete('/:companyId/employees/:userId', async (req, res) => {
 r.delete('/:id', async (req, res) => {
   try {
     if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!companyInTenantContext(req, req.params.id)) return denyCompanyAccess(res);
     const companyId = req.params.id;
     const { data: company } = await supabase.from('companies').select('name').eq('id', companyId).single();
 

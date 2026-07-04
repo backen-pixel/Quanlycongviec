@@ -3,8 +3,8 @@ import { Search, ChevronDown } from 'lucide-react';
 import { getInitials, avatarColor } from '../lib/utils';
 
 // ═══ Searchable User Select ═══
-// Usage: <UserSelect value={userId} onChange={setUserId} users={[{id,full_name,role}]} />
-export default function UserSelect({ value, onChange, users, placeholder, className, size }) {
+// Usage: <UserSelect value={userId} onChange={setUserId} users={[...]} emptyLabel="..." />
+export default function UserSelect({ value, onChange, users, placeholder, emptyLabel, className, size }) {
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
   const btnRef = useRef(null);
@@ -27,15 +27,18 @@ export default function UserSelect({ value, onChange, users, placeholder, classN
   const filtered = useMemo(() => {
     if (!search.trim()) return users;
     const q = search.toLowerCase();
-    return users.filter(u => u.full_name?.toLowerCase().includes(q) || u.role?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q));
+    return users.filter(u => u.full_name?.toLowerCase().includes(q) || u.role?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q) || u.id?.toLowerCase().includes(q));
   }, [users, search]);
   const selected = users.find(u => u.id === value);
   const sm = size === 'sm';
+  const md = size === 'md';
+  const btnH = sm ? 'h-7' : md ? 'h-9' : 'h-8';
+  const emptyText = emptyLabel || '— Chưa chỉ định —';
 
   return (
     <div className={`relative ${className || ''}`}>
       <button ref={btnRef} type="button" onClick={() => setOpen(!open)}
-        className={`w-full ${sm ? 'h-7' : 'h-8'} px-2 text-xs border rounded-md bg-white flex items-center gap-1.5 text-left cursor-pointer hover:border-blue-300`}>
+        className={`w-full ${btnH} px-2 ${md ? 'text-sm px-3' : 'text-xs'} border rounded-md bg-white flex items-center gap-1.5 text-left cursor-pointer hover:border-blue-300`}>
         {selected ? (
           <>
             {selected.avatar ? (
@@ -57,14 +60,14 @@ export default function UserSelect({ value, onChange, users, placeholder, classN
             <div className="p-1.5 border-b shrink-0">
               <div className="flex items-center gap-1.5 px-2 bg-gray-50 rounded-md">
                 <Search className="h-3 w-3 text-gray-400" />
-                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm nhân viên..."
+                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm tên, email, UUID…"
                   className="flex-1 h-7 text-xs bg-transparent outline-none" autoFocus />
               </div>
             </div>
             <div className="overflow-y-auto flex-1">
               <button type="button" onClick={() => { onChange(''); setOpen(false); setSearch(''); }}
                 className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 cursor-pointer ${!value ? 'bg-blue-50 text-blue-600' : 'text-gray-500'}`}>
-                — Chưa chỉ định —
+                {emptyText}
               </button>
               {filtered.map(u => (
                 <button type="button" key={u.id} onClick={() => { onChange(u.id); setOpen(false); setSearch(''); }}
@@ -75,7 +78,10 @@ export default function UserSelect({ value, onChange, users, placeholder, classN
                     <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[7px] font-bold shrink-0"
                       style={{ backgroundColor: avatarColor(u.full_name) }}>{getInitials(u.full_name)}</div>
                   )}
-                  <span className="flex-1 truncate">{u.full_name}</span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block truncate">{u.full_name}</span>
+                    {u.email && <span className="block truncate text-[10px] text-gray-400 font-normal">{u.email}</span>}
+                  </span>
                   <span className="text-[10px] text-gray-400 shrink-0">{u.role}</span>
                 </button>
               ))}

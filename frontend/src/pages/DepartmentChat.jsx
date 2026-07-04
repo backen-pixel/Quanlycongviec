@@ -10,6 +10,7 @@ import {
   Users, Building, Image, File, Plus, Video, UserPlus, Smile, Bot
 } from 'lucide-react';
 import UploadProgressBubble from '../components/UploadProgressBubble';
+import AiBotReportContent, { isAiBotReportContent } from '../components/AiBotReportContent';
 import { makeAxiosUploadProgressHandler, mergeUploadProgressState } from '../lib/uploadProgressEta';
 
 export default function DepartmentChat() {
@@ -350,7 +351,7 @@ export default function DepartmentChat() {
                         </div>
 
                         {/* Bubble */}
-                        <div className={`max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
+                        <div className={`min-w-0 ${isBot && isAiBotReportContent(msg.content) ? 'max-w-[min(92%,440px)]' : 'max-w-[70%]'} ${isMe ? 'items-end' : 'items-start'}`}>
                           {showAvatar && (
                             <p className={`text-[10px] font-medium mb-0.5 flex items-center gap-1 ${
                               isBot ? 'text-indigo-600' : isMe ? 'text-right text-blue-600 justify-end' : 'text-gray-500'
@@ -378,7 +379,11 @@ export default function DepartmentChat() {
                               : isMe ? 'bg-blue-600 text-white rounded-tr-md' : 'bg-gray-100 text-gray-900 rounded-tl-md'
                           } ${msg.is_pinned ? 'ring-1 ring-amber-400' : ''}`}>
                             {msg.is_pinned && <Pin className="absolute -top-1 -right-1 h-3 w-3 text-amber-500" />}
-                            <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                            {isBot && isAiBotReportContent(msg.content) ? (
+                              <AiBotReportContent text={msg.content} />
+                            ) : (
+                              <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                            )}
 
                             {/* Attachments */}
                             {msg.attachments?.length > 0 && (

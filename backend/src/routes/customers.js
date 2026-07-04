@@ -4,6 +4,11 @@ const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { addPhoneToAutoLeadBlocklist } = require('../helpers/crmAutoLeadPhoneBlocklist');
 const { isSystemAdmin } = require('../helpers/adminRole');
+const {
+  applyCompanyTenantScope,
+  assertCompanyAccessible,
+  assertRowCompanyInTenant,
+} = require('../helpers/tenantScope');
 
 const r = Router();
 r.use(auth);
@@ -16,6 +21,7 @@ r.get('/', async (req, res) => {
       *, assigned_user:users!customers_assigned_to_fkey(id,full_name,avatar),
       customer_status:customer_statuses(id,name,slug,color,icon)
     `, { count: 'exact' });
+    q = applyCompanyTenantScope(q, req);
     if (search) q = q.or(`full_name.ilike.%${search}%,phone.ilike.%${search}%,email.ilike.%${search}%,company.ilike.%${search}%`);
     if (status_id && status_id !== 'all') q = q.eq('status_id', status_id);
     else if (status && status !== 'all') q = q.eq('status', status);
@@ -29,12 +35,16 @@ r.get('/', async (req, res) => {
     // Stats by status_id
     let stats = { total: 0 };
     try {
-      const { data: all } = await supabase.from('customers').select('status_id');
+      let statsQ = supabase.from('customers').select('status_id, company_id');
+      statsQ = applyCompanyTenantScope(statsQ, req);
+      const { data: all } = await statsQ;
       stats.total = all?.length || 0;
       all?.forEach(c => { if (c.status_id) stats[c.status_id] = (stats[c.status_id] || 0) + 1; });
     } catch (_) {
       // Fallback: count by old status field
-      const { data: all } = await supabase.from('customers').select('status');
+      let statsQ = supabase.from('customers').select('status, company_id');
+      statsQ = applyCompanyTenantScope(statsQ, req);
+      const { data: all } = await statsQ;
       stats.total = all?.length || 0;
       all?.forEach(c => { stats[c.status] = (stats[c.status] || 0) + 1; });
     }
@@ -50,6 +60,7 @@ r.get('/:id', async (req, res) => {
       *, assigned_user:users!customers_assigned_to_fkey(id,full_name,avatar,email)
     `).eq('id', req.params.id).single();
     if (error) throw error;
+    if (!assertRowCompanyInTenant(req, res, data)) return;
 
     const [projectsRes, interactionsRes] = await Promise.all([
       supabase.from('projects').select('id,code,name,status,estimated_value,final_value,created_at,current_stage:workflow_stages(name,color)')
@@ -83,6 +94,7 @@ r.post('/', async (req, res) => {
     } else {
       commercialCompanyId = req.user?.company_id ? String(req.user.company_id) : null;
     }
+    if (commercialCompanyId && !assertCompanyAccessible(req, res, commercialCompanyId)) return;
     const { data, error } = await supabase.from('customers').insert({
       full_name: b.full_name, phone: b.phone, email: b.email || null,
       address: b.address || null, district: b.district || null, city: b.city || null,
@@ -102,6 +114,8 @@ r.post('/', async (req, res) => {
 // ─── UPDATE CUSTOMER ──
 r.put('/:id', async (req, res) => {
   try {
+    const { data: existing } = await supabase.from('customers').select('company_id').eq('id', req.params.id).maybeSingle();
+    if (!assertRowCompanyInTenant(req, res, existing)) return;
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
     const fields = ['full_name', 'phone', 'email', 'address', 'district', 'city', 'notes', 'source',
@@ -116,14 +130,15 @@ r.put('/:id', async (req, res) => {
 // ─── DELETE CUSTOMER ──
 r.delete('/:id', async (req, res) => {
   try {
+    const { data: existing } = await supabase.from('customers').select('company_id, phone').eq('id', req.params.id).maybeSingle();
+    if (!assertRowCompanyInTenant(req, res, existing)) return;
     const force = req.query.force === 'true';
     const blockAuto = req.query.block_auto_recreate_phone === 'true';
     const custId = req.params.id;
 
     let phoneToBlock = null;
     if (blockAuto) {
-      const { data: crow } = await supabase.from('customers').select('phone').eq('id', custId).maybeSingle();
-      phoneToBlock = crow?.phone && String(crow.phone).trim() ? String(crow.phone).trim() : null;
+      phoneToBlock = existing?.phone && String(existing.phone).trim() ? String(existing.phone).trim() : null;
     }
 
     // Check linked data

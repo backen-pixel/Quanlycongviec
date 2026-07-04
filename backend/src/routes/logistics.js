@@ -13,6 +13,7 @@ const { effectiveWorkshopCompanyId, normalizeWorkshopCompanyId } = require('../h
 const { applyWorkshopProjectVisibilityScope, userCanAccessCrossWorkshopProductionProject, isCrossWorkshopProductionViewer, isMetallaOrHucabiCompanyIdSync, userNeedsParticipantOnlyProductionScopeForWorkshop, userCanAccessProductionProjectAsParticipant } = require('../helpers/dealParticipantProduction');
 const { leadDocVisibleForModuleAndUser } = require('../helpers/documentShareScope');
 const { writeAuditLog } = require('../helpers/auditLog');
+const { applyProjectTenantScope, assertRowCompanyInTenant } = require('../helpers/tenantScope');
 
 const r = Router();
 r.use(auth);
@@ -541,6 +542,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
         workshop_type:workshop_project_types(id, name, applies_to),
         tasks(id, status)`, { count: 'exact' })
       .or(orFilter);
+    query = applyProjectTenantScope(query, req);
     query = applyVcNotDeletedFilter(query);
 
     if (search) query = query.or(`name.ilike.%${search}%,code.ilike.%${search}%`);
@@ -817,6 +819,8 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       } catch (_) { /* ignore */ }
       return res.status(404).json({ error: 'Dự án không tồn tại' });
     }
+
+    if (!assertRowCompanyInTenant(req, res, project)) return;
 
     const rowId = project.id;
 

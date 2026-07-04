@@ -6,6 +6,7 @@ const config = require('../config');
 const { auth } = require('../middleware/auth');
 const { logAuthEvent } = require('../helpers/authEventLog');
 const { buildAuthSessionForUser } = require('../helpers/authSession');
+const { assertTenantActive } = require('../helpers/tenantScope');
 const {
   createQrSession, parseQrText, confirmQrSession, consumeSessionAuth,
   getSessionPublicInfo, targetLabel, deviceFromReq,
@@ -71,6 +72,20 @@ r.post('/login', async (req, res) => {
     if (!(await bcrypt.compare(password, user.password))) {
       void logAuthEvent({ event: 'login_failed', email: emailTrim, user_id: user.id, reason: 'wrong_password', req });
       return res.status(401).json({ error: 'Sai email hoặc mật khẩu' });
+    }
+
+    if (user.tenant_id && String(user.role || '').trim().toLowerCase() !== 'platform_admin') {
+      const tenantCheck = await assertTenantActive(user.tenant_id);
+      if (!tenantCheck.ok) {
+        void logAuthEvent({
+          event: 'login_failed',
+          email: emailTrim,
+          user_id: user.id,
+          reason: 'tenant_inactive',
+          req,
+        });
+        return res.status(403).json({ error: tenantCheck.error, code: 'tenant_inactive' });
+      }
     }
 
     await supabase.from('users').update({ last_login_at: new Date().toISOString() }).eq('id', user.id);

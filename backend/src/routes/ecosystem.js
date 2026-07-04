@@ -2,12 +2,15 @@ const { Router } = require('express');
 const { requirePermission } = require('../middleware/newPermission');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
+const { enforceTenantContext } = require('../middleware/tenantGate');
+const { addEcosystemUnitTenantFilter } = require('../helpers/tenantScope');
 const { KNOWN_MODULE_KEYS, buildMyModuleAccessMap, invalidateEcosystemModuleScopeCache } = require('../helpers/ecosystemModuleScope');
 const { isAdminLike } = require('../helpers/adminRole');
 const { responseCache, invalidateTags } = require('../middleware/responseCache');
 
 const r = Router();
 r.use(auth);
+r.use(enforceTenantContext);
 
 // Xoá response cache sau mọi mutation ecosystem
 r.use((req, res, next) => {
@@ -173,6 +176,7 @@ r.get('/units', responseCache({ ttl: 300, scope: 'role', tags: ['ecosystem'] }),
         company:companies!ecosystem_units_company_id_fkey(id,name,short_name)
       `)
       .eq('is_active', true);
+    q = addEcosystemUnitTenantFilter(q, req);
     
     const { data, error } = await q.order('order_index');
     if (error) throw error;

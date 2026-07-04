@@ -77,7 +77,7 @@ const {
   isCrmRegionAdminUser,
   isCrmSystemAdminUser,
 } = require('../helpers/crmAccessRoles');
-const { isAdminLike, isSystemAdmin, isCrmModuleAdmin } = require('../helpers/adminRole');
+const { isAdminLike, isSystemAdmin, isCrmModuleAdmin, isPlatformAdmin } = require('../helpers/adminRole');
 const {
   getCrmLeadRegionConstraint,
   applyCrmLeadRegionFilterToQuery,
@@ -813,10 +813,14 @@ async function enforceCrmDealAssigneeAccess(req, res, next) {
     const leadId = parts[1];
     const { data: lead, error } = await supabase
       .from('crm_leads')
-      .select('id, type, assigned_to, lead_owner_id, parent_lead_id, project_id')
+      .select('id, type, company_id, assigned_to, lead_owner_id, parent_lead_id, project_id')
       .eq('id', leadId)
       .maybeSingle();
     if (error || !lead) return next();
+    const { companyInTenantContext } = require('../helpers/tenantScope');
+    if (!companyInTenantContext(req, lead.company_id)) {
+      return res.status(403).json({ error: 'Không có quyền truy cập dữ liệu hệ sinh thái khác' });
+    }
     const uid = req.user?.userId;
 
     /** Deal con (fulfillment theo đơn): NV sale phụ trách deal gốc vẫn cần xem/sửa tasks của deal con */
@@ -1053,7 +1057,7 @@ async function resolveCrmReportScope(req, res) {
   const sacDash = scopedAdminCompanyId(req);
   if (sacDash) {
     effectiveCompanyId = sacDash;
-  } else if (!userIsAdmin(req.user?.role)) {
+  } else if (!userIsAdmin(req.user?.role) && !isPlatformAdmin({ role: req.user?.role })) {
     const cid = requireUserCompanyId(req, res);
     if (!cid) return null;
     effectiveCompanyId = cid;
@@ -1560,6 +1564,7 @@ r.get('/live-version', responseCache({ ttl: 5, scope: 'company', tags: ['crm:liv
 /** GET /crm/reports/staff-lead-deal — BC nhân viên: số lead/deal & giá trị pipeline (ước tính) / chốt / thua theo người phụ trách */
 const STAFF_LEAD_DEAL_REPORT_ROLES = new Set([
   'admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'region_admin',
+  'platform_admin', 'sales_admin',
 ]);
 
 const {
@@ -18213,5 +18218,8 @@ r.get('/lead-comments/index', async (req, res) => {
     res.status(500).json({ error: e.message || 'Lỗi server' });
   }
 });
+
+/** Cho AI Assistant — cùng logic GET /crm/reports/org-overview */
+r.computeOrgOverviewReportData = computeOrgOverviewReportData;
 
 module.exports = r;

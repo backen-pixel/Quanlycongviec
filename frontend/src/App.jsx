@@ -151,6 +151,7 @@ const DepartmentChat = lazyWithRetry(() => import('./pages/DepartmentChat'));
 const PDFSettingsPage = lazyWithRetry(() => import('./pages/PDFSettingsPage'));
 const MisaSettingsPage = lazyWithRetry(() => import('./pages/MisaSettingsPage'));
 const ApiKeysSettingsPage = lazyWithRetry(() => import('./pages/ApiKeysSettingsPage'));
+const McpReportApiPage = lazyWithRetry(() => import('./pages/McpReportApiPage'));
 const AiChatBotSettingsPage = lazyWithRetry(() => import('./pages/AiChatBotSettingsPage'));
 const CreateProject = lazyWithRetry(() => import('./pages/CreateProject'));
 const PermissionsPage = lazyWithRetry(() => import('./pages/PermissionsPage'));
@@ -186,6 +187,14 @@ const CalcImport3DPage = lazyWithRetry(() => import('./pages/calc/CalcImport3DPa
 const CalcHistoryPage = lazyWithRetry(() => import('./pages/calc/CalcHistoryPage'));
 const AccountingDashboard = lazyWithRetry(() => import('./pages/AccountingDashboard'));
 const AccountingLayout = lazyWithRetry(() => import('./layouts/AccountingLayout'));
+const PlatformLayout = lazyWithRetry(() => import('./layouts/PlatformLayout'));
+const PlatformDashboard = lazyWithRetry(() => import('./pages/platform/PlatformDashboard'));
+const PlatformTenantsPage = lazyWithRetry(() => import('./pages/platform/PlatformTenantsPage'));
+const PlatformTenantDetailPage = lazyWithRetry(() => import('./pages/platform/PlatformTenantDetailPage'));
+const PlatformStatsPage = lazyWithRetry(() => import('./pages/platform/PlatformStatsPage'));
+const PlatformUsersPage = lazyWithRetry(() => import('./pages/platform/PlatformUsersPage'));
+const PlatformTierFeaturesPage = lazyWithRetry(() => import('./pages/platform/PlatformTierFeaturesPage'));
+const PlatformBillingPage = lazyWithRetry(() => import('./pages/platform/PlatformBillingPage'));
 
 import { Settings } from 'lucide-react';
 
@@ -198,7 +207,7 @@ import MessengerDock from './components/MessengerDock';
 import DriveTransferPanel from './components/drive/DriveTransferPanel';
 import SupabaseSyncBubble from './components/SupabaseSyncBubble';
 import CopyToastHost from './components/CopyToastHost';
-import { RequireCrmElevated, RequireCrmSocialInbox, RequireExecutive } from './components/RequireRole';
+import { RequireCrmElevated, RequireCrmSocialInbox, RequireExecutive, RequirePlatformAdmin } from './components/RequireRole';
 import { useActivityRouteTracker } from './hooks/useActivityRouteTracker';
 import { isCrmSharedPath } from './lib/sidebarModuleContext';
 import ReleaseNoteLoginModal from './components/ReleaseNoteLoginModal';
@@ -352,6 +361,7 @@ export default function App() {
             <Route path="/management" element={<ManagementDashboard />} />
             <Route path="/management/deals/:leadId" element={<UnifiedDealPage />} />
             <Route path="/management/backup-sync" element={<ProductionBackupSyncPage />} />
+            <Route path="/management/mcp-api" element={<RequireCrmElevated><McpReportApiPage /></RequireCrmElevated>} />
             <Route path="/dashboard/classic" element={<DashboardClassic />} />
             <Route path="/social" element={<SocialFeedPage />} />
             <Route path="/social/u/:userId" element={<SocialProfilePage />} />
@@ -379,6 +389,15 @@ export default function App() {
             <Route path="/tools/voice-recordings" element={<VoiceRecordingsPage />} />
             <Route path="/workflow-settings" element={<WorkflowSettings />} />
             <Route path="/approval-rules" element={<ApprovalRulesPage />} />
+            <Route path="/platform" element={<RequirePlatformAdmin><PlatformLayout /></RequirePlatformAdmin>}>
+              <Route index element={<PlatformDashboard />} />
+              <Route path="tenants" element={<PlatformTenantsPage />} />
+              <Route path="tenants/:id" element={<PlatformTenantDetailPage />} />
+              <Route path="users" element={<PlatformUsersPage />} />
+              <Route path="billing" element={<PlatformBillingPage />} />
+              <Route path="tier-features" element={<PlatformTierFeaturesPage />} />
+              <Route path="stats" element={<PlatformStatsPage />} />
+            </Route>
             <Route path="/ecosystem" element={<EcosystemPage />} />
             <Route path="/ecosystem/modules" element={<EcosystemModulesPage />} />
             <Route path="/ecosystem-levels" element={<EcosystemLevelsPage />} />

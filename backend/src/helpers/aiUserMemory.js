@@ -376,13 +376,40 @@ async function getUserLearnedFacts(userId) {
     user_id: userId,
     count: facts.length,
     facts: facts.map((f) => ({
+      id: f.id,
       type: f.fact_type,
       fact: f.fact,
       confidence: f.confidence,
       source: f.source,
       hits: f.hits,
+      last_used_at: f.last_used_at,
+      updated_at: f.updated_at,
     })),
   };
+}
+
+/** Admin: liệt kê fact (có thể lọc user) */
+async function listAllUserFacts({ user_id: userId, limit = 150 } = {}) {
+  let q = supabase
+    .from('ai_chat_bot_user_facts')
+    .select('id, user_id, fact_type, fact, confidence, source, hits, last_used_at, created_at, updated_at, user:users(id, full_name, email)')
+    .order('updated_at', { ascending: false })
+    .limit(Math.min(limit, 300));
+  if (userId) q = q.eq('user_id', userId);
+  const { data, error } = await q;
+  if (error) {
+    if (/relation .* does not exist/i.test(error.message || '')) {
+      return { facts: [], total: 0, hint: 'Chạy migration 236_ai_chat_bot_user_facts.sql' };
+    }
+    throw new Error(error.message);
+  }
+  return { facts: data || [], total: (data || []).length };
+}
+
+async function deleteUserFact(factId) {
+  const { error } = await supabase.from('ai_chat_bot_user_facts').delete().eq('id', factId);
+  if (error) throw new Error(error.message);
+  return { ok: true };
 }
 
 module.exports = {
@@ -393,6 +420,8 @@ module.exports = {
   markFactsUsed,
   teachUserFact,
   getUserLearnedFacts,
+  listAllUserFacts,
+  deleteUserFact,
   buildActivityDigest,
   MIN_ACTIONS_TO_LEARN,
 };

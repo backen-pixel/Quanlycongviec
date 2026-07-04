@@ -34,6 +34,7 @@ function formatUserPayload(user, company_id, crm_region_ids) {
     phone: user.phone,
     department_id: user.department_id || null,
     company_id,
+    tenant_id: user.tenant_id || null,
     crm_region_ids,
     position: user.position || null,
   };
@@ -53,6 +54,7 @@ async function buildAuthSessionForUser(user, opts = {}) {
     role: user.role,
     fullName: user.full_name,
     company_id,
+    tenant_id: user.tenant_id || null,
     department_id: user.department_id || null,
     crm_region_ids,
   }, config.jwtSecret);

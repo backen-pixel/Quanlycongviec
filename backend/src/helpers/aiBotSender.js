@@ -307,6 +307,9 @@ async function buildChannelContextPayload(memberIds, opts = {}) {
   const todayVnStr = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date());
+  const tomorrowVnStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(new Date(`${todayVnStr}T12:00:00+07:00`).getTime() + 24 * 3600 * 1000));
   const startOfTodayIso = new Date(`${todayVnStr}T00:00:00+07:00`).toISOString();
 
   /* Khoảng thời gian cho SLA stage cảnh báo — mặc định CHỈ trong hôm nay.
@@ -382,6 +385,7 @@ async function buildChannelContextPayload(memberIds, opts = {}) {
     tasks_due_this_month: 'Task (CRM + chung) còn mở, deadline trong 30 ngày tới — dùng cho nhắc nhiệm vụ tháng.',
     leads_open: 'Lead/Deal đang mở do thành viên kênh phụ trách. Mỗi item có {id, code, title, assignee, stage, estimated_value, expected_close_date, link}.',
     leads_expired: 'Lead/Deal có expected_close_date < hôm nay nhưng CHƯA đóng — kèm link & days_overdue. Dùng cho cảnh báo lead hết hạn.',
+    leads_expiring_tomorrow: 'Lead/Deal có expected_close_date = NGÀY MAI (theo giờ VN), chưa đóng, chưa won/lost — kèm link. Dùng cho cảnh báo sắp hết hạn 1 ngày.',
     leads_sla_breached_today: 'Lead/Deal vừa vượt SLA STAGE trong KHOẢNG sla_window (mặc định hôm nay, có thể là hôm qua / 7 ngày gần đây tùy schedule.time_scope). Mỗi item: {code, title, type, assignee, stage, sla_days, hours_overdue, link, estimated_value, estimated_value_text}.',
     leads_sla_due_today: 'Lead/Deal SẮP vượt SLA STAGE trong khoảng còn lại tới cuối hôm nay (luôn là look-ahead trong ngày, không phụ thuộc sla_window). Mỗi item: {code, title, type, assignee, stage, sla_days, hours_left, link, estimated_value, estimated_value_text}.',
     sla_window: 'Thông tin khoảng thời gian dùng để tính leads_sla_breached_today + *_in_window: {scope, label, from, to}. label dùng cho header thân thiện (vd: "hôm nay" / "hôm qua" / "7 ngày gần đây" / "30 ngày gần đây").',
@@ -406,6 +410,7 @@ async function buildChannelContextPayload(memberIds, opts = {}) {
       tasks_due_this_month: [],
       leads_open: [],
       leads_expired: [],
+      leads_expiring_tomorrow: [],
       leads_sla_breached_today: [],
       leads_sla_due_today: [],
       sla_window: slaWindow,
@@ -587,6 +592,35 @@ async function buildChannelContextPayload(memberIds, opts = {}) {
     });
   } catch { /* ignore */ }
 
+  /* Lead/Deal SẮP HẾT HẠN: expected_close_date = ngày mai, chưa đóng */
+  let leadsExpiringTomorrow = [];
+  try {
+    const { data } = await supabase
+      .from('crm_leads')
+      .select('id, code, title, estimated_value, assigned_to, expected_close_date, type, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name, is_won, is_lost)')
+      .in('assigned_to', ids)
+      .is('actual_close_date', null)
+      .eq('expected_close_date', tomorrowVnStr)
+      .order('estimated_value', { ascending: false })
+      .limit(80);
+    (data || []).forEach((l) => {
+      if (l.stage?.is_won || l.stage?.is_lost) return;
+      leadsExpiringTomorrow.push({
+        id: l.id,
+        code: l.code,
+        title: l.title,
+        type: l.type || 'lead',
+        estimated_value: l.estimated_value,
+        estimated_value_text: fmtMoney(l.estimated_value),
+        assignee: nameMap.get(l.assigned_to) || '—',
+        stage: l.stage?.name || '—',
+        expected_close_date: l.expected_close_date,
+        days_until_due: 1,
+        link: leadDetailUrl(l.id),
+      });
+    });
+  } catch { /* ignore */ }
+
   /* SLA STAGE-BASED — lead/deal vừa quá SLA trong window (today/yesterday/last_7d…) + sắp quá SLA trong ngày */
   let slaBreachedToday = [];
   let slaDueToday = [];
@@ -745,6 +779,7 @@ async function buildChannelContextPayload(memberIds, opts = {}) {
     tasks_due_this_week: tasksWeek.slice(0, 30),
     tasks_due_this_month: tasksMonth.slice(0, 40),
     leads_expired: leadsExpired,
+    leads_expiring_tomorrow: leadsExpiringTomorrow,
     leads_sla_breached_today: slaBreachedToday,
     leads_sla_due_today: slaDueToday,
     sla_window: slaWindow,
@@ -850,12 +885,20 @@ function fallbackTemplate(playbook, channelInfo, payload, customPrompt) {
     const vip = payload.vip_leads || [];
     const cskh = payload.cskh_needed || [];
     const expired = payload.leads_expired || [];
+    const expiringTomorrow = payload.leads_expiring_tomorrow || [];
     const week = payload.tasks_due_this_week || [];
     const month = payload.tasks_due_this_month || [];
     lines.push(
-      `⚠️ Quá hạn: ${allOverdue.length} · Sắp hạn (≤72h): ${dueSoon.length} · 📅 Tuần: ${week.length} · 🗓 Tháng: ${month.length} · ✅ Done hôm nay: ${doneToday.length} · 💎 VIP: ${vip.length} · 🤝 CSKH: ${cskh.length} · 🔴 Lead hết hạn: ${expired.length} · ⏰ SLA hôm nay: ${(payload.leads_sla_breached_today?.length || 0) + (payload.leads_sla_due_today?.length || 0)}`,
+      `⚠️ Quá hạn: ${allOverdue.length} · Sắp hạn (≤72h): ${dueSoon.length} · 📅 Tuần: ${week.length} · 🗓 Tháng: ${month.length} · ✅ Done hôm nay: ${doneToday.length} · 💎 VIP: ${vip.length} · 🤝 CSKH: ${cskh.length} · 🔴 Lead hết hạn: ${expired.length} · ⏰ Sắp hết hạn ngày mai: ${expiringTomorrow.length} · SLA hôm nay: ${(payload.leads_sla_breached_today?.length || 0) + (payload.leads_sla_due_today?.length || 0)}`,
     );
 
+    if (expiringTomorrow.length) {
+      lines.push('', '⏰ Lead/Deal SẮP HẾT HẠN ngày mai:');
+      expiringTomorrow.slice(0, 8).forEach((l) => {
+        const linkSuffix = l.link ? ` → ${l.link}` : '';
+        lines.push(`- ${l.code || ''} ${l.title} · ${l.assignee} · ${l.estimated_value_text || 0}đ${linkSuffix}`);
+      });
+    }
     if (expired.length) {
       lines.push('', '🔴 Lead/Deal đã HẾT HẠN:');
       expired.slice(0, 8).forEach((l) => {
@@ -1195,6 +1238,106 @@ async function runScheduleSend(schedule, io) {
     }
   }
 
+  /* Báo cáo tự động — format sẵn, không qua OpenAI */
+  const dsAuto = playbook.data_source || '';
+  if (dsAuto === 'reminder') {
+    try {
+      const { formatReminderMessage } = require('./aiBotReminder');
+      const content = formatReminderMessage(schedule);
+      let inserted;
+      if (schedule.channel_type === 'department') {
+        inserted = await insertDepartmentBotMessage(schedule.channel_id, content, io, channelInfo);
+      } else {
+        inserted = await insertGroupBotMessage(schedule.channel_id, content, io, channelInfo);
+      }
+      return {
+        status: 'ok',
+        message_id: inserted?.id || null,
+        preview: content.slice(0, 240),
+        playbook_code: playbook.code,
+      };
+    } catch (e) {
+      return { status: 'error', error: e.message };
+    }
+  }
+  if (dsAuto === 'company_daily' || dsAuto === 'org_overview') {
+    try {
+      let content;
+      if (dsAuto === 'company_daily') {
+        const { formatCompanyReportText } = require('./aiReportTools');
+        content = await formatCompanyReportText({
+          company_id: schedule.company_whitelist?.[0] || undefined,
+          department_id: schedule.department_whitelist?.[0] || undefined,
+          time_scope: schedule.time_scope || 'today',
+          schedule_id: schedule.id,
+        });
+      } else {
+        const deptId = schedule.department_whitelist?.[0] || undefined;
+        if (deptId) {
+          const { formatOrgEmployeeTabReportText } = require('./orgOverviewReportAi');
+          const orgScope = ['today', 'yesterday', 'last_7d', 'last_30d', 'this_month', 'last_month'].includes(schedule.time_scope)
+            ? schedule.time_scope
+            : 'today';
+          const r = await formatOrgEmployeeTabReportText({
+            company_id: schedule.company_whitelist?.[0] || undefined,
+            department_id: deptId,
+            time_scope: orgScope,
+            ctx_user_id: schedule.created_by,
+          });
+          content = r.text;
+        } else {
+          const { formatOrgOverviewReportText } = require('./orgOverviewReportAi');
+          const orgScope = ['today', 'yesterday', 'last_7d', 'last_30d', 'this_month', 'last_month'].includes(schedule.time_scope)
+            ? schedule.time_scope
+            : 'today';
+          const r = await formatOrgOverviewReportText({
+            company_id: schedule.company_whitelist?.[0] || undefined,
+            time_scope: orgScope,
+            ctx_user_id: schedule.created_by,
+          });
+          content = r.text;
+        }
+      }
+      let inserted;
+      if (schedule.channel_type === 'department') {
+        inserted = await insertDepartmentBotMessage(schedule.channel_id, content, io, channelInfo);
+      } else {
+        inserted = await insertGroupBotMessage(schedule.channel_id, content, io, channelInfo);
+      }
+
+      const broadcastIds = Array.isArray(schedule.recipient_user_ids)
+        && schedule.recipient_user_ids.length
+        && !schedule.personal_scope_only
+        ? schedule.recipient_user_ids.filter(Boolean)
+        : [];
+      if (broadcastIds.length) {
+        const {
+          broadcastReportCopy,
+          getPrimaryChannelRecipientUserId,
+        } = require('./aiBotBroadcast');
+        const excludeUid = await getPrimaryChannelRecipientUserId(schedule);
+        const bc = await broadcastReportCopy(content, broadcastIds, io, { excludeUserId: excludeUid });
+        return {
+          status: 'ok',
+          message_id: inserted?.id || null,
+          preview: content.slice(0, 240),
+          playbook_code: playbook.code,
+          broadcast: bc,
+          message: bc.ok ? `Đã gửi kênh chính + ${bc.ok} DM copy` : undefined,
+        };
+      }
+
+      return {
+        status: 'ok',
+        message_id: inserted?.id || null,
+        preview: content.slice(0, 240),
+        playbook_code: playbook.code,
+      };
+    } catch (e) {
+      return { status: 'error', error: e.message };
+    }
+  }
+
   const memberIds = await loadChannelMemberIds(schedule.channel_type, schedule.channel_id);
 
   let payload;
@@ -1272,10 +1415,31 @@ async function runScheduleSend(schedule, io) {
   }
 }
 
+/** Gửi tin cảnh báo vào kênh khi lịch bot chạy lỗi (user thấy ngay thay vì im lặng). */
+async function notifyScheduleRunFailure(schedule, errorText, io) {
+  if (!schedule?.channel_type || !schedule?.channel_id || !errorText) return;
+  const channelInfo = await loadChannelInfo(schedule.channel_type, schedule.channel_id);
+  if (!channelInfo) return;
+
+  const msg = [
+    '⚠️ *Lịch bot không gửi được báo cáo*',
+    `📌 ${schedule.title || 'Lịch bot'}`,
+    `❌ ${String(errorText).slice(0, 400)}`,
+    '_Thử lại: Cài đặt → AI Chat Bot → bấm «Gửi thử» trên lịch này._',
+  ].join('\n');
+
+  if (schedule.channel_type === 'department') {
+    await insertDepartmentBotMessage(schedule.channel_id, msg, io, channelInfo);
+  } else if (schedule.channel_type === 'group') {
+    await insertGroupBotMessage(schedule.channel_id, msg, io, channelInfo);
+  }
+}
+
 module.exports = {
   AI_BOT_USER_ID,
   AI_BOT_DISPLAY_NAME,
   runScheduleSend,
+  notifyScheduleRunFailure,
   resolvePlaybookForSchedule,
   // exported for testing / debugging:
   buildChannelContextPayload,
@@ -1285,4 +1449,5 @@ module.exports = {
   loadChannelInfo,
   insertDepartmentBotMessage,
   insertGroupBotMessage,
+  ensureDmGroupWithBot,
 };

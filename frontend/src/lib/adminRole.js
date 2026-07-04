@@ -19,9 +19,13 @@ export function hasCompanyId(user) {
   return user?.company_id != null && String(user.company_id).trim() !== '';
 }
 
+export function isPlatformAdmin(user) {
+  return normalizeRole(user?.role) === 'platform_admin';
+}
+
 export function isAdminLike(user) {
   const r = normalizeRole(user?.role);
-  return r === 'admin' || r === 'sales_admin';
+  return r === 'admin' || r === 'sales_admin' || r === 'platform_admin';
 }
 
 /** Chỉ true với role `admin` (hệ thống hoặc admin công ty). Không bao gồm sales_admin, manager, module-admin. */

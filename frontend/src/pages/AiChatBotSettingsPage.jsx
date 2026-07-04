@@ -2,9 +2,10 @@
  * AiChatBotSettingsPage
  * Trang admin cấu hình "🤖 AI Assistant" trong chat phòng ban / nhóm.
  *
- * 2 tab:
+ * 3 tab:
  *   - "Lịch chạy" (schedules)   : khi nào bot đăng tin, vào kênh nào, dùng mẫu nội dung nào
  *   - "Mẫu nội dung AI" (playbooks): thư viện các "luồng" AI sẽ nói (admin tạo tuỳ ý + bật/tắt)
+ *   - "Kỹ năng & Trí nhớ"       : kỹ năng/tự động hóa user dạy + fact trí nhớ học từ UI/chat
  *
  * Mỗi schedule trỏ vào 1 playbook → muốn đổi cách AI nói, chỉ cần sửa playbook
  * (không cần đụng vào từng lịch).
@@ -35,6 +36,9 @@ import {
   Lock,
   Settings as SettingsIcon,
   User as UserIcon,
+  Brain,
+  BookOpen,
+  RefreshCw,
 } from 'lucide-react';
 
 const DATA_SOURCES = [
@@ -96,9 +100,28 @@ const EMPTY_PLAYBOOK = {
   enabled: true,
 };
 
+function formatSlotEntry(s) {
+  if (s == null) return null;
+  if (typeof s === 'string') {
+    const t = s.trim();
+    return t || null;
+  }
+  if (typeof s === 'object' && Number.isFinite(parseInt(s.h, 10))) {
+    return `${String(parseInt(s.h, 10)).padStart(2, '0')}:${String(parseInt(s.m, 10) || 0).padStart(2, '0')}`;
+  }
+  return null;
+}
+
 function formatSlots(slots) {
   if (!Array.isArray(slots) || !slots.length) return '—';
-  return slots.map((s) => `${String(s.h).padStart(2, '0')}:${String(s.m).padStart(2, '0')}`).join(', ');
+  const parts = slots.map(formatSlotEntry).filter(Boolean);
+  return parts.length ? parts.join(', ') : '—';
+}
+
+function formatRunTimesInput(runTimes) {
+  if (!runTimes) return '';
+  if (Array.isArray(runTimes)) return formatSlots(runTimes);
+  return String(runTimes);
 }
 
 function formatWeekdays(weekdays) {
@@ -107,11 +130,12 @@ function formatWeekdays(weekdays) {
 }
 
 export default function AiChatBotSettingsPage() {
-  const [tab, setTab] = useState('schedules'); // 'schedules' | 'playbooks'
+  const [tab, setTab] = useState('schedules'); // 'schedules' | 'playbooks' | 'skills'
   const [bot, setBot] = useState(null);
   const [channels, setChannels] = useState({ departments: [], groups: [] });
   const [schedules, setSchedules] = useState([]);
   const [playbooks, setPlaybooks] = useState([]);
+  const [skillsCount, setSkillsCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
   const [editingSchedule, setEditingSchedule] = useState(null);
@@ -141,6 +165,12 @@ export default function AiChatBotSettingsPage() {
       setSchedules(schRes.data?.schedules || []);
       setPlaybooks(pbRes.data?.playbooks || []);
       setChannelFilters(filRes.data || { divisions: [], companies: [], regions: [] });
+      try {
+        const sk = await api.get('/ai-chat-bot/skills');
+        setSkillsCount(sk.data?.total ?? (sk.data?.skills?.length || 0));
+      } catch {
+        setSkillsCount(0);
+      }
     } catch (e) {
       showToast(e?.response?.data?.error || 'Không tải được dữ liệu', 'err');
     } finally {
@@ -211,6 +241,15 @@ export default function AiChatBotSettingsPage() {
           <Sparkles className="h-4 w-4" /> Mẫu nội dung AI
           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-200 text-gray-600">{playbooks.length}</span>
         </button>
+        <button
+          onClick={() => setTab('skills')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium cursor-pointer transition-colors flex items-center gap-2 ${
+            tab === 'skills' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+          }`}
+        >
+          <Brain className="h-4 w-4" /> Kỹ năng & Trí nhớ
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-200 text-gray-600">{skillsCount}</span>
+        </button>
       </div>
 
       {loading ? (
@@ -232,7 +271,7 @@ export default function AiChatBotSettingsPage() {
           setRunsModal={setRunsModal}
           setTab={setTab}
         />
-      ) : (
+      ) : tab === 'playbooks' ? (
         <PlaybooksTab
           playbooks={playbooks}
           busyId={busyId}
@@ -241,6 +280,15 @@ export default function AiChatBotSettingsPage() {
           showToast={showToast}
           editing={editingPlaybook}
           setEditing={setEditingPlaybook}
+        />
+      ) : (
+        <SkillsMemoryTab
+          schedules={schedules}
+          busyId={busyId}
+          setBusyId={setBusyId}
+          onReload={reload}
+          showToast={showToast}
+          setSkillsCount={setSkillsCount}
         />
       )}
 
@@ -2281,6 +2329,631 @@ Cấu trúc:
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════
+   TAB 3: SKILLS & MEMORY
+   ════════════════════════════════════════════════════════ */
+
+const SKILL_TYPES = [
+  { id: 'scheduled_report', label: 'Lịch báo cáo tự động' },
+  { id: 'preference', label: 'Sở thích' },
+  { id: 'instruction', label: 'Hướng dẫn / quy tắc' },
+];
+
+const FACT_TYPES = [
+  { id: 'habit', label: 'Thói quen', color: 'bg-blue-100 text-blue-700' },
+  { id: 'preference', label: 'Sở thích', color: 'bg-purple-100 text-purple-700' },
+  { id: 'context', label: 'Ngữ cảnh', color: 'bg-gray-100 text-gray-700' },
+  { id: 'correction', label: 'User sửa bot', color: 'bg-amber-100 text-amber-800' },
+  { id: 'automation', label: 'Tự động hóa', color: 'bg-indigo-100 text-indigo-700' },
+];
+
+const EMPTY_SKILL = {
+  user_id: '',
+  skill_type: 'instruction',
+  title: '',
+  summary: '',
+  instruction: '',
+  report_type: 'org_overview',
+  company_name: '',
+  department_name: '',
+  run_times: '',
+  time_scope: 'today',
+  schedule_id: '',
+  enabled: true,
+};
+
+const EMPTY_FACT = {
+  user_id: '',
+  fact_type: 'preference',
+  fact: '',
+};
+
+function factTypeBadge(type) {
+  return FACT_TYPES.find((t) => t.id === type) || { label: type, color: 'bg-gray-100 text-gray-600' };
+}
+
+function SkillsMemoryTab({ schedules, busyId, setBusyId, onReload, showToast, setSkillsCount }) {
+  const [subTab, setSubTab] = useState('skills'); // skills | memory | workshop | flows | library
+  const [skills, setSkills] = useState([]);
+  const [facts, setFacts] = useState([]);
+  const [proposals, setProposals] = useState([]);
+  const [flows, setFlows] = useState([]);
+  const [library, setLibrary] = useState({ skills: [], files: [] });
+  const [libraryFile, setLibraryFile] = useState('builtin.json');
+  const [libraryContent, setLibraryContent] = useState('');
+  const [libraryDirty, setLibraryDirty] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filterUserId, setFilterUserId] = useState('');
+  const [editingSkill, setEditingSkill] = useState(null);
+  const [addingFact, setAddingFact] = useState(false);
+  const [factForm, setFactForm] = useState({ ...EMPTY_FACT });
+  const [rebuilding, setRebuilding] = useState(false);
+  const [migrationHint, setMigrationHint] = useState(null);
+
+  const loadData = useCallback(async () => {
+    try {
+      setLoading(true);
+      const q = filterUserId ? `?user_id=${filterUserId}` : '';
+      const [skRes, memRes, uRes, propRes, flowRes, libRes] = await Promise.all([
+        api.get(`/ai-chat-bot/skills${q}`),
+        api.get(`/ai-chat-bot/memory${q}`),
+        api.get('/ai-chat-bot/users'),
+        api.get('/ai-chat-bot/proposals?status=pending').catch(() => ({ data: { proposals: [] } })),
+        api.get('/ai-chat-bot/task-flows?status=waiting_user').catch(() => ({ data: { flows: [] } })),
+        api.get('/ai-chat-bot/skills/library').catch(() => ({ data: { skills: [], files: [] } })),
+      ]);
+      setSkills(skRes.data?.skills || []);
+      setFacts(memRes.data?.facts || []);
+      setProposals(propRes.data?.proposals || []);
+      setFlows(flowRes.data?.flows || []);
+      setLibrary(libRes.data || { skills: [], files: [] });
+      setSkillsCount(skRes.data?.total ?? (skRes.data?.skills?.length || 0));
+      setMigrationHint(skRes.data?.hint || memRes.data?.hint || null);
+      setUsers(uRes.data?.users || []);
+    } catch (e) {
+      showToast(e?.response?.data?.error || 'Không tải kỹ năng/trí nhớ', 'err');
+    } finally {
+      setLoading(false);
+    }
+  }, [filterUserId, showToast, setSkillsCount]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const onSaveSkill = async () => {
+    if (!editingSkill?.user_id || !editingSkill?.title?.trim()) {
+      showToast('Chọn nhân viên và nhập tiêu đề', 'err');
+      return;
+    }
+    setBusyId('skill-save');
+    try {
+      const runTimes = editingSkill.run_times
+        ? String(editingSkill.run_times).split(/[,;]+/).map((s) => s.trim()).filter(Boolean)
+        : null;
+      const payload = {
+        user_id: editingSkill.user_id,
+        skill_type: editingSkill.skill_type,
+        title: editingSkill.title.trim(),
+        summary: editingSkill.summary || null,
+        instruction: editingSkill.instruction || editingSkill.title,
+        report_type: editingSkill.report_type || null,
+        company_name: editingSkill.company_name || null,
+        department_name: editingSkill.department_name || null,
+        run_times: runTimes,
+        time_scope: editingSkill.time_scope || 'today',
+        schedule_id: editingSkill.schedule_id || null,
+        enabled: editingSkill.enabled !== false,
+        source: 'admin_ui',
+      };
+      if (editingSkill.id) {
+        await api.put(`/ai-chat-bot/skills/${editingSkill.id}`, payload);
+        showToast('Đã cập nhật kỹ năng');
+      } else {
+        await api.post('/ai-chat-bot/skills', payload);
+        showToast('Đã tạo kỹ năng');
+      }
+      setEditingSkill(null);
+      loadData();
+      onReload();
+    } catch (e) {
+      showToast(e?.response?.data?.error || 'Lưu thất bại', 'err');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const onDeleteSkill = async (id) => {
+    if (!window.confirm('Xóa kỹ năng này?')) return;
+    setBusyId(id);
+    try {
+      await api.delete(`/ai-chat-bot/skills/${id}`);
+      showToast('Đã xóa kỹ năng');
+      loadData();
+    } catch (e) {
+      showToast(e?.response?.data?.error || 'Xóa thất bại', 'err');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const onToggleSkill = async (sk) => {
+    setBusyId(sk.id);
+    try {
+      await api.patch(`/ai-chat-bot/skills/${sk.id}/toggle`, { enabled: !sk.enabled });
+      loadData();
+    } catch (e) {
+      showToast(e?.response?.data?.error || 'Lỗi', 'err');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const onSaveFact = async () => {
+    if (!factForm.user_id || !factForm.fact?.trim()) {
+      showToast('Chọn NV và nhập nội dung trí nhớ', 'err');
+      return;
+    }
+    setBusyId('fact-save');
+    try {
+      await api.post('/ai-chat-bot/memory/facts', factForm);
+      showToast('Đã thêm trí nhớ');
+      setAddingFact(false);
+      setFactForm({ ...EMPTY_FACT });
+      loadData();
+    } catch (e) {
+      showToast(e?.response?.data?.error || 'Lưu thất bại', 'err');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const onDeleteFact = async (id) => {
+    if (!window.confirm('Xóa trí nhớ này?')) return;
+    setBusyId(id);
+    try {
+      await api.delete(`/ai-chat-bot/memory/facts/${id}`);
+      showToast('Đã xóa');
+      loadData();
+    } catch (e) {
+      showToast(e?.response?.data?.error || 'Lỗi', 'err');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const onRebuildMemory = async (userId = null) => {
+    setRebuilding(true);
+    try {
+      const res = userId
+        ? await api.post(`/ai-chat-bot/memory/rebuild/${userId}`, { days: 7, use_gpt: true })
+        : await api.post('/ai-chat-bot/memory/rebuild', { days: 7, use_gpt: true });
+      const msg = userId
+        ? `Rebuild xong — ${res.data?.facts_count ?? 0} fact`
+        : `Rebuild ${res.data?.processed ?? 0} NV (${res.data?.ok ?? 0} OK)`;
+      showToast(msg);
+      loadData();
+    } catch (e) {
+      showToast(e?.response?.data?.error || 'Rebuild thất bại', 'err');
+    } finally {
+      setRebuilding(false);
+    }
+  };
+
+  const onApproveProposal = async (id) => {
+    setBusyId(id);
+    try {
+      await api.post(`/ai-chat-bot/proposals/${id}/approve`, {});
+      showToast('Đã duyệt — lịch bot đã tạo');
+      loadData();
+      onReload();
+    } catch (e) {
+      showToast(e?.response?.data?.error || 'Duyệt thất bại', 'err');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const onRejectProposal = async (id) => {
+    const note = window.prompt('Lý do từ chối (tuỳ chọn):') || '';
+    setBusyId(id);
+    try {
+      await api.post(`/ai-chat-bot/proposals/${id}/reject`, { note });
+      showToast('Đã từ chối đề xuất');
+      loadData();
+    } catch (e) {
+      showToast(e?.response?.data?.error || 'Lỗi', 'err');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const loadLibraryFile = async (name) => {
+    try {
+      const res = await api.get(`/ai-chat-bot/skills/library/file/${encodeURIComponent(name)}`);
+      setLibraryFile(name);
+      setLibraryContent(res.data?.content || '');
+      setLibraryDirty(false);
+    } catch (e) {
+      showToast(e?.response?.data?.error || 'Không đọc được file', 'err');
+    }
+  };
+
+  const onSaveLibraryFile = async () => {
+    setBusyId('lib-save');
+    try {
+      await api.put(`/ai-chat-bot/skills/library/file/${encodeURIComponent(libraryFile)}`, { content: libraryContent });
+      await api.post('/ai-chat-bot/skills/library/reload');
+      showToast('Đã lưu & reload thư viện JSON');
+      setLibraryDirty(false);
+      loadData();
+    } catch (e) {
+      showToast(e?.response?.data?.error || 'Lưu JSON thất bại', 'err');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const openEditSkill = (sk) => {
+    const cfg = sk.config || {};
+    setEditingSkill({
+      ...EMPTY_SKILL,
+      ...sk,
+      instruction: cfg.instruction || sk.summary || '',
+      report_type: cfg.report_type || 'org_overview',
+      company_name: cfg.company_name || '',
+      department_name: cfg.department_name || '',
+      run_times: formatRunTimesInput(cfg.run_times),
+      time_scope: cfg.time_scope || 'today',
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="px-4 py-3 rounded-xl bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-100 text-sm text-indigo-900">
+        <Brain className="h-4 w-4 inline mr-1.5 -mt-0.5" />
+        Bot <strong>học</strong> từ chat + hành vi UI (cron đêm), lưu <strong>kỹ năng</strong> (lịch/tự động hóa) và{' '}
+        <strong>trí nhớ</strong> (sở thích, thói quen). User có thể dạy qua chat hoặc admin quản lý tại đây.
+      </div>
+
+      {migrationHint && (
+        <div className="px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-800 flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          {migrationHint}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg">
+          <button
+            type="button"
+            onClick={() => setSubTab('skills')}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer ${subTab === 'skills' ? 'bg-white shadow text-indigo-700' : 'text-gray-600'}`}
+          >
+            Kỹ năng ({skills.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setSubTab('memory')}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer ${subTab === 'memory' ? 'bg-white shadow text-indigo-700' : 'text-gray-600'}`}
+          >
+            Trí nhớ ({facts.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setSubTab('workshop')}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer ${subTab === 'workshop' ? 'bg-white shadow text-indigo-700' : 'text-gray-600'}`}
+          >
+            Workshop ({proposals.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setSubTab('flows')}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer ${subTab === 'flows' ? 'bg-white shadow text-indigo-700' : 'text-gray-600'}`}
+          >
+            Task Flow ({flows.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => { setSubTab('library'); if (!libraryContent && (library.files?.[0] || libraryFile)) loadLibraryFile(library.files?.[0] || libraryFile); }}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer ${subTab === 'library' ? 'bg-white shadow text-indigo-700' : 'text-gray-600'}`}
+          >
+            Thư viện JSON
+          </button>
+        </div>
+        <select
+          value={filterUserId}
+          onChange={(e) => setFilterUserId(e.target.value)}
+          className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white"
+        >
+          <option value="">Tất cả nhân viên</option>
+          {users.map((u) => (
+            <option key={u.id} value={u.id}>{u.full_name}{u.department_name ? ` · ${u.department_name}` : ''}</option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={loadData}
+          className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer flex items-center gap-1"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> Làm mới
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-indigo-500" /></div>
+      ) : subTab === 'skills' ? (
+        <>
+          <div className="flex justify-between items-center">
+            <p className="text-sm text-gray-600">Kỹ năng do user dạy qua chat hoặc admin tạo — có thể gắn lịch bot.</p>
+            <button
+              type="button"
+              onClick={() => setEditingSkill({ ...EMPTY_SKILL, user_id: filterUserId || '' })}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 cursor-pointer"
+            >
+              <Plus className="h-4 w-4" /> Thêm kỹ năng
+            </button>
+          </div>
+          {skills.length === 0 ? (
+            <EmptyState icon={Brain} title="Chưa có kỹ năng" subtitle="User dạy bot qua chat hoặc bấm Thêm kỹ năng" />
+          ) : (
+            <div className="grid gap-3">
+              {skills.map((sk) => (
+                <div key={sk.id} className={`p-4 rounded-xl border bg-white ${sk.enabled ? 'border-gray-200' : 'border-gray-100 opacity-60'}`}>
+                  <div className="flex items-start gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-gray-900">{sk.title}</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                          {SKILL_TYPES.find((t) => t.id === sk.skill_type)?.label || sk.skill_type}
+                        </span>
+                        {!sk.enabled && <span className="text-[10px] text-gray-400">(tắt)</span>}
+                      </div>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        👤 {sk.user?.full_name || '—'} · {sk.source === 'user_chat' ? '💬 Chat' : '🛠 Admin'}
+                        {sk.schedule?.title && ` · 📅 ${sk.schedule.title}`}
+                      </p>
+                      {sk.summary && <p className="text-sm text-gray-600 mt-1 line-clamp-2">{sk.summary}</p>}
+                      {sk.config?.run_times && (
+                        <p className="text-xs text-gray-500 mt-1">⏰ {formatSlots(sk.config.run_times)}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button type="button" onClick={() => onToggleSkill(sk)} disabled={busyId === sk.id} className="p-2 rounded-lg hover:bg-gray-100 cursor-pointer" title={sk.enabled ? 'Tắt' : 'Bật'}>
+                        {sk.enabled ? <Power className="h-4 w-4 text-emerald-600" /> : <PowerOff className="h-4 w-4 text-gray-400" />}
+                      </button>
+                      <button type="button" onClick={() => openEditSkill(sk)} className="p-2 rounded-lg hover:bg-gray-100 cursor-pointer"><Pencil className="h-4 w-4 text-gray-500" /></button>
+                      <button type="button" onClick={() => onDeleteSkill(sk.id)} disabled={busyId === sk.id} className="p-2 rounded-lg hover:bg-red-50 cursor-pointer"><Trash2 className="h-4 w-4 text-red-500" /></button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      ) : subTab === 'workshop' ? (
+        <>
+          <p className="text-sm text-gray-600">Skill Workshop — đề xuất từ chat chờ admin duyệt (OpenClaw-style).</p>
+          {proposals.length === 0 ? (
+            <EmptyState icon={Brain} title="Không có đề xuất pending" subtitle="User/admin gửi yêu cầu lịch bot qua chat" />
+          ) : (
+            <div className="grid gap-3">
+              {proposals.map((p) => (
+                <div key={p.id} className="p-4 rounded-xl border border-amber-200 bg-amber-50/50">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-gray-900">{p.title}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        👤 {p.proposer?.full_name || '—'} · {p.proposal_type} · <code className="text-[10px]">{p.id.slice(0, 8)}</code>
+                      </p>
+                      {p.summary && <p className="text-sm text-gray-600 mt-1">{p.summary}</p>}
+                      {p.config?.run_times && (
+                        <p className="text-xs text-gray-500 mt-1">⏰ {formatSlots(p.config?.run_times)}</p>
+                      )}
+                    </div>
+                    <div className="flex gap-1 shrink-0">
+                      <button type="button" onClick={() => onApproveProposal(p.id)} disabled={busyId === p.id} className="px-3 py-1.5 text-xs rounded-lg bg-emerald-600 text-white cursor-pointer">Duyệt</button>
+                      <button type="button" onClick={() => onRejectProposal(p.id)} disabled={busyId === p.id} className="px-3 py-1.5 text-xs rounded-lg border border-red-200 text-red-600 cursor-pointer">Từ chối</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      ) : subTab === 'flows' ? (
+        <>
+          <p className="text-sm text-gray-600">Task Flow — workflow đang chờ xác nhận (OK/huỷ trong chat).</p>
+          {flows.length === 0 ? (
+            <EmptyState icon={RefreshCw} title="Không có flow đang chờ" subtitle="Flow tạo khi admin preview lịch bot" />
+          ) : (
+            <div className="bg-white rounded-xl border overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-left text-xs text-gray-500">
+                  <tr>
+                    <th className="px-4 py-2">NV</th>
+                    <th className="px-4 py-2">Loại</th>
+                    <th className="px-4 py-2">Bước</th>
+                    <th className="px-4 py-2">Hết hạn</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {flows.map((f) => (
+                    <tr key={f.id}>
+                      <td className="px-4 py-2">{f.user?.full_name || f.user_id?.slice(0, 8)}</td>
+                      <td className="px-4 py-2">{f.flow_type}</td>
+                      <td className="px-4 py-2">{f.current_step} · {f.status}</td>
+                      <td className="px-4 py-2 text-xs text-gray-500">{f.expires_at ? new Date(f.expires_at).toLocaleString('vi-VN') : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      ) : subTab === 'library' ? (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={libraryFile}
+              onChange={(e) => loadLibraryFile(e.target.value)}
+              className="text-sm border rounded-lg px-3 py-1.5"
+            >
+              {(library.files || ['builtin.json']).map((f) => (
+                <option key={f} value={f}>{f}</option>
+              ))}
+            </select>
+            <button type="button" onClick={onSaveLibraryFile} disabled={!libraryDirty || busyId === 'lib-save'} className="text-xs px-3 py-2 rounded-lg bg-indigo-600 text-white cursor-pointer disabled:opacity-50">
+              {busyId === 'lib-save' ? 'Đang lưu…' : 'Lưu & reload'}
+            </button>
+          </div>
+          <p className="text-xs text-gray-500">Skill JSON (OpenClaw-style). Chat: <code>/skill [mã]</code></p>
+          <textarea
+            value={libraryContent}
+            onChange={(e) => { setLibraryContent(e.target.value); setLibraryDirty(true); }}
+            rows={18}
+            className="w-full font-mono text-xs border rounded-xl p-3 bg-gray-50"
+            spellCheck={false}
+          />
+          <div className="grid gap-2 mt-2">
+            {(library.skills || []).map((s) => (
+              <div key={s.code} className="text-xs px-3 py-2 rounded-lg bg-white border">
+                <strong>{s.code}</strong> — {s.title}
+                {s.when_to_use && <span className="text-gray-500"> · {s.when_to_use}</span>}
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="flex flex-wrap justify-between items-center gap-2">
+            <p className="text-sm text-gray-600 flex items-center gap-1">
+              <BookOpen className="h-4 w-4" /> Trí nhớ inject vào prompt mỗi lần chat — học từ activity log + user dạy.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={rebuilding}
+                onClick={() => onRebuildMemory(filterUserId || null)}
+                className="text-xs px-3 py-2 rounded-xl border border-indigo-200 text-indigo-700 hover:bg-indigo-50 cursor-pointer flex items-center gap-1 disabled:opacity-50"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${rebuilding ? 'animate-spin' : ''}`} />
+                {filterUserId ? 'Học lại NV này' : 'Học lại tất cả (7 ngày)'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setAddingFact(true); setFactForm({ ...EMPTY_FACT, user_id: filterUserId || '' }); }}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 cursor-pointer"
+              >
+                <Plus className="h-4 w-4" /> Dạy bot
+              </button>
+            </div>
+          </div>
+          {facts.length === 0 ? (
+            <EmptyState icon={BookOpen} title="Chưa có trí nhớ" subtitle="Chạy Học lại hoặc thêm fact thủ công / dạy qua chat" />
+          ) : (
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-left text-xs text-gray-500">
+                  <tr>
+                    <th className="px-4 py-2 font-medium">NV</th>
+                    <th className="px-4 py-2 font-medium">Loại</th>
+                    <th className="px-4 py-2 font-medium">Nội dung</th>
+                    <th className="px-4 py-2 font-medium">Nguồn</th>
+                    <th className="px-4 py-2 font-medium w-20" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {facts.map((f) => {
+                    const badge = factTypeBadge(f.fact_type);
+                    return (
+                      <tr key={f.id} className="hover:bg-gray-50/50">
+                        <td className="px-4 py-2.5 text-gray-800 whitespace-nowrap">{f.user?.full_name || '—'}</td>
+                        <td className="px-4 py-2.5">
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full ${badge.color}`}>{badge.label}</span>
+                        </td>
+                        <td className="px-4 py-2.5 text-gray-700 max-w-md">{f.fact}</td>
+                        <td className="px-4 py-2.5 text-xs text-gray-400">
+                          {f.source}
+                          {f.hits > 0 && ` · ${f.hits}×`}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <button type="button" onClick={() => onDeleteFact(f.id)} disabled={busyId === f.id} className="p-1.5 rounded hover:bg-red-50 cursor-pointer">
+                            <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      {editingSkill && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setEditingSkill(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-bold text-gray-900">{editingSkill.id ? 'Sửa kỹ năng' : 'Thêm kỹ năng'}</h3>
+            <label className="block text-xs font-medium text-gray-600">Nhân viên *</label>
+            <select value={editingSkill.user_id} onChange={(e) => setEditingSkill({ ...editingSkill, user_id: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm">
+              <option value="">— Chọn —</option>
+              {users.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+            </select>
+            <label className="block text-xs font-medium text-gray-600">Loại</label>
+            <select value={editingSkill.skill_type} onChange={(e) => setEditingSkill({ ...editingSkill, skill_type: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm">
+              {SKILL_TYPES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+            </select>
+            <label className="block text-xs font-medium text-gray-600">Tiêu đề *</label>
+            <input value={editingSkill.title} onChange={(e) => setEditingSkill({ ...editingSkill, title: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="vd: BC doanh thu KD 8h/12h/18h" />
+            <label className="block text-xs font-medium text-gray-600">Hướng dẫn / mô tả</label>
+            <textarea value={editingSkill.instruction} onChange={(e) => setEditingSkill({ ...editingSkill, instruction: e.target.value })} rows={3} className="w-full border rounded-lg px-3 py-2 text-sm" />
+            {editingSkill.skill_type === 'scheduled_report' && (
+              <>
+                <label className="block text-xs font-medium text-gray-600">Giờ gửi (cách nhau bởi dấu phẩy)</label>
+                <input value={editingSkill.run_times} onChange={(e) => setEditingSkill({ ...editingSkill, run_times: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="08:00, 12:00, 18:00" />
+                <label className="block text-xs font-medium text-gray-600">Gắn lịch bot (tuỳ chọn)</label>
+                <select value={editingSkill.schedule_id || ''} onChange={(e) => setEditingSkill({ ...editingSkill, schedule_id: e.target.value || null })} className="w-full border rounded-lg px-3 py-2 text-sm">
+                  <option value="">— Không gắn —</option>
+                  {schedules.map((s) => <option key={s.id} value={s.id}>{s.title}</option>)}
+                </select>
+              </>
+            )}
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setEditingSkill(null)} className="px-4 py-2 text-sm rounded-lg border cursor-pointer">Huỷ</button>
+              <button type="button" onClick={onSaveSkill} disabled={busyId === 'skill-save'} className="px-4 py-2 text-sm rounded-lg bg-indigo-600 text-white cursor-pointer disabled:opacity-50">
+                {busyId === 'skill-save' ? 'Đang lưu…' : 'Lưu'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {addingFact && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setAddingFact(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-bold text-gray-900">Dạy bot (trí nhớ mới)</h3>
+            <select value={factForm.user_id} onChange={(e) => setFactForm({ ...factForm, user_id: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm">
+              <option value="">— Chọn NV —</option>
+              {users.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+            </select>
+            <select value={factForm.fact_type} onChange={(e) => setFactForm({ ...factForm, fact_type: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm">
+              {FACT_TYPES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+            </select>
+            <textarea value={factForm.fact} onChange={(e) => setFactForm({ ...factForm, fact: e.target.value })} rows={4} className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="vd: Thích báo cáo Phúc Đạt phòng KD, gọn dạng bảng" />
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setAddingFact(false)} className="px-4 py-2 text-sm rounded-lg border cursor-pointer">Huỷ</button>
+              <button type="button" onClick={onSaveFact} disabled={busyId === 'fact-save'} className="px-4 py-2 text-sm rounded-lg bg-indigo-600 text-white cursor-pointer">Lưu</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

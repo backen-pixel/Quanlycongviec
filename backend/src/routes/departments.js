@@ -9,6 +9,11 @@ const { auth } = require('../middleware/auth');
 const { syncDepartmentToEcosystem, syncUserToEcosystem, removeUserFromEcosystem } = require('../helpers/ecosystemSync');
 const { canManageDepartments, isSystemAdmin } = require('../helpers/adminRole');
 const { responseCache, invalidateTags } = require('../middleware/responseCache');
+const {
+  applyCompanyTenantScope,
+  assertCompanyAccessible,
+  companyInTenantContext,
+} = require('../helpers/tenantScope');
 
 // Upload storage for department chat
 const uploadDir = 'uploads/dept-chat/';
@@ -82,6 +87,10 @@ function assertDepartmentCompanyScope(req, res, dept) {
     res.status(404).json({ error: 'Không tìm thấy phòng ban' });
     return false;
   }
+  if (!companyInTenantContext(req, dept.company_id)) {
+    res.status(403).json({ error: 'Không có quyền truy cập phòng ban hệ sinh thái khác' });
+    return false;
+  }
   if (isSystemAdmin(req.user)) return true;
   const userCo = req.user?.company_id;
   if (userCo && dept.company_id && String(dept.company_id) !== String(userCo)) {
@@ -122,7 +131,11 @@ r.get('/', responseCache({ ttl: 120, scope: 'company', tags: ['orgtree'] }), asy
     }
 
     let q = supabase.from('departments').select('id, name, company_id, division_unit_id, color, is_active').order('name');
-    if (resolvedCompanyId) q = q.eq('company_id', resolvedCompanyId);
+    q = applyCompanyTenantScope(q, req);
+    if (resolvedCompanyId) {
+      if (!assertCompanyAccessible(req, res, resolvedCompanyId)) return;
+      q = q.eq('company_id', resolvedCompanyId);
+    }
     const divFilter = req.query.division_unit_id;
     if (divFilter) q = q.eq('division_unit_id', divFilter);
     q = q.eq('is_active', true);

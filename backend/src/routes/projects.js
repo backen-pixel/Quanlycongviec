@@ -25,6 +25,12 @@ const {
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('../helpers/projectCode');
 const { ensureDealLeadDocumentsForModuleTransition } = require('../helpers/ensureDealLeadDocumentsForModuleTransition');
 const { assertDealResponsible, assertFileAttachmentMutation, assertLeadDocumentOwner, logProjectFileActivity, logDealStageChangeComment, logDealDeadlineChangeComment, logDealActivityComment, requireProjectEditOrSxKanbanWorkshopType } = require('../helpers/projectFileActivity');
+const {
+  applyCompanyTenantScope,
+  assertCompanyAccessible,
+  assertRowCompanyInTenant,
+  intersectCompanyIdsWithTenant,
+} = require('../helpers/tenantScope');
 
 const r = Router();
 r.use(auth);
@@ -125,6 +131,8 @@ r.get('/', requirePermission('projects', 'view'), async (req, res) => {
       project_manager:users!projects_project_manager_id_fkey(id,full_name)
     `, { count: 'exact' });
 
+    q = applyCompanyTenantScope(q, req);
+
     if (status && status !== 'all') q = q.eq('status', status);
     if (search) q = q.or(`code.ilike.%${search}%,name.ilike.%${search}%`);
 
@@ -137,6 +145,7 @@ r.get('/', requirePermission('projects', 'view'), async (req, res) => {
 
     // Filter by company_id
     if (company_id && company_id !== 'all') {
+      if (!assertCompanyAccessible(req, res, company_id)) return;
       q = q.eq('company_id', company_id);
     }
 
@@ -146,7 +155,7 @@ r.get('/', requirePermission('projects', 'view'), async (req, res) => {
         .from('companies')
         .select('id')
         .eq('division_unit_id', division_id);
-      const companyIds = (divCompanies || []).map(c => c.id);
+      let companyIds = intersectCompanyIdsWithTenant(req, (divCompanies || []).map(c => c.id));
       if (companyIds.length > 0) {
         q = q.in('company_id', companyIds);
       } else {
@@ -834,6 +843,7 @@ r.get('/:id', async (req, res) => {
         .single());
     }
     if (error) throw error;
+    if (!assertRowCompanyInTenant(req, res, data)) return;
     if (data && !Array.isArray(data.tasks)) {
       try {
         const { data: projTasks } = await supabase.from('tasks')

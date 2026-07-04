@@ -19,7 +19,7 @@
  */
 
 const { supabase } = require('../config/supabase');
-const { runScheduleSend } = require('../helpers/aiBotSender');
+const { runScheduleSend, notifyScheduleRunFailure } = require('../helpers/aiBotSender');
 const { runIfLeader } = require('../helpers/cronLeader');
 
 const TICK_MS = 60 * 1000;
@@ -63,12 +63,18 @@ async function processSchedule(sched, io, nowParts, vnDate) {
     return;
   }
 
-  // Đếm số lần đã chạy hôm nay (bỏ qua slot_label='manual' để bấm tay không ăn quota)
+  const { shouldRunReminderOnDate } = require('../helpers/aiBotReminder');
+  if (!shouldRunReminderOnDate(sched, vnDate)) {
+    return;
+  }
+
+  // Đếm số lần đã gửi thành công hôm nay
   const { count: runsToday } = await supabase
     .from('ai_chat_bot_runs')
     .select('id', { count: 'exact', head: true })
     .eq('schedule_id', sched.id)
     .eq('vn_date', vnDate)
+    .eq('status', 'ok')
     .neq('slot_label', 'manual');
 
   if ((runsToday || 0) >= (sched.max_runs_per_day || 1)) {
@@ -77,13 +83,14 @@ async function processSchedule(sched, io, nowParts, vnDate) {
 
   const label = slotLabel(matching[0]);
 
-  // Dedupe: nếu slot này đã chạy hôm nay rồi → skip (tránh tick lặp do worker chạy chồng)
+  // Dedupe: slot đã gửi thành công hôm nay → skip (run lỗi được phép thử lại)
   const { data: dupe } = await supabase
     .from('ai_chat_bot_runs')
     .select('id')
     .eq('schedule_id', sched.id)
     .eq('vn_date', vnDate)
     .eq('slot_label', label)
+    .eq('status', 'ok')
     .limit(1);
   if (dupe?.length) return;
 
@@ -114,8 +121,21 @@ async function processSchedule(sched, io, nowParts, vnDate) {
       last_run_status: result.status,
       last_run_message: result.preview || result.error || null,
       updated_at: new Date().toISOString(),
+      ...(result.status === 'ok'
+        && sched.schedule_kind === 'reminder'
+        && sched.reminder_recurrence === 'once'
+        ? { enabled: false }
+        : {}),
     })
     .eq('id', sched.id);
+
+  if (result.status === 'error' && result.error) {
+    try {
+      await notifyScheduleRunFailure(sched, result.error, io);
+    } catch (e) {
+      console.warn('[ai-bot-cron] notify failure lỗi:', e.message);
+    }
+  }
 }
 
 async function tick(io) {

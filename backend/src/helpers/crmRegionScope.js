@@ -4,6 +4,7 @@ const {
   isCrmRegionAdminUser,
   isCrmSalesAdminUser,
 } = require('./crmAccessRoles');
+const { applyCompanyTenantScope, companyInTenantContext } = require('./tenantScope');
 
 /** UUID hợp lệ từ token / body */
 function normalizeRegionIdList(raw) {
@@ -49,6 +50,7 @@ function getCrmLeadRegionConstraint(req) {
 }
 
 function applyCrmLeadRegionFilterToQuery(q, req) {
+  q = applyCompanyTenantScope(q, req, 'company_id');
   const c = getCrmLeadRegionConstraint(req);
   if (c.mode !== 'in') return q;
   if (!c.ids.length) {
@@ -115,6 +117,9 @@ async function assertRegionBelongsToCompany(_supabase, companyId, regionId) {
 }
 
 function assertLeadReadableByRegionScope(req, leadRow) {
+  if (!companyInTenantContext(req, leadRow?.company_id)) {
+    return { ok: false, error: 'Không có quyền truy cập dữ liệu hệ sinh thái khác' };
+  }
   const c = getCrmLeadRegionConstraint(req);
   if (c.mode !== 'in' || !c.ids?.length) return { ok: true };
   const rid = leadRow?.region_id;
