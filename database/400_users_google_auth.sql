@@ -1,4 +1,4 @@
--- Google Sign-In cho users (kết hợp SaaS checkout email)
+-- 400: Google Sign-In cho users (kết hợp SaaS checkout email)
 ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT DEFAULT 'password';
 

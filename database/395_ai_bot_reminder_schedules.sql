@@ -1,4 +1,4 @@
--- 511: Lịch nhắc việc / thông báo tùy chỉnh (một lần, hàng ngày/tháng/năm)
+-- 395: Lịch nhắc việc / thông báo tùy chỉnh (một lần, hàng ngày/tháng/năm)
 BEGIN;
 
 ALTER TABLE ai_chat_bot_schedules

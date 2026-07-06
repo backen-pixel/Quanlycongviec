@@ -1,5 +1,5 @@
 -- ════════════════════════════════════════════════════════════
--- 513: SaaS Store — gói modun bán trên landing, đơn mua, đăng ký thông báo
+-- 397: SaaS Store — gói modun bán trên landing, đơn mua, đăng ký thông báo
 -- ════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS saas_modules (

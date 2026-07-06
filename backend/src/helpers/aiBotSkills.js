@@ -1701,7 +1701,7 @@ async function listBotSkills(ctx, { limit = 20 } = {}) {
     .limit(Math.min(limit, 50));
   if (error) {
     if (/relation .* does not exist/i.test(error.message || '')) {
-      return { skills: [], total: 0, hint: 'Chạy migration database/507_ai_bot_user_skills.sql' };
+      return { skills: [], total: 0, hint: 'Chạy migration database/390_ai_bot_user_skills.sql' };
     }
     throw new Error(error.message);
   }
@@ -1769,7 +1769,7 @@ async function listAllBotSkills({ user_id: userId, limit = 100 } = {}) {
   const { data, error } = await q;
   if (error) {
     if (/relation .* does not exist/i.test(error.message || '')) {
-      return { skills: [], total: 0, hint: 'Chạy migration database/507_ai_bot_user_skills.sql' };
+      return { skills: [], total: 0, hint: 'Chạy migration database/390_ai_bot_user_skills.sql' };
     }
     throw new Error(error.message);
   }

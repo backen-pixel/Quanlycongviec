@@ -1,5 +1,5 @@
 -- ════════════════════════════════════════════════════════════
--- 515: Thanh toán đăng ký gói SaaS
+-- 399: Thanh toán đăng ký gói SaaS
 -- ════════════════════════════════════════════════════════════
 
 ALTER TABLE saas_purchases ADD COLUMN IF NOT EXISTS payment_method VARCHAR(32);

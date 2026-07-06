@@ -27,6 +27,7 @@ async function applyPlanToTenant(tenantId, plan) {
     tier: plan.tenant_tier || PLAN_TO_TIER[plan.id] || 'free',
     max_users: plan.max_users || 50,
     max_companies: plan.max_companies || 5,
+    quotas: plan.quotas && typeof plan.quotas === 'object' ? plan.quotas : {},
     subscription_start: new Date().toISOString(),
     subscription_end: end.toISOString(),
     updated_at: new Date().toISOString(),

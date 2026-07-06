@@ -299,6 +299,7 @@ app.use('/api/flows', require('./routes/flows'));
 app.use('/api/company-processes', require('./routes/companyProcesses'));
 app.use('/api/permissions', require('./routes/permissions'));
 app.use('/api/platform', require('./routes/platform'));
+try { app.use('/api/tenant', require('./routes/tenantUsage')); } catch (e) { console.warn('⚠️ Tenant usage route failed:', e.message); }
 try {
   const { publicRouter: saasPublicRouter, adminRouter: saasAdminRouter } = require('./routes/saasStore');
   app.use('/api/saas', saasPublicRouter);

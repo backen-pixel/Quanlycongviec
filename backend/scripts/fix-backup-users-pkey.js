@@ -1,11 +1,11 @@
-/** Chạy 508_fix_backup_users_pkey.sql trên Supabase BACKUP. */
+/** Chạy 391_fix_backup_users_pkey.sql trên Supabase BACKUP. */
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const TOKEN = process.env.SUPABASE_ACCESS_TOKEN;
 const REF = process.env.BACKUP_PROJECT_REF || 'atcfpgxkgbszglrelfgr';
-const sql = fs.readFileSync(path.join(__dirname, '..', '..', 'database', '508_fix_backup_users_pkey.sql'), 'utf8');
+const sql = fs.readFileSync(path.join(__dirname, '..', '..', 'database', '391_fix_backup_users_pkey.sql'), 'utf8');
 
 async function query(q) {
   const res = await fetch(`https://api.supabase.com/v1/projects/${REF}/database/query`, {

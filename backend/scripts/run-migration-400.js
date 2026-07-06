@@ -1,6 +1,6 @@
 /**
- * Chạy migration 516 (Google auth columns) trên Primary + Backup.
- * Usage: node scripts/run-migration-516.js
+ * Chạy migration 400 (Google auth columns) trên Primary + Backup.
+ * Usage: node scripts/run-migration-400.js
  */
 const fs = require('fs');
 const path = require('path');
@@ -9,7 +9,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const TOKEN = process.env.SUPABASE_ACCESS_TOKEN;
 const PRIMARY_REF = process.env.PRIMARY_PROJECT_REF || 'kdxypztstbeovyedmvem';
 const BACKUP_REF = process.env.BACKUP_PROJECT_REF || 'atcfpgxkgbszglrelfgr';
-const SQL = fs.readFileSync(path.join(__dirname, '..', '..', 'database', '516_users_google_auth.sql'), 'utf8');
+const SQL = fs.readFileSync(path.join(__dirname, '..', '..', 'database', '400_users_google_auth.sql'), 'utf8');
 
 const VERIFY_SQL = `
 SELECT column_name, data_type, column_default
@@ -43,7 +43,7 @@ async function main() {
     { ref: PRIMARY_REF, label: 'PRIMARY' },
     { ref: BACKUP_REF, label: 'BACKUP' },
   ]) {
-    console.log(`=== ${t.label} (${t.ref}) — 516_users_google_auth ===`);
+    console.log(`=== ${t.label} (${t.ref}) — 400_users_google_auth ===`);
     await runQuery(t.ref, SQL, t.label);
     console.log('Migration OK');
     const cols = await runQuery(t.ref, VERIFY_SQL, `${t.label} verify`);

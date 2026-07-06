@@ -1,6 +1,6 @@
 /**
- * Chạy migration 515 (payment) trên Primary + Backup.
- * Usage: node scripts/run-migration-515-payment.js
+ * Chạy migration 399 (payment) trên Primary + Backup.
+ * Usage: node scripts/run-migration-399-payment.js
  */
 const fs = require('fs');
 const path = require('path');
@@ -9,7 +9,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const TOKEN = process.env.SUPABASE_ACCESS_TOKEN;
 const PRIMARY_REF = process.env.PRIMARY_PROJECT_REF || 'kdxypztstbeovyedmvem';
 const BACKUP_REF = process.env.BACKUP_PROJECT_REF || 'atcfpgxkgbszglrelfgr';
-const SQL = fs.readFileSync(path.join(__dirname, '..', '..', 'database', '515_saas_payment.sql'), 'utf8');
+const SQL = fs.readFileSync(path.join(__dirname, '..', '..', 'database', '399_saas_payment.sql'), 'utf8');
 
 async function runQuery(ref, label) {
   const res = await fetch(`https://api.supabase.com/v1/projects/${ref}/database/query`, {
@@ -30,7 +30,7 @@ async function main() {
     { ref: PRIMARY_REF, label: 'PRIMARY' },
     { ref: BACKUP_REF, label: 'BACKUP' },
   ]) {
-    console.log(`=== ${t.label} (${t.ref}) — 515_saas_payment ===`);
+    console.log(`=== ${t.label} (${t.ref}) — 399_saas_payment ===`);
     await runQuery(t.ref, t.label);
     console.log('OK');
   }

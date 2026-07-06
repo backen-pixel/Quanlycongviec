@@ -1,5 +1,5 @@
 -- ════════════════════════════════════════════════════════════
--- 503: Create default tenant and backfill existing data
+-- 386: Create default tenant and backfill existing data
 -- ════════════════════════════════════════════════════════════
 
 INSERT INTO tenants (name, slug, tier, max_users, max_companies)

@@ -1,4 +1,4 @@
-/** 507 cho BACKUP — bỏ FK user_id vì public.users thiếu PRIMARY KEY trên backup. */
+/** 390 cho BACKUP — bỏ FK user_id vì public.users thiếu PRIMARY KEY trên backup. */
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
@@ -43,7 +43,7 @@ async function main() {
   });
   const text = await res.text();
   if (!res.ok) throw new Error(text);
-  console.log('BACKUP 507 OK');
+  console.log('BACKUP 390 OK');
   const v = await fetch(`https://api.supabase.com/v1/projects/${REF}/database/query`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` },

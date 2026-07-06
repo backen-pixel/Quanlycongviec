@@ -1,4 +1,4 @@
--- 510: Ghi chú — broadcast dùng cột recipient_user_ids sẵn có (personal_scope_only=false).
+-- 394: Ghi chú — broadcast dùng cột recipient_user_ids sẵn có (personal_scope_only=false).
 -- Không cần ALTER nếu đã có recipient_user_ids từ migration 233+.
 -- Code backend tự resolve notify_system_admins + notify_team → recipient_user_ids.
 

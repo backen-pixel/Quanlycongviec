@@ -1,5 +1,5 @@
 -- ════════════════════════════════════════════════════════════
--- 501: Tenant feature flags + tier defaults
+-- 384: Tenant feature flags + tier defaults
 -- ════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS tenant_features (

@@ -13,6 +13,7 @@ const {
   resolveAssignmentIdForTask,
 } = require('./crmAssignmentNotifications');
 const { isAdminLike } = require('./adminRole');
+const { assertTenantQuota, resolveTenantIdForQuota, invalidateTenantUsageCache } = require('./tenantQuotas');
 const {
   ecosystemModuleKeyForCrmDeadline,
   crmTaskDeadlineModuleKey,
@@ -127,6 +128,13 @@ async function createCrmLeadTask(req, leadId, body) {
     .select('company_id')
     .eq('id', targetLeadId)
     .maybeSingle();
+
+  const tenantId = await resolveTenantIdForQuota(req, leadSnap?.company_id);
+  const quotaCheck = await assertTenantQuota(tenantId, 'crm_tasks_per_month');
+  if (!quotaCheck.ok) {
+    return { error: quotaCheck.error, status: 403, code: 'quota_exceeded' };
+  }
+
   const insertRow = {
     lead_id: targetLeadId,
     title: b.title,
@@ -162,6 +170,8 @@ async function createCrmLeadTask(req, leadId, body) {
     ({ data, error } = await supabase.from('crm_tasks').insert(legacy).select(CRM_TASK_SELECT).single());
   }
   if (error) return { error: error.message, status: 500 };
+
+  if (tenantId) invalidateTenantUsageCache(tenantId);
 
   if (rawAssigneeIds.length) {
     await replaceCrmTaskAssignees(data.id, rawAssigneeIds);

@@ -1,5 +1,5 @@
 -- ════════════════════════════════════════════════════════════
--- 502: Add tenant_id FK to root tables
+-- 385: Add tenant_id FK to root tables
 -- ════════════════════════════════════════════════════════════
 
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id);

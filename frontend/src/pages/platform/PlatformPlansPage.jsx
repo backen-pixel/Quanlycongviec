@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import api from '../../lib/api';
 import { CreditCard, Save, Pencil, X, ToggleLeft, ToggleRight } from 'lucide-react';
 import { PLAN_LABELS } from '../../lib/platformConstants';
+import { QUOTA_FIELDS, formatQuotaLimit } from '../../lib/saasQuotas';
 
 function formatPrice(n) {
   return Number(n || 0).toLocaleString('vi-VN');
@@ -43,6 +44,7 @@ export default function PlatformPlansPage() {
       is_active: p.is_active !== false,
       is_purchasable: p.is_purchasable !== false,
       tenant_tier: p.tenant_tier,
+      quotas: { ...(p.quotas || {}) },
     });
   };
 
@@ -63,6 +65,14 @@ export default function PlatformPlansPage() {
         is_active: form.is_active,
         is_purchasable: form.is_purchasable,
         tenant_tier: form.tenant_tier,
+        quotas: Object.fromEntries(
+          QUOTA_FIELDS.map(({ key }) => {
+            const raw = form.quotas?.[key];
+            if (raw === '' || raw == null) return [key, -1];
+            const v = Number(raw);
+            return [key, Number.isFinite(v) ? v : -1];
+          }),
+        ),
       });
       setEditing(null);
       load();
@@ -122,6 +132,27 @@ export default function PlatformPlansPage() {
             <label className="block sm:col-span-2"><span className="text-xs text-gray-500">Điểm nổi bật (mỗi dòng)</span>
               <textarea value={form.highlightsText} onChange={(e) => setForm((p) => ({ ...p, highlightsText: e.target.value }))} rows={5} className="w-full border rounded-lg px-3 py-2 text-sm mt-0.5 font-mono" />
             </label>
+            <div className="sm:col-span-2 border-t pt-3">
+              <p className="text-xs font-semibold text-gray-700 mb-2">Giới hạn gói (quota)</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {QUOTA_FIELDS.map(({ key, label, hint }) => (
+                  <label key={key} className="block">
+                    <span className="text-xs text-gray-500">{label}</span>
+                    <input
+                      type="number"
+                      value={form.quotas?.[key] ?? ''}
+                      onChange={(e) => setForm((p) => ({
+                        ...p,
+                        quotas: { ...p.quotas, [key]: e.target.value },
+                      }))}
+                      className="w-full border rounded-lg px-3 py-1.5 text-sm mt-0.5"
+                      placeholder="-1"
+                    />
+                    {hint && <span className="text-[10px] text-gray-400">{hint}</span>}
+                  </label>
+                ))}
+              </div>
+            </div>
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={form.is_active} onChange={(e) => setForm((p) => ({ ...p, is_active: e.target.checked }))} />
               <span className="text-sm">Hiển thị landing</span>
@@ -160,6 +191,11 @@ export default function PlatformPlansPage() {
               ))}
             </ul>
             <p className="mt-2 text-[10px] text-gray-400">Tier DB: {p.tenant_tier} · {p.max_users} user · {p.max_companies} cty</p>
+            {p.quotas && (
+              <p className="mt-1 text-[10px] text-gray-400">
+                {formatQuotaLimit(p.quotas.leads_per_month)} lead/th · {formatQuotaLimit(p.quotas.deals_per_month)} deal/th · {formatQuotaLimit(p.quotas.storage_mb)} MB
+              </p>
+            )}
             <div className="mt-4 flex items-center justify-between pt-3 border-t">
               <button type="button" onClick={() => toggleField(p, 'is_active')} className="cursor-pointer" title="Hiển thị">
                 {p.is_active ? <ToggleRight className="h-6 w-6 text-teal-600" /> : <ToggleLeft className="h-6 w-6 text-gray-300" />}

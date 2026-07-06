@@ -1,6 +1,6 @@
 /**
- * Chạy migration 513 + 514 SaaS trên BACKUP (bỏ FK users nếu backup thiếu PK).
- * Usage: node scripts/run-migration-514-backup.js
+ * Chạy migration 397 + 398 SaaS trên BACKUP (bỏ FK users nếu backup thiếu PK).
+ * Usage: node scripts/run-migration-398-backup.js
  */
 const fs = require('fs');
 const path = require('path');
@@ -9,13 +9,13 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const TOKEN = process.env.SUPABASE_ACCESS_TOKEN;
 const BACKUP_REF = process.env.BACKUP_PROJECT_REF || 'atcfpgxkgbszglrelfgr';
 
-const SQL_513_BACKUP = fs.readFileSync(path.join(__dirname, '..', '..', 'database', '513_saas_store.sql'), 'utf8')
+const SQL_397_BACKUP = fs.readFileSync(path.join(__dirname, '..', '..', 'database', '397_saas_store.sql'), 'utf8')
   .replace(
     'user_id UUID REFERENCES users(id) ON DELETE SET NULL,',
     'user_id UUID,',
   );
 
-const SQL_514 = fs.readFileSync(path.join(__dirname, '..', '..', 'database', '514_saas_plans.sql'), 'utf8');
+const SQL_398 = fs.readFileSync(path.join(__dirname, '..', '..', 'database', '398_saas_plans.sql'), 'utf8');
 
 async function runQuery(label, sql) {
   const res = await fetch(`https://api.supabase.com/v1/projects/${BACKUP_REF}/database/query`, {
@@ -40,13 +40,13 @@ async function main() {
     console.error('Thiếu SUPABASE_ACCESS_TOKEN trong backend/.env');
     process.exit(1);
   }
-  console.log(`=== BACKUP (${BACKUP_REF}) — 513_saas_store ===`);
-  await runQuery('513', SQL_513_BACKUP);
-  console.log('OK 513');
+  console.log(`=== BACKUP (${BACKUP_REF}) — 397_saas_store ===`);
+  await runQuery('397', SQL_397_BACKUP);
+  console.log('OK 397');
 
-  console.log(`=== BACKUP (${BACKUP_REF}) — 514_saas_plans ===`);
-  await runQuery('514', SQL_514);
-  console.log('OK 514');
+  console.log(`=== BACKUP (${BACKUP_REF}) — 398_saas_plans ===`);
+  await runQuery('398', SQL_398);
+  console.log('OK 398');
 
   const verify = await runQuery('verify', `
     SELECT

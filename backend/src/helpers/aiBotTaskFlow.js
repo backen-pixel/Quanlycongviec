@@ -110,7 +110,7 @@ async function listTaskFlows({ status, channelKind, channelId, userId, limit = 5
   const { data, error } = await q;
   if (error) {
     if (/relation .* does not exist/i.test(error.message || '')) {
-      return { flows: [], total: 0, hint: 'Chạy migration database/509_ai_bot_skill_workshop.sql' };
+      return { flows: [], total: 0, hint: 'Chạy migration database/393_ai_bot_skill_workshop.sql' };
     }
     throw new Error(error.message);
   }

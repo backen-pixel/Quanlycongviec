@@ -1,5 +1,5 @@
 -- ════════════════════════════════════════════════════════════
--- 508: Tenant isolation — DB helpers, constraints, audit log
+-- 392: Tenant isolation — DB helpers, constraints, audit log
 -- Defense-in-depth; API layer (Express) là lớp chính.
 -- Backend dùng service role → RLS không chặn API; hữu ích nếu truy cập trực tiếp qua PostgREST.
 -- ════════════════════════════════════════════════════════════
@@ -39,14 +39,14 @@ AS $$
   SELECT id FROM companies WHERE tenant_id = p_tenant_id;
 $$;
 
--- ── NOT NULL tenant_id sau khi backfill 503 ──
+-- ── NOT NULL tenant_id sau khi backfill 386 ──
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM companies WHERE tenant_id IS NULL LIMIT 1) THEN
     ALTER TABLE companies ALTER COLUMN tenant_id SET NOT NULL;
   END IF;
 EXCEPTION WHEN others THEN
-  RAISE NOTICE '508: skip companies.tenant_id NOT NULL — %', SQLERRM;
+  RAISE NOTICE '392: skip companies.tenant_id NOT NULL — %', SQLERRM;
 END $$;
 
 DO $$
@@ -55,7 +55,7 @@ BEGIN
     ALTER TABLE users ALTER COLUMN tenant_id SET NOT NULL;
   END IF;
 EXCEPTION WHEN others THEN
-  RAISE NOTICE '508: skip users.tenant_id NOT NULL — %', SQLERRM;
+  RAISE NOTICE '392: skip users.tenant_id NOT NULL — %', SQLERRM;
 END $$;
 
 -- ── crm_leads: company_id bắt buộc thuộc công ty có tenant (khi company_id set) ──

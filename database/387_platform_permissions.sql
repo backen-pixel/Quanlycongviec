@@ -1,5 +1,5 @@
 -- ════════════════════════════════════════════════════════════
--- 504: Platform-level permissions and role
+-- 387: Platform-level permissions and role
 -- ════════════════════════════════════════════════════════════
 
 INSERT INTO permissions (resource, action, description) VALUES

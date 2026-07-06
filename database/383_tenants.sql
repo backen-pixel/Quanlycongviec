@@ -1,5 +1,5 @@
 -- ════════════════════════════════════════════════════════════
--- 500: SaaS Tenants — bảng quản lý hệ sinh thái (multi-tenant)
+-- 383: SaaS Tenants — bảng quản lý hệ sinh thái (multi-tenant)
 -- ════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS tenants (

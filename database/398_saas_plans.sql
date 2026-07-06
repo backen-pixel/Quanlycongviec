@@ -1,6 +1,6 @@
 -- ════════════════════════════════════════════════════════════
--- 514: SaaS Plans — 4 gói chính + module mua thêm
--- Chạy sau 513_saas_store.sql
+-- 398: SaaS Plans — 4 gói chính + module mua thêm
+-- Chạy sau 397_saas_store.sql
 -- ════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS saas_plans (
