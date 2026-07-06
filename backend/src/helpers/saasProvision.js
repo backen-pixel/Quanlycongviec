@@ -51,7 +51,7 @@ async function applyPlanToTenant(tenantId, plan) {
   invalidateTenantCache(tenantId);
 }
 
-async function provisionPurchase(purchaseId, { loginBaseUrl, forceNewTenant = false } = {}) {
+async function provisionPurchase(purchaseId, { loginBaseUrl, forceNewTenant = false, skipWelcomeEmail = false, provisionedBy = 'platform' } = {}) {
   const { data: purchase, error: pErr } = await supabase
     .from('saas_purchases')
     .select('*, saas_modules(*), saas_plans(*)')
@@ -159,20 +159,23 @@ async function provisionPurchase(purchaseId, { loginBaseUrl, forceNewTenant = fa
   }
 
   const productTitle = isPlan ? plan?.title : mod?.title;
-  const loginUrl = `${loginBaseUrl || config.frontendUrl}/login`;
-  const emailResult = await sendWelcomeCredentialsEmail({
-    email,
-    fullName: purchase.buyer_name,
-    password: tempPassword,
-    loginUrl,
-    moduleTitle: productTitle,
-    companyName: purchase.company_name,
-  });
+  let emailResult = { ok: false, skipped: true };
+  if (!skipWelcomeEmail) {
+    const loginUrl = `${loginBaseUrl || config.frontendUrl}/login`;
+    emailResult = await sendWelcomeCredentialsEmail({
+      email,
+      fullName: purchase.buyer_name,
+      password: tempPassword,
+      loginUrl,
+      moduleTitle: productTitle,
+      companyName: purchase.company_name,
+    });
+  }
 
   const provisionMeta = {
     temp_password_hint: emailResult.skipped ? tempPassword : undefined,
     email_result: emailResult.ok ? 'sent' : (emailResult.skipped ? 'logged_only' : 'failed'),
-    provisioned_by: 'platform',
+    provisioned_by: provisionedBy,
     purchase_type: isPlan ? 'plan' : 'module',
   };
 
@@ -201,4 +204,106 @@ async function provisionPurchase(purchaseId, { loginBaseUrl, forceNewTenant = fa
   };
 }
 
-module.exports = { provisionPurchase, PURCHASE_STATUS, applyPlanToTenant };
+/** Đơn trả phí đang chờ — chặn auto đăng ký Google Free. */
+async function findBlockingPendingPurchase(email) {
+  const em = String(email || '').trim().toLowerCase();
+  if (!em) return null;
+  const { data } = await supabase
+    .from('saas_purchases')
+    .select('id, status, amount, payment_status, plan_id')
+    .eq('buyer_email', em)
+    .in('status', ['pending', 'processing'])
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!data) return null;
+  const amount = Number(data.amount) || 0;
+  const paid = data.payment_status === 'paid' || data.payment_status === 'waived';
+  if (amount > 0 && !paid) return data;
+  return null;
+}
+
+/**
+ * Tài khoản mới đăng nhập Google → tenant + admin user gói Free.
+ */
+async function provisionGoogleFreeSignup({ email, googleId, fullName, picture, companyName }) {
+  const em = String(email || '').trim().toLowerCase();
+  if (!em || !googleId) throw new Error('Thiếu email hoặc Google ID');
+
+  const { data: plan, error: planErr } = await supabase
+    .from('saas_plans')
+    .select('*')
+    .eq('id', 'free')
+    .eq('is_active', true)
+    .maybeSingle();
+  if (planErr || !plan) throw new Error('Gói Free chưa được cấu hình');
+
+  const displayName = String(fullName || '').trim() || em.split('@')[0];
+  const orgName = String(companyName || '').trim() || `Xưởng ${displayName}`;
+  const baseSlug = slugify(orgName || displayName || em.split('@')[0]);
+  let slug = baseSlug;
+  for (let i = 0; i < 5; i += 1) {
+    const { data: dup } = await supabase.from('tenants').select('id').eq('slug', slug).maybeSingle();
+    if (!dup) break;
+    slug = `${baseSlug}-${Math.random().toString(36).slice(2, 6)}`;
+  }
+
+  const tempPassword = generateTempPassword();
+  const result = await onboardTenant({
+    name: orgName,
+    slug,
+    tier: plan.tenant_tier || PLAN_TO_TIER.free || 'free',
+    maxUsers: plan.max_users || 3,
+    maxCompanies: plan.max_companies || 1,
+    adminEmail: em,
+    adminPassword: tempPassword,
+    adminFullName: displayName,
+  });
+  if (!result.tenant?.id || !result.adminUser?.id) {
+    throw new Error('Không tạo được tenant Free');
+  }
+
+  await applyPlanToTenant(result.tenant.id, plan);
+
+  const userPatch = {
+    google_id: googleId,
+    auth_provider: 'google',
+    updated_at: new Date().toISOString(),
+  };
+  if (picture) userPatch.avatar = String(picture).slice(0, 2048);
+
+  await supabase.from('users').update(userPatch).eq('id', result.adminUser.id);
+
+  await supabase.from('saas_purchases').insert({
+    purchase_type: 'plan',
+    plan_id: 'free',
+    buyer_email: em,
+    buyer_name: displayName,
+    company_name: orgName,
+    amount: 0,
+    status: 'provisioned',
+    payment_method: 'free',
+    payment_status: 'waived',
+    tenant_id: result.tenant.id,
+    user_id: result.adminUser.id,
+    provisioned_at: new Date().toISOString(),
+    provision_meta: { provisioned_by: 'google_signup', auto_free: true },
+  });
+
+  const { data: user, error: uErr } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', result.adminUser.id)
+    .single();
+  if (uErr || !user) throw new Error('Không tải được user sau cấp Free');
+
+  return { user, tenant: result.tenant, plan };
+}
+
+module.exports = {
+  provisionPurchase,
+  provisionGoogleFreeSignup,
+  findBlockingPendingPurchase,
+  PURCHASE_STATUS,
+  applyPlanToTenant,
+};
