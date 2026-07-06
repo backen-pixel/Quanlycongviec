@@ -1,4 +1,4 @@
--- Free plan: tối đa 3 người dùng (Google signup + landing)
+-- Free plan: tối đa 3 người dùng (Google signup + landing) — migration 401
 UPDATE saas_plans
 SET
   max_users = 3,

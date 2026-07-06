@@ -1,4 +1,4 @@
-  -- 507_ai_bot_user_skills.sql
+-- 390_ai_bot_user_skills.sql
   -- Kỹ năng / tự động hóa do user dạy bot qua chat (gắn với lịch ai_chat_bot_schedules).
   -- Idempotent.
 

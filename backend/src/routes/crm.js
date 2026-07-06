@@ -107,6 +107,7 @@ const {
   filterCrmTasksForLeadType,
 } = require('../helpers/autoGenCrmTasks');
 const { normalizeTimestamp } = require('../helpers/normalizeTimestamp');
+const { enforceQuotaForRequest, invalidateTenantUsageCache, resolveTenantIdForQuota } = require('../helpers/tenantQuotas');
 const {
   invalidatePipelinesAndStages,
   invalidateSources,
@@ -8505,6 +8506,8 @@ r.post('/leads', async (req, res) => {
     // Resolve pipeline_id + first stage by company (company-scoped pipelines)
     if (!body.company_id) return res.status(400).json({ error: 'Vui lòng chọn công ty' });
 
+    if (await enforceQuotaForRequest(req, res, body.company_id, 'leads_per_month')) return;
+
     if (body.region_id) {
       const v = await assertRegionBelongsToCompany(supabase, body.company_id, body.region_id);
       if (!v.ok) return res.status(400).json({ error: v.error });
@@ -8566,6 +8569,11 @@ r.post('/leads', async (req, res) => {
     if (error) throw error;
 
     try {
+      const tid = await resolveTenantIdForQuota(req, data.company_id);
+      if (tid) invalidateTenantUsageCache(tid);
+    } catch (_) {}
+
+    try {
       const targetIds = new Set();
       if (body.assigned_to) targetIds.add(body.assigned_to);
       const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
@@ -8614,6 +8622,8 @@ r.post('/deals', async (req, res) => {
       body.company_id = cid;
     }
     if (!body.company_id) return res.status(400).json({ error: 'Vui lòng chọn công ty' });
+
+    if (await enforceQuotaForRequest(req, res, body.company_id, 'deals_per_month')) return;
 
     if (body.region_id) {
       const v = await assertRegionBelongsToCompany(supabase, body.company_id, body.region_id);
@@ -8693,6 +8703,11 @@ r.post('/deals', async (req, res) => {
       .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon)')
       .single();
     if (error) throw error;
+
+    try {
+      const tid = await resolveTenantIdForQuota(req, data.company_id);
+      if (tid) invalidateTenantUsageCache(tid);
+    } catch (_) {}
 
     try {
       const targetIds = new Set();
@@ -12798,6 +12813,8 @@ r.post('/leads/:id/convert-to-project', async (req, res) => {
     const { data: lead } = await supabase.from('crm_leads').select('*, customer:customers(id, full_name)').eq('id', req.params.id).single();
     if (!lead) return res.status(404).json({ error: 'Lead không tồn tại' });
 
+    if (await enforceQuotaForRequest(req, res, lead.company_id, 'projects_total')) return;
+
     // Get flow (from body or default)
     const { flow_id: reqFlowId } = req.body || {};
     let flowId = reqFlowId || null;
@@ -14560,6 +14577,8 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
         message: 'Bộ mẫu đã được áp trước đó — không có nhiệm vụ mới nào được thêm.',
       });
     }
+
+    if (await enforceQuotaForRequest(req, res, ownerCompanyId, 'crm_tasks_per_month', { additional: toInsert.length })) return;
 
     const inserts = toInsert.map((item) => ({
       lead_id: targetLeadId,

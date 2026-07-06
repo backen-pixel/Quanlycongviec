@@ -1,4 +1,4 @@
--- Ngữ cảnh hội thoại AI bot: nhân vật chính, kỳ, yêu cầu (cho câu hỏi kế tiếp)
+-- 388: Ngữ cảnh hội thoại AI bot (session_context)
 ALTER TABLE ai_chat_bot_conversations
   ADD COLUMN IF NOT EXISTS session_context JSONB NOT NULL DEFAULT '{}'::jsonb;
 

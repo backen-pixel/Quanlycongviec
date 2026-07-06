@@ -1,4 +1,4 @@
--- 506_ai_chat_bot_lead_expiring_tomorrow.sql
+-- 389_ai_chat_bot_lead_expiring_tomorrow.sql
 -- Bổ sung cảnh báo lead/deal SẮP hết hạn (expected_close_date = ngày mai)
 -- cho playbook lead_deadline_expired.
 -- Field mới: context_pack.leads_expiring_tomorrow (aiBotSender.buildChannelContextPayload).

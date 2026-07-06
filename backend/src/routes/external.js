@@ -29,6 +29,7 @@ const { Router } = require('express');
 const { apiKeyAuth } = require('../middleware/apiKeyAuth');
 const { supabase } = require('../config/supabase');
 const { nextCrmCode } = require('../helpers/crmNextCode');
+const { enforceQuotaForRequest, invalidateTenantUsageCache, resolveTenantIdForQuota } = require('../helpers/tenantQuotas');
 const https = require('https');
 const http = require('http');
 // Cùng helper auto-gen task theo template lead type — y hệt POST /crm/leads
@@ -415,6 +416,8 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
       .filter(Boolean)
       .join('\n\n') || null;
 
+    if (await enforceQuotaForRequest(req, res, req.apiKey.company_id, 'leads_per_month')) return;
+
     const leadSelect = `
         id, code, title, type, estimated_value, description, created_at, stage_entered_at,
         company_id, region_id, pipeline_id, stage_id, lead_type_id, source_id, customer_id,
@@ -469,6 +472,11 @@ r.post('/leads', apiKeyAuth, async (req, res) => {
       throw error;
     }
     if (!lead) throw insertErr || new Error('Không tạo được lead');
+
+    try {
+      const tid = await resolveTenantIdForQuota(req, req.apiKey.company_id);
+      if (tid) invalidateTenantUsageCache(tid);
+    } catch (_) {}
 
     // Auto-gen tasks theo bộ mẫu pipeline công ty — cùng luồng với POST /crm/leads
     if (autoGenCrmTasksForNewLead) {

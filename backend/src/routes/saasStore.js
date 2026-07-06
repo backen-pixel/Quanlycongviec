@@ -13,6 +13,7 @@ const {
   paymentMethodLabel,
   PAYMENT_STATUS,
 } = require('../helpers/saasPayment');
+const { quotasToHighlights } = require('../helpers/tenantQuotas');
 const { enrichMethodForWeb, getGatewayStatus, resolveWebPayment } = require('../helpers/saasPaymentGateway');
 const {
   PLAN_LABELS,
@@ -42,8 +43,20 @@ function formatPrice(n) {
   return String(n || 0).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 }
 
+function mergePlanHighlights(highlights, quotas) {
+  const base = Array.isArray(highlights) ? [...highlights] : [];
+  const extras = quotasToHighlights(quotas);
+  for (const line of extras) {
+    if (!base.some((h) => String(h).toLowerCase().includes(String(line).slice(0, 8).toLowerCase()))) {
+      base.push(line);
+    }
+  }
+  return base.length ? base : extras;
+}
+
 function mapPlanRow(row) {
   if (!row) return null;
+  const quotas = row.quotas && typeof row.quotas === 'object' ? row.quotas : {};
   return {
     id: row.id,
     title: row.title,
@@ -53,12 +66,13 @@ function mapPlanRow(row) {
     price_monthly: row.price_monthly,
     max_users: row.max_users,
     max_companies: row.max_companies,
-    highlights: Array.isArray(row.highlights) ? row.highlights : [],
+    highlights: mergePlanHighlights(row.highlights, quotas),
     badge: row.badge,
     color: row.color,
     trial_days: row.trial_days,
     is_purchasable: row.is_purchasable,
     tenant_tier: row.tenant_tier,
+    quotas,
   };
 }
 
@@ -388,7 +402,7 @@ adminRouter.patch('/saas-plans/:id', async (req, res) => {
     const update = { updated_at: new Date().toISOString() };
     [
       'title', 'subtitle', 'description', 'price_monthly', 'max_users', 'max_companies',
-      'highlights', 'badge', 'color', 'trial_days', 'is_active', 'is_purchasable', 'sort_order', 'tenant_tier',
+      'highlights', 'badge', 'color', 'trial_days', 'is_active', 'is_purchasable', 'sort_order', 'tenant_tier', 'quotas',
     ].forEach((f) => { if (b[f] !== undefined) update[f] = b[f]; });
 
     const { data, error } = await supabase

@@ -41,7 +41,7 @@ async function insertProposal(row) {
     .single();
   if (error) {
     if (/relation .* does not exist/i.test(error.message || '')) {
-      throw new Error('Chưa chạy migration 509_ai_bot_skill_workshop.sql');
+      throw new Error('Chưa chạy migration 393_ai_bot_skill_workshop.sql');
     }
     throw new Error(error.message);
   }
@@ -76,7 +76,7 @@ async function listSkillProposals({ status, user_id: userId, limit = 50 } = {}) 
   const { data, error } = await q;
   if (error) {
     if (/relation .* does not exist/i.test(error.message || '')) {
-      return { proposals: [], total: 0, hint: 'Chạy migration database/509_ai_bot_skill_workshop.sql' };
+      return { proposals: [], total: 0, hint: 'Chạy migration database/393_ai_bot_skill_workshop.sql' };
     }
     throw new Error(error.message);
   }
@@ -139,7 +139,7 @@ async function proposeSkillSchedule(args, ctx) {
         const { createAiBotSchedule } = require('./aiBotSkills');
         return createAiBotSchedule({ ...args, dry_run: true }, ctx);
       }
-      throw new Error('Chưa chạy migration database/509_ai_bot_skill_workshop.sql — nhờ admin chạy SQL trên Primary.');
+      throw new Error('Chưa chạy migration database/393_ai_bot_skill_workshop.sql — nhờ admin chạy SQL trên Primary.');
     }
     throw e;
   }

@@ -1,4 +1,4 @@
--- 512_ai_bot_time_scope_day_cycle.sql
+-- 396_ai_bot_time_scope_day_cycle.sql
 -- Thêm time_scope day_cycle: 8h sáng = hôm qua · 20h tối = hôm nay (tab NV / BC tổ chức).
 
 DO $$

@@ -11,8 +11,8 @@ const PRIMARY_REF = process.env.PRIMARY_PROJECT_REF || 'kdxypztstbeovyedmvem';
 const BACKUP_REF = process.env.BACKUP_PROJECT_REF || 'atcfpgxkgbszglrelfgr';
 
 const FILES = [
-  path.join(__dirname, '..', '..', 'database', '506_ai_chat_bot_lead_expiring_tomorrow.sql'),
-  path.join(__dirname, '..', '..', 'database', '507_ai_bot_user_skills.sql'),
+  path.join(__dirname, '..', '..', 'database', '389_ai_chat_bot_lead_expiring_tomorrow.sql'),
+  path.join(__dirname, '..', '..', 'database', '390_ai_bot_user_skills.sql'),
 ];
 
 async function runQuery(projectRef, label, sql) {
@@ -77,7 +77,7 @@ async function main() {
     try {
       const v = await verify(t.ref, t.label);
       const row = Array.isArray(v) ? v[0] : v;
-      console.log(`  ${t.label}: skills=${row?.has_skills} playbooks=${row?.new_playbooks} 506_ok=${row?.playbook_506}`);
+      console.log(`  ${t.label}: skills=${row?.has_skills} playbooks=${row?.new_playbooks} 389_ok=${row?.playbook_506}`);
     } catch (e) {
       console.error(`  ${t.label} verify: ${e.message}`);
     }

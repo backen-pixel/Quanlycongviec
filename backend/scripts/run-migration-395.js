@@ -10,7 +10,7 @@ const TOKEN = process.env.SUPABASE_ACCESS_TOKEN;
 const PRIMARY_REF = process.env.PRIMARY_PROJECT_REF || 'kdxypztstbeovyedmvem';
 const BACKUP_REF = process.env.BACKUP_PROJECT_REF || 'atcfpgxkgbszglrelfgr';
 
-const SQL_FILE = path.join(__dirname, '..', '..', 'database', '511_ai_bot_reminder_schedules.sql');
+const SQL_FILE = path.join(__dirname, '..', '..', 'database', '395_ai_bot_reminder_schedules.sql');
 
 async function runQuery(projectRef, label, sql) {
   const res = await fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
@@ -59,7 +59,7 @@ async function main() {
 
   for (const t of targets) {
     console.log(`\n=== ${t.label} (${t.ref}) ===`);
-    console.log('Applying 511_ai_bot_reminder_schedules.sql...');
+    console.log('Applying 395_ai_bot_reminder_schedules.sql...');
     await runQuery(t.ref, t.label, sql);
     const v = await verify(t.ref, t.label);
     console.log('Verify:', JSON.stringify(v, null, 2));

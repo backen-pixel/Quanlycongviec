@@ -23,6 +23,7 @@ const {
   canViewerSeeByCompanyAndDept,
 } = require('../helpers/documentShareScope');
 const { isPostgresUniqueViolation, nextTbProjectCode } = require('../helpers/projectCode');
+const { enforceQuotaForRequest, invalidateTenantUsageCache, resolveTenantIdForQuota } = require('../helpers/tenantQuotas');
 const { ensureDealLeadDocumentsForModuleTransition } = require('../helpers/ensureDealLeadDocumentsForModuleTransition');
 const { assertDealResponsible, assertFileAttachmentMutation, assertLeadDocumentOwner, logProjectFileActivity, logDealStageChangeComment, logDealDeadlineChangeComment, logDealActivityComment, requireProjectEditOrSxKanbanWorkshopType } = require('../helpers/projectFileActivity');
 const {
@@ -1052,6 +1053,9 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
       return res.status(400).json({ error: 'Chọn khách hàng (customer_id)' });
     }
 
+    const projectCompanyId = b.company_id || req.user?.company_id || null;
+    if (await enforceQuotaForRequest(req, res, projectCompanyId, 'projects_total')) return;
+
     // Allow creating workshop projects directly (SX/VC modals send status)
     const ALLOWED_CREATE_STATUSES = new Set([
       'new', 'consulting', 'designing', 'quoting', 'contract_signed',
@@ -1199,6 +1203,11 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
         details: lastErr?.details,
       });
     }
+
+    try {
+      const tid = await resolveTenantIdForQuota(req, data.company_id || projectCompanyId);
+      if (tid) invalidateTenantUsageCache(tid);
+    } catch (_) {}
 
     if (data.company_id && (b.workshop_type_id || data.workshop_type_id) && !b.production_person_id) {
       try {
@@ -1465,6 +1474,9 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
     const b = req.body;
     if (!b.name?.trim()) return res.status(400).json({ error: 'Tên dự án là bắt buộc' });
     if (!b.customer_id) return res.status(400).json({ error: 'Chọn khách hàng' });
+
+    const flowCompanyId = b.company_id || req.user?.company_id || null;
+    if (await enforceQuotaForRequest(req, res, flowCompanyId, 'projects_total')) return;
 
     const yr = new Date().getFullYear();
     const { data: firstStage } = await supabase.from('workflow_stages')

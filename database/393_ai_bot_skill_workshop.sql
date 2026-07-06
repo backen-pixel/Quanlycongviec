@@ -1,4 +1,4 @@
--- 509_ai_bot_skill_workshop.sql
+-- 393_ai_bot_skill_workshop.sql
 -- Skill Workshop (đề xuất → duyệt) + Task Flow orchestration.
 -- Idempotent.
 

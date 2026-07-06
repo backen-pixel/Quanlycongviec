@@ -1,4 +1,4 @@
--- 508_fix_backup_users_pkey.sql
+-- 391_fix_backup_users_pkey.sql
 -- Sửa backup DB: public.users thiếu PRIMARY KEY do 1 bản ghi trùng id (sync lỗi).
 -- Chạy trên BACKUP (atcfpgxkgbszglrelfgr). Idempotent sau lần chạy đầu.
 
@@ -27,7 +27,7 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- 3) FK ai_bot_user_skills → users (507 backup chạy không FK)
+-- 3) FK ai_bot_user_skills → users (390 backup chạy không FK)
 DO $$ BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.tables
