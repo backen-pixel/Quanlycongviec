@@ -37,6 +37,9 @@ const MENU_GROUPS = [
     platformAdminOnly: true,
     items: [
       { to: '/platform', icon: LayoutDashboard, label: 'Tổng quan SaaS' },
+      { to: '/platform/plans', icon: CreditCard, label: '4 gói chính' },
+      { to: '/platform/modules', icon: Package, label: 'Modun add-on' },
+      { to: '/platform/purchases', icon: ShoppingCart, label: 'Đơn mua & thông báo' },
       { to: '/platform/tenants', icon: Globe, label: 'Hệ sinh thái' },
       { to: '/platform/users', icon: Users, label: 'Users toàn nền tảng' },
       { to: '/platform/billing', icon: CreditCard, label: 'Gói thuê bao' },

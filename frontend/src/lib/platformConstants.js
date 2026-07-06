@@ -1,10 +1,19 @@
 export const TIER_ORDER = ['free', 'starter', 'pro', 'enterprise'];
 
 export const TIER_LABELS = {
-  free: 'Miễn phí',
-  starter: 'Starter',
+  free: 'Free',
+  starter: 'Standard',
   pro: 'Pro',
-  enterprise: 'Enterprise',
+  enterprise: 'Ultra',
+};
+
+export const PLAN_IDS = ['free', 'standard', 'pro', 'ultra'];
+
+export const PLAN_LABELS = {
+  free: 'Free',
+  standard: 'Standard',
+  pro: 'Pro',
+  ultra: 'Ultra',
 };
 
 export const TIER_COLORS = {

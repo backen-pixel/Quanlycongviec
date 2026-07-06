@@ -73,6 +73,12 @@ export function AuthProvider({ children }) {
     return applyAuthSession(data, sessionId);
   };
 
+  const loginWithGoogle = async (credential) => {
+    const sessionId = `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    const { data } = await api.post('/auth/google', { credential, session_id: sessionId });
+    return applyAuthSession(data, sessionId);
+  };
+
   const applyAuthSession = async (auth, fallbackSessionId) => {
     disconnectSocket();
     resetClientSessionState();
@@ -118,7 +124,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthCtx.Provider value={{ user, loading, login, logout, applyAuthSession, socket }}>
+    <AuthCtx.Provider value={{ user, loading, login, loginWithGoogle, logout, applyAuthSession, socket }}>
       <ActivityPingGate user={user} onLogout={logout}>{children}</ActivityPingGate>
     </AuthCtx.Provider>
   );

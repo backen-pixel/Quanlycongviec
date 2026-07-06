@@ -1166,7 +1166,7 @@ async function insertGroupBotMessage(groupId, content, io, channelInfo) {
  * @param {object} io        Socket.IO server
  * @returns {Promise<{ status:'ok'|'error'|'skipped', message?:string, message_id?:string, error?:string, preview?:string }>}
  */
-async function runScheduleSend(schedule, io) {
+async function runScheduleSend(schedule, io, runOpts = {}) {
   // Fan-out: 1 lịch "1-1 cá nhân" có nhiều recipient_user_ids → gửi DM riêng cho từng người,
   // mỗi người chỉ thấy dữ liệu của chính mình (personal_scope_only).
   const recipients = Array.isArray(schedule.recipient_user_ids)
@@ -1192,7 +1192,7 @@ async function runScheduleSend(schedule, io) {
           region_whitelist: null,
           personal_scope_only: true,
         };
-        const res = await runScheduleSend(subSchedule, io);
+        const res = await runScheduleSend(subSchedule, io, runOpts);
         if (res?.status === 'ok') {
           ok += 1;
           if (firstPreviews.length < 2 && res.preview) firstPreviews.push(res.preview);
@@ -1262,22 +1262,30 @@ async function runScheduleSend(schedule, io) {
   }
   if (dsAuto === 'company_daily' || dsAuto === 'org_overview') {
     try {
+      const { resolveScheduleTimeScope } = require('./aiBotSkills');
+      const slotHour = Number.isFinite(runOpts.slotHour)
+        ? runOpts.slotHour
+        : parseInt(String(runOpts.slotLabel || '').split(':')[0], 10);
+      const resolvedScope = resolveScheduleTimeScope(
+        schedule,
+        Number.isFinite(slotHour) ? slotHour : undefined,
+      );
+      const orgScopeList = ['today', 'yesterday', 'last_7d', 'last_30d', 'this_month', 'last_month'];
+      const orgScope = orgScopeList.includes(resolvedScope) ? resolvedScope : 'today';
+
       let content;
       if (dsAuto === 'company_daily') {
         const { formatCompanyReportText } = require('./aiReportTools');
         content = await formatCompanyReportText({
           company_id: schedule.company_whitelist?.[0] || undefined,
           department_id: schedule.department_whitelist?.[0] || undefined,
-          time_scope: schedule.time_scope || 'today',
+          time_scope: orgScope,
           schedule_id: schedule.id,
         });
       } else {
         const deptId = schedule.department_whitelist?.[0] || undefined;
         if (deptId) {
           const { formatOrgEmployeeTabReportText } = require('./orgOverviewReportAi');
-          const orgScope = ['today', 'yesterday', 'last_7d', 'last_30d', 'this_month', 'last_month'].includes(schedule.time_scope)
-            ? schedule.time_scope
-            : 'today';
           const r = await formatOrgEmployeeTabReportText({
             company_id: schedule.company_whitelist?.[0] || undefined,
             department_id: deptId,
@@ -1287,9 +1295,6 @@ async function runScheduleSend(schedule, io) {
           content = r.text;
         } else {
           const { formatOrgOverviewReportText } = require('./orgOverviewReportAi');
-          const orgScope = ['today', 'yesterday', 'last_7d', 'last_30d', 'this_month', 'last_month'].includes(schedule.time_scope)
-            ? schedule.time_scope
-            : 'today';
           const r = await formatOrgOverviewReportText({
             company_id: schedule.company_whitelist?.[0] || undefined,
             time_scope: orgScope,

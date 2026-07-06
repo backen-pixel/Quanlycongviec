@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Mail, Lock, Eye, EyeOff, ArrowRight, Home, QrCode,
@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import QrLoginPanel from '../components/qr/QrLoginPanel';
+import GoogleSignInButton from '../components/auth/GoogleSignInButton';
 
 const FEATURES = [
   'Quản lý kho & sản phẩm theo thời gian thực',
@@ -31,9 +32,15 @@ export default function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState('password');
-  const { login, applyAuthSession } = useAuth();
+  const { login, loginWithGoogle, applyAuthSession } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+
+  const emailHint = searchParams.get('email') || '';
+
+  useEffect(() => {
+    if (emailHint && !email) setEmail(emailHint);
+  }, [emailHint]);
 
   const logoutNotice = useMemo(() => {
     const reason = searchParams.get('reason');
@@ -59,6 +66,19 @@ export default function Login() {
       setLoading(false);
     }
   };
+
+  const onGoogleSuccess = useCallback(async (credential) => {
+    setError('');
+    setLoading(true);
+    try {
+      await loginWithGoogle(credential);
+      navigate('/');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Lỗi đăng nhập Google');
+    } finally {
+      setLoading(false);
+    }
+  }, [loginWithGoogle, navigate]);
 
   const onQrSuccess = useCallback(async (auth) => {
     try {
@@ -329,6 +349,22 @@ export default function Login() {
                         </>
                       )}
                     </button>
+
+                    <div className="relative py-2">
+                      <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200" /></div>
+                      <div className="relative flex justify-center text-[10px] uppercase tracking-wider"><span className="bg-white px-2 text-slate-400">hoặc</span></div>
+                    </div>
+
+                    <GoogleSignInButton
+                      hintEmail={email || emailHint}
+                      onSuccess={onGoogleSuccess}
+                      onError={(msg) => setError(msg)}
+                    />
+                    {emailHint && (
+                      <p className="text-[11px] text-center text-slate-500">
+                        Dùng Google với email <strong>{emailHint}</strong> đã đăng ký mua gói
+                      </p>
+                    )}
                   </form>
                 )}
               </div>

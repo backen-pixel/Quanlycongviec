@@ -55,6 +55,8 @@ const AnimatedBackground = lazy(() => import('./components/AnimatedBackground'))
 const EarthExperienceBackground = lazy(() => import('./components/EarthExperienceBackground.jsx'));
 import Login from './pages/Login';
 import ModulesLandingPage from './pages/ModulesLandingPage';
+import SaasPaymentReturnPage from './pages/SaasPaymentReturnPage';
+import SaasCheckoutPage from './pages/SaasCheckoutPage';
 
 const Dashboard = lazyWithRetry(() => import('./pages/ManagementDashboard'));
 const ManagementDashboard = lazyWithRetry(() => import('./pages/ManagementDashboard'));
@@ -195,6 +197,9 @@ const PlatformStatsPage = lazyWithRetry(() => import('./pages/platform/PlatformS
 const PlatformUsersPage = lazyWithRetry(() => import('./pages/platform/PlatformUsersPage'));
 const PlatformTierFeaturesPage = lazyWithRetry(() => import('./pages/platform/PlatformTierFeaturesPage'));
 const PlatformBillingPage = lazyWithRetry(() => import('./pages/platform/PlatformBillingPage'));
+const PlatformModulesPage = lazyWithRetry(() => import('./pages/platform/PlatformModulesPage'));
+const PlatformPlansPage = lazyWithRetry(() => import('./pages/platform/PlatformPlansPage'));
+const PlatformPurchasesPage = lazyWithRetry(() => import('./pages/platform/PlatformPurchasesPage'));
 
 import { Settings } from 'lucide-react';
 
@@ -354,6 +359,8 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/modules" element={<ModulesLandingPage />} />
+          <Route path="/modules/checkout/:purchaseId" element={<SaasCheckoutPage />} />
+          <Route path="/modules/payment/return" element={<SaasPaymentReturnPage />} />
           <Route path="/privacy" element={<Suspense fallback={<PageLoader />}><PrivacyPage /></Suspense>} />
           <Route element={<ProtectedLayout />}>
             <Route path="/" element={<DefaultRedirect />} />
@@ -395,6 +402,9 @@ export default function App() {
               <Route path="tenants/:id" element={<PlatformTenantDetailPage />} />
               <Route path="users" element={<PlatformUsersPage />} />
               <Route path="billing" element={<PlatformBillingPage />} />
+              <Route path="plans" element={<PlatformPlansPage />} />
+              <Route path="modules" element={<PlatformModulesPage />} />
+              <Route path="purchases" element={<PlatformPurchasesPage />} />
               <Route path="tier-features" element={<PlatformTierFeaturesPage />} />
               <Route path="stats" element={<PlatformStatsPage />} />
             </Route>

@@ -112,7 +112,12 @@ CÁCH MAPPING CÂU HỎI → TOOLS:
 - "1","2","tất cả","cty Phúc Đạt"… → list_companies_in_scope rồi map sang company_id.
 
 ▶ TỰ ĐỘNG HÓA / LỊCH BOT / KỸ NĂNG (cần quyền admin — tạo lịch gửi tin theo giờ):
-- "gửi báo cáo … lúc 8h sáng / 12h trưa / 6h chiều mỗi ngày" → **manage_ai_bot_schedule(action='preview', report_type=org_overview|company_daily, …)** — KHÔNG create trực tiếp.
+★ QUY TẮC TẠO LỊCH — BẮT BUỘC DÙNG AI BOT ĐÃ CÓ:
+- Tạo lịch = gắn vào **playbook + skill/lịch bot đã cấu hình** (Cài đặt → AI Chat Bot, file JSON, kỹ năng đã lưu) — KHÔNG bịa pipeline/format mới.
+- Luồng ưu tiên: (1) khớp skill JSON /skill apply [mã] · (2) kỹ năng user đã lưu · (3) lịch mẫu cùng kênh · (4) preview → user OK.
+- "tạo lịch bot báo cáo …" → **manage_ai_bot_schedule(action='preview_skill', skill_code=…)** nếu biết mã; không thì **preview** — hệ thống tự khớp bot có sẵn và hiện «Bot nguồn» trong preview.
+- KHÔNG action=create trực tiếp — chỉ sau user OK. KHÔNG gọi format_* để thay thế bot đã setup.
+- "gửi báo cáo … lúc 8h sáng / 12h trưa / 6h chiều mỗi ngày" → **manage_ai_bot_schedule(action='preview', report_type=org_overview|company_daily, …)**.
 - User thường: **manage_skill_proposals(propose)** → admin duyệt Workshop. Admin chat: preview → user OK → backend tự tạo.
 - "duyệt/từ chối đề xuất" → manage_skill_proposals(approve/reject) hoặc slash /duyet /tu-choi.
 - Lệnh nhanh (bypass LLM): /help /bc org /bc nv /lịch /skill /workshop /nhớ.
@@ -123,9 +128,10 @@ CÁCH MAPPING CÂU HỎI → TOOLS:
 - "sửa lịch / đổi giờ" → update(run_times) hoặc /lich sua 16:01 8h — nếu giờ mới đã qua hôm nay (VN) hệ thống từ chối, hiện chi tiết lịch + gợi ý giờ mới
 - "bật/tắt lịch" → toggle hoặc /lich bat|tat [giờ]
 - "lịch sử chạy / lần cuối lỗi" → runs hoặc /lich lich-su [giờ]
-- "báo cáo doanh thu / BC tổ chức cty X phòng KD" → **format_org_employee_tab_report_text**, company_name, department_name='kinh doanh'.
+- "báo cáo doanh thu / BC tổ chức cty X phòng KD" → **manage_ai_bot_schedule(action='send_report', company_name, department_name, time_scope)** — dùng bot đã setup.
+- "gửi báo cáo / xem báo cáo / bc phòng KD" → **send_report** hoặc slash /bc org [cty] [phòng]. KHÔNG gọi format_* trực tiếp.
 - "báo cáo công ty nhanh / lead deal hôm nay" → report_type='company_daily'.
-- "tạo lịch bot báo cáo …" → preview báo cáo (org_overview / company_daily), có company + department + run_times.
+- "tạo lịch bot báo cáo …" → preview_skill nếu có mã skill; không thì preview (auto khớp bot) — org_overview / company_daily + company + department + run_times.
 - "nhắc / thông báo / nhắc việc" → report_type='reminder'. Nếu thiếu nội dung bot TỰ HỎI «Nội dung nhắc là gì?» — user trả lời tên ngắn (vd «mua đồ») cũng được. Preview hiện đúng tin nhắn → OK mới tạo.
 - "nhắc mua đồ abc ngày 10/6/2026 lúc 9h" / "thông báo hàng tháng ngày 1" → preview reminder hoặc /lich nhac 9h mua đồ abc ngày 10/6/2026
 - "nhắc … 5h sáng và 5h chiều mỗi ngày" → preview reminder, run_times=['5h sáng','5h chiều'], recurrence='daily'
@@ -140,32 +146,37 @@ CÁCH MAPPING CÂU HỎI → TOOLS:
 - QUY TRÌNH Skill Workshop: propose/preview → hỏi OK/huủ → backend TỰ tạo (admin) hoặc chờ duyệt UI (user thường).
 - Admin quản lý tại Cài đặt → AI Chat Bot → tab «Kỹ năng & Trí nhớ» → Workshop / Task Flow / Thư viện JSON.
 
-▶ BÁO CÁO THEO TỔ CHỨC (trang «Báo cáo theo tổ chức» — cơ sở created_at, khớp dashboard BC tổ chức):
+▶ BÁO CÁO TRONG CHAT — BẮT BUỘC QUA BOT ĐÃ CẤU HÌNH:
+- Mọi yêu cầu "gửi/xem/chạy báo cáo" → **manage_ai_bot_schedule(action='send_report', …)** hoặc /bc org, /bc daily.
+- Hệ thống chọn lịch bot + playbook (org_overview / company_daily…) đã setup trong kênh hiện tại — cùng pipeline cron/Gửi thử.
+- Trả lời ngắn xác nhận đã gửi; nội dung báo cáo nằm trong tin bot vừa post vào kênh.
+- Nếu send_report báo không có lịch → hướng admin tạo /lich tao hoặc Cài đặt → AI Chat Bot. KHÔNG tự gọi format_* thay thế.
+- Chỉ dùng format_org_* / format_company_* khi user hỏi phân tích số liệu trong chat (không yêu cầu gửi báo cáo vào kênh) hoặc MCP API.
+
+▶ BÁO CÁO THEO TỔ CHỨC (phân tích trong chat — không gửi vào kênh):
 - "báo cáo tổ chức / BC tổ chức / theo tổ chức / tổng quan công ty [kỳ] / org overview" → **format_org_overview_report_text**
 - "tỉ lệ chốt / conversion / pipeline value / giá trị pipeline / KPI sổ cái / so với kỳ trước / tiếp nhận trễ / theo khu vực (số liệu BC)" → format_org_overview_report_text
 - Tham số: company_id (optional, mặc định theo quyền user + last_company_id), region_id, department_id, assigned_to, time_scope, type='all'|'lead'|'deal'
 - Cần raw JSON → get_org_overview_report
 - AI CHỈ in nguyên result.text — KHÔNG tự compose từ get_company_lead_summary
 
-▶ TAB NHÂN VIÊN — BC tổ chức (cột Deal, tiếp nhận, Ký HĐ, BG, KPI… — KHÁC báo cáo nhanh bot):
-- "báo cáo công ty X phòng kinh doanh [kỳ]", "BC phòng KD tháng 6", "tab nhân viên BC tổ chức", "số liệu NV theo BC tổ chức" → **format_org_employee_tab_report_text**
-- "báo cáo doanh thu / BC tổ chức cty X phòng KD" (lịch bot org_overview) → format_org_employee_tab_report_text với company_name + department_name='kinh doanh'
-- Tham số: company_id hoặc company_name, department_name (vd 'kinh doanh'), time_scope hoặc date_from/date_to (tháng 6/2026 → date_from='2026-06-01', date_to='2026-06-30')
-- AI CHỈ in nguyên result.text
-
-KHÁC format_company_report_text (báo cáo nhanh bot — lead MỚI, chuyển deal, thắng/thua theo ngày đóng + stage history):
-- "lead mới hôm nay / chuyển deal hôm nay / thắng thua hôm nay / báo cáo sáng bot" → format_company_report_text
+▶ TAB NHÂN VIÊN — BC tổ chức (phân tích trong chat, không gửi kênh):
+- "số liệu tab nhân viên / Deal tiếp nhận / Ký HĐ" (không yêu cầu gửi) → format_org_employee_tab_report_text
+- "gửi BC phòng KD / báo cáo phòng kinh doanh" → send_report hoặc /bc org
 
 CẤU TRÚC TRẢ LỜI (TỐI ƯU CHO BONG BÓNG CHAT HẸP — DỌC, NGẮN DÒNG):
 
-★ Báo cáo TỔ CHỨC (BC theo công ty / khu vực / phòng — khớp trang org overview):
-- BẮT BUỘC gọi **format_org_overview_report_text** với time_scope khớp từ ngữ user
+★ Gửi báo cáo vào kênh (ưu tiên tuyệt đối):
+- **manage_ai_bot_schedule(action='send_report', company_name?, department_name?, time_scope?, report_type='org_overview'|'company_daily')**
+- AI in nguyên result.text (thường là xác nhận ngắn — báo cáo đầy đủ đã gửi vào kênh)
+
+★ Phân tích BC tổ chức trong chat (không gửi kênh):
 - company_id nếu user chỉ rõ cty hoặc dùng last_company_id
 - region_id / department_id / assigned_to khi user lọc cụ thể
 - AI CHỈ in nguyên result.text
 
-★ Báo cáo TAB NHÂN VIÊN (BC tổ chức — cột Deal, tiếp nhận, Ký HĐ, BG, KPI từng NV):
-- BẮT BUỘC gọi **format_org_employee_tab_report_text** khi user hỏi báo cáo phòng ban / kinh doanh / tab NV BC tổ chức
+★ Phân tích tab Nhân viên BC tổ chức trong chat (không gửi kênh):
+- Gọi **format_org_employee_tab_report_text** khi user hỏi số liệu phòng ban / tab NV (không nói "gửi báo cáo")
 - company_name hoặc company_id + department_name (vd 'kinh doanh') + time_scope hoặc date_from/date_to
 - Tháng cụ thể: "tháng 6" → date_from/date_to của tháng 6 năm hiện tại (hoặc năm user nói)
 - AI CHỈ in nguyên result.text
@@ -181,10 +192,8 @@ CẤU TRÚC TRẢ LỜI (TỐI ƯU CHO BONG BÓNG CHAT HẸP — DỌC, NGẮN D
 - TUYỆT ĐỐI CẤM tự compose từ get_company_lead_summary + get_employee_breakdown rồi format tay — đây là bug nghiêm trọng (AI sẽ giấu NV, đặt nhầm giá trị tiền, in full digits). Nếu tool trả lỗi, báo lỗi cho user thay vì tự bịa.
 
 Mapping "phòng/khối X [kỳ]":
-- BC tab Nhân viên (cột Deal, BG, KPI — khớp trang BC tổ chức): **format_org_employee_tab_report_text(company_name=..., department_name='kinh doanh', date_from/date_to hoặc time_scope)**
-- Báo cáo nhanh hoạt động (lead MỚI, chuyển deal, xử lý, quá hạn chi tiết): **format_company_report_text(company_id=last_company_id, department_name='kinh doanh', time_scope='this_month')**
-- Nếu user không nói rõ loại nhưng nhắc "phòng kinh doanh / BC tổ chức / tab nhân viên / Deal tiếp nhận / Ký HĐ" → format_org_employee_tab_report_text
-- Nếu user nhắc "lead mới / chuyển deal / báo cáo sáng / xử lý / im lặng" → format_company_report_text
+- User muốn **GỬI** BC vào kênh → send_report hoặc /bc org
+- User muốn **XEM/PHÂN TÍCH** trong chat → format_org_employee_tab_report_text hoặc format_company_report_text
 - Nếu user yêu cầu liệt kê các phòng có sẵn ("cty này có phòng nào", "danh sách phòng ban") → gọi list_departments_in_company(company_id).
 - TUYỆT ĐỐI không tự bịa "không có nhân viên nào" — phải gọi tool và đọc field text trả về. Nếu tool báo lỗi/không có data, in chính xác message của tool.
 
@@ -828,8 +837,8 @@ async function handleIncomingMessage({ messageRow, channelKind, channelId, io })
     }
 
     const { ensureSkillSnapshot, formatSnapshotForPrompt } = require('./aiBotSkillSnapshot');
-    const { snapshot: skillSnapshot } = await ensureSkillSnapshot(channelKind, channelId, openConv);
-    const skillSnapshotBlock = formatSnapshotForPrompt(skillSnapshot);
+    const { snapshot: skillSnapshot, channelSchedules } = await ensureSkillSnapshot(channelKind, channelId, openConv);
+    const skillSnapshotBlock = formatSnapshotForPrompt(skillSnapshot, channelSchedules);
 
     const todayVn = vnDateYmd();
     const [yy, mm, dd] = todayVn.split('-');

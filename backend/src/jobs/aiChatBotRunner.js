@@ -98,7 +98,7 @@ async function processSchedule(sched, io, nowParts, vnDate) {
 
   let result;
   try {
-    result = await runScheduleSend(sched, io);
+    result = await runScheduleSend(sched, io, { slotHour: nowParts.hh, slotLabel: label });
   } catch (e) {
     result = { status: 'error', error: e.message };
   }

@@ -132,8 +132,14 @@ function buildMockReq(user, params = {}) {
   if (params.assigned_to) query.assigned_to = String(params.assigned_to);
   if (params.deal_kh_split) query.deal_kh_split = '1';
 
+  const mockUser = user ? { ...user } : {};
+  if (params.bot_schedule_scope && params.company_id) {
+    mockUser.role = mockUser.role || 'admin';
+    mockUser.company_id = mockUser.company_id || null;
+  }
+
   return {
-    user: user || {},
+    user: mockUser,
     query,
   };
 }
@@ -249,6 +255,91 @@ async function resolveDepartmentForOrgReport({ company_id: companyId, department
   };
 }
 
+function formatPeriodLabelVi(df, dt, fallbackLabel) {
+  const fmt = (ymd) => {
+    if (!ymd || !/^\d{4}-\d{2}-\d{2}$/.test(String(ymd))) return ymd;
+    const [y, m, d] = String(ymd).split('-');
+    return `${d}/${m}/${y}`;
+  };
+  if (df && dt) {
+    if (df === dt) return fmt(df);
+    return `${fmt(df)} – ${fmt(dt)}`;
+  }
+  return fallbackLabel || '';
+}
+
+function rankBadge(idx) {
+  if (idx === 0) return '🥇';
+  if (idx === 1) return '🥈';
+  if (idx === 2) return '🥉';
+  return `${idx + 1}.`;
+}
+
+/** Khối tổng quan — nhóm theo Deal / Báo giá chốt / KPI (khớp tab NV trên BC tổ chức). */
+function formatOrgTabSummaryLines(s) {
+  const dealTotal = orgReportTotalDealCount(s);
+  const won = reportClosedWonCount(s);
+  const lostCancel = reportCancelLostTotal(s);
+  const cancelTotal = reportCancelTotalCount(s);
+  const cancelPct = s.cancel_rate_pct != null ? `${s.cancel_rate_pct}%` : '—';
+  const cancelDetail = cancelTotal ? ` (${lostCancel}/${cancelTotal})` : '';
+
+  const lines = [];
+  lines.push('📊 *Tổng quan*');
+  lines.push(`   Lead *${fmtInt(s.lead_count || 0)}* · Deal *${fmtInt(dealTotal)}* · Ký HĐ *${fmtInt(won)}*`);
+  lines.push(
+    `   Chốt *${fmtPct(s.conversion_rate)}* · GT chốt *${fmtPct(s.deal_close_value_rate_pct)}*`
+    + ` · Đúng hạn *${fmtInt(s.on_time_deal_count ?? 0)}* · Trễ *${fmtInt(s.late_deal_count ?? 0)}*`,
+  );
+  lines.push(`   Hủy *${cancelPct}*${cancelDetail}`);
+
+  const quoteParts = [`BG *${fmtInt(s.quote_deal_count ?? 0)}*`];
+  if (s.quote_value > 0) quoteParts.push(`GT BG *${fmtMoneyShort(s.quote_value)}*`);
+  quoteParts.push(`Chốt SL *${fmtInt(won)}*`);
+  if (reportClosedWonValue(s) > 0) quoteParts.push(`GT chốt *${fmtMoneyShort(reportClosedWonValue(s))}*`);
+  if (s.quote_win_rate_pct != null) quoteParts.push(`Chốt/BG *${s.quote_win_rate_pct}%*`);
+  lines.push(`   ${quoteParts.join(' · ')}`);
+
+  const extra = [];
+  if (s.expected_value > 0) extra.push(`Dự kiến *${fmtMoneyShort(s.expected_value)}*`);
+  if (s.weighted_value > 0) extra.push(`Kỳ vọng *${fmtMoneyShort(s.weighted_value)}*`);
+  if (s.kpi_ledger_net) extra.push(`KPI *${Math.round(s.kpi_ledger_net)}*`);
+  if (extra.length) lines.push(`   ${extra.join(' · ')}`);
+
+  return lines;
+}
+
+/** Khối 1 nhân viên — 2 dòng gọn, dễ quét trên chat. */
+function formatOrgTabEmployeeLines(e, idx, { hideDept = false } = {}) {
+  const dealTotal = employeeDealTotal(e);
+  const won = reportClosedWonCount(e);
+  const lostCancel = reportCancelLostTotal(e);
+  const cancelTotal = reportCancelTotalCount(e);
+  const cancelPct = e.cancel_rate_pct != null ? `${e.cancel_rate_pct}%` : '—';
+  const cancelDetail = cancelTotal ? ` (${lostCancel}/${cancelTotal})` : '';
+  const badge = rankBadge(idx);
+  const name = shortName(e.full_name);
+  const dept = !hideDept && e.department_name ? ` · ${e.department_name}` : '';
+
+  const lines = [];
+  lines.push(`${badge} *${name}*${dept}`);
+  lines.push(
+    `   Deal ${dealTotal} · Ký ${won} (${fmtPct(e.conversion_rate)})`
+    + ` · ĐH ${e.on_time_deal_count ?? 0} · Trễ ${e.late_deal_count ?? 0} · Hủy ${cancelPct}${cancelDetail}`,
+  );
+
+  const row2 = [];
+  row2.push(`BG ${e.quote_deal_count ?? 0}`);
+  if (e.quote_value > 0) row2.push(`GT BG ${fmtMoneyShort(e.quote_value)}`);
+  if (reportClosedWonValue(e) > 0) row2.push(`Chốt ${fmtMoneyShort(reportClosedWonValue(e))}`);
+  if (e.quote_win_rate_pct != null) row2.push(`Chốt/BG ${e.quote_win_rate_pct}%`);
+  if (e.kpi_ledger_net) row2.push(`KPI ${Math.round(e.kpi_ledger_net)}`);
+  lines.push(`   ${row2.join(' · ')}`);
+
+  return lines;
+}
+
+/** @deprecated — giữ export nội bộ nếu cần; dùng formatOrgTabSummaryLines thay thế. */
 function formatEmployeeTabMetricsLine(e) {
   const dealTotal = employeeDealTotal(e);
   const won = reportClosedWonCount(e);
@@ -286,8 +377,7 @@ function formatEmployeeTabMetricsLine(e) {
 }
 
 function formatSummaryTabLine(s) {
-  const { row1, row2 } = formatEmployeeTabMetricsLine(s);
-  return `📊 Tổng: ${row1}\n   ${row2}`;
+  return formatOrgTabSummaryLines(s).slice(1).join('\n');
 }
 
 /**
@@ -339,20 +429,20 @@ async function formatOrgEmployeeTabReportText(params = {}) {
   }
 
   const periodLabel = params.date_from && params.date_to
-    ? `${params.date_from} → ${params.date_to}`
-    : `${data.df} → ${data.dt}`;
+    ? formatPeriodLabelVi(params.date_from, params.date_to)
+    : formatPeriodLabelVi(data.df, data.dt);
 
   const lines = [];
-  lines.push('📋 *BC tab Nhân viên · Báo cáo theo tổ chức*');
+  lines.push('🎯 *Báo cáo tab Nhân viên*');
   lines.push(`🏢 ${companyName}`);
   if (deptRes.scopeLabel) lines.push(deptRes.scopeLabel);
   lines.push(`🗓 ${periodLabel}`);
-  lines.push('📌 Cơ sở created_at · cột khớp trang BC tổ chức → tab Nhân viên');
-  lines.push('━━━━━━━━━━━━━');
-  lines.push(formatSummaryTabLine(s));
-  lines.push('━━━━━━━━━━━━━');
+  lines.push('─────────────────');
+  lines.push(...formatOrgTabSummaryLines(s));
+  lines.push('─────────────────');
 
   if (!employees.length) {
+    lines.push('');
     lines.push('📭 Không có NV có số liệu trong kỳ / phạm vi lọc.');
     return {
       text: lines.join('\n').slice(0, 3900),
@@ -361,19 +451,24 @@ async function formatOrgEmployeeTabReportText(params = {}) {
     };
   }
 
+  lines.push(`👥 *${employees.length} nhân viên*`);
+  lines.push('');
+
   const maxRows = Math.min(Math.max(Number(params.top_n) || 15, 1), 25);
+  const hideDept = !!(deptRes.departmentId || params.department_id);
   employees.slice(0, maxRows).forEach((e, idx) => {
-    const { row1, row2 } = formatEmployeeTabMetricsLine(e);
-    lines.push(`${idx + 1}. *${shortName(e.full_name)}*${e.department_name ? ` · ${e.department_name}` : ''}`);
-    lines.push(`   ${row1}`);
-    if (row2) lines.push(`   ${row2}`);
+    lines.push(...formatOrgTabEmployeeLines(e, idx, { hideDept }));
+    if (idx < Math.min(employees.length, maxRows) - 1) lines.push('');
   });
+
   if (employees.length > maxRows) {
-    lines.push(`… +${employees.length - maxRows} NV khác (gọi lại với top_n lớn hơn hoặc get_org_overview_report)`);
+    lines.push('');
+    lines.push(`_… +${employees.length - maxRows} NV khác_`);
   }
 
-  lines.push('━━━━━━━━━━━━━');
-  lines.push(`👥 ${employees.length} NV · Lead ${s.lead_count || 0} · Deal ${orgReportTotalDealCount(s)}`);
+  lines.push('');
+  lines.push('─────────────────');
+  lines.push(`📌 ${employees.length} NV · Lead ${fmtInt(s.lead_count || 0)} · Deal ${fmtInt(orgReportTotalDealCount(s))}`);
 
   return {
     text: lines.join('\n').slice(0, 3900),
@@ -582,7 +677,6 @@ async function formatAllEmployeesReportText(params = {}) {
   });
   const employees = (data.by_employee || []).filter((e) => e.user_id);
   const s = data.summary || {};
-  const dealKh = !!data.dealKhSplit;
 
   let companyName = 'Công ty';
   if (data.effectiveCompanyId) {
@@ -595,14 +689,14 @@ async function formatAllEmployeesReportText(params = {}) {
   }
 
   const periodLabel = params.date_from && params.date_to
-    ? `${params.date_from} → ${params.date_to}`
-    : `${data.df} → ${data.dt}`;
+    ? formatPeriodLabelVi(params.date_from, params.date_to)
+    : formatPeriodLabelVi(data.df, data.dt);
 
   const lines = [];
   lines.push('🎯 *Báo cáo theo nhân viên*');
   lines.push(`🏢 ${companyName}`);
   lines.push(`🗓 ${periodLabel}`);
-  lines.push('━━━━━━━━━━━━━');
+  lines.push('─────────────────');
 
   if (!employees.length) {
     lines.push('📭 Không có dữ liệu NV trong kỳ.');
@@ -620,34 +714,13 @@ async function formatAllEmployeesReportText(params = {}) {
   });
 
   sorted.forEach((e, idx) => {
-    const parts = [];
-    if (e.lead_count) parts.push(`${e.lead_count}L`);
-    if (dealKh) {
-      const totalD = orgReportTotalDealCount(e);
-      if (totalD) parts.push(`Deal ${totalD}`);
-      if (e.deal_count) parts.push(`PL ${e.deal_count}`);
-      if (e.customer_order_count) parts.push(`ĐH ${e.customer_order_count}`);
-    } else if (e.deal_count) {
-      parts.push(`${e.deal_count}D`);
-    }
-    const won = reportClosedWonCount(e);
-    if (won) parts.push(`✅${won}`);
-    if (reportClosedWonValue(e) > 0) parts.push(fmtMoneyShort(reportClosedWonValue(e)));
-    if (e.overdue_count) parts.push(`⚠️${e.overdue_count}`);
-    if (e.kpi_ledger_net) parts.push(`KPI ${Math.round(e.kpi_ledger_net)}`);
-    lines.push(`${idx + 1}. *${shortName(e.full_name)}* · ${parts.join(' · ') || '—'}`);
+    lines.push(...formatOrgTabEmployeeLines(e, idx));
+    if (idx < sorted.length - 1) lines.push('');
   });
 
-  lines.push('━━━━━━━━━━━━━');
-  const totParts = [`${sorted.length} NV`];
-  if (s.lead_count) totParts.push(`${s.lead_count}L`);
-  if (dealKh) {
-    totParts.push(`Deal ${orgReportTotalDealCount(s)}`);
-    totParts.push(`PL ${s.deal_count || 0}`);
-    totParts.push(`ĐH ${s.customer_order_count || 0}`);
-  } else if (s.deal_count) totParts.push(`${s.deal_count}D`);
-  if (reportClosedWonCount(s)) totParts.push(`✅${reportClosedWonCount(s)}`);
-  lines.push(`📊 Tổng: ${totParts.join(' · ')}`);
+  lines.push('');
+  lines.push('─────────────────');
+  lines.push(...formatOrgTabSummaryLines(s).slice(1));
   lines.push('💡 Gõ tên NV để xem chi tiết cá nhân.');
 
   return {

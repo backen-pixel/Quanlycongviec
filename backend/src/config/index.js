@@ -1,14 +1,61 @@
 require('dotenv').config();
 const { resolveRedisUrl } = require('./redisUrl');
 
+/** SPA production trên Render — dùng cho deep-link bot/push khi env còn trỏ domain cũ. */
+const DEFAULT_PRODUCTION_FRONTEND_URL = 'https://tubep-frontend-s30w.onrender.com';
+const LEGACY_FRONTEND_HOSTS = new Set([
+  'beppro.io',
+  'www.beppro.io',
+  'app.tubep.vn',
+  'www.app.tubep.vn',
+  'crm.tubeppro.com',
+  'www.crm.tubeppro.com',
+]);
+
+function normalizeOriginUrl(raw, fallback) {
+  const trimmed = String(raw || '').trim().replace(/\/+$/, '');
+  if (!trimmed) return fallback;
+  try {
+    const u = new URL(trimmed);
+    if (LEGACY_FRONTEND_HOSTS.has(u.hostname.toLowerCase())) {
+      return DEFAULT_PRODUCTION_FRONTEND_URL;
+    }
+    return trimmed;
+  } catch {
+    return fallback;
+  }
+}
+
+function resolveFrontendUrl() {
+  const devFallback = 'http://localhost:5173';
+  const prodFallback = DEFAULT_PRODUCTION_FRONTEND_URL;
+  const fallback = process.env.NODE_ENV === 'production' ? prodFallback : devFallback;
+  const fromEnv = process.env.FRONTEND_URL
+    || (process.env.CORS_ORIGINS || '').split(',')[0]
+    || '';
+  return normalizeOriginUrl(fromEnv, fallback);
+}
+
+function resolveCorsOrigins() {
+  const fallback =
+    'http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:3000,http://127.0.0.1:3000,http://localhost:4173';
+  const raw = process.env.CORS_ORIGINS || fallback;
+  const seen = new Set();
+  return raw
+    .split(',')
+    .map((s) => normalizeOriginUrl(s.trim(), ''))
+    .filter(Boolean)
+    .filter((origin) => {
+      if (seen.has(origin)) return false;
+      seen.add(origin);
+      return true;
+    });
+}
+
 module.exports = {
   port: parseInt(process.env.PORT || '4000'),
   jwtSecret: process.env.JWT_SECRET || 'change-this',
-  corsOrigins: (process.env.CORS_ORIGINS ||
-    'http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:3000,http://127.0.0.1:3000,http://localhost:4173')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean),
+  corsOrigins: resolveCorsOrigins(),
   supabaseUrl: process.env.SUPABASE_URL,
   supabaseAnonKey: process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || '',
   supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || '',
@@ -32,12 +79,8 @@ module.exports = {
   supabaseSwitchLogEnabled: process.env.SUPABASE_SWITCH_LOG_ENABLED === '1',
   pgPoolDisabled: process.env.PG_POOL_DISABLED === '1',
   responseCacheDisabled: process.env.RESPONSE_CACHE_DISABLED === '1',
-  // URL gốc của frontend web — dùng để tạo deep-link trong tin nhắn AI / push.
-  // VD: https://crm.tubeppro.com  hoặc  http://localhost:5173 (dev).
-  frontendUrl:
-    (process.env.FRONTEND_URL ||
-      (process.env.CORS_ORIGINS || 'http://localhost:5173').split(',')[0] ||
-      'http://localhost:5173').trim().replace(/\/+$/, ''),
+  // URL gốc frontend web — deep-link bot AI, email SaaS, push.
+  frontendUrl: resolveFrontendUrl(),
   // ── Google Drive integration (module Drive) ──
   // Hỗ trợ 2 chế độ xác thực — đặt MỘT trong hai:
   //  (A) Service Account: GDRIVE_SERVICE_ACCOUNT_JSON (chuỗi JSON đầy đủ key.json)

@@ -14,7 +14,7 @@ const {
   SKILLS_DIR,
 } = require('./aiBotSkillLibrary');
 
-const VALID_TIME_SCOPES = ['today', 'yesterday', 'last_7d', 'last_30d', 'this_month', 'last_month', 'custom'];
+const VALID_TIME_SCOPES = ['today', 'yesterday', 'last_7d', 'last_30d', 'this_month', 'last_month', 'custom', 'day_cycle'];
 const REPORT_PLAYBOOK_CODES = {
   company_report: 'company_report_menu',
   company_daily: 'company_daily_report',
@@ -82,6 +82,39 @@ function normalizeSlots(input) {
 
 function formatSlotsLabel(slots) {
   return (slots || []).map((s) => `${String(s.h).padStart(2, '0')}:${String(s.m).padStart(2, '0')}`).join(', ');
+}
+
+/** Kỳ báo cáo theo giờ gửi: sáng (<12h) = hôm qua · tối (≥17h) = hôm nay — khớp 8h sáng + 20h tối. */
+function resolveScheduleTimeScope(schedule, slotHour) {
+  const scope = schedule?.time_scope || 'today';
+  if (scope !== 'day_cycle') return scope;
+  const h = Number.isFinite(slotHour) ? slotHour : vnNowParts().hh;
+  if (h >= 17) return 'today';
+  if (h < 12) return 'yesterday';
+  return 'today';
+}
+
+function timeScopeDisplayLabel(scope) {
+  if (scope === 'day_cycle') return 'chu kỳ ngày (8h sáng=hôm qua · 20h tối=hôm nay)';
+  if (scope === 'yesterday') return 'hôm qua';
+  if (scope === 'today') return 'hôm nay';
+  if (scope === 'this_month') return 'tháng này';
+  if (scope === 'last_month') return 'tháng trước';
+  return scope;
+}
+
+function parseTimeScopeFromText(text) {
+  const t = String(text || '').toLowerCase();
+  if (/day_cycle|chu kỳ ngày|chu ky ngay/.test(t)) return 'day_cycle';
+  if (/8h.*sang.*8h.*toi|8h.*toi.*8h.*sang|20h.*08h|08h.*20h|8h tối.*8h sáng|8h sang.*8h toi/.test(t)) return 'day_cycle';
+  if (/hôm đó.*hôm sau|hom do.*hom sau|tối hôm.*sáng hôm|toi hom.*sang hom/.test(t)) return 'day_cycle';
+  if (/hôm qua|hom qua|ngày hôm trước|ngay hom truoc|yesterday/.test(t)) return 'day_cycle';
+  if (/hôm nay|hom nay|today/.test(t)) return 'today';
+  if (/tháng này|thang nay|this_month/.test(t)) return 'this_month';
+  if (/tháng trước|thang truoc|last_month/.test(t)) return 'last_month';
+  if (/7 ngày|7 ngay|last_7d/.test(t)) return 'last_7d';
+  if (/30 ngày|30 ngay|last_30d/.test(t)) return 'last_30d';
+  return null;
 }
 
 const VN_TZ = 'Asia/Ho_Chi_Minh';
@@ -301,7 +334,7 @@ function formatSchedulesListText(rows) {
       const { describeRecurrence } = require('./aiBotReminder');
       lines.push(`   💬 ${(s.reminder_text || s.custom_prompt || '—').slice(0, 60)} · ${describeRecurrence(s)}`);
     }
-    lines.push(`   🕐 ${s.run_times_label || '—'} · Kỳ: ${s.time_scope || 'today'} · ${s.channel_name || '—'}`);
+    lines.push(`   🕐 ${s.run_times_label || '—'} · Kỳ: ${timeScopeDisplayLabel(s.time_scope || 'today')} · ${s.channel_name || '—'}`);
     lines.push(`   🔑 \`${s.id.slice(0, 8)}\` · ${formatLastRunLabel(s)}`);
   });
   lines.push(
@@ -439,6 +472,418 @@ async function resolvePlaybookId(reportType) {
   return data;
 }
 
+function normalizeBotMatchText(s) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function textMentionsTerm(haystack, term) {
+  const h = normalizeBotMatchText(haystack);
+  const t = normalizeBotMatchText(term);
+  if (!h || !t) return false;
+  return h.includes(t) || t.split(/\s+/).filter((w) => w.length > 2).some((w) => h.includes(w));
+}
+
+/** Điểm khớp skill/bot có sẵn với yêu cầu tạo lịch. */
+function scoreSkillForSchedule(skill, args, intentText = '') {
+  if (!skill || skill.skill_type !== 'scheduled_report') return 0;
+  const cfg = skill.config || {};
+  let score = 0;
+  const blob = normalizeBotMatchText([
+    intentText,
+    args.instruction,
+    args.note,
+    args.title,
+    args.company_name,
+    args.department_name,
+    args.report_type,
+  ].filter(Boolean).join(' '));
+
+  if (args.report_type && cfg.report_type === args.report_type) score += 18;
+  else if (!args.report_type && cfg.report_type) score += 6;
+
+  if (args.time_scope && cfg.time_scope === args.time_scope) score += 14;
+  else if (!args.time_scope && cfg.time_scope) score += 4;
+
+  if (cfg.company_name && (textMentionsTerm(blob, cfg.company_name) || textMentionsTerm(args.company_name, cfg.company_name))) {
+    score += 28;
+  }
+  if (cfg.department_name && (textMentionsTerm(blob, cfg.department_name) || textMentionsTerm(args.department_name, cfg.department_name))) {
+    score += 28;
+  }
+
+  if (skill.code && textMentionsTerm(blob, skill.code.replace(/_/g, ' '))) score += 12;
+  if (skill.when_to_use && blob && textMentionsTerm(skill.when_to_use, blob.slice(0, 40))) score += 8;
+  if (skill.title && blob && textMentionsTerm(blob, skill.title)) score += 10;
+
+  if (/tab nv|tab nhan vien|bc tab|nhan vien.*to chuc/i.test(blob) && cfg.report_type === 'org_overview' && cfg.department_name) {
+    score += 12;
+  }
+
+  const reqTimes = args.run_times || args.run_slots;
+  const cfgTimes = cfg.run_times;
+  if (Array.isArray(reqTimes) && reqTimes.length && Array.isArray(cfgTimes) && cfgTimes.length) {
+    const reqNorm = normalizeSlots(reqTimes).map((s) => `${s.h}:${String(s.m).padStart(2, '0')}`);
+    const cfgNorm = normalizeSlots(cfgTimes).map((s) => `${s.h}:${String(s.m).padStart(2, '0')}`);
+    if (reqNorm.some((t) => cfgNorm.includes(t))) score += 10;
+  }
+
+  return score;
+}
+
+function userSkillToScheduleArgs(skill, overrides = {}) {
+  const cfg = skill?.config && typeof skill.config === 'object' ? skill.config : {};
+  return {
+    title: overrides.title || skill.title,
+    report_type: overrides.report_type || cfg.report_type || 'org_overview',
+    company_id: overrides.company_id || cfg.company_id || null,
+    company_name: overrides.company_name || cfg.company_name || null,
+    department_id: overrides.department_id || cfg.department_id || null,
+    department_name: overrides.department_name || cfg.department_name || null,
+    run_times: overrides.run_times || cfg.run_times || ['08:00'],
+    time_scope: overrides.time_scope || cfg.time_scope || 'today',
+    weekdays: overrides.weekdays || cfg.weekdays || null,
+    note: overrides.note || skill.summary || null,
+    instruction: overrides.instruction || cfg.instruction || skill.title,
+    enabled: overrides.enabled != null ? overrides.enabled : skill.enabled,
+    user_skill_id: skill.id,
+    skill_source: 'user_db',
+  };
+}
+
+function dataSourceToReportType(ds) {
+  if (ds === 'company_daily') return 'company_daily';
+  if (ds === 'company_report') return 'company_report';
+  if (ds === 'org_overview') return 'org_overview';
+  return 'org_overview';
+}
+
+/**
+ * Tạo lịch = dùng AI bot / skill / lịch mẫu ĐÃ CÓ — không bịa pipeline mới.
+ * Trả mergedArgs (kế thừa playbook + phạm vi) và meta bot nguồn.
+ */
+async function resolveScheduleFromExistingBots(args, ctx) {
+  if (args.skill_code || args._bot_resolved || args.playbook_id) {
+    return { mergedArgs: { ...args }, meta: args._matched_bot || null, suggestions: [] };
+  }
+
+  const intentText = [
+    args.instruction,
+    args.note,
+    args.title,
+    args.company_name,
+    args.department_name,
+  ].filter(Boolean).join(' ');
+
+  const candidates = [];
+
+  for (const sk of loadSkillLibrary().skills) {
+    if (!sk.enabled || sk.skill_type !== 'scheduled_report') continue;
+    const score = scoreSkillForSchedule(sk, args, intentText);
+    if (score > 0) candidates.push({ source: 'library', skill: sk, score, code: sk.code });
+  }
+
+  const { data: userSkills } = await supabase
+    .from('ai_bot_user_skills')
+    .select('id, skill_type, title, summary, config, enabled')
+    .eq('enabled', true)
+    .eq('skill_type', 'scheduled_report')
+    .order('updated_at', { ascending: false })
+    .limit(40);
+  for (const sk of userSkills || []) {
+    const score = scoreSkillForSchedule(
+      { ...sk, config: sk.config, when_to_use: sk.summary },
+      args,
+      intentText,
+    );
+    if (score > 0) candidates.push({ source: 'user_db', skill: sk, score, code: sk.id?.slice(0, 8) });
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+  const best = candidates[0];
+  const MATCH_THRESHOLD = 32;
+
+  if (best && best.score >= MATCH_THRESHOLD) {
+    const baseArgs = best.source === 'library'
+      ? librarySkillToScheduleArgs(best.skill, args)
+      : userSkillToScheduleArgs(best.skill, args);
+    return {
+      mergedArgs: {
+        ...baseArgs,
+        ...args,
+        report_type: args.report_type || baseArgs.report_type,
+        run_times: args.run_times || args.run_slots || baseArgs.run_times,
+        time_scope: args.time_scope || baseArgs.time_scope,
+        company_name: args.company_name || baseArgs.company_name,
+        department_name: args.department_name || baseArgs.department_name,
+        skill_code: best.source === 'library' ? best.skill.code : args.skill_code,
+        _bot_resolved: true,
+      },
+      meta: {
+        source: best.source,
+        code: best.source === 'library' ? best.skill.code : best.skill.id,
+        title: best.skill.title,
+        score: best.score,
+      },
+      suggestions: candidates.slice(0, 5),
+    };
+  }
+
+  const channelScheds = await findReportSchedulesForChannel(ctx, {
+    channel_id: args.channel_id || ctx?.channel_id,
+    channel_type: args.channel_type || ctx?.channel_kind,
+    company_id: args.company_id,
+    department_id: args.department_id,
+    report_type: args.report_type || 'org_overview',
+  });
+  if (channelScheds.length) {
+    const templ = channelScheds[0];
+    return {
+      mergedArgs: {
+        ...args,
+        report_type: args.report_type || dataSourceToReportType(templ.playbook?.data_source),
+        company_id: args.company_id || templ.company_whitelist?.[0] || null,
+        department_id: args.department_id || templ.department_whitelist?.[0] || null,
+        time_scope: args.time_scope || templ.time_scope || 'today',
+        _bot_resolved: true,
+      },
+      meta: {
+        source: 'channel_schedule',
+        code: templ.id?.slice(0, 8),
+        title: templ.title,
+        playbook: templ.playbook?.name,
+        data_source: templ.playbook?.data_source,
+      },
+      suggestions: candidates.slice(0, 5),
+    };
+  }
+
+  return {
+    mergedArgs: { ...args },
+    meta: null,
+    suggestions: candidates.slice(0, 6),
+  };
+}
+
+function formatMatchedBotHint(meta, suggestions = []) {
+  if (meta?.title) {
+    const srcLabel = meta.source === 'library'
+      ? `skill JSON \`${meta.code}\``
+      : meta.source === 'user_db'
+        ? `kỹ năng đã lưu (#${meta.code})`
+        : meta.source === 'channel_schedule'
+          ? `lịch mẫu trong kênh (#${meta.code})`
+          : 'bot có sẵn';
+    return `🤖 *Bot nguồn:* ${meta.title} (${srcLabel})${meta.playbook ? ` · playbook ${meta.playbook}` : ''}`;
+  }
+  if (suggestions?.length) {
+    const lines = suggestions.map((c) => {
+      const label = c.source === 'library' ? c.skill.code : c.skill.title;
+      return `• \`${label}\` — ${c.skill.title}`;
+    });
+    return `💡 *Gợi ý bot có sẵn:*\n${lines.join('\n')}\n_Dùng \`/skill apply [mã]\` hoặc preview_skill trước khi tạo lịch ad-hoc._`;
+  }
+  return '🤖 *Bot nguồn:* playbook hệ thống (org_overview / company_daily…) — xem Cài đặt → AI Chat Bot';
+}
+
+/** Lịch báo cáo đã cấu hình trong kênh (không gồm nhắc việc). */
+async function findReportSchedulesForChannel(ctx, filters = {}) {
+  const channelId = filters.channel_id || ctx?.channel_id;
+  const channelType = filters.channel_type || ctx?.channel_kind;
+  if (!channelId || !channelType) return [];
+
+  const { data, error } = await supabase
+    .from('ai_chat_bot_schedules')
+    .select('*, playbook:ai_chat_bot_playbooks(id, code, name, data_source, enabled)')
+    .eq('channel_id', channelId)
+    .eq('channel_type', channelType)
+    .eq('enabled', true)
+    .order('updated_at', { ascending: false })
+    .limit(20);
+  if (error) throw new Error(error.message);
+
+  let rows = (data || []).filter(
+    (s) => (s.schedule_kind || 'report') !== 'reminder' && s.playbook?.enabled !== false,
+  );
+
+  const reportType = filters.report_type || 'org_overview';
+  if (reportType === 'company_daily') {
+    rows = rows.filter((s) => s.playbook?.data_source === 'company_daily');
+  } else if (reportType === 'org_overview') {
+    rows = rows.filter((s) => ['org_overview', 'company_daily', 'company_report'].includes(s.playbook?.data_source || ''));
+  }
+
+  const companyId = filters.company_id;
+  if (companyId) {
+    rows = rows.filter(
+      (s) => !Array.isArray(s.company_whitelist) || !s.company_whitelist.length || s.company_whitelist.includes(companyId),
+    );
+  }
+
+  const departmentId = filters.department_id;
+  if (departmentId) {
+    rows = rows.filter(
+      (s) => !Array.isArray(s.department_whitelist) || !s.department_whitelist.length || s.department_whitelist.includes(departmentId),
+    );
+  }
+
+  return rows;
+}
+
+function scoreReportSchedule(sched, { company_id, department_id, report_type }) {
+  let score = 0;
+  const ds = sched.playbook?.data_source || '';
+  if (report_type === 'org_overview' && ds === 'org_overview') score += 12;
+  if (report_type === 'company_daily' && ds === 'company_daily') score += 12;
+  if (report_type === 'org_overview' && ds === 'company_report') score += 6;
+  if (department_id && sched.department_whitelist?.includes(department_id)) score += 25;
+  if (company_id && sched.company_whitelist?.includes(company_id)) score += 18;
+  if (department_id && ds === 'org_overview' && !sched.department_whitelist?.length) score += 4;
+  return score;
+}
+
+async function logManualScheduleRun(sched, ctx, result) {
+  const vnDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date());
+  await supabase.from('ai_chat_bot_runs').insert({
+    schedule_id: sched.id,
+    vn_date: vnDate,
+    slot_label: 'manual',
+    status: result.status,
+    message_preview: result.preview || null,
+    error_text: result.error || null,
+    message_id: result.message_id || null,
+    triggered_by: ctx.sender_user_id || null,
+  });
+  await supabase
+    .from('ai_chat_bot_schedules')
+    .update({
+      last_run_at: new Date().toISOString(),
+      last_run_status: result.status,
+      last_run_message: result.preview || result.error || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', sched.id);
+}
+
+/**
+ * Gửi báo cáo qua lịch bot đã cấu hình (playbook + whitelist + time_scope trên schedule).
+ * Không gọi format_* trực tiếp — đúng pipeline như cron / Gửi thử.
+ */
+async function runConfiguredBotReport(args, ctx) {
+  const channelId = args.channel_id || ctx?.channel_id;
+  const channelType = args.channel_type || ctx?.channel_kind;
+
+  let company_id = args.company_id;
+  if (!company_id && args.company_name) {
+    const companyRes = await resolveCompanyId({
+      company_name: args.company_name,
+      ctx,
+      schedule_id: ctx?.schedule_id,
+    });
+    if (companyRes?.error) return companyRes;
+    company_id = companyRes;
+  }
+
+  let department_id = args.department_id;
+  if (!department_id && args.department_name && company_id) {
+    const deptRes = await resolveDepartmentId(company_id, args.department_name);
+    if (deptRes?.error === 'multiple_departments') return deptRes;
+    department_id = deptRes;
+  }
+
+  const report_type = args.report_type
+    || (args.department_name || department_id ? 'org_overview' : 'org_overview');
+
+  const candidates = await findReportSchedulesForChannel(ctx, {
+    channel_id: channelId,
+    channel_type: channelType,
+    company_id,
+    department_id,
+    report_type,
+  });
+
+  if (!candidates.length) {
+    const enriched = await Promise.all(
+      (await findReportSchedulesForChannel(ctx, { channel_id: channelId, channel_type: channelType })).slice(0, 5).map(enrichScheduleRow),
+    );
+    const hint = enriched.length
+      ? enriched.map((s) => `• ${s.title} (${s.playbook?.data_source || '—'})`).join('\n')
+      : '_Chưa có lịch nào trong kênh._';
+    return {
+      ok: false,
+      no_schedule: true,
+      text: [
+        '⚠️ *Không có lịch bot báo cáo khớp* yêu cầu trong kênh này.',
+        'Lịch đang có:',
+        hint,
+        '',
+        'Admin: tạo/sửa lại tại **Cài đặt → AI Chat Bot** hoặc `/lich tao 8h [cty] [phòng]`.',
+        '_Báo cáo phải chạy qua bot đã setup — không format ad-hoc._',
+      ].join('\n'),
+    };
+  }
+
+  const scored = candidates
+    .map((s) => ({ s, score: scoreReportSchedule(s, { company_id, department_id, report_type }) }))
+    .sort((a, b) => b.score - a.score);
+  const sched = scored[0].s;
+
+  const runSched = {
+    ...sched,
+    time_scope: args.time_scope || sched.time_scope || 'today',
+    time_scope_days_offset: args.time_scope_days_offset ?? sched.time_scope_days_offset ?? 0,
+  };
+
+  const io = ctx?.io;
+  if (!io) {
+    return {
+      ok: false,
+      text: '⚠️ Không gửi được từ phiên này — thử lại trong chat phòng ban/nhóm có bot.',
+    };
+  }
+
+  const { runScheduleSend } = require('./aiBotSender');
+  let result;
+  try {
+    result = await runScheduleSend(runSched, io);
+  } catch (e) {
+    result = { status: 'error', error: e.message };
+  }
+
+  await logManualScheduleRun(sched, ctx, result);
+  const enriched = await enrichScheduleRow(sched);
+
+  if (result.status === 'ok') {
+    return {
+      ok: true,
+      used_schedule_id: sched.id,
+      schedule_title: enriched.title,
+      playbook_code: sched.playbook?.code,
+      sent_to_channel: true,
+      preview: result.preview,
+      text: [
+        `✅ *Đã gửi báo cáo* qua bot đã cấu hình`,
+        `📌 ${enriched.title}`,
+        `📊 Playbook: ${sched.playbook?.name || sched.playbook?.code || '—'}`,
+        result.preview ? `_Xem tin vừa gửi trong kênh chat._` : '',
+      ].filter(Boolean).join('\n'),
+    };
+  }
+
+  return {
+    ok: false,
+    text: [
+      '⚠️ *Gửi báo cáo lỗi*',
+      `📌 ${enriched.title}`,
+      `❌ ${result.error || 'Không rõ lỗi'}`,
+    ].join('\n'),
+  };
+}
+
 async function resolveCompanyId({ company_id, company_name, ctx, schedule_id }) {
   if (company_id) return company_id;
   const companies = await listCompaniesInScope({ schedule_id: schedule_id || ctx?.schedule_id });
@@ -567,7 +1012,9 @@ async function buildSchedulePayload(args, ctx, user) {
   })();
   const maxRuns = Math.max(runSlots.length, Math.min(24, parseInt(args.max_runs_per_day, 10) || runSlots.length));
 
-  const timeScope = VALID_TIME_SCOPES.includes(args.time_scope) ? args.time_scope : 'today';
+  const timeScope = VALID_TIME_SCOPES.includes(args.time_scope)
+    ? args.time_scope
+    : (parseTimeScopeFromText(intentText) || 'today');
 
   let reminderMeta = null;
   if (isReminder) {
@@ -592,7 +1039,9 @@ async function buildSchedulePayload(args, ctx, user) {
   const title = String(args.title || '').trim()
     || (isReminder
       ? `🔔 ${reminderMeta.shortTitle} · ${reminderMeta.recurrenceLabel} · ${formatSlotsLabel(runSlots)}`
-      : `📊 ${playbook.name}${deptTitleLabel ? ` · ${deptTitleLabel}` : ''} · ${formatSlotsLabel(runSlots)}`);
+      : (args.report_type === 'org_overview' && departmentId
+        ? `🎯 Tab NV · ${deptTitleLabel || 'BC tổ chức'} · ${formatSlotsLabel(runSlots)}`
+        : `📊 ${playbook.name}${deptTitleLabel ? ` · ${deptTitleLabel}` : ''} · ${formatSlotsLabel(runSlots)}`));
 
   const instructionText = String(args.instruction || args.note || '').toLowerCase();
   const notifySystemAdmins = args.notify_system_admins === true
@@ -686,7 +1135,16 @@ async function saveSkillFromSchedule(userId, title, config, scheduleId) {
 
 async function createAiBotSchedule(args, ctx) {
   const user = await assertScheduleAdmin(ctx);
-  const payload = await buildSchedulePayload(args, ctx, user);
+
+  let effectiveArgs = { ...args };
+  let botMatch = null;
+  if (!args.skill_code && (args.report_type || 'org_overview') !== 'reminder' && args.schedule_kind !== 'reminder') {
+    const resolved = await resolveScheduleFromExistingBots(effectiveArgs, ctx);
+    effectiveArgs = resolved.mergedArgs;
+    botMatch = resolved;
+  }
+
+  const payload = await buildSchedulePayload(effectiveArgs, ctx, user);
   if (payload.error) return payload;
 
   if (payload.need_content) {
@@ -787,12 +1245,41 @@ async function createAiBotSchedule(args, ctx) {
         '────────────',
       ].join('\n');
     } else if (!isRem) {
-      messagePreviewBlock = [
-        '',
-        '📨 *Loại tin:* báo cáo CRM tự động',
-        `• ${payload._meta.report_type} (${payload._meta.playbook_code}) · kỳ ${payload.time_scope}`,
-        '_Muốn xem mẫu tin thật trước khi OK → `/lich gui` sau khi tạo, hoặc yêu cầu «gửi thử»._',
-      ].join('\n');
+      let sampleReport = null;
+      if (payload._meta.report_type === 'org_overview' && payload._meta.department_id) {
+        try {
+          const { formatOrgEmployeeTabReportText } = require('./orgOverviewReportAi');
+          const previewScope = resolveScheduleTimeScope(
+            { time_scope: payload.time_scope },
+            payload.run_slots?.[0]?.h,
+          );
+          const r = await formatOrgEmployeeTabReportText({
+            company_id: payload._meta.company_id,
+            department_id: payload._meta.department_id,
+            time_scope: previewScope,
+            ctx_user_id: user.id,
+            compare: false,
+          });
+          sampleReport = r.text;
+        } catch (e) {
+          sampleReport = null;
+        }
+      }
+      messagePreviewBlock = sampleReport
+        ? [
+          '',
+          '📨 *Mẫu tin sẽ gửi (kiểm tra trước khi OK):*',
+          '────────────',
+          sampleReport.slice(0, 2800),
+          sampleReport.length > 2800 ? '\n… _(rút gọn preview)_' : '',
+          '────────────',
+        ].join('\n')
+        : [
+          '',
+          '📨 *Loại tin:* báo cáo CRM tự động',
+          `• ${payload._meta.report_type} (${payload._meta.playbook_code}) · kỳ ${timeScopeDisplayLabel(payload.time_scope)}`,
+          '_Muốn xem mẫu tin thật → `/lich gui` sau khi tạo._',
+        ].join('\n');
     }
 
     return {
@@ -816,11 +1303,13 @@ async function createAiBotSchedule(args, ctx) {
       },
       text: [
         isRem ? '🔔 *Xem trước lịch nhắc* (chưa tạo thật)' : '📋 *Xem trước lịch bot* (chưa tạo thật)',
+        formatMatchedBotHint(botMatch?.meta, botMatch?.suggestions),
         `• Tiêu đề: ${payload.title}`,
         isRem ? `• Nội dung: ${rem?.text || '—'}` : null,
         isRem ? `• Lặp: ${rem?.recurrenceLabel || '—'}` : `• Loại: ${payload._meta.report_type} (${payload._meta.playbook_code})`,
+        isRem ? null : `• Playbook: ${payload._meta.playbook_code}`,
         `• Giờ gửi: ${formatSlotsLabel(payload.run_slots)} (giờ VN)`,
-        isRem ? null : `• Kỳ báo cáo: ${payload.time_scope}`,
+        isRem ? null : `• Kỳ báo cáo: ${timeScopeDisplayLabel(payload.time_scope)}`,
         broadcastLine,
         passedPreview,
         messagePreviewBlock,
@@ -894,7 +1383,7 @@ async function createAiBotSchedule(args, ctx) {
       `📌 ${enriched.title}`,
       isRem ? `💬 ${rem?.text || enriched.reminder_text || '—'}` : null,
       isRem ? `📅 ${rem?.recurrenceLabel || '—'}` : null,
-      `⏰ ${enriched.run_times_label}${isRem ? '' : ` · Kỳ: ${enriched.time_scope}`}`,
+      `⏰ ${enriched.run_times_label}${isRem ? '' : ` · Kỳ: ${timeScopeDisplayLabel(enriched.time_scope)}`}`,
       `📍 Kênh: ${enriched.channel_name}`,
       bcCount ? `👥 Nhận thêm DM: ${bcCount} người (admin hệ thống / Khoa IT…)` : '',
       skill?.id ? `💾 Đã lưu kỹ năng (#${skill.id.slice(0, 8)}…)` : '',
@@ -1154,7 +1643,7 @@ async function runNowAiBotSchedule(args, ctx) {
   const { runScheduleSend } = require('./aiBotSender');
   let result;
   try {
-    result = await runScheduleSend(sched, io);
+    result = await runScheduleSend(sched, io, { slotHour: vnNowParts().hh, slotLabel: 'manual' });
   } catch (e) {
     result = { status: 'error', error: e.message };
   }
@@ -1380,6 +1869,8 @@ async function manageAiBotSchedule(args, ctx) {
       return listScheduleRuns(args, ctx);
     case 'run_now':
       return runNowAiBotSchedule(args, ctx);
+    case 'send_report':
+      return runConfiguredBotReport(args, ctx);
     case 'preview':
       return createAiBotSchedule({ ...args, dry_run: true }, ctx);
     case 'propose': {
@@ -1447,12 +1938,17 @@ module.exports = {
   deleteAiBotSchedule,
   getAiBotSchedule,
   runNowAiBotSchedule,
+  runConfiguredBotReport,
+  findReportSchedulesForChannel,
   listScheduleRuns,
   resolveScheduleTarget,
   tryHandleScheduleDeleteCommand,
   isScheduleDeleteRequest,
   parseDeleteTimeFromText,
   findSchedulesForDelete,
+  resolveScheduleFromExistingBots,
+  formatMatchedBotHint,
+  scoreSkillForSchedule,
   applyLibrarySkill,
   listAllBotSkills,
   upsertBotSkillAdmin,
@@ -1465,6 +1961,9 @@ module.exports = {
   REPORT_PLAYBOOK_CODES,
   normalizeSlots,
   formatSlotsLabel,
+  resolveScheduleTimeScope,
+  timeScopeDisplayLabel,
+  parseTimeScopeFromText,
   validateRunSlotsNotAllPassedToday,
   getPassedSlotsToday,
   buildSchedulePayload,

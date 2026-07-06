@@ -1,7 +1,7 @@
 /**
  * Slash commands trong chat — route thẳng tool, bypass LLM (OpenClaw command-dispatch).
  */
-const { listAiBotSchedules, applyLibrarySkill, deleteAiBotSchedule, getAiBotSchedule, runNowAiBotSchedule, listScheduleRuns, updateAiBotSchedule, toggleAiBotSchedule } = require('./aiBotSkills');
+const { listAiBotSchedules, applyLibrarySkill, deleteAiBotSchedule, getAiBotSchedule, runNowAiBotSchedule, listScheduleRuns, updateAiBotSchedule, toggleAiBotSchedule, parseTimeScopeFromText } = require('./aiBotSkills');
 const { listSkillProposals, approveSkillProposal, rejectSkillProposal } = require('./aiBotSkillWorkshop');
 const { listLibrarySkills } = require('./aiBotSkillLibrary');
 const { getUserLearnedFacts } = require('./aiUserMemory');
@@ -9,11 +9,13 @@ const { getUserLearnedFacts } = require('./aiUserMemory');
 const HELP_TEXT = [
   '📖 *Lệnh nhanh AI Bot*',
   '• `/help` — danh sách lệnh',
-  '• `/bc org [cty] [phòng] [kỳ]` — BC tổ chức (có phòng → tab Nhân viên)',
+  '• `/bc org [cty] [phòng] [kỳ]` — gửi BC qua bot đã setup',
+  '• `/bc daily [kỳ]` — báo cáo nhanh qua bot đã setup',
   '• `/bc nv-tab [cty] [phòng] [kỳ]` — tab Nhân viên BC tổ chức',
   '• `/bc nv [tên] [kỳ]` — báo cáo nhân viên',
   '• `/lịch` — danh sách lịch kênh này',
-  '• `/lịch tao [giờ] [cty] [phòng]` — xem trước tạo (trả lời OK để tạo)',
+  '• `/skill apply [mã]` — tạo lịch từ bot/skill JSON đã có',
+  '• `/lịch tao …` — preview (tự khớp bot có sẵn) → OK để tạo',
   '• `/lịch nhac [giờ] [nội dung] [ngày/tháng/năm]` — nhắc việc (OK để tạo)',
   '• `/lịch nhac 5h sang 5h chieu mua do moi ngay` — nhiều giờ, lặp mỗi ngày',
   '• `/lịch xem [giờ|mã]` — chi tiết lịch',
@@ -29,23 +31,49 @@ const HELP_TEXT = [
 ].join('\n');
 
 function parseScheduleSlashArgs(args) {
-  const timeParts = [];
+  const run_times = [];
   let i = 0;
-  while (i < args.length && /^\d|chiều|chieu|trưa|trua|sáng|sang|h$/i.test(args[i])) {
-    timeParts.push(args[i]);
-    i += 1;
+  while (i < args.length) {
+    const tok = args[i];
+    if (/^\d/.test(tok)) {
+      const chunk = [tok];
+      i += 1;
+      while (i < args.length && /^(chiều|chieu|trưa|trua|sáng|sang|tối|toi|h|giờ|gio)$/i.test(args[i])) {
+        chunk.push(args[i]);
+        i += 1;
+      }
+      run_times.push(chunk.join(' '));
+      continue;
+    }
+    break;
   }
-  const run_times = timeParts.length ? [timeParts.join(' ')] : ['15:00'];
-  const rest = args.slice(i).join(' ').toLowerCase();
+  const restRaw = args.slice(i).join(' ');
+  const rest = restRaw.toLowerCase();
   let company_name = null;
   let department_name = null;
   let report_type = 'org_overview';
   if (/phúc|phuc|đạt|dat/.test(rest)) company_name = 'Phúc Đạt';
   if (/kinh doanh|kd|sales|phòng kd|phong kd/.test(rest)) department_name = 'kinh doanh';
-  if (/daily|nhanh|nhanh/.test(rest)) report_type = 'company_daily';
+  if (/daily|nhanh/.test(rest)) report_type = 'company_daily';
+  if (/nv-tab|tab nv|tab nhân viên|tab nhan vien|bc tab/.test(rest)) report_type = 'org_overview';
   const notify_system_admins = /admin|hệ thống|he thong/.test(rest);
   const notify_team = /khoa it|team it|it/.test(rest) ? 'khoa it' : null;
-  return { run_times, company_name, department_name, report_type, notify_system_admins, notify_team };
+  const { parseRunTimesFromText } = require('./aiBotReminder');
+  const timesFromRest = parseRunTimesFromText(restRaw);
+  const finalTimes = run_times.length
+    ? (timesFromRest.length ? [...new Set([...run_times, ...timesFromRest])] : run_times)
+    : (timesFromRest.length ? timesFromRest : ['08:00', '20:00']);
+  const time_scope = parseTimeScopeFromText(restRaw) || (finalTimes.length >= 2 ? 'day_cycle' : 'today');
+  return {
+    run_times: finalTimes,
+    company_name,
+    department_name,
+    report_type,
+    time_scope,
+    notify_system_admins,
+    notify_team,
+    instruction: restRaw,
+  };
 }
 
 function parseSlashCommand(text) {
@@ -130,7 +158,7 @@ async function executeSlashCommand(text, toolCtx) {
         const { createAiBotSchedule } = require('./aiBotSkills');
         const parsed = parseScheduleSlashArgs(args.slice(1));
         const res = await createAiBotSchedule(
-          { ...parsed, dry_run: true, time_scope: 'this_month' },
+          { ...parsed, dry_run: true },
           toolCtx,
         );
         if (res.error === 'multiple_companies' && res.matches?.length) {
@@ -260,31 +288,33 @@ async function executeSlashCommand(text, toolCtx) {
 
     if (cmd === 'bc') {
       const sub = (args[0] || 'org').toLowerCase();
-      const { executeTool } = require('./aiReportTools');
+      const { runConfiguredBotReport } = require('./aiBotSkills');
       if (sub === 'org' || sub === 'to-chuc') {
         const companyName = args[1] || null;
         const deptName = args[2] || null;
-        const timeScope = args[3] || 'this_month';
-        const toolName = deptName ? 'format_org_employee_tab_report_text' : 'format_org_overview_report_text';
-        const r = await executeTool(toolName, {
+        const timeScope = args[3] || null;
+        const r = await runConfiguredBotReport({
+          report_type: 'org_overview',
           company_name: companyName,
           department_name: deptName,
-          time_scope: timeScope,
+          time_scope: timeScope || undefined,
         }, toolCtx);
-        return { handled: true, text: r.text || r.error || 'Không có dữ liệu' };
+        return { handled: true, text: r.text || r.error || 'Không gửi được báo cáo' };
       }
       if (sub === 'nv-tab' || sub === 'tab-nv') {
         const companyName = args[1] || null;
         const deptName = args[2] || 'kinh doanh';
-        const timeScope = args[3] || 'this_month';
-        const r = await executeTool('format_org_employee_tab_report_text', {
+        const timeScope = args[3] || null;
+        const r = await runConfiguredBotReport({
+          report_type: 'org_overview',
           company_name: companyName,
           department_name: deptName,
-          time_scope: timeScope,
+          time_scope: timeScope || undefined,
         }, toolCtx);
-        return { handled: true, text: r.text || r.error || 'Không có dữ liệu' };
+        return { handled: true, text: r.text || r.error || 'Không gửi được báo cáo' };
       }
       if (sub === 'nv' || sub === 'nhan-vien') {
+        const { executeTool } = require('./aiReportTools');
         const name = args.slice(1, -1).join(' ') || args[1];
         const timeScope = args[args.length - 1]?.match(/today|month|tháng/i) ? args[args.length - 1] : 'this_month';
         const r = await executeTool('format_employee_activity_report_text', {
@@ -293,7 +323,15 @@ async function executeSlashCommand(text, toolCtx) {
         }, toolCtx);
         return { handled: true, text: r.text || r.error || 'Không có dữ liệu' };
       }
-      return { handled: true, text: '⚠️ `/bc org` hoặc `/bc nv [tên]`' };
+      if (sub === 'nhanh' || sub === 'daily') {
+        const timeScope = args[1] || 'today';
+        const r = await runConfiguredBotReport({
+          report_type: 'company_daily',
+          time_scope: timeScope,
+        }, toolCtx);
+        return { handled: true, text: r.text || r.error || 'Không gửi được báo cáo' };
+      }
+      return { handled: true, text: '⚠️ `/bc org [cty] [phòng] [kỳ]` · `/bc daily` · `/bc nv [tên]`' };
     }
 
     if (cmd === 'nho' || cmd === 'remember') {

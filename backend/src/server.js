@@ -299,6 +299,12 @@ app.use('/api/flows', require('./routes/flows'));
 app.use('/api/company-processes', require('./routes/companyProcesses'));
 app.use('/api/permissions', require('./routes/permissions'));
 app.use('/api/platform', require('./routes/platform'));
+try {
+  const { publicRouter: saasPublicRouter, adminRouter: saasAdminRouter } = require('./routes/saasStore');
+  app.use('/api/saas', saasPublicRouter);
+  app.use('/api/saas/payment', require('./routes/saasPayment'));
+  app.use('/api/platform', saasAdminRouter);
+} catch (e) { console.warn('⚠️ SaaS store route failed:', e.message); }
 app.use('/api/crm/executive', require('./routes/executiveKpi'));
 app.use('/api/crm/deal-performance', require('./routes/dealScores'));
 app.use('/api/kpi', require('./routes/kpi'));

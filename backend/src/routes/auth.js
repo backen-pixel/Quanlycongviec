@@ -8,6 +8,11 @@ const { logAuthEvent } = require('../helpers/authEventLog');
 const { buildAuthSessionForUser } = require('../helpers/authSession');
 const { assertTenantActive } = require('../helpers/tenantScope');
 const {
+  getGoogleLoginClientId,
+  isGoogleLoginEnabled,
+  verifyGoogleIdToken,
+} = require('../helpers/googleAuth');
+const {
   createQrSession, parseQrText, confirmQrSession, consumeSessionAuth,
   getSessionPublicInfo, targetLabel, deviceFromReq,
 } = require('../helpers/qrLoginSessions');
@@ -104,6 +109,126 @@ r.post('/login', async (req, res) => {
     console.error(e);
     void logAuthEvent({ event: 'login_failed', email: req.body?.email || null, reason: 'server_error', req });
     res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+/** Cấu hình Google Sign-In (client id công khai) */
+r.get('/google-config', (_req, res) => {
+  const clientId = getGoogleLoginClientId();
+  res.json({ enabled: isGoogleLoginEnabled(), clientId: clientId || null });
+});
+
+/** Lấy email/tên từ Google — dùng khi đăng ký gói (không đăng nhập) */
+r.post('/google-profile', async (req, res) => {
+  try {
+    const idToken = String(req.body.credential || req.body.id_token || '').trim();
+    if (!idToken) return res.status(400).json({ error: 'Thiếu token Google' });
+    const payload = await verifyGoogleIdToken(idToken);
+    const email = String(payload.email || '').trim().toLowerCase();
+    res.json({
+      email,
+      full_name: payload.name || payload.given_name || '',
+      picture: payload.picture || null,
+      google_id: payload.sub,
+    });
+  } catch (e) {
+    const status = e.code === 'google_not_configured' ? 503 : 401;
+    res.status(status).json({ error: e.message || 'Google xác minh thất bại' });
+  }
+});
+
+/** Đăng nhập bằng Google ID token */
+r.post('/google', async (req, res) => {
+  try {
+    const idToken = String(req.body.credential || req.body.id_token || '').trim();
+    if (!idToken) {
+      return res.status(400).json({ error: 'Thiếu token Google' });
+    }
+
+    const payload = await verifyGoogleIdToken(idToken);
+    const email = String(payload.email || '').trim().toLowerCase();
+    const googleId = payload.sub;
+    const fullName = payload.name || payload.given_name || email.split('@')[0];
+
+    let user = null;
+    const { data: byGoogle } = await supabase
+      .from('users')
+      .select('*')
+      .eq('google_id', googleId)
+      .neq('is_active', false)
+      .maybeSingle();
+    user = byGoogle;
+
+    if (!user) {
+      const { data: rows } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', email)
+        .neq('is_active', false)
+        .limit(1);
+      user = rows?.[0] || null;
+    }
+
+    if (!user) {
+      const { data: purchase } = await supabase
+        .from('saas_purchases')
+        .select('id, status, payment_status')
+        .eq('buyer_email', email)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (purchase && purchase.status !== 'provisioned') {
+        return res.status(403).json({
+          error: 'Tài khoản chưa được cấp. Kiểm tra email xác nhận thanh toán — admin sẽ kích hoạt sớm.',
+          code: 'account_pending',
+          purchase_id: purchase.id,
+        });
+      }
+      void logAuthEvent({ event: 'login_failed', email, reason: 'google_user_not_found', req });
+      return res.status(401).json({
+        error: 'Chưa có tài khoản với email này. Đăng ký gói tại trang /modules hoặc liên hệ admin.',
+        code: 'user_not_found',
+      });
+    }
+
+    if (user.tenant_id && String(user.role || '').trim().toLowerCase() !== 'platform_admin') {
+      const tenantCheck = await assertTenantActive(user.tenant_id);
+      if (!tenantCheck.ok) {
+        return res.status(403).json({ error: tenantCheck.error, code: 'tenant_inactive' });
+      }
+    }
+
+    const linkPatch = { updated_at: new Date().toISOString() };
+    if (!user.google_id) {
+      linkPatch.google_id = googleId;
+      linkPatch.auth_provider = user.password ? 'both' : 'google';
+    }
+    if (!user.full_name && fullName) linkPatch.full_name = fullName;
+    if (Object.keys(linkPatch).length > 1) {
+      await supabase.from('users').update(linkPatch).eq('id', user.id);
+      user = { ...user, ...linkPatch };
+    }
+
+    await supabase.from('users').update({ last_login_at: new Date().toISOString() }).eq('id', user.id);
+    const sessionId = req.body?.session_id
+      ? String(req.body.session_id).slice(0, 80)
+      : `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    void logAuthEvent({
+      event: 'login_success',
+      user_id: user.id,
+      email: user.email,
+      session_id: sessionId,
+      reason: 'google',
+      req,
+    });
+    const auth = await buildAuthSessionForUser(user, { sessionId });
+    res.json(auth);
+  } catch (e) {
+    console.error('[auth/google]', e.message);
+    void logAuthEvent({ event: 'login_failed', reason: e.code || 'google_error', req });
+    const status = e.code === 'google_not_configured' ? 503 : 401;
+    res.status(status).json({ error: e.message || 'Google login thất bại' });
   }
 });
 
