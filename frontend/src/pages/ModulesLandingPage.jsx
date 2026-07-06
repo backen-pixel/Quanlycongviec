@@ -8,6 +8,7 @@ import {
 import ModulesHeroScene from '../components/login/ModulesHeroScene';
 import GoogleSignInButton from '../components/auth/GoogleSignInButton';
 import api from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { preloadModuleIconsFromModules } from '../lib/moduleIconPreload';
 import { resolveApiOrigin } from '../lib/apiOrigin';
 import {
@@ -53,6 +54,9 @@ function SiteHeader() {
           ))}
         </nav>
         <div className="flex items-center gap-2 shrink-0">
+          <a href="#pricing" className="h-9 px-4 rounded-full text-sm font-semibold text-white transition" style={{ background: 'linear-gradient(135deg, #f17a3a, #ea5a23)' }}>
+            Đăng ký
+          </a>
           <Link to="/login" className="h-9 px-4 rounded-full text-sm font-medium text-white border border-white/30 hover:bg-white/10 transition">Đăng nhập</Link>
         </div>
       </div>
@@ -188,6 +192,7 @@ function submitLabel(paymentMethod, isPlan, isPaid) {
 
 function PurchaseModal({ open, onClose, item, purchaseType, catalog }) {
   const navigate = useNavigate();
+  const { loginWithGoogle } = useAuth();
   const [form, setForm] = useState({ buyer_name: '', company_name: '', email: '', phone: '', payment_method: '', payment_reference: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -238,6 +243,21 @@ function PurchaseModal({ open, onClose, item, purchaseType, catalog }) {
       setGoogleFilled(true);
     } catch (err) {
       setError(err.response?.data?.error || 'Không xác minh được tài khoản Google');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const signupWithGoogle = async (credential) => {
+    if (!isPlan || isPaid) return;
+    setError('');
+    setLoading(true);
+    try {
+      await loginWithGoogle(credential, { plan_id: item.id });
+      onClose();
+      navigate('/');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Không tạo được tài khoản bằng Google');
     } finally {
       setLoading(false);
     }
@@ -335,7 +355,20 @@ function PurchaseModal({ open, onClose, item, purchaseType, catalog }) {
                 Modun mua thêm — cần đã có gói chính với cùng email.
               </p>
             )}
+            {isPlan && !isPaid && (
+              <div className="mt-4 rounded-xl border border-teal-200 bg-teal-50/60 p-4 space-y-2">
+                <p className="text-xs font-semibold text-teal-900 text-center">Đăng ký nhanh bằng Google</p>
+                <GoogleSignInButton
+                  mode="signup"
+                  hintEmail={form.email}
+                  onSuccess={signupWithGoogle}
+                  onError={(msg) => setError(msg)}
+                />
+                <p className="text-[10px] text-center text-teal-700">Tạo tài khoản gói {item.title} ngay — không cần điền form</p>
+              </div>
+            )}
             <form onSubmit={submit} className="mt-4 space-y-3">
+              {(isPaid || !isPlan) && (
               <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 space-y-2">
                 <p className="text-xs font-semibold text-slate-700 text-center">Điền nhanh bằng Google</p>
                 <GoogleSignInButton
@@ -349,6 +382,11 @@ function PurchaseModal({ open, onClose, item, purchaseType, catalog }) {
                   </p>
                 )}
               </div>
+              )}
+
+              {isPlan && !isPaid && (
+                <p className="text-[11px] text-center text-slate-500">hoặc điền thông tin bên dưới</p>
+              )}
 
               <input required value={form.buyer_name} onChange={(e) => setForm((p) => ({ ...p, buyer_name: e.target.value }))} placeholder="Họ và tên *" className="w-full border rounded-xl px-4 py-2.5 text-sm" />
               {isPlan && (

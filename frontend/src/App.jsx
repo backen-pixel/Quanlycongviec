@@ -77,6 +77,7 @@ const PersonalTasks = lazyWithRetry(() => import('./pages/PersonalTasks'));
 const CompaniesPage = lazyWithRetry(() => import('./pages/CompaniesPage'));
 const CompanyCrmRegionsPage = lazyWithRetry(() => import('./pages/CompanyCrmRegionsPage'));
 const OrganizationQuickSetupPage = lazyWithRetry(() => import('./pages/OrganizationQuickSetupPage'));
+const TenantFirstSetupPage = lazyWithRetry(() => import('./pages/TenantFirstSetupPage'));
 const DepartmentsPage = lazyWithRetry(() => import('./pages/DepartmentsPage'));
 const TeamsPage = lazyWithRetry(() => import('./pages/TeamsPage'));
 const WorkflowSettings = lazyWithRetry(() => import('./pages/WorkflowSettings'));
@@ -219,7 +220,6 @@ import ReleaseNoteLoginModal from './components/ReleaseNoteLoginModal';
 import SharedProviders from './shared/SharedProviders';
 import SupabaseSwitchCountdownBanner from './components/SupabaseSwitchCountdownBanner';
 import { useModuleAccess } from './shared/context/ModuleAccessContext';
-
 function PageLoader() {
   return (
     <div className="flex items-center justify-center h-64">
@@ -267,6 +267,15 @@ function ProtectedLayout() {
   }
 
   if (!user) return <Navigate to="/login" state={{ from: location }} />;
+
+  const onSetupPage = location.pathname === '/setup';
+  if (onSetupPage) {
+    return (
+      <Suspense fallback={<PageLoader />}>
+        <TenantFirstSetupPage />
+      </Suspense>
+    );
+  }
 
   if (crmOnly) {
     const path = location.pathname;
@@ -363,6 +372,7 @@ export default function App() {
           <Route path="/modules/payment/return" element={<SaasPaymentReturnPage />} />
           <Route path="/privacy" element={<Suspense fallback={<PageLoader />}><PrivacyPage /></Suspense>} />
           <Route element={<ProtectedLayout />}>
+            <Route path="/setup" element={<Outlet />} />
             <Route path="/" element={<DefaultRedirect />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/management" element={<ManagementDashboard />} />

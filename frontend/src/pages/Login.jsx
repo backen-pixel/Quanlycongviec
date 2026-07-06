@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import {
   Mail, Lock, Eye, EyeOff, ArrowRight, Home, QrCode,
   Check, Gift, Play, Globe, ChevronDown, MoreHorizontal,
@@ -32,11 +32,17 @@ export default function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState('password');
-  const { login, loginWithGoogle, applyAuthSession } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { login, loginWithGoogle, applyAuthSession } = useAuth();
 
   const emailHint = searchParams.get('email') || '';
+
+  useEffect(() => {
+    if (searchParams.get('signup') === '1') {
+      navigate('/modules#pricing', { replace: true });
+    }
+  }, [searchParams, navigate]);
 
   useEffect(() => {
     if (emailHint && !email) setEmail(emailHint);
@@ -365,6 +371,17 @@ export default function Login() {
                         Dùng Google với email <strong>{emailHint}</strong> đã đăng ký mua gói
                       </p>
                     )}
+
+                    <p className="text-center text-sm text-slate-600 pt-2">
+                      Chưa có tài khoản?{' '}
+                      <Link
+                        to="/modules#pricing"
+                        className="font-semibold hover:underline"
+                        style={{ color: BRAND.orange }}
+                      >
+                        Chọn gói và đăng ký
+                      </Link>
+                    </p>
                   </form>
                 )}
               </div>

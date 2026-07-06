@@ -7,6 +7,12 @@ const { supabase } = require('../config/supabase');
 const { isAdminLike } = require('../helpers/adminRole');
 const { getWonDealProjectIds } = require('../helpers/workshopKanban');
 const { buildProjectDealBundle } = require('../helpers/projectDealBundle');
+const {
+  resolveCompanyScopeForRequest,
+  applyCompanyScopeFilter,
+  applyProjectScopeFilter,
+  TENANT_EMPTY_COMPANY_SENTINEL,
+} = require('../helpers/tenantScope');
 
 const r = Router();
 r.use(auth);
@@ -20,14 +26,70 @@ function scopedAdminCompanyId(req) {
   return sac && String(sac).trim() ? String(sac).trim() : null;
 }
 
-function resolveEffectiveCompanyId(req, companyIdQuery) {
-  const sac = scopedAdminCompanyId(req);
-  if (sac) return sac;
-  if (!userIsAdmin(req.user?.role)) {
-    return req.user?.company_id ? String(req.user.company_id) : null;
+function getCompanyScope(req, companyIdQuery) {
+  return resolveCompanyScopeForRequest(req, companyIdQuery, {
+    scopedAdminCompanyId: scopedAdminCompanyId(req),
+  });
+}
+
+function primaryCompanyIdFromScope(scope) {
+  if (!scope?.ok) return null;
+  if (scope.companyId && scope.companyId !== TENANT_EMPTY_COMPANY_SENTINEL) return scope.companyId;
+  if (scope.companyIds?.length === 1) return scope.companyIds[0];
+  return scope.companyIds?.[0] || null;
+}
+
+function denyScope(res, scope) {
+  if (scope?.ok) return false;
+  res.status(scope?.code === 'tenant_company_denied' ? 403 : 400).json({
+    error: scope?.error || 'Không có quyền truy cập',
+    code: scope?.code,
+  });
+  return true;
+}
+
+function assertLeadInScope(res, scope, lead) {
+  if (!scope?.ok) return denyScope(res, scope);
+  if (scope.companyId === TENANT_EMPTY_COMPANY_SENTINEL) {
+    res.status(404).json({ error: 'Không tìm thấy deal/lead' });
+    return false;
   }
-  const raw = companyIdQuery && String(companyIdQuery).trim();
-  return raw || null;
+  const cid = lead?.company_id != null ? String(lead.company_id) : null;
+  if (!cid) {
+    res.status(403).json({ error: 'Không có quyền xem deal này' });
+    return false;
+  }
+  if (scope.companyId && scope.companyId !== cid) {
+    res.status(403).json({ error: 'Không có quyền xem deal này' });
+    return false;
+  }
+  if (scope.companyIds?.length && !scope.companyIds.includes(cid)) {
+    res.status(403).json({ error: 'Không có quyền xem deal này' });
+    return false;
+  }
+  return true;
+}
+
+function assertProjectInScope(res, scope, project) {
+  if (!project) return true;
+  if (!scope?.ok) return denyScope(res, scope);
+  if (scope.companyId === TENANT_EMPTY_COMPANY_SENTINEL) {
+    res.status(404).json({ error: 'Không tìm thấy dự án' });
+    return false;
+  }
+  const cid = project.company_id != null ? String(project.company_id) : null;
+  const lcid = project.logistics_company_id != null ? String(project.logistics_company_id) : null;
+  const inScope = (id) => {
+    if (!id) return false;
+    if (scope.companyId) return scope.companyId === id;
+    if (scope.companyIds?.length) return scope.companyIds.includes(id);
+    return true;
+  };
+  if (!inScope(cid) && !inScope(lcid)) {
+    res.status(403).json({ error: 'Không có quyền xem dự án này' });
+    return false;
+  }
+  return true;
 }
 
 function parsePagination(req, defaultSize = 50, maxSize = 200) {
@@ -39,7 +101,9 @@ function parsePagination(req, defaultSize = 50, maxSize = 200) {
   return { page, pageSize, from, to };
 }
 
-async function loadCrmDealStages(companyId) {
+async function loadCrmDealStages(scope) {
+  if (scope?.companyId === TENANT_EMPTY_COMPANY_SENTINEL) return [];
+  const companyId = primaryCompanyIdFromScope(scope);
   let stagesQuery = supabase
     .from('crm_pipeline_stages')
     .select('id, name, color, icon, order_index, is_won, is_lost, pipeline_type')
@@ -62,12 +126,12 @@ async function loadCrmDealStages(companyId) {
   return (data || []).filter((s) => !s.is_lost);
 }
 
-async function countLeadsByStage(companyId, type, dateFrom, dateTo) {
+async function countLeadsByStage(scope, type, dateFrom, dateTo) {
   let q = supabase
     .from('crm_leads')
     .select('stage_id')
     .eq('type', type);
-  if (companyId) q = q.eq('company_id', companyId);
+  q = applyCompanyScopeFilter(q, scope);
   if (dateFrom) q = q.gte('created_at', dateFrom);
   if (dateTo) q = q.lte('created_at', dateTo);
   const { data } = await q;
@@ -91,16 +155,26 @@ function buildPipelineFromStages(stages, counts) {
   }));
 }
 
-async function loadSxPipelineSummary(companyId) {
-  const wonIds = await getWonDealProjectIds();
+async function loadSxPipelineSummary(scope) {
+  let wonIds = await getWonDealProjectIds();
   if (!wonIds.length) return { kpis: { active: 0, intake: 0, overdue: 0 }, pipeline: [] };
+
+  if (scope?.ok && (scope.companyIds?.length || scope.companyId === TENANT_EMPTY_COMPANY_SENTINEL)) {
+    let pq = supabase.from('projects').select('id').in('id', wonIds);
+    pq = applyCompanyScopeFilter(pq, scope);
+    const { data: filtered } = await pq;
+    wonIds = (filtered || []).map((p) => p.id);
+    if (!wonIds.length) return { kpis: { active: 0, intake: 0, overdue: 0 }, pipeline: [] };
+  }
 
   let q = supabase
     .from('projects')
     .select('id, sx_kanban_column_id, deadline, status, company_id')
     .in('id', wonIds);
-  if (companyId) q = q.eq('company_id', companyId);
+  q = applyCompanyScopeFilter(q, scope);
   const { data: projects } = await q;
+
+  const companyId = primaryCompanyIdFromScope(scope);
 
   let stagesQuery = supabase
     .from('production_pipeline_stages')
@@ -139,18 +213,18 @@ async function loadSxPipelineSummary(companyId) {
   };
 }
 
-async function loadVcPipelineSummary(companyId) {
+async function loadVcPipelineSummary(scope) {
   let q = supabase
     .from('projects')
     .select('id, vc_kanban_column_id, deadline, status, company_id, logistics_company_id')
     .not('vc_kanban_column_id', 'is', null);
-  if (companyId) {
-    q = q.or(`company_id.eq.${companyId},logistics_company_id.eq.${companyId}`);
-  }
+  q = applyProjectScopeFilter(q, scope);
   let { data: projects, error } = await q;
   if (error && /vc_kanban_column_id/.test(error.message || '')) {
     return { kpis: { active: 0, overdue: 0 }, pipeline: [] };
   }
+
+  const companyId = primaryCompanyIdFromScope(scope);
 
   let stagesQuery = supabase
     .from('logistics_pipeline_stages')
@@ -184,12 +258,15 @@ async function loadVcPipelineSummary(companyId) {
 // GET /api/management/overview
 r.get('/overview', async (req, res) => {
   try {
-    const companyId = resolveEffectiveCompanyId(req, req.query.company_id);
+    const scope = getCompanyScope(req, req.query.company_id);
+    if (denyScope(res, scope)) return;
+    const companyId = primaryCompanyIdFromScope(scope);
     const { date_from: dateFrom, date_to: dateTo } = req.query;
 
     const [dealStages, leadStages, dealCounts, leadCounts, sx, vc] = await Promise.all([
-      loadCrmDealStages(companyId),
-      loadCrmDealStages(companyId).then(async () => {
+      loadCrmDealStages(scope),
+      (async () => {
+        if (scope?.companyId === TENANT_EMPTY_COMPANY_SENTINEL) return [];
         let q = supabase
           .from('crm_pipeline_stages')
           .select('id, name, color, icon, order_index, is_won, is_lost, pipeline_type')
@@ -203,28 +280,29 @@ r.get('/overview', async (req, res) => {
             .eq('company_id', companyId)
             .eq('is_active', true)
             .order('is_default', { ascending: false })
+            .order('created_at')
             .limit(1)
             .maybeSingle();
           if (defPl?.id) q = q.eq('pipeline_id', defPl.id);
         }
         const { data } = await q;
         return (data || []).filter((s) => !s.is_lost);
-      }),
-      countLeadsByStage(companyId, 'deal', dateFrom, dateTo),
-      countLeadsByStage(companyId, 'lead', dateFrom, dateTo),
-      loadSxPipelineSummary(companyId),
-      loadVcPipelineSummary(companyId),
+      })(),
+      countLeadsByStage(scope, 'deal', dateFrom, dateTo),
+      countLeadsByStage(scope, 'lead', dateFrom, dateTo),
+      loadSxPipelineSummary(scope),
+      loadVcPipelineSummary(scope),
     ]);
 
     let taskQ = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true })
       .neq('status', 'completed').neq('status', 'done');
-    if (companyId) taskQ = taskQ.eq('company_id', companyId);
+    taskQ = applyCompanyScopeFilter(taskQ, scope);
     const { count: openTasks } = await taskQ;
 
     let overdueQ = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true })
       .lt('deadline', new Date().toISOString())
       .neq('status', 'completed').neq('status', 'done');
-    if (companyId) overdueQ = overdueQ.eq('company_id', companyId);
+    overdueQ = applyCompanyScopeFilter(overdueQ, scope);
     const { count: overdueTasks } = await overdueQ;
 
     const totalDeals = Object.values(dealCounts).reduce((s, n) => s + n, 0);
@@ -233,6 +311,7 @@ r.get('/overview', async (req, res) => {
 
     res.json({
       company_id: companyId,
+      tenant_scoped: !!(scope.companyIds?.length || scope.companyId === TENANT_EMPTY_COMPANY_SENTINEL),
       kpis: {
         crm_leads: totalLeads,
         crm_deals: totalDeals,
@@ -260,7 +339,8 @@ r.get('/overview', async (req, res) => {
 // GET /api/management/deals
 r.get('/deals', async (req, res) => {
   try {
-    const companyId = resolveEffectiveCompanyId(req, req.query.company_id);
+    const scope = getCompanyScope(req, req.query.company_id);
+    if (denyScope(res, scope)) return;
     const {
       q: searchQ, date_from: dateFrom, date_to: dateTo,
       phase, crm_stage_id: crmStageId, assignee_id: assigneeId,
@@ -286,7 +366,7 @@ r.get('/deals', async (req, res) => {
       .eq('type', 'deal')
       .order('updated_at', { ascending: false });
 
-    if (companyId) q = q.eq('company_id', companyId);
+    q = applyCompanyScopeFilter(q, scope);
     if (dateFrom) q = q.gte('created_at', dateFrom);
     if (dateTo) q = q.lte('created_at', dateTo);
     if (crmStageId) q = q.eq('stage_id', crmStageId);
@@ -314,7 +394,7 @@ r.get('/deals', async (req, res) => {
         `, { count: 'exact' })
         .eq('type', 'deal')
         .order('updated_at', { ascending: false });
-      if (companyId) q2 = q2.eq('company_id', companyId);
+      q2 = applyCompanyScopeFilter(q2, scope);
       if (dateFrom) q2 = q2.gte('created_at', dateFrom);
       if (dateTo) q2 = q2.lte('created_at', dateTo);
       if (crmStageId) q2 = q2.eq('stage_id', crmStageId);
@@ -392,7 +472,8 @@ r.get('/deals', async (req, res) => {
 r.get('/deals/:leadId', async (req, res) => {
   try {
     const leadId = req.params.leadId;
-    const companyId = resolveEffectiveCompanyId(req, req.query.company_id);
+    const scope = getCompanyScope(req, req.query.company_id);
+    if (denyScope(res, scope)) return;
 
     let leadQ = supabase
       .from('crm_leads')
@@ -418,9 +499,7 @@ r.get('/deals/:leadId', async (req, res) => {
     const { data: lead, error: leadErr } = await leadQ;
     if (leadErr) throw leadErr;
     if (!lead) return res.status(404).json({ error: 'Không tìm thấy deal/lead' });
-    if (companyId && String(lead.company_id) !== String(companyId)) {
-      return res.status(403).json({ error: 'Không có quyền xem deal này' });
-    }
+    if (!assertLeadInScope(res, scope, lead)) return;
 
     const projectId = lead.project_id;
 
@@ -532,12 +611,11 @@ r.get('/deals/:leadId', async (req, res) => {
 // GET /api/management/by-project/:projectId — tổng hợp deal theo dự án
 r.get('/by-project/:projectId', async (req, res) => {
   try {
-    const companyId = resolveEffectiveCompanyId(req, req.query.company_id);
+    const scope = getCompanyScope(req, req.query.company_id);
+    if (denyScope(res, scope)) return;
     const bundle = await buildProjectDealBundle(req.params.projectId, { user: req.user });
     if (!bundle) return res.status(404).json({ error: 'Không tìm thấy dự án' });
-    if (companyId && bundle.project?.company_id && String(bundle.project.company_id) !== String(companyId)) {
-      return res.status(403).json({ error: 'Không có quyền xem dự án này' });
-    }
+    if (!assertProjectInScope(res, scope, bundle.project)) return;
     res.json(bundle);
   } catch (e) {
     console.error('[management/by-project]', e);

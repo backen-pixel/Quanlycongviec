@@ -15,10 +15,11 @@ function normalizeCrmUserRole(role) {
 }
 
 /**
- * Admin hệ thống (tổng): role `admin` và không gắn `company_id` — xem/lọc mọi công ty khi gọi API.
- * @param {{ role?: string, company_id?: string | null }} user — JWT / req.user
+ * Admin hệ thống (tổng): role `admin`, không gắn `company_id`, không thuộc tenant SaaS.
+ * @param {{ role?: string, company_id?: string | null, tenant_id?: string | null }} user — JWT / req.user
  */
 function isCrmSystemAdminUser(user) {
+  if (user?.tenant_id != null && String(user.tenant_id).trim() !== '') return false;
   return normalizeCrmUserRole(user?.role) === 'admin' && !(user?.company_id != null && String(user.company_id).trim() !== '');
 }
 

@@ -85,6 +85,7 @@ async function syncCompanyToEcosystem(company) {
           level_id: levelId,
           parent_id: divId,
           company_id: company.id,
+          tenant_id: company.tenant_id || null,
           is_active: true,
         }).select('id').single();
         if (error) { console.error('syncCompany error:', error); continue; }
@@ -132,6 +133,10 @@ async function syncDepartmentToEcosystem(dept) {
     }
     if (!parentUnitId) return null;
 
+    let tenantId = null;
+    const { data: coRow } = await supabase.from('companies').select('tenant_id').eq('id', dept.company_id).maybeSingle();
+    tenantId = coRow?.tenant_id || null;
+
     const existingUnitId = await findLinkedUnit('department_id', dept.id);
 
     if (existingUnitId) {
@@ -140,16 +145,19 @@ async function syncDepartmentToEcosystem(dept) {
         short_name: dept.short_name || null,
         parent_id: parentUnitId,
         is_active: dept.is_active !== false,
+        tenant_id: tenantId,
         updated_at: new Date().toISOString(),
       }).eq('id', existingUnitId);
       return existingUnitId;
     }
+
     const { data, error } = await supabase.from('ecosystem_units').insert({
       name: dept.name,
       short_name: dept.short_name || null,
       level_id: levelId,
       parent_id: parentUnitId,
       department_id: dept.id,
+      tenant_id: tenantId,
     }).select('id').single();
     if (error) { console.error('syncDept error:', error); return null; }
     return data.id;
@@ -339,6 +347,27 @@ async function syncUserOrgToEcosystem(userId, { old_department_id = null, old_te
   }
 }
 
+/** Đồng bộ companies + departments của tenant → ecosystem_units (sau thiết lập /setup) */
+async function ensureTenantEcosystemSynced(tenantId) {
+  if (!tenantId) return;
+  const { data: companies } = await supabase
+    .from('companies')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .eq('is_active', true);
+  for (const co of companies || []) {
+    await syncCompanyToEcosystem(co);
+    const { data: depts } = await supabase
+      .from('departments')
+      .select('*')
+      .eq('company_id', co.id)
+      .eq('is_active', true);
+    for (const dept of depts || []) {
+      await syncDepartmentToEcosystem(dept);
+    }
+  }
+}
+
 module.exports = {
   syncCompanyToEcosystem,
   syncDepartmentToEcosystem,
@@ -346,4 +375,5 @@ module.exports = {
   removeUserFromEcosystem,
   syncTeamToEcosystem,
   syncUserOrgToEcosystem,
+  ensureTenantEcosystemSynced,
 };

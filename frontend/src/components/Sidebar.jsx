@@ -12,7 +12,7 @@ import {
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, UsersRound,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
   BookOpen, FolderTree, Factory, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot, Download, UserMinus,
-  Sigma, Calculator, FileUp, History as HistoryIcon, HardDrive, Database, Globe, CreditCard,
+  Sigma, Calculator, FileUp, History as HistoryIcon, HardDrive, Database, Globe, CreditCard, Sparkles,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
@@ -82,6 +82,7 @@ const MENU_GROUPS = [
     emoji: '🏗️',
     adminOnly: true,
     items: [
+      { to: '/setup', icon: Sparkles, label: 'Thiết lập HST', adminOnly: true, tenantAdminOnly: true },
       { to: '/ecosystem', icon: Network, label: 'Cấu trúc công ty' },
       { to: '/ecosystem/modules', icon: Puzzle, label: 'Module & Khối' },
       { to: '/companies', icon: Building2, label: 'Công ty' },
@@ -218,6 +219,7 @@ const CRM_MENU_BOTTOM_GROUPS = [
     emoji: '⚙️',
     adminOnly: true,
     items: [
+      { to: '/setup', icon: Sparkles, label: 'Thiết lập HST', adminOnly: true, tenantAdminOnly: true },
       { to: '/crm/facebook/link-phone-cleanup', icon: Phone, label: 'Dọn SĐT từ link', adminOnly: true },
       { to: '/crm/blocked-phones', icon: ShieldOff, label: 'Chặn KH (SĐT)', adminOnly: true },
       { to: '/crm/pipeline-settings', icon: Settings, label: 'Pipeline', adminOnly: true },
@@ -479,7 +481,7 @@ function SideLink({ to, icon: Icon, label, collapsed, end, badge, moduleContext 
   );
 }
 
-function MenuGroup({ group, collapsed, isAdmin, isPlatformAdminUser, isWorkModuleAdmin, isStrictAdminUser, isExecutive, canAccessModule, canAccessSocialInbox, userRole, updatesUnread = 0, assignmentsUnread = 0, sxAssignmentsUnread = 0, socialUnread = 0 }) {
+function MenuGroup({ group, collapsed, isAdmin, isPlatformAdminUser, isWorkModuleAdmin, isStrictAdminUser, isExecutive, canAccessModule, canAccessSocialInbox, userRole, userTenantId, updatesUnread = 0, assignmentsUnread = 0, sxAssignmentsUnread = 0, socialUnread = 0 }) {
   const [open, setOpen] = useState(true);
   const moduleContext = resolveGroupModuleContext(group);
   const moduleAdmin = (moduleContext === 'work' || moduleContext === 'sx')
@@ -494,6 +496,7 @@ function MenuGroup({ group, collapsed, isAdmin, isPlatformAdminUser, isWorkModul
 
   // Filter items based on role + ecosystem module scope
   const items = group.items.filter((item) => {
+    if (item.tenantAdminOnly && !userTenantId) return false;
     if (item.socialInboxAccess && !canAccessSocialInbox) return false;
     if (item.adminOnly && !moduleAdmin) return false;
     if (item.strictAdminOnly && !isStrictAdminUser) return false;
@@ -712,6 +715,7 @@ export default function Sidebar() {
                 canAccessModule={canAccessModule}
                 canAccessSocialInbox={canAccessSocialInbox}
                 userRole={user?.role}
+                userTenantId={user?.tenant_id}
                 updatesUnread={updatesUnread}
                 assignmentsUnread={assignmentsUnread}
                 sxAssignmentsUnread={sxAssignmentsUnread}
@@ -735,6 +739,7 @@ export default function Sidebar() {
                     canAccessModule={canAccessModule}
                     canAccessSocialInbox={canAccessSocialInbox}
                     userRole={user?.role}
+                    userTenantId={user?.tenant_id}
                     updatesUnread={updatesUnread}
                     assignmentsUnread={assignmentsUnread}
                 sxAssignmentsUnread={sxAssignmentsUnread}
@@ -758,6 +763,7 @@ export default function Sidebar() {
                 canAccessModule={canAccessModule}
                 canAccessSocialInbox={canAccessSocialInbox}
                 userRole={user?.role}
+                userTenantId={user?.tenant_id}
                 updatesUnread={updatesUnread}
                 assignmentsUnread={assignmentsUnread}
                 sxAssignmentsUnread={sxAssignmentsUnread}

@@ -8,6 +8,12 @@ services:
     startCommand: npm start
     healthCheckPath: /api/health
     startTimeout: 120
+    # Autoscaling (Render Pro+). Không có Pro: đặt numInstances thủ công trên Dashboard.
+    scaling:
+      minInstances: 1
+      maxInstances: 3
+      targetCPUPercent: 70
+      targetMemoryPercent: 80
     envVars:
       - key: NODE_ENV
         value: production
@@ -33,6 +39,10 @@ services:
         sync: false
       - key: REDIS_DISABLED
         sync: false
+      - key: PG_POOL_MAX
+        value: "5"
+      - key: FB_AUTO_PIPELINE_LEADER_TTL_SEC
+        value: "180"
       - key: SUPABASE_FAILOVER_ENABLED
         value: "0"
       - key: SUPABASE_AUTO_FAILOVER

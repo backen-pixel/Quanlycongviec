@@ -3,6 +3,10 @@ const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { pgDashboardMainStats } = require('../helpers/pgHotQueries');
 const { responseCache } = require('../middleware/responseCache');
+const {
+  applyProjectTenantScope,
+  isTenantScopeEnforced,
+} = require('../helpers/tenantScope');
 
 const r = Router();
 r.use(auth);
@@ -55,26 +59,23 @@ r.get('/', async (req, res) => {
       // Giám đốc/Quản lý/Giám sát → Xem theo filter
       if (filter === 'division' && user.primary_division_id) {
         // Lọc theo Khối
-        projectIds = await getProjectIdsByDivision(user.primary_division_id);
+        projectIds = await getProjectIdsByDivision(user.primary_division_id, req);
       } else if (filter === 'company' && user.departments?.company_id) {
         // Lọc theo Công ty
-        projectIds = await getProjectIdsByCompany(user.departments.company_id);
+        projectIds = await getProjectIdsByCompany(user.departments.company_id, req);
       } else if (filter === 'department' && user.department_id) {
         // Lọc theo Phòng ban
-        projectIds = await getProjectIdsByDepartment(user.department_id);
+        projectIds = await getProjectIdsByDepartment(user.department_id, req);
       } else if (filter === 'mine') {
         // Chỉ dự án của mình
-        projectIds = await getProjectIdsByUser(userId);
+        projectIds = await getProjectIdsByUser(userId, req);
       } else {
-        // Mặc định: Tất cả dự án
-        const { data: allProjects } = await supabase
-          .from('projects')
-          .select('id');
-        projectIds = (allProjects || []).map(p => p.id);
+        // Mặc định: Tất cả dự án (trong phạm vi tenant nếu có)
+        projectIds = await getAllProjectIds(req);
       }
     } else {
       // Nhân viên thường → Chỉ xem dự án của mình
-      projectIds = await getProjectIdsByUser(userId);
+      projectIds = await getProjectIdsByUser(userId, req);
     }
 
     // 3. Lấy thông tin dự án
@@ -191,10 +192,9 @@ r.get('/stats', responseCache({ ttl: 30, scope: 'user', tags: ['dashboard-main']
     let projectIds = [];
 
     if (hasFullAccess) {
-      const { data: allProjects } = await supabase.from('projects').select('id');
-      projectIds = (allProjects || []).map(p => p.id);
+      projectIds = await getAllProjectIds(req);
     } else {
-      projectIds = await getProjectIdsByUser(userId);
+      projectIds = await getProjectIdsByUser(userId, req);
     }
 
     // Đếm tasks — ưu tiên pg aggregate
@@ -244,7 +244,26 @@ r.get('/stats', responseCache({ ttl: 30, scope: 'user', tags: ['dashboard-main']
 // HELPER FUNCTIONS
 // ═══════════════════════════════════════════════
 
-async function getProjectIdsByDivision(divisionId) {
+async function getAllProjectIds(req) {
+  if (isTenantScopeEnforced(req) && !(req.tenantCompanyIds || []).length) {
+    return [];
+  }
+  let q = supabase.from('projects').select('id');
+  q = applyProjectTenantScope(q, req);
+  const { data } = await q;
+  return (data || []).map((p) => p.id);
+}
+
+async function filterProjectIdsByTenant(req, projectIds) {
+  if (!isTenantScopeEnforced(req) || !projectIds?.length) return projectIds || [];
+  if (!(req.tenantCompanyIds || []).length) return [];
+  let q = supabase.from('projects').select('id').in('id', projectIds);
+  q = applyProjectTenantScope(q, req);
+  const { data } = await q;
+  return (data || []).map((p) => p.id);
+}
+
+async function getProjectIdsByDivision(divisionId, req) {
   // Lấy flows chứa division
   const { data: steps } = await supabase
     .from('workflow_flow_steps')
@@ -261,10 +280,10 @@ async function getProjectIdsByDivision(divisionId) {
     .select('id')
     .in('flow_id', flowIds);
 
-  return (projects || []).map(p => p.id);
+  return filterProjectIdsByTenant(req, (projects || []).map(p => p.id));
 }
 
-async function getProjectIdsByCompany(companyId) {
+async function getProjectIdsByCompany(companyId, req) {
   // Lấy flows có company
   const { data: steps } = await supabase
     .from('workflow_flow_steps')
@@ -280,10 +299,10 @@ async function getProjectIdsByCompany(companyId) {
     .select('id')
     .in('flow_id', flowIds);
 
-  return (projects || []).map(p => p.id);
+  return filterProjectIdsByTenant(req, (projects || []).map(p => p.id));
 }
 
-async function getProjectIdsByDepartment(departmentId) {
+async function getProjectIdsByDepartment(departmentId, req) {
   // Lấy users trong department
   const { data: users } = await supabase
     .from('users')
@@ -300,10 +319,10 @@ async function getProjectIdsByDepartment(departmentId) {
     .select('project_id')
     .in('assigned_to', userIds);
 
-  return [...new Set((tasks || []).map(t => t.project_id))];
+  return filterProjectIdsByTenant(req, [...new Set((tasks || []).map(t => t.project_id))]);
 }
 
-async function getProjectIdsByUser(userId) {
+async function getProjectIdsByUser(userId, req) {
   // Dự án user tạo
   const { data: created } = await supabase
     .from('projects')
@@ -321,7 +340,7 @@ async function getProjectIdsByUser(userId) {
     ...(tasks || []).map(t => t.project_id)
   ];
 
-  return [...new Set(projectIds)];
+  return filterProjectIdsByTenant(req, [...new Set(projectIds)]);
 }
 
 function calculateStats(projects, tasks, userId) {

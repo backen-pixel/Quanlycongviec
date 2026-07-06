@@ -337,9 +337,8 @@ r.post('/call-reject', async (req, res) => {
     }
 
     const io = req.app.get('io');
-    const activeDirectCalls = req.app.get('activeDirectCalls');
     const finalizeDirectCallLog = req.app.get('finalizeDirectCallLog');
-    restRejectCall(io, activeDirectCalls, finalizeDirectCallLog, callId, uid, toUserId);
+    await restRejectCall(io, null, finalizeDirectCallLog, callId, uid, toUserId);
     res.json({ ok: true });
   } catch (e) {
     console.error('POST /push/call-reject:', e);
@@ -363,8 +362,7 @@ r.post('/call-accept', async (req, res) => {
     }
 
     const io = req.app.get('io');
-    const activeDirectCalls = req.app.get('activeDirectCalls');
-    restMarkCallAnswered(io, activeDirectCalls, callId, uid, toUserId);
+    await restMarkCallAnswered(io, null, callId, uid, toUserId);
     res.json({ ok: true });
   } catch (e) {
     console.error('POST /push/call-accept:', e);

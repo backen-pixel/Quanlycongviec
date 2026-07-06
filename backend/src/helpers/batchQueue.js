@@ -380,7 +380,11 @@ function startBatchQueueWorker() {
   const ttlSec = Math.max(10, Math.ceil(intervalMs / 1000) + 5);
   setTimeout(() => { void runIfLeader('batch-queue-worker', () => workerTick(), { ttlSec }); }, 30_000);
   setInterval(() => { void runIfLeader('batch-queue-worker', () => workerTick(), { ttlSec }); }, intervalMs);
-  console.log(`[batch-queue] Worker started — poll ${intervalMs}ms (Redis: ${getRedisIfReady() ? 'yes' : 'in-memory fallback'})`);
+  setTimeout(() => {
+    const { getStatus } = require('../config/redis');
+    const redisLabel = getStatus() === 'ok' ? 'yes' : (getRedisIfReady() ? 'connecting' : 'in-memory fallback');
+    console.log(`[batch-queue] Worker started — poll ${intervalMs}ms (Redis: ${redisLabel})`);
+  }, 5_000);
 }
 
 module.exports = {

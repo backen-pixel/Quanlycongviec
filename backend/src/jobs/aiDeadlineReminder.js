@@ -11,6 +11,7 @@
  */
 const { supabase } = require('../config/supabase');
 const { isNotificationAllowedForUser } = require('../helpers/notificationPrefsUser');
+const { runIfLeader } = require('../helpers/cronLeader');
 
 const HOUR_MS = 3600 * 1000;
 const VN_TZ = 'Asia/Ho_Chi_Minh';
@@ -359,12 +360,12 @@ function start(io) {
   function scheduleNext() {
     const nextDelay = Math.max(msUntilNextRun(slots), 60 * 1000);
     setTimeout(() => {
-      runOnce(io).finally(scheduleNext);
+      void runIfLeader('ai-deadline-reminder', () => runOnce(io), { ttlSec: 7200 }).finally(scheduleNext);
     }, nextDelay);
   }
 
   setTimeout(() => {
-    runOnce(io).finally(scheduleNext);
+    void runIfLeader('ai-deadline-reminder', () => runOnce(io), { ttlSec: 7200 }).finally(scheduleNext);
   }, delay);
 }
 
