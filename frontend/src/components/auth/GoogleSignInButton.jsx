@@ -26,15 +26,22 @@ function loadGoogleScript() {
 
 export default function GoogleSignInButton({ onSuccess, onError, hintEmail, className = '' }) {
   const btnRef = useRef(null);
-  const [ready, setReady] = useState(false);
-  const [enabled, setEnabled] = useState(false);
+  const [status, setStatus] = useState('loading'); // loading | ready | disabled | error
+  const [statusHint, setStatusHint] = useState('');
 
   useEffect(() => {
     let cancelled = false;
+
     (async () => {
       try {
         const { data } = await api.get('/auth/google-config');
-        if (cancelled || !data?.enabled || !data?.clientId) return;
+        if (cancelled) return;
+        if (!data?.enabled || !data?.clientId) {
+          setStatus('disabled');
+          setStatusHint('Google Sign-In chưa bật trên server');
+          return;
+        }
+
         await loadGoogleScript();
         if (cancelled || !btnRef.current) return;
 
@@ -60,21 +67,29 @@ export default function GoogleSignInButton({ onSuccess, onError, hintEmail, clas
           width: 320,
           locale: 'vi',
         });
-        setEnabled(true);
-        setReady(true);
+        setStatus('ready');
       } catch (e) {
-        if (!cancelled) setReady(true);
+        if (cancelled) return;
+        setStatus('error');
+        setStatusHint(e.response?.data?.error || e.message || 'Không tải được Google Sign-In');
       }
     })();
+
     return () => { cancelled = true; };
   }, [hintEmail, onSuccess, onError]);
 
-  if (!ready) return null;
-  if (!enabled) return null;
-
   return (
     <div className={className}>
-      <div ref={btnRef} className="flex justify-center min-h-[44px]" />
+      <div
+        ref={btnRef}
+        className={`flex justify-center min-h-[44px] ${status === 'ready' ? '' : 'hidden'}`}
+      />
+      {status === 'loading' && (
+        <p className="text-center text-xs text-slate-400 py-2">Đang tải đăng nhập Google…</p>
+      )}
+      {(status === 'disabled' || status === 'error') && statusHint && (
+        <p className="text-center text-xs text-amber-600 py-2">{statusHint}</p>
+      )}
     </div>
   );
 }
