@@ -4,12 +4,15 @@ const config = require('../config');
 const r = express.Router();
 const { supabase } = require('../config/supabase');
 const axios = require('axios');
-const { isAdminLike, isSystemAdmin } = require('../helpers/adminRole');
+const { isAdminLike, isSystemAdmin, hasCompanyId } = require('../helpers/adminRole');
+const { runIfLeader, tryAcquireLeader, renewLeader, releaseLeader } = require('../helpers/cronLeader');
 const { resolveCrmSocialInboxCompanyId } = require('../helpers/crmSocialInboxScope');
 const {
   activityTimestampMs,
   sortFacebookContactsNewestFirst,
   enrichContactActivityFields,
+  vnDateStartIso,
+  vnDateEndIso,
 } = require('../helpers/facebookContactActivity');
 const {
   extractContactInfo,
@@ -83,6 +86,13 @@ function fbToolsResumeOnBoot() {
   }
   return process.env.NODE_ENV === 'production';
 }
+
+/** Leader lock FB auto pipeline — chỉ 1 instance chạy khi scale horizontal (Redis). */
+const FB_AUTO_PIPELINE_LEADER = 'fb-auto-pipeline';
+const FB_AUTO_PIPELINE_LEADER_TTL_SEC = Math.max(
+  60,
+  parseInt(process.env.FB_AUTO_PIPELINE_LEADER_TTL_SEC || '180', 10) || 180,
+);
 
 // ═══════════════════════════════════════════════════════════════
 // AUTO PIPELINE STATE (backend-managed, realtime)
@@ -630,6 +640,19 @@ function getAutoPipelineState(companyKey = FB_GLOBAL_SCOPE_KEY) {
   return autoPipelineStates.get(key);
 }
 
+function anyAutoPipelineRunningLocally() {
+  for (const st of autoPipelineStates.values()) {
+    if (st.running) return true;
+  }
+  return false;
+}
+
+async function releaseFbPipelineLeaderIfIdle() {
+  if (!anyAutoPipelineRunningLocally()) {
+    await releaseLeader(FB_AUTO_PIPELINE_LEADER);
+  }
+}
+
 /** companyKey -> companyId thật (null cho global). */
 function companyKeyToId(companyKey) {
   return !companyKey || companyKey === FB_GLOBAL_SCOPE_KEY ? null : companyKey;
@@ -1036,6 +1059,13 @@ async function runAutoPipelineLoop(companyKey = FB_GLOBAL_SCOPE_KEY) {
   }
 
   while (autoPipeline.enabled && !autoPipeline.stopRequested && getFbMasterEnabledSync()) {
+    const stillLeader = await renewLeader(FB_AUTO_PIPELINE_LEADER, FB_AUTO_PIPELINE_LEADER_TTL_SEC);
+    if (!stillLeader) {
+      pushAutoLog('⏸️ Instance khác đang chạy FB auto pipeline — dừng trên instance này', 'error');
+      autoPipeline.stopRequested = true;
+      break;
+    }
+
     const pcfg = getFbPipelineConfigSync(companyKey);
     const pageIds = await getPageIdsForCompany(companyId);
     if (Array.isArray(pageIds) && pageIds.length === 0) {
@@ -1392,6 +1422,7 @@ async function runAutoPipelineLoop(companyKey = FB_GLOBAL_SCOPE_KEY) {
 
   autoPipeline.running = false;
   autoPipeline.stopRequested = false;
+  void releaseFbPipelineLeaderIfIdle();
 
   if (keepAutoOn) {
     autoPipeline.enabled = true;
@@ -1403,7 +1434,7 @@ async function runAutoPipelineLoop(companyKey = FB_GLOBAL_SCOPE_KEY) {
     setTimeout(() => {
       const st2 = getAutoPipelineState(companyKey);
       if (!st2.running && st2.enabled && getFbMasterEnabledSync()) {
-        startAutoPipelineForCompany(companyKey);
+        void startAutoPipelineForCompany(companyKey);
       }
     }, 2000);
     return;
@@ -1419,7 +1450,7 @@ async function runAutoPipelineLoop(companyKey = FB_GLOBAL_SCOPE_KEY) {
 
 // ── Quản lý vòng auto theo công ty (start/stop độc lập + master) ──────────────
 /** Khởi động vòng auto của 1 công ty (chỉ chạy khi master bật). */
-function startAutoPipelineForCompany(companyKey) {
+async function startAutoPipelineForCompany(companyKey) {
   const st = getAutoPipelineState(companyKey);
   if (st.running) {
     st.enabled = true;
@@ -1430,6 +1461,13 @@ function startAutoPipelineForCompany(companyKey) {
     // Master tắt: chỉ đánh dấu enabled (sẽ chạy khi bật master).
     st.enabled = true;
     emitAutoState(st);
+    return st;
+  }
+  const isLeader = await tryAcquireLeader(FB_AUTO_PIPELINE_LEADER, FB_AUTO_PIPELINE_LEADER_TTL_SEC);
+  if (!isLeader) {
+    st.enabled = true;
+    emitAutoState(st);
+    console.log(`[FB] Auto pipeline ${companyKey} — instance khác giữ leader, bỏ qua start`);
     return st;
   }
   st.enabled = true;
@@ -1443,6 +1481,7 @@ function startAutoPipelineForCompany(companyKey) {
     st.stepLabel = null;
     st.pauseUntilMs = null;
     emitAutoState(st);
+    void releaseFbPipelineLeaderIfIdle();
   });
   return st;
 }
@@ -1463,11 +1502,11 @@ async function applyFbPipelineMaster(enabled) {
   if (enabled) {
     for (const key of listFbPipelineCompanyKeys()) {
       const cfg = getFbPipelineConfigSync(key);
-      if (cfg.enabled) startAutoPipelineForCompany(key);
+      if (cfg.enabled) await startAutoPipelineForCompany(key);
     }
     // Các state đang enabled nhưng chưa có trong config companies (hiếm)
     for (const [key, st] of autoPipelineStates.entries()) {
-      if (st.enabled && !st.running) startAutoPipelineForCompany(key);
+      if (st.enabled && !st.running) await startAutoPipelineForCompany(key);
     }
   } else {
     for (const st of autoPipelineStates.values()) {
@@ -1689,12 +1728,19 @@ function armFbMasterSchedule(delayMs) {
   }, d);
 }
 
+/** FB MasterSchedule — chỉ 1 instance chạy chu kỳ bật/tắt master khi scale. */
+const FB_MASTER_SCHEDULE_LEADER = 'fb-master-schedule';
+
 async function advanceMasterScheduleCycle() {
   if (!fbMasterSchedule.enabled) return;
   const nextPhase = fbMasterSchedule.phase === 'run' ? 'rest' : 'run';
-  const startedAt = Date.now();
-  await enterMasterSchedulePhase(nextPhase, startedAt);
-  armFbMasterSchedule(masterSchedulePhaseDurationMs(nextPhase));
+  const ttlSec = Math.max(120, Math.ceil(masterSchedulePhaseDurationMs(nextPhase) / 1000) + 60);
+  const ran = await runIfLeader(FB_MASTER_SCHEDULE_LEADER, async () => {
+    const startedAt = Date.now();
+    await enterMasterSchedulePhase(nextPhase, startedAt);
+    armFbMasterSchedule(masterSchedulePhaseDurationMs(nextPhase));
+  }, { ttlSec });
+  if (!ran) armFbMasterSchedule(60_000);
 }
 
 async function startFbMasterScheduleCycle({ restart = false, source = 'schedule' } = {}) {
@@ -1710,8 +1756,15 @@ async function startFbMasterScheduleCycle({ restart = false, source = 'schedule'
   } else {
     ({ phase, startedAt, delayMs } = reconcileMasterSchedulePhase(fbMasterSchedule));
   }
-  await enterMasterSchedulePhase(phase, startedAt, restart ? 'config' : source);
-  armFbMasterSchedule(delayMs);
+  const ttlSec = Math.max(120, Math.ceil(delayMs / 1000) + 60);
+  const ran = await runIfLeader(FB_MASTER_SCHEDULE_LEADER, async () => {
+    await enterMasterSchedulePhase(phase, startedAt, restart ? 'config' : source);
+    armFbMasterSchedule(delayMs);
+  }, { ttlSec });
+  if (!ran) {
+    armFbMasterSchedule(60_000);
+    return;
+  }
   console.log(
     `[FB MasterSchedule] ⏰ Chu kỳ: chạy ${fbMasterSchedule.run_minutes}p / nghỉ ${fbMasterSchedule.rest_minutes}p — phase=${phase}, tiếp sau ${Math.round(delayMs / 1000)}s`,
   );
@@ -3614,10 +3667,11 @@ async function resolveFacebookPageScope(req, res, opts = {}) {
       pageIds: rows.filter((p) => p.default_company_id && String(p.default_company_id) === String(socialCid)).map((p) => p.page_id),
     };
   }
-  if (isSystemAdmin(req.user)) {
+  if (isSystemAdmin(req.user) || (isAdminLike(req.user) && !hasCompanyId(req.user))) {
     if (forcedLeadCompanyId) {
       return {
         mode: 'filter',
+        companyId: forcedLeadCompanyId,
         pageIds: rows.filter((p) => String(p.default_company_id || '') === forcedLeadCompanyId).map((p) => p.page_id),
       };
     }
@@ -3896,7 +3950,7 @@ r.get('/contacts', authMiddleware, async (req, res) => {
         hasMore: false, nextOffset: 0,
       });
     }
-    const { page_id, has_lead, search, source_category_id, source_id, limit: rawLimit, offset: rawOffset } = req.query;
+    const { page_id, has_lead, search, source_category_id, source_id, limit: rawLimit, offset: rawOffset, activity_from, activity_to } = req.query;
     if (page_id && scope.mode === 'filter' && !scope.pageIds.includes(String(page_id))) {
       return res.status(403).json({ error: 'Không có quyền xem Page này' });
     }
@@ -3914,23 +3968,32 @@ r.get('/contacts', authMiddleware, async (req, res) => {
       return q;
     };
 
+    const actFrom = activity_from && String(activity_from).trim() ? String(activity_from).trim() : null;
+    const actTo = activity_to && String(activity_to).trim() ? String(activity_to).trim() : null;
+    const hasDateFilter = !!(actFrom || actTo);
+    const fromIso = hasDateFilter ? vnDateStartIso(actFrom || actTo) : null;
+    const toIso = hasDateFilter ? vnDateEndIso(actTo || actFrom) : null;
+
     /**
      * Lấy rộng hơn để sort rồi mới paginate.
-     *
-     * Lưu ý: Nếu ORDER theo last_message_at trước khi LIMIT, các contact "mới tạo" nhưng chưa có last_message_at
-     * (event read/delivery, hoặc hồ sơ mới) sẽ bị đẩy xuống cuối và có thể không lọt vào LIMIT khi tổng contact lớn.
-     * → Fetch 2 nhóm (có last_message_at, và last_message_at=null) rồi merge để luôn hiển thị user mới.
+     * Khi có lọc ngày: filter trực tiếp trên DB (last_message_at / created_at) thay vì quét 6000 rồi lọc RAM.
      */
     const [withMsgRes, noMsgRes] = await Promise.all([
-      base()
-        .not('last_message_at', 'is', null)
-        .order('last_message_at', { ascending: false })
-        .order('created_at', { ascending: false })
-        .limit(3500),
-      base()
-        .is('last_message_at', null)
-        .order('created_at', { ascending: false })
-        .limit(2500),
+      (() => {
+        let q = base().not('last_message_at', 'is', null);
+        if (hasDateFilter) q = q.gte('last_message_at', fromIso).lte('last_message_at', toIso);
+        return q
+          .order('last_message_at', { ascending: false })
+          .order('created_at', { ascending: false })
+          .limit(hasDateFilter ? 2000 : 3500);
+      })(),
+      (() => {
+        let q = base().is('last_message_at', null);
+        if (hasDateFilter) q = q.gte('created_at', fromIso).lte('created_at', toIso);
+        return q
+          .order('created_at', { ascending: false })
+          .limit(hasDateFilter ? 500 : 2500);
+      })(),
     ]);
     const merged = [...(withMsgRes.data || []), ...(noMsgRes.data || [])];
     // Dedup by id (tránh trường hợp query overlap do filter).
@@ -3993,6 +4056,8 @@ r.get('/contacts', authMiddleware, async (req, res) => {
       limit: maxLimit,
       hasMore: offset + page.length < total,
       nextOffset: offset + page.length,
+      activity_from: actFrom,
+      activity_to: actTo,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -4439,9 +4504,19 @@ r.get('/contacts/:contactId/messages', authMiddleware, async (req, res) => {
       return res.status(403).json({ error: 'Không có quyền xem hội thoại Facebook của Page này' });
     }
 
-    const { data } = await supabase.from('facebook_messages')
+    const msgFrom = req.query.message_from && String(req.query.message_from).trim()
+      ? String(req.query.message_from).trim() : null;
+    const msgTo = req.query.message_to && String(req.query.message_to).trim()
+      ? String(req.query.message_to).trim() : null;
+
+    let msgQuery = supabase.from('facebook_messages')
       .select('*')
-      .eq('contact_id', req.params.contactId)
+      .eq('contact_id', req.params.contactId);
+    const fromIso = msgFrom ? vnDateStartIso(msgFrom) : null;
+    const toIso = msgTo ? vnDateEndIso(msgTo) : null;
+    if (fromIso) msgQuery = msgQuery.gte('created_at', fromIso);
+    if (toIso) msgQuery = msgQuery.lte('created_at', toIso);
+    const { data } = await msgQuery
       .order('created_at', { ascending: true })
       .limit(500);
 
@@ -6832,7 +6907,7 @@ loadFbPipelineConfigFromDb().then(async () => {
     if (masterOn && fbToolsResumeOnBoot()) {
       const enabledKeys = listFbPipelineCompanyKeys().filter((k) => getFbPipelineConfigSync(k).enabled);
       console.log(`[FB] ▶️ Auto-resume auto pipeline sau deploy (master=ON) cho ${enabledKeys.length} công ty`);
-      for (const key of enabledKeys) startAutoPipelineForCompany(key);
+      for (const key of enabledKeys) void startAutoPipelineForCompany(key);
     } else if (masterOn) {
       console.log('[FB] ⏸️ Master BẬT nhưng không tự chạy pipeline (FB_AUTO_PIPELINE_RESUME_ON_BOOT=0 hoặc NODE_ENV≠production).');
     }
@@ -6918,7 +6993,10 @@ function startScanTimer() {
   const ms = intervalMinutes * 60 * 1000;
   scanConfig.interval_minutes = intervalMinutes;
   console.log(`[LeadScan] ⏰ Timer started — every ${intervalMinutes} minutes`);
-  scanTimer = setInterval(() => scanAndCreateLeads(), ms);
+  scanTimer = setInterval(() => {
+    const ttlSec = Math.max(900, intervalMinutes * 60);
+    void runIfLeader('fb-lead-scan', () => scanAndCreateLeads(), { ttlSec });
+  }, ms);
 }
 
 function stopScanTimer() {
@@ -7023,31 +7101,37 @@ async function runRescanPhonesScheduledTick() {
     armRescanPhonesSchedule(60_000);
     return;
   }
-  rescanPhonesScheduleRunning = true;
-  try {
-    const body = {
-      limit: rescanPhonesSchedule.limit,
-      mode: rescanPhonesSchedule.mode,
-      overwrite: rescanPhonesSchedule.overwrite,
-      sort: rescanPhonesSchedule.sort,
-      page_id: rescanPhonesSchedule.page_id,
-      sync_customer: rescanPhonesSchedule.sync_customer,
-      delete_lead_when_no_phone: !!rescanPhonesSchedule.delete_lead_when_no_phone,
-      delete_orphan_customer_no_phone: !!rescanPhonesSchedule.delete_orphan_customer_no_phone,
-      lead_date_from: rescanPhonesSchedule.lead_date_from || undefined,
-      lead_date_to: rescanPhonesSchedule.lead_date_to || undefined,
-      include_contacts_without_lead_in_range: !!rescanPhonesSchedule.include_contacts_without_lead_in_range,
-    };
-    console.log('[RescanSchedule] ▶ tick', body);
-    await runRescanPhonesBatch(body, r._ioRef);
-  } catch (e) {
-    console.error('[RescanSchedule] tick error:', e.message);
-  } finally {
-    rescanPhonesScheduleRunning = false;
-    if (rescanPhonesSchedule.enabled) {
-      const rest = Math.max(15, parseInt(rescanPhonesSchedule.interval_minutes, 10) || 60) * 60 * 1000;
-      armRescanPhonesSchedule(rest);
+  const intervalMin = Math.max(15, parseInt(rescanPhonesSchedule.interval_minutes, 10) || 60);
+  const ran = await runIfLeader('fb-rescan-phones', async () => {
+    rescanPhonesScheduleRunning = true;
+    try {
+      const body = {
+        limit: rescanPhonesSchedule.limit,
+        mode: rescanPhonesSchedule.mode,
+        overwrite: rescanPhonesSchedule.overwrite,
+        sort: rescanPhonesSchedule.sort,
+        page_id: rescanPhonesSchedule.page_id,
+        sync_customer: rescanPhonesSchedule.sync_customer,
+        delete_lead_when_no_phone: !!rescanPhonesSchedule.delete_lead_when_no_phone,
+        delete_orphan_customer_no_phone: !!rescanPhonesSchedule.delete_orphan_customer_no_phone,
+        lead_date_from: rescanPhonesSchedule.lead_date_from || undefined,
+        lead_date_to: rescanPhonesSchedule.lead_date_to || undefined,
+        include_contacts_without_lead_in_range: !!rescanPhonesSchedule.include_contacts_without_lead_in_range,
+      };
+      console.log('[RescanSchedule] ▶ tick', body);
+      await runRescanPhonesBatch(body, r._ioRef);
+    } catch (e) {
+      console.error('[RescanSchedule] tick error:', e.message);
+    } finally {
+      rescanPhonesScheduleRunning = false;
     }
+  }, { ttlSec: intervalMin * 60 });
+  if (!ran) {
+    console.log('[RescanSchedule] tick skipped — instance khác giữ leader');
+  }
+  if (rescanPhonesSchedule.enabled) {
+    const rest = intervalMin * 60 * 1000;
+    armRescanPhonesSchedule(rest);
   }
 }
 
@@ -7441,7 +7525,7 @@ r.post('/auto-pipeline/start', authMiddleware, async (req, res) => {
     await setFbPipelineMaster(true);
   }
   await saveFbPipelineConfigForCompany(companyKey, { enabled: true });
-  const st = startAutoPipelineForCompany(companyKey);
+  const st = await startAutoPipelineForCompany(companyKey);
   res.json({ ok: true, master_enabled: getFbMasterEnabledSync(), state: getAutoState(st) });
 });
 
