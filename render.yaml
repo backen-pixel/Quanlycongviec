@@ -25,8 +25,10 @@ services:
         sync: false
       - key: JWT_SECRET
         sync: false
+      - key: FRONTEND_URL
+        value: https://tubep-frontend-s30w.onrender.com
       - key: CORS_ORIGINS
-        sync: false
+        value: https://tubep-frontend-s30w.onrender.com,https://tubep-backend.onrender.com
       - key: REDIS_URL
         sync: false
       - key: REDIS_DISABLED

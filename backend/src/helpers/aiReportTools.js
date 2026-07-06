@@ -3472,9 +3472,11 @@ const OPENAI_TOOL_DEFINITIONS = [
       name: 'manage_ai_bot_schedule',
       description:
         'CRUD lịch gửi tin AI tự động (ai_chat_bot_schedules). '
-        + 'action: list|get|preview|create|update|delete|toggle|run_now|runs. '
+        + 'action: list|get|preview|create|update|delete|toggle|run_now|runs|send_report. '
         + 'Resolve lịch theo schedule_id, mã 8 ký tự, hoặc giờ (16:01) trong kênh hiện tại. '
         + 'Dùng khi user: "tạo/sửa/xóa/bật/tắt lịch bot", "gửi thử", "xem lịch sử chạy", "danh sách lịch". '
+        + 'BÁO CÁO: action=send_report — gửi qua lịch bot + playbook ĐÃ CẤU HÌNH trong kênh (KHÔNG format ad-hoc). '
+        + 'TẠO LỊCH: ưu tiên preview_skill/apply_skill (bot JSON đã có) hoặc preview — hệ thống khớp playbook/skill/lịch mẫu; KHÔNG tạo pipeline ad-hoc. '
         + 'LUÔN action=preview trước — KHÔNG action=create trực tiếp (create chỉ sau user OK). '
         + 'Nhắc việc/thông báo: report_type=reminder + reminder_text — KHÔNG dùng org_overview. '
         + 'Preview hiển thị đúng tin nhắn sẽ gửi — user OK mới tạo. Trả lời in nguyên result.text.',
@@ -3483,8 +3485,8 @@ const OPENAI_TOOL_DEFINITIONS = [
         properties: {
           action: {
             type: 'string',
-            enum: ['list', 'get', 'preview', 'create', 'update', 'delete', 'toggle', 'run_now', 'runs', 'apply_skill', 'preview_skill'],
-            description: 'get=chi tiết; run_now=gửi thử ngay; runs=lịch sử chạy.',
+            enum: ['list', 'get', 'preview', 'create', 'update', 'delete', 'toggle', 'run_now', 'runs', 'apply_skill', 'preview_skill', 'send_report'],
+            description: 'get=chi tiết; run_now=gửi thử lịch chỉ định; send_report=gửi BC qua bot đã setup trong kênh; runs=lịch sử.',
           },
           skill_code: { type: 'string', description: 'Mã skill trong backend/data/ai-bot-skills/*.json' },
           schedule_id: { type: 'string', description: 'UUID lịch (update/delete/toggle/get/run_now).' },
@@ -3520,7 +3522,8 @@ const OPENAI_TOOL_DEFINITIONS = [
           },
           time_scope: {
             type: 'string',
-            enum: ['today', 'yesterday', 'last_7d', 'last_30d', 'this_month', 'last_month', 'custom'],
+            enum: ['today', 'yesterday', 'last_7d', 'last_30d', 'this_month', 'last_month', 'custom', 'day_cycle'],
+            description: 'day_cycle = 8h sáng hôm qua · 20h tối hôm nay (tab NV / BC ngày).',
           },
           channel_type: { type: 'string', enum: ['department', 'group'] },
           channel_id: { type: 'string', description: 'Mặc định = kênh chat hiện tại.' },

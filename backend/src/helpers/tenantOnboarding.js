@@ -59,7 +59,7 @@ async function onboardTenant({ name, slug, tier = 'free', maxUsers = 50, maxComp
       .from('users')
       .insert({
         email: adminEmail.trim().toLowerCase(),
-        password_hash: hash,
+        password: hash,
         full_name: adminFullName || 'Tenant Admin',
         role: 'admin',
         tenant_id: tenant.id,

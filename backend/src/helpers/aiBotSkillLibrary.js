@@ -140,10 +140,10 @@ function formatLibraryForPrompt(limit = 12) {
     const rt = s.config?.report_type || s.skill_type;
     const times = Array.isArray(s.config?.run_times) ? s.config.run_times.join(',') : '';
     const when = s.when_to_use ? ` — ${s.when_to_use}` : '';
-    return `- ${s.code}: ${s.title} (${rt}${times ? ` · ${times}` : ''})${when}`;
+    return `- ${s.code}: ${s.title} (${rt}${times ? ` · ${times}` : ''})${when}\n  → preview_skill skill_code=${s.code} hoặc preview (auto khớp)`;
   });
   return lines.length
-    ? `KỸ NĂNG TỪ FILE JSON (${lib.files.join(', ')}):\n${lines.join('\n')}\n→ Slash \`/skill [code]\` hoặc manage_ai_bot_schedule(action='apply_skill', skill_code='...').`
+    ? `KỸ NĂNG / BOT TỪ FILE JSON (${lib.files.join(', ')}):\n${lines.join('\n')}\n→ Tạo lịch: manage_ai_bot_schedule(action='preview_skill', skill_code='...') hoặc preview (tự khớp bot).`
     : '';
 }
 

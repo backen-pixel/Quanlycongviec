@@ -2805,15 +2805,13 @@ async function computeOrgOverviewReportData(req, res) {
       || req.query.deal_kh_split === 'true'
       || String(req.query.deal_kh_split || '').toLowerCase() === 'yes';
 
-    const dealAssigneeOnly =
-      req.user?.userId && !userSeesAllCrmDealsForScope(req.user) ? req.user.userId : null;
-    const leadAssigneeOnly =
-      req.user?.userId && !userSeesAllCrmLeadsForScope(req.user) ? req.user.userId : null;
+    // BC tổ chức = phạm vi công ty/phòng/khu vực — không lọc assigned_to cá nhân
+    // (tránh bot/lịch chạy bằng platform_admin → chỉ deal của 1 người → toàn số 0).
+    const dealAssigneeOnly = null;
+    const leadAssigneeOnly = null;
 
     const assignedToQuery = uuidQueryOrNull(req.query.assigned_to);
-    const assignedToUser = !leadAssigneeOnly && !dealAssigneeOnly && assignedToQuery
-      ? assignedToQuery
-      : null;
+    const assignedToUser = assignedToQuery || null;
 
     const fetchBase = {
       company_id: effectiveCompanyId || undefined,
@@ -2922,6 +2920,10 @@ async function computeOrgOverviewReportData(req, res) {
     }
 
     // --- Đếm deal thiếu bằng chứng ---
+    const ensureEvidenceBucket = (map, key) => {
+      if (!map[key]) map[key] = emptyStaffLeadDealAgg();
+      return map[key];
+    };
     // Logic: deal có task bắt buộc evidence (completion_requires_file_or_note hoặc
     // required_evidence_file_types) → nếu task chưa completed hoặc completed thiếu minh chứng
     // → deal tính là thiếu bằng chứng.
@@ -2990,9 +2992,9 @@ async function computeOrgOverviewReportData(req, res) {
           const cid = l.company_id ? String(l.company_id) : NONE_COMPANY;
           const rid = l.region_id ? String(l.region_id) : NONE_REGION;
           bumpNoEvidence(summary);
-          bumpNoEvidence(ensureBucket(employeeMap, uid));
-          bumpNoEvidence(ensureBucket(companyMap, cid));
-          bumpNoEvidence(ensureBucket(regionMap, rid));
+          bumpNoEvidence(ensureEvidenceBucket(employeeMap, uid));
+          bumpNoEvidence(ensureEvidenceBucket(companyMap, cid));
+          bumpNoEvidence(ensureEvidenceBucket(regionMap, rid));
         }
       }
     } catch (evErr) {

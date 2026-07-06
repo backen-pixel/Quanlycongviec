@@ -304,8 +304,8 @@ const TIME_PRESETS = [
   { key: 'this_month', label: 'Tháng này' },
   { key: 'custom', label: 'Tùy chỉnh' },
 ];
-/** Mặc định lọc thời gian CRM — tháng hiện tại (không tải toàn bộ lịch sử). */
-const CRM_DEFAULT_TIME_PRESET = 'this_month';
+/** Mặc định lọc thời gian CRM — tất cả (không giới hạn kỳ). */
+const CRM_DEFAULT_TIME_PRESET = '';
 
 /** Giá trị lọc SĐT gửi API — `all` / rỗng = không lọc theo SĐT. */
 function resolveCrmPhoneFilterForApi(filterPhone) {
@@ -336,16 +336,12 @@ function snapshotHasActiveFiltersExceptTime(snap) {
   );
 }
 
-/** Mở CRM chưa lọc gì (hoặc snapshot cũ «Tất cả») → mặc định tháng hiện tại. */
+/** Mở CRM chưa lọc gì → mặc định «Tất cả». */
 function resolveCrmTimePresetFromSnapshot(snap) {
   if (!snap || !snapshotHasProperty(snap, 'timePreset')) {
     return CRM_DEFAULT_TIME_PRESET;
   }
-  const raw = typeof snap.timePreset === 'string' ? snap.timePreset : CRM_DEFAULT_TIME_PRESET;
-  if (raw === '' && !snapshotHasActiveFiltersExceptTime(snap)) {
-    return CRM_DEFAULT_TIME_PRESET;
-  }
-  return raw;
+  return typeof snap.timePreset === 'string' ? snap.timePreset : CRM_DEFAULT_TIME_PRESET;
 }
 
 function resolveInitialCrmTimeFilter(P) {
@@ -1507,7 +1503,7 @@ export default function CRMDashboard() {
     setShowCustomDate(!!next.showCustomDate);
   };
 
-  /** Đảm bảo mở trang không có lọc thời gian → tháng hiện tại (snapshot cũ / race hydrate). */
+  /** Đảm bảo mở trang không có lọc thời gian → «Tất cả» (snapshot cũ / race hydrate). */
   useEffect(() => {
     if (timePreset || customDateFrom || customDateTo) return;
     handleTimePresetChange(CRM_DEFAULT_TIME_PRESET);
