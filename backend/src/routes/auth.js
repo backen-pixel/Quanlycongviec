@@ -13,6 +13,11 @@ const {
   verifyGoogleIdToken,
 } = require('../helpers/googleAuth');
 const {
+  provisionGoogleFreeSignup,
+  findBlockingPendingPurchase,
+  provisionPurchase,
+} = require('../helpers/saasProvision');
+const {
   createQrSession, parseQrText, confirmQrSession, consumeSessionAuth,
   getSessionPublicInfo, targetLabel, deviceFromReq,
 } = require('../helpers/qrLoginSessions');
@@ -170,26 +175,74 @@ r.post('/google', async (req, res) => {
     }
 
     if (!user) {
-      const { data: purchase } = await supabase
+      const blocking = await findBlockingPendingPurchase(email);
+      if (blocking) {
+        return res.status(403).json({
+          error: 'Đơn mua gói trả phí đang chờ thanh toán. Hoàn tất thanh toán hoặc huỷ đơn trước khi đăng ký Free bằng Google.',
+          code: 'account_pending',
+          purchase_id: blocking.id,
+        });
+      }
+
+      const { data: openPurchase } = await supabase
         .from('saas_purchases')
-        .select('id, status, payment_status')
+        .select('id, status, amount, payment_status')
         .eq('buyer_email', email)
+        .in('status', ['pending', 'processing'])
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
 
-      if (purchase && purchase.status !== 'provisioned') {
-        return res.status(403).json({
-          error: 'Tài khoản chưa được cấp. Kiểm tra email xác nhận thanh toán — admin sẽ kích hoạt sớm.',
-          code: 'account_pending',
-          purchase_id: purchase.id,
-        });
+      if (openPurchase) {
+        try {
+          const prov = await provisionPurchase(openPurchase.id, {
+            skipWelcomeEmail: true,
+            provisionedBy: 'google_signup',
+          });
+          const uid = prov.adminUser?.id || prov.purchase?.user_id;
+          if (uid) {
+            const { data: provisionedUser } = await supabase.from('users').select('*').eq('id', uid).maybeSingle();
+            user = provisionedUser;
+          }
+        } catch (provErr) {
+          console.warn('[auth/google] provision open purchase:', provErr.message);
+        }
       }
-      void logAuthEvent({ event: 'login_failed', email, reason: 'google_user_not_found', req });
-      return res.status(401).json({
-        error: 'Chưa có tài khoản với email này. Đăng ký gói tại trang /modules hoặc liên hệ admin.',
-        code: 'user_not_found',
-      });
+
+      if (!user) {
+        try {
+          const signup = await provisionGoogleFreeSignup({
+            email,
+            googleId,
+            fullName,
+            picture: payload.picture,
+          });
+          user = signup.user;
+          void logAuthEvent({
+            event: 'google_free_signup',
+            user_id: user.id,
+            email,
+            reason: 'free_plan',
+            req,
+          });
+        } catch (signupErr) {
+          console.error('[auth/google] free signup:', signupErr.message);
+          void logAuthEvent({ event: 'login_failed', email, reason: 'google_free_signup_failed', req });
+          return res.status(500).json({
+            error: signupErr.message || 'Không tạo được tài khoản Free',
+            code: 'signup_failed',
+          });
+        }
+      } else {
+        const linkPatch = {
+          google_id: googleId,
+          auth_provider: user.password ? 'both' : 'google',
+          updated_at: new Date().toISOString(),
+        };
+        if (payload.picture && !user.avatar) linkPatch.avatar = payload.picture;
+        await supabase.from('users').update(linkPatch).eq('id', user.id);
+        user = { ...user, ...linkPatch };
+      }
     }
 
     if (user.tenant_id && String(user.role || '').trim().toLowerCase() !== 'platform_admin') {

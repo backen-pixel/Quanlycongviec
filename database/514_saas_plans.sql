@@ -44,8 +44,8 @@ END $$;
 -- 4 gói chính (map tenant_tier → tier_features hiện có)
 INSERT INTO saas_plans (id, tenant_tier, title, subtitle, description, price_monthly, max_users, max_companies, highlights, badge, color, trial_days, sort_order, is_purchasable) VALUES
 ('free', 'free', 'Free', 'Dùng thử & xưởng nhỏ', 'Bắt đầu miễn phí với CRM, công việc và dự án cơ bản.',
- 0, 5, 1,
- '["CRM cơ bản","Quản lý công việc","Dự án","5 người dùng","1 công ty"]'::jsonb,
+ 0, 3, 1,
+ '["CRM cơ bản","Quản lý công việc","Dự án","3 người dùng","1 công ty"]'::jsonb,
  NULL, '#64748b', 14, 1, true),
 ('standard', 'starter', 'Standard', 'Xưởng vừa & đội sales', 'Thêm sản xuất và quản lý khách hàng cho xưởng đang tăng trưởng.',
  990000, 20, 3,
