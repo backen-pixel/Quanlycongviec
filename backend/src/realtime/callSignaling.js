@@ -249,8 +249,14 @@ function attachCallSignaling(io) {
   };
 }
 
-/** Native REST: callee đã bấm nghe — cập nhật registry mới (call-user) + legacy activeDirectCalls. */
-function restMarkCallAnswered(io, activeDirectCalls, callId, calleeId, toUserId) {
+const {
+  getDirectCall,
+  setDirectCall,
+  deleteDirectCall,
+} = require('../helpers/callSessionStore');
+
+/** Native REST: callee đã bấm nghe — cập nhật registry mới (call-user) + legacy direct call store. */
+async function restMarkCallAnswered(io, _legacyIgnored, callId, calleeId, toUserId) {
   const uid = String(calleeId || '');
   const callerId = String(toUserId || '');
   const entry = callRegistry.calls?.get(callId);
@@ -271,9 +277,10 @@ function restMarkCallAnswered(io, activeDirectCalls, callId, calleeId, toUserId)
     }
     return true;
   }
-  if (activeDirectCalls) {
-    const session = activeDirectCalls.get(callId);
-    if (session && !session.answeredAt) session.answeredAt = Date.now();
+  const session = await getDirectCall(callId);
+  if (session && !session.answeredAt) {
+    session.answeredAt = Date.now();
+    await setDirectCall(callId, session);
   }
   if (io && callerId) {
     io.to(`user:${callerId}`).emit('call-answered', { callId, byUserId: uid });
@@ -282,8 +289,8 @@ function restMarkCallAnswered(io, activeDirectCalls, callId, calleeId, toUserId)
   return false;
 }
 
-/** Native REST: callee từ chối — registry mới + legacy. */
-function restRejectCall(io, activeDirectCalls, finalizeDirectCallLog, callId, calleeId, toUserId) {
+/** Native REST: callee từ chối — registry mới + legacy direct call store. */
+async function restRejectCall(io, _legacyIgnored, finalizeDirectCallLog, callId, calleeId, toUserId) {
   const uid = String(calleeId || '');
   const callerId = String(toUserId || '');
   const entry = callRegistry.calls?.get(callId);
@@ -318,11 +325,11 @@ function restRejectCall(io, activeDirectCalls, finalizeDirectCallLog, callId, ca
     }
     return true;
   }
-  if (io && activeDirectCalls && finalizeDirectCallLog) {
-    const session = activeDirectCalls.get(callId);
+  if (io && finalizeDirectCallLog) {
+    const session = await getDirectCall(callId);
     if (session && !session.logged) {
       session.logged = true;
-      activeDirectCalls.delete(callId);
+      await deleteDirectCall(callId);
       void finalizeDirectCallLog(io, session, { endedByUserId: uid, reason: 'rejected' });
     }
   }

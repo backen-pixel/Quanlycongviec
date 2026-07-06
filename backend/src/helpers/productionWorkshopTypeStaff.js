@@ -221,24 +221,8 @@ async function applyWorkshopTypeDefaultStaffToProject(projectId, companyId, work
     .update({ production_person_id: primaryId, updated_at: nowIso })
     .eq('id', projectId);
 
-  const { data: deal } = await supabase
-    .from('crm_leads')
-    .select('id')
-    .eq('project_id', projectId)
-    .eq('type', 'deal')
-    .limit(1)
-    .maybeSingle();
-  if (deal?.id) {
-    await supabase
-      .from('crm_leads')
-      .update({
-        assigned_to: primaryId,
-        lead_owner_id: primaryId,
-        updated_at: nowIso,
-      })
-      .eq('id', deal.id);
-  }
-
+  // Không ghi đè assigned_to / lead_owner_id trên deal CRM — giữ NVKD làm người phụ trách.
+  // NV xưởng chỉ ghi vào project_production_staff + lead_members (tab Thành viên).
   await syncLeadMembersForProject(projectId, userIds, primaryId, { previousUserIds });
   await ensureProjectProductionAutoParticipants(projectId);
 
@@ -383,7 +367,7 @@ async function syncLeadMembersForProject(projectId, userIds, primaryUserId, opts
 
 /**
  * Áp dụng NV mặc định theo phân loại cho mọi dự án SX đang có phân loại đó.
- * Ghi đè project_production_staff, production_person_id, deal assigned_to + lead_members.
+ * Ghi đè project_production_staff, production_person_id + đồng bộ lead_members (không đổi NVKD trên deal).
  */
 async function applyWorkshopTypeDefaultStaffToAllProjects(companyId, workshopTypeId) {
   if (!companyId || !workshopTypeId) {

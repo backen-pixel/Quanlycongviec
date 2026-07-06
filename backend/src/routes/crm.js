@@ -1504,7 +1504,7 @@ async function computeCrmLiveVersionMs(req, effectiveCompanyId, date_from, date_
 }
 
 /** GET /crm/kanban-rows?lead_ids=… — hydrate vài dòng Kanban cho realtime (không reload cả trang). */
-r.get('/kanban-rows', async (req, res) => {
+r.get('/kanban-rows', responseCache({ ttl: 10, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
   try {
     const leadIds = parseLeadIdsCsvQuery(req.query.lead_ids, 50);
     if (!leadIds.length) return res.json({ data: [] });
@@ -3268,9 +3268,8 @@ r.get('/reports/staff-lead-deal', async (req, res) => {
 });
 
 /** GET /crm/reports/org-overview — BC phân cấp công ty / khu vực / nhân viên */
-r.get('/reports/org-overview', async (req, res) => {
+r.get('/reports/org-overview', responseCache({ ttl: 45, scope: 'user', tags: ['crm:reports'] }), async (req, res) => {
   try {
-    res.set('Cache-Control', 'no-store');
     const data = await computeOrgOverviewReportData(req, res);
     if (!data) return;
     res.json({
@@ -4585,7 +4584,7 @@ r.get('/contract-signed-revenue', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // PIPELINES — Ống bán hàng theo Công ty
 // ═══════════════════════════════════════════════════════════════════════════
-r.get('/pipelines', async (req, res) => {
+r.get('/pipelines', responseCache({ ttl: 120, scope: 'company', tags: ['crm:taxonomy'] }), async (req, res) => {
   try {
     const activeOnly = req.query.active !== 'false';
     let companyFilter = null;
@@ -4871,7 +4870,7 @@ function normalizePipelineStagesList(rows) {
 // ═══════════════════════════════════════════════════════════════════════════
 // PIPELINE STAGES (CRUD)
 // ═══════════════════════════════════════════════════════════════════════════
-r.get('/pipeline-stages', async (req, res) => {
+r.get('/pipeline-stages', responseCache({ ttl: 120, scope: 'company', tags: ['crm:taxonomy'] }), async (req, res) => {
   const { type, pipeline_id, company_id: companyIdQuery, region_id: regionIdQuery } = req.query;
   const sacSt = scopedAdminCompanyId(req);
   const activeOnly = req.query.all !== 'true';
@@ -5750,7 +5749,7 @@ r.get('/employees-by-company', responseCache({ ttl: 120, scope: 'company', tags:
 // ═══════════════════════════════════════════════════════════════════════════
 // SOURCES — bao gồm nguồn thông thường + FB pages gộp
 // ═══════════════════════════════════════════════════════════════════════════
-r.get('/sources', async (req, res) => {
+r.get('/sources', responseCache({ ttl: 120, scope: 'company', tags: ['crm:taxonomy'] }), async (req, res) => {
   try {
     const qCo = req.query.company_id && String(req.query.company_id).trim() ? String(req.query.company_id).trim() : null;
     let filterCo = qCo;

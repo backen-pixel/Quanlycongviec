@@ -24,7 +24,14 @@ function loadGoogleScript() {
   return scriptPromise;
 }
 
-export default function GoogleSignInButton({ onSuccess, onError, hintEmail, className = '' }) {
+/** @param {'signin'|'signup'} mode — signup dùng nút "Đăng ký bằng Google" */
+export default function GoogleSignInButton({
+  onSuccess,
+  onError,
+  hintEmail,
+  className = '',
+  mode = 'signin',
+}) {
   const btnRef = useRef(null);
   const [status, setStatus] = useState('loading'); // loading | ready | disabled | error
   const [statusHint, setStatusHint] = useState('');
@@ -45,6 +52,7 @@ export default function GoogleSignInButton({ onSuccess, onError, hintEmail, clas
         await loadGoogleScript();
         if (cancelled || !btnRef.current) return;
 
+        const isSignup = mode === 'signup';
         window.google.accounts.id.initialize({
           client_id: data.clientId,
           callback: (response) => {
@@ -52,7 +60,7 @@ export default function GoogleSignInButton({ onSuccess, onError, hintEmail, clas
             else onError?.('Không nhận được token Google');
           },
           auto_select: false,
-          context: 'signin',
+          context: isSignup ? 'signup' : 'signin',
           ux_mode: 'popup',
           login_hint: hintEmail || undefined,
         });
@@ -60,9 +68,9 @@ export default function GoogleSignInButton({ onSuccess, onError, hintEmail, clas
         btnRef.current.innerHTML = '';
         window.google.accounts.id.renderButton(btnRef.current, {
           type: 'standard',
-          theme: 'outline',
+          theme: isSignup ? 'filled_blue' : 'outline',
           size: 'large',
-          text: 'signin_with',
+          text: isSignup ? 'signup_with' : 'signin_with',
           shape: 'rectangular',
           width: 320,
           locale: 'vi',
@@ -76,7 +84,7 @@ export default function GoogleSignInButton({ onSuccess, onError, hintEmail, clas
     })();
 
     return () => { cancelled = true; };
-  }, [hintEmail, onSuccess, onError]);
+  }, [hintEmail, mode, onSuccess, onError]);
 
   return (
     <div className={className}>
@@ -85,7 +93,9 @@ export default function GoogleSignInButton({ onSuccess, onError, hintEmail, clas
         className={`flex justify-center min-h-[44px] ${status === 'ready' ? '' : 'hidden'}`}
       />
       {status === 'loading' && (
-        <p className="text-center text-xs text-slate-400 py-2">Đang tải đăng nhập Google…</p>
+        <p className="text-center text-xs text-slate-400 py-2">
+          {mode === 'signup' ? 'Đang tải đăng ký Google…' : 'Đang tải đăng nhập Google…'}
+        </p>
       )}
       {(status === 'disabled' || status === 'error') && statusHint && (
         <p className="text-center text-xs text-amber-600 py-2">{statusHint}</p>

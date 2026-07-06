@@ -73,9 +73,11 @@ export function AuthProvider({ children }) {
     return applyAuthSession(data, sessionId);
   };
 
-  const loginWithGoogle = async (credential) => {
+  const loginWithGoogle = async (credential, options = {}) => {
     const sessionId = `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-    const { data } = await api.post('/auth/google', { credential, session_id: sessionId });
+    const body = { credential, session_id: sessionId };
+    if (options.plan_id) body.plan_id = options.plan_id;
+    const { data } = await api.post('/auth/google', body);
     return applyAuthSession(data, sessionId);
   };
 
@@ -93,6 +95,20 @@ export function AuthProvider({ children }) {
     const s = connectSocket();
     setSocket(s);
     return auth.user;
+  };
+
+  const refreshUser = async () => {
+    try {
+      const { data } = await api.get('/auth/me');
+      if (data?.user) {
+        const prev = JSON.parse(localStorage.getItem('user') || '{}');
+        const merged = { ...prev, ...data.user };
+        localStorage.setItem('user', JSON.stringify(merged));
+        setUser(merged);
+        return merged;
+      }
+    } catch (_) {}
+    return user;
   };
 
   const logout = async (reason = 'manual') => {
@@ -124,7 +140,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthCtx.Provider value={{ user, loading, login, loginWithGoogle, logout, applyAuthSession, socket }}>
+    <AuthCtx.Provider value={{ user, loading, login, loginWithGoogle, logout, applyAuthSession, refreshUser, socket }}>
       <ActivityPingGate user={user} onLogout={logout}>{children}</ActivityPingGate>
     </AuthCtx.Provider>
   );

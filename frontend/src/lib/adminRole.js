@@ -19,6 +19,10 @@ export function hasCompanyId(user) {
   return user?.company_id != null && String(user.company_id).trim() !== '';
 }
 
+export function hasTenantId(user) {
+  return user?.tenant_id != null && String(user.tenant_id).trim() !== '';
+}
+
 export function isPlatformAdmin(user) {
   return normalizeRole(user?.role) === 'platform_admin';
 }
@@ -34,6 +38,7 @@ export function isStrictAdmin(user) {
 }
 
 export function isSystemAdmin(user) {
+  if (hasTenantId(user)) return false;
   return normalizeRole(user?.role) === 'admin' && !hasCompanyId(user);
 }
 

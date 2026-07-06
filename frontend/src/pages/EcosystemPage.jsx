@@ -17,6 +17,8 @@ import {
   List, GitBranch, HelpCircle, Puzzle, Filter, UnfoldVertical, FoldVertical,
 } from 'lucide-react';
 
+const WIZARD_DISMISS_KEY = 'ecosystem_setup_wizard_dismissed';
+
 const RL = { director: 'Giám đốc', manager: 'Quản lý', team_lead: 'Trưởng nhóm', member: 'Nhân viên' };
 const RC = { director: 'bg-purple-100 text-purple-700', manager: 'bg-blue-100 text-blue-700', team_lead: 'bg-amber-100 text-amber-700', member: 'bg-gray-100 text-gray-600' };
 const RI = { director: Crown, manager: Shield, team_lead: Users, member: User };
@@ -39,21 +41,43 @@ export default function EcosystemPage() {
   const [diagramCollapseTick, setDiagramCollapseTick] = useState(0);
   const [showWizard, setShowWizard] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
+  const [wizardDismissed, setWizardDismissed] = useState(
+    () => localStorage.getItem(WIZARD_DISMISS_KEY) === '1',
+  );
+  const [orgConfigured, setOrgConfigured] = useState(false);
   const isAdmin = ['admin', 'manager'].includes(user?.role);
+
+  const dismissWizard = useCallback(() => {
+    try {
+      localStorage.setItem(WIZARD_DISMISS_KEY, '1');
+    } catch { /* ignore */ }
+    setWizardDismissed(true);
+    setShowWizard(false);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [u, l, g, us] = await Promise.all([
+      const [u, l, g, us, co] = await Promise.all([
         api.get('/ecosystem/units'), api.get('/ecosystem/levels'),
         api.get('/ecosystem/stage-groups'), api.get('/users').catch(() => ({ data: { users: [] } })),
+        api.get('/companies').catch(() => ({ data: { companies: [] } })),
       ]);
-      setTree(u.data.tree || []); setUnits(u.data.units || []);
-      setLevels(l.data.levels || []); setStageGroups(g.data.groups || []);
+      const loadedUnits = u.data.units || [];
+      const loadedTree = u.data.tree || [];
+      setTree(loadedTree);
+      setUnits(loadedUnits);
+      setLevels(l.data.levels || []);
+      setStageGroups(g.data.groups || []);
       setAllUsers(us.data.users || []);
+      const hasCompanies = (co.data?.companies || []).length > 0;
+      setOrgConfigured(hasCompanies);
+      if (hasCompanies && loadedUnits.length > 0) {
+        dismissWizard();
+      }
     } catch {}
     setLoading(false);
-  }, []);
+  }, [dismissWizard]);
   useEffect(() => { load(); }, [load]);
 
   const branchFilterOptions = useMemo(() => buildBranchFilterOptions(tree), [tree]);
@@ -73,15 +97,19 @@ export default function EcosystemPage() {
 
   if (loading) return <div className="flex items-center justify-center py-20"><div className="animate-spin h-8 w-8 border-4 border-blue-200 border-t-blue-600 rounded-full" /></div>;
 
-  // Show wizard for first-time setup
-  if (showWizard || (units.length === 0 && isAdmin)) {
+  const shouldAutoWizard = isAdmin && !wizardDismissed && units.length === 0 && !orgConfigured;
+  const shouldShowWizard = showWizard || shouldAutoWizard;
+
+  if (shouldShowWizard) {
     return (
       <EcosystemSetupWizard
         onComplete={() => {
           setShowWizard(false);
+          try { localStorage.removeItem(WIZARD_DISMISS_KEY); } catch { /* ignore */ }
+          setWizardDismissed(false);
           load();
         }}
-        onSkip={() => setShowWizard(false)}
+        onSkip={dismissWizard}
       />
     );
   }
@@ -212,16 +240,38 @@ export default function EcosystemPage() {
       ) : (
         <div className="text-center py-20 bg-white rounded-2xl border">
           <Network className="h-14 w-14 mx-auto mb-4 text-gray-200" />
-          <p className="text-sm text-gray-500 mb-4">Chưa có cấu trúc công ty</p>
-          {isAdmin && (
-            <button
-              onClick={() => setShowWizard(true)}
-              className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
-            >
-              <Plus className="w-5 h-5" />
-              Bắt đầu thiết lập
-            </button>
+          <p className="text-sm text-gray-500 mb-2">Chưa có cấu trúc công ty trên sơ đồ HST</p>
+          {orgConfigured && (
+            <p className="text-xs text-amber-700 mb-4 px-4">
+              Công ty đã được cấu hình — bấm <strong>Tải lại</strong> hoặc thêm đơn vị thủ công.
+            </p>
           )}
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => load()}
+              className="inline-flex items-center gap-2 px-4 py-2 border border-slate-200 rounded-lg text-sm text-slate-700 hover:bg-slate-50"
+            >
+              Tải lại
+            </button>
+            {isAdmin && (
+              <>
+                <button
+                  onClick={() => setShowWizard(true)}
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                >
+                  <Plus className="w-5 h-5" />
+                  Bắt đầu thiết lập
+                </button>
+                <Link
+                  to="/setup"
+                  className="inline-flex items-center gap-2 px-4 py-2 text-sm text-blue-600 hover:underline"
+                >
+                  Mở trang thiết lập
+                </Link>
+              </>
+            )}
+          </div>
         </div>
       )}
 

@@ -210,12 +210,28 @@ r.post('/google', async (req, res) => {
       }
 
       if (!user) {
+        const planId = String(req.body.plan_id || '').trim().toLowerCase();
+        if (!planId) {
+          void logAuthEvent({ event: 'login_failed', email, reason: 'plan_required', req });
+          return res.status(400).json({
+            error: 'Vui lòng chọn gói trước khi đăng ký. Truy cập trang Modules để chọn gói.',
+            code: 'plan_required',
+          });
+        }
+        if (planId !== 'free') {
+          void logAuthEvent({ event: 'login_failed', email, reason: 'plan_purchase_required', req });
+          return res.status(400).json({
+            error: 'Gói trả phí cần hoàn tất mua gói trước. Đăng ký trên trang Modules với cùng email Google.',
+            code: 'plan_purchase_required',
+          });
+        }
         try {
           const signup = await provisionGoogleFreeSignup({
             email,
             googleId,
             fullName,
             picture: payload.picture,
+            planId,
           });
           user = signup.user;
           void logAuthEvent({
@@ -510,12 +526,12 @@ r.post('/change-password', auth, async (req, res) => {
 r.get('/me', auth, async (req, res) => {
   try {
     const { data: u, error: uErr } = await supabase.from('users')
-      .select('id,email,full_name,role,avatar,phone,department_id,company_id,position,is_active,drive_module')
+      .select('id,email,full_name,role,avatar,phone,department_id,company_id,tenant_id,position,is_active,drive_module')
       .eq('id', req.user.userId).single();
     let userRow = u;
     if (uErr) {
       const { data: u2 } = await supabase.from('users')
-        .select('id,email,full_name,role,avatar,phone,department_id,company_id,position,is_active')
+        .select('id,email,full_name,role,avatar,phone,department_id,company_id,tenant_id,position,is_active')
         .eq('id', req.user.userId).single();
       userRow = u2 ? { ...u2, drive_module: null } : null;
     }
@@ -544,6 +560,7 @@ r.get('/me', auth, async (req, res) => {
         phone: userRow.phone,
         department_id: userRow.department_id,
         company_id,
+        tenant_id: userRow.tenant_id || null,
         crm_region_ids,
         drive_module: userRow.drive_module || null,
         position: userRow.position,

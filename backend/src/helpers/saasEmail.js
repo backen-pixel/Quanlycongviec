@@ -24,7 +24,7 @@ async function sendTransactionalEmail({ to, subject, html, text }) {
   const apiKey = process.env.RESEND_API_KEY || process.env.SAAS_EMAIL_API_KEY;
   const from = process.env.SAAS_EMAIL_FROM || process.env.RESEND_FROM || 'TuBep Pro <noreply@tubep.vn>';
 
-  if (!apiKey) {
+  if (!apiKey || !String(apiKey).startsWith('re_')) {
     console.log('[saasEmail] SMTP/API chưa cấu hình — log email:');
     console.log(`  To: ${to}`);
     console.log(`  Subject: ${subject}`);

@@ -123,12 +123,13 @@ export default function EcosystemSetupWizard({ onComplete, onSkip }) {
             </div>
 
             <div className="flex items-center gap-2">
-              {onSkip && step === 1 && (
+              {onSkip && (
                 <button
+                  type="button"
                   onClick={onSkip}
-                  className="px-4 py-2 text-gray-600 hover:text-gray-900 transition"
+                  className="px-4 py-2 text-gray-600 hover:text-gray-900 transition cursor-pointer"
                 >
-                  Bỏ qua hướng dẫn
+                  Bỏ qua
                 </button>
               )}
               

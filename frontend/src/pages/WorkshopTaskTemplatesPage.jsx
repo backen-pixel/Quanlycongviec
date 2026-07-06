@@ -1342,7 +1342,7 @@ function TemplateCard({
       } else {
         await updateTemplateItemFields(tpl.id, item.id, {
           completion_requires_file_or_note: true,
-          required_evidence_file_types: ['note', 'image'],
+          required_evidence_file_types: [],
         });
       }
     } catch { /* alert trong updateTemplateItemFields */ }
@@ -1668,8 +1668,7 @@ function TemplateCard({
                                 onChange={e => setItemEditForm(f => ({
                                   ...f,
                                   completion_requires_file_or_note: e.target.checked,
-                                  required_evidence_file_types: e.target.checked && !f.required_evidence_file_types?.length
-                                    ? ['note', 'image'] : (e.target.checked ? f.required_evidence_file_types : []),
+                                  required_evidence_file_types: e.target.checked ? (f.required_evidence_file_types || []) : [],
                                 }))}
                                 className="accent-violet-600"
                               />
@@ -1857,8 +1856,7 @@ function ChecklistEditor({
                       checked={checklistItemRequiresEvidence(ck)}
                       onChange={(e) => updateChecklistItem(tplId, itemId, ci, {
                         completion_requires_file_or_note: e.target.checked,
-                        required_evidence_file_types: e.target.checked && !ckEvidenceTypesOf(ck).length
-                          ? ['note', 'image'] : (e.target.checked ? ckEvidenceTypesOf(ck) : []),
+                        required_evidence_file_types: e.target.checked ? ckEvidenceTypesOf(ck) : [],
                       })}
                       className="accent-violet-600"
                     />

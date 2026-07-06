@@ -189,6 +189,71 @@ function addEcosystemUnitTenantFilter(query, req) {
   return query.eq('tenant_id', tid);
 }
 
+function trimOrNull(v) {
+  if (v == null || v === '') return null;
+  const s = String(v).trim();
+  return s || null;
+}
+
+/**
+ * Phạm vi company cho API list/dashboard.
+ * Tenant SaaS: luôn giới hạn theo company thuộc tenant (kể cả admin tenant).
+ */
+function resolveCompanyScopeForRequest(req, companyIdQuery, { scopedAdminCompanyId = null } = {}) {
+  if (isTenantScopeEnforced(req)) {
+    const ids = [...(req.tenantCompanyIds || [])];
+    const raw = trimOrNull(companyIdQuery);
+    if (raw) {
+      if (!ids.includes(raw)) {
+        return { ok: false, code: 'tenant_company_denied', error: 'Không có quyền truy cập công ty này' };
+      }
+      return { ok: true, companyId: raw, companyIds: [raw] };
+    }
+    if (!ids.length) {
+      return { ok: true, companyId: TENANT_EMPTY_COMPANY_SENTINEL, companyIds: [] };
+    }
+    return { ok: true, companyId: ids.length === 1 ? ids[0] : null, companyIds: ids };
+  }
+
+  const sac = trimOrNull(scopedAdminCompanyId)
+    || trimOrNull(req.user?.scoped_admin_company_id)
+    || trimOrNull(req.user?.scopedAdminCompanyId);
+  if (sac) return { ok: true, companyId: sac, companyIds: [sac] };
+
+  const { isAdminLike } = require('./adminRole');
+  if (!isAdminLike(req.user) && req.user?.company_id) {
+    const cid = String(req.user.company_id);
+    return { ok: true, companyId: cid, companyIds: [cid] };
+  }
+
+  const raw = trimOrNull(companyIdQuery);
+  return { ok: true, companyId: raw, companyIds: raw ? [raw] : null };
+}
+
+function applyCompanyScopeFilter(query, scope, column = 'company_id') {
+  if (!scope?.ok) return query;
+  if (scope.companyId === TENANT_EMPTY_COMPANY_SENTINEL) {
+    return query.eq(column, TENANT_EMPTY_COMPANY_SENTINEL);
+  }
+  if (scope.companyId) return query.eq(column, scope.companyId);
+  if (scope.companyIds?.length) return query.in(column, scope.companyIds);
+  return query;
+}
+
+/** projects: company_id hoặc logistics_company_id thuộc phạm vi tenant */
+function applyProjectScopeFilter(query, scope) {
+  if (!scope?.ok) return query;
+  if (scope.companyId === TENANT_EMPTY_COMPANY_SENTINEL) {
+    return query.eq('company_id', TENANT_EMPTY_COMPANY_SENTINEL);
+  }
+  const ids = scope.companyIds?.length
+    ? scope.companyIds
+    : (scope.companyId ? [scope.companyId] : null);
+  if (!ids?.length) return query;
+  const inList = ids.join(',');
+  return query.or(`company_id.in.(${inList}),logistics_company_id.in.(${inList})`);
+}
+
 module.exports = {
   isPlatformAdmin,
   isTenantAdmin,
@@ -208,5 +273,8 @@ module.exports = {
   invalidateTenantCache,
   addTenantFilter,
   addEcosystemUnitTenantFilter,
+  resolveCompanyScopeForRequest,
+  applyCompanyScopeFilter,
+  applyProjectScopeFilter,
   TENANT_EMPTY_COMPANY_SENTINEL,
 };

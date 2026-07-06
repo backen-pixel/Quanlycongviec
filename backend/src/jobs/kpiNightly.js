@@ -10,6 +10,7 @@
 const { supabase } = require('../config/supabase');
 const { computeAndStoreForUser } = require('../services/kpiCalculator');
 const { KPI_RECOMPUTE_USER_ROLES_DEFAULT } = require('../services/kpiRoleApplies');
+const { runIfLeader } = require('../helpers/cronLeader');
 
 const HOUR_MS = 3600 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -94,7 +95,7 @@ function start() {
   const delay = msUntilNext1AM();
   console.log(`[kpi-cron] Lần chạy đầu tiên sau ${(delay / HOUR_MS).toFixed(2)}h`);
   setTimeout(function tick() {
-    runOnce().finally(() => {
+    void runIfLeader('kpi-nightly', () => runOnce(), { ttlSec: 21_600 }).finally(() => {
       setTimeout(tick, DAY_MS);
     });
   }, delay);

@@ -325,7 +325,7 @@ async function queryUsersInCompany(companyId, { search, userSelect }) {
  */
 async function listOnlineUsersForCompany(companyId) {
   const userSelect =
-    'id, full_name, email, phone, avatar, role, position, address, department_id, company_id, department:departments!users_department_id_fkey(id,name,color)';
+    'id, full_name, email, phone, avatar, role, position, address, department_id, company_id, tenant_id, department:departments!users_department_id_fkey(id,name,color)';
 
   const thresholdIso = new Date(Date.now() - ONLINE_THRESHOLD_MS).toISOString();
   const { data: activityRows, error: actErr } = await supabase

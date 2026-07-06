@@ -7,6 +7,7 @@
  */
 const { supabase } = require('../config/supabase');
 const { isAdminLike } = require('../helpers/adminRole');
+const { runIfLeader } = require('../helpers/cronLeader');
 
 const HOUR_MS = 3600 * 1000;
 const VN_OFFSET_MS = 7 * HOUR_MS;
@@ -286,12 +287,12 @@ function start(io) {
     const nextDelay = msUntilNextRun();
     const minDelay = Math.max(nextDelay, 60 * 1000);
     setTimeout(() => {
-      runOnce(io).finally(scheduleNext);
+      void runIfLeader('cskh-reminder', () => runOnce(io), { ttlSec: 7200 }).finally(scheduleNext);
     }, minDelay);
   }
 
   setTimeout(() => {
-    runOnce(io).finally(scheduleNext);
+    void runIfLeader('cskh-reminder', () => runOnce(io), { ttlSec: 7200 }).finally(scheduleNext);
   }, delay);
 }
 

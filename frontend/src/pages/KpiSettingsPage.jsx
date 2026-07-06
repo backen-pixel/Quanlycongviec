@@ -1689,8 +1689,8 @@ function CrmTaskBundleTab({ companyId, variant = 'full', roleFilter = '' }) {
                             <span className="font-medium text-gray-800">Ghi chú khách hàng</span>
                             <span className="block text-[10px] text-gray-500">
                               {isSalesAdminA
-                                ? 'Ghi chú trên task — phục vụ đủ thông tin & KPI A3.'
-                                : 'Bắt buộc có nội dung ghi chú trên nhiệm vụ khi xong.'}
+                                ? 'Ghi chú hoặc file trên task — phục vụ đủ thông tin & KPI A3.'
+                                : 'Bắt buộc ghi chú văn bản hoặc file đính kèm khi hoàn thành (một trong hai).'}
                             </span>
                           </span>
                         </label>

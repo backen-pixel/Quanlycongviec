@@ -227,17 +227,21 @@ async function findBlockingPendingPurchase(email) {
 /**
  * Tài khoản mới đăng nhập Google → tenant + admin user gói Free.
  */
-async function provisionGoogleFreeSignup({ email, googleId, fullName, picture, companyName }) {
+async function provisionGoogleFreeSignup({ email, googleId, fullName, picture, companyName, planId = 'free' }) {
   const em = String(email || '').trim().toLowerCase();
   if (!em || !googleId) throw new Error('Thiếu email hoặc Google ID');
 
+  const pid = String(planId || 'free').trim().toLowerCase();
   const { data: plan, error: planErr } = await supabase
     .from('saas_plans')
     .select('*')
-    .eq('id', 'free')
+    .eq('id', pid)
     .eq('is_active', true)
     .maybeSingle();
-  if (planErr || !plan) throw new Error('Gói Free chưa được cấu hình');
+  if (planErr || !plan) throw new Error(`Gói "${pid}" chưa được cấu hình hoặc không khả dụng`);
+  if (Number(plan.price_monthly) > 0) {
+    throw new Error('Gói trả phí cần hoàn tất mua gói trước khi đăng nhập Google');
+  }
 
   const displayName = String(fullName || '').trim() || em.split('@')[0];
   const orgName = String(companyName || '').trim() || `Xưởng ${displayName}`;
@@ -277,7 +281,7 @@ async function provisionGoogleFreeSignup({ email, googleId, fullName, picture, c
 
   await supabase.from('saas_purchases').insert({
     purchase_type: 'plan',
-    plan_id: 'free',
+    plan_id: pid,
     buyer_email: em,
     buyer_name: displayName,
     company_name: orgName,

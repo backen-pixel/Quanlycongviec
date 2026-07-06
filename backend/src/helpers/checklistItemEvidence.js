@@ -26,16 +26,37 @@ function checklistItemRequiresEvidence(item) {
   return taskRequiresTypedEvidence(ck);
 }
 
+function checklistItemHasNoteOrFile(ck, attachments = []) {
+  if (ck.notes != null && String(ck.notes).trim() !== '') return true;
+  const ckAtts = (attachments || []).filter(
+    (a) => String(a.checklist_id || '') === String(ck.id || ''),
+  );
+  return ckAtts.some(
+    (a) => (a.file_url && String(a.file_url).trim() !== '')
+      || (a.notes != null && String(a.notes).trim() !== ''),
+  );
+}
+
 function checklistItemMeetsEvidence(item, attachments = []) {
   const ck = normalizeChecklistEntry(item);
   if (!ck || !checklistItemRequiresEvidence(ck)) {
     return { ok: true, missing: [], missingLabel: '' };
   }
   const types = normalizeEvidenceFileTypes(ck.required_evidence_file_types);
-  const required = types.length ? types : ['note'];
   const ckAtts = (attachments || []).filter(
     (a) => String(a.checklist_id || '') === String(ck.id || ''),
   );
+
+  if (!types.length && ck.completion_requires_file_or_note) {
+    const ok = checklistItemHasNoteOrFile(ck, attachments);
+    return {
+      ok,
+      missing: ok ? [] : ['note'],
+      missingLabel: ok ? '' : 'ghi chú hoặc file đính kèm',
+    };
+  }
+
+  const required = types.length ? types : ['note'];
   const eval0 = evaluateRequiredEvidenceTypes(required, {
     taskNotes: ck.notes,
     attachments: ckAtts,

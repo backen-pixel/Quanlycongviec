@@ -3,6 +3,7 @@
  * Disable: ZALO_OA_TOKEN_CRON_DISABLED=1
  */
 const { refreshAllZaloOaTokensDue } = require('../helpers/zaloOaToken');
+const { runIfLeader } = require('../helpers/cronLeader');
 
 const HOUR_MS = 3600 * 1000;
 const VN_OFFSET_MS = 7 * HOUR_MS;
@@ -37,9 +38,8 @@ async function runOnce() {
 
 function scheduleNext() {
   const delay = msUntilNextRun();
-  setTimeout(async () => {
-    await runOnce();
-    scheduleNext();
+  setTimeout(() => {
+    void runIfLeader('zalo-oa-token-refresh', () => runOnce(), { ttlSec: 1800 }).finally(scheduleNext);
   }, delay);
 }
 

@@ -6,6 +6,7 @@
  */
 
 const { rebuildAllActiveUsers } = require('../helpers/aiUserMemory');
+const { runIfLeader } = require('../helpers/cronLeader');
 
 const HOUR_MS = 3600 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -45,7 +46,7 @@ function start() {
   const delay = msUntilNext230AM();
   console.log(`[ai-memory-cron] Lần chạy đầu sau ${(delay / HOUR_MS).toFixed(2)}h`);
   setTimeout(function tick() {
-    runOnce().finally(() => {
+    void runIfLeader('ai-user-memory-nightly', () => runOnce(), { ttlSec: 21_600 }).finally(() => {
       setTimeout(tick, DAY_MS);
     });
   }, delay);

@@ -5,6 +5,7 @@ const { isCrmSystemAdminUser } = require('../helpers/crmAccessRoles');
 const { getPresenceForUserIds, listOnlineUsersForCompany } = require('../helpers/userPresence');
 const { emitNotifyBadge } = require('../helpers/notifyBadge');
 const { responseCache, invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
+const { companyInTenantContext } = require('../helpers/tenantScope');
 
 const r = Router();
 r.use(auth);
@@ -845,36 +846,52 @@ r.get('/online-members', async (req, res) => {
     const companyId = resolveListCompanyId(req, res);
     if (!companyId) return;
 
-    const byId = new Map();
-    for (const u of await listOnlineUsersForCompany(companyId)) {
-      if (u?.id) byId.set(String(u.id), u);
+    if (req.tenantContext?.enforced && !companyInTenantContext(req, companyId)) {
+      return res.status(403).json({ error: 'Không có quyền xem thành viên công ty này', code: 'tenant_company_denied' });
     }
 
-    // Admin hệ thống (role admin, không gắn company_id) — hiển thị khi đang online
-    const { data: sysAdmins, error: saErr } = await supabase
-      .from('users')
-      .select('id, full_name, email, phone, avatar, role, position, department_id')
-      .eq('role', 'admin')
-      .is('company_id', null)
-      .neq('is_active', false)
-      .limit(50);
-    if (saErr) throw saErr;
+    const viewerTenantId = req.user?.tenant_id && String(req.user.tenant_id).trim()
+      ? String(req.user.tenant_id).trim()
+      : null;
 
-    const sysIds = (sysAdmins || []).map((u) => u.id).filter(Boolean);
-    if (sysIds.length) {
-      const presence = await getPresenceForUserIds(sysIds);
-      for (const u of sysAdmins || []) {
-        const id = String(u.id);
-        const pres = presence[id] || { online: false, last_ping_at: null };
-        if (!pres.online || byId.has(id)) continue;
-        byId.set(id, {
-          ...u,
-          online: true,
-          last_ping_at: pres.last_ping_at,
-          devices: [],
-          online_devices: 0,
-          current_location: null,
-        });
+    const byId = new Map();
+    for (const u of await listOnlineUsersForCompany(companyId)) {
+      if (!u?.id) continue;
+      if (viewerTenantId) {
+        const ut = u.tenant_id != null ? String(u.tenant_id).trim() : '';
+        if (ut && ut !== viewerTenantId) continue;
+      }
+      byId.set(String(u.id), u);
+    }
+
+    // Chỉ admin hệ thống nội bộ (legacy, không tenant SaaS) — không gộp admin các tenant khác
+    if (!viewerTenantId) {
+      const { data: sysAdmins, error: saErr } = await supabase
+        .from('users')
+        .select('id, full_name, email, phone, avatar, role, position, department_id, tenant_id')
+        .eq('role', 'admin')
+        .is('company_id', null)
+        .is('tenant_id', null)
+        .neq('is_active', false)
+        .limit(50);
+      if (saErr) throw saErr;
+
+      const sysIds = (sysAdmins || []).map((u) => u.id).filter(Boolean);
+      if (sysIds.length) {
+        const presence = await getPresenceForUserIds(sysIds);
+        for (const u of sysAdmins || []) {
+          const id = String(u.id);
+          const pres = presence[id] || { online: false, last_ping_at: null };
+          if (!pres.online || byId.has(id)) continue;
+          byId.set(id, {
+            ...u,
+            online: true,
+            last_ping_at: pres.last_ping_at,
+            devices: [],
+            online_devices: 0,
+            current_location: null,
+          });
+        }
       }
     }
 

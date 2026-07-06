@@ -168,7 +168,13 @@ r.delete('/levels/:id', async (req, res) => {
 r.get('/units', responseCache({ ttl: 300, scope: 'role', tags: ['ecosystem'] }), async (req, res) => {
   try {
     const { level } = req.query;
-    
+
+    if (req.tenantContext?.enforced && req.tenantContext?.tenantId) {
+      const { ensureTenantEcosystemSynced } = require('../helpers/ecosystemSync');
+      await ensureTenantEcosystemSynced(req.tenantContext.tenantId);
+      await invalidateTags(['ecosystem']);
+    }
+
     let q = supabase.from('ecosystem_units')
       .select(`
         *,
@@ -788,6 +794,7 @@ r.post('/setup-wizard', async (req, res) => {
         level_id: levelMap[1], // Level 1 = Khối
         parent_id: null,
         is_active: true,
+        ...(req.user?.tenant_id ? { tenant_id: req.user.tenant_id } : {}),
       }).select().single();
 
       if (error) throw error;
@@ -810,6 +817,7 @@ r.post('/setup-wizard', async (req, res) => {
         level_id: levelMap[2], // Level 2 = Công ty
         parent_id: parentId,
         is_active: true,
+        ...(req.user?.tenant_id ? { tenant_id: req.user.tenant_id } : {}),
       }).select().single();
 
       if (error) throw error;
@@ -829,6 +837,7 @@ r.post('/setup-wizard', async (req, res) => {
             level_id: levelMap[3], // Level 3 = Phòng ban
             parent_id: companyUnitId,
             is_active: true,
+            ...(req.user?.tenant_id ? { tenant_id: req.user.tenant_id } : {}),
           }).select().single();
 
           if (error) throw error;
