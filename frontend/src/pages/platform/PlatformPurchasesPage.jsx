@@ -82,6 +82,8 @@ export default function PlatformPurchasesPage() {
       alert(e.response?.data?.error || 'Lỗi');
     }
   };
+
+  const cancelPurchase = async (id) => {
     if (!window.confirm('Huỷ đơn mua này?')) return;
     try {
       await api.patch(`/platform/saas-purchases/${id}`, { status: 'cancelled' });
