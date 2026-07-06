@@ -27,8 +27,54 @@ function enrichContactActivityFields(c) {
   };
 }
 
+/** YYYY-MM-DD → đầu/cuối ngày theo giờ VN (UTC+7) */
+function vnDateStartIso(yyyyMmDd) {
+  const s = String(yyyyMmDd || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  return `${s}T00:00:00+07:00`;
+}
+
+function vnDateEndIso(yyyyMmDd) {
+  const s = String(yyyyMmDd || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  return `${s}T23:59:59.999+07:00`;
+}
+
+function vnDateRangeToMsBounds(fromStr, toStr) {
+  const fromIso = fromStr ? vnDateStartIso(fromStr) : null;
+  const toIso = toStr ? vnDateEndIso(toStr) : null;
+  return {
+    fromMs: fromIso ? new Date(fromIso).getTime() : null,
+    toMs: toIso ? new Date(toIso).getTime() : null,
+  };
+}
+
+function contactActivityInVnDateRange(c, fromStr, toStr) {
+  const { fromMs, toMs } = vnDateRangeToMsBounds(fromStr, toStr);
+  const act = activityTimestampMs(c);
+  if (!act) return false;
+  if (fromMs != null && act < fromMs) return false;
+  if (toMs != null && act > toMs) return false;
+  return true;
+}
+
+function messageCreatedAtInVnDateRange(createdAt, fromStr, toStr) {
+  if (!createdAt) return false;
+  const { fromMs, toMs } = vnDateRangeToMsBounds(fromStr, toStr);
+  const t = new Date(createdAt).getTime();
+  if (!Number.isFinite(t)) return false;
+  if (fromMs != null && t < fromMs) return false;
+  if (toMs != null && t > toMs) return false;
+  return true;
+}
+
 module.exports = {
   activityTimestampMs,
   sortFacebookContactsNewestFirst,
   enrichContactActivityFields,
+  vnDateStartIso,
+  vnDateEndIso,
+  vnDateRangeToMsBounds,
+  contactActivityInVnDateRange,
+  messageCreatedAtInVnDateRange,
 };

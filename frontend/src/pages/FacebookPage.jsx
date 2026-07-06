@@ -49,6 +49,45 @@ function fbActivityTs(c) {
   return Math.max(msg, cre);
 }
 
+/** Định dạng YYYY-MM-DD theo giờ máy người dùng (VN) */
+function vnYmd(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/** Chuyển preset lọc thời gian hộp thư → activity_from / activity_to (YYYY-MM-DD) */
+function resolveInboxTimeRange(timeFilter, customFrom = '', customTo = '') {
+  if (!timeFilter || timeFilter === 'all') return { activity_from: '', activity_to: '', label: '' };
+  const now = new Date();
+  const today = vnYmd(now);
+  if (timeFilter === 'today') return { activity_from: today, activity_to: today, label: 'Hôm nay' };
+  if (timeFilter === 'yesterday') {
+    const y = new Date(now);
+    y.setDate(y.getDate() - 1);
+    const d = vnYmd(y);
+    return { activity_from: d, activity_to: d, label: 'Hôm qua' };
+  }
+  if (timeFilter === '7d') {
+    const s = new Date(now);
+    s.setDate(s.getDate() - 6);
+    return { activity_from: vnYmd(s), activity_to: today, label: '7 ngày qua' };
+  }
+  if (timeFilter === '30d') {
+    const s = new Date(now);
+    s.setDate(s.getDate() - 29);
+    return { activity_from: vnYmd(s), activity_to: today, label: '30 ngày qua' };
+  }
+  if (timeFilter === 'custom') {
+    const f = String(customFrom || '').trim();
+    const t = String(customTo || '').trim();
+    if (!f || !t) return { activity_from: '', activity_to: '', label: '' };
+    return { activity_from: f, activity_to: t, label: `${f} → ${t}` };
+  }
+  return { activity_from: '', activity_to: '', label: '' };
+}
+
 function formatFbActivityTime(c) {
   const ts = fbActivityTs(c);
   if (!ts) return null;
@@ -319,6 +358,9 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
   const [reply, setReply] = useState('');
   const [search, setSearch] = useState('');
   const [pageFilter, setPageFilter] = useState('');
+  const [timeFilter, setTimeFilter] = useState('all'); // all | today | yesterday | 7d | 30d | custom
+  const [timeCustomFrom, setTimeCustomFrom] = useState('');
+  const [timeCustomTo, setTimeCustomTo] = useState('');
   const [pages, setPages] = useState([]);
   const [contactLimit, setContactLimit] = useState(1000);
   const [contactMeta, setContactMeta] = useState({ total: 0, hasMore: false, nextOffset: 0 });
@@ -524,10 +566,17 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
       .then(r => r.ok ? r.json() : []).then(setPages).catch(() => {});
   }, [fbCompanyQs]);
 
+  const timeRange = useMemo(
+    () => resolveInboxTimeRange(timeFilter, timeCustomFrom, timeCustomTo),
+    [timeFilter, timeCustomFrom, timeCustomTo],
+  );
+
   const loadContacts = useCallback((append = false) => {
     const params = new URLSearchParams();
     if (search) params.set('search', search);
     if (pageFilter) params.set('page_id', pageFilter);
+    if (timeRange.activity_from) params.set('activity_from', timeRange.activity_from);
+    if (timeRange.activity_to) params.set('activity_to', timeRange.activity_to);
     params.set('limit', String(contactLimit));
     params.set('offset', append ? String(contactMeta.nextOffset || 0) : '0');
     if (fbCompanyQs) {
@@ -553,7 +602,7 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
         setContacts(sorted);
         setContactMeta({ total: payload?.total || 0, hasMore: !!payload?.hasMore, nextOffset: payload?.nextOffset || 0 });
       }).catch(() => {});
-  }, [search, pageFilter, contactLimit, contactMeta.nextOffset, contacts, fbCompanyQs]);
+  }, [search, pageFilter, timeRange.activity_from, timeRange.activity_to, contactLimit, contactMeta.nextOffset, contacts, fbCompanyQs]);
 
   useEffect(() => { loadContacts(false); }, [loadContacts]);
 
@@ -641,20 +690,24 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
     
     // Load messages
     const loadMsgs = () => {
-      fetch(`${API}/api/facebook/contacts/${selected.id}/messages`, { headers: hdr() })
+      const msgParams = new URLSearchParams();
+      if (timeRange.activity_from) msgParams.set('message_from', timeRange.activity_from);
+      if (timeRange.activity_to) msgParams.set('message_to', timeRange.activity_to);
+      const msgQs = msgParams.toString() ? `?${msgParams}` : '';
+      fetch(`${API}/api/facebook/contacts/${selected.id}/messages${msgQs}`, { headers: hdr() })
         .then(r => r.ok ? r.json() : []).then(d => { 
           setMessages(d); 
           setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
           
           // Auto-sync nếu ít tin nhắn (< 5) → có thể thiếu history
-          if (d.length < 5) {
+          if (d.length < 5 && !timeRange.activity_from) {
             fetch(`${API}/api/facebook/contacts/${selected.id}/sync-history`, { method: 'POST', headers: hdr() })
               .then(r => r.ok ? r.json() : null)
               .then(result => {
                 if (result?.synced > 0) {
                   console.log(`[FB] Auto-synced ${result.synced} messages`);
                   // Reload messages
-                  fetch(`${API}/api/facebook/contacts/${selected.id}/messages`, { headers: hdr() })
+                  fetch(`${API}/api/facebook/contacts/${selected.id}/messages${msgQs}`, { headers: hdr() })
                     .then(r => r.ok ? r.json() : [])
                     .then(fresh => { setMessages(fresh); setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100); });
                 }
@@ -665,7 +718,7 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
     };
     
     loadMsgs();
-  }, [selected]);
+  }, [selected, timeRange.activity_from, timeRange.activity_to]);
 
   // Send text
   const sendReply = async () => {
@@ -785,6 +838,14 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
     return true;
   });
 
+  const selectedPageLabel = useMemo(() => {
+    if (!pageFilter) return null;
+    return pages.find((p) => p.page_id === pageFilter)?.page_name || null;
+  }, [pageFilter, pages]);
+
+  const timeFilterUserTotal = timeRange.label ? (contactMeta.total ?? contacts.length) : null;
+  const contactFilterActive = contactFilter !== 'all';
+
   // Dedup messages — loại bỏ tin nhắn trùng fb_message_id hoặc id
   const uniqueMessages = useMemo(() => {
     const seen = new Set();
@@ -812,6 +873,19 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
           </div>
           <div className="flex items-center gap-2">
             <select
+              value={timeFilter}
+              onChange={(e) => setTimeFilter(e.target.value)}
+              className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-[11px] text-gray-700"
+              aria-label="Lọc theo thời gian"
+            >
+              <option value="all">⏱ Tất cả thời gian</option>
+              <option value="today">📅 Hôm nay</option>
+              <option value="yesterday">📅 Hôm qua</option>
+              <option value="7d">📅 7 ngày qua</option>
+              <option value="30d">📅 30 ngày qua</option>
+              <option value="custom">📅 Tùy chọn ngày</option>
+            </select>
+            <select
               value={contactFilter}
               onChange={(e) => setContactFilter(e.target.value)}
               className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-[11px] text-gray-700"
@@ -834,10 +908,57 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
               <option value={5000}>5000</option>
             </select>
           </div>
-          <div className="text-[11px] text-gray-500">
-            Hiển thị {filteredContacts.length}/{contacts.length}
-            {contactMeta.total ? ` · Tổng ${contactMeta.total}` : ''}
-          </div>
+          {timeFilter === 'custom' && (
+            <div className="flex items-center gap-1.5">
+              <input
+                type="date"
+                value={timeCustomFrom}
+                onChange={(e) => setTimeCustomFrom(e.target.value)}
+                className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-[11px] text-gray-700"
+                aria-label="Từ ngày"
+              />
+              <span className="text-[10px] text-gray-400 shrink-0">→</span>
+              <input
+                type="date"
+                value={timeCustomTo}
+                onChange={(e) => setTimeCustomTo(e.target.value)}
+                className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-[11px] text-gray-700"
+                aria-label="Đến ngày"
+              />
+            </div>
+          )}
+          {timeRange.label ? (
+            <div className="rounded-lg border border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 px-3 py-2.5 flex items-center gap-3">
+              <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center shrink-0 text-lg" aria-hidden>
+                👥
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold text-blue-900 leading-tight">
+                  <span className="text-lg tabular-nums">{timeFilterUserTotal}</span>
+                  {' '}user nhắn tin
+                </p>
+                <p className="text-[10px] text-blue-700 mt-0.5 truncate">
+                  {timeRange.label}
+                  {selectedPageLabel ? ` · ${selectedPageLabel}` : pages.length > 1 ? ' · Tất cả Page' : ''}
+                </p>
+                {contactFilterActive && filteredContacts.length !== timeFilterUserTotal && (
+                  <p className="text-[10px] text-blue-600/80 mt-0.5">
+                    Sau lọc thêm: <strong>{filteredContacts.length}</strong> user
+                  </p>
+                )}
+                {contactMeta.hasMore && contacts.length < (contactMeta.total || 0) && (
+                  <p className="text-[10px] text-amber-700 mt-0.5">
+                    Đã tải {contacts.length}/{contactMeta.total} — bấm «Tải thêm» bên dưới
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="text-[11px] text-gray-500">
+              Hiển thị {filteredContacts.length}/{contacts.length}
+              {contactMeta.total ? ` · Tổng ${contactMeta.total}` : ''}
+            </div>
+          )}
           {pages.length > 1 && (
             <PageSelector
               value={pageFilter}
@@ -896,7 +1017,13 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
           {!filteredContacts.length && (
             <div className="text-center py-12">
               <MessageCircle size={40} className="mx-auto mb-2 text-gray-200" />
-              <p className="text-sm text-gray-400">{contacts.length ? 'Không có kết quả lọc' : 'Chưa có cuộc hội thoại'}</p>
+              <p className="text-sm text-gray-400">
+                {contacts.length
+                  ? 'Không có kết quả lọc'
+                  : timeRange.label
+                    ? `Không có hội thoại trong ${timeRange.label}`
+                    : 'Chưa có cuộc hội thoại'}
+              </p>
             </div>
           )}
           {contactMeta.hasMore && (
@@ -964,7 +1091,11 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
               </div>
               <div className="flex items-center gap-2">
                 <SyncHistoryButton contactId={selected.id} onSynced={() => {
-                  fetch(`${API}/api/facebook/contacts/${selected.id}/messages`, { headers: hdr() })
+                  const msgParams = new URLSearchParams();
+                  if (timeRange.activity_from) msgParams.set('message_from', timeRange.activity_from);
+                  if (timeRange.activity_to) msgParams.set('message_to', timeRange.activity_to);
+                  const msgQs = msgParams.toString() ? `?${msgParams}` : '';
+                  fetch(`${API}/api/facebook/contacts/${selected.id}/messages${msgQs}`, { headers: hdr() })
                     .then(r => r.ok ? r.json() : []).then(d => { setMessages(d); setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100); }).catch(() => {});
                 }} />
                 {selected.lead ? (
@@ -980,6 +1111,16 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
             {/* Messages + khung tin soạn sẵn (chat-style) */}
             <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden flex-row">
               <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden px-4 py-3 space-y-2">
+                {timeRange.label && (
+                  <div className="sticky top-0 z-10 flex justify-center mb-2">
+                    <span className="text-[10px] text-blue-700 bg-blue-50 border border-blue-100 px-3 py-1 rounded-full">
+                      Đang lọc tin: {timeRange.label}
+                    </span>
+                  </div>
+                )}
+                {!uniqueMessages.length && timeRange.label && (
+                  <p className="text-center text-sm text-gray-400 py-8">Không có tin nhắn trong khoảng thời gian này</p>
+                )}
                 {uniqueMessages.map((m, i) => {
                   const isOut = m.direction === 'outbound';
                   const showDate = i === 0 || new Date(m.created_at).toDateString() !== new Date(uniqueMessages[i - 1]?.created_at).toDateString();
