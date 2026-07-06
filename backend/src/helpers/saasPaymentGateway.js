@@ -49,8 +49,19 @@ function enrichMethodForWeb(method) {
 }
 
 function formatVnpayDate(d = new Date()) {
-  const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  // VNPay yêu cầu yyyyMMddHHmmss theo giờ Việt Nam (GMT+7), không phải UTC server.
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const get = (type) => parts.find((p) => p.type === type)?.value || '00';
+  return `${get('year')}${get('month')}${get('day')}${get('hour')}${get('minute')}${get('second')}`;
 }
 
 /** Chuẩn VNPay demo — encode key/value, sort, space → + */

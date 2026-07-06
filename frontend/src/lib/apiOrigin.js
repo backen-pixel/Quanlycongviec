@@ -6,12 +6,16 @@ export function resolveApiOrigin() {
     if (typeof window !== 'undefined') return '';
     return fromEnv;
   }
-  if (fromEnv) return fromEnv;
+  if (fromEnv && !fromEnv.includes('localhost')) return fromEnv;
   if (typeof window !== 'undefined') {
     const { hostname } = window.location;
+    // SPA + API cùng host tubep-backend → relative /api
+    if (hostname.includes('tubep-backend') && hostname.endsWith('.onrender.com')) {
+      return '';
+    }
     if (hostname.includes('tubep-frontend') && hostname.endsWith('.onrender.com')) {
       return 'https://tubep-backend.onrender.com';
     }
   }
-  return '';
+  return fromEnv || '';
 }
