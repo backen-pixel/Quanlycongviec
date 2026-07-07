@@ -97,7 +97,7 @@ Nhân viên Sản xuất
 - Đính kèm file trong Bình luận để trao đổi với CRM
 
 Admin
-- Cấu hình phân loại xưởng tại Pipeline xưởng nếu thiếu tùy chọn (Tủ bếp, Cửa…)
+- Cấu hình phân loại xưởng tại Pipeline xưởng nếu thiếu tùy chọn (Tủ bếp, Cửa…)`,
   },
   {
     id: '2026-06-drive-module-chat-share',

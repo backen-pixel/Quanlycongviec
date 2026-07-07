@@ -60,6 +60,7 @@ const { isVptCompanyCommercialDocViewer } = require('../helpers/dealParticipantP
 const { DEFAULT_CHECKLISTS } = require('../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlowTasks');
 const { autoCreateProjectFromWonDeal } = require('../helpers/autoDealWonProject');
+const { isCrmDealAssigneeLocked, stripCrmAssigneeFromWonStageUpdates } = require('../helpers/crmDealAssigneeLock');
 const {
   syncCrmLeadSxPipelineFromProject,
   syncSxKanbanFromCrmProductionStage,
@@ -8350,6 +8351,17 @@ r.put('/leads/:id', async (req, res) => {
       const newOwner = safeBody.assigned_to;
       const prevOwner = oldLead?.assigned_to || oldLead?.lead_owner_id;
       const adminLike = userIsCrmCompanyOrRegionAdmin(req);
+      if (
+        oldLead?.type === 'deal'
+        && await isCrmDealAssigneeLocked(supabase, oldLead)
+        && String(newOwner || '') !== String(prevOwner || '')
+        && !adminLike
+      ) {
+        return res.status(403).json({
+          error: 'Deal đã chốt Thắng — không thể đổi người phụ trách CRM. Liên hệ admin nếu cần chuyển giao.',
+          code: 'crm_assignee_locked',
+        });
+      }
       if (newOwner == null && prevOwner != null && !adminLike) {
         return res.status(403).json({ error: 'Chỉ admin mới được bỏ gán người phụ trách.' });
       }
@@ -9623,13 +9635,12 @@ r.patch('/leads/:id/stage', async (req, res) => {
       updates.kanban_deadline_at = null;
       updates.kanban_deadline_reason = null;
     }
-    if (requiresProductionPick && effectiveProductionCompanyId) {
-      const sxResponsibleId = await resolveProductionHandoverResponsibleUserId(effectiveProductionCompanyId);
-      if (sxResponsibleId) {
-        updates.assigned_to = sxResponsibleId;
-        updates.lead_owner_id = sxResponsibleId;
-      }
-    }
+    // Bàn giao SX: khóa người phụ trách CRM — NV xưởng gán qua project_production_staff sau auto-create.
+    stripCrmAssigneeFromWonStageUpdates(updates, {
+      leadType: lead?.type,
+      isWon: !!stage?.is_won,
+      requiresProductionPick,
+    });
     if (stage?.is_lost) {
       updates.lost_reason = lost_reason || null;
       updates.actual_close_date = new Date().toISOString().split('T')[0];

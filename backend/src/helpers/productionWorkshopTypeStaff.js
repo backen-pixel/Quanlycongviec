@@ -493,14 +493,7 @@ async function enrichCrmLeadsWithProductionStaff(leads) {
       ...lead,
       production_staff,
       linked_project,
-      ...(primaryUser
-        ? {
-          assignee: { id: primaryUser.id, full_name: primaryUser.full_name },
-          lead_owner: lead.lead_owner?.id
-            ? lead.lead_owner
-            : { id: primaryUser.id, full_name: primaryUser.full_name },
-        }
-        : {}),
+      ...(primaryUser ? { production_person: primaryUser } : {}),
     };
   });
 }
