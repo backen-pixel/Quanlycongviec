@@ -55,6 +55,7 @@ export function useAppHeartbeat({ enabled, user, onUpdate }) {
           social: Number(badges.social?.unread) || 0,
           releaseNotesDb: Number(badges.release_notes?.unread) || 0,
           notifications: badges.notifications || null,
+          unifiedTasks: badges.unified_tasks || { open: 0, overdue: 0 },
         });
       }
 

@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
+import { getSocket } from '../lib/socket';
 import TaskDetailModal from '../components/TaskDetailModal';
 import TaskCreateModal from '../components/TaskCreateModal';
 import Modal from '../components/Modal';
@@ -20,6 +21,7 @@ import ProjectDocumentsTab from '../components/ProjectDocumentsTab';
 import ProjectFlowTab from '../components/ProjectFlowTab';
 import ProjectCRMTab from '../components/ProjectCRMTab';
 import ProjectDealAggregateTab from '../components/ProjectDealAggregateTab';
+import ProjectDealSyncPanel from '../components/ProjectDealSyncPanel';
 import ProjectCashflowTab from '../components/ProjectCashflowTab';
 import SharedCRMNotes from '../components/SharedCRMNotes';
 import {
@@ -44,7 +46,7 @@ export default function ProjectDetail() {
   const navigate = useNavigate();
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'tasks');
+  const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'aggregate');
   const [selectedTask, setSelectedTask] = useState(null);
   const [showCreateTask, setShowCreateTask] = useState(false);
   const [newComment, setNewComment] = useState('');
@@ -62,31 +64,54 @@ export default function ProjectDetail() {
   const [editing, setEditing] = useState(false);
   const [editData, setEditData] = useState({});
   const [aggregateBadge, setAggregateBadge] = useState(null);
+  const [dealBundle, setDealBundle] = useState(null);
 
-  const load = () => {
+  const loadBundle = useCallback(() => {
+    api.get(`/management/by-project/${id}`)
+      .then((r) => {
+        setDealBundle(r.data);
+        const t = r.data?.totals;
+        if (t) setAggregateBadge((t.tasks || 0) + (t.documents || 0));
+      })
+      .catch(() => {
+        setDealBundle(null);
+        setAggregateBadge(null);
+      });
+  }, [id]);
+
+  const load = useCallback(() => {
     setLoading(true);
     api.get(`/projects/${id}`).then(r => setProject(r.data.project)).catch(() => {}).finally(() => setLoading(false));
     api.get(`/projects/${id}/orders`).then(r => setOrderCount((r.data.orders || []).length)).catch(() => setOrderCount(0));
-    // Load pending approval count
     api.get(`/approvals/project/${id}`).then(r => {
       const pending = (r.data.approvals || []).filter(a => a.status === 'pending').length;
       setPendingApprovalCount(pending);
     }).catch(() => {});
-    // Load approval rule for current stage
     api.get(`/approvals/check-auto/${id}`).then(r => {
       setApprovalRule(r.data);
     }).catch(() => {});
-  };
-  useEffect(() => { load(); api.get('/users').then(r => setAllUsers(r.data.users || [])).catch(() => {}); }, [id]);
+    loadBundle();
+  }, [id, loadBundle]);
+
+  useEffect(() => { load(); api.get('/users').then(r => setAllUsers(r.data.users || [])).catch(() => {}); }, [load]);
 
   useEffect(() => {
-    api.get(`/management/by-project/${id}`)
-      .then((r) => {
-        const t = r.data?.totals;
-        if (t) setAggregateBadge((t.tasks || 0) + (t.documents || 0));
-      })
-      .catch(() => setAggregateBadge(null));
-  }, [id]);
+    const socket = getSocket();
+    let debounceTimer = null;
+    const schedule = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        loadBundle();
+        api.get(`/projects/${id}`).then(r => setProject(r.data.project)).catch(() => {});
+      }, 800);
+    };
+    const events = ['project:stage_changed', 'task:updated', 'crm:dashboard_changed'];
+    if (socket) events.forEach((ev) => socket.on(ev, schedule));
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      if (socket) events.forEach((ev) => socket.off(ev, schedule));
+    };
+  }, [id, loadBundle]);
 
   const deleteProject = async () => {
     const msg = `⚠️ Xóa dự án "${project?.name}"?\n\nSẽ xóa luôn:\n• Tất cả nhiệm vụ và checklist\n• Lead/Deal liên kết (nếu có)\n• Tài liệu, báo giá, đơn hàng, hóa đơn\n• Comments, approvals, workflow lines\n\nHành động này KHÔNG THỂ hoàn tác!`;
@@ -500,7 +525,7 @@ export default function ProjectDetail() {
         )}
       </div>
 
-      {/* Template Sets & Assignments - NEW SECTION */}
+      {/* Bộ quy trình theo công ty / khối / NV phụ trách */}
       {project.flowAssignments && project.flowAssignments.length > 0 && (
         <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-200 p-4">
           <div className="flex items-center gap-2 mb-3">
@@ -511,49 +536,91 @@ export default function ProjectDetail() {
               </span>
             )}
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {project.flowAssignments.map((assignment, idx) => (
-              <div key={assignment.id} className="bg-white rounded-lg border border-gray-200 p-3">
-                <div className="flex items-start justify-between mb-2">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-700 text-xs font-bold">
-                        {idx + 1}
-                      </span>
-                      <h4 className="text-sm font-semibold text-gray-900">
-                        {assignment.company?.name || 'N/A'}
-                      </h4>
-                    </div>
-                    <p className="text-xs text-gray-600 ml-8">
-                      {assignment.template_set?.name || 'Chưa chọn template'}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-lg font-bold text-blue-600">
-                      {assignment.progress || 0}%
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      {assignment.tasks_completed || 0}/{assignment.tasks_total || 0}
-                    </div>
-                  </div>
-                </div>
-                {/* Progress bar */}
-                <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+          <div className="grid gap-3">
+            {[...project.flowAssignments]
+              .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+              .map((assignment, idx) => {
+                const resp = assignment.responsible_user;
+                const statusKey = assignment.status || 'pending';
+                const statusLabel = statusKey === 'done' ? 'Hoàn thành'
+                  : statusKey === 'in_progress' ? 'Đang làm' : 'Chờ';
+                const statusClass = statusKey === 'done' ? 'bg-emerald-100 text-emerald-700'
+                  : statusKey === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600';
+                return (
                   <div
-                    className="bg-gradient-to-r from-blue-500 to-indigo-600 h-full rounded-full transition-all"
-                    style={{ width: `${assignment.progress || 0}%` }}
-                  />
-                </div>
-              </div>
-            ))}
+                    key={assignment.id}
+                    className={`bg-white rounded-lg border p-3 ${
+                      assignment.is_project_company ? 'border-blue-300 ring-1 ring-blue-200' : 'border-gray-200'
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
+                      <div className="flex-1 min-w-[200px]">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-700 text-xs font-bold shrink-0">
+                            {idx + 1}
+                          </span>
+                          <h4 className="text-sm font-semibold text-gray-900">
+                            {assignment.division?.name || assignment.division?.short_name || 'Khối'}
+                          </h4>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${statusClass}`}>
+                            {statusLabel}
+                          </span>
+                          {assignment.is_project_company && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 font-medium">
+                              Công ty dự án
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-700 ml-8">
+                          🏢 {assignment.company?.name || assignment.company?.short_name || '—'}
+                        </p>
+                        <p className="text-xs text-gray-500 ml-8 mt-0.5">
+                          📋 {assignment.template_set?.name || 'Chưa chọn bộ mẫu'}
+                        </p>
+                        {resp && (
+                          <div className="flex items-center gap-1.5 ml-8 mt-1.5">
+                            <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold shrink-0"
+                              style={{ backgroundColor: avatarColor(resp.full_name) }}>
+                              {getInitials(resp.full_name)}
+                            </div>
+                            <span className="text-[11px] text-gray-600">
+                              NV phụ trách: <span className="font-medium text-gray-800">{resp.full_name}</span>
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="text-lg font-bold text-blue-600">
+                          {assignment.progress || 0}%
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {assignment.tasks_completed || 0}/{assignment.tasks_total || 0} NV
+                        </div>
+                      </div>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                      <div
+                        className="bg-gradient-to-r from-blue-500 to-indigo-600 h-full rounded-full transition-all"
+                        style={{ width: `${assignment.progress || 0}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
           </div>
         </div>
       )}
 
+      <ProjectDealSyncPanel
+        bundle={dealBundle}
+        projectId={id}
+        onOpenAggregate={() => setActiveTab('aggregate')}
+      />
+
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-200">
         {[
-          { id: 'aggregate', label: 'Tổng hợp Deal', icon: Layers, count: aggregateBadge || undefined },
+          { id: 'aggregate', label: 'Tổng hợp CRM/SX/VC', icon: Layers, count: aggregateBadge || undefined },
           { id: 'tasks', label: 'Công việc', icon: CheckSquare, count: totalTasks },
           { id: 'orders', label: 'Đơn hàng', icon: ShoppingCart, count: orderCount || undefined },
           { id: 'finance', label: 'Thu chi', icon: Wallet },
@@ -576,7 +643,7 @@ export default function ProjectDetail() {
 
       {/* ─── Tổng hợp Deal (CRM + SX + VC) ─── */}
       {activeTab === 'aggregate' && (
-        <ProjectDealAggregateTab projectId={id} project={project} />
+        <ProjectDealAggregateTab projectId={id} project={project} bundle={dealBundle} onReload={loadBundle} />
       )}
 
       {/* ─── Tasks Tab ─── */}

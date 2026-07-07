@@ -18,6 +18,7 @@ import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
 import { publicFileUrl as pubUrl, downloadUploadFile } from '../lib/publicFileUrl';
 import { FilePreviewOpenLink } from '../context/FilePreviewContext';
 import UploadFileLightbox, {
+  buildUploadLightboxItem,
   collectUploadLightboxItems,
   findUploadLightboxIndex,
   isUploadImageFile,
@@ -807,7 +808,7 @@ function TaskFileRow({ file, onOpenImage, projectId = null, enableShareToCrm = f
         {href && (
           <div className="shrink-0 flex items-center gap-2">
             {isImage ? (
-              <button type="button" onClick={openImage} className="text-[10px] text-blue-600 hover:underline cursor-pointer">Mở</button>
+              <button type="button" onClick={openImage} className="text-[10px] text-blue-600 hover:underline cursor-pointer">Phóng to</button>
             ) : href ? (
               <FilePreviewOpenLink
                 fileUrl={rawRef}
@@ -994,7 +995,7 @@ function DocRow({
                     onClick={() => onOpenImage?.(rawFileRef)}
                     className={`hover:underline ${nested ? 'text-[10px]' : 'text-xs'} text-blue-600 cursor-pointer`}
                   >
-                    Mở
+                    Phóng to
                   </button>
                 ) : fileHref ? (
                   <FilePreviewOpenLink
@@ -1302,6 +1303,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [savingIncident, setSavingIncident] = useState(false);
   const [commentCount, setCommentCount] = useState(0);
   const [docLightboxIndex, setDocLightboxIndex] = useState(null);
+  const [docLightboxOverride, setDocLightboxOverride] = useState(null);
 
   const dealIdForCommentCount = project
     ? (resolveSxProjectLeadId({
@@ -1363,10 +1365,28 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     [visibleCrmSharedDocs, projectDocs, taskFiles],
   );
 
+  const activeDocImageGallery = docLightboxOverride || docImageGallery;
+
   const openDocImage = useCallback((rawPath) => {
-    const idx = findUploadLightboxIndex(docImageGallery, rawPath);
-    if (idx >= 0) setDocLightboxIndex(idx);
+    const path = String(rawPath || '').trim();
+    if (!path) return;
+    const idx = findUploadLightboxIndex(docImageGallery, path);
+    if (idx >= 0) {
+      setDocLightboxOverride(null);
+      setDocLightboxIndex(idx);
+      return;
+    }
+    const item = buildUploadLightboxItem({ file_url: path, file_path: path });
+    if (item) {
+      setDocLightboxOverride([item]);
+      setDocLightboxIndex(0);
+    }
   }, [docImageGallery]);
+
+  const closeDocLightbox = useCallback(() => {
+    setDocLightboxIndex(null);
+    setDocLightboxOverride(null);
+  }, []);
 
   const crmDealIdForDocs = project?.crmDeals?.[0]?.id || fallbackDealIdForTasks;
 
@@ -3394,12 +3414,12 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         </div>
       )}
 
-      {docLightboxIndex != null && docImageGallery.length > 0 && (
+      {docLightboxIndex != null && activeDocImageGallery.length > 0 && (
         <UploadFileLightbox
-          items={docImageGallery}
+          items={activeDocImageGallery}
           index={docLightboxIndex}
           onIndexChange={setDocLightboxIndex}
-          onClose={() => setDocLightboxIndex(null)}
+          onClose={closeDocLightbox}
         />
       )}
     </div>

@@ -11,6 +11,7 @@ export function UnreadBadgesProvider({ children }) {
   const [assignmentsSx, setAssignmentsSx] = useState(EMPTY_ASSIGN);
   const [socialUnread, setSocialUnread] = useState(0);
   const [dbUnread, setDbUnread] = useState(0);
+  const [unifiedTasksOpen, setUnifiedTasksOpen] = useState(0);
   const [builtinUnread, setBuiltinUnread] = useState(() => builtinUpdateUnreadCount());
 
   const resetBadgeState = useCallback(() => {
@@ -18,6 +19,7 @@ export function UnreadBadgesProvider({ children }) {
     setAssignmentsSx(EMPTY_ASSIGN);
     setSocialUnread(0);
     setDbUnread(0);
+    setUnifiedTasksOpen(0);
   }, []);
 
   useEffect(() => {
@@ -36,6 +38,7 @@ export function UnreadBadgesProvider({ children }) {
     setAssignmentsSx(payload.assignmentsProduction || EMPTY_ASSIGN);
     setSocialUnread(Number(payload.social) || 0);
     setDbUnread(Number(payload.releaseNotesDb) || 0);
+    setUnifiedTasksOpen(Number(payload.unifiedTasks?.open) || 0);
   }, []);
 
   const { refresh: refreshHeartbeat } = useAppHeartbeat({
@@ -117,6 +120,7 @@ export function UnreadBadgesProvider({ children }) {
       sxAssignmentsDetail: assignmentsSx,
       social: socialUnread,
       socialDetail: { unread: socialUnread, refresh: () => refreshHeartbeat({ fresh: true }) },
+      unifiedTasksOpen,
       refreshAll: async () => {
         setBuiltinUnread(builtinUpdateUnreadCount());
         await refreshHeartbeat({ fresh: true });
@@ -126,7 +130,7 @@ export function UnreadBadgesProvider({ children }) {
       refreshSxAssignments: () => refreshHeartbeat({ fresh: true }),
       refreshUpdates: refreshReleaseNotes,
     }),
-    [release, assignmentsCrm, assignmentsSx, socialUnread, refreshHeartbeat, refreshReleaseNotes],
+    [release, assignmentsCrm, assignmentsSx, socialUnread, unifiedTasksOpen, refreshHeartbeat, refreshReleaseNotes],
   );
 
   return (
@@ -160,5 +164,6 @@ export function useSidebarUnreadBadges() {
     assignmentsUnread: b.assignments,
     sxAssignmentsUnread: b.sxAssignments ?? 0,
     socialUnread: b.social,
+    unifiedTasksOpen: b.unifiedTasksOpen ?? 0,
   };
 }

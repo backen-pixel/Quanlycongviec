@@ -6,12 +6,15 @@ import {
   Receipt,
   Sigma,
   GraduationCap,
+  Layers,
 } from 'lucide-react';
 
 export const WORK_MODULE_LABEL = 'Quản lý';
+export const CONGVIEC_MODULE_LABEL = 'Công việc';
 export const LOGISTICS_MODULE_LABEL = 'Vận chuyển';
 export const CRM_MODULE_ICON = '/icons/crm-module.png?v=4';
 export const WORK_MODULE_ICON = '/icons/work-module.png?v=3';
+export const CONGVIEC_MODULE_ICON = '/icons/work-module.png?v=4';
 export const SX_MODULE_ICON = '/icons/sx-module.png?v=3';
 export const VC_MODULE_ICON = '/icons/vc-module.png?v=3';
 export const KETOAN_MODULE_ICON = '/icons/ketoan-module.png?v=3';
@@ -44,6 +47,25 @@ export const APP_MODULE_DEFINITIONS = [
     },
     mod: null,
     hideCrmOnly: true,
+  },
+  {
+    id: 'congviec',
+    path: '/work/unified',
+    name: CONGVIEC_MODULE_LABEL,
+    desc: 'Tổng hợp nhiệm vụ từ CRM, SX, VC & giao việc',
+    Icon: Layers,
+    imageUrl: CONGVIEC_MODULE_ICON,
+    iconClass: 'bg-transparent shadow-none',
+    category: 'Làm việc',
+    categoryClass: 'bg-cyan-50 text-cyan-800 border-cyan-100',
+    sidebarAccent: {
+      ring: 'ring-cyan-400/35 hover:ring-cyan-300/55',
+      card: 'bg-gradient-to-br from-cyan-500/22 via-cyan-500/8 to-transparent hover:from-cyan-500/30',
+      iconWrap: 'bg-cyan-500/18 ring-1 ring-cyan-300/30 shadow-inner shadow-cyan-900/20',
+      dot: 'bg-cyan-400',
+    },
+    mod: null,
+    always: true,
   },
   {
     id: 'crm',
@@ -181,7 +203,7 @@ export function writeAppSwitcherFavorites(paths) {
 }
 
 export function defaultAppSwitcherFavorites(allPaths) {
-  const preferred = ['/crm', '/sx', '/dashboard', '/knowledge', '/vc'];
+  const preferred = ['/crm', '/sx', '/work/unified', '/dashboard', '/knowledge', '/vc'];
   const picked = preferred.filter((p) => allPaths.includes(p));
   if (picked.length >= 2) return picked.slice(0, 5);
   return allPaths.slice(0, 5);
@@ -202,6 +224,7 @@ export function resolveActiveAppModuleId({
   isVC,
   isSX,
   isCRM,
+  isCongViec,
 }) {
   if (isKnowledge) return 'knowledge';
   if (isCalc) return 'calc';
@@ -209,5 +232,6 @@ export function resolveActiveAppModuleId({
   if (isVC) return 'vc';
   if (isSX) return 'sx';
   if (isCRM) return 'crm';
+  if (isCongViec) return 'congviec';
   return 'work';
 }

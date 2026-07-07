@@ -4,7 +4,7 @@
 const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
-const { isAdminLike, isSystemAdmin } = require('../helpers/adminRole');
+const { isSystemAdmin } = require('../helpers/adminRole');
 const {
   createProjectTask,
   updateProjectTask,
@@ -25,6 +25,12 @@ const {
   addCrmAssignmentComment,
 } = require('../helpers/crmAssignmentMutations');
 const { mergeDeadlineHistoryIntoUnified } = require('../helpers/crmKanbanDeadlineHistory');
+const {
+  isManagerLike,
+  applyEmployeeScope,
+  applyOpenOnlyFilter,
+  fetchUnifiedTasksSummary,
+} = require('../helpers/unifiedTasksQuery');
 
 const r = Router();
 r.use(auth);
@@ -38,21 +44,6 @@ function parsePagination(req, defaultSize = 50, maxSize = 200) {
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
   return { page, pageSize, from, to };
-}
-
-function isManagerLike(req) {
-  const role = String(req.user?.role || '').toLowerCase();
-  return isAdminLike(req.user)
-    || role === 'manager'
-    || role === 'production_staff'
-    || role === 'production_admin'
-    || role === 'crm_production_staff'
-    || role === 'crm_production_admin';
-}
-
-/** Áp scope cho nhân viên thường — chỉ thấy NV mình liên quan. */
-function applyEmployeeScope(q, userId) {
-  return q.or(`assignee_id.eq.${userId},created_by_id.eq.${userId}`);
 }
 
 function sendMutationResult(res, result) {
@@ -71,12 +62,26 @@ const TASK_SELECT = `
   project_code, project_name, lead_title
 `;
 
+// GET /api/work-tasks/summary — KPI + phân bổ theo module
+r.get('/summary', async (req, res) => {
+  try {
+    const { assignee_id, company_id, date_from, date_to } = req.query;
+    const summary = await fetchUnifiedTasksSummary(req.user, {
+      assignee_id, company_id, date_from, date_to,
+    });
+    res.json(summary);
+  } catch (e) {
+    console.error('[work-tasks] summary:', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải tổng hợp' });
+  }
+});
+
 // GET /api/work-tasks
 r.get('/', async (req, res) => {
   try {
     const {
       source, project_id, assignee_id, status, q: searchQ, task_kind,
-      date_from, date_to, company_id,
+      date_from, date_to, company_id, open_only, module_key,
     } = req.query;
     const { page, pageSize, from, to } = parsePagination(req);
 
@@ -95,11 +100,23 @@ r.get('/', async (req, res) => {
     if (searchQ) q = q.ilike('title', `%${searchQ}%`);
     if (date_from) q = q.gte('deadline', date_from);
     if (date_to) q = q.lte('deadline', date_to);
+    if (open_only === '1' || open_only === 'true') q = applyOpenOnlyFilter(q);
+
+    const MODULE_KIND_FILTER = {
+      crm: ['CRM-Deal', 'CRM-Lead'],
+      production: ['SX', 'Dự án'],
+      logistics: ['VC'],
+      assignment: ['Giao việc'],
+      personal: ['Cá nhân'],
+    };
+    if (module_key && MODULE_KIND_FILTER[module_key]) {
+      q = q.in('task_kind', MODULE_KIND_FILTER[module_key]);
+    }
 
     const effectiveCompany = company_id || (!isSystemAdmin(req.user) ? req.user?.company_id : null);
     if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
 
-    if (!isManagerLike(req)) {
+    if (!isManagerLike(req.user)) {
       q = applyEmployeeScope(q, req.user.userId);
     }
 
@@ -121,14 +138,14 @@ r.get('/by-project/:projectId', async (req, res) => {
     const leadIds = await getLeadIdsForProject(projectId);
 
     let qProject = supabase.from('unified_tasks_v').select(TASK_SELECT).eq('project_id', projectId);
-    if (!isManagerLike(req)) qProject = applyEmployeeScope(qProject, req.user.userId);
+    if (!isManagerLike(req.user)) qProject = applyEmployeeScope(qProject, req.user.userId);
     const { data: projectTasks, error: e1 } = await qProject;
     if (e1) throw e1;
 
     let crmTasks = [];
     if (leadIds.length) {
       let qCrm = supabase.from('unified_tasks_v').select(TASK_SELECT).in('lead_id', leadIds);
-      if (!isManagerLike(req)) qCrm = applyEmployeeScope(qCrm, req.user.userId);
+      if (!isManagerLike(req.user)) qCrm = applyEmployeeScope(qCrm, req.user.userId);
       const { data: ct, error: e2 } = await qCrm;
       if (e2) throw e2;
       crmTasks = ct || [];
@@ -204,7 +221,7 @@ r.get('/history', async (req, res) => {
       return res.status(400).json({ error: 'Cần source+id hoặc project_id hoặc lead_id' });
     }
 
-    if (assignee_id && !isManagerLike(req)) {
+    if (assignee_id && !isManagerLike(req.user)) {
       // nhân viên chỉ xem lịch sử NV mình — filter qua subquery tasks
       if (String(assignee_id) !== String(req.user.userId)) {
         return res.status(403).json({ error: 'Không có quyền' });

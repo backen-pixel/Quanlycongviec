@@ -897,17 +897,45 @@ r.get('/:id', async (req, res) => {
 
     // Load flow assignments (company + template set per step)
     let flowAssignments = [];
+    let productionStaff = [];
+    try {
+      const { data: staffRows } = await supabase
+        .from('project_production_staff')
+        .select('order_index, is_primary, user:users(id, full_name, avatar, email)')
+        .eq('project_id', req.params.id);
+      productionStaff = (staffRows || [])
+        .sort((a, b) => {
+          const ap = a.is_primary ? 1 : 0;
+          const bp = b.is_primary ? 1 : 0;
+          if (bp !== ap) return bp - ap;
+          return (a.order_index ?? 0) - (b.order_index ?? 0);
+        })
+        .map((r) => (r.user ? { ...r.user, is_primary: !!r.is_primary } : null))
+        .filter(Boolean);
+    } catch { /* migration 293/294 chưa chạy */ }
+
+    const resolveAssignmentResponsible = (assignment) => {
+      const oi = assignment.order_index ?? 0;
+      const byStep = [
+        data.sales_person || stagePersons.consulting_person,
+        data.project_manager || data.designer || stagePersons.production_person || productionStaff[0] || null,
+        data.supervisor || stagePersons.shipping_person,
+        stagePersons.installation_person,
+        stagePersons.care_person,
+      ];
+      return byStep[oi] || data.project_manager || data.sales_person || null;
+    };
+
     if (data.id) {
       try {
         const { data: assignments } = await supabase.from('project_company_assignments').select(`
           *,
           division:ecosystem_units!project_company_assignments_division_unit_id_fkey(id,name,short_name),
-          company:ecosystem_units!project_company_assignments_company_unit_id_fkey(id,name,short_name),
+          company:ecosystem_units!project_company_assignments_company_unit_id_fkey(id,name,short_name,company_id),
           template_set:company_template_sets(id,name,description,is_default)
         `).eq('project_id', data.id).order('order_index');
         flowAssignments = assignments || [];
 
-        // Load ALL project tasks once (instead of per-assignment)
         const { data: allTasks } = await supabase.from('tasks').select(`
           *,
           assignee:users!tasks_assignee_id_fkey(id,full_name,avatar,email),
@@ -917,40 +945,50 @@ r.get('/:id', async (req, res) => {
           .eq('task_type', 'project')
           .order('order_index');
 
-        // Build map: flow_step_id → division_unit_id (from flow steps)
-        let stepToDivMap = {};
+        const stepToDivMap = {};
+        const divToStepIds = {};
         if (data.flow_id) {
           const { data: flowSteps } = await supabase.from('workflow_flow_steps')
-            .select('id, division_unit_id')
+            .select('id, division_unit_id, order_index')
             .eq('flow_id', data.flow_id);
           for (const fs of (flowSteps || [])) {
             stepToDivMap[fs.id] = fs.division_unit_id;
+            const divKey = String(fs.division_unit_id || '');
+            if (!divToStepIds[divKey]) divToStepIds[divKey] = [];
+            divToStepIds[divKey].push(fs.id);
           }
         }
 
-        // Assign tasks to each assignment by matching:
-        // 1. task.metadata.flow_step_id → stepToDivMap → division_unit_id === assignment.division_unit_id
-        // 2. OR task.metadata.template_set_id === assignment.template_set_id
-        const usedTaskIds = new Set();
+        const KD_STAGE_SLUGS = new Set(['consulting', 'design', 'quoting', 'contract', 'contract_signed']);
+
         for (const assignment of flowAssignments) {
-          const assignmentTasks = (allTasks || []).filter(t => {
+          const divKey = String(assignment.division_unit_id || '');
+          const stepIdsForDiv = new Set((divToStepIds[divKey] || []).map(String));
+          const assignmentTasks = (allTasks || []).filter((t) => {
             const meta = t.metadata || {};
-            // Match by flow_step → division
             if (meta.flow_step_id && stepToDivMap[meta.flow_step_id] === assignment.division_unit_id) return true;
-            // Match by template_set
+            if (meta.flow_step_id && stepIdsForDiv.has(String(meta.flow_step_id))) return true;
             if (meta.template_set_id && meta.template_set_id === assignment.template_set_id) return true;
+            if ((assignment.order_index ?? 0) === 0) {
+              if (meta.imported_from === 'crm_deal' || meta.crm_task_id) return true;
+              const baseSlug = String(t.stage?.slug || '').replace(/-[a-f0-9]{8}$/i, '');
+              if (KD_STAGE_SLUGS.has(baseSlug) || KD_STAGE_SLUGS.has(String(t.stage?.slug || ''))) return true;
+            }
             return false;
           });
 
           assignment.tasks = assignmentTasks;
-          assignmentTasks.forEach(t => usedTaskIds.add(t.id));
-
-          // Calculate progress
           const total = assignmentTasks.length;
-          const done = assignmentTasks.filter(t => t.status === 'done').length;
+          const done = assignmentTasks.filter((t) => t.status === 'done' || t.status === 'completed').length;
           assignment.tasks_total = total;
           assignment.tasks_completed = done;
           assignment.progress = total > 0 ? Math.round((done / total) * 100) : 0;
+          assignment.responsible_user = resolveAssignmentResponsible(assignment);
+          assignment.is_project_company = !!(
+            data.company_id
+            && assignment.company?.company_id
+            && String(assignment.company.company_id) === String(data.company_id)
+          );
         }
       } catch (e) { console.warn('Failed to load flow assignments:', e.message); }
     }
@@ -992,23 +1030,6 @@ r.get('/:id', async (req, res) => {
         .eq('project_id', req.params.id).order('order_index');
       workflowLines = wl || [];
     } catch { }
-
-    let productionStaff = [];
-    try {
-      const { data: staffRows } = await supabase
-        .from('project_production_staff')
-        .select('order_index, is_primary, user:users(id, full_name, avatar, email)')
-        .eq('project_id', req.params.id);
-      productionStaff = (staffRows || [])
-        .sort((a, b) => {
-          const ap = a.is_primary ? 1 : 0;
-          const bp = b.is_primary ? 1 : 0;
-          if (bp !== ap) return bp - ap;
-          return (a.order_index ?? 0) - (b.order_index ?? 0);
-        })
-        .map((r) => (r.user ? { ...r.user, is_primary: !!r.is_primary } : null))
-        .filter(Boolean);
-    } catch { /* migration 293/294 chưa chạy */ }
 
     res.json({
       project: {
