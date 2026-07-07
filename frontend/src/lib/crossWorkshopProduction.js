@@ -1,4 +1,4 @@
-import { isSystemAdmin } from './adminRole';
+import { isProductionAdmin, isProductionStaff, isSystemAdmin } from './adminRole';
 
 /** Legacy email list — ưu tiên role `accounting` (isAccountingUser). */
 export const CROSS_WORKSHOP_PRODUCTION_VIEWER_EMAILS = new Set([]);
@@ -88,7 +88,38 @@ export function isVptCompanyChip(companyId, companies, user) {
 export function canPickWorkshopCompany(user, isAdmin, isCompanyScopedAdmin) {
   if (isAdmin && !isCompanyScopedAdmin) return true;
   if (user?.company_id) return true;
+  if (isProductionAdmin(user) || isProductionStaff(user)) return true;
   return isCrossWorkshopProductionViewer(user);
+}
+
+/**
+ * Công ty dùng để nạp phân loại xưởng (workshop_project_types).
+ * Ưu tiên xưởng thực tế (HCB/Metalla) — không dùng công ty CRM (VPT) làm nguồn phân loại.
+ */
+export function resolveWorkshopCompanyForTypes({
+  filterCompany = '',
+  filterSxWorkshopCompany = '',
+  userCompanyId = '',
+  showVptSxWorkshopFilter = false,
+  companies = [],
+} = {}) {
+  const workshopId = (id) => {
+    const s = String(id || '').trim();
+    if (!s) return '';
+    return isMetallaOrHucabiCompanyId(s, companies) ? s : '';
+  };
+
+  if (showVptSxWorkshopFilter && filterSxWorkshopCompany) {
+    return workshopId(filterSxWorkshopCompany) || String(filterSxWorkshopCompany);
+  }
+
+  const fromFilter = workshopId(filterCompany);
+  if (fromFilter) return fromFilter;
+
+  const fromUser = workshopId(userCompanyId);
+  if (fromUser) return fromUser;
+
+  return '';
 }
 
 /** Công ty chọn khi tạo deal SX tại xưởng (HCB, Metalla). */

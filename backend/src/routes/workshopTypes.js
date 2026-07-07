@@ -5,7 +5,7 @@ const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/newPermission');
-const { isSystemAdmin } = require('../helpers/adminRole');
+const { isSystemAdmin, isProductionAdmin, isProductionStaff } = require('../helpers/adminRole');
 const { filterWorkshopProjectTypesForClientCompany } = require('../helpers/workshopTypeClientScope');
 
 const r = Router();
@@ -15,13 +15,19 @@ function userIsAdmin(user) {
   return isSystemAdmin(user);
 }
 
+function resolvedUserCompanyId(user) {
+  const cid = user?.company_id;
+  if (cid != null && String(cid).trim() !== '') return String(cid).trim();
+  return null;
+}
+
 function requireUserCompanyId(req, res) {
-  const cid = req.user?.company_id;
+  const cid = resolvedUserCompanyId(req.user);
   if (!cid) {
     res.status(400).json({ error: 'Thiếu company_id của tài khoản. Gán công ty cho user hoặc dùng tài khoản admin.' });
     return null;
   }
-  return String(cid);
+  return cid;
 }
 
 function matchesModule(appliesTo, module) {
@@ -33,18 +39,25 @@ function matchesModule(appliesTo, module) {
 r.get('/project-types', requirePermission('projects', 'view'), async (req, res) => {
   try {
     const { company_id, module, all: allParam, client_company_id } = req.query;
-    let companyId = company_id || null;
+    let companyId = company_id ? String(company_id).trim() : '';
     if (!userIsAdmin(req.user)) {
-      const cid = requireUserCompanyId(req, res);
-      if (!cid) return;
-      if (companyId && String(companyId) !== String(cid)) {
-        // Cho phép xem phân loại SX của công ty khác (chọn công ty SX khi tạo dự án)
-        // Chỉ trả danh sách read-only, không cho sửa/xóa
+      const userCid = resolvedUserCompanyId(req.user);
+      const isWorkshopRole = isProductionAdmin(req.user) || isProductionStaff(req.user);
+      if (companyId) {
+        // Cho phép đọc phân loại của xưởng được chọn (query company_id).
+      } else if (userCid) {
+        companyId = userCid;
+      } else if (isWorkshopRole) {
+        return res.status(400).json({
+          error: 'Chọn công ty sản xuất (xưởng) trước khi tải phân loại.',
+        });
       } else {
-        companyId = cid;
+        return res.status(400).json({
+          error: 'Thiếu company_id của tài khoản. Gán công ty cho user hoặc dùng tài khoản admin.',
+        });
       }
-    } else {
-      if (!companyId) return res.json([]);
+    } else if (!companyId) {
+      return res.json([]);
     }
     let q = supabase
       .from('workshop_project_types')

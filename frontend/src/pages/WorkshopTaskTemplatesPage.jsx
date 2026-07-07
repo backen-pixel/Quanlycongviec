@@ -2,8 +2,9 @@
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { isAdminLike } from '../lib/adminRole';
+import { isAdminLike, isProductionAdmin } from '../lib/adminRole';
 import { findDefaultAdminCrmCompanyPhucDat } from '../lib/crmCompanyFilter';
+import { isMetallaOrHucabiCompanyId, productionWorkshopFilterCompanies } from '../lib/crossWorkshopProduction';
 import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Globe, MapPin, Lock, Star, Paperclip, MessageSquare, User, Truck } from 'lucide-react';
 import EvidenceFileTypesPicker from '../components/EvidenceFileTypesPicker';
 import TemplateItemAssigneePicker from '../components/TemplateItemAssigneePicker';
@@ -45,6 +46,7 @@ function SortableItem({ id, children }) {
 export default function WorkshopTaskTemplatesPage({ initialArea = 'production', fixedArea = '' } = {}) {
   const { user } = useAuth();
   const isAdmin = isAdminLike(user);
+  const canPickTemplateCompany = isAdmin || isProductionAdmin(user);
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState({});
@@ -164,9 +166,12 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
       if (!companyDefaultResolvedRef.current) {
         companyDefaultResolvedRef.current = true;
         if (!selectedCompanyId) {
+          const coListForPick = isAdmin ? coList : productionWorkshopFilterCompanies(coList);
           const fromUser = user?.company_id ? String(user.company_id) : '';
+          const userWorkshop = isMetallaOrHucabiCompanyId(fromUser, coList) ? fromUser : '';
           const phucDat = isAdmin ? findDefaultAdminCrmCompanyPhucDat(coList) : '';
-          const pick = fromUser || phucDat;
+          const firstWorkshop = coListForPick[0]?.id ? String(coListForPick[0].id) : '';
+          const pick = userWorkshop || firstWorkshop || phucDat;
           if (pick) setSelectedCompanyId(pick);
         }
       }
@@ -828,15 +833,15 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
               ))}
             </div>
           )}
-          {isAdmin && (
+          {canPickTemplateCompany && (
             <select
               value={selectedCompanyId}
               onChange={(e) => setSelectedCompanyId(e.target.value)}
               className="h-9 px-3 rounded-lg border text-sm bg-white"
-              title="Chọn công ty để quản lý bộ nhiệm vụ"
+              title="Chọn công ty sản xuất (xưởng)"
             >
               <option value="">— Chọn công ty —</option>
-              {companies.map((c) => (
+              {(isAdmin ? companies : productionWorkshopFilterCompanies(companies)).map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.short_name || c.name}
                 </option>

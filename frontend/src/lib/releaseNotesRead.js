@@ -1,6 +1,7 @@
 import { BUILTIN_UPDATES } from '../content/builtinUpdates';
 
 const LS_BUILTIN_READ = 'release_notes_read_builtin_ids';
+const LS_LOGIN_POPUP_OFF = 'release_notes_login_popup_off';
 
 function readBuiltinReadSet() {
   try {
@@ -85,4 +86,20 @@ export function markNotesReadLocally(notes) {
   for (const note of notes || []) {
     markNoteRead(note);
   }
+}
+
+/** User tắt popup «Có gì mới» khi đăng nhập (chỉ sau khi đã cuộn đọc hết). */
+export function isLoginPopupDisabled() {
+  try {
+    return localStorage.getItem(LS_LOGIN_POPUP_OFF) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function setLoginPopupDisabled(disabled) {
+  try {
+    if (disabled) localStorage.setItem(LS_LOGIN_POPUP_OFF, '1');
+    else localStorage.removeItem(LS_LOGIN_POPUP_OFF);
+  } catch { /* ignore */ }
 }
