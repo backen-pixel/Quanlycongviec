@@ -1232,6 +1232,10 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
   }
 });
 
+/** Embed CRM deals trên danh sách Kanban SX — gồm NV phụ trách CRM (assignee / lead_owner). */
+const CRM_DEALS_PROJECT_EMBED = 'crm_deals:crm_leads(id, type, region_id, created_at, assigned_to, lead_owner_id, external_company_name, external_company_id, crm_region:company_regions(id, name, code), assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar))';
+const CRM_DEALS_PROJECT_EMBED_LEGACY = 'crm_deals:crm_leads(id, type, region_id, created_at, assigned_to, lead_owner_id, crm_region:company_regions(id, name, code), assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar))';
+
 // ─── GET /production/projects ──
 r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 20, scope: 'user', tags: ['production'] }), async (req, res) => {
   try {
@@ -1406,9 +1410,6 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
 const MIGRATION_76_COLS = 'production_deadline, production_note,';
 /** Columns added in migration 300 — ngày đặt / giao hàng trên dự án SX */
 const MIGRATION_300_COLS = 'order_date, delivery_date,';
-/** Embed CRM deals — migration 301 thêm external_company_name */
-const CRM_DEALS_PROJECT_EMBED = 'crm_deals:crm_leads(id, type, region_id, created_at, external_company_name, external_company_id, crm_region:company_regions(id, name, code))';
-const CRM_DEALS_PROJECT_EMBED_LEGACY = 'crm_deals:crm_leads(id, type, region_id, created_at, crm_region:company_regions(id, name, code))';
 function isExternalCompanyNameMissingError(err) {
   const m = String(err?.message || '');
   return m.includes('external_company_name');

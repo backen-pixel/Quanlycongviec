@@ -1685,10 +1685,17 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const load = async () => {
     setLoading(true);
     setLoadError(null);
+    const timeoutMs = 30_000;
+    const timeout = new Promise((_, reject) => {
+      window.setTimeout(() => reject(new Error('Timeout tải dự án — vui lòng thử lại')), timeoutMs);
+    });
     try {
-      const [projRes, tasksRes] = await Promise.all([
-        api.get(`${MOD.apiPrefix}/projects/${id}`),
-        api.get('/tasks', { params: { project_id: id } }).catch(() => ({ data: { tasks: [] } })),
+      const [projRes, tasksRes] = await Promise.race([
+        Promise.all([
+          api.get(`${MOD.apiPrefix}/projects/${id}`),
+          api.get('/tasks', { params: { project_id: id } }).catch(() => ({ data: { tasks: [] } })),
+        ]),
+        timeout,
       ]);
       const proj = projRes.data?.project;
       if (proj?.id && String(proj.id) !== String(id)) {
@@ -1754,6 +1761,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         try {
           const { data: lead } = await api.get(`/crm/leads/${id}/detail`);
           if (lead?.project_id) {
+            setLoading(false);
             navigate(`${MOD.routePrefix}/projects/${lead.project_id}`, { replace: true });
             return;
           }
@@ -2354,6 +2362,16 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   }
 
   if (loading || !project) {
+    if (!loading && !project && !loadError) {
+      return (
+        <div className="max-w-lg mx-auto mt-12 p-6 bg-white rounded-xl border border-gray-200 shadow-sm space-y-4 text-center">
+          <p className="text-sm text-gray-600">Không tải được dữ liệu dự án.</p>
+          <button type="button" onClick={goToDashboard} className="h-10 px-4 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">
+            Về dashboard
+          </button>
+        </div>
+      );
+    }
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full" />

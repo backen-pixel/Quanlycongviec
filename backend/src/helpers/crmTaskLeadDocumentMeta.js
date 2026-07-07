@@ -66,9 +66,9 @@ function shouldAutoShareSxToWorkshop(taskRow, opts = {}) {
   return !!(slug && String(slug).startsWith(SX_PREFIX));
 }
 
-/** Cờ mặc định trên crm_task_attachments khi tạo từ nhiệm vụ SX đã gắn dự án. */
+/** Cờ mặc định trên crm_task_attachments — deal đã có dự án SX thì tự chia sẻ sang xưởng. */
 function getDefaultCrmAttachmentShare(taskRow, opts = {}) {
-  if (shouldAutoShareSxToWorkshop(taskRow, opts)) {
+  if (opts.linkToProject || shouldAutoShareSxToWorkshop(taskRow, opts)) {
     return { shared_to_project: true, allowed_share_modules: ['production'] };
   }
   return { shared_to_project: false, allowed_share_modules: null };

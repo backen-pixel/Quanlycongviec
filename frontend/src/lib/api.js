@@ -84,7 +84,8 @@ api.interceptors.response.use(r => r, (err) => {
   const url = String(err.config?.url || '');
   const isMonitorUnlock = url.includes('/production/backup-sync/unlock');
   const isMonitorPasswordFail = err.response?.data?.code === 'MONITOR_PASSWORD_INVALID';
-  if (err.response?.status === 401 && !isMonitorUnlock && !isMonitorPasswordFail) {
+  const isUserActivity = url.includes('/user-activity');
+  if (err.response?.status === 401 && !isMonitorUnlock && !isMonitorPasswordFail && !isUserActivity) {
     const code = err.response?.data?.code;
     const isMidnight = code === 'session_expired_midnight'
       || localStorage.getItem('logoutReason') === 'midnight';

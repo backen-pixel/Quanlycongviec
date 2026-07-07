@@ -141,6 +141,10 @@ const { ensureDealLeadDocumentsForModuleTransition } = require('../helpers/ensur
 const { assertDealResponsible, assertLeadDocumentOwner, logProjectFileActivity, logDealStageChangeComment, logDealDeadlineChangeComment, logDealActivityComment } = require('../helpers/projectFileActivity');
 const { getLeadDocumentFieldsFromCrmTask, getDefaultCrmAttachmentShare } = require('../helpers/crmTaskLeadDocumentMeta');
 const {
+  getDefaultLeadDocumentShareForDeal,
+  notifyProductionDocumentUploaded,
+} = require('../helpers/crmDocumentCrossModule');
+const {
   findChecklistItem,
   artifactNamePrefix,
   syncChecklistItemNotes,
@@ -9608,7 +9612,7 @@ r.post('/leads/:id/documents', async (req, res) => {
     } = req.body;
     
     // Get project_id from lead/deal (for sync)
-    const { data: lead } = await supabase.from('crm_leads').select('project_id').eq('id', req.params.id).single();
+    const { data: lead } = await supabase.from('crm_leads').select('project_id, title').eq('id', req.params.id).single();
     
     let shareMods = null;
     if (Array.isArray(allowed_share_modules) && allowed_share_modules.length) {
@@ -9618,6 +9622,10 @@ r.post('/leads/:id/documents', async (req, res) => {
       );
       if (!shareMods.length) shareMods = null;
     }
+    const docShare = getDefaultLeadDocumentShareForDeal(lead?.project_id, {
+      shared_to_workshop: req.body.shared_to_workshop,
+      allowed_share_modules: shareMods,
+    });
 
     const { data, error } = await supabase
       .from('lead_documents')
@@ -9633,7 +9641,8 @@ r.post('/leads/:id/documents', async (req, res) => {
         notes,
         allowed_departments: allowed_departments || null,
         allowed_companies: allowed_companies || null,
-        allowed_share_modules: shareMods,
+        allowed_share_modules: docShare.allowed_share_modules,
+        shared_to_workshop: docShare.shared_to_workshop,
         created_by: req.user.userId,
       })
       .select('*, creator:users!lead_documents_created_by_fkey(id, full_name)')
@@ -9667,6 +9676,23 @@ r.post('/leads/:id/documents', async (req, res) => {
         'crm_lead', req.params.id);
     } catch (ne) { console.warn('[NOTIFY] document_uploaded:', ne.message); }
 
+    await logProjectFileActivity(req, {
+      projectId: lead?.project_id,
+      leadId: req.params.id,
+      action: 'uploaded',
+      fileName: data.file_name || data.name,
+      fileUrl: data.file_url,
+    });
+    if (lead?.project_id && docShare.shared_to_workshop) {
+      await notifyProductionDocumentUploaded({
+        req,
+        projectId: lead.project_id,
+        leadId: req.params.id,
+        fileName: data.file_name || data.name,
+        dealTitle: lead.title,
+      });
+    }
+
     res.status(201).json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -9680,7 +9706,8 @@ r.post('/leads/:id/documents/bulk', async (req, res) => {
     const items = req.body.items;
     if (!items?.length) return res.status(400).json({ error: 'Không có file' });
 
-    const { data: lead } = await supabase.from('crm_leads').select('project_id').eq('id', req.params.id).single();
+    const { data: lead } = await supabase.from('crm_leads').select('project_id, title, assigned_to, lead_owner_id').eq('id', req.params.id).single();
+    const docShare = getDefaultLeadDocumentShareForDeal(lead?.project_id);
     const rows = items.map(item => ({
       lead_id: req.params.id,
       project_id: lead?.project_id || null,
@@ -9690,6 +9717,8 @@ r.post('/leads/:id/documents/bulk', async (req, res) => {
       file_name: item.file_name,
       file_size: item.file_size,
       mime_type: item.mime_type,
+      shared_to_workshop: docShare.shared_to_workshop,
+      allowed_share_modules: docShare.allowed_share_modules,
       created_by: req.user.userId,
     }));
     const { data, error } = await supabase.from('lead_documents')
@@ -9704,7 +9733,25 @@ r.post('/leads/:id/documents/bulk', async (req, res) => {
         fileName: doc.file_name || doc.name,
         fileUrl: doc.file_url,
       });
+      if (lead?.project_id && docShare.shared_to_workshop) {
+        await notifyProductionDocumentUploaded({
+          req,
+          projectId: lead.project_id,
+          leadId: req.params.id,
+          fileName: doc.file_name || doc.name,
+          dealTitle: lead.title,
+        });
+      }
     }
+    try {
+      const ownerIds = [lead?.assigned_to, lead?.lead_owner_id].filter(Boolean);
+      if (ownerIds.length && data?.length) {
+        await notifyMultiple(req, ownerIds, 'document_uploaded',
+          '📎 Tài liệu mới',
+          `${data.length} file được upload vào deal "${lead?.title || 'N/A'}"`,
+          'crm_lead', req.params.id);
+      }
+    } catch (ne) { console.warn('[NOTIFY] document_uploaded bulk:', ne.message); }
     res.status(201).json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -10410,13 +10457,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
       updates.kanban_deadline_at = null;
       updates.kanban_deadline_reason = null;
     }
-    if (requiresProductionPick && effectiveProductionCompanyId) {
-      const sxResponsibleId = await resolveProductionHandoverResponsibleUserId(effectiveProductionCompanyId);
-      if (sxResponsibleId) {
-        updates.assigned_to = sxResponsibleId;
-        updates.lead_owner_id = sxResponsibleId;
-      }
-    }
+    // Bàn giao SX: giữ nguyên người phụ trách CRM trên deal — NV xưởng gán qua project sau auto-create.
     if (stage?.is_lost) {
       updates.lost_reason = lost_reason || null;
       updates.actual_close_date = new Date().toISOString().split('T')[0];
@@ -15319,7 +15360,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
     if (checklistId && !ckItem) return res.status(400).json({ error: 'Mục checklist không tồn tại' });
 
     const { data: leadForShare } = await supabase.from('crm_leads')
-      .select('project_id').eq('id', req.params.leadId).single();
+      .select('project_id, title').eq('id', req.params.leadId).single();
     const bulkShareOpts = { linkToProject: !!leadForShare?.project_id };
     const defaultShare = getDefaultCrmAttachmentShare(task, bulkShareOpts);
 
@@ -15396,6 +15437,15 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
         fileUrl: att.file_url,
         taskTitle: task?.title,
       });
+      if (leadForShare?.project_id && att.shared_to_project) {
+        await notifyProductionDocumentUploaded({
+          req,
+          projectId: leadForShare.project_id,
+          leadId: req.params.leadId,
+          fileName: att.file_name || att.name,
+          dealTitle: leadForShare.title,
+        });
+      }
     }
 
     res.status(201).json(data || []);
@@ -15427,7 +15477,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
     const ckItem = ckId ? findChecklistItem(taskForShare, ckId) : null;
     if (ckId && !ckItem) return res.status(400).json({ error: 'Mục checklist không tồn tại' });
     const { data: leadForShare } = await supabase.from('crm_leads')
-      .select('project_id').eq('id', req.params.leadId).single();
+      .select('project_id, title').eq('id', req.params.leadId).single();
     const singleShareOpts = { linkToProject: !!leadForShare?.project_id };
     const singleDefaultShare = getDefaultCrmAttachmentShare(taskForShare, singleShareOpts);
 
@@ -15494,6 +15544,15 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
       fileUrl: data.file_url,
       taskTitle: taskForShare?.title,
     });
+    if (leadForShare?.project_id && data.shared_to_project) {
+      await notifyProductionDocumentUploaded({
+        req,
+        projectId: leadForShare.project_id,
+        leadId: req.params.leadId,
+        fileName: data.file_name || data.name,
+        dealTitle: leadForShare.title,
+      });
+    }
 
     res.status(201).json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -16274,7 +16333,6 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
       pcv.company.id,
       projRow?.workshop_type_id || null,
     );
-    const sxResponsible = primaryStaffId || await resolveProductionHandoverResponsibleUserId(pcv.company.id);
     const leadHandoverPatch = {
       sx_handover_at: now,
       sx_handover_confirmed_by: uid,
@@ -16284,10 +16342,6 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
       expected_production_end_date: pEnd,
       updated_at: now,
     };
-    if (sxResponsible) {
-      leadHandoverPatch.assigned_to = sxResponsible;
-      leadHandoverPatch.lead_owner_id = sxResponsible;
-    }
     const { error: upLeadErr } = await supabase.from('crm_leads').update(leadHandoverPatch).eq('id', leadId);
     if (upLeadErr) throw upLeadErr;
 
@@ -16298,6 +16352,20 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
       company_id: pcv.company.id,
     };
     if (pEnd) projPatch.production_deadline = pEnd;
+    // Gán NV SX trên dự án — không ghi đè assigned_to/lead_owner_id (người phụ trách CRM).
+    try {
+      await assignProductionCompanyDealResponsibility({
+        dealId: leadId,
+        productionCompanyId: pcv.company.id,
+        projectId: lead.project_id,
+      });
+    } catch (respErr) {
+      console.warn('[sx-handover] assign production responsible:', respErr.message);
+      if (!primaryStaffId) {
+        const sxResponsible = await resolveProductionHandoverResponsibleUserId(pcv.company.id);
+        if (sxResponsible) projPatch.production_person_id = sxResponsible;
+      }
+    }
     const { error: projErr } = await supabase.from('projects').update(projPatch).eq('id', lead.project_id);
     if (projErr) console.warn('[sx-handover] project dates:', projErr.message);
 

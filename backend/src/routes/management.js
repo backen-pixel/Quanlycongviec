@@ -222,7 +222,7 @@ async function countLeadsByStage(scope, type, dateFrom, dateTo, assigneeId) {
   q = applyCompanyScopeFilter(q, scope);
   if (dateFrom) q = q.gte('created_at', dateFrom);
   if (dateTo) q = q.lte('created_at', dateTo);
-  if (assigneeId) q = q.eq('assignee_id', assigneeId);
+  if (assigneeId) q = q.or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`);
   const { data } = await q;
   const counts = {};
   for (const row of data || []) {
@@ -262,7 +262,7 @@ async function loadDealPipelineMetrics(scope, dateFrom, dateTo, assigneeId) {
   q = applyCompanyScopeFilter(q, scope);
   if (dateFrom) q = q.gte('created_at', dateFrom);
   if (dateTo) q = q.lte('created_at', dateTo);
-  if (assigneeId) q = q.eq('assignee_id', assigneeId);
+  if (assigneeId) q = q.or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`);
   const { data } = await q;
   const now = Date.now();
   let pipelineValue = 0;
@@ -281,16 +281,26 @@ function isProjectOverdue(project) {
   return new Date(project.deadline).getTime() < Date.now();
 }
 
-function applyDealRowFilters(rows, { phase, focus, sxStageId, sxStageIds, vcStageId, vcStageIds }) {
+function applyDealRowFilters(rows, { phase, focus, sxStageId, sxStageIds, vcStageId, vcStageIds, installStageIds }) {
   let out = rows || [];
   const sxIds = String(sxStageIds || '').split(',').map((s) => s.trim()).filter(Boolean);
   const vcIds = String(vcStageIds || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const installIds = installStageIds || new Set();
   if (phase === 'crm') {
     out = out.filter((d) => !d.project_id || !d.stage?.is_won);
   } else if (phase === 'sx') {
     out = out.filter((d) => d.project_id);
+  } else if (phase === 'install') {
+    out = out.filter((d) => {
+      const col = d.project?.vc_kanban_column_id;
+      return col && installIds.has(String(col));
+    });
   } else if (phase === 'vc') {
-    out = out.filter((d) => d.project?.vc_kanban_column_id);
+    out = out.filter((d) => {
+      const col = d.project?.vc_kanban_column_id;
+      if (!col) return false;
+      return !installIds.has(String(col));
+    });
   }
   if (focus === 'overdue_crm') {
     const now = Date.now();
@@ -324,8 +334,79 @@ function applyDealRowFilters(rows, { phase, focus, sxStageId, sxStageIds, vcStag
 }
 
 function needsDealPostFilter({ phase, focus, sxStageId, vcStageId }) {
-  return !!(phase === 'crm' || phase === 'vc' || focus === 'sx_intake' || focus === 'sx_overdue'
-    || focus === 'vc_overdue' || sxStageId || vcStageId);
+  return !!(phase === 'crm' || phase === 'sx' || phase === 'vc' || phase === 'install'
+    || focus === 'sx_intake' || focus === 'sx_overdue' || focus === 'vc_overdue' || sxStageId || vcStageId);
+}
+
+function isInstallStageMeta(stage) {
+  const name = String(stage?.name || '').toLowerCase();
+  const slug = String(stage?.bucket_slug || '').toLowerCase();
+  return slug.includes('install') || name.includes('lắp') || name.includes('lap dat') || name.includes('lắp đặt');
+}
+
+function collectStageIds(stages, predicate) {
+  const ids = new Set();
+  for (const s of stages || []) {
+    if (!predicate(s)) continue;
+    for (const id of (s.stage_ids || [String(s.id)])) ids.add(String(id));
+  }
+  return ids;
+}
+
+async function enrichRowsWithWorkshopStages(rows) {
+  const sxIds = [...new Set((rows || []).map((r) => r.project?.sx_kanban_column_id).filter(Boolean))];
+  const vcIds = [...new Set((rows || []).map((r) => r.project?.vc_kanban_column_id).filter(Boolean))];
+  const sxMap = {};
+  const vcMap = {};
+  if (sxIds.length) {
+    const { data } = await supabase.from('production_pipeline_stages').select('id, name, color').in('id', sxIds);
+    for (const s of data || []) sxMap[String(s.id)] = s;
+  }
+  if (vcIds.length) {
+    const { data } = await supabase.from('logistics_pipeline_stages').select('id, name, color, bucket_slug').in('id', vcIds);
+    for (const s of data || []) vcMap[String(s.id)] = s;
+  }
+  return (rows || []).map((row) => {
+    if (!row.project) return row;
+    const p = { ...row.project };
+    if (p.sx_kanban_column_id && sxMap[String(p.sx_kanban_column_id)]) {
+      p.sx_stage = sxMap[String(p.sx_kanban_column_id)];
+    }
+    if (p.vc_kanban_column_id && vcMap[String(p.vc_kanban_column_id)]) {
+      p.vc_stage = vcMap[String(p.vc_kanban_column_id)];
+    }
+    return { ...row, project: p };
+  });
+}
+
+async function attachTaskAndDocCounts(rows) {
+  const leadIds = (rows || []).map((d) => d.id).filter(Boolean);
+  const taskCounts = {};
+  const docCounts = {};
+  const CHUNK = 150;
+  for (let i = 0; i < leadIds.length; i += CHUNK) {
+    const chunk = leadIds.slice(i, i + CHUNK);
+    const [{ data: crmTasks }, { data: docs }] = await Promise.all([
+      supabase.from('crm_tasks').select('lead_id, status').in('lead_id', chunk),
+      supabase.from('lead_documents').select('lead_id').in('lead_id', chunk),
+    ]);
+    for (const t of crmTasks || []) {
+      const lid = String(t.lead_id);
+      if (!taskCounts[lid]) taskCounts[lid] = { crm_total: 0, crm_done: 0 };
+      taskCounts[lid].crm_total += 1;
+      if (t.status === 'completed') taskCounts[lid].crm_done += 1;
+    }
+    for (const d of docs || []) {
+      const lid = String(d.lead_id);
+      docCounts[lid] = (docCounts[lid] || 0) + 1;
+    }
+  }
+  return (rows || []).map((d) => ({
+    ...d,
+    task_stats: taskCounts[String(d.id)] || { crm_total: 0, crm_done: 0 },
+    document_count: docCounts[String(d.id)] || 0,
+    value: d.budget || d.estimated_value || d.project?.estimated_value || 0,
+  }));
 }
 
 async function loadWorkshopStages(table, scope) {
@@ -410,7 +491,7 @@ async function loadSxPipelineSummary(scope) {
   };
 }
 
-async function loadVcPipelineSummary(scope) {
+async function loadVcInstallPipelines(scope) {
   let q = supabase
     .from('projects')
     .select('id, vc_kanban_column_id, deadline, status, company_id, logistics_company_id')
@@ -418,21 +499,43 @@ async function loadVcPipelineSummary(scope) {
   q = applyProjectScopeFilter(q, scope);
   let { data: projects, error } = await q;
   if (error && /vc_kanban_column_id/.test(error.message || '')) {
-    return { kpis: { active: 0, overdue: 0 }, pipeline: [] };
+    return {
+      vc: { kpis: { active: 0, overdue: 0 }, pipeline: [] },
+      install: { kpis: { active: 0, overdue: 0 }, pipeline: [] },
+    };
   }
 
   const stages = await loadWorkshopStages('logistics_pipeline_stages', scope);
+  const installStages = stages.filter(isInstallStageMeta);
+  const vcStages = stages.filter((s) => !isInstallStageMeta(s));
+  const installIds = collectStageIds(installStages, () => true);
+
+  const installProjects = [];
+  const vcProjects = [];
   const now = Date.now();
-  let overdue = 0;
+  let vcOverdue = 0;
+  let installOverdue = 0;
   for (const p of projects || []) {
-    if (p.deadline && new Date(p.deadline).getTime() < now && p.status !== 'completed') overdue += 1;
+    const col = p.vc_kanban_column_id ? String(p.vc_kanban_column_id) : '';
+    const overdue = p.deadline && new Date(p.deadline).getTime() < now && p.status !== 'completed';
+    if (col && installIds.has(col)) {
+      installProjects.push(p);
+      if (overdue) installOverdue += 1;
+    } else {
+      vcProjects.push(p);
+      if (overdue) vcOverdue += 1;
+    }
   }
 
-  const { pipeline } = countByStageIds(projects, 'vc_kanban_column_id', stages);
-
   return {
-    kpis: { active: (projects || []).length, overdue },
-    pipeline,
+    vc: {
+      kpis: { active: vcProjects.length, overdue: vcOverdue },
+      pipeline: countByStageIds(vcProjects, 'vc_kanban_column_id', vcStages).pipeline,
+    },
+    install: {
+      kpis: { active: installProjects.length, overdue: installOverdue },
+      pipeline: countByStageIds(installProjects, 'vc_kanban_column_id', installStages).pipeline,
+    },
   };
 }
 
@@ -444,15 +547,17 @@ r.get('/overview', async (req, res) => {
     const companyId = primaryCompanyIdFromScope(scope);
     const { date_from: dateFrom, date_to: dateTo, assignee_id: assigneeId } = req.query;
 
-    const [dealStages, leadStages, dealCounts, leadCounts, sx, vc, pipelineMetrics] = await Promise.all([
+    const [dealStages, leadStages, dealCounts, leadCounts, sx, vcInstall, pipelineMetrics] = await Promise.all([
       loadCrmDealStages(scope),
       loadCrmLeadStages(scope),
       countLeadsByStage(scope, 'deal', dateFrom, dateTo, assigneeId),
       countLeadsByStage(scope, 'lead', dateFrom, dateTo, assigneeId),
       loadSxPipelineSummary(scope),
-      loadVcPipelineSummary(scope),
+      loadVcInstallPipelines(scope),
       loadDealPipelineMetrics(scope, dateFrom, dateTo, assigneeId),
     ]);
+    const vc = vcInstall.vc;
+    const install = vcInstall.install;
 
     let taskQ = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true })
       .neq('status', 'completed').neq('status', 'done');
@@ -492,6 +597,8 @@ r.get('/overview', async (req, res) => {
         sx_overdue: sx.kpis.overdue,
         vc_active: vc.kpis.active,
         vc_overdue: vc.kpis.overdue,
+        install_active: install.kpis.active,
+        install_overdue: install.kpis.overdue,
         open_tasks: openTasks || 0,
         overdue_tasks: overdueTasks || 0,
       },
@@ -507,6 +614,7 @@ r.get('/overview', async (req, res) => {
         crm_deal: crmDealPipeline,
         sx: sx.pipeline,
         vc: vc.pipeline,
+        install: install.pipeline,
       },
     });
   } catch (e) {
@@ -528,36 +636,31 @@ r.get('/deals', async (req, res) => {
       vc_stage_id: vcStageId, vc_stage_ids: vcStageIds,
       assignee_id: assigneeId,
       has_project: hasProject, record_type: recordType,
+      module_tab: moduleTab,
     } = req.query;
     const leadType = recordType === 'lead' ? 'lead' : (recordType === 'all' || recordType === 'both' ? 'all' : 'deal');
     const loadAll = req.query.all === '1' || req.query.all === 'true' || req.query.page_size === 'all';
     const { page, pageSize, from, to } = parsePagination(req);
-    const postFilter = needsDealPostFilter({ phase, focus, sxStageId, vcStageId });
-    const wonStageIds = (focus === 'overdue_crm' || phase === 'crm') ? await loadWonStageIds(scope) : [];
+    let effectivePhase = phase || '';
+    if (!effectivePhase && moduleTab === 'sx') effectivePhase = 'sx';
+    if (!effectivePhase && moduleTab === 'vc') effectivePhase = 'vc';
+    if (!effectivePhase && moduleTab === 'install') effectivePhase = 'install';
+    const postFilter = needsDealPostFilter({ phase: effectivePhase, focus, sxStageId, vcStageId });
+    const wonStageIds = (focus === 'overdue_crm' || effectivePhase === 'crm') ? await loadWonStageIds(scope) : [];
+    const vcStagesAll = (effectivePhase === 'vc' || effectivePhase === 'install' || postFilter)
+      ? await loadWorkshopStages('logistics_pipeline_stages', scope)
+      : [];
+    const installStageIds = collectStageIds(vcStagesAll.filter(isInstallStageMeta), () => true);
 
-    const dealSelect = `
-        id, code, title, type, budget, estimated_value, created_at, updated_at, deadline,
-        project_id, company_id, assignee_id,
-        stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost),
-        customer:customers(id, full_name, phone),
-        assignee:users!crm_leads_assignee_id_fkey(id, full_name, avatar),
-        company:companies(id, name, short_name),
-        project:projects(
-          id, code, name, status, deadline, estimated_value, production_value, deposit_amount,
-          sx_kanban_column_id, vc_kanban_column_id, company_id,
-          sx_stage:production_pipeline_stages!projects_sx_kanban_column_id_fkey(id, name, color),
-          vc_stage:logistics_pipeline_stages!projects_vc_kanban_column_id_fkey(id, name, color)
-        )
-      `;
-
-    const dealSelectFallback = `
+    const listSelect = `
           id, code, title, type, budget, estimated_value, created_at, updated_at, deadline,
-          project_id, company_id, assignee_id,
+          project_id, company_id, assigned_to, lead_owner_id,
           stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost),
           customer:customers(id, full_name, phone),
-          assignee:users!crm_leads_assignee_id_fkey(id, full_name, avatar),
+          assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar),
+          lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar),
           company:companies(id, name, short_name),
-          project:projects(id, code, name, status, deadline, estimated_value, sx_kanban_column_id, vc_kanban_column_id)
+          project:projects(id, code, name, status, deadline, estimated_value, sx_kanban_column_id, vc_kanban_column_id, install_address)
         `;
 
     function applyStageIdFilter(query, singleId, multiIds) {
@@ -580,10 +683,13 @@ r.get('/deals', async (req, res) => {
       } else if (leadType === 'deal') {
         query = applyStageIdFilter(query, crmStageId, crmStageIds);
       }
-      if (assigneeId) query = query.eq('assignee_id', assigneeId);
+      if (assigneeId) query = query.or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`);
       if (hasProject === '1') query = query.not('project_id', 'is', null);
       if (hasProject === '0') query = query.is('project_id', null);
-      if (phase === 'sx' || focus === 'sx_intake' || focus === 'sx_overdue' || sxStageId) {
+      if (phase === 'sx' || effectivePhase === 'sx' || focus === 'sx_intake' || focus === 'sx_overdue' || sxStageId) {
+        query = query.not('project_id', 'is', null);
+      }
+      if (effectivePhase === 'vc' || effectivePhase === 'install') {
         query = query.not('project_id', 'is', null);
       }
       if (focus === 'overdue_crm') {
@@ -605,96 +711,53 @@ r.get('/deals', async (req, res) => {
       return applyDealQueryFilters(q);
     }
 
+    async function fetchTypeRows(type) {
+      return fetchAllLeadRows(() => {
+        let q = supabase.from('crm_leads').select(listSelect).eq('type', type).order('updated_at', { ascending: false });
+        return applyDealQueryFilters(q);
+      });
+    }
+
     let rows = [];
     let count = 0;
 
-    async function loadRows(select, fallbackSelect) {
-      try {
-        if (loadAll || postFilter) {
-          return await fetchAllLeadRows(() => buildLeadsQuery(select));
-        }
-        let q = buildLeadsQuery(select);
-        const res = await q.range(from, to);
-        if (res.error) throw res.error;
-        count = res.count ?? (res.data || []).length;
-        return res.data || [];
-      } catch (err) {
-        if (!fallbackSelect || !/production_pipeline_stages|logistics_pipeline_stages|sx_kanban|vc_kanban|companies/.test(err.message || '')) {
-          throw err;
-        }
-        if (loadAll || postFilter) {
-          return await fetchAllLeadRows(() => {
-            let q = supabase.from('crm_leads').select(fallbackSelect);
-            if (leadType === 'all') q = q.in('type', ['lead', 'deal']);
-            else q = q.eq('type', leadType);
-            q = q.order('updated_at', { ascending: false });
-            return applyDealQueryFilters(q);
-          });
-        }
-        let q2 = supabase.from('crm_leads').select(fallbackSelect, { count: 'exact' });
-        if (leadType === 'all') q2 = q2.in('type', ['lead', 'deal']);
-        else q2 = q2.eq('type', leadType);
-        q2 = q2.order('updated_at', { ascending: false });
-        q2 = applyDealQueryFilters(q2);
-        const res2 = await q2.range(from, to);
-        if (res2.error) throw res2.error;
-        count = res2.count ?? (res2.data || []).length;
-        return res2.data || [];
+    if (loadAll || postFilter) {
+      if (leadType === 'all') {
+        const [leads, deals] = await Promise.all([
+          fetchTypeRows('lead'),
+          fetchTypeRows('deal'),
+        ]);
+        rows = [...leads, ...deals].sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+      } else {
+        rows = await fetchAllLeadRows(() => buildLeadsQuery(listSelect));
       }
+    } else {
+      let q = buildLeadsQuery(listSelect);
+      const res = await q.range(from, to);
+      if (res.error) throw res.error;
+      count = res.count ?? (res.data || []).length;
+      rows = res.data || [];
     }
 
-    rows = await loadRows(dealSelect, dealSelectFallback);
-
     if (postFilter) {
-      rows = applyDealRowFilters(rows, { phase, focus, sxStageId, sxStageIds, vcStageId, vcStageIds });
+      rows = applyDealRowFilters(rows, {
+        phase: effectivePhase, focus, sxStageId, sxStageIds, vcStageId, vcStageIds, installStageIds,
+      });
       count = rows.length;
       if (!loadAll) rows = rows.slice(from, Math.min(to + 1, rows.length));
     } else if (loadAll) {
       count = rows.length;
     }
 
-    const leadIds = rows.map((d) => d.id).filter(Boolean);
-    const projectIds = rows.map((d) => d.project_id).filter(Boolean);
-
-    const taskCounts = {};
-    if (leadIds.length) {
-      const { data: crmTasks } = await supabase
-        .from('crm_tasks')
-        .select('lead_id, status')
-        .in('lead_id', leadIds);
-      for (const t of crmTasks || []) {
-        const lid = String(t.lead_id);
-        if (!taskCounts[lid]) taskCounts[lid] = { crm_total: 0, crm_done: 0 };
-        taskCounts[lid].crm_total += 1;
-        if (t.status === 'completed') taskCounts[lid].crm_done += 1;
-      }
-    }
-
-    const docCounts = {};
-    if (leadIds.length) {
-      const { data: docs } = await supabase
-        .from('crm_lead_documents')
-        .select('lead_id')
-        .in('lead_id', leadIds);
-      for (const d of docs || []) {
-        const lid = String(d.lead_id);
-        docCounts[lid] = (docCounts[lid] || 0) + 1;
-      }
-    }
-
-    const deals = rows.map((d) => ({
-      ...d,
-      task_stats: taskCounts[String(d.id)] || { crm_total: 0, crm_done: 0 },
-      document_count: docCounts[String(d.id)] || 0,
-      value: d.budget || d.estimated_value || d.project?.estimated_value || 0,
-    }));
+    rows = await enrichRowsWithWorkshopStages(rows);
+    const deals = await attachTaskAndDocCounts(rows);
 
     res.json({
       deals,
       total: count ?? deals.length,
       page,
-      page_size: pageSize,
-      project_ids_loaded: projectIds.length,
+      page_size: loadAll ? deals.length : pageSize,
+      module_tab: moduleTab || null,
     });
   } catch (e) {
     console.error('[management/deals]', e);
@@ -715,7 +778,8 @@ r.get('/deals/:leadId', async (req, res) => {
         *,
         stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, order_index),
         customer:customers(id, full_name, phone, email, address),
-        assignee:users!crm_leads_assignee_id_fkey(id, full_name, avatar, phone),
+        assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar, phone),
+        lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar, phone),
         company:companies(id, name, short_name),
         project:projects(
           id, code, name, status, deadline, production_deadline, estimated_value, production_value, deposit_amount,

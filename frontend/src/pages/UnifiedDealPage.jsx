@@ -70,8 +70,15 @@ export default function UnifiedDealPage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
+    const timeoutMs = 30_000;
+    const timeout = new Promise((_, reject) => {
+      window.setTimeout(() => reject(new Error('Timeout tải deal — vui lòng thử lại')), timeoutMs);
+    });
     try {
-      const { data } = await api.get(`/management/deals/${leadId}`);
+      const { data } = await Promise.race([
+        api.get(`/management/deals/${leadId}`),
+        timeout,
+      ]);
       setBundle(data);
     } catch (e) {
       setError(e.response?.data?.error || e.message || 'Không tải được deal');

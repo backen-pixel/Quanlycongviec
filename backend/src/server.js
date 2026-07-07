@@ -139,11 +139,22 @@ app.use((req, res, next) => {
 });
 
 // Rate limiting — protect auth + external webhook endpoints from abuse.
+const skipRateLimitInDev = () => process.env.NODE_ENV !== 'production';
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 60,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: skipRateLimitInDev,
+  message: { error: 'Quá nhiều yêu cầu, vui lòng thử lại sau.' },
+});
+/** GET /auth/me gọi mỗi lần mở app / HMR dev — tách limiter để tránh 429 → kẹt loading. */
+const authMeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: skipRateLimitInDev,
   message: { error: 'Quá nhiều yêu cầu, vui lòng thử lại sau.' },
 });
 const externalLimiter = rateLimit({
@@ -153,7 +164,10 @@ const externalLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Rate limit exceeded' },
 });
-app.use('/api/auth', authLimiter);
+app.use('/api/auth', (req, res, next) => {
+  if (req.path === '/me') return authMeLimiter(req, res, next);
+  return authLimiter(req, res, next);
+});
 app.use('/api/external', externalLimiter);
 app.use('/api/mcp', externalLimiter);
 
