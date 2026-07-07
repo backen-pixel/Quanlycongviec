@@ -92,6 +92,19 @@ export function canPickWorkshopCompany(user, isAdmin, isCompanyScopedAdmin) {
   return isCrossWorkshopProductionViewer(user);
 }
 
+/** NV sản xuất gắn xưởng HCB/Metalla (không phải NV CRM xem chéo). */
+export function isWorkshopProductionStaff(user) {
+  return isProductionAdmin(user) || isProductionStaff(user);
+}
+
+/** Công ty xưởng của NV sản xuất — tin JWT/dept khi danh sách companies chưa tải. */
+export function resolveStaffWorkshopCompanyId(user, companies = []) {
+  const cid = String(user?.company_id || '').trim();
+  if (!cid || !isWorkshopProductionStaff(user)) return '';
+  if (isMetallaOrHucabiCompanyId(cid, companies, user)) return cid;
+  return '';
+}
+
 /**
  * Công ty dùng để nạp phân loại xưởng (workshop_project_types).
  * Ưu tiên xưởng thực tế (HCB/Metalla) — không dùng công ty CRM (VPT) làm nguồn phân loại.
@@ -100,24 +113,37 @@ export function resolveWorkshopCompanyForTypes({
   filterCompany = '',
   filterSxWorkshopCompany = '',
   userCompanyId = '',
+  user = null,
   showVptSxWorkshopFilter = false,
   companies = [],
 } = {}) {
   const workshopId = (id) => {
     const s = String(id || '').trim();
     if (!s) return '';
-    return isMetallaOrHucabiCompanyId(s, companies) ? s : '';
+    return isMetallaOrHucabiCompanyId(s, companies, user) ? s : '';
   };
 
   if (showVptSxWorkshopFilter && filterSxWorkshopCompany) {
     return workshopId(filterSxWorkshopCompany) || String(filterSxWorkshopCompany);
   }
 
+  const ownWorkshop = resolveStaffWorkshopCompanyId(
+    user || (userCompanyId ? { company_id: userCompanyId } : null),
+    companies,
+  );
   const fromFilter = workshopId(filterCompany);
+
+  // NV xưởng: không giữ filter localStorage trỏ sang xưởng khác (vd. Metalla vs HCB Cánh kính).
+  if (ownWorkshop && fromFilter && fromFilter !== ownWorkshop) {
+    return ownWorkshop;
+  }
+
   if (fromFilter) return fromFilter;
 
   const fromUser = workshopId(userCompanyId);
   if (fromUser) return fromUser;
+
+  if (ownWorkshop) return ownWorkshop;
 
   return '';
 }
@@ -135,8 +161,14 @@ export function findVptCompany(companies) {
   }) || null;
 }
 
-export function isMetallaOrHucabiCompanyId(companyId, companies) {
+export function isMetallaOrHucabiCompanyId(companyId, companies, user = null) {
   if (!companyId) return false;
   const c = (companies || []).find((x) => String(x.id) === String(companyId));
-  return c ? isMetallaOrHucabiCompany(c) : false;
+  if (c) return isMetallaOrHucabiCompany(c);
+  // Companies chưa tải: NV xưởng có company_id từ JWT/dept — tránh race Kanban trống.
+  if (user && isWorkshopProductionStaff(user)) {
+    const cid = String(user.company_id || '').trim();
+    if (cid && String(companyId) === cid) return true;
+  }
+  return false;
 }

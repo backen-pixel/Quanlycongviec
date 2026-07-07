@@ -17,6 +17,8 @@ import {
   isAccountingUser,
   sxWorkshopFilterCompanies,
   resolveWorkshopCompanyForTypes,
+  resolveStaffWorkshopCompanyId,
+  isWorkshopProductionStaff,
   productionWorkshopFilterCompanies,
 } from '../lib/crossWorkshopProduction';
 import { formatVND, formatDate } from '../lib/utils';
@@ -117,6 +119,15 @@ function readSxDashPersisted() {
     if (!raw) return null;
     const data = JSON.parse(raw);
     if (!data || typeof data !== 'object') return null;
+    // NV xưởng: bỏ filter công ty xưởng khác còn trong localStorage (vd. Metalla khi user thuộc HCB).
+    try {
+      const u = JSON.parse(localStorage.getItem('user') || 'null');
+      const ownWs = resolveStaffWorkshopCompanyId(u, []);
+      if (ownWs && data.filterCompany && String(data.filterCompany) !== ownWs) {
+        data.filterCompany = ownWs;
+        data.filterWorkTypeId = '';
+      }
+    } catch { /* ignore */ }
     return data;
   } catch {
     try { localStorage.removeItem(LS_SX); } catch { /* ignore */ }
@@ -484,8 +495,10 @@ export default function ProductionDashboard() {
       if (fromApi.length) return fromApi;
       return workshopOptionsForDeal;
     }
-    if (user?.company_id && isMetallaOrHucabiCompanyId(user.company_id, companies)) {
-      return (companies || []).filter((c) => String(c.id) === String(user.company_id));
+    const staffWs = resolveStaffWorkshopCompanyId(user, companies);
+    if (staffWs) {
+      const own = (companies || []).find((c) => String(c.id) === staffWs);
+      return own ? [own] : [{ id: staffWs, name: staffWs, short_name: staffWs }];
     }
     return workshopCompaniesForCrossViewer(companies, user);
   }, [companies, user, workshopOptionsForDeal, dealCompanyParam, isAdmin]);
@@ -516,9 +529,11 @@ export default function ProductionDashboard() {
   }, []);
 
   const companyParam = useMemo(() => {
+    const staffWs = resolveStaffWorkshopCompanyId(user, companies);
+    if (staffWs) return staffWs;
     if (filterCompany) return String(filterCompany);
     return undefined;
-  }, [filterCompany]);
+  }, [filterCompany, user, companies]);
 
   const showVptSxWorkshopFilter = useMemo(() => {
     const cid = companyParam || filterCompany || user?.company_id || '';
@@ -534,12 +549,13 @@ export default function ProductionDashboard() {
     filterCompany: companyParam || filterCompany,
     filterSxWorkshopCompany,
     userCompanyId: user?.company_id,
+    user,
     showVptSxWorkshopFilter,
     companies,
-  }), [companyParam, filterCompany, filterSxWorkshopCompany, user?.company_id, showVptSxWorkshopFilter, companies]);
+  }), [companyParam, filterCompany, filterSxWorkshopCompany, user, showVptSxWorkshopFilter, companies]);
 
   const productionCreateCompanyIdDefault = useMemo(() => {
-    if (filterCompany && isMetallaOrHucabiCompanyId(filterCompany, companies)) return String(filterCompany);
+    if (filterCompany && isMetallaOrHucabiCompanyId(filterCompany, companies, user)) return String(filterCompany);
     if (filterSxWorkshopCompany) return String(filterSxWorkshopCompany);
     const opts = productionCreateCompanyOptions(companies);
     return opts[0]?.id ? String(opts[0].id) : '';
@@ -847,13 +863,18 @@ export default function ProductionDashboard() {
 
   useEffect(() => {
     if (!workshopCompanyPickerList.length || isAdmin) return;
+    const staffWs = resolveStaffWorkshopCompanyId(user, companies);
+    if (staffWs && String(filterCompany || '') !== staffWs) {
+      handleStaffFilterCompanyChange(staffWs);
+      return;
+    }
     if (filterCompany && workshopCompanyPickerList.some((c) => String(c.id) === String(filterCompany))) return;
     const own = user?.company_id
       ? workshopCompanyPickerList.find((c) => String(c.id) === String(user.company_id))
       : null;
     const pick = own || workshopCompanyPickerList[0];
     if (pick?.id) handleStaffFilterCompanyChange(pick.id);
-  }, [workshopCompanyPickerList, filterCompany, handleStaffFilterCompanyChange, isAdmin, user?.company_id]);
+  }, [workshopCompanyPickerList, filterCompany, handleStaffFilterCompanyChange, isAdmin, user, companies]);
 
   useEffect(() => {
     api.get('/companies', { params: { for_module: 'production' } })
