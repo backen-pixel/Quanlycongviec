@@ -15,9 +15,9 @@ function midnightVnTodayMs() {
   return new Date(`${todayVn}T00:00:00+07:00`).getTime();
 }
 
-/** Kiểm token có "qua đêm" chưa. Bypass khi env tắt hoặc role 'system'. */
+/** Kiểm token có "qua đêm" chưa. Chỉ bật khi env AUTO_LOGOUT_AT_MIDNIGHT=1. */
 function isStaleAcrossMidnight(payload) {
-  if (process.env.AUTO_LOGOUT_AT_MIDNIGHT_DISABLED === '1') return false;
+  if (process.env.AUTO_LOGOUT_AT_MIDNIGHT !== '1') return false;
   if (payload?.role === 'system') return false;
   const iatMs = payload?.iat ? payload.iat * 1000 : 0;
   if (!iatMs) return true;

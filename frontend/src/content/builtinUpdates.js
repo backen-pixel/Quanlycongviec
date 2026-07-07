@@ -11,7 +11,7 @@ export const BUILTIN_UPDATES = [
     title: '🏭 Hướng dẫn — Chuyển Deal CRM sang Sản xuất (mẫu Phúc Đạt)',
     content: `## Tổng quan luồng CRM → Xưởng
 
-Deal thắng trên CRM → chọn xưởng sản xuất → dự án xuất hiện cột Tiếp nhận → xưởng up bản vẽ và trao đổi với CRM qua bình luận → CRM xác nhận → xưởng chuyển cột tiếp theo.
+Deal thắng trên CRM → chọn xưởng sản xuất → dự án xuất hiện cột Tiếp nhận → up bản vẽ (Tài liệu) → trao đổi file qua tab Bình luận giữa CRM và xưởng → CRM xác nhận → xưởng chuyển cột tiếp theo.
 
 Mẫu minh họa: Công ty Nhôm Kính Phúc Đạt · Deal DEAL-2026-440 → dự án TB-2026-337 · phân loại Cửa.
 
@@ -62,26 +62,46 @@ File chỉ dùng nội bộ xưởng thì up bình thường, không bật chia 
 
 ![Tab Tài liệu — Upload file xưởng](/release-notes/sx-tab-tai-lieu-upload.png)
 
-### 3b. Trao đổi nhanh — đính kèm bản vẽ trong Bình luận
+### 3b. Bình luận nhanh trên Kanban (chỉ text)
 
-Để CRM và xưởng bàn giao, chỉnh sửa nhanh mà không phải mở từng tab Tài liệu:
-
-- Mở chi tiết dự án → tab Bình luận (hoặc Bình luận nhanh trên Kanban để nhắn text)
-- Ở ô soạn thảo tab Bình luận: bấm biểu tượng đính kèm (kẹp giấy) → chọn file bản vẽ
-- Hoặc dán trực tiếp ảnh/PDF vào ô soạn (Ctrl+V)
-- Gõ nội dung ngắn, ví dụ: «Đính kèm bản vẽ SX, nhờ CRM kiểm tra và phản hồi»
-- Dùng @ để nhắc NVKD phụ trách deal
-- Bấm Đăng — CRM thấy file ngay trong luồng bình luận, có thể trả lời hoặc đính kèm bản chỉnh sửa
-
-Gợi ý: lưu bản chính thức ở tab Tài liệu; đính kèm bình luận khi cần trao đổi, hỏi nhanh hoặc gửi bản phác thảo.
+Dùng khi chỉ cần nhắc CRM đã up file ở tab Tài liệu — không đính kèm file được.
 
 ![Bình luận nhanh — đợi CRM xác nhận](/release-notes/sx-binh-luan-doi-crm.png)
 
 ### 3c. CRM xác nhận
 
-NVKD mở deal DEAL-2026-440 (hoặc link CRM trên thẻ xưởng) → xem tab Tài liệu và Bình luận → phản hồi «OK bản vẽ» hoặc yêu cầu chỉnh.
+NVKD mở deal DEAL-2026-440 → xem tab Tài liệu → phản hồi OK hoặc yêu cầu chỉnh.
 
-Sau khi CRM đồng ý, xưởng Chuyển cột nhanh sang Thiết kế và lập kế hoạch (hoặc cột kế tiếp theo quy trình).
+Sau khi CRM đồng ý, xưởng Chuyển cột nhanh sang cột kế tiếp.
+
+
+## Bước 4 — Trao đổi bản vẽ qua tab Bình luận (CRM ↔ Sản xuất)
+
+Đây là cách khuyến nghị để hai bên bàn giao và chỉnh sửa nhanh: gửi file bản vẽ (PDF, DWG, JPG…) trực tiếp trong luồng bình luận — CRM và xưởng cùng thấy một chỗ.
+
+Phía Sản xuất — gửi bản vẽ kèm bình luận:
+
+1. Từ Kanban, bấm tiêu đề thẻ TB-2026-337 → mở chi tiết dự án
+2. Ở cột phải, bấm tab 💬 Bình luận trên thanh tab (Công việc · Tài liệu · Bình luận…)
+3. Gõ nội dung ngắn, dùng @ để nhắc NVKD (VD: @Vũ Pd)
+4. Bấm biểu tượng đính kèm (kẹp giấy) bên ô soạn → chọn file bản vẽ PDF/DWG/JPG
+5. Hoặc dán trực tiếp ảnh/PDF vào ô soạn (Ctrl+V) → bấm Đăng
+
+![Chi tiết dự án SX — tab Bình luận trên thanh tab, đính kèm bản vẽ](/release-notes/sx-binh-luan-dinh-kem-ban-ve.png)
+
+Phía CRM — xem và phản hồi:
+
+1. Mở deal DEAL-2026-440 (link CRM deal trên dự án xưởng hoặc từ Kanban CRM)
+2. Ở cột phải, bấm tab 💬 Bình luận trên thanh tab
+3. Xem file đính kèm dưới bình luận xưởng — bấm để xem/tải
+4. Trả lời hoặc đính kèm bản chỉnh sửa trong cùng luồng → báo xưởng chuyển cột
+
+![Chi tiết deal CRM — tab Bình luận trên thanh tab, xem file từ xưởng](/release-notes/sx-crm-xem-binh-luan-ban-ve.png)
+
+Ghi nhớ:
+- Tab Tài liệu: lưu bản vẽ chính thức, có thể Chia sẻ CRM
+- Tab Bình luận + đính kèm: trao đổi nhanh, hỏi–đáp, gửi bản phác thảo giữa CRM và xưởng
+- Bình luận nhanh trên Kanban chỉ gửi text — cần file thì vào tab Bình luận chi tiết dự án
 
 
 ## Ai làm gì?
@@ -94,7 +114,7 @@ NVKD / Admin CRM
 Nhân viên Sản xuất
 - Nhận thẻ ở cột Tiếp nhận
 - Up bản vẽ tab Tài liệu, bật Chia sẻ CRM nếu cần
-- Đính kèm file trong Bình luận để trao đổi với CRM
+- Đính kèm file bản vẽ trong tab Bình luận để trao đổi với CRM (@ nhắc NVKD)
 
 Admin
 - Cấu hình phân loại xưởng tại Pipeline xưởng nếu thiếu tùy chọn (Tủ bếp, Cửa…)`,

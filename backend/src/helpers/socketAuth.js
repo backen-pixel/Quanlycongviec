@@ -12,7 +12,7 @@ function midnightVnTodayMs() {
 }
 
 function isStaleAcrossMidnight(payload) {
-  if (process.env.AUTO_LOGOUT_AT_MIDNIGHT_DISABLED === '1') return false;
+  if (process.env.AUTO_LOGOUT_AT_MIDNIGHT !== '1') return false;
   if (payload?.role === 'system') return false;
   const iatMs = payload?.iat ? payload.iat * 1000 : 0;
   if (!iatMs) return true;

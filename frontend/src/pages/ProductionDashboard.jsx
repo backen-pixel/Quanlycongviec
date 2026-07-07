@@ -329,6 +329,8 @@ export default function ProductionDashboard() {
   const [workTypes, setWorkTypes] = useState([]);
   /** Công ty mà danh sách `workTypes` hiện tại thuộc về — chống dùng nhầm loại của công ty cũ khi đổi công ty. */
   const [workTypesCompanyId, setWorkTypesCompanyId] = useState('');
+  /** true khi đang fetch /workshop/project-types — chặn load() với phân loại cũ (regression c6e2f07d). */
+  const [workTypesFetching, setWorkTypesFetching] = useState(false);
   /** Hiện cột ảo «Chưa phân loại» ở đầu Kanban — gom các project chưa có workshop_type_id. */
   const [showOrphanColumn, setShowOrphanColumn] = useState(() => !!P0?.showOrphanColumn);
 
@@ -641,7 +643,8 @@ export default function ProductionDashboard() {
     }
   }, [companyParam, dealCompanyParam, kanbanLoadKey, showVptSxWorkshopFilter, filterSxWorkshopCompany]);
 
-  const dataLoadReady = workTypesCompanyId === companyForTypes
+  const dataLoadReady = !workTypesFetching
+    && workTypesCompanyId === companyForTypes
     && (workTypes.length === 0 || !!filterWorkTypeId);
 
   useEffect(() => {
@@ -863,7 +866,8 @@ export default function ProductionDashboard() {
     if (dealCompanyParam) return;
     const list = workshopCompanyPickerList;
     if (!list.length) return;
-    handleStaffFilterCompanyChange(list[0].id);
+    const ownWorkshop = list.find((c) => String(c.id) === String(user.company_id));
+    handleStaffFilterCompanyChange(ownWorkshop?.id || list[0].id);
   }, [companies, filterCompany, user, handleStaffFilterCompanyChange, workshopCompanyPickerList, dealCompanyParam]);
 
   useEffect(() => {
@@ -900,12 +904,14 @@ export default function ProductionDashboard() {
     if (!companyForTypes) {
       setWorkTypes([]);
       setWorkTypesCompanyId('');
+      setWorkTypesFetching(false);
       return undefined;
     }
     let cancelled = false;
+    setWorkTypesFetching(true);
     setWorkTypes([]);
-    // Gắn công ty ngay khi bắt đầu fetch — tránh dataLoadReady=false kẹt spinner.
-    setWorkTypesCompanyId(companyForTypes);
+    // Chỉ gắn công ty sau khi fetch xong — tránh dataLoadReady=true với phân loại cũ (c6e2f07d).
+    setWorkTypesCompanyId('');
     const typeParams = { company_id: companyForTypes, module: 'production' };
     if (dealCompanyParam) typeParams.client_company_id = dealCompanyParam;
     api.get('/workshop/project-types', { params: typeParams })
@@ -918,6 +924,9 @@ export default function ProductionDashboard() {
         if (cancelled) return;
         setWorkTypes([]);
         setWorkTypesCompanyId(companyForTypes);
+      })
+      .finally(() => {
+        if (!cancelled) setWorkTypesFetching(false);
       });
     return () => { cancelled = true; };
   }, [companyForTypes, dealCompanyParam]);
@@ -1172,6 +1181,17 @@ export default function ProductionDashboard() {
           return wid && String(wid) === String(cid);
         });
         if (wfMatches.length === 1) return wfMatches[0].id;
+        if (wfMatches.length > 1) {
+          const deals = Array.isArray(project.crm_deals) ? project.crm_deals : [];
+          const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
+          const leadColId = primaryDeal?.sx_pipeline_stage_id || null;
+          const ids = new Set(wfMatches.map((m) => String(m.id)));
+          if (project.sx_kanban_column_id && ids.has(String(project.sx_kanban_column_id))) {
+            return project.sx_kanban_column_id;
+          }
+          if (leadColId && ids.has(String(leadColId))) return leadColId;
+          return wfMatches.sort((a, b) => (a.order_index || 0) - (b.order_index || 0))[0]?.id || null;
+        }
       }
       // Won deal nhưng chưa map được workflow → cột intake hoặc cột đầu tiên
       if (project.sx_won_deal || project.sx_intake) {

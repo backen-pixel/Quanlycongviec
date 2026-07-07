@@ -42,11 +42,15 @@ export function getUnreadBuiltinUpdates() {
 
 /** Bản builtin chưa đọc mới nhất (theo publishedAt). */
 export function getLatestUnreadBuiltinUpdate() {
-  const unread = getUnreadBuiltinUpdates();
-  if (!unread.length) return null;
-  return [...unread].sort(
+  const sorted = getSortedUnreadBuiltinUpdates();
+  return sorted[0] || null;
+}
+
+/** Tất cả builtin chưa đọc, mới → cũ. */
+export function getSortedUnreadBuiltinUpdates() {
+  return [...getUnreadBuiltinUpdates()].sort(
     (a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0),
-  )[0];
+  );
 }
 
 export function builtinUpdateUnreadCount() {
@@ -73,6 +77,12 @@ export function markNoteRead(note) {
   if (!note) return;
   if (note.is_builtin || String(note.id || '').startsWith('builtin:')) {
     markBuiltinUpdateRead(note.builtinId || String(note.id).replace(/^builtin:/, ''));
-    return;
+  }
+}
+
+/** Đánh dấu đã đọc nhiều bản (builtin + DB id thuần). */
+export function markNotesReadLocally(notes) {
+  for (const note of notes || []) {
+    markNoteRead(note);
   }
 }

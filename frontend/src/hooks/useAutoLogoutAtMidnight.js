@@ -1,10 +1,8 @@
 /**
- * Tự đăng xuất user vào 00:00:05 (giờ VN) mỗi ngày.
+ * (Không dùng mặc định) Tự đăng xuất user vào 00:00:05 (giờ VN) mỗi ngày.
  *
- * - Timer: logout đúng nửa đêm khi tab vẫn mở.
- * - Kiểm tra ngay khi mount / tab focus: token cấp trước 00:00 hôm nay → logout (mở app sáng hôm sau).
- *
- * Disable: localStorage.setItem('autoLogoutMidnight', 'off')
+ * Bật lại: import hook vào auth.jsx + localStorage.setItem('autoLogoutMidnight', 'on')
+ * Backend: AUTO_LOGOUT_AT_MIDNIGHT=1
  */
 import { useEffect, useRef } from 'react';
 
@@ -21,7 +19,7 @@ function midnightVnTodayMs() {
 
 /** Token JWT có iat trước 00:00 VN hôm nay → phiên "qua đêm". */
 function isTokenStaleAcrossMidnight() {
-  if (localStorage.getItem('autoLogoutMidnight') === 'off') return false;
+  if (localStorage.getItem('autoLogoutMidnight') !== 'on') return false;
   const token = localStorage.getItem('token');
   if (!token) return false;
   try {
@@ -65,7 +63,7 @@ export function useAutoLogoutAtMidnight(enabled, onLogout) {
   useEffect(() => {
     if (!enabled) return undefined;
     if (typeof window === 'undefined') return undefined;
-    if (localStorage.getItem('autoLogoutMidnight') === 'off') return undefined;
+    if (localStorage.getItem('autoLogoutMidnight') !== 'on') return undefined;
 
     function schedule() {
       if (isTokenStaleAcrossMidnight()) {
