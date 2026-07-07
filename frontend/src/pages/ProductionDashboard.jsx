@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
-import { isAdminLike, isSystemAdmin } from '../lib/adminRole';
+import { isAdminLike, isSystemAdmin, isProductionAdmin, isProductionStaff } from '../lib/adminRole';
 import {
   canPickWorkshopCompany,
   isCrossWorkshopProductionViewer,
@@ -16,6 +16,8 @@ import {
   isMetallaOrHucabiCompanyId,
   isAccountingUser,
   sxWorkshopFilterCompanies,
+  resolveWorkshopCompanyForTypes,
+  productionWorkshopFilterCompanies,
 } from '../lib/crossWorkshopProduction';
 import { formatVND, formatDate } from '../lib/utils';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
@@ -471,9 +473,10 @@ export default function ProductionDashboard() {
 
   const canPickCompany = canPickWorkshopCompany(user, isAdmin, isCompanyScopedAdmin);
   const workshopCompanyPickerList = useMemo(() => {
-    // Admin (kể cả admin gắn công ty): đủ xưởng module SX — khớp backend GET /companies?for_module=production
+    // Admin hệ thống: chỉ xưởng SX (HCB/Metalla) — tránh chọn VPT/CRM làm «công ty sản xuất» rồi không có phân loại.
     if (isAdmin && !dealCompanyParam) {
-      return companies;
+      const workshops = productionWorkshopFilterCompanies(companies);
+      return workshops.length ? workshops : companies;
     }
     if (workshopOptionsForDeal.length) {
       const ids = new Set(workshopOptionsForDeal.map((w) => String(w.id)));
@@ -527,13 +530,13 @@ export default function ProductionDashboard() {
     [companies, user],
   );
 
-  const companyForTypes = useMemo(() => {
-    const base = companyParam || (user?.company_id ? String(user.company_id) : '');
-    if (showVptSxWorkshopFilter && filterSxWorkshopCompany) {
-      return String(filterSxWorkshopCompany);
-    }
-    return base;
-  }, [companyParam, user?.company_id, showVptSxWorkshopFilter, filterSxWorkshopCompany]);
+  const companyForTypes = useMemo(() => resolveWorkshopCompanyForTypes({
+    filterCompany: companyParam || filterCompany,
+    filterSxWorkshopCompany,
+    userCompanyId: user?.company_id,
+    showVptSxWorkshopFilter,
+    companies,
+  }), [companyParam, filterCompany, filterSxWorkshopCompany, user?.company_id, showVptSxWorkshopFilter, companies]);
 
   const productionCreateCompanyIdDefault = useMemo(() => {
     if (filterCompany && isMetallaOrHucabiCompanyId(filterCompany, companies)) return String(filterCompany);
@@ -845,9 +848,12 @@ export default function ProductionDashboard() {
   useEffect(() => {
     if (!workshopCompanyPickerList.length || isAdmin) return;
     if (filterCompany && workshopCompanyPickerList.some((c) => String(c.id) === String(filterCompany))) return;
-    const first = workshopCompanyPickerList[0];
-    if (first?.id) handleStaffFilterCompanyChange(first.id);
-  }, [workshopCompanyPickerList, filterCompany, handleStaffFilterCompanyChange, isAdmin]);
+    const own = user?.company_id
+      ? workshopCompanyPickerList.find((c) => String(c.id) === String(user.company_id))
+      : null;
+    const pick = own || workshopCompanyPickerList[0];
+    if (pick?.id) handleStaffFilterCompanyChange(pick.id);
+  }, [workshopCompanyPickerList, filterCompany, handleStaffFilterCompanyChange, isAdmin, user?.company_id]);
 
   useEffect(() => {
     api.get('/companies', { params: { for_module: 'production' } })
@@ -862,12 +868,19 @@ export default function ProductionDashboard() {
 
   useEffect(() => {
     if (filterCompany || !companies.length || isSystemAdmin(user)) return;
-    if (!user?.company_id) return;
     if (dealCompanyParam) return;
     const list = workshopCompanyPickerList;
     if (!list.length) return;
-    const ownWorkshop = list.find((c) => String(c.id) === String(user.company_id));
-    handleStaffFilterCompanyChange(ownWorkshop?.id || list[0].id);
+    const ownWorkshop = user?.company_id
+      ? list.find((c) => String(c.id) === String(user.company_id))
+      : null;
+    if (ownWorkshop?.id) {
+      handleStaffFilterCompanyChange(ownWorkshop.id);
+      return;
+    }
+    if (!user?.company_id && (isProductionAdmin(user) || isProductionStaff(user))) {
+      handleStaffFilterCompanyChange(list[0].id);
+    }
   }, [companies, filterCompany, user, handleStaffFilterCompanyChange, workshopCompanyPickerList, dealCompanyParam]);
 
   useEffect(() => {

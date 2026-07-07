@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import api from '../lib/api';
 import { BUILTIN_UPDATES } from '../content/builtinUpdates';
 import { ReleaseNoteContent } from '../lib/renderReleaseNoteContent';
-import { markBuiltinUpdateRead } from '../lib/releaseNotesRead';
+import { markBuiltinUpdateRead, isLoginPopupDisabled, setLoginPopupDisabled } from '../lib/releaseNotesRead';
 import { useReleaseNotesUnread } from '../hooks/useReleaseNotesUnread';
 import {
   Megaphone, Plus, Edit3, Trash2, Eye, EyeOff, Pin, Check, Sparkles, Bug,
@@ -77,6 +77,7 @@ export default function ReleaseNotesPage() {
   const [editNote, setEditNote] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
   const [expandedBuiltinId, setExpandedBuiltinId] = useState(BUILTIN_UPDATES[0]?.id ?? null);
+  const [loginPopupOff, setLoginPopupOff] = useState(() => isLoginPopupDisabled());
   const { refresh: refreshUnread } = useReleaseNotesUnread();
   const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
   const isAdmin = ['admin', 'sales_admin', 'manager'].includes(currentUser.role);
@@ -150,9 +151,21 @@ export default function ReleaseNotesPage() {
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">
             {isAdmin
-              ? 'Quản lý thông báo cập nhật — popup khi mở web chỉ hiện đúng bản mới nhất cho đến khi nhân viên đã đọc.'
+              ? 'Quản lý thông báo cập nhật — popup khi đăng nhập hiện mọi bản chưa đọc, bắt buộc cuộn hết mới tắt được.'
               : 'Cập nhật và thay đổi mới nhất'}
           </p>
+          {loginPopupOff && (
+            <button
+              type="button"
+              onClick={() => {
+                setLoginPopupDisabled(false);
+                setLoginPopupOff(false);
+              }}
+              className="mt-2 text-xs text-blue-600 hover:text-blue-800 font-medium cursor-pointer"
+            >
+              Bật lại popup «Có gì mới» khi đăng nhập
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {isAdmin && (
