@@ -57,7 +57,31 @@ r.get('/unread-count', responseCache({ ttl: 60, scope: 'user', tags: ['releaseNo
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// GET /release-notes/login-banner — chỉ bản cập nhật mới nhất (đã xuất bản); popup nếu user chưa đọc đúng bản đó (không xếp hàng các bản cũ)
+// GET /release-notes/login-queue — tất cả bản đã xuất bản mà user chưa đọc (popup đăng nhập)
+r.get('/login-queue', responseCache({ ttl: 60, scope: 'user', tags: ['releaseNotes'] }), async (req, res) => {
+  try {
+    const { data: rows, error } = await supabase.from('release_notes')
+      .select(NOTE_SELECT)
+      .eq('is_published', true)
+      .order('is_pinned', { ascending: false })
+      .order('published_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    const published = rows || [];
+    if (!published.length) return res.json({ notes: [], total: 0 });
+
+    const pubIds = published.map((n) => n.id);
+    const { data: readRows } = await supabase.from('release_note_reads')
+      .select('release_note_id')
+      .eq('user_id', req.user.userId)
+      .in('release_note_id', pubIds);
+    const readIds = new Set((readRows || []).map((r) => r.release_note_id));
+    const notes = published.filter((n) => !readIds.has(n.id));
+    res.json({ notes, total: notes.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /release-notes/login-banner — chỉ bản cập nhật mới nhất (legacy; popup dùng login-queue)
 r.get('/login-banner', responseCache({ ttl: 120, scope: 'user', tags: ['releaseNotes'] }), async (req, res) => {
   try {
     const { data: rows, error } = await supabase.from('release_notes')

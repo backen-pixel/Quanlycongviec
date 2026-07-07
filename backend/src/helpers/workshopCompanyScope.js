@@ -1,4 +1,4 @@
-const { isSystemAdmin } = require('./adminRole');
+const { isSystemAdmin, isProductionAdmin, isProductionStaff } = require('./adminRole');
 const {
   canCrossWorkshopProductionViewerUseCompanyQuery,
   isMetallaOrHucabiCompanyIdSync,
@@ -32,6 +32,12 @@ function effectiveWorkshopCompanyId(req, queryCompanyId) {
     if (q) return q;
     if (userCid && isMetallaOrHucabiCompanyIdSync(userCid)) return userCid;
     return null;
+  }
+
+  // NV xưởng (HCB/Metalla): luôn scope theo công ty đã resolve (kể cả từ department_id).
+  if ((isProductionAdmin(req.user) || isProductionStaff(req.user)) && userCid) {
+    if (q && String(q) === String(userCid)) return q;
+    return userCid;
   }
 
   return userCid || null;

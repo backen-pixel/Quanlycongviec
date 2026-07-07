@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import api from '../lib/api';
 import { BUILTIN_UPDATES } from '../content/builtinUpdates';
 import { ReleaseNoteContent } from '../lib/renderReleaseNoteContent';
-import { markAllBuiltinUpdatesRead } from '../lib/releaseNotesRead';
+import { markBuiltinUpdateRead } from '../lib/releaseNotesRead';
 import { useReleaseNotesUnread } from '../hooks/useReleaseNotesUnread';
 import {
   Megaphone, Plus, Edit3, Trash2, Eye, EyeOff, Pin, Check, Sparkles, Bug,
@@ -14,6 +14,7 @@ const CATEGORIES = {
   improvement: { label: 'Cải thiện', icon: '⚡', color: 'bg-amber-100 text-amber-700', badge: 'bg-amber-500' },
   bugfix: { label: 'Sửa lỗi', icon: '🐛', color: 'bg-red-100 text-red-700', badge: 'bg-red-500' },
   announcement: { label: 'Thông báo', icon: '📢', color: 'bg-purple-100 text-purple-700', badge: 'bg-purple-500' },
+  guide: { label: 'Hướng dẫn', icon: '📖', color: 'bg-teal-100 text-teal-700', badge: 'bg-teal-500' },
 };
 
 function formatDateVN(iso) {
@@ -81,7 +82,6 @@ export default function ReleaseNotesPage() {
   const isAdmin = ['admin', 'sales_admin', 'manager'].includes(currentUser.role);
 
   useEffect(() => {
-    markAllBuiltinUpdatesRead();
     refreshUnread();
   }, [refreshUnread]);
 
@@ -181,7 +181,16 @@ export default function ReleaseNotesPage() {
                 key={item.id}
                 item={item}
                 isExpanded={expandedBuiltinId === item.id}
-                onToggle={() => setExpandedBuiltinId((cur) => (cur === item.id ? null : item.id))}
+                onToggle={() => {
+                  setExpandedBuiltinId((cur) => {
+                    const next = cur === item.id ? null : item.id;
+                    if (next === item.id) {
+                      markBuiltinUpdateRead(item.id);
+                      refreshUnread();
+                    }
+                    return next;
+                  });
+                }}
               />
             ))}
           </div>

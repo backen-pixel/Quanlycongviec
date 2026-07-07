@@ -14,7 +14,7 @@ CRM Kanban (Deal)
     → Popup «Chuyển Deal sang Sản xuất»: chọn Công ty SX + Phân loại → Tiếp tục
     → Tự tạo dự án xưởng (mã TB-YYYY-NNN)
     → Xưởng SX: Kanban cột «Tiếp nhận»
-    → Up bản vẽ (tab Tài liệu) + đính kèm bản vẽ trong Bình luận để trao đổi
+    → Up bản vẽ (tab Tài liệu) + đính kèm file trong tab Bình luận để CRM ↔ xưởng trao đổi
     → CRM xác nhận → xưởng chuyển cột pipeline tiếp theo
 ```
 
@@ -131,37 +131,60 @@ Ghi chú trên ảnh:
 - (4) Banner vàng: tài liệu CRM chưa chia sẻ xưởng.
 - (5) Pipeline stepper đang ở Tiếp nhận.
 
-### 3.2. Trao đổi nhanh — đính kèm bản vẽ trong Bình luận
+### 3.2. Bình luận nhanh trên Kanban (chỉ text)
 
-Tab Tài liệu phù hợp để lưu bản vẽ chính thức. Khi cần trao đổi, hỏi nhanh hoặc gửi bản phác thảo, dùng Bình luận kèm file:
-
-Tab Bình luận (trong chi tiết dự án)
-1. Mở tab 💬 Bình luận.
-2. Bấm biểu tượng đính kèm (kẹp giấy) ở ô soạn thảo → chọn file bản vẽ.
-3. Hoặc dán trực tiếp ảnh/PDF vào ô soạn (Ctrl+V).
-4. Gõ nội dung ngắn, VD: «Đính kèm bản vẽ SX, nhờ CRM kiểm tra và phản hồi».
-5. Dùng @ để nhắc NVKD phụ trách deal → bấm Đăng.
-
-Bình luận nhanh (từ Kanban)
-- Bấm Bình luận nhanh trên thẻ → gõ lời nhắn text (không đính kèm file).
-- Dùng khi chỉ cần nhắc CRM đã up bản vẽ ở tab Tài liệu.
-- Cần gửi kèm file → vào chi tiết dự án, tab Bình luận.
+Bấm Bình luận nhanh trên thẻ → gõ nội dung → Đăng. Không đính kèm file — dùng khi chỉ cần nhắc CRM.
 
 ![Bình luận nhanh — đợi CRM xác nhận](../frontend/public/release-notes/sx-binh-luan-doi-crm.png)
 
+### 3.3. Phía CRM xác nhận (qua tab Tài liệu)
+
+1. Mở deal DEAL-2026-440.
+2. Kiểm tra tab Tài liệu.
+3. Phản hồi qua tab Bình luận hoặc chuyển cột sau khi OK.
+
+---
+
+## Bước 4 — Trao đổi bản vẽ qua tab Bình luận (CRM ↔ Sản xuất)
+
+Cách khuyến nghị để CRM và xưởng bàn giao nhanh: gửi file bản vẽ trực tiếp trong luồng bình luận — hai bên cùng thấy một chỗ, có thể trả lời và đính kèm bản chỉnh sửa.
+
+### 4.1. Phía Sản xuất — gửi bản vẽ kèm bình luận
+
+1. Từ Kanban, bấm tiêu đề thẻ TB-2026-337 → mở chi tiết dự án.
+2. Cột phải: bấm tab 💬 Bình luận trên thanh tab (Công việc · Tài liệu · Bình luận…).
+3. Gõ nội dung ngắn, dùng @ nhắc NVKD (VD: @Vũ Pd).
+4. Bấm biểu tượng đính kèm (kẹp giấy) → chọn PDF/DWG/JPG bản vẽ.
+5. Hoặc dán trực tiếp ảnh/PDF (Ctrl+V) → bấm Đăng.
+
+![Chi tiết dự án SX — tab Bình luận trên thanh tab, đính kèm bản vẽ](../frontend/public/release-notes/sx-binh-luan-dinh-kem-ban-ve.png)
+
 Ghi chú trên ảnh:
-- (1) Popup Bình luận nhanh gắn mã TB-2026-337.
-- (2) Nội dung mẫu nhắc CRM kiểm tra bản vẽ.
-- (3) CRM thấy bình luận trên deal hoặc tab Bình luận chi tiết dự án.
+- (1) Header deal và pipeline stepper Tiếp nhận.
+- (2) Thanh tab cột phải — tab 💬 Bình luận (3) đang được chọn.
+- (3) Luồng bình luận chung CRM ↔ xưởng; file đính kèm hiển thị thumbnail.
+- (4) Ô soạn phía dưới: icon kẹp giấy + Ctrl+V + nút Đăng.
 
-Phía CRM: mở deal → tab Bình luận → xem file đính kèm, trả lời hoặc đính kèm bản chỉnh sửa ngay trong luồng.
+### 4.2. Phía CRM — xem file và phản hồi
 
-### 3.3. Phía CRM xác nhận
+1. Mở deal DEAL-2026-440 (link CRM deal hoặc từ Kanban CRM).
+2. Cột phải: bấm tab 💬 Bình luận trên thanh tab.
+3. Xem file đính kèm dưới bình luận xưởng — bấm xem/tải.
+4. Trả lời hoặc đính kèm bản chỉnh trong cùng luồng.
 
-1. Mở deal DEAL-2026-440 (hoặc link từ thẻ CRM trên Kanban xưởng).
-2. Kiểm tra tab Tài liệu và Bình luận (kể cả file đính kèm).
-3. Phản hồi «Đã OK bản vẽ» hoặc yêu cầu chỉnh sửa.
-4. Sau khi OK → xưởng Chuyển cột nhanh sang Thiết kế và lập kế hoạch.
+![Chi tiết deal CRM — tab Bình luận trên thanh tab, xem file từ xưởng](../frontend/public/release-notes/sx-crm-xem-binh-luan-ban-ve.png)
+
+Ghi chú trên ảnh:
+- (1) Header deal CRM DEAL-2026-440 và pipeline stepper.
+- (2) Thanh tab — tab 💬 Bình luận (3) đang mở.
+- (3) Cùng luồng bình luận với xưởng; file bản vẽ hiển thị inline.
+- (4) CRM trả lời tại ô soạn phía dưới (cũng hỗ trợ đính kèm file).
+
+### 4.3. Phân biệt Tài liệu vs Bình luận
+
+- Tab Tài liệu: lưu bản vẽ chính thức, có nút Chia sẻ CRM.
+- Tab Bình luận + đính kèm: trao đổi nhanh, hỏi–đáp, gửi bản phác thảo.
+- Bình luận nhanh Kanban: chỉ text, không file.
 
 ---
 

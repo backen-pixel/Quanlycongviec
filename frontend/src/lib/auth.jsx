@@ -10,15 +10,13 @@ import { connectSocket, disconnectSocket } from '../lib/socket';
 import { resetClientSessionState } from '../lib/sessionReset';
 import { useActivityPing } from '../hooks/useActivityPing';
 import { useDeviceHeartbeat } from '../hooks/useDeviceHeartbeat';
-import { useAutoLogoutAtMidnight } from '../hooks/useAutoLogoutAtMidnight';
 import GeoConsentBanner from '../components/GeoConsentBanner';
 
 const AuthCtx = createContext(null);
 
-function ActivityPingGate({ user, onLogout, children }) {
+function ActivityPingGate({ user, children }) {
   useActivityPing(!!user);
   useDeviceHeartbeat(!!user);
-  useAutoLogoutAtMidnight(!!user, onLogout);
   return (
     <>
       {children}
@@ -141,7 +139,7 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthCtx.Provider value={{ user, loading, login, loginWithGoogle, logout, applyAuthSession, refreshUser, socket }}>
-      <ActivityPingGate user={user} onLogout={logout}>{children}</ActivityPingGate>
+      <ActivityPingGate user={user}>{children}</ActivityPingGate>
     </AuthCtx.Provider>
   );
 }

@@ -347,6 +347,17 @@ async function loadDealSxPipelineMetaByProjectIds(projectIds) {
   return map;
 }
 
+/** Nhiều cột pipeline dùng chung workflow_stage_id (vd. HCB Cánh kính) — ưu tiên cột deal / sx_kanban. */
+function resolveSharedWorkflowStageColumn(wfMatches, { leadColId = null, projectSxColId = null } = {}) {
+  if (!wfMatches?.length) return null;
+  if (wfMatches.length === 1) return wfMatches[0].id;
+  const ids = new Set(wfMatches.map((m) => String(m.id)));
+  if (projectSxColId && ids.has(String(projectSxColId))) return String(projectSxColId);
+  if (leadColId && ids.has(String(leadColId))) return String(leadColId);
+  const sorted = [...wfMatches].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+  return sorted[0]?.id || null;
+}
+
 function kanbanColumnIdForProject(project, sortedStages, wonIdSet, leadMeta = null) {
   const sorted = [...(sortedStages || [])].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
   const stageIds = new Set(sorted.map((s) => String(s.id)));
@@ -370,8 +381,10 @@ function kanbanColumnIdForProject(project, sortedStages, wonIdSet, leadMeta = nu
     const wid = col.workflow_stage_id || col.workflow_stage?.id;
     return wid && cid && String(wid) === String(cid);
   });
-  if (wfMatches.length === 1) return wfMatches[0].id;
-  return null;
+  return resolveSharedWorkflowStageColumn(wfMatches, {
+    leadColId: leadColValid || leadCol,
+    projectSxColId: project?.sx_kanban_column_id,
+  });
 }
 
 /**
@@ -413,7 +426,11 @@ function resolveSxDisplayColumnId(project, sortedStages, opts = {}) {
       const wid = col.workflow_stage_id || col.workflow_stage?.id;
       return wid && String(wid) === String(cid);
     });
-    if (wfMatches.length === 1) return wfMatches[0].id;
+    const fromWf = resolveSharedWorkflowStageColumn(wfMatches, {
+      leadColId: leadColId || leadMeta?.sx_pipeline_stage_id,
+      projectSxColId: project?.sx_kanban_column_id,
+    });
+    if (fromWf) return fromWf;
   }
 
   if (project?.sx_intake || wonDeal) return firstSxPipelineColumnId(sorted);
