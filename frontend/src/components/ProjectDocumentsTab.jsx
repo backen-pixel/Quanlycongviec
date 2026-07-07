@@ -1,9 +1,14 @@
-﻿import { useState, useEffect, useCallback } from 'react';
+﻿import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
+import UploadFileLightbox, {
+  buildUploadLightboxItem,
+  collectUploadLightboxItems,
+  findUploadLightboxIndex,
+} from './UploadFileLightbox';
 import {
   FileText, Paperclip, ChevronDown, ChevronRight, CheckCircle2, ShieldCheck,
-  FolderOpen, ClipboardList, StickyNote, Image, FileSearch, ExternalLink, Download
+  FolderOpen, ClipboardList, StickyNote, ExternalLink, Download, ZoomIn
 } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
 import {
@@ -30,6 +35,7 @@ export default function ProjectDocumentsTab({ projectId, project }) {
   const [leadDocuments, setLeadDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedStage, setExpandedStage] = useState(null);
+  const [lightbox, setLightbox] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -54,6 +60,23 @@ export default function ProjectDocumentsTab({ projectId, project }) {
   }, [projectId]);
 
   useEffect(() => { load(); }, [load]);
+
+  const dealImageGallery = useMemo(
+    () => collectUploadLightboxItems(leadDocuments),
+    [leadDocuments],
+  );
+
+  const openDealImage = useCallback((rawPath) => {
+    const path = String(rawPath || '').trim();
+    if (!path) return;
+    const idx = findUploadLightboxIndex(dealImageGallery, path);
+    if (idx >= 0) {
+      setLightbox({ items: dealImageGallery, index: idx });
+      return;
+    }
+    const item = buildUploadLightboxItem({ file_url: path, file_path: path });
+    if (item) setLightbox({ items: [item], index: 0 });
+  }, [dealImageGallery]);
 
   if (loading) return (
     <div className="flex items-center justify-center py-10">
@@ -129,7 +152,7 @@ export default function ProjectDocumentsTab({ projectId, project }) {
           </div>
           <div className="px-4 pb-4 space-y-2">
             {leadDocuments.map(doc => (
-              <LeadDocumentCard key={doc.id} doc={doc} onVisibilitySaved={load} />
+              <LeadDocumentCard key={doc.id} doc={doc} onVisibilitySaved={load} onOpenImage={openDealImage} />
             ))}
           </div>
         </div>
@@ -298,6 +321,15 @@ export default function ProjectDocumentsTab({ projectId, project }) {
           <p className="text-[10px] mt-1">Tài liệu sẽ tự động xuất hiện khi các giai đoạn được duyệt</p>
         </div>
       )}
+
+      {lightbox?.items?.length > 0 && (
+        <UploadFileLightbox
+          items={lightbox.items}
+          index={lightbox.index}
+          onIndexChange={(index) => setLightbox((prev) => (prev ? { ...prev, index } : prev))}
+          onClose={() => setLightbox(null)}
+        />
+      )}
     </div>
   );
 }
@@ -313,15 +345,16 @@ const DOC_TYPE_MAP = {
   other: { label: 'Khác', icon: '📎', color: 'text-gray-600 bg-gray-50' },
 };
 
-function LeadDocumentCard({ doc, onVisibilitySaved }) {
+function LeadDocumentCard({ doc, onVisibilitySaved, onOpenImage }) {
   const [expanded, setExpanded] = useState(false);
   const [showVis, setShowVis] = useState(false);
   const [sharedToWorkshop, setSharedToWorkshop] = useState(!!doc.shared_to_workshop);
   const [allowedShareModules, setAllowedShareModules] = useState(() => parseShareModules(doc.allowed_share_modules) || []);
   const [savingVis, setSavingVis] = useState(false);
   const typeInfo = DOC_TYPE_MAP[doc.doc_type] || DOC_TYPE_MAP.other;
-  const fileHref = doc.file_url ? publicFileUrl(doc.file_url) : '';
-  const fileOpenProps = fileHref ? getFileOpenAnchorProps(doc.file_url, { fileName: doc.file_name }) : null;
+  const rawFileRef = doc.file_url || doc.file_path || '';
+  const fileHref = rawFileRef ? publicFileUrl(rawFileRef) : '';
+  const fileOpenProps = fileHref ? getFileOpenAnchorProps(rawFileRef, { fileName: doc.file_name }) : null;
   const isFile = !!fileHref;
   const isImage = doc.doc_type === 'image' || doc.mime_type?.startsWith('image/') ||
     /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(doc.file_url || doc.file_name || '');
@@ -374,8 +407,18 @@ function LeadDocumentCard({ doc, onVisibilitySaved }) {
           </div>
         </div>
 
-        {/* Quick preview: truncated notes */}
-        {hasNotes && !expanded && (
+        {/* Quick preview: truncated notes or image thumbnail */}
+        {isImage && fileHref && onOpenImage && !expanded && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onOpenImage(rawFileRef); }}
+            className="shrink-0 hidden sm:block rounded-lg overflow-hidden border border-amber-200 hover:ring-2 hover:ring-blue-400 transition-shadow cursor-zoom-in"
+            title="Phóng to ảnh"
+          >
+            <img src={fileHref} alt="" className="h-10 w-10 object-cover" loading="lazy" />
+          </button>
+        )}
+        {hasNotes && !expanded && !isImage && (
           <p className="text-xs text-gray-500 truncate max-w-[200px] hidden sm:block">{doc.notes}</p>
         )}
 
@@ -391,7 +434,17 @@ function LeadDocumentCard({ doc, onVisibilitySaved }) {
               ⚙️
             </button>
           )}
-          {isFile && fileOpenProps && (
+          {isImage && fileHref && onOpenImage && (
+            <button
+              type="button"
+              className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+              onClick={(e) => { e.stopPropagation(); onOpenImage(rawFileRef); }}
+              title="Phóng to ảnh"
+            >
+              <ZoomIn className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {isFile && fileOpenProps && !isImage && (
             <a {...fileOpenProps}
               className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
               onClick={e => e.stopPropagation()} title="Mở file">
@@ -448,11 +501,14 @@ function LeadDocumentCard({ doc, onVisibilitySaved }) {
               </div>
 
               {isImage ? (
-                fileOpenProps ? (
-                  <a {...fileOpenProps} className="block">
+                fileHref && onOpenImage ? (
+                  <button type="button" onClick={() => onOpenImage(rawFileRef)} className="block text-left group/img">
                     <img src={fileHref} alt={doc.name} loading="lazy"
-                      className="max-h-64 rounded-lg border object-contain hover:opacity-90 transition-opacity" />
-                  </a>
+                      className="max-h-64 rounded-lg border object-contain cursor-zoom-in hover:opacity-90 hover:ring-2 hover:ring-blue-400 transition-all" />
+                    <span className="inline-flex items-center gap-1 text-[10px] text-blue-600 mt-1.5 opacity-80 group-hover/img:opacity-100">
+                      <ZoomIn className="h-3 w-3" /> Click để phóng to
+                    </span>
+                  </button>
                 ) : null
               ) : fileOpenProps ? (
                 <a {...fileOpenProps}

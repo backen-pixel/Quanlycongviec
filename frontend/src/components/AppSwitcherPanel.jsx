@@ -66,6 +66,7 @@ export default function AppSwitcherPanel({
   isVC,
   isSX,
   isCRM,
+  isCongViec,
   panelRef,
 }) {
   const [search, setSearch] = useState('');
@@ -80,6 +81,7 @@ export default function AppSwitcherPanel({
     isVC,
     isSX,
     isCRM,
+    isCongViec,
   });
 
   const allModulePaths = useMemo(

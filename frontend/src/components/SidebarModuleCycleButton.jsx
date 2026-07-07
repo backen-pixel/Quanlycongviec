@@ -62,6 +62,8 @@ export default function SidebarModuleCycleButton({
   isVC,
   isSX,
   isCRM,
+  isCongViec,
+  taskBadge = 0,
 }) {
   const [swapping, setSwapping] = useState(false);
   const [displayIdx, setDisplayIdx] = useState(0);
@@ -82,6 +84,7 @@ export default function SidebarModuleCycleButton({
     isVC,
     isSX,
     isCRM,
+    isCongViec,
   });
 
   const curIdx = Math.max(0, modules.findIndex((m) => m.id === activeId));
@@ -153,6 +156,11 @@ export default function SidebarModuleCycleButton({
       } ${swapping ? 'is-swapping' : ''}`}
       style={{ width: dial, height: dial }}
     >
+      {displayMod?.id === 'congviec' && taskBadge > 0 && (
+        <span className="absolute -top-0.5 -right-0.5 z-10 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-rose-500 text-white text-[10px] font-bold ring-2 ring-[var(--color-sidebar)]">
+          {taskBadge > 99 ? '99+' : taskBadge}
+        </span>
+      )}
       <span className="module-cycle-dial-bg absolute inset-0 rounded-full" aria-hidden />
       <span className="module-cycle-dial-shine absolute inset-0 rounded-full pointer-events-none" aria-hidden />
 
@@ -189,13 +197,16 @@ export default function SidebarModuleCycleButton({
     <div className={`${highlightShell} relative overflow-hidden`}>
       <span className={`absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full ${accentDot} opacity-90 module-cycle-accent-bar`} aria-hidden />
       {dialButton}
-      <div className="min-w-0 flex-1 pl-0.5">
+      <div className="min-w-0 flex-1 pl-0.5 relative">
         <p
           key={displayMod.id}
           className="text-[15px] font-extrabold text-white leading-tight truncate tracking-tight drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)] module-cycle-label"
         >
           {displayMod.name}
         </p>
+        {displayMod?.id === 'congviec' && taskBadge > 0 && (
+          <span className="text-[10px] font-semibold text-rose-200">{taskBadge} NV mở</span>
+        )}
       </div>
     </div>
   );

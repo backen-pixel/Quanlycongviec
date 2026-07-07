@@ -75,6 +75,51 @@ function mapLeadDoc(d) {
   };
 }
 
+function mapFileAttachment(f) {
+  return {
+    id: f.id,
+    name: f.file_name,
+    file_name: f.file_name,
+    file_path: f.file_url,
+    file_url: f.file_url,
+    created_at: f.created_at,
+    entity_type: f.entity_type,
+    entity_id: f.entity_id,
+    kind: 'file_attachment',
+  };
+}
+
+function mapUnifiedTask(t) {
+  return {
+    id: t.source_id || t.unified_id,
+    unified_id: t.unified_id,
+    source: t.source,
+    task_kind: t.task_kind,
+    title: t.title,
+    status: t.status,
+    deadline: t.deadline,
+    priority: t.priority,
+    assignee_id: t.assignee_id,
+  };
+}
+
+function classifyUnifiedTask(t) {
+  const kind = String(t.task_kind || '');
+  if (t.source === 'crm_task' || kind === 'CRM-Deal' || kind === 'CRM-Lead') return 'crm';
+  if (kind === 'VC') return 'vc';
+  if (kind === 'SX' || kind === 'Dự án') return 'sx';
+  if (t.source === 'crm_assignment' || kind === 'Giao việc') return 'crm';
+  if (t.project_id) return 'workflow';
+  return 'workflow';
+}
+
+function mergeTasksByKey(existing, incoming, keyFn) {
+  const map = new Map();
+  for (const t of existing || []) map.set(keyFn(t), t);
+  for (const t of incoming || []) map.set(keyFn(t), t);
+  return Array.from(map.values());
+}
+
 /**
  * @param {string} projectId
  * @param {object} [opts]
@@ -106,11 +151,15 @@ async function buildProjectDealBundle(projectId, opts = {}) {
 
   const primaryLead = (leads || []).find((l) => l.type === 'deal') || (leads || [])[0] || null;
   const leadId = primaryLead?.id || null;
+  const leadIds = (leads || []).map((l) => l.id).filter(Boolean);
 
   const [
     crmTasksRes,
     projectTasksRes,
     docsRes,
+    unifiedProjectRes,
+    unifiedCrmRes,
+    projectFilesRes,
   ] = await Promise.all([
     leadId
       ? supabase.from('crm_tasks').select('id, title, status, stage_slug, deadline, assignee_id, priority, order_index')
@@ -127,6 +176,19 @@ async function buildProjectDealBundle(projectId, opts = {}) {
         .select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_path, file_url, crm_stage_slug, source_crm_task_id, project_id')
         .eq('project_id', projectId)
         .order('created_at', { ascending: false }),
+    supabase.from('unified_tasks_v')
+      .select('unified_id, source, source_id, project_id, lead_id, title, status, priority, assignee_id, deadline, task_kind')
+      .eq('project_id', projectId),
+    leadIds.length
+      ? supabase.from('unified_tasks_v')
+        .select('unified_id, source, source_id, project_id, lead_id, title, status, priority, assignee_id, deadline, task_kind')
+        .in('lead_id', leadIds)
+      : Promise.resolve({ data: [] }),
+    supabase.from('file_attachments')
+      .select('id, file_name, file_url, mime_type, created_at, entity_type, entity_id, notes')
+      .eq('entity_type', 'project')
+      .eq('entity_id', projectId)
+      .order('created_at', { ascending: false }),
   ]);
 
   let sxStage = null;
@@ -150,6 +212,19 @@ async function buildProjectDealBundle(projectId, opts = {}) {
 
   const crmTasksRaw = crmTasksRes.data || [];
   const crmTaskIds = crmTasksRaw.map((t) => t.id).filter(Boolean);
+  const allProjectTasks = projectTasksRes.data || [];
+  const projectTaskIds = allProjectTasks.map((t) => t.id).filter(Boolean);
+
+  let taskFiles = [];
+  if (projectTaskIds.length) {
+    const { data: tf } = await supabase
+      .from('file_attachments')
+      .select('id, file_name, file_url, mime_type, created_at, entity_type, entity_id, notes')
+      .eq('entity_type', 'task')
+      .in('entity_id', projectTaskIds);
+    taskFiles = tf || [];
+  }
+
   let crmAttachments = [];
   if (crmTaskIds.length) {
     const { data: att } = await supabase
@@ -159,11 +234,38 @@ async function buildProjectDealBundle(projectId, opts = {}) {
     crmAttachments = att || [];
   }
 
-  const crmTasks = crmTasksRaw.map(mapCrmTask);
-  const allProjectTasks = projectTasksRes.data || [];
-  const sxTasks = allProjectTasks.filter(isSxProjectTask).map(mapProjectTask);
-  const vcTasks = allProjectTasks.filter(isVcProjectTask).map(mapProjectTask);
-  const workflowTasks = allProjectTasks.filter(isWorkflowProjectTask).map(mapProjectTask);
+  const unifiedSeen = new Set();
+  const unifiedAll = [...(unifiedProjectRes.data || []), ...(unifiedCrmRes.data || [])].filter((t) => {
+    if (unifiedSeen.has(t.unified_id)) return false;
+    unifiedSeen.add(t.unified_id);
+    return true;
+  });
+  const unifiedBySection = { crm: [], sx: [], vc: [], workflow: [] };
+  for (const ut of unifiedAll) {
+    const bucket = classifyUnifiedTask(ut);
+    unifiedBySection[bucket].push(mapUnifiedTask(ut));
+  }
+
+  const crmTasks = mergeTasksByKey(
+    crmTasksRaw.map(mapCrmTask),
+    unifiedBySection.crm,
+    (t) => `${t.source || 'crm_task'}-${t.id}`,
+  );
+  const sxTasks = mergeTasksByKey(
+    allProjectTasks.filter(isSxProjectTask).map(mapProjectTask),
+    unifiedBySection.sx,
+    (t) => `${t.source || 'task'}-${t.id}`,
+  );
+  const vcTasks = mergeTasksByKey(
+    allProjectTasks.filter(isVcProjectTask).map(mapProjectTask),
+    unifiedBySection.vc,
+    (t) => `${t.source || 'task'}-${t.id}`,
+  );
+  const workflowTasks = mergeTasksByKey(
+    allProjectTasks.filter(isWorkflowProjectTask).map(mapProjectTask),
+    unifiedBySection.workflow,
+    (t) => `${t.source || 'task'}-${t.id}`,
+  );
 
   const allLeadDocs = (docsRes.data || []).map(mapLeadDoc);
   const crmDocuments = allLeadDocs.map((d) => ({ ...d, bucket: 'crm' }));
@@ -191,10 +293,28 @@ async function buildProjectDealBundle(projectId, opts = {}) {
     crm_task_id: a.crm_task_id,
   }));
 
+  const projectNativeFiles = (projectFilesRes.data || []).map((f) => ({
+    ...mapFileAttachment(f),
+    bucket: 'workflow',
+  }));
+  const taskNativeFiles = taskFiles.map((f) => ({
+    ...mapFileAttachment(f),
+    bucket: isSxProjectTask(allProjectTasks.find((t) => String(t.id) === String(f.entity_id)) || {})
+      ? 'sx'
+      : isVcProjectTask(allProjectTasks.find((t) => String(t.id) === String(f.entity_id)) || {})
+        ? 'vc'
+        : 'workflow',
+  }));
+
   const crmAllDocuments = [...crmDocuments, ...crmTaskAttachments];
+  const workflowDocuments = [...projectNativeFiles, ...taskNativeFiles.filter((d) => d.bucket === 'workflow')];
+  const sxNativeDocs = taskNativeFiles.filter((d) => d.bucket === 'sx');
+  const sxAllDocuments = [...sxDocuments, ...sxNativeDocs];
+  const vcNativeDocs = taskNativeFiles.filter((d) => d.bucket === 'vc');
+  const vcAllDocuments = [...vcDocuments, ...vcNativeDocs];
 
   const uniqueDocIds = new Set();
-  [...crmAllDocuments, ...sxDocuments, ...vcDocuments].forEach((d) => {
+  [...crmAllDocuments, ...sxAllDocuments, ...vcAllDocuments, ...workflowDocuments].forEach((d) => {
     if (d?.id) uniqueDocIds.add(String(d.id));
   });
 
@@ -225,10 +345,10 @@ async function buildProjectDealBundle(projectId, opts = {}) {
         emoji: '🏭',
         color: '#ea580c',
         tasks: sxTasks,
-        documents: sxDocuments,
+        documents: sxAllDocuments,
         stats: {
           tasks: countDone(sxTasks),
-          documents: { total: sxDocuments.length },
+          documents: { total: sxAllDocuments.length },
         },
       },
       vc: {
@@ -236,10 +356,10 @@ async function buildProjectDealBundle(projectId, opts = {}) {
         emoji: '🚚',
         color: '#d97706',
         tasks: vcTasks,
-        documents: vcDocuments,
+        documents: vcAllDocuments,
         stats: {
           tasks: countDone(vcTasks),
-          documents: { total: vcDocuments.length },
+          documents: { total: vcAllDocuments.length },
         },
       },
       workflow: {
@@ -247,10 +367,10 @@ async function buildProjectDealBundle(projectId, opts = {}) {
         emoji: '📋',
         color: '#2563eb',
         tasks: workflowTasks,
-        documents: [],
+        documents: workflowDocuments,
         stats: {
           tasks: countDone(workflowTasks),
-          documents: { total: 0 },
+          documents: { total: workflowDocuments.length },
         },
       },
     },
@@ -258,8 +378,9 @@ async function buildProjectDealBundle(projectId, opts = {}) {
       tasks: crmTasks.length + sxTasks.length + vcTasks.length + workflowTasks.length,
       documents: uniqueDocIds.size,
       documents_crm: crmAllDocuments.length,
-      documents_sx: sxDocuments.length,
-      documents_vc: vcDocuments.length,
+      documents_sx: sxAllDocuments.length,
+      documents_vc: vcAllDocuments.length,
+      documents_workflow: workflowDocuments.length,
     },
   };
 }

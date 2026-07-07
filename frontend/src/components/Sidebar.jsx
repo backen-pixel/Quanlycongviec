@@ -20,6 +20,7 @@ import {
   readStoredModule,
   resolveActiveModule,
   storeModule,
+  isCongViecPrimaryPath,
 } from '../lib/sidebarModuleContext';
 import { useModuleAccess } from '../shared/context/ModuleAccessContext';
 import { useSidebarUnreadBadges } from '../shared/context/UnreadBadgesContext';
@@ -53,12 +54,6 @@ const MENU_GROUPS = [
     emoji: '📊',
     items: [
       { to: '/dashboard', icon: LayoutDashboard, label: 'Tổng hợp Quản lý' },
-      { to: '/dashboard/classic', icon: BarChart3, label: 'Dashboard cũ' },
-      { to: '/dashboard/divisions', icon: BarChart3, label: 'Dashboard Khối' },
-      { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
-      { to: '/work/unified', icon: Layers, label: 'Tổng hợp nhiệm vụ' },
-      { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
-      { to: '/project-workflow', icon: GitBranch, label: 'Công việc dự án' },
     ]
   },
   {
@@ -112,6 +107,21 @@ const MENU_GROUPS = [
       // { to: '/stage-groups', icon: FolderKanban, label: 'Nhóm quy trình' },
     ]
   }
+];
+
+/** CÔNG VIỆC — module tổng hợp nhiệm vụ từ CRM / SX / VC / giao việc */
+const CONGVIEC_MENU_GROUPS = [
+  {
+    id: 'congviec-overview',
+    title: '1. Công việc',
+    emoji: '✅',
+    items: [
+      { to: '/work/unified', icon: Layers, label: 'Công việc tổng hợp', end: true },
+      { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
+      { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
+      { to: '/project-workflow', icon: GitBranch, label: 'Công việc dự án' },
+    ],
+  },
 ];
 
 /** CRM — đầu sidebar: lối vào nhanh */
@@ -481,7 +491,7 @@ function SideLink({ to, icon: Icon, label, collapsed, end, badge, moduleContext 
   );
 }
 
-function MenuGroup({ group, collapsed, isAdmin, isPlatformAdminUser, isWorkModuleAdmin, isStrictAdminUser, isExecutive, canAccessModule, canAccessSocialInbox, userRole, userTenantId, updatesUnread = 0, assignmentsUnread = 0, sxAssignmentsUnread = 0, socialUnread = 0 }) {
+function MenuGroup({ group, collapsed, isAdmin, isPlatformAdminUser, isWorkModuleAdmin, isStrictAdminUser, isExecutive, canAccessModule, canAccessSocialInbox, userRole, userTenantId, updatesUnread = 0, assignmentsUnread = 0, sxAssignmentsUnread = 0, socialUnread = 0, unifiedTasksOpen = 0 }) {
   const [open, setOpen] = useState(true);
   const moduleContext = resolveGroupModuleContext(group);
   const moduleAdmin = (moduleContext === 'work' || moduleContext === 'sx')
@@ -542,6 +552,7 @@ function MenuGroup({ group, collapsed, isAdmin, isPlatformAdminUser, isWorkModul
                 : item.to === '/crm/assignments' ? assignmentsUnread
                 : item.to === '/sx/assignments' ? sxAssignmentsUnread
                 : item.to === '/social' ? socialUnread
+                : item.to === '/work/unified' ? unifiedTasksOpen
                 : 0
               }
             />
@@ -553,7 +564,7 @@ function MenuGroup({ group, collapsed, isAdmin, isPlatformAdminUser, isWorkModul
 }
 
 export default function Sidebar() {
-  const { updatesUnread, assignmentsUnread, sxAssignmentsUnread, socialUnread } = useSidebarUnreadBadges();
+  const { updatesUnread, assignmentsUnread, sxAssignmentsUnread, socialUnread, unifiedTasksOpen } = useSidebarUnreadBadges();
   const { canAccessModule, crmOnly } = useModuleAccess();
   const [collapsed, setCollapsed] = useState(false);
   const [userPanelHidden, setUserPanelHidden] = useState(() => {
@@ -607,6 +618,8 @@ export default function Sidebar() {
   const isKetoan = !isKnowledge && !isCalc && (location.pathname.startsWith('/ketoan') || activeModule === 'ketoan');
   const isSX = !isKnowledge && !isCalc && !isKetoan && (location.pathname.startsWith('/sx') || activeModule === 'sx');
   const isVC = !isKnowledge && !isCalc && !isKetoan && (location.pathname.startsWith('/vc') || activeModule === 'vc');
+  const isCongViec = !isKnowledge && !isCalc && !isKetoan && !isSX && !isVC && !isCRM
+    && (isCongViecPrimaryPath(location.pathname) || activeModule === 'congviec');
   const activeMenuGroups = isKnowledge
     ? KNOWLEDGE_MENU_GROUPS
     : isCalc
@@ -617,9 +630,11 @@ export default function Sidebar() {
           ? VC_MENU_GROUPS
           : isSX
             ? SX_MENU_GROUPS
-            : isCRM
-              ? null
-              : MENU_GROUPS;
+            : isCongViec
+              ? CONGVIEC_MENU_GROUPS
+              : isCRM
+                ? null
+                : MENU_GROUPS;
 
   const pinModule = (path) => {
     localStorage.setItem('pinned_module', path);
@@ -657,6 +672,7 @@ export default function Sidebar() {
         isVC={isVC}
         isSX={isSX}
         isCRM={isCRM}
+        isCongViec={isCongViec}
         panelRef={appSwitcherRef}
       />
 
@@ -691,6 +707,8 @@ export default function Sidebar() {
             isVC={isVC}
             isSX={isSX}
           isCRM={isCRM}
+          isCongViec={isCongViec}
+          taskBadge={unifiedTasksOpen}
         />
       </div>
 
@@ -720,6 +738,7 @@ export default function Sidebar() {
                 assignmentsUnread={assignmentsUnread}
                 sxAssignmentsUnread={sxAssignmentsUnread}
                 socialUnread={socialUnread}
+                unifiedTasksOpen={unifiedTasksOpen}
               />
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto border-t border-white/10 mt-1 pt-2">
@@ -744,6 +763,7 @@ export default function Sidebar() {
                     assignmentsUnread={assignmentsUnread}
                 sxAssignmentsUnread={sxAssignmentsUnread}
                 socialUnread={socialUnread}
+                unifiedTasksOpen={unifiedTasksOpen}
                   />
                 );
               })}
@@ -768,6 +788,7 @@ export default function Sidebar() {
                 assignmentsUnread={assignmentsUnread}
                 sxAssignmentsUnread={sxAssignmentsUnread}
                 socialUnread={socialUnread}
+                unifiedTasksOpen={unifiedTasksOpen}
               />
           ))
         )}

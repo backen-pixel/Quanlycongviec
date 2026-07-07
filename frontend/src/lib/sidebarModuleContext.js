@@ -51,16 +51,25 @@ export function appendDriveModuleQuery(path, moduleKey) {
   return `${path}${sep}module=${encodeURIComponent(moduleKey)}`;
 }
 
+/** Module Công việc — tổng hợp NV từ các module. */
+export function isCongViecPrimaryPath(pathname) {
+  return (
+    pathname.startsWith('/work') ||
+    pathname.startsWith('/my-tasks') ||
+    pathname.startsWith('/personal-tasks') ||
+    pathname.startsWith('/project-workflow')
+  );
+}
+
 export function isWorkPrimaryPath(pathname) {
   if (pathname.startsWith('/crm') || pathname.startsWith('/sx') || pathname.startsWith('/vc') || pathname.startsWith('/ketoan')) return false;
+  if (isCongViecPrimaryPath(pathname)) return false;
   return (
     pathname === '/' ||
     pathname.startsWith('/dashboard') ||
     pathname.startsWith('/management') ||
     pathname.startsWith('/tasks') ||
     pathname.startsWith('/projects') ||
-    pathname.startsWith('/my-tasks') ||
-    pathname.startsWith('/personal-tasks') ||
     pathname.startsWith('/workspace') ||
     pathname.startsWith('/ecosystem') ||
     pathname.startsWith('/companies') ||
@@ -72,8 +81,7 @@ export function isWorkPrimaryPath(pathname) {
     pathname.startsWith('/workflow') ||
     pathname.startsWith('/permissions') ||
     pathname.startsWith('/settings/app-updates') ||
-    pathname.startsWith('/stage/') ||
-    pathname.startsWith('/project-workflow')
+    pathname.startsWith('/stage/')
   );
 }
 
@@ -90,6 +98,7 @@ export function resolveModuleFromPathname(pathname) {
   if (pathname.startsWith('/ketoan')) return 'ketoan';
   if (pathname.startsWith('/calc')) return 'calc';
   if (pathname.startsWith('/knowledge')) return 'knowledge';
+  if (isCongViecPrimaryPath(pathname)) return 'congviec';
   if (isWorkPrimaryPath(pathname)) return 'work';
   return null;
 }
@@ -97,7 +106,7 @@ export function resolveModuleFromPathname(pathname) {
 export function readStoredModule() {
   try {
     const v = sessionStorage.getItem(STORAGE_KEY);
-    if (v === 'crm' || v === 'work' || v === 'sx' || v === 'vc' || v === 'calc' || v === 'knowledge' || v === 'ketoan') return v;
+    if (v === 'crm' || v === 'work' || v === 'congviec' || v === 'sx' || v === 'vc' || v === 'calc' || v === 'knowledge' || v === 'ketoan') return v;
   } catch { /* ignore */ }
   return null;
 }

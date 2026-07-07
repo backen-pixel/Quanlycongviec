@@ -8,6 +8,7 @@ const { supabase } = require('../config/supabase');
 const { recordUserPing } = require('./userPresence');
 const { pgDashboardNotificationStats } = require('./pgHotQueries');
 const { isCrmSystemAdminUser } = require('./crmAccessRoles');
+const { countUnifiedOpenTasks, countUnifiedOverdueTasks } = require('./unifiedTasksQuery');
 const { lookupCache } = require('./ttlCache');
 
 const BADGE_CACHE_MS = 15_000;
@@ -159,11 +160,13 @@ async function countReleaseNotesUnread(userId) {
 
 async function computeHeartbeatBadges(req, socialCompanyId) {
   const uid = req.user.userId || req.user.id;
-  const [assignments, social, releaseNotes, pgNotif] = await Promise.all([
+  const [assignments, social, releaseNotes, pgNotif, unifiedOpen, unifiedOverdue] = await Promise.all([
     countAssignmentsBothModules(uid),
     countSocialUnread(req, socialCompanyId),
     countReleaseNotesUnread(uid),
     pgDashboardNotificationStats(uid),
+    countUnifiedOpenTasks(req.user),
+    countUnifiedOverdueTasks(req.user),
   ]);
 
   let notifications = null;
@@ -188,6 +191,7 @@ async function computeHeartbeatBadges(req, socialCompanyId) {
     social,
     release_notes: releaseNotes,
     notifications,
+    unified_tasks: { open: unifiedOpen, overdue: unifiedOverdue },
   };
 }
 

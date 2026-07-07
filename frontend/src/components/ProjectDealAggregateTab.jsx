@@ -114,24 +114,29 @@ function SectionBlock({ sectionKey, section, defaultOpen }) {
   );
 }
 
-export default function ProjectDealAggregateTab({ projectId, project }) {
-  const [bundle, setBundle] = useState(null);
-  const [loading, setLoading] = useState(true);
+export default function ProjectDealAggregateTab({ projectId, project, bundle: bundleProp, onReload }) {
+  const parentOwned = !!onReload;
+  const [bundleLocal, setBundleLocal] = useState(null);
+  const [loading, setLoading] = useState(!parentOwned);
 
-  const load = useCallback(async () => {
+  const loadLocal = useCallback(async () => {
     setLoading(true);
     try {
       const { data } = await api.get(`/management/by-project/${projectId}`);
-      setBundle(data);
+      setBundleLocal(data);
     } catch {
-      setBundle(null);
+      setBundleLocal(null);
     }
     setLoading(false);
   }, [projectId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!parentOwned) void loadLocal();
+  }, [parentOwned, loadLocal]);
 
-  if (loading) {
+  const bundle = parentOwned ? bundleProp : (bundleLocal || bundleProp);
+
+  if (loading || (parentOwned && !bundle)) {
     return (
       <div className="flex justify-center py-16">
         <div className="animate-spin h-8 w-8 border-4 border-blue-600 border-t-transparent rounded-full" />
@@ -157,7 +162,7 @@ export default function ProjectDealAggregateTab({ projectId, project }) {
           <div>
             <h2 className="text-base font-bold text-gray-900 flex items-center gap-2">
               <Layers className="h-5 w-5 text-blue-600" />
-              Tổng hợp Deal — CRM & Sản xuất
+              Tổng hợp — CRM · Sản xuất · Vận chuyển · Dữ liệu
             </h2>
             {primary_lead ? (
               <p className="text-sm text-gray-600 mt-1">
@@ -235,19 +240,31 @@ export default function ProjectDealAggregateTab({ projectId, project }) {
               <p className="text-[10px] text-gray-500">NV SX · {sections.sx.stats.documents.total} TL</p>
             </div>
           )}
+          {sections?.vc && (
+            <div>
+              <p className="text-lg font-bold text-amber-700">{sections.vc.stats.tasks.total}</p>
+              <p className="text-[10px] text-gray-500">NV VC · {sections.vc.stats.documents.total} TL</p>
+            </div>
+          )}
+          {sections?.workflow?.stats?.documents?.total > 0 && (
+            <div>
+              <p className="text-lg font-bold text-blue-700">{sections.workflow.stats.documents.total}</p>
+              <p className="text-[10px] text-gray-500">TL quy trình DA</p>
+            </div>
+          )}
         </div>
       </div>
 
       {!hasAny ? (
         <p className="text-center text-sm text-gray-400 py-8">
-          Chưa có nhiệm vụ hoặc tài liệu từ CRM / Sản xuất
+          Chưa có nhiệm vụ hoặc tài liệu từ CRM / Sản xuất / Vận chuyển
         </p>
       ) : (
         <div className="space-y-3">
           <SectionBlock sectionKey="crm" section={sections.crm} defaultOpen />
           <SectionBlock sectionKey="sx" section={sections.sx} defaultOpen />
-          <SectionBlock sectionKey="vc" section={sections.vc} defaultOpen={false} />
-          <SectionBlock sectionKey="workflow" section={sections.workflow} defaultOpen={false} />
+          <SectionBlock sectionKey="vc" section={sections.vc} defaultOpen={(sections.vc?.tasks?.length || 0) > 0} />
+          <SectionBlock sectionKey="workflow" section={sections.workflow} defaultOpen={(sections.workflow?.documents?.length || 0) > 0} />
         </div>
       )}
 

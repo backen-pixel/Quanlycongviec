@@ -165,7 +165,7 @@ const GUIDES = [
       {
         title: 'Dashboard theo Khối',
         content: 'Menu → "Dashboard Khối" → Xem tổng quan theo từng Khối:\n• 4 KPI: Sắp tới / Đang thực hiện / Hoàn thành / Trễ hạn\n• Chi tiết theo Công ty\n• Chi tiết nhân viên theo quy trình\n• Bộ lọc: tìm kiếm, quy trình, nhân viên, thời gian',
-        link: { to: '/dashboard/divisions', label: 'Dashboard Khối' },
+        link: { to: '/dashboard', label: 'Tổng hợp Quản lý' },
       },
     ],
   },
