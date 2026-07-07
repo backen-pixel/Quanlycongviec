@@ -10,22 +10,27 @@ import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import ManagementFilterPanel from '../components/ManagementFilterPanel';
 import {
   MODULE_TABS, MODULE_FOR_COMPANIES,
+  TAB_QUICK_PRESETS, TAB_TABLE_COLUMNS,
   readStoredManagementFilters, storeManagementFilters,
-  stageIdsParam, stageFilterValue,
+  stageIdsParam, stageFilterValue, getListTitle, getColumnLabel, isInstallVcStage,
 } from '../lib/managementDashboardUtils';
 import {
-  LayoutDashboard, Search, Filter, RefreshCw, Target, Factory, Truck,
+  LayoutDashboard, Search, Filter, RefreshCw, Target, Factory, Truck, Wrench,
   CheckSquare, AlertTriangle, ChevronRight, X, Calendar, Users,
 } from 'lucide-react';
 import SupabaseMonitorButton from '../components/SupabaseMonitorButton';
 
-const QUICK_PRESETS = [
-  { id: '', label: 'Tất cả' },
-  { id: 'overdue_crm', label: 'CRM trễ' },
-  { id: 'sx_intake', label: 'Chờ SX' },
-  { id: 'sx_overdue', label: 'SX trễ' },
-  { id: 'vc_overdue', label: 'VC trễ' },
-];
+function StageBadge({ stage, fallback = '—', className = '' }) {
+  if (!stage) return <span className="text-xs text-gray-300">{fallback}</span>;
+  return (
+    <span
+      className={`text-xs px-2 py-0.5 rounded-full font-medium ${className}`}
+      style={{ backgroundColor: `${stage.color || '#94a3b8'}22`, color: stage.color || '#64748b' }}
+    >
+      {stage.name}
+    </span>
+  );
+}
 
 function PipelineStrip({ title, icon: Icon, color, stages, onStageClick, activeStageId }) {
   const max = Math.max(...(stages || []).map((s) => s.count || 0), 1);
@@ -256,7 +261,12 @@ export default function ManagementDashboard() {
 
   const handleModuleTabChange = (tabId) => {
     setModuleTab(tabId);
-    setPhase(tabId === 'sx' ? 'sx' : tabId === 'vc' ? 'vc' : '');
+    setPhase(
+      tabId === 'sx' ? 'sx'
+        : tabId === 'vc' ? 'vc'
+          : tabId === 'install' ? 'install'
+            : '',
+    );
     setFocus('');
     setCrmStageId('');
     setCrmStageIds('');
@@ -277,9 +287,19 @@ export default function ManagementDashboard() {
   }, [companies, userCompanyId]);
 
   const loadRecordType = useMemo(() => {
-    if (moduleTab === 'sx' || moduleTab === 'vc') return 'deal';
+    if (moduleTab === 'sx' || moduleTab === 'vc' || moduleTab === 'install') return 'deal';
     return recordType || 'all';
   }, [moduleTab, recordType]);
+
+  const tableColumns = useMemo(
+    () => TAB_TABLE_COLUMNS[moduleTab] || TAB_TABLE_COLUMNS.overview,
+    [moduleTab],
+  );
+
+  const quickPresets = useMemo(
+    () => TAB_QUICK_PRESETS[moduleTab] || TAB_QUICK_PRESETS.overview,
+    [moduleTab],
+  );
 
   const filterParams = useMemo(() => {
     const p = {};
@@ -303,12 +323,12 @@ export default function ManagementDashboard() {
     else if (sxStageId) p.sx_stage_id = sxStageId;
     if (vcStageIds) p.vc_stage_ids = vcStageIds;
     else if (vcStageId) p.vc_stage_id = vcStageId;
+    p.module_tab = moduleTab;
     return p;
-  }, [effectiveCompanyId, companyId, assigneeId, searchQ, phase, focus, dateRange, loadRecordType,
+  }, [effectiveCompanyId, companyId, assigneeId, searchQ, phase, focus, dateRange, loadRecordType, moduleTab,
     crmStageId, crmStageIds, leadStageId, leadStageIds, sxStageId, sxStageIds, vcStageId, vcStageIds]);
 
   const loadOverview = useCallback(async () => {
-    if (timePreset === 'custom' && (!dateFrom || !dateTo)) return;
     try {
       const params = {};
       if (effectiveCompanyId) params.company_id = effectiveCompanyId;
@@ -326,14 +346,13 @@ export default function ManagementDashboard() {
     } catch {
       setOverview(null);
     }
-  }, [effectiveCompanyId, companyId, assigneeId, dateRange, timePreset, dateFrom, dateTo]);
+  }, [effectiveCompanyId, companyId, assigneeId, dateRange]);
 
   const loadRecords = useCallback(async () => {
-    if (timePreset === 'custom' && (!dateFrom || !dateTo)) return;
     setRecordsLoading(true);
     try {
       const { data } = await api.get('/management/deals', {
-        params: { ...filterParams, page_size: 500 },
+        params: { ...filterParams, all: 1 },
       });
       setRecords(data.deals || []);
       setTotal(data.total ?? (data.deals || []).length);
@@ -342,7 +361,7 @@ export default function ManagementDashboard() {
       setTotal(0);
     }
     setRecordsLoading(false);
-  }, [filterParams, timePreset, dateFrom, dateTo]);
+  }, [filterParams]);
 
   const reloadAll = useCallback(async (opts = {}) => {
     const silent = !!opts.silent;
@@ -392,7 +411,12 @@ export default function ManagementDashboard() {
   const applySearch = () => setSearchQ(searchInput.trim());
 
   const clearStageFilters = () => {
-    setPhase(moduleTab === 'sx' ? 'sx' : moduleTab === 'vc' ? 'vc' : '');
+    setPhase(
+      moduleTab === 'sx' ? 'sx'
+        : moduleTab === 'vc' ? 'vc'
+          : moduleTab === 'install' ? 'install'
+            : '',
+    );
     setFocus('');
     setCrmStageId('');
     setCrmStageIds('');
@@ -477,15 +501,53 @@ export default function ManagementDashboard() {
     setSxStageIds('');
   };
 
+  const applyInstallStage = (s) => {
+    const id = stageFilterValue(s);
+    const ids = stageIdsParam(s);
+    setVcStageId((prev) => (prev === id ? '' : id));
+    setVcStageIds((prev) => (prev === ids ? '' : ids));
+    setFocus('');
+    setPhase('install');
+    setModuleTab('install');
+    setCrmStageId('');
+    setCrmStageIds('');
+    setSxStageId('');
+    setSxStageIds('');
+  };
+
   const filterActiveCounts = useMemo(() => ({
     employee: (companyId && isAdmin && !isCompanyScoped ? 1 : 0) + (assigneeId ? 1 : 0),
     time: timePreset ? 1 : 0,
   }), [companyId, isAdmin, isCompanyScoped, assigneeId, timePreset]);
 
+  const beginFilterPanelDrag = (e) => {
+    if (e.button !== 0) return;
+    const originX = filterPanelPos?.x ?? (typeof window !== 'undefined' ? window.innerWidth - 360 : 0);
+    const originY = filterPanelPos?.y ?? 72;
+    filterPanelDragRef.current = { startX: e.clientX, startY: e.clientY, originX, originY };
+    if (!filterPanelPos) setFilterPanelPos({ x: originX, y: originY });
+    const onMove = (ev) => {
+      const drag = filterPanelDragRef.current;
+      if (!drag) return;
+      setFilterPanelPos({
+        x: Math.max(8, drag.originX + ev.clientX - drag.startX),
+        y: Math.max(8, drag.originY + ev.clientY - drag.startY),
+      });
+    };
+    const onUp = () => {
+      filterPanelDragRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
   const applyKpiFilter = (key) => {
     clearStageFilters();
     if (key === 'sx') { setPhase('sx'); setModuleTab('sx'); }
     else if (key === 'vc') { setPhase('vc'); setModuleTab('vc'); }
+    else if (key === 'install') { setPhase('install'); setModuleTab('install'); }
     else if (key === 'crm_leads') { setModuleTab('crm'); setRecordType('lead'); }
     else if (key === 'crm_deals') { setModuleTab('crm'); setRecordType('deal'); }
     else if (key === 'sx_intake') setFocus('sx_intake');
@@ -498,9 +560,163 @@ export default function ManagementDashboard() {
   const kpis = overview?.kpis;
   const pipelines = overview?.pipelines;
   const hasActiveStageFilter = !!(phase || focus || crmStageId || leadStageId || sxStageId || vcStageId || searchQ);
-  const listTitle = loadRecordType === 'lead' ? 'Danh sách Lead'
-    : loadRecordType === 'deal' ? 'Danh sách Deal'
-      : 'Lead & Deal';
+  const visibleColumns = useMemo(
+    () => tableColumns.filter((c) => c !== 'company' || isAdmin),
+    [tableColumns, isAdmin],
+  );
+  const listTitle = getListTitle(moduleTab, loadRecordType);
+  const colSpan = visibleColumns.length;
+
+  const renderTableCell = (col, d) => {
+    const isLead = d.type === 'lead';
+    const crmStage = d.stage;
+    const sxStage = d.project?.sx_stage;
+    const vcStage = d.project?.vc_stage;
+    const installStage = vcStage && isInstallVcStage(vcStage) ? vcStage : null;
+    const shippingStage = vcStage && !isInstallVcStage(vcStage) ? vcStage : null;
+    const crmOverdue = d.deadline && new Date(d.deadline) < new Date() && !crmStage?.is_won;
+    const projectDeadline = d.project?.deadline || d.deadline;
+    const projectOverdue = d.project_id && projectDeadline
+      && new Date(projectDeadline) < new Date()
+      && d.project?.status !== 'completed';
+
+    switch (col) {
+      case 'record':
+        return (
+          <td key={col} className="px-4 py-3 min-w-[200px]">
+            <Link
+              to={isLead ? `/crm/leads/${d.id}` : `/management/deals/${d.id}`}
+              className="font-semibold text-gray-900 hover:text-blue-600"
+            >
+              {(moduleTab === 'overview' || moduleTab === 'crm') && (
+                <span className={`inline-block text-[9px] font-bold uppercase px-1 py-0.5 rounded mr-1.5 ${
+                  isLead ? 'bg-purple-100 text-purple-700' : 'bg-emerald-100 text-emerald-700'
+                }`}>
+                  {isLead ? 'Lead' : 'Deal'}
+                </span>
+              )}
+              {d.code && <span className="text-blue-600 mr-1">{d.code}</span>}
+              {d.title || d.project?.name || '—'}
+            </Link>
+            <p className="text-xs text-gray-500 mt-0.5">{d.customer?.full_name || '—'}</p>
+            {d.project?.code && (
+              <p className="text-[10px] text-gray-400 mt-0.5">DA: {d.project.code}</p>
+            )}
+          </td>
+        );
+      case 'company':
+        return (
+          <td key={col} className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
+            {d.company?.short_name || d.company?.name || '—'}
+          </td>
+        );
+      case 'assignee':
+        return (
+          <td key={col} className="px-4 py-3">
+            {d.assignee ? (
+              <div className="flex items-center gap-1.5">
+                <div
+                  className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0"
+                  style={{ backgroundColor: avatarColor(d.assignee.full_name) }}
+                >
+                  {getInitials(d.assignee.full_name)}
+                </div>
+                <span className="text-xs text-gray-700 truncate max-w-[100px]" title={d.assignee.full_name}>
+                  {d.assignee.full_name}
+                </span>
+              </div>
+            ) : (
+              <span className="text-xs text-gray-300">—</span>
+            )}
+          </td>
+        );
+      case 'deadline':
+        return (
+          <td key={col} className="px-4 py-3 text-xs whitespace-nowrap">
+            {projectDeadline ? (
+              <span className={projectOverdue ? 'text-red-600 font-semibold' : 'text-gray-600'}>
+                <Calendar className="inline h-3 w-3 mr-0.5 -mt-px" />
+                {formatDate(projectDeadline)}
+              </span>
+            ) : (
+              <span className="text-gray-300">—</span>
+            )}
+          </td>
+        );
+      case 'crm':
+        return (
+          <td key={col} className="px-4 py-3">
+            <StageBadge stage={crmStage} />
+            {crmOverdue && <AlertTriangle className="inline h-3.5 w-3.5 text-red-500 ml-1" />}
+          </td>
+        );
+      case 'sx':
+        return (
+          <td key={col} className="px-4 py-3">
+            {d.project_id ? (
+              sxStage ? (
+                <StageBadge stage={sxStage} className="bg-orange-100 text-orange-800" />
+              ) : (
+                <span className="text-xs text-blue-600 font-medium">Tiếp nhận</span>
+              )
+            ) : (
+              <span className="text-xs text-gray-300">—</span>
+            )}
+            {projectOverdue && moduleTab === 'sx' && (
+              <AlertTriangle className="inline h-3.5 w-3.5 text-orange-500 ml-1" />
+            )}
+          </td>
+        );
+      case 'vc':
+        return (
+          <td key={col} className="px-4 py-3">
+            <StageBadge stage={shippingStage} className="bg-amber-100 text-amber-800" />
+          </td>
+        );
+      case 'install':
+        return (
+          <td key={col} className="px-4 py-3">
+            <StageBadge stage={installStage} className="bg-teal-100 text-teal-800" />
+            {projectOverdue && moduleTab === 'install' && (
+              <AlertTriangle className="inline h-3.5 w-3.5 text-teal-600 ml-1" />
+            )}
+          </td>
+        );
+      case 'address':
+        return (
+          <td key={col} className="px-4 py-3 text-xs text-gray-600 max-w-[180px] truncate" title={d.project?.install_address || ''}>
+            {d.project?.install_address || '—'}
+          </td>
+        );
+      case 'tasks':
+        return (
+          <td key={col} className="px-4 py-3 text-xs text-gray-600">
+            <span title="Nhiệm vụ CRM">{d.task_stats?.crm_done}/{d.task_stats?.crm_total} NV</span>
+            <span className="mx-1 text-gray-300">·</span>
+            <span title="Tài liệu">{d.document_count} TL</span>
+          </td>
+        );
+      case 'value':
+        return (
+          <td key={col} className="px-4 py-3 text-right font-semibold text-gray-900 whitespace-nowrap">
+            {d.value ? formatVND(d.value) : '—'}
+          </td>
+        );
+      case 'link':
+        return (
+          <td key={col} className="px-4 py-3">
+            <Link
+              to={isLead ? `/crm/leads/${d.id}` : `/management/deals/${d.id}`}
+              className="inline-flex items-center text-blue-600 hover:text-blue-800"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Link>
+          </td>
+        );
+      default:
+        return null;
+    }
+  };
 
   return (
     <div className="min-h-screen p-4 sm:p-6 lg:p-8 space-y-6">
@@ -511,7 +727,7 @@ export default function ManagementDashboard() {
             Tổng hợp Quản lý
           </h1>
           <p className="text-sm text-gray-500 mt-1 flex items-center gap-2 flex-wrap">
-            <span>CRM · Sản xuất · Vận chuyển — một màn hình</span>
+            <span>CRM · Sản xuất · Vận chuyển · Lắp đặt — một màn hình</span>
             {lastSyncAt && (
               <span className="inline-flex items-center gap-1 text-xs">
                 <span className={`inline-block h-1.5 w-1.5 rounded-full ${syncing ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500'}`} />
@@ -577,46 +793,6 @@ export default function ManagementDashboard() {
           </button>
         ))}
       </div>
-
-      <ManagementFilterPanel
-        open={showFilters}
-        onClose={() => setShowFilters(false)}
-        filterTab={filterTab}
-        onFilterTabChange={setFilterTab}
-        isAdmin={isAdmin}
-        isCompanyScoped={isCompanyScoped}
-        userCompanyId={userCompanyId}
-        companyDisplayName={companyDisplayName}
-        companies={companies}
-        companyId={companyId}
-        onCompanyChange={(v) => { setCompanyId(v); setAssigneeId(''); }}
-        users={users}
-        assigneeId={assigneeId}
-        onAssigneeChange={setAssigneeId}
-        timePreset={timePreset}
-        onTimePresetChange={handleTimePresetChange}
-        dateFrom={dateFrom}
-        dateTo={dateTo}
-        onOpenDatePicker={() => setShowDateRangePicker(true)}
-        onReset={resetFilters}
-        onDefault={defaultFilters}
-        activeCounts={filterActiveCounts}
-      />
-
-      {showDateRangePicker && (
-        <DateRangePickerPopover
-          open={showDateRangePicker}
-          title="Phạm vi tùy chỉnh"
-          from={dateFrom}
-          to={dateTo}
-          onChange={({ from, to }) => {
-            setDateFrom(from || '');
-            setDateTo(to || '');
-            setTimePreset('custom');
-          }}
-          onClose={() => setShowDateRangePicker(false)}
-        />
-      )}
 
       {/* Tìm kiếm nhanh */}
       <div className="flex flex-wrap gap-2 items-end">
@@ -712,6 +888,17 @@ export default function ManagementDashboard() {
               active={moduleTab === 'vc' && phase === 'vc'}
             />
           )}
+          {(moduleTab === 'overview' || moduleTab === 'install') && (
+            <KpiTile
+              label="Đang lắp đặt"
+              value={kpis.install_active ?? 0}
+              sub={kpis.install_overdue ? `${kpis.install_overdue} trễ` : undefined}
+              bg="bg-teal-50 border-teal-100"
+              color="text-teal-700"
+              onClick={() => applyKpiFilter('install')}
+              active={moduleTab === 'install' && phase === 'install'}
+            />
+          )}
           {moduleTab === 'overview' && (
             <>
               <KpiTile
@@ -771,8 +958,18 @@ export default function ManagementDashboard() {
               icon={Truck}
               color="text-amber-600"
               stages={pipelines.vc}
-              activeStageId={vcStageId}
+              activeStageId={moduleTab === 'vc' ? vcStageId : null}
               onStageClick={applyVcStage}
+            />
+          )}
+          {(moduleTab === 'overview' || moduleTab === 'install') && (
+            <PipelineStrip
+              title="Pipeline Lắp đặt"
+              icon={Wrench}
+              color="text-teal-600"
+              stages={pipelines.install}
+              activeStageId={moduleTab === 'install' ? vcStageId : null}
+              onStageClick={applyInstallStage}
             />
           )}
         </div>
@@ -813,11 +1010,11 @@ export default function ManagementDashboard() {
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-100 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-bold text-gray-900">
-            {listTitle} tổng hợp
+            {listTitle}
             <span className="ml-2 text-gray-400 font-normal">({total})</span>
           </h2>
           <div className="flex flex-wrap gap-1.5">
-            {QUICK_PRESETS.map((p) => (
+            {quickPresets.map((p) => (
               <button
                 key={p.id || 'all'}
                 type="button"
@@ -840,141 +1037,74 @@ export default function ManagementDashboard() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 text-left text-xs text-gray-500 uppercase">
-                <th className="px-4 py-2.5 font-semibold">Lead / Deal / KH</th>
-                {isAdmin && <th className="px-4 py-2.5 font-semibold">Công ty</th>}
-                <th className="px-4 py-2.5 font-semibold">NV phụ trách</th>
-                <th className="px-4 py-2.5 font-semibold">Deadline</th>
-                <th className="px-4 py-2.5 font-semibold">CRM</th>
-                <th className="px-4 py-2.5 font-semibold">SX</th>
-                <th className="px-4 py-2.5 font-semibold">VC</th>
-                <th className="px-4 py-2.5 font-semibold">NV / TL</th>
-                <th className="px-4 py-2.5 font-semibold text-right">Giá trị</th>
-                <th className="px-4 py-2.5" />
+                {visibleColumns.map((col) => (
+                  <th
+                    key={col}
+                    className={`px-4 py-2.5 font-semibold ${col === 'value' ? 'text-right' : ''}`}
+                  >
+                    {getColumnLabel(moduleTab, col)}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {recordsLoading && (
-                <tr><td colSpan={isAdmin ? 10 : 9} className="px-4 py-8 text-center text-gray-400">Đang tải…</td></tr>
+                <tr><td colSpan={colSpan} className="px-4 py-8 text-center text-gray-400">Đang tải…</td></tr>
               )}
               {!recordsLoading && records.length === 0 && (
-                <tr><td colSpan={isAdmin ? 10 : 9} className="px-4 py-8 text-center text-gray-400">Không có bản ghi phù hợp bộ lọc</td></tr>
+                <tr><td colSpan={colSpan} className="px-4 py-8 text-center text-gray-400">Không có bản ghi phù hợp bộ lọc</td></tr>
               )}
-              {records.map((d) => {
-                const isLead = d.type === 'lead';
-                const crmStage = d.stage;
-                const sxStage = d.project?.sx_stage;
-                const vcStage = d.project?.vc_stage;
-                const crmOverdue = d.deadline && new Date(d.deadline) < new Date() && !crmStage?.is_won;
-                const sxOverdue = d.project_id && d.project?.deadline
-                  && new Date(d.project.deadline) < new Date()
-                  && d.project.status !== 'completed';
-                return (
-                  <tr key={d.id} className="hover:bg-blue-50/40 transition-colors">
-                    <td className="px-4 py-3 min-w-[200px]">
-                      <Link
-                        to={isLead ? `/crm/leads/${d.id}` : `/management/deals/${d.id}`}
-                        className="font-semibold text-gray-900 hover:text-blue-600"
-                      >
-                        <span className={`inline-block text-[9px] font-bold uppercase px-1 py-0.5 rounded mr-1.5 ${
-                          isLead ? 'bg-purple-100 text-purple-700' : 'bg-emerald-100 text-emerald-700'
-                        }`}>
-                          {isLead ? 'Lead' : 'Deal'}
-                        </span>
-                        {d.code && <span className="text-blue-600 mr-1">{d.code}</span>}
-                        {d.title}
-                      </Link>
-                      <p className="text-xs text-gray-500 mt-0.5">{d.customer?.full_name || '—'}</p>
-                      {d.project?.code && (
-                        <p className="text-[10px] text-gray-400 mt-0.5">DA: {d.project.code}</p>
-                      )}
-                    </td>
-                    {isAdmin && (
-                      <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
-                        {d.company?.short_name || d.company?.name || '—'}
-                      </td>
-                    )}
-                    <td className="px-4 py-3">
-                      {d.assignee ? (
-                        <div className="flex items-center gap-1.5">
-                          <div
-                            className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0"
-                            style={{ backgroundColor: avatarColor(d.assignee.full_name) }}
-                          >
-                            {getInitials(d.assignee.full_name)}
-                          </div>
-                          <span className="text-xs text-gray-700 truncate max-w-[100px]" title={d.assignee.full_name}>
-                            {d.assignee.full_name}
-                          </span>
-                        </div>
-                      ) : (
-                        <span className="text-xs text-gray-300">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-xs whitespace-nowrap">
-                      {d.deadline ? (
-                        <span className={crmOverdue ? 'text-red-600 font-semibold' : 'text-gray-600'}>
-                          <Calendar className="inline h-3 w-3 mr-0.5 -mt-px" />
-                          {formatDate(d.deadline)}
-                        </span>
-                      ) : (
-                        <span className="text-gray-300">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      {crmStage ? (
-                        <span className="text-xs px-2 py-0.5 rounded-full font-medium"
-                          style={{ backgroundColor: `${crmStage.color || '#94a3b8'}22`, color: crmStage.color || '#64748b' }}>
-                          {crmStage.name}
-                        </span>
-                      ) : '—'}
-                      {crmOverdue && <AlertTriangle className="inline h-3.5 w-3.5 text-red-500 ml-1" />}
-                    </td>
-                    <td className="px-4 py-3">
-                      {d.project_id ? (
-                        sxStage ? (
-                          <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 font-medium">
-                            {sxStage.name}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-blue-600 font-medium">Tiếp nhận</span>
-                        )
-                      ) : (
-                        <span className="text-xs text-gray-300">—</span>
-                      )}
-                      {sxOverdue && <AlertTriangle className="inline h-3.5 w-3.5 text-orange-500 ml-1" />}
-                    </td>
-                    <td className="px-4 py-3">
-                      {vcStage ? (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-medium">
-                          {vcStage.name}
-                        </span>
-                      ) : (
-                        <span className="text-xs text-gray-300">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-gray-600">
-                      <span title="Nhiệm vụ CRM">{d.task_stats?.crm_done}/{d.task_stats?.crm_total} NV</span>
-                      <span className="mx-1 text-gray-300">·</span>
-                      <span title="Tài liệu">{d.document_count} TL</span>
-                    </td>
-                    <td className="px-4 py-3 text-right font-semibold text-gray-900 whitespace-nowrap">
-                      {d.value ? formatVND(d.value) : '—'}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Link
-                        to={isLead ? `/crm/leads/${d.id}` : `/management/deals/${d.id}`}
-                        className="inline-flex items-center text-blue-600 hover:text-blue-800"
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </Link>
-                    </td>
-                  </tr>
-                );
-              })}
+              {records.map((d) => (
+                <tr key={d.id} className="hover:bg-blue-50/40 transition-colors">
+                  {visibleColumns.map((col) => renderTableCell(col, d))}
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
       </div>
+
+      <ManagementFilterPanel
+        open={showFilters}
+        onClose={() => setShowFilters(false)}
+        filterTab={filterTab}
+        onFilterTabChange={setFilterTab}
+        isAdmin={isAdmin}
+        isCompanyScoped={isCompanyScoped}
+        userCompanyId={userCompanyId}
+        companyDisplayName={companyDisplayName}
+        companies={companies}
+        companyId={companyId}
+        onCompanyChange={(v) => { setCompanyId(v); setAssigneeId(''); }}
+        users={users}
+        assigneeId={assigneeId}
+        onAssigneeChange={setAssigneeId}
+        timePreset={timePreset}
+        onTimePresetChange={handleTimePresetChange}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        onOpenDatePicker={() => setShowDateRangePicker(true)}
+        onReset={resetFilters}
+        onDefault={defaultFilters}
+        panelPos={filterPanelPos}
+        onDragStart={beginFilterPanelDrag}
+        activeCounts={filterActiveCounts}
+      />
+
+      {showDateRangePicker && (
+        <DateRangePickerPopover
+          open={showDateRangePicker}
+          title="Phạm vi tùy chỉnh"
+          from={dateFrom}
+          to={dateTo}
+          onChange={({ from, to }) => {
+            setDateFrom(from || '');
+            setDateTo(to || '');
+            setTimePreset('custom');
+          }}
+          onClose={() => setShowDateRangePicker(false)}
+        />
+      )}
     </div>
   );
 }

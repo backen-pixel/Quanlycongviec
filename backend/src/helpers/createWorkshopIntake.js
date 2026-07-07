@@ -153,7 +153,7 @@ async function insertWorkshopProject({ deal, companyId, workshopTypeId, userId, 
     production_value: deal.estimated_value ?? null,
     deposit_amount: Number(deal.deposit_amount) > 0 ? Number(deal.deposit_amount) : null,
     priority: 'medium',
-    sales_person_id: deal.assigned_to || userId,
+    sales_person_id: deal.assigned_to || deal.lead_owner_id || userId,
     consult_date: nowIso,
     workshop_type_id: workshopTypeId,
   });

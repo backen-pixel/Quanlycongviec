@@ -52,6 +52,8 @@ async function flush() {
     } else if (status === 404) {
       console.warn('[activity] Route /api/user-activity chưa enabled — tắt log cho phiên này');
       disabled = true;
+    } else if (status === 401) {
+      disabled = true;
     } else if (process.env.NODE_ENV !== 'production') {
       console.debug('[activity] flush failed (silent):', err?.message);
     }

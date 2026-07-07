@@ -117,7 +117,10 @@ function completeAuth(req, res, next) {
 }
 
 function auth(req, res, next) {
-  const h = req.headers.authorization;
+  let h = req.headers.authorization;
+  if ((!h || !h.startsWith('Bearer ')) && req.query?.bearer) {
+    h = `Bearer ${String(req.query.bearer).trim()}`;
+  }
   if (!h || !h.startsWith('Bearer ')) return res.status(401).json({ error: 'Chưa đăng nhập' });
   try {
     const payload = jwt.verify(h.slice(7), config.jwtSecret);

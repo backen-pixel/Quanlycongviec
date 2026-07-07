@@ -657,6 +657,20 @@ export default function ProductionDashboard() {
     filterSxWorkshopCompany,
   ]);
 
+  /** Tránh spinner vô hạn nếu phân loại xưởng / API treo */
+  useEffect(() => {
+    if (firstLoaded) return undefined;
+    const t = window.setTimeout(() => {
+      if (firstLoaded) return;
+      console.warn('[sx-dashboard] load timeout — hiển thị dashboard');
+      sxLoadProgressCtrlRef.current?.reset();
+      setLoading(false);
+      setFirstLoaded(true);
+      void load({ bustCache: true });
+    }, 12_000);
+    return () => window.clearTimeout(t);
+  }, [firstLoaded, load]);
+
   const prevWorkTypeForReloadRef = useRef(filterWorkTypeId);
   useEffect(() => {
     if (workTypesCompanyId !== companyForTypes) return;
@@ -889,9 +903,9 @@ export default function ProductionDashboard() {
       return undefined;
     }
     let cancelled = false;
-    // Xoá ngay danh sách cũ để effect chọn loại mặc định không bám nhầm loại của công ty trước.
     setWorkTypes([]);
-    setWorkTypesCompanyId('');
+    // Gắn công ty ngay khi bắt đầu fetch — tránh dataLoadReady=false kẹt spinner.
+    setWorkTypesCompanyId(companyForTypes);
     const typeParams = { company_id: companyForTypes, module: 'production' };
     if (dealCompanyParam) typeParams.client_company_id = dealCompanyParam;
     api.get('/workshop/project-types', { params: typeParams })
@@ -3266,6 +3280,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   const assignee = item.production_person || primaryStaff || item.assignee;
   const deals = Array.isArray(item.crm_deals) ? item.crm_deals : [];
   const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
+  const crmAssignee = primaryDeal?.assignee || primaryDeal?.lead_owner || item.sales_person || null;
   const leadCreatedAt = primaryDeal?.created_at || item.created_at || null;
   const columnEnteredAt = item.sx_pipeline_stage_entered_at || item.stage_entered_at || item.updated_at || item.created_at || null;
   const columnSlaTone = getSxPipelineStageSlaTone(item.sx_pipeline_stage_entered_at, item.sx_pipeline_stage);
@@ -3528,6 +3543,28 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
               <span className="text-[10px]">📍</span>{crmRegionName}
             </span>
           )}
+        </div>
+      )}
+
+      {/* Người phụ trách CRM (deal) */}
+      {crmAssignee?.full_name && (
+        <div
+          className="flex items-center gap-1.5 text-[11px] text-violet-700 mb-1 min-w-0"
+          title={`Phụ trách CRM: ${crmAssignee.full_name}`}
+        >
+          <UserCheck className="h-3 w-3 text-violet-500 shrink-0" strokeWidth={2.4} />
+          {crmAssignee.avatar ? (
+            <img src={crmAssignee.avatar} alt="" className="h-4 w-4 rounded-full shrink-0" />
+          ) : (
+            <span
+              className="h-4 w-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white shrink-0"
+              style={{ backgroundColor: '#7c3aed' }}
+            >
+              {getInitials(crmAssignee.full_name)}
+            </span>
+          )}
+          <span className="truncate font-medium">{crmAssignee.full_name}</span>
+          <span className="text-[10px] text-violet-500 shrink-0">CRM</span>
         </div>
       )}
 

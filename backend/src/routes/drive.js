@@ -76,6 +76,7 @@ const driveAcl = require('../helpers/drivePermissions');
 const driveOrgPath = require('../helpers/driveOrgPath');
 const driveEntityFolder = require('../helpers/driveEntityFolder');
 const { logDriveActivity } = require('../helpers/driveActivity');
+const { afterCrmDriveEntityFileUploaded } = require('../helpers/crmDocumentCrossModule');
 const { isAdminLike, isSystemAdmin } = require('../helpers/adminRole');
 const { ensureUserDriveModuleAssigned } = require('../helpers/driveModuleDefaults');
 
@@ -2524,6 +2525,17 @@ r.post('/entity/upload', diskUpload.single('file'), async (req, res) => {
       meta: { entity_type, entity_id, module: ep.module_key },
     });
 
+    try {
+      await afterCrmDriveEntityFileUploaded({
+        req,
+        fileRow,
+        entityType: entity_type,
+        entityId: entity_id,
+      });
+    } catch (syncErr) {
+      console.warn('[drive] crm cross-module sync:', syncErr.message);
+    }
+
     res.status(201).json({
       file: fileRow,
       link: linkRow,
@@ -2614,6 +2626,17 @@ r.post('/entity/create-google', async (req, res) => {
       meta: { entity_type, entity_id, kind, google: true },
     });
 
+    try {
+      await afterCrmDriveEntityFileUploaded({
+        req,
+        fileRow,
+        entityType: entity_type,
+        entityId: entity_id,
+      });
+    } catch (syncErr) {
+      console.warn('[drive] crm cross-module sync:', syncErr.message);
+    }
+
     res.status(201).json({
       file: enriched || fileRow,
       link: linkRow,
@@ -2649,6 +2672,24 @@ r.post('/links', async (req, res) => {
       .select()
       .single();
     if (error) throw error;
+
+    const et = String(entity_type || '').toLowerCase();
+    if (et === 'deal' || et === 'lead') {
+      try {
+        const { data: fileRow } = await supabase.from('drive_files').select('*').eq('id', file_id).maybeSingle();
+        if (fileRow) {
+          await afterCrmDriveEntityFileUploaded({
+            req,
+            fileRow,
+            entityType: entity_type,
+            entityId: entity_id,
+          });
+        }
+      } catch (syncErr) {
+        console.warn('[drive] link crm cross-module sync:', syncErr.message);
+      }
+    }
+
     res.status(201).json({ link: data });
   } catch (e) {
     res.status(500).json({ error: e.message });
