@@ -55,9 +55,7 @@ export function appendDriveModuleQuery(path, moduleKey) {
 export function isCongViecPrimaryPath(pathname) {
   return (
     pathname.startsWith('/work') ||
-    pathname.startsWith('/my-tasks') ||
-    pathname.startsWith('/personal-tasks') ||
-    pathname.startsWith('/project-workflow')
+    pathname.startsWith('/personal-tasks')
   );
 }
 

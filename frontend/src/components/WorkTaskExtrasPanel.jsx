@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ExternalLink, FileUp, MessageSquare, Save, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, ExternalLink, Eye, FileUp, MessageSquare, Plus, Save, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
-import { publicFileUrl } from '../lib/publicFileUrl';
+import { getFileDownloadAnchorProps, publicFileUrl } from '../lib/publicFileUrl';
 import { AttachmentFileIcon, inferAttachmentDocType } from '../lib/attachmentFileIcon';
 import { mergeUploadProgressState, uploadSingleFileWithProgress } from '../lib/uploadProgressEta';
 import UploadProgressBubble from './UploadProgressBubble';
+import UploadFileLightbox, {
+  collectUploadLightboxItems,
+  findUploadLightboxIndex,
+  isUploadImageFile,
+} from './UploadFileLightbox';
+import { FilePreviewOpenLink } from '../context/FilePreviewContext';
 
 function compressImage(file, maxWidth = 1920, quality = 0.8) {
   return new Promise((resolve) => {
@@ -26,16 +32,171 @@ function compressImage(file, maxWidth = 1920, quality = 0.8) {
   });
 }
 
+function isImageAtt(att) {
+  if (!att?.file_url) return false;
+  if (att.doc_type === 'image') return true;
+  if (att.mime_type?.startsWith('image/')) return true;
+  return isUploadImageFile(att.mime_type, att.file_name || att.file_url);
+}
+
+function isVideoAtt(att) {
+  if (!att?.file_url) return false;
+  if (att.doc_type === 'video') return true;
+  if (att.mime_type?.startsWith('video/')) return true;
+  return /\.(mp4|mov|webm|avi|mkv|m4v)$/i.test(att.file_name || att.file_url || '');
+}
+
+function UploadedNoteCard({ att, expanded, onToggle, onDelete }) {
+  const text = att.notes || att.name || '';
+  const long = text.length > 180;
+  const showFull = expanded || !long;
+
+  return (
+    <div className="py-2 px-2.5 rounded-lg bg-amber-50/80 border border-amber-100">
+      <div className="flex items-start gap-2">
+        <MessageSquare className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
+        <div className="flex-1 min-w-0">
+          {att.name && att.name !== 'Ghi chú' && (
+            <p className="text-xs font-semibold text-gray-800 mb-0.5">{att.name}</p>
+          )}
+          <p className={`text-xs text-gray-700 whitespace-pre-wrap ${showFull ? '' : 'line-clamp-3'}`}>
+            {text}
+          </p>
+          {att.creator?.full_name && (
+            <p className="text-[9px] text-gray-400 mt-1">{att.creator.full_name}</p>
+          )}
+          {long && (
+            <button
+              type="button"
+              onClick={onToggle}
+              className="mt-1 text-[10px] font-medium text-amber-800 hover:text-amber-950 inline-flex items-center gap-0.5 cursor-pointer"
+            >
+              {expanded ? <><ChevronUp className="h-3 w-3" /> Thu gọn</> : <><ChevronDown className="h-3 w-3" /> Xem chi tiết</>}
+            </button>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onDelete}
+          className="p-1 text-gray-400 hover:text-red-600 cursor-pointer shrink-0"
+          title="Xóa"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function FileAttachmentCard({ att, allAtts, onOpenLightbox, onDelete }) {
+  const img = isImageAtt(att);
+  const video = isVideoAtt(att);
+  const downloadProps = att.file_url ? getFileDownloadAnchorProps(att.file_url, { fileName: att.file_name || att.name }) : null;
+
+  return (
+    <div className="py-2 px-2.5 rounded-lg bg-white border border-gray-200 space-y-1.5">
+      <div className="flex items-start gap-2">
+        <AttachmentFileIcon att={att} className="h-4 w-4 mt-0.5 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-medium text-gray-800 truncate">{att.name || att.file_name || 'File'}</p>
+          {att.notes && <p className="text-[10px] text-gray-500 mt-0.5 whitespace-pre-wrap">{att.notes}</p>}
+          {att.creator?.full_name && (
+            <p className="text-[9px] text-gray-400 mt-0.5">{att.creator.full_name}</p>
+          )}
+        </div>
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          {att.file_url && (
+            img ? (
+              <button
+                type="button"
+                onClick={() => onOpenLightbox(allAtts, att.file_url)}
+                className="text-[10px] font-medium text-emerald-700 hover:text-emerald-900 px-1.5 py-0.5 rounded hover:bg-emerald-50 cursor-pointer inline-flex items-center gap-0.5"
+              >
+                <Eye className="h-3 w-3" /> Xem ảnh
+              </button>
+            ) : (
+              <FilePreviewOpenLink
+                fileUrl={att.file_url}
+                fileName={att.file_name || att.name}
+                mimeType={att.mime_type}
+                className="text-[10px] font-medium text-emerald-700 hover:text-emerald-900 px-1.5 py-0.5 rounded hover:bg-emerald-50 cursor-pointer inline-flex items-center gap-0.5"
+              >
+                <Eye className="h-3 w-3 inline" /> Xem file
+              </FilePreviewOpenLink>
+            )
+          )}
+          {downloadProps && (
+            <a
+              {...downloadProps}
+              className="text-[10px] text-blue-600 hover:text-blue-800 px-1.5 py-0.5 rounded hover:bg-blue-50"
+            >
+              Tải xuống
+            </a>
+          )}
+          <button
+            type="button"
+            onClick={onDelete}
+            className="text-[10px] font-medium text-red-500 hover:text-red-700 px-1.5 py-0.5 rounded hover:bg-red-50 cursor-pointer"
+          >
+            Xóa
+          </button>
+        </div>
+      </div>
+
+      {img && att.file_url && (
+        <button
+          type="button"
+          onClick={() => onOpenLightbox(allAtts, att.file_url)}
+          className="block w-full text-left rounded-lg border border-gray-200 overflow-hidden cursor-zoom-in hover:ring-2 hover:ring-blue-300 transition-shadow bg-gray-50"
+          title="Phóng to xem ảnh"
+        >
+          <img
+            src={publicFileUrl(att.file_url)}
+            alt={att.name || att.file_name || ''}
+            loading="lazy"
+            className="max-h-64 w-full object-contain"
+          />
+        </button>
+      )}
+
+      {video && att.file_url && (
+        <video
+          src={publicFileUrl(att.file_url)}
+          controls
+          preload="metadata"
+          className="max-h-64 w-full rounded-lg border border-gray-200 bg-black"
+        />
+      )}
+    </div>
+  );
+}
+
 function CrmTaskNotesAttachments({ task }) {
   const taskId = task.source_id;
   const leadId = task.lead_id;
-  const [notes, setNotes] = useState('');
+  const [notes, setNotes] = useState(task.notes || '');
   const [attachments, setAttachments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [savingNote, setSavingNote] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(null);
+  const [addingAttNote, setAddingAttNote] = useState(false);
+  const [attNoteName, setAttNoteName] = useState('');
+  const [attNoteText, setAttNoteText] = useState('');
+  const [expandedNoteId, setExpandedNoteId] = useState(null);
+  const [lightboxItems, setLightboxItems] = useState([]);
+  const [lightboxIndex, setLightboxIndex] = useState(null);
+
+  const openLightbox = useCallback((atts, rawPath) => {
+    const items = collectUploadLightboxItems(
+      (atts || []).filter((a) => a.doc_type !== 'checklist_inline_note'),
+    );
+    if (!items.length) return;
+    const idx = rawPath ? findUploadLightboxIndex(items, rawPath) : 0;
+    setLightboxItems(items);
+    setLightboxIndex(Math.max(idx, 0));
+  }, []);
 
   const loadAttachments = useCallback(async () => {
     try {
@@ -50,18 +211,15 @@ function CrmTaskNotesAttachments({ task }) {
     let cancelled = false;
     setLoading(true);
     Promise.all([
-      api.get(`/crm/leads/${leadId}/tasks`).catch(() => ({ data: { tasks: [] } })),
       api.get(`/crm/leads/${leadId}/tasks/${taskId}/attachments`).catch(() => ({ data: [] })),
-    ]).then(([taskRes, attRes]) => {
+    ]).then(([attRes]) => {
       if (cancelled) return;
-      const list = taskRes.data?.tasks || taskRes.data || [];
-      const row = Array.isArray(list) ? list.find((x) => String(x.id) === String(taskId)) : null;
-      setNotes(row?.notes || '');
+      setNotes(task.notes || '');
       setAttachments(Array.isArray(attRes.data) ? attRes.data : []);
       setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [leadId, taskId]);
+  }, [leadId, taskId, task.notes]);
 
   const saveNotes = async () => {
     setSavingNote(true);
@@ -147,11 +305,34 @@ function CrmTaskNotesAttachments({ task }) {
     }
   };
 
+  const addAttachmentNote = async () => {
+    if (!attNoteText.trim()) return alert('Nhập nội dung ghi chú');
+    try {
+      await api.post(`/crm/leads/${leadId}/tasks/${taskId}/attachments`, {
+        name: attNoteName.trim() || 'Ghi chú',
+        doc_type: 'task_note',
+        notes: attNoteText,
+      });
+      setAddingAttNote(false);
+      setAttNoteText('');
+      setAttNoteName('');
+      await loadAttachments();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi thêm ghi chú');
+    }
+  };
+
   if (loading) {
     return <p className="text-xs text-gray-400 py-4 text-center">Đang tải ghi chú & file…</p>;
   }
 
-  const fileAtts = attachments.filter((a) => a.file_url);
+  const taskLevelAtts = attachments.filter((a) => !a.checklist_id);
+  const fileAtts = taskLevelAtts.filter(
+    (a) => a.file_url && a.doc_type !== 'task_note' && a.doc_type !== 'checklist_inline_note',
+  );
+  const uploadedNotes = taskLevelAtts.filter(
+    (a) => a.doc_type === 'task_note' || (!a.file_url && (a.notes || a.name)),
+  );
 
   return (
     <div className="space-y-3 pt-1">
@@ -166,13 +347,22 @@ function CrmTaskNotesAttachments({ task }) {
         {uploading ? (
           <span className="text-[10px] text-orange-600">Đang upload…</span>
         ) : (
-          <button
-            type="button"
-            onClick={uploadFiles}
-            className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-0.5 cursor-pointer px-1.5 py-0.5 rounded hover:bg-blue-50"
-          >
-            <FileUp className="h-3 w-3" /> Upload file
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setAddingAttNote((v) => !v)}
+              className="text-[10px] text-emerald-700 hover:text-emerald-900 flex items-center gap-0.5 cursor-pointer px-1.5 py-0.5 rounded hover:bg-emerald-50"
+            >
+              <Plus className="h-3 w-3" /> Ghi chú
+            </button>
+            <button
+              type="button"
+              onClick={uploadFiles}
+              className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-0.5 cursor-pointer px-1.5 py-0.5 rounded hover:bg-blue-50"
+            >
+              <FileUp className="h-3 w-3" /> Upload file
+            </button>
+          </div>
         )}
       </div>
 
@@ -211,46 +401,88 @@ function CrmTaskNotesAttachments({ task }) {
         />
       )}
 
+      {addingAttNote && (
+        <div className="p-2 rounded-lg border border-emerald-200 bg-emerald-50/50 space-y-1.5">
+          <input
+            value={attNoteName}
+            onChange={(e) => setAttNoteName(e.target.value)}
+            placeholder="Tiêu đề (tuỳ chọn)"
+            className="w-full px-2 py-1 border rounded text-xs outline-none focus:border-emerald-400"
+          />
+          <textarea
+            value={attNoteText}
+            onChange={(e) => setAttNoteText(e.target.value)}
+            rows={2}
+            placeholder="Nội dung ghi chú đính kèm…"
+            className="w-full px-2 py-1 border rounded text-xs outline-none focus:border-emerald-400 resize-y"
+          />
+          <div className="flex justify-end gap-1">
+            <button
+              type="button"
+              onClick={() => { setAddingAttNote(false); setAttNoteText(''); setAttNoteName(''); }}
+              className="px-2 py-0.5 text-[10px] text-gray-600 hover:bg-gray-100 rounded cursor-pointer"
+            >
+              Hủy
+            </button>
+            <button
+              type="button"
+              onClick={addAttachmentNote}
+              className="px-2 py-0.5 text-[10px] font-medium bg-emerald-600 text-white rounded hover:bg-emerald-700 cursor-pointer"
+            >
+              Lưu ghi chú
+            </button>
+          </div>
+        </div>
+      )}
+
+      {uploadedNotes.length > 0 && (
+        <div className="space-y-1.5">
+          <label className="text-[10px] font-semibold text-gray-500 uppercase">
+            Ghi chú đã lưu ({uploadedNotes.length})
+          </label>
+          {uploadedNotes.map((att) => (
+            <UploadedNoteCard
+              key={att.id}
+              att={att}
+              expanded={expandedNoteId === att.id}
+              onToggle={() => setExpandedNoteId((id) => (id === att.id ? null : att.id))}
+              onDelete={() => deleteAttachment(att.id)}
+            />
+          ))}
+        </div>
+      )}
+
       {fileAtts.length > 0 && (
         <div className="space-y-1.5">
           <label className="text-[10px] font-semibold text-gray-500 uppercase">
             Đính kèm ({fileAtts.length})
           </label>
-          {fileAtts.map((att) => {
-            const img = att.mime_type?.startsWith('image/') || att.doc_type === 'image';
-            return (
-              <div key={att.id} className="py-1.5 px-2 rounded bg-gray-50 border flex items-start gap-2">
-                <AttachmentFileIcon att={att} className="h-4 w-4 mt-0.5 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <a
-                    href={publicFileUrl(att.file_url)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs font-medium text-blue-700 hover:underline truncate block"
-                  >
-                    {att.name || att.file_name}
-                  </a>
-                  {att.notes && <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{att.notes}</p>}
-                  {img && att.file_url && (
-                    <img
-                      src={publicFileUrl(att.file_url)}
-                      alt=""
-                      className="mt-1 max-h-32 rounded border object-contain"
-                    />
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => deleteAttachment(att.id)}
-                  className="p-1 text-gray-400 hover:text-red-600 cursor-pointer shrink-0"
-                  title="Xóa"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            );
-          })}
+          {fileAtts.map((att) => (
+            <FileAttachmentCard
+              key={att.id}
+              att={att}
+              allAtts={fileAtts}
+              onOpenLightbox={openLightbox}
+              onDelete={() => deleteAttachment(att.id)}
+            />
+          ))}
         </div>
+      )}
+
+      {lightboxIndex != null && lightboxItems.length > 0 && (
+        <UploadFileLightbox
+          items={lightboxItems}
+          index={lightboxIndex}
+          onIndexChange={setLightboxIndex}
+          onClose={() => {
+            setLightboxIndex(null);
+            setLightboxItems([]);
+          }}
+        />
+      )}
+
+      {fileAtts.length === 0 && uploadedNotes.length === 0 && !notes?.trim() && (
+        <p className="text-[10px] text-gray-400 italic">Chưa có ghi chú hoặc file đính kèm</p>
       )}
     </div>
   );

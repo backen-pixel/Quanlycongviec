@@ -25,6 +25,7 @@ const {
   addCrmAssignmentComment,
 } = require('../helpers/crmAssignmentMutations');
 const { mergeDeadlineHistoryIntoUnified } = require('../helpers/crmKanbanDeadlineHistory');
+const { enrichUnifiedCrmTasks } = require('../helpers/crmTaskAttachmentCounts');
 const {
   isManagerLike,
   applyEmployeeScope,
@@ -57,7 +58,7 @@ function normalizeWorkTaskPatchStatus(source, status) {
   return s;
 }
 
-function parsePagination(req, defaultSize = 50, maxSize = 200) {
+function parsePagination(req, defaultSize = 50, maxSize = 500) {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const requested = parseInt(req.query.page_size || req.query.limit, 10) || defaultSize;
   const pageSize = Math.max(1, Math.min(maxSize, requested));
@@ -167,7 +168,8 @@ r.get('/', async (req, res) => {
     const { data, error, count } = await q;
     if (error) throw error;
 
-    res.json({ tasks: data || [], total: count ?? data?.length ?? 0, page, page_size: pageSize });
+    const tasks = await enrichUnifiedCrmTasks(supabase, data || []);
+    res.json({ tasks, total: count ?? tasks.length ?? 0, page, page_size: pageSize });
   } catch (e) {
     console.error('[work-tasks] list:', e);
     res.status(500).json({ error: e.message || 'Lỗi tải danh sách' });

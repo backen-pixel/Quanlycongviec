@@ -8,7 +8,7 @@ import { getInitials, avatarColor } from '../lib/utils';
 import { publicFileUrl } from '../lib/publicFileUrl';
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut, Lock,
-  ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Inbox, UserCircle, Package, ClipboardList, 
+  ChevronLeft, ChevronRight, ChevronDown, ChevronUp, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, UsersRound,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
   BookOpen, FolderTree, Factory, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot, Download, UserMinus,
@@ -117,9 +117,7 @@ const CONGVIEC_MENU_GROUPS = [
     emoji: '✅',
     items: [
       { to: '/work/unified', icon: Layers, label: 'Công việc tổng hợp', end: true },
-      { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
       { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
-      { to: '/project-workflow', icon: GitBranch, label: 'Công việc dự án' },
     ],
   },
 ];
