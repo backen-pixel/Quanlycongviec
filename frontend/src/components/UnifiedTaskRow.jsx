@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
-import { ExternalLink, Flag, Calendar, User } from 'lucide-react';
+import { ExternalLink, Calendar, User } from 'lucide-react';
 import { formatDate, PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/utils';
+import { normalizeKanbanStatus } from '../lib/workTasksDashboardUtils';
 
 const SOURCE_LABELS = {
   task: 'Công việc',
@@ -17,6 +18,13 @@ const KIND_COLORS = {
   'Cá nhân': 'bg-gray-100 text-gray-700',
   'Dự án': 'bg-sky-100 text-sky-800',
 };
+
+const STATUS_ACTIONS = [
+  { key: 'pending', label: 'Chờ' },
+  { key: 'in_progress', label: 'Đang làm' },
+  { key: 'done', label: 'Hoàn thành' },
+  { key: 'cancelled', label: 'Hủy' },
+];
 
 function getDeepLink(task) {
   if (!task) return null;
@@ -40,6 +48,7 @@ export default function UnifiedTaskRow({ task, onStatusChange, compact = false }
   const deepLink = getDeepLink(task);
   const priorityCls = PRIORITY_COLORS[task.priority] || 'bg-gray-100 text-gray-600';
   const kindCls = KIND_COLORS[task.task_kind] || 'bg-gray-100 text-gray-600';
+  const kanbanStatus = normalizeKanbanStatus(task.status);
 
   return (
     <div className={`flex items-start gap-3 p-3 rounded-xl border border-gray-100 bg-white hover:border-blue-200 transition-colors ${compact ? 'p-2' : ''}`}>
@@ -61,7 +70,7 @@ export default function UnifiedTaskRow({ task, onStatusChange, compact = false }
         {!compact && (
           <div className="flex flex-wrap gap-3 mt-1 text-xs text-gray-500">
             {task.project_code && <span>DA {task.project_code}</span>}
-            {task.lead_title && <span>Lead: {task.lead_title}</span>}
+            {task.lead_title && <span>Deal: {task.lead_title}</span>}
             {task.deadline && (
               <span className="inline-flex items-center gap-1">
                 <Calendar className="h-3 w-3" />
@@ -76,20 +85,25 @@ export default function UnifiedTaskRow({ task, onStatusChange, compact = false }
             )}
           </div>
         )}
-        <div className="flex flex-wrap items-center gap-2 mt-2">
-          <span className="text-xs px-2 py-0.5 rounded-full bg-gray-50 text-gray-600 border border-gray-200">
-            {task.status}
-          </span>
-          {onStatusChange && task.source === 'task' && task.status !== 'done' && (
-            <button
-              type="button"
-              onClick={() => onStatusChange(task, 'done')}
-              className="text-xs text-blue-600 hover:underline cursor-pointer"
-            >
-              Đánh dấu xong
-            </button>
-          )}
-        </div>
+        {onStatusChange && (
+          <div className="flex flex-wrap items-center gap-1.5 mt-2">
+            {STATUS_ACTIONS.map((a) => (
+              <button
+                key={a.key}
+                type="button"
+                onClick={() => onStatusChange(task, a.key)}
+                disabled={kanbanStatus === a.key}
+                className={`text-[11px] px-2 py-0.5 rounded-md border font-medium transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-default ${
+                  kanbanStatus === a.key
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:text-blue-700'
+                }`}
+              >
+                {a.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       {deepLink && (
         <Link

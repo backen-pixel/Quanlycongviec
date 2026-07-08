@@ -24,6 +24,49 @@ function applyOpenOnlyFilter(q) {
   return q.not('status', 'in', `(${DONE_STATUSES.join(',')})`);
 }
 
+const ASSIGNEE_LEAD_IDS_MAX = 500;
+
+/** Lead/deal mà NV là phụ trách (assigned_to hoặc lead_owner_id). */
+async function fetchLeadIdsForAssignee(assigneeId, companyId, maxIds = ASSIGNEE_LEAD_IDS_MAX) {
+  if (!assigneeId) return [];
+  let q = supabase.from('crm_leads')
+    .select('id')
+    .or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`)
+    .limit(maxIds);
+  if (companyId) q = q.eq('company_id', companyId);
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data || []).map((r) => r.id);
+}
+
+/** Lead/deal options cho dropdown lọc — theo NV phụ trách. */
+async function fetchLeadOptionsForAssignee(assigneeId, companyId, maxRows = 300) {
+  if (!assigneeId) return [];
+  let q = supabase.from('crm_leads')
+    .select('id, title, type, code')
+    .or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`)
+    .order('updated_at', { ascending: false })
+    .limit(maxRows);
+  if (companyId) q = q.eq('company_id', companyId);
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data || []).map((r) => ({
+    id: r.id,
+    title: r.title || r.code || r.id,
+    type: r.type || 'lead',
+    code: r.code || '',
+  }));
+}
+
+function applyAssigneeFilter(q, assigneeId, leadIds = []) {
+  if (!assigneeId) return q;
+  const ids = (leadIds || []).filter(Boolean);
+  if (ids.length > 0) {
+    return q.or(`assignee_id.eq.${assigneeId},lead_id.in.(${ids.join(',')})`);
+  }
+  return q.eq('assignee_id', assigneeId);
+}
+
 function resolveModuleKey(task) {
   const kind = String(task?.task_kind || '');
   const source = String(task?.source || '');
@@ -35,13 +78,17 @@ function resolveModuleKey(task) {
   return 'other';
 }
 
-function buildUnifiedTasksBaseQuery(user, { assignee_id, company_id, date_from, date_to } = {}) {
-  let q = supabase.from('unified_tasks_v').select('unified_id, task_kind, source, status, deadline, assignee_id');
+function buildUnifiedTasksBaseQuery(user, { assignee_id, company_id, date_from, date_to, lead_id, assignee_lead_ids } = {}) {
+  let q = supabase.from('unified_tasks_v').select('unified_id, task_kind, source, status, deadline, assignee_id, lead_id');
 
   const effectiveCompany = company_id || (!isSystemAdmin(user) ? user?.company_id : null);
   if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
 
-  if (assignee_id) q = q.eq('assignee_id', assignee_id);
+  if (lead_id) {
+    q = q.eq('lead_id', lead_id);
+  } else if (assignee_id) {
+    q = applyAssigneeFilter(q, assignee_id, assignee_lead_ids);
+  }
   if (date_from) q = q.gte('deadline', date_from);
   if (date_to) q = q.lte('deadline', date_to);
 
@@ -58,7 +105,11 @@ async function countUnifiedOpenTasks(user, opts = {}) {
 
   const effectiveCompany = opts.company_id || (!isSystemAdmin(user) ? user?.company_id : null);
   if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
-  if (opts.assignee_id) q = q.eq('assignee_id', opts.assignee_id);
+  if (opts.lead_id) {
+    q = q.eq('lead_id', opts.lead_id);
+  } else if (opts.assignee_id) {
+    q = applyAssigneeFilter(q, opts.assignee_id, opts.assignee_lead_ids);
+  }
   if (opts.date_from) q = q.gte('deadline', opts.date_from);
   if (opts.date_to) q = q.lte('deadline', opts.date_to);
 
@@ -79,7 +130,11 @@ async function countUnifiedOverdueTasks(user, opts = {}) {
 
   const effectiveCompany = opts.company_id || (!isSystemAdmin(user) ? user?.company_id : null);
   if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
-  if (opts.assignee_id) q = q.eq('assignee_id', opts.assignee_id);
+  if (opts.lead_id) {
+    q = q.eq('lead_id', opts.lead_id);
+  } else if (opts.assignee_id) {
+    q = applyAssigneeFilter(q, opts.assignee_id, opts.assignee_lead_ids);
+  }
   if (opts.date_from) q = q.gte('deadline', opts.date_from);
   if (opts.date_to) q = q.lte('deadline', opts.date_to);
 
@@ -92,8 +147,16 @@ async function countUnifiedOverdueTasks(user, opts = {}) {
   return count || 0;
 }
 
+async function resolveAssigneeLeadScope(assignee_id, company_id) {
+  if (!assignee_id) return [];
+  return fetchLeadIdsForAssignee(assignee_id, company_id || null);
+}
+
 async function fetchUnifiedTasksSummary(user, opts = {}) {
-  let q = buildUnifiedTasksBaseQuery(user, opts);
+  const assignee_lead_ids = opts.lead_id
+    ? []
+    : await resolveAssigneeLeadScope(opts.assignee_id, opts.company_id || (!isSystemAdmin(user) ? user?.company_id : null));
+  let q = buildUnifiedTasksBaseQuery(user, { ...opts, assignee_lead_ids });
   q = q.limit(3000);
   const { data, error } = await q;
   if (error) throw error;
@@ -142,7 +205,11 @@ module.exports = {
   isManagerLike,
   applyEmployeeScope,
   applyOpenOnlyFilter,
+  applyAssigneeFilter,
   resolveModuleKey,
+  fetchLeadIdsForAssignee,
+  fetchLeadOptionsForAssignee,
+  resolveAssigneeLeadScope,
   buildUnifiedTasksBaseQuery,
   countUnifiedOpenTasks,
   countUnifiedOverdueTasks,
