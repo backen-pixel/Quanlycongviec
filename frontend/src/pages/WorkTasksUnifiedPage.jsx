@@ -22,6 +22,8 @@ import {
   storeWorkTasksFilterPanelPos,
   groupTasksByModule,
   filterVisibleModuleColumns,
+  resolveCompaniesForModuleFilter,
+  resolveDefaultWorkTasksFilterCompany,
   STATUS_FILTER_OPTIONS,
   TASK_KIND_OPTIONS,
   isTaskDone,
@@ -80,14 +82,20 @@ export default function WorkTasksUnifiedPage() {
   const [taskModal, setTaskModal] = useState(null);
   const [taskSaving, setTaskSaving] = useState(false);
   const [taskDeleting, setTaskDeleting] = useState(false);
-  const [kanbanColumnDefs, setKanbanColumnDefs] = useState(() => {
-    const stored = readStoredKanbanColumns();
-    const ensured = ensureKanbanColumns(stored);
-    if (!stored?.length || serializeKanbanColumns(ensured).length > (stored?.length || 0)) {
-      storeKanbanColumns(serializeKanbanColumns(ensured));
-    }
-    return ensured;
-  });
+  const [kanbanColumnDefs, setKanbanColumnDefs] = useState(() => ensureKanbanColumns(readStoredKanbanColumns()));
+
+  useEffect(() => {
+    setKanbanColumnDefs((prev) => {
+      const ensured = ensureKanbanColumns(prev);
+      const prevJson = JSON.stringify(serializeKanbanColumns(prev));
+      const nextJson = JSON.stringify(serializeKanbanColumns(ensured));
+      if (prevJson !== nextJson) {
+        storeKanbanColumns(serializeKanbanColumns(ensured));
+        return ensured;
+      }
+      return prev;
+    });
+  }, []);
   const [columnModal, setColumnModal] = useState(null);
 
   const deadlineKanbanColumns = useMemo(() => getDeadlineKanbanColumns(), []);
@@ -108,12 +116,24 @@ export default function WorkTasksUnifiedPage() {
     if (!isAdmin) setFilterAssignee((prev) => prev || String(user.id));
   }, [user?.id, isAdmin]);
 
+  const companiesModuleFilter = useMemo(
+    () => resolveCompaniesForModuleFilter(filterModule),
+    [filterModule],
+  );
+
   useEffect(() => {
     if (!isAdmin && !isCompanyScoped) return;
-    api.get('/companies', { params: { for_module: 'crm' } })
-      .then((r) => setCompanies(Array.isArray(r.data?.companies || r.data) ? (r.data?.companies || r.data) : []))
+    const params = companiesModuleFilter ? { for_module: companiesModuleFilter } : {};
+    api.get('/companies', { params })
+      .then((r) => {
+        const list = Array.isArray(r.data?.companies || r.data) ? (r.data?.companies || r.data) : [];
+        setCompanies(list);
+        if (isAdmin && !isCompanyScoped) {
+          setFilterCompany((prev) => resolveDefaultWorkTasksFilterCompany(list, prev));
+        }
+      })
       .catch(() => setCompanies([]));
-  }, [isAdmin, isCompanyScoped]);
+  }, [isAdmin, isCompanyScoped, companiesModuleFilter]);
 
   useEffect(() => {
     const params = {};
@@ -189,7 +209,6 @@ export default function WorkTasksUnifiedPage() {
     if (filterStatus) params.status = filterStatus;
     if (filterKind) params.task_kind = filterKind;
     if (filterModule) params.module_key = filterModule;
-    if (filterOpenOnly) params.open_only = '1';
     if (dateRange.from) params.date_from = dateRange.from;
     if (dateRange.to) params.date_to = dateRange.to;
     return params;
@@ -203,13 +222,9 @@ export default function WorkTasksUnifiedPage() {
     setLoading(true);
     try {
       const params = buildParams();
-      const summaryParams = {};
-      if (effectiveCompanyId) summaryParams.company_id = effectiveCompanyId;
-      else if (filterCompany) summaryParams.company_id = filterCompany;
-      if (filterLead) summaryParams.lead_id = filterLead;
-      else if (filterAssignee) summaryParams.assignee_id = filterAssignee;
-      if (dateRange.from) summaryParams.date_from = dateRange.from;
-      if (dateRange.to) summaryParams.date_to = dateRange.to;
+      const summaryParams = { ...params };
+      delete summaryParams.module_key;
+      delete summaryParams.page_size;
 
       const [tasksRes, summaryRes] = await Promise.all([
         api.get('/work-tasks', { params }),
@@ -237,7 +252,7 @@ export default function WorkTasksUnifiedPage() {
   );
 
   const persistKanbanColumns = useCallback((cols) => {
-    const merged = cols.map(mergeKanbanColumnStyles);
+    const merged = ensureKanbanColumns(cols);
     setKanbanColumnDefs(merged);
     storeKanbanColumns(serializeKanbanColumns(merged));
   }, []);
@@ -252,11 +267,6 @@ export default function WorkTasksUnifiedPage() {
     );
   }, [tasks, search]);
 
-  const moduleGroups = useMemo(
-    () => groupTasksByModule(filteredTasks, { openOnly: filterOpenOnly }),
-    [filteredTasks, filterOpenOnly],
-  );
-
   const stats = useMemo(() => ({
     total: summary?.total ?? filteredTasks.length,
     open: summary?.open ?? filteredTasks.filter((t) => !isTaskDone(t.status)).length,
@@ -265,11 +275,55 @@ export default function WorkTasksUnifiedPage() {
     byModule: summary?.by_module || {},
   }), [summary, filteredTasks]);
 
+  const moduleChipCounts = useMemo(() => {
+    const fromSummary = stats.byModule;
+    const fallback = groupTasksByModule(filteredTasks, { openOnly: filterOpenOnly });
+    const counts = {};
+    for (const col of visibleColumns) {
+      counts[col.key] = fromSummary[col.key] ?? fallback[col.key]?.length ?? 0;
+    }
+    return counts;
+  }, [stats.byModule, filteredTasks, filterOpenOnly, visibleColumns]);
+
+  const allModulesCount = useMemo(
+    () => Object.values(moduleChipCounts).reduce((sum, n) => sum + (n || 0), 0),
+    [moduleChipCounts],
+  );
+
   const patchTaskStatus = useCallback(async (task, columnKey) => {
     const statusKey = resolveColumnStatusKey(visibleKanbanColumns, columnKey);
     const next = resolveStatusForApi(task, statusKey);
-    await api.patch(`/work-tasks/${task.source}/${task.source_id}`, { status: next });
+    const body = { status: next };
+    if (task.lead_id) body.lead_id = task.lead_id;
+    try {
+      await api.patch(`/work-tasks/${task.source}/${task.source_id}`, body);
+      void load();
+    } catch (err) {
+      const msg = err.response?.data?.error
+        || (err.code === 'ERR_NETWORK' ? 'Không kết nối được server — kiểm tra backend đang chạy port 4000' : null)
+        || err.message
+        || 'Không cập nhật được trạng thái';
+      throw new Error(msg);
+    }
+  }, [load, visibleKanbanColumns]);
+
+  const patchDealStatus = useCallback(async (dealTasks, columnKey) => {
+    const statusKey = resolveColumnStatusKey(visibleKanbanColumns, columnKey);
+    const errors = [];
+    for (const task of dealTasks) {
+      try {
+        const next = resolveStatusForApi(task, statusKey);
+        const body = { status: next };
+        if (task.lead_id) body.lead_id = task.lead_id;
+        await api.patch(`/work-tasks/${task.source}/${task.source_id}`, body);
+      } catch (err) {
+        errors.push(task.title || task.unified_id);
+      }
+    }
     void load();
+    if (errors.length) {
+      throw new Error(`Không cập nhật được ${errors.length} nhiệm vụ trong deal`);
+    }
   }, [load, visibleKanbanColumns]);
 
   const patchTaskFields = useCallback(async (task, payload) => {
@@ -361,11 +415,11 @@ export default function WorkTasksUnifiedPage() {
     setFilterOpenOnly(true);
     if (isAdmin && !isCompanyScoped) {
       setFilterAssignee('');
-      setFilterCompany('');
+      setFilterCompany(resolveDefaultWorkTasksFilterCompany(companies, ''));
     } else {
       setFilterAssignee(user?.id ? String(user.id) : '');
     }
-  }, [isAdmin, isCompanyScoped, user?.id]);
+  }, [isAdmin, isCompanyScoped, user?.id, companies]);
 
   const openFilterPanel = useCallback(() => {
     setShowAdvFilter((open) => !open);
@@ -446,7 +500,7 @@ export default function WorkTasksUnifiedPage() {
         || companies.find((c) => String(c.id) === String(filterCompany))?.name
         || filterCompany;
       push('company', `Công ty: ${name}`, () => {
-        setFilterCompany('');
+        setFilterCompany(resolveDefaultWorkTasksFilterCompany(companies, ''));
         setFilterAssignee('');
       });
     }
@@ -740,14 +794,19 @@ export default function WorkTasksUnifiedPage() {
         <button
           type="button"
           onClick={() => setFilterModule('')}
-          className={`text-xs px-3 py-1.5 rounded-full border cursor-pointer transition-colors ${
+          className={`text-xs px-3 py-1.5 rounded-full border cursor-pointer transition-colors inline-flex items-center gap-1.5 ${
             !filterModule ? 'bg-blue-600 text-white border-blue-600' : 'bg-white border-gray-200 hover:border-blue-300'
           }`}
         >
           Tất cả module
+          {allModulesCount > 0 && (
+            <span className={`text-[10px] font-bold px-1.5 rounded-full ${
+              !filterModule ? 'bg-white/25' : 'bg-gray-100 text-gray-700'
+            }`}>{allModulesCount}</span>
+          )}
         </button>
         {visibleColumns.map((col) => {
-          const count = stats.byModule[col.key] ?? moduleGroups[col.key]?.length ?? 0;
+          const count = moduleChipCounts[col.key] ?? 0;
           return (
             <button
               key={col.key}
@@ -773,14 +832,14 @@ export default function WorkTasksUnifiedPage() {
       {viewMode === 'kanban' && (
         <>
           <p className="text-xs text-gray-500 -mt-2">
-            <strong>6 cột trạng thái</strong> tự khởi tạo · <strong>Kéo thả</strong> để đổi trạng thái · <strong>Nhấp đúp</strong> hoặc «Thêm việc» để sửa/tạo.
-            {filterOpenOnly && ' Tắt «Chỉ việc đang mở» để xem cột Hoàn thành và Hủy.'}
+            <strong>{visibleKanbanColumns.length} cột</strong> · Kéo <strong>icon ≡</strong> trên deal để chuyển cả nhóm (kể cả NV hoàn thành) · Kéo từng thẻ hoặc nhấp đúp để sửa / ghi chú & file.
           </p>
           <WorkTasksStatusKanban
             tasks={filteredTasks}
             openOnly={filterOpenOnly}
             columnDefs={visibleKanbanColumns}
             onPatchStatus={patchTaskStatus}
+            onPatchDealStatus={patchDealStatus}
             onTaskClick={(task) => setTaskModal({ mode: 'edit', task })}
             onAddTask={(column) => setTaskModal({ mode: 'create', defaultStatus: column?.statusKey || 'pending' })}
             onAddColumn={() => setColumnModal({ mode: 'create' })}
@@ -792,9 +851,9 @@ export default function WorkTasksUnifiedPage() {
       {/* LIST */}
       {viewMode === 'list' && (
         <div className="bg-white rounded-xl border divide-y overflow-y-auto" style={{ maxHeight: '640px' }}>
-          {filteredTasks.length === 0 ? (
+          {(filterOpenOnly ? filteredTasks.filter((t) => !isTaskDone(t.status)) : filteredTasks).length === 0 ? (
             <p className="text-center text-sm text-gray-400 py-10">Không có nhiệm vụ phù hợp bộ lọc</p>
-          ) : filteredTasks.map((t) => (
+          ) : (filterOpenOnly ? filteredTasks.filter((t) => !isTaskDone(t.status)) : filteredTasks).map((t) => (
             <UnifiedTaskRow key={t.unified_id} task={t} onStatusChange={handleStatusChange} compact />
           ))}
         </div>
@@ -804,7 +863,7 @@ export default function WorkTasksUnifiedPage() {
       {viewMode === 'deadline' && (
         <>
           <p className="text-xs text-gray-500 -mt-2">
-            <strong>5 cột deadline</strong> tự hiển thị (Quá hạn → Chưa có hạn) · <strong>Nhấp đúp</strong> thẻ để sửa · Nhóm theo deal/dự án.
+            <strong>5 cột deadline</strong> · Deal <strong>ẩn mặc định</strong> — bấm để mở · Nhấp đúp thẻ để sửa.
           </p>
           <WorkTasksStatusKanban
             tasks={filteredTasks}

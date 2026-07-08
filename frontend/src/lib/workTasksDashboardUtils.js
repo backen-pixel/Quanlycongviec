@@ -3,6 +3,7 @@
 export const LS_WORK_TASKS_FILTERS = 'work_tasks_dashboard_filters_v1';
 export const LS_WORK_TASKS_FILTER_PANEL_POS = 'work_tasks_filter_panel_pos_v1';
 export const LS_WORK_TASKS_KANBAN_COLUMNS = 'work_tasks_kanban_columns_v1';
+export const LS_WORK_TASKS_KANBAN_PINS = 'work_tasks_kanban_column_pins_v1';
 
 export function readStoredWorkTasksFilterPanelPos() {
   try {
@@ -42,6 +43,12 @@ export const MODULE_ACCESS_MAP = {
   personal: 'tasks',
   other: null,
 };
+
+/** `for_module` cho GET /companies — theo chip module trên /work/unified. */
+export function resolveCompaniesForModuleFilter(filterModuleKey) {
+  if (!filterModuleKey) return 'crm';
+  return MODULE_ACCESS_MAP[filterModuleKey] ?? 'crm';
+}
 
 export const TASK_KIND_OPTIONS = [
   { value: '', label: 'Mọi loại' },
@@ -127,6 +134,15 @@ export function storeWorkTasksFilters(filters) {
   } catch {
     /* ignore */
   }
+}
+
+/** Công ty mặc định bộ lọc — ưu tiên đã lưu nếu còn trong danh sách, không thì công ty đầu. */
+export function resolveDefaultWorkTasksFilterCompany(companies, preferredId) {
+  const list = Array.isArray(companies) ? companies : [];
+  if (!list.length) return '';
+  const pref = preferredId != null ? String(preferredId).trim() : '';
+  if (pref && list.some((c) => String(c.id) === pref)) return pref;
+  return String(list[0].id);
 }
 
 export function filterVisibleModuleColumns(canAccessModule) {
@@ -222,13 +238,16 @@ export function serializeKanbanColumns(cols) {
 export function ensureKanbanColumns(storedCols) {
   const defaults = DEFAULT_STATUS_KANBAN_COLUMNS.map((c) => mergeKanbanColumnStyles({ ...c }));
   let cols = Array.isArray(storedCols) && storedCols.length
-    ? storedCols.map((c) => mergeKanbanColumnStyles({ ...c }))
+    ? storedCols.map((c) => mergeKanbanColumnStyles({
+      ...c,
+      statusKey: c.statusKey || c.key,
+      isSystem: c.isSystem ?? KANBAN_STATUS_ORDER.includes(c.statusKey || c.key),
+    }))
     : [...defaults];
 
   for (const def of defaults) {
-    if (!cols.some((c) => c.statusKey === def.statusKey)) {
-      cols.push({ ...def });
-    }
+    const hasMatch = cols.some((c) => c.statusKey === def.statusKey || c.key === def.key);
+    if (!hasMatch) cols.push({ ...def });
   }
 
   cols.sort((a, b) => {
@@ -271,21 +290,13 @@ export function groupTasksByDeadlineColumns(tasks, columnDefs, { openOnly = true
   return Object.fromEntries(columnDefs.map((c) => [c.key, groups[c.key] || []]));
 }
 
-/** Cột hiển thị: mặc định + tùy chỉnh, ẩn cột done/hủy khi openOnly. */
-export function getEffectiveKanbanColumns(openOnly = true, sourceCols = null) {
-  let cols;
+/** Cột hiển thị trên board — luôn hiện đủ cột (openOnly chỉ lọc task, không ẩn cột). */
+export function getEffectiveKanbanColumns(_openOnly = true, sourceCols = null) {
   if (sourceCols?.length) {
-    cols = sourceCols.map(mergeKanbanColumnStyles);
-  } else {
-    const stored = readStoredKanbanColumns();
-    cols = ensureKanbanColumns(stored?.length ? stored : null);
+    return ensureKanbanColumns(sourceCols);
   }
-
-  if (openOnly) {
-    cols = cols.filter((c) => c.statusKey === 'pending' || c.statusKey === 'in_progress'
-      || c.statusKey === 'review' || c.statusKey === 'blocked');
-  }
-  return cols;
+  const stored = readStoredKanbanColumns();
+  return ensureKanbanColumns(stored?.length ? stored : null);
 }
 
 export function createCustomKanbanColumn({ label, statusKey, colorId }) {
@@ -300,7 +311,10 @@ export function createCustomKanbanColumn({ label, statusKey, colorId }) {
   });
 }
 
-export function resolveTaskColumnKey(task, columnDefs) {
+export function resolveTaskColumnKey(task, columnDefs, columnPins = null) {
+  const pin = columnPins?.[task?.unified_id];
+  if (pin && columnDefs.some((c) => c.key === pin)) return pin;
+
   let st = String(task?.status || 'pending').toLowerCase();
   if (st === 'completed') st = 'done';
   const exact = columnDefs.find((c) => c.statusKey === st);
@@ -310,17 +324,123 @@ export function resolveTaskColumnKey(task, columnDefs) {
   return byNorm?.key || norm;
 }
 
-export function groupTasksByKanbanColumns(tasks, columnDefs, { openOnly = true } = {}) {
+export function readKanbanColumnPins() {
+  try {
+    const raw = localStorage.getItem(LS_WORK_TASKS_KANBAN_PINS);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function storeKanbanColumnPins(pins) {
+  try {
+    if (!pins || !Object.keys(pins).length) {
+      localStorage.removeItem(LS_WORK_TASKS_KANBAN_PINS);
+    } else {
+      localStorage.setItem(LS_WORK_TASKS_KANBAN_PINS, JSON.stringify(pins));
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+export function setKanbanColumnPin(pins, unifiedId, columnKey) {
+  const next = { ...pins, [String(unifiedId)]: columnKey };
+  storeKanbanColumnPins(next);
+  return next;
+}
+
+export function groupTasksByKanbanColumns(tasks, columnDefs, { openOnly = true, columnPins = null } = {}) {
+  return groupTasksByKanbanColumnsWithDeals(tasks, columnDefs, { openOnly, columnPins });
+}
+
+export function getDealKeyForTask(task) {
+  if (task?.lead_id) return `lead:${task.lead_id}`;
+  if (task?.project_id) return `proj:${task.project_id}`;
+  return null;
+}
+
+export function getTasksForDealKey(dealKey, tasks) {
+  if (!dealKey) return [];
+  if (dealKey.startsWith('lead:')) {
+    const lid = dealKey.slice(5);
+    return (tasks || []).filter((t) => String(t.lead_id) === String(lid));
+  }
+  if (dealKey.startsWith('proj:')) {
+    const pid = dealKey.slice(5);
+    return (tasks || []).filter((t) => String(t.project_id) === String(pid));
+  }
+  return [];
+}
+
+export function dealSortableId(dealKey) {
+  return `deal:${dealKey}`;
+}
+
+export function isDealSortableId(id) {
+  return String(id || '').startsWith('deal:');
+}
+
+export function resolveDealColumnKey(dealTasks, columnDefs, pins = null) {
+  const openTasks = (dealTasks || []).filter((t) => !isTaskDone(t.status));
+  const refs = openTasks.length ? openTasks : (dealTasks || []);
+  if (!refs.length) return columnDefs[0]?.key;
+  if (openTasks.length === 0) {
+    const doneCol = columnDefs.find((c) => c.statusKey === 'done');
+    if (doneCol) return doneCol.key;
+  }
+  const keys = refs.map((t) => resolveTaskColumnKey(t, columnDefs, pins));
+  const active = keys.find((k) => {
+    const def = columnDefs.find((c) => c.key === k);
+    return def && def.statusKey !== 'done' && def.statusKey !== 'cancelled';
+  });
+  return active || keys[0];
+}
+
+/** Kanban cột — deal gom chung (kể cả NV hoàn thành trong deal). */
+export function groupTasksByKanbanColumnsWithDeals(tasks, columnDefs, { openOnly = true, columnPins = null } = {}) {
+  const pins = columnPins || {};
   const map = Object.fromEntries(columnDefs.map((c) => [c.key, []]));
+  const dealBuckets = new Map();
+  const loose = [];
+
   for (const t of tasks || []) {
-    if (openOnly && isTaskDone(t.status)) continue;
-    const colKey = resolveTaskColumnKey(t, columnDefs);
+    const dealKey = getDealKeyForTask(t);
+    if (dealKey) {
+      if (!dealBuckets.has(dealKey)) dealBuckets.set(dealKey, []);
+      dealBuckets.get(dealKey).push(t);
+    } else if (!openOnly || !isTaskDone(t.status)) {
+      loose.push(t);
+    }
+  }
+
+  for (const dealTasks of dealBuckets.values()) {
+    const openTasks = dealTasks.filter((t) => !isTaskDone(t.status));
+    if (openOnly && !openTasks.length && !dealTasks.length) continue;
+    const colKey = resolveDealColumnKey(dealTasks, columnDefs, pins);
+    const bucket = map[colKey] || map[columnDefs[0]?.key];
+    if (!bucket) continue;
+    if (openOnly && !openTasks.length) {
+      bucket.push(...dealTasks);
+    } else if (openOnly) {
+      bucket.push(...dealTasks);
+    } else {
+      bucket.push(...dealTasks);
+    }
+  }
+
+  for (const t of loose) {
+    const colKey = resolveTaskColumnKey(t, columnDefs, pins);
     if (map[colKey]) map[colKey].push(t);
     else {
       const fallback = columnDefs.find((c) => c.statusKey === 'pending')?.key || columnDefs[0]?.key;
       if (fallback && map[fallback]) map[fallback].push(t);
     }
   }
+
   return map;
 }
 
@@ -342,11 +462,24 @@ export function resolveStatusForApi(task, columnOrStatusKey) {
   const key = typeof columnOrStatusKey === 'object'
     ? columnOrStatusKey.statusKey
     : String(columnOrStatusKey || 'pending');
+  const source = task?.source;
+
+  if (source === 'crm_task' || source === 'crm_assignment') {
+    if (key === 'done') return 'completed';
+    if (key === 'review' || key === 'blocked') return 'in_progress';
+    if (key === 'cancelled') return 'cancelled';
+    if (key === 'in_progress' || key === 'pending') return key;
+    if (key === 'completed') return 'completed';
+    return 'pending';
+  }
+
+  // tasks (SX / cá nhân / dự án)
+  if (key === 'completed') return 'done';
   if (key === 'cancelled') return 'cancelled';
   if (key === 'in_progress') return 'in_progress';
   if (key === 'pending') return 'pending';
   if (key === 'review' || key === 'blocked') return key;
-  if (key === 'done') return isCrmLikeUnifiedTask(task) ? 'completed' : 'done';
+  if (key === 'done') return 'done';
   return key;
 }
 

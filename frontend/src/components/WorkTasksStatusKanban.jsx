@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import {
   DndContext, DragOverlay, closestCorners, PointerSensor, useSensor, useSensors,
   useDroppable,
 } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, Calendar, Plus, Pencil, Columns3 } from 'lucide-react';
+import { GripVertical, Calendar, Plus, Pencil, Columns3, ChevronRight } from 'lucide-react';
 import { formatDate, PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/utils';
 import {
   groupTasksByKanbanColumns,
@@ -14,7 +14,31 @@ import {
   resolveStatusForApi,
   resolveTaskColumnKey,
   isTaskDone,
+  readKanbanColumnPins,
+  setKanbanColumnPin,
+  getTasksForDealKey,
+  isDealSortableId,
+  dealSortableId,
+  resolveDealColumnKey,
 } from '../lib/workTasksDashboardUtils';
+
+function resolveDropColumnKey(overId, columnDefs, columnMap) {
+  if (!overId) return null;
+  const overStr = String(overId);
+  if (columnDefs.some((c) => c.key === overStr)) return overStr;
+  if (isDealSortableId(overStr)) {
+    const dealKey = overStr.slice(5);
+    for (const col of columnDefs) {
+      const groups = groupTasksByDeal(columnMap[col.key] || []);
+      if (groups.some((g) => g.key === dealKey)) return col.key;
+    }
+    return null;
+  }
+  for (const col of columnDefs) {
+    if ((columnMap[col.key] || []).some((t) => t.unified_id === overId)) return col.key;
+  }
+  return null;
+}
 
 function KanbanTaskCard({ task, isOverlay = false, isDragging = false, readOnly = false }) {
   const overdue = task.deadline && new Date(task.deadline) < new Date() && !isTaskDone(task.status);
@@ -96,24 +120,122 @@ function StaticKanbanCard({ task, onTaskClick }) {
   );
 }
 
-function DealGroup({ group, onTaskClick, readOnly = false }) {
+function SortableDealGroup({ group, expanded, onToggle, onTaskClick, readOnly = false }) {
+  const sortId = dealSortableId(group.key);
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: sortId });
+  const count = group.tasks.length;
+  const doneCount = group.tasks.filter((t) => isTaskDone(t.status)).length;
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.45 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="rounded-lg border border-black/5 bg-white/50 overflow-hidden">
+      <div className="flex items-stretch bg-white/90 border-b border-black/5">
+        {!readOnly && (
+          <button
+            type="button"
+            className="shrink-0 px-1.5 flex items-center text-gray-300 hover:text-indigo-500 cursor-grab active:cursor-grabbing touch-none"
+            {...attributes}
+            {...listeners}
+            title="Kéo cả deal để đổi trạng thái mọi nhiệm vụ"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <GripVertical className="h-4 w-4" aria-hidden />
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => onToggle?.(group.key)}
+          className="flex-1 min-w-0 px-2 py-1.5 text-left cursor-pointer hover:bg-indigo-50/70 transition-colors flex items-center gap-1.5 group/deal"
+          aria-expanded={expanded}
+          title={expanded ? 'Thu gọn deal' : 'Mở xem nhiệm vụ trong deal'}
+        >
+          <ChevronRight
+            className={`h-3.5 w-3.5 shrink-0 text-indigo-600 transition-transform duration-200 ${
+              expanded ? 'rotate-90' : ''
+            }`}
+            aria-hidden
+          />
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] font-bold text-indigo-900 truncate" title={group.label}>
+              {group.leadId ? '💼' : '📁'} {group.label}
+            </p>
+            {group.projectCode && group.leadId && (
+              <p className="text-[10px] text-gray-500 truncate">{group.projectCode}</p>
+            )}
+          </div>
+          <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800 tabular-nums">
+            {count}{doneCount > 0 && doneCount < count ? ` · ${doneCount}✓` : ''}
+          </span>
+        </button>
+      </div>
+      {expanded && (
+        <div className="p-1.5 space-y-1.5">
+          {group.tasks.map((t) => (
+            readOnly
+              ? <StaticKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} />
+              : <SortableKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DealGroup({ group, expanded, onToggle, onTaskClick, readOnly = false }) {
+  if (!readOnly && group.key !== '__other__') {
+    return (
+      <SortableDealGroup
+        group={group}
+        expanded={expanded}
+        onToggle={onToggle}
+        onTaskClick={onTaskClick}
+        readOnly={readOnly}
+      />
+    );
+  }
+  const count = group.tasks.length;
+
   return (
     <div className="rounded-lg border border-black/5 bg-white/50 overflow-hidden">
-      <div className="px-2 py-1.5 bg-white/90 border-b border-black/5">
-        <p className="text-[11px] font-bold text-indigo-900 truncate" title={group.label}>
-          {group.leadId ? '💼' : '📁'} {group.label}
-        </p>
-        {group.projectCode && group.leadId && (
-          <p className="text-[10px] text-gray-500 truncate">{group.projectCode}</p>
-        )}
-      </div>
-      <div className="p-1.5 space-y-1.5">
-        {group.tasks.map((t) => (
-          readOnly
-            ? <StaticKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} />
-            : <SortableKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} />
-        ))}
-      </div>
+      <button
+        type="button"
+        onClick={() => onToggle?.(group.key)}
+        className="w-full px-2 py-1.5 bg-white/90 border-b border-black/5 text-left cursor-pointer hover:bg-indigo-50/70 transition-colors flex items-center gap-1.5 group/deal"
+        aria-expanded={expanded}
+        title={expanded ? 'Thu gọn deal' : 'Mở xem nhiệm vụ trong deal'}
+      >
+        <ChevronRight
+          className={`h-3.5 w-3.5 shrink-0 text-indigo-600 transition-transform duration-200 ${
+            expanded ? 'rotate-90' : ''
+          }`}
+          aria-hidden
+        />
+        <div className="flex-1 min-w-0">
+          <p className="text-[11px] font-bold text-indigo-900 truncate" title={group.label}>
+            {group.leadId ? '💼' : '📁'} {group.label}
+          </p>
+          {group.projectCode && group.leadId && (
+            <p className="text-[10px] text-gray-500 truncate">{group.projectCode}</p>
+          )}
+        </div>
+        <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800 tabular-nums">
+          {count}
+        </span>
+      </button>
+      {expanded && (
+        <div className="p-1.5 space-y-1.5">
+          {group.tasks.map((t) => (
+            readOnly
+              ? <StaticKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} />
+              : <SortableKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -121,9 +243,18 @@ function DealGroup({ group, onTaskClick, readOnly = false }) {
 function StatusColumn({
   column, tasks, onTaskClick, onAddTask, onEditColumn,
   readOnly = false, showAddTask = true, allowColumnEdit = true,
+  expandedDeals, onToggleDeal,
 }) {
   const dealGroups = useMemo(() => groupTasksByDeal(tasks), [tasks]);
-  const taskIds = tasks.map((t) => t.unified_id);
+  const sortableIds = useMemo(() => {
+    const ids = tasks.map((t) => t.unified_id);
+    if (!readOnly) {
+      for (const g of dealGroups) {
+        if (g.key !== '__other__') ids.push(dealSortableId(g.key));
+      }
+    }
+    return ids;
+  }, [tasks, dealGroups, readOnly]);
   const { setNodeRef, isOver } = useDroppable({ id: column.key, disabled: readOnly });
 
   const body = (
@@ -134,7 +265,14 @@ function StatusColumn({
             {readOnly ? 'Không có nhiệm vụ' : 'Kéo thả nhiệm vụ vào đây'}
           </p>
         ) : dealGroups.map((group) => (
-          <DealGroup key={group.key} group={group} onTaskClick={onTaskClick} readOnly={readOnly} />
+          <DealGroup
+            key={group.key}
+            group={group}
+            expanded={expandedDeals?.has(group.key)}
+            onToggle={onToggleDeal}
+            onTaskClick={onTaskClick}
+            readOnly={readOnly}
+          />
         ))}
       </div>
       {showAddTask && !readOnly && (
@@ -178,7 +316,7 @@ function StatusColumn({
           {body}
         </div>
       ) : (
-        <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
+        <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
           <div
             ref={setNodeRef}
             className={`flex-1 flex flex-col min-h-[240px] max-h-[calc(100vh-340px)] transition-colors ${
@@ -224,13 +362,15 @@ function KanbanBoard({
   showAddColumn,
   showAddTask,
   allowColumnEdit,
+  expandedDeals,
+  onToggleDeal,
   onTaskClick,
   onAddTask,
   onAddColumn,
   onEditColumn,
 }) {
   return (
-    <div className="flex gap-3 overflow-x-auto pb-2 min-h-[420px] [scrollbar-width:thin] items-stretch">
+      <div className="flex gap-3 overflow-x-auto pb-2 min-h-[420px] [scrollbar-width:thin] items-stretch scroll-smooth">
       {columnDefs.map((col) => (
         <StatusColumn
           key={col.key}
@@ -242,6 +382,8 @@ function KanbanBoard({
           readOnly={readOnly}
           showAddTask={showAddTask}
           allowColumnEdit={allowColumnEdit}
+          expandedDeals={expandedDeals}
+          onToggleDeal={onToggleDeal}
         />
       ))}
       {showAddColumn && !readOnly && <AddColumnCard onClick={onAddColumn} />}
@@ -259,6 +401,7 @@ export default function WorkTasksStatusKanban({
   showAddTask = true,
   allowColumnEdit = true,
   onPatchStatus,
+  onPatchDealStatus,
   onTaskClick,
   onAddTask,
   onAddColumn,
@@ -266,9 +409,27 @@ export default function WorkTasksStatusKanban({
 }) {
   const [columns, setColumns] = useState(() => {
     const fn = groupMode === 'deadline' ? groupTasksByDeadlineColumns : groupTasksByKanbanColumns;
-    return fn(tasks, columnDefs, { openOnly });
+    return fn(tasks, columnDefs, { openOnly, columnPins: readKanbanColumnPins() });
   });
   const [activeTask, setActiveTask] = useState(null);
+  const [activeDeal, setActiveDeal] = useState(null);
+  const [expandedDeals, setExpandedDeals] = useState(() => new Set());
+  const [columnPins, setColumnPins] = useState(() => readKanbanColumnPins());
+  const dropTargetColRef = useRef(null);
+
+  const regroupColumns = useCallback((pinMap = columnPins) => {
+    const fn = groupMode === 'deadline' ? groupTasksByDeadlineColumns : groupTasksByKanbanColumns;
+    return fn(tasks, columnDefs, { openOnly, columnPins: pinMap });
+  }, [groupMode, tasks, columnDefs, openOnly, columnPins]);
+
+  const toggleDeal = useCallback((dealKey) => {
+    setExpandedDeals((prev) => {
+      const next = new Set(prev);
+      if (next.has(dealKey)) next.delete(dealKey);
+      else next.add(dealKey);
+      return next;
+    });
+  }, []);
 
   const tasksKey = useMemo(
     () => (tasks || []).map((t) => `${t.unified_id}:${t.status}:${t.deadline}:${t.title}`).join('|'),
@@ -281,20 +442,28 @@ export default function WorkTasksStatusKanban({
   );
 
   useEffect(() => {
-    const fn = groupMode === 'deadline' ? groupTasksByDeadlineColumns : groupTasksByKanbanColumns;
-    setColumns(fn(tasks, columnDefs, { openOnly }));
-  }, [tasksKey, columnsDefKey, openOnly, tasks, columnDefs, groupMode]);
+    setColumns(regroupColumns());
+  }, [tasksKey, columnsDefKey, openOnly, tasks, columnDefs, groupMode, regroupColumns]);
 
   const allTasks = useMemo(() => Object.values(columns).flat(), [columns]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
-  const findColumnKey = useCallback((taskId) => {
+  const findColumnKeyInMap = useCallback((itemId, columnMap) => {
+    const idStr = String(itemId);
+    if (isDealSortableId(idStr)) {
+      const dealKey = idStr.slice(5);
+      for (const col of columnDefs) {
+        const groups = groupTasksByDeal(columnMap[col.key] || []);
+        if (groups.some((g) => g.key === dealKey)) return col.key;
+      }
+      return null;
+    }
     for (const col of columnDefs) {
-      if ((columns[col.key] || []).some((t) => t.unified_id === taskId)) return col.key;
+      if ((columnMap[col.key] || []).some((t) => t.unified_id === itemId)) return col.key;
     }
     return null;
-  }, [columns, columnDefs]);
+  }, [columnDefs]);
 
   const getColumnDef = useCallback((key) => columnDefs.find((c) => c.key === key), [columnDefs]);
 
@@ -302,15 +471,32 @@ export default function WorkTasksStatusKanban({
     const { active, over } = event;
     if (!over) return;
 
-    const activeKey = findColumnKey(active.id);
-    let overKey = findColumnKey(over.id);
-    if (!overKey && columnDefs.some((c) => c.key === over.id)) overKey = over.id;
-
-    if (!activeKey || !overKey || activeKey === overKey) return;
-
-    const targetCol = getColumnDef(overKey);
     setColumns((prev) => {
+      const activeKey = findColumnKeyInMap(active.id, prev);
+      let overKey = findColumnKeyInMap(over.id, prev);
+      if (!overKey && columnDefs.some((c) => c.key === over.id)) overKey = over.id;
+
+      if (!activeKey || !overKey || activeKey === overKey) return prev;
+
+      dropTargetColRef.current = overKey;
+      const targetCol = getColumnDef(overKey);
       const next = { ...prev };
+      const activeStr = String(active.id);
+
+      if (isDealSortableId(activeStr)) {
+        const dealKey = activeStr.slice(5);
+        const dealTasks = getTasksForDealKey(dealKey, next[activeKey] || []);
+        if (!dealTasks.length) return prev;
+        const ids = new Set(dealTasks.map((t) => t.unified_id));
+        next[activeKey] = (next[activeKey] || []).filter((t) => !ids.has(t.unified_id));
+        const moved = dealTasks.map((t) => ({
+          ...t,
+          status: resolveStatusForApi(t, targetCol?.statusKey || overKey),
+        }));
+        next[overKey] = [...(next[overKey] || []), ...moved];
+        return next;
+      }
+
       const task = next[activeKey]?.find((t) => t.unified_id === active.id);
       if (!task) return prev;
       next[activeKey] = next[activeKey].filter((t) => t.unified_id !== active.id);
@@ -323,22 +509,66 @@ export default function WorkTasksStatusKanban({
   };
 
   const handleDragEnd = async (event) => {
-    const { active } = event;
+    const { active, over } = event;
+    setActiveTask(null);
+    setActiveDeal(null);
+
+    const overKey = dropTargetColRef.current
+      || (over ? resolveDropColumnKey(over.id, columnDefs, columns) : null);
+    dropTargetColRef.current = null;
+
+    const activeStr = String(active.id);
+
+    if (isDealSortableId(activeStr)) {
+      const dealKey = activeStr.slice(5);
+      const dealTasks = getTasksForDealKey(dealKey, tasks);
+      if (!dealTasks.length || !overKey) {
+        setColumns(regroupColumns());
+        return;
+      }
+      const prevKey = resolveDealColumnKey(dealTasks, columnDefs, columnPins);
+      if (prevKey === overKey) return;
+
+      try {
+        if (onPatchDealStatus) {
+          await onPatchDealStatus(dealTasks, overKey);
+        } else {
+          for (const t of dealTasks) {
+            await onPatchStatus?.(t, overKey);
+          }
+        }
+        let nextPins = columnPins;
+        for (const t of dealTasks) {
+          nextPins = setKanbanColumnPin(nextPins, t.unified_id, overKey);
+        }
+        setColumnPins(nextPins);
+        setColumns(regroupColumns(nextPins));
+      } catch (err) {
+        setColumns(regroupColumns());
+        alert(err?.message || 'Không chuyển deal được — thử lại sau');
+      }
+      return;
+    }
+
     const task = tasks.find((t) => t.unified_id === active.id)
       || allTasks.find((t) => t.unified_id === active.id);
-    const newKey = findColumnKey(active.id);
-    setActiveTask(null);
 
-    if (!task || !newKey) return;
+    if (!task || !overKey) {
+      setColumns(regroupColumns());
+      return;
+    }
 
-    const prevKey = resolveTaskColumnKey(task, columnDefs);
-    if (prevKey === newKey) return;
+    const prevKey = resolveTaskColumnKey(task, columnDefs, columnPins);
+    if (prevKey === overKey) return;
 
     try {
-      await onPatchStatus?.(task, newKey);
-    } catch {
-      const fn = groupMode === 'deadline' ? groupTasksByDeadlineColumns : groupTasksByKanbanColumns;
-      setColumns(fn(tasks, columnDefs, { openOnly }));
+      await onPatchStatus?.(task, overKey);
+      const nextPins = setKanbanColumnPin(columnPins, task.unified_id, overKey);
+      setColumnPins(nextPins);
+      setColumns(regroupColumns(nextPins));
+    } catch (err) {
+      setColumns(regroupColumns());
+      alert(err?.message || 'Không chuyển cột được — thử lại sau');
     }
   };
 
@@ -350,6 +580,8 @@ export default function WorkTasksStatusKanban({
       showAddColumn={showAddColumn}
       showAddTask={showAddTask}
       allowColumnEdit={allowColumnEdit}
+      expandedDeals={expandedDeals}
+      onToggleDeal={toggleDeal}
       onTaskClick={onTaskClick}
       onAddTask={onAddTask}
       onAddColumn={onAddColumn}
@@ -364,16 +596,40 @@ export default function WorkTasksStatusKanban({
       sensors={sensors}
       collisionDetection={closestCorners}
       onDragStart={(e) => {
+        const idStr = String(e.active.id);
+        if (isDealSortableId(idStr)) {
+          const dealKey = idStr.slice(5);
+          const dealTasks = getTasksForDealKey(dealKey, allTasks);
+          const sample = dealTasks[0];
+          setActiveDeal({
+            key: dealKey,
+            label: sample?.lead_title || sample?.project_code || 'Deal',
+            count: dealTasks.length,
+          });
+          setActiveTask(null);
+          return;
+        }
         const task = allTasks.find((t) => t.unified_id === e.active.id);
         setActiveTask(task || null);
+        setActiveDeal(null);
       }}
       onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
-      onDragCancel={() => setActiveTask(null)}
+      onDragCancel={() => {
+        setActiveTask(null);
+        setActiveDeal(null);
+        dropTargetColRef.current = null;
+        setColumns(regroupColumns());
+      }}
     >
       {board}
       <DragOverlay dropAnimation={null}>
-        {activeTask ? (
+        {activeDeal ? (
+          <div className="w-[280px] rotate-1 opacity-95 pointer-events-none rounded-lg border-2 border-indigo-400 bg-indigo-50 shadow-lg px-3 py-2.5">
+            <p className="text-sm font-bold text-indigo-900 truncate">💼 {activeDeal.label}</p>
+            <p className="text-[10px] text-indigo-700 mt-0.5">Kéo cả deal · {activeDeal.count} nhiệm vụ</p>
+          </div>
+        ) : activeTask ? (
           <div className="w-[280px] rotate-1 opacity-95 pointer-events-none">
             <KanbanTaskCard task={activeTask} isOverlay />
           </div>

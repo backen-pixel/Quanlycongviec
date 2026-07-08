@@ -78,7 +78,10 @@ function resolveModuleKey(task) {
   return 'other';
 }
 
-function buildUnifiedTasksBaseQuery(user, { assignee_id, company_id, date_from, date_to, lead_id, assignee_lead_ids } = {}) {
+function buildUnifiedTasksBaseQuery(user, {
+  assignee_id, company_id, date_from, date_to, lead_id, assignee_lead_ids,
+  status, task_kind, q: searchQ, open_only,
+} = {}) {
   let q = supabase.from('unified_tasks_v').select('unified_id, task_kind, source, status, deadline, assignee_id, lead_id');
 
   const effectiveCompany = company_id || (!isSystemAdmin(user) ? user?.company_id : null);
@@ -89,8 +92,13 @@ function buildUnifiedTasksBaseQuery(user, { assignee_id, company_id, date_from, 
   } else if (assignee_id) {
     q = applyAssigneeFilter(q, assignee_id, assignee_lead_ids);
   }
+  if (status) q = q.eq('status', status);
+  if (task_kind) q = q.eq('task_kind', task_kind);
+  const search = String(searchQ || '').trim();
+  if (search) q = q.ilike('title', `%${search}%`);
   if (date_from) q = q.gte('deadline', date_from);
   if (date_to) q = q.lte('deadline', date_to);
+  if (open_only === '1' || open_only === true || open_only === 'true') q = applyOpenOnlyFilter(q);
 
   if (!isManagerLike(user)) {
     q = applyEmployeeScope(q, user.userId || user.id);
@@ -168,6 +176,7 @@ async function fetchUnifiedTasksSummary(user, opts = {}) {
   let open = 0;
   let overdue = 0;
   let done = 0;
+  const countOpenOnly = opts.open_only === '1' || opts.open_only === true || opts.open_only === 'true';
 
   for (const t of rows) {
     const st = String(t.status || '').toLowerCase();
@@ -184,8 +193,8 @@ async function fetchUnifiedTasksSummary(user, opts = {}) {
       if (t.deadline && new Date(t.deadline).getTime() < now) overdue += 1;
     }
 
+    if (countOpenOnly && isDone) continue;
     const mod = resolveModuleKey(t);
-    if (isDone) continue;
     if (byModule[mod] != null) byModule[mod] += 1;
     else byModule.other += 1;
   }
