@@ -29,6 +29,9 @@ const {
   isManagerLike,
   applyEmployeeScope,
   applyOpenOnlyFilter,
+  applyAssigneeFilter,
+  fetchLeadOptionsForAssignee,
+  resolveAssigneeLeadScope,
   fetchUnifiedTasksSummary,
 } = require('../helpers/unifiedTasksQuery');
 
@@ -65,9 +68,9 @@ const TASK_SELECT = `
 // GET /api/work-tasks/summary — KPI + phân bổ theo module
 r.get('/summary', async (req, res) => {
   try {
-    const { assignee_id, company_id, date_from, date_to } = req.query;
+    const { assignee_id, company_id, date_from, date_to, lead_id } = req.query;
     const summary = await fetchUnifiedTasksSummary(req.user, {
-      assignee_id, company_id, date_from, date_to,
+      assignee_id, company_id, date_from, date_to, lead_id,
     });
     res.json(summary);
   } catch (e) {
@@ -76,12 +79,26 @@ r.get('/summary', async (req, res) => {
   }
 });
 
+// GET /api/work-tasks/lead-options — lead/deal theo NV phụ trách (dropdown lọc)
+r.get('/lead-options', async (req, res) => {
+  try {
+    const { assignee_id, company_id } = req.query;
+    if (!assignee_id) return res.json({ leads: [] });
+    const effectiveCompany = company_id || (!isSystemAdmin(req.user) ? req.user?.company_id : null);
+    const leads = await fetchLeadOptionsForAssignee(assignee_id, effectiveCompany || null);
+    res.json({ leads });
+  } catch (e) {
+    console.error('[work-tasks] lead-options:', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải lead/deal' });
+  }
+});
+
 // GET /api/work-tasks
 r.get('/', async (req, res) => {
   try {
     const {
       source, project_id, assignee_id, status, q: searchQ, task_kind,
-      date_from, date_to, company_id, open_only, module_key,
+      date_from, date_to, company_id, open_only, module_key, lead_id,
     } = req.query;
     const { page, pageSize, from, to } = parsePagination(req);
 
@@ -94,7 +111,13 @@ r.get('/', async (req, res) => {
       else if (sources.length > 1) q = q.in('source', sources);
     }
     if (project_id) q = q.eq('project_id', project_id);
-    if (assignee_id) q = q.eq('assignee_id', assignee_id);
+    const effectiveCompany = company_id || (!isSystemAdmin(req.user) ? req.user?.company_id : null);
+    if (lead_id) {
+      q = q.eq('lead_id', lead_id);
+    } else if (assignee_id) {
+      const assigneeLeadIds = await resolveAssigneeLeadScope(assignee_id, effectiveCompany || null);
+      q = applyAssigneeFilter(q, assignee_id, assigneeLeadIds);
+    }
     if (status) q = q.eq('status', status);
     if (task_kind) q = q.eq('task_kind', task_kind);
     if (searchQ) q = q.ilike('title', `%${searchQ}%`);
@@ -113,7 +136,6 @@ r.get('/', async (req, res) => {
       q = q.in('task_kind', MODULE_KIND_FILTER[module_key]);
     }
 
-    const effectiveCompany = company_id || (!isSystemAdmin(req.user) ? req.user?.company_id : null);
     if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
 
     if (!isManagerLike(req.user)) {

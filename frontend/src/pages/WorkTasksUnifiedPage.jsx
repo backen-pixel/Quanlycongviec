@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -6,23 +6,30 @@ import { useModuleAccess } from '../shared/context/ModuleAccessContext';
 import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
 import { formatDate, PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/utils';
 import UnifiedTaskRow, { getDeepLink } from '../components/UnifiedTaskRow';
+import WorkTasksStatusKanban from '../components/WorkTasksStatusKanban';
+import WorkTaskFormModal from '../components/WorkTaskFormModal';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
+import SearchInlineFilterChips, { SearchClearButton } from '../components/SearchInlineFilterChips';
+import WorkTasksFilterPanel, { WORK_TASKS_FILTER_TABS_META } from '../components/WorkTasksFilterPanel';
 import { CRM_TIME_PRESETS, getCrmDateRangeFromPreset } from '../lib/crmDateRangePresets';
 import {
   Layers, LayoutGrid, List, AlertTriangle, Search, RefreshCw,
-  Building2, X, CheckCircle2, Circle, Clock, Calendar, User, Filter,
+  CheckCircle2, Clock, Calendar, Filter, Plus,
 } from 'lucide-react';
 import {
   readStoredWorkTasksFilters,
   storeWorkTasksFilters,
+  readStoredWorkTasksFilterPanelPos,
+  storeWorkTasksFilterPanelPos,
   groupTasksByModule,
   groupTasksByDeadline,
   filterVisibleModuleColumns,
-  TASK_KIND_OPTIONS,
   STATUS_FILTER_OPTIONS,
+  TASK_KIND_OPTIONS,
   DEADLINE_BUCKETS,
   isTaskDone,
-  resolveModuleKey,
+  normalizeKanbanStatus,
+  resolveStatusForApi,
 } from '../lib/workTasksDashboardUtils';
 
 const VIEW_MODES = [
@@ -31,51 +38,53 @@ const VIEW_MODES = [
   { id: 'deadline', icon: AlertTriangle, label: 'Deadline' },
 ];
 
-const filterLabelCls = 'block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1';
-const filterSelectCls = 'w-full h-9 px-2.5 rounded-lg border border-slate-200 bg-white text-xs outline-none focus:border-blue-400';
-const filterFieldCls = 'w-full h-9 px-2.5 rounded-lg border border-slate-200 text-xs';
-
 function WorkTaskCard({ task, onStatusChange, compact = false }) {
   const deepLink = getDeepLink(task);
   const overdue = task.deadline && new Date(task.deadline) < new Date() && !isTaskDone(task.status);
-  const modKey = resolveModuleKey(task);
+  const kanbanStatus = normalizeKanbanStatus(task.status);
+  const actions = [
+    { key: 'pending', label: 'Chờ' },
+    { key: 'in_progress', label: 'Đang làm' },
+    { key: 'done', label: 'Xong' },
+    { key: 'cancelled', label: 'Hủy' },
+  ];
 
   return (
     <div className={`bg-white rounded-lg border border-gray-100 shadow-sm hover:shadow-md hover:border-blue-200 transition-all ${compact ? 'p-2' : 'p-3'}`}>
       <div className="flex items-start gap-2">
-        <button
-          type="button"
-          onClick={() => onStatusChange?.(task)}
-          className="shrink-0 mt-0.5 cursor-pointer"
-          title="Đổi trạng thái"
-        >
-          {isTaskDone(task.status)
-            ? <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-            : task.status === 'in_progress'
-              ? <Clock className="h-4 w-4 text-blue-500" />
-              : <Circle className="h-4 w-4 text-gray-300" />}
-        </button>
         <div className="flex-1 min-w-0">
           <p className={`text-sm font-medium truncate ${isTaskDone(task.status) ? 'line-through text-gray-400' : 'text-gray-900'}`}>
             {task.title}
           </p>
           <div className="flex flex-wrap items-center gap-1.5 mt-1">
+            {task.lead_title && (
+              <span className="text-[10px] text-indigo-600 truncate max-w-[160px]">💼 {task.lead_title}</span>
+            )}
             {task.project_code && (
               <span className="text-[10px] text-gray-500">{task.project_code}</span>
-            )}
-            {task.lead_title && (
-              <span className="text-[10px] text-indigo-600 truncate max-w-[120px]">{task.lead_title}</span>
             )}
             {task.deadline && (
               <span className={`text-[10px] inline-flex items-center gap-0.5 ${overdue ? 'text-red-600 font-bold' : 'text-gray-400'}`}>
                 <Calendar className="h-2.5 w-2.5" />{formatDate(task.deadline)}
               </span>
             )}
-            {task.priority && (
-              <span className={`text-[9px] px-1 py-0.5 rounded font-medium ${PRIORITY_COLORS[task.priority] || 'bg-gray-100 text-gray-600'}`}>
-                {PRIORITY_LABELS[task.priority] || task.priority}
-              </span>
-            )}
+          </div>
+          <div className="flex flex-wrap gap-1 mt-2">
+            {actions.map((a) => (
+              <button
+                key={a.key}
+                type="button"
+                onClick={() => onStatusChange?.(task, a.key)}
+                disabled={kanbanStatus === a.key}
+                className={`text-[10px] px-1.5 py-0.5 rounded border font-medium transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-default ${
+                  kanbanStatus === a.key
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
+                }`}
+              >
+                {a.label}
+              </button>
+            ))}
           </div>
         </div>
         {deepLink && (
@@ -105,6 +114,9 @@ export default function WorkTasksUnifiedPage() {
   const [search, setSearch] = useState(stored.search || '');
   const [filterCompany, setFilterCompany] = useState(stored.filterCompany || '');
   const [filterAssignee, setFilterAssignee] = useState(stored.filterAssignee || '');
+  const [filterLead, setFilterLead] = useState(stored.filterLead || '');
+  const [leadOptions, setLeadOptions] = useState([]);
+  const [leadOptionsLoading, setLeadOptionsLoading] = useState(false);
   const [filterStatus, setFilterStatus] = useState(stored.filterStatus || '');
   const [filterKind, setFilterKind] = useState(stored.filterKind || '');
   const [filterModule, setFilterModule] = useState(stored.filterModule || '');
@@ -113,6 +125,15 @@ export default function WorkTasksUnifiedPage() {
   const [dateFrom, setDateFrom] = useState(stored.dateFrom || '');
   const [dateTo, setDateTo] = useState(stored.dateTo || '');
   const [showDateRangePicker, setShowDateRangePicker] = useState(false);
+  const [showAdvFilter, setShowAdvFilter] = useState(false);
+  const [filterTab, setFilterTab] = useState('employee');
+  const [filterPanelPos, setFilterPanelPos] = useState(() => readStoredWorkTasksFilterPanelPos());
+  const [searchFocused, setSearchFocused] = useState(false);
+  const filterPanelRef = useRef(null);
+  const filterPanelDragRef = useRef(null);
+  const [taskModal, setTaskModal] = useState(null);
+  const [taskSaving, setTaskSaving] = useState(false);
+  const [taskDeleting, setTaskDeleting] = useState(false);
 
   const effectiveCompanyId = useMemo(() => {
     if (isCompanyScoped && userCompanyId) return userCompanyId;
@@ -147,10 +168,10 @@ export default function WorkTasksUnifiedPage() {
 
   useEffect(() => {
     storeWorkTasksFilters({
-      viewMode, search, filterCompany, filterAssignee, filterStatus,
+      viewMode, search, filterCompany, filterAssignee, filterLead, filterStatus,
       filterKind, filterModule, filterOpenOnly, timePreset, dateFrom, dateTo,
     });
-  }, [viewMode, search, filterCompany, filterAssignee, filterStatus, filterKind, filterModule, filterOpenOnly, timePreset, dateFrom, dateTo]);
+  }, [viewMode, search, filterCompany, filterAssignee, filterLead, filterStatus, filterKind, filterModule, filterOpenOnly, timePreset, dateFrom, dateTo]);
 
   const dateRange = useMemo(() => {
     if (!timePreset) return { from: '', to: '' };
@@ -172,12 +193,42 @@ export default function WorkTasksUnifiedPage() {
     setDateTo(range.to);
   };
 
+  useEffect(() => {
+    if (!filterAssignee) {
+      setLeadOptions([]);
+      setFilterLead('');
+      return undefined;
+    }
+    let cancelled = false;
+    setLeadOptionsLoading(true);
+    const params = { assignee_id: filterAssignee };
+    if (effectiveCompanyId) params.company_id = effectiveCompanyId;
+    api.get('/work-tasks/lead-options', { params })
+      .then((r) => {
+        if (cancelled) return;
+        const leads = Array.isArray(r.data?.leads) ? r.data.leads : [];
+        setLeadOptions(leads);
+        setFilterLead((prev) => (prev && leads.some((ld) => String(ld.id) === String(prev)) ? prev : ''));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLeadOptions([]);
+          setFilterLead('');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLeadOptionsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [filterAssignee, effectiveCompanyId]);
+
   const buildParams = useCallback(() => {
     const params = { page_size: 500 };
     if (search.trim()) params.q = search.trim();
     if (effectiveCompanyId) params.company_id = effectiveCompanyId;
     else if (filterCompany) params.company_id = filterCompany;
-    if (filterAssignee) params.assignee_id = filterAssignee;
+    if (filterLead) params.lead_id = filterLead;
+    else if (filterAssignee) params.assignee_id = filterAssignee;
     if (filterStatus) params.status = filterStatus;
     if (filterKind) params.task_kind = filterKind;
     if (filterModule) params.module_key = filterModule;
@@ -185,7 +236,7 @@ export default function WorkTasksUnifiedPage() {
     if (dateRange.from) params.date_from = dateRange.from;
     if (dateRange.to) params.date_to = dateRange.to;
     return params;
-  }, [search, effectiveCompanyId, filterCompany, filterAssignee, filterStatus, filterKind, filterModule, filterOpenOnly, dateRange]);
+  }, [search, effectiveCompanyId, filterCompany, filterAssignee, filterLead, filterStatus, filterKind, filterModule, filterOpenOnly, dateRange]);
 
   const load = useCallback(async () => {
     if (timePreset === 'custom' && (!dateFrom || !dateTo)) {
@@ -198,7 +249,8 @@ export default function WorkTasksUnifiedPage() {
       const summaryParams = {};
       if (effectiveCompanyId) summaryParams.company_id = effectiveCompanyId;
       else if (filterCompany) summaryParams.company_id = filterCompany;
-      if (filterAssignee) summaryParams.assignee_id = filterAssignee;
+      if (filterLead) summaryParams.lead_id = filterLead;
+      else if (filterAssignee) summaryParams.assignee_id = filterAssignee;
       if (dateRange.from) summaryParams.date_from = dateRange.from;
       if (dateRange.to) summaryParams.date_to = dateRange.to;
 
@@ -213,7 +265,7 @@ export default function WorkTasksUnifiedPage() {
       setSummary(null);
     }
     setLoading(false);
-  }, [buildParams, effectiveCompanyId, filterCompany, filterAssignee, dateRange, timePreset, dateFrom, dateTo]);
+  }, [buildParams, effectiveCompanyId, filterCompany, filterAssignee, filterLead, dateRange, timePreset, dateFrom, dateTo]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -250,37 +302,230 @@ export default function WorkTasksUnifiedPage() {
     byModule: summary?.by_module || {},
   }), [summary, filteredTasks]);
 
-  const handleStatusChange = async (task) => {
-    const st = String(task.status || '').toLowerCase();
-    let next = 'done';
-    if (task.source === 'crm_task' || task.source === 'crm_assignment') {
-      next = st === 'pending' ? 'in_progress' : 'completed';
-    } else {
-      next = st === 'pending' ? 'in_progress' : 'done';
+  const patchTaskStatus = useCallback(async (task, kanbanKey) => {
+    const next = resolveStatusForApi(task, kanbanKey);
+    await api.patch(`/work-tasks/${task.source}/${task.source_id}`, { status: next });
+    void load();
+  }, [load]);
+
+  const patchTaskFields = useCallback(async (task, payload) => {
+    const body = { ...payload };
+    if (body.deadline === null) body.deadline = null;
+    if (task.source === 'task' && body.deadline) {
+      body.due_date = body.deadline;
+      delete body.deadline;
     }
+    await api.patch(`/work-tasks/${task.source}/${task.source_id}`, body);
+    void load();
+  }, [load]);
+
+  const handleTaskFormSave = async ({ mode, task, payload }) => {
+    setTaskSaving(true);
     try {
-      await api.patch(`/work-tasks/${task.source}/${task.source_id}`, { status: next });
+      if (mode === 'create') {
+        const { source, lead_id, company_id, title, description, status, priority, deadline, assignee_id, due_date } = payload;
+        const body = { title, description, status, priority, assignee_id };
+        if (source === 'task') {
+          body.due_date = due_date || deadline || null;
+          body.task_type = 'personal';
+        } else {
+          body.deadline = deadline || null;
+        }
+        if (company_id) body.company_id = company_id;
+        await api.post('/work-tasks', { source, lead_id, ...body });
+      } else {
+        await patchTaskFields(task, payload);
+      }
+      setTaskModal(null);
+    } catch (err) {
+      alert(err.response?.data?.error || 'Không lưu được nhiệm vụ');
+    } finally {
+      setTaskSaving(false);
+    }
+  };
+
+  const handleTaskFormDelete = async (task) => {
+    if (!task) return;
+    if (!window.confirm(`Xóa nhiệm vụ «${task.title}»?`)) return;
+    setTaskDeleting(true);
+    try {
+      await api.delete(`/work-tasks/${task.source}/${task.source_id}`);
+      setTaskModal(null);
       void load();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Không xóa được nhiệm vụ');
+    } finally {
+      setTaskDeleting(false);
+    }
+  };
+
+  const handleStatusChange = async (task, kanbanKey) => {
+    try {
+      await patchTaskStatus(task, kanbanKey || 'done');
     } catch { /* ignore */ }
   };
 
-  const hasFilters = filterStatus || filterAssignee || filterKind || filterModule || search || timePreset
-    || (isAdmin && !isCompanyScoped && filterCompany);
-  const clearFilters = () => {
+  const resetFilters = useCallback(() => {
     setSearch('');
     setFilterStatus('');
     setFilterKind('');
     setFilterModule('');
+    setFilterLead('');
     setTimePreset('');
     setDateFrom('');
     setDateTo('');
+    setFilterOpenOnly(true);
     if (isAdmin && !isCompanyScoped) {
       setFilterAssignee('');
       setFilterCompany('');
     } else {
       setFilterAssignee(user?.id ? String(user.id) : '');
     }
-  };
+  }, [isAdmin, isCompanyScoped, user?.id]);
+
+  const openFilterPanel = useCallback(() => {
+    setShowAdvFilter((open) => !open);
+    if (!showAdvFilter) setFilterTab('employee');
+  }, [showAdvFilter]);
+
+  const closeFilterPanel = useCallback(() => {
+    setShowAdvFilter(false);
+    setShowDateRangePicker(false);
+  }, []);
+
+  const beginFilterPanelDrag = useCallback((e) => {
+    if (e.button !== 0) return;
+    const panel = filterPanelRef.current;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    const originX = filterPanelPos?.x ?? rect.left;
+    const originY = filterPanelPos?.y ?? rect.top;
+    filterPanelDragRef.current = {
+      dragging: true,
+      startX: e.clientX,
+      startY: e.clientY,
+      originX,
+      originY,
+      width: rect.width,
+      height: rect.height,
+    };
+    if (!filterPanelPos) setFilterPanelPos({ x: originX, y: originY });
+    e.preventDefault();
+  }, [filterPanelPos]);
+
+  useEffect(() => {
+    const onMove = (e) => {
+      const drag = filterPanelDragRef.current;
+      if (!drag?.dragging) return;
+      const margin = 8;
+      const maxX = Math.max(margin, window.innerWidth - drag.width - margin);
+      const maxY = Math.max(margin, window.innerHeight - drag.height - margin);
+      const x = Math.min(maxX, Math.max(margin, drag.originX + (e.clientX - drag.startX)));
+      const y = Math.min(maxY, Math.max(margin, drag.originY + (e.clientY - drag.startY)));
+      setFilterPanelPos({ x, y });
+    };
+    const onUp = () => {
+      const drag = filterPanelDragRef.current;
+      if (!drag?.dragging) return;
+      drag.dragging = false;
+      setFilterPanelPos((pos) => {
+        if (pos) storeWorkTasksFilterPanelPos(pos);
+        return pos;
+      });
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!showAdvFilter) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape' && !showDateRangePicker) closeFilterPanel();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [showAdvFilter, showDateRangePicker, closeFilterPanel]);
+
+  const activeFilterChips = useMemo(() => {
+    const chips = [];
+    const push = (key, label, onClear) => chips.push({ key, label, onClear });
+
+    if (search.trim()) {
+      push('search', `Tìm: “${search.trim()}”`, () => setSearch(''));
+    }
+    if (isAdmin && !isCompanyScoped && filterCompany) {
+      const name = companies.find((c) => String(c.id) === String(filterCompany))?.short_name
+        || companies.find((c) => String(c.id) === String(filterCompany))?.name
+        || filterCompany;
+      push('company', `Công ty: ${name}`, () => {
+        setFilterCompany('');
+        setFilterAssignee('');
+      });
+    }
+    if (filterAssignee && (isAdmin || String(filterAssignee) !== String(user?.id || ''))) {
+      const name = users.find((u) => String(u.id) === String(filterAssignee))?.full_name || filterAssignee;
+      push('assignee', `NV: ${name}`, () => {
+        setFilterAssignee('');
+        setFilterLead('');
+      });
+    }
+    if (filterLead) {
+      const ld = leadOptions.find((l) => String(l.id) === String(filterLead));
+      const label = ld
+        ? `${ld.type === 'deal' ? 'Deal' : 'Lead'}: ${ld.code ? `${ld.code} — ` : ''}${ld.title}`
+        : `Lead/Deal: ${filterLead}`;
+      push('lead', label, () => setFilterLead(''));
+    }
+    if (filterStatus) {
+      const label = STATUS_FILTER_OPTIONS.find((o) => o.value === filterStatus)?.label || filterStatus;
+      push('status', `Trạng thái: ${label}`, () => setFilterStatus(''));
+    }
+    if (filterKind) {
+      const label = TASK_KIND_OPTIONS.find((o) => o.value === filterKind)?.label || filterKind;
+      push('kind', `Loại: ${label}`, () => setFilterKind(''));
+    }
+    if (filterModule) {
+      const col = visibleColumns.find((c) => c.key === filterModule);
+      push('module', `Module: ${col?.label || filterModule}`, () => setFilterModule(''));
+    }
+    if (!filterOpenOnly) {
+      push('openOnly', 'Gồm việc đã đóng', () => setFilterOpenOnly(true));
+    }
+    if (timePreset) {
+      push('time', `Thời gian: ${CRM_TIME_PRESETS.find((p) => p.key === timePreset)?.label || timePreset}`, () => {
+        setTimePreset('');
+        setDateFrom('');
+        setDateTo('');
+      });
+    }
+    return chips;
+  }, [
+    search, filterCompany, filterAssignee, filterLead, filterStatus, filterKind, filterModule,
+    filterOpenOnly, timePreset, isAdmin, isCompanyScoped, companies, users, user?.id, visibleColumns, leadOptions,
+  ]);
+
+  const inlineFilterChips = useMemo(
+    () => activeFilterChips.filter((c) => c.key !== 'search'),
+    [activeFilterChips],
+  );
+
+  const filterTabCounts = useMemo(() => ({
+    employee: [filterCompany, filterAssignee && (isAdmin || String(filterAssignee) !== String(user?.id || '')), filterLead].filter(Boolean).length,
+    task: [filterStatus, filterKind, !filterOpenOnly].filter(Boolean).length,
+    display: timePreset ? 1 : 0,
+  }), [filterCompany, filterAssignee, filterLead, filterStatus, filterKind, filterOpenOnly, timePreset, isAdmin, user?.id]);
+
+  const filterTabs = useMemo(
+    () => WORK_TASKS_FILTER_TABS_META.map((tab) => ({ ...tab, count: filterTabCounts[tab.id] || 0 })),
+    [filterTabCounts],
+  );
+
+  const filterPanelActive = filterTabCounts.employee + filterTabCounts.task + filterTabCounts.display > 0
+    || filterModule;
 
   const companyDisplayName = useMemo(() => {
     if (!userCompanyId) return 'Công ty của bạn';
@@ -326,6 +571,13 @@ export default function WorkTasksUnifiedPage() {
           </div>
           <button
             type="button"
+            onClick={() => setTaskModal({ mode: 'create', defaultStatus: 'pending' })}
+            className="h-8 px-3 rounded-lg bg-blue-600 text-white text-xs font-semibold flex items-center gap-1.5 hover:bg-blue-700 cursor-pointer"
+          >
+            <Plus className="h-3.5 w-3.5" />Thêm việc
+          </button>
+          <button
+            type="button"
             onClick={() => void load()}
             className="h-8 w-8 flex items-center justify-center rounded-lg border bg-white hover:bg-gray-50 cursor-pointer"
             title="Làm mới"
@@ -334,6 +586,135 @@ export default function WorkTasksUnifiedPage() {
           </button>
         </div>
       </div>
+
+      {/* Thanh tìm kiếm & bộ lọc — giống CRM dashboard */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+        <div className="flex flex-wrap items-center gap-1 px-2.5 py-1.5 sm:px-3">
+          <div
+            className={`group/search flex items-center shrink-0 flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem] rounded-md border transition-colors ${
+              searchFocused
+                ? 'border-violet-400 bg-white ring-1 ring-violet-200/60'
+                : search.trim()
+                  ? 'border-violet-300 bg-violet-50/80'
+                  : inlineFilterChips.length && !showAdvFilter
+                    ? 'border-violet-200 bg-violet-50/40'
+                    : 'border-slate-200 bg-white hover:border-slate-300'
+            }`}
+          >
+            <div className="relative flex-1 min-w-0 flex items-center gap-1 pl-7 pr-1">
+              <Search
+                className={`absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none transition-colors ${
+                  searchFocused || search.trim() ? 'text-violet-600' : 'text-slate-400'
+                }`}
+              />
+              {!showAdvFilter && inlineFilterChips.length > 0 && (
+                <SearchInlineFilterChips
+                  chips={inlineFilterChips}
+                  opacityClass={
+                    searchFocused ? 'opacity-40' : search.trim() ? 'opacity-35' : 'opacity-45 group-hover/search:opacity-100'
+                  }
+                  onClearChip={(chip) => chip.onClear()}
+                  onClearAll={resetFilters}
+                  showClearAll={inlineFilterChips.length > 1}
+                />
+              )}
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onFocus={() => setSearchFocused(true)}
+                onBlur={() => setTimeout(() => setSearchFocused(false), 180)}
+                placeholder="Tìm tiêu đề, dự án, lead..."
+                className={`flex-1 min-w-[3.5rem] h-8 bg-transparent border-0 text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-0 ${search ? 'pr-7' : ''}`}
+              />
+              {search && (
+                <SearchClearButton onClick={() => { setSearch(''); setSearchFocused(false); }} />
+              )}
+            </div>
+            <div className="shrink-0 pr-1">
+              <button
+                type="button"
+                onClick={openFilterPanel}
+                aria-expanded={showAdvFilter}
+                className={`relative h-6 w-6 flex items-center justify-center rounded border transition-colors cursor-pointer ${
+                  showAdvFilter || filterPanelActive
+                    ? 'bg-violet-100 text-violet-700 border-violet-300'
+                    : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100 hover:text-slate-700'
+                }`}
+                title={showAdvFilter ? 'Thu gọn bộ lọc' : 'Bộ lọc nâng cao'}
+                aria-label="Bộ lọc"
+              >
+                <Filter className="h-3 w-3" />
+                {filterPanelActive && (
+                  <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-violet-600 ring-1 ring-white" />
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <WorkTasksFilterPanel
+        open={showAdvFilter}
+        panelRef={filterPanelRef}
+        panelPos={filterPanelPos}
+        onDragStart={beginFilterPanelDrag}
+        onClose={closeFilterPanel}
+        filterTab={filterTab}
+        onFilterTabChange={setFilterTab}
+        filterTabs={filterTabs}
+        isAdmin={isAdmin}
+        isCompanyScoped={isCompanyScoped}
+        companies={companies}
+        users={users}
+        userCompanyId={userCompanyId}
+        companyDisplayName={companyDisplayName}
+        filterCompany={filterCompany}
+        onFilterCompanyChange={(v) => {
+          setFilterCompany(v);
+          setFilterAssignee('');
+          setFilterLead('');
+        }}
+        filterAssignee={filterAssignee}
+        onFilterAssigneeChange={(v) => {
+          setFilterAssignee(v);
+          setFilterLead('');
+        }}
+        filterLead={filterLead}
+        onFilterLeadChange={setFilterLead}
+        leadOptions={leadOptions}
+        leadOptionsLoading={leadOptionsLoading}
+        filterStatus={filterStatus}
+        onFilterStatusChange={setFilterStatus}
+        filterKind={filterKind}
+        onFilterKindChange={setFilterKind}
+        filterOpenOnly={filterOpenOnly}
+        onFilterOpenOnlyChange={setFilterOpenOnly}
+        timePreset={timePreset}
+        onTimePresetChange={handleTimePresetChange}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        onOpenDatePicker={() => setShowDateRangePicker(true)}
+        onResetFilters={resetFilters}
+        onResetPosition={() => {
+          setFilterPanelPos(null);
+          storeWorkTasksFilterPanelPos(null);
+        }}
+      />
+
+      {showDateRangePicker && (
+        <DateRangePickerPopover
+          open={showDateRangePicker}
+          from={dateFrom}
+          to={dateTo}
+          onChange={({ from, to }) => {
+            setDateFrom(from || '');
+            setDateTo(to || '');
+            setTimePreset('custom');
+          }}
+          onClose={() => setShowDateRangePicker(false)}
+        />
+      )}
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -395,170 +776,21 @@ export default function WorkTasksUnifiedPage() {
         })}
       </div>
 
-      {/* Bộ lọc chính — Công ty, Nhân viên, Thời gian (giống CRM) */}
-      <div className="bg-white rounded-xl border border-gray-200 p-3 space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {isAdmin && !isCompanyScoped && companies.length > 0 && (
-            <div className="min-w-0">
-              <label className={filterLabelCls}>Công ty</label>
-              <div className="relative">
-                <Building2 className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-                <select
-                  value={filterCompany}
-                  onChange={(e) => {
-                    setFilterCompany(e.target.value);
-                    setFilterAssignee('');
-                  }}
-                  className={`${filterSelectCls} pl-8 ${filterCompany ? 'border-blue-300 bg-blue-50/50 text-blue-800' : ''}`}
-                >
-                  <option value="">Tất cả công ty</option>
-                  {companies.map((co) => (
-                    <option key={co.id} value={co.id}>{co.short_name || co.name}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          )}
-          {!isAdmin && userCompanyId && (
-            <div className="min-w-0">
-              <label className={filterLabelCls}>Công ty</label>
-              <div className={`${filterFieldCls} flex items-center bg-blue-50/80 border-blue-200 text-blue-800 cursor-default`}>
-                {companyDisplayName}
-              </div>
-            </div>
-          )}
-          {isCompanyScoped && userCompanyId && (
-            <div className="min-w-0">
-              <label className={filterLabelCls}>Công ty</label>
-              <div className={`${filterFieldCls} flex items-center bg-indigo-50/80 border-indigo-200 text-indigo-900 cursor-default truncate`} title="Admin phạm vi một công ty">
-                {companyDisplayName}
-              </div>
-            </div>
-          )}
-
-          <div className="min-w-0">
-            <label className={filterLabelCls}>Nhân viên</label>
-            <div className="relative">
-              <User className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-              <select
-                value={filterAssignee}
-                onChange={(e) => setFilterAssignee(e.target.value)}
-                className={`${filterSelectCls} pl-8 ${filterAssignee ? 'border-emerald-300 bg-emerald-50/50 text-emerald-800' : ''}`}
-              >
-                <option value="">{isAdmin ? 'Tất cả nhân viên' : 'Tất cả NV'}</option>
-                {users.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-              </select>
-            </div>
-          </div>
-
-          <div className="min-w-0">
-            <label className={filterLabelCls}>Thời gian (deadline)</label>
-            <div className="relative">
-              <Clock className={`absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none ${timePreset ? 'text-violet-500' : 'text-slate-400'}`} />
-              <select
-                value={timePreset}
-                onChange={(e) => {
-                  handleTimePresetChange(e.target.value);
-                  if (e.target.value === 'custom') setShowDateRangePicker(true);
-                }}
-                className={`${filterSelectCls} pl-8 ${timePreset ? 'border-violet-300 bg-violet-50/50 text-violet-800' : ''}`}
-              >
-                {CRM_TIME_PRESETS.map((p) => (
-                  <option key={p.key || 'all'} value={p.key}>{p.label}</option>
-                ))}
-              </select>
-            </div>
-            {timePreset === 'custom' && (
-              <button
-                type="button"
-                onClick={() => setShowDateRangePicker(true)}
-                className={`mt-1.5 ${filterFieldCls} flex items-center gap-2 text-left cursor-pointer hover:border-violet-300 hover:bg-violet-50/40 w-full`}
-              >
-                <Calendar className="h-3.5 w-3.5 text-violet-500 shrink-0" />
-                {dateFrom && dateTo ? `${dateFrom} → ${dateTo}` : 'Chọn ngày bắt đầu / kết thúc'}
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Bộ lọc phụ */}
-        <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-gray-100">
-          <div className="relative flex-1 min-w-[200px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Tìm tiêu đề, dự án, lead..."
-              className="w-full h-9 pl-9 pr-3 rounded-lg border text-sm outline-none focus:border-blue-500"
-            />
-          </div>
-          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="h-9 px-3 rounded-lg border text-xs">
-            {STATUS_FILTER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-          <select value={filterKind} onChange={(e) => setFilterKind(e.target.value)} className="h-9 px-3 rounded-lg border text-xs">
-            {TASK_KIND_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-          <label className="inline-flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={filterOpenOnly}
-              onChange={(e) => setFilterOpenOnly(e.target.checked)}
-              className="rounded border-gray-300"
-            />
-            Chỉ việc mở
-          </label>
-          {hasFilters && (
-            <button type="button" onClick={clearFilters} className="h-9 px-3 text-xs text-red-500 hover:bg-red-50 rounded-lg cursor-pointer flex items-center gap-1">
-              <X className="h-3 w-3" />Xóa lọc
-            </button>
-          )}
-          <button type="button" onClick={() => void load()} className="h-9 px-3 bg-gray-900 text-white rounded-lg text-xs cursor-pointer inline-flex items-center gap-1">
-            <Filter className="h-3.5 w-3.5" />Lọc
-          </button>
-        </div>
-      </div>
-
-      {showDateRangePicker && (
-        <DateRangePickerPopover
-          open={showDateRangePicker}
-          from={dateFrom}
-          to={dateTo}
-          onChange={({ from, to }) => {
-            setDateFrom(from || '');
-            setDateTo(to || '');
-            setTimePreset('custom');
-          }}
-          onClose={() => setShowDateRangePicker(false)}
-        />
-      )}
-
-      {/* KANBAN — cột theo module */}
+      {/* KANBAN — cột trạng thái, nhóm theo deal/dự án */}
       {viewMode === 'kanban' && (
-        <div className="flex gap-3 overflow-x-auto pb-2 min-h-[420px] [scrollbar-width:thin]">
-          {visibleColumns
-            .filter((col) => !filterModule || col.key === filterModule)
-            .map((col) => {
-              const colTasks = moduleGroups[col.key] || [];
-              if (!colTasks.length && filterModule && filterModule !== col.key) return null;
-              return (
-                <div key={col.key} className={`shrink-0 w-[280px] flex flex-col rounded-xl border ${col.bg}`}>
-                  <div className="px-3 py-2.5 border-b border-black/5 flex items-center justify-between">
-                    <span className="text-sm font-bold text-gray-800 flex items-center gap-1.5">
-                      <span>{col.emoji}</span>{col.label}
-                    </span>
-                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-white/80 text-gray-700">{colTasks.length}</span>
-                  </div>
-                  <div className="flex-1 p-2 space-y-2 overflow-y-auto max-h-[calc(100vh-320px)] [scrollbar-width:thin]">
-                    {colTasks.length === 0 ? (
-                      <p className="text-center text-xs text-gray-400 py-6">Không có NV</p>
-                    ) : colTasks.map((t) => (
-                      <WorkTaskCard key={t.unified_id} task={t} onStatusChange={handleStatusChange} compact />
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-        </div>
+        <>
+          <p className="text-xs text-gray-500 -mt-2">
+            <strong>Kéo thả</strong> thẻ giữa các cột để đổi trạng thái · <strong>Nhấp đúp</strong> thẻ hoặc «Thêm việc» để tạo/sửa · Nhóm theo deal/dự án trong từng cột.
+            {filterOpenOnly && ' Tắt «Chỉ việc đang mở» để xem cột Hoàn thành và Hủy.'}
+          </p>
+          <WorkTasksStatusKanban
+            tasks={filteredTasks}
+            openOnly={filterOpenOnly}
+            onPatchStatus={patchTaskStatus}
+            onTaskClick={(task) => setTaskModal({ mode: 'edit', task })}
+            onAddTask={(status) => setTaskModal({ mode: 'create', defaultStatus: status })}
+          />
+        </>
       )}
 
       {/* LIST */}
@@ -592,6 +824,23 @@ export default function WorkTasksUnifiedPage() {
           )}
         </div>
       )}
+
+      <WorkTaskFormModal
+        open={!!taskModal}
+        mode={taskModal?.mode || 'edit'}
+        task={taskModal?.task || null}
+        defaultStatus={taskModal?.defaultStatus || 'pending'}
+        defaultLeadId={filterLead}
+        defaultAssigneeId={filterAssignee}
+        defaultCompanyId={effectiveCompanyId}
+        leadOptions={leadOptions}
+        users={users}
+        saving={taskSaving}
+        deleting={taskDeleting}
+        onClose={() => setTaskModal(null)}
+        onSave={handleTaskFormSave}
+        onDelete={handleTaskFormDelete}
+      />
     </div>
   );
 }

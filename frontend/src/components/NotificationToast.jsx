@@ -21,43 +21,50 @@ const TYPE_ICONS = {
 };
 
 /**
- * Toast thông báo hệ thống — wrapper quanh FloatingNotificationCard.
+ * Toast thông báo hệ thống — xếp chồng dọc khi có nhiều thông báo.
+ * @param {{ key: string, notification: object }[]} toasts
  */
-export default function NotificationToast({ notification, onDismiss, onNavigate }) {
-  if (!notification) return null;
-
-  const actor = notification.metadata?.actor || notification.metadata?.sender || null;
-  const avatarRaw = actor?.avatar || notification.metadata?.avatar || null;
-  const avatarSrc = avatarRaw ? publicFileUrl(String(avatarRaw).trim()) : null;
-  const userName = actor?.full_name || notification.title || 'Thông báo';
-  const contextLabel = actor?.full_name && notification.title && notification.title !== actor.full_name
-    ? notification.title
-    : notification.entity_type === 'crm_lead' || notification.entity_type === 'lead'
-      ? 'CRM'
-      : notification.entity_type === 'project'
-        ? 'Dự án'
-        : null;
+export default function NotificationToast({ toasts, onDismiss, onNavigate }) {
+  if (!toasts?.length) return null;
 
   return (
     <div
-      className="fixed z-[9999] flex flex-col gap-2 pointer-events-none"
+      className="fixed z-[9999] flex flex-col gap-2 pointer-events-none max-h-[min(85vh,calc(100vh-2rem))] overflow-y-auto overscroll-contain"
       style={{ top: 'max(1rem, env(safe-area-inset-top))', right: 'max(1rem, env(safe-area-inset-right))' }}
     >
-      <FloatingNotificationCard
-        className="pointer-events-auto"
-        userName={userName}
-        contextLabel={contextLabel}
-        message={notification.message}
-        avatarSrc={avatarSrc}
-        avatarFallback={userName}
-        iconEmoji={TYPE_ICONS[notification.type] || '🔔'}
-        online={null}
-        unreadCount={notification.metadata?.unread_count || 0}
-        autoDismissMs={isCommentWebToast(notification) ? 0 : undefined}
-        showClose
-        onDismiss={onDismiss}
-        onClick={() => onNavigate?.(notification)}
-      />
+      {toasts.map(({ key, notification }) => {
+        if (!notification) return null;
+        const actor = notification.metadata?.actor || notification.metadata?.sender || null;
+        const avatarRaw = actor?.avatar || notification.metadata?.avatar || null;
+        const avatarSrc = avatarRaw ? publicFileUrl(String(avatarRaw).trim()) : null;
+        const userName = actor?.full_name || notification.title || 'Thông báo';
+        const contextLabel = actor?.full_name && notification.title && notification.title !== actor.full_name
+          ? notification.title
+          : notification.entity_type === 'crm_lead' || notification.entity_type === 'lead'
+            ? 'CRM'
+            : notification.entity_type === 'project'
+              ? 'Dự án'
+              : null;
+
+        return (
+          <FloatingNotificationCard
+            key={key}
+            className="pointer-events-auto shrink-0"
+            userName={userName}
+            contextLabel={contextLabel}
+            message={notification.message}
+            avatarSrc={avatarSrc}
+            avatarFallback={userName}
+            iconEmoji={TYPE_ICONS[notification.type] || '🔔'}
+            online={null}
+            unreadCount={notification.metadata?.unread_count || 0}
+            autoDismissMs={isCommentWebToast(notification) ? 0 : undefined}
+            showClose
+            onDismiss={() => onDismiss?.(key)}
+            onClick={() => onNavigate?.(notification)}
+          />
+        );
+      })}
     </div>
   );
 }

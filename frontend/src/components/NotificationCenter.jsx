@@ -284,7 +284,19 @@ export default function NotificationCenter({ socket }) {
   const [onlyUnread, setOnlyUnread] = useState(false);
   const [activityDate, setActivityDate] = useState('');
   const [deadlinesModule, setDeadlinesModule] = useState('all');
-  const [toastNotification, setToastNotification] = useState(null);
+  const [toastStack, setToastStack] = useState([]);
+  const toastKeyRef = useRef(0);
+  const MAX_TOAST_STACK = 8;
+
+  const pushToast = useCallback((notif) => {
+    if (!notif) return;
+    const key = `toast-${++toastKeyRef.current}`;
+    setToastStack((prev) => [...prev, { key, notification: notif }].slice(-MAX_TOAST_STACK));
+  }, []);
+
+  const dismissToast = useCallback((key) => {
+    setToastStack((prev) => prev.filter((t) => t.key !== key));
+  }, []);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const rootRef = useRef(null);
   const panelRef = useRef(null);
@@ -293,7 +305,7 @@ export default function NotificationCenter({ socket }) {
     if (user) return undefined;
     cancelNotificationSpeech();
     setNotifications([]);
-    setToastNotification(null);
+    setToastStack([]);
     setUnreadActivity(0);
     setUnreadChat(0);
     setUnreadDeadlines(0);
@@ -307,7 +319,7 @@ export default function NotificationCenter({ socket }) {
     const onCleared = () => {
       cancelNotificationSpeech();
       setNotifications([]);
-      setToastNotification(null);
+      setToastStack([]);
       setUnreadActivity(0);
       setUnreadChat(0);
       setUnreadDeadlines(0);
@@ -556,7 +568,7 @@ export default function NotificationCenter({ socket }) {
         setNotifications((prev) => (tab === 'activity' ? [notif, ...prev] : prev));
       }
 
-      setToastNotification(notif);
+      pushToast(notif);
 
       if (notif?.type === 'ai_crm_deadline_digest') {
         try {
@@ -577,7 +589,7 @@ export default function NotificationCenter({ socket }) {
     };
     socket.on('notification', handler);
     return () => socket.off('notification', handler);
-  }, [socket, tab, user]);
+  }, [socket, tab, user, pushToast]);
 
   useEffect(() => {
     if (open) load();
@@ -663,10 +675,10 @@ export default function NotificationCenter({ socket }) {
   return (
     <div className="relative" ref={rootRef}>
       {/* Toast — portal ra body để fixed không bị sidebar backdropFilter ảnh hưởng */}
-      {toastNotification && createPortal(
+      {toastStack.length > 0 && createPortal(
         <NotificationToast
-          notification={toastNotification}
-          onDismiss={() => setToastNotification(null)}
+          toasts={toastStack}
+          onDismiss={dismissToast}
           onNavigate={(notif) => {
             if (isLeadCommentMentionNotification(notif) && notif.entity_id) {
               navigateLeadCommentMention(navigate, notif, setOpen);
