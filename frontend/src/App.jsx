@@ -61,7 +61,6 @@ import SaasCheckoutPage from './pages/SaasCheckoutPage';
 const Dashboard = lazyWithRetry(() => import('./pages/ManagementDashboard'));
 const ManagementDashboard = lazyWithRetry(() => import('./pages/ManagementDashboard'));
 const UnifiedDealPage = lazyWithRetry(() => import('./pages/UnifiedDealPage'));
-const MyTasks = lazyWithRetry(() => import('./pages/MyTasks'));
 const WorkTasksUnifiedPage = lazyWithRetry(() => import('./pages/WorkTasksUnifiedPage'));
 const Projects = lazyWithRetry(() => import('./pages/Projects'));
 const ProjectDetail = lazyWithRetry(() => import('./pages/ProjectDetail'));
@@ -159,7 +158,6 @@ const CreateProject = lazyWithRetry(() => import('./pages/CreateProject'));
 const PermissionsPage = lazyWithRetry(() => import('./pages/PermissionsPage'));
 const EcosystemPermissionsPage = lazyWithRetry(() => import('./pages/EcosystemPermissionsPage'));
 const WorkflowHubPage = lazyWithRetry(() => import('./pages/WorkflowHubPage'));
-const ProjectWorkflowPage = lazyWithRetry(() => import('./pages/ProjectWorkflowPage'));
 const GuidePage = lazyWithRetry(() => import('./pages/GuidePage'));
 const KnowledgeLibraryPage = lazyWithRetry(() => import('./pages/KnowledgeLibraryPage'));
 const KnowledgeLessonPage = lazyWithRetry(() => import('./pages/KnowledgeLessonPage'));
@@ -381,13 +379,13 @@ export default function App() {
             <Route path="/dashboard/divisions" element={<Navigate to="/dashboard" replace />} />
             <Route path="/social" element={<SocialFeedPage />} />
             <Route path="/social/u/:userId" element={<SocialProfilePage />} />
-            <Route path="/my-tasks" element={<MyTasks />} />
+            <Route path="/my-tasks" element={<Navigate to="/work/unified" replace />} />
             <Route path="/work" element={<Navigate to="/work/unified" replace />} />
             <Route path="/work/unified" element={<Suspense fallback={<PageLoader />}><WorkTasksUnifiedPage /></Suspense>} />
             <Route path="/projects" element={<Projects />} />
             <Route path="/projects/create" element={<CreateProject />} />
             <Route path="/projects/:id" element={<ProjectDetail />} />
-            <Route path="/project-workflow" element={<ProjectWorkflowPage />} />
+            <Route path="/project-workflow" element={<Navigate to="/work/unified" replace />} />
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/tasks/regions" element={<CompanyCrmRegionsPage />} />
             <Route path="/workspace/org-setup" element={<OrganizationQuickSetupPage />} />

@@ -6,7 +6,7 @@ import { getInitials, avatarColor } from '../lib/utils';
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut,
   ChevronDown, MessageSquare, Palette, Calculator, FileText,
-  Hammer, Truck, Wrench, Heart, Inbox, UserCircle, Package, ClipboardList, 
+  Hammer, Truck, Wrench, Heart, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, Smartphone
 } from 'lucide-react';
 import { useState } from 'react';
@@ -19,9 +19,8 @@ const MENUS = [
     emoji: '📊',
     items: [
       { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-      { to: '/my-tasks', icon: Inbox, label: 'Việc của tôi' },
+      { to: '/work/unified', icon: Layers, label: 'Công việc tổng hợp' },
       { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
-      { to: '/project-workflow', icon: GitBranch, label: 'Công việc dự án' },
     ]
   },
   {

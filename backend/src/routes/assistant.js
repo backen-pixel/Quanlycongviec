@@ -643,9 +643,9 @@ r.post('/chat', async (req, res) => {
     // ── INFO ACTIONS ──
     if (intent.action === 'suggest') {
       const suggestions = [];
-      if (ctx.overdueTasks > 0) suggestions.push({ icon: '🔴', message: `${ctx.overdueTasks} NV quá hạn: ${ctx.overdueTasksList.join(', ')}`, action: '/my-tasks' });
+      if (ctx.overdueTasks > 0) suggestions.push({ icon: '🔴', message: `${ctx.overdueTasks} NV quá hạn: ${ctx.overdueTasksList.join(', ')}`, action: '/work/unified' });
       if (ctx.unpaidInvoices > 0) suggestions.push({ icon: '💰', message: `${ctx.unpaidInvoices} HĐ chưa thu (${fmt(ctx.totalDebt)}đ)`, action: '/crm/invoices' });
-      if (ctx.myTasks > 0) suggestions.push({ icon: '📋', message: `${ctx.myTasks} NV đang chờ`, action: '/my-tasks' });
+      if (ctx.myTasks > 0) suggestions.push({ icon: '📋', message: `${ctx.myTasks} NV đang chờ`, action: '/work/unified' });
       if (ctx.openLeads > 0) suggestions.push({ icon: '🎯', message: `${ctx.openLeads} lead đang mở`, action: '/crm' });
       if (!suggestions.length) return res.json({ reply: '✅ Không có việc gấp! 👏' });
       return res.json({ reply: `📋 **Việc cần làm:**\n\n${suggestions.map(s => `${s.icon} ${s.message}`).join('\n')}`, action: { action: 'suggest', suggestions } });
@@ -900,9 +900,9 @@ r.get('/suggestions', async (req, res) => {
   try {
     const ctx = await buildContext(req.user.userId);
     const suggestions = [];
-    if (ctx.overdueTasks) suggestions.push({ priority:'high', icon:'🔴', message:`${ctx.overdueTasks} NV quá hạn`, action:'/my-tasks' });
+    if (ctx.overdueTasks) suggestions.push({ priority:'high', icon:'🔴', message:`${ctx.overdueTasks} NV quá hạn`, action:'/work/unified' });
     if (ctx.unpaidInvoices) suggestions.push({ priority:'medium', icon:'💰', message:`${ctx.unpaidInvoices} HĐ chưa thu (${fmt(ctx.totalDebt)}đ)`, action:'/crm/invoices' });
-    if (ctx.myTasks) suggestions.push({ priority:'low', icon:'📋', message:`${ctx.myTasks} NV chờ`, action:'/my-tasks' });
+    if (ctx.myTasks) suggestions.push({ priority:'low', icon:'📋', message:`${ctx.myTasks} NV chờ`, action:'/work/unified' });
     res.json({ suggestions });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

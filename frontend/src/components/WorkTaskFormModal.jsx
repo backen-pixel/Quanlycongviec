@@ -24,6 +24,7 @@ export default function WorkTaskFormModal({
   defaultCompanyId = '',
   leadOptions = [],
   users = [],
+  initialTab = 'details',
   onClose,
   onSave,
   onDelete,
@@ -42,7 +43,7 @@ export default function WorkTaskFormModal({
 
   useEffect(() => {
     if (!open) return;
-    setModalTab('details');
+    setModalTab(initialTab === 'extras' ? 'extras' : 'details');
     if (mode === 'edit' && task) {
       setSource(task.source || 'task');
       setTitle(task.title || '');
@@ -66,7 +67,7 @@ export default function WorkTaskFormModal({
       setAssigneeId(defaultAssigneeId || '');
       setLeadId(defaultLeadId || '');
     }
-  }, [open, mode, task, defaultStatus, defaultLeadId, defaultAssigneeId]);
+  }, [open, mode, task, defaultStatus, defaultLeadId, defaultAssigneeId, initialTab]);
 
   if (!open) return null;
 
@@ -109,7 +110,9 @@ export default function WorkTaskFormModal({
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/40" onClick={onClose}>
       <div
-        className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col"
+        className={`bg-white rounded-xl shadow-2xl w-full max-h-[90vh] overflow-hidden flex flex-col ${
+          isEdit && modalTab === 'extras' ? 'max-w-3xl' : 'max-w-2xl'
+        }`}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-labelledby="work-task-form-title"

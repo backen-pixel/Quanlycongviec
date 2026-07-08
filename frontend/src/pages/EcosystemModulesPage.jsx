@@ -9,7 +9,7 @@ const MODULE_ROWS = [
   { key: 'crm', label: 'CRM', hint: 'Bán hàng, pipeline, đơn hàng…' },
   { key: 'production', label: 'Sản xuất / Xưởng', hint: '/sx — deal vào xưởng' },
   { key: 'logistics', label: 'Vận chuyển', hint: '/vc' },
-  { key: 'projects', label: 'Dự án (workspace)', hint: '/projects, project-workflow' },
+  { key: 'projects', label: 'Dự án (workspace)', hint: '/projects' },
   { key: 'tasks', label: 'Tất cả công việc', hint: '/tasks' },
   { key: 'customers', label: 'Khách hàng (workspace)', hint: '/customers' },
 ];

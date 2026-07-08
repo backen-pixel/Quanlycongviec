@@ -312,16 +312,24 @@ export function createCustomKanbanColumn({ label, statusKey, colorId }) {
 }
 
 export function resolveTaskColumnKey(task, columnDefs, columnPins = null) {
-  const pin = columnPins?.[task?.unified_id];
-  if (pin && columnDefs.some((c) => c.key === pin)) return pin;
-
   let st = String(task?.status || 'pending').toLowerCase();
   if (st === 'completed') st = 'done';
+
   const exact = columnDefs.find((c) => c.statusKey === st);
-  if (exact) return exact.key;
   const norm = normalizeKanbanStatus(st);
   const byNorm = columnDefs.find((c) => c.key === norm || c.statusKey === norm);
-  return byNorm?.key || norm;
+  const statusColKey = exact?.key || byNorm?.key || norm;
+
+  // Pin chỉ giữ khi vẫn khớp trạng thái thật (tránh lệch cột sau khi đổi status ở deal).
+  const pin = columnPins?.[task?.unified_id];
+  if (pin && columnDefs.some((c) => c.key === pin)) {
+    const pinCol = columnDefs.find((c) => c.key === pin);
+    const pinSt = String(pinCol?.statusKey || pin).toLowerCase();
+    const pinNorm = normalizeKanbanStatus(pinSt === 'completed' ? 'done' : pinSt);
+    if (pinSt === st || pinNorm === norm) return pin;
+  }
+
+  return statusColKey;
 }
 
 export function readKanbanColumnPins() {
@@ -351,6 +359,24 @@ export function setKanbanColumnPin(pins, unifiedId, columnKey) {
   const next = { ...pins, [String(unifiedId)]: columnKey };
   storeKanbanColumnPins(next);
   return next;
+}
+
+/** Xóa pin cũ khi status thật đã đổi (vd. từ tab chi tiết deal). */
+export function pruneKanbanColumnPins(pins, tasks, columnDefs) {
+  if (!pins || !Object.keys(pins).length) return pins || {};
+  const next = { ...pins };
+  let changed = false;
+  for (const t of tasks || []) {
+    const uid = String(t.unified_id);
+    if (!next[uid]) continue;
+    const expected = resolveTaskColumnKey(t, columnDefs, {});
+    if (next[uid] !== expected) {
+      delete next[uid];
+      changed = true;
+    }
+  }
+  if (changed) storeKanbanColumnPins(next);
+  return changed ? next : pins;
 }
 
 export function groupTasksByKanbanColumns(tasks, columnDefs, { openOnly = true, columnPins = null } = {}) {
@@ -393,52 +419,46 @@ export function resolveDealColumnKey(dealTasks, columnDefs, pins = null) {
     if (doneCol) return doneCol.key;
   }
   const keys = refs.map((t) => resolveTaskColumnKey(t, columnDefs, pins));
-  const active = keys.find((k) => {
+  const counts = new Map();
+  for (const k of keys) counts.set(k, (counts.get(k) || 0) + 1);
+  let best = keys[0];
+  let bestN = 0;
+  for (const [k, n] of counts) {
     const def = columnDefs.find((c) => c.key === k);
-    return def && def.statusKey !== 'done' && def.statusKey !== 'cancelled';
-  });
-  return active || keys[0];
+    const isTerminal = def && (def.statusKey === 'done' || def.statusKey === 'cancelled');
+    if (isTerminal && openTasks.length) continue;
+    if (n > bestN) {
+      best = k;
+      bestN = n;
+    }
+  }
+  return best || keys[0];
 }
 
-/** Kanban cột — deal gom chung (kể cả NV hoàn thành trong deal). */
+/**
+ * Kanban cột — mỗi nhiệm vụ vào đúng cột theo status.
+ * Deal vẫn gom UI trong từng cột (groupTasksByDeal), không gom cả deal xuyên cột.
+ */
 export function groupTasksByKanbanColumnsWithDeals(tasks, columnDefs, { openOnly = true, columnPins = null } = {}) {
   const pins = columnPins || {};
   const map = Object.fromEntries(columnDefs.map((c) => [c.key, []]));
-  const dealBuckets = new Map();
-  const loose = [];
+  const fallback = columnDefs.find((c) => c.statusKey === 'pending')?.key || columnDefs[0]?.key;
 
   for (const t of tasks || []) {
-    const dealKey = getDealKeyForTask(t);
-    if (dealKey) {
-      if (!dealBuckets.has(dealKey)) dealBuckets.set(dealKey, []);
-      dealBuckets.get(dealKey).push(t);
-    } else if (!openOnly || !isTaskDone(t.status)) {
-      loose.push(t);
+    if (openOnly && isTaskDone(t.status)) {
+      // Vẫn hiện nhiệm vụ đã xong ở cột Hoàn thành / Hủy để đồng bộ trạng thái ↔ cột.
+      const doneKey = resolveTaskColumnKey(t, columnDefs, pins);
+      const doneDef = columnDefs.find((c) => c.key === doneKey);
+      if (doneDef && (doneDef.statusKey === 'done' || doneDef.statusKey === 'cancelled')) {
+        if (map[doneKey]) map[doneKey].push(t);
+        continue;
+      }
+      continue;
     }
-  }
 
-  for (const dealTasks of dealBuckets.values()) {
-    const openTasks = dealTasks.filter((t) => !isTaskDone(t.status));
-    if (openOnly && !openTasks.length && !dealTasks.length) continue;
-    const colKey = resolveDealColumnKey(dealTasks, columnDefs, pins);
-    const bucket = map[colKey] || map[columnDefs[0]?.key];
-    if (!bucket) continue;
-    if (openOnly && !openTasks.length) {
-      bucket.push(...dealTasks);
-    } else if (openOnly) {
-      bucket.push(...dealTasks);
-    } else {
-      bucket.push(...dealTasks);
-    }
-  }
-
-  for (const t of loose) {
     const colKey = resolveTaskColumnKey(t, columnDefs, pins);
     if (map[colKey]) map[colKey].push(t);
-    else {
-      const fallback = columnDefs.find((c) => c.statusKey === 'pending')?.key || columnDefs[0]?.key;
-      if (fallback && map[fallback]) map[fallback].push(t);
-    }
+    else if (fallback && map[fallback]) map[fallback].push(t);
   }
 
   return map;

@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ExternalLink, Calendar, User } from 'lucide-react';
+import { ExternalLink, Calendar, User, MessageSquare } from 'lucide-react';
 import { formatDate, PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/utils';
 import { normalizeKanbanStatus } from '../lib/workTasksDashboardUtils';
 
@@ -29,7 +29,7 @@ const STATUS_ACTIONS = [
 function getDeepLink(task) {
   if (!task) return null;
   if (task.source === 'crm_task' && task.lead_id) {
-    return `/lead/${task.lead_id}`;
+    return `/crm/leads/${task.lead_id}`;
   }
   if (task.source === 'task' && task.project_id) {
     if (task.task_kind === 'SX') return `/sx/projects/${task.project_id}`;
@@ -43,7 +43,7 @@ function getDeepLink(task) {
   return null;
 }
 
-export default function UnifiedTaskRow({ task, onStatusChange, compact = false }) {
+export default function UnifiedTaskRow({ task, onStatusChange, onOpenExtras, compact = false }) {
   if (!task) return null;
   const deepLink = getDeepLink(task);
   const priorityCls = PRIORITY_COLORS[task.priority] || 'bg-gray-100 text-gray-600';
@@ -105,16 +105,29 @@ export default function UnifiedTaskRow({ task, onStatusChange, compact = false }
           </div>
         )}
       </div>
-      {deepLink && (
-        <Link
-          to={deepLink}
-          className="shrink-0 inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded-lg hover:bg-blue-50"
-          title="Mở trong module gốc"
-        >
-          <ExternalLink className="h-3.5 w-3.5" />
-          {!compact && 'Mở gốc'}
-        </Link>
-      )}
+      <div className="shrink-0 flex flex-col items-end gap-1">
+        {onOpenExtras && (
+          <button
+            type="button"
+            onClick={() => onOpenExtras(task)}
+            className="inline-flex items-center gap-1 text-[11px] text-blue-700 font-semibold px-2 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 border border-blue-200 cursor-pointer"
+            title="Ghi chú & file đính kèm"
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+            {!compact && 'Ghi chú & file'}
+          </button>
+        )}
+        {deepLink && (
+          <Link
+            to={deepLink}
+            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded-lg hover:bg-blue-50"
+            title="Mở trong module gốc"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            {!compact && 'Mở gốc'}
+          </Link>
+        )}
+      </div>
     </div>
   );
 }

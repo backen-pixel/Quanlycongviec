@@ -241,6 +241,18 @@ export default function WorkTasksUnifiedPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === 'visible') void load();
+    };
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('focus', refresh);
+    return () => {
+      document.removeEventListener('visibilitychange', refresh);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [load]);
+
   const visibleColumns = useMemo(
     () => filterVisibleModuleColumns(canAccessModule),
     [canAccessModule],
@@ -295,10 +307,14 @@ export default function WorkTasksUnifiedPage() {
     const next = resolveStatusForApi(task, statusKey);
     const body = { status: next };
     if (task.lead_id) body.lead_id = task.lead_id;
+    setTasks((prev) => prev.map((t) => (
+      t.unified_id === task.unified_id ? { ...t, status: next } : t
+    )));
     try {
       await api.patch(`/work-tasks/${task.source}/${task.source_id}`, body);
       void load();
     } catch (err) {
+      void load();
       const msg = err.response?.data?.error
         || (err.code === 'ERR_NETWORK' ? 'Không kết nối được server — kiểm tra backend đang chạy port 4000' : null)
         || err.message
@@ -309,14 +325,21 @@ export default function WorkTasksUnifiedPage() {
 
   const patchDealStatus = useCallback(async (dealTasks, columnKey) => {
     const statusKey = resolveColumnStatusKey(visibleKanbanColumns, columnKey);
+    const updates = dealTasks.map((task) => ({
+      task,
+      next: resolveStatusForApi(task, statusKey),
+    }));
+    setTasks((prev) => prev.map((t) => {
+      const hit = updates.find((u) => u.task.unified_id === t.unified_id);
+      return hit ? { ...t, status: hit.next } : t;
+    }));
     const errors = [];
-    for (const task of dealTasks) {
+    for (const { task, next } of updates) {
       try {
-        const next = resolveStatusForApi(task, statusKey);
         const body = { status: next };
         if (task.lead_id) body.lead_id = task.lead_id;
         await api.patch(`/work-tasks/${task.source}/${task.source_id}`, body);
-      } catch (err) {
+      } catch {
         errors.push(task.title || task.unified_id);
       }
     }
@@ -832,7 +855,7 @@ export default function WorkTasksUnifiedPage() {
       {viewMode === 'kanban' && (
         <>
           <p className="text-xs text-gray-500 -mt-2">
-            <strong>{visibleKanbanColumns.length} cột</strong> · Kéo <strong>icon ≡</strong> trên deal để chuyển cả nhóm (kể cả NV hoàn thành) · Kéo từng thẻ hoặc nhấp đúp để sửa / ghi chú & file.
+            <strong>{visibleKanbanColumns.length} cột</strong> · Mỗi nhiệm vụ vào đúng cột theo trạng thái · Deal cùng tên có thể xuất hiện ở nhiều cột nếu NV khác trạng thái.
           </p>
           <WorkTasksStatusKanban
             tasks={filteredTasks}
@@ -840,7 +863,8 @@ export default function WorkTasksUnifiedPage() {
             columnDefs={visibleKanbanColumns}
             onPatchStatus={patchTaskStatus}
             onPatchDealStatus={patchDealStatus}
-            onTaskClick={(task) => setTaskModal({ mode: 'edit', task })}
+            onTaskClick={(task) => setTaskModal({ mode: 'edit', task, initialTab: 'details' })}
+            onTaskExtrasClick={(task) => setTaskModal({ mode: 'edit', task, initialTab: 'extras' })}
             onAddTask={(column) => setTaskModal({ mode: 'create', defaultStatus: column?.statusKey || 'pending' })}
             onAddColumn={() => setColumnModal({ mode: 'create' })}
             onEditColumn={(column) => setColumnModal({ mode: 'edit', column })}
@@ -854,7 +878,13 @@ export default function WorkTasksUnifiedPage() {
           {(filterOpenOnly ? filteredTasks.filter((t) => !isTaskDone(t.status)) : filteredTasks).length === 0 ? (
             <p className="text-center text-sm text-gray-400 py-10">Không có nhiệm vụ phù hợp bộ lọc</p>
           ) : (filterOpenOnly ? filteredTasks.filter((t) => !isTaskDone(t.status)) : filteredTasks).map((t) => (
-            <UnifiedTaskRow key={t.unified_id} task={t} onStatusChange={handleStatusChange} compact />
+            <UnifiedTaskRow
+              key={t.unified_id}
+              task={t}
+              onStatusChange={handleStatusChange}
+              onOpenExtras={(task) => setTaskModal({ mode: 'edit', task, initialTab: 'extras' })}
+              compact
+            />
           ))}
         </div>
       )}
@@ -874,7 +904,8 @@ export default function WorkTasksUnifiedPage() {
             showAddColumn={false}
             showAddTask={false}
             allowColumnEdit={false}
-            onTaskClick={(task) => setTaskModal({ mode: 'edit', task })}
+            onTaskClick={(task) => setTaskModal({ mode: 'edit', task, initialTab: 'details' })}
+            onTaskExtrasClick={(task) => setTaskModal({ mode: 'edit', task, initialTab: 'extras' })}
           />
         </>
       )}
@@ -883,6 +914,7 @@ export default function WorkTasksUnifiedPage() {
         open={!!taskModal}
         mode={taskModal?.mode || 'edit'}
         task={taskModal?.task || null}
+        initialTab={taskModal?.initialTab || 'details'}
         defaultStatus={taskModal?.defaultStatus || 'pending'}
         statusOptions={kanbanColumnDefs}
         defaultLeadId={filterLead}

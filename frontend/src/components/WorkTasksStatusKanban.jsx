@@ -5,7 +5,7 @@ import {
 } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, Calendar, Plus, Pencil, Columns3, ChevronRight } from 'lucide-react';
+import { GripVertical, Calendar, Plus, Pencil, Columns3, ChevronRight, MessageSquare, Paperclip } from 'lucide-react';
 import { formatDate, PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/utils';
 import {
   groupTasksByKanbanColumns,
@@ -16,6 +16,7 @@ import {
   isTaskDone,
   readKanbanColumnPins,
   setKanbanColumnPin,
+  pruneKanbanColumnPins,
   getTasksForDealKey,
   isDealSortableId,
   dealSortableId,
@@ -40,8 +41,12 @@ function resolveDropColumnKey(overId, columnDefs, columnMap) {
   return null;
 }
 
-function KanbanTaskCard({ task, isOverlay = false, isDragging = false, readOnly = false }) {
+function KanbanTaskCard({ task, isOverlay = false, isDragging = false, readOnly = false, onTaskExtrasClick }) {
   const overdue = task.deadline && new Date(task.deadline) < new Date() && !isTaskDone(task.status);
+  const showExtras = !!onTaskExtrasClick && !isOverlay;
+  const fileCount = task.file_count || 0;
+  const noteCount = task.note_count || 0;
+  const hasNotes = !!(task.notes && String(task.notes).trim());
 
   return (
     <div
@@ -52,7 +57,7 @@ function KanbanTaskCard({ task, isOverlay = false, isDragging = false, readOnly 
       } ${isOverlay ? 'p-2.5' : readOnly ? 'p-2.5' : 'p-2.5 cursor-grab active:cursor-grabbing'}`}
     >
       <div className="flex items-start gap-2">
-        {!readOnly && <GripVertical className="h-4 w-4 shrink-0 mt-0.5 text-gray-300" aria-hidden />}
+        {!readOnly && !isOverlay && <GripVertical className="h-4 w-4 shrink-0 mt-0.5 text-gray-300" aria-hidden />}
         <div className="flex-1 min-w-0">
           <p className={`text-sm font-medium leading-snug ${isTaskDone(task.status) ? 'line-through text-gray-400' : 'text-gray-900'}`}>
             {task.title}
@@ -60,6 +65,11 @@ function KanbanTaskCard({ task, isOverlay = false, isDragging = false, readOnly 
           {(task.lead_title || task.project_code) && (
             <p className="text-[10px] text-indigo-700 truncate mt-0.5">
               {task.lead_title || task.project_code}
+            </p>
+          )}
+          {hasNotes && (
+            <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-1 italic" title={task.notes}>
+              💬 {String(task.notes).slice(0, 60)}{String(task.notes).length > 60 ? '…' : ''}
             </p>
           )}
           <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
@@ -76,14 +86,41 @@ function KanbanTaskCard({ task, isOverlay = false, isDragging = false, readOnly 
                 {PRIORITY_LABELS[task.priority] || task.priority}
               </span>
             )}
+            {fileCount > 0 && (
+              <span className="text-[9px] text-gray-500 inline-flex items-center gap-0.5">
+                <Paperclip className="h-2.5 w-2.5" />{fileCount}
+              </span>
+            )}
+            {noteCount > 0 && (
+              <span className="text-[9px] text-amber-700 inline-flex items-center gap-0.5">
+                <MessageSquare className="h-2.5 w-2.5" />{noteCount}
+              </span>
+            )}
           </div>
+          {showExtras && (
+            <div className="flex items-center gap-1 mt-2 pt-1.5 border-t border-gray-100">
+              <button
+                type="button"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onTaskExtrasClick(task);
+                }}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 cursor-pointer"
+                title="Ghi chú & file đính kèm"
+              >
+                <MessageSquare className="h-3 w-3" />
+                Ghi chú &amp; file
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function SortableKanbanCard({ task, onTaskClick }) {
+function SortableKanbanCard({ task, onTaskClick, onTaskExtrasClick }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.unified_id });
 
   const style = {
@@ -104,23 +141,23 @@ function SortableKanbanCard({ task, onTaskClick }) {
       }}
       title="Kéo để đổi trạng thái · Nhấp đúp để sửa"
     >
-      <KanbanTaskCard task={task} isDragging={isDragging} />
+      <KanbanTaskCard task={task} isDragging={isDragging} onTaskExtrasClick={onTaskExtrasClick} />
     </div>
   );
 }
 
-function StaticKanbanCard({ task, onTaskClick }) {
+function StaticKanbanCard({ task, onTaskClick, onTaskExtrasClick }) {
   return (
     <div
       onDoubleClick={() => onTaskClick?.(task)}
       title="Nhấp đúp để sửa"
     >
-      <KanbanTaskCard task={task} readOnly />
+      <KanbanTaskCard task={task} readOnly onTaskExtrasClick={onTaskExtrasClick} />
     </div>
   );
 }
 
-function SortableDealGroup({ group, expanded, onToggle, onTaskClick, readOnly = false }) {
+function SortableDealGroup({ group, expanded, onToggle, onTaskClick, onTaskExtrasClick, readOnly = false }) {
   const sortId = dealSortableId(group.key);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: sortId });
   const count = group.tasks.length;
@@ -177,8 +214,8 @@ function SortableDealGroup({ group, expanded, onToggle, onTaskClick, readOnly = 
         <div className="p-1.5 space-y-1.5">
           {group.tasks.map((t) => (
             readOnly
-              ? <StaticKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} />
-              : <SortableKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} />
+              ? <StaticKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} onTaskExtrasClick={onTaskExtrasClick} />
+              : <SortableKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} onTaskExtrasClick={onTaskExtrasClick} />
           ))}
         </div>
       )}
@@ -186,7 +223,7 @@ function SortableDealGroup({ group, expanded, onToggle, onTaskClick, readOnly = 
   );
 }
 
-function DealGroup({ group, expanded, onToggle, onTaskClick, readOnly = false }) {
+function DealGroup({ group, expanded, onToggle, onTaskClick, onTaskExtrasClick, readOnly = false }) {
   if (!readOnly && group.key !== '__other__') {
     return (
       <SortableDealGroup
@@ -194,6 +231,7 @@ function DealGroup({ group, expanded, onToggle, onTaskClick, readOnly = false })
         expanded={expanded}
         onToggle={onToggle}
         onTaskClick={onTaskClick}
+        onTaskExtrasClick={onTaskExtrasClick}
         readOnly={readOnly}
       />
     );
@@ -231,8 +269,8 @@ function DealGroup({ group, expanded, onToggle, onTaskClick, readOnly = false })
         <div className="p-1.5 space-y-1.5">
           {group.tasks.map((t) => (
             readOnly
-              ? <StaticKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} />
-              : <SortableKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} />
+              ? <StaticKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} onTaskExtrasClick={onTaskExtrasClick} />
+              : <SortableKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} onTaskExtrasClick={onTaskExtrasClick} />
           ))}
         </div>
       )}
@@ -241,7 +279,7 @@ function DealGroup({ group, expanded, onToggle, onTaskClick, readOnly = false })
 }
 
 function StatusColumn({
-  column, tasks, onTaskClick, onAddTask, onEditColumn,
+  column, tasks, onTaskClick, onTaskExtrasClick, onAddTask, onEditColumn,
   readOnly = false, showAddTask = true, allowColumnEdit = true,
   expandedDeals, onToggleDeal,
 }) {
@@ -271,6 +309,7 @@ function StatusColumn({
             expanded={expandedDeals?.has(group.key)}
             onToggle={onToggleDeal}
             onTaskClick={onTaskClick}
+            onTaskExtrasClick={onTaskExtrasClick}
             readOnly={readOnly}
           />
         ))}
@@ -365,6 +404,7 @@ function KanbanBoard({
   expandedDeals,
   onToggleDeal,
   onTaskClick,
+  onTaskExtrasClick,
   onAddTask,
   onAddColumn,
   onEditColumn,
@@ -377,6 +417,7 @@ function KanbanBoard({
           column={col}
           tasks={columns[col.key] || []}
           onTaskClick={onTaskClick}
+          onTaskExtrasClick={onTaskExtrasClick}
           onAddTask={onAddTask}
           onEditColumn={onEditColumn}
           readOnly={readOnly}
@@ -403,6 +444,7 @@ export default function WorkTasksStatusKanban({
   onPatchStatus,
   onPatchDealStatus,
   onTaskClick,
+  onTaskExtrasClick,
   onAddTask,
   onAddColumn,
   onEditColumn,
@@ -442,8 +484,11 @@ export default function WorkTasksStatusKanban({
   );
 
   useEffect(() => {
-    setColumns(regroupColumns());
-  }, [tasksKey, columnsDefKey, openOnly, tasks, columnDefs, groupMode, regroupColumns]);
+    const pruned = pruneKanbanColumnPins(readKanbanColumnPins(), tasks, columnDefs);
+    setColumnPins(pruned);
+    const fn = groupMode === 'deadline' ? groupTasksByDeadlineColumns : groupTasksByKanbanColumns;
+    setColumns(fn(tasks, columnDefs, { openOnly, columnPins: pruned }));
+  }, [tasksKey, columnsDefKey, openOnly, tasks, columnDefs, groupMode]);
 
   const allTasks = useMemo(() => Object.values(columns).flat(), [columns]);
 
@@ -583,6 +628,7 @@ export default function WorkTasksStatusKanban({
       expandedDeals={expandedDeals}
       onToggleDeal={toggleDeal}
       onTaskClick={onTaskClick}
+      onTaskExtrasClick={onTaskExtrasClick}
       onAddTask={onAddTask}
       onAddColumn={onAddColumn}
       onEditColumn={onEditColumn}
