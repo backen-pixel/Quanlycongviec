@@ -483,10 +483,10 @@ export default function ProductionDashboard() {
 
   const canPickCompany = canPickWorkshopCompany(user, isAdmin, isCompanyScopedAdmin);
   const workshopCompanyPickerList = useMemo(() => {
-    // Admin hệ thống: chỉ xưởng SX (HCB/Metalla) — tránh chọn VPT/CRM làm «công ty sản xuất» rồi không có phân loại.
+    // Admin hệ thống: hiện toàn bộ công ty backend trả về cho module SX (đã lọc tenant + division ở /api/companies?for_module=production).
+    // Không hard-code HCB/Metalla nữa — hệ sinh thái có thể có nhiều công ty SX khác.
     if (isAdmin && !dealCompanyParam) {
-      const workshops = productionWorkshopFilterCompanies(companies);
-      return workshops.length ? workshops : companies;
+      return companies || [];
     }
     if (workshopOptionsForDeal.length) {
       const ids = new Set(workshopOptionsForDeal.map((w) => String(w.id)));
