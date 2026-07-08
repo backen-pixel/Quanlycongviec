@@ -23,12 +23,14 @@ export default function FloatingNotificationCard({
   className = '',
   style = {},
   showClose = true,
+  alwaysShowClose = false,
   'aria-label': ariaLabel,
 }) {
+  const sticky = autoDismissMs == null || autoDismissMs <= 0;
   const [phase, setPhase] = useState('enter');
   const [paused, setPaused] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
-  const remainingRef = useRef(autoDismissMs);
+  const remainingRef = useRef(sticky ? 0 : autoDismissMs);
   const tickStartRef = useRef(Date.now());
   const timerRef = useRef(null);
 
@@ -38,25 +40,27 @@ export default function FloatingNotificationCard({
   }, [onDismiss]);
 
   const armTimer = useCallback(() => {
+    if (sticky) return;
     if (timerRef.current) clearTimeout(timerRef.current);
     tickStartRef.current = Date.now();
     timerRef.current = setTimeout(finish, remainingRef.current);
-  }, [finish]);
+  }, [finish, sticky]);
 
   useEffect(() => {
     const id = requestAnimationFrame(() => setPhase('visible'));
-    armTimer();
+    if (!sticky) armTimer();
     return () => {
       cancelAnimationFrame(id);
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [armTimer]);
+  }, [armTimer, sticky]);
 
   useEffect(() => {
     setImgFailed(false);
   }, [avatarSrc]);
 
   const pauseTimer = () => {
+    if (sticky) return;
     if (paused) return;
     setPaused(true);
     if (timerRef.current) {
@@ -67,6 +71,7 @@ export default function FloatingNotificationCard({
   };
 
   const resumeTimer = () => {
+    if (sticky) return;
     if (!paused) return;
     setPaused(false);
     if (remainingRef.current <= 0) {
@@ -82,10 +87,13 @@ export default function FloatingNotificationCard({
   };
 
   const handleClick = () => {
-    if (onClick) {
-      finish();
-      window.setTimeout(() => onClick(), EXIT_MS);
+    if (!onClick) return;
+    if (sticky) {
+      onClick();
+      return;
     }
+    finish();
+    window.setTimeout(() => onClick(), EXIT_MS);
   };
 
   const initials = (avatarFallback || userName || '?').trim().slice(0, 2).toUpperCase();
@@ -171,7 +179,9 @@ export default function FloatingNotificationCard({
           <button
             type="button"
             onClick={handleClose}
-            className="absolute right-2 top-2 rounded-lg p-1 text-gray-400 opacity-0 transition hover:bg-gray-100 hover:text-gray-700 group-hover:opacity-100"
+            className={`absolute right-2 top-2 rounded-lg p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 ${
+              alwaysShowClose || sticky ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+            }`}
             aria-label="Đóng thông báo"
           >
             <X className="h-3.5 w-3.5" />
@@ -179,9 +189,11 @@ export default function FloatingNotificationCard({
         )}
       </div>
 
-      <div className="absolute bottom-0 left-0 right-0 h-1 bg-slate-100" aria-hidden>
-        <div className={`toast-progress-bar toast-crm-progress h-full rounded-full ${paused ? 'toast-progress-paused' : ''}`} />
-      </div>
+      {!sticky && (
+        <div className="absolute bottom-0 left-0 right-0 h-1 bg-slate-100" aria-hidden>
+          <div className={`toast-progress-bar toast-crm-progress h-full rounded-full ${paused ? 'toast-progress-paused' : ''}`} />
+        </div>
+      )}
     </div>
   );
 }
