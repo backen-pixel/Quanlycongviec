@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X, Trash2 } from 'lucide-react';
 import { PRIORITY_LABELS } from '../lib/utils';
+import WorkTaskExtrasPanel from './WorkTaskExtrasPanel';
 import {
   resolveStatusForApi,
   KANBAN_STATUS_KEY_OPTIONS,
@@ -37,9 +38,11 @@ export default function WorkTaskFormModal({
   const [deadline, setDeadline] = useState('');
   const [assigneeId, setAssigneeId] = useState('');
   const [leadId, setLeadId] = useState('');
+  const [modalTab, setModalTab] = useState('details');
 
   useEffect(() => {
     if (!open) return;
+    setModalTab('details');
     if (mode === 'edit' && task) {
       setSource(task.source || 'task');
       setTitle(task.title || '');
@@ -106,12 +109,12 @@ export default function WorkTaskFormModal({
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/40" onClick={onClose}>
       <div
-        className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
+        className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-labelledby="work-task-form-title"
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 shrink-0">
           <h2 id="work-task-form-title" className="text-base font-bold text-gray-900">
             {isEdit ? 'Sửa nhiệm vụ' : 'Thêm nhiệm vụ'}
           </h2>
@@ -120,7 +123,39 @@ export default function WorkTaskFormModal({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-4 space-y-3">
+        {isEdit && (
+          <div className="shrink-0 flex border-b border-gray-200 px-4 gap-4">
+            {[
+              { id: 'details', label: 'Thông tin' },
+              { id: 'extras', label: 'Ghi chú & File' },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setModalTab(tab.id)}
+                className={`py-2 text-xs font-semibold border-b-2 -mb-px cursor-pointer transition-colors ${
+                  modalTab === tab.id
+                    ? 'border-blue-600 text-blue-700'
+                    : 'border-transparent text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {isEdit && modalTab === 'extras' ? (
+          <div className="flex-1 min-h-0 overflow-y-auto p-4">
+            <WorkTaskExtrasPanel task={task} />
+            <div className="flex justify-end pt-3 mt-3 border-t border-gray-100">
+              <button type="button" onClick={onClose} className="h-9 px-4 rounded-lg border border-gray-200 text-sm font-medium hover:bg-gray-50 cursor-pointer">
+                Đóng
+              </button>
+            </div>
+          </div>
+        ) : (
+        <form onSubmit={handleSubmit} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
           {!isEdit && (
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1">Loại nhiệm vụ</label>
@@ -256,6 +291,7 @@ export default function WorkTaskFormModal({
             </div>
           </div>
         </form>
+        )}
       </div>
     </div>
   );

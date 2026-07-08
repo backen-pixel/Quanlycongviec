@@ -40,6 +40,23 @@ r.use(auth);
 
 const VALID_SOURCES = new Set(['task', 'crm_task', 'crm_assignment']);
 
+/** Chuẩn hóa status trước khi ghi DB — tránh CHECK constraint / enum lỗi. */
+function normalizeWorkTaskPatchStatus(source, status) {
+  const s = String(status || 'pending').toLowerCase();
+  if (source === 'crm_task' || source === 'crm_assignment') {
+    if (s === 'done') return 'completed';
+    if (s === 'review' || s === 'blocked') return 'in_progress';
+    if (['pending', 'in_progress', 'completed', 'cancelled'].includes(s)) return s;
+    return 'pending';
+  }
+  if (source === 'task') {
+    if (s === 'completed') return 'done';
+    if (['pending', 'in_progress', 'review', 'blocked', 'done', 'cancelled'].includes(s)) return s;
+    return 'pending';
+  }
+  return s;
+}
+
 function parsePagination(req, defaultSize = 50, maxSize = 200) {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const requested = parseInt(req.query.page_size || req.query.limit, 10) || defaultSize;
@@ -68,9 +85,13 @@ const TASK_SELECT = `
 // GET /api/work-tasks/summary — KPI + phân bổ theo module
 r.get('/summary', async (req, res) => {
   try {
-    const { assignee_id, company_id, date_from, date_to, lead_id } = req.query;
+    const {
+      assignee_id, company_id, date_from, date_to, lead_id,
+      status, task_kind, q, open_only,
+    } = req.query;
     const summary = await fetchUnifiedTasksSummary(req.user, {
       assignee_id, company_id, date_from, date_to, lead_id,
+      status, task_kind, q, open_only,
     });
     res.json(summary);
   } catch (e) {
@@ -322,18 +343,23 @@ r.patch('/:source/:id', async (req, res) => {
     const { source, id } = req.params;
     if (!VALID_SOURCES.has(source)) return res.status(400).json({ error: 'source không hợp lệ' });
 
+    const body = { ...req.body };
+    if (body.status !== undefined) {
+      body.status = normalizeWorkTaskPatchStatus(source, body.status);
+    }
+
     if (source === 'task') {
-      return sendMutationResult(res, await updateProjectTask(req, id, req.body));
+      return sendMutationResult(res, await updateProjectTask(req, id, body));
     }
     if (source === 'crm_task') {
-      const leadId = req.body.lead_id || await getCrmTaskLeadId(id);
+      const leadId = body.lead_id || await getCrmTaskLeadId(id);
       if (!leadId) return res.status(404).json({ error: 'Không tìm thấy lead cho nhiệm vụ CRM' });
-      const result = await updateCrmLeadTask(req, leadId, id, req.body);
+      const result = await updateCrmLeadTask(req, leadId, id, body);
       if (result.error) return sendMutationResult(res, result);
       return res.status(result.status).json(result.data);
     }
     if (source === 'crm_assignment') {
-      return sendMutationResult(res, await updateCrmAssignment(req, id, req.body));
+      return sendMutationResult(res, await updateCrmAssignment(req, id, body));
     }
     return res.status(400).json({ error: 'source không hợp lệ' });
   } catch (e) {
