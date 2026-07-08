@@ -1,12 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useModuleAccess } from '../shared/context/ModuleAccessContext';
 import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
-import { formatDate, PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/utils';
-import UnifiedTaskRow, { getDeepLink } from '../components/UnifiedTaskRow';
+import UnifiedTaskRow from '../components/UnifiedTaskRow';
 import WorkTasksStatusKanban from '../components/WorkTasksStatusKanban';
+import WorkTasksKanbanColumnModal from '../components/WorkTasksKanbanColumnModal';
 import WorkTaskFormModal from '../components/WorkTaskFormModal';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import SearchInlineFilterChips, { SearchClearButton } from '../components/SearchInlineFilterChips';
@@ -14,7 +13,7 @@ import WorkTasksFilterPanel, { WORK_TASKS_FILTER_TABS_META } from '../components
 import { CRM_TIME_PRESETS, getCrmDateRangeFromPreset } from '../lib/crmDateRangePresets';
 import {
   Layers, LayoutGrid, List, AlertTriangle, Search, RefreshCw,
-  CheckCircle2, Clock, Calendar, Filter, Plus,
+  CheckCircle2, Clock, Filter, Plus, Columns3,
 } from 'lucide-react';
 import {
   readStoredWorkTasksFilters,
@@ -22,14 +21,20 @@ import {
   readStoredWorkTasksFilterPanelPos,
   storeWorkTasksFilterPanelPos,
   groupTasksByModule,
-  groupTasksByDeadline,
   filterVisibleModuleColumns,
   STATUS_FILTER_OPTIONS,
   TASK_KIND_OPTIONS,
-  DEADLINE_BUCKETS,
   isTaskDone,
-  normalizeKanbanStatus,
   resolveStatusForApi,
+  resolveColumnStatusKey,
+  readStoredKanbanColumns,
+  storeKanbanColumns,
+  serializeKanbanColumns,
+  mergeKanbanColumnStyles,
+  getEffectiveKanbanColumns,
+  createCustomKanbanColumn,
+  ensureKanbanColumns,
+  getDeadlineKanbanColumns,
 } from '../lib/workTasksDashboardUtils';
 
 const VIEW_MODES = [
@@ -37,65 +42,6 @@ const VIEW_MODES = [
   { id: 'list', icon: List, label: 'Danh sách' },
   { id: 'deadline', icon: AlertTriangle, label: 'Deadline' },
 ];
-
-function WorkTaskCard({ task, onStatusChange, compact = false }) {
-  const deepLink = getDeepLink(task);
-  const overdue = task.deadline && new Date(task.deadline) < new Date() && !isTaskDone(task.status);
-  const kanbanStatus = normalizeKanbanStatus(task.status);
-  const actions = [
-    { key: 'pending', label: 'Chờ' },
-    { key: 'in_progress', label: 'Đang làm' },
-    { key: 'done', label: 'Xong' },
-    { key: 'cancelled', label: 'Hủy' },
-  ];
-
-  return (
-    <div className={`bg-white rounded-lg border border-gray-100 shadow-sm hover:shadow-md hover:border-blue-200 transition-all ${compact ? 'p-2' : 'p-3'}`}>
-      <div className="flex items-start gap-2">
-        <div className="flex-1 min-w-0">
-          <p className={`text-sm font-medium truncate ${isTaskDone(task.status) ? 'line-through text-gray-400' : 'text-gray-900'}`}>
-            {task.title}
-          </p>
-          <div className="flex flex-wrap items-center gap-1.5 mt-1">
-            {task.lead_title && (
-              <span className="text-[10px] text-indigo-600 truncate max-w-[160px]">💼 {task.lead_title}</span>
-            )}
-            {task.project_code && (
-              <span className="text-[10px] text-gray-500">{task.project_code}</span>
-            )}
-            {task.deadline && (
-              <span className={`text-[10px] inline-flex items-center gap-0.5 ${overdue ? 'text-red-600 font-bold' : 'text-gray-400'}`}>
-                <Calendar className="h-2.5 w-2.5" />{formatDate(task.deadline)}
-              </span>
-            )}
-          </div>
-          <div className="flex flex-wrap gap-1 mt-2">
-            {actions.map((a) => (
-              <button
-                key={a.key}
-                type="button"
-                onClick={() => onStatusChange?.(task, a.key)}
-                disabled={kanbanStatus === a.key}
-                className={`text-[10px] px-1.5 py-0.5 rounded border font-medium transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-default ${
-                  kanbanStatus === a.key
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
-                }`}
-              >
-                {a.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        {deepLink && (
-          <Link to={deepLink} className="shrink-0 text-[10px] text-blue-600 hover:underline" title="Mở module gốc">
-            →
-          </Link>
-        )}
-      </div>
-    </div>
-  );
-}
 
 export default function WorkTasksUnifiedPage() {
   const { user } = useAuth();
@@ -134,6 +80,17 @@ export default function WorkTasksUnifiedPage() {
   const [taskModal, setTaskModal] = useState(null);
   const [taskSaving, setTaskSaving] = useState(false);
   const [taskDeleting, setTaskDeleting] = useState(false);
+  const [kanbanColumnDefs, setKanbanColumnDefs] = useState(() => {
+    const stored = readStoredKanbanColumns();
+    const ensured = ensureKanbanColumns(stored);
+    if (!stored?.length || serializeKanbanColumns(ensured).length > (stored?.length || 0)) {
+      storeKanbanColumns(serializeKanbanColumns(ensured));
+    }
+    return ensured;
+  });
+  const [columnModal, setColumnModal] = useState(null);
+
+  const deadlineKanbanColumns = useMemo(() => getDeadlineKanbanColumns(), []);
 
   const effectiveCompanyId = useMemo(() => {
     if (isCompanyScoped && userCompanyId) return userCompanyId;
@@ -274,6 +231,17 @@ export default function WorkTasksUnifiedPage() {
     [canAccessModule],
   );
 
+  const visibleKanbanColumns = useMemo(
+    () => getEffectiveKanbanColumns(filterOpenOnly, kanbanColumnDefs),
+    [kanbanColumnDefs, filterOpenOnly],
+  );
+
+  const persistKanbanColumns = useCallback((cols) => {
+    const merged = cols.map(mergeKanbanColumnStyles);
+    setKanbanColumnDefs(merged);
+    storeKanbanColumns(serializeKanbanColumns(merged));
+  }, []);
+
   const filteredTasks = useMemo(() => {
     if (!search.trim()) return tasks;
     const q = search.trim().toLowerCase();
@@ -289,11 +257,6 @@ export default function WorkTasksUnifiedPage() {
     [filteredTasks, filterOpenOnly],
   );
 
-  const deadlineGroups = useMemo(
-    () => groupTasksByDeadline(filteredTasks, { openOnly: filterOpenOnly }),
-    [filteredTasks, filterOpenOnly],
-  );
-
   const stats = useMemo(() => ({
     total: summary?.total ?? filteredTasks.length,
     open: summary?.open ?? filteredTasks.filter((t) => !isTaskDone(t.status)).length,
@@ -302,11 +265,12 @@ export default function WorkTasksUnifiedPage() {
     byModule: summary?.by_module || {},
   }), [summary, filteredTasks]);
 
-  const patchTaskStatus = useCallback(async (task, kanbanKey) => {
-    const next = resolveStatusForApi(task, kanbanKey);
+  const patchTaskStatus = useCallback(async (task, columnKey) => {
+    const statusKey = resolveColumnStatusKey(visibleKanbanColumns, columnKey);
+    const next = resolveStatusForApi(task, statusKey);
     await api.patch(`/work-tasks/${task.source}/${task.source_id}`, { status: next });
     void load();
-  }, [load]);
+  }, [load, visibleKanbanColumns]);
 
   const patchTaskFields = useCallback(async (task, payload) => {
     const body = { ...payload };
@@ -363,6 +327,26 @@ export default function WorkTasksUnifiedPage() {
     try {
       await patchTaskStatus(task, kanbanKey || 'done');
     } catch { /* ignore */ }
+  };
+
+  const handleColumnSave = ({ label, statusKey, colorId }) => {
+    if (columnModal?.mode === 'edit' && columnModal.column) {
+      persistKanbanColumns(kanbanColumnDefs.map((c) => (
+        c.key === columnModal.column.key
+          ? mergeKanbanColumnStyles({ ...c, label, statusKey, colorId })
+          : c
+      )));
+    } else {
+      persistKanbanColumns([...kanbanColumnDefs, createCustomKanbanColumn({ label, statusKey, colorId })]);
+    }
+    setColumnModal(null);
+  };
+
+  const handleColumnDelete = (col) => {
+    if (!col || col.isSystem) return;
+    if (!window.confirm(`Xóa cột «${col.label}»? Nhiệm vụ trong cột sẽ hiển thị theo trạng thái tương ứng.`)) return;
+    persistKanbanColumns(kanbanColumnDefs.filter((c) => c.key !== col.key));
+    setColumnModal(null);
   };
 
   const resetFilters = useCallback(() => {
@@ -576,6 +560,15 @@ export default function WorkTasksUnifiedPage() {
           >
             <Plus className="h-3.5 w-3.5" />Thêm việc
           </button>
+          {viewMode === 'kanban' && (
+            <button
+              type="button"
+              onClick={() => setColumnModal({ mode: 'create' })}
+              className="h-8 px-3 rounded-lg border border-violet-300 bg-violet-50 text-violet-800 text-xs font-semibold flex items-center gap-1.5 hover:bg-violet-100 cursor-pointer"
+            >
+              <Columns3 className="h-3.5 w-3.5" />Thêm cột
+            </button>
+          )}
           <button
             type="button"
             onClick={() => void load()}
@@ -780,15 +773,18 @@ export default function WorkTasksUnifiedPage() {
       {viewMode === 'kanban' && (
         <>
           <p className="text-xs text-gray-500 -mt-2">
-            <strong>Kéo thả</strong> thẻ giữa các cột để đổi trạng thái · <strong>Nhấp đúp</strong> thẻ hoặc «Thêm việc» để tạo/sửa · Nhóm theo deal/dự án trong từng cột.
+            <strong>6 cột trạng thái</strong> tự khởi tạo · <strong>Kéo thả</strong> để đổi trạng thái · <strong>Nhấp đúp</strong> hoặc «Thêm việc» để sửa/tạo.
             {filterOpenOnly && ' Tắt «Chỉ việc đang mở» để xem cột Hoàn thành và Hủy.'}
           </p>
           <WorkTasksStatusKanban
             tasks={filteredTasks}
             openOnly={filterOpenOnly}
+            columnDefs={visibleKanbanColumns}
             onPatchStatus={patchTaskStatus}
             onTaskClick={(task) => setTaskModal({ mode: 'edit', task })}
-            onAddTask={(status) => setTaskModal({ mode: 'create', defaultStatus: status })}
+            onAddTask={(column) => setTaskModal({ mode: 'create', defaultStatus: column?.statusKey || 'pending' })}
+            onAddColumn={() => setColumnModal({ mode: 'create' })}
+            onEditColumn={(column) => setColumnModal({ mode: 'edit', column })}
           />
         </>
       )}
@@ -804,25 +800,24 @@ export default function WorkTasksUnifiedPage() {
         </div>
       )}
 
-      {/* DEADLINE */}
+      {/* DEADLINE — 5 cột hạn tự động */}
       {viewMode === 'deadline' && (
-        <div className="space-y-3">
-          {DEADLINE_BUCKETS.filter((g) => (deadlineGroups[g.key] || []).length > 0).map((group) => (
-            <div key={group.key} className={`border rounded-xl ${group.color}`}>
-              <div className="px-4 py-2 font-semibold text-sm flex items-center justify-between">
-                <span>{group.label} <span className="text-gray-400 font-normal">({deadlineGroups[group.key].length})</span></span>
-              </div>
-              <div className="bg-white rounded-b-xl overflow-y-auto p-2 space-y-2" style={{ maxHeight: '480px' }}>
-                {deadlineGroups[group.key].map((t) => (
-                  <WorkTaskCard key={t.unified_id} task={t} onStatusChange={handleStatusChange} />
-                ))}
-              </div>
-            </div>
-          ))}
-          {DEADLINE_BUCKETS.every((g) => !(deadlineGroups[g.key] || []).length) && (
-            <p className="text-center text-sm text-gray-400 py-10">Không có nhiệm vụ theo deadline</p>
-          )}
-        </div>
+        <>
+          <p className="text-xs text-gray-500 -mt-2">
+            <strong>5 cột deadline</strong> tự hiển thị (Quá hạn → Chưa có hạn) · <strong>Nhấp đúp</strong> thẻ để sửa · Nhóm theo deal/dự án.
+          </p>
+          <WorkTasksStatusKanban
+            tasks={filteredTasks}
+            openOnly={filterOpenOnly}
+            columnDefs={deadlineKanbanColumns}
+            groupMode="deadline"
+            readOnly
+            showAddColumn={false}
+            showAddTask={false}
+            allowColumnEdit={false}
+            onTaskClick={(task) => setTaskModal({ mode: 'edit', task })}
+          />
+        </>
       )}
 
       <WorkTaskFormModal
@@ -830,6 +825,7 @@ export default function WorkTasksUnifiedPage() {
         mode={taskModal?.mode || 'edit'}
         task={taskModal?.task || null}
         defaultStatus={taskModal?.defaultStatus || 'pending'}
+        statusOptions={kanbanColumnDefs}
         defaultLeadId={filterLead}
         defaultAssigneeId={filterAssignee}
         defaultCompanyId={effectiveCompanyId}
@@ -840,6 +836,16 @@ export default function WorkTasksUnifiedPage() {
         onClose={() => setTaskModal(null)}
         onSave={handleTaskFormSave}
         onDelete={handleTaskFormDelete}
+      />
+
+      <WorkTasksKanbanColumnModal
+        open={!!columnModal}
+        mode={columnModal?.mode || 'create'}
+        column={columnModal?.column || null}
+        existingColumns={kanbanColumnDefs}
+        onClose={() => setColumnModal(null)}
+        onSave={handleColumnSave}
+        onDelete={handleColumnDelete}
       />
     </div>
   );

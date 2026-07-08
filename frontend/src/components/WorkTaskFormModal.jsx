@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import { X, Trash2 } from 'lucide-react';
 import { PRIORITY_LABELS } from '../lib/utils';
-import { resolveStatusForApi, normalizeKanbanStatus, STATUS_KANBAN_COLUMNS } from '../lib/workTasksDashboardUtils';
+import {
+  resolveStatusForApi,
+  KANBAN_STATUS_KEY_OPTIONS,
+} from '../lib/workTasksDashboardUtils';
 
 const SOURCE_OPTIONS = [
   { value: 'crm_task', label: 'Nhiệm vụ CRM (Lead/Deal)' },
@@ -14,6 +17,7 @@ export default function WorkTaskFormModal({
   mode = 'edit',
   task = null,
   defaultStatus = 'pending',
+  statusOptions = null,
   defaultLeadId = '',
   defaultAssigneeId = '',
   defaultCompanyId = '',
@@ -40,7 +44,11 @@ export default function WorkTaskFormModal({
       setSource(task.source || 'task');
       setTitle(task.title || '');
       setDescription(task.description || '');
-      setKanbanStatus(normalizeKanbanStatus(task.status));
+      setKanbanStatus(() => {
+        const st = String(task.status || 'pending').toLowerCase();
+        if (st === 'completed') return 'done';
+        return st;
+      });
       setPriority(task.priority || 'medium');
       setDeadline(task.deadline ? String(task.deadline).slice(0, 10) : '');
       setAssigneeId(task.assignee_id ? String(task.assignee_id) : '');
@@ -60,6 +68,10 @@ export default function WorkTaskFormModal({
   if (!open) return null;
 
   const isEdit = mode === 'edit' && task;
+  const statusSelectOptions = (statusOptions?.length
+    ? [...new Map(statusOptions.map((c) => [c.statusKey, { value: c.statusKey, label: c.label }])).values()]
+    : KANBAN_STATUS_KEY_OPTIONS.map((o) => ({ value: o.value, label: o.label.split(' (')[0] }))
+  );
   const statusApi = isEdit
     ? resolveStatusForApi(task, kanbanStatus)
     : resolveStatusForApi({ source: source === 'task' ? 'task' : source }, kanbanStatus);
@@ -174,8 +186,8 @@ export default function WorkTaskFormModal({
                 onChange={(e) => setKanbanStatus(e.target.value)}
                 className="w-full h-9 px-2.5 rounded-lg border border-gray-200 text-sm"
               >
-                {STATUS_KANBAN_COLUMNS.map((c) => (
-                  <option key={c.key} value={c.key}>{c.label}</option>
+                {statusSelectOptions.map((c) => (
+                  <option key={c.value} value={c.value}>{c.label}</option>
                 ))}
               </select>
             </div>

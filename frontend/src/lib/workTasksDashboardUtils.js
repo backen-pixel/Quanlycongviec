@@ -2,6 +2,7 @@
 
 export const LS_WORK_TASKS_FILTERS = 'work_tasks_dashboard_filters_v1';
 export const LS_WORK_TASKS_FILTER_PANEL_POS = 'work_tasks_filter_panel_pos_v1';
+export const LS_WORK_TASKS_KANBAN_COLUMNS = 'work_tasks_kanban_columns_v1';
 
 export function readStoredWorkTasksFilterPanelPos() {
   try {
@@ -144,13 +145,184 @@ export const DEADLINE_BUCKETS = [
   { key: 'noDeadline', label: '⏳ Chưa có hạn', color: 'border-gray-200 bg-gray-50' },
 ];
 
-/** Cột Kanban theo trạng thái — kéo thả đổi trạng thái nhiệm vụ. */
-export const STATUS_KANBAN_COLUMNS = [
-  { key: 'pending', label: 'Chờ', dot: 'bg-slate-400', border: 'border-slate-200', bg: 'bg-slate-50/80' },
-  { key: 'in_progress', label: 'Đang làm', dot: 'bg-blue-500', border: 'border-blue-200', bg: 'bg-blue-50/80' },
-  { key: 'done', label: 'Hoàn thành', dot: 'bg-emerald-500', border: 'border-emerald-200', bg: 'bg-emerald-50/80' },
-  { key: 'cancelled', label: 'Hủy', dot: 'bg-red-400', border: 'border-red-200', bg: 'bg-red-50/80' },
+/** Cột Kanban mặc định — tự khởi tạo đủ trạng thái khi mở trang. */
+export const DEFAULT_STATUS_KANBAN_COLUMNS = [
+  { key: 'pending', label: 'Chờ', statusKey: 'pending', colorId: 'slate', isSystem: true },
+  { key: 'in_progress', label: 'Đang làm', statusKey: 'in_progress', colorId: 'blue', isSystem: true },
+  { key: 'review', label: 'Chờ kiểm tra', statusKey: 'review', colorId: 'violet', isSystem: true },
+  { key: 'blocked', label: 'Bị chặn', statusKey: 'blocked', colorId: 'amber', isSystem: true },
+  { key: 'done', label: 'Hoàn thành', statusKey: 'done', colorId: 'emerald', isSystem: true },
+  { key: 'cancelled', label: 'Hủy', statusKey: 'cancelled', colorId: 'red', isSystem: true },
 ];
+
+const KANBAN_STATUS_ORDER = ['pending', 'in_progress', 'review', 'blocked', 'done', 'cancelled'];
+
+export const KANBAN_STATUS_KEY_OPTIONS = [
+  { value: 'pending', label: 'Chờ (pending)' },
+  { value: 'in_progress', label: 'Đang làm (in_progress)' },
+  { value: 'review', label: 'Chờ kiểm tra (review)' },
+  { value: 'blocked', label: 'Bị chặn (blocked)' },
+  { value: 'done', label: 'Hoàn thành (done/completed)' },
+  { value: 'cancelled', label: 'Hủy (cancelled)' },
+];
+
+export const KANBAN_COLUMN_COLOR_PRESETS = [
+  { id: 'slate', label: 'Xám', dot: 'bg-slate-400', border: 'border-slate-200', bg: 'bg-slate-50/80' },
+  { id: 'blue', label: 'Xanh dương', dot: 'bg-blue-500', border: 'border-blue-200', bg: 'bg-blue-50/80' },
+  { id: 'violet', label: 'Tím', dot: 'bg-violet-500', border: 'border-violet-200', bg: 'bg-violet-50/80' },
+  { id: 'amber', label: 'Vàng', dot: 'bg-amber-500', border: 'border-amber-200', bg: 'bg-amber-50/80' },
+  { id: 'emerald', label: 'Xanh lá', dot: 'bg-emerald-500', border: 'border-emerald-200', bg: 'bg-emerald-50/80' },
+  { id: 'red', label: 'Đỏ', dot: 'bg-red-400', border: 'border-red-200', bg: 'bg-red-50/80' },
+  { id: 'orange', label: 'Cam', dot: 'bg-orange-500', border: 'border-orange-200', bg: 'bg-orange-50/80' },
+  { id: 'cyan', label: 'Lam', dot: 'bg-cyan-500', border: 'border-cyan-200', bg: 'bg-cyan-50/80' },
+];
+
+export function readStoredKanbanColumns() {
+  try {
+    const raw = localStorage.getItem(LS_WORK_TASKS_KANBAN_COLUMNS);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function storeKanbanColumns(columns) {
+  try {
+    localStorage.setItem(LS_WORK_TASKS_KANBAN_COLUMNS, JSON.stringify(columns));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function mergeKanbanColumnStyles(col) {
+  if (!col.colorId && col.dot && col.border && col.bg) return { ...col };
+  const preset = KANBAN_COLUMN_COLOR_PRESETS.find((p) => p.id === col.colorId)
+    || KANBAN_COLUMN_COLOR_PRESETS[0];
+  return {
+    ...col,
+    dot: preset.dot,
+    border: preset.border,
+    bg: preset.bg,
+  };
+}
+
+export function serializeKanbanColumns(cols) {
+  return (cols || []).map(({ key, label, statusKey, colorId, isSystem }) => ({
+    key,
+    label,
+    statusKey,
+    colorId: colorId || null,
+    isSystem: !!isSystem,
+  }));
+}
+
+/** Gộp cột lưu localStorage với cột hệ thống mặc định (tự thêm thiếu). */
+export function ensureKanbanColumns(storedCols) {
+  const defaults = DEFAULT_STATUS_KANBAN_COLUMNS.map((c) => mergeKanbanColumnStyles({ ...c }));
+  let cols = Array.isArray(storedCols) && storedCols.length
+    ? storedCols.map((c) => mergeKanbanColumnStyles({ ...c }))
+    : [...defaults];
+
+  for (const def of defaults) {
+    if (!cols.some((c) => c.statusKey === def.statusKey)) {
+      cols.push({ ...def });
+    }
+  }
+
+  cols.sort((a, b) => {
+    const ai = KANBAN_STATUS_ORDER.indexOf(a.statusKey);
+    const bi = KANBAN_STATUS_ORDER.indexOf(b.statusKey);
+    if (ai >= 0 && bi >= 0) return ai - bi;
+    if (ai >= 0) return -1;
+    if (bi >= 0) return 1;
+    return String(a.label).localeCompare(String(b.label), 'vi');
+  });
+
+  return cols;
+}
+
+/** Alias cột mặc định đã merge style — tương thích import cũ. */
+export const STATUS_KANBAN_COLUMNS = ensureKanbanColumns(null);
+
+const DEADLINE_KANBAN_STYLES = {
+  overdue: { dot: 'bg-red-500', border: 'border-red-300', bg: 'bg-red-50/80' },
+  today: { dot: 'bg-amber-500', border: 'border-amber-300', bg: 'bg-amber-50/80' },
+  thisWeek: { dot: 'bg-blue-500', border: 'border-blue-300', bg: 'bg-blue-50/80' },
+  later: { dot: 'bg-slate-400', border: 'border-gray-200', bg: 'bg-gray-50/80' },
+  noDeadline: { dot: 'bg-slate-300', border: 'border-gray-200', bg: 'bg-gray-50/80' },
+};
+
+/** Cột Kanban cho tab Deadline — luôn hiển thị đủ 5 nhóm hạn. */
+export function getDeadlineKanbanColumns() {
+  return DEADLINE_BUCKETS.map((b) => ({
+    key: b.key,
+    label: b.label,
+    statusKey: b.key,
+    isSystem: true,
+    isDeadlineBucket: true,
+    ...(DEADLINE_KANBAN_STYLES[b.key] || DEADLINE_KANBAN_STYLES.later),
+  }));
+}
+
+export function groupTasksByDeadlineColumns(tasks, columnDefs, { openOnly = true } = {}) {
+  const groups = groupTasksByDeadline(tasks, { openOnly });
+  return Object.fromEntries(columnDefs.map((c) => [c.key, groups[c.key] || []]));
+}
+
+/** Cột hiển thị: mặc định + tùy chỉnh, ẩn cột done/hủy khi openOnly. */
+export function getEffectiveKanbanColumns(openOnly = true, sourceCols = null) {
+  let cols;
+  if (sourceCols?.length) {
+    cols = sourceCols.map(mergeKanbanColumnStyles);
+  } else {
+    const stored = readStoredKanbanColumns();
+    cols = ensureKanbanColumns(stored?.length ? stored : null);
+  }
+
+  if (openOnly) {
+    cols = cols.filter((c) => c.statusKey === 'pending' || c.statusKey === 'in_progress'
+      || c.statusKey === 'review' || c.statusKey === 'blocked');
+  }
+  return cols;
+}
+
+export function createCustomKanbanColumn({ label, statusKey, colorId }) {
+  const id = `col_${Date.now().toString(36)}`;
+  const preset = KANBAN_COLUMN_COLOR_PRESETS.find((p) => p.id === colorId) || KANBAN_COLUMN_COLOR_PRESETS[1];
+  return mergeKanbanColumnStyles({
+    key: id,
+    label: label.trim(),
+    statusKey,
+    colorId: preset.id,
+    isSystem: false,
+  });
+}
+
+export function resolveTaskColumnKey(task, columnDefs) {
+  let st = String(task?.status || 'pending').toLowerCase();
+  if (st === 'completed') st = 'done';
+  const exact = columnDefs.find((c) => c.statusKey === st);
+  if (exact) return exact.key;
+  const norm = normalizeKanbanStatus(st);
+  const byNorm = columnDefs.find((c) => c.key === norm || c.statusKey === norm);
+  return byNorm?.key || norm;
+}
+
+export function groupTasksByKanbanColumns(tasks, columnDefs, { openOnly = true } = {}) {
+  const map = Object.fromEntries(columnDefs.map((c) => [c.key, []]));
+  for (const t of tasks || []) {
+    if (openOnly && isTaskDone(t.status)) continue;
+    const colKey = resolveTaskColumnKey(t, columnDefs);
+    if (map[colKey]) map[colKey].push(t);
+    else {
+      const fallback = columnDefs.find((c) => c.statusKey === 'pending')?.key || columnDefs[0]?.key;
+      if (fallback && map[fallback]) map[fallback].push(t);
+    }
+  }
+  return map;
+}
 
 export function isCrmLikeUnifiedTask(task) {
   return task?.source === 'crm_task' || task?.source === 'crm_assignment';
@@ -166,24 +338,30 @@ export function normalizeKanbanStatus(status) {
 }
 
 /** Map cột Kanban → status API theo nguồn nhiệm vụ. */
-export function resolveStatusForApi(task, kanbanKey) {
-  const key = String(kanbanKey || 'pending');
+export function resolveStatusForApi(task, columnOrStatusKey) {
+  const key = typeof columnOrStatusKey === 'object'
+    ? columnOrStatusKey.statusKey
+    : String(columnOrStatusKey || 'pending');
   if (key === 'cancelled') return 'cancelled';
   if (key === 'in_progress') return 'in_progress';
   if (key === 'pending') return 'pending';
+  if (key === 'review' || key === 'blocked') return key;
   if (key === 'done') return isCrmLikeUnifiedTask(task) ? 'completed' : 'done';
-  return 'pending';
+  return key;
 }
 
-export function groupTasksByKanbanStatus(tasks, { openOnly = true } = {}) {
-  const map = Object.fromEntries(STATUS_KANBAN_COLUMNS.map((c) => [c.key, []]));
-  for (const t of tasks || []) {
-    if (openOnly && isTaskDone(t.status)) continue;
-    const col = normalizeKanbanStatus(t.status);
-    if (map[col]) map[col].push(t);
-    else map.pending.push(t);
-  }
-  return map;
+export function resolveColumnStatusKey(columnDefs, columnKey) {
+  const col = columnDefs.find((c) => c.key === columnKey);
+  return col?.statusKey || columnKey;
+}
+
+export function groupTasksByKanbanStatus(tasks, { openOnly = true, columnDefs } = {}) {
+  const defs = columnDefs || getEffectiveKanbanColumns(openOnly);
+  return groupTasksByKanbanColumns(tasks, defs, { openOnly });
+}
+
+export function visibleKanbanStatusColumns(openOnly) {
+  return getEffectiveKanbanColumns(openOnly);
 }
 
 /** Nhóm nhiệm vụ trong cột theo deal / dự án. */
@@ -209,9 +387,4 @@ export function groupTasksByDeal(tasks) {
     if (b.key === '__other__') return -1;
     return String(a.label).localeCompare(String(b.label), 'vi');
   });
-}
-
-export function visibleKanbanStatusColumns(openOnly) {
-  if (!openOnly) return STATUS_KANBAN_COLUMNS;
-  return STATUS_KANBAN_COLUMNS.filter((c) => c.key === 'pending' || c.key === 'in_progress');
 }
