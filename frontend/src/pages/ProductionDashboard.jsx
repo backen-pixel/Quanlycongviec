@@ -119,13 +119,12 @@ function readSxDashPersisted() {
     if (!raw) return null;
     const data = JSON.parse(raw);
     if (!data || typeof data !== 'object') return null;
-    // NV xưởng: bỏ filter công ty xưởng khác còn trong localStorage (vd. Metalla khi user thuộc HCB).
+    // NV xưởng: sửa filter công ty xưởng khác còn trong localStorage (vd. Metalla khi user thuộc HCB).
     try {
       const u = JSON.parse(localStorage.getItem('user') || 'null');
       const ownWs = resolveStaffWorkshopCompanyId(u, []);
       if (ownWs && data.filterCompany && String(data.filterCompany) !== ownWs) {
         data.filterCompany = ownWs;
-        data.filterWorkTypeId = '';
       }
     } catch { /* ignore */ }
     return data;
@@ -518,14 +517,19 @@ export default function ProductionDashboard() {
   const deferredSearchQuery = useDeferredValue(searchQuery);
 
   const handleStaffFilterCompanyChange = useCallback((companyId) => {
+    const next = companyId ? String(companyId) : '';
+    const prev = String(filterCompany || '');
     onStaffFilterCompanyChange(companyId);
-    setFilterWorkTypeId('');
-    setFilterSxWorkshopCompany('');
-  }, [onStaffFilterCompanyChange]);
+    // Chỉ xóa phân loại khi user đổi xưởng (không xóa lúc khởi tạo công ty từ localStorage).
+    if (next && prev && next !== prev) {
+      setFilterWorkTypeId('');
+      setFilterSxWorkshopCompany('');
+    }
+  }, [onStaffFilterCompanyChange, filterCompany]);
 
   const handleDealCompanyChange = useCallback((dealCompanyId) => {
     setFilterDealCompany(dealCompanyId);
-    setFilterWorkTypeId('');
+    // workTypes refetch theo deal_company_id — effect bên dưới tự reset nếu loại không còn hợp lệ.
   }, []);
 
   const companyParam = useMemo(() => {
@@ -805,8 +809,8 @@ export default function ProductionDashboard() {
     if (workTypesCompanyId !== companyForTypes) return undefined;
     const typesExist = Array.isArray(workTypes) && workTypes.length > 0;
     // Công ty CÓ phân loại nhưng chưa chọn loại cụ thể → chờ effect default chọn loại,
-    // tuyệt đối không tải all-types trong lúc chuyển tiếp.
-    if (typesExist && (!filterWorkTypeId || filterWorkTypeId === 'none')) return undefined;
+    // tuyệt đối không tải all-types trong lúc chuyển tiếp. «Chưa phân loại» vẫn tải cột global.
+    if (typesExist && !filterWorkTypeId) return undefined;
     let cancelled = false;
     (async () => {
       try {

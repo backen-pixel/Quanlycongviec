@@ -18,6 +18,11 @@ import { FbCrmAvatar, formatCrmFbRelativeTime } from './crmFbCommentUi';
 import { CrmCommentMentionComposer, renderCrmCommentBody } from './crmCommentMentionUi';
 import { upsertComment } from './CommentsPanels';
 import {
+  CommentHideConfirmBar,
+  CommentNewNotice,
+  useCommentThreadLive,
+} from './commentThreadLiveUx';
+import {
   Plus, X, Trash2, MessageSquare, GripVertical, Search, Edit2, Settings as SettingsIcon,
   CheckSquare, Eye, Clock,
 } from 'lucide-react';
@@ -1053,6 +1058,38 @@ function CommentCard({ item, expanded, onToggle, onChanged, navigate }) {
   const [replyTo, setReplyTo] = useState(null);
   const [reactionBusy, setReactionBusy] = useState(null);
   const [members, setMembers] = useState([]);
+  const [hideConfirm, setHideConfirm] = useState(false);
+
+  const {
+    scrollRef,
+    unreadCount,
+    handleIncomingComment,
+    scrollToLatest,
+    onScroll,
+  } = useCommentThreadLive({
+    expanded,
+    comments,
+    loading,
+    currentUserId: user?.userId || user?.id,
+  });
+
+  const hasDraft = Boolean(body.trim());
+
+  const requestToggle = () => {
+    if (!expanded) {
+      setHideConfirm(false);
+      onToggle();
+      return;
+    }
+    setHideConfirm(true);
+  };
+
+  const confirmHide = () => {
+    setHideConfirm(false);
+    setBody('');
+    setReplyTo(null);
+    onToggle();
+  };
 
   const loadMembers = useCallback(async () => {
     try {
@@ -1086,6 +1123,10 @@ function CommentCard({ item, expanded, onToggle, onChanged, navigate }) {
   }, [expanded]);
 
   useEffect(() => {
+    if (!expanded) setHideConfirm(false);
+  }, [expanded]);
+
+  useEffect(() => {
     if (!expanded) return;
     const socket = getSocket();
     if (!socket) return;
@@ -1106,13 +1147,14 @@ function CommentCard({ item, expanded, onToggle, onChanged, navigate }) {
       }
       setComments((prev) => upsertComment(prev, row));
       onChanged?.();
+      handleIncomingComment(row);
     };
     socket.on('lead:comment', handler);
     return () => {
       socket.emit('leave:lead', item.id);
       socket.off('lead:comment', handler);
     };
-  }, [expanded, item.id, onChanged]);
+  }, [expanded, item.id, onChanged, handleIncomingComment]);
 
   const commentsByParent = useMemo(() => groupCrmCommentsByParent(comments || []), [comments]);
 
@@ -1130,6 +1172,7 @@ function CommentCard({ item, expanded, onToggle, onChanged, navigate }) {
       setBody('');
       setReplyTo(null);
       onChanged?.();
+      handleIncomingComment(row, { isOwnPost: true });
     } catch (e) {
       alert(e?.response?.data?.error || 'Lỗi gửi bình luận');
     } finally {
@@ -1331,19 +1374,33 @@ function CommentCard({ item, expanded, onToggle, onChanged, navigate }) {
 
       <button
         type="button"
-        onClick={onToggle}
+        onClick={requestToggle}
         className="mx-3 mb-2 rounded-md px-2 py-1.5 text-left text-[13px] font-semibold text-[#65676b] transition-colors hover:bg-[#f0f2f5]"
       >
         {expanded ? 'Ẩn bình luận' : `Xem ${item._comments.count} bình luận trước`}
       </button>
 
+      {expanded && hideConfirm && (
+        <CommentHideConfirmBar
+          unreadCount={unreadCount}
+          hasDraft={hasDraft}
+          onConfirm={confirmHide}
+          onCancel={() => setHideConfirm(false)}
+        />
+      )}
+
       {expanded && (
-        <div className="min-h-[280px] max-h-[min(560px,70vh)] overflow-y-auto border-t border-[#e4e6eb] bg-[#f0f2f5] px-2 py-2">
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          className="relative min-h-[280px] max-h-[min(560px,70vh)] overflow-y-auto border-t border-[#e4e6eb] bg-[#f0f2f5] px-2 py-2 scroll-smooth"
+        >
           {loading && <p className="py-6 text-center text-sm text-[#65676b]">Đang tải…</p>}
           {!loading && (comments || []).length === 0 && (
             <p className="py-6 text-center text-sm text-[#65676b]">Chưa có bình luận nào.</p>
           )}
           {!loading && renderCommentBranch('__root__', 0)}
+          <CommentNewNotice count={unreadCount} onScrollToNew={scrollToLatest} />
         </div>
       )}
 
