@@ -12,6 +12,11 @@ import { upsertComment, CommentAttachmentsBlock, CrmLeadCommentsPanel } from './
 import { FilePreview, FileUploadButton } from './FileUpload';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
 import { resolveSxProjectLeadId, resolveSxProjectLeadIdAsync } from '../lib/sxProjectComments';
+import {
+  CommentHideConfirmBar,
+  CommentNewNotice,
+  useCommentThreadLive,
+} from './commentThreadLiveUx';
 
 /** Bộ emoji được phép — đồng bộ với backend PROJECT_COMMENT_ALLOWED_REACTION_EMOJI */
 const PROJECT_COMMENT_REACTION_PICKER = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
@@ -1421,6 +1426,42 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
   const [editingBody, setEditingBody] = useState('');
   const [replyTo, setReplyTo] = useState(null);
   const [reactionBusy, setReactionBusy] = useState(null);
+  const [hideConfirm, setHideConfirm] = useState(false);
+  const [leadUnreadCount, setLeadUnreadCount] = useState(0);
+
+  const {
+    scrollRef,
+    unreadCount: projectUnreadCount,
+    handleIncomingComment,
+    scrollToLatest,
+    onScroll,
+  } = useCommentThreadLive({
+    expanded: expanded && !leadId,
+    comments,
+    loading,
+    currentUserId: user?.userId || user?.id,
+  });
+
+  const unreadCount = leadId ? leadUnreadCount : projectUnreadCount;
+  const hasDraft = Boolean(body.trim() || pendingFiles.length);
+
+  const requestToggle = () => {
+    if (!expanded) {
+      setHideConfirm(false);
+      onToggle();
+      return;
+    }
+    setHideConfirm(true);
+  };
+
+  const confirmHide = () => {
+    setHideConfirm(false);
+    setBody('');
+    setPendingFiles([]);
+    setReplyTo(null);
+    setLeadUnreadCount(0);
+    onToggle();
+  };
 
   const load = useCallback(async (opts) => {
     if (leadId) return;
@@ -1448,6 +1489,7 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
 
   useEffect(() => { if (expanded && comments == null && !leadId) load(); }, [expanded, comments, load, leadId]);
   useEffect(() => { if (!expanded) setReplyTo(null); }, [expanded]);
+  useEffect(() => { if (!expanded) setHideConfirm(false); }, [expanded]);
 
   useEffect(() => {
     if (!expanded || !socket || leadId) return;
@@ -1469,6 +1511,7 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
         return;
       }
       setComments((prev) => upsertComment(prev, row));
+      handleIncomingComment(row);
     };
     const onDeleted = (p) => merge({ ...p, action: 'deleted' });
     const onUpdated = (p) => merge({ ...p, action: 'updated' });
@@ -1482,7 +1525,7 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
       socket.off('project:comment:deleted', onDeleted);
       socket.off('project:comment:updated', onUpdated);
     };
-  }, [expanded, item.id, socket, leadId]);
+  }, [expanded, item.id, socket, leadId, handleIncomingComment]);
 
   const commentsByParent = useMemo(() => groupProjectCommentsByParent(comments || []), [comments]);
 
@@ -1505,6 +1548,7 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
       setPendingFiles([]);
       setReplyTo(null);
       onChanged?.();
+      handleIncomingComment(row, { isOwnPost: true });
     } catch (e) {
       alert(e?.response?.data?.error || 'Lỗi gửi bình luận');
     } finally {
@@ -1693,24 +1737,42 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
 
       <button
         type="button"
-        onClick={onToggle}
+        onClick={requestToggle}
         className="mx-3 mb-2 rounded-md px-2 py-1.5 text-left text-[13px] font-semibold text-[#65676b] transition-colors hover:bg-[#f0f2f5]"
       >
         {expanded ? 'Ẩn bình luận' : `Xem ${item._comments.count} bình luận trước`}
       </button>
 
+      {expanded && hideConfirm && (
+        <CommentHideConfirmBar
+          unreadCount={unreadCount}
+          hasDraft={hasDraft}
+          onConfirm={confirmHide}
+          onCancel={() => setHideConfirm(false)}
+        />
+      )}
+
       {expanded && (
         leadId ? (
           <div className="border-t border-[#e4e6eb] bg-[#f0f2f5]">
-            <CrmLeadCommentsPanel leadId={leadId} onCountChange={() => onChanged?.()} />
+            <CrmLeadCommentsPanel
+              leadId={leadId}
+              onCountChange={() => onChanged?.()}
+              onUnreadCountChange={setLeadUnreadCount}
+            />
           </div>
         ) : (
-        <div className="max-h-[min(360px,55vh)] overflow-y-auto border-t border-[#e4e6eb] bg-[#f0f2f5] px-2 py-2">
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          className="relative max-h-[min(360px,55vh)] overflow-y-auto border-t border-[#e4e6eb] bg-[#f0f2f5] px-2 py-2 scroll-smooth"
+        >
           {loading && <p className="py-6 text-center text-sm text-[#65676b]">Đang tải…</p>}
           {!loading && (comments || []).length === 0 && (
             <p className="py-6 text-center text-sm text-[#65676b]">Chưa có bình luận nào.</p>
           )}
           {!loading && renderCommentBranch('__root__', 0)}
+          <CommentNewNotice count={unreadCount} onScrollToNew={scrollToLatest} />
         </div>
         )
       )}

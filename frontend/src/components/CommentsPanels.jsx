@@ -11,6 +11,7 @@ import { FilePreview, FileUploadButton, uploadFilesBatch } from './FileUpload';
 import UploadProgressBubble from './UploadProgressBubble';
 import { publicFileUrl as pubUrl } from '../lib/publicFileUrl';
 import { handleCommentFilePaste } from '../lib/chatClipboard';
+import { CommentNewNotice, useCommentThreadLive } from './commentThreadLiveUx';
 
 const REACTION_PICKER = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
@@ -490,6 +491,10 @@ function CommentThread({
   readDetailId,
   onOpenReadDetail,
   showReadStatus = false,
+  threadScrollRef,
+  onThreadScroll,
+  newCommentCount = 0,
+  onScrollToNewComments,
 }) {
   const selfUid = user?.userId || user?.id;
   const commentsByParent = useMemo(() => groupByParent(comments), [comments]);
@@ -632,7 +637,11 @@ function CommentThread({
 
   return (
     <div className="rounded-xl border border-[#e4e6eb] bg-[#f0f2f5] overflow-hidden">
-      <div className="min-h-[320px] max-h-[min(720px,75vh)] overflow-y-auto px-2 py-3">
+      <div
+        ref={threadScrollRef}
+        onScroll={onThreadScroll}
+        className="relative min-h-[320px] max-h-[min(720px,75vh)] overflow-y-auto px-2 py-3 scroll-smooth"
+      >
         {loading && <p className="py-8 text-center text-sm text-[#65676b]">Đang tải…</p>}
         {!loading && loadError && (
           <p className="py-8 text-center text-sm text-red-600 px-4">{loadError}</p>
@@ -641,6 +650,7 @@ function CommentThread({
           <p className="py-8 text-center text-sm text-[#65676b]">Chưa có bình luận. Hãy là người đầu tiên!</p>
         )}
         {!loading && !loadError && renderBranch('__root__', 0)}
+        <CommentNewNotice count={newCommentCount} onScrollToNew={onScrollToNewComments} />
       </div>
       <div className="border-t border-[#e4e6eb] bg-white">
         {replyTo && (
@@ -700,8 +710,9 @@ function CommentThread({
 }
 
 /** Bình luận lead/deal CRM — realtime qua socket `lead:comment` */
-export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
+export function CrmLeadCommentsPanel({ leadId, onCountChange, onUnreadCountChange }) {
   const { user } = useAuth();
+  const selfUid = user?.userId || user?.id;
   const [comments, setComments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [body, setBody] = useState('');
@@ -713,6 +724,23 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
   const [reactionBusy, setReactionBusy] = useState(null);
   const [members, setMembers] = useState([]);
   const [loadError, setLoadError] = useState('');
+
+  const {
+    scrollRef,
+    unreadCount,
+    handleIncomingComment,
+    scrollToLatest,
+    onScroll,
+  } = useCommentThreadLive({
+    expanded: true,
+    comments,
+    loading,
+    currentUserId: selfUid,
+  });
+
+  useEffect(() => {
+    onUnreadCountChange?.(unreadCount);
+  }, [unreadCount, onUnreadCountChange]);
 
   const loadMembers = useCallback(async () => {
     if (!leadId) return;
@@ -769,7 +797,8 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
       if (next.length !== (prev || []).length) onCountChange?.(next.length);
       return next;
     });
-  }, [onCountChange]);
+    handleIncomingComment(row);
+  }, [onCountChange, handleIncomingComment]);
 
   useLeadCommentSocket(leadId, handleLeadCommentEvent);
 
@@ -790,6 +819,7 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
         if (next.length !== (prev || []).length) onCountChange?.(next.length);
         return next;
       });
+      handleIncomingComment(row, { isOwnPost: true });
       setBody('');
       setPendingFiles([]);
       setReplyTo(null);
@@ -798,7 +828,7 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
     } finally {
       setPosting(false);
     }
-  }, [body, pendingFiles, leadId, replyTo, onCountChange]);
+  }, [body, pendingFiles, leadId, replyTo, onCountChange, handleIncomingComment]);
 
   const handleFilesUploaded = useCallback((files) => {
     const uploaded = (files || []).filter((f) => f?.file_url || f?.url);
@@ -882,6 +912,10 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange }) {
       onRemovePendingFile={(i) => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))}
       canSubmit={Boolean(body.trim() || pendingFiles.length)}
       renderBody={(text) => renderCrmCommentBody(text, members)}
+      threadScrollRef={scrollRef}
+      onThreadScroll={onScroll}
+      newCommentCount={unreadCount}
+      onScrollToNewComments={scrollToLatest}
     />
   );
 }
