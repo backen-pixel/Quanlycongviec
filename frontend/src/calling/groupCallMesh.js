@@ -63,12 +63,23 @@ export async function getLocalMediaStream(media, existing) {
   });
 }
 
+export function cloneAudioOnlyStream(stream) {
+  if (!stream) return null;
+  return new MediaStream(stream.getAudioTracks());
+}
+
+export function cloneStreamWithVideo(stream, videoTrack) {
+  if (!stream || !videoTrack) return stream;
+  return new MediaStream([...stream.getAudioTracks(), videoTrack]);
+}
+
 export function stopLocalVideoTracks(stream) {
   const tracks = [...(stream?.getVideoTracks() || [])];
   for (const track of tracks) {
     try { stream.removeTrack(track); } catch { /* noop */ }
     try { track.stop(); } catch { /* noop */ }
   }
+  return cloneAudioOnlyStream(stream);
 }
 
 export async function acquireLocalVideoTrack(facing = 'front') {

@@ -33,8 +33,20 @@ export default function CallOverlay() {
   }, [remoteStream, showVideo]);
 
   useEffect(() => {
-    if (localVideoRef.current && localStream) localVideoRef.current.srcObject = localStream;
-  }, [localStream, showVideo]);
+    const el = localVideoRef.current;
+    if (!el) return undefined;
+    const hasLiveVideo = !!localStream?.getVideoTracks().some((t) => t.readyState === 'live');
+    if (showVideo && !session?.isCameraOff && hasLiveVideo) {
+      el.srcObject = localStream;
+    } else {
+      el.srcObject = null;
+      try { el.load(); } catch { /* noop */ }
+    }
+    return () => {
+      el.srcObject = null;
+      try { el.load(); } catch { /* noop */ }
+    };
+  }, [localStream, showVideo, session?.isCameraOff]);
 
   useEffect(() => {
     if (session?.state !== 'CONNECTED') return undefined;
@@ -127,8 +139,17 @@ export default function CallOverlay() {
                   )}
               </div>
             )}
-            {showVideo && !session.isCameraOff && (
-              <video ref={localVideoRef} autoPlay playsInline muted style={S.pip} />
+            {showVideo && (
+              <video
+                ref={localVideoRef}
+                autoPlay
+                playsInline
+                muted
+                style={{
+                  ...S.pip,
+                  ...(session.isCameraOff ? { display: 'none' } : {}),
+                }}
+              />
             )}
             <div style={S.videoOverlayTop}>
               <div style={S.name}>{session.peer.name}</div>

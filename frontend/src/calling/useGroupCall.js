@@ -6,8 +6,8 @@ import { useCallback, useRef, useState } from 'react';
 import { playCallRingtone, stopCallRingtone } from '../lib/callRingtonePlayer';
 import { dismissIncomingCallDesktopAlert, showIncomingCallDesktopAlert } from '../lib/incomingCallNotify';
 import {
-  applyPeerSignal, acquireLocalVideoTrack, createGroupPeerConnection, getLocalMediaStream,
-  replaceVideoOnPeerConnections, sendOfferToPeer, stopLocalVideoTracks,
+  applyPeerSignal, acquireLocalVideoTrack, cloneStreamWithVideo, createGroupPeerConnection,
+  getLocalMediaStream, replaceVideoOnPeerConnections, sendOfferToPeer, stopLocalVideoTracks,
 } from './groupCallMesh';
 
 const GROUP_CALL_TIMEOUT_MS = 60_000;
@@ -275,13 +275,15 @@ export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patc
     const peerEntries = [...groupPeersRef.current.values()];
     try {
       if (next) {
-        stopLocalVideoTracks(stream);
-        await replaceVideoOnPeerConnections(peerEntries, null, stream);
+        const audioOnly = stopLocalVideoTracks(stream);
+        localStreamRef.current = audioOnly;
+        await replaceVideoOnPeerConnections(peerEntries, null, audioOnly);
       } else {
         const facing = cur.cameraFacing === 'back' ? 'back' : 'front';
         const track = await acquireLocalVideoTrack(facing);
-        stream.addTrack(track);
-        await replaceVideoOnPeerConnections(peerEntries, track, stream);
+        const nextStream = cloneStreamWithVideo(localStreamRef.current, track);
+        localStreamRef.current = nextStream;
+        await replaceVideoOnPeerConnections(peerEntries, track, nextStream);
       }
       patchSession({ isCameraOff: next });
     } catch (e) {
@@ -301,8 +303,9 @@ export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patc
     try {
       stopLocalVideoTracks(stream);
       const track = await acquireLocalVideoTrack(facing);
-      stream.addTrack(track);
-      await replaceVideoOnPeerConnections(peerEntries, track, stream);
+      const nextStream = cloneStreamWithVideo(localStreamRef.current, track);
+      localStreamRef.current = nextStream;
+      await replaceVideoOnPeerConnections(peerEntries, track, nextStream);
     } catch (e) {
       patchSession({ error: e?.message || 'Không đổi được camera' });
     }
