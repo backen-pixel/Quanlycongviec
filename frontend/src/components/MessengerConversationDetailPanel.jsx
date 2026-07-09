@@ -27,6 +27,7 @@ import {
 import { resolveMediaUrl, BROKEN_MEDIA_PLACEHOLDER } from '../lib/mediaUrl';
 import { publicFileUrl } from '../lib/publicFileUrl';
 import { displayMessengerFilename, downloadMessengerFile, openMessengerFile } from '../lib/messengerMessageActions';
+import { messengerDisplayName } from '../lib/messengerDisplayName';
 import GroupSenderName from './GroupSenderName';
 import { dispatchMessengerClearHistory } from '../lib/messengerHiddenHistory';
 import UploadFileLightbox, { collectUploadLightboxItems, findUploadLightboxIndex } from './UploadFileLightbox';
@@ -186,6 +187,7 @@ export default function MessengerConversationDetailPanel({
   onChangeMemberRole,
   onChangeGroupAvatar,
   onRenameGroup,
+  onSaveNickname,
   onTogglePin,
   onLeaveGroup,
   onGroupCall,
@@ -197,6 +199,8 @@ export default function MessengerConversationDetailPanel({
 }) {
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
+  const [nicknamingUserId, setNicknamingUserId] = useState(null);
+  const [nicknameDraft, setNicknameDraft] = useState('');
   const [memberMenuId, setMemberMenuId] = useState(null);
   const [membersExpanded, setMembersExpanded] = useState(false);
   const [mediaLightboxIndex, setMediaLightboxIndex] = useState(null);
@@ -206,6 +210,9 @@ export default function MessengerConversationDetailPanel({
 
   const isDirect = !!selected?.is_direct;
   const title = selected?.title || groupDetail?.name || 'Hội thoại';
+  const peerMember = isDirect ? groupMembers.find((m) => String(m.user_id) !== String(uid)) : null;
+  const peerUser = peerMember?.user || null;
+  const peerLegalName = peerUser?.full_name || peerUser?.email || selected?.peer_full_name || '';
   const memberCount = groupMembers.length;
 
   const mediaCount = (mediaBundle?.images?.length || 0) + (mediaBundle?.videos?.length || 0);
@@ -296,6 +303,26 @@ export default function MessengerConversationDetailPanel({
     setRenaming(false);
   };
 
+  const startNicknameEdit = (targetUserId, currentNickname = '') => {
+    setNicknamingUserId(targetUserId);
+    setNicknameDraft(currentNickname);
+    setMemberMenuId(null);
+  };
+
+  const saveNickname = async () => {
+    if (!nicknamingUserId) return;
+    await onSaveNickname?.(nicknamingUserId, nicknameDraft);
+    setNicknamingUserId(null);
+    setNicknameDraft('');
+  };
+
+  const clearNickname = async () => {
+    if (!nicknamingUserId) return;
+    await onSaveNickname?.(nicknamingUserId, '');
+    setNicknamingUserId(null);
+    setNicknameDraft('');
+  };
+
   const onNotifyToggle = (v) => {
     setNotifyOn(v);
     if (notifyKey) {
@@ -369,6 +396,34 @@ export default function MessengerConversationDetailPanel({
               <X className="h-4 w-4" />
             </button>
           </div>
+        ) : nicknamingUserId && isDirect ? (
+          <div className="px-2 space-y-2">
+            <input
+              value={nicknameDraft}
+              onChange={(e) => setNicknameDraft(e.target.value)}
+              placeholder="Nhập biệt danh"
+              maxLength={80}
+              className="w-full h-9 px-2 rounded-lg text-slate-900 text-sm"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void saveNickname();
+                if (e.key === 'Escape') setNicknamingUserId(null);
+              }}
+            />
+            <div className="flex items-center justify-center gap-2">
+              <button type="button" onClick={() => void saveNickname()} className="px-3 py-1 rounded-lg bg-white/20 hover:bg-white/30 text-[12px] font-semibold">
+                Lưu
+              </button>
+              {peerUser?.nickname ? (
+                <button type="button" onClick={() => void clearNickname()} className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[12px]">
+                  Xóa biệt danh
+                </button>
+              ) : null}
+              <button type="button" onClick={() => setNicknamingUserId(null)} className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
         ) : (
           <div className="flex items-center justify-center gap-1.5 px-2">
             <h2 className="text-lg font-bold truncate">{title}</h2>
@@ -377,12 +432,33 @@ export default function MessengerConversationDetailPanel({
                 <Pencil className="h-3.5 w-3.5 opacity-90" />
               </button>
             )}
+            {isDirect && selected?.peer_id ? (
+              <button
+                type="button"
+                onClick={() => startNicknameEdit(selected.peer_id, peerUser?.nickname || title)}
+                className="p-1 rounded-md hover:bg-white/15 shrink-0"
+                title="Đặt biệt danh"
+              >
+                <Pencil className="h-3.5 w-3.5 opacity-90" />
+              </button>
+            ) : null}
           </div>
         )}
 
         <p className="text-[12px] text-white/90 mt-1">
-          {isDirect ? 'Chat trực tiếp' : `Nhóm chat • ${memberCount} thành viên`}
+          {isDirect ? (
+            peerUser?.nickname && peerLegalName ? (
+              <span className="block truncate opacity-90">{peerLegalName}</span>
+            ) : (
+              'Chat trực tiếp'
+            )
+          ) : (
+            `Nhóm chat • ${memberCount} thành viên`
+          )}
         </p>
+        {isDirect && peerUser?.nickname && peerLegalName ? (
+          <p className="text-[11px] text-white/75">Chat trực tiếp</p>
+        ) : null}
         <p className="text-[11px] text-white/80 mt-0.5 inline-flex items-center gap-1.5 justify-center">
           <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-sm" />
           {onlineLabel}
@@ -394,7 +470,7 @@ export default function MessengerConversationDetailPanel({
               <DetailAvatar
                 key={m.user_id}
                 src={m.user?.avatar}
-                name={m.user?.full_name || m.user?.email}
+                name={messengerDisplayName(m.user)}
                 className="w-9 h-9 ring-2 ring-white/80"
                 textClass="text-[11px]"
               />
@@ -455,6 +531,7 @@ export default function MessengerConversationDetailPanel({
               <ul className="p-2 text-xs space-y-0.5">
                 {groupMembers.map((m) => {
                   const u = m.user || {};
+                  const displayName = messengerDisplayName(u);
                   const isCreator = groupDetail?.created_by && String(groupDetail.created_by) === String(m.user_id);
                   const isLeader = m.role === 'leader' || isCreator;
                   const isDeputy = m.role === 'deputy';
@@ -462,13 +539,14 @@ export default function MessengerConversationDetailPanel({
                   const busy = busyMember === m.user_id;
                   const pres = getUserPresence(presenceByUser, m.user_id);
                   const online = !!pres?.online;
+                  const editingNickname = nicknamingUserId === m.user_id;
                   return (
                     <li
                       key={m.user_id}
                       className="flex items-center gap-2.5 px-2 py-2.5 rounded-xl hover:bg-slate-50 transition relative"
                     >
                       <div className="relative shrink-0">
-                        <DetailAvatar src={u.avatar} name={u.full_name || u.email} className="w-10 h-10" textClass="text-sm" />
+                        <DetailAvatar src={u.avatar} name={displayName} className="w-10 h-10" textClass="text-sm" />
                         <span
                           className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-white ${
                             online ? 'bg-emerald-500' : 'bg-slate-300'
@@ -477,31 +555,58 @@ export default function MessengerConversationDetailPanel({
                         />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="text-[13px] font-semibold text-slate-900 truncate flex items-center gap-1">
-                          {!isDirect ? (
-                            <GroupSenderName
-                              userId={m.user_id}
-                              name={u.full_name || u.email || 'Người dùng'}
-                              isGroupChat
-                              className="text-[13px]"
+                        {editingNickname ? (
+                          <div className="flex items-center gap-1">
+                            <input
+                              value={nicknameDraft}
+                              onChange={(e) => setNicknameDraft(e.target.value)}
+                              maxLength={80}
+                              className="flex-1 min-w-0 h-8 px-2 rounded-lg border border-slate-200 text-[12px]"
+                              autoFocus
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') void saveNickname();
+                                if (e.key === 'Escape') setNicknamingUserId(null);
+                              }}
                             />
-                          ) : (
-                            u.full_name || 'Người dùng'
-                          )}
-                          {isMe && <span className="text-[10px] font-normal text-slate-400">(bạn)</span>}
-                          {isLeader && <Crown className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
-                          {isDeputy && !isLeader && <Shield className="h-3.5 w-3.5 text-indigo-500 shrink-0" />}
-                        </p>
+                            <button type="button" onClick={() => void saveNickname()} className="p-1 text-violet-600">
+                              <Check className="h-4 w-4" />
+                            </button>
+                            <button type="button" onClick={() => setNicknamingUserId(null)} className="p-1 text-slate-400">
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <p className="text-[13px] font-semibold text-slate-900 truncate flex items-center gap-1">
+                            {!isDirect ? (
+                              <GroupSenderName
+                                userId={m.user_id}
+                                name={displayName}
+                                isGroupChat
+                                className="text-[13px]"
+                              />
+                            ) : (
+                              displayName
+                            )}
+                            {isMe && <span className="text-[10px] font-normal text-slate-400">(bạn)</span>}
+                            {isLeader && <Crown className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
+                            {isDeputy && !isLeader && <Shield className="h-3.5 w-3.5 text-indigo-500 shrink-0" />}
+                          </p>
+                        )}
                         <p className="text-[11px] text-slate-500">
-                          {memberRoleLabel(m, groupDetail)}
-                          {online ? (
-                            <span className="text-emerald-600"> · Đang hoạt động</span>
-                          ) : (
-                            <span> · {formatLastActiveAgo(pres?.last_ping_at)}</span>
-                          )}
+                          {u.nickname && (u.full_name || u.email) ? (
+                            <span className="block truncate text-slate-400">{u.full_name || u.email}</span>
+                          ) : null}
+                          <span>
+                            {memberRoleLabel(m, groupDetail)}
+                            {online ? (
+                              <span className="text-emerald-600"> · Đang hoạt động</span>
+                            ) : (
+                              <span> · {formatLastActiveAgo(pres?.last_ping_at)}</span>
+                            )}
+                          </span>
                         </p>
                       </div>
-                      {canManageGroup && !isCreator && !isMe ? (
+                      {!isMe && !editingNickname ? (
                         <div className="relative shrink-0" ref={memberMenuId === m.user_id ? memberMenuRef : null}>
                           <button
                             type="button"
@@ -512,32 +617,55 @@ export default function MessengerConversationDetailPanel({
                             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <MoreVertical className="h-4 w-4" />}
                           </button>
                           {memberMenuId === m.user_id ? (
-                            <div className="absolute right-0 top-full mt-1 z-20 w-40 py-1 rounded-xl bg-white border border-slate-200 shadow-xl text-[12px]">
+                            <div className="absolute right-0 top-full mt-1 z-20 w-44 py-1 rounded-xl bg-white border border-slate-200 shadow-xl text-[12px]">
                               <button
                                 type="button"
                                 className="w-full px-3 py-2 text-left hover:bg-violet-50"
-                                onClick={() => {
-                                  onChangeMemberRole?.(m, isDeputy ? 'member' : 'deputy');
-                                  setMemberMenuId(null);
-                                }}
+                                onClick={() => startNicknameEdit(m.user_id, u.nickname || displayName)}
                               >
-                                {isDeputy ? 'Hạ xuống thành viên' : 'Đặt làm phó nhóm'}
+                                Đặt biệt danh
                               </button>
-                              <button
-                                type="button"
-                                className="w-full px-3 py-2 text-left text-rose-600 hover:bg-rose-50"
-                                onClick={() => {
-                                  setMemberMenuId(null);
-                                  onRemoveMember?.(m);
-                                }}
-                              >
-                                Xóa khỏi nhóm
-                              </button>
+                              {u.nickname ? (
+                                <button
+                                  type="button"
+                                  className="w-full px-3 py-2 text-left text-slate-600 hover:bg-slate-50"
+                                  onClick={() => {
+                                    setMemberMenuId(null);
+                                    void onSaveNickname?.(m.user_id, '');
+                                  }}
+                                >
+                                  Xóa biệt danh
+                                </button>
+                              ) : null}
+                              {canManageGroup && !isCreator ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="w-full px-3 py-2 text-left hover:bg-violet-50"
+                                    onClick={() => {
+                                      onChangeMemberRole?.(m, isDeputy ? 'member' : 'deputy');
+                                      setMemberMenuId(null);
+                                    }}
+                                  >
+                                    {isDeputy ? 'Hạ xuống thành viên' : 'Đặt làm phó nhóm'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="w-full px-3 py-2 text-left text-rose-600 hover:bg-rose-50"
+                                    onClick={() => {
+                                      setMemberMenuId(null);
+                                      onRemoveMember?.(m);
+                                    }}
+                                  >
+                                    Xóa khỏi nhóm
+                                  </button>
+                                </>
+                              ) : null}
                             </div>
                           ) : null}
                         </div>
                       ) : (
-                        <MoreVertical className="h-4 w-4 text-slate-200 shrink-0" />
+                        !editingNickname ? <MoreVertical className="h-4 w-4 text-slate-200 shrink-0" /> : null
                       )}
                     </li>
                   );

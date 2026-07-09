@@ -29,6 +29,7 @@ import { driveShareToLeadChat, driveShareToMessengerChat } from '../lib/drive';
 import UploadFileLightbox, { collectUploadLightboxItems, findUploadLightboxIndex } from './UploadFileLightbox';
 import { buildMessengerMessagePreview } from '../lib/messengerPreview';
 import GroupSenderName from './GroupSenderName';
+import { messengerDisplayName } from '../lib/messengerDisplayName';
 import AiBotReportContent, { isAiBotReportContent } from './AiBotReportContent';
 import MessengerCallLogCard from './MessengerCallLogCard';
 import { useCall } from '../calling/CallProvider';
@@ -457,7 +458,7 @@ function getSeenByUsersForMessage(msg, readReceipts, excludeUserId) {
 
 function messengerMemberDisplayName(userId, members) {
   const mem = (members || []).find((m) => String(m.user_id) === String(userId));
-  return mem?.user?.full_name || mem?.user?.email || '';
+  return messengerDisplayName(mem?.user, '');
 }
 
 /** Nhãn rút gọn: "Đã gửi" / "Đã xem · An, Bình" / "Đã xem bởi N người". */
@@ -625,7 +626,7 @@ function previewOfMessage(parent) {
  */
 function ReplyQuoteInBubble({ parent, isMe, onJump, isGroupChat = false }) {
   if (!parent) return null;
-  const author = parent.user?.full_name || parent.user?.email || 'Thành viên';
+  const author = messengerDisplayName(parent.user, 'Thành viên');
   return (
     <button
       type="button"
@@ -654,7 +655,7 @@ function ReplyQuoteInBubble({ parent, isMe, onJump, isGroupChat = false }) {
 /** Thanh preview phía trên ô nhập khi đang trả lời 1 tin. */
 function ReplyComposerBar({ replyTo, onCancel, isGroupChat = false }) {
   if (!replyTo) return null;
-  const author = replyTo.user?.full_name || replyTo.user?.email || 'Thành viên';
+  const author = messengerDisplayName(replyTo.user, 'Thành viên');
   return (
     <div className="mb-2 flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5">
       <CornerDownRight className="h-3.5 w-3.5 mt-0.5 text-blue-600 shrink-0" />
@@ -2334,8 +2335,21 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   }, [groupId]);
 
   const mergeIncomingChat = useCallback((msg) => {
+    let user = msg?.user;
+    if (msg?.user_id && user) {
+      const mem = (groupMetaRef.current?.members || []).find((m) => String(m.user_id) === String(msg.user_id));
+      const fromMember = mem?.user;
+      if (fromMember?.display_name || fromMember?.nickname) {
+        user = {
+          ...user,
+          nickname: fromMember.nickname ?? user.nickname,
+          display_name: fromMember.display_name || user.display_name,
+        };
+      }
+    }
     const normalized = {
       ...msg,
+      user,
       reactions: normalizeMessengerReactions(msg.reactions),
       is_recalled: !!(msg.recalled_at || msg.is_recalled),
     };
@@ -2401,7 +2415,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
             let name = payload.full_name;
             if (!name) {
               const mem = (groupMetaRef.current?.members || []).find((m) => String(m.user_id) === uid);
-              name = mem?.user?.full_name || mem?.user?.email || (isBot ? '🤖 AI' : 'Ai đó');
+              name = messengerDisplayName(mem?.user, isBot ? '🤖 AI' : 'Ai đó');
             }
             next.set(uid, { name, isBot, ts: Date.now() });
           } else {
@@ -2820,7 +2834,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
             : [];
           const mentioned = mentionedIds.map(String).includes(String(uid));
           if (isCallLog && !isBot) {
-            const callActorName = m.user?.full_name || m.user?.email || 'Thành viên';
+            const callActorName = messengerDisplayName(m.user, 'Thành viên');
             const callOnCallerSide = isMe;
             return (
               <div
@@ -2867,7 +2881,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
               </div>
             );
           }
-          const senderName = m.user?.full_name || m.user?.email || 'Thành viên';
+          const senderName = messengerDisplayName(m.user, 'Thành viên');
           const parent = m.reply_to_message || m.reply || null;
           const isHighlight = String(highlightId || '') === String(m.id);
 

@@ -12,6 +12,7 @@ import { useAuth } from '../lib/auth';
 import { getInitials } from '../lib/utils';
 import SocialProfileFullCard from '../components/SocialProfileFullCard';
 import SocialPostEditComposer from '../components/SocialPostEditComposer';
+import EditMyNameModal from '../components/EditMyNameModal';
 import { normalizeSocialPost } from '../lib/internalSocialPost';
 
 const UPLOAD_STREAM_BYTES = 48 * 1024 * 1024;
@@ -301,7 +302,7 @@ function MediaTile({ item, onOpen }) {
 
 export default function SocialProfilePage() {
   const { userId } = useParams();
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -343,6 +344,7 @@ export default function SocialProfilePage() {
   const [savingCover, setSavingCover] = useState(false);
   const [bioOpen, setBioOpen] = useState(false);
   const [savingBio, setSavingBio] = useState(false);
+  const [nameOpen, setNameOpen] = useState(false);
 
   const loadProfile = useCallback(async () => {
     setLoading(true);
@@ -642,6 +644,16 @@ export default function SocialProfilePage() {
                   <h1 className="text-force-white text-2xl sm:text-4xl font-extrabold tracking-tight drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)]" style={{ color: '#ffffff' }}>
                     {headerName}
                   </h1>
+                  {isOwner && (
+                    <button
+                      type="button"
+                      onClick={() => setNameOpen(true)}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white hover:bg-white/30 backdrop-blur"
+                      title="Đổi tên"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                  )}
                   <BadgeCheck className="h-6 w-6 sm:h-7 sm:w-7 text-sky-400 drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]" aria-label="Verified" />
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -990,6 +1002,19 @@ export default function SocialProfilePage() {
         onClose={() => setBioOpen(false)}
         onSave={handleSaveBio}
         saving={savingBio}
+      />
+
+      <EditMyNameModal
+        open={nameOpen && isOwner}
+        initialName={profile?.full_name || ''}
+        onClose={() => setNameOpen(false)}
+        onSaved={async (saved) => {
+          const nextName = saved?.full_name;
+          if (nextName) {
+            setProfile((p) => (p ? { ...p, full_name: nextName } : p));
+          }
+          await refreshUser();
+        }}
       />
     </div>
   );

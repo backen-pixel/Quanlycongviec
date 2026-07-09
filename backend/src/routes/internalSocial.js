@@ -1051,6 +1051,13 @@ r.patch('/profile/me', async (req, res) => {
       const raw = req.body.bio == null ? '' : String(req.body.bio).trim();
       update.bio = raw ? raw.slice(0, 500) : null;
     }
+    if (req.body?.full_name !== undefined) {
+      const raw = req.body.full_name == null ? '' : String(req.body.full_name).trim();
+      if (!raw || raw.length > 120) {
+        return res.status(400).json({ error: 'Họ tên phải từ 1–120 ký tự.' });
+      }
+      update.full_name = raw;
+    }
     if (!Object.keys(update).length) {
       return res.status(400).json({ error: 'Không có thay đổi.' });
     }

@@ -186,6 +186,7 @@ function buildMessengerThreads(apiList, lsMessengerRows, pinnedGroupIds, prevByG
       is_direct: !!g.is_direct,
       peer_id: g.peer_id || null,
       peer_avatar: g.peer_avatar || null,
+      peer_full_name: g.peer_full_name || null,
       avatar: g.avatar || null,
       code: '',
       type: 'group',
@@ -949,6 +950,47 @@ export default function MessengerHubPage() {
     }
   };
 
+  const saveContactNickname = async (targetUserId, nickname) => {
+    const trimmed = String(nickname || '').trim();
+    try {
+      let displayName = trimmed;
+      if (!trimmed) {
+        const { data } = await api.delete(`/messenger/nicknames/${targetUserId}`);
+        displayName = data?.display_name || '';
+      } else {
+        const { data } = await api.put(`/messenger/nicknames/${targetUserId}`, { nickname: trimmed });
+        displayName = data?.display_name || trimmed;
+      }
+      const patchMemberUser = (m) => {
+        if (String(m.user_id) !== String(targetUserId)) return m;
+        const u = m.user || {};
+        return {
+          ...m,
+          user: {
+            ...u,
+            nickname: trimmed || null,
+            display_name: displayName || u.full_name || u.email,
+          },
+        };
+      };
+      setGroupMembers((prev) => prev.map(patchMemberUser));
+      if (selected?.is_direct && String(selected.peer_id) === String(targetUserId)) {
+        const fallback = selected.peer_full_name || displayName;
+        setThreads((prev) =>
+          prev.map((t) =>
+            t.groupId === selectedGroupId
+              ? { ...t, title: trimmed || fallback }
+              : t,
+          ),
+        );
+      }
+      await reloadMessengerThreads();
+    } catch (e) {
+      alert(e?.response?.data?.error || e.message || 'Không lưu được biệt danh');
+      throw e;
+    }
+  };
+
   const filteredAddCandidates = useMemo(() => {
     const memberIdSet = new Set(groupMembers.map((m) => String(m.user_id)));
     const q = addMemberQ.trim().toLowerCase();
@@ -1693,6 +1735,7 @@ export default function MessengerHubPage() {
                     onChangeMemberRole={onChangeMemberRole}
                     onChangeGroupAvatar={onChangeGroupAvatar}
                     onRenameGroup={renameGroup}
+                    onSaveNickname={saveContactNickname}
                     onTogglePin={setPinnedForSelected}
                     onLeaveGroup={() => void leaveSelectedGroup()}
                     onGroupCall={(kind) => setGroupCallPicker({ kind })}

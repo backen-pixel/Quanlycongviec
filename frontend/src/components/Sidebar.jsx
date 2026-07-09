@@ -11,7 +11,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, UsersRound,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
-  BookOpen, FolderTree, Factory, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot, Download, UserMinus,
+  BookOpen, FolderTree, Factory, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot, Download, UserMinus, Pencil,
   Sigma, Calculator, FileUp, History as HistoryIcon, HardDrive, Database, Globe, CreditCard, Sparkles,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
@@ -26,6 +26,7 @@ import { useModuleAccess } from '../shared/context/ModuleAccessContext';
 import { useSidebarUnreadBadges } from '../shared/context/UnreadBadgesContext';
 import AppSwitcherPanel, { AppSwitcherButton } from './AppSwitcherPanel';
 import SidebarModuleCycleButton from './SidebarModuleCycleButton';
+import EditMyNameModal from './EditMyNameModal';
 import { APP_MODULE_DEFINITIONS } from '../lib/appSwitcherModules';
 import { preloadModuleIconsFromModules } from '../lib/moduleIconPreload';
 
@@ -578,7 +579,8 @@ export default function Sidebar() {
   const [showAppSwitcher, setShowAppSwitcher] = useState(false);
   const [pinnedModule, setPinnedModule] = useState(() => localStorage.getItem('pinned_module') || '/crm');
   const appSwitcherRef = useRef(null);
-  const { user, logout, socket } = useAuth();
+  const { user, logout, socket, refreshUser } = useAuth();
+  const [nameModalOpen, setNameModalOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -834,7 +836,21 @@ export default function Sidebar() {
                 {getInitials(user?.full_name || 'U')}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-[13px] font-semibold text-white truncate">{user?.full_name}</p>
+                <div className="flex items-center gap-1 min-w-0">
+                  <p className="text-[13px] font-semibold text-white truncate flex-1">{user?.full_name}</p>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setNameModalOpen(true);
+                    }}
+                    className="shrink-0 p-0.5 rounded text-white/40 hover:text-white hover:bg-white/10"
+                    title="Đổi tên"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                </div>
                 <p className="text-[11px] text-white/75 truncate group-hover:text-white/90">{user?.email}</p>
               </div>
               <UserCog className="h-4 w-4 text-white/40 group-hover:text-white/90 shrink-0 transition-colors" />
@@ -903,6 +919,18 @@ export default function Sidebar() {
         {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronLeft className="h-3 w-3" />}
       </button>
     </aside>
+    <EditMyNameModal
+      open={nameModalOpen}
+      initialName={user?.full_name || ''}
+      onClose={() => setNameModalOpen(false)}
+      onSaved={async (profile) => {
+        const prev = JSON.parse(localStorage.getItem('user') || '{}');
+        const nextName = profile?.full_name || prev.full_name;
+        const merged = { ...prev, full_name: nextName, fullName: nextName };
+        localStorage.setItem('user', JSON.stringify(merged));
+        await refreshUser();
+      }}
+    />
     </>
   );
 }
