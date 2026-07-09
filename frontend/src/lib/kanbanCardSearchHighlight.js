@@ -29,11 +29,34 @@ export function findKanbanCard(dataAttr, id) {
   );
 }
 
-/** Cuộn tới thẻ — cả slot wrapper (content-visibility) lẫn thẻ. */
+/** Cuộn tới thẻ — cả slot wrapper (content-visibility) lẫn thẻ, cả ngang lẫn dọc. */
 export function scrollKanbanCardIntoView(el) {
   if (!el) return;
   const slot = el.closest('.crm-kanban-card-slot') || el;
-  slot.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+  const opts = { behavior: 'auto', block: 'center', inline: 'center' };
+  slot.scrollIntoView(opts);
+  el.scrollIntoView(opts);
+  const column = el.closest('.kanban-unified-scroll-column') || el.closest('.kanban-column-surface');
+  if (column) column.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'center' });
+}
+
+export const KANBAN_SEARCH_SCROLL_MAX_RETRIES = 32;
+
+function scheduleKanbanCardScroll(dataAttr, id, hitClass, onFound, tryNum = 0) {
+  const el = findKanbanCard(dataAttr, id);
+  if (el) {
+    if (hitClass) applyDomHitClass(el, hitClass);
+    scrollKanbanCardIntoView(el);
+    onFound?.(el);
+    return el;
+  }
+  if (tryNum < KANBAN_SEARCH_SCROLL_MAX_RETRIES) {
+    window.setTimeout(
+      () => scheduleKanbanCardScroll(dataAttr, id, hitClass, onFound, tryNum + 1),
+      50 + tryNum * 45,
+    );
+  }
+  return null;
 }
 
 function applyDomHitClass(el, hitClass) {
@@ -107,21 +130,11 @@ export function useKanbanSearchHighlight(dataAttr, { hitClass, durationMs = KANB
       }, durationMs);
     }
 
-    const attemptScroll = (tryNum = 0) => {
-      const el = findKanbanCard(dataAttr, sid);
-      if (el) {
-        if (hitClass) {
-          applyDomHitClass(el, hitClass);
-          domElRef.current = el;
-        }
-        scrollKanbanCardIntoView(el);
-        return;
-      }
-      if (tryNum < 16) {
-        window.setTimeout(() => attemptScroll(tryNum + 1), 40 + tryNum * 35);
-      }
-    };
-    requestAnimationFrame(() => attemptScroll());
+    requestAnimationFrame(() => {
+      scheduleKanbanCardScroll(dataAttr, sid, hitClass, (el) => {
+        domElRef.current = el;
+      });
+    });
   }, [dataAttr, durationMs, hitClass]);
 
   useEffect(() => () => {

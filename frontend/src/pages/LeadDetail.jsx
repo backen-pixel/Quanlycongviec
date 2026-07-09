@@ -19,6 +19,7 @@ import { isAdminLike } from '../lib/adminRole';
 import { canUserDeleteCrmLeadDeal } from '../lib/crmPipelineDeletePermission';
 import { isDealResponsibleUser } from '../lib/fileOwnership';
 import api from '../lib/api';
+import { consumeCrmLeadDetailPrefetch } from '../lib/crmLeadDetailPrefetch';
 import { getSocket } from '../lib/socket';
 import { formatVND, formatDate } from '../lib/utils';
 import CRMTasksTab from '../components/CRMTasksTab';
@@ -418,8 +419,12 @@ export default function LeadDetail() {
     const seq = ++loadSeqRef.current;
     if (!silent) setLoading(true);
     try {
+      const prefetchedLead = !silent ? consumeCrmLeadDetailPrefetch(id) : null;
+      const leadDetailPromise = prefetchedLead
+        ? Promise.resolve(prefetchedLead)
+        : api.get(`/crm/leads/${id}/detail`).then((r) => r.data);
       const [leadRes, actRes, docRes, flowsRes, usersRes, taskDocRes, tasksRes] = await Promise.all([
-        api.get(`/crm/leads/${id}/detail`).then(r => r.data),
+        leadDetailPromise,
         api.get(`/crm/leads/${id}/activities`).catch(() => ({ data: [] })),
         api.get(`/crm/leads/${id}/documents`).catch(() => ({ data: [] })),
         api.get('/flows').then(r => r.data?.flows || r.data || []).catch(() => []),

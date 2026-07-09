@@ -56,7 +56,9 @@ function resolveEventsCompanyScope(req, res) {
   return { ok: true, companyId: String(cid).trim() };
 }
 
-const EVENTS_COMPANY_OR_MAX_IN = 320;
+const EVENTS_COMPANY_LEAD_IN_CHUNK = 150;
+/** Giới hạn lead_id khi lọc theo khu vực (một mệnh đề `.in`). */
+const EVENTS_REGION_LEAD_MAX_IN = 2000;
 
 /**
  * Lọc sự kiện thuộc công ty: company_id khớp HOẶC (legacy) lead/deal thuộc công ty đó.
@@ -65,11 +67,16 @@ const EVENTS_COMPANY_OR_MAX_IN = 320;
  */
 function applyEventsCompanyFilter(queryBuilder, companyId, leadIdsForCompany) {
   if (!companyId) return queryBuilder;
-  const slice = (leadIdsForCompany || []).slice(0, EVENTS_COMPANY_OR_MAX_IN);
-  if (slice.length === 0) {
+  const leadIds = (leadIdsForCompany || []).filter(Boolean);
+  if (!leadIds.length) {
     return queryBuilder.eq('company_id', companyId);
   }
-  return queryBuilder.or(`company_id.eq.${companyId},lead_id.in.(${slice.join(',')})`);
+  const orParts = [`company_id.eq.${companyId}`];
+  for (let i = 0; i < leadIds.length; i += EVENTS_COMPANY_LEAD_IN_CHUNK) {
+    const chunk = leadIds.slice(i, i + EVENTS_COMPANY_LEAD_IN_CHUNK);
+    if (chunk.length) orParts.push(`lead_id.in.(${chunk.join(',')})`);
+  }
+  return queryBuilder.or(orParts.join(','));
 }
 
 async function assertEventCompanyAccess(req, res, eventId) {
@@ -248,7 +255,7 @@ r.get('/', async (req, res) => {
       if (lids.length === 0) {
         return res.json({ events: [], total: 0 });
       }
-      const slice = lids.slice(0, EVENTS_COMPANY_OR_MAX_IN);
+      const slice = lids.slice(0, EVENTS_REGION_LEAD_MAX_IN);
       q = q.in('lead_id', slice);
     }
 
@@ -380,7 +387,7 @@ r.get('/overview', async (req, res) => {
       if (userId) q = q.or(`created_by.eq.${userId},assignee_id.eq.${userId}`);
       if (eventType) q = q.eq('event_type', eventType);
       if (regionLeadIds) {
-        const lids = [...regionLeadIds].slice(0, EVENTS_COMPANY_OR_MAX_IN);
+        const lids = [...regionLeadIds].slice(0, EVENTS_REGION_LEAD_MAX_IN);
         if (lids.length === 0) {
           return res.json(emptyOverviewPayload(dateFrom, dateTo, granularityQ));
         }
@@ -582,7 +589,7 @@ r.get('/calendar', async (req, res) => {
       if (lids.length === 0) {
         return res.json([]);
       }
-      cq = cq.in('lead_id', lids.slice(0, EVENTS_COMPANY_OR_MAX_IN));
+      cq = cq.in('lead_id', lids.slice(0, EVENTS_REGION_LEAD_MAX_IN));
     }
     if (moduleFilter) cq = cq.eq('module', moduleFilter);
     else if (modulesFilter && modulesFilter.length) cq = cq.in('module', modulesFilter);
@@ -598,7 +605,7 @@ r.get('/calendar', async (req, res) => {
         const { data: lr } = await lq;
         const lids = (lr || []).map((x) => x.id).filter(Boolean);
         if (lids.length === 0) return res.json([]);
-        cq2 = cq2.in('lead_id', lids.slice(0, EVENTS_COMPANY_OR_MAX_IN));
+        cq2 = cq2.in('lead_id', lids.slice(0, EVENTS_REGION_LEAD_MAX_IN));
       }
       cq2 = cq2.order('start_time');
       cqRes = await cq2;

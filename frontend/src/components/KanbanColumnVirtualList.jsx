@@ -1,5 +1,6 @@
 import { useRef, useEffect, useLayoutEffect, useState, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { findKanbanCard, scrollKanbanCardIntoView } from '../lib/kanbanCardSearchHighlight';
 
 /** Bật virtualize khi cột có ít nhất N thẻ. */
 export const CRM_KANBAN_VIRTUAL_THRESHOLD = 8;
@@ -25,6 +26,7 @@ export default function KanbanColumnVirtualList({
   compact = false,
   threshold = CRM_KANBAN_VIRTUAL_THRESHOLD,
   searchHighlightId = null,
+  cardDomAttr = 'data-crm-pipeline-card',
   renderCard,
 }) {
   const listRootRef = useRef(null);
@@ -96,12 +98,23 @@ export default function KanbanColumnVirtualList({
     getItemKey: (index) => items[index]?.id ?? index,
   });
 
-  useEffect(() => {
-    if (!shouldVirtualize || searchHighlightId == null || searchHighlightId === '') return;
+  useLayoutEffect(() => {
+    if (!shouldVirtualize || searchHighlightId == null || searchHighlightId === '') return undefined;
     const idx = items.findIndex((it) => String(it.id) === String(searchHighlightId));
-    if (idx < 0) return;
+    if (idx < 0) return undefined;
     virtualizer.scrollToIndex(idx, { align: 'center', behavior: 'auto' });
-  }, [searchHighlightId, items, shouldVirtualize, virtualizer]);
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        const el = findKanbanCard(cardDomAttr, searchHighlightId);
+        scrollKanbanCardIntoView(el);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2) cancelAnimationFrame(raf2);
+    };
+  }, [searchHighlightId, items, shouldVirtualize, virtualizer, scrollMargin, cardDomAttr]);
 
   if (!itemCount) return null;
 

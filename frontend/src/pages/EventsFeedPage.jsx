@@ -68,6 +68,23 @@ function isSameDay(d1, d2) {
 }
 function isToday(isoStr) { return isSameDay(isoStr, new Date()); }
 
+/** Ngày theo múi giờ VN (YYYY-MM-DD) — đồng bộ với backend /events/calendar. */
+function vnDateKey(isoStr) {
+  if (!isoStr) return '';
+  const d = new Date(isoStr);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+}
+
+function vnDayInMonth(isoStr, year, month1to12) {
+  const key = vnDateKey(isoStr);
+  if (!key) return null;
+  const pad = (n) => String(n).padStart(2, '0');
+  const prefix = `${year}-${pad(month1to12)}`;
+  if (!key.startsWith(prefix)) return null;
+  return parseInt(key.slice(-2), 10);
+}
+
 /** Khoảng ngày theo preset (đồng bộ style với CRM Dashboard). YYYY-MM-DD theo local. */
 function getEventsDateRange(preset) {
   const pad = (n) => String(n).padStart(2, '0');
@@ -173,6 +190,14 @@ export default function EventsFeedPage() {
     return EVENT_MODULE_OPTIONS.some((o) => o.value === v) ? v : '';
   }, [searchParams]);
   const [filterModule, setFilterModule] = useState(initialModule);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    if (!filterModule) return;
+    if (allowedModules && !allowedModules.includes(filterModule)) {
+      setFilterModule('');
+    }
+  }, [filterModule, allowedModules]);
 
   useEffect(() => {
     const next = new URLSearchParams(searchParams);
@@ -291,6 +316,7 @@ export default function EventsFeedPage() {
 
   const loadFeed = async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const params = { limit: 500, ...listParams };
       if (filterType) params.type = filterType;
@@ -307,6 +333,7 @@ export default function EventsFeedPage() {
       console.error(e);
       setEvents([]);
       setTotalEvents(0);
+      setLoadError(e.response?.data?.error || e.message || 'Không tải được danh sách sự kiện');
     }
     setLoading(false);
   };
@@ -318,7 +345,13 @@ export default function EventsFeedPage() {
       if (filterRegionId) params.region_id = filterRegionId;
       const { data } = await api.get('/events/calendar', { params });
       setCalEvents(data || []);
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      setCalEvents([]);
+      if (!loadError) {
+        setLoadError(e.response?.data?.error || e.message || 'Không tải được lịch sự kiện');
+      }
+    }
     setCalLoading(false);
   };
 
@@ -367,7 +400,9 @@ export default function EventsFeedPage() {
     setFilterStatus('');
     setFilterUser('');
     setFilterRegionId('');
+    setFilterModule('');
     setTimePreset('');
+    setLoadError('');
     if (view === 'calendar') {
       setRangeFrom(monthRangeBounds.from);
       setRangeTo(monthRangeBounds.to);
@@ -412,7 +447,39 @@ export default function EventsFeedPage() {
   }, [timePreset, rangeFrom, rangeTo]);
 
   const hasActiveFilters = !!(search || filterType || filterStatus || filterUser || filterRegionId
-    || ((view === 'feed' || view === 'list') && (rangeFrom || rangeTo)));
+    || filterModule
+    || (isSystemAdmin && filterCompanyId)
+    || rangeFrom || rangeTo);
+
+  const activeFilterHints = useMemo(() => {
+    const hints = [];
+    if (filterModule) hints.push(`khối ${moduleMeta(filterModule).label}`);
+    if (isSystemAdmin && filterCompanyId) {
+      const co = companies.find((c) => String(c.id) === String(filterCompanyId));
+      hints.push(`công ty ${co?.short_name || co?.name || filterCompanyId}`);
+    }
+    if (view === 'calendar' && (rangeFrom || rangeTo)) {
+      hints.push(`tháng ${calMonth}/${calYear}`);
+    } else if (rangeFrom || rangeTo) {
+      hints.push(`thời gian ${rangeFrom || '...'} → ${rangeTo || '...'}`);
+    }
+    if (filterRegionId) hints.push('khu vực đã chọn');
+    if (filterType) hints.push('loại sự kiện');
+    if (filterStatus) hints.push('trạng thái');
+    if (filterUser) hints.push('nhân viên');
+    if (search.trim()) hints.push(`tìm "${search.trim()}"`);
+    return hints;
+  }, [
+    filterModule, isSystemAdmin, filterCompanyId, companies, view, rangeFrom, rangeTo,
+    calMonth, calYear, filterRegionId, filterType, filterStatus, filterUser, search,
+  ]);
+
+  const viewAllTimeEvents = () => {
+    setTimePreset('');
+    setRangeFrom('');
+    setRangeTo('');
+    if (view === 'calendar') setView('feed');
+  };
 
   /**
    * Xuất Excel danh sách sự kiện theo bộ lọc hiện tại (đặc biệt là khoảng thời gian).
@@ -512,6 +579,15 @@ export default function EventsFeedPage() {
 
   return (
     <div className="space-y-4">
+      {loadError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 flex items-start gap-2">
+          <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-medium">{loadError}</p>
+            <p className="text-xs mt-1 text-red-700">Thử xóa bộ lọc hoặc đổi khối / công ty / tháng đang xem.</p>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
@@ -570,27 +646,41 @@ export default function EventsFeedPage() {
                 })}
             </div>
           )}
+          {!(isAdmin || isSystemAdmin) && filterModule && (
+            <div className="flex items-center gap-2 px-2.5 h-9 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-xs">
+              <span>{moduleMeta(filterModule).emoji} Khối: {moduleMeta(filterModule).label}</span>
+              <button
+                type="button"
+                onClick={() => setFilterModule('')}
+                className="font-semibold underline cursor-pointer hover:text-amber-950"
+              >
+                Xem tất cả khối
+              </button>
+            </div>
+          )}
           {isSystemAdmin && (
-            <div className="flex items-center gap-2 mr-1 min-w-[200px]">
-              <Building2 className="h-4 w-4 text-gray-500 shrink-0" />
-              <ScopeFilterBar
-                scope={{ ...scope, showDepartment: false, showSearch: false, showDateRange: false }}
-                companyLabel=""
-                companyAllowAll
-              />
+            <div className="flex items-center gap-2 h-9 px-2.5 rounded-lg border border-indigo-200 bg-indigo-50/70 shadow-sm min-w-[220px]">
+              <Building2 className="h-4 w-4 text-indigo-600 shrink-0" aria-hidden />
+              <div className="flex-1 min-w-0 [&_label]:!m-0 [&_label>span]:!hidden [&_select]:!mt-0 [&_select]:h-7 [&_select]:py-1 [&_select]:text-xs [&_select]:font-semibold [&_select]:border-indigo-200 [&_select]:bg-white [&_select]:text-indigo-900">
+                <ScopeFilterBar
+                  scope={{ ...scope, showDepartment: false, showSearch: false, showDateRange: false }}
+                  companyLabel=""
+                  companyAllowAll
+                />
+              </div>
             </div>
           )}
           <Link
             to="/crm/leaves"
-            className="h-9 px-3 border rounded-lg text-sm font-medium flex items-center gap-1.5 text-gray-700 hover:bg-gray-50"
+            className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg text-sm font-semibold border border-purple-200 bg-purple-50 text-purple-800 shadow-sm hover:bg-purple-100 hover:border-purple-300 transition-colors"
           >
-            <CalendarRange className="h-4 w-4 text-purple-600" /> Lịch nghỉ
+            <CalendarRange className="h-4 w-4 text-purple-600 shrink-0" /> Lịch nghỉ
           </Link>
           <Link
             to="/crm/events/overview"
-            className="h-9 px-3 border rounded-lg text-sm font-medium flex items-center gap-1.5 text-gray-700 hover:bg-gray-50"
+            className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg text-sm font-semibold border border-blue-200 bg-blue-50 text-blue-800 shadow-sm hover:bg-blue-100 hover:border-blue-300 transition-colors"
           >
-            <BarChart3 className="h-4 w-4 text-blue-600" /> Tổng quan
+            <BarChart3 className="h-4 w-4 text-blue-600 shrink-0" /> Tổng quan
           </Link>
           {/* View toggle */}
           <div className="flex bg-gray-100 rounded-lg p-0.5">
@@ -850,6 +940,10 @@ export default function EventsFeedPage() {
                 loading={loading}
                 rangeFrom={rangeFrom}
                 rangeTo={rangeTo}
+                loadError={loadError}
+                emptyHints={activeFilterHints}
+                onClearFilters={clearFilters}
+                onViewAllTime={viewAllTimeEvents}
                 onEdit={(ev) => { setEditEvent(ev); setCreatePresetDay(null); setShowCreate(true); }}
                 onDelete={handleDelete}
                 onCancel={handleCancel}
@@ -886,10 +980,13 @@ export default function EventsFeedPage() {
                   {loading ? (
                     <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-blue-500" /></div>
                   ) : events.length === 0 ? (
-                    <div className="text-center py-16 text-gray-400">
-                      <Calendar className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                      <p className="text-sm">Không có sự kiện phù hợp bộ lọc</p>
-                    </div>
+                    <EventsEmptyState
+                      loadError={loadError}
+                      hints={activeFilterHints}
+                      onClearFilters={clearFilters}
+                      onViewAllTime={viewAllTimeEvents}
+                      showViewAllTime={!!(rangeFrom || rangeTo)}
+                    />
                   ) : (
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                       {events.map(ev => (
@@ -940,6 +1037,48 @@ export default function EventsFeedPage() {
         }}
         onClose={() => setShowDateRangePicker(false)}
       />
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EMPTY STATE — gợi ý khi không có sự kiện
+// ═══════════════════════════════════════════════════════════════
+function EventsEmptyState({ loadError, hints, onClearFilters, onViewAllTime, showViewAllTime }) {
+  return (
+    <div className="text-center py-16 text-gray-400">
+      <Calendar className="h-12 w-12 mx-auto mb-3 opacity-50" />
+      {loadError ? (
+        <p className="text-sm text-red-600 font-medium">{loadError}</p>
+      ) : (
+        <p className="text-sm">Không có sự kiện phù hợp bộ lọc</p>
+      )}
+      {hints?.length > 0 && (
+        <p className="text-xs mt-2 text-gray-500 max-w-md mx-auto">
+          Đang lọc: {hints.join(' · ')}
+        </p>
+      )}
+      <p className="text-xs mt-2 text-gray-400 max-w-md mx-auto">
+        Tab Lịch mặc định chỉ hiển thị sự kiện trong tháng đang chọn — thử chuyển tháng hoặc mở tab Feed với «Tất cả» thời gian.
+      </p>
+      <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
+        {showViewAllTime && (
+          <button
+            type="button"
+            onClick={onViewAllTime}
+            className="h-8 px-3 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 cursor-pointer"
+          >
+            Xem tất cả thời gian
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onClearFilters}
+          className="h-8 px-3 text-xs font-medium rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 cursor-pointer"
+        >
+          Xóa bộ lọc
+        </button>
+      </div>
     </div>
   );
 }
@@ -1413,10 +1552,11 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
   // Pad end
   while (cells.length % 7 !== 0) cells.push(null);
 
-  // Group events by day
+  // Group events by day (múi giờ VN, đúng tháng đang xem)
   const eventsByDay = {};
   events.forEach(ev => {
-    const d = new Date(ev.start_time).getDate();
+    const d = vnDayInMonth(ev.start_time, year, month);
+    if (!d) return;
     if (!eventsByDay[d]) eventsByDay[d] = [];
     eventsByDay[d].push(ev);
   });
@@ -1635,7 +1775,10 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
 // ═══════════════════════════════════════════════════════════════
 // EVENT LIST VIEW — Bảng danh sách sự kiện kèm hành động nhanh
 // ═══════════════════════════════════════════════════════════════
-function EventListView({ events, eventTypes, loading, rangeFrom, rangeTo, onEdit, onDelete, onCancel, onStatusChange, currentUser }) {
+function EventListView({
+  events, eventTypes, loading, rangeFrom, rangeTo, loadError, emptyHints,
+  onClearFilters, onViewAllTime, onEdit, onDelete, onCancel, onStatusChange, currentUser,
+}) {
   const [sortKey, setSortKey] = useState('start_time');
   const [sortDir, setSortDir] = useState('desc');
   const [cancelTarget, setCancelTarget] = useState(null);
@@ -1719,10 +1862,13 @@ function EventListView({ events, eventTypes, loading, rangeFrom, rangeTo, onEdit
           {loading ? (
             <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-blue-500" /></div>
           ) : sorted.length === 0 ? (
-            <div className="text-center py-16 text-gray-400">
-              <Calendar className="h-12 w-12 mx-auto mb-3 opacity-50" />
-              <p className="text-sm">Không có sự kiện phù hợp bộ lọc</p>
-            </div>
+            <EventsEmptyState
+              loadError={loadError}
+              hints={emptyHints}
+              onClearFilters={onClearFilters}
+              onViewAllTime={onViewAllTime}
+              showViewAllTime={!!(rangeFrom || rangeTo)}
+            />
           ) : (
             <table className="w-full text-sm min-w-max border-separate border-spacing-0">
               <thead>
