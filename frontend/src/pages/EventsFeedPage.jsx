@@ -5,10 +5,12 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import {
   isAdminLike,
+  isCompanyScopedAdmin,
   isSystemAdmin as checkSystemAdmin,
   isProductionAdmin,
   isLogisticsAdmin,
 } from '../lib/adminRole';
+import { getStoredCrmFilterCompanyId } from '../lib/crmCompanyFilter';
 import { formatDate } from '../lib/utils';
 import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetimeLocal';
 import {
@@ -153,7 +155,8 @@ const EVENTS_TIME_PRESETS = [
 export default function EventsFeedPage() {
   const { user } = useAuth();
   const isAdmin = isAdminLike(user);
-  /** Admin hệ thống (không gắn company) — mới được lọc «tất cả công ty» / chọn công ty khác */
+  /** Admin chọn công ty (admin tổng / platform_admin — khớp CRM Dashboard, không chỉ isSystemAdmin). */
+  const canPickCompany = isAdmin && !isCompanyScopedAdmin(user);
   const isSystemAdmin = checkSystemAdmin(user);
   const scope = useScopeFilter({
     storageKey: 'crm_events',
@@ -208,22 +211,28 @@ export default function EventsFeedPage() {
     }
   }, [filterModule]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!canPickCompany || filterCompanyId) return;
+    const stored = getStoredCrmFilterCompanyId();
+    if (stored) scope.setCompanyId(stored);
+  }, [canPickCompany, filterCompanyId, scope.setCompanyId]);
+
   const listParams = useMemo(
     () => {
-      const p = isSystemAdmin && filterCompanyId ? { company_id: filterCompanyId } : {};
+      const p = canPickCompany && filterCompanyId ? { company_id: filterCompanyId } : {};
       if (filterModule) p.module = filterModule;
       else if (allowedModules && allowedModules.length) p.modules = allowedModules.join(',');
       return p;
     },
-    [isSystemAdmin, filterCompanyId, filterModule, allowedModules],
+    [canPickCompany, filterCompanyId, filterModule, allowedModules],
   );
 
   /** Danh sách nhân viên cho filter / form sự kiện — chỉ trong một công ty (không «tất cả» xuyên hệ thống). */
   const effectiveCompanyIdForUsers = useMemo(() => {
-    if (isSystemAdmin && filterCompanyId) return filterCompanyId;
+    if (canPickCompany && filterCompanyId) return filterCompanyId;
     const cid = user?.company_id != null ? String(user.company_id).trim() : '';
     return cid || '';
-  }, [isSystemAdmin, filterCompanyId, user?.company_id]);
+  }, [canPickCompany, filterCompanyId, user?.company_id]);
 
   const [view, setView] = useState('calendar'); // feed | calendar | list | types — mặc định Lịch khi vào trang
   const [events, setEvents] = useState([]);
@@ -448,13 +457,13 @@ export default function EventsFeedPage() {
 
   const hasActiveFilters = !!(search || filterType || filterStatus || filterUser || filterRegionId
     || filterModule
-    || (isSystemAdmin && filterCompanyId)
+    || (canPickCompany && filterCompanyId)
     || rangeFrom || rangeTo);
 
   const activeFilterHints = useMemo(() => {
     const hints = [];
     if (filterModule) hints.push(`khối ${moduleMeta(filterModule).label}`);
-    if (isSystemAdmin && filterCompanyId) {
+    if (canPickCompany && filterCompanyId) {
       const co = companies.find((c) => String(c.id) === String(filterCompanyId));
       hints.push(`công ty ${co?.short_name || co?.name || filterCompanyId}`);
     }
@@ -470,7 +479,7 @@ export default function EventsFeedPage() {
     if (search.trim()) hints.push(`tìm "${search.trim()}"`);
     return hints;
   }, [
-    filterModule, isSystemAdmin, filterCompanyId, companies, view, rangeFrom, rangeTo,
+    filterModule, canPickCompany, filterCompanyId, companies, view, rangeFrom, rangeTo,
     calMonth, calYear, filterRegionId, filterType, filterStatus, filterUser, search,
   ]);
 
@@ -563,7 +572,7 @@ export default function EventsFeedPage() {
       XLSX.utils.book_append_sheet(wb, ws, 'Sự kiện');
       const fromStamp = (rangeFrom || '').replace(/-/g, '') || 'all';
       const toStamp = (rangeTo || '').replace(/-/g, '') || 'all';
-      const coName = isSystemAdmin && filterCompanyId
+      const coName = canPickCompany && filterCompanyId
         ? (companies?.find((c) => String(c.id) === String(filterCompanyId))?.short_name
             || companies?.find((c) => String(c.id) === String(filterCompanyId))?.name)
         : '';
@@ -658,7 +667,7 @@ export default function EventsFeedPage() {
               </button>
             </div>
           )}
-          {isSystemAdmin && (
+          {canPickCompany && (
             <div className="flex items-center gap-2 h-9 px-2.5 rounded-lg border border-indigo-200 bg-indigo-50/70 shadow-sm min-w-[220px]">
               <Building2 className="h-4 w-4 text-indigo-600 shrink-0" aria-hidden />
               <div className="flex-1 min-w-0 [&_label]:!m-0 [&_label>span]:!hidden [&_select]:!mt-0 [&_select]:h-7 [&_select]:py-1 [&_select]:text-xs [&_select]:font-semibold [&_select]:border-indigo-200 [&_select]:bg-white [&_select]:text-indigo-900">

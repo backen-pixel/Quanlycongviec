@@ -309,6 +309,8 @@ const TIME_PRESETS = [
 ];
 /** Mặc định lọc thời gian CRM — tất cả (không giới hạn kỳ). */
 const CRM_DEFAULT_TIME_PRESET = '';
+/** Đã chuyển snapshot cũ mặc định «tháng này» → «tất cả» (một lần / trình duyệt). */
+const LS_CRM_TIME_ALL_DEFAULT_MIGRATION = 'crm_time_default_all_migrated_v1';
 
 /** Giá trị lọc SĐT gửi API — `all` / rỗng = không lọc theo SĐT. */
 function resolveCrmPhoneFilterForApi(filterPhone) {
@@ -344,7 +346,18 @@ function resolveCrmTimePresetFromSnapshot(snap) {
   if (!snap || !snapshotHasProperty(snap, 'timePreset')) {
     return CRM_DEFAULT_TIME_PRESET;
   }
-  return typeof snap.timePreset === 'string' ? snap.timePreset : CRM_DEFAULT_TIME_PRESET;
+  const raw = typeof snap.timePreset === 'string' ? snap.timePreset : CRM_DEFAULT_TIME_PRESET;
+  if (raw === 'this_month') {
+    try {
+      if (!localStorage.getItem(LS_CRM_TIME_ALL_DEFAULT_MIGRATION)) {
+        localStorage.setItem(LS_CRM_TIME_ALL_DEFAULT_MIGRATION, '1');
+        return CRM_DEFAULT_TIME_PRESET;
+      }
+    } catch {
+      return CRM_DEFAULT_TIME_PRESET;
+    }
+  }
+  return raw;
 }
 
 function resolveInitialCrmTimeFilter(P) {
