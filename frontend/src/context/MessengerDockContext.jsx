@@ -566,7 +566,7 @@ export function MessengerDockProvider({ children }) {
       const leadTitle = msg.lead?.title || msg.lead_title || msg.lead_name || 'Lead/Deal';
       const preview =
         msg.content || (Array.isArray(msg.attachments) && msg.attachments.length ? '[Tệp đính kèm]' : '');
-      const senderName = msg.user?.full_name || 'Ai đó';
+      const senderName = msg.user?.display_name || msg.user?.full_name || 'Ai đó';
       setUnreadByLeadId((prev) => ({
         ...prev,
         [leadId]: (Number(prev[leadId]) || 0) + 1,
@@ -621,7 +621,7 @@ export function MessengerDockProvider({ children }) {
       const groupTitle = msg.group?.name || msg.group_name || 'Nhóm chat';
       const preview =
         msg.content || (Array.isArray(msg.attachments) && msg.attachments.length ? '[Tệp đính kèm]' : '');
-      const senderName = msg.user?.full_name || 'Ai đó';
+      const senderName = msg.user?.display_name || msg.user?.full_name || 'Ai đó';
       if (isNotificationTypeEnabled('messenger_chat', 'messenger_group')) {
         void alertIncomingNotification({ type: 'messenger_chat', entityType: 'messenger_group' });
       }

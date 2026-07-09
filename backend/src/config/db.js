@@ -110,7 +110,12 @@ function getPool() {
 
 function getSessionPool() {
   if (PG_DISABLED || isPgAuthBackoffActive()) return null;
-  const url = _activeDbDirectUrl();
+  const { toSessionPoolerUrl } = require('./pgConnection');
+  const poolUrl = _activeDbUrl();
+  const sessionPooler = toSessionPoolerUrl(poolUrl);
+  const direct = _activeDbDirectUrl();
+  // Ưu tiên session pooler (5432) — tránh ENETUNREACH IPv6 tới db.*.supabase.co trên Windows/Render.
+  const url = sessionPooler || direct || poolUrl;
   if (!url) return getPool();
   if (_sessionPool && _sessionPoolUrl !== url) {
     _sessionPool.end().catch(() => {});
@@ -202,6 +207,20 @@ async function pgSessionQuery(text, params = []) {
   }
 }
 
+/** Như pgSessionQuery nhưng trả null khi lỗi kết nối — caller fallback Supabase REST. */
+async function pgSessionQuerySafe(text, params = []) {
+  try {
+    return await pgSessionQuery(text, params);
+  } catch (err) {
+    if (isPgConnectionError(err)) {
+      notePgAuthFailure(err);
+      console.warn('[pg-pool] session query fallback REST:', err.code || 'err', String(err.message || '').slice(0, 100));
+      return null;
+    }
+    throw err;
+  }
+}
+
 module.exports = {
   getPool,
   getSessionPool,
@@ -212,6 +231,7 @@ module.exports = {
   pgQuery,
   pgQuerySafe,
   pgSessionQuery,
+  pgSessionQuerySafe,
   resetPools,
   isPgConnectionError,
 };
