@@ -41,6 +41,7 @@ async function main() {
     role: 'admin',
     position: 'Quản trị hệ thống',
     company_id: null,
+    tenant_id: null,
     is_active: true,
   };
 

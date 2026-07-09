@@ -170,9 +170,26 @@ export function computeSxRevenueKpis(projects, stages) {
   };
 }
 
+/** Cột tích «doanh thu đã hoàn thành» — không tính/hiển thị deadline. */
+export function isSxPipelineStageCompletedRevenue(stage) {
+  return !!stage?.counts_as_completed_revenue;
+}
+
+/** Cột không theo dõi deadline (Hoàn thành / Đã công). */
+export function isSxPipelineStageNoDeadline(stage) {
+  return isSxPipelineStageCompletedRevenue(stage);
+}
+
+/** Ẩn badge deadline trên thẻ Kanban SX khi ở cột «Đã công». */
+export function shouldHideSxKanbanDeadlineOnCard(item, stage) {
+  const st = stage || item?.sx_pipeline_stage;
+  return isSxPipelineStageNoDeadline(st);
+}
+
 /** SLA cột pipeline SX — null nếu không áp dụng. */
 export function getSxPipelineStageSlaTone(stageEnteredAt, stage) {
   if (!stageEnteredAt || !stage) return null;
+  if (isSxPipelineStageNoDeadline(stage)) return null;
   if (stage.bucket_slug === INTAKE_BUCKET) return null;
   const slaDays = effectivePipelineStageSlaDays(stage.sla_days);
   if (slaDays == null) return null;

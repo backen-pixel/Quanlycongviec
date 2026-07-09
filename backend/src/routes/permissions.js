@@ -2,6 +2,8 @@ const express = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { isAdminLike } = require('../helpers/adminRole');
+const { enforceTenantContext } = require('../middleware/tenantGate');
+const { companyInTenantContext } = require('../helpers/tenantScope');
 const { responseCache, invalidateTags } = require('../middleware/responseCache');
 const { buildCatalogFromPermissions } = require('../helpers/permissionCatalog');
 const {
@@ -11,6 +13,30 @@ const {
 const r = express.Router();
 
 r.use(auth);
+r.use(enforceTenantContext);
+
+async function assertUserInRequestTenant(req, res, userId) {
+  if (!req.tenantContext?.enforced || !userId) return true;
+  const { data } = await supabase.from('users').select('tenant_id').eq('id', userId).maybeSingle();
+  if (String(data?.tenant_id || '') !== String(req.tenantContext.tenantId)) {
+    res.status(403).json({ error: 'Không có quyền truy cập người dùng này' });
+    return false;
+  }
+  return true;
+}
+
+async function assertEcosystemUnitInRequestTenant(req, res, unitId) {
+  if (!req.tenantContext?.enforced || !unitId) return true;
+  const { data } = await supabase.from('ecosystem_units').select('tenant_id, company_id').eq('id', unitId).maybeSingle();
+  if (!data) {
+    res.status(404).json({ error: 'Không tìm thấy đơn vị hệ sinh thái' });
+    return false;
+  }
+  if (data.tenant_id && String(data.tenant_id) === String(req.tenantContext.tenantId)) return true;
+  if (data.company_id && companyInTenantContext(req, data.company_id)) return true;
+  res.status(403).json({ error: 'Không có quyền truy cập đơn vị này' });
+  return false;
+}
 
 function requirePermissionsAdmin(req, res, next) {
   if (!isAdminLike(req.user)) {
@@ -250,6 +276,7 @@ r.put('/roles/:roleId/permissions', requirePermissionsAdmin, async (req, res) =>
 // Effective permissions for a user (role + overrides)
 r.get('/users/:userId/effective', requirePermissionsAdmin, async (req, res) => {
   try {
+    if (!(await assertUserInRequestTenant(req, res, req.params.userId))) return;
     const ecosystemUnitId = req.query.ecosystem_unit_id || null;
     const data = await getEffectivePermissions(req.params.userId, ecosystemUnitId);
     res.json(data);
@@ -267,6 +294,9 @@ r.post('/users/effective/bulk', requirePermissionsAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Thiếu mảng user_ids' });
     }
     const uniqueIds = [...new Set(userIds.filter(Boolean))];
+    for (const userId of uniqueIds) {
+      if (!(await assertUserInRequestTenant(req, res, userId))) return;
+    }
     const entries = await Promise.all(
       uniqueIds.map(async (userId) => {
         const data = await getEffectivePermissions(userId, ecosystemUnitId || null);
@@ -297,6 +327,7 @@ r.put('/users/bulk-overrides', requirePermissionsAdmin, async (req, res) => {
     const errors = [];
 
     for (const userId of uniqueIds) {
+      if (!(await assertUserInRequestTenant(req, res, userId))) return;
       const results = await applyUserPermissionOverrides(
         userId,
         ecosystemUnitId || null,
@@ -338,6 +369,7 @@ r.put('/users/bulk-overrides', requirePermissionsAdmin, async (req, res) => {
 // Bulk save user permission overrides (single user)
 r.put('/users/:userId/overrides', requirePermissionsAdmin, async (req, res) => {
   try {
+    if (!(await assertUserInRequestTenant(req, res, req.params.userId))) return;
     const { ecosystem_unit_id: ecosystemUnitId, changes } = req.body;
     if (!Array.isArray(changes)) {
       return res.status(400).json({ error: 'Thiếu mảng changes' });
@@ -362,6 +394,7 @@ r.put('/users/:userId/overrides', requirePermissionsAdmin, async (req, res) => {
 // Get user's roles
 r.get('/users/:userId/roles', requirePermissionsAdmin, async (req, res) => {
   try {
+    if (!(await assertUserInRequestTenant(req, res, req.params.userId))) return;
     const { data, error } = await supabase
       .from('user_roles')
       .select(`
@@ -400,6 +433,7 @@ async function findExistingUserRole(userId, roleId, ecosystemUnitId) {
 // Assign role to user
 r.post('/users/:userId/roles', requirePermissionsAdmin, async (req, res) => {
   try {
+    if (!(await assertUserInRequestTenant(req, res, req.params.userId))) return;
     const { role_id, ecosystem_unit_id, granted_by } = req.body;
     if (!role_id) return res.status(400).json({ error: 'Thiếu role_id' });
 
@@ -494,6 +528,7 @@ module.exports = r;
 // Get permissions for an ecosystem unit (all users in that unit)
 r.get('/ecosystem-units/:unitId/permissions', requirePermissionsAdmin, async (req, res) => {
   try {
+    if (!(await assertEcosystemUnitInRequestTenant(req, res, req.params.unitId))) return;
     const { data, error } = await supabase
       .from('user_permissions')
       .select(`
@@ -514,6 +549,8 @@ r.get('/ecosystem-units/:unitId/permissions', requirePermissionsAdmin, async (re
 r.post('/users/custom-permission', requirePermissionsAdmin, async (req, res) => {
   try {
     const { user_id, permission_id, ecosystem_unit_id, granted, position_role } = req.body;
+    if (!(await assertUserInRequestTenant(req, res, user_id))) return;
+    if (!(await assertEcosystemUnitInRequestTenant(req, res, ecosystem_unit_id))) return;
     
     // Upsert: if exists update, else insert
     const { data, error } = await supabase

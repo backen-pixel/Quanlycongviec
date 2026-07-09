@@ -1,10 +1,15 @@
 import FloatingNotificationCard from './FloatingNotificationCard';
 import { publicFileUrl } from '../lib/publicFileUrl';
 
-const COMMENT_TOAST_TYPES = new Set(['comment_added', 'crm_assignment_comment']);
+/** Toast không tự ẩn — chỉ đóng khi bấm X; xếp chồng khi có nhiều thông báo. */
+const STICKY_TOAST_TYPES = new Set([
+  'comment_added',
+  'crm_assignment_comment',
+  'workshop_new_deal',
+]);
 
-function isCommentWebToast(notification) {
-  return COMMENT_TOAST_TYPES.has(String(notification?.type || ''));
+function isStickyWebToast(notification) {
+  return STICKY_TOAST_TYPES.has(String(notification?.type || ''));
 }
 
 const TYPE_ICONS = {
@@ -18,6 +23,7 @@ const TYPE_ICONS = {
   checklist_completed: '📋', lead_assigned: '👤',
   order_confirmed: '📦', invoice_overdue: '💰',
   project_stage_changed: '🎉', project_assigned: '📁',
+  workshop_new_deal: '🏭',
 };
 
 /**
@@ -58,7 +64,7 @@ export default function NotificationToast({ toasts, onDismiss, onNavigate }) {
             iconEmoji={TYPE_ICONS[notification.type] || '🔔'}
             online={null}
             unreadCount={notification.metadata?.unread_count || 0}
-            autoDismissMs={isCommentWebToast(notification) ? 0 : undefined}
+            autoDismissMs={isStickyWebToast(notification) ? 0 : undefined}
             showClose
             onDismiss={() => onDismiss?.(key)}
             onClick={() => onNavigate?.(notification)}

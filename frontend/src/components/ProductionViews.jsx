@@ -11,6 +11,7 @@ import { FbCrmAvatar, FbCrmCommentComposer, formatCrmCommentFullDateTime, format
 import { upsertComment, CommentAttachmentsBlock, CrmLeadCommentsPanel } from './CommentsPanels';
 import { FilePreview, FileUploadButton } from './FileUpload';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
+import { shouldHideSxKanbanDeadlineOnCard } from '../lib/sxPipelineRevenue';
 import { resolveSxProjectLeadId, resolveSxProjectLeadIdAsync } from '../lib/sxProjectComments';
 import {
   CommentHideConfirmBar,
@@ -1224,6 +1225,7 @@ export function ProductionDeadlineView({ pipeline }) {
     SX_DEADLINE_BUCKETS.forEach((b) => { out[b.key] = []; });
     pipeline.forEach((s) => {
       s.items.forEach((item) => {
+        if (shouldHideSxKanbanDeadlineOnCard(item, s)) return;
         let { bucket, ts, source } = resolveSxDeadlineBucket(item, todayMs);
         const ovr = localOverride[String(item.id)];
         if (ovr) {

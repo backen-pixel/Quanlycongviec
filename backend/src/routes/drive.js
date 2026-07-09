@@ -78,6 +78,7 @@ const driveEntityFolder = require('../helpers/driveEntityFolder');
 const { logDriveActivity } = require('../helpers/driveActivity');
 const { afterCrmDriveEntityFileUploaded } = require('../helpers/crmDocumentCrossModule');
 const { isAdminLike, isSystemAdmin } = require('../helpers/adminRole');
+const { companyInTenantContext } = require('../helpers/tenantScope');
 const { ensureUserDriveModuleAssigned } = require('../helpers/driveModuleDefaults');
 
 const r = Router();
@@ -200,17 +201,28 @@ async function getOwnerCompanyId(req) {
   return req.user?.company_id || null;
 }
 
-/** Admin công ty chỉ thao tác trong công ty mình; admin hệ thống (không company_id) toàn quyền. */
+/** Admin công ty chỉ thao tác trong công ty mình; admin hệ thống toàn quyền trong phạm vi tenant. */
 function canAdminAccessCompany(req, companyId) {
   if (!isAdminLike(req.user)) return false;
-  if (isSystemAdmin(req.user)) return true;
+  if (isSystemAdmin(req.user)) {
+    if (req.tenantContext?.enforced && companyId) {
+      return companyInTenantContext(req, companyId);
+    }
+    return true;
+  }
   const myCompanyId = req.user?.company_id || null;
   return !!myCompanyId && companyId === myCompanyId;
 }
 
 async function canAdminAccessUser(req, userId) {
   if (!isAdminLike(req.user)) return false;
-  if (isSystemAdmin(req.user)) return true;
+  if (isSystemAdmin(req.user)) {
+    if (!req.tenantContext?.enforced) return true;
+    const { data: u } = await supabase.from('users').select('tenant_id, company_id').eq('id', userId).maybeSingle();
+    if (String(u?.tenant_id || '') !== String(req.tenantContext.tenantId)) return false;
+    if (u?.company_id) return companyInTenantContext(req, u.company_id);
+    return true;
+  }
   const myCompanyId = await getOwnerCompanyId(req);
   if (!myCompanyId) return false;
   const { data: u } = await supabase.from('users').select('company_id').eq('id', userId).maybeSingle();
@@ -219,7 +231,11 @@ async function canAdminAccessUser(req, userId) {
 
 async function canAdminAccessDepartment(req, departmentId) {
   if (!isAdminLike(req.user)) return false;
-  if (isSystemAdmin(req.user)) return true;
+  if (isSystemAdmin(req.user)) {
+    if (!req.tenantContext?.enforced) return true;
+    const { data: d } = await supabase.from('departments').select('company_id').eq('id', departmentId).maybeSingle();
+    return d?.company_id ? companyInTenantContext(req, d.company_id) : true;
+  }
   const myCompanyId = await getOwnerCompanyId(req);
   if (!myCompanyId) return false;
   const { data: d } = await supabase.from('departments').select('company_id').eq('id', departmentId).maybeSingle();

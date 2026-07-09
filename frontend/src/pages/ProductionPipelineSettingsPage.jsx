@@ -1796,7 +1796,11 @@ export default function ProductionPipelineSettingsPage() {
                       <input
                         type="checkbox"
                         checked={!!form.counts_as_completed_revenue}
-                        onChange={(e) => setForm((f) => ({ ...f, counts_as_completed_revenue: e.target.checked }))}
+                        onChange={(e) => setForm((f) => ({
+                          ...f,
+                          counts_as_completed_revenue: e.target.checked,
+                          ...(e.target.checked ? { requires_deadline: false } : {}),
+                        }))}
                         className="rounded border-teal-400"
                       />
                       <Hammer className="h-3.5 w-3.5 text-teal-600" /> Tính vào «Đã công» (công nợ nếu chưa thu)

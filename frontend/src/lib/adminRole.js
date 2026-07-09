@@ -7,7 +7,9 @@
  *
  * Quy tắc:
  *  - isAdminLike          : gating UI/route admin (mở trang cài đặt, hành động admin).
- *  - isSystemAdmin        : "thấy mọi công ty" — chỉ `admin` không có company_id.
+ *  - isSystemAdmin        : admin hệ thống — `admin` không có company_id (legacy hoặc admin cao nhất HST).
+ *                           Khác `platform_admin`. Phạm vi dữ liệu do tenant context trên API.
+ *  - isLegacySystemAdmin  : admin legacy không tenant_id (toàn server cũ).
  *  - isCompanyScopedAdmin : admin-like + có company_id (admin công ty hoặc sales_admin).
  */
 
@@ -37,8 +39,17 @@ export function isStrictAdmin(user) {
   return normalizeRole(user?.role) === 'admin';
 }
 
+/** Admin cao nhất trong HST (có tenant_id, không company_id). */
+export function isTenantAdmin(user) {
+  return normalizeRole(user?.role) === 'admin' && hasTenantId(user) && !hasCompanyId(user);
+}
+
+/** Admin hệ thống legacy — không thuộc tenant SaaS. */
+export function isLegacySystemAdmin(user) {
+  return normalizeRole(user?.role) === 'admin' && !hasCompanyId(user) && !hasTenantId(user);
+}
+
 export function isSystemAdmin(user) {
-  if (hasTenantId(user)) return false;
   return normalizeRole(user?.role) === 'admin' && !hasCompanyId(user);
 }
 

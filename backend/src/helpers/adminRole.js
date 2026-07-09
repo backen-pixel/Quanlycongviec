@@ -8,8 +8,10 @@
  * Quy tắc dùng:
  *  - isAdminLike          : gating "có quyền thao tác admin" (mở UI/route admin, tạo/sửa/xoá).
  *                           Phạm vi dữ liệu vẫn được khoá ở tầng route khi user có company_id.
- *  - isSystemAdmin        : nhánh "thấy mọi công ty" (admin tổng, không gắn company_id).
+ *  - isSystemAdmin        : admin hệ thống — `admin` không gắn company_id (legacy hoặc admin cao nhất HST).
+ *                           Khác `platform_admin` (toàn nền tảng SaaS). Phạm vi dữ liệu do tenantGate xử lý.
  *                           `sales_admin` không bao giờ qualify.
+ *  - isLegacySystemAdmin  : admin hệ thống legacy (không tenant_id) — chỉ dùng khi cần phạm vi toàn server cũ.
  *  - isCompanyScopedAdmin : admin-like + có company_id (admin công ty hoặc sales_admin).
  */
 
@@ -39,8 +41,17 @@ function isStrictAdmin(user) {
   return normalizeRole(user?.role) === 'admin';
 }
 
+/** Admin cao nhất trong HST (có tenant_id, không company_id). */
+function isTenantAdmin(user) {
+  return normalizeRole(user?.role) === 'admin' && hasTenantId(user) && !hasCompanyId(user);
+}
+
+/** Admin hệ thống legacy — không thuộc tenant SaaS (phạm vi toàn server cũ). */
+function isLegacySystemAdmin(user) {
+  return normalizeRole(user?.role) === 'admin' && !hasCompanyId(user) && !hasTenantId(user);
+}
+
 function isSystemAdmin(user) {
-  if (hasTenantId(user)) return false;
   return normalizeRole(user?.role) === 'admin' && !hasCompanyId(user);
 }
 
@@ -144,9 +155,12 @@ function canManageDepartments(user) {
 module.exports = {
   normalizeRole,
   hasCompanyId,
+  hasTenantId,
   isPlatformAdmin,
   isAdminLike,
   isStrictAdmin,
+  isTenantAdmin,
+  isLegacySystemAdmin,
   isSystemAdmin,
   isCompanyScopedAdmin,
   isCrmProductionStaff,
