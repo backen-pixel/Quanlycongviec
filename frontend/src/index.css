@@ -690,6 +690,17 @@ button:disabled,
   transform: translate3d(calc(100% + 1.25rem), 0, 0);
   opacity: 0;
 }
+.toast-enter-pending {
+  transform: translate3d(calc(100% + 1.25rem), 0, 0);
+  opacity: 0;
+}
+.toast-enter-done {
+  transform: translate3d(0, 0, 0);
+  opacity: 1;
+}
+.toast-animate-in {
+  animation: toast-slide-in-right 0.3s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
 .toast-slide-in-right-active {
   animation: toast-slide-in-right 0.3s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }

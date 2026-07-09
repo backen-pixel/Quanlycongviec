@@ -5,6 +5,14 @@ const AUTO_DISMISS_MS = 5000;
 const EXIT_MS = 300;
 const ACCENT = '#00C853';
 
+function prefersReducedMotion() {
+  try {
+    return window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Toast thông báo tổng — nền trắng sáng, accent xanh lá, progress 5s.
  */
@@ -47,10 +55,20 @@ export default function FloatingNotificationCard({
   }, [finish, sticky]);
 
   useEffect(() => {
-    const id = requestAnimationFrame(() => setPhase('visible'));
+    const reveal = () => setPhase('visible');
+    if (prefersReducedMotion()) {
+      reveal();
+      if (!sticky) armTimer();
+      return () => {
+        if (timerRef.current) clearTimeout(timerRef.current);
+      };
+    }
+    const rafId = requestAnimationFrame(reveal);
+    const safetyId = window.setTimeout(reveal, 400);
     if (!sticky) armTimer();
     return () => {
-      cancelAnimationFrame(id);
+      cancelAnimationFrame(rafId);
+      clearTimeout(safetyId);
       if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, [armTimer, sticky]);
@@ -98,7 +116,12 @@ export default function FloatingNotificationCard({
 
   const initials = (avatarFallback || userName || '?').trim().slice(0, 2).toUpperCase();
   const showImg = !!(avatarSrc && !imgFailed);
-  const previewLine = [contextLabel, message].filter(Boolean).join(' · ') || message || contextLabel || '';
+  const bodyLine = String(message || '').trim();
+  const subtitleLine = contextLabel && contextLabel !== userName && !bodyLine.includes(contextLabel)
+    ? String(contextLabel).trim()
+    : '';
+  const previewLine = bodyLine || subtitleLine || 'Bạn có thông báo mới';
+  const animateIn = phase === 'visible' && !prefersReducedMotion();
 
   return (
     <div
@@ -117,11 +140,11 @@ export default function FloatingNotificationCard({
         ['--toast-progress-ms']: `${autoDismissMs}ms`,
       }}
       className={[
-        'toast-crm group relative w-full min-w-[320px] max-w-[380px] min-h-[90px] max-h-[110px] overflow-hidden rounded-[18px] cursor-pointer',
+        'toast-crm group relative w-full min-w-[320px] max-w-[380px] min-h-[90px] overflow-hidden rounded-[18px] cursor-pointer',
         'border border-slate-200/90 backdrop-blur-[12px]',
         'transition-[transform,box-shadow,opacity] duration-300 ease-out will-change-transform',
-        phase === 'enter' ? 'toast-slide-in-right opacity-0' : '',
-        phase === 'visible' ? 'toast-slide-in-right toast-slide-in-right-active opacity-100 hover:-translate-y-[3px]' : '',
+        phase === 'enter' ? 'toast-enter-pending' : '',
+        phase === 'visible' ? `toast-enter-done opacity-100${animateIn ? ' toast-animate-in' : ''}` : '',
         phase === 'exit' ? 'toast-slide-out-right opacity-0' : '',
         className,
       ].filter(Boolean).join(' ')}
@@ -155,16 +178,14 @@ export default function FloatingNotificationCard({
               Online
             </p>
           )}
-          {online !== true && contextLabel && !previewLine.includes(contextLabel) && (
+          {online !== true && subtitleLine && (
             <p className="mt-0.5 truncate text-[11px] font-medium text-sky-700">
-              {contextLabel}
+              {subtitleLine}
             </p>
           )}
-          {previewLine ? (
-            <p className="mt-1 truncate text-[12px] leading-snug text-gray-600">
-              {previewLine}
-            </p>
-          ) : null}
+          <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-gray-600 break-words">
+            {previewLine}
+          </p>
         </div>
 
         {unreadCount > 0 && (
