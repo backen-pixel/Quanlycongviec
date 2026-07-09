@@ -765,17 +765,17 @@ export default function MessengerHubPage() {
     }
   }, [selectedGroupId]);
 
-  /* Quyền quản trị nhóm: leader/deputy hoặc admin hệ thống */
+  /* Quyền quản trị nhóm: trưởng/phó hoặc người tạo nhóm (không dùng role admin hệ thống). */
   const myMember = useMemo(
     () => groupMembers.find((m) => String(m.user_id) === String(uid)) || null,
     [groupMembers, uid],
   );
   const canManageGroup = useMemo(() => {
     if (!groupDetail || groupDetail.is_direct) return false;
-    const role = String(user?.role || '').toLowerCase();
-    if (role === 'admin' || role === 'sales_admin') return true;
-    return myMember && (myMember.role === 'leader' || myMember.role === 'deputy');
-  }, [groupDetail, myMember, user?.role]);
+    if (groupDetail.created_by && String(groupDetail.created_by) === String(uid)) return true;
+    const r = String(myMember?.role || '').toLowerCase();
+    return r === 'leader' || r === 'deputy';
+  }, [groupDetail, myMember, uid]);
 
   const totalUnreadCount = useMemo(() => {
     const visibleGroupIds = new Set(

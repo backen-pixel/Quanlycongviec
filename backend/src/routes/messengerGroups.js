@@ -1451,7 +1451,7 @@ r.get('/groups/:id/read-receipts', async (req, res) => {
 });
 
 /**
- * Đổi avatar nhóm — yêu cầu là leader/deputy (hoặc admin hệ thống).
+ * Đổi avatar nhóm — yêu cầu trưởng/phó nhóm hoặc người tạo nhóm.
  * Upload qua multipart `file`; lưu vào Supabase Storage hoặc /uploads.
  * Trả về `{ avatar }` URL public mới và emit socket `messenger_group:updated`.
  */
@@ -1628,12 +1628,17 @@ r.post('/groups', async (req, res) => {
 });
 
 /**
- * Kiểm tra user có vai trò leader/deputy trong nhóm không (để cho phép quản trị nhóm).
- * Admin hệ thống (admin / sales_admin) cũng được tính như leader.
+ * Kiểm tra user có quyền quản trị nhóm (trưởng/phó hoặc người tạo nhóm).
+ * Không dùng role admin hệ thống — quyền gắn với vai trò trong nhóm chat.
  */
 async function assertGroupLeader(groupId, userId) {
-  const { data: u } = await supabase.from('users').select('role').eq('id', userId).maybeSingle();
-  if (isAdminLike(u)) return true;
+  const { data: grp } = await supabase
+    .from('messenger_groups')
+    .select('created_by, is_direct')
+    .eq('id', groupId)
+    .maybeSingle();
+  if (!grp || grp.is_direct) return false;
+  if (String(grp.created_by) === String(userId)) return true;
   const { data } = await supabase
     .from('messenger_group_members')
     .select('role')
@@ -1667,7 +1672,7 @@ r.get('/groups/:id/members', async (req, res) => {
 });
 
 /**
- * Xoá thành viên khỏi nhóm — chỉ leader/deputy hoặc admin hệ thống.
+ * Xoá thành viên khỏi nhóm — chỉ trưởng/phó nhóm hoặc người tạo nhóm.
  * Không cho xoá chính creator của nhóm (giữ cấu trúc).
  */
 r.delete('/groups/:id/members/:userId', async (req, res) => {
@@ -1793,13 +1798,14 @@ r.patch('/groups/:id/members/:userId/role', async (req, res) => {
   }
 });
 
-/** Thêm thành viên — leader/deputy hoặc admin hệ thống. Nhiều thành viên cùng lúc qua members[]. */
+/** Thêm thành viên — trưởng/phó có thể gán vai trò; thành viên thường chỉ thêm member. */
 r.post('/groups/:id/members', async (req, res) => {
   try {
-    const isLeader = await assertGroupLeader(req.params.id, req.authUserId);
-    if (!isLeader) {
-      // Fallback: vẫn cho member thường thêm (giữ tương thích với UI cũ)
-      const ok = await assertGroupMember(req.params.id, req.authUserId);
+    const gid = req.params.id;
+    const canManage = await assertGroupLeader(gid, req.authUserId);
+    if (!canManage) {
+      // Fallback: thành viên thường vẫn được mời người khác, nhưng chỉ với role member
+      const ok = await assertGroupMember(gid, req.authUserId);
       if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
     }
     const batch = Array.isArray(req.body.members) ? req.body.members : [];
@@ -1809,11 +1815,11 @@ r.post('/groups/:id/members', async (req, res) => {
 
     const { data: adder } = await supabase.from('users').select('full_name').eq('id', req.authUserId).single();
     const io = req.app.get('io');
-    const gid = req.params.id;
     const results = [];
     for (const item of toAdd) {
       let role = mapIncomingRole(item.role);
       if (role === 'leader') role = 'member';
+      if (!canManage) role = 'member';
       const { data: existed } = await supabase
         .from('messenger_group_members')
         .select('id')
