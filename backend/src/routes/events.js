@@ -3,7 +3,13 @@ const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { notifyMultiple } = require('../helpers/notifications');
 const { isCrmSystemAdminUser, isCrmCompanyAdminUser } = require('../helpers/crmAccessRoles');
-const { isAdminLike } = require('../helpers/adminRole');
+const { isAdminLike, isCompanyScopedAdmin } = require('../helpers/adminRole');
+
+/** Admin chọn công ty qua query (admin tổng, platform_admin, admin tenant — khớp CRM Dashboard). */
+function canPickEventsCompanyScope(user) {
+  if (isCrmSystemAdminUser(user)) return true;
+  return isAdminLike(user) && !isCompanyScopedAdmin(user);
+}
 const {
   normalizeEventModule,
   assertEventModuleWrite,
@@ -43,7 +49,7 @@ function resolveEventsCompanyScope(req, res) {
   if (isCrmCompanyAdminUser(req.user)) {
     return { ok: true, companyId: String(req.user.company_id).trim() };
   }
-  if (isCrmSystemAdminUser(req.user)) {
+  if (canPickEventsCompanyScope(req.user)) {
     const q = req.query.company_id;
     const id = q && String(q).trim() ? String(q).trim() : null;
     return { ok: true, companyId: id };
@@ -56,33 +62,41 @@ function resolveEventsCompanyScope(req, res) {
   return { ok: true, companyId: String(cid).trim() };
 }
 
-const EVENTS_COMPANY_LEAD_IN_CHUNK = 150;
+const EVENTS_LEGACY_LEAD_OR_MAX = 320;
 /** Giới hạn lead_id khi lọc theo khu vực (một mệnh đề `.in`). */
 const EVENTS_REGION_LEAD_MAX_IN = 2000;
+
+/** Lead IDs cho OR legacy — chỉ khi công ty nhỏ; công ty lớn chỉ lọc `company_id`. */
+async function resolveCompanyLeadIdsForEvents(companyId) {
+  const { count, error } = await supabase
+    .from('crm_leads')
+    .select('id', { count: 'exact', head: true })
+    .eq('company_id', companyId);
+  if (error) throw error;
+  if ((count || 0) > EVENTS_LEGACY_LEAD_OR_MAX) return [];
+  return fetchAllLeadIdsForCompany(companyId);
+}
 
 /**
  * Lọc sự kiện thuộc công ty: company_id khớp HOẶC (legacy) lead/deal thuộc công ty đó.
  * Phải là hàm đồng bộ — không được `async` + `return queryBuilder`: builder Supabase là thenable,
  * async function sẽ await nhầm và trả về { data, error } → lỗi «q.order is not a function».
+ *
+ * Công ty nhiều lead: chỉ `.eq('company_id')` — tránh OR URL quá dài gây 5xx PostgREST.
  */
 function applyEventsCompanyFilter(queryBuilder, companyId, leadIdsForCompany) {
   if (!companyId) return queryBuilder;
   const leadIds = (leadIdsForCompany || []).filter(Boolean);
-  if (!leadIds.length) {
+  if (!leadIds.length || leadIds.length > EVENTS_LEGACY_LEAD_OR_MAX) {
     return queryBuilder.eq('company_id', companyId);
   }
-  const orParts = [`company_id.eq.${companyId}`];
-  for (let i = 0; i < leadIds.length; i += EVENTS_COMPANY_LEAD_IN_CHUNK) {
-    const chunk = leadIds.slice(i, i + EVENTS_COMPANY_LEAD_IN_CHUNK);
-    if (chunk.length) orParts.push(`lead_id.in.(${chunk.join(',')})`);
-  }
-  return queryBuilder.or(orParts.join(','));
+  return queryBuilder.or(`company_id.eq.${companyId},lead_id.in.(${leadIds.join(',')})`);
 }
 
 async function assertEventCompanyAccess(req, res, eventId) {
   const sc = resolveEventsCompanyScope(req, res);
   if (!sc.ok) return false;
-  if (!sc.companyId && isCrmSystemAdminUser(req.user)) return true;
+  if (!sc.companyId && canPickEventsCompanyScope(req.user)) return true;
   const { data: row, error } = await supabase.from('crm_events').select('id, company_id, lead_id, module').eq('id', eventId).maybeSingle();
   if (error) throw error;
   if (!row) {
@@ -240,7 +254,7 @@ r.get('/', async (req, res) => {
     modulesFilter = modScope.modulesFilter;
     let companyLeadIds = [];
     if (sc.companyId) {
-      companyLeadIds = await fetchAllLeadIdsForCompany(sc.companyId);
+      companyLeadIds = await resolveCompanyLeadIdsForEvents(sc.companyId);
     }
     let q = supabase.from('crm_events').select(EVENT_SELECT, { count: 'exact' });
     q = applyEventsCompanyFilter(q, sc.companyId, companyLeadIds);
@@ -363,7 +377,7 @@ r.get('/overview', async (req, res) => {
 
     let companyLeadIds = [];
     if (sc.companyId) {
-      companyLeadIds = await fetchAllLeadIdsForCompany(sc.companyId);
+      companyLeadIds = await resolveCompanyLeadIdsForEvents(sc.companyId);
     }
 
     let regionLeadIds = null;
@@ -572,7 +586,7 @@ r.get('/calendar', async (req, res) => {
 
     let companyLeadIds = [];
     if (sc.companyId) {
-      companyLeadIds = await fetchAllLeadIdsForCompany(sc.companyId);
+      companyLeadIds = await resolveCompanyLeadIdsForEvents(sc.companyId);
     }
     let cq = supabase.from('crm_events')
       .select(EVENT_SELECT)
@@ -677,9 +691,9 @@ r.post('/', async (req, res) => {
     }
 
     let evCompanyId = null;
-    if (isCrmSystemAdminUser(req.user) && b.company_id !== undefined && b.company_id !== null && b.company_id !== '') {
+    if (canPickEventsCompanyScope(req.user) && b.company_id !== undefined && b.company_id !== null && b.company_id !== '') {
       evCompanyId = String(b.company_id).trim() || null;
-    } else if (!isCrmSystemAdminUser(req.user)) {
+    } else if (!canPickEventsCompanyScope(req.user)) {
       evCompanyId = req.user?.company_id ? String(req.user.company_id).trim() : null;
     }
     if (!evCompanyId && insert.lead_id) {
@@ -693,7 +707,7 @@ r.post('/', async (req, res) => {
       }
       if (!evCompanyId) evCompanyId = leadCid;
     }
-    if (!isCrmSystemAdminUser(req.user) && !evCompanyId) {
+    if (!canPickEventsCompanyScope(req.user) && !evCompanyId) {
       return res.status(400).json({ error: 'Thiếu công ty — gắn lead/deal hoặc gán công ty cho tài khoản' });
     }
     insert.company_id = evCompanyId;
@@ -803,7 +817,7 @@ r.put('/:id', async (req, res) => {
         update.module = m;
       }
     }
-    if (isCrmSystemAdminUser(req.user) && b.company_id !== undefined) {
+    if (canPickEventsCompanyScope(req.user) && b.company_id !== undefined) {
       update.company_id = b.company_id === '' || b.company_id === null ? null : String(b.company_id);
     }
 
@@ -812,7 +826,7 @@ r.put('/:id', async (req, res) => {
       if (newLead) {
         const leadCid = await resolveLeadCompanyId(newLead);
         if (!leadCid) return res.status(400).json({ error: 'Lead/deal không gắn công ty' });
-        if (!isCrmSystemAdminUser(req.user)) {
+        if (!canPickEventsCompanyScope(req.user)) {
           update.company_id = leadCid;
         } else {
           const co = update.company_id;

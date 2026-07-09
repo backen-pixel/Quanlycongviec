@@ -2,7 +2,8 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { isSystemAdmin as checkSystemAdmin } from '../lib/adminRole';
+import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
+import { getStoredCrmFilterCompanyId } from '../lib/crmCompanyFilter';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import {
   Bar,
@@ -109,7 +110,8 @@ function StatCard({ icon: Icon, label, value, sub, color = 'blue' }) {
 
 export default function EventsOverviewPage() {
   const { user } = useAuth();
-  const isSystemAdmin = checkSystemAdmin(user);
+  const isAdmin = isAdminLike(user);
+  const canPickCompany = isAdmin && !isCompanyScopedAdmin(user);
   const scope = useScopeFilter({
     storageKey: 'crm_events',
     showCompany: true,
@@ -119,6 +121,12 @@ export default function EventsOverviewPage() {
   });
   const filterCompanyId = scope.companyId;
   const companies = scope.companies;
+
+  useEffect(() => {
+    if (!canPickCompany || filterCompanyId) return;
+    const stored = getStoredCrmFilterCompanyId();
+    if (stored) scope.setCompanyId(stored);
+  }, [canPickCompany, filterCompanyId, scope.setCompanyId]);
 
   const [preset, setPreset] = useState('month');
   const [rangeFrom, setRangeFrom] = useState(() => resolvePresetRange('month').from);
@@ -137,15 +145,15 @@ export default function EventsOverviewPage() {
   const [loading, setLoading] = useState(true);
 
   const listParams = useMemo(
-    () => (isSystemAdmin && filterCompanyId ? { company_id: filterCompanyId } : {}),
-    [isSystemAdmin, filterCompanyId],
+    () => (canPickCompany && filterCompanyId ? { company_id: filterCompanyId } : {}),
+    [canPickCompany, filterCompanyId],
   );
 
   const effectiveCompanyIdForUsers = useMemo(() => {
-    if (isSystemAdmin && filterCompanyId) return filterCompanyId;
+    if (canPickCompany && filterCompanyId) return filterCompanyId;
     const cid = user?.company_id != null ? String(user.company_id).trim() : '';
     return cid || '';
-  }, [isSystemAdmin, filterCompanyId, user?.company_id]);
+  }, [canPickCompany, filterCompanyId, user?.company_id]);
 
   useEffect(() => {
     api.get('/events/event-types').then((r) => setEventTypes(r.data || [])).catch(() => {});
@@ -271,7 +279,7 @@ export default function EventsOverviewPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {isSystemAdmin && (
+          {canPickCompany && (
             <div className="flex items-center gap-2 h-9 px-2.5 rounded-lg border border-indigo-200 bg-indigo-50/70 shadow-sm min-w-[220px]">
               <Building2 className="h-4 w-4 text-indigo-600 shrink-0" aria-hidden />
               <div className="flex-1 min-w-0 [&_label]:!m-0 [&_label>span]:!hidden [&_select]:!mt-0 [&_select]:h-7 [&_select]:py-1 [&_select]:text-xs [&_select]:font-semibold [&_select]:border-indigo-200 [&_select]:bg-white [&_select]:text-indigo-900">
@@ -332,7 +340,7 @@ export default function EventsOverviewPage() {
                 value={filterUser}
                 onChange={(e) => setFilterUser(e.target.value)}
                 className="h-9 px-3 border rounded-lg text-sm min-w-[150px]"
-                disabled={!effectiveCompanyIdForUsers && isSystemAdmin}
+                disabled={!effectiveCompanyIdForUsers && canPickCompany}
               >
                 <option value="">Tất cả</option>
                 {users.map((u) => (
