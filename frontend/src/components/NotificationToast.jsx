@@ -26,6 +26,40 @@ const TYPE_ICONS = {
   workshop_new_deal: '🏭',
 };
 
+function resolveToastDisplay(notification) {
+  const meta = notification?.metadata && typeof notification.metadata === 'object' ? notification.metadata : {};
+  const actor = meta.actor || meta.sender || null;
+  const senderName = String(meta.sender_name || actor?.full_name || '').trim();
+  const title = String(notification?.title || '').trim();
+  const rawMessage = String(notification?.message || '').trim();
+
+  let userName = senderName || title || 'Thông báo';
+  let contextLabel = null;
+  let message = rawMessage;
+
+  if (senderName && title && title !== senderName) {
+    contextLabel = title;
+  } else if (!senderName && title) {
+    userName = title;
+  } else if (!title && !senderName && notification?.entity_type === 'crm_lead') {
+    contextLabel = 'CRM';
+  } else if (!title && !senderName && notification?.entity_type === 'lead') {
+    contextLabel = 'CRM';
+  } else if (!title && !senderName && notification?.entity_type === 'project') {
+    contextLabel = 'Dự án';
+  }
+
+  if (!message) {
+    if (contextLabel && contextLabel !== userName) message = contextLabel;
+    else if (title && title !== userName) message = title;
+    else message = 'Bạn có thông báo mới';
+  }
+
+  const avatarRaw = actor?.avatar || meta.sender_avatar || meta.avatar || null;
+
+  return { userName, contextLabel, message, avatarRaw };
+}
+
 /**
  * Toast thông báo hệ thống — xếp chồng dọc khi có nhiều thông báo.
  * @param {{ key: string, notification: object }[]} toasts
@@ -40,17 +74,8 @@ export default function NotificationToast({ toasts, onDismiss, onNavigate }) {
     >
       {toasts.map(({ key, notification }) => {
         if (!notification) return null;
-        const actor = notification.metadata?.actor || notification.metadata?.sender || null;
-        const avatarRaw = actor?.avatar || notification.metadata?.avatar || null;
+        const { userName, contextLabel, message, avatarRaw } = resolveToastDisplay(notification);
         const avatarSrc = avatarRaw ? publicFileUrl(String(avatarRaw).trim()) : null;
-        const userName = actor?.full_name || notification.title || 'Thông báo';
-        const contextLabel = actor?.full_name && notification.title && notification.title !== actor.full_name
-          ? notification.title
-          : notification.entity_type === 'crm_lead' || notification.entity_type === 'lead'
-            ? 'CRM'
-            : notification.entity_type === 'project'
-              ? 'Dự án'
-              : null;
 
         return (
           <FloatingNotificationCard
@@ -58,7 +83,7 @@ export default function NotificationToast({ toasts, onDismiss, onNavigate }) {
             className="pointer-events-auto shrink-0"
             userName={userName}
             contextLabel={contextLabel}
-            message={notification.message}
+            message={message}
             avatarSrc={avatarSrc}
             avatarFallback={userName}
             iconEmoji={TYPE_ICONS[notification.type] || '🔔'}

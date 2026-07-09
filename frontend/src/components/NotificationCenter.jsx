@@ -546,15 +546,18 @@ export default function NotificationCenter({ socket }) {
     if (!socket || !user) return;
     const handler = (notif) => {
       if (!localStorage.getItem('token')) return;
-      if (isExpiryDeadlineNotificationType(notif?.type)) return;
       if (!isNotificationTypeEnabled(notif?.type, notif?.entity_type, notif?.metadata)) return;
 
       cancelNotificationSpeech();
 
+      const isExp = isExpiryDeadlineNotificationType(notif?.type);
       const isChat = isChatChannelNotification(notif);
       const isEvent = EVENT_NOTIFICATION_TYPES.includes(notif?.type);
       const isAssign = isAssignmentNotification(notif);
-      if (isChat) {
+      if (isExp) {
+        setUnreadDeadlines((c) => c + 1);
+        setNotifications((prev) => (tab === 'deadlines' ? [notif, ...prev] : prev));
+      } else if (isChat) {
         setUnreadChat((c) => c + 1);
         setNotifications((prev) => (tab === 'messages' ? [notif, ...prev] : prev));
       } else if (isEvent) {
