@@ -63,6 +63,53 @@ export async function getLocalMediaStream(media, existing) {
   });
 }
 
+export function stopLocalVideoTracks(stream) {
+  const tracks = [...(stream?.getVideoTracks() || [])];
+  for (const track of tracks) {
+    try { stream.removeTrack(track); } catch { /* noop */ }
+    try { track.stop(); } catch { /* noop */ }
+  }
+}
+
+export async function acquireLocalVideoTrack(facing = 'front') {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: {
+      facingMode: facing === 'back' ? 'environment' : 'user',
+      width: 720,
+      height: 1280,
+    },
+  });
+  const track = stream.getVideoTracks()[0];
+  stream.getTracks().forEach((t) => {
+    if (t !== track) try { t.stop(); } catch { /* noop */ }
+  });
+  if (!track) throw new Error('Không truy cập được camera');
+  return track;
+}
+
+export function getPeerVideoSender(pc) {
+  if (!pc) return null;
+  if (pc._videoSender) return pc._videoSender;
+  const sender = pc.getSenders().find((s) => s.track?.kind === 'video') || null;
+  if (sender) pc._videoSender = sender;
+  return sender;
+}
+
+export async function replaceVideoOnPeerConnections(peerEntries, track, localStream) {
+  for (const entry of peerEntries) {
+    const pc = entry?.pc;
+    if (!pc) continue;
+    const sender = getPeerVideoSender(pc);
+    if (sender) {
+      await sender.replaceTrack(track);
+      pc._videoSender = sender;
+    } else if (track && localStream) {
+      pc._videoSender = pc.addTrack(track, localStream);
+    }
+  }
+}
+
 export async function sendOfferToPeer(socket, callId, toUserId, pc) {
   const offer = await pc.createOffer({
     offerToReceiveAudio: true,

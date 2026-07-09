@@ -10,6 +10,9 @@ export class WebRTCService {
     this.remoteStream = null;
     this.pending = [];
     this.media = 'audio';
+    this.cameraFacing = 'front';
+    this.cameraOff = false;
+    this._videoSender = null;
   }
 
   async start(iceServers, media) {
@@ -27,7 +30,10 @@ export class WebRTCService {
       audio: true,
       video: media === 'video' ? { facingMode: 'user', width: 1280, height: 720 } : false,
     });
-    this.localStream.getTracks().forEach((t) => this.pc.addTrack(t, this.localStream));
+    this.localStream.getTracks().forEach((t) => {
+      const sender = this.pc.addTrack(t, this.localStream);
+      if (t.kind === 'video') this._videoSender = sender;
+    });
     this.cb.onLocalStream?.(this.localStream);
   }
 
@@ -85,24 +91,87 @@ export class WebRTCService {
   }
 
   setMuted(muted) { this.localStream?.getAudioTracks().forEach((t) => { t.enabled = !muted; }); }
-  setCameraOff(off) { this.localStream?.getVideoTracks().forEach((t) => { t.enabled = !off; }); }
+
+  _getVideoSender() {
+    if (this._videoSender) return this._videoSender;
+    return this.pc?.getSenders().find((s) => s.track?.kind === 'video') || null;
+  }
+
+  _stopLocalVideoTracks() {
+    const tracks = [...(this.localStream?.getVideoTracks() || [])];
+    for (const track of tracks) {
+      try { this.localStream.removeTrack(track); } catch { /* noop */ }
+      try { track.stop(); } catch { /* noop */ }
+    }
+  }
+
+  async _acquireVideoTrack() {
+    const facing = this.cameraFacing === 'back' ? 'environment' : 'user';
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: facing, width: 1280, height: 720 },
+    });
+    const track = stream.getVideoTracks()[0];
+    stream.getTracks().forEach((t) => {
+      if (t !== track) try { t.stop(); } catch { /* noop */ }
+    });
+    if (!track) throw new Error('Không truy cập được camera');
+    return track;
+  }
+
+  /** Tắt/bật camera — stop()/replaceTrack để giải phóng đèn camera thật (không chỉ ẩn preview). */
+  async setCameraOff(off) {
+    if (this.media !== 'video' || !this.pc || !this.localStream) {
+      this.localStream?.getVideoTracks().forEach((t) => { t.enabled = !off; });
+      return;
+    }
+    this.cameraOff = !!off;
+    const sender = this._getVideoSender();
+    if (off) {
+      this._stopLocalVideoTracks();
+      if (sender) {
+        try { await sender.replaceTrack(null); } catch { /* noop */ }
+        this._videoSender = sender;
+      }
+      this.cb.onLocalStream?.(this.localStream);
+      return;
+    }
+    const newTrack = await this._acquireVideoTrack();
+    if (sender) {
+      await sender.replaceTrack(newTrack);
+      this._videoSender = sender;
+    } else {
+      this._videoSender = this.pc.addTrack(newTrack, this.localStream);
+    }
+    this.localStream.addTrack(newTrack);
+    this.cb.onLocalStream?.(this.localStream);
+  }
 
   /** Đổi camera trước/sau (web: chỉ áp dụng nếu thiết bị có nhiều camera). */
   async switchCamera(facing) {
-    if (this.media !== 'video' || !this.pc) return;
+    this.cameraFacing = facing === 'back' ? 'back' : 'front';
+    if (this.media !== 'video' || !this.pc || this.cameraOff) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: facing === 'back' ? 'environment' : 'user' }, audio: false,
+        video: { facingMode: this.cameraFacing === 'back' ? 'environment' : 'user' }, audio: false,
       });
       const newTrack = stream.getVideoTracks()[0];
-      const sender = this.pc.getSenders().find((s) => s.track && s.track.kind === 'video');
+      const sender = this._getVideoSender();
       if (sender && newTrack) {
         const old = sender.track;
         await sender.replaceTrack(newTrack);
-        old?.stop();
-        this.localStream.removeTrack(old);
+        if (old) {
+          try { this.localStream.removeTrack(old); } catch { /* noop */ }
+          try { old.stop(); } catch { /* noop */ }
+        }
+        this._videoSender = sender;
         this.localStream.addTrack(newTrack);
+        stream.getTracks().forEach((t) => {
+          if (t !== newTrack) try { t.stop(); } catch { /* noop */ }
+        });
         this.cb.onLocalStream?.(this.localStream);
+      } else {
+        stream.getTracks().forEach((t) => { try { t.stop(); } catch { /* noop */ } });
       }
     } catch { /* noop */ }
   }
@@ -115,5 +184,6 @@ export class WebRTCService {
     try { this.localStream?.getTracks().forEach((t) => t.stop()); } catch { /* noop */ }
     try { this.pc?.close(); } catch { /* noop */ }
     this.pc = null; this.localStream = null; this.remoteStream = null; this.pending = [];
+    this._videoSender = null; this.cameraOff = false;
   }
 }

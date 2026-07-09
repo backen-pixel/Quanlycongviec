@@ -6,7 +6,8 @@ import { useCallback, useRef, useState } from 'react';
 import { playCallRingtone, stopCallRingtone } from '../lib/callRingtonePlayer';
 import { dismissIncomingCallDesktopAlert, showIncomingCallDesktopAlert } from '../lib/incomingCallNotify';
 import {
-  applyPeerSignal, createGroupPeerConnection, getLocalMediaStream, sendOfferToPeer,
+  applyPeerSignal, acquireLocalVideoTrack, createGroupPeerConnection, getLocalMediaStream,
+  replaceVideoOnPeerConnections, sendOfferToPeer, stopLocalVideoTracks,
 } from './groupCallMesh';
 
 const GROUP_CALL_TIMEOUT_MS = 60_000;
@@ -73,7 +74,12 @@ export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patc
       };
       placeholder.pc = pc;
       const stream = localStreamRef.current;
-      if (stream) stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+      if (stream) {
+        stream.getTracks().forEach((t) => {
+          const sender = pc.addTrack(t, stream);
+          if (t.kind === 'video') pc._videoSender = sender;
+        });
+      }
     })();
     return placeholder;
   }, [socket, markConnected]);
@@ -87,9 +93,13 @@ export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patc
   const attachTracksToAllPeers = useCallback(() => {
     const stream = localStreamRef.current;
     if (!stream) return;
-    for (const { pc } of groupPeersRef.current.values()) {
+    for (const entry of groupPeersRef.current.values()) {
+      const { pc } = entry;
       if (pc && pc.getSenders().length === 0) {
-        stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+        stream.getTracks().forEach((t) => {
+          const sender = pc.addTrack(t, stream);
+          if (t.kind === 'video') pc._videoSender = sender;
+        });
       }
     }
   }, []);
@@ -254,6 +264,48 @@ export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patc
     const next = !cur.isMuted;
     localStreamRef.current?.getAudioTracks().forEach((t) => { t.enabled = !next; });
     patchSession({ isMuted: next });
+  }, [sessionRef, patchSession]);
+
+  const toggleGroupCamera = useCallback(async () => {
+    const cur = sessionRef.current;
+    if (!cur || cur.media !== 'video') return;
+    const stream = localStreamRef.current;
+    if (!stream) return;
+    const next = !cur.isCameraOff;
+    const peerEntries = [...groupPeersRef.current.values()];
+    try {
+      if (next) {
+        stopLocalVideoTracks(stream);
+        await replaceVideoOnPeerConnections(peerEntries, null, stream);
+      } else {
+        const facing = cur.cameraFacing === 'back' ? 'back' : 'front';
+        const track = await acquireLocalVideoTrack(facing);
+        stream.addTrack(track);
+        await replaceVideoOnPeerConnections(peerEntries, track, stream);
+      }
+      patchSession({ isCameraOff: next });
+    } catch (e) {
+      patchSession({ error: e?.message || 'Không truy cập được camera' });
+    }
+  }, [sessionRef, patchSession]);
+
+  const switchGroupCamera = useCallback(async () => {
+    const cur = sessionRef.current;
+    if (!cur || cur.media !== 'video') return;
+    const facing = cur.cameraFacing === 'back' ? 'front' : 'back';
+    patchSession({ cameraFacing: facing });
+    if (cur.isCameraOff) return;
+    const stream = localStreamRef.current;
+    if (!stream) return;
+    const peerEntries = [...groupPeersRef.current.values()];
+    try {
+      stopLocalVideoTracks(stream);
+      const track = await acquireLocalVideoTrack(facing);
+      stream.addTrack(track);
+      await replaceVideoOnPeerConnections(peerEntries, track, stream);
+    } catch (e) {
+      patchSession({ error: e?.message || 'Không đổi được camera' });
+    }
   }, [sessionRef, patchSession]);
 
   const approveGroupJoin = useCallback((requesterId) => {
@@ -439,6 +491,8 @@ export function useGroupCall({ socket, uid, isBusy, setSession, sessionRef, patc
     rejectGroupCall,
     endGroupCall,
     toggleGroupMute,
+    toggleGroupCamera,
+    switchGroupCamera,
     approveGroupJoin,
     denyGroupJoin,
     bindGroupHandlers,

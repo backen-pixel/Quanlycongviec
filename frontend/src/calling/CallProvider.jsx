@@ -201,16 +201,29 @@ export function CallProvider({ children }) {
     const next = !cur.isMuted; rtcRef.current?.setMuted(next); patch({ isMuted: next });
   }, [patch]);
 
-  const toggleCamera = useCallback(() => {
+  const toggleCamera = useCallback(async () => {
     const cur = sessionRef.current; if (!cur) return;
-    const next = !cur.isCameraOff; rtcRef.current?.setCameraOff(next); patch({ isCameraOff: next });
-  }, [patch]);
+    if (cur.mode === 'group') { await group.toggleGroupCamera(); return; }
+    const next = !cur.isCameraOff;
+    try {
+      await rtcRef.current?.setCameraOff(next);
+      patch({ isCameraOff: next });
+    } catch (e) {
+      patch({ error: e?.message || 'Không truy cập được camera' });
+    }
+  }, [patch, group]);
 
-  const switchCamera = useCallback(() => {
+  const switchCamera = useCallback(async () => {
     const cur = sessionRef.current; if (!cur) return;
+    if (cur.mode === 'group') { await group.switchGroupCamera(); return; }
     const facing = cur.cameraFacing === 'back' ? 'front' : 'back';
-    rtcRef.current?.switchCamera(facing); patch({ cameraFacing: facing });
-  }, [patch]);
+    try {
+      await rtcRef.current?.switchCamera(facing);
+      patch({ cameraFacing: facing });
+    } catch (e) {
+      patch({ error: e?.message || 'Không đổi được camera' });
+    }
+  }, [patch, group]);
 
   const dismissIncomingSilently = useCallback((callId) => {
     const cur = sessionRef.current;
