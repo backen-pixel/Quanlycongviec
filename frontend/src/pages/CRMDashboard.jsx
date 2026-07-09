@@ -36,8 +36,11 @@ import {
 import {
   CRM_KANBAN_SEARCH_HIT_CLASS,
   CRM_KANBAN_SEARCH_HIT_TW,
+  findKanbanCard,
+  scrollKanbanCardIntoView,
   useKanbanSearchHighlight,
 } from '../lib/kanbanCardSearchHighlight';
+import { prefetchCrmLeadDetail } from '../lib/crmLeadDetailPrefetch';
 import {
   buildCrmDashboardCacheKey,
   getCrmDashboardCache,
@@ -1077,6 +1080,7 @@ export default function CRMDashboard() {
   const overdueTriggerRef = useRef(null);
   const searchBoxRef = useRef(null);
   const searchInputRef = useRef(null);
+  const pendingCrmSearchFocusRef = useRef(null);
   const [showAdvSearch, setShowAdvSearch] = useState(() => !!P?.showAdvSearch);
   const [crmFilterTab, setCrmFilterTab] = useState('employee');
   const [filterPanelPos, setFilterPanelPos] = useState(() => readStoredCrmFilterPanelPos());
@@ -3983,17 +3987,61 @@ export default function CRMDashboard() {
     setShowOverduePopover(false);
   }, [navigate, pipelineType]);
 
+  const openCrmSearchResultDetail = useCallback((itemId) => {
+    prefetchCrmLeadDetail(api, itemId);
+    persistCrmPipelineUiNow();
+    setSearchSuggestDismissed(true);
+    setSearchFocused(false);
+    searchInputRef.current?.blur();
+    localStorage.setItem('crm_pinned_tab', pipelineType);
+    markCrmPipelineCardFocus(itemId);
+    navigate(`/crm/leads/${itemId}`);
+  }, [navigate, pipelineType, persistCrmPipelineUiNow]);
+
   const focusCrmSearchResult = useCallback((itemId) => {
     persistCrmPipelineUiNow();
     setSearchSuggestDismissed(true);
     setSearchFocused(false);
     searchInputRef.current?.blur();
 
+    const sid = String(itemId);
     if (viewMode !== 'kanban') {
+      pendingCrmSearchFocusRef.current = sid;
       setViewMode('kanban');
+      return;
     }
-    triggerKanbanSearchHighlight(itemId, { persist: true });
+    triggerKanbanSearchHighlight(sid, { persist: true });
   }, [viewMode, persistCrmPipelineUiNow, triggerKanbanSearchHighlight]);
+
+  useEffect(() => {
+    const pendingId = pendingCrmSearchFocusRef.current;
+    if (viewMode !== 'kanban' || !pendingId) return;
+    pendingCrmSearchFocusRef.current = null;
+    requestAnimationFrame(() => {
+      triggerKanbanSearchHighlight(pendingId, { persist: true });
+    });
+  }, [viewMode, kanbanPipelineForView, triggerKanbanSearchHighlight]);
+
+  useEffect(() => {
+    if (viewMode !== 'kanban' || !kanbanSearchHighlightId) return undefined;
+    let tryNum = 0;
+    let timer = null;
+    const tick = () => {
+      const el = findKanbanCard('data-crm-pipeline-card', kanbanSearchHighlightId);
+      if (el) {
+        scrollKanbanCardIntoView(el);
+        return;
+      }
+      if (tryNum < 32) {
+        tryNum += 1;
+        timer = window.setTimeout(tick, 50 + tryNum * 45);
+      }
+    };
+    tick();
+    return () => {
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [viewMode, kanbanSearchHighlightId, kanbanPipelineForView]);
 
   useEffect(() => {
     if (searchText.trim()) return;
@@ -5399,45 +5447,59 @@ export default function CRMDashboard() {
                 <p className="text-[11px] font-semibold text-violet-800">
                   <span className="font-bold text-violet-700">{crmSearchSuggestMatches.length}</span>
                   {' '}kết quả cho &ldquo;{searchText}&rdquo;
-                  {crmSearchSuggestMatches.length > 10 && (
-                    <span className="block text-[10px] font-normal text-violet-600/90 mt-0.5">
-                      Hiển thị 10 kết quả đầu — chọn để cuộn tới thẻ trên Kanban
-                    </span>
-                  )}
+                  <span className="block text-[10px] font-normal text-violet-600/90 mt-0.5">
+                    Nhấn dòng để cuộn tới thẻ trên Kanban · biểu tượng mắt để mở chi tiết
+                    {crmSearchSuggestMatches.length > 10 && ' · Hiển thị 10 kết quả đầu'}
+                  </span>
                 </p>
               </div>
               {crmSearchSuggestItems.map(item => (
-                <button
+                <div
                   key={item.id}
-                  type="button"
-                  className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-violet-50/80 transition-colors cursor-pointer border-b border-slate-50 last:border-0 group/item text-left"
-                  onMouseDown={e => e.preventDefault()}
-                  onClick={() => focusCrmSearchResult(item.id)}
+                  className="flex items-stretch border-b border-slate-50 last:border-0 group/item"
                 >
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[10px] font-mono font-semibold text-slate-500 group-hover/item:bg-violet-100 group-hover/item:text-violet-700 transition-colors">
-                    {(item.code || '?').slice(0, 2)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-mono text-slate-400">{item.code}</span>
-                      <p className="text-sm font-medium text-slate-900 truncate">{item.title}</p>
-                      {item.is_new_for_current_user && (
-                        <span className="shrink-0 text-[9px] font-bold uppercase text-white bg-rose-500 px-1.5 py-0.5 rounded-full">Mới</span>
-                      )}
+                  <button
+                    type="button"
+                    className="flex-1 min-w-0 flex items-center gap-3 px-3 py-2.5 hover:bg-violet-50/80 transition-colors cursor-pointer text-left"
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={() => focusCrmSearchResult(item.id)}
+                  >
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[10px] font-mono font-semibold text-slate-500 group-hover/item:bg-violet-100 group-hover/item:text-violet-700 transition-colors">
+                      {(item.code || '?').slice(0, 2)}
                     </div>
-                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                      {item.customer?.phone && <span className="text-[10px] text-emerald-600">📞 {item.customer.phone}</span>}
-                      {item.customer?.full_name && <span className="text-[10px] text-slate-500 truncate max-w-[8rem]">👤 {item.customer.full_name}</span>}
-                      {item.assignee?.full_name && <span className="text-[10px] text-violet-600 truncate max-w-[8rem]">🤝 {item.assignee.full_name}</span>}
-                      {(item.production_staff?.length > 1) && (
-                        <span className="text-[10px] text-indigo-600" title={(item.production_staff || []).map((u) => u.full_name).join(', ')}>
-                          🏭 {item.production_staff.length} NV
-                        </span>
-                      )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono text-slate-400">{item.code}</span>
+                        <p className="text-sm font-medium text-slate-900 truncate">{item.title}</p>
+                        {item.is_new_for_current_user && (
+                          <span className="shrink-0 text-[9px] font-bold uppercase text-white bg-rose-500 px-1.5 py-0.5 rounded-full">Mới</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        {item.customer?.phone && <span className="text-[10px] text-emerald-600">📞 {item.customer.phone}</span>}
+                        {item.customer?.full_name && <span className="text-[10px] text-slate-500 truncate max-w-[8rem]">👤 {item.customer.full_name}</span>}
+                        {item.assignee?.full_name && <span className="text-[10px] text-violet-600 truncate max-w-[8rem]">🤝 {item.assignee.full_name}</span>}
+                        {(item.production_staff?.length > 1) && (
+                          <span className="text-[10px] text-indigo-600" title={(item.production_staff || []).map((u) => u.full_name).join(', ')}>
+                            🏭 {item.production_staff.length} NV
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <ChevronRight className="h-3.5 w-3.5 text-slate-300 group-hover/item:text-violet-400 transition-colors shrink-0" />
-                </button>
+                    <ChevronRight className="h-3.5 w-3.5 text-slate-300 group-hover/item:text-violet-400 transition-colors shrink-0" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Mở chi tiết"
+                    aria-label={`Mở chi tiết ${item.code || item.title || item.id}`}
+                    className="shrink-0 flex items-center justify-center px-2.5 border-l border-slate-100 text-slate-400 hover:bg-violet-100 hover:text-violet-700 transition-colors cursor-pointer"
+                    onMouseDown={e => e.preventDefault()}
+                    onMouseEnter={() => prefetchCrmLeadDetail(api, item.id)}
+                    onClick={() => openCrmSearchResultDetail(item.id)}
+                  >
+                    <Eye className="h-4 w-4" />
+                  </button>
+                </div>
               ))}
             </AnchoredDropdownMenu>
             <div className="shrink-0 pr-1">
@@ -8052,6 +8114,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
             boardScrollRef={perColumnScroll ? null : boardScrollRef}
             compact={compact}
             searchHighlightId={searchHighlightId}
+            cardDomAttr="data-crm-pipeline-card"
             renderCard={renderCard}
           />
         )}

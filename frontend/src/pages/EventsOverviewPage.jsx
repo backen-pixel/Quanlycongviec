@@ -272,20 +272,22 @@ export default function EventsOverviewPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {isSystemAdmin && (
-            <div className="flex items-center gap-2 min-w-[200px]">
-              <Building2 className="h-4 w-4 text-gray-500 shrink-0" />
-              <ScopeFilterBar
-                scope={{ ...scope, showDepartment: false, showSearch: false, showDateRange: false }}
-                companyLabel=""
-                companyAllowAll
-              />
+            <div className="flex items-center gap-2 h-9 px-2.5 rounded-lg border border-indigo-200 bg-indigo-50/70 shadow-sm min-w-[220px]">
+              <Building2 className="h-4 w-4 text-indigo-600 shrink-0" aria-hidden />
+              <div className="flex-1 min-w-0 [&_label]:!m-0 [&_label>span]:!hidden [&_select]:!mt-0 [&_select]:h-7 [&_select]:py-1 [&_select]:text-xs [&_select]:font-semibold [&_select]:border-indigo-200 [&_select]:bg-white [&_select]:text-indigo-900">
+                <ScopeFilterBar
+                  scope={{ ...scope, showDepartment: false, showSearch: false, showDateRange: false }}
+                  companyLabel=""
+                  companyAllowAll
+                />
+              </div>
             </div>
           )}
           <Link
             to="/crm/events"
-            className="h-9 px-3 border rounded-lg text-sm font-medium flex items-center gap-1.5 hover:bg-gray-50"
+            className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg text-sm font-semibold border border-blue-200 bg-blue-50 text-blue-800 shadow-sm hover:bg-blue-100 hover:border-blue-300 transition-colors"
           >
-            <Calendar className="h-4 w-4" /> Lịch & Feed
+            <Calendar className="h-4 w-4 text-blue-600 shrink-0" /> Lịch & Feed
           </Link>
         </div>
       </div>

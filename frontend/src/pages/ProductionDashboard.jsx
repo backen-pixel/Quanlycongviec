@@ -33,7 +33,7 @@ import {
 import {
   CheckCircle2, Search, X, Calendar, Plus,
   Factory, Users, LayoutGrid, List,
-  CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Layers, Trash2, MessageSquare, Pin, Building2, ArrowRightLeft, Settings, ChevronDown,
+  CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Layers, Trash2, MessageSquare, Pin, Building2, ArrowRightLeft, Settings, ChevronDown, Eye, ChevronRight,
 } from 'lucide-react';
 import { ProductionListView, ProductionPlannerView, ProductionCalendarView, ProductionCommentsView, ProductionDeadlineView } from '../components/ProductionViews';
 import WorkshopPipelineKanbanScroll, { useWorkshopKanbanScrollLayout } from '../components/WorkshopPipelineKanbanScroll';
@@ -50,6 +50,8 @@ import {
 import {
   SX_KANBAN_SEARCH_HIT_CLASS,
   SX_KANBAN_SEARCH_HIT_TW,
+  findKanbanCard,
+  scrollKanbanCardIntoView,
   useKanbanSearchHighlight,
 } from '../lib/kanbanCardSearchHighlight';
 import {
@@ -384,6 +386,7 @@ export default function ProductionDashboard() {
   const viewModeTriggerRef = useRef(null);
   const searchBoxRef = useRef(null);
   const searchInputRef = useRef(null);
+  const pendingSxSearchFocusRef = useRef(null);
   const [kanbanColumnScrollMode, setKanbanColumnScrollMode] = useState(() => {
     const fromP = P0?.kanbanColumnScrollMode;
     if (fromP && KANBAN_COLUMN_SCROLL_MODES.includes(fromP)) return fromP;
@@ -1547,16 +1550,57 @@ export default function ProductionDashboard() {
     triggerKanbanSearchHighlight(id, { onDone: () => clearWorkshopPipelineCardFocus('sx') });
   }, [loading, viewMode, filteredKanbanPipeline, triggerKanbanSearchHighlight]);
 
+  const openSxSearchResultDetail = useCallback((projectId) => {
+    setSearchSuggestDismissed(true);
+    setSearchFocused(false);
+    searchInputRef.current?.blur();
+    markWorkshopPipelineCardFocus(projectId, 'sx');
+    navigate(`/sx/projects/${projectId}`);
+  }, [navigate]);
+
   const focusSxSearchResult = useCallback((projectId) => {
     setSearchSuggestDismissed(true);
     setSearchFocused(false);
     searchInputRef.current?.blur();
 
+    const sid = String(projectId);
     if (viewMode !== 'kanban') {
+      pendingSxSearchFocusRef.current = sid;
       setViewMode('kanban');
+      return;
     }
-    triggerKanbanSearchHighlight(projectId, { persist: true });
+    triggerKanbanSearchHighlight(sid, { persist: true });
   }, [viewMode, triggerKanbanSearchHighlight]);
+
+  useEffect(() => {
+    const pendingId = pendingSxSearchFocusRef.current;
+    if (viewMode !== 'kanban' || !pendingId) return;
+    pendingSxSearchFocusRef.current = null;
+    requestAnimationFrame(() => {
+      triggerKanbanSearchHighlight(pendingId, { persist: true });
+    });
+  }, [viewMode, filteredKanbanPipeline, triggerKanbanSearchHighlight]);
+
+  useEffect(() => {
+    if (viewMode !== 'kanban' || !kanbanSearchHighlightId) return undefined;
+    let tryNum = 0;
+    let timer = null;
+    const tick = () => {
+      const el = findKanbanCard('data-sx-kanban-card', kanbanSearchHighlightId);
+      if (el) {
+        scrollKanbanCardIntoView(el);
+        return;
+      }
+      if (tryNum < 32) {
+        tryNum += 1;
+        timer = window.setTimeout(tick, 50 + tryNum * 45);
+      }
+    };
+    tick();
+    return () => {
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [viewMode, kanbanSearchHighlightId, filteredKanbanPipeline]);
 
   useEffect(() => {
     if (searchQuery.trim()) return;
@@ -2283,37 +2327,55 @@ export default function ProductionDashboard() {
                       {' '}kết quả cho &ldquo;{searchQuery}&rdquo;
                       {sxSearchSuggestMatches.length > 10 && (
                         <span className="block text-[10px] font-normal text-violet-600/90 mt-0.5">
-                          Hiển thị 10 kết quả đầu — chọn để cuộn tới thẻ trên Kanban
+                          Hiển thị 10 kết quả đầu
                         </span>
                       )}
+                      <span className="block text-[10px] font-normal text-violet-600/90 mt-0.5">
+                        Nhấn dòng để cuộn tới thẻ trên Kanban · biểu tượng mắt để mở chi tiết
+                      </span>
                     </p>
           </div>
                   {sxSearchSuggestItems.map((project) => (
-          <button
+                    <div
                       key={project.id}
-            type="button"
-                      className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-violet-50/80 transition-colors cursor-pointer border-b border-slate-50 last:border-0 group/item text-left"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => focusSxSearchResult(project.id)}
+                      className="flex items-stretch border-b border-slate-50 last:border-0 group/item"
                     >
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[10px] font-mono font-semibold text-slate-500 group-hover/item:bg-indigo-100 group-hover/item:text-indigo-700 transition-colors">
-                        {(project.code || '?').slice(0, 2)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-mono text-slate-400">{project.code}</span>
-                          <p className="text-sm font-medium text-slate-900 truncate">{project.name}</p>
+                      <button
+                        type="button"
+                        className="flex-1 min-w-0 flex items-center gap-3 px-3 py-2.5 hover:bg-violet-50/80 transition-colors cursor-pointer text-left"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => focusSxSearchResult(project.id)}
+                      >
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[10px] font-mono font-semibold text-slate-500 group-hover/item:bg-indigo-100 group-hover/item:text-indigo-700 transition-colors">
+                          {(project.code || '?').slice(0, 2)}
                         </div>
-                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                          {project.customer?.phone && (
-                            <span className="text-[10px] text-emerald-600">📞 {project.customer.phone}</span>
-                          )}
-                          {project.customer?.full_name && (
-                            <span className="text-[10px] text-slate-500 truncate max-w-[8rem]">👤 {project.customer.full_name}</span>
-                          )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-mono text-slate-400">{project.code}</span>
+                            <p className="text-sm font-medium text-slate-900 truncate">{project.name}</p>
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                            {project.customer?.phone && (
+                              <span className="text-[10px] text-emerald-600">📞 {project.customer.phone}</span>
+                            )}
+                            {project.customer?.full_name && (
+                              <span className="text-[10px] text-slate-500 truncate max-w-[8rem]">👤 {project.customer.full_name}</span>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    </button>
+                        <ChevronRight className="h-3.5 w-3.5 text-slate-300 group-hover/item:text-indigo-400 transition-colors shrink-0" />
+                      </button>
+                      <button
+                        type="button"
+                        title="Mở chi tiết"
+                        aria-label={`Mở chi tiết ${project.code || project.name || project.id}`}
+                        className="shrink-0 flex items-center justify-center px-2.5 border-l border-slate-100 text-slate-400 hover:bg-indigo-100 hover:text-indigo-700 transition-colors cursor-pointer"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => openSxSearchResultDetail(project.id)}
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                    </div>
                   ))}
                 </AnchoredDropdownMenu>
                 <div className="shrink-0 pr-1 pl-0.5">
@@ -3299,6 +3361,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
             boardScrollRef={perColumnScroll ? null : boardScrollRef}
             compact={false}
             searchHighlightId={searchHighlightId}
+            cardDomAttr="data-sx-kanban-card"
             renderCard={renderCard}
           />
         )}
