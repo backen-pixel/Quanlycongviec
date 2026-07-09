@@ -133,6 +133,7 @@ export class WebRTCService {
         try { await sender.replaceTrack(null); } catch { /* noop */ }
         this._videoSender = sender;
       }
+      this.localStream = new MediaStream(this.localStream.getAudioTracks());
       this.cb.onLocalStream?.(this.localStream);
       return;
     }
@@ -143,7 +144,7 @@ export class WebRTCService {
     } else {
       this._videoSender = this.pc.addTrack(newTrack, this.localStream);
     }
-    this.localStream.addTrack(newTrack);
+    this.localStream = new MediaStream([...this.localStream.getAudioTracks(), newTrack]);
     this.cb.onLocalStream?.(this.localStream);
   }
 
@@ -165,7 +166,7 @@ export class WebRTCService {
           try { old.stop(); } catch { /* noop */ }
         }
         this._videoSender = sender;
-        this.localStream.addTrack(newTrack);
+        this.localStream = new MediaStream([...this.localStream.getAudioTracks(), newTrack]);
         stream.getTracks().forEach((t) => {
           if (t !== newTrack) try { t.stop(); } catch { /* noop */ }
         });
