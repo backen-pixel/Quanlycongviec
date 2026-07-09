@@ -1,5 +1,6 @@
 const { supabase } = require('../config/supabase');
 const { createTTLCache } = require('./ttlCache');
+const { isTenantAdmin: isEcosystemSystemAdmin } = require('./adminRole');
 
 const tenantCache = createTTLCache({
   ttlMs: 60_000,
@@ -14,10 +15,7 @@ function isPlatformAdmin(user) {
 }
 
 function isTenantAdmin(user) {
-  const r = String(user?.role ?? '').trim().toLowerCase();
-  const hasTenant = user?.tenant_id != null && String(user.tenant_id).trim() !== '';
-  const noCompany = user?.company_id == null || String(user.company_id).trim() === '';
-  return r === 'admin' && hasTenant && noCompany;
+  return isEcosystemSystemAdmin(user);
 }
 
 async function resolveTenantIdForUser(userId) {

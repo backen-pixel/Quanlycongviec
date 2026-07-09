@@ -216,6 +216,36 @@ async function touchProjectSxPipelineStageEnteredAt(projectId, targetColId, curr
   }
 }
 
+/** Xóa deadline thẻ Kanban SX — cột «Đã công» không còn theo dõi hạn. */
+async function clearSxKanbanDeadlinesForProjects(projectIds) {
+  const ids = [...new Set((projectIds || []).map(String).filter(Boolean))];
+  if (!ids.length) return;
+  const nowIso = new Date().toISOString();
+  try {
+    await supabase
+      .from('projects')
+      .update({
+        sx_kanban_deadline_at: null,
+        sx_kanban_deadline_reason: null,
+        updated_at: nowIso,
+      })
+      .in('id', ids);
+  } catch (e) {
+    if (!/sx_kanban_deadline/.test(e.message || '')) throw e;
+  }
+}
+
+async function clearSxKanbanDeadlinesForPipelineColumn(colId) {
+  if (!colId) return;
+  const { data: leads } = await supabase
+    .from('crm_leads')
+    .select('project_id')
+    .eq('sx_pipeline_stage_id', colId)
+    .eq('type', 'deal')
+    .not('project_id', 'is', null);
+  await clearSxKanbanDeadlinesForProjects((leads || []).map((l) => l.project_id));
+}
+
 /** Gán NV mặc định theo phân loại xưởng khi deal vào cột intake nếu dự án chưa có đủ NV SX. */
 async function applyDefaultIntakeAssigneeIfNeeded(projectId, companyId) {
   if (!projectId || !companyId) return;
@@ -694,6 +724,10 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
       update.converts_workshop_type = b.is_switch_workshop_type;
     }
     Object.assign(update, parseProductionStageKpiBody(b));
+    const enablingCompletedRevenue = b.counts_as_completed_revenue === true;
+    if (enablingCompletedRevenue) {
+      update.requires_deadline = false;
+    }
     if (existingRow?.bucket_slug === INTAKE_BUCKET) {
       update.workflow_stage_id = null;
       update.is_handover_to_logistics = false;
@@ -777,6 +811,13 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
 
     const { data, error: fetchErr } = await fetchProductionPipelineStageById(supabase, req.params.id);
     if (fetchErr) throw fetchErr;
+    if (enablingCompletedRevenue) {
+      try {
+        await clearSxKanbanDeadlinesForPipelineColumn(req.params.id);
+      } catch (clearErr) {
+        console.warn('[production] clear deadlines on completed column:', clearErr.message);
+      }
+    }
     await invalidateProductionPipelineCache();
     res.json(data);
   } catch (e) {
@@ -2034,13 +2075,13 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       const colId = String(pipelineStageId);
       let { data: colRow } = await supabase
         .from('production_pipeline_stages')
-        .select('id, workflow_stage_id, bucket_slug, crm_target_stage_id, requires_deadline')
+        .select('id, name, workflow_stage_id, bucket_slug, crm_target_stage_id, requires_deadline, counts_as_completed_revenue')
         .eq('id', colId)
         .maybeSingle();
       if (!colRow) {
         ({ data: colRow } = await supabase
           .from('production_pipeline_stages')
-          .select('id, workflow_stage_id, bucket_slug, crm_target_stage_id')
+          .select('id, name, workflow_stage_id, bucket_slug, crm_target_stage_id, counts_as_completed_revenue')
           .eq('id', colId)
           .maybeSingle());
       }
@@ -2077,8 +2118,10 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
         });
       }
 
+      const isCompletedCol = !!colRow?.counts_as_completed_revenue;
+
       // Gate deadline: cột bật requires_deadline → bắt buộc chọn deadline khi chuyển sang (cột mới).
-      if (isColChange && colRow?.requires_deadline && !hasDeadlineInput) {
+      if (isColChange && colRow?.requires_deadline && !hasDeadlineInput && !isCompletedCol) {
         return res.status(400).json({
           error: 'Cột này yêu cầu đặt deadline khi chuyển thẻ tới.',
           code: 'requires_deadline',
@@ -2134,7 +2177,10 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
 
       let projectUpd = {};
       if (colChanged) projectUpd.sx_pipeline_stage_entered_at = nowIso;
-      if (hasDeadlineInput) {
+      if (isColChange && isCompletedCol) {
+        projectUpd.sx_kanban_deadline_at = null;
+        projectUpd.sx_kanban_deadline_reason = null;
+      } else if (hasDeadlineInput) {
         projectUpd.sx_kanban_deadline_at = new Date(parsedDeadlineTs).toISOString();
         const reason = (req.body?.deadline_reason || req.body?.sx_kanban_deadline_reason || '').toString().trim();
         projectUpd.sx_kanban_deadline_reason = reason || null;

@@ -61,6 +61,7 @@ import {
   getSxPipelineStageSlaTone,
   isSxColumnSlaOverdue,
   resolveSxHandoverColumnId,
+  shouldHideSxKanbanDeadlineOnCard,
   VC_KANBAN_STATUSES,
 } from '../lib/sxPipelineRevenue';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
@@ -1687,6 +1688,8 @@ export default function ProductionDashboard() {
       icon: targetCol.icon,
     } : null;
 
+    const clearsDeadline = !!targetCol?.counts_as_completed_revenue;
+
     setProjects((prev) => prev.map((p) => (p.id === projectId
       ? {
         ...p,
@@ -1694,7 +1697,11 @@ export default function ProductionDashboard() {
         current_stage_id: wid || null,
         sx_kanban_column_id: colId,
         sx_intake: false,
-        ...(deadlineIso ? {
+        sx_pipeline_stage: buildSxPipelineStageMeta(targetCol) || p.sx_pipeline_stage,
+        ...(clearsDeadline ? {
+          sx_kanban_deadline_at: null,
+          sx_kanban_deadline_reason: null,
+        } : deadlineIso ? {
           sx_kanban_deadline_at: deadlineIso,
           sx_kanban_deadline_reason: reason || null,
         } : {}),
@@ -1804,7 +1811,7 @@ export default function ProductionDashboard() {
     const colId = targetCol?.id;
     const currentColId = current?.sx_kanban_column_id || null;
     const isSameCol = colId && currentColId && String(colId) === String(currentColId);
-    if (!isSameCol && targetCol?.requires_deadline) {
+    if (!isSameCol && targetCol?.requires_deadline && !targetCol?.counts_as_completed_revenue) {
       setDeadlineCtx({
         projectId,
         targetCol,
@@ -3404,14 +3411,18 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   const crmAssignee = primaryDeal?.assignee || primaryDeal?.lead_owner || item.sales_person || null;
   const leadCreatedAt = primaryDeal?.created_at || item.created_at || null;
   const columnEnteredAt = item.sx_pipeline_stage_entered_at || item.stage_entered_at || item.updated_at || item.created_at || null;
-  const columnSlaTone = getSxPipelineStageSlaTone(item.sx_pipeline_stage_entered_at, item.sx_pipeline_stage);
-  const manualDlUrgency = item.sx_kanban_deadline_at
+  const sxStage = stage || item.sx_pipeline_stage;
+  const hideColumnDeadline = shouldHideSxKanbanDeadlineOnCard(item, sxStage);
+  const columnSlaTone = hideColumnDeadline
+    ? null
+    : getSxPipelineStageSlaTone(item.sx_pipeline_stage_entered_at, item.sx_pipeline_stage);
+  const manualDlUrgency = !hideColumnDeadline && item.sx_kanban_deadline_at
     ? getCrmDeadlineUrgencyFromIso(item.sx_kanban_deadline_at)
     : null;
   const manualDlLevel = manualDlUrgency && manualDlUrgency.level !== 'ok' ? manualDlUrgency.level : null;
   const companyName = item.company?.short_name || item.company?.name || null;
   const externalCompanyName = primaryDeal?.external_company_name?.trim() || null;
-  const slaDeadlineTs = (() => {
+  const slaDeadlineTs = hideColumnDeadline ? null : (() => {
     const raw = item.deadline || item.production_deadline || null;
     if (!raw) return null;
     const ts = new Date(raw).getTime();
@@ -3438,7 +3449,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
     }
   })();
 
-  const primaryDeadline = item.production_deadline || item.deadline || null;
+  const primaryDeadline = hideColumnDeadline ? null : (item.production_deadline || item.deadline || null);
   const primaryUrgency = getDeadlineUrgency(primaryDeadline);
   const customerInitials = getInitials(item.customer?.full_name || item.name || '');
   const progress = item.sx_pipeline_percent != null ? Math.max(0, Math.min(100, Number(item.sx_pipeline_percent) || 0)) : null;
@@ -3632,7 +3643,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
       })()}
 
       {/* Deadline thẻ (sx_kanban_deadline_at) — bấm để sửa */}
-      {typeof onOpenDeadline === 'function' && item.sx_kanban_deadline_at && (() => {
+      {!hideColumnDeadline && typeof onOpenDeadline === 'function' && item.sx_kanban_deadline_at && (() => {
         const { level } = getCrmDeadlineUrgencyFromIso(item.sx_kanban_deadline_at);
         const tone = `${getCrmDeadlineUrgencyBadgeClass(level)} hover:opacity-90 cursor-pointer`;
         const urgent = level === 'overdue' || level === 'soon';
@@ -3834,6 +3845,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
           theme="sx"
           deadlineAt={item.sx_kanban_deadline_at}
           onOpenDeadline={onOpenDeadline}
+          hideDeadlineOption={hideColumnDeadline}
           onTogglePin={onTogglePin}
           pinEnabled={!!sxLeadId}
         />
@@ -3841,7 +3853,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
       </div>
 
       {/* SLA cảnh báo (chỉ khi quá hạn / sắp) — đặt cuối */}
-      {slaDeadlineTs != null && slaOverdue && (
+      {!hideColumnDeadline && slaDeadlineTs != null && slaOverdue && (
         <p className="mt-1.5 text-[10px] text-red-600 font-semibold flex items-center gap-1">
           ⚠️ Quá hạn SLA {formatDate(new Date(slaDeadlineTs).toISOString())}
         </p>

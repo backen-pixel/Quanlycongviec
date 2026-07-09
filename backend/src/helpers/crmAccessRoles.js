@@ -15,11 +15,11 @@ function normalizeCrmUserRole(role) {
 }
 
 /**
- * Admin hệ thống (tổng): role `admin`, không gắn `company_id`, không thuộc tenant SaaS.
+ * Admin hệ thống CRM: role `admin`, không gắn `company_id` (legacy hoặc admin cao nhất HST).
+ * Phạm vi công ty do tenantGate / resolveCompanyScopeForRequest trên từng route.
  * @param {{ role?: string, company_id?: string | null, tenant_id?: string | null }} user — JWT / req.user
  */
 function isCrmSystemAdminUser(user) {
-  if (user?.tenant_id != null && String(user.tenant_id).trim() !== '') return false;
   return normalizeCrmUserRole(user?.role) === 'admin' && !(user?.company_id != null && String(user.company_id).trim() !== '');
 }
 
