@@ -1455,7 +1455,7 @@ export default function ProductionDashboard() {
     };
   }, []);
 
-  /** Realtime Kanban SX: kéo thẻ / sửa nhiệm vụ từ mobile → refetch silent */
+  /** Realtime Kanban SX: kéo thẻ / sửa nhiệm vụ / badge CRM / board changed */
   const loadRef = useRef(load);
   loadRef.current = load;
   useEffect(() => () => sxLoadProgressCtrlRef.current?.dispose(), []);
@@ -1469,16 +1469,22 @@ export default function ProductionDashboard() {
       timer = setTimeout(() => {
         if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
         loadRef.current?.({ silent: true });
-      }, 2000);
+      }, 800);
     };
     const onStage = () => schedule();
     const onTask = () => schedule();
+    const onBoard = () => schedule();
+    const onBadge = () => schedule();
     socket.on('project:stage_changed', onStage);
     socket.on('crm:task_changed', onTask);
+    socket.on('production:board_changed', onBoard);
+    socket.on('crm:badge_updated', onBadge);
     return () => {
       if (timer) clearTimeout(timer);
       socket.off('project:stage_changed', onStage);
       socket.off('crm:task_changed', onTask);
+      socket.off('production:board_changed', onBoard);
+      socket.off('crm:badge_updated', onBadge);
     };
   }, []);
 

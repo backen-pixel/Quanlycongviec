@@ -2078,6 +2078,14 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       res.json({ project: updated, moved_to_intake: true, was_on_workshop: wasOnWorkshop });
 
       const ioIntake = req.app.get('io');
+      const { emitProductionKanbanChangedImmediate, emitProductionKanbanChangedAsync } = require('../helpers/workshopIntakeNotify');
+      if (ioIntake) {
+        emitProductionKanbanChangedImmediate(ioIntake, {
+          projectId: id,
+          reason: 'move_to_intake',
+          project: updated,
+        });
+      }
       setImmediate(() => {
         void (async () => {
           try {
@@ -2086,9 +2094,9 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
             console.warn('[production] syncCrmLeadSxPipelineFromProject (intake):', syncErr.message);
           }
           try {
-            if (ioIntake) await emitCrmBadgeUpdateForProject(id, ioIntake);
+            if (ioIntake) await emitProductionKanbanChangedAsync(ioIntake, id, 'move_to_intake');
           } catch (emitErr) {
-            console.warn('[production] emitCrmBadgeUpdateForProject (intake):', emitErr.message);
+            console.warn('[production] emit kanban async (intake):', emitErr.message);
           }
         })();
       });
@@ -2260,6 +2268,19 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       });
 
       const ioPipe = req.app.get('io');
+      const { emitProductionKanbanChangedImmediate, emitProductionKanbanChangedAsync } = require('../helpers/workshopIntakeNotify');
+      if (ioPipe) {
+        emitProductionKanbanChangedImmediate(ioPipe, {
+          projectId: id,
+          columnId: colId,
+          reason: 'pipeline_column',
+          project: {
+            ...updatedPipe,
+            sx_kanban_column_id: colId,
+            sx_intake: colRow.bucket_slug === INTAKE_BUCKET,
+          },
+        });
+      }
       const shouldApplyPipelineTemplates = colChanged && colRow.bucket_slug !== INTAKE_BUCKET;
       setImmediate(() => {
         void (async () => {
@@ -2286,9 +2307,9 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
             }
           }
           try {
-            if (ioPipe) await emitCrmBadgeUpdateForProject(id, ioPipe);
+            if (ioPipe) await emitProductionKanbanChangedAsync(ioPipe, id, 'pipeline_column');
           } catch (emitErr) {
-            console.warn('[production] emitCrmBadgeUpdateForProject (pipeline col):', emitErr.message);
+            console.warn('[production] emit kanban async (pipeline col):', emitErr.message);
           }
         })();
       });
@@ -2453,7 +2474,18 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       .single();
 
     const io = req.app.get('io');
-    if (io) io.emit('project:stage_changed', updated);
+    const { emitProductionKanbanChangedImmediate, emitProductionKanbanChangedAsync } = require('../helpers/workshopIntakeNotify');
+    if (io) {
+      emitProductionKanbanChangedImmediate(io, {
+        projectId: id,
+        columnId: explicitSxColId || null,
+        reason: 'workflow_stage',
+        project: {
+          ...updated,
+          ...(explicitSxColId ? { sx_kanban_column_id: String(explicitSxColId), sx_intake: false } : {}),
+        },
+      });
+    }
 
     const stageLabel = updated?.current_stage?.name || 'giai đoạn mới';
     await logDealStageChangeComment(req, { projectId: id, stageName: stageLabel });
@@ -2592,9 +2624,9 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
 
         // Emit sau sync + handover CRM để thẻ Kanban CRM luôn nhận đúng SX/VC (một lần, đủ dữ liệu)
         try {
-          if (io) await emitCrmBadgeUpdateForProject(projectId, io);
+          if (io) await emitProductionKanbanChangedAsync(io, projectId, 'workflow_stage');
         } catch (emitErr) {
-          console.warn('[production/stage] emitCrmBadgeUpdateForProject:', emitErr.message);
+          console.warn('[production/stage] emit kanban async:', emitErr.message);
         }
       })();
     });
@@ -2657,6 +2689,13 @@ r.patch('/projects/:id/kanban-deadline', requireProductionKanbanEdit(), async (r
       newDeadlineAt: newIso,
       cleared: !newIso,
     });
+
+    const ioDl = req.app.get('io');
+    const { emitProductionKanbanChangedImmediate, emitProductionKanbanChangedAsync } = require('../helpers/workshopIntakeNotify');
+    if (ioDl) {
+      emitProductionKanbanChangedImmediate(ioDl, { projectId: id, reason: 'kanban_deadline' });
+      void emitProductionKanbanChangedAsync(ioDl, id, 'kanban_deadline');
+    }
 
     res.json({ ok: true, sx_kanban_deadline_at: newIso, sx_kanban_deadline_reason: reason || null });
   } catch (e) {
@@ -2805,6 +2844,18 @@ r.patch('/projects/:id/switch-workshop-type', requireProductionKanbanEdit(), asy
     });
 
     const ioSw = req.app.get('io');
+    const { emitProductionKanbanChangedImmediate, emitProductionKanbanChangedAsync } = require('../helpers/workshopIntakeNotify');
+    if (ioSw) {
+      emitProductionKanbanChangedImmediate(ioSw, {
+        projectId: id,
+        columnId: firstCol.id,
+        reason: 'switch_workshop_type',
+        project: {
+          ...updated,
+          sx_kanban_column_id: firstCol.id,
+        },
+      });
+    }
     setImmediate(() => {
       void (async () => {
         try {
@@ -2813,9 +2864,9 @@ r.patch('/projects/:id/switch-workshop-type', requireProductionKanbanEdit(), asy
           console.warn('[production/switch-workshop-type] sync CRM:', syncErr.message);
         }
         try {
-          if (ioSw) await emitCrmBadgeUpdateForProject(id, ioSw);
+          if (ioSw) await emitProductionKanbanChangedAsync(ioSw, id, 'switch_workshop_type');
         } catch (emitErr) {
-          console.warn('[production/switch-workshop-type] emit badge:', emitErr.message);
+          console.warn('[production/switch-workshop-type] emit kanban async:', emitErr.message);
         }
       })();
     });
@@ -3131,10 +3182,19 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
       .eq('id', id).single();
 
     const io = req.app.get('io');
-    if (io) io.emit('project:stage_changed', updated);
-
-    // Emit badge update cho CRM deals liên quan sau khi sync vc_pipeline_stage_id
-    emitCrmBadgeUpdateForProject(id, io).catch(() => {});
+    const { emitProductionKanbanChangedImmediate, emitProductionKanbanChangedAsync } = require('../helpers/workshopIntakeNotify');
+    if (io) {
+      emitProductionKanbanChangedImmediate(io, {
+        projectId: id,
+        columnId: sxHandoverPipelineStageId || null,
+        reason: 'handover_vc',
+        project: {
+          ...updated,
+          ...(sxHandoverPipelineStageId ? { sx_kanban_column_id: sxHandoverPipelineStageId } : {}),
+        },
+      });
+      void emitProductionKanbanChangedAsync(io, id, 'handover_vc');
+    }
 
     res.json({
       project: {

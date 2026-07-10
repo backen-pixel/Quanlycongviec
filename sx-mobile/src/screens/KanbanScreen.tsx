@@ -2,6 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   FlatList,
   Pressable,
   RefreshControl,
@@ -184,6 +185,7 @@ export default function KanbanScreen() {
   const [error, setError] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const [movingId, setMovingId] = useState<string | null>(null);
+  const movingIdRef = useRef<string | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
@@ -355,10 +357,23 @@ export default function KanbanScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterCompany, filterDealCompany, dealCompanyParam, filterWorkTypeId]);
 
+  useEffect(() => { movingIdRef.current = movingId; }, [movingId]);
+
   useProductionRealtime({
-    onRefresh: () => load('silent'),
+    onRefresh: () => {
+      if (movingIdRef.current) return;
+      void load('silent');
+    },
     modes: ['board', 'task'],
+    debounceMs: 400,
   });
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && !movingIdRef.current) void load('silent');
+    });
+    return () => sub.remove();
+  }, [load]);
 
   useEffect(() => {
     board.projects.forEach((p) => {
