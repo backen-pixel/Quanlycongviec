@@ -234,23 +234,9 @@ export function serializeKanbanColumns(cols) {
   }));
 }
 
-/** Gộp cột lưu localStorage với cột hệ thống mặc định (tự thêm thiếu). */
-export function ensureKanbanColumns(storedCols) {
-  const defaults = DEFAULT_STATUS_KANBAN_COLUMNS.map((c) => mergeKanbanColumnStyles({ ...c }));
-  let cols = Array.isArray(storedCols) && storedCols.length
-    ? storedCols.map((c) => mergeKanbanColumnStyles({
-      ...c,
-      statusKey: c.statusKey || c.key,
-      isSystem: c.isSystem ?? KANBAN_STATUS_ORDER.includes(c.statusKey || c.key),
-    }))
-    : [...defaults];
-
-  for (const def of defaults) {
-    const hasMatch = cols.some((c) => c.statusKey === def.statusKey || c.key === def.key);
-    if (!hasMatch) cols.push({ ...def });
-  }
-
-  cols.sort((a, b) => {
+/** Gộp style cột; chỉ khởi tạo đủ cột mặc định khi chưa lưu preference (storedCols === null). */
+function sortKanbanColumns(cols) {
+  return [...cols].sort((a, b) => {
     const ai = KANBAN_STATUS_ORDER.indexOf(a.statusKey);
     const bi = KANBAN_STATUS_ORDER.indexOf(b.statusKey);
     if (ai >= 0 && bi >= 0) return ai - bi;
@@ -258,8 +244,22 @@ export function ensureKanbanColumns(storedCols) {
     if (bi >= 0) return 1;
     return String(a.label).localeCompare(String(b.label), 'vi');
   });
+}
 
-  return cols;
+export function ensureKanbanColumns(storedCols) {
+  const defaults = DEFAULT_STATUS_KANBAN_COLUMNS.map((c) => mergeKanbanColumnStyles({ ...c }));
+
+  if (storedCols == null || !Array.isArray(storedCols)) {
+    return sortKanbanColumns(defaults);
+  }
+
+  const cols = storedCols.map((c) => mergeKanbanColumnStyles({
+    ...c,
+    statusKey: c.statusKey || c.key,
+    isSystem: c.isSystem ?? KANBAN_STATUS_ORDER.includes(c.statusKey || c.key),
+  }));
+
+  return sortKanbanColumns(cols);
 }
 
 /** Alias cột mặc định đã merge style — tương thích import cũ. */
@@ -292,11 +292,10 @@ export function groupTasksByDeadlineColumns(tasks, columnDefs, { openOnly = true
 
 /** Cột hiển thị trên board — luôn hiện đủ cột (openOnly chỉ lọc task, không ẩn cột). */
 export function getEffectiveKanbanColumns(_openOnly = true, sourceCols = null) {
-  if (sourceCols?.length) {
+  if (sourceCols != null) {
     return ensureKanbanColumns(sourceCols);
   }
-  const stored = readStoredKanbanColumns();
-  return ensureKanbanColumns(stored?.length ? stored : null);
+  return ensureKanbanColumns(readStoredKanbanColumns());
 }
 
 export function createCustomKanbanColumn({ label, statusKey, colorId }) {
