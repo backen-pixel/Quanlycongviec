@@ -16,6 +16,11 @@ if (-not (Test-Path '.env')) {
   if (Test-Path '.env.example') { Copy-Item '.env.example' '.env' }
 }
 
+if (-not (Test-Path 'node_modules')) {
+  Write-Host '>> npm install (thiếu node_modules)...'
+  npm install
+}
+
 if (-not (Test-Path 'android\gradlew.bat')) {
   Write-Host '>> expo prebuild (android)...'
   npx expo prebuild --platform android --no-install
@@ -111,7 +116,28 @@ function Set-Arm64OnlyApk {
   Write-Host '>> ABI: arm64-v8a only (giảm kích thước APK cho upload server)'
 }
 
+function Set-WebrtcVersionPin {
+  $bg = Join-Path $root 'android\build.gradle'
+  if (-not (Test-Path $bg)) { return }
+  $content = Get-Content $bg -Raw
+  if ($content -match "force 'org\.jitsi:webrtc:124\.0\.0'") {
+    Write-Host '>> WebRTC: 124.0.0 pinned (already set)'
+    return
+  }
+  $needle = "allprojects {`r`n  repositories {"
+  $patch = @"
+allprojects {
+  repositories {
+"@
+  if ($content -notmatch [regex]::Escape($needle) -and $content -match 'allprojects \{\s+repositories \{') {
+    $content = $content -replace '(allprojects \{\s+repositories \{[^}]+\})', "`$1`r`n  configurations.all {`r`n    resolutionStrategy {`r`n      force 'org.jitsi:webrtc:124.0.0'`r`n    }`r`n  }"
+    Set-Content -Path $bg -Value $content -NoNewline
+    Write-Host '>> WebRTC: pinned org.jitsi:webrtc:124.0.0 (tránh SSL metadata fetch)'
+  }
+}
+
 Set-Arm64OnlyApk
+Set-WebrtcVersionPin
 
 Write-Host '>> gradlew assembleRelease...'
 Set-Location android
