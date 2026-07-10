@@ -12,7 +12,7 @@ import {
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, UsersRound,
   Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
   BookOpen, FolderTree, Factory, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot, Download, UserMinus,
-  Sigma, Calculator, FileUp, History as HistoryIcon, HardDrive, Database, Globe, CreditCard, Sparkles,
+  Sigma, Calculator, FileUp, History as HistoryIcon, HardDrive, Database, Globe, CreditCard, Sparkles, Pin,
 } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
@@ -28,6 +28,11 @@ import AppSwitcherPanel, { AppSwitcherButton } from './AppSwitcherPanel';
 import SidebarModuleCycleButton from './SidebarModuleCycleButton';
 import { APP_MODULE_DEFINITIONS } from '../lib/appSwitcherModules';
 import { preloadModuleIconsFromModules } from '../lib/moduleIconPreload';
+import {
+  readModuleLocalMenuPins,
+  saveModuleMenuPins,
+  syncMenuPinsFromServer,
+} from '../lib/sidebarMenuPins';
 
 // Reorganized menu structure - 4 groups + platform admin group
 const MENU_GROUPS = [
@@ -438,77 +443,39 @@ function resolveGroupModuleContext(group) {
   return 'work';
 }
 
-function SideLink({ to, icon: Icon, label, collapsed, end, badge, moduleContext }) {
-  const location = useLocation();
-  const onNavClick = () => {
-    const p = location.pathname;
-    if (p === '/crm/dashboard' || p === '/crm/pipeline') {
-      persistCrmPipelineUiNow();
-    }
-    if (moduleContext) storeModule(moduleContext);
-  };
-  return (
-    <SidebarTooltip
-      label={label}
-      badge={badge}
-      enabled={collapsed}
-    >
-      <NavLink
-        to={to}
-        state={moduleContext ? { moduleContext } : undefined}
-        onClick={onNavClick}
-        end={to === '/' || end}
-        className={({ isActive }) =>
-          `flex items-center gap-3 rounded-lg px-3 py-2 text-[14px] font-medium transition-all ${
-            isActive
-              ? 'bg-[var(--color-sidebar-active)] text-[var(--color-sidebar-text-active)]'
-              : 'text-[var(--color-sidebar-text)] hover:bg-[var(--color-sidebar-hover)] hover:text-white'
-          }`
-        }
-      >
-        <span className="relative shrink-0">
-          <Icon className="h-[19px] w-[19px]" />
-          {badge > 0 && (
-            <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
-              {badge > 9 ? '9+' : badge}
-            </span>
-          )}
-        </span>
-        {!collapsed && (
-          <span className="flex-1 flex items-center justify-between gap-2 min-w-0">
-            <span className="truncate">{label}</span>
-            {badge > 0 && (
-              <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
-                {badge > 9 ? '9+' : badge}
-              </span>
-            )}
-          </span>
-        )}
-      </NavLink>
-    </SidebarTooltip>
-  );
+function serializeMenuLinkTo(to) {
+  if (typeof to === 'string') return to;
+  if (to && typeof to === 'object') {
+    const pathname = to.pathname || '';
+    const search = to.search || '';
+    return `${pathname}${search}`;
+  }
+  return '';
 }
 
-function MenuGroup({ group, collapsed, moduleScope, isAdmin, isPlatformAdminUser, isWorkModuleAdmin, isStrictAdminUser, isExecutive, canAccessModule, canAccessSocialInbox, userRole, userTenantId, updatesUnread = 0, assignmentsUnread = 0, sxAssignmentsUnread = 0, socialUnread = 0, unifiedTasksOpen = 0 }) {
-  const [open, setOpen] = useState(false);
-  const moduleContext = resolveGroupModuleContext(group);
-
-  // Đổi module (CRM / SX / VC / Công việc / …) → thu gọn lại toàn bộ nhóm menu
-  useEffect(() => {
-    setOpen(false);
-  }, [moduleScope]);
-  const moduleAdmin = (moduleContext === 'work' || moduleContext === 'sx')
+function resolveMenuGroupAdmin(moduleContext, { isAdmin, isWorkModuleAdmin }) {
+  return (moduleContext === 'work' || moduleContext === 'sx')
     ? (isWorkModuleAdmin ?? isAdmin)
     : isAdmin;
+}
 
-  if (group.platformAdminOnly && !isPlatformAdminUser) return null;
-  if (group.moduleKey && canAccessModule && !canAccessModule(group.moduleKey)) return null;
-  if (group.adminOnly && !moduleAdmin) return null;
+function filterVisibleMenuItems(items, {
+  group,
+  moduleAdmin,
+  isPlatformAdminUser,
+  isStrictAdminUser,
+  isExecutive,
+  canAccessModule,
+  canAccessSocialInbox,
+  userRole,
+  userTenantId,
+}) {
+  if (group.platformAdminOnly && !isPlatformAdminUser) return [];
+  if (group.moduleKey && canAccessModule && !canAccessModule(group.moduleKey)) return [];
+  if (group.adminOnly && !moduleAdmin) return [];
 
   const r = String(userRole || '').trim().toLowerCase();
-
-  // Filter items based on role + ecosystem module scope
-  const items = group.items.filter((item) => {
+  return (items || []).filter((item) => {
     if (item.tenantAdminOnly && !userTenantId) return false;
     if (item.socialInboxAccess && !canAccessSocialInbox) return false;
     if (item.adminOnly && !moduleAdmin) return false;
@@ -518,9 +485,198 @@ function MenuGroup({ group, collapsed, moduleScope, isAdmin, isPlatformAdminUser
     if (item.hideForRoles?.length && r && item.hideForRoles.map((x) => String(x).toLowerCase()).includes(r)) return false;
     return true;
   });
-  
-  // Hide entire group if no items visible
-  if (items.length === 0) return null;
+}
+
+function badgeForMenuLink(to, {
+  updatesUnread = 0,
+  assignmentsUnread = 0,
+  sxAssignmentsUnread = 0,
+  socialUnread = 0,
+  unifiedTasksOpen = 0,
+} = {}) {
+  const key = serializeMenuLinkTo(to);
+  if (key === '/updates') return updatesUnread;
+  if (key === '/crm/assignments') return assignmentsUnread;
+  if (key === '/sx/assignments') return sxAssignmentsUnread;
+  if (key === '/social') return socialUnread;
+  if (key === '/work/unified') return unifiedTasksOpen;
+  return 0;
+}
+
+function SideLink({
+  to,
+  icon: Icon,
+  label,
+  collapsed,
+  end,
+  badge,
+  moduleContext,
+  linkKey,
+  isPinned = false,
+  onTogglePin,
+  pinEnabled = false,
+}) {
+  const location = useLocation();
+  const resolvedKey = linkKey || serializeMenuLinkTo(to);
+  const onNavClick = () => {
+    const p = location.pathname;
+    if (p === '/crm/dashboard' || p === '/crm/pipeline') {
+      persistCrmPipelineUiNow();
+    }
+    if (moduleContext) storeModule(moduleContext);
+  };
+  const link = (
+    <NavLink
+      to={to}
+      state={moduleContext ? { moduleContext } : undefined}
+      onClick={onNavClick}
+      end={to === '/' || end}
+      className={({ isActive }) =>
+        `flex items-center gap-3 rounded-lg px-3 py-2 text-[14px] font-medium transition-all min-w-0 flex-1 ${
+          isActive
+            ? 'bg-[var(--color-sidebar-active)] text-[var(--color-sidebar-text-active)]'
+            : 'text-[var(--color-sidebar-text)] hover:bg-[var(--color-sidebar-hover)] hover:text-white'
+        }`
+      }
+    >
+      <span className="relative shrink-0">
+        <Icon className="h-[19px] w-[19px]" />
+        {badge > 0 && (
+          <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
+            {badge > 9 ? '9+' : badge}
+          </span>
+        )}
+      </span>
+      {!collapsed && (
+        <span className="flex-1 flex items-center justify-between gap-2 min-w-0">
+          <span className="truncate">{label}</span>
+          {badge > 0 && (
+            <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+              {badge > 9 ? '9+' : badge}
+            </span>
+          )}
+        </span>
+      )}
+    </NavLink>
+  );
+
+  if (!pinEnabled || collapsed || !onTogglePin || !resolvedKey) {
+    return (
+      <SidebarTooltip label={label} badge={badge} enabled={collapsed}>
+        {link}
+      </SidebarTooltip>
+    );
+  }
+
+  return (
+    <div className="group/link flex items-center gap-0.5 min-w-0">
+      <SidebarTooltip label={label} badge={badge} enabled={false}>
+        {link}
+      </SidebarTooltip>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onTogglePin(resolvedKey);
+        }}
+        title={isPinned ? 'Bỏ ghim' : 'Ghim tab'}
+        className={`shrink-0 p-1 rounded transition-all cursor-pointer ${
+          isPinned
+            ? 'text-amber-300 opacity-100'
+            : 'text-white/35 opacity-0 group-hover/link:opacity-100 hover:text-amber-200'
+        }`}
+      >
+        <Pin className={`h-3 w-3 ${isPinned ? 'fill-current' : ''}`} />
+      </button>
+    </div>
+  );
+}
+
+function PinnedMenuBar({
+  items,
+  collapsed,
+  onTogglePin,
+  updatesUnread,
+  assignmentsUnread,
+  sxAssignmentsUnread,
+  socialUnread,
+  unifiedTasksOpen,
+}) {
+  if (!items.length) return null;
+  const badgeOpts = {
+    updatesUnread,
+    assignmentsUnread,
+    sxAssignmentsUnread,
+    socialUnread,
+    unifiedTasksOpen,
+  };
+  return (
+    <div className="shrink-0 px-2 pb-2 mb-1 border-b border-white/10">
+      {!collapsed && (
+        <p className="px-2 pt-0.5 pb-1.5 text-[11px] font-bold text-amber-200/85 uppercase tracking-wide flex items-center gap-1.5">
+          <Pin className="h-3 w-3 fill-current shrink-0" />
+          <span>Đã ghim</span>
+        </p>
+      )}
+      <nav className="space-y-0.5">
+        {items.map((item) => (
+          <SideLink
+            key={`pin-${item.linkKey}`}
+            to={item.to}
+            icon={item.icon}
+            label={item.label}
+            end={item.end}
+            moduleContext={item.moduleContext}
+            collapsed={collapsed}
+            linkKey={item.linkKey}
+            isPinned
+            pinEnabled
+            onTogglePin={onTogglePin}
+            badge={badgeForMenuLink(item.to, badgeOpts)}
+          />
+        ))}
+      </nav>
+    </div>
+  );
+}
+
+function MenuGroup({ group, collapsed, moduleScope, isAdmin, isPlatformAdminUser, isWorkModuleAdmin, isStrictAdminUser, isExecutive, canAccessModule, canAccessSocialInbox, userRole, userTenantId, updatesUnread = 0, assignmentsUnread = 0, sxAssignmentsUnread = 0, socialUnread = 0, unifiedTasksOpen = 0, pinnedLinkKeys = [], onTogglePin }) {
+  const [open, setOpen] = useState(false);
+  const moduleContext = resolveGroupModuleContext(group);
+
+  // Đổi module (CRM / SX / VC / Công việc / …) → thu gọn lại toàn bộ nhóm menu
+  useEffect(() => {
+    setOpen(false);
+  }, [moduleScope]);
+  const moduleAdmin = resolveMenuGroupAdmin(moduleContext, { isAdmin, isWorkModuleAdmin });
+
+  const items = filterVisibleMenuItems(group.items, {
+    group,
+    moduleAdmin,
+    isPlatformAdminUser,
+    isStrictAdminUser,
+    isExecutive,
+    canAccessModule,
+    canAccessSocialInbox,
+    userRole,
+    userTenantId,
+  });
+
+  const unpinnedItems = items.filter(
+    (item) => !pinnedLinkKeys.includes(serializeMenuLinkTo(item.to)),
+  );
+
+  // Ẩn nhóm nếu không còn mục (đã ghim hết hoặc không có quyền)
+  if (unpinnedItems.length === 0) return null;
+
+  const badgeOpts = {
+    updatesUnread,
+    assignmentsUnread,
+    sxAssignmentsUnread,
+    socialUnread,
+    unifiedTasksOpen,
+  };
 
   return (
     <div className="mb-4">
@@ -544,22 +700,22 @@ function MenuGroup({ group, collapsed, moduleScope, isAdmin, isPlatformAdminUser
       
       {open && (
         <nav className="space-y-0.5 px-2 mt-1">
-          {items.map((item) => (
-            <SideLink
-              key={`${group.id}-${typeof item.to === 'string' ? item.to : `${item.to?.pathname || ''}${item.to?.search || ''}`}-${item.label}`}
-              {...item}
-              moduleContext={moduleContext}
-              collapsed={collapsed}
-              badge={
-                item.to === '/updates' ? updatesUnread
-                : item.to === '/crm/assignments' ? assignmentsUnread
-                : item.to === '/sx/assignments' ? sxAssignmentsUnread
-                : item.to === '/social' ? socialUnread
-                : item.to === '/work/unified' ? unifiedTasksOpen
-                : 0
-              }
-            />
-          ))}
+          {unpinnedItems.map((item) => {
+            const linkKey = serializeMenuLinkTo(item.to);
+            return (
+              <SideLink
+                key={`${group.id}-${linkKey}-${item.label}`}
+                {...item}
+                moduleContext={moduleContext}
+                collapsed={collapsed}
+                linkKey={linkKey}
+                isPinned={pinnedLinkKeys.includes(linkKey)}
+                pinEnabled
+                onTogglePin={onTogglePin}
+                badge={badgeForMenuLink(item.to, badgeOpts)}
+              />
+            );
+          })}
         </nav>
       )}
     </div>
@@ -647,6 +803,116 @@ export default function Sidebar() {
                 ? null
                 : MENU_GROUPS;
 
+  const sidebarUserId = user?.id || user?.userId || null;
+
+  const sidebarGroups = useMemo(() => {
+    if (isCRM) {
+      return [
+        CRM_MENU_TOP_GROUP,
+        ...CRM_MENU_BOTTOM_GROUPS.filter((g) => {
+          if (g.staffHidden && !isCrmMenuAdmin) return false;
+          if (g.adminOnly && !isCrmMenuAdmin) return false;
+          return true;
+        }),
+      ];
+    }
+    return activeMenuGroups || [];
+  }, [isCRM, isCrmMenuAdmin, activeMenuGroups]);
+
+  const menuFilterContext = useMemo(() => ({
+    isAdmin: isCRM ? isCrmMenuAdmin : isAdmin,
+    isPlatformAdminUser,
+    isWorkModuleAdmin,
+    isStrictAdminUser,
+    isExecutive,
+    canAccessModule,
+    canAccessSocialInbox,
+    userRole: user?.role,
+    userTenantId: user?.tenant_id,
+  }), [
+    isCRM,
+    isCrmMenuAdmin,
+    isAdmin,
+    isPlatformAdminUser,
+    isWorkModuleAdmin,
+    isStrictAdminUser,
+    isExecutive,
+    canAccessModule,
+    canAccessSocialInbox,
+    user?.role,
+    user?.tenant_id,
+  ]);
+
+  const flatVisibleMenuItems = useMemo(() => {
+    const rows = [];
+    for (const group of sidebarGroups) {
+      const moduleContext = resolveGroupModuleContext(group);
+      const moduleAdmin = resolveMenuGroupAdmin(moduleContext, {
+        isAdmin: menuFilterContext.isAdmin,
+        isWorkModuleAdmin,
+      });
+      const items = filterVisibleMenuItems(group.items, {
+        group,
+        moduleAdmin,
+        ...menuFilterContext,
+      });
+      for (const item of items) {
+        rows.push({
+          ...item,
+          linkKey: serializeMenuLinkTo(item.to),
+          moduleContext,
+        });
+      }
+    }
+    return rows;
+  }, [sidebarGroups, menuFilterContext, isWorkModuleAdmin]);
+
+  const [pinnedLinkKeys, setPinnedLinkKeys] = useState(() => readModuleLocalMenuPins(sidebarModuleKey, sidebarUserId));
+  const [menuPinsSynced, setMenuPinsSynced] = useState(false);
+
+  useEffect(() => {
+    if (!sidebarUserId) {
+      setMenuPinsSynced(true);
+      setPinnedLinkKeys(readModuleLocalMenuPins(sidebarModuleKey, null));
+      return undefined;
+    }
+    let cancelled = false;
+    setMenuPinsSynced(false);
+    (async () => {
+      const all = await syncMenuPinsFromServer(sidebarUserId);
+      if (cancelled) return;
+      setPinnedLinkKeys(Array.isArray(all[sidebarModuleKey]) ? all[sidebarModuleKey] : []);
+      setMenuPinsSynced(true);
+    })();
+    return () => { cancelled = true; };
+  }, [sidebarUserId]);
+
+  useEffect(() => {
+    if (!menuPinsSynced) return;
+    setPinnedLinkKeys(readModuleLocalMenuPins(sidebarModuleKey, sidebarUserId));
+  }, [sidebarModuleKey, sidebarUserId, menuPinsSynced]);
+
+  const toggleMenuPin = useCallback((linkKey) => {
+    if (!linkKey) return;
+    setPinnedLinkKeys((prev) => {
+      const next = prev.includes(linkKey)
+        ? prev.filter((k) => k !== linkKey)
+        : [...prev, linkKey];
+      saveModuleMenuPins(sidebarModuleKey, sidebarUserId, next);
+      return next;
+    });
+  }, [sidebarModuleKey, sidebarUserId]);
+
+  const pinnedMenuItems = useMemo(() => {
+    const byKey = new Map(flatVisibleMenuItems.map((row) => [row.linkKey, row]));
+    return pinnedLinkKeys.map((key) => byKey.get(key)).filter(Boolean);
+  }, [pinnedLinkKeys, flatVisibleMenuItems]);
+
+  const menuPinProps = {
+    pinnedLinkKeys,
+    onTogglePin: toggleMenuPin,
+  };
+
   const pinModule = (path) => {
     localStorage.setItem('pinned_module', path);
     setPinnedModule(path);
@@ -730,6 +996,16 @@ export default function Sidebar() {
 
       {/* Menu Groups — CRM: tổng quan cố định trên; các cụm Bán hàng / Tài chính / KPI / … cuộn bên dưới */}
       <div className={`flex-1 flex flex-col min-h-0 ${isCRM ? '' : 'overflow-y-auto'} py-2`}>
+        <PinnedMenuBar
+          items={pinnedMenuItems}
+          collapsed={collapsed}
+          onTogglePin={toggleMenuPin}
+          updatesUnread={updatesUnread}
+          assignmentsUnread={assignmentsUnread}
+          sxAssignmentsUnread={sxAssignmentsUnread}
+          socialUnread={socialUnread}
+          unifiedTasksOpen={unifiedTasksOpen}
+        />
         {isCRM ? (
           <>
             <div className="shrink-0">
@@ -752,6 +1028,7 @@ export default function Sidebar() {
                 sxAssignmentsUnread={sxAssignmentsUnread}
                 socialUnread={socialUnread}
                 unifiedTasksOpen={unifiedTasksOpen}
+                {...menuPinProps}
               />
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto border-t border-white/10 mt-1 pt-2">
@@ -778,6 +1055,7 @@ export default function Sidebar() {
                 sxAssignmentsUnread={sxAssignmentsUnread}
                 socialUnread={socialUnread}
                 unifiedTasksOpen={unifiedTasksOpen}
+                    {...menuPinProps}
                   />
                 );
               })}
@@ -804,6 +1082,7 @@ export default function Sidebar() {
                 sxAssignmentsUnread={sxAssignmentsUnread}
                 socialUnread={socialUnread}
                 unifiedTasksOpen={unifiedTasksOpen}
+                {...menuPinProps}
               />
           ))
         )}
