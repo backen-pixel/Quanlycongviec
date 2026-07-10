@@ -392,6 +392,65 @@ r.put('/crm-app-prefs', async (req, res) => {
   }
 });
 
+// ═══ Sidebar menu pins (đồng bộ web ↔ mobile / máy khác) ═══
+function sidebarMenuPinsStorageKey(userId) {
+  return `sidebar_menu_pins:${userId}`;
+}
+
+function normalizeSidebarMenuPinsMap(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = {};
+  for (const [mod, arr] of Object.entries(raw)) {
+    if (!Array.isArray(arr)) continue;
+    const keys = [...new Set(arr.map((x) => String(x || '').trim()).filter(Boolean))];
+    if (keys.length) out[String(mod)] = keys;
+  }
+  return out;
+}
+
+r.get('/sidebar-menu-pins', async (req, res) => {
+  try {
+    const uid = req.user.userId || req.user.id;
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
+    const { data, error } = await supabase.from('app_settings')
+      .select('value')
+      .eq('key', sidebarMenuPinsStorageKey(uid))
+      .maybeSingle();
+    if (error && error.code !== 'PGRST116') throw error;
+    res.json(normalizeSidebarMenuPinsMap(data?.value));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.put('/sidebar-menu-pins', async (req, res) => {
+  try {
+    const uid = req.user.userId || req.user.id;
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
+    const incoming = normalizeSidebarMenuPinsMap(req.body);
+    const storageKey = sidebarMenuPinsStorageKey(uid);
+    const { data: existing, error: readErr } = await supabase.from('app_settings')
+      .select('value')
+      .eq('key', storageKey)
+      .maybeSingle();
+    if (readErr && readErr.code !== 'PGRST116') throw readErr;
+    const prev = normalizeSidebarMenuPinsMap(existing?.value);
+    const merged = normalizeSidebarMenuPinsMap({ ...prev, ...incoming });
+    const { error } = await supabase.from('app_settings').upsert(
+      {
+        key: storageKey,
+        value: merged,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'key' },
+    );
+    if (error) throw error;
+    res.json(merged);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ════════════════════════════════════════════════════
 // PARAM ROUTES (/:id comes after static routes)
 // ════════════════════════════════════════════════════
