@@ -489,9 +489,14 @@ function SideLink({ to, icon: Icon, label, collapsed, end, badge, moduleContext 
   );
 }
 
-function MenuGroup({ group, collapsed, isAdmin, isPlatformAdminUser, isWorkModuleAdmin, isStrictAdminUser, isExecutive, canAccessModule, canAccessSocialInbox, userRole, userTenantId, updatesUnread = 0, assignmentsUnread = 0, sxAssignmentsUnread = 0, socialUnread = 0, unifiedTasksOpen = 0 }) {
-  const [open, setOpen] = useState(true);
+function MenuGroup({ group, collapsed, moduleScope, isAdmin, isPlatformAdminUser, isWorkModuleAdmin, isStrictAdminUser, isExecutive, canAccessModule, canAccessSocialInbox, userRole, userTenantId, updatesUnread = 0, assignmentsUnread = 0, sxAssignmentsUnread = 0, socialUnread = 0, unifiedTasksOpen = 0 }) {
+  const [open, setOpen] = useState(false);
   const moduleContext = resolveGroupModuleContext(group);
+
+  // Đổi module (CRM / SX / VC / Công việc / …) → thu gọn lại toàn bộ nhóm menu
+  useEffect(() => {
+    setOpen(false);
+  }, [moduleScope]);
   const moduleAdmin = (moduleContext === 'work' || moduleContext === 'sx')
     ? (isWorkModuleAdmin ?? isAdmin)
     : isAdmin;
@@ -618,6 +623,14 @@ export default function Sidebar() {
   const isVC = !isKnowledge && !isCalc && !isKetoan && (location.pathname.startsWith('/vc') || activeModule === 'vc');
   const isCongViec = !isKnowledge && !isCalc && !isKetoan && !isSX && !isVC && !isCRM
     && (isCongViecPrimaryPath(location.pathname) || activeModule === 'congviec');
+  const sidebarModuleKey = isKnowledge ? 'knowledge'
+    : isCalc ? 'calc'
+      : isKetoan ? 'ketoan'
+        : isVC ? 'vc'
+          : isSX ? 'sx'
+            : isCongViec ? 'congviec'
+              : isCRM ? 'crm'
+                : 'platform';
   const activeMenuGroups = isKnowledge
     ? KNOWLEDGE_MENU_GROUPS
     : isCalc
@@ -721,7 +734,9 @@ export default function Sidebar() {
           <>
             <div className="shrink-0">
               <MenuGroup
+                key={`${sidebarModuleKey}-${CRM_MENU_TOP_GROUP.id}`}
                 group={CRM_MENU_TOP_GROUP}
+                moduleScope={sidebarModuleKey}
                 collapsed={collapsed}
                 isAdmin={isAdmin}
                 isPlatformAdminUser={isPlatformAdminUser}
@@ -745,8 +760,9 @@ export default function Sidebar() {
                 if (group.adminOnly && !isCrmMenuAdmin) return null;
                 return (
                   <MenuGroup
-                    key={group.id}
+                    key={`${sidebarModuleKey}-${group.id}`}
                     group={group}
+                    moduleScope={sidebarModuleKey}
                     collapsed={collapsed}
                     isAdmin={isCrmMenuAdmin}
                     isPlatformAdminUser={isPlatformAdminUser}
@@ -770,8 +786,9 @@ export default function Sidebar() {
         ) : (
           activeMenuGroups.map((group) => (
               <MenuGroup
-                key={group.id}
+                key={`${sidebarModuleKey}-${group.id}`}
                 group={group}
+                moduleScope={sidebarModuleKey}
                 collapsed={collapsed}
                 isAdmin={isAdmin}
                 isPlatformAdminUser={isPlatformAdminUser}
