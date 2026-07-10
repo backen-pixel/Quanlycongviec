@@ -401,7 +401,7 @@ export default function MessengerConversationDetailPanel({
             <input
               value={nicknameDraft}
               onChange={(e) => setNicknameDraft(e.target.value)}
-              placeholder="Nhập biệt danh"
+              placeholder={isDirect ? 'Nhập biệt danh cá nhân' : 'Nhập biệt danh trong nhóm'}
               maxLength={80}
               className="w-full h-9 px-2 rounded-lg text-slate-900 text-sm"
               autoFocus
@@ -437,7 +437,7 @@ export default function MessengerConversationDetailPanel({
                 type="button"
                 onClick={() => startNicknameEdit(selected.peer_id, peerUser?.nickname || title)}
                 className="p-1 rounded-md hover:bg-white/15 shrink-0"
-                title="Đặt biệt danh"
+                title="Đặt biệt danh cá nhân"
               >
                 <Pencil className="h-3.5 w-3.5 opacity-90" />
               </button>
@@ -593,8 +593,13 @@ export default function MessengerConversationDetailPanel({
                           </p>
                         )}
                         <p className="text-[11px] text-slate-500">
-                          {u.nickname && (u.full_name || u.email) ? (
+                          {(u.group_nickname || u.nickname) && (u.full_name || u.email) ? (
                             <span className="block truncate text-slate-400">{u.full_name || u.email}</span>
+                          ) : null}
+                          {u.contact_nickname && !isDirect ? (
+                            <span className="block truncate text-slate-400">
+                              Biệt danh cá nhân: {u.contact_nickname}
+                            </span>
                           ) : null}
                           <span>
                             {memberRoleLabel(m, groupDetail)}
@@ -621,11 +626,11 @@ export default function MessengerConversationDetailPanel({
                               <button
                                 type="button"
                                 className="w-full px-3 py-2 text-left hover:bg-violet-50"
-                                onClick={() => startNicknameEdit(m.user_id, u.nickname || displayName)}
+                                onClick={() => startNicknameEdit(m.user_id, u.group_nickname || u.nickname || displayName)}
                               >
-                                Đặt biệt danh
+                                Biệt danh trong nhóm
                               </button>
-                              {u.nickname ? (
+                              {(u.group_nickname || u.nickname) ? (
                                 <button
                                   type="button"
                                   className="w-full px-3 py-2 text-left text-slate-600 hover:bg-slate-50"
@@ -634,7 +639,7 @@ export default function MessengerConversationDetailPanel({
                                     void onSaveNickname?.(m.user_id, '');
                                   }}
                                 >
-                                  Xóa biệt danh
+                                  Xóa biệt danh nhóm
                                 </button>
                               ) : null}
                               {canManageGroup && !isCreator ? (

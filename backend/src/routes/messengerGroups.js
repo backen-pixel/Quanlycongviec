@@ -318,12 +318,15 @@ async function fetchLastMessagesForGroupPreviews(groupIds, forUserId) {
   return out;
 }
 
-function formatGroupListPreview(preview, { isDirect, lastUserId, viewerId, userNameById }) {
+function formatGroupListPreview(preview, { isDirect, lastUserId, viewerId, userNameById, senderName }) {
   const text = String(preview ?? '').trim();
   if (!text || isDirect) return text || null;
   if (!lastUserId) return text;
   if (String(lastUserId) === String(viewerId)) return `Bạn: ${text}`;
-  const name = userNameById?.get(lastUserId) ?? userNameById?.get(String(lastUserId));
+  const name =
+    senderName
+    ?? userNameById?.get(lastUserId)
+    ?? userNameById?.get(String(lastUserId));
   return name ? `${name}: ${text}` : text;
 }
 
@@ -713,6 +716,111 @@ async function fetchMessengerNicknameMap(viewerUserId, targetUserIds = null) {
   return map;
 }
 
+let _messengerGroupNicknamesTableReady = null;
+
+async function ensureMessengerGroupMemberNicknamesTable() {
+  if (_messengerGroupNicknamesTableReady === true) return true;
+  if (_messengerGroupNicknamesTableReady === false) return false;
+  try {
+    await pgSessionQuery(`
+      CREATE TABLE IF NOT EXISTS messenger_group_member_nicknames (
+        viewer_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        group_id UUID NOT NULL REFERENCES messenger_groups(id) ON DELETE CASCADE,
+        target_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        nickname TEXT NOT NULL CHECK (char_length(trim(nickname)) BETWEEN 1 AND 80),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (viewer_user_id, group_id, target_user_id),
+        CHECK (viewer_user_id <> target_user_id)
+      )
+    `);
+    await pgSessionQuery(`
+      CREATE INDEX IF NOT EXISTS idx_messenger_group_member_nicknames_viewer_group
+        ON messenger_group_member_nicknames (viewer_user_id, group_id)
+    `);
+    _messengerGroupNicknamesTableReady = true;
+    return true;
+  } catch {
+    _messengerGroupNicknamesTableReady = false;
+    return false;
+  }
+}
+
+function isMissingGroupNicknamesTableError(err) {
+  const msg = String(err?.message || err || '').toLowerCase();
+  const code = String(err?.code || '');
+  return (
+    code === '42P01'
+    || code === 'PGRST205'
+    || msg.includes('messenger_group_member_nicknames')
+    || (msg.includes('relation') && msg.includes('does not exist'))
+  );
+}
+
+/** Map target_user_id → nickname trong một nhóm (chỉ viewer hiện tại). */
+async function fetchMessengerGroupNicknameMap(viewerUserId, groupId, targetUserIds = null) {
+  const map = new Map();
+  if (!viewerUserId || !groupId) return map;
+  const ready = await ensureMessengerGroupMemberNicknamesTable();
+  if (!ready) return map;
+  try {
+    let q = supabase
+      .from('messenger_group_member_nicknames')
+      .select('target_user_id, nickname')
+      .eq('viewer_user_id', viewerUserId)
+      .eq('group_id', groupId);
+    if (Array.isArray(targetUserIds) && targetUserIds.length) {
+      q = q.in('target_user_id', [...new Set(targetUserIds.map(String))]);
+    }
+    const { data, error } = await q;
+    if (error) {
+      if (isMissingGroupNicknamesTableError(error)) return map;
+      throw error;
+    }
+    for (const row of data || []) {
+      const nick = String(row.nickname || '').trim();
+      if (nick) map.set(String(row.target_user_id), nick);
+    }
+  } catch (e) {
+    if (!isMissingGroupNicknamesTableError(e)) console.warn('[messenger] group nicknames load:', e.message);
+  }
+  return map;
+}
+
+/** Lấy nickname trong nhóm cho nhiều nhóm (preview danh sách hội thoại). */
+async function fetchMessengerGroupNicknameMapsByGroup(viewerUserId, groupIds, targetUserIds = null) {
+  const byGroup = new Map();
+  if (!viewerUserId || !Array.isArray(groupIds) || !groupIds.length) return byGroup;
+  const ready = await ensureMessengerGroupMemberNicknamesTable();
+  if (!ready) return byGroup;
+  const gids = [...new Set(groupIds.map(String))];
+  try {
+    let q = supabase
+      .from('messenger_group_member_nicknames')
+      .select('group_id, target_user_id, nickname')
+      .eq('viewer_user_id', viewerUserId)
+      .in('group_id', gids);
+    if (Array.isArray(targetUserIds) && targetUserIds.length) {
+      q = q.in('target_user_id', [...new Set(targetUserIds.map(String))]);
+    }
+    const { data, error } = await q;
+    if (error) {
+      if (isMissingGroupNicknamesTableError(error)) return byGroup;
+      throw error;
+    }
+    for (const row of data || []) {
+      const nick = String(row.nickname || '').trim();
+      if (!nick) continue;
+      const gid = String(row.group_id);
+      const tid = String(row.target_user_id);
+      if (!byGroup.has(gid)) byGroup.set(gid, new Map());
+      byGroup.get(gid).set(tid, nick);
+    }
+  } catch (e) {
+    if (!isMissingGroupNicknamesTableError(e)) console.warn('[messenger] group nicknames batch load:', e.message);
+  }
+  return byGroup;
+}
+
 function resolveMessengerDisplayName(user, nickMap, fallback = 'Đồng nghiệp') {
   if (!user) return fallback;
   const id = user.id || user.user_id;
@@ -721,15 +829,42 @@ function resolveMessengerDisplayName(user, nickMap, fallback = 'Đồng nghiệp
   return user.full_name || user.email || fallback;
 }
 
-function attachDisplayNameToUser(user, nickMap) {
+function attachContactDisplayNameToUser(user, nickMap) {
   if (!user) return user;
   const id = user.id || user.user_id;
   const nick = id ? nickMap?.get?.(String(id)) || null : null;
   return {
     ...user,
     nickname: nick,
+    contact_nickname: nick,
     display_name: resolveMessengerDisplayName(user, nickMap),
   };
+}
+
+function attachGroupDisplayNameToUser(user, groupNickMap, contactNickMap = null) {
+  if (!user) return user;
+  const id = user.id || user.user_id;
+  const groupNick = id ? groupNickMap?.get?.(String(id)) || null : null;
+  const contactNick = id && contactNickMap ? contactNickMap?.get?.(String(id)) || null : null;
+  return {
+    ...user,
+    group_nickname: groupNick,
+    contact_nickname: contactNick,
+    nickname: groupNick,
+    display_name: groupNick || user.full_name || user.email || 'Đồng nghiệp',
+  };
+}
+
+function attachDisplayNameToUser(user, nickMap) {
+  return attachContactDisplayNameToUser(user, nickMap);
+}
+
+function attachGroupDisplayNamesToMessages(rows, groupNickMap, contactNickMap = null) {
+  if (!Array.isArray(rows) || !rows.length) return rows;
+  return rows.map((m) => {
+    if (!m?.user) return m;
+    return { ...m, user: attachGroupDisplayNameToUser(m.user, groupNickMap, contactNickMap) };
+  });
 }
 
 function attachDisplayNamesToMessages(rows, nickMap) {
@@ -1181,12 +1316,18 @@ r.get('/groups', responseCache({ ttl: 30, scope: 'user', tags: ['messenger'] }),
       ),
     ];
     const nickTargetIds = [...new Set([...uniquePeers, ...lastSenderIds].map(String))];
-    const nickMap = await fetchMessengerNicknameMap(uid, nickTargetIds);
-    const userNameById = new Map();
+    const contactNickMap = await fetchMessengerNicknameMap(uid, nickTargetIds);
+    const nonDirectGroupIds = (groupsFiltered || []).filter((g) => !g.is_direct).map((g) => g.id);
+    const groupNickMapsByGroup = await fetchMessengerGroupNicknameMapsByGroup(
+      uid,
+      nonDirectGroupIds,
+      lastSenderIds,
+    );
+    const senderUserById = new Map();
     if (lastSenderIds.length) {
-      const { data: senderUsers } = await supabase.from('users').select('id, full_name').in('id', lastSenderIds);
+      const { data: senderUsers } = await supabase.from('users').select('id, full_name, email').in('id', lastSenderIds);
       for (const u of senderUsers || []) {
-        if (u?.id) userNameById.set(u.id, resolveMessengerDisplayName(u, nickMap));
+        if (u?.id) senderUserById.set(String(u.id), u);
       }
     }
 
@@ -1202,20 +1343,27 @@ r.get('/groups', responseCache({ ttl: 30, scope: 'user', tags: ['messenger'] }),
           peer_id = other;
           const pu = peerMap.get(other);
           if (pu) {
-            display_name = resolveMessengerDisplayName(pu, nickMap);
+            display_name = resolveMessengerDisplayName(pu, contactNickMap);
             peer_full_name = pu.full_name || pu.email || null;
           }
           if (pu?.avatar) peer_avatar = pu.avatar;
         }
       }
       const st = statsMap.get(g.id);
+      const lastUserId = st?.last_user_id ?? null;
+      let previewSenderName = null;
+      if (!g.is_direct && lastUserId) {
+        const senderUser = senderUserById.get(String(lastUserId));
+        const gNickMap = groupNickMapsByGroup.get(String(g.id)) || new Map();
+        previewSenderName = resolveMessengerDisplayName(senderUser, gNickMap);
+      }
       const last_message = formatGroupListPreview(
         sanitizeStatsLastMessagePreview(st?.last_message, uid),
         {
           isDirect: !!g.is_direct,
-          lastUserId: st?.last_user_id,
+          lastUserId,
           viewerId: uid,
-          userNameById,
+          senderName: previewSenderName,
         },
       );
       return {
@@ -1245,7 +1393,7 @@ r.get('/groups', responseCache({ ttl: 30, scope: 'user', tags: ['messenger'] }),
   }
 });
 
-/** Biệt danh liên hệ Messenger (chỉ mình bạn thấy). */
+/** Biệt danh liên hệ Messenger (chat 1-1 / chat nhanh — chỉ mình bạn thấy). */
 r.get('/nicknames', async (req, res) => {
   try {
     const uid = req.authUserId;
@@ -1319,6 +1467,97 @@ r.delete('/nicknames/:targetUserId', async (req, res) => {
     res.json({
       target_user_id: targetId,
       nickname: null,
+      display_name: targetUser?.full_name || targetUser?.email || 'Đồng nghiệp',
+      full_name: targetUser?.full_name || targetUser?.email || null,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Biệt danh thành viên trong nhóm (tách biệt biệt danh cá nhân). */
+r.put('/groups/:groupId/nicknames/:targetUserId', async (req, res) => {
+  try {
+    const viewerId = req.authUserId;
+    const groupId = parseUuidParam(req.params.groupId);
+    const targetId = parseUuidParam(req.params.targetUserId);
+    if (!groupId) return res.status(400).json({ error: 'Nhóm không hợp lệ' });
+    if (!targetId) return res.status(400).json({ error: 'Người dùng không hợp lệ' });
+    if (String(targetId) === String(viewerId)) {
+      return res.status(400).json({ error: 'Không thể đặt biệt danh cho chính mình' });
+    }
+    const ok = await assertGroupMember(groupId, viewerId);
+    if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
+    const { data: grp } = await supabase.from('messenger_groups').select('id, is_direct').eq('id', groupId).maybeSingle();
+    if (!grp) return res.status(404).json({ error: 'Không tìm thấy nhóm' });
+    if (grp.is_direct) {
+      return res.status(400).json({ error: 'Chat 1-1 dùng biệt danh cá nhân, không dùng biệt danh nhóm' });
+    }
+    const memberOk = await assertGroupMember(groupId, targetId);
+    if (!memberOk) return res.status(404).json({ error: 'Người dùng không thuộc nhóm' });
+    const nickname = String(req.body?.nickname || '').trim();
+    if (!nickname || nickname.length > 80) {
+      return res.status(400).json({ error: 'Biệt danh phải từ 1–80 ký tự' });
+    }
+    const { data: targetUser, error: uErr } = await supabase
+      .from('users')
+      .select('id, full_name, email, avatar')
+      .eq('id', targetId)
+      .maybeSingle();
+    if (uErr || !targetUser) return res.status(404).json({ error: 'Không tìm thấy người dùng' });
+    const ready = await ensureMessengerGroupMemberNicknamesTable();
+    if (!ready) return res.status(503).json({ error: 'Chưa cấu hình bảng biệt danh nhóm Messenger' });
+    const { error } = await supabase.from('messenger_group_member_nicknames').upsert(
+      {
+        viewer_user_id: viewerId,
+        group_id: groupId,
+        target_user_id: targetId,
+        nickname,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'viewer_user_id,group_id,target_user_id' },
+    );
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({
+      group_id: groupId,
+      target_user_id: targetId,
+      nickname,
+      group_nickname: nickname,
+      display_name: nickname,
+      full_name: targetUser.full_name || targetUser.email || null,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.delete('/groups/:groupId/nicknames/:targetUserId', async (req, res) => {
+  try {
+    const viewerId = req.authUserId;
+    const groupId = parseUuidParam(req.params.groupId);
+    const targetId = parseUuidParam(req.params.targetUserId);
+    if (!groupId) return res.status(400).json({ error: 'Nhóm không hợp lệ' });
+    if (!targetId) return res.status(400).json({ error: 'Người dùng không hợp lệ' });
+    const ok = await assertGroupMember(groupId, viewerId);
+    if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
+    const ready = await ensureMessengerGroupMemberNicknamesTable();
+    if (!ready) return res.status(503).json({ error: 'Chưa cấu hình bảng biệt danh nhóm Messenger' });
+    const { data: targetUser } = await supabase
+      .from('users')
+      .select('id, full_name, email')
+      .eq('id', targetId)
+      .maybeSingle();
+    await supabase
+      .from('messenger_group_member_nicknames')
+      .delete()
+      .eq('viewer_user_id', viewerId)
+      .eq('group_id', groupId)
+      .eq('target_user_id', targetId);
+    res.json({
+      group_id: groupId,
+      target_user_id: targetId,
+      nickname: null,
+      group_nickname: null,
       display_name: targetUser?.full_name || targetUser?.email || 'Đồng nghiệp',
       full_name: targetUser?.full_name || targetUser?.email || null,
     });
@@ -1551,14 +1790,20 @@ r.get('/groups/:id', async (req, res) => {
       const users = await fetchUsersByIdsForMessenger(uids);
       users.forEach((u) => userMap.set(String(u.id), u));
     }
-    const nickMap = await fetchMessengerNicknameMap(req.authUserId, uids);
+    const contactNickMap = await fetchMessengerNicknameMap(req.authUserId, uids);
+    const groupNickMap = group.is_direct
+      ? new Map()
+      : await fetchMessengerGroupNicknameMap(req.authUserId, req.params.id, uids);
     const members = (memberRows || []).map((m) => {
       const u = userMap.get(String(m.user_id)) || null;
-      return { ...m, user: attachDisplayNameToUser(u, nickMap) };
+      if (group.is_direct) {
+        return { ...m, user: attachContactDisplayNameToUser(u, contactNickMap) };
+      }
+      return { ...m, user: attachGroupDisplayNameToUser(u, groupNickMap, contactNickMap) };
     });
     let payload = { ...group, members };
     if (group.is_direct) {
-      payload = await enrichDirectGroupResponse(group, req.authUserId, nickMap);
+      payload = await enrichDirectGroupResponse(group, req.authUserId, contactNickMap);
       payload = { ...payload, members };
     }
     res.json(payload);
@@ -1917,8 +2162,19 @@ r.get('/groups/:id/chat', async (req, res) => {
     rows = await attachReactionsToMessages(rows);
     const viewerId = req.authUserId;
     const msgUserIds = [...new Set(rows.map((m) => m.user_id).filter(Boolean).map(String))];
-    const nickMap = await fetchMessengerNicknameMap(viewerId, msgUserIds);
-    rows = attachDisplayNamesToMessages(rows, nickMap);
+    const { data: grpRow } = await supabase
+      .from('messenger_groups')
+      .select('id, is_direct')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (grpRow?.is_direct) {
+      const contactNickMap = await fetchMessengerNicknameMap(viewerId, msgUserIds);
+      rows = attachDisplayNamesToMessages(rows, contactNickMap);
+    } else {
+      const groupNickMap = await fetchMessengerGroupNicknameMap(viewerId, req.params.id, msgUserIds);
+      const contactNickMap = await fetchMessengerNicknameMap(viewerId, msgUserIds);
+      rows = attachGroupDisplayNamesToMessages(rows, groupNickMap, contactNickMap);
+    }
     rows = rows.map((m) => hydrateMessengerCallLogRow(m, viewerId));
     res.json(rows);
   } catch (e) {

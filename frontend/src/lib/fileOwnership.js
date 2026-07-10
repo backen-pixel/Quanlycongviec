@@ -26,6 +26,24 @@ export function isDealResponsibleUser(user, dealOrLead, { allowAdmin = true } = 
   return false;
 }
 
+/** Quyền xóa/sửa file trên chi tiết dự án SX (gồm NV phụ trách SX trên project + đội SX). */
+export function canManageWorkshopProjectFiles(user, dealOrLead, project, opts) {
+  if (!user) return false;
+  const uid = String(user.userId || user.id || '');
+  if (!uid) return false;
+  const dealCtx = {
+    ...(dealOrLead || {}),
+    production_person_id:
+      dealOrLead?.production_person_id
+      || project?.production_person_id
+      || project?.production_person?.id
+      || null,
+  };
+  if (isDealResponsibleUser(user, dealCtx, opts)) return true;
+  const staffIds = (project?.production_staff || []).map((u) => String(u?.id || u?.user_id)).filter(Boolean);
+  return staffIds.includes(uid);
+}
+
 /** @deprecated — dùng isDealResponsibleUser */
 export function canManageUploadedFile(_file, user, opts) {
   return isDealResponsibleUser(user, null, opts);

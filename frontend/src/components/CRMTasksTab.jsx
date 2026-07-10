@@ -5,7 +5,7 @@ import api from '../lib/api';
 import { connectSocket, getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { isDealResponsibleUser } from '../lib/fileOwnership';
+import { canManageWorkshopProjectFiles, isDealResponsibleUser } from '../lib/fileOwnership';
 import { fetchPipelineStagesById, filterSxPipelineStagesForWorkshopType, sortAndDedupePipelineStages } from '../lib/crmPipelineStages';
 import { formatDateTime, formatVND } from '../lib/utils';
 import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetimeLocal';
@@ -465,9 +465,13 @@ export default function CRMTasksTab({
   /** Mở & cuộn tới nhiệm vụ từ liên kết Giao việc (?crm_task=) */
   focusTaskId = null,
   dealResponsible = null,
+  /** Dự án SX gắn deal — dùng để xác định quyền xóa file (NV phụ trách SX / đội SX). */
+  workshopProject = null,
 }) {
   const { user } = useAuth();
-  const canManageDeal = isDealResponsibleUser(user, dealResponsible);
+  const canManageDeal = workshopProject
+    ? canManageWorkshopProjectFiles(user, dealResponsible, workshopProject)
+    : isDealResponsibleUser(user, dealResponsible);
   const isAdmin = isAdminLike(user);
   const [tasks, setTasks] = useState([]);
   const isSxStageSlug = useMemo(() => (slug) => String(slug || '').startsWith('sx_'), []);

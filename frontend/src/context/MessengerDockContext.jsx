@@ -596,7 +596,7 @@ export function MessengerDockProvider({ children }) {
             recalled_at: msg.recalled_at || null,
             is_recalled: !!(msg.recalled_at || msg.is_recalled),
             is_self: String(msg.user_id) === String(uid),
-            sender_name: msg.user?.full_name || '',
+            sender_name: msg.user?.display_name || msg.user?.full_name || '',
           },
         }),
       );
