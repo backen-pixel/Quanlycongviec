@@ -21,6 +21,7 @@ const {
   crmReportDayKeyVn,
   crmReportAsOfMs,
 } = require('../../../helpers/crmReportDateBounds');
+const { isLostOrCancelledPipelineStage: orgReportStageIsLostOrCancelled } = require('../../../helpers/crmLostPipelineStage');
 const { userIsAdmin, scopedAdminCompanyId, requireUserCompanyId } = require('../shared/requestScope');
 const { STAFF_LEAD_DEAL_REPORT_ROLES } = require('../shared/reportRoles');
 
@@ -360,8 +361,8 @@ const DEAL_PRE_CONTRACT_SLUGS_STAFF = new Set([
  */
 function classifyDealStageForStaffReport(st, slug) {
   if (!st) return 'pre_contract';
+  if (orgReportStageIsLostOrCancelled(st)) return 'lost';
   const slugStr = slug || null;
-  if (st.is_lost || slugStr === 'lost') return 'lost';
 
   const bucket = st.deal_report_bucket || null;
   if (bucket === 'lost') return 'lost';
@@ -666,7 +667,7 @@ function orgReportDealIsCompleted(st, stagesInPipe) {
 }
 
 function orgReportDealCountsExpected(st, stagesInPipe) {
-  if (!st || st.is_lost) return false;
+  if (!st || orgReportStageIsLostOrCancelled(st)) return false;
   const slug = st.canonical_slug || null;
   if (pipelineHasExplicitExpected(stagesInPipe)) return !!st.counts_as_expected_revenue;
   if (st.is_won) return false;

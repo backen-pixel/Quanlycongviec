@@ -42,6 +42,8 @@ import Modal from '../components/Modal';
 import DealCrossScoresPanel from '../components/DealCrossScoresPanel';
 import LeadKpiLedgerPanel from '../components/LeadKpiLedgerPanel';
 import { CrmLeadCommentsPanel } from '../components/CommentsPanels';
+import { CRM_DEAL_COMMENT_QUICK_REPLIES } from '../lib/crmCommentMentions';
+import { TASK_ATTACHMENT_FILE_ACCEPT } from '../lib/attachmentFileIcon';
 import DriveAttachments from '../components/drive/DriveAttachments';
 import { driveLinksCountByEntity } from '../lib/drive';
 import { useCrmNotesFab } from '../context/CrmNotesFabContext';
@@ -1244,7 +1246,7 @@ export default function LeadDetail() {
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
-    input.accept = 'image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.dwg,.dxf,.mp4,.mov,.webm,.avi';
+    input.accept = TASK_ATTACHMENT_FILE_ACCEPT;
     input.onchange = async (e) => {
       const rawFiles = Array.from(e.target.files || []).slice(0, 20);
       if (!rawFiles.length) return;
@@ -2084,7 +2086,11 @@ export default function LeadDetail() {
               ) : activeTab === 'team' ? (
                 <LeadMembersTab leadId={id} />
               ) : activeTab === 'comments' ? (
-                <CrmLeadCommentsPanel leadId={id} onCountChange={setCommentCount} />
+                <CrmLeadCommentsPanel
+                  leadId={id}
+                  onCountChange={setCommentCount}
+                  quickReplyTemplates={lead?.type === 'deal' ? CRM_DEAL_COMMENT_QUICK_REPLIES : []}
+                />
               ) : activeTab === 'chat' ? (
                 <LeadChatTab leadId={id} socket={socket} />
               ) : activeTab === 'voice_crm' ? (

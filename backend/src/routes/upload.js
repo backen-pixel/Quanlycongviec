@@ -42,7 +42,7 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_MEMORY_UPLOAD_BYTES },
   fileFilter: (req, file, cb) => {
-    const allowed = /jpeg|jpg|png|gif|webp|pdf|doc|docx|xls|xlsx|dwg|dxf|zip|rar|mp4|mov|webm|ogg|mp3|wav|avi|mkv/;
+    const allowed = /jpeg|jpg|png|gif|webp|pdf|doc|docx|xls|xlsx|dwg|dxf|skp|skb|skm|zip|rar|mp4|mov|webm|ogg|mp3|wav|avi|mkv/;
     const ext = path.extname(file.originalname).toLowerCase();
     if (allowed.test(ext) || file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/') || file.mimetype.startsWith('audio/') || file.mimetype.startsWith('application/')) {
       cb(null, true);

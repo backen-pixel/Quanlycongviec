@@ -13,6 +13,7 @@ const {
   skipSxWorkQuickComplete,
 } = require('../helpers/crmTaskCompletionEvidence');
 const { logKanbanDeadlineUnifiedHistory } = require('../helpers/crmKanbanDeadlineHistory');
+const { isLostOrCancelledPipelineStage: orgReportStageIsLostOrCancelled } = require('../helpers/crmLostPipelineStage');
 const {
   createCrmLeadTask,
   updateCrmLeadTask,
@@ -56,7 +57,8 @@ const {
   notifyDealCommentMentions,
   notifyDealCommentParticipants,
 } = require('../helpers/dealCommentNotifications');
-const { userCanAccessCrmLeadAsParticipant } = require('../helpers/crmLeadParticipantAccess');
+const { fetchLeadCommentAudienceMembers } = require('../helpers/crmLeadCommentAudience');
+const { userCanAccessCrmLeadAsParticipant, userCanAccessCrmLeadViaVisibility } = require('../helpers/crmLeadParticipantAccess');
 const { isVptCompanyCommercialDocViewer } = require('../helpers/dealParticipantProduction');
 const { DEFAULT_CHECKLISTS } = require('../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlowTasks');
@@ -855,7 +857,8 @@ async function enforceCrmDealAssigneeAccess(req, res, next) {
         return res.status(403).json({ error: 'Bạn chỉ được xem/sửa deal mà bạn phụ trách.' });
       }
       const ok = await userOwnsDealViaAncestor(uid, lead)
-        || await userCanAccessCrmLeadAsParticipant(supabase, uid, lead);
+        || await userCanAccessCrmLeadAsParticipant(supabase, uid, lead)
+        || await userCanAccessCrmLeadViaVisibility(supabase, uid, lead);
       if (!ok) {
         return res.status(403).json({ error: 'Bạn chỉ được xem/sửa deal mà bạn phụ trách hoặc tham gia.' });
       }
@@ -866,7 +869,10 @@ async function enforceCrmDealAssigneeAccess(req, res, next) {
       const owns =
         uid &&
         (String(lead.assigned_to || '') === String(uid) || String(lead.lead_owner_id || '') === String(uid));
-      const participant = uid && await userCanAccessCrmLeadAsParticipant(supabase, uid, lead);
+      const participant = uid && (
+        await userCanAccessCrmLeadAsParticipant(supabase, uid, lead)
+        || await userCanAccessCrmLeadViaVisibility(supabase, uid, lead)
+      );
       if (!owns && !participant) {
         return res.status(403).json({ error: 'Bạn chỉ được xem/sửa lead mà bạn phụ trách hoặc tham gia.' });
       }
@@ -1915,8 +1921,8 @@ const DEAL_PRE_CONTRACT_SLUGS_STAFF = new Set([
  */
 function classifyDealStageForStaffReport(st, slug) {
   if (!st) return 'pre_contract';
+  if (orgReportStageIsLostOrCancelled(st)) return 'lost';
   const slugStr = slug || null;
-  if (st.is_lost || slugStr === 'lost') return 'lost';
 
   const bucket = st.deal_report_bucket || null;
   if (bucket === 'lost') return 'lost';
@@ -2218,13 +2224,6 @@ function orgReportDealIsCompleted(st, stagesInPipe) {
   if (st.is_lost || slug === 'lost' || st.deal_report_bucket === 'lost') return false;
   if (pipelineHasExplicitCompleted(stagesInPipe)) return !!st.counts_as_completed_revenue;
   return classifyDealStageForStaffReport(st, slug) === 'project_completed';
-}
-
-function orgReportStageIsLostOrCancelled(st) {
-  if (!st) return false;
-  if (st.is_lost || st.canonical_slug === 'lost' || st.deal_report_bucket === 'lost') return true;
-  const name = String(st.name || '').trim();
-  return /(hủy\s*deal|^\s*thua\s*\.?\s*$|chê\s*gi[aá]|khách\s*hủy|từ\s*chối|rớt|\blost\b|mất\s*deal)/i.test(name);
 }
 
 function orgReportDealCountsExpected(st, stagesInPipe) {
@@ -9540,16 +9539,28 @@ function parseUuidArrayJsonb(raw) {
   return null;
 }
 
-function canUserViewDocByAllowlist(user, doc) {
-  if (isAdminLike(user)) return true;
-  const uc = user?.company_id || user?.companyId || null;
-  const ud = user?.department_id || null;
-  const allowedCompanies = parseUuidArrayJsonb(doc?.allowed_companies);
-  const allowedDepts = parseUuidArrayJsonb(doc?.allowed_departments);
-  if (!allowedCompanies && !allowedDepts) return true;
-  if (allowedCompanies && uc && allowedCompanies.some((x) => String(x) === String(uc))) return true;
-  if (allowedDepts && ud && allowedDepts.some((x) => String(x) === String(ud))) return true;
-  return false;
+function canUserViewDocByAllowlist(user, doc, taskRow = null) {
+  const { canViewerSeeByCompanyAndDept } = require('../helpers/documentShareScope');
+  return canViewerSeeByCompanyAndDept(doc, user, taskRow);
+}
+
+function redactCrmTaskNotesForViewer(user, task) {
+  if (canUserViewDocByAllowlist(user, task)) return task;
+  const redactChecklist = (raw) => {
+    if (!Array.isArray(raw)) return raw;
+    return raw.map((c) => {
+      if (typeof c === 'string') return c;
+      return { ...c, notes: '' };
+    });
+  };
+  const filesOnly = task.file_count || 0;
+  return {
+    ...task,
+    notes: null,
+    checklist: redactChecklist(task.checklist),
+    note_count: 0,
+    attachment_count: filesOnly,
+  };
 }
 
 // Get lead documents
@@ -9620,7 +9631,7 @@ r.get('/leads/:id/task-documents', async (req, res) => {
     });
     projectTasks.forEach(t => { if (!taskMap[t.id]) taskMap[t.id] = { title: t.title, stage_slug: null, checklist: [] }; });
     
-    const visible = (attachments || []).filter((a) => canUserViewDocByAllowlist(req.user, a));
+    const visible = (attachments || []).filter((a) => canUserViewDocByAllowlist(req.user, a, taskMap[a.task_id]));
     const result = visible.map(a => {
       const taskInfo = taskMap[a.task_id] || {};
       const ckItem = a.checklist_id ? findChecklistItem(taskInfo, a.checklist_id) : null;
@@ -14430,6 +14441,8 @@ r.get('/leads/:id/tasks', async (req, res) => {
       data = await attachAssignmentIdsToCrmTasks(data);
     }
 
+    data = (data || []).map((t) => redactCrmTaskNotesForViewer(req.user, t));
+
     res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -15204,20 +15217,24 @@ r.get('/project/:projectId/shared-notes', async (req, res) => {
     if (!lead) return res.json([]);
 
     const { data: allTasks } = await supabase.from('crm_tasks')
-      .select('id, title, notes, stage_slug, shared_to_project, allowed_share_modules, allowed_companies, allowed_departments, assignee:users!crm_tasks_assignee_id_fkey(id,full_name), updated_at')
+      .select('id, title, notes, stage_slug, shared_to_project, allowed_share_modules, default_allowed_companies, default_allowed_departments, assignee:users!crm_tasks_assignee_id_fkey(id,full_name), updated_at')
       .eq('lead_id', lead.id)
       .order('order_index');
 
     const taskIds = (allTasks || []).map(t => t.id);
+    const taskMap = Object.fromEntries((allTasks || []).map((t) => [t.id, t]));
     let sharedAtts = [];
     if (taskIds.length) {
       const { data: atts } = await supabase.from('crm_task_attachments')
         .select('id, task_id, name, file_url, file_name, file_size, mime_type, notes, doc_type, created_by, shared_to_project, allowed_share_modules, allowed_companies, allowed_departments')
         .in('task_id', taskIds)
         .eq('shared_to_project', true);
-      sharedAtts = (atts || []).filter((a) => (useMod
-        ? crmAttachmentVisibleForModuleAndUser(a, useMod, req.user)
-        : a.shared_to_project === true));
+      sharedAtts = (atts || []).filter((a) => {
+        const taskRow = taskMap[a.task_id];
+        return useMod
+          ? crmAttachmentVisibleForModuleAndUser(a, useMod, req.user, taskRow)
+          : a.shared_to_project === true && canUserViewDocByAllowlist(req.user, a, taskRow);
+      });
     }
 
     const result = (allTasks || [])
@@ -15225,10 +15242,11 @@ r.get('/project/:projectId/shared-notes', async (req, res) => {
         const taskShared = useMod
           ? crmTaskVisibleForModuleAndUser(t, useMod, req.user)
           : t.shared_to_project === true;
+        const canViewNotes = taskShared && canUserViewDocByAllowlist(req.user, t);
         const attachments = sharedAtts.filter((a) => a.task_id === t.id);
         return {
           ...t,
-          notes: taskShared ? t.notes : null,
+          notes: canViewNotes ? t.notes : null,
           attachments,
         };
       })
@@ -15246,11 +15264,13 @@ r.get('/project/:projectId/shared-notes', async (req, res) => {
 r.put('/leads/:leadId/tasks/:taskId/notes', async (req, res) => {
   try {
     const { notes } = req.body;
+    const { getTaskVisibilityAllowlist } = require('../helpers/documentShareScope');
     const { data, error } = await supabase.from('crm_tasks')
       .update({ notes, updated_at: new Date().toISOString() })
       .eq('id', req.params.taskId)
-      .select('id, title, notes, stage_slug').single();
+      .select('id, title, notes, stage_slug, default_allowed_companies, default_allowed_departments, shared_to_project, allowed_share_modules').single();
     if (error) throw error;
+    const vis = getTaskVisibilityAllowlist(data);
 
     // Sync: upsert ghi chú vào lead_documents
     // Tìm attachment type "task_note" cho task này
@@ -15269,7 +15289,12 @@ r.put('/leads/:leadId/tasks/:taskId/notes', async (req, res) => {
         if (existingAtt) {
           // Update existing
           await supabase.from('crm_task_attachments')
-            .update({ notes, name: `📝 ${data.title}` })
+            .update({
+              notes,
+              name: `📝 ${data.title}`,
+              allowed_companies: vis.allowed_companies,
+              allowed_departments: vis.allowed_departments,
+            })
             .eq('id', existingAtt.id);
           // Sync lead_document (project_id + cờ xưởng khớp tab Tài liệu / SX)
           await supabase.from('lead_documents')
@@ -15277,6 +15302,8 @@ r.put('/leads/:leadId/tasks/:taskId/notes', async (req, res) => {
               notes,
               name: `[${data.title}] 📝 Ghi chú`,
               project_id: leadForSync?.project_id ?? null,
+              allowed_companies: vis.allowed_companies,
+              allowed_departments: vis.allowed_departments,
               ...getLeadDocumentFieldsFromCrmTask(data, taskDocOpts),
             })
             .eq('source_attachment_id', existingAtt.id);
@@ -15287,6 +15314,8 @@ r.put('/leads/:leadId/tasks/:taskId/notes', async (req, res) => {
             task_id: req.params.taskId, lead_id: req.params.leadId,
             name: `📝 ${data.title}`, doc_type: 'task_inline_note', notes,
             created_by: req.user.userId,
+            allowed_companies: vis.allowed_companies,
+            allowed_departments: vis.allowed_departments,
             ...noteShare,
           }).select().single();
           if (att) {
@@ -15294,6 +15323,8 @@ r.put('/leads/:leadId/tasks/:taskId/notes', async (req, res) => {
               lead_id: req.params.leadId, project_id: leadForSync?.project_id || null,
               name: `[${data.title}] 📝 Ghi chú`, doc_type: 'task_inline_note',
               notes, created_by: req.user.userId, source_attachment_id: att.id,
+              allowed_companies: vis.allowed_companies,
+              allowed_departments: vis.allowed_departments,
               ...getLeadDocumentFieldsFromCrmTask(data, taskDocOpts),
             });
           }
@@ -15373,12 +15404,17 @@ r.put('/leads/:leadId/tasks/:taskId/checklist/:checklistId/notes', async (req, r
 // GET attachments for a task
 r.get('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
   try {
+    const { data: taskRow } = await supabase.from('crm_tasks')
+      .select('id, default_allowed_companies, default_allowed_departments')
+      .eq('id', req.params.taskId)
+      .maybeSingle();
     const { data, error } = await supabase.from('crm_task_attachments')
       .select('*, creator:users!crm_task_attachments_created_by_fkey(id, full_name)')
       .eq('task_id', req.params.taskId)
       .order('created_at', { ascending: false });
     if (error) throw error;
-    res.json(data || []);
+    const visible = (data || []).filter((a) => canUserViewDocByAllowlist(req.user, a, taskRow));
+    res.json(visible);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -15680,11 +15716,12 @@ r.delete('/leads/:leadId/tasks/:taskId/attachments/:attId', async (req, res) => 
 r.get('/leads/:id/task-attachments', async (req, res) => {
   try {
     const { data, error } = await supabase.from('crm_task_attachments')
-      .select('*, task:crm_tasks(id, title, stage_slug), creator:users!crm_task_attachments_created_by_fkey(id, full_name)')
+      .select('*, task:crm_tasks(id, title, stage_slug, default_allowed_companies, default_allowed_departments), creator:users!crm_task_attachments_created_by_fkey(id, full_name)')
       .eq('lead_id', req.params.id)
       .order('created_at', { ascending: false });
     if (error) throw error;
-    res.json(data || []);
+    const visible = (data || []).filter((a) => canUserViewDocByAllowlist(req.user, a, a.task));
+    res.json(visible);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -18054,6 +18091,14 @@ async function fetchCrmCommentReactionsAggregate(supabase, commentIds, userId) {
   return out;
 }
 
+function crmLeadCommentReadReceiptsTableMissing(error) {
+  return String(error?.message || '').toLowerCase().includes('crm_lead_comment_read_receipts');
+}
+
+async function fetchLeadCommentAudienceMembersForRead(leadId) {
+  return fetchLeadCommentAudienceMembers(supabase, leadId);
+}
+
 // GET /crm/leads/:id/comments → list bình luận của một lead
 r.get('/leads/:id/comments', async (req, res) => {
   try {
@@ -18095,6 +18140,59 @@ r.get('/leads/:id/comments', async (req, res) => {
   } catch (e) {
     console.error('GET /crm/leads/:id/comments:', e);
     res.status(500).json({ error: e.message || 'Lỗi server' });
+  }
+});
+
+/** Đánh dấu đã đọc bình luận lead/deal (cập nhật last_read_at). */
+r.patch('/leads/:id/comments/read', async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const leadId = String(req.params.id || '').trim();
+    const last_read_at = new Date().toISOString();
+    const { error } = await supabase.from('crm_lead_comment_read_receipts').upsert(
+      { lead_id: leadId, user_id: userId, last_read_at },
+      { onConflict: 'lead_id,user_id' },
+    );
+    if (error) {
+      if (crmLeadCommentReadReceiptsTableMissing(error)) {
+        return res.status(503).json({
+          error: 'Bảng read receipt chưa có. Chạy migration database/410_crm_lead_comment_read_receipts.sql.',
+        });
+      }
+      throw error;
+    }
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`lead:${leadId}`).emit('lead:comment:read', { lead_id: leadId, user_id: userId, last_read_at });
+    }
+    res.json({ ok: true, last_read_at });
+  } catch (e) {
+    console.error('PATCH /crm/leads/:id/comments/read:', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
+/** Read receipts + thành viên audience — hiển thị Đã xem / Đã nhận trên từng bình luận. */
+r.get('/leads/:id/comments/read-receipts', async (req, res) => {
+  try {
+    const leadId = String(req.params.id || '').trim();
+    const [receiptsRes, members] = await Promise.all([
+      supabase.from('crm_lead_comment_read_receipts').select('user_id, last_read_at').eq('lead_id', leadId),
+      fetchLeadCommentAudienceMembersForRead(leadId),
+    ]);
+    const audienceIds = new Set((members || []).map((m) => String(m.user_id)).filter(Boolean));
+    if (receiptsRes.error) {
+      if (crmLeadCommentReadReceiptsTableMissing(receiptsRes.error)) {
+        return res.json({ receipts: [], members });
+      }
+      throw receiptsRes.error;
+    }
+    const receipts = (receiptsRes.data || []).filter((row) => audienceIds.has(String(row.user_id)));
+    res.json({ receipts, members });
+  } catch (e) {
+    console.error('GET /crm/leads/:id/comments/read-receipts:', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
   }
 });
 
@@ -18159,7 +18257,7 @@ r.post('/leads/:id/comments', async (req, res) => {
     if (io) io.to(`lead:${leadId}`).emit('lead:comment', { lead_id: leadId, action: 'created', comment: row });
 
     try {
-      const leadMembers = await fetchLeadMentionMembers(supabase, leadId);
+      const leadMembers = await fetchLeadCommentAudienceMembers(supabase, leadId);
       const mentionIds = resolveLeadCommentMentionIds(req.body, body, leadMembers, userId);
       const notifyIds = await fetchCrmLeadCommentNotifyUserIds(supabase, leadId);
 

@@ -1,19 +1,15 @@
 /**
- * MCP API Gateway — OpenClaw / agent bên ngoài lấy dữ liệu báo cáo CRM.
+ * MCP API — Model Context Protocol chuẩn (Streamable HTTP).
  *
- * Auth: header X-Api-Key (bảng external_api_keys), giống /api/external.
- * User context (quyền xem BC): default_assigned_to trên key, hoặc header X-User-Id.
+ * Transport:
+ *   POST /api/mcp          — MCP endpoint (JSON-RPC 2.0, Streamable HTTP)
+ *   GET  /api/mcp          — Legacy HTTP+SSE (2024-11-05 backward compat)
  *
- * REST:
+ * Auth: X-Api-Key (+ X-User-Id cho quyền BC).
+ *
+ * REST shortcuts (không thay MCP endpoint):
  *   GET  /api/mcp/ping
- *   GET  /api/mcp/tools
- *   POST /api/mcp/tools/call       { "name": "...", "arguments": { ... } }
- *   GET  /api/mcp/reports/org-overview?date_from=...&date_to=...
- *
- * JSON-RPC (MCP transport lite):
- *   POST /api/mcp/rpc
- *     { "jsonrpc":"2.0", "method":"tools/list", "id":1 }
- *     { "jsonrpc":"2.0", "method":"tools/call", "params":{ "name":"...", "arguments":{} }, "id":2 }
+ *   GET  /api/mcp/reports/org-overview?...
  */
 const { Router } = require('express');
 const { apiKeyAuth } = require('../middleware/apiKeyAuth');
@@ -22,6 +18,14 @@ const {
   callMcpReportTool,
   queryToReportArgs,
 } = require('../helpers/mcpGateway');
+const {
+  handleMcpPost,
+  buildCallToolResult,
+  buildLegacySseEndpointUrl,
+  SUPPORTED_PROTOCOL_VERSIONS,
+  SERVER_NAME,
+  SERVER_VERSION,
+} = require('../helpers/mcpServer');
 
 const r = Router();
 
@@ -46,8 +50,11 @@ function mcpRateLimit(req, res, next) {
   next();
 }
 
-r.use(apiKeyAuth);
-r.use(mcpRateLimit);
+function applyMcpResponseHeaders(res, { sessionId, clientId, setSessionOnInit, setClientOnInit }) {
+  res.set('Cache-Control', 'no-store');
+  if (sessionId) res.set('Mcp-Session-Id', sessionId);
+  if (clientId && (setClientOnInit || setSessionOnInit)) res.set('Mcp-Client-Id', clientId);
+}
 
 async function handleToolError(res, e) {
   const status = e.status || 500;
@@ -55,96 +62,109 @@ async function handleToolError(res, e) {
   return res.status(status).json({ error: e.message || 'Lỗi MCP' });
 }
 
-/** GET /api/mcp/ping */
+r.use(apiKeyAuth);
+r.use(mcpRateLimit);
+
+/**
+ * POST /api/mcp — MCP endpoint chuẩn (Streamable HTTP).
+ * Mỗi request = một JSON-RPC message.
+ */
+async function mcpPostHandler(req, res) {
+  try {
+    const out = await handleMcpPost(req, req.body || {});
+    applyMcpResponseHeaders(res, out);
+
+    if (out.isNotification) {
+      return res.status(202).end();
+    }
+
+    res.status(out.httpStatus || 200);
+    res.set('Content-Type', 'application/json');
+    return res.json(out.body);
+  } catch (e) {
+    console.error('[MCP] POST', e.message);
+    return res.status(500).json({
+      jsonrpc: '2.0',
+      id: req.body?.id ?? null,
+      error: { code: -32603, message: e.message || 'Internal error' },
+    });
+  }
+}
+
+r.post('/', mcpPostHandler);
+
+/**
+ * GET /api/mcp — Legacy HTTP+SSE (protocol 2024-11-05).
+ * Client cũ mở SSE, nhận event `endpoint` trỏ về POST URL.
+ */
+r.get('/', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+
+  const postUrl = buildLegacySseEndpointUrl(req);
+  res.write(`event: endpoint\ndata: ${JSON.stringify(postUrl)}\n\n`);
+
+  const keepAlive = setInterval(() => {
+    if (!res.writableEnded) res.write(': keepalive\n\n');
+  }, 25_000);
+
+  req.on('close', () => clearInterval(keepAlive));
+});
+
+/** POST /api/mcp/rpc — alias backward-compat → cùng handler MCP chuẩn */
+r.post('/rpc', mcpPostHandler);
+
+/** GET /api/mcp/ping — health check (ngoài MCP spec, tiện debug) */
 r.get('/ping', (req, res) => {
   res.json({
     ok: true,
-    gateway: 'mcp-report',
+    mcp: true,
+    server: SERVER_NAME,
+    version: SERVER_VERSION,
+    protocol_versions: SUPPORTED_PROTOCOL_VERSIONS,
+    endpoint: 'POST /api/mcp',
+    connection: {
+      session_id: '(nhận sau initialize — header Mcp-Session-Id)',
+      client_id: '(gửi Mcp-Client-Id hoặc params.client_id khi initialize)',
+      flow: ['initialize', 'notifications/initialized', 'tools/list', 'tools/call'],
+    },
     key_name: req.apiKey.name,
     company_id: req.apiKey.company_id,
     act_as_user: req.apiKey.default_assigned_to || null,
-    message: 'MCP report gateway — kỳ BC do client gửi (date_from/date_to hoặc time_scope mỗi request)',
   });
 });
 
-/** GET /api/mcp/tools — manifest cho OpenClaw MCP client */
+/**
+ * GET /api/mcp/tools — MCP tools/list (JSON thuần, không JSON-RPC envelope).
+ * @deprecated Dùng POST /api/mcp với method tools/list
+ */
 r.get('/tools', (_req, res) => {
-  res.json({
-    protocol: 'mcp-report-gateway/1',
-    tools: getMcpReportTools(),
-  });
+  res.json({ tools: getMcpReportTools() });
 });
 
-/** POST /api/mcp/tools/call */
+/**
+ * POST /api/mcp/tools/call — MCP CallToolResult (không JSON-RPC envelope).
+ * @deprecated Dùng POST /api/mcp với method tools/call
+ */
 r.post('/tools/call', async (req, res) => {
   try {
     const name = req.body?.name || req.body?.tool;
     const args = req.body?.arguments || req.body?.args || {};
     if (!name) return res.status(400).json({ error: 'Thiếu name (tên tool)' });
     const result = await callMcpReportTool(String(name), args, req);
-    res.json({ ok: true, tool: name, result });
+    res.json(buildCallToolResult(result));
   } catch (e) {
-    return handleToolError(res, e);
+    if (e.status === 404 || e.status === 403) return handleToolError(res, e);
+    return res.status(200).json({
+      content: [{ type: 'text', text: e.message || 'Lỗi' }],
+      isError: true,
+    });
   }
 });
 
-/** POST /api/mcp/rpc — JSON-RPC 2.0 (tools/list, tools/call) */
-r.post('/rpc', async (req, res) => {
-  const body = req.body || {};
-  const id = body.id ?? null;
-  const reply = (result, error = null) => {
-    if (error) {
-      return res.json({
-        jsonrpc: '2.0',
-        id,
-        error: { code: error.code || -32000, message: error.message },
-      });
-    }
-    return res.json({ jsonrpc: '2.0', id, result });
-  };
-
-  if (body.jsonrpc && body.jsonrpc !== '2.0') {
-    return reply(null, { code: -32600, message: 'Invalid Request — cần jsonrpc 2.0' });
-  }
-
-  const method = body.method;
-  try {
-    if (method === 'tools/list' || method === 'mcp/tools/list') {
-      return reply({ tools: getMcpReportTools() });
-    }
-    if (method === 'tools/call' || method === 'mcp/tools/call') {
-      const params = body.params || {};
-      const name = params.name || params.tool;
-      const args = params.arguments || params.args || {};
-      if (!name) return reply(null, { code: -32602, message: 'Thiếu params.name' });
-      const result = await callMcpReportTool(String(name), args, req);
-      const payload = {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-      };
-      // MCP spec: structuredContent phải là object (record), không được là array/primitive
-      if (result !== null && typeof result === 'object' && !Array.isArray(result)) {
-        payload.structuredContent = result;
-      }
-      return reply(payload);
-    }
-    if (method === 'ping' || method === 'initialize') {
-      return reply({
-        protocolVersion: '2024-11-05',
-        serverInfo: { name: 'qlcv-mcp-report', version: '1.0.0' },
-        capabilities: { tools: {} },
-      });
-    }
-    return reply(null, { code: -32601, message: `Method not found: ${method}` });
-  } catch (e) {
-    const code = e.status === 403 ? -32003 : e.status === 400 ? -32602 : -32000;
-    return reply(null, { code, message: e.message || 'Lỗi' });
-  }
-});
-
-/**
- * GET /api/mcp/reports/org-overview
- * Shortcut REST — trả JSON đầy đủ như trang «Báo cáo theo tổ chức».
- */
+/** GET /api/mcp/reports/org-overview — REST shortcut */
 r.get('/reports/org-overview', async (req, res) => {
   try {
     res.set('Cache-Control', 'no-store');
@@ -156,10 +176,6 @@ r.get('/reports/org-overview', async (req, res) => {
   }
 });
 
-/**
- * GET /api/mcp/reports/org-overview/summary
- * JSON gọn (get_org_overview_report) — phù hợp token/context nhỏ.
- */
 r.get('/reports/org-overview/summary', async (req, res) => {
   try {
     res.set('Cache-Control', 'no-store');
@@ -171,10 +187,6 @@ r.get('/reports/org-overview/summary', async (req, res) => {
   }
 });
 
-/**
- * GET /api/mcp/reports/org-overview/text
- * Text đã format — gửi thẳng vào chat OpenClaw.
- */
 r.get('/reports/org-overview/text', async (req, res) => {
   try {
     res.set('Cache-Control', 'no-store');

@@ -26,6 +26,8 @@ export function CrmCommentMentionComposer({
   canSubmit,
   attachSlot = null,
   onPaste,
+  quickReplyTemplates = [],
+  onQuickReply,
 }) {
   const textareaRef = useRef(null);
   const pickedIdsRef = useRef(new Set());
@@ -182,6 +184,31 @@ export function CrmCommentMentionComposer({
       <div className="flex items-end gap-2 px-3 py-2.5 bg-white">
         <FbCrmAvatar user={user} className="h-8 w-8 shrink-0 mb-px" />
         <div className="flex-1 min-w-0 rounded-[22px] bg-[#f0f2f5] px-3 py-2 border border-transparent focus-within:border-[#1877f2]/30 transition-colors">
+          {quickReplyTemplates.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 pb-2 mb-1 border-b border-[#e4e6eb]/70">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-[#65676b] shrink-0">Tin mẫu</span>
+              {quickReplyTemplates.map((item) => {
+                const label = typeof item === 'string' ? item : (item.label || item.text || '');
+                const text = typeof item === 'string' ? item : (item.text || item.label || '');
+                if (!label) return null;
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    disabled={posting}
+                    onClick={() => {
+                      onQuickReply?.(text);
+                      onChange?.({ target: { value: text } });
+                      requestAnimationFrame(() => textareaRef.current?.focus());
+                    }}
+                    className="h-6 px-2 rounded-full border border-[#ccd0d5] bg-white text-[11px] font-medium text-[#050505] hover:bg-[#e7f3ff] hover:border-[#1877f2]/40 disabled:opacity-50 cursor-pointer transition-colors"
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           <div className="flex items-start gap-1.5">
             {attachSlot ? <div className="shrink-0 pt-0.5">{attachSlot}</div> : null}
             <textarea

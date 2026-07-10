@@ -4,23 +4,14 @@ import {
   resolveDealWonAnchorStage,
   splitDealStagesForCrmTabs,
 } from './crmPipelineTabs';
+import { isLostOrCancelledPipelineStage } from './crmLostPipelineStage';
 import { sortAndDedupePipelineStages } from './crmPipelineStages';
 
 const ORPHAN_STAGE_KEY = '__none__';
 
-const LOST_PIPELINE_STAGE_NAME_RE =
-  /(hủy\s*deal|^\s*thua\s*\.?\s*$|chê\s*gi[aá]|khách\s*hủy|từ\s*chối|rớt|\blost\b|mất\s*deal)/i;
-
 function stageOrderIndex(stage) {
   const ord = Number(stage?.order_index);
   return Number.isFinite(ord) ? ord : 999;
-}
-
-export function isLostOrCancelledPipelineStage(stage) {
-  if (!stage) return false;
-  if (stage.is_lost || stage.canonical_slug === 'lost' || stage.deal_report_bucket === 'lost') return true;
-  const name = String(stage.name || '').trim();
-  return LOST_PIPELINE_STAGE_NAME_RE.test(name);
 }
 
 function isWonOrClosedPipelineStage(stage) {

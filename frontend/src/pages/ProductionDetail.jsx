@@ -7,6 +7,7 @@ import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
 import {
   isLeadDocVisibleInModule,
   isCrmSharedArtifactVisibleInModule,
+  canViewerSeeByCompanyAndDept,
   parseShareModules,
   cleanShareModulesForApi,
   shareModuleLabels,
@@ -46,6 +47,7 @@ import { buildCrmLeadDocTaskSections, normalizeCrmChecklist } from '../lib/crmTa
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
 import { buildSxPipelineStageMeta, resolveSxProjectDeposit, resolveSxProjectRemaining, resolveSxProjectPaymentProgress } from '../lib/sxPipelineRevenue';
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
+import SharedCRMNotes from '../components/SharedCRMNotes';
 import DriveAttachments from '../components/drive/DriveAttachments';
 import { driveLinksCountByEntity } from '../lib/drive';
 import { isDealResponsibleUser } from '../lib/fileOwnership';
@@ -1542,12 +1544,14 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
   const workshopShareMod = moduleKey === 'vc' ? 'logistics' : 'production';
 
-  /** Chỉ hiện hoạt động đã chia sẻ và thuộc khối hiện tại */
+  /** Chỉ hiện hoạt động đã chia sẻ, đúng module và phân quyền xem công ty/PB */
   const sharedActivities = useMemo(
     () => (crmActivities || []).filter(
-      (a) => a.shared_to_workshop === true && isCrmSharedArtifactVisibleInModule(a, workshopShareMod),
+      (a) => a.shared_to_workshop === true
+        && isCrmSharedArtifactVisibleInModule(a, workshopShareMod)
+        && canViewerSeeByCompanyAndDept(a, user),
     ),
-    [crmActivities, workshopShareMod],
+    [crmActivities, workshopShareMod, user],
   );
 
   const sharedNotes = useMemo(
@@ -1556,8 +1560,10 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   );
 
   const visibleCrmSharedDocs = useMemo(
-    () => (project?.sharedDocuments || []).filter((d) => isLeadDocVisibleInModule(d, workshopShareMod)),
-    [project?.sharedDocuments, workshopShareMod],
+    () => (project?.sharedDocuments || []).filter(
+      (d) => isLeadDocVisibleInModule(d, workshopShareMod) && canViewerSeeByCompanyAndDept(d, user),
+    ),
+    [project?.sharedDocuments, workshopShareMod, user],
   );
 
   const docImageGallery = useMemo(
@@ -1915,6 +1921,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       const percent = total ? Math.round((completed / total) * 100) : 0;
       setProductionTaskSummary({ total, completed, percent });
       setProject(proj ? { ...proj, productionTaskProgress: percent } : proj);
+      if (Array.isArray(proj?.crmSharedNotes) && proj.crmSharedNotes.length) {
+        setCrmActivities(proj.crmSharedNotes);
+      }
       if (Array.isArray(proj?.[MOD.stagesKey]) && proj[MOD.stagesKey].length) {
         setProductionStages(proj[MOD.stagesKey]);
       }
@@ -2009,6 +2018,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       const percent = total ? Math.round((completed / total) * 100) : 0;
       setProductionTaskSummary({ total, completed, percent });
       setProject(proj ? { ...proj, productionTaskProgress: percent } : proj);
+      if (Array.isArray(proj?.crmSharedNotes) && proj.crmSharedNotes.length) {
+        setCrmActivities(proj.crmSharedNotes);
+      }
       if (Array.isArray(proj?.[MOD.stagesKey]) && proj[MOD.stagesKey].length) {
         setProductionStages(proj[MOD.stagesKey]);
       }
@@ -3254,7 +3266,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               {/* Ghi chú — chỉ hiện ghi chú đã chia sẻ xưởng, dùng CrmChatNotesPanel giống LeadDetail */}
               {activeTab === 'notes' && (
                 crmLeadId ? (
-                  <CrmChatNotesPanel
+                  <>
+                    <SharedCRMNotes projectId={project.id} forModule={workshopShareMod} />
+                    <CrmChatNotesPanel
                     variant="embedded"
                     leadId={crmLeadId}
                     notes={sharedNotes}
@@ -3271,6 +3285,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     }
                     contextBadge={primaryCrmDeal?.code || project?.code || ''}
                   />
+                  </>
                 ) : (
                   <p className="text-sm text-gray-500 text-center py-8">Liên kết deal CRM để dùng ghi chú.</p>
                 )

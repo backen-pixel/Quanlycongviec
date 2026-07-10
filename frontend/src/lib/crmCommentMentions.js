@@ -139,3 +139,9 @@ export function applyMentionPickToText({ text, mentionStart, cursorPos, item }) 
   const pickedId = item?.type === 'member' ? String(item.mem?.user_id || '') : null;
   return { text: next, caret, pickedId };
 }
+
+/** Tin mẫu nhanh — tab Bình luận chi tiết deal (NV SX cập nhật tiến độ). */
+export const CRM_DEAL_COMMENT_QUICK_REPLIES = [
+  'Đã nhận deal',
+  'Đang lên bảng vẽ',
+];

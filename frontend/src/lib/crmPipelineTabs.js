@@ -1,4 +1,5 @@
 import { sortAndDedupePipelineStages } from './crmPipelineStages';
+import { isLostOrCancelledPipelineStage } from './crmLostPipelineStage';
 
 /** @typedef {'lead'|'deal'|'customer'} CrmPipelineTab */
 
@@ -95,7 +96,7 @@ export function splitDealStagesForCrmTabs(stagesDeal) {
   for (const s of sorted) {
     const sid = String(s.id);
     const order = stageOrderIndex(s);
-    if (s.is_lost) {
+    if (isLostOrCancelledPipelineStage(s)) {
       dealTabStages.push(s);
       continue;
     }
@@ -119,7 +120,7 @@ export function splitDealStagesForCrmTabs(stagesDeal) {
 export function preWonStagesForDealStats(dealTabStages, wonStage, wonAnchorOrder) {
   const wonId = wonStage?.id ? String(wonStage.id) : null;
   return (dealTabStages || []).filter((s) => {
-    if (s.is_lost) return true;
+    if (isLostOrCancelledPipelineStage(s)) return true;
     if (wonAnchorOrder == null) return !s.is_won;
     if (wonId && String(s.id) === wonId) return false;
     return stageOrderIndex(s) < wonAnchorOrder;
@@ -140,7 +141,7 @@ export function filterDealsForDealTabStats(deals, { wonAnchorOrder, stagesDeal }
       out.push(d);
       continue;
     }
-    if (st.is_lost) {
+    if (isLostOrCancelledPipelineStage(st)) {
       out.push(d);
       continue;
     }
@@ -162,6 +163,11 @@ export function isDealTabWonColumnForMetrics(stage, pipelineType, wonStage) {
   return String(stage.id) === String(wonStage.id);
 }
 
+/** Cột Thua/Hủy — hiển thị thẻ nhưng không cộng tổng deal và GT pipeline. */
+export function isDealTabLostColumnForMetrics(stage) {
+  return isLostOrCancelledPipelineStage(stage);
+}
+
 export function partitionDealsForCrmTabs(deals, { wonAnchorOrder, stagesDeal }) {
   const dealTabDeals = [];
   const customerTabDeals = [];
@@ -180,7 +186,7 @@ export function partitionDealsForCrmTabs(deals, { wonAnchorOrder, stagesDeal }) 
       dealTabDeals.push(d);
       continue;
     }
-    if (st.is_lost) {
+    if (isLostOrCancelledPipelineStage(st)) {
       dealTabDeals.push(d);
       continue;
     }

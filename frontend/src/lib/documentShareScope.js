@@ -49,6 +49,25 @@ export function isCrmArtifactShared(artifact) {
   return artifact?.shared_to_workshop === true || artifact?.shared_to_project === true;
 }
 
+/** Khớp backend canViewerSeeByCompanyAndDept — lọc theo công ty / phòng ban đã setup. */
+export function canViewerSeeByCompanyAndDept(docOrAtt, user, taskRow = null) {
+  if (!user) return true;
+  const role = String(user.role || '').toLowerCase();
+  if (role === 'admin' || role === 'sales_admin') return true;
+  const uc = user.company_id || user.companyId || null;
+  const ud = user.department_id || user.departmentId || null;
+  const ac = parseShareModules(docOrAtt?.allowed_companies)
+    ?? parseShareModules(taskRow?.default_allowed_companies)
+    ?? parseShareModules(docOrAtt?.default_allowed_companies);
+  const ad = parseShareModules(docOrAtt?.allowed_departments)
+    ?? parseShareModules(taskRow?.default_allowed_departments)
+    ?? parseShareModules(docOrAtt?.default_allowed_departments);
+  if (!ac?.length && !ad?.length) return true;
+  if (ac?.length && uc && ac.some((x) => String(x) === String(uc))) return true;
+  if (ad?.length && ud && ad.some((x) => String(x) === String(ud))) return true;
+  return false;
+}
+
 /** null / rỗng sau chuẩn hóa = hiển thị mọi module (khi đã bật chia sẻ) */
 export function isVisibleInShareModule(artifact, moduleKey) {
   const mod = String(moduleKey || '').toLowerCase().trim();

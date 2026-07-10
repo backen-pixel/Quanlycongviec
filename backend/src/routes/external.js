@@ -682,6 +682,22 @@ r.get('/source-categories', apiKeyAuth, async (req, res) => {
   }
 });
 
+// ── POST /api/external/oauth/token — đổi access_token bằng refresh_token ───
+const { refreshAccessToken } = require('../helpers/apiKeyTokens');
+
+r.post('/oauth/token', async (req, res) => {
+  try {
+    const grant = String(req.body?.grant_type || 'refresh_token').trim();
+    if (grant !== 'refresh_token') {
+      return res.status(400).json({ error: 'Chỉ hỗ trợ grant_type=refresh_token' });
+    }
+    const result = await refreshAccessToken(req.body?.refresh_token);
+    res.json(result);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message || 'Lỗi refresh token' });
+  }
+});
+
 // ── GET /api/external/ping — kiểm tra key hợp lệ ────────────────────────────
 
 r.get('/ping', apiKeyAuth, (req, res) => {
