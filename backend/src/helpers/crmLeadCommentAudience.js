@@ -3,7 +3,8 @@
  * (default_allowed_* trên crm_tasks / đính kèm / tài liệu deal).
  */
 
-const { parseJsonArray, canViewerSeeByCompanyAndDept, isAdminLike } = require('./documentShareScope');
+const { parseJsonArray, canViewerSeeByCompanyAndDept } = require('./documentShareScope');
+const { isAdminLike } = require('./adminRole');
 const { fetchLeadMentionMembers } = require('./crmLeadCommentMentions');
 const { ensureLeadMembersFromProjectStaff } = require('./productionWorkshopTypeStaff');
 
