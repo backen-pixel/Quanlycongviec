@@ -1123,7 +1123,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
       return supabase
         .from('projects')
         .select(`
-          id, code, name, estimated_value, production_value, deposit_amount, status, deadline, created_at, company_id,
+          id, code, name, estimated_value, production_value, deposit_amount, collected_amount, status, deadline, created_at, company_id,
           sx_pipeline_stage_entered_at, sx_kanban_deadline_at, sx_kanban_deadline_reason,
           current_stage_id${wtScalar},
           current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1182,7 +1182,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
         return supabase
           .from('projects')
           .select(`
-          id, code, name, estimated_value, production_value, deposit_amount, status, deadline, created_at, company_id,
+          id, code, name, estimated_value, production_value, deposit_amount, collected_amount, status, deadline, created_at, company_id,
           sx_pipeline_stage_entered_at,
           current_stage_id${wtScalar},
           current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1303,7 +1303,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     let query = supabase
       .from('projects')
       .select(`
-        id, code, name, estimated_value, production_value, deposit_amount, priority, deadline, ${MIGRATION_300_COLS} created_at, status, notes, company_id,
+        id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, ${MIGRATION_300_COLS} created_at, status, notes, company_id,
         production_deadline, production_note, vc_kanban_column_id,
         current_stage_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1372,6 +1372,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       error.message?.includes('relationship') ||
       isOrderDeliveryDateMissingError(error) ||
       isDepositAmountMissingError(error) ||
+      isCollectedAmountMissingError(error) ||
       isExternalCompanyNameMissingError(error)
     );
     if (needsFallback) {
@@ -1379,7 +1380,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       let fallbackQuery = supabase
         .from('projects')
         .select(`
-          id, code, name, estimated_value, production_value, deposit_amount, priority, deadline, created_at, status, notes,
+          id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, created_at, status, notes,
           production_deadline, production_note, workshop_type_id,
           current_stage_id,
           current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1465,8 +1466,20 @@ function isOrderDeliveryDateMissingError(err) {
 function isDepositAmountMissingError(err) {
   return String(err?.message || '').includes('deposit_amount');
 }
+function isCollectedAmountMissingError(err) {
+  return String(err?.message || '').includes('collected_amount');
+}
 function stripDepositAmountCol(sel) {
   return sel.replace(/,?\s*deposit_amount,?\s*/g, ', ').replace(/,\s*,/g, ',');
+}
+function stripCollectedAmountCol(sel) {
+  return sel.replace(/,?\s*collected_amount,?\s*/g, ', ').replace(/,\s*,/g, ',');
+}
+function stripProjectFinanceCols(sel) {
+  return stripCollectedAmountCol(stripDepositAmountCol(sel));
+}
+function isProjectFinanceColMissingError(err) {
+  return isDepositAmountMissingError(err) || isCollectedAmountMissingError(err);
 }
 /**
  * Workshop type fields (migration 97 + 251).
@@ -1477,7 +1490,7 @@ const WORKSHOP_TYPE_SCALAR = 'workshop_type_id,';
 const WORKSHOP_TYPE_EMBED = 'workshop_type:workshop_project_types(id, name, applies_to),';
 
 const PROJECT_DETAIL_SELECT = `
-        id, company_id, code, name, description, estimated_value, production_value, deposit_amount, priority, deadline, ${MIGRATION_300_COLS} ${MIGRATION_76_COLS} status, notes, created_at,
+        id, company_id, code, name, description, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, ${MIGRATION_300_COLS} ${MIGRATION_76_COLS} status, notes, created_at,
         current_stage_id, ${WORKSHOP_TYPE_SCALAR}
         ${WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1587,6 +1600,20 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       ({ data: project, error } = await supabase
         .from('projects')
         .select(stripWorkshopTypeAll(PROJECT_DETAIL_SELECT))
+        .eq('id', projectId)
+        .single());
+    }
+    if (error && isCollectedAmountMissingError(error)) {
+      ({ data: project, error } = await supabase
+        .from('projects')
+        .select(stripCollectedAmountCol(PROJECT_DETAIL_SELECT))
+        .eq('id', projectId)
+        .single());
+    }
+    if (error && isDepositAmountMissingError(error)) {
+      ({ data: project, error } = await supabase
+        .from('projects')
+        .select(stripDepositAmountCol(PROJECT_DETAIL_SELECT))
         .eq('id', projectId)
         .single());
     }

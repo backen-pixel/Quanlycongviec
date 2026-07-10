@@ -40,7 +40,7 @@ let _ckSeq = 0;
 const genChecklistId = () => `ck_${Date.now().toString(36)}_${(_ckSeq++).toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 const normalizeChecklist = (arr) => (Array.isArray(arr) ? arr : []).map((c, i) => (
   typeof c === 'string'
-    ? { id: `ckidx_${i}_${c.slice(0, 8)}`, title: c, description: '', notes: '', done: false, priority: 'medium', assignee_id: null, executor_company_id: null, completion_requires_file_or_note: false, required_evidence_file_types: [] }
+    ? { id: `ckidx_${i}_${c.slice(0, 8)}`, title: c, description: '', notes: '', done: false, priority: 'medium', assignee_id: null, executor_company_id: null, completion_requires_file_or_note: false, required_evidence_file_types: [], shared_to_project: false, allowed_share_modules: null }
     : {
         id: c?.id || `ckidx_${i}`,
         title: c?.title || c?.label || '',
@@ -52,6 +52,8 @@ const normalizeChecklist = (arr) => (Array.isArray(arr) ? arr : []).map((c, i) =
         executor_company_id: c?.executor_company_id || null,
         completion_requires_file_or_note: !!c?.completion_requires_file_or_note,
         required_evidence_file_types: Array.isArray(c?.required_evidence_file_types) ? c.required_evidence_file_types : [],
+        shared_to_project: !!c?.shared_to_project,
+        allowed_share_modules: Array.isArray(c?.allowed_share_modules) ? c.allowed_share_modules : null,
       }
 ));
 const ckStateKey = (taskId, ckId) => `${taskId}:${ckId}`;
@@ -3211,6 +3213,14 @@ export default function CRMTasksTab({
                                     title={`Cần nộp: ${formatEvidenceTypesList(ck.required_evidence_file_types)}`}
                                   >
                                     📎 {formatEvidenceTypesShort(ck.required_evidence_file_types) || 'Minh chứng'}
+                                  </span>
+                                )}
+                                {ck.shared_to_project && (
+                                  <span
+                                    className="text-[9px] text-green-700 bg-green-50 px-1 py-0.5 rounded-full flex items-center gap-0.5"
+                                    title={shareModuleLabels(ck.allowed_share_modules) || 'Tự chia sẻ sang xưởng khi up ghi chú/file'}
+                                  >
+                                    <Share2 className="h-2.5 w-2.5" />Tự chia sẻ SX
                                   </span>
                                 )}
                               </div>

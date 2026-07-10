@@ -44,7 +44,7 @@ import {
 } from '../lib/crmStageSlugLabels';
 import { buildCrmLeadDocTaskSections, normalizeCrmChecklist } from '../lib/crmTaskDocumentTree';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
-import { buildSxPipelineStageMeta, resolveSxProjectDeposit, resolveSxProjectRemaining } from '../lib/sxPipelineRevenue';
+import { buildSxPipelineStageMeta, resolveSxProjectDeposit, resolveSxProjectRemaining, resolveSxProjectPaymentProgress } from '../lib/sxPipelineRevenue';
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
 import DriveAttachments from '../components/drive/DriveAttachments';
 import { driveLinksCountByEntity } from '../lib/drive';
@@ -129,6 +129,12 @@ const ACTIVITY_FORM_TYPES = ACTIVITY_TYPES.filter((t) =>
 );
 
 /** Cột trái — inline-editable như LeadDetail */
+function pickPaymentInvoice(invoices) {
+  const list = Array.isArray(invoices) ? invoices : [];
+  const unpaid = list.find((i) => (Number(i.total) || 0) - (Number(i.paid_amount) || 0) > 0.01);
+  return unpaid || list[0] || null;
+}
+
 function WorkshopInfoPanel({
   project,
   onUpdate,
@@ -136,11 +142,15 @@ function WorkshopInfoPanel({
   crmDeal = null,
   companyRegions = [],
   onDealUpdate,
+  financeRefreshKey = 0,
 }) {
   const isVC = moduleKey === 'vc';
   const [editing, setEditing] = useState(null); // field name
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
+  const [crmFinance, setCrmFinance] = useState(null);
+  const [paymentMethod, setPaymentMethod] = useState('transfer');
+  const [paymentRef, setPaymentRef] = useState('');
   const prob = typeof project.productionTaskProgress === 'number' ? project.productionTaskProgress : 0;
 
   const startEdit = (field, value) => { setEditing(field); setDraft(value ?? ''); };
@@ -198,6 +208,84 @@ function WorkshopInfoPanel({
   const orderTotalValue = isVC ? project.estimated_value : project.production_value;
   const depositValue = resolveSxProjectDeposit(financeProject);
   const remainingValue = resolveSxProjectRemaining(financeProject);
+
+  const reloadCrmFinance = useCallback(async () => {
+    if (!project?.id) {
+      setCrmFinance(null);
+      return null;
+    }
+    try {
+      const { data } = await api.get(`/crm/project/${project.id}/summary`);
+      setCrmFinance(data || null);
+      return data || null;
+    } catch {
+      setCrmFinance(null);
+      return null;
+    }
+  }, [project?.id]);
+
+  useEffect(() => {
+    void reloadCrmFinance();
+  }, [
+    reloadCrmFinance,
+    project?.production_value,
+    project?.estimated_value,
+    project?.deposit_amount,
+    project?.collected_amount,
+    crmDeal?.deposit_amount,
+    financeRefreshKey,
+  ]);
+
+  const crmPaymentStats = crmFinance?.stats || null;
+  const paymentProgress = resolveSxProjectPaymentProgress(financeProject, crmPaymentStats);
+  const paymentInvoice = pickPaymentInvoice(crmFinance?.invoices);
+
+  const startPaymentEdit = () => {
+    setPaymentMethod('transfer');
+    setPaymentRef('');
+    if (paymentInvoice) {
+      setDraft(paymentProgress.paymentDebt > 0 ? String(paymentProgress.paymentDebt) : '');
+    } else {
+      setDraft(paymentProgress.paid > 0 ? String(paymentProgress.paid) : '');
+    }
+    setEditing('payment_progress');
+  };
+
+  const savePaymentProgress = async () => {
+    const amount = Number(draft);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      alert('Nhập số tiền hợp lệ');
+      return;
+    }
+    setSaving(true);
+    try {
+      let invoice = paymentInvoice;
+      if (!invoice && crmFinance?.stats?.needsInvoice) {
+        const { data: auto } = await api.post(`/crm/project/${project.id}/auto-invoice`);
+        invoice = auto?.invoices?.[0] || pickPaymentInvoice((await reloadCrmFinance())?.invoices);
+      }
+      if (invoice) {
+        const invRemaining = Math.max(0, (Number(invoice.total) || 0) - (Number(invoice.paid_amount) || 0));
+        const payAmt = invRemaining > 0 ? Math.min(amount, invRemaining) : amount;
+        await api.post(`/crm/invoices/${invoice.id}/payments`, {
+          amount: payAmt,
+          payment_method: paymentMethod,
+          reference_number: paymentRef || null,
+        });
+      } else {
+        const cap = Number(orderTotalValue) || amount;
+        const capped = Math.min(amount, cap);
+        await api.put(`/projects/${project.id}`, { collected_amount: capped });
+      }
+      await reloadCrmFinance();
+      setEditing(null);
+      setDraft('');
+      onUpdate?.();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi lưu');
+    }
+    setSaving(false);
+  };
 
   return (
     <div className="bg-white rounded-xl border p-5 space-y-1">
@@ -298,6 +386,121 @@ function WorkshopInfoPanel({
               </p>
             </div>
           </div>
+
+          {(paymentProgress.hasData || Number(orderTotalValue) > 0) && (
+            <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors">
+              <span className="text-sm mt-0.5 shrink-0">💳</span>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2 mb-0.5">
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium">Tiến độ thu tiền</p>
+                  <div className="flex items-center gap-2">
+                    {editing !== 'payment_progress' && (
+                      <button
+                        type="button"
+                        onClick={startPaymentEdit}
+                        className="text-[10px] text-blue-500 hover:text-blue-700 cursor-pointer"
+                      >
+                        Sửa
+                      </button>
+                    )}
+                    {editing !== 'payment_progress' && (
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                        paymentProgress.paidFull
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : paymentProgress.pct > 0
+                            ? 'bg-amber-100 text-amber-700'
+                            : 'bg-red-100 text-red-700'
+                      }`}>
+                        {paymentProgress.paidFull ? '✅ Đủ' : paymentProgress.pct > 0 ? `${paymentProgress.pct}%` : 'Chưa thu'}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {editing === 'payment_progress' ? (
+                  <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
+                    <div>
+                      <label className="text-[10px] text-gray-500">
+                        {paymentInvoice ? 'Số tiền thu thêm' : 'Tổng đã thu'}
+                        {paymentProgress.paymentDebt > 0 && paymentInvoice && (
+                          <span className="text-gray-400"> (còn nợ {formatVND(paymentProgress.paymentDebt)})</span>
+                        )}
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        autoFocus
+                        className="w-full mt-0.5 px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400"
+                        placeholder="0"
+                      />
+                    </div>
+                    {paymentInvoice && (
+                      <>
+                        <div>
+                          <label className="text-[10px] text-gray-500">Hình thức</label>
+                          <select
+                            value={paymentMethod}
+                            onChange={(e) => setPaymentMethod(e.target.value)}
+                            className="w-full mt-0.5 px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400 bg-white"
+                          >
+                            <option value="transfer">🏦 Chuyển khoản</option>
+                            <option value="cash">💵 Tiền mặt</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-gray-500">Số GD / Ghi chú</label>
+                          <input
+                            value={paymentRef}
+                            onChange={(e) => setPaymentRef(e.target.value)}
+                            className="w-full mt-0.5 px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400"
+                            placeholder="Tùy chọn"
+                          />
+                        </div>
+                        <p className="text-[10px] text-gray-500">
+                          Ghi qua HĐ {paymentInvoice.code || ''} — đồng bộ CRM.
+                        </p>
+                      </>
+                    )}
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => void savePaymentProgress()}
+                        disabled={saving}
+                        className="px-2 py-1 bg-emerald-600 text-white rounded text-xs cursor-pointer disabled:opacity-50"
+                      >
+                        {saving ? 'Đang lưu...' : '✓ Lưu'}
+                      </button>
+                      <button type="button" onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-sm font-medium text-gray-900 tabular-nums">
+                      {formatVND(paymentProgress.paid)}
+                      <span className="text-gray-400 font-normal"> / {formatVND(paymentProgress.base)}</span>
+                    </p>
+                    <div className="mt-1 w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-300 ${
+                          paymentProgress.paidFull ? 'bg-emerald-500' : 'bg-amber-500'
+                        }`}
+                        style={{ width: `${paymentProgress.pct}%` }}
+                      />
+                    </div>
+                    {paymentProgress.paymentDebt > 0 && (
+                      <p className="text-[10px] text-red-600 font-medium mt-1">Còn nợ: {formatVND(paymentProgress.paymentDebt)}</p>
+                    )}
+                    {paymentProgress.needsInvoice && paymentProgress.invoiceGap > 0 && (
+                      <p className="text-[10px] text-amber-700 mt-0.5">
+                        Chưa xuất hết HĐ ({formatVND(paymentProgress.invoiceGap)})
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
         </>
       )}
 
@@ -1233,6 +1436,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const { setCrmNotesAnchor } = useCrmNotesFab();
   const [searchParams, setSearchParams] = useSearchParams();
   const [project, setProject] = useState(null);
+  const [financeRefreshKey, setFinanceRefreshKey] = useState(0);
   const [companyRegions, setCompanyRegions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [fallbackDealIdForTasks, setFallbackDealIdForTasks] = useState(null);
@@ -1733,6 +1937,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       loadProjectDocs(id);
       loadTaskFiles(id);
       loadProjectActivities(id);
+      setFinanceRefreshKey((k) => k + 1);
     } catch (e) {
       console.error(e);
       const st = e.response?.status;
@@ -1811,6 +2016,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       await fetchCrmDealTaskSummary(dealId);
       loadProjectDocs(id);
       loadTaskFiles(id);
+      setFinanceRefreshKey((k) => k + 1);
     } catch (_) {
       /* giữ state cũ */
     }
@@ -2584,6 +2790,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             moduleKey={moduleKey}
             crmDeal={primaryCrmDeal}
             companyRegions={companyRegions}
+            financeRefreshKey={financeRefreshKey}
             onDealUpdate={(data) => {
               if (!data?.id) return;
               setProject((prev) => (prev ? {

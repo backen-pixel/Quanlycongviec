@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { Search, ChevronDown } from 'lucide-react';
-import { getInitials, avatarColor } from '../lib/utils';
+import { getInitials, avatarColor, formatStaffDisplayName, getStaffInitials, staffNameMatchesQuery } from '../lib/utils';
 
 // ═══ Searchable User Select ═══
 // Usage: <UserSelect value={userId} onChange={setUserId} users={[...]} emptyLabel="..." />
@@ -27,7 +27,7 @@ export default function UserSelect({ value, onChange, users, placeholder, emptyL
   const filtered = useMemo(() => {
     if (!search.trim()) return users;
     const q = search.toLowerCase();
-    return users.filter(u => u.full_name?.toLowerCase().includes(q) || u.role?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q) || u.id?.toLowerCase().includes(q));
+    return users.filter(u => staffNameMatchesQuery(u.full_name, q) || u.role?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q) || u.id?.toLowerCase().includes(q));
   }, [users, search]);
   const selected = users.find(u => u.id === value);
   const sm = size === 'sm';
@@ -47,7 +47,7 @@ export default function UserSelect({ value, onChange, users, placeholder, emptyL
               <div className={`${sm ? 'h-4 w-4 text-[6px]' : 'h-5 w-5 text-[7px]'} rounded-full flex items-center justify-center text-white font-bold shrink-0`}
                 style={{ backgroundColor: avatarColor(selected.full_name) }}>{getInitials(selected.full_name)}</div>
             )}
-            <span className="truncate flex-1">{selected.full_name}</span>
+            <span className="truncate flex-1" title={selected.full_name}>{formatStaffDisplayName(selected.full_name)}</span>
           </>
         ) : <span className="text-gray-400 flex-1 truncate">{placeholder || '— Chọn NV —'}</span>}
         <ChevronDown className="h-3 w-3 text-gray-400 shrink-0" />
@@ -79,7 +79,7 @@ export default function UserSelect({ value, onChange, users, placeholder, emptyL
                       style={{ backgroundColor: avatarColor(u.full_name) }}>{getInitials(u.full_name)}</div>
                   )}
                   <span className="flex-1 min-w-0">
-                    <span className="block truncate">{u.full_name}</span>
+                    <span className="block truncate" title={u.full_name}>{formatStaffDisplayName(u.full_name)}</span>
                     {u.email && <span className="block truncate text-[10px] text-gray-400 font-normal">{u.email}</span>}
                   </span>
                   <span className="text-[10px] text-gray-400 shrink-0">{u.role}</span>

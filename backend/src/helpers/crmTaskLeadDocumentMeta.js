@@ -66,8 +66,25 @@ function shouldAutoShareSxToWorkshop(taskRow, opts = {}) {
   return !!(slug && String(slug).startsWith(SX_PREFIX));
 }
 
+function shareFromChecklistItem(checklistItem) {
+  if (!checklistItem || checklistItem.shared_to_project !== true) return null;
+  const raw = parseJsonArray(checklistItem.allowed_share_modules);
+  const cleaned = raw?.length ? cleanShareModulesInput(raw) : null;
+  return {
+    shared_to_project: true,
+    allowed_share_modules: cleaned?.length ? cleaned : ['production'],
+  };
+}
+
 /** Cờ mặc định trên crm_task_attachments — deal đã có dự án SX thì tự chia sẻ sang xưởng. */
-function getDefaultCrmAttachmentShare(taskRow, opts = {}) {
+function getDefaultCrmAttachmentShare(taskRow, opts = {}, checklistItem = null) {
+  const fromCk = shareFromChecklistItem(checklistItem);
+  if (fromCk) return fromCk;
+  if (taskRow?.shared_to_project === true) {
+    const raw = parseJsonArray(taskRow.allowed_share_modules);
+    const cleaned = raw?.length ? cleanShareModulesInput(raw) : null;
+    return { shared_to_project: true, allowed_share_modules: cleaned };
+  }
   if (opts.linkToProject || shouldAutoShareSxToWorkshop(taskRow, opts)) {
     return { shared_to_project: true, allowed_share_modules: ['production'] };
   }

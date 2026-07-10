@@ -3,7 +3,7 @@ export const LEAVE_TYPES = [
   { v: 'unpaid', l: 'Phép không lương', color: '#6B7280' },
   { v: 'sick', l: 'Nghỉ ốm', color: '#EF4444' },
   { v: 'business_trip', l: 'Công tác', color: '#3B82F6' },
-  { v: 'remote', l: 'Làm từ xa', color: '#10B981' },
+  { v: 'remote', l: 'Làm online', color: '#10B981' },
   { v: 'other', l: 'Khác', color: '#F59E0B' },
 ];
 
@@ -68,6 +68,7 @@ export function leaveTypeMeta(v) {
 
 export function leaveTypeDisplayLabel(v) {
   if (v === 'paid') return 'Nghỉ phép';
+  if (v === 'remote') return 'Làm online';
   return leaveTypeMeta(v).l;
 }
 
@@ -75,6 +76,28 @@ export function halfDayDisplayLabel(v) {
   if (v === 'morning') return 'Buổi sáng';
   if (v === 'afternoon') return 'Buổi chiều';
   return 'Cả ngày';
+}
+
+/** Nhãn gộp loại nghỉ + buổi — dùng trên lịch và ghi chú. */
+export function leaveTypeAndHalfLabel(leave) {
+  if (!leave) return '';
+  return `${leaveTypeDisplayLabel(leave.leave_type)} · ${halfDayDisplayLabel(leave.half_day)}`;
+}
+
+/** Ghi chú hiển thị: loại nghỉ · buổi — lý do (nếu có). */
+export function formatLeaveNote(leave) {
+  if (!leave) return '—';
+  const meta = leaveTypeAndHalfLabel(leave);
+  const reason = String(leave.reason || '').trim();
+  if (!reason) return meta;
+  return `${meta} — ${reason}`;
+}
+
+/** Màu ô lịch Kanban theo loại nghỉ / buổi. */
+export function resolveLeaveCalendarChipKind(leave) {
+  if (leave?.leave_type === 'remote') return 'remote';
+  if (leave?.half_day && leave.half_day !== 'full') return 'half';
+  return 'full';
 }
 
 export function pad(n) {
@@ -124,6 +147,32 @@ export function resolveLeaveUser(leave, usersById, currentUser) {
     };
   }
   return leave?.user || null;
+}
+
+/** Gộp users từ dropdown + embed API leave.user để luôn tra được tên. */
+export function buildLeaveUsersById(users = [], leaves = [], currentUser = null) {
+  const map = {};
+  for (const u of users) {
+    if (u?.id) map[String(u.id)] = u;
+  }
+  for (const l of leaves || []) {
+    const u = l?.user;
+    if (u?.id && (u.full_name || u.email)) {
+      const key = String(u.id);
+      map[key] = { ...map[key], ...u };
+    }
+  }
+  if (currentUser?.id) {
+    const key = String(currentUser.id);
+    if (!map[key]) map[key] = currentUser;
+  }
+  return map;
+}
+
+/** Tên đầy đủ nhân viên — dùng bảng danh sách và form sửa. */
+export function leavePersonDisplayName(leave, usersById, currentUser) {
+  const user = resolveLeaveUser(leave, usersById, currentUser);
+  return String(user?.full_name || user?.email || '').trim() || '—';
 }
 
 export function leavePersonCalendarLabel(leave, usersById, currentUser) {

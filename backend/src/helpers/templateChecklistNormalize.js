@@ -1,4 +1,7 @@
-const { evidenceFieldsFromTemplateChecklistItem } = require('./checklistItemEvidence');
+const {
+  evidenceFieldsFromTemplateChecklistItem,
+  shareFieldsFromTemplateChecklistItem,
+} = require('./checklistItemEvidence');
 
 let _ckSeq = 0;
 
@@ -29,6 +32,7 @@ function normalizeTemplateChecklistForCrmTask(raw, defaultExecutorCompanyId = nu
         executor_company_id: explicitExec || defExec || null,
         done: false,
         ...evidenceFieldsFromTemplateChecklistItem(x),
+        ...shareFieldsFromTemplateChecklistItem(x),
       };
     })
     .filter(Boolean);

@@ -5161,7 +5161,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
     const { data: leadForShare } = await supabase.from('crm_leads')
       .select('project_id').eq('id', req.params.leadId).single();
     const bulkShareOpts = { linkToProject: !!leadForShare?.project_id };
-    const defaultShare = getDefaultCrmAttachmentShare(task, bulkShareOpts);
+    const defaultShare = getDefaultCrmAttachmentShare(task, bulkShareOpts, ckItem);
 
     // Insert tất cả attachments 1 lần
     const rows = items.map(item => ({
@@ -5261,7 +5261,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
     const { data: leadForShare } = await supabase.from('crm_leads')
       .select('project_id').eq('id', req.params.leadId).single();
     const singleShareOpts = { linkToProject: !!leadForShare?.project_id };
-    const singleDefaultShare = getDefaultCrmAttachmentShare(taskForShare, singleShareOpts);
+    const singleDefaultShare = getDefaultCrmAttachmentShare(taskForShare, singleShareOpts, ckItem);
 
     const insertRow = {
       task_id: req.params.taskId,

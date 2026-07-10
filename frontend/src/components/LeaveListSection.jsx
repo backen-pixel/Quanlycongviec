@@ -9,8 +9,12 @@ import {
   leaveTypeMeta,
   leaveTypeDisplayLabel,
   halfDayDisplayLabel,
+  formatLeaveNote,
   formatLeaveDateWithWeekday,
   fmtCreatedAt,
+  buildLeaveUsersById,
+  leavePersonDisplayName,
+  resolveLeaveUser,
 } from '../lib/leaveScheduleUtils';
 import DateRangePickerPopover from './DateRangePickerPopover';
 import ScopeFilterBar from '../shared/components/ScopeFilterBar';
@@ -185,20 +189,25 @@ export default function LeaveListSection({
     [leaves],
   );
 
+  const usersById = useMemo(
+    () => buildLeaveUsersById(users, leaves, currentUser),
+    [users, leaves, currentUser],
+  );
+
   const filteredRows = useMemo(() => {
     const q = searchText.trim().toLowerCase();
     if (!q) return sortedRows;
     return sortedRows.filter((l) => {
       const hay = [
-        l.user?.full_name,
+        leavePersonDisplayName(l, usersById, currentUser),
         l.user?.email,
-        l.reason,
+        formatLeaveNote(l),
         leaveTypeDisplayLabel(l.leave_type),
         halfDayDisplayLabel(l.half_day),
       ].filter(Boolean).join(' ').toLowerCase();
       return hay.includes(q);
     });
-  }, [sortedRows, searchText]);
+  }, [sortedRows, searchText, usersById, currentUser]);
 
   const handleExportExcel = useCallback(async () => {
     setExporting(true);
@@ -480,11 +489,15 @@ export default function LeaveListSection({
                   </tr>
                 ) : filteredRows.map((l) => {
                   const typeColor = leaveTypeMeta(l.leave_type).color;
+                  const personName = leavePersonDisplayName(l, usersById, currentUser);
+                  const personEmail = resolveLeaveUser(l, usersById, currentUser)?.email || '';
                   return (
                     <tr key={l.id} className="border-b border-gray-50 hover:bg-gray-50/70">
                       <td className="px-5 py-3.5">
-                        <p className="font-semibold text-gray-900">{l.user?.full_name || '—'}</p>
-                        <p className="text-xs text-gray-500 truncate max-w-[180px]">{l.user?.email || ''}</p>
+                        <p className="font-semibold text-gray-900">{personName}</p>
+                        {personEmail && personName !== personEmail && (
+                          <p className="text-xs text-gray-500 truncate max-w-[180px]">{personEmail}</p>
+                        )}
                       </td>
                       <td className="px-5 py-3.5 text-gray-800 whitespace-nowrap">
                         {formatLeaveDateWithWeekday(l.start_date, l.end_date)}
@@ -496,7 +509,7 @@ export default function LeaveListSection({
                         </span>
                       </td>
                       <td className="px-5 py-3.5 text-gray-600">{halfDayDisplayLabel(l.half_day)}</td>
-                      <td className="px-5 py-3.5 text-gray-600 max-w-[220px] truncate" title={l.reason}>{l.reason || '—'}</td>
+                      <td className="px-5 py-3.5 text-gray-600 max-w-[280px] truncate" title={formatLeaveNote(l)}>{formatLeaveNote(l)}</td>
                       <td className="px-5 py-3.5 text-gray-500 tabular-nums whitespace-nowrap">{fmtCreatedAt(l.created_at)}</td>
                       <td className="px-5 py-3.5 text-right">{renderLeaveRowMenu(l)}</td>
                     </tr>

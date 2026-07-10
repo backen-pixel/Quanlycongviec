@@ -252,6 +252,75 @@ async function syncProductionStaffToLeadMembers({ dealId, userIds, primaryUserId
   return { synced: rows.length };
 }
 
+/**
+ * Khi gán production_person_id thủ công → đảm bảo NV đó có trong project_production_staff (phụ trách chính)
+ * và tab Thành viên deal (lead_members).
+ */
+async function syncProductionPersonToStaffAndMembers(projectId, userId, opts = {}) {
+  if (!projectId || !userId) return { synced: 0 };
+
+  const uid = String(userId);
+  let staffRows = [];
+  try {
+    const { data } = await supabase
+      .from('project_production_staff')
+      .select('id, user_id, order_index, is_primary')
+      .eq('project_id', projectId)
+      .order('order_index');
+    staffRows = data || [];
+  } catch (e) {
+    if (String(e.message || '').includes('project_production_staff')) {
+      staffRows = [];
+    } else {
+      throw e;
+    }
+  }
+
+  const exists = staffRows.some((r) => String(r.user_id) === uid);
+  const maxOrder = staffRows.reduce((m, r) => Math.max(m, r.order_index ?? 0), -1);
+
+  try {
+    await supabase
+      .from('project_production_staff')
+      .update({ is_primary: false })
+      .eq('project_id', projectId);
+    if (exists) {
+      await supabase
+        .from('project_production_staff')
+        .update({ is_primary: true })
+        .eq('project_id', projectId)
+        .eq('user_id', uid);
+    } else {
+      let { error: insErr } = await supabase.from('project_production_staff').insert({
+        project_id: projectId,
+        user_id: uid,
+        order_index: maxOrder + 1,
+        is_primary: true,
+      });
+      if (insErr && String(insErr.message || '').includes('is_primary')) {
+        ({ error: insErr } = await supabase.from('project_production_staff').insert({
+          project_id: projectId,
+          user_id: uid,
+          order_index: maxOrder + 1,
+        }));
+      }
+      if (insErr) {
+        console.warn('[productionWorkshopTypeStaff] syncProductionPerson insert:', insErr.message);
+        return { synced: 0, error: insErr.message };
+      }
+    }
+  } catch (e) {
+    console.warn('[productionWorkshopTypeStaff] syncProductionPerson staff:', e.message);
+    return { synced: 0, error: e.message };
+  }
+
+  const userIds = exists
+    ? staffRows.map((r) => String(r.user_id)).filter(Boolean)
+    : [...staffRows.map((r) => String(r.user_id)).filter(Boolean), uid];
+
+  return syncLeadMembersForProject(projectId, userIds, uid, opts);
+}
+
 /** Lazy backfill: deal có project → ghi thiếu NV từ project_production_staff vào lead_members. */
 async function ensureLeadMembersFromProjectStaff(leadId) {
   if (!leadId) return { synced: 0 };
@@ -611,6 +680,7 @@ module.exports = {
   formatDefaultsForApi,
   userBelongsToProductionCompany,
   syncProductionStaffToLeadMembers,
+  syncProductionPersonToStaffAndMembers,
   ensureLeadMembersFromProjectStaff,
   syncLeadMembersForProject,
 };

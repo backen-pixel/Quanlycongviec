@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import api from '../lib/api';
 import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
-import { isCrossWorkshopProductionViewer } from '../lib/crossWorkshopProduction';
+import { isCrossWorkshopProductionViewer, resolveStaffWorkshopCompanyId } from '../lib/crossWorkshopProduction';
 
 function coerceFilterStr(value) {
   if (typeof value === 'string') return value;
@@ -36,13 +36,13 @@ export function projectMatchesStaffRegion(project, filterRegion, personRegionMap
   return regionIds.has(String(filterRegion));
 }
 
-export function getProjectAssigneeName(project) {
-  return (
+export function getProjectAssigneeName(project, forModule = 'crm') {
+  const workshopName =
     project?.production_person?.full_name
     || project?.logistics_person?.full_name
-    || project?.sales_person?.full_name
-    || ''
-  );
+    || '';
+  if (forModule === 'production' || forModule === 'logistics') return workshopName;
+  return workshopName || project?.sales_person?.full_name || '';
 }
 
 /**
@@ -77,6 +77,16 @@ export function useWorkshopStaffFilter({
     /** Pick công ty đặt hàng có thể là `ext:…` — không dùng làm company_id CRM. */
     const crmDealCompanyId = dealPick && !dealPick.startsWith('ext:') ? dealPick : '';
 
+    // Dashboard SX/VC: NV phụ trách theo xưởng thực hiện, không theo công ty CRM của deal.
+    if (forModule === 'production' || forModule === 'logistics') {
+      if (workshopPick) return workshopPick;
+      const ownWorkshop = resolveStaffWorkshopCompanyId(user, companies);
+      if (ownWorkshop) return ownWorkshop;
+      if (!isAdmin && userCompanyId) return userCompanyId;
+      if (isAdmin && workshopPick) return workshopPick;
+      return '';
+    }
+
     if (crmDealCompanyId) return crmDealCompanyId;
     if (workshopPick) return workshopPick;
     if (isCompanyScopedAdmin && userCompanyId) return userCompanyId;
@@ -84,7 +94,7 @@ export function useWorkshopStaffFilter({
     if (!isAdmin && userCompanyId) return userCompanyId;
     if (isAdmin && workshopPick) return workshopPick;
     return '';
-  }, [dealCompanyFilter, isCompanyScopedAdmin, crossWorkshopViewer, isAdmin, userCompanyId, filterCompany]);
+  }, [dealCompanyFilter, filterCompany, forModule, isCompanyScopedAdmin, crossWorkshopViewer, isAdmin, userCompanyId, user, companies]);
 
   const crmCompanyIdsCsv = useMemo(
     () => (companies || []).map((c) => String(c.id)).filter(Boolean).join(','),
@@ -136,7 +146,16 @@ export function useWorkshopStaffFilter({
       }
     })();
     return () => { cancel = true; };
-  }, [dashboardScopeCompanyId]);
+  }, [dashboardScopeCompanyId, forModule]);
+
+  useEffect(() => {
+    if (!filterPersonId || companyEmployees.length === 0) return;
+    const ok = companyEmployees.some((u) => String(u.id) === String(filterPersonId));
+    if (!ok) {
+      setFilterPersonId('');
+      setFilterPersonName('');
+    }
+  }, [companyEmployees, filterPersonId]);
 
   const personRegionMap = useMemo(() => {
     const map = {};
@@ -213,12 +232,12 @@ export function useWorkshopStaffFilter({
     }
     const q = String(personNameQ || filterPersonName || '').trim().toLowerCase();
     if (q) {
-      const name = getProjectAssigneeName(project).toLowerCase();
+      const name = getProjectAssigneeName(project, forModule).toLowerCase();
       if (!name.includes(q)) return false;
     }
     if (!projectMatchesStaffRegion(project, filterRegion, personRegionMap)) return false;
     return true;
-  }, [filterPersonId, filterPersonName, filterRegion, personRegionMap]);
+  }, [filterPersonId, filterPersonName, filterRegion, personRegionMap, forModule]);
 
   const staffFilterActiveCount =
     (filterRegion ? 1 : 0)

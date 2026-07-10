@@ -139,6 +139,14 @@ function buildTaskInsertsFromTemplates(templates, allItems, userId, leadId) {
       blocks_stage_advance: !!item.blocks_stage_advance,
       show_excel_quotation_upload: !!item.show_excel_quotation_upload,
       assignee_id: primaryTemplateItemAssigneeId(item),
+      default_allowed_companies: item.default_allowed_companies || null,
+      default_allowed_departments: item.default_allowed_departments || null,
+      shared_to_project: !!item.default_shared_to_project,
+      allowed_share_modules: item.default_shared_to_project
+        ? (Array.isArray(item.default_allowed_share_modules) && item.default_allowed_share_modules.length
+          ? item.default_allowed_share_modules
+          : null)
+        : null,
     };
   });
 }
@@ -511,6 +519,14 @@ function buildCrmTaskInsertFromTemplateItem(item, tpl, leadId, pipelineStageId, 
     blocks_stage_advance: !!item.blocks_stage_advance,
     show_excel_quotation_upload: !!item.show_excel_quotation_upload,
     assignee_id: primaryTemplateItemAssigneeId(item),
+    default_allowed_companies: item.default_allowed_companies || null,
+    default_allowed_departments: item.default_allowed_departments || null,
+    shared_to_project: !!item.default_shared_to_project,
+    allowed_share_modules: item.default_shared_to_project
+      ? (Array.isArray(item.default_allowed_share_modules) && item.default_allowed_share_modules.length
+        ? item.default_allowed_share_modules
+        : null)
+      : null,
     ...crmExecutorFieldsFromTemplateItem(item, ownerCompanyId),
   };
 }

@@ -21,7 +21,7 @@ import {
   isWorkshopProductionStaff,
   productionWorkshopFilterCompanies,
 } from '../lib/crossWorkshopProduction';
-import { formatVND, formatDate } from '../lib/utils';
+import { formatVND, formatDate, formatStaffDisplayName, getStaffInitials } from '../lib/utils';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
 import { resolveSxProjectLeadId, resolveSxProjectLeadIdAsync, partitionSxProjectsByCommentSource } from '../lib/sxProjectComments';
 import { CrmCommentMentionComposer } from '../components/crmCommentMentionUi';
@@ -2720,6 +2720,8 @@ export default function ProductionDashboard() {
               filterPersonName={filterPersonName}
               employeeFilterListByRegion={employeeFilterListByRegion}
               companyEmployees={companyEmployees}
+            personSelectLabel="NV phụ trách SX"
+            panelTitle="Lọc NV phụ trách sản xuất (xưởng → khu vực → NV)"
             canPickCompany={canPickCompany}
             workshopCompanyPickerList={workshopCompanyPickerList}
             showAllWorkshopOption={isAdmin}
@@ -2952,7 +2954,7 @@ export default function ProductionDashboard() {
             >
               <option value="">— Chọn người phụ trách SX —</option>
               {(employeeOptionsForSelect.length ? employeeOptionsForSelect : allUsers).map((u) => (
-                <option key={u.id} value={u.id}>{u.full_name}</option>
+                <option key={u.id} value={u.id}>{formatStaffDisplayName(u.full_name)}</option>
               ))}
             </select>
             <div className="flex gap-2">
@@ -3692,10 +3694,12 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
               className="h-4 w-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white shrink-0"
               style={{ backgroundColor: '#7c3aed' }}
             >
-              {getInitials(crmAssignee.full_name)}
+              {getStaffInitials(crmAssignee.full_name)}
             </span>
           )}
-          <span className="truncate font-medium">{crmAssignee.full_name}</span>
+          <span className="truncate font-medium" title={crmAssignee.full_name}>
+            {formatStaffDisplayName(crmAssignee.full_name)}
+          </span>
           <span className="text-[10px] text-violet-500 shrink-0">CRM</span>
         </div>
       )}
@@ -3781,7 +3785,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
                     className="h-5 w-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white ring-2 ring-white shrink-0"
                     style={{ backgroundColor: u.is_primary ? '#4f46e5' : stageColor }}
                   >
-                    {getInitials(u.full_name)}
+                    {getStaffInitials(u.full_name)}
             </div>
                 )
               ))}
@@ -3800,7 +3804,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
                 style={{ backgroundColor: stageColor }}
                 title={assignee.full_name}
               >
-                {getInitials(assignee.full_name)}
+                {getStaffInitials(assignee.full_name)}
             </div>
             )
           ) : (

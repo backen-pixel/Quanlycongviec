@@ -66,7 +66,7 @@ async function syncChecklistItemNotes(supabase, {
     return { ok: true, cleared: true };
   }
 
-  const noteShare = getDefaultCrmAttachmentShare(taskRow, taskDocOpts);
+  const noteShare = getDefaultCrmAttachmentShare(taskRow, taskDocOpts, ck);
   const attName = `📝 ${ck.title}`;
 
   if (existingAtt?.id) {

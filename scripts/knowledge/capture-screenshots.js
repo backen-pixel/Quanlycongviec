@@ -21,7 +21,8 @@ const AUTH_FILE = path.join(__dirname, '.auth-session.json');
 
 /** Khớp frontend/src/content/builtinUpdates.js — tránh popup builtin khi chụp */
 const BUILTIN_RELEASE_NOTE_IDS = [
-  '2026-05-unified-work-tasks',
+  '2026-07-leave-schedule-guide',
+  '2026-07-crm-deal-chuyen-san-xuat',
   '2026-05-knowledge-deal-crm-courses',
   '2026-05-crm-assignments',
   '2026-05-crm-pipeline-orphan-unlock',

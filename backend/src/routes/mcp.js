@@ -118,10 +118,14 @@ r.post('/rpc', async (req, res) => {
       const args = params.arguments || params.args || {};
       if (!name) return reply(null, { code: -32602, message: 'Thiếu params.name' });
       const result = await callMcpReportTool(String(name), args, req);
-      return reply({
+      const payload = {
         content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-        structuredContent: result,
-      });
+      };
+      // MCP spec: structuredContent phải là object (record), không được là array/primitive
+      if (result !== null && typeof result === 'object' && !Array.isArray(result)) {
+        payload.structuredContent = result;
+      }
+      return reply(payload);
     }
     if (method === 'ping' || method === 'initialize') {
       return reply({
