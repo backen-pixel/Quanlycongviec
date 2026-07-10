@@ -2,14 +2,27 @@
  * Panel bình luận (thread + reactions) dùng chung cho chi tiết CRM và Sản xuất.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, CheckCheck, Paperclip } from 'lucide-react';
+import {
+  Check,
+  CheckCheck,
+  Download,
+  File,
+  FileArchive,
+  FileAudio,
+  FileCode,
+  FileSpreadsheet,
+  FileText,
+  FileVideo,
+  Paperclip,
+} from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmCommentFullDateTime, formatCrmFbRelativeTime } from './crmFbCommentUi';
 import { CrmCommentMentionComposer, renderCrmCommentBody } from './crmCommentMentionUi';
 import { FilePreview, FileUploadButton, uploadFilesBatch } from './FileUpload';
 import UploadProgressBubble from './UploadProgressBubble';
-import { publicFileUrl as pubUrl } from '../lib/publicFileUrl';
+import UploadFileLightbox from './UploadFileLightbox';
+import { downloadUploadFile, publicFileUrl as pubUrl } from '../lib/publicFileUrl';
 import { handleCommentFilePaste } from '../lib/chatClipboard';
 import { CommentNewNotice, useCommentThreadLive } from './commentThreadLiveUx';
 
@@ -85,49 +98,143 @@ function isCommentImage(att) {
   return mime.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg|heic|heif)$/i.test(name);
 }
 
-export function CommentAttachmentsBlock({ attachments }) {
+function fileExt(name) {
+  const s = String(name || '').trim();
+  const idx = s.lastIndexOf('.');
+  if (idx < 0 || idx === s.length - 1) return '';
+  return s.slice(idx + 1).toLowerCase();
+}
+
+function humanFileSize(bytes) {
+  const n = Number(bytes || 0);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function fileVisual(name, mime) {
+  const ext = fileExt(name);
+  const mm = String(mime || '').toLowerCase();
+  const isVideo = mm.startsWith('video/') || ['mp4', 'mov', 'mkv', 'avi', 'webm'].includes(ext);
+  const isAudio = mm.startsWith('audio/') || ['mp3', 'wav', 'm4a', 'aac', 'ogg'].includes(ext);
+  const isPdf = ext === 'pdf' || mm === 'application/pdf';
+  const isDoc = ['doc', 'docx'].includes(ext);
+  const isPpt = ['ppt', 'pptx'].includes(ext);
+  const isXls = ['xls', 'xlsx', 'csv'].includes(ext);
+  const isZip = ['zip', 'rar', '7z', 'tar', 'gz'].includes(ext);
+  const isCode = ['js', 'ts', 'tsx', 'jsx', 'json', 'sql', 'py', 'java', 'cs', 'php', 'rb', 'go', 'rs', 'yml', 'yaml'].includes(ext);
+  const isTxt = ['txt', 'md', 'log'].includes(ext);
+
+  if (isVideo) return { Icon: FileVideo, bg: 'bg-indigo-50', fg: 'text-indigo-600', ring: 'ring-indigo-200', label: ext || 'video' };
+  if (isAudio) return { Icon: FileAudio, bg: 'bg-fuchsia-50', fg: 'text-fuchsia-600', ring: 'ring-fuchsia-200', label: ext || 'audio' };
+  if (isPdf) return { Icon: FileText, bg: 'bg-red-50', fg: 'text-red-600', ring: 'ring-red-200', label: 'pdf' };
+  if (isXls) return { Icon: FileSpreadsheet, bg: 'bg-emerald-50', fg: 'text-emerald-700', ring: 'ring-emerald-200', label: ext || 'xls' };
+  if (isDoc || isPpt) return { Icon: FileText, bg: 'bg-sky-50', fg: 'text-sky-700', ring: 'ring-sky-200', label: ext || 'doc' };
+  if (isZip) return { Icon: FileArchive, bg: 'bg-amber-50', fg: 'text-amber-700', ring: 'ring-amber-200', label: ext || 'zip' };
+  if (isCode) return { Icon: FileCode, bg: 'bg-slate-50', fg: 'text-slate-700', ring: 'ring-slate-200', label: ext || 'code' };
+  if (isTxt) return { Icon: FileText, bg: 'bg-gray-50', fg: 'text-gray-700', ring: 'ring-gray-200', label: ext || 'txt' };
+  return { Icon: File, bg: 'bg-gray-50', fg: 'text-gray-700', ring: 'ring-gray-200', label: ext || 'file' };
+}
+
+export function CommentAttachmentsBlock({ attachments, onOpenImage }) {
   const items = commentAttachmentList(attachments);
   if (!items.length) return null;
   const images = items.filter(isCommentImage);
   const otherFiles = items.filter((f) => !isCommentImage(f));
+
+  const localLightboxItems = useMemo(
+    () => images.map((img) => ({ url: pubUrl(img.url), title: img.name || 'image', rawPath: img.url })),
+    [images],
+  );
+  const [localOpen, setLocalOpen] = useState(false);
+  const [localIndex, setLocalIndex] = useState(0);
+
   return (
     <div className="mt-2 space-y-2">
+      {localOpen && !onOpenImage && localLightboxItems.length > 0 && (
+        <UploadFileLightbox
+          items={localLightboxItems}
+          index={localIndex}
+          onIndexChange={setLocalIndex}
+          onClose={() => setLocalOpen(false)}
+        />
+      )}
       {images.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {images.map((img, ii) => {
             const href = pubUrl(img.url);
             return (
-              <a key={ii} href={href} target="_blank" rel="noopener noreferrer" className="block">
+              <button
+                key={ii}
+                type="button"
+                className="block"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (onOpenImage) return onOpenImage(href, { title: img.name || 'image', rawPath: img.url });
+                  setLocalIndex(ii);
+                  setLocalOpen(true);
+                }}
+              >
                 <img
                   src={href}
                   alt={img.name || 'image'}
                   className="max-h-48 max-w-xs rounded-lg border border-[#e4e6eb] object-cover hover:opacity-90 transition-opacity"
                 />
-              </a>
+              </button>
             );
           })}
         </div>
       )}
       {otherFiles.length > 0 && (
-        <div className="space-y-1">
+        <div className="space-y-2">
           {otherFiles.map((f, fi) => {
             const href = pubUrl(f.url);
+            const v = fileVisual(f.name, f.mime);
+            const sizeText = humanFileSize(f.size);
             return (
-              <a
+              <button
                 key={fi}
-                href={href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 rounded-lg bg-[#f0f2f5] px-2.5 py-1.5 hover:bg-[#e4e6eb] transition-colors"
+                type="button"
+                className={[
+                  'w-full text-left flex items-center gap-3 rounded-2xl',
+                  'bg-white px-3 py-2.5',
+                  'border border-[#e4e6eb]',
+                  'shadow-sm',
+                  'hover:shadow-md hover:-translate-y-[1px]',
+                  'hover:border-[#cbd5e1]',
+                  'transition-[transform,box-shadow,border-color] duration-150',
+                  'focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1877f2]/30',
+                ].join(' ')}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  downloadUploadFile(f.url, f.name || 'tai-lieu').catch((err) => {
+                    alert(err?.message || 'Không tải được file');
+                  });
+                }}
               >
-                <Paperclip className="h-3.5 w-3.5 shrink-0 text-[#65676b]" />
-                <span className="min-w-0 flex-1 truncate text-xs text-[#1877f2]">{f.name}</span>
-                {f.size > 0 && (
-                  <span className="shrink-0 text-[10px] text-[#65676b] tabular-nums">
-                    {f.size < 1048576 ? `${(f.size / 1024).toFixed(0)} KB` : `${(f.size / 1048576).toFixed(1)} MB`}
+                <span className={`shrink-0 h-11 w-11 rounded-xl ring-1 ${v.bg} ${v.ring} flex items-center justify-center`}>
+                  <v.Icon className={`h-6 w-6 ${v.fg}`} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block min-w-0 truncate text-[13px] font-semibold text-[#111827]">
+                    {f.name}
                   </span>
-                )}
-              </a>
+                  <span className="mt-1 flex items-center gap-2 text-[11px] text-[#6b7280]">
+                    <span className={`inline-flex items-center rounded-md px-2 py-0.5 ring-1 ${v.bg} ${v.ring} ${v.fg} font-bold uppercase tracking-wide`}>
+                      {v.label}
+                    </span>
+                    {sizeText ? <span className="tabular-nums">{sizeText}</span> : null}
+                  </span>
+                </span>
+                <span className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-[#1877f2] px-3 py-2 text-[12px] font-semibold text-white shadow-sm hover:bg-[#166fe5] transition-colors">
+                  <Download className="h-4 w-4 text-white" />
+                  Tải xuống
+                </span>
+              </button>
             );
           })}
         </div>
@@ -510,6 +617,56 @@ function CommentThread({
   const selfUid = user?.userId || user?.id;
   const commentsByParent = useMemo(() => groupByParent(comments), [comments]);
 
+  const threadImageItems = useMemo(() => {
+    const out = [];
+    const seen = new Set();
+
+    for (const c of comments || []) {
+      const rawBody = getBody?.(c) || '';
+      if (isSystemComment(rawBody)) {
+        const fileLink = extractSystemFileLink(rawBody);
+        const hasImagePreview = fileLink && isImageFileName(fileLink.label);
+        if (hasImagePreview) {
+          const rawPath = fileLink.url;
+          const url = pubUrl(rawPath);
+          const key = `sys:${rawPath}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            out.push({ url, title: fileLink.label, rawPath });
+          }
+        }
+      }
+
+      for (const att of commentAttachmentList(c.attachments)) {
+        if (!isCommentImage(att)) continue;
+        const rawPath = att.url;
+        const url = pubUrl(rawPath);
+        const key = `att:${rawPath}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ url, title: att.name || 'image', rawPath });
+      }
+    }
+    return out;
+  }, [comments, getBody]);
+
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState(0);
+  const [lightboxItems, setLightboxItems] = useState([]);
+
+  const openLightboxByUrl = useCallback((url, meta) => {
+    if (!url) return;
+    const idx = threadImageItems.findIndex((x) => x.url === url);
+    if (idx >= 0) {
+      setLightboxItems(threadImageItems);
+      setLightboxIndex(idx);
+    } else {
+      setLightboxItems([{ url, title: meta?.title || 'image', rawPath: meta?.rawPath || null }]);
+      setLightboxIndex(0);
+    }
+    setLightboxOpen(true);
+  }, [threadImageItems]);
+
   const handleComposerPaste = useCallback((e) => {
     if (!enableAttachments || !onPasteFiles) return;
     handleCommentFilePaste(e, onPasteFiles);
@@ -540,20 +697,38 @@ function CommentThread({
               </span>
             </div>
             {hasImagePreview && (
-              <a href={pubUrl(fileLink.url)} target="_blank" rel="noopener noreferrer" className="block mt-1">
+              <button
+                type="button"
+                className="block mt-1"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  openLightboxByUrl(pubUrl(fileLink.url));
+                }}
+              >
                 <img
                   src={pubUrl(fileLink.url)}
                   alt={fileLink.label}
                   className="max-h-40 max-w-[260px] rounded-lg border border-[#e4e6eb] object-cover hover:opacity-90 transition-opacity"
                 />
-              </a>
+              </button>
             )}
             {fileLink && !hasImagePreview && (
-              <a href={pubUrl(fileLink.url)} target="_blank" rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 mt-0.5 px-2.5 py-1 rounded-lg border border-[#e4e6eb] bg-white hover:bg-gray-50 transition-colors text-[12px] text-blue-600">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  downloadUploadFile(fileLink.url, fileLink.label || 'tai-lieu').catch((err) => {
+                    alert(err?.message || 'Không tải được file');
+                  });
+                }}
+                className="inline-flex items-center gap-1.5 mt-0.5 px-2.5 py-1 rounded-lg border border-[#e4e6eb] bg-white hover:bg-gray-50 transition-colors text-[12px] text-blue-600"
+              >
                 <Paperclip size={13} className="text-[#65676b]" />
                 <span className="truncate max-w-[200px]">{fileLink.label}</span>
-              </a>
+                <Download size={14} className="ml-1 text-[#65676b]" />
+              </button>
             )}
           </div>
         );
@@ -596,7 +771,7 @@ function CommentThread({
                           {renderBody ? renderBody(getBody(c)) : getBody(c)}
                         </p>
                       ) : null}
-                      <CommentAttachmentsBlock attachments={c.attachments} />
+                      <CommentAttachmentsBlock attachments={c.attachments} onOpenImage={openLightboxByUrl} />
                     </>
                   )}
                 </div>
@@ -648,6 +823,14 @@ function CommentThread({
 
   return (
     <div className="rounded-xl border border-[#e4e6eb] bg-[#f0f2f5] overflow-hidden">
+      {lightboxOpen && (
+        <UploadFileLightbox
+          items={(lightboxItems && lightboxItems.length ? lightboxItems : threadImageItems)}
+          index={lightboxIndex}
+          onIndexChange={setLightboxIndex}
+          onClose={() => setLightboxOpen(false)}
+        />
+      )}
       <div
         ref={threadScrollRef}
         onScroll={onThreadScroll}
