@@ -128,6 +128,16 @@ function evidenceFieldsFromTemplateChecklistItem(x) {
   };
 }
 
+/** Cờ chia sẻ mặc định trên mục checklist (JSONB) — ghi chú/file tự hiện ở SX/VC. */
+function shareFieldsFromTemplateChecklistItem(x) {
+  if (!x || typeof x !== 'object' || x.shared_to_project !== true) return {};
+  const raw = Array.isArray(x.allowed_share_modules) ? x.allowed_share_modules : null;
+  return {
+    shared_to_project: true,
+    allowed_share_modules: raw?.length ? raw.map((m) => String(m).toLowerCase().trim()).filter(Boolean) : ['production'],
+  };
+}
+
 module.exports = {
   normalizeChecklistEntry,
   checklistItemRequiresEvidence,
@@ -135,4 +145,5 @@ module.exports = {
   validateChecklistDoneEvidence,
   validateChecklistTransition,
   evidenceFieldsFromTemplateChecklistItem,
+  shareFieldsFromTemplateChecklistItem,
 };

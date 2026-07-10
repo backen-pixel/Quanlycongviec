@@ -7,7 +7,12 @@ import { downloadLeavesExcel } from '../lib/leaveScheduleExport';
 import LeaveActiveFilterBar from './LeaveActiveFilterBar';
 import {
   leavePersonCalendarLabel,
+  leavePersonDisplayName,
   resolveLeaveUser,
+  buildLeaveUsersById,
+  leaveTypeAndHalfLabel,
+  formatLeaveNote,
+  resolveLeaveCalendarChipKind,
 } from '../lib/leaveScheduleUtils';
 import {
   CRM_TIME_PRESETS,
@@ -26,7 +31,7 @@ const LEAVE_TYPES = [
   { v: 'unpaid', l: 'Phép không lương', color: '#6B7280' },
   { v: 'sick', l: 'Nghỉ ốm', color: '#EF4444' },
   { v: 'business_trip', l: 'Công tác', color: '#3B82F6' },
-  { v: 'remote', l: 'Làm từ xa', color: '#10B981' },
+  { v: 'remote', l: 'Làm online', color: '#10B981' },
   { v: 'other', l: 'Khác', color: '#F59E0B' },
 ];
 const HALF_DAY = [
@@ -107,6 +112,7 @@ const WEEKDAY_LABELS = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 
 
 function leaveTypeDisplayLabel(v) {
   if (v === 'paid') return 'Nghỉ phép';
+  if (v === 'remote') return 'Làm online';
   return leaveTypeMeta(v).l;
 }
 
@@ -150,17 +156,17 @@ function buildDayCalendarChips(dayLeaves, holiday, usersById, currentUser) {
   }
   const active = (dayLeaves || []);
   active.slice(0, 4).forEach((l) => {
-    const isHalf = l.half_day && l.half_day !== 'full';
-    const typeLabel = isHalf ? 'Nửa ngày' : leaveTypeDisplayLabel(l.leave_type);
+    const kind = resolveLeaveCalendarChipKind(l);
+    const typeLabel = leaveTypeAndHalfLabel(l);
     const person = leavePersonCalendarLabel(l, usersById, currentUser);
     const user = resolveLeaveUser(l, usersById, currentUser);
     chips.push({
       key: String(l.id),
-      kind: isHalf ? 'half' : 'full',
+      kind,
       person,
       typeLabel,
       label: `${person} · ${typeLabel}`,
-      title: `${user?.full_name || person} — ${typeLabel}${l.reason ? ` — ${l.reason}` : ''}`,
+      title: `${user?.full_name || person} — ${formatLeaveNote(l)}`,
       leave: l,
     });
   });
@@ -219,6 +225,13 @@ function LeaveLegendPanel() {
           <div>
             <p className="text-sm font-semibold text-gray-900">Nửa ngày</p>
             <p className="text-xs text-gray-500 mt-0.5">Nghỉ 1 buổi (sáng hoặc chiều)</p>
+          </div>
+        </li>
+        <li className="flex gap-2.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 mt-1 shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-gray-900">Làm online</p>
+            <p className="text-xs text-gray-500 mt-0.5">Làm việc từ xa (cả ngày hoặc nửa ngày)</p>
           </div>
         </li>
         <li className="flex gap-2.5">
@@ -478,46 +491,31 @@ export default function EventsOffLeaveSection({
   const filteredLeaves = useMemo(() => [...leaves], [leaves]);
 
   const usersById = useMemo(
-    () => Object.fromEntries((users || []).map((u) => [String(u.id), u])),
-    [users],
+    () => buildLeaveUsersById(users, filteredLeaves, currentUser),
+    [users, filteredLeaves, currentUser],
   );
 
-  const calendarLeaves = useMemo(
-    () => filteredLeaves
-      .map((l) => {
-        if (l.user?.full_name || l.user?.email) return l;
-        const u = usersById[String(l.user_id)];
-        if (u) {
-          return {
-            ...l,
-            user: { id: u.id, full_name: u.full_name, email: u.email },
-          };
-        }
-        if (String(l.user_id) === String(currentUser?.id)) {
-          return {
-            ...l,
-            user: {
-              id: currentUser.id,
-              full_name: currentUser.full_name,
-              email: currentUser.email,
-            },
-          };
-        }
-        return l;
-      }),
+  const enrichedLeaves = useMemo(
+    () => filteredLeaves.map((l) => {
+      const user = resolveLeaveUser(l, usersById, currentUser);
+      if (user && (user.full_name || user.email)) {
+        return { ...l, user };
+      }
+      return l;
+    }),
     [filteredLeaves, usersById, currentUser],
   );
 
   const leavesByDay = useMemo(() => {
     const map = {};
-    calendarLeaves.forEach((l) => {
+    enrichedLeaves.forEach((l) => {
       expandLeaveToDays(l, year, month).forEach((d) => {
         if (!map[d]) map[d] = [];
         map[d].push(l);
       });
     });
     return map;
-  }, [calendarLeaves, year, month]);
+  }, [enrichedLeaves, year, month]);
 
   const monthHolidays = useMemo(() => holidaysForMonth(holidays, year, month), [holidays, year, month]);
   const holidaysByDay = useMemo(() => {
@@ -572,10 +570,6 @@ export default function EventsOffLeaveSection({
     }
     if (form.end_date < form.start_date) {
       setErr('Ngày kết thúc phải ≥ ngày bắt đầu');
-      return;
-    }
-    if (!String(form.reason || '').trim()) {
-      setErr('Nhập lý do nghỉ');
       return;
     }
     setSubmitting(true);
@@ -660,8 +654,8 @@ export default function EventsOffLeaveSection({
   const today = new Date();
 
   const recentRows = useMemo(
-    () => [...filteredLeaves].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))),
-    [filteredLeaves],
+    () => [...enrichedLeaves].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))),
+    [enrichedLeaves],
   );
 
   const todayIso = useMemo(() => {
@@ -670,10 +664,15 @@ export default function EventsOffLeaveSection({
   }, []);
 
   const upcomingLeaves = useMemo(() => (
-    [...filteredLeaves]
+    [...enrichedLeaves]
       .filter((l) => l.end_date >= todayIso)
       .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)))
-  ), [filteredLeaves, todayIso]);
+  ), [enrichedLeaves, todayIso]);
+
+  const editingLeave = useMemo(
+    () => (editingLeaveId ? enrichedLeaves.find((l) => l.id === editingLeaveId) : null),
+    [editingLeaveId, enrichedLeaves],
+  );
 
   const RECENT_LIMIT = 5;
   const UPCOMING_LIMIT = 4;
@@ -791,9 +790,7 @@ export default function EventsOffLeaveSection({
             <input
               type="text"
               readOnly
-              value={createFormUsers.find((u) => String(u.id) === String(form.user_id))?.full_name
-                || users.find((u) => String(u.id) === String(form.user_id))?.full_name
-                || form.user_id?.slice(0, 8) || '—'}
+              value={leavePersonDisplayName(editingLeave || { user_id: form.user_id }, usersById, currentUser)}
               className="w-full px-2 py-1.5 border rounded-lg text-sm bg-gray-100 text-gray-700"
             />
           </div>
@@ -837,10 +834,10 @@ export default function EventsOffLeaveSection({
           </select>
         </div>
         <div className="lg:col-span-12">
-          <label className="block text-[10px] font-medium text-gray-600 mb-0.5">Lý do nghỉ *</label>
+          <label className="block text-[10px] font-medium text-gray-600 mb-0.5">Ghi chú</label>
           <input
             type="text"
-            placeholder="VD: Nghỉ phép về quê, khám bệnh…"
+            placeholder="VD: Về quê, khám bệnh… (loại nghỉ và buổi tự hiển thị kèm)"
             value={form.reason}
             onChange={(e) => setForm({ ...form, reason: e.target.value })}
             className="w-full px-2 py-1.5 border rounded-lg text-sm bg-white"
@@ -1214,11 +1211,13 @@ export default function EventsOffLeaveSection({
                                 className={`text-[10px] leading-tight px-2 py-1 rounded-md font-medium min-w-0 ${
                                   chip.kind === 'holiday'
                                     ? 'bg-orange-100 text-orange-800 truncate'
-                                    : chip.kind === 'half'
-                                      ? 'bg-pink-100 text-pink-800'
-                                      : chip.kind === 'more'
-                                        ? 'bg-gray-100 text-gray-600 truncate'
-                                        : 'bg-violet-600 text-white'
+                                    : chip.kind === 'remote'
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : chip.kind === 'half'
+                                        ? 'bg-pink-100 text-pink-800'
+                                        : chip.kind === 'more'
+                                          ? 'bg-gray-100 text-gray-600 truncate'
+                                          : 'bg-violet-600 text-white'
                                 } ${chip.leave ? 'cursor-pointer hover:opacity-90' : ''}`}
                                 title={chip.title || chip.label}
                               >
@@ -1281,6 +1280,7 @@ export default function EventsOffLeaveSection({
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 border-b border-gray-100">
+                        <th className="text-left px-5 py-3">Nhân viên</th>
                         <th className="text-left px-5 py-3">Ngày nghỉ</th>
                         <th className="text-left px-5 py-3">Loại nghỉ</th>
                         <th className="text-left px-5 py-3">Thời gian</th>
@@ -1291,11 +1291,18 @@ export default function EventsOffLeaveSection({
                     </thead>
                     <tbody>
                       {displayedRecent.length === 0 ? (
-                        <tr><td colSpan={6} className="text-center text-gray-400 py-12">Chưa có đơn nghỉ nào.</td></tr>
+                        <tr><td colSpan={7} className="text-center text-gray-400 py-12">Chưa có đơn nghỉ nào.</td></tr>
                       ) : displayedRecent.map((l) => {
                         const typeColor = leaveTypeMeta(l.leave_type).color;
+                        const personName = leavePersonDisplayName(l, usersById, currentUser);
                         return (
                           <tr key={l.id} className="border-b border-gray-50 hover:bg-gray-50/60">
+                            <td className="px-5 py-3.5">
+                              <p className="font-semibold text-gray-900">{personName}</p>
+                              {l.user?.email && personName !== l.user.email && (
+                                <p className="text-xs text-gray-500 truncate max-w-[160px]">{l.user.email}</p>
+                              )}
+                            </td>
                             <td className="px-5 py-3.5 text-gray-800 whitespace-nowrap">
                               {formatLeaveDateWithWeekday(l.start_date, l.end_date)}
                             </td>
@@ -1306,7 +1313,7 @@ export default function EventsOffLeaveSection({
                               </span>
                             </td>
                             <td className="px-5 py-3.5 text-gray-600">{halfDayDisplayLabel(l.half_day)}</td>
-                            <td className="px-5 py-3.5 text-gray-600 max-w-[220px] truncate" title={l.reason}>{l.reason || '—'}</td>
+                            <td className="px-5 py-3.5 text-gray-600 max-w-[280px] truncate" title={formatLeaveNote(l)}>{formatLeaveNote(l)}</td>
                             <td className="px-5 py-3.5 text-gray-500 tabular-nums whitespace-nowrap">{fmtCreatedAt(l.created_at)}</td>
                             <td className="px-5 py-3.5 text-right">{renderLeaveRowMenu(l)}</td>
                           </tr>
@@ -1349,6 +1356,7 @@ export default function EventsOffLeaveSection({
                 ) : displayedUpcoming.map((l) => {
                   const dateBlock = formatUpcomingDateBlock(l.start_date);
                   const typeColor = leaveTypeMeta(l.leave_type).color;
+                  const personName = leavePersonDisplayName(l, usersById, currentUser);
                   return (
                     <button
                       key={l.id}
@@ -1362,11 +1370,11 @@ export default function EventsOffLeaveSection({
                       </div>
                       <span className="w-px self-stretch bg-gray-200 shrink-0" aria-hidden />
                       <div className="min-w-0 flex-1">
+                        <p className="text-sm font-bold text-gray-900 truncate mb-0.5">{personName}</p>
                         <div className="flex items-center gap-2">
                           <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: typeColor }} />
-                          <span className="text-sm font-semibold text-gray-900 truncate">{leaveTypeDisplayLabel(l.leave_type)}</span>
+                          <span className="text-xs text-gray-600 truncate">{formatLeaveNote(l)}</span>
                         </div>
-                        <p className="text-xs text-gray-500 mt-1">{halfDayDisplayLabel(l.half_day)}</p>
                       </div>
                     </button>
                   );

@@ -91,6 +91,74 @@ export const getInitials = (name) => {
   return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 };
 
+/** Tách họ tên Việt Nam: họ | đệm... | tên gọi (từ cuối). */
+export function parseVietnameseFullName(name) {
+  const parts = String(name ?? '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return null;
+  if (parts.length === 1) {
+    return { parts, family: parts[0], middles: [], given: parts[0] };
+  }
+  return {
+    parts,
+    family: parts[0],
+    middles: parts.slice(1, -1),
+    given: parts[parts.length - 1],
+  };
+}
+
+/** Tên gọi — "Dương Thanh Thời" → "Thời". */
+export function formatStaffGivenName(name) {
+  const parsed = parseVietnameseFullName(name);
+  if (!parsed) return String(name ?? '').trim();
+  return parsed.given;
+}
+
+/** Tên gọi lên trước — "Dương Thanh Thời" → "Thời Dương Thanh". */
+export function formatStaffGivenFirst(name) {
+  const parsed = parseVietnameseFullName(name);
+  if (!parsed) return '';
+  const { parts, family, middles, given } = parsed;
+  if (parts.length <= 1) return parts[0] || '';
+  return [given, family, ...middles].join(' ');
+}
+
+/**
+ * Hiển thị ngắn NV: tên gọi trước + viết tắt họ đệm.
+ * "Dương Thanh Thời" → "Thời D.T." · "Nguyễn Văn A" → "A N.V."
+ */
+export function formatStaffDisplayName(name) {
+  const parsed = parseVietnameseFullName(name);
+  if (!parsed) return '';
+  const { parts, family, middles, given } = parsed;
+  if (parts.length === 1) return parts[0];
+  const abbr = [family, ...middles].map((w) => w[0]?.toUpperCase()).filter(Boolean).join('.');
+  return abbr ? `${given} ${abbr}.` : given;
+}
+
+/** Avatar chữ cái NV: tên gọi + họ — "Dương Thanh Thời" → "TD". */
+export function getStaffInitials(name) {
+  const parsed = parseVietnameseFullName(name);
+  if (!parsed) return '?';
+  const { parts, family, given } = parsed;
+  if (parts.length === 1) return given.slice(0, 2).toUpperCase();
+  const a = `${given[0] || ''}${family[0] || ''}`.toUpperCase();
+  return a || '?';
+}
+
+/** Tìm kiếm tên NV — khớp full, tên gọi, dạng rút gọn. */
+export function staffNameMatchesQuery(name, query) {
+  const q = String(query ?? '').trim().toLowerCase();
+  if (!q) return true;
+  const raw = String(name ?? '').trim().toLowerCase();
+  if (raw.includes(q)) return true;
+  const given = formatStaffGivenName(name).toLowerCase();
+  if (given.includes(q)) return true;
+  const compact = formatStaffDisplayName(name).toLowerCase();
+  if (compact.includes(q)) return true;
+  const givenFirst = formatStaffGivenFirst(name).toLowerCase();
+  return givenFirst.includes(q);
+}
+
 export const avatarColor = (name) => {
   if (!name) return '#6b7280';
   const colors = ['#3b82f6','#8b5cf6','#ec4899','#f59e0b','#10b981','#06b6d4','#f97316','#ef4444'];

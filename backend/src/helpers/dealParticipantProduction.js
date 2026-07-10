@@ -294,6 +294,12 @@ async function applyCrossWorkshopVptProductionFilter(query, user, {
     return { query: query.in('id', ids), memberProjectIds: ids };
   }
 
+  // NV xưởng HCB/Metalla tại xưởng của mình: xem mọi dự án (company_id đã lọc ở bước trên).
+  // Không áp getAccountingScopedProjectIds — deal CRM VPT chuyển SX vẫn có crm_leads.company_id = VPT.
+  if (isClientWorkshopChip && isPartnerWorkshop && !userNeedsParticipantOnlyProductionScope(user)) {
+    return { query, memberProjectIds: null };
+  }
+
   if (isClientWorkshopChip && clientCoId && !userNeedsParticipantOnlyProductionScope(user)) {
     let projectIds = await getAccountingScopedProjectIds(clientCoId);
     if (sxWorkshopCompanyId) {

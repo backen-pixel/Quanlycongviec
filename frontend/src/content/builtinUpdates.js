@@ -4,6 +4,87 @@
  */
 export const BUILTIN_UPDATES = [
   {
+    id: '2026-07-leave-schedule-guide',
+    version: '2.4.1',
+    category: 'guide',
+    publishedAt: '2026-07-09T04:45:00.000Z',
+    title: '📅 Hướng dẫn — Ghi nhận Lịch nghỉ (loại nghỉ, buổi & ghi chú)',
+    content: `## Vì sao cần ghi trên Lịch nghỉ?
+
+Khi bạn nghỉ phép, làm online hay công tác, hệ thống dùng **Lịch nghỉ** để:
+- Đồng nghiệp / quản lý biết ai nghỉ ngày nào, buổi nào.
+- **KPI thời gian** (A1/A2/A4) bỏ qua khoảng bạn nghỉ — công bằng hơn.
+- Lịch tháng có **màu chú thích** — nhìn một phát biết loại nghỉ.
+
+**Menu:** CRM → **Lịch nghỉ** (\`/crm/leaves\`). Danh sách chi tiết: **Danh sách nghỉ**.
+
+
+## Bước 1 — Mở lịch & xem chú thích màu
+
+Trên lịch tháng, mỗi ô ngày hiển thị tên NV + **loại nghỉ · buổi**. Cột phải có bảng **Chú thích**:
+
+| Màu | Ý nghĩa |
+|---|---|
+| 🟣 Tím | **Nghỉ phép** — nghỉ nguyên ngày |
+| 🩷 Hồng | **Nửa ngày** — nghỉ 1 buổi (sáng hoặc chiều), loại khác «Làm online» |
+| 🟢 Xanh lá | **Làm online** — làm việc từ xa (cả ngày hoặc nửa ngày) |
+| 🟠 Cam | **Ngày lễ** — lễ, Tết |
+| ⚪ Xám | **Hôm nay** — ngày hiện tại |
+
+![Lịch tháng & chú thích màu](/release-notes/leave-lich-thang-chu-thich.png)
+
+
+## Bước 2 — Tạo đơn nghỉ
+
+1. Bấm **Tạo đơn nghỉ** (sidebar phải hoặc nút tím).
+2. Chọn **Nhân viên** (quản lý chọn NV; NV thường tạo cho chính mình).
+3. Chọn **Nghỉ từ ngày** → **Đến ngày** (cùng ngày nếu chỉ nghỉ 1 ngày).
+4. Chọn **Loại nghỉ** và **Buổi** (xem bảng dưới).
+5. **Ghi chú** (tùy chọn): lý do cụ thể — hệ thống **tự ghép** loại nghỉ + buổi vào cột Ghi chú khi xem lịch / danh sách.
+
+![Form tạo đơn — Loại nghỉ & Buổi](/release-notes/leave-tao-don-loai-buoi.png)
+
+
+## Loại nghỉ (dropdown «Loại nghỉ»)
+
+| Giá trị | Khi nào dùng |
+|---|---|
+| **Phép có lương** | Nghỉ phép năm, nghỉ có lương theo quy định công ty |
+| **Phép không lương** | Nghỉ không hưởng lương |
+| **Nghỉ ốm** | Nghỉ ốm, có giấy tờ (nếu công ty yêu cầu) |
+| **Công tác** | Đi công tác, họp ngoài — không coi là nghỉ phép thường |
+| **Làm online** | Làm từ xa: họp online, WFH buổi sáng/chiều — hiển thị **xanh lá** trên lịch |
+| **Khác** | Trường hợp đặc biệt — ghi rõ trong **Ghi chú** |
+
+
+## Buổi nghỉ (dropdown «Buổi»)
+
+| Giá trị | Ý nghĩa |
+|---|---|
+| **Cả ngày** | Nghỉ / làm online trọn ngày làm việc |
+| **Sáng** | Chỉ buổi sáng (VD: làm online sáng, chiều vào văn phòng) |
+| **Chiều** | Chỉ buổi chiều |
+
+**Ví dụ:** *Làm online · Buổi sáng* + ghi chú «Họp online sáng, chiều vào văn phòng» → trên lịch hiện ô **xanh lá**, cột Ghi chú: \`Làm online · Buổi sáng — Họp online sáng…\`.
+
+
+## Ghi chú hiển thị thế nào?
+
+- Cột **Ghi chú** (lịch & **Danh sách nghỉ**) luôn có dạng: **Loại nghỉ · Buổi — lý do** (nếu bạn nhập).
+- Hover / bấm ô trên lịch tháng cũng thấy đủ loại + buổi + lý do.
+- **Ghi chú trong form là tùy chọn** — không nhập vẫn lưu được; khi xem vẫn thấy loại + buổi.
+
+**Xuất Excel:** nút **Xuất Excel** trên lịch — cột Ghi chú đã gồm loại + buổi.
+
+
+## Quyền & mẹo
+
+- **Nhân viên:** tạo đơn cho mình; trạng thái có thể *Chờ duyệt* tùy công ty.
+- **Quản lý / Admin:** chọn NV, tạo đơn **Đã duyệt** ngay; lọc theo công ty, khu vực, phòng ban.
+- Sửa / xóa: bấm ô trên lịch hoặc menu **Tùy chọn** ở bảng «Đơn nghỉ gần đây».
+- **Mẹo:** nghỉ nửa ngày nhưng **không** phải làm online → chọn loại phép + buổi **Sáng/Chiều** → lịch hiện **hồng** (Nửa ngày).`,
+  },
+  {
     id: '2026-07-crm-deal-chuyen-san-xuat',
     version: '2.4.0',
     category: 'guide',

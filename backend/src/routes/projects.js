@@ -1242,6 +1242,15 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
       } catch (staffErr) {
         console.warn('[POST /projects] apply default production staff:', staffErr.message);
       }
+    } else if (b.production_person_id) {
+      try {
+        const { syncProductionPersonToStaffAndMembers } = require('../helpers/productionWorkshopTypeStaff');
+        await syncProductionPersonToStaffAndMembers(data.id, b.production_person_id, {
+          addedBy: req.user.userId,
+        });
+      } catch (syncErr) {
+        console.warn('[POST /projects] sync production person to members:', syncErr.message);
+      }
     }
 
     // Activity log
@@ -1820,7 +1829,7 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
   try {
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
-    const fields = ['name','description','status','customer_id','kitchen_type','material','install_address','estimated_value','production_value','deposit_amount','final_value','priority','sales_person_id','designer_id','project_manager_id','design_deadline','production_start_date','install_date','consulting_person_id','design_person_id','quotation_person_id','contract_person_id','production_person_id','shipping_person_id','installation_person_id','care_person_id','quotation_files','deadline','notes','supervisor_id','production_deadline','production_note','workshop_type_id','order_date','delivery_date'];
+    const fields = ['name','description','status','customer_id','kitchen_type','material','install_address','estimated_value','production_value','deposit_amount','collected_amount','final_value','priority','sales_person_id','designer_id','project_manager_id','design_deadline','production_start_date','install_date','consulting_person_id','design_person_id','quotation_person_id','contract_person_id','production_person_id','shipping_person_id','installation_person_id','care_person_id','quotation_files','deadline','notes','supervisor_id','production_deadline','production_note','workshop_type_id','order_date','delivery_date'];
     const dateFields = ['deadline', 'design_deadline', 'production_start_date', 'install_date', 'production_deadline', 'order_date', 'delivery_date'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
     dateFields.forEach((f) => { if (update[f] === '') update[f] = null; });
@@ -1832,8 +1841,16 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
         update.deposit_amount = Number.isFinite(n) && n > 0 ? n : null;
       }
     }
+    if (b.collected_amount !== undefined) {
+      const raw = b.collected_amount;
+      if (raw === '' || raw === null) update.collected_amount = null;
+      else {
+        const n = Number(raw);
+        update.collected_amount = Number.isFinite(n) && n > 0 ? n : null;
+      }
+    }
 
-    const { data: old } = await supabase.from('projects').select('status,name,workshop_type_id,company_id,production_person_id,production_value,estimated_value,deposit_amount').eq('id', req.params.id).single();
+    const { data: old } = await supabase.from('projects').select('status,name,workshop_type_id,company_id,production_person_id,production_value,estimated_value,deposit_amount,collected_amount').eq('id', req.params.id).single();
 
     if (update.deposit_amount != null) {
       const total = Number(update.production_value ?? old?.production_value ?? old?.estimated_value ?? 0);
@@ -1848,6 +1865,12 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
         return res.status(400).json({ error: 'Giá trị đơn hàng phải lớn hơn hoặc bằng tiền cọc' });
       }
     }
+    if (update.collected_amount != null) {
+      const total = Number(update.production_value ?? old?.production_value ?? old?.estimated_value ?? 0);
+      if (Number.isFinite(total) && total > 0 && update.collected_amount > total) {
+        return res.status(400).json({ error: 'Tiền đã thu không được lớn hơn giá trị đơn hàng' });
+      }
+    }
 
     // Try update — if column doesn't exist, retry without problematic fields
     let data, error;
@@ -1855,7 +1878,7 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
     if (error && error.message?.includes('column')) {
       // Remove fields that may not exist yet (need migration)
       const safeCopy = { ...update };
-      ['deadline', 'notes', 'order_date', 'delivery_date', 'deposit_amount'].forEach(f => delete safeCopy[f]);
+      ['deadline', 'notes', 'order_date', 'delivery_date', 'deposit_amount', 'collected_amount'].forEach(f => delete safeCopy[f]);
       ({ data, error } = await supabase.from('projects').update(safeCopy).eq('id', req.params.id).select(`*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)`).single());
     }
     if (error) throw error;
@@ -1913,6 +1936,16 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
           projectId: req.params.id,
           body: `👤 ${_actor?.full_name || 'Người dùng'} đã thay đổi người phụ trách Sản xuất thành «${newName}».`,
         });
+        if (b.production_person_id) {
+          try {
+            const { syncProductionPersonToStaffAndMembers } = require('../helpers/productionWorkshopTypeStaff');
+            await syncProductionPersonToStaffAndMembers(req.params.id, b.production_person_id, {
+              addedBy: req.user.userId,
+            });
+          } catch (syncErr) {
+            console.warn('[PUT /projects] sync production person to members:', syncErr.message);
+          }
+        }
       }
     } catch (_) {}
 

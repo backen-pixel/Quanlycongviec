@@ -23,6 +23,8 @@ export default function WorkshopStaffFilterPanel({
   employeeFilterListByRegion = [],
   companyEmployees = [],
   personSelectLabel = 'Chọn NV',
+  personNameLabel = 'Tên trên pipeline',
+  panelTitle = 'Lọc nhân viên (công ty → khu vực → NV)',
   ringFocusClass = 'focus:ring-blue-500',
   hidePersonSelect = false,
   hidePersonName = false,
@@ -32,7 +34,7 @@ export default function WorkshopStaffFilterPanel({
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50/90 p-3 space-y-3">
       <div className="text-[11px] font-bold text-slate-600 uppercase tracking-wide">
-        Lọc nhân viên (công ty → khu vực → NV)
+        {panelTitle}
       </div>
       <div className="flex flex-wrap items-end gap-3">
         {isAdmin && !isCompanyScopedAdmin && !hideCompanySelect && companies.length > 0 && (
@@ -133,7 +135,7 @@ export default function WorkshopStaffFilterPanel({
               <select
                 value={filterPersonId}
                 onChange={(e) => setFilterPersonId(e.target.value)}
-                title="Chỉ hiện NV thuộc công ty & khu vực đã chọn (khi có)"
+                title="Chỉ hiện NV phụ trách sản xuất thuộc xưởng & khu vực đã chọn"
                 className={`h-9 w-full min-w-0 px-2 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 ${ringFocusClass} cursor-pointer`}
               >
                 <option value="">Tất cả nhân viên</option>
@@ -165,13 +167,13 @@ export default function WorkshopStaffFilterPanel({
           )}
           {!hidePersonName && (
             <div className="flex flex-col gap-0.5 min-w-[10rem]">
-              <label className="text-[10px] text-slate-600 font-semibold">Tên trên pipeline</label>
+              <label className="text-[10px] text-slate-600 font-semibold">{personNameLabel}</label>
               <input
                 type="search"
                 value={filterPersonName}
                 onChange={(e) => setFilterPersonName(e.target.value)}
                 placeholder="Tên người phụ trách…"
-                title="Lọc nhanh theo tên hiển thị trên thẻ"
+                title="Lọc theo tên NV phụ trách hiển thị trên thẻ pipeline"
                 className="h-9 w-40 px-2 bg-amber-50/90 border border-amber-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-amber-400"
               />
             </div>

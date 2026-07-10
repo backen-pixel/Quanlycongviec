@@ -27,6 +27,43 @@ export function resolveSxProjectDeposit(project) {
 export function resolveSxProjectRemaining(project) {
   return Math.max(0, resolveSxProjectValue(project) - resolveSxProjectDeposit(project));
 }
+
+/** Tiền đã thu trên dự án SX (cột riêng, không gồm tiền cọc). */
+export function resolveSxProjectCollected(project) {
+  const n = Number(project?.collected_amount);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** Tiến độ thu tiền — giá trị đơn + thu HĐ CRM hoặc cột collected_amount. */
+export function resolveSxProjectPaymentProgress(project, crmStats = null) {
+  const orderValue = resolveSxProjectValue(project);
+
+  const invoicePaid = Number(crmStats?.totalPaid) || 0;
+  const invoicedTotal = Number(crmStats?.totalInvoiced) || 0;
+  const ordersTotal = Number(crmStats?.totalOrders) || 0;
+  const manualCollected = resolveSxProjectCollected(project);
+
+  const base = orderValue > 0 ? orderValue : (invoicedTotal > 0 ? invoicedTotal : ordersTotal);
+
+  const hasCrmInvoicing = invoicedTotal > 0;
+  let paid = hasCrmInvoicing ? invoicePaid : manualCollected;
+  if (base > 0) paid = Math.min(paid, base);
+
+  const pct = base > 0 ? Math.min(Math.round((paid / base) * 100), 100) : 0;
+  const paymentDebt = base > 0 ? Math.max(0, base - paid) : 0;
+
+  return {
+    base,
+    paid,
+    pct,
+    paymentDebt,
+    hasData: base > 0,
+    needsInvoice: Boolean(crmStats?.needsInvoice),
+    invoiceGap: Math.max(0, ordersTotal - invoicedTotal),
+    paidFull: base > 0 && paid >= base,
+  };
+}
+
 export const VC_KANBAN_STATUSES = new Set(['shipping', 'installing', 'warranty']);
 
 function stageById(stages, colId) {

@@ -5709,18 +5709,42 @@ r.get('/employees-by-company', responseCache({ ttl: 120, scope: 'company', tags:
     const targetDepts = moduleDepts.length > 0 ? moduleDepts : (allDepts || []);
     const deptIds = targetDepts.map(d => d.id);
 
-    if (!deptIds.length) {
-      return res.json({ users: [], departments: [], company_id: companyId });
+    let userRows = [];
+    if (deptIds.length) {
+      const { data: users } = await supabase.from('users')
+        .select('id, full_name, email, phone, avatar, role, department_id, position')
+        .in('department_id', deptIds)
+        .eq('is_active', true)
+        .order('full_name');
+      userRows = users || [];
     }
 
-    // Lấy nhân viên thuộc các phòng ban đó
-    const { data: users } = await supabase.from('users')
-      .select('id, full_name, email, phone, avatar, role, department_id, position')
-      .in('department_id', deptIds)
-      .eq('is_active', true)
-      .order('full_name');
+    // SX/VC: bổ sung NV gắn trực tiếp company_id xưởng (có thể không thuộc phòng ban keyword).
+    if (forModule === 'production' || forModule === 'logistics') {
+      const { loadUsersForProductionCompany } = require('../helpers/productionWorkshopTypeStaff');
+      const directUsers = await loadUsersForProductionCompany(companyId);
+      const seen = new Set(userRows.map((u) => u.id));
+      for (const u of directUsers) {
+        if (!u?.id || seen.has(u.id)) continue;
+        seen.add(u.id);
+        userRows.push({
+          id: u.id,
+          full_name: u.full_name,
+          email: u.email,
+          phone: null,
+          avatar: null,
+          role: u.role,
+          department_id: u.department?.id ?? null,
+          position: null,
+        });
+      }
+      userRows.sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
+    }
 
-    const userRows = users || [];
+    if (!userRows.length) {
+      return res.json({ users: [], departments: targetDepts, company_id: companyId });
+    }
+
     const userIds = userRows.map((u) => u.id).filter(Boolean);
     const regionByUser = {};
     if (userIds.length) {
@@ -15379,7 +15403,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
     const { data: leadForShare } = await supabase.from('crm_leads')
       .select('project_id, title').eq('id', req.params.leadId).single();
     const bulkShareOpts = { linkToProject: !!leadForShare?.project_id };
-    const defaultShare = getDefaultCrmAttachmentShare(task, bulkShareOpts);
+    const defaultShare = getDefaultCrmAttachmentShare(task, bulkShareOpts, ckItem);
 
     // Insert tất cả attachments 1 lần
     const rows = items.map(item => ({
@@ -15496,7 +15520,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
     const { data: leadForShare } = await supabase.from('crm_leads')
       .select('project_id, title').eq('id', req.params.leadId).single();
     const singleShareOpts = { linkToProject: !!leadForShare?.project_id };
-    const singleDefaultShare = getDefaultCrmAttachmentShare(taskForShare, singleShareOpts);
+    const singleDefaultShare = getDefaultCrmAttachmentShare(taskForShare, singleShareOpts, ckItem);
 
     const insertRow = {
       task_id: req.params.taskId,
@@ -16159,15 +16183,24 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
 r.put('/task-templates/:tplId/items/:itemId', async (req, res) => {
   try {
     const update = {};
-    ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments', 'executor_company_id', 'completion_requires_file_or_note', 'required_evidence_file_types', 'completion_requires_customer_note', 'completion_requires_customer_contact', 'requires_quick_verdict', 'blocks_stage_advance', 'show_excel_quotation_upload'].forEach(f => {
+    ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments', 'default_shared_to_project', 'default_allowed_share_modules', 'executor_company_id', 'completion_requires_file_or_note', 'required_evidence_file_types', 'completion_requires_customer_note', 'completion_requires_customer_contact', 'requires_quick_verdict', 'blocks_stage_advance', 'show_excel_quotation_upload'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
     Object.assign(update, templateItemAssigneePatch(req.body));
     if (req.body.executor_company_id === '' || req.body.executor_company_id === null) {
       update.executor_company_id = null;
     }
+    if (req.body.default_shared_to_project === false) {
+      update.default_allowed_share_modules = null;
+    }
     let { data, error } = await supabase.from('crm_task_template_items')
       .update(update).eq('id', req.params.itemId).select().single();
+    if (error && /default_shared_to_project|default_allowed_share_modules/.test(error.message || '')) {
+      return res.status(503).json({
+        error: 'Database chưa có cột chia sẻ mẫu — chạy database/409_crm_template_item_share_defaults.sql trên Supabase rồi thử lại.',
+        code: 'db_migration_template_share_defaults',
+      });
+    }
     if (error && /required_evidence_file_types|completion_requires_file_or_note|requires_quick_verdict/.test(error.message || '')) {
       return res.status(503).json({
         error: 'Database chưa có cột minh chứng (migration 315/316). Chạy database/315_task_required_evidence_file_types.sql trên Supabase rồi thử lại.',

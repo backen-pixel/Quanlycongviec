@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { markCrmPipelineCardFocus, persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
-import { formatVND } from '../lib/utils';
+import { formatVND, formatStaffDisplayName, getStaffInitials } from '../lib/utils';
 import {
   mergeListColumnDefs,
   resolveVisibleColumnKeys,
@@ -881,9 +881,9 @@ export function ListView({
                                   style={{ backgroundColor: colorFromName(name) }}
                                   aria-hidden
                                 >
-                                  {getInitials(name)}
+                                  {getStaffInitials(name)}
                                 </span>
-                                <span className="truncate text-gray-700">{name}</span>
+                                <span className="truncate text-gray-700">{formatStaffDisplayName(name)}</span>
                               </span>
                             );
                           })()

@@ -12,6 +12,7 @@ import { upsertComment, CommentAttachmentsBlock, CrmLeadCommentsPanel } from './
 import { FilePreview, FileUploadButton } from './FileUpload';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
 import { shouldHideSxKanbanDeadlineOnCard } from '../lib/sxPipelineRevenue';
+import { formatStaffDisplayName, getStaffInitials } from '../lib/utils';
 import { resolveSxProjectLeadId, resolveSxProjectLeadIdAsync } from '../lib/sxProjectComments';
 import {
   CommentHideConfirmBar,
@@ -131,6 +132,7 @@ function colorFromName(name) {
 
 function PersonAvatarCell({ name, fallback = '—' }) {
   if (!name) return <span className="text-gray-400">{fallback}</span>;
+  const display = formatStaffDisplayName(name);
   return (
     <span className="inline-flex items-center gap-1.5 min-w-0 max-w-full" title={name}>
       <span
@@ -138,9 +140,9 @@ function PersonAvatarCell({ name, fallback = '—' }) {
         style={{ backgroundColor: colorFromName(name) }}
         aria-hidden
       >
-        {getInitials(name)}
+        {getStaffInitials(name)}
       </span>
-      <span className="truncate text-gray-700">{name}</span>
+      <span className="truncate text-gray-700">{display}</span>
     </span>
   );
 }
@@ -616,10 +618,12 @@ function ProductionPlannerByOwner({ allItems, goProject, onGoPersonal }) {
         <div key={group.user.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
           <div className="flex items-center gap-3 px-4 py-3 bg-gray-50 border-b border-gray-100">
             <div className="h-8 w-8 rounded-full bg-teal-600 flex items-center justify-center text-white text-xs font-bold">
-              {group.user.full_name?.charAt(0) || '?'}
+              {getStaffInitials(group.user.full_name)}
             </div>
-            <div>
-              <p className="text-sm font-semibold text-gray-900">{group.user.full_name}</p>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-gray-900 truncate" title={group.user.full_name}>
+                {formatStaffDisplayName(group.user.full_name)}
+              </p>
               <p className="text-[10px] text-gray-500">
                 {group.items.length} dự án
                 {!HIDE_PRODUCTION_DEAL_VALUES && ` • ${formatVND(group.totalValue)}`}

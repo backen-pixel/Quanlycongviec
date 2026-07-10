@@ -6,6 +6,8 @@ import { isAdminLike } from '../lib/adminRole';
 import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Lock, Building2, Workflow, Globe, MapPin, RefreshCw, FileSpreadsheet, Paperclip, MessageSquare, User, Star } from 'lucide-react';
 import EvidenceFileTypesPicker from '../components/EvidenceFileTypesPicker';
 import TemplateItemAssigneePicker from '../components/TemplateItemAssigneePicker';
+import DocumentShareModulePicker from '../components/DocumentShareModulePicker';
+import { parseShareModules, cleanShareModulesForApi, shareModuleLabels } from '../lib/documentShareScope';
 import { templateItemAssigneeIds, templateItemAssigneeCount } from '../lib/templateItemAssignees';
 import { formatEvidenceTypesShort, normalizeEvidenceFileTypes, checklistItemRequiresEvidence } from '../lib/evidenceFileTypes';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
@@ -30,6 +32,27 @@ const DEAL_STAGES = [
 ];
 
 const ALL_STAGES = [...LEAD_STAGES, ...DEAL_STAGES];
+
+function companiesForDivision(companies, divisionId) {
+  const did = String(divisionId);
+  return (companies || []).filter((c) => {
+    if (String(c.division_unit_id) === did) return true;
+    if (Array.isArray(c.division_unit_ids) && c.division_unit_ids.some((x) => String(x) === did)) return true;
+    return false;
+  });
+}
+
+function isProductionDivision(div) {
+  if (!div) return false;
+  const n = `${div.name || ''} ${div.short_name || ''} ${div.code || ''}`.toLowerCase();
+  return /sản xuất|san xuat|production|\bsx\b/.test(n);
+}
+
+function departmentsForCompanies(departments, companyIds) {
+  const ids = new Set((companyIds || []).map(String));
+  if (!ids.size) return departments || [];
+  return (departments || []).filter((d) => d?.company_id && ids.has(String(d.company_id)));
+}
 
 // ═══ Sortable Item component ═══
 function SortableItem({ id, children }) {
@@ -63,6 +86,7 @@ export default function CRMTemplatesPage() {
   const [newCheckItem, setNewCheckItem] = useState({});
   const [editingVisibility, setEditingVisibility] = useState({}); // {itemId: true/false}
   const [companies, setCompanies] = useState([]);
+  const [divisions, setDivisions] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [users, setUsers] = useState([]);
 
@@ -199,14 +223,16 @@ export default function CRMTemplatesPage() {
       const tplParams = selectedPipelineId
         ? { pipeline_id: selectedPipelineId, scope: 'pipeline' }
         : (selectedCompanyId ? { company_id: selectedCompanyId, scope: 'pipeline' } : {});
-      const [tplRes, compRes, deptRes] = await Promise.all([
+      const [tplRes, compRes, deptRes, divRes] = await Promise.all([
         api.get('/crm/task-templates', { params: tplParams }),
         api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: [] })),
         api.get('/departments').catch(() => ({ data: [] })),
+        api.get('/divisions').catch(() => ({ data: { divisions: [] } })),
       ]);
       setTemplates(tplRes.data || []);
       const compList = compRes.data?.companies || compRes.data || [];
       setCompanies(compList);
+      setDivisions(divRes.data?.divisions || []);
       setDepartments(deptRes.data?.departments || deptRes.data || []);
       // Auto-pick công ty đầu tiên cho admin → xử lý ở useEffect riêng (theo dõi companies)
 
@@ -726,28 +752,65 @@ export default function CRMTemplatesPage() {
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); load(); }
   };
 
-  const updateItemVisibility = async (tplId, itemId, allowedCompanies, allowedDepts) => {
+  const updateItemVisibility = async (tplId, itemId, patch) => {
     try {
-      const payload = {
-        default_allowed_companies: allowedCompanies?.length ? allowedCompanies : null,
-        default_allowed_departments: allowedDepts?.length ? allowedDepts : null,
-      };
-      const { data } = await api.put(`/crm/task-templates/${tplId}/items/${itemId}`, payload);
+      const { data } = await api.put(`/crm/task-templates/${tplId}/items/${itemId}`, patch);
       if (data?.id) upsertItemLocal(tplId, data);
-      else upsertItemLocal(tplId, { id: itemId, ...payload });
+      else upsertItemLocal(tplId, { id: itemId, ...patch });
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
 
   const toggleItemCompany = (tplId, itemId, companyId, item) => {
     const current = item.default_allowed_companies || [];
     const next = current.includes(companyId) ? current.filter(x => x !== companyId) : [...current, companyId];
-    updateItemVisibility(tplId, itemId, next, item.default_allowed_departments);
+    updateItemVisibility(tplId, itemId, {
+      default_allowed_companies: next.length ? next : null,
+      default_allowed_departments: item.default_allowed_departments?.length ? item.default_allowed_departments : null,
+    });
   };
 
   const toggleItemDept = (tplId, itemId, deptId, item) => {
     const current = item.default_allowed_departments || [];
     const next = current.includes(deptId) ? current.filter(x => x !== deptId) : [...current, deptId];
-    updateItemVisibility(tplId, itemId, item.default_allowed_companies, next);
+    updateItemVisibility(tplId, itemId, {
+      default_allowed_companies: item.default_allowed_companies?.length ? item.default_allowed_companies : null,
+      default_allowed_departments: next.length ? next : null,
+    });
+  };
+
+  const selectAllItemCompanies = (tplId, itemId, item, scopeCompanies = companies) => {
+    const allIds = (scopeCompanies || []).map((c) => c.id);
+    const current = item.default_allowed_companies || [];
+    const allSelected = allIds.length > 0 && allIds.every((id) => current.includes(id));
+    updateItemVisibility(tplId, itemId, {
+      default_allowed_companies: allSelected ? null : allIds,
+      default_allowed_departments: item.default_allowed_departments?.length ? item.default_allowed_departments : null,
+    });
+  };
+
+  const clearItemVisibility = (tplId, itemId) => {
+    updateItemVisibility(tplId, itemId, {
+      default_allowed_companies: null,
+      default_allowed_departments: null,
+      default_shared_to_project: false,
+      default_allowed_share_modules: null,
+    });
+  };
+
+  const toggleItemShareToWorkshop = (tplId, itemId, item, shared) => {
+    updateItemVisibility(tplId, itemId, {
+      default_shared_to_project: !!shared,
+      default_allowed_share_modules: shared
+        ? cleanShareModulesForApi(parseShareModules(item.default_allowed_share_modules) || [])
+        : null,
+    });
+  };
+
+  const setItemShareModules = (tplId, itemId, item, modules) => {
+    updateItemVisibility(tplId, itemId, {
+      default_shared_to_project: true,
+      default_allowed_share_modules: cleanShareModulesForApi(modules),
+    });
   };
 
   const addChecklistItem = async (tplId, itemId) => {
@@ -1388,9 +1451,13 @@ export default function CRMTemplatesPage() {
                           updateItemChecklist={updateItemChecklist}
                           updateTemplateItemFields={updateTemplateItemFields}
                           editingVisibility={editingVisibility} setEditingVisibility={setEditingVisibility}
-                          companies={companies} departments={departments} users={users}
+                          companies={companies} departments={departments} divisions={divisions} users={users}
                           defaultCompanyId={selectedCompanyId}
                           toggleItemCompany={toggleItemCompany} toggleItemDept={toggleItemDept}
+                          selectAllItemCompanies={selectAllItemCompanies}
+                          clearItemVisibility={clearItemVisibility}
+                          toggleItemShareToWorkshop={toggleItemShareToWorkshop}
+                          setItemShareModules={setItemShareModules}
                           isPipelineMode={isPipelineMode} pipelineStages={pipelineStages}
                           companyPipelinesAll={companyPipelinesAll} activeTab={activeTab}
                         />
@@ -1429,13 +1496,17 @@ function TemplateCard({
   addChecklistItem, removeChecklistItem, updateChecklistItem,
   sensors, handleItemDragEnd, handleChecklistDragEnd,
   editingVisibility, setEditingVisibility,
-  companies, departments, users = [], defaultCompanyId = '', toggleItemCompany, toggleItemDept,
+  companies, departments, divisions = [], users = [], defaultCompanyId = '',
+  toggleItemCompany, toggleItemDept, selectAllItemCompanies,
+  clearItemVisibility, toggleItemShareToWorkshop, setItemShareModules,
   updateTemplateItemFields,
   isPipelineMode = false, pipelineStages = [],
   companyPipelinesAll = [], activeTab = 'deal',
 }) {
   const [editingItemId, setEditingItemId] = useState(null);
   const [editingAssignee, setEditingAssignee] = useState({});
+  const [visDivFilter, setVisDivFilter] = useState({});
+  const [divCompaniesCache, setDivCompaniesCache] = useState({});
   const [itemEditForm, setItemEditForm] = useState({
     title: '',
     description: '',
@@ -1452,6 +1523,17 @@ function TemplateCard({
   });
 
   const sortedItems = [...(tpl.items || [])].sort((a, b) => a.order_index - b.order_index);
+
+  const ensureDivCompanies = async (divId) => {
+    if (!divId || divCompaniesCache[divId]) return;
+    try {
+      const { data } = await api.get('/companies', { params: { division_unit_id: divId } });
+      const list = data?.companies || data || [];
+      setDivCompaniesCache((prev) => ({ ...prev, [divId]: list }));
+    } catch {
+      setDivCompaniesCache((prev) => ({ ...prev, [divId]: companiesForDivision(companies, divId) }));
+    }
+  };
 
   const userLabel = (uid) => {
     if (!uid) return '';
@@ -1701,6 +1783,11 @@ function TemplateCard({
                         {(item.default_allowed_companies?.length > 0 || item.default_allowed_departments?.length > 0) && (
                           <span className="text-[9px] bg-red-50 text-red-600 px-1 py-0.5 rounded-full">🔒</span>
                         )}
+                        {item.default_shared_to_project && (
+                          <span className="text-[9px] bg-teal-50 text-teal-700 px-1 py-0.5 rounded-full" title={shareModuleLabels(item.default_allowed_share_modules)}>
+                            🧩 SX/VC
+                          </span>
+                        )}
                         {item.executor_company_id && (
                           <span className="text-[9px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded-full font-medium" title="Công ty thực hiện">
                             🤝 {companies.find((c) => String(c.id) === String(item.executor_company_id))?.short_name
@@ -1767,7 +1854,11 @@ function TemplateCard({
                           )}
                         </button>
                         <button type="button" onClick={() => setEditingVisibility(p => ({ ...p, [item.id]: !p[item.id] }))}
-                          className={`p-1 rounded cursor-pointer shrink-0 ${(item.default_allowed_companies?.length > 0 || item.default_allowed_departments?.length > 0) ? 'text-red-500 hover:bg-red-50' : 'text-gray-400 hover:bg-purple-50 hover:text-purple-600'}`} title="Phân quyền xem">
+                          className={`p-1 rounded cursor-pointer shrink-0 ${
+                            (item.default_allowed_companies?.length > 0 || item.default_allowed_departments?.length > 0 || item.default_shared_to_project)
+                              ? 'text-red-500 hover:bg-red-50'
+                              : 'text-gray-400 hover:bg-purple-50 hover:text-purple-600'
+                          }`} title="Phân quyền xem & chia sẻ khối">
                           <Shield className="h-3.5 w-3.5" /></button>
                         <button type="button" onClick={() => setEditingChecklist(p => ({ ...p, [item.id]: !p[item.id] }))}
                           className="p-1 text-gray-500 hover:text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer shrink-0" title="Checklist mẫu">
@@ -1924,24 +2015,130 @@ function TemplateCard({
                           </p>
                         </div>
                       )}
-                      {editingVisibility[item.id] && (
-                        <div className="mx-2 mb-2 p-3 bg-purple-50 rounded-lg border border-purple-200 space-y-2">
+                      {editingVisibility[item.id] && (() => {
+                        const activeDivId = visDivFilter[item.id] || null;
+                        const activeDiv = divisions.find((d) => String(d.id) === String(activeDivId));
+                        const divScoped = activeDivId
+                          ? (divCompaniesCache[activeDivId]?.length
+                            ? divCompaniesCache[activeDivId]
+                            : companiesForDivision(companies, activeDivId))
+                          : companies;
+                        const displayCompanies = divScoped.length ? divScoped : companies;
+                        const showDeptSection = !activeDivId || !isProductionDivision(activeDiv);
+                        const displayDepartments = showDeptSection
+                          ? (activeDivId
+                            ? departmentsForCompanies(departments, displayCompanies.map((c) => c.id))
+                            : departments)
+                          : [];
+                        const allScopeSelected = displayCompanies.length > 0
+                          && displayCompanies.every((c) => (item.default_allowed_companies || []).includes(c.id));
+                        return (
+                        <div className="mx-2 mb-2 p-3 bg-purple-50 rounded-lg border border-purple-200 space-y-3">
                           <p className="text-[10px] text-purple-600 font-bold uppercase">🔒 Phân quyền mặc định — tài liệu upload ở nhiệm vụ này</p>
+
+                          <div className="rounded-lg border border-teal-200 bg-white p-2.5 space-y-2">
+                            <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={!!item.default_shared_to_project}
+                                onChange={(e) => toggleItemShareToWorkshop(tpl.id, item.id, item, e.target.checked)}
+                                className="accent-teal-600"
+                              />
+                              <span>Chia sẻ sang khối SX / VC / Công việc dự án</span>
+                            </label>
+                            {item.default_shared_to_project && (
+                              <DocumentShareModulePicker
+                                value={parseShareModules(item.default_allowed_share_modules) || []}
+                                onChange={(mods) => setItemShareModules(tpl.id, item.id, item, mods)}
+                                hint="Để trống = cả ba khối (SX, VC, CV) đều xem được file/ghi chú đã chia sẻ."
+                              />
+                            )}
+                          </div>
+
+                          {divisions.length > 0 && (
+                            <div>
+                              <p className="text-[10px] font-semibold text-gray-500 mb-1">🧱 Khối (HST) — lọc công ty theo khối</p>
+                              <div className="flex flex-wrap gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setVisDivFilter((p) => ({ ...p, [item.id]: null }))}
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-medium cursor-pointer ${
+                                    !activeDivId ? 'bg-gray-700 text-white' : 'bg-white text-gray-600 border'
+                                  }`}
+                                >
+                                  Tất cả khối
+                                </button>
+                                {divisions.map((d) => {
+                                  const divCos = divCompaniesCache[d.id]?.length
+                                    ? divCompaniesCache[d.id]
+                                    : companiesForDivision(companies, d.id);
+                                  if (!divCos.length && !divCompaniesCache[d.id]) {
+                                    // vẫn hiện nút — load khi bấm
+                                  }
+                                  const isActive = String(activeDivId) === String(d.id);
+                                  return (
+                                    <button
+                                      key={d.id}
+                                      type="button"
+                                      onClick={() => {
+                                        const next = isActive ? null : d.id;
+                                        setVisDivFilter((p) => ({ ...p, [item.id]: next }));
+                                        if (next) ensureDivCompanies(next);
+                                      }}
+                                      className={`px-2 py-0.5 rounded-full text-[10px] font-medium cursor-pointer ${
+                                        isActive ? 'bg-teal-600 text-white ring-2 ring-teal-300' : 'bg-white text-gray-600 border'
+                                      }`}
+                                      title={isProductionDivision(d)
+                                        ? 'Chỉ hiện công ty sản xuất — không dùng phòng ban'
+                                        : 'Lọc công ty & phòng ban thuộc khối này'}
+                                    >
+                                      {d.short_name || d.name}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              {activeDiv && (
+                                <p className="text-[10px] text-teal-700 mt-1">
+                                  Đang lọc: <strong>{activeDiv.short_name || activeDiv.name}</strong>
+                                  {isProductionDivision(activeDiv)
+                                    ? ' — chỉ chọn công ty (không phân quyền phòng ban)'
+                                    : ` — ${displayCompanies.length} công ty`}
+                                </p>
+                              )}
+                            </div>
+                          )}
+
                           <div>
-                            <p className="text-[10px] font-semibold text-gray-500 mb-1">🏢 Công ty</p>
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <p className="text-[10px] font-semibold text-gray-500">🏢 Công ty được xem</p>
+                              {displayCompanies.length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => selectAllItemCompanies(tpl.id, item.id, item, displayCompanies)}
+                                  className="text-[10px] font-medium text-purple-700 hover:underline cursor-pointer"
+                                >
+                                  {allScopeSelected ? 'Bỏ chọn tất cả' : (activeDivId ? 'Chọn hết khối này' : 'Tất cả công ty')}
+                                </button>
+                              )}
+                            </div>
                             <div className="flex flex-wrap gap-1">
-                              {companies.map(c => (
+                              {displayCompanies.map(c => (
                                 <button key={c.id} type="button" onClick={() => toggleItemCompany(tpl.id, item.id, c.id, item)}
                                   className={`px-2 py-0.5 rounded-full text-[10px] font-medium cursor-pointer ${
                                     (item.default_allowed_companies || []).includes(c.id) ? 'bg-purple-600 text-white' : 'bg-white text-gray-600 border'
-                                  }`}>{c.name}</button>
+                                  }`}>{c.short_name || c.name}</button>
                               ))}
                             </div>
+                            {!displayCompanies.length && activeDivId && (
+                              <p className="text-[10px] text-amber-600 mt-1">Không tìm thấy công ty thuộc khối này.</p>
+                            )}
+                            <p className="text-[10px] text-gray-400 mt-1">Không chọn = mọi người trên CRM đều xem được.</p>
                           </div>
+                          {showDeptSection && displayDepartments.length > 0 && (
                           <div>
-                            <p className="text-[10px] font-semibold text-gray-500 mb-1">🏬 Phòng ban</p>
+                            <p className="text-[10px] font-semibold text-gray-500 mb-1">🏬 Phòng ban được xem</p>
                             <div className="flex flex-wrap gap-1">
-                              {departments.map(d => (
+                              {displayDepartments.map(d => (
                                 <button key={d.id} type="button" onClick={() => toggleItemDept(tpl.id, item.id, d.id, item)}
                                   className={`px-2 py-0.5 rounded-full text-[10px] font-medium cursor-pointer ${
                                     (item.default_allowed_departments || []).includes(d.id) ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 border'
@@ -1949,11 +2146,25 @@ function TemplateCard({
                               ))}
                             </div>
                           </div>
-                          {!(item.default_allowed_companies?.length) && !(item.default_allowed_departments?.length) && (
-                            <p className="text-[10px] text-gray-400 italic">Chưa giới hạn — tất cả đều xem được</p>
                           )}
+                          {!(item.default_allowed_companies?.length) && !(item.default_allowed_departments?.length) && !item.default_shared_to_project && (
+                            <p className="text-[10px] text-gray-400 italic">Chưa giới hạn — tất cả đều xem được trên CRM</p>
+                          )}
+                          <div className="flex justify-end pt-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setVisDivFilter((p) => ({ ...p, [item.id]: null }));
+                                clearItemVisibility(tpl.id, item.id);
+                              }}
+                              className="text-[10px] px-2.5 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 cursor-pointer"
+                            >
+                              Bỏ giới hạn
+                            </button>
+                          </div>
                         </div>
-                      )}
+                        );
+                      })()}
                       {editingChecklist[item.id] && (
                         <ChecklistEditor tplId={tpl.id} itemId={item.id}
                           checklist={Array.isArray(item.checklist) ? item.checklist : []}

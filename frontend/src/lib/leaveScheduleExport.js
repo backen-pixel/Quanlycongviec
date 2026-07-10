@@ -2,6 +2,7 @@ import { loadXlsxStyle } from './xlsxLoader';
 import {
   leaveTypeMeta,
   halfDayDisplayLabel,
+  formatLeaveNote,
   formatLeaveDateWithWeekday,
   fmtCreatedAt,
 } from './leaveScheduleUtils';
@@ -39,7 +40,7 @@ function buildDataRow(leave, idx) {
   row[5] = leave.end_date || '';
   row[6] = leaveTypeMeta(leave.leave_type).l;
   row[7] = halfDayDisplayLabel(leave.half_day);
-  row[8] = leave.reason || '';
+  row[8] = formatLeaveNote(leave);
   row[9] = fmtCreatedAt(leave.created_at);
   return row;
 }

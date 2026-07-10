@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Search, X, ChevronDown, User, Building2, Users, AlertCircle } from 'lucide-react';
 import api from '../lib/api';
+import { formatStaffDisplayName, getStaffInitials, staffNameMatchesQuery } from '../lib/utils';
 
 // Global cache to prevent re-fetching when components remount
 const _cache = { users: {}, departments: {} };
@@ -148,9 +149,9 @@ export default function EmployeePicker({
 
   const filtered = allUsers.filter(u => {
     const matchDept = !selectedDept || u.department_id === selectedDept;
-    const matchSearch = !search ||
-      u.full_name?.toLowerCase().includes(search.toLowerCase()) ||
-      u.email?.toLowerCase().includes(search.toLowerCase());
+    const matchSearch = !search
+      || staffNameMatchesQuery(u.full_name, search)
+      || u.email?.toLowerCase().includes(search.toLowerCase());
     return matchDept && matchSearch;
   });
 
@@ -270,11 +271,11 @@ export default function EmployeePicker({
                     <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
                       isSelected ? 'bg-purple-600 text-white' : 'bg-gray-200 text-gray-600'
                     }`}>
-                      {user.full_name?.charAt(0)?.toUpperCase() || '?'}
+                      {getStaffInitials(user.full_name)}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className={`text-sm font-medium truncate ${isSelected ? 'text-purple-700' : 'text-gray-900'}`}>
-                        {user.full_name}
+                      <div className={`text-sm font-medium truncate ${isSelected ? 'text-purple-700' : 'text-gray-900'}`} title={user.full_name}>
+                        {formatStaffDisplayName(user.full_name)}
                       </div>
                       {deptName && <div className="text-xs text-gray-400 truncate">{deptName}</div>}
                     </div>
@@ -322,8 +323,8 @@ export default function EmployeePicker({
             <div className="w-5 h-5 rounded-full bg-purple-100 flex items-center justify-center shrink-0">
               <User className="w-3 h-3 text-purple-600" />
             </div>
-            <span className="flex-1 text-left font-medium text-gray-900 truncate">
-              {selectedUser.full_name}
+            <span className="flex-1 text-left font-medium text-gray-900 truncate" title={selectedUser.full_name}>
+              {formatStaffDisplayName(selectedUser.full_name)}
             </span>
             {!isDisabled && (
               <button

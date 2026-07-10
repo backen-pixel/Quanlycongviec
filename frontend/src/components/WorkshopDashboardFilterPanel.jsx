@@ -46,6 +46,8 @@ export default function WorkshopDashboardFilterPanel({
   employeeFilterListByRegion,
   companyEmployees,
   hideCompanySelect = false,
+  personSelectLabel = 'Chọn NV',
+  panelTitle,
   // Phạm vi xưởng / đặt hàng
   canPickCompany = false,
   workshopCompanyPickerList = [],
@@ -258,6 +260,8 @@ export default function WorkshopDashboardFilterPanel({
               filterPersonName={filterPersonName}
               employeeFilterListByRegion={employeeFilterListByRegion}
               companyEmployees={companyEmployees}
+              personSelectLabel={personSelectLabel}
+              panelTitle={panelTitle}
               ringFocusClass="focus:ring-violet-300/80 focus:border-violet-400"
               hideAssigneeSearch
               hidePersonName
