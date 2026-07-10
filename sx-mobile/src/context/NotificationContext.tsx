@@ -564,6 +564,10 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     s.on('logistics:project_restored', onBoardChanged);
     s.on('logistics:project_purged', onBoardChanged);
     s.on('crm:task_changed', onTaskChanged);
+    const onTaskUpdated = (raw: unknown) => {
+      emitSync({ type: 'crm:task_changed', payload: (raw || {}) as CrmTaskChangedPayload });
+    };
+    s.on('task:updated', onTaskUpdated);
     s.on('messenger_group:chat', onMessengerChat);
     s.on('messenger_group:read', onMessengerRead);
     s.on('messenger_group:members', onMessengerMembers);
@@ -595,6 +599,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       s.off('logistics:project_restored', onBoardChanged);
       s.off('logistics:project_purged', onBoardChanged);
       s.off('crm:task_changed', onTaskChanged);
+      s.off('task:updated', onTaskUpdated);
       s.off('messenger_group:chat', onMessengerChat);
       s.off('messenger_group:read', onMessengerRead);
       s.off('messenger_group:members', onMessengerMembers);

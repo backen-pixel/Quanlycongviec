@@ -65,20 +65,20 @@ export default function PlannerScreen() {
     }));
   }, []);
 
-  const load = useCallback(async (mode: 'init' | 'refresh' = 'init') => {
+  const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
     if (mode === 'init') setLoading(true);
-    else setRefreshing(true);
+    else if (mode === 'refresh') setRefreshing(true);
     setError(null);
     try {
       const [boardData, personalData] = await Promise.all([
-        fetchProductionBoard(false, { companyId: scopedCompanyId }),
+        fetchProductionBoard(mode === 'silent', { companyId: scopedCompanyId }),
         fetchPersonalPlanner().catch(() => ({ columns: [], items: [] }) as PersonalPlanner),
       ]);
       setBoard(boardData);
       setPersonal(personalData);
-      setOwnerVisible({});
+      if (mode !== 'silent') setOwnerVisible({});
     } catch (e) {
-      setError(formatApiError(e));
+      if (mode !== 'silent') setError(formatApiError(e));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -90,7 +90,8 @@ export default function PlannerScreen() {
   }, [load]);
 
   useProductionRealtime({
-    onRefresh: () => load('refresh'),
+    onRefresh: () => load('silent'),
+    debounceMs: 400,
   });
 
   const stageById = useMemo(() => {

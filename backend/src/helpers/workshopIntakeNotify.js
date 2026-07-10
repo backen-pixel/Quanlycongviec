@@ -1,5 +1,5 @@
 /**
- * Thông báo + socket realtime khi deal mới vào cột «Chờ vào xưởng» (tiếp nhận).
+ * Thông báo + socket realtime Kanban SX (tiếp nhận, kéo cột, deadline…).
  */
 
 const { supabase } = require('../config/supabase');
@@ -58,26 +58,58 @@ async function notifyWorkshopIntakeNewDeal({
 }
 
 /**
- * Cập nhật Kanban realtime: badge CRM + sự kiện board (mobile/web).
+ * Phát socket ngay sau khi DB ghi xong — client refetch Kanban không chờ sync nền.
  */
-async function emitProductionBoardRealtime(projectId, io, reason = 'intake') {
+function emitProductionKanbanChangedImmediate(io, {
+  projectId,
+  columnId = null,
+  reason = 'kanban',
+  project = null,
+} = {}) {
+  if (!io || !projectId) return;
+  const pid = String(projectId);
+  const base = {
+    project_id: pid,
+    id: pid,
+    reason,
+    sx_kanban_column_id: columnId != null ? String(columnId) : null,
+  };
+  const stagePayload = project && typeof project === 'object'
+    ? { ...project, ...base, project_id: pid, id: pid }
+    : base;
+  io.emit('production:board_changed', base);
+  io.emit('project:stage_changed', stagePayload);
+}
+
+/**
+ * Đồng bộ badge CRM + dashboard sau khi sync pipeline (chạy nền).
+ */
+async function emitProductionKanbanChangedAsync(io, projectId, reason = 'kanban_sync') {
   if (!projectId) return;
   const pid = String(projectId);
   try {
     if (io) {
       await emitCrmBadgeUpdateForProject(pid, io);
-      io.emit('production:board_changed', { project_id: pid, reason });
       io.emit('crm:dashboard_changed', { project_id: pid, reason });
     }
   } catch (e) {
-    console.warn('[workshop-intake-notify] socket:', e.message);
+    console.warn('[workshop-kanban-realtime] async:', e.message);
   }
   try {
     void rcInvalidateTags(['production', 'crm']);
   } catch (_) { /* ignore */ }
 }
 
+/** Tiếp nhận / tạo đơn — immediate + async. */
+async function emitProductionBoardRealtime(projectId, io, reason = 'intake') {
+  if (!projectId) return;
+  emitProductionKanbanChangedImmediate(io, { projectId, reason });
+  await emitProductionKanbanChangedAsync(io, projectId, reason);
+}
+
 module.exports = {
   notifyWorkshopIntakeNewDeal,
   emitProductionBoardRealtime,
+  emitProductionKanbanChangedImmediate,
+  emitProductionKanbanChangedAsync,
 };

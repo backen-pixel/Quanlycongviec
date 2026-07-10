@@ -110,7 +110,11 @@ export default function WorkScreen() {
     void load();
   }, [load]);
 
-  useProductionRealtime({ onRefresh: onRefresh, enabled: Boolean(userId) });
+  useProductionRealtime({
+    onRefresh: onRefresh,
+    enabled: Boolean(userId),
+    debounceMs: 400,
+  });
 
   const stats = useMemo(
     () => ({
