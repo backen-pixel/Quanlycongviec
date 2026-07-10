@@ -15602,22 +15602,44 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
 // DELETE attachment + sync xóa lead_document liên kết
 r.delete('/leads/:leadId/tasks/:taskId/attachments/:attId', async (req, res) => {
   try {
-    const { data: attBefore } = await supabase.from('crm_task_attachments')
-      .select('id, source_assignment_file_id, created_by, file_name, name, lead_id, task:crm_tasks(id, title, project_id)')
-      .eq('id', req.params.attId)
-      .eq('task_id', req.params.taskId)
+    const attId = String(req.params.attId || '').trim();
+    const { data: attBefore, error: fetchErr } = await supabase.from('crm_task_attachments')
+      .select('id, task_id, source_assignment_file_id, created_by, file_name, name, lead_id')
+      .eq('id', attId)
       .maybeSingle();
+    if (fetchErr) throw fetchErr;
     if (!attBefore) return res.status(404).json({ error: 'Không tìm thấy file' });
+
+    const resolvedTaskId = attBefore.task_id || req.params.taskId;
+    const resolvedLeadId = attBefore.lead_id || req.params.leadId;
+
+    let taskTitle = '';
+    let projectId = null;
+    if (resolvedTaskId) {
+      const { data: taskRow } = await supabase.from('crm_tasks')
+        .select('id, title')
+        .eq('id', resolvedTaskId)
+        .maybeSingle();
+      taskTitle = taskRow?.title || '';
+    }
+    if (resolvedLeadId) {
+      const { data: leadRow } = await supabase.from('crm_leads')
+        .select('project_id')
+        .eq('id', resolvedLeadId)
+        .maybeSingle();
+      projectId = leadRow?.project_id || null;
+    }
+
     if (!(await assertDealResponsible(req, res, {
-      leadId: attBefore.lead_id || req.params.leadId,
-      projectId: attBefore.task?.project_id,
+      leadId: resolvedLeadId,
+      projectId,
     }))) return;
 
     // Snapshot vào Thùng rác trước khi xóa thật (trừ khi permanent=true)
     if (req.query.permanent !== 'true') {
       try {
         const { snapshotTaskAttachment } = require('../helpers/trashSnapshot');
-        const snapRes = await snapshotTaskAttachment(supabase, req.params.attId, req.user?.userId);
+        const snapRes = await snapshotTaskAttachment(supabase, attId, req.user?.userId);
         if (!snapRes.ok) console.warn('[delete task attach] snapshot trash failed:', snapRes.error);
       } catch (e) {
         console.warn('[delete task attach] trash snapshot error:', e.message);
@@ -15625,29 +15647,29 @@ r.delete('/leads/:leadId/tasks/:taskId/attachments/:attId', async (req, res) => 
     }
     // Xóa lead_document liên kết trước (vì có FK ON DELETE SET NULL)
     await supabase.from('lead_documents').delete()
-      .eq('source_attachment_id', req.params.attId);
+      .eq('source_attachment_id', attId);
     try {
       await deleteMirroredAssignmentFileForTaskAttachment(
-        req.params.attId,
+        attId,
         attBefore?.source_assignment_file_id,
       );
     } catch (syncErr) {
       console.warn('[delete attach] sync→assignment:', syncErr.message);
     }
-    // Xóa attachment
+    // Xóa attachment (theo id — task_id URL có thể lệch deal con / đồng bộ giao việc)
     const { error } = await supabase.from('crm_task_attachments')
-      .delete().eq('id', req.params.attId).eq('task_id', req.params.taskId);
+      .delete().eq('id', attId);
     if (error) throw error;
     await logProjectFileActivity(req, {
-      projectId: attBefore.task?.project_id,
-      leadId: attBefore.lead_id || req.params.leadId,
+      projectId,
+      leadId: resolvedLeadId,
       action: 'deleted',
       fileName: attBefore.file_name || attBefore.name,
-      taskTitle: attBefore.task?.title,
+      taskTitle,
     });
     await emitCrmTaskChanged(req, {
-      leadId: req.params.leadId,
-      taskId: req.params.taskId,
+      leadId: resolvedLeadId,
+      taskId: resolvedTaskId,
       action: 'attachment_deleted',
     });
     res.json({ success: true });

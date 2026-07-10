@@ -204,9 +204,6 @@ export default function SidebarModuleCycleButton({
         >
           {displayMod.name}
         </p>
-        {displayMod?.id === 'congviec' && taskBadge > 0 && (
-          <span className="text-[10px] font-semibold text-rose-200">{taskBadge} NV mở</span>
-        )}
       </div>
     </div>
   );

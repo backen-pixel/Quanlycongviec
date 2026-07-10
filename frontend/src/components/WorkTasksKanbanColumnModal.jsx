@@ -110,7 +110,7 @@ export default function WorkTasksKanbanColumnModal({
           </div>
 
           <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
-            {isEdit && !column?.isSystem && onDelete && (
+            {isEdit && onDelete && (
               <button
                 type="button"
                 onClick={() => onDelete(column)}

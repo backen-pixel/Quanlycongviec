@@ -5,8 +5,9 @@ import {
 } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, Calendar, Plus, Pencil, Columns3, ChevronRight, MessageSquare, Paperclip } from 'lucide-react';
-import { formatDate, PRIORITY_LABELS, PRIORITY_COLORS } from '../lib/utils';
+import { GripVertical, Calendar, Plus, Pencil, Trash2, Columns3, ChevronRight, MessageSquare, Paperclip, FolderKanban } from 'lucide-react';
+import { formatDate, PRIORITY_LABELS, getInitials, avatarColor } from '../lib/utils';
+import { publicFileUrl } from '../lib/publicFileUrl';
 import {
   groupTasksByKanbanColumns,
   groupTasksByDeadlineColumns,
@@ -22,6 +23,35 @@ import {
   dealSortableId,
   resolveDealColumnKey,
 } from '../lib/workTasksDashboardUtils';
+
+const MODULE_KIND_STYLES = {
+  'CRM-Deal': { iconBg: 'bg-emerald-100 text-emerald-600', label: 'CRM Deal' },
+  'CRM-Lead': { iconBg: 'bg-teal-100 text-teal-600', label: 'CRM Lead' },
+  SX: { iconBg: 'bg-orange-100 text-orange-600', label: 'Sản xuất' },
+  VC: { iconBg: 'bg-violet-100 text-violet-600', label: 'Vận chuyển' },
+  'Giao việc': { iconBg: 'bg-blue-100 text-blue-600', label: 'Giao việc' },
+  'Cá nhân': { iconBg: 'bg-slate-100 text-slate-600', label: 'Cá nhân' },
+  'Dự án': { iconBg: 'bg-sky-100 text-sky-600', label: 'Dự án' },
+};
+
+const PRIORITY_PILL = {
+  urgent: 'bg-red-50 text-red-700 border-red-200',
+  high: 'bg-orange-50 text-orange-700 border-orange-200',
+  medium: 'bg-blue-50 text-blue-700 border-blue-200',
+  low: 'bg-slate-50 text-slate-600 border-slate-200',
+};
+
+const PRIORITY_FULL = {
+  urgent: 'Ưu tiên cao',
+  high: 'Ưu tiên cao',
+  medium: 'Ưu tiên TB',
+  low: 'Ưu tiên thấp',
+};
+
+function resolveAssignee(task, assigneeMap) {
+  if (!task?.assignee_id || !assigneeMap) return null;
+  return assigneeMap.get(String(task.assignee_id)) || null;
+}
 
 function resolveDropColumnKey(overId, columnDefs, columnMap) {
   if (!overId) return null;
@@ -41,78 +71,103 @@ function resolveDropColumnKey(overId, columnDefs, columnMap) {
   return null;
 }
 
-function KanbanTaskCard({ task, isOverlay = false, isDragging = false, readOnly = false, onTaskExtrasClick }) {
+function KanbanTaskCard({ task, isOverlay = false, isDragging = false, readOnly = false, onTaskExtrasClick, assigneeMap }) {
   const overdue = task.deadline && new Date(task.deadline) < new Date() && !isTaskDone(task.status);
   const showExtras = !!onTaskExtrasClick && !isOverlay;
   const fileCount = task.file_count || 0;
   const noteCount = task.note_count || 0;
   const hasNotes = !!(task.notes && String(task.notes).trim());
+  const kindStyle = MODULE_KIND_STYLES[task.task_kind] || { iconBg: 'bg-violet-100 text-violet-600', label: task.task_kind || 'Công việc' };
+  const assignee = resolveAssignee(task, assigneeMap);
+  const priorityKey = String(task.priority || '').toLowerCase();
+  const priorityPill = PRIORITY_PILL[priorityKey] || 'bg-slate-50 text-slate-600 border-slate-200';
 
   return (
     <div
-      className={`bg-white rounded-lg border shadow-sm transition-all select-none ${
+      className={`bg-white rounded-xl border transition-all select-none ${
         readOnly ? 'cursor-pointer' : 'touch-none'
       } ${
-        isDragging ? 'border-blue-400 shadow-lg ring-2 ring-blue-200' : 'border-gray-200 hover:border-blue-300 hover:shadow-md'
+        isDragging
+          ? 'border-violet-400 shadow-xl ring-2 ring-violet-200/80 scale-[1.02]'
+          : 'border-slate-200/90 shadow-sm hover:border-violet-300 hover:shadow-md hover:-translate-y-0.5'
       } ${isOverlay ? 'p-2.5' : readOnly ? 'p-2.5' : 'p-2.5 cursor-grab active:cursor-grabbing'}`}
     >
       <div className="flex items-start gap-2">
-        {!readOnly && !isOverlay && <GripVertical className="h-4 w-4 shrink-0 mt-0.5 text-gray-300" aria-hidden />}
+        {!readOnly && !isOverlay && (
+          <GripVertical className="h-3.5 w-3.5 shrink-0 mt-0.5 text-slate-300 opacity-0 group-hover/card:opacity-100" aria-hidden />
+        )}
+        <div className={`shrink-0 h-8 w-8 rounded-lg flex items-center justify-center ${kindStyle.iconBg}`}>
+          <FolderKanban className="h-4 w-4" aria-hidden />
+        </div>
         <div className="flex-1 min-w-0">
-          <p className={`text-sm font-medium leading-snug ${isTaskDone(task.status) ? 'line-through text-gray-400' : 'text-gray-900'}`}>
+          <p className={`text-xs font-bold leading-snug ${isTaskDone(task.status) ? 'line-through text-slate-400' : 'text-slate-900'}`}>
             {task.title}
           </p>
-          {(task.lead_title || task.project_code) && (
-            <p className="text-[10px] text-indigo-700 truncate mt-0.5">
-              {task.lead_title || task.project_code}
+          {(task.lead_title || task.project_code || task.project_name) && (
+            <p className="text-[11px] text-slate-500 truncate mt-0.5">
+              {task.lead_title || task.project_name || task.project_code}
             </p>
           )}
           {hasNotes && (
-            <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-1 italic" title={task.notes}>
-              💬 {String(task.notes).slice(0, 60)}{String(task.notes).length > 60 ? '…' : ''}
+            <p className="text-[10px] text-slate-400 mt-1 line-clamp-1 italic" title={task.notes}>
+              {String(task.notes).slice(0, 72)}{String(task.notes).length > 72 ? '…' : ''}
             </p>
           )}
           <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-            {task.task_kind && (
-              <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{task.task_kind}</span>
+            {assignee && (
+              <span className="inline-flex items-center gap-1" title={assignee.full_name || assignee.fullName}>
+                {assignee.avatar ? (
+                  <img
+                    src={publicFileUrl(assignee.avatar)}
+                    alt=""
+                    className="h-5 w-5 rounded-full object-cover ring-1 ring-white shadow-sm"
+                  />
+                ) : (
+                  <span
+                    className="h-5 w-5 rounded-full text-[8px] font-bold text-white flex items-center justify-center ring-1 ring-white shadow-sm"
+                    style={{ backgroundColor: avatarColor(assignee.full_name || assignee.fullName || 'U') }}
+                  >
+                    {getInitials(assignee.full_name || assignee.fullName || 'U')}
+                  </span>
+                )}
+              </span>
             )}
             {task.deadline && (
-              <span className={`text-[10px] inline-flex items-center gap-0.5 ${overdue ? 'text-red-600 font-bold' : 'text-gray-400'}`}>
-                <Calendar className="h-2.5 w-2.5" />{formatDate(task.deadline)}
+              <span className={`text-[10px] inline-flex items-center gap-1 font-medium ${overdue ? 'text-red-600' : 'text-slate-500'}`}>
+                <Calendar className="h-3 w-3" />
+                {formatDate(task.deadline)}
               </span>
             )}
             {task.priority && (
-              <span className={`text-[9px] px-1 py-0.5 rounded font-medium ${PRIORITY_COLORS[task.priority] || 'bg-gray-100 text-gray-600'}`}>
-                {PRIORITY_LABELS[task.priority] || task.priority}
+              <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold border ${priorityPill}`}>
+                {PRIORITY_FULL[priorityKey] || PRIORITY_LABELS[task.priority] || task.priority}
               </span>
             )}
             {fileCount > 0 && (
-              <span className="text-[9px] text-gray-500 inline-flex items-center gap-0.5">
-                <Paperclip className="h-2.5 w-2.5" />{fileCount}
+              <span className="text-[10px] text-slate-500 inline-flex items-center gap-0.5">
+                <Paperclip className="h-3 w-3" />{fileCount}
               </span>
             )}
             {noteCount > 0 && (
-              <span className="text-[9px] text-amber-700 inline-flex items-center gap-0.5">
-                <MessageSquare className="h-2.5 w-2.5" />{noteCount}
+              <span className="text-[10px] text-amber-700 inline-flex items-center gap-0.5">
+                <MessageSquare className="h-3 w-3" />{noteCount}
               </span>
             )}
           </div>
           {showExtras && (
-            <div className="flex items-center gap-1 mt-2 pt-1.5 border-t border-gray-100">
-              <button
-                type="button"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onTaskExtrasClick(task);
-                }}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 cursor-pointer"
-                title="Ghi chú & file đính kèm"
-              >
-                <MessageSquare className="h-3 w-3" />
-                Ghi chú &amp; file
-              </button>
-            </div>
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onTaskExtrasClick(task);
+              }}
+              className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-semibold text-violet-700 bg-violet-50 hover:bg-violet-100 border border-violet-200 cursor-pointer"
+              title="Ghi chú & file đính kèm"
+            >
+              <MessageSquare className="h-3 w-3" />
+              Ghi chú &amp; file
+            </button>
           )}
         </div>
       </div>
@@ -120,7 +175,7 @@ function KanbanTaskCard({ task, isOverlay = false, isDragging = false, readOnly 
   );
 }
 
-function SortableKanbanCard({ task, onTaskClick, onTaskExtrasClick }) {
+function SortableKanbanCard({ task, onTaskClick, onTaskExtrasClick, assigneeMap }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.unified_id });
 
   const style = {
@@ -133,6 +188,7 @@ function SortableKanbanCard({ task, onTaskClick, onTaskExtrasClick }) {
     <div
       ref={setNodeRef}
       style={style}
+      className="group/card"
       {...attributes}
       {...listeners}
       onDoubleClick={(e) => {
@@ -141,23 +197,24 @@ function SortableKanbanCard({ task, onTaskClick, onTaskExtrasClick }) {
       }}
       title="Kéo để đổi trạng thái · Nhấp đúp để sửa"
     >
-      <KanbanTaskCard task={task} isDragging={isDragging} onTaskExtrasClick={onTaskExtrasClick} />
+      <KanbanTaskCard task={task} isDragging={isDragging} onTaskExtrasClick={onTaskExtrasClick} assigneeMap={assigneeMap} />
     </div>
   );
 }
 
-function StaticKanbanCard({ task, onTaskClick, onTaskExtrasClick }) {
+function StaticKanbanCard({ task, onTaskClick, onTaskExtrasClick, assigneeMap }) {
   return (
     <div
+      className="group/card"
       onDoubleClick={() => onTaskClick?.(task)}
       title="Nhấp đúp để sửa"
     >
-      <KanbanTaskCard task={task} readOnly onTaskExtrasClick={onTaskExtrasClick} />
+      <KanbanTaskCard task={task} readOnly onTaskExtrasClick={onTaskExtrasClick} assigneeMap={assigneeMap} />
     </div>
   );
 }
 
-function SortableDealGroup({ group, expanded, onToggle, onTaskClick, onTaskExtrasClick, readOnly = false }) {
+function SortableDealGroup({ group, expanded, onToggle, onTaskClick, onTaskExtrasClick, readOnly = false, assigneeMap }) {
   const sortId = dealSortableId(group.key);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: sortId });
   const count = group.tasks.length;
@@ -214,8 +271,8 @@ function SortableDealGroup({ group, expanded, onToggle, onTaskClick, onTaskExtra
         <div className="p-1.5 space-y-1.5">
           {group.tasks.map((t) => (
             readOnly
-              ? <StaticKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} onTaskExtrasClick={onTaskExtrasClick} />
-              : <SortableKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} onTaskExtrasClick={onTaskExtrasClick} />
+              ? <StaticKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} onTaskExtrasClick={onTaskExtrasClick} assigneeMap={assigneeMap} />
+              : <SortableKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} onTaskExtrasClick={onTaskExtrasClick} assigneeMap={assigneeMap} />
           ))}
         </div>
       )}
@@ -223,7 +280,7 @@ function SortableDealGroup({ group, expanded, onToggle, onTaskClick, onTaskExtra
   );
 }
 
-function DealGroup({ group, expanded, onToggle, onTaskClick, onTaskExtrasClick, readOnly = false }) {
+function DealGroup({ group, expanded, onToggle, onTaskClick, onTaskExtrasClick, readOnly = false, assigneeMap }) {
   if (!readOnly && group.key !== '__other__') {
     return (
       <SortableDealGroup
@@ -233,6 +290,7 @@ function DealGroup({ group, expanded, onToggle, onTaskClick, onTaskExtrasClick, 
         onTaskClick={onTaskClick}
         onTaskExtrasClick={onTaskExtrasClick}
         readOnly={readOnly}
+        assigneeMap={assigneeMap}
       />
     );
   }
@@ -269,8 +327,8 @@ function DealGroup({ group, expanded, onToggle, onTaskClick, onTaskExtrasClick, 
         <div className="p-1.5 space-y-1.5">
           {group.tasks.map((t) => (
             readOnly
-              ? <StaticKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} onTaskExtrasClick={onTaskExtrasClick} />
-              : <SortableKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} onTaskExtrasClick={onTaskExtrasClick} />
+              ? <StaticKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} onTaskExtrasClick={onTaskExtrasClick} assigneeMap={assigneeMap} />
+              : <SortableKanbanCard key={t.unified_id} task={t} onTaskClick={onTaskClick} onTaskExtrasClick={onTaskExtrasClick} assigneeMap={assigneeMap} />
           ))}
         </div>
       )}
@@ -279,9 +337,9 @@ function DealGroup({ group, expanded, onToggle, onTaskClick, onTaskExtrasClick, 
 }
 
 function StatusColumn({
-  column, tasks, onTaskClick, onTaskExtrasClick, onAddTask, onEditColumn,
+  column, tasks, onTaskClick, onTaskExtrasClick, onAddTask, onEditColumn, onDeleteColumn,
   readOnly = false, showAddTask = true, allowColumnEdit = true,
-  expandedDeals, onToggleDeal,
+  expandedDeals, onToggleDeal, assigneeMap,
 }) {
   const dealGroups = useMemo(() => groupTasksByDeal(tasks), [tasks]);
   const sortableIds = useMemo(() => {
@@ -297,9 +355,9 @@ function StatusColumn({
 
   const body = (
     <>
-      <div className="flex-1 p-2 space-y-2 overflow-y-auto [scrollbar-width:thin]">
+      <div className="flex-1 p-1.5 space-y-1.5 overflow-y-auto [scrollbar-width:thin]">
         {dealGroups.length === 0 ? (
-          <p className="text-center text-xs text-gray-400 py-8">
+          <p className="text-center text-[11px] text-gray-400 py-6">
             {readOnly ? 'Không có nhiệm vụ' : 'Kéo thả nhiệm vụ vào đây'}
           </p>
         ) : dealGroups.map((group) => (
@@ -311,18 +369,21 @@ function StatusColumn({
             onTaskClick={onTaskClick}
             onTaskExtrasClick={onTaskExtrasClick}
             readOnly={readOnly}
+            assigneeMap={assigneeMap}
           />
         ))}
       </div>
       {showAddTask && !readOnly && (
-        <div className="shrink-0 p-2 pt-0">
+        <div className="shrink-0 px-2 pb-2 pt-0.5">
           <button
             type="button"
             onClick={() => onAddTask?.(column)}
-            className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border-2 border-dashed border-gray-300 bg-white/60 text-xs font-medium text-gray-500 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/50 cursor-pointer transition-colors"
+            className="w-full flex items-center justify-center gap-1 py-1.5 text-[11px] font-semibold text-violet-600 hover:text-violet-800 hover:bg-violet-50 rounded-lg cursor-pointer transition-colors"
+            title="Thêm công việc"
+            aria-label="Thêm công việc"
           >
             <Plus className="h-3.5 w-3.5" />
-            Thêm việc
+            Thêm công việc
           </button>
         </div>
       )}
@@ -330,36 +391,47 @@ function StatusColumn({
   );
 
   return (
-    <div className={`shrink-0 w-[min(100vw-2rem,300px)] flex flex-col rounded-xl border ${column.border} ${column.bg}`}>
-      <div className="px-3 py-2.5 border-b border-black/5 flex items-center gap-2 group/col">
+    <div className="shrink-0 w-[min(100%,268px)] flex flex-col rounded-xl border border-slate-200/80 bg-slate-50/60 shadow-sm overflow-hidden">
+      <div className="px-2.5 py-2 border-b border-slate-200/70 flex items-center gap-1.5 group/col bg-white/80">
         <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${column.dot}`} />
-        <span className="text-sm font-bold text-gray-800 truncate flex-1 min-w-0" title={column.label}>
+        <span className="text-xs font-bold text-slate-800 truncate flex-1 min-w-0" title={column.label}>
           {column.label}
         </span>
         {allowColumnEdit && !readOnly && (
           <button
             type="button"
             onClick={() => onEditColumn?.(column)}
-            className="shrink-0 h-6 w-6 flex items-center justify-center rounded text-gray-400 hover:text-violet-700 hover:bg-white/80 opacity-0 group-hover/col:opacity-100 transition-opacity cursor-pointer"
+            className="shrink-0 h-6 w-6 flex items-center justify-center rounded-md text-slate-400 hover:text-violet-700 hover:bg-violet-50 opacity-0 group-hover/col:opacity-100 transition-opacity cursor-pointer"
             title="Sửa cột"
           >
             <Pencil className="h-3 w-3" />
           </button>
         )}
-        <span className="shrink-0 text-xs font-bold px-2 py-0.5 rounded-full bg-white/80 text-gray-700 tabular-nums">
+        {allowColumnEdit && !readOnly && onDeleteColumn && (
+          <button
+            type="button"
+            onClick={() => onDeleteColumn(column)}
+            className="shrink-0 h-6 w-6 flex items-center justify-center rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover/col:opacity-100 transition-opacity cursor-pointer"
+            title="Xóa cột"
+            aria-label="Xóa cột"
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        )}
+        <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 tabular-nums">
           {tasks.length}
         </span>
       </div>
       {readOnly ? (
-        <div className="flex-1 flex flex-col min-h-[240px] max-h-[calc(100vh-340px)]">
+        <div className="flex-1 flex flex-col min-h-[180px] max-h-[calc(100dvh-15.5rem)]">
           {body}
         </div>
       ) : (
         <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
           <div
             ref={setNodeRef}
-            className={`flex-1 flex flex-col min-h-[240px] max-h-[calc(100vh-340px)] transition-colors ${
-              isOver ? 'bg-blue-50/60 ring-2 ring-inset ring-blue-300/50' : ''
+            className={`flex-1 flex flex-col min-h-[180px] max-h-[calc(100dvh-15.5rem)] transition-colors ${
+              isOver ? 'bg-violet-50/70 ring-1 ring-inset ring-violet-300/60' : ''
             }`}
             data-status={column.key}
           >
@@ -379,17 +451,16 @@ function AddColumnCard({ onClick }) {
       ref={setNodeRef}
       type="button"
       onClick={onClick}
-      className={`shrink-0 w-[min(100vw-2rem,220px)] min-h-[280px] self-stretch rounded-xl border-2 border-dashed flex flex-col items-center justify-center gap-2.5 cursor-pointer transition-all ${
+      className={`shrink-0 w-[min(100%,188px)] min-h-[180px] self-stretch rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-1.5 cursor-pointer transition-all ${
         isOver
           ? 'border-violet-500 bg-violet-100/80 scale-[1.01]'
           : 'border-violet-300 bg-violet-50/50 hover:bg-violet-50 hover:border-violet-500 hover:shadow-md'
       }`}
     >
-      <div className="h-12 w-12 rounded-full bg-violet-100 flex items-center justify-center">
-        <Columns3 className="h-6 w-6 text-violet-600" />
+      <div className="h-9 w-9 rounded-full bg-violet-100 flex items-center justify-center">
+        <Columns3 className="h-4 w-4 text-violet-600" />
       </div>
-      <span className="text-sm font-bold text-violet-800">Thêm cột</span>
-      <span className="text-[10px] text-violet-600/80 px-3 text-center leading-snug">Tùy chỉnh tên, màu và trạng thái cột</span>
+      <span className="text-xs font-bold text-violet-800">Thêm cột</span>
     </button>
   );
 }
@@ -408,9 +479,11 @@ function KanbanBoard({
   onAddTask,
   onAddColumn,
   onEditColumn,
+  onDeleteColumn,
+  assigneeMap,
 }) {
   return (
-      <div className="flex gap-3 overflow-x-auto pb-2 min-h-[420px] [scrollbar-width:thin] items-stretch scroll-smooth">
+      <div className="flex gap-2.5 overflow-x-auto pb-1 min-h-[220px] [scrollbar-width:thin] items-stretch scroll-smooth">
       {columnDefs.map((col) => (
         <StatusColumn
           key={col.key}
@@ -420,11 +493,13 @@ function KanbanBoard({
           onTaskExtrasClick={onTaskExtrasClick}
           onAddTask={onAddTask}
           onEditColumn={onEditColumn}
+          onDeleteColumn={onDeleteColumn}
           readOnly={readOnly}
           showAddTask={showAddTask}
           allowColumnEdit={allowColumnEdit}
           expandedDeals={expandedDeals}
           onToggleDeal={onToggleDeal}
+          assigneeMap={assigneeMap}
         />
       ))}
       {showAddColumn && !readOnly && <AddColumnCard onClick={onAddColumn} />}
@@ -448,6 +523,8 @@ export default function WorkTasksStatusKanban({
   onAddTask,
   onAddColumn,
   onEditColumn,
+  onDeleteColumn,
+  assigneeMap,
 }) {
   const [columns, setColumns] = useState(() => {
     const fn = groupMode === 'deadline' ? groupTasksByDeadlineColumns : groupTasksByKanbanColumns;
@@ -632,6 +709,8 @@ export default function WorkTasksStatusKanban({
       onAddTask={onAddTask}
       onAddColumn={onAddColumn}
       onEditColumn={onEditColumn}
+      onDeleteColumn={onDeleteColumn}
+      assigneeMap={assigneeMap}
     />
   );
 

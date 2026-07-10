@@ -771,7 +771,8 @@ export default function CRMTasksTab({
   const [dateSavingKey, setDateSavingKey] = useState('');
   /** Task có thể thuộc deal con (fulfillment) khi deal gốc dùng đơn — API đính kèm/ghi chú cần đúng lead_id */
   const apiLeadIdForTaskId = (taskId) => {
-    const t = tasks.find((x) => x.id === taskId);
+    const tid = String(taskId || '');
+    const t = tasks.find((x) => String(x.id) === tid);
     return (t?.lead_id && String(t.lead_id)) || leadId;
   };
 
@@ -2204,15 +2205,29 @@ export default function CRMTasksTab({
   };
 
   const deleteAttachment = async (taskId, attId, { skipConfirm = false } = {}) => {
-    if (!skipConfirm && !confirm('Xóa đính kèm này?')) return;
-    try {
-      await api.delete(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/${attId}`);
-      bumpTaskAttachmentCount(taskId, -1);
-      notifyArtifactsSynced(taskId);
-    } catch (e) {
-      if (e.response?.status !== 404) { alert('Lỗi xóa'); return; }
+    const tid = String(taskId || '');
+    const aid = String(attId || '');
+    if (!tid || !aid) {
+      alert('Không xác định được file cần xóa');
+      return;
     }
-    loadAttachments({ id: taskId });
+    const att = (taskAttachments[tid] || []).find((a) => String(a.id) === aid)
+      || Object.values(taskAttachments).flat().find((a) => String(a.id) === aid);
+    if (!skipConfirm && !confirm('Xóa đính kèm này?')) return;
+    const lid = att?.lead_id ? String(att.lead_id) : apiLeadIdForTaskId(tid);
+    const resolvedTaskId = att?.task_id ? String(att.task_id) : tid;
+    try {
+      await api.delete(`/crm/leads/${lid}/tasks/${resolvedTaskId}/attachments/${aid}`);
+      setTaskAttachments((p) => ({
+        ...p,
+        [tid]: (p[tid] || []).filter((a) => String(a.id) !== aid),
+      }));
+      bumpTaskAttachmentCount(tid, -1);
+      notifyArtifactsSynced(tid);
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi xóa file');
+    }
+    loadAttachments({ id: tid });
   };
 
   const uploadOneRawFile = async (file) => {

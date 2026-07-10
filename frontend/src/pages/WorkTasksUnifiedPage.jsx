@@ -13,7 +13,8 @@ import WorkTasksFilterPanel, { WORK_TASKS_FILTER_TABS_META } from '../components
 import { CRM_TIME_PRESETS, getCrmDateRangeFromPreset } from '../lib/crmDateRangePresets';
 import {
   Layers, LayoutGrid, List, AlertTriangle, Search, RefreshCw,
-  CheckCircle2, Clock, Filter, Plus, Columns3,
+  CheckCircle2, Clock, Filter, Plus, Columns3, Rocket, ArrowRight,
+  BarChart3, CalendarDays,
 } from 'lucide-react';
 import {
   readStoredWorkTasksFilters,
@@ -42,8 +43,15 @@ import {
 const VIEW_MODES = [
   { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
   { id: 'list', icon: List, label: 'Danh sách' },
-  { id: 'deadline', icon: AlertTriangle, label: 'Deadline' },
+  { id: 'deadline', icon: CalendarDays, label: 'Deadline' },
 ];
+
+const KPI_SHORT_LABELS = {
+  'Tổng công việc': 'Tổng',
+  'Đang mở': 'Mở',
+  'Quá hạn': 'Quá hạn',
+  'Hoàn thành': 'Xong',
+};
 
 export default function WorkTasksUnifiedPage() {
   const { user } = useAuth();
@@ -420,7 +428,7 @@ export default function WorkTasksUnifiedPage() {
   };
 
   const handleColumnDelete = (col) => {
-    if (!col || col.isSystem) return;
+    if (!col) return;
     if (!window.confirm(`Xóa cột «${col.label}»? Nhiệm vụ trong cột sẽ hiển thị theo trạng thái tương ứng.`)) return;
     persistKanbanColumns(kanbanColumnDefs.filter((c) => c.key !== col.key));
     setColumnModal(null);
@@ -594,132 +602,173 @@ export default function WorkTasksUnifiedPage() {
     return co?.short_name || co?.name || 'Công ty của bạn';
   }, [companies, userCompanyId]);
 
+  const userDisplayName = useMemo(
+    () => user?.full_name || user?.fullName || user?.name || 'bạn',
+    [user],
+  );
+
+  const assigneeMap = useMemo(() => {
+    const map = new Map();
+    for (const u of users) map.set(String(u.id), u);
+    return map;
+  }, [users]);
+
+  const completionPct = useMemo(() => {
+    if (!stats.total) return 0;
+    return Math.min(100, Math.round((stats.done / stats.total) * 100));
+  }, [stats.done, stats.total]);
+
   if (loading && !tasks.length) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <RefreshCw className="h-8 w-8 animate-spin text-blue-500" />
+      <div className="flex flex-col items-center justify-center min-h-[280px] gap-2">
+        <div className="h-11 w-11 rounded-xl bg-violet-100 flex items-center justify-center">
+          <RefreshCw className="h-5 w-5 animate-spin text-violet-600" />
+        </div>
+        <p className="text-xs font-medium text-slate-600">Đang tải công việc...</p>
       </div>
     );
   }
 
+  const kpiCards = [
+    { label: 'Tổng công việc', value: stats.total, icon: BarChart3, iconWrap: 'bg-indigo-100 text-indigo-600' },
+    { label: 'Đang mở', value: stats.open, icon: Clock, iconWrap: 'bg-blue-100 text-blue-600' },
+    { label: 'Quá hạn', value: stats.overdue, icon: AlertTriangle, iconWrap: 'bg-orange-100 text-orange-600' },
+    { label: 'Hoàn thành', value: stats.done, icon: CheckCircle2, iconWrap: 'bg-emerald-100 text-emerald-600' },
+  ];
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-3.5 min-w-0">
       {/* Header */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <Layers className="h-7 w-7 text-blue-600" />
-            Công việc tổng hợp
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight truncate">
+            Xin chào, {userDisplayName}
+            <span className="ml-1" aria-hidden>👋</span>
           </h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            Nhiệm vụ từ CRM, Sản xuất, Vận chuyển, Giao việc — theo quyền module của bạn
+          <p className="text-xs text-slate-500 mt-0.5 truncate">
+            CRM · Sản xuất · Vận chuyển · Giao việc — {companyDisplayName}
           </p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
+        <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+          <div className="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-slate-100 border border-slate-200/80">
             {VIEW_MODES.map((v) => (
               <button
                 key={v.id}
                 type="button"
                 onClick={() => setViewMode(v.id)}
-                className={`h-8 px-3 rounded-md text-xs font-medium flex items-center gap-1.5 cursor-pointer transition-colors ${
-                  viewMode === v.id ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-200'
+                className={`h-8 px-2.5 rounded-md text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-all ${
+                  viewMode === v.id
+                    ? 'bg-violet-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-white hover:text-slate-900'
                 }`}
               >
-                <v.icon className="h-3.5 w-3.5" />{v.label}
+                <v.icon className="h-3.5 w-3.5 shrink-0" />
+                <span className="hidden sm:inline">{v.label}</span>
               </button>
             ))}
           </div>
           <button
             type="button"
             onClick={() => setTaskModal({ mode: 'create', defaultStatus: 'pending' })}
-            className="h-8 px-3 rounded-lg bg-blue-600 text-white text-xs font-semibold flex items-center gap-1.5 hover:bg-blue-700 cursor-pointer"
+            className="h-8 w-8 rounded-lg bg-violet-600 text-white flex items-center justify-center hover:bg-violet-700 shadow-sm cursor-pointer transition-colors"
+            title="Thêm công việc"
+            aria-label="Thêm công việc"
           >
-            <Plus className="h-3.5 w-3.5" />Thêm việc
+            <Plus className="h-4 w-4" />
           </button>
           {viewMode === 'kanban' && (
             <button
               type="button"
               onClick={() => setColumnModal({ mode: 'create' })}
-              className="h-8 px-3 rounded-lg border border-violet-300 bg-violet-50 text-violet-800 text-xs font-semibold flex items-center gap-1.5 hover:bg-violet-100 cursor-pointer"
+              className="h-8 w-8 rounded-lg border border-violet-200 bg-violet-50 text-violet-800 flex items-center justify-center hover:bg-violet-100 cursor-pointer"
+              title="Thêm cột"
+              aria-label="Thêm cột"
             >
-              <Columns3 className="h-3.5 w-3.5" />Thêm cột
+              <Columns3 className="h-3.5 w-3.5" />
             </button>
           )}
           <button
             type="button"
             onClick={() => void load()}
-            className="h-8 w-8 flex items-center justify-center rounded-lg border bg-white hover:bg-gray-50 cursor-pointer"
+            className="h-8 w-8 flex items-center justify-center rounded-lg border border-slate-200 bg-white hover:bg-slate-50 cursor-pointer"
             title="Làm mới"
+            aria-label="Làm mới"
           >
-            <RefreshCw className={`h-4 w-4 text-gray-500 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-3.5 w-3.5 text-slate-500 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
 
-      {/* Thanh tìm kiếm & bộ lọc — giống CRM dashboard */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-        <div className="flex flex-wrap items-center gap-1 px-2.5 py-1.5 sm:px-3">
-          <div
-            className={`group/search flex items-center shrink-0 flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem] rounded-md border transition-colors ${
-              searchFocused
-                ? 'border-violet-400 bg-white ring-1 ring-violet-200/60'
-                : search.trim()
-                  ? 'border-violet-300 bg-violet-50/80'
-                  : inlineFilterChips.length && !showAdvFilter
-                    ? 'border-violet-200 bg-violet-50/40'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-            }`}
-          >
-            <div className="relative flex-1 min-w-0 flex items-center gap-1 pl-7 pr-1">
-              <Search
-                className={`absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none transition-colors ${
-                  searchFocused || search.trim() ? 'text-violet-600' : 'text-slate-400'
-                }`}
-              />
-              {!showAdvFilter && inlineFilterChips.length > 0 && (
-                <SearchInlineFilterChips
-                  chips={inlineFilterChips}
-                  opacityClass={
-                    searchFocused ? 'opacity-40' : search.trim() ? 'opacity-35' : 'opacity-45 group-hover/search:opacity-100'
-                  }
-                  onClearChip={(chip) => chip.onClear()}
-                  onClearAll={resetFilters}
-                  showClearAll={inlineFilterChips.length > 1}
-                />
-              )}
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                onFocus={() => setSearchFocused(true)}
-                onBlur={() => setTimeout(() => setSearchFocused(false), 180)}
-                placeholder="Tìm tiêu đề, dự án, lead..."
-                className={`flex-1 min-w-[3.5rem] h-8 bg-transparent border-0 text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-0 ${search ? 'pr-7' : ''}`}
-              />
-              {search && (
-                <SearchClearButton onClick={() => { setSearch(''); setSearchFocused(false); }} />
-              )}
-            </div>
-            <div className="shrink-0 pr-1">
-              <button
-                type="button"
-                onClick={openFilterPanel}
-                aria-expanded={showAdvFilter}
-                className={`relative h-6 w-6 flex items-center justify-center rounded border transition-colors cursor-pointer ${
-                  showAdvFilter || filterPanelActive
-                    ? 'bg-violet-100 text-violet-700 border-violet-300'
-                    : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100 hover:text-slate-700'
-                }`}
-                title={showAdvFilter ? 'Thu gọn bộ lọc' : 'Bộ lọc nâng cao'}
-                aria-label="Bộ lọc"
-              >
-                <Filter className="h-3 w-3" />
-                {filterPanelActive && (
-                  <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-violet-600 ring-1 ring-white" />
+      {/* Search, filter & KPI toolbar */}
+      <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm p-1.5">
+        <div className="flex flex-col gap-2 lg:grid lg:grid-cols-2 lg:items-center lg:gap-2">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <div
+              className={`group/search flex items-center flex-1 min-w-0 rounded-lg border transition-all ${
+                searchFocused
+                  ? 'border-violet-400 bg-white ring-1 ring-violet-100'
+                  : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
+              }`}
+            >
+              <div className="relative flex-1 min-w-0 flex items-center gap-1 pl-8 pr-1.5">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+                {!showAdvFilter && inlineFilterChips.length > 0 && (
+                  <SearchInlineFilterChips
+                    chips={inlineFilterChips}
+                    opacityClass={searchFocused ? 'opacity-40' : 'opacity-50 group-hover/search:opacity-100'}
+                    onClearChip={(chip) => chip.onClear()}
+                    onClearAll={resetFilters}
+                    showClearAll={inlineFilterChips.length > 1}
+                  />
                 )}
-              </button>
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  onFocus={() => setSearchFocused(true)}
+                  onBlur={() => setTimeout(() => setSearchFocused(false), 180)}
+                  placeholder="Tìm kiếm..."
+                  className={`flex-1 min-w-0 h-8 bg-transparent border-0 text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-0 ${search ? 'pr-6' : ''}`}
+                />
+                {search && <SearchClearButton onClick={() => { setSearch(''); setSearchFocused(false); }} />}
+              </div>
             </div>
+            <button
+              type="button"
+              onClick={openFilterPanel}
+              aria-expanded={showAdvFilter}
+              title="Bộ lọc"
+              aria-label="Bộ lọc"
+              className={`h-8 w-8 rounded-lg border text-xs font-semibold flex items-center justify-center cursor-pointer transition-colors shrink-0 ${
+                showAdvFilter || filterPanelActive
+                  ? 'bg-violet-600 text-white border-violet-600'
+                  : 'bg-white text-slate-700 border-slate-200 hover:border-violet-300 hover:text-violet-700'
+              }`}
+            >
+              <Filter className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 min-w-0">
+            {kpiCards.map((kpi) => {
+              const Icon = kpi.icon;
+              return (
+                <div
+                  key={kpi.label}
+                  className="flex items-center gap-2 px-2 py-1.5 rounded-lg border border-slate-100 bg-slate-50/60 w-full min-w-0"
+                  title={kpi.label}
+                >
+                  <div className={`h-7 w-7 rounded-md flex items-center justify-center shrink-0 ${kpi.iconWrap}`}>
+                    <Icon className="h-3.5 w-3.5" />
+                  </div>
+                  <div className="leading-none min-w-0">
+                    <p className="text-base font-extrabold text-slate-900 tabular-nums truncate">{kpi.value}</p>
+                    <p className="text-[10px] font-semibold text-slate-500 mt-0.5 truncate">
+                      {KPI_SHORT_LABELS[kpi.label] || kpi.label}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -786,64 +835,44 @@ export default function WorkTasksUnifiedPage() {
         />
       )}
 
-      {/* KPI cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { label: 'Tổng', value: stats.total, icon: List, accent: 'bg-slate-500', gradient: 'from-slate-100 via-gray-50 to-white', border: 'border-slate-300' },
-          { label: 'Đang mở', value: stats.open, icon: Clock, accent: 'bg-blue-500', gradient: 'from-blue-100 via-sky-50 to-white', border: 'border-blue-300' },
-          { label: 'Quá hạn', value: stats.overdue, icon: AlertTriangle, accent: 'bg-red-500', gradient: 'from-red-100 via-rose-50 to-white', border: 'border-red-300' },
-          { label: 'Hoàn thành', value: stats.done, icon: CheckCircle2, accent: 'bg-emerald-500', gradient: 'from-emerald-100 via-green-50 to-white', border: 'border-emerald-300' },
-        ].map((kpi) => {
-          const Icon = kpi.icon;
-          return (
-            <div key={kpi.label} className={`relative overflow-hidden bg-gradient-to-br ${kpi.gradient} border ${kpi.border} rounded-2xl p-4 shadow-sm`}>
-              <div className={`absolute top-0 left-0 right-0 h-1 ${kpi.accent}`} />
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-xl bg-white/70 flex items-center justify-center shrink-0">
-                  <Icon className="h-5 w-5 text-gray-700" />
-                </div>
-                <div>
-                  <p className="text-2xl font-extrabold text-gray-900 leading-none">{kpi.value}</p>
-                  <p className="text-xs font-semibold mt-1 text-gray-600 uppercase tracking-wide">{kpi.label}</p>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Module chips */}
-      <div className="flex flex-wrap gap-2">
+      {/* Module tabs */}
+      <div className="flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:thin]">
         <button
           type="button"
           onClick={() => setFilterModule('')}
-          className={`text-xs px-3 py-1.5 rounded-full border cursor-pointer transition-colors inline-flex items-center gap-1.5 ${
-            !filterModule ? 'bg-blue-600 text-white border-blue-600' : 'bg-white border-gray-200 hover:border-blue-300'
+          className={`shrink-0 text-xs px-3 py-1.5 rounded-full border font-semibold cursor-pointer transition-all inline-flex items-center gap-1.5 ${
+            !filterModule
+              ? 'bg-violet-600 text-white border-violet-600'
+              : 'bg-white text-slate-700 border-slate-200 hover:border-violet-300'
           }`}
         >
-          Tất cả module
+          <Layers className="h-3.5 w-3.5" />
+          Tất cả
           {allModulesCount > 0 && (
-            <span className={`text-[10px] font-bold px-1.5 rounded-full ${
-              !filterModule ? 'bg-white/25' : 'bg-gray-100 text-gray-700'
+            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+              !filterModule ? 'bg-white/20' : 'bg-slate-100'
             }`}>{allModulesCount}</span>
           )}
         </button>
         {visibleColumns.map((col) => {
           const count = moduleChipCounts[col.key] ?? 0;
+          const active = filterModule === col.key;
           return (
             <button
               key={col.key}
               type="button"
-              onClick={() => setFilterModule(filterModule === col.key ? '' : col.key)}
-              className={`text-xs px-3 py-1.5 rounded-full border cursor-pointer transition-colors inline-flex items-center gap-1.5 ${
-                filterModule === col.key ? 'bg-blue-600 text-white border-blue-600' : `${col.bg} hover:opacity-90`
+              onClick={() => setFilterModule(active ? '' : col.key)}
+              className={`shrink-0 text-xs px-3 py-1.5 rounded-full border font-semibold cursor-pointer transition-all inline-flex items-center gap-1.5 ${
+                active
+                  ? 'bg-violet-600 text-white border-violet-600'
+                  : `bg-white text-slate-700 border-slate-200 hover:border-violet-300 ${col.bg}`
               }`}
             >
               <span>{col.emoji}</span>
               <span>{col.label}</span>
               {count > 0 && (
-                <span className={`text-[10px] font-bold px-1.5 rounded-full ${
-                  filterModule === col.key ? 'bg-white/25' : 'bg-white/80 text-gray-700'
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                  active ? 'bg-white/20' : 'bg-slate-100'
                 }`}>{count}</span>
               )}
             </button>
@@ -851,12 +880,8 @@ export default function WorkTasksUnifiedPage() {
         })}
       </div>
 
-      {/* KANBAN — cột trạng thái, nhóm theo deal/dự án */}
       {viewMode === 'kanban' && (
-        <>
-          <p className="text-xs text-gray-500 -mt-2">
-            <strong>{visibleKanbanColumns.length} cột</strong> · Mỗi nhiệm vụ vào đúng cột theo trạng thái · Deal cùng tên có thể xuất hiện ở nhiều cột nếu NV khác trạng thái.
-          </p>
+        <div className="bg-white/70 rounded-xl border border-slate-200/70 p-2 shadow-sm min-h-0">
           <WorkTasksStatusKanban
             tasks={filteredTasks}
             openOnly={filterOpenOnly}
@@ -868,33 +893,34 @@ export default function WorkTasksUnifiedPage() {
             onAddTask={(column) => setTaskModal({ mode: 'create', defaultStatus: column?.statusKey || 'pending' })}
             onAddColumn={() => setColumnModal({ mode: 'create' })}
             onEditColumn={(column) => setColumnModal({ mode: 'edit', column })}
+            onDeleteColumn={handleColumnDelete}
+            assigneeMap={assigneeMap}
           />
-        </>
+        </div>
       )}
 
-      {/* LIST */}
       {viewMode === 'list' && (
-        <div className="bg-white rounded-xl border divide-y overflow-y-auto" style={{ maxHeight: '640px' }}>
+        <div
+          className="bg-white rounded-xl border border-slate-200/80 shadow-sm divide-y divide-slate-100 overflow-y-auto min-h-0"
+          style={{ maxHeight: 'calc(100dvh - 17rem)' }}
+        >
           {(filterOpenOnly ? filteredTasks.filter((t) => !isTaskDone(t.status)) : filteredTasks).length === 0 ? (
-            <p className="text-center text-sm text-gray-400 py-10">Không có nhiệm vụ phù hợp bộ lọc</p>
+            <p className="text-center text-sm text-slate-400 py-12">Không có nhiệm vụ phù hợp bộ lọc</p>
           ) : (filterOpenOnly ? filteredTasks.filter((t) => !isTaskDone(t.status)) : filteredTasks).map((t) => (
-            <UnifiedTaskRow
-              key={t.unified_id}
-              task={t}
-              onStatusChange={handleStatusChange}
-              onOpenExtras={(task) => setTaskModal({ mode: 'edit', task, initialTab: 'extras' })}
-              compact
-            />
+            <div key={t.unified_id} className="px-3 py-1 hover:bg-slate-50/80 transition-colors">
+              <UnifiedTaskRow
+                task={t}
+                onStatusChange={handleStatusChange}
+                onOpenExtras={(task) => setTaskModal({ mode: 'edit', task, initialTab: 'extras' })}
+                compact
+              />
+            </div>
           ))}
         </div>
       )}
 
-      {/* DEADLINE — 5 cột hạn tự động */}
       {viewMode === 'deadline' && (
-        <>
-          <p className="text-xs text-gray-500 -mt-2">
-            <strong>5 cột deadline</strong> · Deal <strong>ẩn mặc định</strong> — bấm để mở · Nhấp đúp thẻ để sửa.
-          </p>
+        <div className="bg-white/70 rounded-xl border border-slate-200/70 p-2 shadow-sm min-h-0">
           <WorkTasksStatusKanban
             tasks={filteredTasks}
             openOnly={filterOpenOnly}
@@ -906,9 +932,49 @@ export default function WorkTasksUnifiedPage() {
             allowColumnEdit={false}
             onTaskClick={(task) => setTaskModal({ mode: 'edit', task, initialTab: 'details' })}
             onTaskExtrasClick={(task) => setTaskModal({ mode: 'edit', task, initialTab: 'extras' })}
+            assigneeMap={assigneeMap}
           />
-        </>
+        </div>
       )}
+
+      {/* Performance footer — floating bar */}
+      <div className="sticky bottom-3 z-20 pt-1">
+        <div className="bg-white/92 backdrop-blur-xl border border-white/70 rounded-2xl shadow-[0_10px_40px_-8px_rgba(109,40,217,0.35),0_4px_16px_-4px_rgba(15,23,42,0.12)] px-3.5 py-3 flex flex-col md:flex-row md:items-center gap-3 ring-1 ring-violet-200/50">
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <div className="h-9 w-9 rounded-lg bg-violet-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-violet-500/40">
+              <Rocket className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-slate-900">Hiệu suất công việc</p>
+              <p className="text-[10px] text-slate-600 truncate">
+                {stats.open} mở · {stats.overdue} quá hạn · {stats.done}/{stats.total} xong
+              </p>
+            </div>
+          </div>
+          <div className="flex-1 min-w-0 w-full md:max-w-lg flex items-center gap-2.5">
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] font-semibold text-slate-500 mb-1">Tiến độ hoàn thành</p>
+              <div className="relative h-2.5 rounded-full bg-slate-100/90 border border-violet-100 overflow-hidden shadow-inner">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-violet-500 to-indigo-500 transition-all duration-500 shadow-sm"
+                  style={{ width: `${completionPct}%` }}
+                />
+              </div>
+            </div>
+            <span className="shrink-0 self-end pb-0.5 text-lg font-extrabold text-violet-700 tabular-nums leading-none drop-shadow-sm">
+              {completionPct}%
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setViewMode('list')}
+            className="shrink-0 inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-lg border border-violet-200/80 bg-white/90 text-xs font-semibold text-violet-800 hover:bg-violet-50 hover:border-violet-300 cursor-pointer transition-colors shadow-sm"
+          >
+            Chi tiết
+            <ArrowRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
 
       <WorkTaskFormModal
         open={!!taskModal}
