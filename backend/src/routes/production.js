@@ -1958,9 +1958,16 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     const dealDepositMap = await loadDealDepositByProjectIds([project.id]);
     const [projectWithFinance] = attachSxFinanceToProjects([project], dealDepositMap);
 
+    let production_staff = [];
+    try {
+      const { loadProjectProductionStaffForApi } = require('../helpers/productionWorkshopTypeStaff');
+      production_staff = await loadProjectProductionStaffForApi(project.id);
+    } catch (_) { /* ignore */ }
+
     res.json({
       project: {
         ...projectWithFinance,
+        production_staff,
         is_partner_project_view: isPartnerProjectView,
         sx_won_deal: sxRow.sx_won_deal,
         sx_kanban_column_id: finalSxKanbanColumnId,

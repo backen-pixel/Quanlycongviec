@@ -336,7 +336,7 @@ async function assertFileAttachmentMutation(req, res, fileRow) {
   if (fileRow.entity_type === 'project') {
     return assertDealResponsible(req, res, { projectId: fileRow.entity_id });
   }
-  if (fileRow.entity_type === 'task') {
+  if (fileRow.entity_type === 'task' || (!fileRow.entity_type && fileRow.entity_id)) {
     const { data: task } = await supabase
       .from('tasks')
       .select('project_id')

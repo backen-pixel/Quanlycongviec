@@ -285,6 +285,14 @@ export default function MessengerDock() {
   }, [user, loadDockData]);
 
   useEffect(() => {
+    const onNicknamesChanged = () => {
+      void loadDockData();
+    };
+    window.addEventListener('messenger:nicknames-changed', onNicknamesChanged);
+    return () => window.removeEventListener('messenger:nicknames-changed', onNicknamesChanged);
+  }, [loadDockData]);
+
+  useEffect(() => {
     if (!uid) return undefined;
     let reloadT;
     const onGroupActivity = (e) => {

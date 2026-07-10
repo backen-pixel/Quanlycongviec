@@ -969,6 +969,7 @@ export default function MessengerHubPage() {
           user: {
             ...u,
             nickname: trimmed || null,
+            contact_nickname: trimmed || null,
             display_name: displayName || u.full_name || u.email,
           },
         };
@@ -984,11 +985,64 @@ export default function MessengerHubPage() {
           ),
         );
       }
+      window.dispatchEvent(
+        new CustomEvent('messenger:nicknames-changed', {
+          detail: { scope: 'contact', targetUserId, groupId: selectedGroupId || null },
+        }),
+      );
       await reloadMessengerThreads();
     } catch (e) {
       alert(e?.response?.data?.error || e.message || 'Không lưu được biệt danh');
       throw e;
     }
+  };
+
+  const saveGroupMemberNickname = async (targetUserId, nickname) => {
+    if (!selectedGroupId || selected?.is_direct) return;
+    const trimmed = String(nickname || '').trim();
+    try {
+      let displayName = trimmed;
+      if (!trimmed) {
+        const { data } = await api.delete(`/messenger/groups/${selectedGroupId}/nicknames/${targetUserId}`);
+        displayName = data?.display_name || '';
+      } else {
+        const { data } = await api.put(`/messenger/groups/${selectedGroupId}/nicknames/${targetUserId}`, {
+          nickname: trimmed,
+        });
+        displayName = data?.display_name || trimmed;
+      }
+      const patchMemberUser = (m) => {
+        if (String(m.user_id) !== String(targetUserId)) return m;
+        const u = m.user || {};
+        return {
+          ...m,
+          user: {
+            ...u,
+            group_nickname: trimmed || null,
+            nickname: trimmed || null,
+            display_name: displayName || u.full_name || u.email,
+          },
+        };
+      };
+      setGroupMembers((prev) => prev.map(patchMemberUser));
+      window.dispatchEvent(
+        new CustomEvent('messenger:nicknames-changed', {
+          detail: { scope: 'group', groupId: selectedGroupId, targetUserId },
+        }),
+      );
+      await reloadMessengerThreads();
+    } catch (e) {
+      alert(e?.response?.data?.error || e.message || 'Không lưu được biệt danh trong nhóm');
+      throw e;
+    }
+  };
+
+  const onSaveNickname = async (targetUserId, nickname) => {
+    if (selected?.is_direct) {
+      await saveContactNickname(targetUserId, nickname);
+      return;
+    }
+    await saveGroupMemberNickname(targetUserId, nickname);
   };
 
   const filteredAddCandidates = useMemo(() => {
@@ -1735,7 +1789,7 @@ export default function MessengerHubPage() {
                     onChangeMemberRole={onChangeMemberRole}
                     onChangeGroupAvatar={onChangeGroupAvatar}
                     onRenameGroup={renameGroup}
-                    onSaveNickname={saveContactNickname}
+                    onSaveNickname={onSaveNickname}
                     onTogglePin={setPinnedForSelected}
                     onLeaveGroup={() => void leaveSelectedGroup()}
                     onGroupCall={(kind) => setGroupCallPicker({ kind })}

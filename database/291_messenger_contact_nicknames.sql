@@ -12,4 +12,4 @@ CREATE INDEX IF NOT EXISTS idx_messenger_contact_nicknames_viewer
   ON messenger_contact_nicknames (viewer_user_id);
 
 COMMENT ON TABLE messenger_contact_nicknames IS
-  'Biệt danh cá nhân: viewer_user_id đặt nickname cho target_user_id (chat 1-1 và tên người gửi trong nhóm).';
+  'Biệt danh cá nhân/liên hệ: viewer đặt nickname cho target (chat 1-1, chat nhanh). Không dùng trong nhóm chat.';

@@ -50,7 +50,7 @@ import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/Commen
 import SharedCRMNotes from '../components/SharedCRMNotes';
 import DriveAttachments from '../components/drive/DriveAttachments';
 import { driveLinksCountByEntity } from '../lib/drive';
-import { isDealResponsibleUser } from '../lib/fileOwnership';
+import { canManageWorkshopProjectFiles } from '../lib/fileOwnership';
 
 /** Cùng tên tab với LeadDetail (chi tiết deal) — bỏ facebook và calls */
 const DEAL_TAB_KEYS = new Set(['tasks', 'shared-workspace', 'documents', 'notes', 'comments', 'team', 'approvals', 'incidents']);
@@ -956,7 +956,15 @@ function FileDownloadButton({ rawRef, fileName, className = 'hover:underline tex
 }
 
 /** File đính kèm nhiệm vụ — xem ảnh inline, không cần tải */
-function TaskFileRow({ file, onOpenImage, projectId = null, enableShareToCrm = false, onShareToCrmSaved = null, canManageDeal = false }) {
+function TaskFileRow({
+  file,
+  onOpenImage,
+  projectId = null,
+  enableShareToCrm = false,
+  onShareToCrmSaved = null,
+  onDelete = null,
+  canManageDeal = false,
+}) {
   const [showCrmShare, setShowCrmShare] = useState(false);
   const [sharedToCrm, setSharedToCrm] = useState(file.shared_to_crm === true);
   const [savingCrmShare, setSavingCrmShare] = useState(false);
@@ -1031,6 +1039,16 @@ function TaskFileRow({ file, onOpenImage, projectId = null, enableShareToCrm = f
                 className="text-[10px] text-emerald-600 hover:underline cursor-pointer"
               />
             )}
+            {onDelete && canManageDeal ? (
+              <button
+                type="button"
+                onClick={() => void onDelete()}
+                className="p-1 hover:bg-red-100 text-red-500 rounded cursor-pointer"
+                title="Xóa file"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
           </div>
         )}
       </div>
@@ -2479,12 +2497,6 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const deleteCrmDocument = async (doc) => {
     const docId = doc?.id;
     if (!docId) return;
-
-    // Tài liệu mirror từ xưởng — xóa file gốc (backend cũng xử lý qua CRM route)
-    if (doc.source_file_attachment_id) {
-      return deleteProjectDocument(doc.source_file_attachment_id);
-    }
-
     const projectId = project?.id || id;
     if (!projectId) {
       alert('Không xác định được dự án');
@@ -2493,9 +2505,28 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     if (!confirm('Xóa tài liệu này?')) return;
     try {
       await api.delete(`/projects/${projectId}/lead-documents/${docId}`);
+      await loadProjectDocs(projectId);
+      await loadTaskFiles(projectId);
       await refreshProjectSilently();
     } catch (e) {
-      alert(e.response?.data?.error || e.message || 'Lỗi xóa tài liệu');
+      alert(e?.response?.data?.error || e.message || 'Lỗi xóa tài liệu');
+    }
+  };
+
+  const deleteTaskFile = async (file) => {
+    const taskId = file?.task?.id || file?.entity_id;
+    const attId = file?.id;
+    if (!taskId || !attId) return;
+    if (!confirm('Xóa file đính kèm này?')) return;
+    const projectId = project?.id || id;
+    try {
+      await api.delete(`/tasks/${taskId}/attachments/${attId}`);
+      if (projectId) {
+        await loadTaskFiles(projectId);
+        await loadProjectDocs(projectId);
+      }
+    } catch (e) {
+      alert(e?.response?.data?.error || e.message || 'Lỗi xóa file');
     }
   };
 
@@ -2633,7 +2664,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     ? (project.vc_kanban_column_id || project.current_stage_id || project.current_stage?.id)
     : resolveSxKanbanCurrentStageId(project, safePipelineStages);
   const primaryCrmDeal = project.crmDeals?.[0];
-  const canManageDeal = isDealResponsibleUser(user, primaryCrmDeal);
+  const canManageDeal = canManageWorkshopProjectFiles(user, primaryCrmDeal, project);
   const crmLeadId = resolveSxProjectLeadId({
     crm_lead_id: project.crm_lead_id,
     crm_deals: project.crmDeals || project.crm_deals,
@@ -3008,6 +3039,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     embeddedWorkshopTypeId={project?.workshop_type_id || project?.workshop_type?.id || null}
                     sxTemplateCompanyId={project?.company_id || project?.company?.id || null}
                     dealResponsible={primaryCrmDeal}
+                    workshopProject={project}
                   />
                 ) : scopedWorkshopTasksForTab.length > 0 ? (
                   <WorkshopTasksFallbackPanel
@@ -3146,6 +3178,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                             onShareToCrmSaved={() => loadTaskFiles(project?.id || id)}
                             onOpenImage={openDocImage}
                             canManageDeal={canManageDeal}
+                            onDelete={canManageDeal ? () => deleteTaskFile(f) : null}
                           />
                         ))}
                       </div>

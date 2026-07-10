@@ -2339,10 +2339,11 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     if (msg?.user_id && user) {
       const mem = (groupMetaRef.current?.members || []).find((m) => String(m.user_id) === String(msg.user_id));
       const fromMember = mem?.user;
-      if (fromMember?.display_name || fromMember?.nickname) {
+      if (fromMember?.display_name || fromMember?.nickname || fromMember?.group_nickname) {
         user = {
           ...user,
-          nickname: fromMember.nickname ?? user.nickname,
+          group_nickname: fromMember.group_nickname ?? user.group_nickname,
+          nickname: fromMember.nickname ?? fromMember.group_nickname ?? user.nickname,
           display_name: fromMember.display_name || user.display_name,
         };
       }
@@ -2402,6 +2403,19 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
         void loadGroupMeta();
         void load();
       };
+      const onNicknamesChanged = (e) => {
+        const detail = e?.detail || {};
+        if (detail.scope === 'contact') {
+          void loadGroupMeta();
+          void load();
+          return;
+        }
+        if (detail.scope === 'group' && String(detail.groupId) === String(groupId)) {
+          void loadGroupMeta();
+          void load();
+        }
+      };
+      window.addEventListener('messenger:nicknames-changed', onNicknamesChanged);
       const onTyping = (payload) => {
         if (!payload || String(payload.group_id) !== String(groupId)) return;
         const meId = String(user?.userId || user?.id || '');
@@ -2434,6 +2448,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
       socket.on('connect', onSocketConnect);
       return () => {
         socket.emit('leave:messenger_group', groupId);
+        window.removeEventListener('messenger:nicknames-changed', onNicknamesChanged);
         socket.off('messenger_group:chat', onChat);
         socket.off('messenger_group:reaction', onReaction);
         socket.off('messenger_group:reactions', onReaction);
