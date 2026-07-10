@@ -42,13 +42,30 @@ function isVisibleInShareModule(docOrAtt, moduleKey) {
   return allowed.includes(mod);
 }
 
-function canViewerSeeByCompanyAndDept(docOrAtt, user) {
+/** Quyền xem kế thừa từ mẫu CRM (crm_tasks.default_allowed_*). */
+function getTaskVisibilityAllowlist(taskRow) {
+  return {
+    allowed_companies: parseJsonArray(taskRow?.default_allowed_companies),
+    allowed_departments: parseJsonArray(taskRow?.default_allowed_departments),
+  };
+}
+
+/**
+ * @param {object} docOrAtt — lead_document, attachment, hoặc crm_tasks row
+ * @param {object} user — req.user
+ * @param {object} [taskRow] — fallback default_allowed_* khi artifact chưa ghi allowlist
+ */
+function canViewerSeeByCompanyAndDept(docOrAtt, user, taskRow = null) {
   if (!user) return true;
   if (isAdminLike(user)) return true;
   const uc = user.company_id || null;
   const ud = user.department_id || null;
-  const ac = parseJsonArray(docOrAtt?.allowed_companies);
-  const ad = parseJsonArray(docOrAtt?.allowed_departments);
+  const ac = parseJsonArray(docOrAtt?.allowed_companies)
+    ?? parseJsonArray(taskRow?.default_allowed_companies)
+    ?? parseJsonArray(docOrAtt?.default_allowed_companies);
+  const ad = parseJsonArray(docOrAtt?.allowed_departments)
+    ?? parseJsonArray(taskRow?.default_allowed_departments)
+    ?? parseJsonArray(docOrAtt?.default_allowed_departments);
   if (!ac?.length && !ad?.length) return true;
   if (ac?.length && uc && ac.some((x) => String(x) === String(uc))) return true;
   if (ad?.length && ud && ad.some((x) => String(x) === String(ud))) return true;
@@ -87,9 +104,9 @@ function isCrmAttachmentSharedToProject(att) {
   return att?.shared_to_project === true;
 }
 
-function crmAttachmentVisibleForModuleAndUser(att, moduleKey, user) {
+function crmAttachmentVisibleForModuleAndUser(att, moduleKey, user, taskRow = null) {
   if (!isCrmAttachmentSharedToProject(att)) return false;
-  return canViewerSeeByCompanyAndDept(att, user) && isVisibleInShareModule(att, moduleKey);
+  return canViewerSeeByCompanyAndDept(att, user, taskRow) && isVisibleInShareModule(att, moduleKey);
 }
 
 /** CRM task ghi chú (shared_to_project trên crm_tasks) */
@@ -123,6 +140,7 @@ module.exports = {
   isLeadDocSharedToWorkshop,
   isCrmAttachmentSharedToProject,
   isCrmTaskSharedToProject,
+  getTaskVisibilityAllowlist,
   canViewerSeeByCompanyAndDept,
   leadDocVisibleForModuleAndUser,
   taskAttachmentVisibleForModuleAndUser,

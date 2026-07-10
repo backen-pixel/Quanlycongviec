@@ -2,6 +2,7 @@
  * Đồng bộ ghi chú / đính kèm của mục checklist con (crm_tasks.checklist[]) → lead_documents.
  */
 const { getLeadDocumentFieldsFromCrmTask, getDefaultCrmAttachmentShare } = require('./crmTaskLeadDocumentMeta');
+const { getTaskVisibilityAllowlist } = require('./documentShareScope');
 
 function parseChecklist(raw) {
   if (!Array.isArray(raw)) return [];
@@ -67,11 +68,18 @@ async function syncChecklistItemNotes(supabase, {
   }
 
   const noteShare = getDefaultCrmAttachmentShare(taskRow, taskDocOpts, ck);
+  const vis = getTaskVisibilityAllowlist(taskRow);
   const attName = `📝 ${ck.title}`;
 
   if (existingAtt?.id) {
     await supabase.from('crm_task_attachments')
-      .update({ notes: trimmed, name: attName, updated_at: new Date().toISOString() })
+      .update({
+        notes: trimmed,
+        name: attName,
+        allowed_companies: vis.allowed_companies,
+        allowed_departments: vis.allowed_departments,
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', existingAtt.id);
     await supabase.from('lead_documents')
       .update({
@@ -79,6 +87,8 @@ async function syncChecklistItemNotes(supabase, {
         name: `${prefix} 📝 Ghi chú`,
         project_id: leadForSync?.project_id ?? null,
         source_checklist_id: String(checklistId),
+        allowed_companies: vis.allowed_companies,
+        allowed_departments: vis.allowed_departments,
         ...getLeadDocumentFieldsFromCrmTask(taskRow, taskDocOpts),
       })
       .eq('source_attachment_id', existingAtt.id);
@@ -93,6 +103,8 @@ async function syncChecklistItemNotes(supabase, {
     doc_type: 'checklist_inline_note',
     notes: trimmed,
     created_by: userId,
+    allowed_companies: vis.allowed_companies,
+    allowed_departments: vis.allowed_departments,
     ...noteShare,
   }).select('id').single();
   if (attErr) throw attErr;
@@ -103,6 +115,8 @@ async function syncChecklistItemNotes(supabase, {
     name: `${prefix} 📝 Ghi chú`,
     doc_type: 'checklist_inline_note',
     notes: trimmed,
+    allowed_companies: vis.allowed_companies,
+    allowed_departments: vis.allowed_departments,
     created_by: userId,
     source_attachment_id: att.id,
     source_checklist_id: String(checklistId),

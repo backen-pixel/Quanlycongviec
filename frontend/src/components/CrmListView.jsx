@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { markCrmPipelineCardFocus, persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
 import { formatVND, formatStaffDisplayName, getStaffInitials } from '../lib/utils';
+import { isLostOrCancelledPipelineStage } from '../lib/crmLostPipelineStage';
 import {
   mergeListColumnDefs,
   resolveVisibleColumnKeys,
@@ -52,7 +53,7 @@ function colorFromName(name) {
 }
 
 function closeResultLabel(item, stage) {
-  if (stage?.is_lost || item?.lost_reason) return 'Thua';
+  if (isLostOrCancelledPipelineStage(stage) || item?.lost_reason) return 'Thua';
   if (stage?.is_won) return 'Thắng';
   return 'Đang xử lý';
 }
@@ -359,6 +360,7 @@ export function ListView({
         pipeline_id: s.pipeline_id,
         is_won: s.is_won,
         is_lost: s.is_lost,
+        deal_report_bucket: s.deal_report_bucket,
       }));
     }
     if (!companyId) return [];
@@ -371,6 +373,7 @@ export function ListView({
       pipeline_id: s.pipeline_id,
       is_won: s.is_won,
       is_lost: s.is_lost,
+      deal_report_bucket: s.deal_report_bucket,
     }));
   }, [companyPipelineStages, companyId, pipeline]);
 
@@ -378,6 +381,17 @@ export function ListView({
     () => new Set(pipelineStages.map((s) => String(s.id)).filter(Boolean)),
     [pipelineStages],
   );
+
+  const listFooterValue = useMemo(() => {
+    const stageById = new Map(pipelineStages.map((s) => [String(s.id), s]));
+    return allItems.reduce((sum, item) => {
+      if (pipelineType === 'deal') {
+        const st = item._stage || item.stage || stageById.get(String(item.stage_id));
+        if (isLostOrCancelledPipelineStage(st)) return sum;
+      }
+      return sum + (Number(item.estimated_value) || 0);
+    }, 0);
+  }, [allItems, pipelineStages, pipelineType]);
 
   const companyLabel = companyName || (companyId ? 'Công ty' : '');
 
@@ -938,7 +952,7 @@ export function ListView({
           <span>
             Hiển thị: {Math.min(visibleCount, allItems.length).toLocaleString()} / {allItems.length.toLocaleString()} {pipelineType === 'deal' ? 'deal' : 'lead'}
           </span>
-          <span>GT: {formatVND(allItems.reduce((s, i) => s + (i.estimated_value || 0), 0))}</span>
+          <span>GT: {formatVND(listFooterValue)}</span>
         </div>
       </div>
 

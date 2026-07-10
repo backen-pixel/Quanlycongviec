@@ -172,7 +172,7 @@ function useProjectCommentSocket(projectId, onEvent, onRead) {
   }, [projectId, socket, onEvent, onRead]);
 }
 
-function useLeadCommentSocket(leadId, onEvent) {
+function useLeadCommentSocket(leadId, onEvent, onRead) {
   const { socket } = useAuth();
 
   useEffect(() => {
@@ -186,14 +186,20 @@ function useLeadCommentSocket(leadId, onEvent) {
       if (String(payload?.lead_id) !== String(leadId)) return;
       onEvent(payload);
     };
+    const onReadEvt = (payload) => {
+      if (String(payload?.lead_id) !== String(leadId)) return;
+      onRead?.(payload);
+    };
     socket.on('lead:comment', handler);
+    if (onRead) socket.on('lead:comment:read', onReadEvt);
 
     return () => {
       socket.off('connect', join);
       socket.emit('leave:lead', leadId);
       socket.off('lead:comment', handler);
+      if (onRead) socket.off('lead:comment:read', onReadEvt);
     };
-  }, [leadId, socket, onEvent]);
+  }, [leadId, socket, onEvent, onRead]);
 }
 
 function memberDisplayName(userId, members) {
@@ -201,14 +207,18 @@ function memberDisplayName(userId, members) {
   return mem?.user?.full_name || mem?.full_name || mem?.user?.email || mem?.email || '';
 }
 
-function getSeenByUsersForComment(comment, readReceipts, excludeUserId) {
+function getSeenByUsersForComment(comment, readReceipts, excludeUserId, audienceMembers = []) {
   if (!comment?.created_at || !readReceipts || readReceipts.size === 0) return [];
   const ts = new Date(comment.created_at).getTime();
   if (!Number.isFinite(ts)) return [];
   const excludeStr = String(excludeUserId || '');
+  const audienceIds = new Set(
+    (audienceMembers || []).map((m) => String(m.user_id || m.id || '')).filter(Boolean),
+  );
   const out = [];
   for (const [userId, lastReadAt] of readReceipts) {
     if (String(userId) === excludeStr) continue;
+    if (audienceIds.size && !audienceIds.has(String(userId))) continue;
     const readTs = new Date(lastReadAt).getTime();
     if (Number.isFinite(readTs) && readTs >= ts) {
       out.push({ user_id: userId, last_read_at: lastReadAt });
@@ -261,7 +271,7 @@ function ProjectCommentReadStatus({
   if (!comment) return null;
 
   const excludeUid = isOwn ? selfUid : comment.user_id;
-  const seenBy = getSeenByUsersForComment(comment, readReceipts, excludeUid);
+  const seenBy = getSeenByUsersForComment(comment, readReceipts, excludeUid, members);
   const notSeen = getNotSeenMembersForComment(seenBy, members, excludeUid);
   const seenCount = seenBy.length;
   const Icon = seenCount > 0 ? CheckCheck : Check;
@@ -495,6 +505,7 @@ function CommentThread({
   onThreadScroll,
   newCommentCount = 0,
   onScrollToNewComments,
+  quickReplyTemplates = [],
 }) {
   const selfUid = user?.userId || user?.id;
   const commentsByParent = useMemo(() => groupByParent(comments), [comments]);
@@ -690,6 +701,8 @@ function CommentThread({
             canSubmit={canSubmit}
             attachSlot={enableAttachments ? <FileUploadButton compact onFilesUploaded={onFilesUploaded} /> : null}
             placeholder={composerPlaceholder}
+            quickReplyTemplates={quickReplyTemplates}
+            onQuickReply={(text) => setBody(text)}
           />
         ) : (
           <FbCrmCommentComposer
@@ -710,7 +723,7 @@ function CommentThread({
 }
 
 /** Bình luận lead/deal CRM — realtime qua socket `lead:comment` */
-export function CrmLeadCommentsPanel({ leadId, onCountChange, onUnreadCountChange }) {
+export function CrmLeadCommentsPanel({ leadId, onCountChange, onUnreadCountChange, quickReplyTemplates = [] }) {
   const { user } = useAuth();
   const selfUid = user?.userId || user?.id;
   const [comments, setComments] = useState([]);
@@ -724,6 +737,43 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange, onUnreadCountChang
   const [reactionBusy, setReactionBusy] = useState(null);
   const [members, setMembers] = useState([]);
   const [loadError, setLoadError] = useState('');
+  const [readReceipts, setReadReceipts] = useState(() => new Map());
+  const [readDetailId, setReadDetailId] = useState(null);
+
+  const applyReadReceipt = useCallback((payload) => {
+    if (!payload?.user_id || !payload?.last_read_at) return;
+    setReadReceipts((prev) => {
+      const next = new Map(prev);
+      next.set(String(payload.user_id), payload.last_read_at);
+      return next;
+    });
+  }, []);
+
+  const loadReadMeta = useCallback(async () => {
+    if (!leadId) return;
+    try {
+      const r = await api.get(`/crm/leads/${leadId}/comments/read-receipts`);
+      const next = new Map();
+      for (const row of r.data?.receipts || []) {
+        if (row?.user_id && row?.last_read_at) next.set(String(row.user_id), row.last_read_at);
+      }
+      setReadReceipts(next);
+      const apiMembers = Array.isArray(r.data?.members) ? r.data.members : [];
+      setMembers(apiMembers);
+    } catch {
+      setReadReceipts(new Map());
+    }
+  }, [leadId]);
+
+  const markCommentsRead = useCallback(async () => {
+    if (!leadId || !selfUid) return;
+    try {
+      const r = await api.patch(`/crm/leads/${leadId}/comments/read`);
+      if (r.data?.last_read_at) {
+        applyReadReceipt({ user_id: selfUid, last_read_at: r.data.last_read_at });
+      }
+    } catch { /* bảng chưa migrate — bỏ qua */ }
+  }, [leadId, selfUid, applyReadReceipt]);
 
   const {
     scrollRef,
@@ -741,20 +791,6 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange, onUnreadCountChang
   useEffect(() => {
     onUnreadCountChange?.(unreadCount);
   }, [unreadCount, onUnreadCountChange]);
-
-  const loadMembers = useCallback(async () => {
-    if (!leadId) return;
-    try {
-      const r = await api.get(`/crm/leads/${leadId}/members`);
-      setMembers(Array.isArray(r.data) ? r.data : []);
-      setLoadError((prev) => (prev && prev.includes('bình luận') ? prev : ''));
-    } catch (e) {
-      setMembers([]);
-      setLoadError(e?.response?.data?.error || 'Không tải được danh sách thành viên');
-    }
-  }, [leadId]);
-
-  useEffect(() => { void loadMembers(); }, [loadMembers]);
 
   const load = useCallback(async () => {
     if (!leadId) return;
@@ -774,7 +810,11 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange, onUnreadCountChang
     }
   }, [leadId, onCountChange]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); void loadReadMeta(); }, [load, loadReadMeta]);
+
+  useEffect(() => {
+    if (!loading) void markCommentsRead();
+  }, [loading, comments.length, markCommentsRead]);
 
   const handleLeadCommentEvent = useCallback((payload) => {
     const action = payload?.action || 'created';
@@ -800,7 +840,7 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange, onUnreadCountChang
     handleIncomingComment(row);
   }, [onCountChange, handleIncomingComment]);
 
-  useLeadCommentSocket(leadId, handleLeadCommentEvent);
+  useLeadCommentSocket(leadId, handleLeadCommentEvent, applyReadReceipt);
 
   const submit = useCallback(async ({ mention_user_ids, attachmentList } = {}) => {
     const v = body.trim();
@@ -916,6 +956,12 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange, onUnreadCountChang
       onThreadScroll={onScroll}
       newCommentCount={unreadCount}
       onScrollToNewComments={scrollToLatest}
+      quickReplyTemplates={quickReplyTemplates}
+      showReadStatus
+      readReceipts={readReceipts}
+      commentMembers={members}
+      readDetailId={readDetailId}
+      onOpenReadDetail={setReadDetailId}
     />
   );
 }

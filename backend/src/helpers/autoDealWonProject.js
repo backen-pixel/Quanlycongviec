@@ -7,6 +7,7 @@ const { isPostgresUniqueViolation, nextTbProjectCode } = require('./projectCode'
 const { validateProductionCompanyId } = require('./productionCompanyGate');
 const { ensureDealLeadDocumentsForModuleTransition } = require('./ensureDealLeadDocumentsForModuleTransition');
 const { applyProductionTemplateToFulfillmentLead } = require('./projectOrderFulfillment');
+const { postSxTransferMentionComment } = require('./dealCommentNotifications');
 
 /**
  * Tạo dự án xưởng từ deal thắng (luồng tự động — dùng chung cho POST auto-create và PATCH stage).
@@ -343,6 +344,23 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
             project_name: project.name,
           });
       } catch (_) {}
+    }
+
+    if (notifyStaff.length) {
+      try {
+        await postSxTransferMentionComment(req, notifyMultiple, {
+          dealId,
+          projectId,
+          senderId: userId,
+          mentionUserIds: notifyStaff,
+          projectCode: project.code,
+          dealTitle: deal.title,
+          workshopLabel: coCheck.company.short_name || coCheck.company.name || '',
+          mode: 'transfer',
+        });
+      } catch (mentionErr) {
+        console.warn('[auto-project] sx transfer mention comment:', mentionErr.message);
+      }
     }
   } catch (staffErr) {
     console.warn('[auto-project] production default staff:', staffErr.message);

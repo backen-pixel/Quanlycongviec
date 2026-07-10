@@ -11,14 +11,19 @@ import {
 const PUBLIC_API_ORIGIN = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '') || window.location.origin;
 const MCP_BASE = `${PUBLIC_API_ORIGIN}/api/mcp`;
 
+const MCP_ENDPOINT = `${MCP_BASE}`;
+const MCP_PROTOCOL = '2025-06-18';
+
 const ENDPOINTS = [
-  ['GET', '/ping', 'Kiểm tra key + gateway'],
-  ['GET', '/tools', 'Danh sách tool MCP (OpenClaw)'],
-  ['POST', '/tools/call', 'Gọi tool: body { name, arguments } — kỳ BC trong arguments'],
-  ['POST', '/rpc', 'JSON-RPC: tools/list, tools/call'],
+  ['POST', '/', 'MCP endpoint chuẩn — JSON-RPC 2.0 (Streamable HTTP)'],
+  ['GET', '/', 'Legacy HTTP+SSE (2024-11-05) — event endpoint'],
+  ['GET', '/ping', 'Health check + phiên bản protocol'],
+  ['POST', '/rpc', 'Alias → POST / (backward-compat)'],
+  ['GET', '/tools', 'tools/list (REST shortcut)'],
+  ['POST', '/tools/call', 'tools/call → CallToolResult'],
   ['GET', '/reports/org-overview', 'BC tổ chức JSON đầy đủ — ?date_from=&date_to='],
-  ['GET', '/reports/org-overview/summary', 'BC JSON gọn — client truyền kỳ qua query'],
-  ['GET', '/reports/org-overview/text', 'BC text — client truyền kỳ qua query'],
+  ['GET', '/reports/org-overview/summary', 'BC JSON gọn'],
+  ['GET', '/reports/org-overview/text', 'BC text format'],
 ];
 
 function monthBoundsYmd() {
@@ -83,17 +88,48 @@ function CodeBlock({ code, lang = 'bash' }) {
   );
 }
 
-function buildOpenClawConfig(baseUrl, keyPreview) {
+function getOrCreateMcpClientId() {
+  try {
+    const k = 'qlcv_mcp_client_id';
+    let id = sessionStorage.getItem(k);
+    if (!id) {
+      id = `qlcv-${crypto.randomUUID()}`;
+      sessionStorage.setItem(k, id);
+    }
+    return id;
+  } catch {
+    return `qlcv-${Date.now()}`;
+  }
+}
+
+function buildOpenClawConfig(baseUrl, keyPreview, clientId = 'qlcv-your-client-id') {
   return JSON.stringify({
     mcpServers: {
       qlcv_reports: {
         type: 'http',
-        url: `${baseUrl}/rpc`,
+        url: baseUrl,
         headers: {
-          'X-Api-Key': keyPreview === 'YOUR_API_KEY' ? keyPreview : '<key-sau-khi-rotate>',
+          'X-Api-Key': keyPreview === 'YOUR_API_KEY' ? keyPreview : '<access_token-sau-khi-rotate>',
           'X-User-Id': '<uuid-manager-co-quyen-bc>',
+          Accept: 'application/json, text/event-stream',
+          'MCP-Protocol-Version': MCP_PROTOCOL,
+          'Mcp-Client-Id': clientId,
         },
-        description: 'Báo cáo CRM theo tổ chức — TuBep Pro',
+        description: 'Báo cáo CRM — initialize nhận Mcp-Session-Id, gửi lại mỗi request',
+      },
+    },
+  }, null, 2);
+}
+
+function buildMcpJsonRpcExample(method, params, id = 1) {
+  return JSON.stringify({
+    jsonrpc: '2.0',
+    id,
+    method,
+    params: {
+      ...params,
+      _meta: {
+        'io.modelcontextprotocol/protocolVersion': MCP_PROTOCOL,
       },
     },
   }, null, 2);
@@ -123,9 +159,11 @@ export default function McpReportApiPage() {
     default_assigned_to: '',
   });
   const [newKeyValue, setNewKeyValue] = useState(null);
+  const [newRefreshToken, setNewRefreshToken] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
   const [selectedKeyId, setSelectedKeyId] = useState('');
   const [keySecret, setKeySecret] = useState('');
+  const [keySecrets, setKeySecrets] = useState({});
   const [actAsUserId, setActAsUserId] = useState('');
   const defaultMonth = monthBoundsYmd();
   const [testDateFrom, setTestDateFrom] = useState(defaultMonth.from);
@@ -135,6 +173,8 @@ export default function McpReportApiPage() {
   const [tools, setTools] = useState(null);
   const [showTools, setShowTools] = useState(false);
   const [error, setError] = useState('');
+  const [mcpSessionId, setMcpSessionId] = useState('');
+  const [mcpClientId, setMcpClientId] = useState(() => getOrCreateMcpClientId());
 
   const loadData = async () => {
     setLoading(true);
@@ -215,9 +255,11 @@ export default function McpReportApiPage() {
         region_id: createForm.region_id,
         default_assigned_to: createForm.default_assigned_to,
       });
-      const createdKey = data.key;
+      const createdKey = data.access_token || data.key;
       setNewKeyValue(createdKey);
+      setNewRefreshToken(data.refresh_token || null);
       setKeySecret(createdKey);
+      if (data.id) storeKeyTokens(data.id, data);
       if (data.default_assigned_to) setActAsUserId(data.default_assigned_to);
       setCreateForm({ name: '', company_id: '', region_id: '', default_assigned_to: '' });
       setShowCreateForm(false);
@@ -252,25 +294,139 @@ export default function McpReportApiPage() {
     }
   };
 
-  const rotateForTest = async () => {
-    if (!selectedKeyId) return;
+  const rotateKey = async (id) => {
     if (!window.confirm('Rotate key sẽ vô hiệu key cũ ngay. Tiếp tục?')) return;
     try {
-      const { data } = await api.post(`/settings/api-keys/${selectedKeyId}/rotate`);
-      setKeySecret(data.key);
+      const { data } = await api.post(`/settings/api-keys/${id}/rotate`);
+      setKeySecrets((s) => ({ ...s, [id]: { access_token: data.access_token || data.key, refresh_token: data.refresh_token || '' } }));
+      setNewKeyValue(data.access_token || data.key);
+      setNewRefreshToken(data.refresh_token || null);
+      if (selectedKeyId === id) setKeySecret(data.access_token || data.key);
+      await loadData();
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi rotate key');
     }
   };
 
+  const rotateForTest = async () => {
+    if (!selectedKeyId) return;
+    await rotateKey(selectedKeyId);
+  };
+
+  const storeKeyTokens = (id, data) => {
+    const access = data?.access_token || data?.key || '';
+    const refresh = data?.refresh_token || '';
+    if (!id || (!access && !refresh)) return;
+    setKeySecrets((s) => ({
+      ...s,
+      [id]: { access_token: access, refresh_token: refresh },
+    }));
+    if (access) setKeySecret(access);
+  };
+
+  const getKeyTokens = (id) => {
+    const stored = keySecrets[id];
+    if (stored) return stored;
+    if (selectedKeyId === id && keySecret) {
+      return { access_token: keySecret, refresh_token: newRefreshToken || '' };
+    }
+    return null;
+  };
+
+  const copyAccessToken = (id, preview) => {
+    const tokens = getKeyTokens(id);
+    if (tokens?.access_token) {
+      copyText(tokens.access_token, `${id}_access`);
+      return;
+    }
+    if (window.confirm(
+      `Chưa có access token — chỉ thấy mask "${preview}".\n\nRotate để nhận cặp access + refresh token mới?`,
+    )) rotateKey(id);
+  };
+
+  const copyRefreshToken = (id, preview) => {
+    const tokens = getKeyTokens(id);
+    if (tokens?.refresh_token) {
+      copyText(tokens.refresh_token, `${id}_refresh`);
+      return;
+    }
+    if (window.confirm(
+      `Chưa có refresh token cho key "${preview}".\n\nRotate để tạo cặp token mới?`,
+    )) rotateKey(id);
+  };
+
   const mcpFetch = async (path, opts = {}) => {
     const key = keySecret;
     if (!key) throw new Error('Cần key thật — chọn key và bấm Rotate để test');
-    const headers = { 'X-Api-Key': key, ...(opts.headers || {}) };
+    const headers = {
+      'X-Api-Key': key,
+      Accept: 'application/json, text/event-stream',
+      ...(opts.headers || {}),
+    };
     if (actAsUserId) headers['X-User-Id'] = actAsUserId;
     const res = await fetch(`${MCP_BASE}${path}`, { ...opts, headers });
+    if (res.status === 202) return { ok: true, status: 202, data: { accepted: true } };
     const data = await res.json().catch(() => ({}));
-    return { ok: res.ok, status: res.status, data };
+    return { ok: res.ok, status: res.status, data, sessionId: res.headers.get('Mcp-Session-Id') };
+  };
+
+  const applyMcpConnection = (res) => {
+    const sid = res.sessionId || res.data?.result?.session_id || res.data?.result?.connection?.session_id;
+    const cid = res.data?.result?.client_id || res.data?.result?.connection?.client_id;
+    if (sid) setMcpSessionId(sid);
+    if (cid) {
+      setMcpClientId(cid);
+      try { sessionStorage.setItem('qlcv_mcp_client_id', cid); } catch { /* ignore */ }
+    }
+  };
+
+  const mcpRpc = async (method, params = {}, { id = 1, sessionId, clientId, extraHeaders = {}, notification = false } = {}) => {
+    const key = keySecret;
+    if (!key) throw new Error('Cần key thật — chọn key và bấm Rotate để test');
+    const effectiveClientId = clientId || mcpClientId;
+    const effectiveSessionId = method === 'initialize' ? undefined : (sessionId || mcpSessionId);
+    const headers = {
+      'X-Api-Key': key,
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
+      'MCP-Protocol-Version': MCP_PROTOCOL,
+      'Mcp-Method': method,
+      ...(extraHeaders || {}),
+    };
+    if (params?.name) headers['Mcp-Name'] = params.name;
+    if (params?.uri) headers['Mcp-Name'] = params.uri;
+    if (actAsUserId) headers['X-User-Id'] = actAsUserId;
+    if (effectiveClientId) headers['Mcp-Client-Id'] = effectiveClientId;
+    if (effectiveSessionId) headers['Mcp-Session-Id'] = effectiveSessionId;
+
+    const body = {
+      jsonrpc: '2.0',
+      method,
+      params: {
+        ...params,
+        _meta: { 'io.modelcontextprotocol/protocolVersion': MCP_PROTOCOL },
+      },
+    };
+    if (!notification && id != null) body.id = id;
+
+    const res = await fetch(MCP_ENDPOINT, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+    const wrap = {
+      ok: res.ok,
+      status: res.status,
+      sessionId: res.headers.get('Mcp-Session-Id'),
+      clientId: res.headers.get('Mcp-Client-Id'),
+    };
+    if (res.status === 202) {
+      applyMcpConnection(wrap);
+      return { ...wrap, data: { accepted: true } };
+    }
+    const data = await res.json().catch(() => ({}));
+    applyMcpConnection({ ...wrap, data });
+    return { ...wrap, data };
   };
 
   const testPeriodParams = useMemo(
@@ -286,9 +442,18 @@ export default function McpReportApiPage() {
       const period = testPeriodParams;
       if (kind === 'ping') {
         result = await mcpFetch('/ping');
+      } else if (kind === 'init') {
+        result = await mcpRpc('initialize', {
+          client_id: mcpClientId,
+          protocolVersion: MCP_PROTOCOL,
+          capabilities: {},
+          clientInfo: { name: 'mcp-test-ui', version: '1.0.0' },
+        });
+      } else if (kind === 'initialized') {
+        result = await mcpRpc('notifications/initialized', {}, { notification: true });
       } else if (kind === 'tools') {
-        result = await mcpFetch('/tools');
-        if (result.ok) setTools(result.data?.tools || []);
+        result = await mcpRpc('tools/list', {});
+        if (result.ok) setTools(result.data?.result?.tools || []);
       } else if (kind === 'org-overview') {
         const qs = new URLSearchParams(period).toString();
         result = await mcpFetch(`/reports/org-overview/summary?${qs}`);
@@ -296,13 +461,9 @@ export default function McpReportApiPage() {
         const qs = new URLSearchParams(period).toString();
         result = await mcpFetch(`/reports/org-overview/text?${qs}`);
       } else if (kind === 'tool-call') {
-        result = await mcpFetch('/tools/call', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: 'get_org_overview_report',
-            arguments: period,
-          }),
+        result = await mcpRpc('tools/call', {
+          name: 'get_org_overview_report',
+          arguments: period,
         });
       }
       setTestResult({ kind, ...result });
@@ -338,7 +499,7 @@ export default function McpReportApiPage() {
             MCP API — Báo cáo tổ chức
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            Cổng API cho OpenClaw / agent bên ngoài lấy dữ liệu «Báo cáo theo tổ chức» — cùng logic trang BC CRM.
+            MCP server chuẩn (Streamable HTTP) — báo cáo «Theo tổ chức» cho OpenClaw / Cursor / Claude Desktop.
           </p>
         </div>
       </div>
@@ -354,13 +515,18 @@ export default function McpReportApiPage() {
               API Key tích hợp <ExternalLink className="h-3 w-3" />
             </Link>)
           </li>
-          <li>Header <code className="bg-violet-100 px-1 rounded">X-Api-Key</code> bắt buộc</li>
+          <li><strong>Kết nối MCP:</strong> <code className="bg-violet-100 px-1 rounded">initialize</code> → nhận <code className="bg-violet-100 px-1 rounded">session_id</code> + <code className="bg-violet-100 px-1 rounded">client_id</code> → gửi header <code className="bg-violet-100 px-1 rounded">Mcp-Session-Id</code> + <code className="bg-violet-100 px-1 rounded">Mcp-Client-Id</code> mỗi request sau đó</li>
+          <li>Header <code className="bg-violet-100 px-1 rounded">X-Api-Key</code> hoặc <code className="bg-violet-100 px-1 rounded">Authorization: Bearer &lt;access_token&gt;</code></li>
+          <li><code className="bg-violet-100 px-1 rounded">refresh_token</code> — đổi access mới qua <code className="bg-violet-100 px-1 rounded">POST /api/external/oauth/token</code></li>
+          <li>Endpoint MCP: <code className="bg-violet-100 px-1 rounded">POST {MCP_ENDPOINT}</code> (JSON-RPC 2.0)</li>
+          <li>Header <code className="bg-violet-100 px-1 rounded">Accept: application/json, text/event-stream</code> bắt buộc</li>
+          <li>Header <code className="bg-violet-100 px-1 rounded">MCP-Protocol-Version</code> + <code className="bg-violet-100 px-1 rounded">Mcp-Method</code> (+ <code className="bg-violet-100 px-1 rounded">Mcp-Name</code> khi tools/call)</li>
           <li>Header <code className="bg-violet-100 px-1 rounded">X-User-Id</code>: user có quyền xem BC (mặc định = default_assigned_to trên key)</li>
           <li>Key phải gắn <strong>công ty</strong>; user act-as phải thuộc cùng công ty (trừ system admin)</li>
           <li><strong>Kỳ báo cáo</strong> không cấu hình trên gateway — OpenClaw/client gửi <code className="bg-violet-100 px-1 rounded">date_from</code> + <code className="bg-violet-100 px-1 rounded">date_to</code> (hoặc <code className="bg-violet-100 px-1 rounded">time_scope</code>) <em>mỗi request</em></li>
         </ul>
         <code className="block text-[11px] font-mono text-violet-700 bg-white border border-violet-100 rounded-lg px-3 py-2 mt-2">
-          Base: {MCP_BASE}
+          MCP: POST {MCP_ENDPOINT} · client_id: {mcpClientId || '—'} · session_id: {mcpSessionId || '(chưa initialize)'}
         </code>
       </div>
 
@@ -368,20 +534,43 @@ export default function McpReportApiPage() {
         <div className="bg-emerald-50 border-2 border-emerald-400 rounded-xl p-5 space-y-3">
           <div className="font-bold text-sm text-emerald-800 flex items-center gap-2">
             <CheckCircle2 className="h-4 w-4" />
-            Key mới đã tạo — sao chép ngay, sẽ không hiển thị lại!
+            Token mới — sao chép ngay, sẽ không hiển thị lại!
           </div>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 bg-white border border-emerald-300 rounded-lg px-3 py-2 text-sm font-mono text-emerald-900 break-all">
-              {newKeyValue}
-            </code>
-            <button
-              type="button"
-              onClick={() => copyText(newKeyValue, 'new')}
-              className="h-9 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 shrink-0 cursor-pointer"
-            >
-              {copiedId === 'new' ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-              {copiedId === 'new' ? 'Đã copy' : 'Copy'}
-            </button>
+          <div className="space-y-2">
+            <div>
+              <p className="text-[10px] font-semibold text-emerald-800 uppercase mb-1">Access token (X-Api-Key / Bearer)</p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 bg-white border border-emerald-300 rounded-lg px-3 py-2 text-xs font-mono text-emerald-900 break-all">
+                  {newKeyValue}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => copyText(newKeyValue, 'new_access')}
+                  className="h-8 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-medium flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  {copiedId === 'new_access' ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                  {copiedId === 'new_access' ? 'Đã copy' : 'Access'}
+                </button>
+              </div>
+            </div>
+            {newRefreshToken && (
+              <div>
+                <p className="text-[10px] font-semibold text-emerald-800 uppercase mb-1">Refresh token</p>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 bg-white border border-emerald-300 rounded-lg px-3 py-2 text-xs font-mono text-emerald-900 break-all">
+                    {newRefreshToken}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => copyText(newRefreshToken, 'new_refresh')}
+                    className="h-8 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-medium flex items-center gap-1 shrink-0 cursor-pointer"
+                  >
+                    {copiedId === 'new_refresh' ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                    {copiedId === 'new_refresh' ? 'Đã copy' : 'Refresh'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
           <p className="text-[11px] text-emerald-700">
             Key đã được chọn sẵn trong panel test — có thể bấm Ping / BC summary ngay.
@@ -525,12 +714,40 @@ export default function McpReportApiPage() {
                     )}
                   </p>
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
+                  <button
+                    type="button"
+                    onClick={() => copyAccessToken(k.id, k.preview)}
+                    title="Sao chép access token"
+                    className={`h-7 px-2 rounded-lg text-[10px] font-medium cursor-pointer flex items-center gap-1 transition ${
+                      getKeyTokens(k.id)?.access_token
+                        ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
+                        : 'bg-white border border-gray-200 text-gray-500 hover:bg-orange-50'
+                    }`}
+                  >
+                    {copiedId === `${k.id}_access` ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                    Access
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => copyRefreshToken(k.id, k.preview)}
+                    title="Sao chép refresh token"
+                    className={`h-7 px-2 rounded-lg text-[10px] font-medium cursor-pointer flex items-center gap-1 transition ${
+                      getKeyTokens(k.id)?.refresh_token
+                        ? 'bg-sky-50 text-sky-700 hover:bg-sky-100 border border-sky-200'
+                        : 'bg-white border border-gray-200 text-gray-500 hover:bg-orange-50'
+                    }`}
+                  >
+                    {copiedId === `${k.id}_refresh` ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                    Refresh
+                  </button>
                   <button
                     type="button"
                     onClick={() => {
                       setSelectedKeyId(k.id);
-                      setKeySecret('');
+                      const tokens = getKeyTokens(k.id);
+                      if (tokens?.access_token) setKeySecret(tokens.access_token);
+                      else if (selectedKeyId !== k.id) setKeySecret('');
                       if (k.default_assigned_to) setActAsUserId(k.default_assigned_to);
                     }}
                     className={`h-7 px-2 rounded-lg text-[10px] font-medium cursor-pointer ${selectedKeyId === k.id ? 'bg-violet-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-violet-50'}`}
@@ -709,10 +926,12 @@ export default function McpReportApiPage() {
             <div className="flex flex-wrap gap-2">
               {[
                 ['ping', 'Ping'],
-                ['tools', 'List tools'],
+                ['init', 'Initialize'],
+                ['initialized', 'initialized'],
+                ['tools', 'tools/list'],
                 ['org-overview', 'BC summary'],
                 ['org-text', 'BC text'],
-                ['tool-call', 'Tool call'],
+                ['tool-call', 'tools/call'],
               ].map(([kind, label]) => (
                 <button
                   key={kind}
@@ -802,8 +1021,20 @@ export default function McpReportApiPage() {
           OpenClaw thay <code>date_from</code> / <code>date_to</code> theo câu hỏi user mỗi lần gọi.
         </p>
         <div>
-          <p className="text-xs font-medium text-gray-600 mb-2">OpenClaw — gợi ý cấu hình MCP HTTP</p>
-          <CodeBlock lang="json" code={buildOpenClawConfig(MCP_BASE, displayKey)} />
+          <p className="text-xs font-medium text-gray-600 mb-2">MCP JSON-RPC — initialize</p>
+          <CodeBlock
+            lang="json"
+            code={buildMcpJsonRpcExample('initialize', {
+              client_id: mcpClientId || 'qlcv-your-client-id',
+              protocolVersion: MCP_PROTOCOL,
+              capabilities: {},
+              clientInfo: { name: 'my-client', version: '1.0.0' },
+            })}
+          />
+        </div>
+        <div>
+          <p className="text-xs font-medium text-gray-600 mb-2">OpenClaw / Cursor — cấu hình MCP HTTP</p>
+          <CodeBlock lang="json" code={buildOpenClawConfig(MCP_ENDPOINT, displayKey, mcpClientId)} />
         </div>
       </div>
     </div>

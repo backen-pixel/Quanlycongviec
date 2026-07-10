@@ -3,6 +3,7 @@ import { AlertCircle, X, Lock, CheckCircle2, Paperclip, MessageSquare, Loader2, 
 import api from '../lib/api';
 import TaskQuickVerdictBar from './TaskQuickVerdictBar';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
+import { TASK_ATTACHMENT_FILE_ACCEPT } from '../lib/attachmentFileIcon';
 
 function fmtDateTime(value) {
   if (!value) return '';
@@ -331,7 +332,7 @@ export default function BlockingTasksAlertModal({
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
-    input.accept = 'image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.dwg,.dxf,.mp4,.mov,.webm,.avi';
+    input.accept = TASK_ATTACHMENT_FILE_ACCEPT;
     input.onchange = async (e) => {
       const rawFiles = Array.from(e.target.files || []).slice(0, 20);
       if (!rawFiles.length) return;

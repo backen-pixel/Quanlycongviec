@@ -9,7 +9,7 @@ const jwt = require('jsonwebtoken');
 const BASE = (process.env.CHECK_API_URL || 'https://tubep-backend.onrender.com').replace(/\/$/, '');
 
 const LOST_PIPELINE_STAGE_NAME_RE =
-  /(hủy\s*deal|^\s*thua\s*\.?\s*$|chê\s*gi[aá]|khách\s*hủy|từ\s*chối|rớt|\blost\b|mất\s*deal)/i;
+  /(hủy\s*deal|thua\s*\/\s*hủy|^\s*hủy\s*$|^\s*thua\s*\.?\s*$|chê\s*gi[aá]|khách\s*hủy|từ\s*chối|rớt|\blost\b|mất\s*deal)/i;
 
 function monthRange() {
   const now = new Date();

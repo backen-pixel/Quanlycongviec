@@ -4,7 +4,12 @@
  */
 
 const { supabase } = require('../config/supabase');
-const { fetchLeadMentionMembers } = require('./crmLeadCommentMentions');
+const {
+  fetchLeadMentionMembers,
+  resolveLeadCommentMentionIds,
+  logLeadCommentMentionActivity,
+  memberDisplayName,
+} = require('./crmLeadCommentMentions');
 const { ensureLeadMembersFromProjectStaff } = require('./productionWorkshopTypeStaff');
 
 async function loadDealCommentContext(supabase, leadId) {
@@ -86,9 +91,9 @@ async function fetchProjectCommentAudienceUserIds(supabase, projectId) {
 }
 
 async function fetchCrmLeadCommentNotifyUserIds(supabase, leadId) {
-  await ensureLeadMembersFromProjectStaff(leadId);
-  const leadMembers = await fetchLeadMentionMembers(supabase, leadId);
-  const memberIds = (leadMembers || []).map((m) => String(m?.user_id || '')).filter(Boolean);
+  const { fetchLeadCommentAudienceMembers } = require('./crmLeadCommentAudience');
+  const audienceMembers = await fetchLeadCommentAudienceMembers(supabase, leadId);
+  const memberIds = (audienceMembers || []).map((m) => String(m?.user_id || '')).filter(Boolean);
   const { data: participantRows } = await supabase
     .from('crm_lead_comments')
     .select('user_id')
@@ -230,6 +235,119 @@ async function notifyProjectCommentParticipants(req, notifyMultiple, projectId, 
   );
 }
 
+/**
+ * Tự động bình luận @ NV phụ trách SX khi deal chuyển sang sản xuất / xác nhận bàn giao.
+ */
+async function postSxTransferMentionComment(req, notifyMultiple, {
+  dealId,
+  projectId,
+  senderId,
+  mentionUserIds = [],
+  projectCode = '',
+  dealTitle = '',
+  workshopLabel = '',
+  mode = 'transfer',
+}) {
+  if (!dealId || !senderId) return null;
+
+  const ids = [...new Set((mentionUserIds || []).map(String).filter(Boolean))]
+    .filter((id) => id !== String(senderId));
+  if (!ids.length) return null;
+
+  await ensureLeadMembersFromProjectStaff(dealId);
+
+  const { data: senderRow } = await supabase
+    .from('users')
+    .select('id, full_name, avatar')
+    .eq('id', senderId)
+    .maybeSingle();
+  const senderName = senderRow?.full_name || req.user?.fullName || 'Hệ thống';
+
+  const leadMembers = await fetchLeadMentionMembers(supabase, dealId);
+  const memberById = new Map((leadMembers || []).map((m) => [String(m.user_id), m]));
+
+  const mentionLabels = [];
+  for (const id of ids) {
+    const mem = memberById.get(String(id));
+    const name = memberDisplayName(mem);
+    if (name) mentionLabels.push(`@${name}`);
+  }
+  if (!mentionLabels.length) {
+    const { data: users } = await supabase
+      .from('users')
+      .select('id, full_name')
+      .in('id', ids);
+    for (const u of users || []) {
+      const name = String(u.full_name || '').trim();
+      if (name) mentionLabels.push(`@${name}`);
+    }
+  }
+  if (!mentionLabels.length) return null;
+
+  const mentionText = mentionLabels.join(' ');
+  const codePart = projectCode ? ` · ${projectCode}` : '';
+  const workshopPart = workshopLabel ? ` (${workshopLabel})` : '';
+  const titlePart = dealTitle ? ` «${dealTitle}»` : '';
+
+  let body;
+  if (mode === 'handover') {
+    body = `✅ ${senderName} đã xác nhận bàn giao sản xuất${codePart}. ${mentionText} — vui lòng tiếp nhận và xử lý deal${titlePart}.`;
+  } else {
+    body = `🏭 ${senderName} đã chuyển deal sang Sản xuất${workshopPart}${codePart}. ${mentionText} — bạn được giao phụ trách sản xuất deal${titlePart}.`;
+  }
+
+  const { data, error } = await supabase
+    .from('crm_lead_comments')
+    .insert({ lead_id: dealId, user_id: senderId, body })
+    .select('id, lead_id, user_id, parent_id, body, attachments, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
+    .single();
+  if (error) {
+    console.warn('[postSxTransferMentionComment] insert:', error.message);
+    return null;
+  }
+
+  const row = {
+    ...data,
+    attachments: [],
+    reactions: { summary: [], mine: null },
+  };
+
+  const io = req.app?.get?.('io');
+  if (io) {
+    io.to(`lead:${dealId}`).emit('lead:comment', { lead_id: dealId, action: 'created', comment: row });
+  }
+
+  try {
+    const mentionIds = resolveLeadCommentMentionIds(
+      { mention_user_ids: ids },
+      body,
+      leadMembers,
+      senderId,
+    );
+    const notifyIds = await fetchCrmLeadCommentNotifyUserIds(supabase, dealId);
+
+    await notifyDealCommentParticipants(req, notifyMultiple, dealId, senderId, row, notifyIds, mentionIds);
+
+    if (mentionIds.length) {
+      await notifyDealCommentMentions(req, notifyMultiple, dealId, senderId, row, mentionIds);
+      const activityRow = await logLeadCommentMentionActivity(supabase, {
+        leadId: dealId,
+        senderId,
+        commentRow: row,
+        mentionIds,
+        members: leadMembers,
+      });
+      if (io && activityRow) {
+        io.to(`lead:${dealId}`).emit('lead:activity', { lead_id: dealId, activity: activityRow });
+      }
+    }
+  } catch (notifyErr) {
+    console.warn('[postSxTransferMentionComment] notify:', notifyErr?.message || notifyErr);
+  }
+
+  return row;
+}
+
 module.exports = {
   loadDealCommentContext,
   resolveDealByProjectId,
@@ -239,4 +357,5 @@ module.exports = {
   notifyDealCommentMentions,
   notifyDealCommentParticipants,
   notifyProjectCommentParticipants,
+  postSxTransferMentionComment,
 };

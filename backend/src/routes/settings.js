@@ -183,6 +183,7 @@ r.post('/misa/test', async (req, res) => {
 const {
   listKeys, findKeyById, insertKey, updateKey, deleteKey, migrateLegacyFileOnce,
 } = require('../middleware/apiKeyAuth');
+const { buildTokenPair, formatOneTimeTokenResponse } = require('../helpers/apiKeyTokens');
 const crypto = require('crypto');
 
 function previewKey(k) {
@@ -259,10 +260,11 @@ r.post('/api-keys', async (req, res) => {
     }
     const chk = await assertRegionMatchesCompany(region_id, company_id);
     if (!chk.ok) return res.status(400).json({ error: chk.error });
-    const key = 'tbp_' + crypto.randomBytes(24).toString('hex');
+    const pair = buildTokenPair();
     const record = await insertKey({
       name: String(name).trim(),
-      key,
+      key: pair.access_token,
+      refresh_token: pair.refresh_token,
       active: true,
       default_assigned_to: default_assigned_to || null,
       company_id,
@@ -273,7 +275,7 @@ r.post('/api-keys', async (req, res) => {
       webhook_url: webhook_url || null,
       created_by: req.user.userId,
     });
-    res.status(201).json({ ...record, _note: 'Sao chép key ngay — sẽ không hiển thị lại giá trị đầy đủ.' });
+    res.status(201).json(formatOneTimeTokenResponse(record));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -335,24 +337,14 @@ r.post('/api-keys/:id/rotate', async (req, res) => {
     }
     const cur = await findKeyById(req.params.id);
     if (!cur) return res.status(404).json({ error: 'Không tìm thấy key' });
-    const newKey = 'tbp_' + crypto.randomBytes(24).toString('hex');
+    const pair = buildTokenPair();
     const updated = await updateKey(req.params.id, {
-      key: newKey,
+      key: pair.access_token,
+      refresh_token: pair.refresh_token,
       rotated_at: new Date().toISOString(),
       rotated_by: req.user.userId,
     });
-    res.json({
-      id: updated.id,
-      name: updated.name,
-      key: newKey,
-      preview: newKey.slice(0, 8) + '••••••••••••••••',
-      active: updated.active !== false,
-      default_assigned_to: updated.default_assigned_to || null,
-      company_id: updated.company_id || null,
-      webhook_url: updated.webhook_url || null,
-      rotated_at: updated.rotated_at,
-      _note: 'Key mới chỉ hiển thị 1 lần. Sao chép và lưu ở nơi an toàn.',
-    });
+    res.json(formatOneTimeTokenResponse(updated));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

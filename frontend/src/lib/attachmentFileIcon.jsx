@@ -7,7 +7,12 @@ import {
   Paperclip,
   Presentation,
   FileType,
+  Box,
 } from 'lucide-react';
+
+/** Chuỗi `accept` cho input file đính kèm nhiệm vụ CRM / SX (gồm SketchUp). */
+export const TASK_ATTACHMENT_FILE_ACCEPT =
+  'image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.dwg,.dxf,.skp,.skb,.skm,.zip,.rar,.mp4,.mov,.webm,.avi';
 
 function fileExt(name) {
   const base = String(name || '').split('?')[0].split('/').pop() || '';
@@ -20,6 +25,7 @@ export function inferAttachmentDocType({ mime_type: mime = '', file_name: name =
   const fileName = name || orig || '';
   if (mime.startsWith('image/')) return 'image';
   if (mime.startsWith('video/')) return 'video';
+  if (/\.(skp|skb|skm)$/i.test(fileName) || mime.includes('sketchup')) return 'sketchup';
   if (/\.(dwg|dxf)$/i.test(fileName)) return 'drawing';
   if (/\.pdf$/i.test(fileName) || mime === 'application/pdf') return 'pdf';
   if (/\.(doc|docx|rtf|odt)$/i.test(fileName) || mime.includes('word') || mime.includes('msword')) return 'document';
@@ -32,6 +38,7 @@ const DOC_TYPE_ICON = {
   image: { Icon: FileImage, iconClassName: 'text-violet-500' },
   video: { Icon: Film, iconClassName: 'text-purple-600' },
   drawing: { Icon: FileText, iconClassName: 'text-slate-600' },
+  sketchup: { Icon: Box, iconClassName: 'text-sky-700' },
   pdf: { Icon: FileType, iconClassName: 'text-red-600' },
   document: { Icon: FileText, iconClassName: 'text-blue-600' },
   spreadsheet: { Icon: FileSpreadsheet, iconClassName: 'text-emerald-600' },
@@ -68,6 +75,7 @@ export function resolveAttachmentFileIcon(att) {
     return DOC_TYPE_ICON.presentation;
   }
   if (['dwg', 'dxf'].includes(ext)) return DOC_TYPE_ICON.drawing;
+  if (['skp', 'skb', 'skm'].includes(ext) || mime.includes('sketchup')) return DOC_TYPE_ICON.sketchup;
 
   return DOC_TYPE_ICON.other;
 }

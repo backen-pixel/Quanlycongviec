@@ -168,6 +168,7 @@ export default function ApiKeysSettingsPage() {
   const [form, setForm] = useState({ name: '', default_assigned_to: '', webhook_url: '', company_id: '', region_id: '', default_source_category_id: '', default_lead_type_id: '', default_pipeline_id: '' });
   const [showForm, setShowForm] = useState(false);
   const [newKeyValue, setNewKeyValue] = useState(null);
+  const [newRefreshToken, setNewRefreshToken] = useState(null);
   const [users, setUsers] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [regions, setRegions] = useState([]);
@@ -183,7 +184,38 @@ export default function ApiKeysSettingsPage() {
   const [activeTab, setActiveTab] = useState('curl');
   const [keyStats, setKeyStats] = useState({});
   const [pingResult, setPingResult] = useState({});
-  const [keySecrets, setKeySecrets] = useState({}); // { [keyId]: fullKeyValue }
+  const [keySecrets, setKeySecrets] = useState({}); // { [keyId]: { access_token, refresh_token } }
+
+  const storeKeyTokens = (id, data) => {
+    const access = data?.access_token || data?.key || '';
+    const refresh = data?.refresh_token || '';
+    if (!id || (!access && !refresh)) return;
+    setKeySecrets((s) => ({ ...s, [id]: { access_token: access, refresh_token: refresh } }));
+  };
+
+  const getKeyTokens = (id) => keySecrets[id] || null;
+
+  const copyAccessToken = (id, preview) => {
+    const tokens = getKeyTokens(id);
+    if (tokens?.access_token) {
+      copyText(tokens.access_token, `${id}_access`);
+      return;
+    }
+    if (window.confirm(
+      `Chưa có access token — chỉ thấy mask "${preview}".\n\nRotate để nhận cặp access + refresh token mới?`,
+    )) rotateKey(id);
+  };
+
+  const copyRefreshToken = (id, preview) => {
+    const tokens = getKeyTokens(id);
+    if (tokens?.refresh_token) {
+      copyText(tokens.refresh_token, `${id}_refresh`);
+      return;
+    }
+    if (window.confirm(
+      `Chưa có refresh token cho key "${preview}".\n\nRotate để tạo cặp token mới?`,
+    )) rotateKey(id);
+  };
 
   const load = async () => {
     setLoading(true);
@@ -243,7 +275,9 @@ export default function ApiKeysSettingsPage() {
         default_lead_type_id: form.default_lead_type_id || null,
         default_pipeline_id: form.default_pipeline_id || null,
       });
-      setNewKeyValue(data.key);
+      setNewKeyValue(data.access_token || data.key);
+      setNewRefreshToken(data.refresh_token || null);
+      if (data.id) storeKeyTokens(data.id, data);
       setForm({ name: '', default_assigned_to: '', webhook_url: '', company_id: '', region_id: '', default_source_category_id: '', default_lead_type_id: '', default_pipeline_id: '' });
       setShowForm(false);
       await load();
@@ -301,8 +335,9 @@ export default function ApiKeysSettingsPage() {
   const rotateKey = async (id) => {
     try {
       const { data } = await api.post(`/settings/api-keys/${id}/rotate`);
-      setKeySecrets((s) => ({ ...s, [id]: data.key }));
-      setNewKeyValue(data.key); // show big banner once so user can copy
+      storeKeyTokens(id, data);
+      setNewKeyValue(data.access_token || data.key);
+      setNewRefreshToken(data.refresh_token || null);
       await load();
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi rotate key');
@@ -310,7 +345,7 @@ export default function ApiKeysSettingsPage() {
   };
 
   const pingWithKey = async (id) => {
-    const key = keySecrets[id];
+    const key = keySecrets[id]?.access_token;
     if (!key) return;
     setPingResult((p) => ({ ...p, [id]: { loading: true } }));
     try {
@@ -323,7 +358,7 @@ export default function ApiKeysSettingsPage() {
   };
 
   const loadStats = async (id) => {
-    const key = keySecrets[id];
+    const key = keySecrets[id]?.access_token;
     if (!key) return;
     setKeyStats((s) => ({ ...s, [id]: { loading: true } }));
     try {
@@ -398,10 +433,10 @@ export default function ApiKeysSettingsPage() {
         </div>
 
         <p className="text-xs text-blue-700">
-          Xác thực: ưu tiên header <code className="bg-blue-100 px-1 rounded">X-Api-Key: &lt;key&gt;</code>
-          . Hỗ trợ thêm query <code className="bg-blue-100 px-1 rounded">?api_key=</code> hoặc{' '}
-          <code className="bg-blue-100 px-1 rounded">?x-api-key=</code> (Postman Params) — tránh dùng tên tham số{' '}
-          <code className="bg-blue-100 px-1 rounded">?tbp_…=</code> (sai; key phải là <i>giá trị</i>).
+          Xác thực: <code className="bg-blue-100 px-1 rounded">X-Api-Key: &lt;access_token&gt;</code> hoặc{' '}
+          <code className="bg-blue-100 px-1 rounded">Authorization: Bearer &lt;access_token&gt;</code>.
+          Đổi access mới: <code className="bg-blue-100 px-1 rounded">POST /api/external/oauth/token</code> với{' '}
+          <code className="bg-blue-100 px-1 rounded">refresh_token</code>.
         </p>
         {PUBLIC_API_ORIGIN === window.location.origin && (
           <p className="text-[11px] text-orange-800 bg-orange-50 border border-orange-200 rounded-md px-2 py-1.5">
@@ -413,9 +448,7 @@ export default function ApiKeysSettingsPage() {
           Hãy test bằng panel <b>"Test kết nối"</b> bên dưới hoặc Postman / cURL.
         </p>
         <p className="text-[11px] text-purple-700 bg-purple-50 border border-purple-200 rounded-md px-2 py-1.5">
-          🔐 Vì bảo mật, key thật chỉ hiển thị <b>1 lần duy nhất</b> lúc tạo (hoặc sau khi Rotate). Sau đó UI chỉ
-          thấy mask kiểu <code>tbp_xxxx••••••</code>. Lỡ mất key → bấm icon <b>Copy</b> hoặc <b>Rotate key</b> để
-          nhận key mới (key cũ bị vô hiệu ngay).
+          🔐 Access + refresh token chỉ hiển thị <b>1 lần</b> lúc tạo/Rotate. Sau đó chỉ thấy mask — bấm <b>Access</b> / <b>Refresh</b> để copy (hoặc Rotate nếu đã mất).
         </p>
       </div>
 
@@ -423,19 +456,43 @@ export default function ApiKeysSettingsPage() {
       {newKeyValue && (
         <div className="bg-emerald-50 border-2 border-emerald-400 rounded-xl p-5 space-y-3">
           <div className="font-bold text-sm text-emerald-800 flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4" /> Key mới đã tạo — sao chép ngay, sẽ không hiển thị lại!
+            <CheckCircle2 className="h-4 w-4" /> Token mới — sao chép ngay, sẽ không hiển thị lại!
           </div>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 bg-white border border-emerald-300 rounded-lg px-3 py-2 text-sm font-mono text-emerald-900 break-all">
-              {newKeyValue}
-            </code>
-            <button
-              onClick={() => copyText(newKeyValue, 'new')}
-              className="h-9 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 shrink-0 cursor-pointer"
-            >
-              {copiedId === 'new' ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-              {copiedId === 'new' ? 'Đã copy' : 'Copy'}
-            </button>
+          <div className="space-y-2">
+            <div>
+              <p className="text-[10px] font-semibold text-emerald-800 uppercase mb-1">Access token</p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 bg-white border border-emerald-300 rounded-lg px-3 py-2 text-xs font-mono text-emerald-900 break-all">
+                  {newKeyValue}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => copyText(newKeyValue, 'new_access')}
+                  className="h-8 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-medium flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  {copiedId === 'new_access' ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                  Access
+                </button>
+              </div>
+            </div>
+            {newRefreshToken && (
+              <div>
+                <p className="text-[10px] font-semibold text-emerald-800 uppercase mb-1">Refresh token</p>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 bg-white border border-emerald-300 rounded-lg px-3 py-2 text-xs font-mono text-emerald-900 break-all">
+                    {newRefreshToken}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => copyText(newRefreshToken, 'new_refresh')}
+                    className="h-8 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-medium flex items-center gap-1 shrink-0 cursor-pointer"
+                  >
+                    {copiedId === 'new_refresh' ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                    Refresh
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Code examples */}
@@ -660,27 +717,32 @@ export default function ApiKeysSettingsPage() {
                         )}
                       </p>
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
+                    <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
                       <button
-                        onClick={() => {
-                          if (keySecrets[k.id]) {
-                            copyText(keySecrets[k.id], k.id + '_copy');
-                          } else {
-                            if (window.confirm(
-                              `Vì bảo mật, hệ thống KHÔNG lưu key thật — chỉ hiển thị mask "${k.preview}".\n\n` +
-                              `Để lấy key đầy đủ, cần Rotate (tạo key mới và vô hiệu key cũ).\n\n` +
-                              `Rotate ngay bây giờ?`
-                            )) {
-                              rotateKey(k.id);
-                            }
-                          }
-                        }}
-                        title={keySecrets[k.id] ? 'Copy key thật vào clipboard' : 'Không thể copy mask — bấm để Rotate lấy key mới'}
-                        className={`p-1.5 rounded-lg cursor-pointer transition ${keySecrets[k.id] ? 'hover:bg-emerald-50' : 'hover:bg-orange-50'}`}
+                        type="button"
+                        onClick={() => copyAccessToken(k.id, k.preview)}
+                        title="Sao chép access token"
+                        className={`h-7 px-2 rounded-lg text-[10px] font-medium cursor-pointer flex items-center gap-1 transition ${
+                          getKeyTokens(k.id)?.access_token
+                            ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
+                            : 'bg-white border border-gray-200 text-gray-500 hover:bg-orange-50'
+                        }`}
                       >
-                        {copiedId === k.id + '_copy'
-                          ? <Check className="h-4 w-4 text-emerald-500" />
-                          : <Copy className={`h-4 w-4 ${keySecrets[k.id] ? 'text-emerald-500' : 'text-gray-300'}`} />}
+                        {copiedId === `${k.id}_access` ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                        Access
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => copyRefreshToken(k.id, k.preview)}
+                        title="Sao chép refresh token"
+                        className={`h-7 px-2 rounded-lg text-[10px] font-medium cursor-pointer flex items-center gap-1 transition ${
+                          getKeyTokens(k.id)?.refresh_token
+                            ? 'bg-sky-50 text-sky-700 hover:bg-sky-100 border border-sky-200'
+                            : 'bg-white border border-gray-200 text-gray-500 hover:bg-orange-50'
+                        }`}
+                      >
+                        {copiedId === `${k.id}_refresh` ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                        Refresh
                       </button>
                       <button
                         onClick={() => toggleActive(k.id, k.active)}
@@ -726,7 +788,7 @@ export default function ApiKeysSettingsPage() {
                             Rotate key để test
                           </button>
                         </div>
-                        {!keySecrets[k.id] ? (
+                        {!keySecrets[k.id]?.access_token ? (
                           <div className="text-[11px] text-gray-500">
                             Vì bảo mật, hệ thống không hiển thị lại key thật. Bấm <b>Rotate</b> để nhận key mới 1 lần, rồi mới ping/test được.
                           </div>
@@ -789,12 +851,12 @@ export default function ApiKeysSettingsPage() {
                             </button>
                           ))}
                         </div>
-                        {activeTab === 'curl' && <CodeBlock code={buildCurl(keySecrets[k.id] || k.preview)} lang="bash" />}
-                        {activeTab === 'javascript' && <CodeBlock code={buildJS(keySecrets[k.id] || k.preview)} lang="javascript" />}
-                        {activeTab === 'python' && <CodeBlock code={buildPython(keySecrets[k.id] || k.preview)} lang="python" />}
+                        {activeTab === 'curl' && <CodeBlock code={buildCurl(keySecrets[k.id]?.access_token || k.preview)} lang="bash" />}
+                        {activeTab === 'javascript' && <CodeBlock code={buildJS(keySecrets[k.id]?.access_token || k.preview)} lang="javascript" />}
+                        {activeTab === 'python' && <CodeBlock code={buildPython(keySecrets[k.id]?.access_token || k.preview)} lang="python" />}
                         {activeTab === 'test' && (
-                          keySecrets[k.id]
-                            ? <TestPanel apiKey={keySecrets[k.id]} />
+                          keySecrets[k.id]?.access_token
+                            ? <TestPanel apiKey={keySecrets[k.id].access_token} />
                             : <div className="text-xs text-gray-500 bg-white border border-gray-200 rounded-xl p-3">Rotate key để nhận key thật rồi mới test được.</div>
                         )}
                       </div>

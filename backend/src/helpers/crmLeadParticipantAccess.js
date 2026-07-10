@@ -60,8 +60,16 @@ async function userCanAccessCrmLeadAsParticipant(supabase, userId, leadRow) {
   return false;
 }
 
+/** NV được xem deal qua phân quyền xem trên nhiệm vụ/tài liệu CRM. */
+async function userCanAccessCrmLeadViaVisibility(supabase, userId, leadRow) {
+  if (!userId || !leadRow?.id) return false;
+  const { userCanViewLeadViaVisibilitySetup } = require('./crmLeadCommentAudience');
+  return userCanViewLeadViaVisibilitySetup(supabase, userId, leadRow.id);
+}
+
 module.exports = {
   userIsLeadMember,
   userIsLinkedProjectParticipant,
   userCanAccessCrmLeadAsParticipant,
+  userCanAccessCrmLeadViaVisibility,
 };

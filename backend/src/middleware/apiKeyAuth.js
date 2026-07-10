@@ -33,7 +33,7 @@ function invalidateCache(key) {
 }
 
 // ── CRUD helpers (Supabase-backed) ──────────────────────────────────────────
-const SELECT_COLS = `id, name, key, active, default_assigned_to, company_id, region_id,
+const SELECT_COLS = `id, name, key, refresh_token, active, default_assigned_to, company_id, region_id,
   default_source_category_id, default_lead_type_id, default_pipeline_id,
   webhook_url, created_by, created_at, rotated_at, rotated_by`;
 
@@ -56,6 +56,21 @@ async function findKeyByValue(keyValue) {
     .maybeSingle();
   if (error) throw error;
   _setCache(keyValue, data || null);
+  return data || null;
+}
+
+async function findKeyByRefreshToken(refreshToken) {
+  const rt = String(refreshToken || '').trim();
+  if (!rt) return null;
+  const cached = _getCache(`rt:${rt}`);
+  if (cached !== undefined) return cached;
+  const { data, error } = await supabase
+    .from('external_api_keys')
+    .select(SELECT_COLS)
+    .eq('refresh_token', rt)
+    .maybeSingle();
+  if (error) throw error;
+  _setCache(`rt:${rt}`, data || null);
   return data || null;
 }
 
@@ -150,15 +165,21 @@ async function migrateLegacyFileOnce() {
 
 // ── Middleware ──────────────────────────────────────────────────────────────
 
-/** Header trước, sau đó query (?x-api-key= / ?X-Api-Key= / ?api_key=), không phân biệt hoa thường tên param */
+/** Header X-Api-Key, Authorization Bearer, hoặc query api_key / access_token */
 function extractApiKey(req) {
+  const bearer = String(req.headers.authorization || '').trim();
+  if (bearer.toLowerCase().startsWith('bearer ')) {
+    const token = bearer.slice(7).trim();
+    if (token) return token;
+  }
+
   const h = req.headers['x-api-key'];
   if (h) return String(h).trim();
 
   const q = req.query;
   if (!q || typeof q !== 'object') return null;
 
-  const single = q['x-api-key'] ?? q['X-Api-Key'] ?? q.api_key ?? q.apiKey;
+  const single = q['x-api-key'] ?? q['X-Api-Key'] ?? q.api_key ?? q.apiKey ?? q.access_token;
   if (single != null && String(single).trim() !== '') return String(single).trim();
 
   for (const name of Object.keys(q)) {
@@ -175,7 +196,7 @@ async function apiKeyAuth(req, res, next) {
   const key = extractApiKey(req);
   if (!key) {
     return res.status(401).json({
-      error: 'Thiếu API key: thêm header X-Api-Key hoặc query ?api_key=... / ?x-api-key=...',
+      error: 'Thiếu access token: header X-Api-Key, Authorization Bearer, hoặc query ?api_key= / ?access_token=',
     });
   }
 
@@ -213,6 +234,7 @@ module.exports = {
   listKeys,
   findKeyById,
   findKeyByValue,
+  findKeyByRefreshToken,
   insertKey,
   updateKey,
   deleteKey,

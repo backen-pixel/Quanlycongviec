@@ -1,0 +1,256 @@
+{
+  "info": {
+    "_postman_id": "qlcv-mcp-reports-2026",
+    "name": "QLCV MCP — Báo cáo tổ chức",
+    "description": "Test MCP server chuẩn (Streamable HTTP) tại POST /api/mcp.\n\nBiến collection:\n- base_url: http://localhost:4000/api/mcp\n- api_key: key từ trang /management/mcp-api (Rotate để lấy key thật)\n- user_id: UUID user act-as có quyền BC\n- protocol_version: 2025-06-18",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:4000/api/mcp" },
+    { "key": "api_origin", "value": "http://localhost:4000/api" },
+    { "key": "api_key", "value": "YOUR_ACCESS_TOKEN" },
+    { "key": "access_token", "value": "YOUR_ACCESS_TOKEN" },
+    { "key": "refresh_token", "value": "YOUR_REFRESH_TOKEN" },
+    { "key": "user_id", "value": "YOUR_USER_UUID" },
+    { "key": "protocol_version", "value": "2025-06-18" },
+    { "key": "mcp_session_id", "value": "" },
+    { "key": "mcp_client_id", "value": "qlcv-postman-client" },
+    { "key": "date_from", "value": "2026-07-01" },
+    { "key": "date_to", "value": "2026-07-31" }
+  ],
+  "item": [
+    {
+      "name": "0. Health — GET ping",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "X-Api-Key", "value": "{{api_key}}" },
+          { "key": "X-User-Id", "value": "{{user_id}}" }
+        ],
+        "url": "{{base_url}}/ping"
+      }
+    },
+    {
+      "name": "1. MCP initialize",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const sid = pm.response.headers.get('Mcp-Session-Id');",
+              "const cid = pm.response.headers.get('Mcp-Client-Id') || pm.response.json().result?.client_id;",
+              "if (sid) pm.collectionVariables.set('mcp_session_id', sid);",
+              "if (cid) pm.collectionVariables.set('mcp_client_id', cid);",
+              "pm.test('initialize OK', () => pm.response.to.have.status(200));",
+              "pm.test('has protocolVersion', () => {",
+              "  const j = pm.response.json();",
+              "  pm.expect(j.result.protocolVersion).to.eql(pm.collectionVariables.get('protocol_version'));",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "X-Api-Key", "value": "{{api_key}}" },
+          { "key": "X-User-Id", "value": "{{user_id}}" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Accept", "value": "application/json, text/event-stream" },
+          { "key": "MCP-Protocol-Version", "value": "{{protocol_version}}" },
+          { "key": "Mcp-Method", "value": "initialize" },
+          { "key": "Mcp-Client-Id", "value": "{{mcp_client_id}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"initialize\",\n  \"params\": {\n    \"client_id\": \"{{mcp_client_id}}\",\n    \"protocolVersion\": \"{{protocol_version}}\",\n    \"capabilities\": {},\n    \"clientInfo\": { \"name\": \"postman\", \"version\": \"1.0.0\" },\n    \"_meta\": {\n      \"io.modelcontextprotocol/protocolVersion\": \"{{protocol_version}}\"\n    }\n  }\n}"
+        },
+        "url": "{{base_url}}"
+      }
+    },
+    {
+      "name": "2. MCP notifications/initialized",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('notification accepted', () => pm.response.to.have.status(202));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "X-Api-Key", "value": "{{api_key}}" },
+          { "key": "X-User-Id", "value": "{{user_id}}" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Accept", "value": "application/json, text/event-stream" },
+          { "key": "MCP-Protocol-Version", "value": "{{protocol_version}}" },
+          { "key": "Mcp-Method", "value": "notifications/initialized" },
+          { "key": "Mcp-Session-Id", "value": "{{mcp_session_id}}" },
+          { "key": "Mcp-Client-Id", "value": "{{mcp_client_id}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"method\": \"notifications/initialized\"\n}"
+        },
+        "url": "{{base_url}}"
+      }
+    },
+    {
+      "name": "3. MCP tools/list",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('tools/list OK', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "pm.test('has tools', () => pm.expect(j.result.tools.length).to.be.above(0));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "X-Api-Key", "value": "{{api_key}}" },
+          { "key": "X-User-Id", "value": "{{user_id}}" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Accept", "value": "application/json, text/event-stream" },
+          { "key": "MCP-Protocol-Version", "value": "{{protocol_version}}" },
+          { "key": "Mcp-Method", "value": "tools/list" },
+          { "key": "Mcp-Session-Id", "value": "{{mcp_session_id}}" },
+          { "key": "Mcp-Client-Id", "value": "{{mcp_client_id}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"method\": \"tools/list\",\n  \"params\": {\n    \"_meta\": {\n      \"io.modelcontextprotocol/protocolVersion\": \"{{protocol_version}}\"\n    }\n  }\n}"
+        },
+        "url": "{{base_url}}"
+      }
+    },
+    {
+      "name": "4. MCP tools/call — get_org_overview_report",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('tools/call OK', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "pm.test('has content', () => pm.expect(j.result.content[0].type).to.eql('text'));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "X-Api-Key", "value": "{{api_key}}" },
+          { "key": "X-User-Id", "value": "{{user_id}}" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Accept", "value": "application/json, text/event-stream" },
+          { "key": "MCP-Protocol-Version", "value": "{{protocol_version}}" },
+          { "key": "Mcp-Method", "value": "tools/call" },
+          { "key": "Mcp-Name", "value": "get_org_overview_report" },
+          { "key": "Mcp-Session-Id", "value": "{{mcp_session_id}}" },
+          { "key": "Mcp-Client-Id", "value": "{{mcp_client_id}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 3,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"get_org_overview_report\",\n    \"arguments\": {\n      \"date_from\": \"{{date_from}}\",\n      \"date_to\": \"{{date_to}}\"\n    },\n    \"_meta\": {\n      \"io.modelcontextprotocol/protocolVersion\": \"{{protocol_version}}\"\n    }\n  }\n}"
+        },
+        "url": "{{base_url}}"
+      }
+    },
+    {
+      "name": "5. MCP resources/list",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "X-Api-Key", "value": "{{api_key}}" },
+          { "key": "X-User-Id", "value": "{{user_id}}" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Accept", "value": "application/json, text/event-stream" },
+          { "key": "MCP-Protocol-Version", "value": "{{protocol_version}}" },
+          { "key": "Mcp-Method", "value": "resources/list" },
+          { "key": "Mcp-Session-Id", "value": "{{mcp_session_id}}" },
+          { "key": "Mcp-Client-Id", "value": "{{mcp_client_id}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 4,\n  \"method\": \"resources/list\",\n  \"params\": {\n    \"_meta\": {\n      \"io.modelcontextprotocol/protocolVersion\": \"{{protocol_version}}\"\n    }\n  }\n}"
+        },
+        "url": "{{base_url}}"
+      }
+    },
+    {
+      "name": "6. REST shortcut — BC summary",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "X-Api-Key", "value": "{{api_key}}" },
+          { "key": "X-User-Id", "value": "{{user_id}}" }
+        ],
+        "url": {
+          "raw": "{{base_url}}/reports/org-overview/summary?date_from={{date_from}}&date_to={{date_to}}",
+          "host": ["{{base_url}}"],
+          "path": ["reports", "org-overview", "summary"],
+          "query": [
+            { "key": "date_from", "value": "{{date_from}}" },
+            { "key": "date_to", "value": "{{date_to}}" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "7. Legacy SSE — GET endpoint event",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "X-Api-Key", "value": "{{api_key}}" },
+          { "key": "X-User-Id", "value": "{{user_id}}" },
+          { "key": "Accept", "value": "text/event-stream" }
+        ],
+        "url": "{{base_url}}"
+      }
+    },
+    {
+      "name": "8. OAuth — refresh access token",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "  const j = pm.response.json();",
+              "  if (j.access_token) pm.collectionVariables.set('access_token', j.access_token);",
+              "  if (j.access_token) pm.collectionVariables.set('api_key', j.access_token);",
+              "  if (j.refresh_token) pm.collectionVariables.set('refresh_token', j.refresh_token);",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"grant_type\": \"refresh_token\",\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+        },
+        "url": "{{api_origin}}/external/oauth/token"
+      }
+    }
+  ]
+}

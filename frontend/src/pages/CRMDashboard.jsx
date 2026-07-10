@@ -73,6 +73,7 @@ import {
   isCrmDealSidePipelineTab,
   partitionDealsForCrmTabs,
   filterDealsForDealTabStats,
+  isDealTabLostColumnForMetrics,
   isDealTabWonColumnForMetrics,
   preWonStagesForDealStats,
   resolveCrmPipelineStagesForTab,
@@ -81,6 +82,11 @@ import {
   storeDealKhSplitPreference,
   splitDealStagesForCrmTabs,
 } from '../lib/crmPipelineTabs';
+import {
+  countDealsExcludingLostStages,
+  countLostDealsInStages,
+  isLostOrCancelledPipelineStage,
+} from '../lib/crmLostPipelineStage';
 import { fetchAggregatedOpenPipelineKpi } from '../lib/crmOpenPipelineKpi';
 import {
   canDropDealOnCrmKanbanStage,
@@ -827,8 +833,8 @@ const CRM_DEAL_PRE_CONTRACT_SLUGS = new Set([
  */
 function classifyDealStageForDashboardKpi(st) {
   if (!st) return 'pre_contract';
+  if (isLostOrCancelledPipelineStage(st)) return 'lost';
   const slug = st.canonical_slug || null;
-  if (st.is_lost || slug === 'lost') return 'lost';
 
   const bucket = st.deal_report_bucket || null;
   if (bucket === 'lost') return 'lost';
@@ -850,13 +856,6 @@ function dealDashboardKpiBucket(item, stagesDeal) {
 }
 
 /** Deal trên pipeline đang mở — không tính cột Thắng / Thua / Hủy / Hoàn thành DT. */
-function isLostOrCancelledPipelineStage(st) {
-  if (!st) return false;
-  if (st.is_lost || st.canonical_slug === 'lost' || st.deal_report_bucket === 'lost') return true;
-  const name = String(st.name || '').trim();
-  return /(hủy\s*deal|^\s*thua\s*\.?\s*$|chê\s*gi[aá]|khách\s*hủy|từ\s*chối|rớt|\blost\b|mất\s*deal)/i.test(name);
-}
-
 function dealCountsTowardPipelineEstimate(item, stagesDeal) {
   const st = resolveDealStageForKpi(item, stagesDeal);
   if (isLostOrCancelledPipelineStage(st)) return false;
@@ -939,7 +938,7 @@ function dealCountsTowardExpectedValueScoped(deal, kpiStages, fullStages) {
 }
 
 /** KPI dashboard Deal/KH — tính trên tập deal + stages đã lọc theo tab. */
-function computeDashboardDealKpis(kpiDeals, kpiStages, stagesDeal, kpiTotal) {
+function computeDashboardDealKpis(kpiDeals, kpiStages, stagesDeal) {
   const stagesByPipeline = groupDealStagesByPipeline(stagesDeal);
   const kpiStagesByPipeline = groupDealStagesByPipeline(kpiStages);
   const fullCtx = (d) => resolveDealPipelineStages(d, stagesDeal, stagesByPipeline);
@@ -977,7 +976,7 @@ function computeDashboardDealKpis(kpiDeals, kpiStages, stagesDeal, kpiTotal) {
   }
 
   return {
-    total_deals: kpiTotal,
+    total_deals: countDealsExcludingLostStages(kpiDeals, stagesDeal, (d) => resolveDealStageForKpi(d, stagesDeal)),
     deal_processing,
     deal_lost,
     project_active,
@@ -3728,19 +3727,35 @@ export default function CRMDashboard() {
   }, [kpiUsesClientOnlyFilters, filterPhone, pipelinePhoneTotals.lead?.hasPhone, leadKpiTotalCount]);
 
   const dealMergedKpiTotalCount = useMemo(() => {
-    if (kpiUsesClientOnlyFilters) return deals.length;
-    const t = loadMoreState.dealTotal;
-    return typeof t === 'number' ? t : deals.length;
-  }, [kpiUsesClientOnlyFilters, deals.length, loadMoreState.dealTotal]);
+    const pool = deals;
+    if (kpiUsesClientOnlyFilters) {
+      return countDealsExcludingLostStages(pool, stagesDeal, (d) => resolveDealStageForKpi(d, stagesDeal));
+    }
+    const raw = typeof loadMoreState.dealTotal === 'number' ? loadMoreState.dealTotal : pool.length;
+    const lostLoaded = countLostDealsInStages(pool, stagesDeal, (d) => resolveDealStageForKpi(d, stagesDeal));
+    return Math.max(0, raw - lostLoaded);
+  }, [kpiUsesClientOnlyFilters, deals, stagesDeal, loadMoreState.dealTotal]);
 
   const dealKpiTotalCount = useMemo(() => {
+    const pool = dealKhSplitEnabled ? dealStatsDeals : deals;
     if (kpiUsesClientOnlyFilters) {
-      return dealKhSplitEnabled ? dealStatsDeals.length : deals.length;
+      return countDealsExcludingLostStages(pool, stagesDeal, (d) => resolveDealStageForKpi(d, stagesDeal));
     }
-    if (dealKhSplitEnabled && hasCustomerTab) return dealStatsDeals.length;
-    const t = loadMoreState.dealTotal;
-    return typeof t === 'number' ? t : deals.length;
-  }, [kpiUsesClientOnlyFilters, dealKhSplitEnabled, hasCustomerTab, dealStatsDeals.length, deals.length, loadMoreState.dealTotal]);
+    if (dealKhSplitEnabled && hasCustomerTab) {
+      return countDealsExcludingLostStages(pool, stagesDeal, (d) => resolveDealStageForKpi(d, stagesDeal));
+    }
+    const raw = typeof loadMoreState.dealTotal === 'number' ? loadMoreState.dealTotal : pool.length;
+    const lostLoaded = countLostDealsInStages(pool, stagesDeal, (d) => resolveDealStageForKpi(d, stagesDeal));
+    return Math.max(0, raw - lostLoaded);
+  }, [
+    kpiUsesClientOnlyFilters,
+    dealKhSplitEnabled,
+    hasCustomerTab,
+    dealStatsDeals,
+    deals,
+    stagesDeal,
+    loadMoreState.dealTotal,
+  ]);
 
   const customerKpiTotalCount = useMemo(() => customerTabDeals.length, [customerTabDeals.length]);
 
@@ -3763,20 +3778,20 @@ export default function CRMDashboard() {
 
   /** KPI tab Deal — chỉ pipeline bán hàng (trước Thắng + Thua), không cộng Thắng / sau Thắng. */
   const dealSalesKpisFromFilters = useMemo(
-    () => computeDashboardDealKpis(dealStatsDeals, preWonKpiStages, stagesDeal, dealKpiTotalCount),
-    [dealStatsDeals, preWonKpiStages, stagesDeal, dealKpiTotalCount],
+    () => computeDashboardDealKpis(dealStatsDeals, preWonKpiStages, stagesDeal),
+    [dealStatsDeals, preWonKpiStages, stagesDeal],
   );
 
   /** KPI tab Deal gộp — toàn pipeline như trước khi tách tab KH. */
   const mergedDealKpisFromFilters = useMemo(
-    () => computeDashboardDealKpis(deals, stagesDeal, stagesDeal, dealMergedKpiTotalCount),
-    [deals, stagesDeal, dealMergedKpiTotalCount],
+    () => computeDashboardDealKpis(deals, stagesDeal, stagesDeal),
+    [deals, stagesDeal],
   );
 
   /** KPI tab KH — cột Thắng + sau Thắng (doanh thu thắng, hoàn thành, dự án). */
   const customerKpisFromFilters = useMemo(
-    () => computeDashboardDealKpis(customerTabDeals, customerTabStages, stagesDeal, customerKpiTotalCount),
-    [customerTabDeals, customerTabStages, stagesDeal, customerKpiTotalCount],
+    () => computeDashboardDealKpis(customerTabDeals, customerTabStages, stagesDeal),
+    [customerTabDeals, customerTabStages, stagesDeal],
   );
 
   /** «Tất cả công ty»: KPI Dự kiến/Kỳ vọng từ stage-counts từng công ty (khớp Hub). */
@@ -7909,11 +7924,13 @@ const KanbanStageCard = memo(function KanbanStageCard({
   const columnStagesCtx = [stage];
   const columnRawValue = (items || []).reduce((sum, item) => sum + (Number(item.estimated_value) || 0), 0);
   const isWonColumnExcludedFromDealMetrics = isDealTabWonColumnForMetrics(stage, pipelineType, wonStage);
+  const isLostColumnExcludedFromDealMetrics = isDealTabLostColumnForMetrics(stage);
   const isCustomerWonColumn = isCrmCustomerPipelineTab(pipelineType)
     && wonStage
     && String(stage.id) === String(wonStage.id);
   const showColumnForecastKpis = pipelineType === 'deal'
     && !isWonColumnExcludedFromDealMetrics
+    && !isLostColumnExcludedFromDealMetrics
     && (!explicitExpectedKv || !!stage.counts_as_expected_revenue);
   const columnExpectedValue = showColumnForecastKpis
     ? (items || []).reduce((sum, item) => (
@@ -7945,6 +7962,9 @@ const KanbanStageCard = memo(function KanbanStageCard({
     }
     if (isWonColumnExcludedFromDealMetrics && totalInColumn > 0) {
       return <span className="text-amber-700/80">Đã chốt — không tính pipeline</span>;
+    }
+    if (isLostColumnExcludedFromDealMetrics && totalInColumn > 0) {
+      return <span className="text-red-700/80">Đã hủy — không tính pipeline</span>;
     }
     if (isCrmCustomerPipelineTab(pipelineType) && totalInColumn > 0) {
       return (

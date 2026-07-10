@@ -3,7 +3,7 @@ import { ChevronDown, ChevronUp, ExternalLink, Eye, FileUp, MessageSquare, Plus,
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { getFileDownloadAnchorProps, publicFileUrl } from '../lib/publicFileUrl';
-import { AttachmentFileIcon, inferAttachmentDocType } from '../lib/attachmentFileIcon';
+import { AttachmentFileIcon, inferAttachmentDocType, TASK_ATTACHMENT_FILE_ACCEPT } from '../lib/attachmentFileIcon';
 import { mergeUploadProgressState, uploadSingleFileWithProgress } from '../lib/uploadProgressEta';
 import UploadProgressBubble from './UploadProgressBubble';
 import UploadFileLightbox, {
@@ -237,7 +237,7 @@ function CrmTaskNotesAttachments({ task }) {
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
-    input.accept = 'image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.dwg,.dxf,.mp4,.mov,.webm,.avi';
+    input.accept = TASK_ATTACHMENT_FILE_ACCEPT;
     input.onchange = async (e) => {
       const rawFiles = Array.from(e.target.files || []).slice(0, 20);
       if (!rawFiles.length) return;
