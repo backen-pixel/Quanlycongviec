@@ -347,15 +347,27 @@ export default function KanbanScreen() {
   useEffect(() => { filterDealCompanyRef.current = dealCompanyParam || ''; }, [dealCompanyParam]);
   useEffect(() => { filterWorkTypeIdRef.current = filterWorkTypeId; }, [filterWorkTypeId]);
 
-  useEffect(() => { void load('init'); }, [load]);
+  // Chờ phân loại sẵn sàng (giống web) trước khi load board — tránh enrich sai cột.
+  const boardFiltersReady = useMemo(() => {
+    if (workTypesCompanyId !== companyForTypes) return false;
+    if (!companyForTypes) return true;
+    if (workTypes.length === 0) return true;
+    return !!filterWorkTypeId;
+  }, [workTypesCompanyId, companyForTypes, workTypes.length, filterWorkTypeId]);
+
+  useEffect(() => {
+    if (!boardFiltersReady) return;
+    void load('init');
+  }, [load, boardFiltersReady]);
 
   // Re-fetch board khi company hoặc phân loại đổi (bỏ qua lần mount đầu tiên).
   useEffect(() => {
+    if (!boardFiltersReady) return;
     if (isFirstMount.current) { isFirstMount.current = false; return; }
     setActiveIndex(0);
     void load('init');
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterCompany, filterDealCompany, dealCompanyParam, filterWorkTypeId]);
+  }, [filterCompany, filterDealCompany, dealCompanyParam, filterWorkTypeId, boardFiltersReady]);
 
   useEffect(() => { movingIdRef.current = movingId; }, [movingId]);
 
@@ -470,17 +482,15 @@ export default function KanbanScreen() {
   }, [companyForTypes, dealCompanyParam]);
 
   /**
-   * Khi đã chọn công ty (hoặc user thuộc 1 công ty) mà chưa chọn phân loại → tự chọn loại đầu tiên.
+   * Khi có danh sách phân loại mà chưa chọn → tự chọn loại đầu tiên (khớp web).
+   * Dùng companyForTypes (kể cả khi pill xưởng = «Tất cả») để admin vẫn có pipeline đúng.
    * Không ghi đè khi user chủ động chọn «Chưa phân loại» (none).
    */
   useEffect(() => {
     if (workTypesCompanyId !== companyForTypes) return;
 
-    const hasCompanyContext = !!filterCompany || (!isSysAdmin && !!user?.company_id);
-    if (!hasCompanyContext) {
-      if (!companyForTypes && filterWorkTypeId && filterWorkTypeId !== 'none') {
-        setFilterWorkTypeId('');
-      }
+    if (!companyForTypes) {
+      if (filterWorkTypeId && filterWorkTypeId !== 'none') setFilterWorkTypeId('');
       return;
     }
 
@@ -502,9 +512,6 @@ export default function KanbanScreen() {
     workTypesCompanyId,
     companyForTypes,
     filterWorkTypeId,
-    filterCompany,
-    isSysAdmin,
-    user?.company_id,
   ]);
 
   const companyOptions = useMemo(() => {

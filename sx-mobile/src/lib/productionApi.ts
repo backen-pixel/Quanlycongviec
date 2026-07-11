@@ -51,6 +51,7 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
       type: d.type != null ? String(d.type) : undefined,
       external_company_name: d.external_company_name != null ? String(d.external_company_name) : null,
       external_catalog_id: d.external_catalog_id != null ? String(d.external_catalog_id) : null,
+      sx_pipeline_stage_id: d.sx_pipeline_stage_id != null ? String(d.sx_pipeline_stage_id) : null,
     })),
   };
 }
@@ -65,30 +66,61 @@ function mapStageRow(raw: Record<string, unknown>, index: number): KanbanStage {
     order_index: Number(raw.order_index ?? index),
     bucket_slug: (raw.bucket_slug as string) ?? null,
     workflow_stage_id: (raw.workflow_stage_id as string) ?? wfStage.id ?? null,
+    workshop_type_id: (raw.workshop_type_id as string) ?? null,
     is_handover_to_logistics: Boolean(raw.is_handover_to_logistics),
     count: raw.count != null ? Number(raw.count) : undefined,
     total_value: raw.total_value != null ? Number(raw.total_value) : undefined,
   };
 }
 
-const VC_STATUSES = new Set(['shipping', 'installing', 'warranty']);
+const VC_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
+
+/** Chọn cột bàn giao VC theo phân loại — khớp web `resolveSxHandoverColumnId`. */
+function resolveSxHandoverColumnId(
+  stages: KanbanStage[],
+  project: ProductionProject,
+  preferredColId: string | null = null,
+): string | null {
+  const stageIds = new Set(stages.map((s) => String(s.id)));
+  if (preferredColId && stageIds.has(String(preferredColId))) return preferredColId;
+  const handoverCols = stages.filter((s) => s.is_handover_to_logistics === true);
+  if (!handoverCols.length) return null;
+  const wktId = project.workshop_type_id || null;
+  if (wktId) {
+    const typed = handoverCols.find((s) => String(s.workshop_type_id || '') === String(wktId));
+    if (typed) return typed.id;
+  }
+  const globalHo = handoverCols.find((s) => !s.workshop_type_id);
+  if (globalHo) return globalHo.id;
+  return handoverCols[0].id;
+}
 
 /**
- * Resolve cột Kanban cho 1 dự án trên pipeline hiện hành (client-side) — replicate
- * `kanbanColumnIdForProject`/`colIdFor` của web để mobile & web đồng bộ tuyệt đối.
+ * Resolve cột Kanban — khớp web ProductionDashboard `colIdFor` + fallback intake.
+ * Không để null (card biến mất) khi đã có stages.
  */
 export function resolveColumnId(
   project: ProductionProject,
   sortedStages: KanbanStage[],
 ): string | null {
-  const handover = sortedStages.find((s) => s.is_handover_to_logistics === true);
   const intake = sortedStages.find((s) => s.bucket_slug === 'won_pending');
 
-  if (project.status && VC_STATUSES.has(project.status) && handover) return handover.id;
+  if (project.status && VC_STATUSES.has(project.status)) {
+    let preferred: string | null = null;
+    if (
+      project.sx_kanban_column_id
+      && sortedStages.some((s) => String(s.id) === String(project.sx_kanban_column_id))
+    ) {
+      const pinned = sortedStages.find((s) => String(s.id) === String(project.sx_kanban_column_id));
+      if (pinned?.is_handover_to_logistics) preferred = project.sx_kanban_column_id;
+    }
+    const handoverId = resolveSxHandoverColumnId(sortedStages, project, preferred);
+    if (handoverId) return handoverId;
+  }
 
   if (
-    project.sx_kanban_column_id &&
-    sortedStages.some((s) => String(s.id) === String(project.sx_kanban_column_id))
+    project.sx_kanban_column_id
+    && sortedStages.some((s) => String(s.id) === String(project.sx_kanban_column_id))
   ) {
     return project.sx_kanban_column_id;
   }
@@ -99,12 +131,25 @@ export function resolveColumnId(
       (col) => col.workflow_stage_id && String(col.workflow_stage_id) === String(cid),
     );
     if (wfMatches.length === 1) return wfMatches[0].id;
+    if (wfMatches.length > 1) {
+      const deals = Array.isArray(project.crm_deals) ? project.crm_deals : [];
+      const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
+      const leadColId = primaryDeal?.sx_pipeline_stage_id || null;
+      const ids = new Set(wfMatches.map((m) => String(m.id)));
+      if (project.sx_kanban_column_id && ids.has(String(project.sx_kanban_column_id))) {
+        return project.sx_kanban_column_id;
+      }
+      if (leadColId && ids.has(String(leadColId))) return leadColId;
+      return [...wfMatches].sort((a, b) => a.order_index - b.order_index)[0]?.id || null;
+    }
   }
 
   if (project.sx_won_deal || project.sx_intake) {
     return intake?.id || sortedStages[0]?.id || null;
   }
-  return null;
+
+  // Fallback giống web: không để card mất khỏi board
+  return intake?.id || sortedStages[0]?.id || null;
 }
 
 export type BoardFilters = {
@@ -112,7 +157,10 @@ export type BoardFilters = {
   companyId?: string;
   /** Lọc theo công ty đặt hàng CRM (deal_company_id). */
   dealCompanyId?: string;
-  /** Lọc theo phân loại (workshop_type_id). Chỉ dùng cho pipeline-stages; project lọc client-side. */
+  /**
+   * Lọc theo phân loại (workshop_type_id).
+   * Phải gửi kèm GET /production/projects để BE enrich đúng cột (không gộp pipeline mọi loại).
+   */
   workshopTypeId?: string;
 };
 
@@ -132,6 +180,7 @@ async function fetchAllProjects(noCache = false, filters: BoardFilters = {}): Pr
     if (noCache) params._t = Date.now();
     if (filters.companyId) params.company_id = filters.companyId;
     if (filters.dealCompanyId) params.deal_company_id = filters.dealCompanyId;
+    if (filters.workshopTypeId) params.workshop_type_id = filters.workshopTypeId;
     return params;
   };
   const getPage = async (page: number) => {
@@ -166,10 +215,9 @@ async function fetchAllProjects(noCache = false, filters: BoardFilters = {}): Pr
 /**
  * Tải board đồng bộ với web:
  *  - Cột Kanban từ /production/pipeline-stages (lọc theo companyId + workshopTypeId)
- *  - Dự án đầy đủ (kèm production_person) từ /production/projects (lọc theo companyId)
+ *  - Dự án từ /production/projects (cùng companyId + dealCompanyId + workshopTypeId)
  *  - KPI từ /production/dashboard (best-effort)
  * Resolve cột client-side (giống web) và gắn vào resolved_column_id.
- * Lọc theo phân loại (workshopTypeId) cho project được thực hiện phía client (giống web).
  */
 export async function fetchProductionBoard(noCache = false, filters: BoardFilters = {}): Promise<ProductionBoard> {
   const stageParams: Record<string, unknown> = {};
@@ -182,9 +230,11 @@ export async function fetchProductionBoard(noCache = false, filters: BoardFilter
   if (filters.companyId) dashParams.company_id = filters.companyId;
   if (filters.dealCompanyId) dashParams.deal_company_id = filters.dealCompanyId;
 
+  // Khớp web: luôn gửi workshop_type_id xuống /projects để BE enrich đúng cột theo phân loại.
   const projectFilters: BoardFilters = {
     companyId: filters.companyId,
     dealCompanyId: filters.dealCompanyId,
+    workshopTypeId: filters.workshopTypeId,
   };
 
   const [stageRes, projects, kpis] = await Promise.all([
@@ -207,9 +257,7 @@ export async function fetchProductionBoard(noCache = false, filters: BoardFilter
 
   const resolved = projects.map((p) => ({
     ...p,
-    resolved_column_id: p.sx_kanban_column_id && stages.some((s) => String(s.id) === String(p.sx_kanban_column_id))
-      ? p.sx_kanban_column_id
-      : resolveColumnId(p, stages),
+    resolved_column_id: resolveColumnId(p, stages),
   }));
   return { stages, projects: resolved, kpis };
 }
