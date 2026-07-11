@@ -1310,7 +1310,7 @@ export default function CRMDashboard() {
     }
   }, [pipelineType, pinnedTab]);
 
-  const applyKanbanLoadLimit = useCallback((value) => {
+  const applyKanbanLoadLimit = useCallback((value, { reload = false } = {}) => {
     const normalized = normalizeStoredKanbanLoadLimit(value);
     setKanbanLoadLimit(normalized);
     try {
@@ -1323,6 +1323,10 @@ export default function CRMDashboard() {
       setKanbanLoadCustomOpen(true);
     } else {
       setKanbanLoadCustomOpen(false);
+    }
+    // «Tất cả» / đổi trần lớn: tải lại ngay (tránh chỉ đổi cap mà vẫn giữ 500 thẻ cũ).
+    if (reload || normalized === 'all') {
+      void loadRef.current?.({ silent: true, kanbanLoadLimitOverride: normalized });
     }
   }, []);
 
@@ -2847,9 +2851,16 @@ export default function CRMDashboard() {
         return common;
       };
 
+      const effectiveKanbanLoadLimit = opts?.kanbanLoadLimitOverride != null
+        ? normalizeStoredKanbanLoadLimit(opts.kanbanLoadLimitOverride)
+        : kanbanLoadLimit;
       const fetchKanbanRows = (type, offset = 0) => {
+        // «Tất cả»: tải hết theo vòng lặp API (không chỉ 500 bản ghi đầu).
+        if (String(effectiveKanbanLoadLimit ?? '').trim().toLowerCase() === 'all' && offset === 0) {
+          return fetchCrmKanbanRowsPage(api, buildKanbanCommon(type), { loadAll: true });
+        }
         const loaded = type === 'lead' ? allLeads.length : allDeals.length;
-        const limit = resolveKanbanBatchLimit(kanbanLoadLimit, offset, offset > 0 ? loaded : 0);
+        const limit = resolveKanbanBatchLimit(effectiveKanbanLoadLimit, offset, offset > 0 ? loaded : 0);
         return fetchCrmKanbanRowsPage(api, buildKanbanCommon(type), { offset, limit });
       };
 
@@ -2867,7 +2878,7 @@ export default function CRMDashboard() {
       const activeType = onlyType || (pipelineType === 'deal' ? 'deal' : 'lead');
       const inactiveType = activeType === 'lead' ? 'deal' : 'lead';
       const emptyDash = { pipeline: [], kpis: {}, ledger_net_by_lead: {}, recent_quotations: [], recent_orders: [] };
-      const loadAllKanban = String(kanbanLoadLimit ?? '').trim().toLowerCase() === 'all';
+      const loadAllKanban = String(effectiveKanbanLoadLimit ?? '').trim().toLowerCase() === 'all';
       const canUseBootstrap =
         !crmDashboardUsesLegacyListFilters({ filterLeadType, filterReferrer, filterCustomerCompany })
         && !loadAllKanban;
@@ -5670,7 +5681,7 @@ export default function CRMDashboard() {
                   <div className="my-3 border-t border-gray-100" />
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">Giới hạn tải Kanban</p>
                   <p className="text-[11px] text-gray-500 leading-snug mb-2">
-                    Trần số lead/deal tự tải khi cuộn. Mỗi lần gọi API tối đa {KANBAN_PAGE_SIZE.toLocaleString('vi-VN')} bản ghi.
+                    Trần số lead/deal tự tải khi cuộn. Chọn «Tất cả» sẽ tải lại toàn bộ (tối đa {KANBAN_LOAD_ALL_MAX.toLocaleString('vi-VN')}). Mỗi lần gọi API tối đa {KANBAN_PAGE_SIZE.toLocaleString('vi-VN')} bản ghi.
                   </p>
                   <div className="grid grid-cols-3 gap-1">
                     {KANBAN_LOAD_PRESET_VALUES.map((v) => (
@@ -6642,7 +6653,7 @@ export default function CRMDashboard() {
                     </span>
                   )}
                   <button
-                    onClick={() => { applyKanbanLoadLimit('all'); void load({ silent: true }); }}
+                    onClick={() => { applyKanbanLoadLimit('all', { reload: true }); }}
                     className="h-8 px-3 border border-gray-200 bg-white text-xs text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
                   >
                     Tải tất cả
@@ -6653,7 +6664,7 @@ export default function CRMDashboard() {
                 <div className="flex items-center justify-center gap-3 py-2 border-t border-gray-100 bg-amber-50/40 rounded-b-xl text-xs text-amber-800">
                   <span>Đã tải {kanbanScrollLoad.loaded.toLocaleString()} / {kanbanScrollLoad.total.toLocaleString()} (giới hạn {kanbanScrollLoad.cap.toLocaleString()})</span>
                   <button
-                    onClick={() => { applyKanbanLoadLimit('all'); void load({ silent: true }); }}
+                    onClick={() => { applyKanbanLoadLimit('all', { reload: true }); }}
                     className="h-7 px-2.5 border border-amber-200 bg-white rounded-lg hover:bg-amber-50"
                   >
                     Tải tất cả

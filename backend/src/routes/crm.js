@@ -56,6 +56,7 @@ const {
   fetchCrmLeadCommentNotifyUserIds,
   notifyDealCommentMentions,
   notifyDealCommentParticipants,
+  postCrmStageDefaultAssigneeComment,
 } = require('../helpers/dealCommentNotifications');
 const { fetchLeadCommentAudienceMembers } = require('../helpers/crmLeadCommentAudience');
 const { userCanAccessCrmLeadAsParticipant, userCanAccessCrmLeadViaVisibility } = require('../helpers/crmLeadParticipantAccess');
@@ -10549,13 +10550,23 @@ r.patch('/leads/:id/stage', async (req, res) => {
       updates.kanban_deadline_at = null;
       updates.kanban_deadline_reason = null;
     }
+    let stageAssigneeTransfer = null;
     if (isStageChange) {
+      const prevAssigneeId = String(lead?.assigned_to || lead?.lead_owner_id || '').trim() || null;
       await mergeCrmStageDefaultAssigneeIntoUpdates(updates, {
         stage,
         lead,
         isStageChange: true,
         sb: supabase,
       });
+      const newAssigneeId = updates.assigned_to ? String(updates.assigned_to).trim() : null;
+      if (newAssigneeId && newAssigneeId !== prevAssigneeId) {
+        stageAssigneeTransfer = {
+          prevAssigneeId,
+          newAssigneeId,
+          stageName: stage?.name || '',
+        };
+      }
     }
     // Bàn giao SX: khóa người phụ trách CRM — NV xưởng gán qua project_production_staff sau auto-create.
     stripCrmAssigneeFromWonStageUpdates(updates, {
@@ -10563,6 +10574,9 @@ r.patch('/leads/:id/stage', async (req, res) => {
       isWon: !!stage?.is_won,
       requiresProductionPick,
     });
+    if (stageAssigneeTransfer && !updates.assigned_to) {
+      stageAssigneeTransfer = null;
+    }
     if (stage?.is_lost) {
       updates.lost_reason = lost_reason || null;
       updates.actual_close_date = new Date().toISOString().split('T')[0];
@@ -10588,6 +10602,24 @@ r.patch('/leads/:id/stage', async (req, res) => {
     }
     if (error) throw error;
     let responseLead = updatedLeadRow;
+
+    if (stageAssigneeTransfer) {
+      const appliedId = String(updatedLeadRow?.assigned_to || updatedLeadRow?.lead_owner_id || '').trim();
+      if (appliedId === stageAssigneeTransfer.newAssigneeId) {
+        try {
+          await postCrmStageDefaultAssigneeComment(req, notifyMultiple, {
+            leadId: req.params.id,
+            senderId: req.user.userId,
+            newAssigneeId: stageAssigneeTransfer.newAssigneeId,
+            previousAssigneeId: stageAssigneeTransfer.prevAssigneeId,
+            stageName: stageAssigneeTransfer.stageName,
+            leadType: lead?.type,
+          });
+        } catch (assigneeCommentErr) {
+          console.warn('[crm/stage] postCrmStageDefaultAssigneeComment:', assigneeCommentErr.message);
+        }
+      }
+    }
 
     // Bổ sung nhiệm vụ CRM thiếu theo bộ mẫu của cột đích (chỉ thêm phần chưa có).
     if (isStageChange && stage_id) {

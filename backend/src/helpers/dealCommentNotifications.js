@@ -382,6 +382,98 @@ async function postSxTransferMentionComment(req, notifyMultiple, {
   return row;
 }
 
+/**
+ * Bình luận CRM khi lead/deal vào cột pipeline có bật «Chuyển người phụ trách».
+ */
+async function postCrmStageDefaultAssigneeComment(req, notifyMultiple, {
+  leadId,
+  senderId,
+  newAssigneeId,
+  previousAssigneeId = null,
+  stageName = '',
+  leadType = 'lead',
+}) {
+  if (!leadId || !senderId || !newAssigneeId) return null;
+
+  const { data: senderRow } = await supabase
+    .from('users')
+    .select('id, full_name, avatar')
+    .eq('id', senderId)
+    .maybeSingle();
+  const senderName = senderRow?.full_name || req.user?.fullName || 'Hệ thống';
+
+  const userIds = [newAssigneeId, previousAssigneeId].filter(Boolean);
+  const { data: users } = userIds.length
+    ? await supabase.from('users').select('id, full_name').in('id', [...new Set(userIds.map(String))])
+    : { data: [] };
+  const userMap = new Map((users || []).map((u) => [String(u.id), String(u.full_name || '').trim()]));
+
+  const newName = userMap.get(String(newAssigneeId)) || 'NV mới';
+  const mentionText = `@${newName}`;
+  const stagePart = stageName ? ` «${stageName}»` : '';
+  const entityLabel = leadType === 'deal' ? 'deal' : 'lead';
+  const prevName = previousAssigneeId ? (userMap.get(String(previousAssigneeId)) || '') : '';
+
+  let body;
+  if (prevName && String(previousAssigneeId) !== String(newAssigneeId)) {
+    body = `👤 ${senderName} đã chuyển người phụ trách từ ${prevName} sang ${mentionText} khi kéo ${entityLabel} vào cột${stagePart}.`;
+  } else {
+    body = `👤 ${senderName} đã chuyển người phụ trách sang ${mentionText} khi kéo ${entityLabel} vào cột${stagePart}.`;
+  }
+
+  const { data, error } = await supabase
+    .from('crm_lead_comments')
+    .insert({ lead_id: leadId, user_id: senderId, body })
+    .select('id, lead_id, user_id, parent_id, body, attachments, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
+    .single();
+  if (error) {
+    console.warn('[postCrmStageDefaultAssigneeComment] insert:', error.message);
+    return null;
+  }
+
+  const row = {
+    ...data,
+    attachments: data.attachments || [],
+    reactions: { summary: [], mine: null },
+  };
+
+  const io = req.app?.get?.('io');
+  if (io) {
+    io.to(`lead:${leadId}`).emit('lead:comment', { lead_id: leadId, action: 'created', comment: row });
+  }
+
+  try {
+    const leadMembers = await fetchLeadMentionMembers(supabase, leadId);
+    const mentionIds = resolveLeadCommentMentionIds(
+      { mention_user_ids: [String(newAssigneeId)] },
+      body,
+      leadMembers,
+      senderId,
+    );
+    const notifyIds = await fetchCrmLeadCommentNotifyUserIds(supabase, leadId);
+
+    await notifyDealCommentParticipants(req, notifyMultiple, leadId, senderId, row, notifyIds, mentionIds);
+
+    if (mentionIds.length) {
+      await notifyDealCommentMentions(req, notifyMultiple, leadId, senderId, row, mentionIds);
+      const activityRow = await logLeadCommentMentionActivity(supabase, {
+        leadId,
+        senderId,
+        commentRow: row,
+        mentionIds,
+        members: leadMembers,
+      });
+      if (io && activityRow) {
+        io.to(`lead:${leadId}`).emit('lead:activity', { lead_id: leadId, activity: activityRow });
+      }
+    }
+  } catch (notifyErr) {
+    console.warn('[postCrmStageDefaultAssigneeComment] notify:', notifyErr?.message || notifyErr);
+  }
+
+  return row;
+}
+
 module.exports = {
   loadDealCommentContext,
   resolveDealByProjectId,
@@ -392,4 +484,5 @@ module.exports = {
   notifyDealCommentParticipants,
   notifyProjectCommentParticipants,
   postSxTransferMentionComment,
+  postCrmStageDefaultAssigneeComment,
 };

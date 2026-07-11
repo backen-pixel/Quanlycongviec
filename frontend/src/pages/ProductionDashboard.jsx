@@ -76,6 +76,7 @@ import { getCrmDeadlineUrgencyFromIso, getCrmDeadlineUrgencyBadgeClass } from '.
 import { showCopyToast } from '../lib/copyToast';
 import SearchInlineFilterChips, { SearchClearButton } from '../components/SearchInlineFilterChips';
 import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
+import AnchoredDropdownMenu from '../components/AnchoredDropdownMenu';
 
 const INTAKE_BUCKET = 'won_pending';
 
