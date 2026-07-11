@@ -143,17 +143,54 @@ function stageById(stages: KanbanStage[], colId?: string | null): KanbanStage | 
   return stages.find((s) => String(s.id) === String(colId));
 }
 
-/** Đã bàn giao / đang vận chuyển (khớp web `projectIsShipped`). */
-function isShipped(p: ProductionProject): boolean {
-  return VC_SHIPPED_STATUSES.has(String(p.status || ''));
+function projectColumnId(p: ProductionProject): string | null {
+  return p.resolved_column_id ?? p.sx_kanban_column_id ?? null;
 }
 
-/** Ở cột bàn giao VC, chưa vận chuyển (khớp web `projectIsAwaitingDelivery`). */
+/** Đã bàn giao / đang vận chuyển — khớp web `projectIsShipped`. */
+function isShipped(p: ProductionProject): boolean {
+  return VC_SHIPPED_STATUSES.has(String(p.status || ''))
+    || Boolean(p.logistics_company_id);
+}
+
+/** Ở cột bàn giao VC, chưa vận chuyển — khớp web `projectIsAwaitingDelivery`. */
 function isAwaitingDelivery(p: ProductionProject, stages: KanbanStage[]): boolean {
   if (isShipped(p)) return false;
-  const colId = p.resolved_column_id ?? p.sx_kanban_column_id;
-  const col = stageById(stages, colId);
+  const col = stageById(stages, projectColumnId(p));
   return Boolean(col?.is_handover_to_logistics);
+}
+
+function countsAsCompletedRevenue(p: ProductionProject, stages: KanbanStage[]): boolean {
+  const completedCols = stages.filter(
+    (s) => s.bucket_slug !== INTAKE_BUCKET && s.counts_as_completed_revenue,
+  );
+  if (completedCols.length) {
+    const colId = String(projectColumnId(p) || '');
+    return completedCols.some((s) => String(s.id) === colId);
+  }
+  return String(p.status || '') === 'completed';
+}
+
+function countsAsCollectedRevenue(p: ProductionProject, stages: KanbanStage[]): boolean {
+  const colId = String(projectColumnId(p) || '');
+  if (!colId) return false;
+  return stages.some(
+    (s) => s.bucket_slug !== INTAKE_BUCKET
+      && s.counts_as_collected_revenue
+      && String(s.id) === colId,
+  );
+}
+
+/** Đang sản xuất — khớp web `projectIsProducing`. */
+function isProducing(p: ProductionProject, stages: KanbanStage[]): boolean {
+  if (p.sx_intake) return false;
+  if (isShipped(p)) return false;
+  if (isAwaitingDelivery(p, stages)) return false;
+  if (countsAsCompletedRevenue(p, stages)) return false;
+  if (countsAsCollectedRevenue(p, stages)) return false;
+  const col = stageById(stages, projectColumnId(p));
+  if (col?.bucket_slug === INTAKE_BUCKET) return false;
+  return true;
 }
 
 function isToday(value?: string | null): boolean {
@@ -804,18 +841,15 @@ export default function KanbanScreen() {
 
   const statPills = useMemo(() => {
     const list = filteredProjects;
-    const intakeStage = stages.find((s) => s.bucket_slug === INTAKE_BUCKET);
-    const handoverStage = stages.find((s) => s.is_handover_to_logistics);
-    const producing = list.filter((p) => {
-      const col = p.resolved_column_id;
-      if (!col || col === intakeStage?.id || col === handoverStage?.id) return false;
-      if (isShipped(p) || isAwaitingDelivery(p, stages)) return false;
-      return p.status === 'producing' || !['completed'].includes(String(p.status || ''));
-    }).length;
+    const producing = list.filter((p) => isProducing(p, stages)).length;
     const awaitingDelivery = list.filter((p) => isAwaitingDelivery(p, stages)).length;
     const shipped = list.filter((p) => isShipped(p)).length;
-    const completed = list.filter((p) => p.status === 'completed').length;
-    const intake = list.filter((p) => p.resolved_column_id === intakeStage?.id || p.sx_intake).length;
+    const completed = list.filter((p) => countsAsCompletedRevenue(p, stages) || p.status === 'completed').length;
+    const intake = list.filter((p) => {
+      if (p.sx_intake) return true;
+      const col = stageById(stages, projectColumnId(p));
+      return col?.bucket_slug === INTAKE_BUCKET;
+    }).length;
     const overdue = list.filter((p) => p.is_overdue).length;
     return [
       { label: 'Tổng', value: list.length, color: colors.text },
@@ -826,7 +860,7 @@ export default function KanbanScreen() {
       { label: 'Kế hoạch', value: intake, color: colors.textMuted },
       ...(overdue > 0 ? [{ label: 'Quá hạn', value: overdue, color: colors.danger }] : []),
     ];
-  }, [filteredProjects, stages]);
+  }, [filteredProjects, stages, colors]);
 
   if (loading) {
     return (

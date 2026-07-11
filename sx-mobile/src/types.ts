@@ -9,6 +9,8 @@ export type KanbanStage = {
   workflow_stage_id?: string | null;
   workshop_type_id?: string | null;
   is_handover_to_logistics?: boolean;
+  counts_as_completed_revenue?: boolean;
+  counts_as_collected_revenue?: boolean;
   count?: number;
   total_value?: number;
 };
@@ -44,6 +46,7 @@ export type ProductionProject = {
   company_name?: string | null;
   company_id?: string | null;
   workshop_type_name?: string | null;
+  logistics_company_id?: string | null;
   region_id?: string | null;
   region_name?: string | null;
   /** Deal CRM gắn dự án — dùng lọc công ty đặt hàng ngoài (ext:) + resolve cột. */
