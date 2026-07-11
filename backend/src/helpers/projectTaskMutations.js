@@ -121,15 +121,17 @@ async function updateProjectTask(req, taskId, body) {
   if (update.status === 'done') update.completed_at = new Date().toISOString();
   if (update.status === 'in_progress' && !b.start_date) update.start_date = new Date().toISOString();
 
-  const { data: old } = await supabase.from('tasks').select('status,assignee_id,title,created_by_id,project_id').eq('id', taskId).single();
+  const { data: old, error: oldErr } = await supabase.from('tasks').select('status,assignee_id,title,created_by_id,project_id').eq('id', taskId).maybeSingle();
+  if (oldErr) return { error: oldErr.message, status: 500 };
   if (!old) return { error: 'Không tìm thấy nhiệm vụ', status: 404 };
 
-  let { data, error } = await supabase.from('tasks').update(update).eq('id', taskId).select().single();
+  let { data, error } = await supabase.from('tasks').update(update).eq('id', taskId).select().maybeSingle();
   if (error && /(blocks_stage_advance|production_stage_id|notes)/i.test(String(error.message || ''))) {
     const { blocks_stage_advance: _b, production_stage_id: _p, notes: _n, ...legacy } = update;
-    ({ data, error } = await supabase.from('tasks').update(legacy).eq('id', taskId).select().single());
+    ({ data, error } = await supabase.from('tasks').update(legacy).eq('id', taskId).select().maybeSingle());
   }
   if (error) return { error: error.message, status: 500 };
+  if (!data) return { error: 'Không cập nhật được nhiệm vụ', status: 500 };
 
   // Client cũ (PUT notes) → append task_comments thay vì cột tasks.notes
   const noteText = b.notes != null ? String(b.notes).trim() : '';

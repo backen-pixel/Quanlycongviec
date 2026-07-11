@@ -395,8 +395,9 @@ r.post('/:id/comments', async (req, res) => {
     const { data, error } = await supabase.from('task_comments').insert({
       task_id: req.params.id, user_id: req.user.userId, content,
       attachments: req.body.attachments || [],
-    }).select('*, user:users(id,full_name,avatar)').single();
+    }).select('*, user:users!task_comments_user_id_fkey(id,full_name,avatar)').maybeSingle();
     if (error) throw error;
+    if (!data) return res.status(500).json({ error: 'Không lưu được ghi chú' });
 
     // Save file attachments
     if (req.body.attachments?.length) {
@@ -411,7 +412,7 @@ r.post('/:id/comments', async (req, res) => {
     }
 
     // Notify assignee, creator & all participants
-    const { data: task } = await supabase.from('tasks').select('assignee_id,created_by_id,title,project_id').eq('id', req.params.id).single();
+    const { data: task } = await supabase.from('tasks').select('assignee_id,created_by_id,title,project_id').eq('id', req.params.id).maybeSingle();
     const { data: participants } = await supabase.from('task_participants').select('user_id').eq('task_id', req.params.id);
     if (task) {
       const allIds = [task.assignee_id, task.created_by_id, ...(participants || []).map(p => p.user_id)];

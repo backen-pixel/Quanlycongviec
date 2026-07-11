@@ -15385,8 +15385,14 @@ r.put('/leads/:leadId/tasks/:taskId/notes', async (req, res) => {
     const { data, error } = await supabase.from('crm_tasks')
       .update({ notes, updated_at: new Date().toISOString() })
       .eq('id', req.params.taskId)
-      .select('id, title, notes, stage_slug, default_allowed_companies, default_allowed_departments, shared_to_project, allowed_share_modules').single();
+      .select('id, title, notes, stage_slug, default_allowed_companies, default_allowed_departments, shared_to_project, allowed_share_modules')
+      .maybeSingle();
     if (error) throw error;
+    if (!data) {
+      return res.status(404).json({
+        error: 'Không tìm thấy nhiệm vụ CRM. Nhiệm vụ VC/LĐ xưởng hãy dùng ghi chú /tasks/:id/comments.',
+      });
+    }
     const vis = getTaskVisibilityAllowlist(data);
 
     // Sync: upsert ghi chú vào lead_documents
@@ -15394,7 +15400,7 @@ r.put('/leads/:leadId/tasks/:taskId/notes', async (req, res) => {
     if (notes?.trim()) {
       try {
         const { data: leadForSync } = await supabase.from('crm_leads')
-          .select('project_id, company_id').eq('id', req.params.leadId).single();
+          .select('project_id, company_id').eq('id', req.params.leadId).maybeSingle();
         const taskDocOpts = {
           linkToProject: !!leadForSync?.project_id,
           leadCompanyId: leadForSync?.company_id || null,
@@ -15404,7 +15410,8 @@ r.put('/leads/:leadId/tasks/:taskId/notes', async (req, res) => {
           .select('id')
           .eq('task_id', req.params.taskId)
           .eq('doc_type', 'task_inline_note')
-          .limit(1).single();
+          .limit(1)
+          .maybeSingle();
         
         if (existingAtt) {
           // Update existing

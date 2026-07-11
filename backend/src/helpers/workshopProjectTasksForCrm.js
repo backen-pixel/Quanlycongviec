@@ -43,6 +43,7 @@ function mapWorkshopProjectTaskToCrmTask(task, leadId, projectMeta = {}) {
     note_count: 0,
     attachment_count: 0,
     _workshop_project_task: true,
+    source: 'workshop',
     metadata: meta,
   };
 }

@@ -132,7 +132,8 @@ export default function ProjectCrmTaskRow({
   onDeleted,
 }: Props) {
   const { colors } = useTheme();
-  const isWorkshop = task.source === 'workshop';
+  const isWorkshop = task.source === 'workshop'
+    || String(task.stage_slug || '').startsWith('vc_ws_');
   const done = isTaskDone(task.status);
   const assignees = taskAssignees(task);
   const assignee = assignees[0] || null;

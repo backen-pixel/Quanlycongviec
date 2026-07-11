@@ -251,7 +251,21 @@ export async function fetchCrmDealTasks(dealId: string): Promise<CrmTask[]> {
     params: { task_scope: 'logistics' },
   });
   const list = Array.isArray(data) ? data : [];
-  return list.map((row) => ({ ...mapCrmTask(row as Record<string, unknown>), source: 'crm' as const }));
+  return list.map((row) => {
+    const raw = row as Record<string, unknown>;
+    const meta = raw.metadata && typeof raw.metadata === 'object'
+      ? (raw.metadata as Record<string, unknown>)
+      : {};
+    // API CRM có thể trả nhiệm vụ bảng `tasks` (bộ mẫu VC) — không phải crm_tasks
+    const isWorkshopRow = raw._workshop_project_task === true
+      || meta.workshop_area === 'logistics'
+      || meta.workshop_module === 'logistics'
+      || String(raw.stage_slug || '').startsWith('vc_ws_');
+    return {
+      ...mapCrmTask(raw),
+      source: isWorkshopRow ? 'workshop' as const : 'crm' as const,
+    };
+  });
 }
 
 const VC_WORKSHOP_STAGE_LABEL: Record<string, string> = {

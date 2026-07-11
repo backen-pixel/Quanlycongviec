@@ -75,8 +75,13 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         fetchLogisticsWorkshopTasks(projectId),
         fetchProjectActivities(projectId),
       ]);
-      // Ưu tiên crm_tasks VC; nếu trống dùng nhiệm vụ bộ mẫu logistics trên dự án
-      setTasks(crmTasks.length ? crmTasks : workshopTasks);
+      // Ưu tiên nhiệm vụ bộ mẫu logistics trên dự án (bảng tasks).
+      // CRM API đôi khi trả cùng bộ đó nhưng thiếu source=workshop → ghi chú/file sẽ sai bảng.
+      const crmWorkshop = crmTasks.filter((t) => t.source === 'workshop');
+      const crmOnly = crmTasks.filter((t) => t.source !== 'workshop');
+      if (workshopTasks.length) setTasks(workshopTasks);
+      else if (crmWorkshop.length) setTasks(crmWorkshop);
+      else setTasks(crmOnly);
       setActivities(actRows);
     } catch (e) {
       setErr(formatApiError(e));
