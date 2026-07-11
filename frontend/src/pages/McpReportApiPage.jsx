@@ -5,7 +5,7 @@ import UserSelect from '../components/UserSelect';
 import {
   ArrowLeft, Bot, Check, Copy, Key, RefreshCw, Shield, Code2, Send,
   CheckCircle2, ChevronDown, ChevronRight, ExternalLink, ListTree, Plus,
-  ToggleLeft, ToggleRight, Trash2,
+  ToggleLeft, ToggleRight, Trash2, Plug,
 } from 'lucide-react';
 
 const PUBLIC_API_ORIGIN = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '') || window.location.origin;
@@ -60,6 +60,56 @@ function filterBcReportUsers(list, companyId) {
     out = out.filter((u) => !u.company_id || String(u.company_id) === String(companyId));
   }
   return out.sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
+}
+
+function ConnectorField({ label, value, placeholder, optional, onCopy, copied, copyKey }) {
+  const empty = !value || String(value).startsWith('(');
+  return (
+    <div>
+      <label className="text-xs font-medium text-gray-700 block mb-1">
+        {label}
+        {optional && <span className="text-gray-400 font-normal ml-1">(optional)</span>}
+      </label>
+      <div className="flex gap-2">
+        <div
+          className={`flex-1 min-h-9 px-3 py-2 border rounded-lg text-sm break-all ${
+            empty ? 'bg-gray-50 border-gray-200 text-gray-400 italic font-sans' : 'bg-white border-gray-200 text-gray-900 font-mono'
+          }`}
+        >
+          {value || placeholder}
+        </div>
+        {!empty && onCopy && (
+          <button
+            type="button"
+            onClick={() => onCopy(value, copyKey)}
+            className="h-9 px-3 shrink-0 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-[10px] font-medium flex items-center gap-1 cursor-pointer transition"
+          >
+            {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+            {copied ? 'Đã copy' : 'Copy'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function buildClaudeConnectorPaste({ name, url, headers }) {
+  const lines = [
+    '=== Claude.ai — Add custom connector ===',
+    '',
+    `Name: ${name}`,
+    `Remote MCP server URL: ${url}`,
+    '',
+    'Advanced settings (OAuth):',
+    'OAuth Client ID: (để trống)',
+    'OAuth Client Secret: (để trống)',
+    '',
+    'Request headers:',
+    ...Object.entries(headers).map(([k, v]) => `${k}: ${v}`),
+    '',
+    'Lưu ý: QLCV xác thực bằng API key (header X-Api-Key), không dùng OAuth.',
+  ];
+  return lines.join('\n');
 }
 
 function CodeBlock({ code, lang = 'bash' }) {
@@ -175,6 +225,7 @@ export default function McpReportApiPage() {
   const [error, setError] = useState('');
   const [mcpSessionId, setMcpSessionId] = useState('');
   const [mcpClientId, setMcpClientId] = useState(() => getOrCreateMcpClientId());
+  const [showClaudeAdvanced, setShowClaudeAdvanced] = useState(true);
 
   const loadData = async () => {
     setLoading(true);
@@ -475,6 +526,23 @@ export default function McpReportApiPage() {
 
   const displayKey = keySecret || newKeyValue || (selectedKey?.preview || 'YOUR_API_KEY');
 
+  const claudeConnectorName = useMemo(() => {
+    if (selectedKey?.name) return `QLCV — ${selectedKey.name}`;
+    return 'QLCV — Báo cáo CRM';
+  }, [selectedKey?.name]);
+
+  const claudeRequestHeaders = useMemo(() => {
+    const headers = {
+      Accept: 'application/json, text/event-stream',
+      'MCP-Protocol-Version': MCP_PROTOCOL,
+    };
+    if (keySecret) headers['X-Api-Key'] = keySecret;
+    if (actAsUserId) headers['X-User-Id'] = actAsUserId;
+    return headers;
+  }, [keySecret, actAsUserId]);
+
+  const claudeConnectorReady = Boolean(keySecret && actAsUserId);
+
   const createFormBcUsers = useMemo(
     () => filterBcReportUsers(users, createForm.company_id || null),
     [users, createForm.company_id],
@@ -499,7 +567,7 @@ export default function McpReportApiPage() {
             MCP API — Báo cáo tổ chức
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            MCP server chuẩn (Streamable HTTP) — báo cáo «Theo tổ chức» cho OpenClaw / Cursor / Claude Desktop.
+            MCP server chuẩn (Streamable HTTP) — báo cáo «Theo tổ chức» cho Claude.ai / OpenClaw / Cursor.
           </p>
         </div>
       </div>
@@ -781,6 +849,138 @@ export default function McpReportApiPage() {
         {!loading && keys.length === 0 && !showCreateForm && (
           <p className="text-sm text-gray-400 text-center py-4">Chưa có key — bấm «Tạo key MCP» để bắt đầu.</p>
         )}
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100 bg-gradient-to-b from-gray-50 to-white">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+                <Plug className="h-4 w-4 text-violet-600" />
+                Kết nối Claude.ai
+                <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Beta</span>
+              </h2>
+              <p className="text-xs text-gray-500 mt-1 max-w-xl">
+                Điền form <strong>Add custom connector</strong> trong Claude (Settings → Connectors).
+                Chọn key + user act-as ở trên, rotate key nếu chưa có access token.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => copyText(
+                buildClaudeConnectorPaste({
+                  name: claudeConnectorName,
+                  url: MCP_ENDPOINT,
+                  headers: claudeRequestHeaders,
+                }),
+                'claude_all',
+              )}
+              disabled={!claudeConnectorReady}
+              className="h-8 px-3 shrink-0 bg-violet-600 hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-[10px] font-medium flex items-center gap-1 cursor-pointer transition"
+            >
+              {copiedId === 'claude_all' ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              Copy tất cả
+            </button>
+          </div>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {!claudeConnectorReady && (
+            <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              {!selectedKeyId && 'Chọn API key ở mục trên. '}
+              {selectedKeyId && !keySecret && 'Bấm Rotate / copy Access để có token thật. '}
+              {!actAsUserId && 'Chọn user act-as (X-User-Id) có quyền báo cáo tổ chức.'}
+            </div>
+          )}
+
+          <ConnectorField
+            label="Name"
+            value={claudeConnectorName}
+            onCopy={copyText}
+            copied={copiedId === 'claude_name'}
+            copyKey="claude_name"
+          />
+
+          <ConnectorField
+            label="Remote MCP server URL"
+            value={MCP_ENDPOINT}
+            onCopy={copyText}
+            copied={copiedId === 'claude_url'}
+            copyKey="claude_url"
+          />
+
+          <div>
+            <button
+              type="button"
+              onClick={() => setShowClaudeAdvanced((v) => !v)}
+              className="flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-gray-900 cursor-pointer"
+            >
+              {showClaudeAdvanced ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              Advanced settings
+            </button>
+            {showClaudeAdvanced && (
+              <div className="mt-3 space-y-3 pl-1 border-l-2 border-gray-100 ml-1.5 pl-4">
+                <ConnectorField
+                  label="OAuth Client ID"
+                  optional
+                  value="(để trống)"
+                  placeholder="(để trống)"
+                />
+                <ConnectorField
+                  label="OAuth Client Secret"
+                  optional
+                  value="(để trống)"
+                  placeholder="(để trống)"
+                />
+                <p className="text-[10px] text-gray-500">
+                  QLCV dùng <strong>API key</strong> (không OAuth). Không điền OAuth — dùng Request headers bên dưới.
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-violet-100 bg-violet-50/40 p-4 space-y-3">
+            <p className="text-xs font-semibold text-violet-900">Request headers</p>
+            <p className="text-[10px] text-violet-800">
+              Trong dialog Claude, thêm từng header (hoặc dùng mục tương đương).{' '}
+              <code className="bg-violet-100 px-1 rounded">Authorization</code> không dùng — gửi qua{' '}
+              <code className="bg-violet-100 px-1 rounded">X-Api-Key</code>.
+            </p>
+            <div className="space-y-2">
+              {Object.entries(claudeRequestHeaders).map(([headerName, headerValue]) => (
+                <div key={headerName} className="flex items-center gap-2 text-xs">
+                  <code className="shrink-0 w-40 sm:w-48 text-[11px] text-gray-600 font-mono">{headerName}</code>
+                  <code className="flex-1 min-w-0 truncate bg-white border border-gray-200 rounded-lg px-2 py-1.5 font-mono text-[11px] text-gray-800" title={headerValue}>
+                    {headerName === 'X-Api-Key' && headerValue
+                      ? `${headerValue.slice(0, 10)}…${headerValue.slice(-6)}`
+                      : headerValue}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => copyText(headerValue, `claude_h_${headerName}`)}
+                    disabled={!headerValue}
+                    className="h-7 px-2 shrink-0 bg-white border border-gray-200 hover:bg-gray-50 rounded-lg text-[10px] cursor-pointer disabled:opacity-40"
+                  >
+                    {copiedId === `claude_h_${headerName}` ? '✓' : 'Copy'}
+                  </button>
+                </div>
+              ))}
+              {!keySecret && (
+                <p className="text-[10px] text-amber-700">Thiếu X-Api-Key — rotate key để lấy access token.</p>
+              )}
+              {!actAsUserId && (
+                <p className="text-[10px] text-amber-700">Thiếu X-User-Id — chọn user act-as trong phần Test hoặc khi tạo key.</p>
+              )}
+            </div>
+          </div>
+
+          <ol className="text-[11px] text-gray-600 space-y-1 list-decimal list-inside">
+            <li>Claude → <strong>Settings</strong> → <strong>Connectors</strong> → <strong>Add custom connector</strong></li>
+            <li>Copy <strong>Name</strong> và <strong>Remote MCP server URL</strong> vào form</li>
+            <li>OAuth để trống; thêm <strong>Request headers</strong> như bảng trên</li>
+            <li>Bấm <strong>Add</strong>, sau đó bật connector trong cuộc hội thoại</li>
+          </ol>
+        </div>
       </div>
 
       <div className="bg-white rounded-xl border p-5 space-y-3">

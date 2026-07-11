@@ -65,6 +65,10 @@ const { generateFlowTasks, generateStepTasks } = require('../helpers/generateFlo
 const { autoCreateProjectFromWonDeal } = require('../helpers/autoDealWonProject');
 const { isCrmDealAssigneeLocked, stripCrmAssigneeFromWonStageUpdates } = require('../helpers/crmDealAssigneeLock');
 const {
+  normalizeCrmStageDefaultAssigneeUserId,
+  mergeCrmStageDefaultAssigneeIntoUpdates,
+} = require('../helpers/crmPipelineStageAssignee');
+const {
   syncCrmLeadSxPipelineFromProject,
   syncSxKanbanFromCrmProductionStage,
   emitCrmBadgeUpdateForProject,
@@ -4833,6 +4837,8 @@ r.post('/pipelines/:id/copy', async (req, res) => {
         send_zalo_on_enter: !!s.send_zalo_on_enter,
         create_event_on_enter: !!s.create_event_on_enter,
         sync_role: s.sync_role || null,
+        apply_default_assignee_on_enter: !!s.apply_default_assignee_on_enter,
+        default_assignee_user_id: s.default_assignee_user_id || null,
         default_probability: s.default_probability != null && s.default_probability !== '' ? s.default_probability : null,
         description: s.description != null && String(s.description).trim() !== '' ? String(s.description).trim() : null,
         counts_as_won_revenue: !!s.counts_as_won_revenue,
@@ -4971,6 +4977,9 @@ r.post('/pipeline-stages', async (req, res) => {
       b.description != null && String(b.description).trim() !== ''
         ? String(b.description).trim()
         : null;
+    if (b.apply_default_assignee_on_enter && !normalizeCrmStageDefaultAssigneeUserId(b.default_assignee_user_id)) {
+      return res.status(400).json({ error: 'Chọn người phụ trách trước khi bật «Chuyển người phụ trách».' });
+    }
     const slaInsert =
       b.sla_days !== undefined ? normalizePipelineStageSlaDaysForDb(b.sla_days) : undefined;
     const insertObj = {
@@ -4980,6 +4989,8 @@ r.post('/pipeline-stages', async (req, res) => {
       send_zalo_on_enter: !!b.send_zalo_on_enter,
       create_event_on_enter: !!b.create_event_on_enter,
       sync_role: b.sync_role || null,
+      apply_default_assignee_on_enter: !!b.apply_default_assignee_on_enter,
+      default_assignee_user_id: normalizeCrmStageDefaultAssigneeUserId(b.default_assignee_user_id) ?? null,
       default_probability: defaultProbability,
       description: stageDesc,
       ...(b.requires_deadline !== undefined ? { requires_deadline: !!b.requires_deadline } : {}),
@@ -5003,6 +5014,11 @@ r.post('/pipeline-stages', async (req, res) => {
     }
     if (error && /allow_revert_to_lead/.test(error.message || '')) {
       delete insertObj.allow_revert_to_lead;
+      ({ data, error } = await supabase.from('crm_pipeline_stages').insert(insertObj).select().single());
+    }
+    if (error && /apply_default_assignee_on_enter|default_assignee_user_id/.test(error.message || '')) {
+      delete insertObj.apply_default_assignee_on_enter;
+      delete insertObj.default_assignee_user_id;
       ({ data, error } = await supabase.from('crm_pipeline_stages').insert(insertObj).select().single());
     }
     if (error) throw error;
@@ -5059,6 +5075,22 @@ r.put('/pipeline-stages/:id', async (req, res) => {
         update.default_probability = Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null;
       }
     }
+    if (b.apply_default_assignee_on_enter !== undefined) {
+      update.apply_default_assignee_on_enter = !!b.apply_default_assignee_on_enter;
+    }
+    if (b.default_assignee_user_id !== undefined) {
+      update.default_assignee_user_id = normalizeCrmStageDefaultAssigneeUserId(b.default_assignee_user_id);
+    }
+    if (update.apply_default_assignee_on_enter && !update.default_assignee_user_id) {
+      const { data: cur } = await supabase
+        .from('crm_pipeline_stages')
+        .select('default_assignee_user_id')
+        .eq('id', req.params.id)
+        .maybeSingle();
+      if (!cur?.default_assignee_user_id) {
+        return res.status(400).json({ error: 'Chọn người phụ trách trước khi bật «Chuyển người phụ trách».' });
+      }
+    }
     let { data, error } = await supabase.from('crm_pipeline_stages').update(update)
       .eq('id', req.params.id).select().single();
     if (error && /requires_deadline/.test(error.message || '')) {
@@ -5068,6 +5100,12 @@ r.put('/pipeline-stages/:id', async (req, res) => {
     }
     if (error && /allow_revert_to_lead/.test(error.message || '')) {
       delete update.allow_revert_to_lead;
+      ({ data, error } = await supabase.from('crm_pipeline_stages').update(update)
+        .eq('id', req.params.id).select().single());
+    }
+    if (error && /apply_default_assignee_on_enter|default_assignee_user_id/.test(error.message || '')) {
+      delete update.apply_default_assignee_on_enter;
+      delete update.default_assignee_user_id;
       ({ data, error } = await supabase.from('crm_pipeline_stages').update(update)
         .eq('id', req.params.id).select().single());
     }
@@ -5664,7 +5702,7 @@ r.get('/employees-by-company', responseCache({ ttl: 120, scope: 'company', tags:
     const userId = req.user.userId;
     const { company_id: queryCompanyId } = req.query;
     const forModuleRaw = String(req.query?.for_module || 'crm').trim().toLowerCase();
-    const forModule = ['crm', 'production', 'logistics'].includes(forModuleRaw) ? forModuleRaw : 'crm';
+    const forModule = ['crm', 'production', 'logistics', 'all'].includes(forModuleRaw) ? forModuleRaw : 'crm';
 
     const sacEmp = scopedAdminCompanyId(req);
     // Resolve company_id: admin gắn công ty → chỉ công ty đó; khác → query / user / department
@@ -5699,13 +5737,17 @@ r.get('/employees-by-company', responseCache({ ttl: 120, scope: 'company', tags:
       logistics: ['logistics', 'vận chuyển', 'van chuyen', 'giao hàng', 'giao hang', 'lắp đặt', 'lap dat', 'kho'],
     };
     const moduleKeywords = MODULE_DEPT_KEYWORDS[forModule] || MODULE_DEPT_KEYWORDS.crm;
-    const moduleDepts = (allDepts || []).filter((d) => {
-      const lowerName = (d.name || '').toLowerCase();
-      return moduleKeywords.some((kw) => lowerName.includes(kw));
-    });
+    const moduleDepts = forModule === 'all'
+      ? (allDepts || [])
+      : (allDepts || []).filter((d) => {
+        const lowerName = (d.name || '').toLowerCase();
+        return moduleKeywords.some((kw) => lowerName.includes(kw));
+      });
 
     // Nếu chưa map được theo keyword module → fallback tất cả phòng ban công ty.
-    const targetDepts = moduleDepts.length > 0 ? moduleDepts : (allDepts || []);
+    const targetDepts = forModule === 'all'
+      ? (allDepts || [])
+      : (moduleDepts.length > 0 ? moduleDepts : (allDepts || []));
     const deptIds = targetDepts.map(d => d.id);
 
     let userRows = [];
@@ -5718,8 +5760,8 @@ r.get('/employees-by-company', responseCache({ ttl: 120, scope: 'company', tags:
       userRows = users || [];
     }
 
-    // SX/VC: bổ sung NV gắn trực tiếp company_id xưởng (có thể không thuộc phòng ban keyword).
-    if (forModule === 'production' || forModule === 'logistics') {
+    // SX/VC/all: bổ sung NV gắn trực tiếp company_id (có thể không thuộc phòng ban keyword).
+    if (forModule === 'production' || forModule === 'logistics' || forModule === 'all') {
       const { loadUsersForProductionCompany } = require('../helpers/productionWorkshopTypeStaff');
       const directUsers = await loadUsersForProductionCompany(companyId);
       const seen = new Set(userRows.map((u) => u.id));
@@ -5766,7 +5808,7 @@ r.get('/employees-by-company', responseCache({ ttl: 120, scope: 'company', tags:
       departments: targetDepts,
       company_id: companyId,
       for_module: forModule,
-      is_module_filtered: moduleDepts.length > 0,
+      is_module_filtered: forModule !== 'all' && moduleDepts.length > 0,
     });
   } catch (e) {
     console.error('employees-by-company error:', e.message);
@@ -10384,16 +10426,19 @@ r.patch('/leads/:id/stage', async (req, res) => {
     
     let { data: stage } = await supabase
       .from('crm_pipeline_stages')
-      .select('id, name, order_index, is_won, is_lost, pipeline_type, send_zalo_on_enter, default_probability, sync_role, requires_deadline, counts_as_completed_revenue')
+      .select('id, name, order_index, is_won, is_lost, pipeline_type, send_zalo_on_enter, default_probability, sync_role, requires_deadline, counts_as_completed_revenue, apply_default_assignee_on_enter, default_assignee_user_id')
       .eq('id', stage_id)
       .single();
     if (!stage) {
       // Fallback nếu chưa migrate cột requires_deadline.
       ({ data: stage } = await supabase
         .from('crm_pipeline_stages')
-        .select('id, name, order_index, is_won, is_lost, pipeline_type, send_zalo_on_enter, default_probability, sync_role')
+        .select('id, name, order_index, is_won, is_lost, pipeline_type, send_zalo_on_enter, default_probability, sync_role, apply_default_assignee_on_enter, default_assignee_user_id')
         .eq('id', stage_id)
         .single());
+    }
+    if (stage && stage.apply_default_assignee_on_enter === undefined) {
+      stage.apply_default_assignee_on_enter = false;
     }
     
     // Validate: lead/deal chỉ vào cột pipeline_type khớp (lead | deal | both)
@@ -10503,6 +10548,14 @@ r.patch('/leads/:id/stage', async (req, res) => {
     if (stage?.counts_as_completed_revenue) {
       updates.kanban_deadline_at = null;
       updates.kanban_deadline_reason = null;
+    }
+    if (isStageChange) {
+      await mergeCrmStageDefaultAssigneeIntoUpdates(updates, {
+        stage,
+        lead,
+        isStageChange: true,
+        sb: supabase,
+      });
     }
     // Bàn giao SX: khóa người phụ trách CRM — NV xưởng gán qua project_production_staff sau auto-create.
     stripCrmAssigneeFromWonStageUpdates(updates, {

@@ -1,7 +1,7 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Building2, ChevronRight, ListChecks, Loader2, Plus, Save, Settings, Trash2, Truck, Wrench, ShieldCheck,
+  Building2, ChevronRight, ListChecks, Loader2, Plus, Save, Settings, Trash2, Truck, Wrench, ShieldCheck, UserCircle, Info,
 } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -35,6 +35,11 @@ export default function LogisticsPipelineSettingsPage() {
   const [bulkSelected, setBulkSelected] = useState(() => new Set());
   const [draggingId, setDraggingId] = useState(null);
   const [dragOverId, setDragOverId] = useState(null);
+  const [handoverLoading, setHandoverLoading] = useState(false);
+  const [handoverSaving, setHandoverSaving] = useState(false);
+  const [handoverUsers, setHandoverUsers] = useState([]);
+  const [vcResponsibleId, setVcResponsibleId] = useState('');
+  const [ldResponsibleId, setLdResponsibleId] = useState('');
   const [form, setForm] = useState({
     name: '',
     color: COLORS[0],
@@ -101,6 +106,45 @@ export default function LogisticsPipelineSettingsPage() {
   }, [isAdmin, settingsCompanyId]);
 
   useEffect(() => { load(); }, [load]);
+
+  const loadHandoverSettings = useCallback(async () => {
+    if (!settingsCompanyId) {
+      setHandoverUsers([]);
+      setVcResponsibleId('');
+      setLdResponsibleId('');
+      return;
+    }
+    setHandoverLoading(true);
+    try {
+      const { data } = await api.get(`/logistics/handover-settings/${settingsCompanyId}`);
+      setHandoverUsers(data?.users || []);
+      setVcResponsibleId(data?.settings?.responsible_user_id ? String(data.settings.responsible_user_id) : '');
+      setLdResponsibleId(data?.settings?.installer_user_id ? String(data.settings.installer_user_id) : '');
+    } catch {
+      setHandoverUsers([]);
+      setVcResponsibleId('');
+      setLdResponsibleId('');
+    }
+    setHandoverLoading(false);
+  }, [settingsCompanyId]);
+
+  useEffect(() => { void loadHandoverSettings(); }, [loadHandoverSettings]);
+
+  const saveHandoverSettings = async () => {
+    if (!settingsCompanyId) return;
+    setHandoverSaving(true);
+    try {
+      await api.put(`/logistics/handover-settings/${settingsCompanyId}`, {
+        responsible_user_id: vcResponsibleId || null,
+        installer_user_id: ldResponsibleId || null,
+      });
+      await loadHandoverSettings();
+      alert('Đã lưu cấu hình bàn giao SX → VC/LĐ.');
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi lưu');
+    }
+    setHandoverSaving(false);
+  };
 
   const sorted = useMemo(
     () => [...stages].sort((a, b) => (a.order_index || 0) - (b.order_index || 0)),
@@ -365,7 +409,11 @@ export default function LogisticsPipelineSettingsPage() {
         </span>
         <span className="text-gray-300">→</span>
         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full ${settingsCompanyId ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-gray-50 text-gray-400 border border-gray-200'}`}>
-          2. Pipeline VC
+          2. Bàn giao SX→VC
+        </span>
+        <span className="text-gray-300">→</span>
+        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full ${settingsCompanyId && !loading ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-gray-50 text-gray-400 border border-gray-200'}`}>
+          3. Pipeline VC
         </span>
       </div>
 
@@ -388,6 +436,94 @@ export default function LogisticsPipelineSettingsPage() {
           )}
         </div>
       </div>
+
+      {settingsCompanyId && (
+        <div className="rounded-xl border border-orange-200 bg-gradient-to-r from-orange-50/80 to-white p-4 shadow-sm space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="flex items-start gap-2.5 min-w-0">
+              <UserCircle className="h-5 w-5 text-orange-600 shrink-0 mt-0.5" />
+              <div>
+                <h2 className="text-sm font-bold text-gray-900">Bàn giao Sản xuất → Vận chuyển & Lắp đặt</h2>
+                <p className="text-[11px] text-gray-600 mt-0.5 leading-snug max-w-2xl">
+                  Khi dự án chuyển từ module SX sang VC (cột «Bàn giao VC» hoặc bàn giao thủ công),
+                  hệ thống gán <strong>người phụ trách VC</strong> và <strong>người lắp đặt</strong> theo cấu hình bên dưới.
+                </p>
+              </div>
+            </div>
+            <Link
+              to="/sx/pipeline-settings"
+              className="text-[11px] font-medium text-orange-700 hover:text-orange-900 border border-orange-200 rounded-lg px-2.5 py-1.5 bg-white shrink-0"
+            >
+              Cột bàn giao SX →
+            </Link>
+          </div>
+
+          <div className="flex items-start gap-2 rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2 text-[11px] text-blue-900">
+            <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+            <p>
+              <strong>Quy tắc:</strong> Không thay đổi người phụ trách <strong>CRM</strong> trên deal
+              và không ghi đè <strong>phụ trách Sản xuất</strong> — chỉ bổ sung / cập nhật phụ trách VC và LĐ trên dự án.
+            </p>
+          </div>
+
+          {handoverLoading ? (
+            <div className="flex items-center gap-2 text-xs text-gray-500 py-1">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang tải nhân sự…
+            </div>
+          ) : (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="flex flex-col gap-1">
+                  <span className="text-[10px] font-semibold text-orange-700 uppercase tracking-wide flex items-center gap-1">
+                    <Truck className="h-3 w-3" /> Người phụ trách VC
+                  </span>
+                  <select
+                    value={vcResponsibleId}
+                    onChange={(e) => setVcResponsibleId(e.target.value)}
+                    className="h-9 px-2 border border-orange-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-orange-300"
+                  >
+                    <option value="">— Chưa chọn —</option>
+                    {handoverUsers.map((u) => (
+                      <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
+                    ))}
+                  </select>
+                  <span className="text-[10px] text-gray-500">Gán vào «Người vận chuyển» khi deal vào module VC.</span>
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide flex items-center gap-1">
+                    <Wrench className="h-3 w-3" /> Người lắp đặt (LĐ)
+                  </span>
+                  <select
+                    value={ldResponsibleId}
+                    onChange={(e) => setLdResponsibleId(e.target.value)}
+                    className="h-9 px-2 border border-amber-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-amber-300"
+                  >
+                    <option value="">— Chưa chọn —</option>
+                    {handoverUsers.map((u) => (
+                      <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
+                    ))}
+                  </select>
+                  <span className="text-[10px] text-gray-500">Gán vào «Người lắp đặt» khi bàn giao từ SX.</span>
+                </label>
+              </div>
+              {handoverUsers.length === 0 && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  Chưa có nhân viên VC/LĐ thuộc công ty này — thêm user với role logistics / installer / logistics_admin.
+                </p>
+              )}
+              <button
+                type="button"
+                disabled={handoverSaving}
+                onClick={() => saveHandoverSettings()}
+                className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-orange-600 text-white text-sm font-medium hover:bg-orange-700 disabled:opacity-50 cursor-pointer"
+              >
+                {handoverSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                Lưu cấu hình bàn giao
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {!settingsCompanyId ? (
         <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-10 text-center text-sm text-gray-500">

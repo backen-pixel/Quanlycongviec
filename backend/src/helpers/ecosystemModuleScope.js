@@ -8,12 +8,15 @@ const {
   isCrmProductionAdmin,
 } = require('./adminRole');
 const { isAccountingUser } = require('./accountingScope');
+const { isWorkshopRoleProductionParticipant } = require('./dealParticipantProduction');
 const { isPlatformAdmin, tenantFeatureEnabled } = require('./tenantScope');
 
 const PRODUCTION_STAFF_MODULES = new Set(['tasks', 'production', 'projects']);
 const CRM_PRODUCTION_DUAL_MODULES = new Set(['crm', 'production', 'tasks', 'projects', 'customers']);
 /** Kế toán công ty — xem CRM + SX + VC + module Kế toán (phạm vi deal thuộc công ty). */
 const ACCOUNTING_VIEW_MODULES = new Set(['crm', 'production', 'logistics', 'projects', 'accounting']);
+/** NV lắp đặt / vận chuyển — vào module SX/VC, chỉ thấy deal được thêm thành viên. */
+const WORKSHOP_PARTICIPANT_VIEW_MODULES = new Set(['production', 'logistics', 'projects']);
 
 /** Khớp module_key dùng trong ecosystem_module_scopes và Sidebar */
 const KNOWN_MODULE_KEYS = ['crm', 'production', 'logistics', 'projects', 'tasks', 'customers', 'tinhtoan', 'accounting'];
@@ -78,6 +81,7 @@ async function userHasEcosystemModuleAccess(user, moduleKey) {
   }
   if (isAdminLike(user)) return true;
   if (isAccountingUser(user) && ACCOUNTING_VIEW_MODULES.has(String(moduleKey))) return true;
+  if (isWorkshopRoleProductionParticipant(user) && WORKSHOP_PARTICIPANT_VIEW_MODULES.has(String(moduleKey))) return true;
   if (isCrmProductionAdmin(user) && CRM_PRODUCTION_DUAL_MODULES.has(String(moduleKey))) return true;
   if (isCrmProductionStaff(user) && CRM_PRODUCTION_DUAL_MODULES.has(String(moduleKey))) return true;
   if (isProductionStaff(user) && PRODUCTION_STAFF_MODULES.has(String(moduleKey))) return true;

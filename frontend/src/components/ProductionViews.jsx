@@ -11,7 +11,7 @@ import { FbCrmAvatar, FbCrmCommentComposer, formatCrmCommentFullDateTime, format
 import { upsertComment, CommentAttachmentsBlock, CrmLeadCommentsPanel } from './CommentsPanels';
 import { FilePreview, FileUploadButton } from './FileUpload';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
-import { shouldHideSxKanbanDeadlineOnCard } from '../lib/sxPipelineRevenue';
+import { shouldHideSxKanbanDeadlineOnCard, shouldIgnoreSxOrderDeliveryOverdue } from '../lib/sxPipelineRevenue';
 import { formatStaffDisplayName, getStaffInitials } from '../lib/utils';
 import { resolveSxProjectLeadId, resolveSxProjectLeadIdAsync } from '../lib/sxProjectComments';
 import {
@@ -1121,15 +1121,22 @@ function startOfDay(d) {
 }
 
 function resolveSxDeadlineBucket(item, todayMs) {
-  const raw = item.production_deadline || item.deadline;
+  const raw = item.delivery_date || item.production_deadline || item.deadline;
   if (!raw) return { bucket: 'none', ts: null, source: null };
   const t = new Date(raw).getTime();
   if (!Number.isFinite(t)) return { bucket: 'none', ts: null, source: null };
-  const source = item.production_deadline ? 'production_deadline' : 'deadline';
+  const source = item.delivery_date
+    ? 'delivery_date'
+    : (item.production_deadline ? 'production_deadline' : 'deadline');
   const today = startOfDay(new Date(todayMs));
   const dayMs = 86400000;
   const diffDays = Math.floor((startOfDay(t).getTime() - today.getTime()) / dayMs);
-  if (diffDays < 0) return { bucket: 'overdue', ts: t, source };
+  if (diffDays < 0) {
+    if (shouldIgnoreSxOrderDeliveryOverdue(item.sx_pipeline_stage)) {
+      return { bucket: 'later', ts: t, source };
+    }
+    return { bucket: 'overdue', ts: t, source };
+  }
   if (diffDays === 0) return { bucket: 'today', ts: t, source };
   const dow = today.getDay() === 0 ? 7 : today.getDay();
   const daysToEndOfWeek = 7 - dow;
@@ -1197,6 +1204,8 @@ function DeadlineCard({ item, goProject }) {
           {item._deadlineTs ? formatDate(item._deadlineTs) : '—'}
           {item._deadlineSource === 'production_deadline'
             ? ' · Giao xưởng'
+            : item._deadlineSource === 'delivery_date'
+            ? ' · Giao hàng'
             : item._deadlineSource === 'deadline'
             ? ' · Deadline'
             : ''}

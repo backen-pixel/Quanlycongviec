@@ -19,10 +19,11 @@ async function loadDealCommentContext(supabase, leadId) {
   let projectId = null;
   let projectCode = null;
   let isProductionDeal = false;
+  let isLogisticsDeal = false;
   try {
     const { data: leadRow } = await supabase
       .from('crm_leads')
-      .select('title, code, type, project_id, linked_project:projects!crm_leads_project_id_fkey(id, code, production_person_id)')
+      .select('title, code, type, project_id, linked_project:projects!crm_leads_project_id_fkey(id, code, status, vc_kanban_column_id, production_person_id, logistics_person_id, current_stage:workflow_stages(slug))')
       .eq('id', leadId)
       .maybeSingle();
     leadTitle = leadRow?.title || '';
@@ -30,8 +31,18 @@ async function loadDealCommentContext(supabase, leadId) {
     leadType = leadRow?.type || 'lead';
     projectId = leadRow?.project_id || null;
     projectCode = leadRow?.linked_project?.code || null;
-    isProductionDeal = Boolean(leadRow?.linked_project?.production_person_id);
+    const proj = leadRow?.linked_project;
+    const status = String(proj?.status || '');
+    const stageSlug = proj?.current_stage?.slug || '';
+    isLogisticsDeal = Boolean(
+      proj?.vc_kanban_column_id
+      || ['shipping', 'installing', 'warranty', 'completed'].includes(status)
+      || ['delivery', 'installation', 'customer-care'].includes(stageSlug)
+      || proj?.logistics_person_id,
+    );
+    isProductionDeal = !isLogisticsDeal && Boolean(proj?.production_person_id);
   } catch { /* ignore */ }
+  const ecosystemModuleKey = isLogisticsDeal ? 'logistics' : (isProductionDeal ? 'production' : 'crm');
   return {
     leadId,
     leadTitle,
@@ -40,8 +51,9 @@ async function loadDealCommentContext(supabase, leadId) {
     projectId,
     projectCode,
     isProductionDeal,
-    moduleKey: isProductionDeal ? 'production' : 'crm',
-    ecosystemModuleKey: isProductionDeal ? 'production' : 'crm',
+    isLogisticsDeal,
+    moduleKey: ecosystemModuleKey,
+    ecosystemModuleKey,
   };
 }
 
@@ -59,7 +71,7 @@ async function resolveDealByProjectId(supabase, projectId) {
 async function fetchProjectCommentAudienceUserIds(supabase, projectId) {
   const { data: proj } = await supabase
     .from('projects')
-    .select('sales_person_id, designer_id, project_manager_id, supervisor_id, production_person_id, responsible_person_id, created_by, code, name')
+    .select('sales_person_id, designer_id, project_manager_id, supervisor_id, production_person_id, logistics_person_id, installer_person_id, responsible_person_id, created_by, code, name, status, vc_kanban_column_id, current_stage:workflow_stages(slug)')
     .eq('id', projectId)
     .maybeSingle();
   if (!proj) return { userIds: [], proj: null, deal: null };
@@ -83,9 +95,20 @@ async function fetchProjectCommentAudienceUserIds(supabase, projectId) {
     .eq('project_id', projectId)
     .not('assignee_id', 'is', null);
   const taskIds = (taskAssignees || []).map((t) => t.assignee_id).filter(Boolean);
-  const baseTeam = proj.production_person_id
-    ? [proj.production_person_id, proj.responsible_person_id]
-    : [proj.sales_person_id, proj.designer_id, proj.project_manager_id, proj.supervisor_id, proj.responsible_person_id];
+  const status = String(proj.status || '');
+  const stageSlug = proj.current_stage?.slug || '';
+  const isLogistics = Boolean(
+    proj.vc_kanban_column_id
+    || ['shipping', 'installing', 'warranty', 'completed'].includes(status)
+    || ['delivery', 'installation', 'customer-care'].includes(stageSlug)
+    || proj.logistics_person_id
+    || proj.installer_person_id,
+  );
+  const baseTeam = isLogistics
+    ? [proj.logistics_person_id, proj.installer_person_id, proj.responsible_person_id, proj.production_person_id]
+    : (proj.production_person_id
+      ? [proj.production_person_id, proj.responsible_person_id]
+      : [proj.sales_person_id, proj.designer_id, proj.project_manager_id, proj.supervisor_id, proj.responsible_person_id]);
   const ids = [...new Set([...baseTeam, ...taskIds, proj.created_by].filter(Boolean))];
   return { userIds: ids.map(String), proj, deal };
 }
@@ -198,7 +221,17 @@ async function notifyProjectCommentParticipants(req, notifyMultiple, projectId, 
   if (deal?.id) {
     ctx = await loadDealCommentContext(supabase, deal.id);
   } else {
-    const isProduction = Boolean(proj?.production_person_id);
+    const status = String(proj?.status || '');
+    const stageSlug = proj?.current_stage?.slug || '';
+    const isLogistics = Boolean(
+      proj?.vc_kanban_column_id
+      || ['shipping', 'installing', 'warranty', 'completed'].includes(status)
+      || ['delivery', 'installation', 'customer-care'].includes(stageSlug)
+      || proj?.logistics_person_id
+      || proj?.installer_person_id,
+    );
+    const isProduction = !isLogistics && Boolean(proj?.production_person_id);
+    const ecosystemModuleKey = isLogistics ? 'logistics' : (isProduction ? 'production' : 'projects');
     ctx = {
       leadId: null,
       leadTitle: proj?.name || '',
@@ -207,8 +240,9 @@ async function notifyProjectCommentParticipants(req, notifyMultiple, projectId, 
       projectId,
       projectCode: proj?.code || null,
       isProductionDeal: isProduction,
-      moduleKey: isProduction ? 'production' : 'projects',
-      ecosystemModuleKey: isProduction ? 'production' : 'projects',
+      isLogisticsDeal: isLogistics,
+      moduleKey: ecosystemModuleKey,
+      ecosystemModuleKey,
     };
   }
 

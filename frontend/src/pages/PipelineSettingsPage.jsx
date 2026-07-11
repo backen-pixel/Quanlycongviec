@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
-import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar, CheckCircle2, Clock, Factory, Search, X, TrendingUp, RotateCcw } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar, CheckCircle2, Clock, Factory, Search, X, TrendingUp, RotateCcw, UserCircle } from 'lucide-react';
 import {
   IconSettings,
   IconTags,
@@ -29,12 +29,14 @@ import {
   IconBuildingFactory,
   IconPencil,
   IconShieldLock,
+  IconUser,
 } from '@tabler/icons-react';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { resolveDefaultCrmAdminCompanyId, setStoredCrmFilterCompanyId } from '../lib/crmCompanyFilter';
 import { isPipelineStageSlaDisabled } from '../lib/crmPipelineSla';
 import Modal from '../components/Modal';
+import EmployeePicker from '../components/EmployeePicker';
 
 /** Hai mẫu theo tài liệu Zalo / ví dụ template ngắn — ID chỉ để thử form; OA thật cần template_id của bạn */
 const ZALO_TEST_PRESETS = [
@@ -239,6 +241,7 @@ function StageStatusBadges({ stage, linkedSx, linkedVc, syncRoleLabels }) {
   }
   if (s.send_zalo_on_enter) badges.push({ key: 'zalo', cls: 'bg-sky-50 text-sky-800 border-sky-200', icon: IconMessage, text: 'Zalo' });
   if (s.create_event_on_enter) badges.push({ key: 'event', cls: 'bg-emerald-50 text-emerald-800 border-emerald-200', icon: IconCalendar, text: 'Sự kiện' });
+  if (s.apply_default_assignee_on_enter) badges.push({ key: 'assignee', cls: 'bg-indigo-50 text-indigo-800 border-indigo-200', icon: IconUser, text: 'Chuyển PT' });
   if (s.allow_revert_to_lead) badges.push({ key: 'revert', cls: 'bg-amber-50 text-amber-800 border-amber-200', icon: IconRotateClockwise, text: 'Trả Lead' });
   if (s.sync_role) {
     badges.push({ key: 'sync', cls: 'bg-indigo-50 text-indigo-700 border-indigo-200', icon: IconBuildingFactory, text: syncRoleLabels[s.sync_role] || s.sync_role });
@@ -293,6 +296,8 @@ export default function PipelineSettingsPage() {
     sync_role: '',
     default_probability: '',
     requires_deadline: false,
+    apply_default_assignee_on_enter: false,
+    default_assignee_user_id: '',
   });
   const isAdmin = isAdminLike(user);
   const [companies, setCompanies] = useState([]);
@@ -750,6 +755,11 @@ export default function PipelineSettingsPage() {
     [visiblePipelines, selectedPipelineId],
   );
 
+  const assigneeCompanyId = useMemo(
+    () => String(selectedCompanyId || selectedPipeline?.company_id || user?.company_id || '').trim(),
+    [selectedCompanyId, selectedPipeline?.company_id, user?.company_id],
+  );
+
   useEffect(() => {
     if (!selectedPipeline) return;
     setDeletePermLead(selectedPipeline.allow_employee_delete_lead !== false);
@@ -802,6 +812,8 @@ export default function PipelineSettingsPage() {
       sla_days: '',
       requires_deadline: false,
       allow_revert_to_lead: false,
+      apply_default_assignee_on_enter: false,
+      default_assignee_user_id: '',
     });
   };
 
@@ -825,11 +837,16 @@ export default function PipelineSettingsPage() {
       sla_days: stage.sla_days != null && stage.sla_days !== '' ? String(stage.sla_days) : '',
       requires_deadline: !!stage.requires_deadline,
       allow_revert_to_lead: !!stage.allow_revert_to_lead,
+      apply_default_assignee_on_enter: !!stage.apply_default_assignee_on_enter,
+      default_assignee_user_id: stage.default_assignee_user_id || '',
     });
   };
 
   const saveNew = async () => {
     if (!form.name.trim()) return alert('Nhập tên giai đoạn');
+    if (form.apply_default_assignee_on_enter && !form.default_assignee_user_id) {
+      return alert('Chọn người phụ trách trước khi bật «Chuyển người phụ trách».');
+    }
     try {
       if (!selectedPipelineId) return alert('Chọn pipeline trước');
       const payload = { ...form, pipeline_type: adding, pipeline_id: selectedPipelineId };
@@ -844,6 +861,9 @@ export default function PipelineSettingsPage() {
 
   const saveEdit = async () => {
     if (!form.name.trim()) return alert('Nhập tên giai đoạn');
+    if (form.apply_default_assignee_on_enter && !form.default_assignee_user_id) {
+      return alert('Chọn người phụ trách trước khi bật «Chuyển người phụ trách».');
+    }
     try {
       const payload = { ...form };
       if (payload.default_probability === '') payload.default_probability = null;
@@ -1997,6 +2017,7 @@ export default function PipelineSettingsPage() {
             onSave={saveNew}
             onCancel={() => setAdding(null)}
             pipelineType={adding}
+            assigneeCompanyId={assigneeCompanyId}
           />
         </Modal>
       )}
@@ -2042,6 +2063,7 @@ export default function PipelineSettingsPage() {
             onSetModuleTarget={setModuleStageTarget}
             onSetVcSyncType={setVcSyncType}
             onBulkSetVcSyncType={bulkSetVcSyncType}
+            assigneeCompanyId={assigneeCompanyId}
           />
         </Modal>
       )}
@@ -2053,6 +2075,7 @@ export default function PipelineSettingsPage() {
 function StageForm({
   form, setForm, onSave, onCancel, pipelineType = 'lead', editingStageId,
   sxStages = [], vcStages = [], onSetModuleTarget, onSetVcSyncType, onBulkSetVcSyncType,
+  assigneeCompanyId = '',
 }) {
   const [bulkVcSelected, setBulkVcSelected] = useState(() => new Set());
   useEffect(() => { setBulkVcSelected(new Set()); }, [editingStageId]);
@@ -2280,6 +2303,45 @@ function StageForm({
               </span>
             </span>
           </label>
+        )}
+        {!form.is_won && !form.is_lost && (
+          <div className="w-full space-y-2 p-3 rounded-lg border border-indigo-200 bg-indigo-50/50">
+            <label className="flex items-start gap-2 text-xs cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!form.apply_default_assignee_on_enter}
+                onChange={(e) => setForm((f) => ({ ...f, apply_default_assignee_on_enter: e.target.checked }))}
+                className="mt-0.5 rounded border-indigo-400 accent-indigo-600"
+              />
+              <span>
+                <span className="flex items-center gap-1 font-semibold text-indigo-800">
+                  <UserCircle className="h-3.5 w-3.5" /> Chuyển người phụ trách khi kéo vào cột
+                </span>
+                <span className="block text-[10px] text-indigo-700/90 mt-0.5 leading-snug">
+                  Mỗi lần lead/deal vào cột này, hệ thống gán NV đã chọn làm người phụ trách CRM.
+                  Không áp dụng khi deal đã Thắng hoặc đã có dự án SX.
+                </span>
+              </span>
+            </label>
+            {(form.apply_default_assignee_on_enter || form.default_assignee_user_id) && (
+              <div className="pl-1 max-w-sm">
+                <label className="text-[10px] font-semibold text-indigo-700 uppercase tracking-wide block mb-1">
+                  Người phụ trách mặc định
+                </label>
+                <EmployeePicker
+                  companyId={assigneeCompanyId || undefined}
+                  value={form.default_assignee_user_id || null}
+                  onChange={(uid) => setForm((f) => ({ ...f, default_assignee_user_id: uid || '' }))}
+                  placeholder="Chọn NV phụ trách…"
+                  size="sm"
+                  disabled={!assigneeCompanyId}
+                />
+                {!assigneeCompanyId && (
+                  <p className="text-[10px] text-amber-700 mt-1">Chọn công ty pipeline trước khi gán NV.</p>
+                )}
+              </div>
+            )}
+          </div>
         )}
       </div>
 

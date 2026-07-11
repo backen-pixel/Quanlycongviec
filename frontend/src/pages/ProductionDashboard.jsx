@@ -62,6 +62,8 @@ import {
   isSxColumnSlaOverdue,
   resolveSxHandoverColumnId,
   shouldHideSxKanbanDeadlineOnCard,
+  shouldIgnoreSxOrderDeliveryOverdue,
+  getSxOrderDeliveryDateUrgency,
   VC_KANBAN_STATUSES,
 } from '../lib/sxPipelineRevenue';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
@@ -71,7 +73,7 @@ import { DashboardLoader } from '../components/DashboardLoader';
 import { createCrmLoadProgressController } from '../lib/crmDashboardLoadProgress';
 import { isClickOutside } from '../lib/domUtils';
 import { getCrmDeadlineUrgencyFromIso, getCrmDeadlineUrgencyBadgeClass } from '../lib/crmLeadDeadlineDisplay';
-import AnchoredDropdownMenu from '../components/AnchoredDropdownMenu';
+import { showCopyToast } from '../lib/copyToast';
 import SearchInlineFilterChips, { SearchClearButton } from '../components/SearchInlineFilterChips';
 import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
 
@@ -199,9 +201,11 @@ const DEADLINE_TONE_CLASS = {
 };
 
 /** Pill cảnh báo deadline thống nhất. */
-function DeadlineBadge({ date, icon = '📅', label = 'Hạn' }) {
+function DeadlineBadge({ date, icon = '📅', label = 'Hạn', suppressUrgency = false }) {
   if (!date) return null;
-  const u = getDeadlineUrgency(date);
+  const u = suppressUrgency
+    ? { tone: 'normal', pulse: false }
+    : getDeadlineUrgency(date);
   if (!u) return null;
   const cls = DEADLINE_TONE_CLASS[u.tone] || DEADLINE_TONE_CLASS.normal;
   const dateText = formatDate(date);
@@ -1715,12 +1719,33 @@ export default function ProductionDashboard() {
       : p)));
 
     try {
-      await api.patch(`/production/projects/${projectId}/stage`, {
+      const { data } = await api.patch(`/production/projects/${projectId}/stage`, {
         production_pipeline_stage_id: colId,
         current_sx_pipeline_stage_id: currentColId,
         company_id: companyParam || undefined,
         ...(deadlineIso ? { sx_kanban_deadline_at: deadlineIso, deadline_reason: reason || '' } : {}),
       });
+      const applied = data?.stage_staff_applied;
+      const staffList = data?.project?.production_staff || applied?.production_staff;
+      if (staffList?.length || applied?.users?.length) {
+        setProjects((prev) => prev.map((p) => {
+          if (String(p.id) !== String(projectId)) return p;
+          const next = { ...p };
+          if (staffList?.length) next.production_staff = staffList;
+          const primaryProd = staffList?.find((u) => u.is_primary) || staffList?.[0];
+          if (primaryProd && !next.production_person) next.production_person = primaryProd;
+          const logistics = applied?.users?.find((u) => u.kind === 'logistics');
+          const installer = applied?.users?.find((u) => u.kind === 'installation');
+          if (logistics && !next.logistics_person) next.logistics_person = logistics;
+          if (installer && !next.installer_person) next.installer_person = installer;
+          return next;
+        }));
+      }
+      if (applied?.users?.length) {
+        const names = applied.users.map((u) => u.full_name || u.email).filter(Boolean).join(', ');
+        const stageLabel = applied.stage_name || targetCol?.name || 'cột pipeline';
+        showCopyToast(`👥 Đã thêm ${applied.users.length} thành viên («${stageLabel}»): ${names}`);
+      }
       scheduleCrmBadgeRefresh(projectId);
     } catch (e) {
       console.error(e);
@@ -3321,6 +3346,9 @@ const KanbanStageCard = memo(function KanbanStageCard({
           {stage.counts_as_collected_revenue && (
             <span className="px-1 py-0.5 bg-emerald-100 text-emerald-700 text-[9px] font-bold rounded shrink-0" title="Cột tính «Đã thu tiền»">💰Thu</span>
           )}
+          {stage.auto_add_members_on_enter && (
+            <span className="px-1 py-0.5 bg-indigo-100 text-indigo-700 text-[9px] font-bold rounded shrink-0" title="Tự thêm thành viên khi kéo thẻ vào cột">👥Đội</span>
+          )}
             {onSelectColumn && items.length > 0 && (
               <button
                 type="button"
@@ -3347,6 +3375,41 @@ const KanbanStageCard = memo(function KanbanStageCard({
         <p className={`text-[11px] tabular-nums mt-0.5 ${KANBAN_COLUMN_VALUE_METRIC_CLASS}`}>
           {totalValue > 0 ? formatVND(totalValue) : '0đ'}
         </p>
+        {stage.auto_add_members_on_enter && (() => {
+          const ds = stage.default_staff;
+          const team = [
+            ...(Array.isArray(ds?.users) ? ds.users : []),
+            ds?.logistics_person ? { ...ds.logistics_person, _role: 'VC' } : null,
+            ds?.installer_person ? { ...ds.installer_person, _role: 'LĐ' } : null,
+          ].filter(Boolean);
+          if (!team.length) {
+            return (
+              <p className="mt-1 text-[10px] text-indigo-600/80 italic" title="Cột bật tự thêm NV nhưng chưa cấu hình đội">
+                👥 Chưa cấu hình đội
+              </p>
+            );
+          }
+          return (
+            <div
+              className="mt-1 flex flex-wrap items-center gap-1"
+              title={`Đội tự thêm khi kéo vào cột: ${team.map((u) => `${u.full_name || u.email || ''}${u._role ? ` (${u._role})` : ''}`).join(', ')}`}
+            >
+              <span className="text-[9px] font-semibold text-indigo-700 shrink-0">👥</span>
+              {team.slice(0, 4).map((u) => (
+                <span
+                  key={`${u.id}-${u._role || 'sx'}`}
+                  className="inline-flex max-w-[88px] truncate items-center rounded-full border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[9px] font-medium text-indigo-800"
+                >
+                  {u.full_name || u.email}
+                  {u._role ? ` ·${u._role}` : ''}
+                </span>
+              ))}
+              {team.length > 4 && (
+                <span className="text-[9px] font-semibold text-indigo-600">+{team.length - 4}</span>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Cards container */}
@@ -3457,8 +3520,8 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
     }
   })();
 
+  const ignoreOrderDeliveryOverdue = shouldIgnoreSxOrderDeliveryOverdue(sxStage);
   const primaryDeadline = hideColumnDeadline ? null : (item.production_deadline || item.deadline || null);
-  const primaryUrgency = getDeadlineUrgency(primaryDeadline);
   const customerInitials = getInitials(item.customer?.full_name || item.name || '');
   const progress = item.sx_pipeline_percent != null ? Math.max(0, Math.min(100, Number(item.sx_pipeline_percent) || 0)) : null;
 
@@ -3583,9 +3646,9 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
             </span>
           )}
           {item.delivery_date && (() => {
-            const dd = new Date(item.delivery_date);
-            const overdue = dd < new Date();
-            const soon = !overdue && dd < new Date(Date.now() + 3 * 86400000);
+            const urgency = getSxOrderDeliveryDateUrgency(item.delivery_date, sxStage);
+            const overdue = urgency?.overdue;
+            const soon = urgency?.soon;
             return (
               <span
                 className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium border tabular-nums ${
@@ -3595,7 +3658,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
                       ? 'bg-amber-50 text-amber-800 border-amber-200'
                       : 'bg-emerald-50 text-emerald-700 border-emerald-100'
                 }`}
-                title={`Ngày giao hàng: ${formatDate(item.delivery_date)}`}
+                title={`Ngày giao hàng: ${formatDate(item.delivery_date)}${ignoreOrderDeliveryOverdue ? ' · Cột đang bỏ quá hạn' : ''}`}
               >
                 <Truck className="h-2.5 w-2.5 shrink-0" strokeWidth={2.4} />
                 Giao: {formatDate(item.delivery_date)}
@@ -3624,6 +3687,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
               date={primaryDeadline}
               icon={item.production_deadline ? '🏭' : '📅'}
               label={item.production_deadline ? 'Giao xưởng' : 'Deadline'}
+              suppressUrgency={ignoreOrderDeliveryOverdue}
             />
           )}
         </div>

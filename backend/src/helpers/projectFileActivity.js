@@ -214,7 +214,7 @@ async function assertDealResponsible(req, res, { leadId, projectId } = {}) {
     res.status(403).json({ error: 'Không xác định được người phụ trách deal' });
     return false;
   }
-  if (!isDealResponsibleUser(req, dealRow)) {
+  if (!isDealResponsibleUser(req, dealRow) && !(await isDealLeadMemberUser(req, dealRow))) {
     res.status(403).json({ error: 'Chỉ người phụ trách deal mới được thao tác' });
     return false;
   }
