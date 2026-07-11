@@ -1,5 +1,5 @@
 const { supabase } = require('../config/supabase');
-const { isSystemAdmin: isSystemAdminUser, normalizeEmail } = require('./adminRole');
+const { isSystemAdmin: isSystemAdminUser, normalizeEmail, normalizeRole } = require('./adminRole');
 const {
   isAccountingUser,
   getAccountingCompanyId,
@@ -12,7 +12,11 @@ const {
 const DEAL_PARTICIPANT_PRODUCTION_EMAILS = new Set([
   'ketoanvanphuthanh.vpt@gmail.com',
   'ketoan1@vpt.vn',
+  'ngoclinh3970@gmail.com',
 ]);
+
+/** NV lắp đặt / vận chuyển — chỉ xem SX deal được thêm tab Thành viên hoặc auto-add từ pipeline. */
+const WORKSHOP_PARTICIPANT_PRODUCTION_ROLES = new Set(['installer', 'logistics', 'driver']);
 
 /** Legacy email — role `accounting` dùng isAccountingUser. */
 const CROSS_WORKSHOP_PRODUCTION_VIEWER_EMAILS = new Set([]);
@@ -477,10 +481,14 @@ function isDealParticipantProductionViewer(user) {
   return DEAL_PARTICIPANT_PRODUCTION_EMAILS.has(normalizeEmail(user?.email));
 }
 
+function isWorkshopRoleProductionParticipant(user) {
+  return WORKSHOP_PARTICIPANT_PRODUCTION_ROLES.has(normalizeRole(user?.role));
+}
+
 /** Kanban SX chỉ hiện dự án gắn deal mình tham gia (lead_members) — không áp dụng role accounting. */
 function userNeedsParticipantOnlyProductionScope(user) {
   if (isAccountingUser(user)) return false;
-  return isDealParticipantProductionViewer(user);
+  return isDealParticipantProductionViewer(user) || isWorkshopRoleProductionParticipant(user);
 }
 
 /** Báo giá / ĐH / HĐ — xem toàn công ty (role accounting hoặc kế toán VPT cũ). */
@@ -609,6 +617,8 @@ module.exports = {
   shouldFilterDealsByUserCompanyAtWorkshop,
   getClientCompanyProductionScopeId,
   isDealParticipantProductionViewer,
+  isWorkshopRoleProductionParticipant,
+  WORKSHOP_PARTICIPANT_PRODUCTION_ROLES,
   isCrossWorkshopProductionViewer,
   isVptCompanyCommercialDocViewer,
   userNeedsParticipantOnlyProductionScope,

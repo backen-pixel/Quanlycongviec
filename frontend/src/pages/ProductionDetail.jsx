@@ -45,7 +45,7 @@ import {
 } from '../lib/crmStageSlugLabels';
 import { buildCrmLeadDocTaskSections, normalizeCrmChecklist } from '../lib/crmTaskDocumentTree';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
-import { buildSxPipelineStageMeta, resolveSxProjectDeposit, resolveSxProjectRemaining, resolveSxProjectPaymentProgress } from '../lib/sxPipelineRevenue';
+import { buildSxPipelineStageMeta, resolveSxProjectDeposit, resolveSxProjectRemaining, resolveSxProjectPaymentProgress, getSxOrderDeliveryDateUrgency } from '../lib/sxPipelineRevenue';
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
 import SharedCRMNotes from '../components/SharedCRMNotes';
 import DriveAttachments from '../components/drive/DriveAttachments';
@@ -527,9 +527,10 @@ function WorkshopInfoPanel({
       {/* Ngày giao hàng */}
       {(() => {
         const dd = project.delivery_date;
-        const ddDate = dd ? new Date(dd) : null;
-        const isOverdue = ddDate && ddDate < new Date();
-        const isSoon = ddDate && !isOverdue && ddDate < new Date(Date.now() + 3 * 86400000);
+        const sxStage = project.sx_pipeline_stage || crmDeal?.sx_pipeline_stage || null;
+        const urgency = getSxOrderDeliveryDateUrgency(dd, sxStage);
+        const isOverdue = urgency?.overdue;
+        const isSoon = urgency?.soon;
         return (
           <div className={`flex items-start gap-2 py-2 px-1 rounded-lg -mx-1 transition-colors group cursor-pointer ${isOverdue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}
             onClick={() => editing !== 'delivery_date' && startEdit('delivery_date', dd ? dd.substring(0, 10) : '')}>
@@ -2879,7 +2880,15 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               <PersonCard label="Kinh doanh" person={project.sales_person} />
               <PersonCard label="QL dự án" person={project.project_manager} />
               <PersonCard label="Giám sát" person={project.supervisor} />
-              <PersonCard label={moduleKey === 'vc' ? 'Người vận chuyển' : 'Phụ trách chính'} person={project.logistics_person || project.production_person} />
+              {moduleKey === 'vc' ? (
+                <>
+                  <PersonCard label="Phụ trách SX" person={project.production_person} showPlaceholder />
+                  <PersonCard label="Vận chuyển (VC)" person={project.logistics_person} showPlaceholder />
+                  <PersonCard label="Lắp đặt (LĐ)" person={project.installer_person} showPlaceholder />
+                </>
+              ) : (
+                <PersonCard label="Phụ trách chính" person={project.production_person} />
+              )}
               {moduleKey !== 'vc' && (project.production_staff?.length > 0) && (
                 <div className="pl-2">
                   <p className="text-[10px] text-gray-400 uppercase font-medium mb-1">Đội SX ({project.production_staff.length})</p>
@@ -2901,7 +2910,11 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                   {moduleKey === 'vc' ? '🚚 Người vận chuyển phụ trách' : `Phân công ${MOD.label}`}
                 </p>
                 <select
-                  value={project.logistics_person?.id || project.logistics_person_id || project.production_person?.id || project.production_person_id || ''}
+                  value={
+                    moduleKey === 'vc'
+                      ? (project.logistics_person?.id || project.logistics_person_id || '')
+                      : (project.logistics_person?.id || project.logistics_person_id || project.production_person?.id || project.production_person_id || '')
+                  }
                   onChange={(e) => setProductionPerson(e.target.value)}
                   disabled={savingProductionOwner}
                   className="w-full h-9 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 disabled:opacity-60"

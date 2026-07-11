@@ -2,7 +2,7 @@
  * KPI doanh thu / thanh toán dashboard Sản xuất theo cột production_pipeline_stages (frontend).
  */
 
-import { effectivePipelineStageSlaDays } from './crmPipelineSla';
+import { effectivePipelineStageSlaDays, isPipelineStageSlaDisabled } from './crmPipelineSla';
 
 const INTAKE_BUCKET = 'won_pending';
 const VC_SHIPPED_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
@@ -185,7 +185,7 @@ export function computeSxRevenueKpis(projects, stages) {
     if (projectIsProducing(p, st)) producing += 1;
     if (projectIsAwaitingDelivery(p, st)) awaitingDelivery += 1;
     if (projectIsShipped(p)) shipped += 1;
-    if (p.deadline && new Date(p.deadline) < now && p.status !== 'completed') overdue += 1;
+    if (isSxProjectDeliveryDateOverdue(p, col)) overdue += 1;
     if (col && col.bucket_slug !== INTAKE_BUCKET && val > 0) {
       const prob = resolveSxProjectProbability(p, col);
       if (prob != null) weightedPipeline += val * (prob / 100);
@@ -221,6 +221,42 @@ export function isSxPipelineStageNoDeadline(stage) {
 export function shouldHideSxKanbanDeadlineOnCard(item, stage) {
   const st = stage || item?.sx_pipeline_stage;
   return isSxPipelineStageNoDeadline(st);
+}
+
+/**
+ * Cột bật «Bỏ quá hạn» (sla_days=0) hoặc «Đã công» — không tô đỏ ngày đặt/giao/deadline dự án.
+ * Khớp cấu hình pipeline setup.
+ */
+export function shouldIgnoreSxOrderDeliveryOverdue(stage) {
+  if (!stage) return false;
+  if (isSxPipelineStageNoDeadline(stage)) return true;
+  if (isPipelineStageSlaDisabled(stage.sla_days)) return true;
+  return false;
+}
+
+/** Mức cảnh báo ngày giao / deadline đặt hàng — null nếu không có ngày. */
+export function getSxOrderDeliveryDateUrgency(dateIso, stage) {
+  if (!dateIso) return null;
+  const dd = new Date(dateIso);
+  if (Number.isNaN(dd.getTime())) return null;
+  if (shouldIgnoreSxOrderDeliveryOverdue(stage)) {
+    return { level: 'ok', overdue: false, soon: false };
+  }
+  const overdue = dd < new Date();
+  const soon = !overdue && dd < new Date(Date.now() + 3 * 86400000);
+  return {
+    level: overdue ? 'overdue' : soon ? 'soon' : 'ok',
+    overdue,
+    soon,
+  };
+}
+
+export function isSxProjectDeliveryDateOverdue(project, stage) {
+  const st = stage || project?.sx_pipeline_stage;
+  if (shouldIgnoreSxOrderDeliveryOverdue(st)) return false;
+  const raw = project?.delivery_date || project?.production_deadline || project?.deadline;
+  if (!raw || project?.status === 'completed') return false;
+  return new Date(raw) < new Date();
 }
 
 /** SLA cột pipeline SX — null nếu không áp dụng. */
@@ -278,6 +314,7 @@ export function buildSxPipelineStageMeta(col) {
     counts_as_completed_revenue: col.counts_as_completed_revenue,
     counts_as_collected_revenue: col.counts_as_collected_revenue,
     requires_deadline: col.requires_deadline,
+    auto_add_members_on_enter: col.auto_add_members_on_enter,
     bucket_slug: col.bucket_slug,
     is_handover_to_logistics: col.is_handover_to_logistics,
   };

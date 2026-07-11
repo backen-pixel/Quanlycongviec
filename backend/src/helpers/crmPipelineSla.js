@@ -24,9 +24,32 @@ function effectivePipelineStageSlaDays(slaDaysRaw) {
   return DEFAULT_PIPELINE_STAGE_SLA_DAYS;
 }
 
+function isSxPipelineStageNoDeadline(stage) {
+  return !!stage?.counts_as_completed_revenue;
+}
+
+/** Cột «Bỏ quá hạn» hoặc «Đã công» — không ghi nhận quá hạn ngày đặt/giao. */
+function shouldIgnoreSxOrderDeliveryOverdue(stage) {
+  if (!stage) return false;
+  if (isSxPipelineStageNoDeadline(stage)) return true;
+  if (isPipelineStageSlaDisabled(stage.sla_days)) return true;
+  return false;
+}
+
+function isSxProjectDateOverdue(project, dateField) {
+  const stage = project?.sx_pipeline_stage;
+  if (shouldIgnoreSxOrderDeliveryOverdue(stage)) return false;
+  const raw = project?.[dateField];
+  if (!raw || project?.status === 'completed') return false;
+  return new Date(raw) < new Date();
+}
+
 module.exports = {
   DEFAULT_PIPELINE_STAGE_SLA_DAYS,
   isPipelineStageSlaDisabled,
   normalizePipelineStageSlaDaysForDb,
   effectivePipelineStageSlaDays,
+  isSxPipelineStageNoDeadline,
+  shouldIgnoreSxOrderDeliveryOverdue,
+  isSxProjectDateOverdue,
 };

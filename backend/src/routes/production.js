@@ -71,6 +71,11 @@ async function applyParticipantOnlyProductionScope(
 }
 
 const { notifyMultiple: notifyMultipleShared, createNotification: createNotif } = require('../helpers/notifications');
+const { notifyVcHandoverFromSx } = require('../helpers/vcHandoverNotify');
+const {
+  resolveLogisticsHandoverResponsibleUserId,
+  resolveLogisticsHandoverInstallerUserId,
+} = require('../helpers/logisticsHandoverSettings');
 const {
   buildPipelineStageSelect,
   isHandoverMissingError,
@@ -98,7 +103,7 @@ const {
   normalizePipelineStageApiRow,
   mapSwitchWorkshopTypeBodyToDb,
 } = require('../helpers/productionPipelineSchema');
-const { normalizePipelineStageSlaDaysForDb } = require('../helpers/crmPipelineSla');
+const { normalizePipelineStageSlaDaysForDb, isSxProjectDateOverdue } = require('../helpers/crmPipelineSla');
 const { computeSxRevenueKpis, resolveSxProjectValue, resolveSxProjectDeposit, resolveSxProjectRemaining } = require('../helpers/sxPipelineRevenue');
 const {
   leadDocVisibleForModuleAndUser,
@@ -631,6 +636,12 @@ r.get('/pipeline-stages', requirePermission('projects', 'view'), responseCache({
     if (rawWorkshopType !== undefined && rawWorkshopType !== null && rawWorkshopType !== '') {
       out = filterProductionPipelineStagesForWorkshopType(out, rawWorkshopType);
     }
+    try {
+      const { enrichPipelineStagesWithDefaultStaff } = require('../helpers/productionWorkshopTypeStaff');
+      out = await enrichPipelineStagesWithDefaultStaff(out);
+    } catch (staffEnrichErr) {
+      console.warn('[production/pipeline-stages] enrich default_staff:', staffEnrichErr.message);
+    }
     res.json(out);
   } catch (e) {
     console.error(e);
@@ -691,8 +702,31 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
     };
 
     const data = await insertProductionPipelineStageRow(supabase, insertPayload);
+    if (!isIntake && (b.default_staff || b.auto_add_members_on_enter)) {
+      try {
+        const { savePipelineStageDefaultStaff } = require('../helpers/productionWorkshopTypeStaff');
+        if (b.auto_add_members_on_enter) {
+          await supabase
+            .from('production_pipeline_stages')
+            .update({ auto_add_members_on_enter: true })
+            .eq('id', data.id);
+        }
+        if (b.default_staff) {
+          await savePipelineStageDefaultStaff(data.id, insertCompanyId, b.default_staff);
+        }
+      } catch (staffErr) {
+        console.warn('[production] save pipeline stage default staff (create):', staffErr.message);
+      }
+    }
     await invalidateProductionPipelineCache();
-    res.status(201).json(data);
+    try {
+      const { enrichPipelineStagesWithDefaultStaff } = require('../helpers/productionWorkshopTypeStaff');
+      const { data: fullRow } = await fetchProductionPipelineStageById(supabase, data.id);
+      const [enriched] = await enrichPipelineStagesWithDefaultStaff([fullRow || data]);
+      return res.status(201).json(enriched || data);
+    } catch (_) {
+      return res.status(201).json(data);
+    }
   } catch (e) {
     console.error(e);
     res.status(e.status || 500).json({ error: e.status ? e.message : friendlyPipelineStageDbError(e) });
@@ -811,6 +845,25 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
 
     const { data, error: fetchErr } = await fetchProductionPipelineStageById(supabase, req.params.id);
     if (fetchErr) throw fetchErr;
+    if (existingRow?.bucket_slug !== INTAKE_BUCKET && b.default_staff) {
+      try {
+        const { savePipelineStageDefaultStaff } = require('../helpers/productionWorkshopTypeStaff');
+        const scopeCompanyId = existingRow?.company_id || effectiveWorkshopCompanyId(req, b.company_id);
+        await savePipelineStageDefaultStaff(req.params.id, scopeCompanyId, b.default_staff);
+      } catch (staffErr) {
+        console.warn('[production] save pipeline stage default staff (update):', staffErr.message);
+      }
+    }
+    if (existingRow?.bucket_slug !== INTAKE_BUCKET && b.auto_add_members_on_enter !== undefined) {
+      try {
+        await supabase
+          .from('production_pipeline_stages')
+          .update({ auto_add_members_on_enter: !!b.auto_add_members_on_enter })
+          .eq('id', req.params.id);
+      } catch (flagErr) {
+        console.warn('[production] auto_add_members_on_enter update:', flagErr.message);
+      }
+    }
     if (enablingCompletedRevenue) {
       try {
         await clearSxKanbanDeadlinesForPipelineColumn(req.params.id);
@@ -819,7 +872,13 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
       }
     }
     await invalidateProductionPipelineCache();
-    res.json(data);
+    try {
+      const { enrichPipelineStagesWithDefaultStaff } = require('../helpers/productionWorkshopTypeStaff');
+      const [enriched] = await enrichPipelineStagesWithDefaultStaff([data]);
+      return res.json(enriched || data);
+    } catch (_) {
+      return res.json(data);
+    }
   } catch (e) {
     console.error(e);
     res.status(e.status || 500).json({ error: e.status ? e.message : friendlyPipelineStageDbError(e) });
@@ -1425,8 +1484,9 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       progress: calcTaskProgress(project.tasks),
       task_total: project.tasks?.length || 0,
       done_tasks: project.tasks?.filter((task) => task.status === 'done').length || 0,
-      is_overdue: Boolean(project.deadline && new Date(project.deadline) < new Date() && project.status !== 'completed'),
-      is_production_overdue: Boolean(project.production_deadline && new Date(project.production_deadline) < new Date() && project.status !== 'completed'),
+      is_overdue: isSxProjectDateOverdue(project, 'deadline'),
+      is_production_overdue: isSxProjectDateOverdue(project, 'production_deadline'),
+      is_delivery_overdue: isSxProjectDateOverdue(project, 'delivery_date'),
     }));
     const enhanced = await attachCrmProductionTaskStatsToProjects(workflowProjects);
     const withUserFlags = await attachLeadUserFlagsToProjects(enhanced, req.user?.userId);
@@ -2265,13 +2325,35 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
         .eq('id', id)
         .single();
 
+      let stageStaffApplied = null;
+      if (colChanged && colRow.bucket_slug !== INTAKE_BUCKET) {
+        try {
+          const { applyPipelineStageDefaultStaffToProject } = require('../helpers/productionWorkshopTypeStaff');
+          stageStaffApplied = await applyPipelineStageDefaultStaffToProject(id, colId, {
+            addedBy: userId,
+            req,
+          });
+          if (stageStaffApplied?.added > 0) {
+            console.info(
+              `[production] pipeline stage staff applied: project=${id} stage=${colId} added=${stageStaffApplied.added}`,
+            );
+          }
+        } catch (staffErr) {
+          console.warn('[production] applyPipelineStageDefaultStaffToProject:', staffErr.message);
+        }
+      }
+
       res.json({
         project: {
           ...updatedPipe,
           sx_kanban_column_id: colId,
           sx_intake: colRow.bucket_slug === INTAKE_BUCKET,
+          ...(stageStaffApplied?.production_staff?.length
+            ? { production_staff: stageStaffApplied.production_staff }
+            : {}),
         },
         pipeline_stage_id: colId,
+        stage_staff_applied: stageStaffApplied,
       });
 
       const ioPipe = req.app.get('io');
@@ -2534,8 +2616,26 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
               }
             } catch (_e) { /* ignore */ }
 
+            const { data: projVcMeta } = await supabase
+              .from('projects')
+              .select('logistics_company_id, company_id, logistics_person_id, installer_person_id')
+              .eq('id', projectId)
+              .maybeSingle();
+            const vcCoId = projVcMeta?.logistics_company_id || projVcMeta?.company_id || companyIdForPipeline;
+
+            let resolvedLogisticsPersonId = projVcMeta?.logistics_person_id || null;
+            let resolvedInstallerPersonId = projVcMeta?.installer_person_id || null;
+            if (!resolvedLogisticsPersonId) {
+              resolvedLogisticsPersonId = await resolveLogisticsHandoverResponsibleUserId(vcCoId);
+            }
+            if (!resolvedInstallerPersonId) {
+              resolvedInstallerPersonId = await resolveLogisticsHandoverInstallerUserId(vcCoId);
+            }
+
             const autoUpd = { status: 'shipping' };
             if (autoVcStageId) autoUpd.vc_kanban_column_id = autoVcStageId;
+            if (resolvedLogisticsPersonId) autoUpd.logistics_person_id = resolvedLogisticsPersonId;
+            if (resolvedInstallerPersonId) autoUpd.installer_person_id = resolvedInstallerPersonId;
             const { error: autoUpdErr } = await supabase.from('projects').update(autoUpd).eq('id', projectId);
             if (autoUpdErr && autoUpdErr.message?.includes('vc_kanban_column_id')) {
               await supabase.from('projects').update({ status: 'shipping' }).eq('id', projectId);
@@ -2546,6 +2646,19 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
               await ensureLeadDocumentsIncludeShareModules(projectId, ['logistics']);
             } catch (mdErr) {
               console.warn('[production/stage] expand doc modules for VC:', mdErr.message);
+            }
+
+            try {
+              const out = await applyAllActiveWorkshopTemplatesForArea(projectId, userId, {
+                workshopArea: 'logistics',
+                companyId: vcCoId,
+                logisticsStageId: autoVcStageId,
+              });
+              if (!out?.ok) {
+                console.warn('[production/stage] gen logistics templates:', out?.error || 'unknown');
+              }
+            } catch (tplErr) {
+              console.warn('[production/stage] gen logistics templates:', tplErr.message);
             }
 
             try {
@@ -2582,22 +2695,17 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
               console.warn('[production/handover] sync CRM VC delivery:', crmErr.message);
             }
 
-            const { data: vcUsers } = await supabase
-              .from('users')
-              .select('id')
-              .in('role', ['logistics', 'installer', 'manager'])
-              .eq('is_active', true);
-            const vcRecipients = (vcUsers || []).map((u) => u.id).filter((uid) => uid !== userId);
-            if (!DISABLE_PRODUCTION_PUSH_NOTIFICATIONS && vcRecipients.length) {
-              await notifyMultipleShared(
-                reqRef,
-                vcRecipients,
-                'workshop_new_deal',
-                `🚚 Vận chuyển: Deal mới từ Xưởng`,
-                `Dự án ${updatedSnapshot.code || updatedSnapshot.name} đã hoàn thành sản xuất, chuyển sang Vận chuyển`,
-                'project',
+            try {
+              await notifyVcHandoverFromSx(reqRef, {
                 projectId,
-              );
+                projectCode: updatedSnapshot.code,
+                projectName: updatedSnapshot.name,
+                logisticsCompanyId: vcCoId,
+                actorUserId: userId,
+                manual: false,
+              });
+            } catch (vcNotifErr) {
+              console.warn('[production/stage] notify VC handover:', vcNotifErr.message);
             }
           }
         } catch (handoverErr) {
@@ -2875,6 +2983,12 @@ r.patch('/projects/:id/switch-workshop-type', requireProductionKanbanEdit(), asy
         } catch (emitErr) {
           console.warn('[production/switch-workshop-type] emit kanban async:', emitErr.message);
         }
+        try {
+          const { applyPipelineStageDefaultStaffToProject } = require('../helpers/productionWorkshopTypeStaff');
+          await applyPipelineStageDefaultStaffToProject(id, firstCol.id, { addedBy: userId });
+        } catch (staffErr) {
+          console.warn('[production/switch-workshop-type] pipeline stage staff:', staffErr.message);
+        }
       })();
     });
   } catch (e) {
@@ -2890,6 +3004,7 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
     const { id } = req.params;
     const userId = req.user.userId;
     const logisticsPersonId = req.body?.logistics_person_id || null;
+    const installerPersonId = req.body?.installer_person_id || null;
     const logisticsCompanyId = req.body?.logistics_company_id || null;
     const deliveryTeamId = req.body?.delivery_team_id || null;
     const installationTeamId = req.body?.installation_team_id || null;
@@ -3043,8 +3158,25 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
     }
 
     // ── 2. Đổi status sang 'shipping', xoá current_stage_id, gán vc_kanban_column_id ──
+    const { data: projPersons } = await supabase
+      .from('projects')
+      .select('logistics_person_id, installer_person_id, production_person_id')
+      .eq('id', id)
+      .maybeSingle();
+
+    let resolvedLogisticsPersonId = logisticsPersonId || projPersons?.logistics_person_id || null;
+    let resolvedInstallerPersonId = installerPersonId || projPersons?.installer_person_id || null;
+    if (!resolvedLogisticsPersonId) {
+      resolvedLogisticsPersonId = await resolveLogisticsHandoverResponsibleUserId(logisticsCompanyId);
+    }
+    if (!resolvedInstallerPersonId) {
+      resolvedInstallerPersonId = await resolveLogisticsHandoverInstallerUserId(logisticsCompanyId);
+    }
+
     const projectUpdate = { status: 'shipping', current_stage_id: null };
-    if (logisticsPersonId) projectUpdate.logistics_person_id = logisticsPersonId;
+    // Chỉ gán VC/LĐ — không ghi đè production_person_id hay assignee CRM trên deal.
+    if (resolvedLogisticsPersonId) projectUpdate.logistics_person_id = resolvedLogisticsPersonId;
+    if (resolvedInstallerPersonId) projectUpdate.installer_person_id = resolvedInstallerPersonId;
     projectUpdate.logistics_company_id = logisticsCompanyId;
     if (deliveryTeamId) projectUpdate.delivery_team_id = deliveryTeamId;
     if (installationTeamId) projectUpdate.installation_team_id = installationTeamId;
@@ -3078,7 +3210,8 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
             ...(deliveryTeamId ? { delivery_team_id: deliveryTeamId } : {}),
             ...(installationTeamId ? { installation_team_id: installationTeamId } : {}),
             ...(vcStageId ? { vc_kanban_column_id: vcStageId } : {}),
-            ...(logisticsPersonId ? { logistics_person_id: logisticsPersonId } : {}),
+            ...(resolvedLogisticsPersonId ? { logistics_person_id: resolvedLogisticsPersonId } : {}),
+            ...(resolvedInstallerPersonId ? { installer_person_id: resolvedInstallerPersonId } : {}),
           })
           .eq('id', id);
         if (retryErr) throw retryErr;
@@ -3158,19 +3291,16 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
       console.warn('[production/handover-vc] sync CRM:', crmErr.message);
     }
 
-    // Thông báo nhân viên VC
+    // Thông báo nhân viên VC/LĐ (luôn bật — không phụ thuộc DISABLE_PRODUCTION_PUSH_NOTIFICATIONS)
     try {
-      const { data: vcUsers } = await supabase
-        .from('users').select('id').in('role', ['logistics', 'installer', 'manager']).eq('is_active', true);
-      const vcRecipients = (vcUsers || []).map((u) => u.id).filter((uid) => uid !== userId);
-      if (!DISABLE_PRODUCTION_PUSH_NOTIFICATIONS && vcRecipients.length) {
-        await notifyMultipleShared(
-          req, vcRecipients, 'workshop_new_deal',
-          `🚚 Vận chuyển: Deal mới từ Xưởng`,
-          `Dự án ${project.code || project.name} đã bàn giao sang Vận chuyển`,
-          'project', id,
-        );
-      }
+      await notifyVcHandoverFromSx(req, {
+        projectId: id,
+        projectCode: project.code,
+        projectName: project.name,
+        logisticsCompanyId,
+        actorUserId: userId,
+        manual: true,
+      });
     } catch (notifErr) {
       console.warn('[production/handover-vc] notify VC:', notifErr.message);
     }

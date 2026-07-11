@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { Settings, Plus, Trash2, Save, ChevronRight, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer, ArrowRightLeft } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, ChevronRight, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer, ArrowRightLeft, Search, Wrench } from 'lucide-react';
 import WorkshopTypeSettingsSection from '../components/WorkshopTypeSettingsSection';
 import { isPipelineStageSlaDisabled } from '../lib/crmPipelineSla';
 
@@ -50,6 +50,15 @@ export default function ProductionPipelineSettingsPage() {
   const [typeStaffUsers, setTypeStaffUsers] = useState([]);
   const [typeStaffLoading, setTypeStaffLoading] = useState(false);
   const [typeStaffSaving, setTypeStaffSaving] = useState(false);
+  const [stageStaffFilterCompanyId, setStageStaffFilterCompanyId] = useState('');
+  const [stageStaffFilterDivisionId, setStageStaffFilterDivisionId] = useState('');
+  const [stageStaffDivisions, setStageStaffDivisions] = useState([]);
+  const [stageStaffAllCompanies, setStageStaffAllCompanies] = useState([]);
+  const [stageStaffPickerCompanies, setStageStaffPickerCompanies] = useState([]);
+  const [stageStaffBrowseUsers, setStageStaffBrowseUsers] = useState([]);
+  const [stageStaffBrowseLoading, setStageStaffBrowseLoading] = useState(false);
+  const [stageStaffSearch, setStageStaffSearch] = useState('');
+  const [stageStaffSelectedMeta, setStageStaffSelectedMeta] = useState([]);
   const [form, setForm] = useState({
     name: '', color: COLORS[0], icon: '📋', is_active: true,
     is_handover_to_logistics: false,
@@ -63,6 +72,11 @@ export default function ProductionPipelineSettingsPage() {
     counts_as_completed_revenue: false,
     counts_as_collected_revenue: false,
     requires_deadline: false,
+    auto_add_members_on_enter: false,
+    stage_staff_user_ids: [],
+    stage_staff_primary_user_id: '',
+    stage_logistics_person_id: '',
+    stage_installer_person_id: '',
   });
 
   const load = useCallback(async () => {
@@ -204,6 +218,166 @@ export default function ProductionPipelineSettingsPage() {
     () => (typeStaffUsers.length ? typeStaffUsers : handoverData?.users || []),
     [typeStaffUsers, handoverData?.users],
   );
+
+  const toggleStageStaffUser = (userId, userMeta = null) => {
+    const uid = String(userId);
+    setForm((prev) => {
+      const current = Array.isArray(prev.stage_staff_user_ids) ? [...prev.stage_staff_user_ids] : [];
+      const idx = current.indexOf(uid);
+      if (idx >= 0) current.splice(idx, 1);
+      else current.push(uid);
+      const next = { ...prev, stage_staff_user_ids: current };
+      if (String(prev.stage_staff_primary_user_id) === uid && idx >= 0) {
+        next.stage_staff_primary_user_id = '';
+      }
+      return next;
+    });
+    setStageStaffSelectedMeta((prev) => {
+      const exists = prev.some((u) => String(u.id) === uid);
+      if (exists) return prev.filter((u) => String(u.id) !== uid);
+      if (userMeta?.id) return [...prev, userMeta];
+      return prev;
+    });
+  };
+
+  const setStageStaffPrimary = (userId) => {
+    const uid = userId ? String(userId) : '';
+    setForm((prev) => {
+      const next = { ...prev, stage_staff_primary_user_id: uid };
+      if (uid) {
+        const current = Array.isArray(prev.stage_staff_user_ids) ? [...prev.stage_staff_user_ids] : [];
+        if (!current.includes(uid)) {
+          next.stage_staff_user_ids = [...current, uid];
+        }
+      }
+      return next;
+    });
+  };
+
+  const stageStaffPayloadFromForm = () => ({
+    auto_add_members_on_enter: !!form.auto_add_members_on_enter,
+    default_staff: {
+      user_ids: (form.stage_staff_user_ids || []).map(String),
+      primary_user_id: form.stage_staff_primary_user_id || null,
+      logistics_person_id: form.stage_logistics_person_id || null,
+      installer_person_id: form.stage_installer_person_id || null,
+    },
+  });
+
+  const stageStaffHasAnyConfig = () => (
+    (form.stage_staff_user_ids || []).length > 0
+    || !!form.stage_logistics_person_id
+    || !!form.stage_installer_person_id
+  );
+
+  const stageStaffPickerCompaniesSorted = useMemo(
+    () => [...stageStaffPickerCompanies].sort((a, b) => String(a.short_name || a.name || '').localeCompare(String(b.short_name || b.name || ''), 'vi')),
+    [stageStaffPickerCompanies],
+  );
+
+  const stageStaffDivisionLabel = useMemo(() => {
+    if (!stageStaffFilterDivisionId) return '';
+    const d = stageStaffDivisions.find((x) => String(x.id) === String(stageStaffFilterDivisionId));
+    return d?.short_name || d?.name || '';
+  }, [stageStaffDivisions, stageStaffFilterDivisionId]);
+
+  const stageStaffCompanyLabel = useMemo(() => {
+    if (!stageStaffFilterCompanyId) return '';
+    const c = stageStaffAllCompanies.find((x) => String(x.id) === String(stageStaffFilterCompanyId));
+    return c?.short_name || c?.name || '';
+  }, [stageStaffAllCompanies, stageStaffFilterCompanyId]);
+
+  const stageStaffSelectedUsers = useMemo(() => {
+    const byId = new Map();
+    for (const u of stageStaffSelectedMeta) {
+      if (u?.id) byId.set(String(u.id), u);
+    }
+    for (const u of stageStaffBrowseUsers) {
+      if (u?.id) byId.set(String(u.id), u);
+    }
+    return (form.stage_staff_user_ids || [])
+      .map((id) => byId.get(String(id)))
+      .filter(Boolean);
+  }, [form.stage_staff_user_ids, stageStaffSelectedMeta, stageStaffBrowseUsers]);
+
+  const stageStaffFilteredBrowseUsers = useMemo(() => {
+    const q = stageStaffSearch.trim().toLowerCase();
+    const byId = new Map();
+    for (const u of stageStaffBrowseUsers) {
+      if (u?.id) byId.set(String(u.id), u);
+    }
+    for (const u of stageStaffSelectedMeta) {
+      if (u?.id) byId.set(String(u.id), u);
+    }
+    return [...byId.values()].filter((u) => {
+      if (!q) return true;
+      const name = String(u.full_name || '').toLowerCase();
+      const email = String(u.email || '').toLowerCase();
+      return name.includes(q) || email.includes(q);
+    });
+  }, [stageStaffBrowseUsers, stageStaffSearch, stageStaffSelectedMeta]);
+
+  useEffect(() => {
+    if (!stageStaffFilterCompanyId || !(adding || editId) || !form.auto_add_members_on_enter) {
+      setStageStaffBrowseLoading(false);
+      if (!form.auto_add_members_on_enter) {
+        setStageStaffBrowseUsers([]);
+      }
+      return undefined;
+    }
+    let cancelled = false;
+    setStageStaffBrowseLoading(true);
+    api.get('/crm/employees-by-company', {
+      params: { company_id: stageStaffFilterCompanyId, for_module: 'all' },
+    })
+      .then((r) => {
+        if (cancelled) return;
+        const list = r.data?.users || r.data || [];
+        setStageStaffBrowseUsers(Array.isArray(list) ? list : []);
+      })
+      .catch(() => {
+        if (!cancelled) setStageStaffBrowseUsers([]);
+      })
+      .finally(() => {
+        if (!cancelled) setStageStaffBrowseLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [stageStaffFilterCompanyId, adding, editId, form.auto_add_members_on_enter]);
+
+  useEffect(() => {
+    api.get('/divisions').catch(() => ({ data: { divisions: [] } })).then((divRes) => {
+      setStageStaffDivisions(divRes.data?.divisions || []);
+    });
+    api.get('/companies').catch(() => ({ data: { companies: [] } })).then((coRes) => {
+      const list = coRes.data?.companies || coRes.data || [];
+      setStageStaffAllCompanies(Array.isArray(list) ? list : []);
+      setStageStaffPickerCompanies(Array.isArray(list) ? list : []);
+    });
+  }, []);
+
+  useEffect(() => {
+    const params = stageStaffFilterDivisionId
+      ? { division_unit_id: stageStaffFilterDivisionId }
+      : {};
+    api.get('/companies', { params })
+      .catch(() => ({ data: { companies: [] } }))
+      .then((coRes) => {
+        const list = coRes.data?.companies || coRes.data || [];
+        setStageStaffPickerCompanies(Array.isArray(list) ? list : []);
+      });
+  }, [stageStaffFilterDivisionId]);
+
+  useEffect(() => {
+    if (!stageStaffFilterDivisionId || !stageStaffFilterCompanyId) return;
+    if (!stageStaffPickerCompanies.length) return;
+    const ok = stageStaffPickerCompanies.some((c) => String(c.id) === String(stageStaffFilterCompanyId));
+    if (!ok) setStageStaffFilterCompanyId('');
+  }, [stageStaffFilterDivisionId, stageStaffFilterCompanyId, stageStaffPickerCompanies]);
+
+  const ensureStageStaffDefaultCompany = useCallback(() => {
+    if (!settingsCompanyId || stageStaffFilterCompanyId) return;
+    setStageStaffFilterCompanyId(String(settingsCompanyId));
+  }, [settingsCompanyId, stageStaffFilterCompanyId]);
 
   const setTypeStaffForType = (typeId, userIds) => {
     const key = String(typeId);
@@ -558,6 +732,11 @@ export default function ProductionPipelineSettingsPage() {
   const startAdd = () => {
     setAdding(true);
     setEditId(null);
+    setStageStaffFilterCompanyId(settingsCompanyId ? String(settingsCompanyId) : '');
+    setStageStaffFilterDivisionId('');
+    setStageStaffBrowseUsers([]);
+    setStageStaffSearch('');
+    setStageStaffSelectedMeta([]);
     setForm({
       name: '', color: COLORS[stages.length % COLORS.length], icon: ICONS[stages.length % ICONS.length],
       is_active: true, is_handover_to_logistics: false,
@@ -570,12 +749,25 @@ export default function ProductionPipelineSettingsPage() {
       counts_as_completed_revenue: false,
       counts_as_collected_revenue: false,
       requires_deadline: false,
+      auto_add_members_on_enter: false,
+      stage_staff_user_ids: [],
+      stage_staff_primary_user_id: '',
+      stage_logistics_person_id: '',
+      stage_installer_person_id: '',
     });
   };
 
   const startEdit = (stage) => {
     setEditId(stage.id);
     setAdding(false);
+    setStageStaffFilterCompanyId(settingsCompanyId ? String(settingsCompanyId) : '');
+    setStageStaffFilterDivisionId('');
+    setStageStaffSearch('');
+    setStageStaffSelectedMeta([
+      ...(Array.isArray(stage.default_staff?.users) ? stage.default_staff.users : []),
+      stage.default_staff?.logistics_person,
+      stage.default_staff?.installer_person,
+    ].filter(Boolean));
     setForm({
       name: stage.name,
       color: stage.color || '#0f766e',
@@ -593,6 +785,11 @@ export default function ProductionPipelineSettingsPage() {
       counts_as_completed_revenue: !!stage.counts_as_completed_revenue,
       counts_as_collected_revenue: !!stage.counts_as_collected_revenue,
       requires_deadline: !!stage.requires_deadline,
+      auto_add_members_on_enter: !!stage.auto_add_members_on_enter,
+      stage_staff_user_ids: (stage.default_staff?.user_ids || []).map(String),
+      stage_staff_primary_user_id: stage.default_staff?.primary_user_id ? String(stage.default_staff.primary_user_id) : '',
+      stage_logistics_person_id: stage.default_staff?.logistics_person_id ? String(stage.default_staff.logistics_person_id) : '',
+      stage_installer_person_id: stage.default_staff?.installer_person_id ? String(stage.default_staff.installer_person_id) : '',
     });
   };
 
@@ -601,6 +798,9 @@ export default function ProductionPipelineSettingsPage() {
     if (!selectedTypeKey) return alert('Hãy chọn phân loại trước');
     if (form.is_switch_workshop_type && !form.target_workshop_type_id) {
       return alert('Chọn phân loại đích khi bật «Chuyển phân loại»');
+    }
+    if (form.auto_add_members_on_enter && !stageStaffHasAnyConfig()) {
+      return alert('Chọn ít nhất 1 NV sản xuất, phụ trách vận chuyển hoặc người lắp đặt');
     }
     setSaving(true);
     try {
@@ -619,6 +819,7 @@ export default function ProductionPipelineSettingsPage() {
         company_id: settingsCompanyId,
         workshop_type_id: currentWorkshopTypeId,
         ...kpiPayloadFromForm(),
+        ...stageStaffPayloadFromForm(),
       });
       setAdding(false);
       setEditId(null);
@@ -635,6 +836,9 @@ export default function ProductionPipelineSettingsPage() {
     if (!form.name.trim()) return alert('Nhập tên cột');
     if (form.is_switch_workshop_type && !form.target_workshop_type_id) {
       return alert('Chọn phân loại đích khi bật «Chuyển phân loại»');
+    }
+    if (form.auto_add_members_on_enter && !stageStaffHasAnyConfig()) {
+      return alert('Chọn ít nhất 1 NV sản xuất, phụ trách vận chuyển hoặc người lắp đặt');
     }
     if (!stages.some((s) => s.id === editId)) {
       await recoverMissingStage();
@@ -657,7 +861,7 @@ export default function ProductionPipelineSettingsPage() {
         target_workshop_type_id: switchType ? (form.target_workshop_type_id || null) : null,
         crm_sync_type: intakeRow || handover || switchType ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
         crm_target_stage_id: intakeRow || handover || switchType ? null : (form.crm_target_stage_id || null),
-        ...(intakeRow ? {} : kpiPayloadFromForm()),
+        ...(intakeRow ? {} : { ...kpiPayloadFromForm(), ...stageStaffPayloadFromForm() }),
       });
       setEditId(null);
       setAdding(false);
@@ -1574,6 +1778,21 @@ export default function ProductionPipelineSettingsPage() {
                           ⏰ DL bắt buộc
                         </span>
                       )}
+                      {!isIntake && s.auto_add_members_on_enter && (
+                        <span className="bg-indigo-50 text-indigo-800 border border-indigo-200 px-1.5 py-0.5 rounded font-medium">
+                          👥 Tự thêm NV
+                          {(() => {
+                            const names = [
+                              ...(Array.isArray(s.default_staff?.users) ? s.default_staff.users : []),
+                              s.default_staff?.logistics_person,
+                              s.default_staff?.installer_person,
+                            ].filter(Boolean).map((u) => u.full_name || u.email).filter(Boolean);
+                            if (!names.length) return '';
+                            const preview = names.slice(0, 3).join(', ');
+                            return `: ${preview}${names.length > 3 ? ` +${names.length - 3}` : ''}`;
+                          })()}
+                        </span>
+                      )}
                     </p>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
@@ -1919,7 +2138,9 @@ export default function ProductionPipelineSettingsPage() {
                         <Truck className="h-3.5 w-3.5" /> Bàn giao VC
                       </span>
                       <span className="block text-[10px] text-orange-600/90 mt-0.5 leading-snug">
-                        Bật để hiện nút bàn giao Vận chuyển khi kéo thẻ vào cột này. Tự tắt đồng bộ CRM khi bật.
+                        Bật để hiện nút bàn giao Vận chuyển khi kéo thẻ vào cột này. Người phụ trách VC/LĐ cấu hình tại{' '}
+                        <Link to="/vc/pipeline-settings" className="underline font-medium hover:text-orange-800">Pipeline VC</Link>.
+                        Không đổi phụ trách CRM và SX.
                       </span>
                     </span>
                   </label>
@@ -1968,6 +2189,182 @@ export default function ProductionPipelineSettingsPage() {
                               <option key={t.id} value={t.id}>{t.name}</option>
                             ))}
                         </select>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {!editingIntake && (
+                  <div className="w-full space-y-2 p-3 rounded-lg border border-indigo-200 bg-indigo-50/50">
+                    <label className="flex items-start gap-2 text-xs cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={!!form.auto_add_members_on_enter}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setForm((f) => ({ ...f, auto_add_members_on_enter: checked }));
+                          if (checked) ensureStageStaffDefaultCompany();
+                        }}
+                        className="mt-0.5 rounded border-indigo-400 accent-indigo-600"
+                      />
+                      <span>
+                        <span className="flex items-center gap-1 font-semibold text-indigo-800">
+                          <UserCircle className="h-3.5 w-3.5" /> Tự thêm thành viên khi kéo vào cột
+                        </span>
+                        <span className="block text-[10px] text-indigo-700/90 mt-0.5 leading-snug">
+                          Mỗi lần dự án chuyển vào cột này, hệ thống gộp NV đã chọn vào tab Thành viên deal.
+                          Có thể cấu hình đội SX, phụ trách vận chuyển và người lắp đặt — <strong className="font-semibold">không ghi đè</strong> phụ trách CRM/SX/VC đã có.
+                        </span>
+                      </span>
+                    </label>
+                    {form.auto_add_members_on_enter && (
+                      <div className="space-y-2 pl-1">
+                        {stageStaffSelectedUsers.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {stageStaffSelectedUsers.map((u) => (
+                              <span
+                                key={`picked-${u.id}`}
+                                className="inline-flex items-center gap-1 max-w-[180px] truncate rounded-full bg-white border border-indigo-200 px-2 py-0.5 text-[10px] text-indigo-800"
+                                title={u.full_name || u.email}
+                              >
+                                {u.full_name || u.email}
+                                {String(u.id) === String(form.stage_staff_primary_user_id) ? ' ★' : ''}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        <div className="grid gap-2 sm:grid-cols-3 max-w-3xl">
+                          <label className="flex flex-col gap-1">
+                            <span className="text-[10px] font-semibold text-indigo-700 uppercase tracking-wide flex items-center gap-1">
+                              <Globe className="h-3 w-3" /> Khối
+                            </span>
+                            <select
+                              value={stageStaffFilterDivisionId}
+                              onChange={(e) => {
+                                setStageStaffFilterDivisionId(e.target.value);
+                                setStageStaffPickerCompanies([]);
+                              }}
+                              className="h-8 px-2 border border-indigo-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-indigo-300"
+                            >
+                              <option value="">— Mọi khối —</option>
+                              {stageStaffDivisions.map((d) => (
+                                <option key={d.id} value={d.id}>{d.short_name || d.name}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className="text-[10px] font-semibold text-indigo-700 uppercase tracking-wide flex items-center gap-1">
+                              <Building2 className="h-3 w-3" /> Công ty
+                            </span>
+                            <select
+                              value={stageStaffFilterCompanyId}
+                              onChange={(e) => setStageStaffFilterCompanyId(e.target.value)}
+                              className="h-8 px-2 border border-indigo-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-indigo-300"
+                            >
+                              <option value="">— Chọn công ty —</option>
+                              {stageStaffPickerCompaniesSorted.map((c) => (
+                                <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className="text-[10px] font-semibold text-indigo-700 uppercase tracking-wide flex items-center gap-1">
+                              <Search className="h-3 w-3" /> Tìm tên
+                            </span>
+                            <input
+                              value={stageStaffSearch}
+                              disabled={!stageStaffFilterCompanyId}
+                              onChange={(e) => setStageStaffSearch(e.target.value)}
+                              placeholder="Tên hoặc email…"
+                              className="h-8 px-2 border border-indigo-200 rounded-lg text-xs bg-white disabled:bg-gray-100"
+                            />
+                          </label>
+                        </div>
+                        {!stageStaffFilterCompanyId ? (
+                          <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-100 rounded px-2 py-1.5">
+                            Chọn khối (tuỳ chọn) rồi chọn công ty — có thể chọn NV từ khối/công ty khác công ty pipeline.
+                          </p>
+                        ) : stageStaffBrowseLoading ? (
+                          <p className="text-[10px] text-gray-500 flex items-center gap-1.5">
+                            <Loader2 className="h-3 w-3 animate-spin" /> Đang tải nhân viên…
+                          </p>
+                        ) : (
+                          <>
+                            <div className="grid gap-2 sm:grid-cols-2 max-w-2xl">
+                              <label className="flex flex-col gap-1">
+                                <span className="text-[10px] font-semibold text-orange-700 uppercase tracking-wide flex items-center gap-1">
+                                  <Truck className="h-3 w-3" /> Phụ trách vận chuyển
+                                </span>
+                                <select
+                                  value={form.stage_logistics_person_id || ''}
+                                  onChange={(e) => setForm((f) => ({ ...f, stage_logistics_person_id: e.target.value }))}
+                                  className="h-8 px-2 border border-orange-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-orange-300"
+                                >
+                                  <option value="">— Không gán —</option>
+                                  {stageStaffFilteredBrowseUsers.map((u) => (
+                                    <option key={`log-${u.id}`} value={u.id}>{u.full_name || u.email}</option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label className="flex flex-col gap-1">
+                                <span className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide flex items-center gap-1">
+                                  <Wrench className="h-3 w-3" /> Người lắp đặt
+                                </span>
+                                <select
+                                  value={form.stage_installer_person_id || ''}
+                                  onChange={(e) => setForm((f) => ({ ...f, stage_installer_person_id: e.target.value }))}
+                                  className="h-8 px-2 border border-amber-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-amber-300"
+                                >
+                                  <option value="">— Không gán —</option>
+                                  {stageStaffFilteredBrowseUsers.map((u) => (
+                                    <option key={`ins-${u.id}`} value={u.id}>{u.full_name || u.email}</option>
+                                  ))}
+                                </select>
+                              </label>
+                            </div>
+                            <label className="flex flex-col gap-1 max-w-sm">
+                              <span className="text-[10px] font-semibold text-indigo-700 uppercase tracking-wide">Phụ trách SX ★ (chỉ khi dự án chưa có)</span>
+                              <select
+                                value={form.stage_staff_primary_user_id || ''}
+                                onChange={(e) => setStageStaffPrimary(e.target.value)}
+                                className="h-8 px-2 border border-indigo-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-indigo-300"
+                              >
+                                <option value="">— Chọn phụ trách —</option>
+                                {(stageStaffSelectedUsers.length ? stageStaffSelectedUsers : stageStaffFilteredBrowseUsers).map((u) => (
+                                  <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <p className="text-[10px] text-gray-500">Đội sản xuất (chọn nhiều):</p>
+                            <div className="flex flex-wrap gap-x-4 gap-y-1.5 max-h-36 overflow-y-auto rounded border border-indigo-100 bg-white p-2">
+                              {!stageStaffFilteredBrowseUsers.length ? (
+                                <p className="text-[10px] text-gray-400 px-1 py-2">Không có nhân viên phù hợp.</p>
+                              ) : stageStaffFilteredBrowseUsers.map((u) => {
+                                const checked = (form.stage_staff_user_ids || []).includes(String(u.id));
+                                const isPrimary = String(u.id) === String(form.stage_staff_primary_user_id);
+                                return (
+                                  <label
+                                    key={`stage-staff-${u.id}`}
+                                    className={`inline-flex items-center gap-1.5 text-xs cursor-pointer select-none px-2 py-1 rounded-md border transition-colors ${
+                                      isPrimary
+                                        ? 'bg-amber-50 border-amber-300 text-amber-900 ring-1 ring-amber-200'
+                                        : checked
+                                          ? 'bg-indigo-50 border-indigo-200 text-indigo-900'
+                                          : 'bg-gray-50/50 border-transparent text-gray-700 hover:bg-gray-100'
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                      checked={checked}
+                                      onChange={() => toggleStageStaffUser(u.id, u)}
+                                    />
+                                    <span>{u.full_name || u.email}{isPrimary ? ' ★' : ''}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>

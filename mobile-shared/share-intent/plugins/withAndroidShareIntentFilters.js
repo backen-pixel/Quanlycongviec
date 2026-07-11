@@ -10,6 +10,7 @@ function loadConfigPlugins() {
     process.cwd(),
     path.resolve(__dirname, '../../../crm-mobile-v2'),
     path.resolve(__dirname, '../../../sx-mobile'),
+    path.resolve(__dirname, '../../../vc-mobile'),
   ];
   return require(require.resolve('@expo/config-plugins', { paths: searchPaths }));
 }

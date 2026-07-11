@@ -27,7 +27,7 @@ const { defaultKpiLedgerMonthStartYmd } = require('./kpiHelpers');
 const CRM_LEAD_LIST_SELECT_EXTRA = ', linked_project:projects!crm_leads_project_id_fkey(id, code, name, order_date, delivery_date, production_deadline, production_note)';
 const CRM_LEAD_REGION_EMBED = ', crm_region:company_regions!crm_leads_region_id_fkey(id, name, code)';
 const CRM_LEAD_LIST_SELECT_BASE =
-  `*, customer:customers(id, full_name, phone, email, company), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type, sync_role, order_index), source:crm_sources(id, name, icon), lead_type:crm_lead_types(id, name, color), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies!crm_leads_company_id_fkey(id, name, short_name)${CRM_LEAD_REGION_EMBED}, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name)), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)`;
+  `*, customer:customers(id, full_name, phone, email, company), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type, sync_role, order_index), source:crm_sources(id, name, icon), lead_type:crm_lead_types(id, name, color), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies!crm_leads_company_id_fkey(id, name, short_name)${CRM_LEAD_REGION_EMBED}, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, sla_days, counts_as_completed_revenue, company:companies(id, name, short_name)), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)`;
 /** Select tối ưu cho Kanban web/mobile — đủ field thẻ CRM, nhẹ hơn getCrmLeadListSelect ~60%. */
 const CRM_LEAD_KANBAN_LITE_SELECT =
   'id, code, title, type, phone, customer_id, estimated_value, probability, created_at, updated_at, assigned_to, lead_owner_id, stage_id, region_id, company_id, lead_type_id, project_id, stage_entered_at, kanban_deadline_at, kanban_deadline_reason, next_follow_up, expected_close_date, lost_reason, ' +
@@ -39,7 +39,7 @@ const CRM_LEAD_KANBAN_LITE_SELECT =
   'lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), ' +
   'company:companies!crm_leads_company_id_fkey(id, name, short_name)' +
   CRM_LEAD_REGION_EMBED +
-  ', sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name)), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)' +
+  ', sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, sla_days, counts_as_completed_revenue, company:companies(id, name, short_name)), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)' +
   CRM_LEAD_LIST_SELECT_EXTRA;
 
 function resolveCrmLeadsKanbanLite(reqQuery, opts = {}) {

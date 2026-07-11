@@ -17,16 +17,23 @@ export function LogisticsListView({ pipeline, calculateDays }) {
       <table className="w-full text-sm">
         <thead className="bg-gray-50 border-b">
           <tr>
-            {['Mã', 'Tên dự án', 'Khách hàng', 'Giai đoạn VC', 'Giá trị', 'Phụ trách VC', 'Deadline', 'Thời gian'].map((h) => (
+            {['Mã', 'Tên dự án', 'Khách hàng', 'Giai đoạn VC', 'Giá trị', 'CRM', 'SX', 'VC', 'LĐ', 'Deadline', 'Thời gian'].map((h) => (
               <th key={h} className="text-left text-xs font-semibold text-gray-500 px-4 py-3 whitespace-nowrap">{h}</th>
             ))}
           </tr>
         </thead>
         <tbody>
           {allProjects.length === 0 ? (
-            <tr><td colSpan={8} className="text-center text-gray-400 py-12 text-sm">Không có dự án nào</td></tr>
+            <tr><td colSpan={11} className="text-center text-gray-400 py-12 text-sm">Không có dự án nào</td></tr>
           ) : (
-            allProjects.map((p) => (
+            allProjects.map((p) => {
+              const deals = Array.isArray(p.crm_deals) ? p.crm_deals : [];
+              const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
+              const crmName = primaryDeal?.assignee?.full_name || primaryDeal?.lead_owner?.full_name || p.sales_person?.full_name || '—';
+              const sxName = p.production_person?.full_name || '—';
+              const vcName = p.logistics_person?.full_name || '—';
+              const ldName = p.installer_person?.full_name || '—';
+              return (
               <tr key={p.id} onClick={() => goProject(p.id)}
                 className="border-b last:border-b-0 hover:bg-orange-50 cursor-pointer transition-colors">
                 <td className="px-4 py-3">
@@ -48,7 +55,16 @@ export function LogisticsListView({ pipeline, calculateDays }) {
                   <span className="font-semibold text-emerald-600">{formatVND(p.estimated_value)}</span>
                 </td>
                 <td className="px-4 py-3">
-                  <span className="text-gray-600">{p.logistics_person?.full_name || p.production_person?.full_name || '—'}</span>
+                  <span className="text-gray-600">{crmName}</span>
+                </td>
+                <td className="px-4 py-3">
+                  <span className="text-gray-600">{sxName}</span>
+                </td>
+                <td className="px-4 py-3">
+                  <span className="text-gray-600">{vcName}</span>
+                </td>
+                <td className="px-4 py-3">
+                  <span className="text-gray-600">{ldName}</span>
                 </td>
                 <td className="px-4 py-3">
                   {p.deadline ? (
@@ -61,7 +77,8 @@ export function LogisticsListView({ pipeline, calculateDays }) {
                   <span className="text-xs text-gray-500">{calculateDays?.(p.created_at) || '—'}</span>
                 </td>
               </tr>
-            ))
+              );
+            })
           )}
         </tbody>
       </table>

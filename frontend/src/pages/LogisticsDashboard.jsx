@@ -1066,9 +1066,41 @@ const KanbanCard = memo(function KanbanCard({ item, stage, calculateDays, isSele
   const totalTasks = item.task_total ?? 0;
   const pipelinePercent = item.vc_pipeline_percent;
   const taskPercent = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : (item.progress || 0);
-  const assignee = item.logistics_person || item.production_person || item.assignee;
+  const deals = Array.isArray(item.crm_deals) ? item.crm_deals : [];
+  const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
+  const crmAssignee = primaryDeal?.assignee || primaryDeal?.lead_owner || item.sales_person || null;
+  const sxAssignee = item.production_person || null;
+  const vcAssignee = item.logistics_person || null;
+  const ldAssignee = item.installer_person || null;
   const getInitials = (name) => !name ? '?' : name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2);
   const isNew = item.created_at && (Date.now() - new Date(item.created_at).getTime()) < 86400000;
+
+  const PersonChip = ({ label, person, tone = 'gray' }) => {
+    if (!person?.full_name) return null;
+    const toneMap = {
+      violet: 'bg-violet-50 text-violet-800 border-violet-100',
+      teal: 'bg-teal-50 text-teal-800 border-teal-100',
+      orange: 'bg-orange-50 text-orange-800 border-orange-100',
+      amber: 'bg-amber-50 text-amber-800 border-amber-100',
+      gray: 'bg-gray-50 text-gray-700 border-gray-100',
+    };
+    return (
+      <span
+        className={`inline-flex items-center gap-1 max-w-full px-1.5 py-0.5 rounded border text-[10px] min-w-0 ${toneMap[tone] || toneMap.gray}`}
+        title={`${label}: ${person.full_name}`}
+      >
+        {person.avatar ? (
+          <img src={person.avatar} alt="" className="h-3.5 w-3.5 rounded-full shrink-0" />
+        ) : (
+          <span className="h-3.5 w-3.5 rounded-full flex items-center justify-center text-[8px] font-bold text-white shrink-0" style={{ backgroundColor: stageColor }}>
+            {getInitials(person.full_name)}
+          </span>
+        )}
+        <span className="truncate font-medium">{person.full_name}</span>
+        <span className="shrink-0 opacity-70">{label}</span>
+      </span>
+    );
+  };
 
   return (
     <div
@@ -1142,23 +1174,18 @@ const KanbanCard = memo(function KanbanCard({ item, stage, calculateDays, isSele
         </div>
       )}
 
+      {(crmAssignee || sxAssignee || vcAssignee || ldAssignee) && (
+        <div className="flex flex-wrap gap-1 mb-2">
+          <PersonChip label="CRM" person={crmAssignee} tone="violet" />
+          <PersonChip label="SX" person={sxAssignee} tone="teal" />
+          <PersonChip label="VC" person={vcAssignee} tone="orange" />
+          <PersonChip label="LĐ" person={ldAssignee} tone="amber" />
+        </div>
+      )}
+
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
-          {assignee?.full_name ? (
-            <div className="flex items-center gap-2 min-w-0">
-              {assignee.avatar ? (
-                <img src={assignee.avatar} alt="" className="h-6 w-6 rounded-full shrink-0" />
-              ) : (
-                <div className="h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0" style={{ backgroundColor: stageColor }}>
-                  {getInitials(assignee.full_name)}
-                </div>
-              )}
-              <div className="min-w-0">
-                <p className="text-[10px] text-gray-400 leading-tight">Phụ trách VC</p>
-                <p className="text-xs text-gray-700 font-medium truncate">{assignee.full_name}</p>
-              </div>
-            </div>
-          ) : (
+          {!crmAssignee && !sxAssignee && !vcAssignee && !ldAssignee && (
             <p className="text-[10px] text-gray-400"><span className="text-gray-500">Phụ trách:</span> —</p>
           )}
         </div>

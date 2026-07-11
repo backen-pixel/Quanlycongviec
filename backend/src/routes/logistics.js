@@ -14,6 +14,9 @@ const { applyWorkshopProjectVisibilityScope, userCanAccessCrossWorkshopProductio
 const { leadDocVisibleForModuleAndUser } = require('../helpers/documentShareScope');
 const { writeAuditLog } = require('../helpers/auditLog');
 const { applyProjectTenantScope, assertRowCompanyInTenant } = require('../helpers/tenantScope');
+const { attachCrmDealsToProjects, loadCrmDealsForProjectDetail } = require('../helpers/workshopCrmDeals');
+const { validateLogisticsCompanyId } = require('../helpers/logisticsCompanyGate');
+const { isSystemAdmin } = require('../helpers/adminRole');
 
 const r = Router();
 r.use(auth);
@@ -225,7 +228,8 @@ async function enrichProjectsForLogistics(projects, filterCompanyId = null) {
     const sorted = [...stages].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
     cache.set(key, sorted);
   }
-  return (projects || []).map((p) => enrichOneLogisticsProject(p, cache.get(keyFor(p))));
+  const pipelineEnriched = (projects || []).map((p) => enrichOneLogisticsProject(p, cache.get(keyFor(p))));
+  return attachCrmDealsToProjects(pipelineEnriched);
 }
 
 function buildLogisticsPipelineSummary(stages, projects) {
@@ -396,6 +400,9 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
         customer:customers(id, full_name),
         company:companies!projects_company_id_fkey(id, name, short_name),
         logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
+        logistics_person:users!projects_logistics_person_id_fkey(id, full_name, avatar),
+        production_person:users!projects_production_person_id_fkey(id, full_name, avatar),
+        installer_person:users!projects_installer_person_id_fkey(id, full_name, avatar),
         workshop_type:workshop_project_types(id, name, applies_to),
         tasks(id, status)`)
       .or(orFilter);
@@ -538,6 +545,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
         logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
         logistics_person:users!projects_logistics_person_id_fkey(id, full_name, avatar),
         production_person:users!projects_production_person_id_fkey(id, full_name),
+        installer_person:users!projects_installer_person_id_fkey(id, full_name, avatar),
         sales_person:users!projects_sales_person_id_fkey(id, full_name),
         workshop_type:workshop_project_types(id, name, applies_to),
         tasks(id, status)`, { count: 'exact' })
@@ -568,6 +576,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
           logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
           logistics_person:users!projects_logistics_person_id_fkey(id, full_name, avatar),
           production_person:users!projects_production_person_id_fkey(id, full_name),
+          installer_person:users!projects_installer_person_id_fkey(id, full_name, avatar),
           sales_person:users!projects_sales_person_id_fkey(id, full_name),
           workshop_type:workshop_project_types(id, name, applies_to),
           tasks(id, status)`, { count: 'exact' })
@@ -888,30 +897,28 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     });
     const docs = [];
 
-    // CRM deals + badge SX/VC để tab chi tiết VC không mất tag module Sản xuất sau khi reload/move stage.
+    // CRM deals đầy đủ (assignee, badge SX/VC) — bình luận VC đồng bộ deal CRM.
     let crmDeals = [];
     try {
-      const { data: crmDealsRaw, error: crmDealsErr } = await supabase
-        .from('crm_leads')
-        .select(`
-          id, name, type,
-          stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, is_won),
-          sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name)),
-          vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)
-        `)
-        .eq('project_id', rowId)
-        .eq('type', 'deal');
-      if (crmDealsErr) throw crmDealsErr;
-      crmDeals = Array.isArray(crmDealsRaw) ? crmDealsRaw : [];
+      crmDeals = await loadCrmDealsForProjectDetail(rowId);
+      if (crmDeals.length) {
+        const dealIds = crmDeals.map((d) => d.id).filter(Boolean);
+        const { data: stageRows } = await supabase
+          .from('crm_leads')
+          .select(`
+            id,
+            stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, is_won)
+          `)
+          .in('id', dealIds);
+        const stageById = new Map((stageRows || []).map((r) => [String(r.id), r.stage]));
+        crmDeals = crmDeals.map((d) => ({
+          ...d,
+          stage: d.stage || stageById.get(String(d.id)) || null,
+        }));
+      }
     } catch (crmDealsBadgeErr) {
-      console.warn('[logistics/projects/:id] crm_leads badges:', crmDealsBadgeErr.message);
-      const { data: crmDealsRaw2, error: crmDealsErr2 } = await supabase
-        .from('crm_leads')
-        .select('id, name, type, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, is_won)')
-        .eq('project_id', rowId)
-        .eq('type', 'deal');
-      if (crmDealsErr2) console.warn('[logistics/projects/:id] crm_leads:', crmDealsErr2.message);
-      crmDeals = Array.isArray(crmDealsRaw2) ? crmDealsRaw2 : [];
+      console.warn('[logistics/projects/:id] crmDeals:', crmDealsBadgeErr.message);
+      crmDeals = [];
     }
 
     // Stage transitions
@@ -1168,7 +1175,13 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
         await notifyMultipleShared(req, recipientIds, 'logistics_stage_changed',
           `🚚 VC: ${stageName}`,
           `Dự án ${updated.code || updated.name} vừa chuyển sang "${stageName}"`,
-          'project', id);
+          'project', id, {
+            ecosystem_module_key: 'logistics',
+            project_id: String(id),
+            project_code: updated.code || null,
+            project_name: updated.name || null,
+            nav_tab: 'kanban',
+          });
       }
     } catch (notifErr) {
       console.warn('[logistics/stage] notify:', notifErr.message);
@@ -1228,6 +1241,149 @@ r.patch('/projects/:projectId/incidents/:incidentId', requirePermission('project
       .from('project_incidents').update(update).eq('id', req.params.incidentId).eq('project_id', req.params.projectId).select('*').single();
     if (error) throw error;
     res.json(data);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Bàn giao SX → VC/LĐ: người phụ trách (không đổi phụ trách CRM / SX) ───
+
+async function loadLogisticsCompanyUsers(companyId) {
+  let usersCo = [];
+  try {
+    const { data: direct } = await supabase
+      .from('users')
+      .select('id, full_name, email, role, department:departments!users_department_id_fkey(id, name, company_id)')
+      .eq('company_id', companyId)
+      .eq('is_active', true)
+      .order('full_name');
+    usersCo = direct || [];
+  } catch (_e) {
+    usersCo = [];
+  }
+  if (!usersCo.length) {
+    const { data: dpts } = await supabase
+      .from('departments')
+      .select('id')
+      .eq('company_id', companyId)
+      .eq('is_active', true);
+    const deptIds = (dpts || []).map((d) => d.id).filter(Boolean);
+    if (deptIds.length) {
+      const { data: viaDept } = await supabase
+        .from('users')
+        .select('id, full_name, email, role, department:departments!users_department_id_fkey(id, name, company_id)')
+        .in('department_id', deptIds)
+        .eq('is_active', true)
+        .order('full_name');
+      usersCo = viaDept || [];
+    }
+  }
+  const vcRoles = new Set(['logistics_admin', 'logistics', 'installer', 'manager', 'admin']);
+  return (usersCo || []).filter((u) => vcRoles.has(String(u.role || '')));
+}
+
+function userCanAccessLogisticsHandover(req, logisticsCompanyId) {
+  const pid = String(logisticsCompanyId || '').trim();
+  if (!pid) return false;
+  if (isSystemAdmin(req.user)) return true;
+  if (String(req.user?.company_id || '') === pid) return true;
+  return false;
+}
+
+r.get('/handover-settings/:companyId', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const companyId = req.params.companyId;
+    const v = await validateLogisticsCompanyId(companyId);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    if (!userCanAccessLogisticsHandover(req, companyId)) {
+      return res.status(403).json({ error: 'Không có quyền xem cấu hình công ty này' });
+    }
+
+    let settings = null;
+    try {
+      const { data } = await supabase
+        .from('logistics_handover_settings')
+        .select('*')
+        .eq('logistics_company_id', companyId)
+        .maybeSingle();
+      settings = data || null;
+    } catch (e) {
+      if (!String(e.message || '').includes('logistics_handover_settings')) throw e;
+    }
+
+    const users = await loadLogisticsCompanyUsers(companyId);
+
+    res.json({
+      settings,
+      users,
+      rules: {
+        preserve_crm_assignee: true,
+        preserve_production_person: true,
+      },
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.put('/handover-settings/:companyId', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    const companyId = req.params.companyId;
+    const v = await validateLogisticsCompanyId(companyId);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    if (!userCanAccessLogisticsHandover(req, companyId)) {
+      return res.status(403).json({ error: 'Không có quyền sửa cấu hình công ty này' });
+    }
+
+    const { responsible_user_id, installer_user_id } = req.body || {};
+    const now = new Date().toISOString();
+
+    const validateUser = async (uid, label) => {
+      if (!uid) return null;
+      const { data: u, error: uErr } = await supabase
+        .from('users')
+        .select('id, role, is_active, company_id')
+        .eq('id', uid)
+        .maybeSingle();
+      if (uErr || !u) return { error: `${label} không tồn tại.` };
+      if (u.is_active === false) return { error: `${label} đã ngưng hoạt động.` };
+      const allowed = ['logistics_admin', 'logistics', 'installer', 'manager', 'admin'];
+      if (!allowed.includes(String(u.role || ''))) {
+        return { error: `${label} phải thuộc nhóm Vận chuyển / Lắp đặt.` };
+      }
+      return { ok: true };
+    };
+
+    if (responsible_user_id) {
+      const chk = await validateUser(responsible_user_id, 'Người phụ trách VC');
+      if (chk?.error) return res.status(400).json({ error: chk.error });
+    }
+    if (installer_user_id) {
+      const chk = await validateUser(installer_user_id, 'Người lắp đặt');
+      if (chk?.error) return res.status(400).json({ error: chk.error });
+    }
+
+    const { error: upErr } = await supabase.from('logistics_handover_settings').upsert(
+      {
+        logistics_company_id: companyId,
+        responsible_user_id: responsible_user_id || null,
+        installer_user_id: installer_user_id || null,
+        updated_at: now,
+      },
+      { onConflict: 'logistics_company_id' },
+    );
+    if (upErr) {
+      if (String(upErr.message || '').includes('logistics_handover_settings')) {
+        return res.status(503).json({
+          error: 'Chưa cài đặt bảng logistics_handover_settings. Chạy migration database/415_logistics_handover_settings_ngoc_linh.sql',
+        });
+      }
+      throw upErr;
+    }
+
+    res.json({ ok: true });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });
@@ -1457,6 +1613,295 @@ r.delete('/trash/:id', requirePermission('projects', 'edit'), async (req, res) =
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── VC mobile: thông báo chỉ hoạt động module Vận chuyển / Lắp đặt ─────────
+
+const { invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
+
+const VC_NOTIF_TYPES = [
+  'workshop_new_deal',
+  'logistics_stage_changed',
+  'logistics_task_deadline_warning',
+  'logistics_task_deadline_overdue',
+  'project_assigned',
+  'project_created',
+];
+
+function notifEcoKey(n) {
+  const meta = n?.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  return String(meta.ecosystem_module_key || '').trim();
+}
+
+function isVcScopedProjectRow(p) {
+  if (!p) return false;
+  if (p.vc_kanban_column_id) return true;
+  if (LOGISTICS_STATUSES.includes(String(p.status || ''))) return true;
+  const slug = p.current_stage?.slug || p.stage_slug;
+  if (slug && LOGISTICS_STAGE_SLUGS.includes(String(slug))) return true;
+  return false;
+}
+
+/** Bình luận: chỉ logistics (hoặc dự án đang trong phạm vi VC). Loại trừ production. */
+function isVcLogisticsCommentNotification(n) {
+  if (!n || String(n.type || '') !== 'comment_added') return false;
+  const eco = notifEcoKey(n);
+  if (eco === 'production' || eco === 'crm') return false;
+  if (eco === 'logistics') return true;
+  const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  return (n.entity_type === 'project' || n.entity_type === 'lead') && !!(meta.project_id || n.entity_id);
+}
+
+function isVcLogisticsActivityNotification(n) {
+  if (!n) return false;
+  const type = String(n.type || '');
+  const eco = notifEcoKey(n);
+  if (eco === 'production' || eco === 'crm') return false;
+  if (eco === 'logistics') return true;
+  if (type === 'logistics_stage_changed'
+    || type === 'logistics_task_deadline_warning'
+    || type === 'logistics_task_deadline_overdue') {
+    return true;
+  }
+  if (type === 'workshop_new_deal') {
+    const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+    return Boolean(meta.vc_handover) || eco === 'logistics';
+  }
+  // project_assigned / project_created — chỉ khi dự án đang ở VC (lọc sau bằng DB)
+  if (type === 'project_assigned' || type === 'project_created') {
+    return n.entity_type === 'project' || !!(n.metadata && n.metadata.project_id);
+  }
+  return false;
+}
+
+async function loadVcScopedProjectMap(projectIds) {
+  const ids = [...new Set((projectIds || []).map(String).filter(Boolean))];
+  if (!ids.length) return new Map();
+  const { data: projs } = await supabase
+    .from('projects')
+    .select('id, code, name, status, vc_kanban_column_id, current_stage_id, current_stage:workflow_stages(id, slug)')
+    .in('id', ids);
+  const map = new Map();
+  for (const p of projs || []) {
+    if (isVcScopedProjectRow(p)) map.set(String(p.id), p);
+  }
+  return map;
+}
+
+async function filterVcLogisticsCommentNotifications(rows) {
+  const candidates = (rows || []).filter(isVcLogisticsCommentNotification);
+  const withEco = [];
+  const needScope = [];
+  for (const n of candidates) {
+    if (notifEcoKey(n) === 'logistics') withEco.push(n);
+    else needScope.push(n);
+  }
+
+  const projectIds = needScope.map((n) => {
+    const meta = n.metadata || {};
+    return String(meta.project_id || (n.entity_type === 'project' ? n.entity_id : '') || '').trim();
+  }).filter(Boolean);
+
+  // entity_type=lead → resolve project_id từ crm_leads
+  const leadIds = needScope
+    .filter((n) => n.entity_type === 'lead' || n.entity_type === 'crm_lead' || n.entity_type === 'crm_deal')
+    .map((n) => String(n.entity_id || ''))
+    .filter(Boolean);
+  const leadProjectMap = new Map();
+  if (leadIds.length) {
+    const { data: leads } = await supabase
+      .from('crm_leads')
+      .select('id, project_id')
+      .in('id', leadIds);
+    (leads || []).forEach((l) => {
+      if (l.project_id) {
+        leadProjectMap.set(String(l.id), String(l.project_id));
+        projectIds.push(String(l.project_id));
+      }
+    });
+  }
+
+  const vcMap = await loadVcScopedProjectMap(projectIds);
+  const scoped = needScope.filter((n) => {
+    const meta = n.metadata || {};
+    let pid = String(meta.project_id || '').trim();
+    if (!pid && n.entity_type === 'project') pid = String(n.entity_id || '');
+    if (!pid) pid = leadProjectMap.get(String(n.entity_id || '')) || '';
+    return pid && vcMap.has(pid);
+  });
+
+  const list = [...withEco, ...scoped];
+  const enrichIds = [
+    ...new Set(list.map((n) => {
+      const meta = n.metadata || {};
+      return String(meta.project_id || (n.entity_type === 'project' ? n.entity_id : '') || leadProjectMap.get(String(n.entity_id || '')) || '').trim();
+    }).filter(Boolean)),
+  ];
+  const allProjMap = await loadVcScopedProjectMap(enrichIds);
+  // Also load codes for eco=logistics projects that may not be in vcMap yet
+  const missing = enrichIds.filter((id) => !allProjMap.has(id));
+  if (missing.length) {
+    const { data: extra } = await supabase.from('projects').select('id, code, name').in('id', missing);
+    (extra || []).forEach((p) => allProjMap.set(String(p.id), p));
+  }
+
+  return list.map((n) => {
+    const meta = n.metadata && typeof n.metadata === 'object' ? { ...n.metadata } : {};
+    let pid = String(meta.project_id || '').trim();
+    if (!pid && n.entity_type === 'project') pid = String(n.entity_id || '');
+    if (!pid) pid = leadProjectMap.get(String(n.entity_id || '')) || '';
+    const proj = pid ? allProjMap.get(pid) : null;
+    return {
+      ...n,
+      metadata: {
+        ...meta,
+        ecosystem_module_key: 'logistics',
+        project_id: pid || meta.project_id || null,
+        project_code: meta.project_code || proj?.code || null,
+        project_name: meta.project_name || proj?.name || null,
+      },
+    };
+  });
+}
+
+async function enrichVcLogisticsActivityNotifications(rows) {
+  const candidates = (rows || []).filter(isVcLogisticsActivityNotification);
+  const withEco = [];
+  const needScope = [];
+  for (const n of candidates) {
+    const eco = notifEcoKey(n);
+    const type = String(n.type || '');
+    if (eco === 'logistics'
+      || type.startsWith('logistics_')
+      || (type === 'workshop_new_deal' && (n.metadata?.vc_handover || eco === 'logistics'))) {
+      withEco.push(n);
+    } else {
+      needScope.push(n);
+    }
+  }
+
+  const projectIds = needScope.map((n) => {
+    const meta = n.metadata || {};
+    return String(meta.project_id || (n.entity_type === 'project' ? n.entity_id : '') || '').trim();
+  }).filter(Boolean);
+  const vcMap = await loadVcScopedProjectMap(projectIds);
+  const scoped = needScope.filter((n) => {
+    const meta = n.metadata || {};
+    const pid = String(meta.project_id || (n.entity_type === 'project' ? n.entity_id : '') || '').trim();
+    return pid && vcMap.has(pid);
+  });
+
+  const list = [...withEco, ...scoped];
+  const enrichIds = [
+    ...new Set(list.map((n) => {
+      const meta = n.metadata || {};
+      return String(meta.project_id || (n.entity_type === 'project' ? n.entity_id : '') || '').trim();
+    }).filter(Boolean)),
+  ];
+  const allProjMap = new Map(vcMap);
+  const missing = enrichIds.filter((id) => !allProjMap.has(id));
+  if (missing.length) {
+    const { data: extra } = await supabase.from('projects').select('id, code, name').in('id', missing);
+    (extra || []).forEach((p) => allProjMap.set(String(p.id), p));
+  }
+
+  return list.map((n) => {
+    const meta = n.metadata && typeof n.metadata === 'object' ? { ...n.metadata } : {};
+    const pid = String(meta.project_id || (n.entity_type === 'project' ? n.entity_id : '') || '').trim();
+    const proj = pid ? allProjMap.get(pid) : null;
+    if (proj) {
+      meta.project_id = String(proj.id);
+      meta.project_code = meta.project_code || proj.code || null;
+      meta.project_name = meta.project_name || proj.name || null;
+    } else if (pid) {
+      meta.project_id = pid;
+    }
+    meta.ecosystem_module_key = 'logistics';
+    return { ...n, metadata: meta };
+  });
+}
+
+async function fetchVcLogisticsNotificationsForUser(userId, { unreadOnly = false, limit = 50 } = {}) {
+  const [{ data: commentRows, error: cErr }, { data: activityRows, error: aErr }] = await Promise.all([
+    supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('type', 'comment_added')
+      .order('created_at', { ascending: false })
+      .limit(250),
+    supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .in('type', VC_NOTIF_TYPES)
+      .order('created_at', { ascending: false })
+      .limit(250),
+  ]);
+  if (cErr) throw cErr;
+  if (aErr) throw aErr;
+
+  let items = [
+    ...(await filterVcLogisticsCommentNotifications(commentRows)),
+    ...(await enrichVcLogisticsActivityNotifications(activityRows)),
+  ];
+  items.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+  if (unreadOnly) items = items.filter((n) => !n.is_read);
+  const unreadCount = items.filter((n) => !n.is_read).length;
+  return { notifications: items.slice(0, limit), unread_count: unreadCount };
+}
+
+r.get('/notifications/comments', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const lim = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 100);
+    const unreadOnly = String(req.query.unread || '') === 'true';
+    const { notifications, unread_count } = await fetchVcLogisticsNotificationsForUser(userId, {
+      unreadOnly,
+      limit: lim,
+    });
+    res.json({ notifications, unread_count });
+  } catch (e) {
+    console.error('GET /logistics/notifications/comments:', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải thông báo' });
+  }
+});
+
+r.get('/notifications/comments/unread-count', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const { unread_count } = await fetchVcLogisticsNotificationsForUser(userId, { limit: 200 });
+    res.json({ unread_count });
+  } catch (e) {
+    console.error('GET /logistics/notifications/comments/unread-count:', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
+r.put('/notifications/comments/read-all', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const { notifications } = await fetchVcLogisticsNotificationsForUser(userId, { unreadOnly: true, limit: 500 });
+    const ids = notifications.map((n) => n.id).filter(Boolean);
+    if (ids.length) {
+      const { error: upErr } = await supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .in('id', ids)
+        .eq('user_id', userId);
+      if (upErr) throw upErr;
+    }
+    try {
+      rcInvalidateTags(['notifications', `user:${userId}`]);
+    } catch { /* ignore */ }
+    res.json({ ok: true, marked: ids.length });
+  } catch (e) {
+    console.error('PUT /logistics/notifications/comments/read-all:', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
   }
 });
 

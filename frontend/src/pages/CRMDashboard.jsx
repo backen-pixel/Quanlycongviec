@@ -57,6 +57,7 @@ import {
 } from '../lib/crmCompanyFilter';
 import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
 import { effectivePipelineStageSlaDays } from '../lib/crmPipelineSla';
+import { getSxOrderDeliveryDateUrgency } from '../lib/sxPipelineRevenue';
 import {
   coalesceCrmDashboardChangedEvents,
   crmRealtimePayloadInCompanyScope,
@@ -8366,8 +8367,9 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   const deliveryDateChip = (() => {
     const pd = item.linked_project?.delivery_date || item.linked_project?.production_deadline;
     if (!pd) return null;
-    const isOverdue = new Date(pd) < new Date();
-    const isSoon = !isOverdue && new Date(pd) < new Date(Date.now() + 3 * 86400000);
+    const urgency = getSxOrderDeliveryDateUrgency(pd, item.sx_pipeline_stage);
+    const isOverdue = urgency?.overdue;
+    const isSoon = urgency?.soon;
     const tone = isOverdue ? 'bg-red-50 border-red-200 text-red-700'
       : isSoon ? 'bg-amber-50 border-amber-200 text-amber-800'
       : 'bg-teal-50 border-teal-200 text-teal-700';
