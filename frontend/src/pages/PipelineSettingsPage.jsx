@@ -2335,6 +2335,7 @@ function StageForm({
                   placeholder="Chọn NV phụ trách…"
                   size="sm"
                   disabled={!assigneeCompanyId}
+                  displayFullName
                 />
                 {!assigneeCompanyId && (
                   <p className="text-[10px] text-amber-700 mt-1">Chọn công ty pipeline trước khi gán NV.</p>

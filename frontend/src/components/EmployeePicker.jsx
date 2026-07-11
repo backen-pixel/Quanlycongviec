@@ -26,7 +26,14 @@ export default function EmployeePicker({
   className = '',
   size = 'md',
   disabled = false,
+  /** true: hiển thị full_name gốc thay vì dạng rút gọn (VD «Thời D.T.») */
+  displayFullName = false,
 }) {
+  const labelForUser = (name) => {
+    const full = String(name || '').trim();
+    if (!full) return '';
+    return displayFullName ? full : formatStaffDisplayName(full);
+  };
   const [open, setOpen] = useState(false);
   const [allUsers, setAllUsers] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -275,7 +282,7 @@ export default function EmployeePicker({
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className={`text-sm font-medium truncate ${isSelected ? 'text-purple-700' : 'text-gray-900'}`} title={user.full_name}>
-                        {formatStaffDisplayName(user.full_name)}
+                        {labelForUser(user.full_name)}
                       </div>
                       {deptName && <div className="text-xs text-gray-400 truncate">{deptName}</div>}
                     </div>
@@ -324,7 +331,7 @@ export default function EmployeePicker({
               <User className="w-3 h-3 text-purple-600" />
             </div>
             <span className="flex-1 text-left font-medium text-gray-900 truncate" title={selectedUser.full_name}>
-              {formatStaffDisplayName(selectedUser.full_name)}
+              {labelForUser(selectedUser.full_name)}
             </span>
             {!isDisabled && (
               <button
