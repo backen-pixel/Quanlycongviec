@@ -1333,8 +1333,8 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
 });
 
 /** Embed CRM deals trên danh sách Kanban SX — gồm NV phụ trách CRM (assignee / lead_owner). */
-const CRM_DEALS_PROJECT_EMBED = 'crm_deals:crm_leads(id, type, region_id, created_at, assigned_to, lead_owner_id, external_company_name, external_company_id, crm_region:company_regions(id, name, code), assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar))';
-const CRM_DEALS_PROJECT_EMBED_LEGACY = 'crm_deals:crm_leads(id, type, region_id, created_at, assigned_to, lead_owner_id, crm_region:company_regions(id, name, code), assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar))';
+const CRM_DEALS_PROJECT_EMBED = 'crm_deals:crm_leads(id, type, region_id, created_at, assigned_to, lead_owner_id, external_company_name, external_company_id, sx_pipeline_stage_id, crm_region:company_regions(id, name, code), assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar))';
+const CRM_DEALS_PROJECT_EMBED_LEGACY = 'crm_deals:crm_leads(id, type, region_id, created_at, assigned_to, lead_owner_id, sx_pipeline_stage_id, crm_region:company_regions(id, name, code), assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar))';
 
 // ─── GET /production/projects ──
 r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 20, scope: 'user', tags: ['production'] }), async (req, res) => {

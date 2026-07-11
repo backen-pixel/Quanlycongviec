@@ -7,6 +7,7 @@ export type KanbanStage = {
   order_index: number;
   bucket_slug?: string | null;
   workflow_stage_id?: string | null;
+  workshop_type_id?: string | null;
   is_handover_to_logistics?: boolean;
   count?: number;
   total_value?: number;
@@ -45,12 +46,13 @@ export type ProductionProject = {
   workshop_type_name?: string | null;
   region_id?: string | null;
   region_name?: string | null;
-  /** Deal CRM gắn dự án — dùng lọc công ty đặt hàng ngoài (ext:). */
+  /** Deal CRM gắn dự án — dùng lọc công ty đặt hàng ngoài (ext:) + resolve cột. */
   crm_deals?: Array<{
     id?: string;
     type?: string;
     external_company_name?: string | null;
     external_catalog_id?: string | null;
+    sx_pipeline_stage_id?: string | null;
   }>;
 };
 
