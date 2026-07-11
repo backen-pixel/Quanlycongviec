@@ -117,21 +117,39 @@ export function resolveWorkshopCompanyForTypes({
   showVptSxWorkshopFilter = false,
   companies = [],
 } = {}) {
-  const workshopId = (id) => {
-    const s = String(id || '').trim();
+  const trim = (id) => String(id || '').trim();
+
+  /** Công ty hợp lệ làm nguồn phân loại pipeline SX. */
+  const isWorkshopTypesSource = (id) => {
+    const s = trim(id);
+    if (!s) return false;
+    if (isMetallaOrHucabiCompanyId(s, companies, user)) return true;
+    // Admin / bộ lọc «Công ty sản xuất»: mọi công ty trong danh sách module SX (không chỉ HCB/Metalla).
+    return (companies || []).some((c) => String(c.id) === s);
+  };
+
+  /** Chỉ HCB/Metalla — dùng khi suy ra từ JWT, tránh nhầm công ty CRM (VPT/Phúc Đạt deal). */
+  const workshopIdStrict = (id) => {
+    const s = trim(id);
     if (!s) return '';
     return isMetallaOrHucabiCompanyId(s, companies, user) ? s : '';
   };
 
+  const workshopIdFromFilter = (id) => {
+    const s = trim(id);
+    if (!s) return '';
+    return isWorkshopTypesSource(s) ? s : '';
+  };
+
   if (showVptSxWorkshopFilter && filterSxWorkshopCompany) {
-    return workshopId(filterSxWorkshopCompany) || String(filterSxWorkshopCompany);
+    return workshopIdFromFilter(filterSxWorkshopCompany) || trim(filterSxWorkshopCompany);
   }
 
   const ownWorkshop = resolveStaffWorkshopCompanyId(
     user || (userCompanyId ? { company_id: userCompanyId } : null),
     companies,
   );
-  const fromFilter = workshopId(filterCompany);
+  const fromFilter = workshopIdFromFilter(filterCompany);
 
   // NV xưởng: không giữ filter localStorage trỏ sang xưởng khác (vd. Metalla vs HCB Cánh kính).
   if (ownWorkshop && fromFilter && fromFilter !== ownWorkshop) {
@@ -140,7 +158,7 @@ export function resolveWorkshopCompanyForTypes({
 
   if (fromFilter) return fromFilter;
 
-  const fromUser = workshopId(userCompanyId);
+  const fromUser = workshopIdStrict(userCompanyId);
   if (fromUser) return fromUser;
 
   if (ownWorkshop) return ownWorkshop;
