@@ -44,6 +44,9 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
     company_name: company.short_name || company.name || null,
     company_id: (raw.company_id as string) ?? company.id ?? null,
     workshop_type_name: workshopType.name ?? null,
+    logistics_company_id:
+      (raw.logistics_company_id as string)
+      ?? ((raw.logistics_company as { id?: string } | undefined)?.id ?? null),
     region_id: (dealWithRegion?.region_id as string) ?? crmRegion.id ?? null,
     region_name: crmRegion.name ?? null,
     crm_deals: crmDeals.map((d) => ({
@@ -68,6 +71,8 @@ function mapStageRow(raw: Record<string, unknown>, index: number): KanbanStage {
     workflow_stage_id: (raw.workflow_stage_id as string) ?? wfStage.id ?? null,
     workshop_type_id: (raw.workshop_type_id as string) ?? null,
     is_handover_to_logistics: Boolean(raw.is_handover_to_logistics),
+    counts_as_completed_revenue: Boolean(raw.counts_as_completed_revenue),
+    counts_as_collected_revenue: Boolean(raw.counts_as_collected_revenue),
     count: raw.count != null ? Number(raw.count) : undefined,
     total_value: raw.total_value != null ? Number(raw.total_value) : undefined,
   };
@@ -255,10 +260,15 @@ export async function fetchProductionBoard(noCache = false, filters: BoardFilter
 
   const stages = stageRes.map((s, i) => mapStageRow(s, i)).sort((a, b) => a.order_index - b.order_index);
 
-  const resolved = projects.map((p) => ({
-    ...p,
-    resolved_column_id: resolveColumnId(p, stages),
-  }));
+  const resolved = projects.map((p) => {
+    const colId = resolveColumnId(p, stages);
+    return {
+      ...p,
+      // Đồng bộ với web: sau resolve, sx_kanban_column_id = cột hiển thị (KPI + bucket dùng chung).
+      sx_kanban_column_id: colId,
+      resolved_column_id: colId,
+    };
+  });
   return { stages, projects: resolved, kpis };
 }
 
