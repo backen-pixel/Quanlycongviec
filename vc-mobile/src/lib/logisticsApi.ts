@@ -15,6 +15,7 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
   const customer = (raw.customer || {}) as { full_name?: string; phone?: string };
   const stage = (raw.current_stage || {}) as { id?: string; name?: string; slug?: string };
   const logisticsPerson = (raw.logistics_person || {}) as { id?: string; full_name?: string };
+  const installerPerson = (raw.installer_person || {}) as { id?: string; full_name?: string };
   const productionPerson = (raw.production_person || {}) as { id?: string; full_name?: string };
   const company = (raw.company || raw.logistics_company || {}) as { id?: string; short_name?: string; name?: string };
   const workshopType = (raw.workshop_type || {}) as { id?: string; name?: string };
@@ -43,8 +44,10 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
     workshop_type_id: (raw.workshop_type_id as string) ?? workshopType.id ?? null,
     stage_name: stage.name ?? null,
     stage_slug: stage.slug ?? null,
-    logistics_person_id: logisticsPerson.id ?? null,
+    logistics_person_id: logisticsPerson.id ?? (raw.logistics_person_id as string) ?? null,
     logistics_person_name: logisticsPerson.full_name ?? null,
+    installer_person_id: installerPerson.id ?? (raw.installer_person_id as string) ?? null,
+    installer_person_name: installerPerson.full_name ?? null,
     production_person_id: productionPerson.id ?? null,
     production_person_name: productionPerson.full_name ?? null,
     company_name: company.short_name || company.name || null,

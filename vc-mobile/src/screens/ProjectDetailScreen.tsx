@@ -321,7 +321,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         >
           <View style={styles.content}>
           <ProductionPipelineStepper
-            stages={project?.sxKanbanStages || []}
+            stages={project?.vcKanbanStages || project?.sxKanbanStages || []}
             currentStageId={project?.vc_kanban_column_id}
           />
 
@@ -345,7 +345,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           </View>
 
           <View style={styles.progressBox}>
-            <Text style={styles.progressLabel}>Tiến độ sản xuất</Text>
+            <Text style={styles.progressLabel}>Tiến độ lắp đặt</Text>
             <View style={styles.progressTrack}>
               <View style={[styles.progressFill, { width: `${Math.min(100, progress)}%`, backgroundColor: progressColor }]} />
             </View>
@@ -401,7 +401,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
                 </View>
               );
             }) : (
-              <Text style={styles.empty}>Chưa có nhiệm vụ SX — đồng bộ từ web khi deal có template.</Text>
+              <Text style={styles.empty}>Chưa có nhiệm vụ VC — đồng bộ từ web khi deal có bộ mẫu vận chuyển lắp đặt.</Text>
             )
           )}
 
@@ -412,7 +412,8 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
                 ['Điện thoại', project.customer?.phone || project.customer_phone || '—'],
                 ['Công ty', project.company?.short_name || project.company?.name || project.company_name || '—'],
                 ['Loại xưởng', project.workshop_type?.name || project.workshop_type_name || '—'],
-                ['Hạn SX', formatDate(project.production_deadline) || '—'],
+                ['Vận chuyển (VC)', project.logistics_person?.full_name || project.logistics_person_name || '—'],
+                ['Lắp đặt (LĐ)', project.installer_person?.full_name || project.installer_person_name || '—'],
                 ['Hạn dự án', formatDate(project.deadline) || '—'],
                 ['Mô tả', project.description?.trim() || project.notes?.trim() || '—'],
               ].map(([label, value]) => (
@@ -426,12 +427,6 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
 
           {tab === 'schedule' && (
             <>
-              {project?.production_deadline ? (
-                <View style={styles.scheduleItem}>
-                  <Text style={styles.infoLabel}>Hạn sản xuất</Text>
-                  <Text style={styles.infoValue}>{formatDate(project.production_deadline)}</Text>
-                </View>
-              ) : null}
               {project?.deadline ? (
                 <View style={styles.scheduleItem}>
                   <Text style={styles.infoLabel}>Hạn dự án</Text>

@@ -10551,12 +10551,16 @@ r.patch('/leads/:id/stage', async (req, res) => {
       updates.kanban_deadline_reason = null;
     }
     let stageAssigneeTransfer = null;
+    const applyDefaultAssignee = req.body?.apply_default_assignee === true;
+    const assigneeOverride = normalizeCrmStageDefaultAssigneeUserId(req.body?.assignee_user_id);
     if (isStageChange) {
       const prevAssigneeId = String(lead?.assigned_to || lead?.lead_owner_id || '').trim() || null;
       await mergeCrmStageDefaultAssigneeIntoUpdates(updates, {
         stage,
         lead,
         isStageChange: true,
+        applyDefaultAssignee,
+        assigneeUserId: assigneeOverride,
         sb: supabase,
       });
       const newAssigneeId = updates.assigned_to ? String(updates.assigned_to).trim() : null;
@@ -14465,7 +14469,8 @@ r.get('/leads/:id/tasks', async (req, res) => {
 
     // Phân tách nhiệm vụ theo module:
     // - production: chỉ task SX (stage_slug bắt đầu sx_)
-    // - crm: ẩn task SX
+    // - logistics: chỉ task VC (stage_slug bắt đầu vc_ / metadata logistics)
+    // - crm: ẩn task SX (dùng cho tab VC web — nhiệm vụ deal không lẫn sx_*)
     if (taskScope === 'production') {
       data = (data || []).filter((t) => String(t.stage_slug || '').startsWith('sx_') || t.production_pipeline_stage_id);
       const workshopTypeId = String(req.query?.workshop_type_id || '').trim() || null;
@@ -14497,6 +14502,16 @@ r.get('/leads/:id/tasks', async (req, res) => {
           data = filterSxTasksToWorkshopPipeline(data, stages);
         }
       }
+    } else if (taskScope === 'logistics') {
+      const all = data || [];
+      const vcOnly = all.filter((t) => {
+        const slug = String(t.stage_slug || '');
+        if (slug.startsWith('vc_')) return true;
+        const meta = t.metadata && typeof t.metadata === 'object' ? t.metadata : {};
+        return meta.workshop_module === 'logistics' || meta.workshop_area === 'logistics';
+      });
+      // Fallback: chưa có task vc_* trên deal → giống web VC (ẩn sx_*)
+      data = vcOnly.length ? vcOnly : all.filter((t) => !String(t.stage_slug || '').startsWith('sx_'));
     } else if (taskScope === 'crm') {
       data = (data || []).filter((t) => !String(t.stage_slug || '').startsWith('sx_'));
     }
@@ -15846,6 +15861,15 @@ r.get('/tasks/overview', async (req, res) => {
     if (type) rows = rows.filter((t) => (t.lead?.type || '') === type);
     if (taskScope === 'production') {
       rows = rows.filter((t) => String(t.stage_slug || '').startsWith('sx_') || t.production_pipeline_stage_id);
+    } else if (taskScope === 'logistics') {
+      const vcRows = rows.filter((t) => {
+        const slug = String(t.stage_slug || '');
+        if (slug.startsWith('vc_')) return true;
+        const meta = t.metadata && typeof t.metadata === 'object' ? t.metadata : {};
+        return meta.workshop_module === 'logistics' || meta.workshop_area === 'logistics';
+      });
+      // Chưa có task vc_* → ẩn sx_* (khớp tab VC)
+      rows = vcRows.length ? vcRows : rows.filter((t) => !String(t.stage_slug || '').startsWith('sx_'));
     } else if (taskScope === 'crm') {
       rows = rows.filter((t) => !String(t.stage_slug || '').startsWith('sx_'));
     }

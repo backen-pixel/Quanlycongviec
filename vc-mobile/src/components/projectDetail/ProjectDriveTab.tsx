@@ -36,7 +36,7 @@ type Props = {
 export default function ProjectDriveTab({ projectId }: Props) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const entityType = 'production_project' as const;
+  const entityType = 'vc_project' as const;
 
   const [folders, setFolders] = useState<{ id: string; name: string }[]>([]);
   const [files, setFiles] = useState<{ id: string; name: string; mime_type?: string | null; size_bytes?: number }[]>([]);

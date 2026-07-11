@@ -76,11 +76,11 @@ export function nextTaskStatus(status: string): string {
   return 'completed';
 }
 
-export async function fetchMyProductionTasks(userId: string): Promise<WorkTask[]> {
+export async function fetchMyLogisticsTasks(userId: string): Promise<WorkTask[]> {
   const { data } = await api.get<unknown[]>('/crm/tasks/overview', {
     params: {
       assignee_id: userId,
-      task_scope: 'production',
+      task_scope: 'logistics',
     },
   });
   const list = Array.isArray(data) ? data : [];
@@ -89,7 +89,12 @@ export async function fetchMyProductionTasks(userId: string): Promise<WorkTask[]
     .filter((t) => t.id && t.lead_id);
 }
 
-/** Cập nhật trạng thái nhanh từ tab Công việc — không bắt minh chứng (backend sx_*). */
+/** @deprecated alias — VC mobile dùng logistics */
+export async function fetchMyProductionTasks(userId: string): Promise<WorkTask[]> {
+  return fetchMyLogisticsTasks(userId);
+}
+
+/** Cập nhật trạng thái nhanh từ tab Công việc — không bắt minh chứng. */
 export async function updateWorkTaskStatus(
   dealId: string,
   taskId: string,
@@ -121,7 +126,7 @@ export function groupTasksByDeal(tasks: WorkTask[]): DealTaskSection[] {
       section = {
         leadId,
         code: task.lead?.code?.trim() || `DEAL-${leadId.slice(0, 8)}`,
-        title: task.lead?.title?.trim() || 'Nhiệm vụ sản xuất',
+        title: task.lead?.title?.trim() || 'Nhiệm vụ vận chuyển lắp đặt',
         projectId: task.lead?.project_id ?? null,
         customerName: task.lead?.customer?.full_name ?? null,
         tasks: [],

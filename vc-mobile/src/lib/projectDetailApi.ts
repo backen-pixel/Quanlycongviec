@@ -97,26 +97,23 @@ function mapCrmTask(raw: Record<string, unknown>): CrmTask {
   };
 }
 
-/** Thứ tự giai đoạn SX — khớp CRMTasksTab.jsx SX_ORDER_STAGES */
-const SX_STAGE_ORDER: { slug: string; label: string }[] = [
-  { slug: 'sx_tiep_nhan', label: 'Tiếp nhận' },
-  { slug: 'sx_thiet_ke_ke_hoach', label: 'Thiết kế và lên kế hoạch' },
-  { slug: 'sx_kiem_tra_cheo', label: 'Kiểm tra chéo' },
-  { slug: 'sx_vat_tu', label: 'Vật tư' },
-  { slug: 'sx_san_xuat_thung', label: 'Sản xuất thùng' },
-  { slug: 'sx_san_xuat_alu', label: 'Sản xuất alu' },
-  { slug: 'sx_hoan_thien', label: 'Hoàn thiện' },
-  { slug: 'sx_dong_goi', label: 'Đóng gói' },
-  { slug: 'sx_giao_hang', label: 'Giao hàng' },
+/** Thứ tự giai đoạn VC — slug vc_* trên crm_tasks (khi có bộ mẫu VC) */
+const VC_STAGE_ORDER: { slug: string; label: string }[] = [
+  { slug: 'vc_tiep_nhan', label: 'Tiếp nhận VC' },
+  { slug: 'vc_van_chuyen', label: 'Vận chuyển' },
+  { slug: 'vc_giao_hang', label: 'Giao hàng' },
+  { slug: 'vc_lap_dat', label: 'Lắp đặt' },
+  { slug: 'vc_nghiem_thu', label: 'Nghiệm thu' },
+  { slug: 'vc_bao_hanh', label: 'Bảo hành / CSKH' },
 ];
 
-const SX_STAGE_INDEX = new Map(SX_STAGE_ORDER.map((s, i) => [s.slug, i]));
+const VC_STAGE_INDEX = new Map(VC_STAGE_ORDER.map((s, i) => [s.slug, i]));
 
 /** Chuẩn hoá stage_slug (bỏ hậu tố uuid pipeline) — khớp web CRMTasksTab */
 export function normalizeCrmTaskStageSlug(slug?: string | null): string {
   const s = String(slug || '').trim();
   if (!s) return '_other';
-  if (s.startsWith('sx_')) {
+  if (s.startsWith('sx_') || s.startsWith('vc_')) {
     return s.replace(/[-_][a-f0-9]{8}$/i, '');
   }
   return s;
@@ -133,8 +130,8 @@ function sortTasksInStage(tasks: CrmTask[]): CrmTask[] {
 
 function stageGroupSortIndex(key: string, sampleTask?: CrmTask): number {
   const normalized = normalizeCrmTaskStageSlug(key);
-  const sxIdx = SX_STAGE_INDEX.get(normalized);
-  if (sxIdx != null) return sxIdx;
+  const vcIdx = VC_STAGE_INDEX.get(normalized);
+  if (vcIdx != null) return vcIdx;
   const pipeOrder = sampleTask?.pipeline_stage?.order_index;
   if (pipeOrder != null && Number.isFinite(pipeOrder)) return 100 + pipeOrder;
   return 900;
@@ -143,13 +140,13 @@ function stageGroupSortIndex(key: string, sampleTask?: CrmTask): number {
 export function resolveCrmTaskStageLabel(task: CrmTask): string {
   if (task.pipeline_stage?.name) return task.pipeline_stage.name;
   const slug = normalizeCrmTaskStageSlug(task.stage_slug);
-  const fromOrder = SX_STAGE_ORDER.find((s) => s.slug === slug);
+  const fromOrder = VC_STAGE_ORDER.find((s) => s.slug === slug);
   if (fromOrder) return fromOrder.label;
   if (!slug || slug === '_other') return 'Khác';
-  if (slug === 'sx_other') return 'Khác';
-  if (slug.startsWith('sx_')) {
+  if (slug === 'vc_other' || slug === 'sx_other') return 'Khác';
+  if (slug.startsWith('vc_') || slug.startsWith('sx_')) {
     return slug
-      .replace(/^sx_/, '')
+      .replace(/^(vc_|sx_)/, '')
       .replace(/_/g, ' ')
       .replace(/\b\w/g, (c) => c.toUpperCase());
   }
@@ -226,6 +223,8 @@ export async function fetchProductionProjectDetail(projectId: string): Promise<P
     project_manager: mapPerson(raw.project_manager),
     supervisor: mapPerson(raw.supervisor),
     production_person: mapPerson(raw.production_person),
+    logistics_person: mapPerson(raw.logistics_person),
+    installer_person: mapPerson(raw.installer_person),
     shipping_person: mapPerson(raw.shipping_person),
     care_person: mapPerson(raw.care_person),
     current_stage: currentStage.id || currentStage.name

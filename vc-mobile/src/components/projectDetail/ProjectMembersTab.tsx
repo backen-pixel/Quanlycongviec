@@ -282,9 +282,9 @@ export default function ProjectMembersTab({ project, dealId }: Props) {
 
     ['Giám sát', project.supervisor?.full_name],
 
-    ['Phụ trách SX', project.production_person?.full_name || project.production_person_name],
+    ['Vận chuyển (VC)', project.logistics_person?.full_name || project.logistics_person_name],
 
-    ['Vận chuyển', project.shipping_person?.full_name],
+    ['Lắp đặt (LĐ)', project.installer_person?.full_name || project.installer_person_name],
 
     ['CSKH', project.care_person?.full_name],
 

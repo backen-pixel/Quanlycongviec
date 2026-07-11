@@ -37,6 +37,8 @@ import FacebookChatTab from '../components/FacebookChatTab';
 import ZaloChatTab from '../components/ZaloChatTab';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
+import CrmStageAssigneeModal from '../components/CrmStageAssigneeModal';
+import { stageNeedsAssigneeConfirm } from '../lib/crmStageAssigneeConfirm';
 import CrmLeadDeadlineOverview from '../components/CrmLeadDeadlineOverview';
 import Modal from '../components/Modal';
 import DealCrossScoresPanel from '../components/DealCrossScoresPanel';
@@ -177,6 +179,8 @@ export default function LeadDetail() {
   /** Cột yêu cầu deadline khi đổi stage từ trang chi tiết */
   const [stageDeadlineCtx, setStageDeadlineCtx] = useState(null);
   const [stageDeadlineBusy, setStageDeadlineBusy] = useState(false);
+  const [assigneeStageCtx, setAssigneeStageCtx] = useState(null);
+  const [assigneeStageBusy, setAssigneeStageBusy] = useState(false);
   const [dealDetailEventCtx, setDealDetailEventCtx] = useState(null);
   const [dealDetailEventBusy, setDealDetailEventBusy] = useState(false);
   /** Kéo deal Thắng chưa có dự án: chọn công ty SX */
@@ -865,17 +869,75 @@ export default function LeadDetail() {
     if (!ctx) return;
     setStageDeadlineBusy(true);
     try {
-      const data = await patchLeadStage(ctx.stageId, {
+      const mergedExtra = {
         ...ctx.extraData,
         kanban_deadline_at: deadlineIso,
         deadline_reason: reason || '',
-      });
-      if (data) {
-        setStageDeadlineCtx(null);
-        setCrmTasksRefreshKey((k) => k + 1);
-      }
+      };
+      const targetStage = ctx.targetStage
+        || (lead?.type === 'deal' ? stagesDeal : stagesLead).find((s) => String(s.id) === String(ctx.stageId));
+      setStageDeadlineCtx(null);
+      await proceedLeadStageMove(ctx.stageId, mergedExtra, targetStage);
+      setCrmTasksRefreshKey((k) => k + 1);
     } finally {
       setStageDeadlineBusy(false);
+    }
+  };
+
+  const proceedLeadStageMove = async (stageId, extraData, targetStage) => {
+    const isRegularStage = targetStage
+      && !targetStage.is_won
+      && !targetStage.is_lost
+      && !targetStage.counts_as_completed_revenue;
+    const isSameStage = String(lead?.stage_id || '') === String(stageId);
+
+    if (
+      isRegularStage
+      && !isSameStage
+      && targetStage.requires_deadline
+      && !extraData?.kanban_deadline_at
+    ) {
+      setStageDeadlineCtx({ stageId, extraData, targetStage, stageName: targetStage.name });
+      return;
+    }
+
+    if (
+      isRegularStage
+      && !isSameStage
+      && stageNeedsAssigneeConfirm(targetStage, lead)
+      && extraData?.apply_default_assignee === undefined
+    ) {
+      setAssigneeStageCtx({ stageId, extraData, targetStage, card: lead });
+      return;
+    }
+
+    if (
+      lead?.type === 'deal'
+      && targetStage
+      && !targetStage.is_lost
+      && targetStage.create_event_on_enter
+    ) {
+      setDealDetailEventCtx({ stageId, extraData, targetStage });
+      return;
+    }
+
+    if (movingStage) return;
+    await patchLeadStage(stageId, extraData);
+  };
+
+  const finishAssigneeStageMove = async (applyDefaultAssignee, assigneeUserId = null) => {
+    const ctx = assigneeStageCtx;
+    if (!ctx) return;
+    setAssigneeStageBusy(true);
+    try {
+      const mergedExtra = { ...ctx.extraData, apply_default_assignee: applyDefaultAssignee };
+      if (applyDefaultAssignee && assigneeUserId) {
+        mergedExtra.assignee_user_id = assigneeUserId;
+      }
+      setAssigneeStageCtx(null);
+      await proceedLeadStageMove(ctx.stageId, mergedExtra, ctx.targetStage);
+    } finally {
+      setAssigneeStageBusy(false);
     }
   };
 
@@ -1005,24 +1067,9 @@ export default function LeadDetail() {
           return;
         }
       } catch (_) { /* lỗi pre-check → bỏ qua */ }
-      if (targetStage.requires_deadline) {
-        setStageDeadlineCtx({ stageId, extraData, stageName: targetStage.name });
-        return;
-      }
     }
 
-    if (
-      lead?.type === 'deal' &&
-      targetStage &&
-      !targetStage.is_lost &&
-      targetStage.create_event_on_enter
-    ) {
-      setDealDetailEventCtx({ stageId, extraData, targetStage });
-      return;
-    }
-
-    if (movingStage) return;
-    await patchLeadStage(stageId, extraData);
+    await proceedLeadStageMove(stageId, extraData, targetStage);
   };
 
   const confirmDealWonSxExistsOnlyStage = async () => {
@@ -2566,6 +2613,18 @@ export default function LeadDetail() {
         submitting={stageDeadlineBusy}
         onClose={() => { if (!stageDeadlineBusy) setStageDeadlineCtx(null); }}
         onConfirm={confirmStageDeadline}
+      />
+
+      <CrmStageAssigneeModal
+        open={!!assigneeStageCtx}
+        onClose={() => { if (!assigneeStageBusy) setAssigneeStageCtx(null); }}
+        card={assigneeStageCtx?.card || lead}
+        targetStage={assigneeStageCtx?.targetStage}
+        entityLabel={lead?.type === 'deal' ? 'deal' : 'lead'}
+        employeeList={allUsers}
+        submitting={assigneeStageBusy}
+        onConfirmTransfer={(userId) => finishAssigneeStageMove(true, userId)}
+        onKeepCurrent={() => finishAssigneeStageMove(false)}
       />
 
       <BlockingTasksAlertModal

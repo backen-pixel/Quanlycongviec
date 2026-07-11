@@ -17,10 +17,14 @@ async function mergeCrmStageDefaultAssigneeIntoUpdates(updates, {
   stage,
   lead,
   isStageChange,
+  applyDefaultAssignee,
+  assigneeUserId,
   sb = supabase,
 }) {
   if (!isStageChange || !stage?.apply_default_assignee_on_enter) return updates;
-  const assigneeId = String(stage.default_assignee_user_id || '').trim();
+  if (applyDefaultAssignee !== true) return updates;
+  const overrideId = normalizeCrmStageDefaultAssigneeUserId(assigneeUserId);
+  const assigneeId = String(overrideId || stage.default_assignee_user_id || '').trim();
   if (!assigneeId) return updates;
 
   if (lead?.type === 'deal' && await isCrmDealAssigneeLocked(sb, lead)) {
