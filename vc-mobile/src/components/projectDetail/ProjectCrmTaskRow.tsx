@@ -1,6 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -20,25 +21,37 @@ import {
 import { formatApiError } from '../../api/client';
 import { useTheme } from '../../context/ThemeContext';
 import {
+  addCrmTaskNote,
+  addWorkshopTaskNote,
   deleteCrmTask,
   deleteCrmTaskAttachment,
+  deleteWorkshopTask,
+  deleteWorkshopTaskAttachment,
+  deleteWorkshopTaskNote,
   fetchCrmTaskAttachments,
   fetchLeadMembers,
   fetchUsersForAssign,
+  fetchWorkshopTaskAttachments,
+  fetchWorkshopTaskNotes,
   taskDeadline,
   updateCrmTask,
   updateCrmTaskNotes,
+  updateWorkshopTask,
   uploadCrmTaskFiles,
+  uploadWorkshopTaskFiles,
   type TaskAttachment,
 } from '../../lib/projectDetailApi';
+import { fetchEmployeesByCompanyForMembers } from '../../lib/leadMembersApi';
 import { Radii, Spacing } from '../../theme';
-import type { CrmTask, PersonRef } from '../../types';
+import type { CrmTask, PersonRef, TaskStaffNote } from '../../types';
 import TapHighlight from '../TapHighlight';
 import { resolveMediaUrl } from '../../lib/mediaUtils';
 
 type Props = {
   task: CrmTask;
-  dealId: string;
+  dealId?: string | null;
+  /** Công ty VC/LĐ — dùng khi gán người cho nhiệm vụ workshop */
+  projectCompanyId?: string | null;
   onUpdated: (task: CrmTask) => void;
   onDeleted: (taskId: string) => void;
 };
@@ -85,24 +98,57 @@ function parseDeadline(value?: string | null): Date {
   return Number.isNaN(d.getTime()) ? new Date() : d;
 }
 
+function formatNoteTime(iso?: string | null): string {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleString('vi-VN', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return '';
+  }
+}
+
+function guessMime(name: string, fallback = 'application/octet-stream'): string {
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.mp4')) return 'video/mp4';
+  if (lower.endsWith('.mov')) return 'video/quicktime';
+  return fallback;
+}
+
 type ModalKind = 'attach' | 'assign' | 'edit' | 'deadline' | null;
 
-export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }: Props) {
+export default function ProjectCrmTaskRow({
+  task,
+  dealId,
+  projectCompanyId,
+  onUpdated,
+  onDeleted,
+}: Props) {
   const { colors } = useTheme();
+  const isWorkshop = task.source === 'workshop';
   const done = isTaskDone(task.status);
   const assignees = taskAssignees(task);
   const assignee = assignees[0] || null;
   const deadline = taskDeadline(task);
   const fileCount = task.file_count ?? 0;
-  const noteText = task.notes?.trim() || '';
-  const hasNote = Boolean(noteText);
-
+  const descriptionText = task.description?.trim() || '';
   const [modal, setModal] = useState<ModalKind>(null);
   const [busy, setBusy] = useState(false);
 
   const [noteDraft, setNoteDraft] = useState('');
+  const [staffNotes, setStaffNotes] = useState<TaskStaffNote[]>(task.staff_notes || []);
   const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
   const [attLoading, setAttLoading] = useState(false);
+  const noteCount = staffNotes.length || task.note_count || 0;
+  const latestNote = staffNotes[0]?.text?.trim() || task.notes?.trim() || '';
+  const hasNote = noteCount > 0 || Boolean(latestNote);
 
   const [editTitle, setEditTitle] = useState('');
   const [editDesc, setEditDesc] = useState('');
@@ -120,20 +166,92 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
   };
 
   const openAttach = () => {
-    setNoteDraft(task.notes?.trim() || '');
+    setNoteDraft('');
     setModal('attach');
-    void loadAttachments();
+    void loadNotesAndAttachments();
   };
 
-  const loadAttachments = async () => {
+  const syncNotePreview = (notes: TaskStaffNote[]) => {
+    setStaffNotes(notes);
+    onUpdated({
+      ...task,
+      staff_notes: notes,
+      notes: notes[0]?.text || null,
+      note_count: notes.length,
+      attachment_count: (task.file_count ?? 0) + notes.length,
+      source: task.source,
+    });
+  };
+
+  const loadNotesAndAttachments = async () => {
     setAttLoading(true);
     try {
-      const list = await fetchCrmTaskAttachments(dealId, task.id);
-      setAttachments(list.filter((a) => a.doc_type !== 'task_inline_note'));
+      if (isWorkshop) {
+        const [notes, files] = await Promise.all([
+          fetchWorkshopTaskNotes(task.id),
+          fetchWorkshopTaskAttachments(task.id),
+        ]);
+        setStaffNotes(notes);
+        setAttachments(files.filter((a) => a.file_url));
+        onUpdated({
+          ...task,
+          staff_notes: notes,
+          notes: notes[0]?.text || null,
+          note_count: notes.length,
+          file_count: files.filter((a) => a.file_url).length,
+          source: 'workshop',
+        });
+      } else if (dealId) {
+        const list = await fetchCrmTaskAttachments(dealId, task.id);
+        const noteAtts = list.filter(
+          (a) => a.doc_type === 'task_note' || a.doc_type === 'task_inline_note' || (!a.file_url && a.notes),
+        );
+        const files = list.filter((a) => a.file_url && a.doc_type !== 'task_note' && a.doc_type !== 'task_inline_note');
+        const notes: TaskStaffNote[] = [];
+        if (task.notes?.trim()) {
+          notes.push({ id: `inline-${task.id}`, text: task.notes.trim(), created_at: null, user_name: null });
+        }
+        for (const a of noteAtts) {
+          if (a.doc_type === 'task_inline_note') continue; // đã có trong task.notes
+          const text = (a.notes || a.name || '').trim();
+          if (!text) continue;
+          notes.push({ id: a.id, text, created_at: null, user_name: null });
+        }
+        setStaffNotes(notes);
+        setAttachments(files);
+        onUpdated({
+          ...task,
+          staff_notes: notes,
+          note_count: notes.length,
+          file_count: files.length,
+        });
+      } else {
+        setAttachments([]);
+      }
     } catch {
       setAttachments([]);
     } finally {
       setAttLoading(false);
+    }
+  };
+
+  const loadAttachments = async () => {
+    try {
+      const list = isWorkshop
+        ? await fetchWorkshopTaskAttachments(task.id)
+        : dealId
+          ? await fetchCrmTaskAttachments(dealId, task.id)
+          : [];
+      setAttachments(
+        list.filter(
+          (a) =>
+            a.file_url
+            && a.doc_type !== 'task_inline_note'
+            && a.doc_type !== 'task_note',
+        ),
+      );
+    } catch {
+      setAttachments([]);
     }
   };
 
@@ -147,16 +265,40 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
   const loadUsers = async () => {
     setUsersLoading(true);
     try {
-      const [allUsers, members] = await Promise.all([
-        fetchUsersForAssign(),
-        fetchLeadMembers(dealId),
-      ]);
-      const memberIds = new Set(members.map((m) => String(m.user_id)).filter(Boolean));
-      const memberUsers = members
-        .map((m) => m.user)
-        .filter((u): u is PersonRef => Boolean(u?.id));
-      const extra = allUsers.filter((u) => u.id && !memberIds.has(String(u.id)));
-      setUsers([...memberUsers, ...extra]);
+      if (isWorkshop) {
+        const [members, companyUsers] = await Promise.all([
+          dealId ? fetchLeadMembers(dealId).catch(() => []) : Promise.resolve([]),
+          projectCompanyId
+            ? fetchEmployeesByCompanyForMembers(projectCompanyId).catch(() => [])
+            : Promise.resolve([]),
+        ]);
+        const byId = new Map<string, PersonRef>();
+        for (const m of members) {
+          if (m.user?.id) byId.set(String(m.user.id), m.user);
+        }
+        for (const u of companyUsers) {
+          if (!u.id) continue;
+          if (!byId.has(u.id)) {
+            byId.set(u.id, { id: u.id, full_name: u.full_name, email: u.email });
+          }
+        }
+        if (!byId.size) {
+          const all = await fetchUsersForAssign().catch(() => []);
+          for (const u of all) if (u.id) byId.set(String(u.id), u);
+        }
+        setUsers([...byId.values()]);
+      } else {
+        const [allUsers, members] = await Promise.all([
+          fetchUsersForAssign(),
+          dealId ? fetchLeadMembers(dealId) : Promise.resolve([]),
+        ]);
+        const memberIds = new Set(members.map((m) => String(m.user_id)).filter(Boolean));
+        const memberUsers = members
+          .map((m) => m.user)
+          .filter((u): u is PersonRef => Boolean(u?.id));
+        const extra = allUsers.filter((u) => u.id && !memberIds.has(String(u.id)));
+        setUsers([...memberUsers, ...extra]);
+      }
     } catch {
       setUsers([]);
     } finally {
@@ -181,8 +323,10 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
     const next = cur === 'completed' ? 'pending' : cur === 'pending' ? 'in_progress' : 'completed';
     setBusy(true);
     try {
-      const updated = await updateCrmTask(dealId, task.id, { status: next });
-      onUpdated(updated);
+      const updated = isWorkshop
+        ? await updateWorkshopTask(task.id, { status: next })
+        : await updateCrmTask(String(dealId), task.id, { status: next });
+      onUpdated({ ...updated, source: task.source });
     } catch (e) {
       Alert.alert('Lỗi', formatApiError(e));
     } finally {
@@ -199,7 +343,8 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
         onPress: async () => {
           setBusy(true);
           try {
-            await deleteCrmTask(dealId, task.id);
+            if (isWorkshop) await deleteWorkshopTask(task.id);
+            else await deleteCrmTask(String(dealId), task.id);
             onDeleted(task.id);
           } catch (e) {
             Alert.alert('Lỗi', formatApiError(e));
@@ -211,18 +356,32 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
     ]);
   };
 
-  const saveNotes = async () => {
+  const addNote = async () => {
+    const text = noteDraft.trim();
+    if (!text) {
+      Alert.alert('Thiếu nội dung', 'Nhập ghi chú trước khi thêm.');
+      return;
+    }
+    if (!isWorkshop && !dealId) {
+      Alert.alert('Lỗi', 'Không xác định được deal để lưu ghi chú.');
+      return;
+    }
     setBusy(true);
     try {
-      const text = noteDraft.trim();
-      await updateCrmTaskNotes(dealId, task.id, text || null);
-      onUpdated({
-        ...task,
-        notes: text || null,
-        note_count: text ? 1 : 0,
-        attachment_count: (task.file_count ?? 0) + (text ? 1 : 0),
-      });
-      if (text) Alert.alert('Đã lưu', 'Ghi chú đã hiển thị trên nhiệm vụ.');
+      if (isWorkshop) {
+        const created = await addWorkshopTaskNote(task.id, text);
+        const next = [created, ...staffNotes];
+        setNoteDraft('');
+        syncNotePreview(next);
+      } else {
+        const created = await addCrmTaskNote(String(dealId), task.id, text);
+        const next: TaskStaffNote[] = [
+          { id: created.id, text, created_at: null, user_name: null },
+          ...staffNotes,
+        ];
+        setNoteDraft('');
+        syncNotePreview(next);
+      }
     } catch (e) {
       Alert.alert('Lỗi', formatApiError(e));
     } finally {
@@ -230,9 +389,8 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
     }
   };
 
-  const confirmDeleteNote = () => {
-    if (!noteDraft.trim() && !hasNote) return;
-    Alert.alert('Xóa ghi chú', 'Xóa ghi chú khỏi nhiệm vụ này?', [
+  const confirmDeleteNote = (note: TaskStaffNote) => {
+    Alert.alert('Xóa ghi chú', 'Xóa ghi chú này?', [
       { text: 'Hủy', style: 'cancel' },
       {
         text: 'Xóa',
@@ -240,14 +398,17 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
         onPress: async () => {
           setBusy(true);
           try {
-            await updateCrmTaskNotes(dealId, task.id, null);
-            setNoteDraft('');
-            onUpdated({
-              ...task,
-              notes: null,
-              note_count: 0,
-              attachment_count: task.file_count ?? 0,
-            });
+            if (isWorkshop) {
+              await deleteWorkshopTaskNote(task.id, note.id);
+              syncNotePreview(staffNotes.filter((n) => n.id !== note.id));
+            } else if (dealId) {
+              if (note.id.startsWith('inline-')) {
+                await updateCrmTaskNotes(dealId, task.id, null);
+              } else {
+                await deleteCrmTaskAttachment(dealId, task.id, note.id);
+              }
+              syncNotePreview(staffNotes.filter((n) => n.id !== note.id));
+            }
           } catch (e) {
             Alert.alert('Lỗi', formatApiError(e));
           } finally {
@@ -267,13 +428,15 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
         onPress: async () => {
           setBusy(true);
           try {
-            await deleteCrmTaskAttachment(dealId, task.id, att.id);
+            if (isWorkshop) await deleteWorkshopTaskAttachment(task.id, att.id);
+            else await deleteCrmTaskAttachment(String(dealId), task.id, att.id);
             await loadAttachments();
             const nextFileCount = Math.max(0, (task.file_count ?? 0) - 1);
             onUpdated({
               ...task,
               file_count: nextFileCount,
-              attachment_count: nextFileCount + (hasNote ? 1 : 0),
+              attachment_count: nextFileCount + noteCount,
+              source: task.source,
             });
           } catch (e) {
             Alert.alert('Lỗi', formatApiError(e));
@@ -285,27 +448,111 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
     ]);
   };
 
-  const pickFile = async () => {
-    const pick = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true, multiple: false });
-    if (pick.canceled || !pick.assets?.[0]) return;
-    const a = pick.assets[0];
+  const uploadPickedFiles = async (
+    files: { uri: string; name: string; mime: string }[],
+    opts?: { silent?: boolean },
+  ) => {
+    if (!files.length) return;
     setBusy(true);
     try {
-      await uploadCrmTaskFiles(dealId, task.id, [
-        { uri: a.uri, name: a.name || 'file', mime: a.mimeType || 'application/octet-stream' },
-      ]);
+      if (isWorkshop) await uploadWorkshopTaskFiles(task.id, files);
+      else await uploadCrmTaskFiles(String(dealId), task.id, files);
       await loadAttachments();
       onUpdated({
         ...task,
-        file_count: (task.file_count ?? 0) + 1,
-        attachment_count: (task.attachment_count ?? 0) + 1,
+        file_count: (task.file_count ?? 0) + files.length,
+        attachment_count: (task.attachment_count ?? 0) + files.length,
+        source: task.source,
       });
-      Alert.alert('Đã tải lên', 'File đã đính kèm.');
+      if (!opts?.silent) {
+        Alert.alert('Đã tải lên', `Đã đính kèm ${files.length} file.`);
+      }
     } catch (e) {
       Alert.alert('Lỗi upload', formatApiError(e));
     } finally {
       setBusy(false);
     }
+  };
+
+  const pickFile = async () => {
+    const pick = await DocumentPicker.getDocumentAsync({
+      copyToCacheDirectory: true,
+      multiple: true,
+    });
+    if (pick.canceled || !pick.assets?.length) return;
+    await uploadPickedFiles(
+      pick.assets.map((a) => ({
+        uri: a.uri,
+        name: a.name || 'file',
+        mime: a.mimeType || guessMime(a.name || 'file'),
+      })),
+    );
+  };
+
+  const takePhoto = async (opts?: { silent?: boolean; openSheetAfter?: boolean }) => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Cần quyền camera', 'Cho phép camera để chụp ảnh ghi chú.');
+      return;
+    }
+    const shot = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      quality: 0.85,
+    });
+    if (shot.canceled || !shot.assets?.[0]) return;
+    const a = shot.assets[0];
+    const name = a.fileName || `anh-${Date.now()}.jpg`;
+    await uploadPickedFiles(
+      [{ uri: a.uri, name, mime: a.mimeType || guessMime(name, 'image/jpeg') }],
+      { silent: opts?.silent },
+    );
+    if (opts?.openSheetAfter) openAttach();
+  };
+
+  const takeVideo = async (opts?: { silent?: boolean; openSheetAfter?: boolean }) => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Cần quyền camera', 'Cho phép camera để quay video ghi chú.');
+      return;
+    }
+    const shot = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['videos'],
+      videoMaxDuration: 120,
+      quality: 0.7,
+    });
+    if (shot.canceled || !shot.assets?.[0]) return;
+    const a = shot.assets[0];
+    const name = a.fileName || `video-${Date.now()}.mp4`;
+    await uploadPickedFiles(
+      [{ uri: a.uri, name, mime: a.mimeType || guessMime(name, 'video/mp4') }],
+      { silent: opts?.silent },
+    );
+    if (opts?.openSheetAfter) openAttach();
+  };
+
+  const pickFromLibrary = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Cần quyền thư viện', 'Cho phép truy cập ảnh/video để đính kèm.');
+      return;
+    }
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images', 'videos'],
+      allowsMultipleSelection: true,
+      quality: 0.85,
+      selectionLimit: 20,
+    });
+    if (res.canceled || !res.assets?.length) return;
+    await uploadPickedFiles(
+      res.assets.map((a, i) => {
+        const name = a.fileName || `media-${Date.now()}-${i}.${a.type === 'video' ? 'mp4' : 'jpg'}`;
+        return {
+          uri: a.uri,
+          name,
+          mime: a.mimeType || guessMime(name, a.type === 'video' ? 'video/mp4' : 'image/jpeg'),
+        };
+      }),
+    );
   };
 
   const saveEdit = async () => {
@@ -315,12 +562,15 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
     }
     setBusy(true);
     try {
-      const updated = await updateCrmTask(dealId, task.id, {
+      const payload = {
         title: editTitle.trim(),
         description: editDesc.trim() || null,
-        stage_slug: task.stage_slug,
-      });
-      onUpdated(updated);
+        ...(isWorkshop ? {} : { stage_slug: task.stage_slug }),
+      };
+      const updated = isWorkshop
+        ? await updateWorkshopTask(task.id, payload)
+        : await updateCrmTask(String(dealId), task.id, payload);
+      onUpdated({ ...updated, source: task.source });
       closeModal();
     } catch (e) {
       Alert.alert('Lỗi', formatApiError(e));
@@ -336,10 +586,17 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
     }
     setBusy(true);
     try {
-      const updated = await updateCrmTask(dealId, task.id, {
-        assignee_ids: [...selectedIds],
+      const ids = [...selectedIds];
+      const updated = isWorkshop
+        ? await updateWorkshopTask(task.id, { assignee_id: ids[0] || null, assignee_ids: ids })
+        : await updateCrmTask(String(dealId), task.id, { assignee_ids: ids });
+      const picked = users.filter((u) => u.id && selectedIds.has(String(u.id)));
+      onUpdated({
+        ...updated,
+        assignee: picked[0] || updated.assignee || null,
+        assignees: picked.length ? picked : updated.assignees,
+        source: task.source,
       });
-      onUpdated(updated);
       closeModal();
     } catch (e) {
       Alert.alert('Lỗi', formatApiError(e));
@@ -351,8 +608,11 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
   const saveDeadline = async (date: Date) => {
     setBusy(true);
     try {
-      const updated = await updateCrmTask(dealId, task.id, { deadline: deadlineToIso(date) });
-      onUpdated(updated);
+      const iso = deadlineToIso(date);
+      const updated = isWorkshop
+        ? await updateWorkshopTask(task.id, { due_date: iso, deadline: iso })
+        : await updateCrmTask(String(dealId), task.id, { deadline: iso });
+      onUpdated({ ...updated, source: task.source });
       closeModal();
     } catch (e) {
       Alert.alert('Lỗi', formatApiError(e));
@@ -364,8 +624,10 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
   const clearDeadline = async () => {
     setBusy(true);
     try {
-      const updated = await updateCrmTask(dealId, task.id, { deadline: null });
-      onUpdated(updated);
+      const updated = isWorkshop
+        ? await updateWorkshopTask(task.id, { due_date: null, deadline: null })
+        : await updateCrmTask(String(dealId), task.id, { deadline: null });
+      onUpdated({ ...updated, source: task.source });
       closeModal();
     } catch (e) {
       Alert.alert('Lỗi', formatApiError(e));
@@ -381,6 +643,10 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
 
   const toggleUser = (id: string) => {
     setSelectedIds((prev) => {
+      if (isWorkshop) {
+        // Nhiệm vụ xưởng chỉ 1 người phụ trách
+        return prev.has(id) ? new Set() : new Set([id]);
+      }
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -427,6 +693,30 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
         metaTextActive: { color: colors.primary },
         metaOverdue: { color: colors.danger },
         attachBadge: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+        descBox: {
+          marginTop: 8,
+          paddingHorizontal: 10,
+          paddingVertical: 8,
+          borderRadius: Radii.md,
+          backgroundColor: colors.cardAlt,
+          borderWidth: 1,
+          borderColor: colors.border,
+          borderLeftWidth: 3,
+          borderLeftColor: colors.primary,
+        },
+        descLabel: {
+          color: colors.primary,
+          fontSize: 10,
+          fontWeight: '800',
+          textTransform: 'uppercase',
+          letterSpacing: 0.3,
+          marginBottom: 2,
+        },
+        descText: {
+          color: colors.textMuted,
+          fontSize: 12,
+          lineHeight: 17,
+        },
         noteBox: {
           flexDirection: 'row',
           alignItems: 'flex-start',
@@ -456,6 +746,81 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
           textTransform: 'uppercase',
           letterSpacing: 0.3,
           marginBottom: 2,
+        },
+        mediaRow: {
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          gap: 8,
+          marginTop: 4,
+          marginBottom: 8,
+        },
+        mediaBtn: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          paddingHorizontal: 12,
+          paddingVertical: 10,
+          borderRadius: Radii.md,
+          backgroundColor: colors.cardAlt,
+          borderWidth: 1,
+          borderColor: colors.border,
+        },
+        mediaBtnPrimary: {
+          backgroundColor: colors.primarySoft,
+          borderColor: colors.primary + '66',
+          flex: 1,
+          minWidth: 120,
+          justifyContent: 'center',
+        },
+        mediaBtnText: { color: colors.text, fontSize: 12, fontWeight: '700' },
+        mediaBtnTextPrimary: { color: colors.primary, fontSize: 13, fontWeight: '800' },
+        quickCapture: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          marginTop: 8,
+        },
+        quickCaptureBtn: {
+          flex: 1,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 6,
+          paddingVertical: 10,
+          paddingHorizontal: 8,
+          borderRadius: Radii.md,
+          backgroundColor: colors.primarySoft,
+          borderWidth: 1,
+          borderColor: colors.primary + '55',
+        },
+        quickCaptureBtnAlt: {
+          backgroundColor: colors.cardAlt,
+          borderColor: colors.border,
+        },
+        quickCaptureText: {
+          color: colors.primary,
+          fontSize: 12,
+          fontWeight: '800',
+        },
+        quickCaptureTextAlt: {
+          color: colors.text,
+          fontSize: 12,
+          fontWeight: '700',
+        },
+        noteItem: {
+          paddingVertical: 10,
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: colors.border,
+        },
+        noteItemMeta: { color: colors.textFaint, fontSize: 11, marginBottom: 4 },
+        noteItemText: { color: colors.text, fontSize: 13, lineHeight: 18 },
+        noteItemActions: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 6 },
+        sectionLabel: {
+          color: colors.text,
+          fontSize: 14,
+          fontWeight: '800',
+          marginTop: 12,
+          marginBottom: 6,
         },
         avatar: {
           width: 28,
@@ -708,40 +1073,93 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
         <Modal visible transparent animationType="slide" onRequestClose={closeModal}>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
             <Pressable style={styles.modalOverlay} onPress={closeModal}>
-              <Pressable style={[styles.sheet, { maxHeight: '85%' }]} onPress={(e) => e.stopPropagation()}>
-                <View style={styles.noteSectionHeader}>
-                  <Text style={styles.sheetTitle}>Ghi chú</Text>
-                  {(noteDraft.trim() || hasNote) ? (
-                    <TapHighlight style={styles.noteDeleteBtn} onPress={confirmDeleteNote} disabled={busy}>
-                      <Ionicons name="trash-outline" size={14} color={colors.danger} />
-                      <Text style={styles.noteDeleteText}>Xóa ghi chú</Text>
-                    </TapHighlight>
+              <Pressable style={[styles.sheet, { maxHeight: '90%' }]} onPress={(e) => e.stopPropagation()}>
+                <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+                  <Text style={styles.sheetTitle}>Ghi chú & file</Text>
+
+                  {descriptionText ? (
+                    <View style={styles.descBox}>
+                      <Text style={styles.descLabel}>Mô tả / hướng dẫn</Text>
+                      <Text style={styles.descText}>{descriptionText}</Text>
+                    </View>
                   ) : null}
-                </View>
-                <TextInput
-                  style={[styles.input, styles.textArea]}
-                  value={noteDraft}
-                  onChangeText={setNoteDraft}
-                  placeholder="Nhập ghi chú — sẽ hiển thị nổi bật trên nhiệm vụ..."
-                  placeholderTextColor={colors.textFaint}
-                  multiline
-                />
-                <View style={styles.btnRow}>
-                  <TapHighlight style={[styles.btn, styles.btnPrimary]} onPress={() => void saveNotes()} disabled={busy}>
-                    {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Lưu ghi chú</Text>}
+
+                  <Text style={styles.sectionLabel}>Thêm ghi chú nhân viên</Text>
+                  <TextInput
+                    style={[styles.input, styles.textArea]}
+                    value={noteDraft}
+                    onChangeText={setNoteDraft}
+                    placeholder="Nhập ghi chú mới (có thể thêm nhiều lần)…"
+                    placeholderTextColor={colors.textFaint}
+                    multiline
+                  />
+                  <View style={styles.mediaRow}>
+                    <TapHighlight
+                      style={[styles.mediaBtn, styles.mediaBtnPrimary]}
+                      onPress={() => void takePhoto({ silent: true })}
+                      disabled={busy}
+                    >
+                      <Ionicons name="camera" size={20} color={colors.primary} />
+                      <Text style={styles.mediaBtnTextPrimary}>Chụp nhanh</Text>
+                    </TapHighlight>
+                    <TapHighlight
+                      style={[styles.mediaBtn, styles.mediaBtnPrimary]}
+                      onPress={() => void takeVideo({ silent: true })}
+                      disabled={busy}
+                    >
+                      <Ionicons name="videocam" size={20} color={colors.primary} />
+                      <Text style={styles.mediaBtnTextPrimary}>Quay video</Text>
+                    </TapHighlight>
+                  </View>
+                  <TapHighlight
+                    style={[styles.btn, styles.btnPrimary, { marginBottom: 4 }]}
+                    onPress={() => void addNote()}
+                    disabled={busy}
+                  >
+                    {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>Thêm ghi chú</Text>}
                   </TapHighlight>
-                  <TapHighlight style={[styles.btn, styles.btnGhost]} onPress={() => void pickFile()} disabled={busy}>
-                    <Text style={styles.btnTextDark}>Chọn file</Text>
-                  </TapHighlight>
-                </View>
-                <Text style={[styles.sheetTitle, { fontSize: 14, marginTop: 12 }]}>
-                  File đính kèm ({attachments.length})
-                </Text>
-                {attLoading ? (
-                  <ActivityIndicator color={colors.primary} />
-                ) : attachments.length ? (
-                  <ScrollView style={{ maxHeight: 180 }}>
-                    {attachments.map((a) => (
+
+                  <Text style={styles.sectionLabel}>Thêm file khác</Text>
+                  <View style={styles.mediaRow}>
+                    <TapHighlight style={styles.mediaBtn} onPress={() => void pickFromLibrary()} disabled={busy}>
+                      <Ionicons name="images-outline" size={18} color={colors.primary} />
+                      <Text style={styles.mediaBtnText}>Thư viện</Text>
+                    </TapHighlight>
+                    <TapHighlight style={styles.mediaBtn} onPress={() => void pickFile()} disabled={busy}>
+                      <Ionicons name="document-attach-outline" size={18} color={colors.primary} />
+                      <Text style={styles.mediaBtnText}>Nhiều file</Text>
+                    </TapHighlight>
+                  </View>
+
+                  <Text style={styles.sectionLabel}>Ghi chú đã nhập ({staffNotes.length})</Text>
+                  {attLoading ? (
+                    <ActivityIndicator color={colors.primary} />
+                  ) : staffNotes.length ? (
+                    staffNotes.map((n) => (
+                      <View key={n.id} style={styles.noteItem}>
+                        <Text style={styles.noteItemMeta}>
+                          {[n.user_name, formatNoteTime(n.created_at)].filter(Boolean).join(' · ') || 'Ghi chú'}
+                        </Text>
+                        <Text style={styles.noteItemText}>{n.text}</Text>
+                        <View style={styles.noteItemActions}>
+                          <TapHighlight
+                            style={styles.noteDeleteBtn}
+                            onPress={() => confirmDeleteNote(n)}
+                            disabled={busy}
+                          >
+                            <Ionicons name="trash-outline" size={14} color={colors.danger} />
+                            <Text style={styles.noteDeleteText}>Xóa</Text>
+                          </TapHighlight>
+                        </View>
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={styles.emptyAtt}>Chưa có ghi chú — nhân viên nhập bên trên</Text>
+                  )}
+
+                  <Text style={styles.sectionLabel}>File đính kèm ({attachments.length})</Text>
+                  {attLoading ? null : attachments.length ? (
+                    attachments.map((a) => (
                       <TapHighlight
                         key={a.id}
                         style={styles.attRow}
@@ -751,7 +1169,13 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
                         }}
                       >
                         <Ionicons
-                          name={a.doc_type === 'task_note' ? 'document-text-outline' : 'document-outline'}
+                          name={
+                            (a.mime_type || '').startsWith('video/')
+                              ? 'videocam-outline'
+                              : (a.mime_type || '').startsWith('image/')
+                                ? 'image-outline'
+                                : 'document-outline'
+                          }
                           size={18}
                           color={colors.primary}
                         />
@@ -759,8 +1183,8 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
                           <Text style={styles.attName} numberOfLines={1}>
                             {a.name || a.file_name || 'Tệp'}
                           </Text>
-                          {a.doc_type === 'task_note' && a.notes ? (
-                            <Text style={styles.attType} numberOfLines={2}>{a.notes}</Text>
+                          {a.mime_type ? (
+                            <Text style={styles.attType} numberOfLines={1}>{a.mime_type}</Text>
                           ) : null}
                         </View>
                         <TapHighlight
@@ -772,14 +1196,15 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
                           <Ionicons name="trash-outline" size={16} color={colors.danger} />
                         </TapHighlight>
                       </TapHighlight>
-                    ))}
-                  </ScrollView>
-                ) : (
-                  <Text style={styles.emptyAtt}>Chưa có file đính kèm</Text>
-                )}
-                <TapHighlight style={[styles.btn, styles.btnGhost, { marginTop: 12 }]} onPress={closeModal}>
-                  <Text style={styles.btnTextDark}>Đóng</Text>
-                </TapHighlight>
+                    ))
+                  ) : (
+                    <Text style={styles.emptyAtt}>Chưa có file — có thể gửi nhiều lần</Text>
+                  )}
+
+                  <TapHighlight style={[styles.btn, styles.btnGhost, { marginTop: 16 }]} onPress={closeModal}>
+                    <Text style={styles.btnTextDark}>Đóng</Text>
+                  </TapHighlight>
+                </ScrollView>
               </Pressable>
             </Pressable>
           </KeyboardAvoidingView>
@@ -801,6 +1226,14 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
             <Text style={[styles.title, done && styles.titleDone]} numberOfLines={2}>
               {task.title}
             </Text>
+            {descriptionText ? (
+              <View style={styles.descBox}>
+                <Text style={styles.descLabel}>Mô tả</Text>
+                <Text style={styles.descText} numberOfLines={3}>
+                  {descriptionText}
+                </Text>
+              </View>
+            ) : null}
             {hasNote ? (
               <TapHighlight
                 style={styles.noteBox}
@@ -809,9 +1242,11 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
               >
                 <Ionicons name="chatbubble-ellipses" size={16} color={colors.warning} style={styles.noteIcon} />
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.noteLabel}>Ghi chú</Text>
+                  <Text style={styles.noteLabel}>
+                    Ghi chú{noteCount > 1 ? ` (${noteCount})` : ''}
+                  </Text>
                   <Text style={styles.noteText} numberOfLines={4}>
-                    {noteText}
+                    {latestNote || `${noteCount} ghi chú`}
                   </Text>
                 </View>
               </TapHighlight>
@@ -834,6 +1269,26 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
                 </View>
               )}
             </View>
+            <View style={styles.quickCapture}>
+              <TapHighlight
+                style={styles.quickCaptureBtn}
+                pressStyle={{ opacity: 0.88 }}
+                onPress={() => void takePhoto({ silent: true, openSheetAfter: true })}
+                disabled={busy}
+              >
+                <Ionicons name="camera" size={16} color={colors.primary} />
+                <Text style={styles.quickCaptureText}>Chụp nhanh</Text>
+              </TapHighlight>
+              <TapHighlight
+                style={[styles.quickCaptureBtn, styles.quickCaptureBtnAlt]}
+                pressStyle={{ opacity: 0.88 }}
+                onPress={() => void takeVideo({ silent: true, openSheetAfter: true })}
+                disabled={busy}
+              >
+                <Ionicons name="videocam" size={16} color={colors.text} />
+                <Text style={styles.quickCaptureTextAlt}>Quay video</Text>
+              </TapHighlight>
+            </View>
           </View>
           {assignee ? (
             <View style={styles.avatar}>
@@ -847,6 +1302,24 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
         </View>
 
         <View style={styles.actions}>
+          <TapHighlight
+            style={styles.actionBtn}
+            pressStyle={styles.actionBtnActive}
+            onPress={() => void takePhoto({ silent: true, openSheetAfter: true })}
+            hitSlop={4}
+            disabled={busy}
+          >
+            <Ionicons name="camera-outline" size={18} color={colors.primary} />
+          </TapHighlight>
+          <TapHighlight
+            style={styles.actionBtn}
+            pressStyle={styles.actionBtnActive}
+            onPress={() => void takeVideo({ silent: true, openSheetAfter: true })}
+            hitSlop={4}
+            disabled={busy}
+          >
+            <Ionicons name="videocam-outline" size={18} color={colors.primary} />
+          </TapHighlight>
           <TapHighlight
             style={styles.actionBtn}
             pressStyle={styles.actionBtnActive}

@@ -28,7 +28,7 @@ export const DEAL_MEMBER_ROLE_LABELS: Record<string, string> = {
 
 export async function fetchCrmCompaniesForMembers(): Promise<CompanyOption[]> {
   const { data } = await api.get<{ companies?: unknown[] } | unknown[]>('/companies', {
-    params: { for_module: 'crm' },
+    params: { for_module: 'logistics' },
   });
   const list = Array.isArray(data)
     ? data
@@ -51,7 +51,7 @@ export async function fetchEmployeesByCompanyForMembers(
 ): Promise<CrmEmployeeOption[]> {
   if (!companyId) return [];
   const { data } = await api.get<{ users?: unknown[] }>('/crm/employees-by-company', {
-    params: { company_id: companyId, for_module: 'crm' },
+    params: { company_id: companyId, for_module: 'logistics' },
   });
   const list = Array.isArray(data?.users) ? data.users : [];
   return list.map((u) => {

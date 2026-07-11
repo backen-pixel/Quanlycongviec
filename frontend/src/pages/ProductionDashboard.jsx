@@ -66,6 +66,7 @@ import {
   getSxOrderDeliveryDateUrgency,
   VC_KANBAN_STATUSES,
 } from '../lib/sxPipelineRevenue';
+import { isProjectAlreadyInLogistics } from '../lib/projectLogistics';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import NewDealModal from '../components/NewDealModal';
@@ -1767,8 +1768,10 @@ export default function ProductionDashboard() {
 
   const handleMoveStage = useCallback(async (projectId, targetCol) => {
     const current = projects.find((p) => String(p.id) === String(projectId));
-    const lockedInVc = ['shipping', 'installing', 'warranty', 'completed'].includes(String(current?.status || ''));
-    if (lockedInVc) {
+    const alreadyInLogistics = isProjectAlreadyInLogistics(current);
+    const isHandover = targetCol?.is_handover_to_logistics === true;
+
+    if (alreadyInLogistics && !isHandover) {
       alert('Deal đã bàn giao sang Vận chuyển nên không thể kéo về cột khác.');
       return;
     }
@@ -1788,7 +1791,6 @@ export default function ProductionDashboard() {
 
     const isIntake = targetCol?.bucket_slug === INTAKE_BUCKET
       || String(targetCol?.id || '').startsWith('__fb_');
-    const isHandover = targetCol?.is_handover_to_logistics === true;
     const isSwitchWorkshopType = targetCol?.is_switch_workshop_type === true
       && !!targetCol?.target_workshop_type_id;
 
@@ -1806,8 +1808,12 @@ export default function ProductionDashboard() {
       return;
     }
 
-    // Cột được đánh dấu "bàn giao VC" → gọi handover-vc, giữ card trong cột
+    // Cột được đánh dấu "bàn giao VC" → hỏi lần đầu; đã bàn giao thì chỉ cập nhật cột SX
     if (isHandover) {
+      if (alreadyInLogistics) {
+        await executeStageMove(projectId, targetCol);
+        return;
+      }
       setHandoverModal({ projectId, projectName: current?.name || current?.code || projectId });
       setHandoverTargetSxColId(targetCol?.id ? String(targetCol.id) : '');
       setHandoverErr('');
@@ -3935,7 +3941,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
       )}
 
       {/* VC status (khi đã bàn giao) — gọn 1 dòng nhỏ */}
-      {(item.status === 'shipping' || item.status === 'installing' || item.status === 'warranty') && (
+      {(item.status === 'shipping' || item.status === 'installing' || item.status === 'warranty' || item.vc_kanban_column_id) && (
         <div className="mt-1.5 flex items-center gap-1 text-[10px] text-orange-700 bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5">
           <Truck className="h-2.5 w-2.5" />
           <span className="font-medium">
@@ -3945,7 +3951,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
       )}
 
       {/* Nút Bàn giao VC: chỉ hiện ở cột được đánh dấu is_handover_to_logistics */}
-      {onHandoverVC && stage?.is_handover_to_logistics === true && item.status !== 'shipping' && item.status !== 'installing' && item.status !== 'warranty' && item.status !== 'completed' && (
+      {onHandoverVC && stage?.is_handover_to_logistics === true && !isProjectAlreadyInLogistics(item) && (
         <button
           type="button"
           onClick={(e) => {

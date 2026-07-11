@@ -43,11 +43,25 @@ const ACCENT = {
     border: 'border-emerald-200',
     btn: 'bg-emerald-600 hover:bg-emerald-700',
   },
+  orange: {
+    ring: 'ring-orange-100',
+    bg: 'bg-orange-600',
+    bgSoft: 'bg-orange-50',
+    text: 'text-orange-700',
+    border: 'border-orange-200',
+    btn: 'bg-orange-600 hover:bg-orange-700',
+  },
 };
+
+function resolveDownloadModule(pathname) {
+  if (pathname.startsWith('/sx/')) return 'sx';
+  if (pathname.startsWith('/vc/')) return 'vc';
+  return 'crm';
+}
 
 export default function DownloadAppPage() {
   const { pathname } = useLocation();
-  const module = pathname.startsWith('/sx/') ? 'sx' : 'crm';
+  const module = resolveDownloadModule(pathname);
   const config = getModuleAppDownloadConfig(module);
   const accent = ACCENT[config?.accent || 'blue'] || ACCENT.blue;
 

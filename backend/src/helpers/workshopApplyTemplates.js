@@ -11,10 +11,10 @@ function normalizeChecklistForTaskInsert(checklist) {
   return checklist
     .map((c, i) => {
       if (typeof c === 'string' && c.trim()) return { title: c.trim(), notes: null, order_index: i };
-      if (c && typeof c === 'object' && (c.label || c.title)) {
+      if (c && typeof c === 'object' && (c.label || c.title || c.text)) {
         const desc = (c.description ?? c.notes ?? '').toString().trim();
         return {
-          title: String(c.label || c.title).trim(),
+          title: String(c.label || c.title || c.text).trim(),
           notes: desc || null,
           order_index: c.order_index ?? i,
         };
@@ -36,6 +36,27 @@ async function resolveStageIdForWorkshopArea(workshopArea) {
   return null;
 }
 
+/** Cột pipeline VC/LĐ theo tiêu đề nhiệm vụ (bộ mẫu đơn giản Phúc Đạt). */
+function guessLogisticsPipelineBucketFromTitle(title) {
+  const t = String(title || '').toLowerCase().trim();
+  // Bộ mẫu chung VC/LĐ (6 việc): 1–3 Nhận hàng, 4–6 Lắp đặt
+  if (
+    t.includes('trước khi lấy')
+    || t.includes('lên xe')
+    || t.includes('trước khi giao')
+    || t.includes('kiểm tra đơn hàng')
+  ) return 'delivery_pending';
+  if (
+    t.includes('nghiệm thu')
+    || t.includes('quy trình lắp')
+    || t.includes('lắp đặt')
+    || t.includes('kiểm tra và nhận')
+    || t.includes('kiểm tra nhận hàng')
+    || t.includes('lắp ')
+  ) return 'installation';
+  return 'shipping';
+}
+
 function guessStageSlugForTemplateItemTitle(workshopArea, title) {
   const t = String(title || '').toLowerCase();
   if (workshopArea === 'production') {
@@ -44,9 +65,57 @@ function guessStageSlugForTemplateItemTitle(workshopArea, title) {
     if (t.includes('đóng gói') || t.includes('xuất kho') || t.includes('bàn giao') || t.includes('giao cho kho')) return 'packaging';
     return 'production';
   }
+  const bucket = guessLogisticsPipelineBucketFromTitle(title);
+  if (bucket === 'delivery_pending') return 'delivery_pending';
+  if (bucket === 'installation') return 'installation';
   if (t.includes('lắp đặt') || t.includes('install')) return 'installation';
   if (t.includes('vận chuyển') || t.includes('giao hàng') || t.includes('shipping') || t.includes('delivery')) return 'shipping';
   return 'shipping';
+}
+
+/** logistics_pipeline_stages.id theo bucket (ưu tiên pipeline công ty VC). */
+async function resolveLogisticsPipelineStageIdByBucket(bucketSlug, companyId) {
+  const cid = companyId || null;
+  const matchBucket = (row) => {
+    const name = String(row?.name || '').toLowerCase();
+    const bucket = String(row?.bucket_slug || '').toLowerCase();
+    if (bucketSlug === 'delivery_pending') {
+      return bucket === 'delivery_pending' || name.includes('chờ vận');
+    }
+    if (bucketSlug === 'shipping') {
+      return name.includes('đang vận') || (name.includes('vận chuyển') && bucket !== 'delivery_pending');
+    }
+    if (bucketSlug === 'installation') {
+      return name.includes('lắp đặt') || bucket === 'installation';
+    }
+    if (bucketSlug === 'completed') {
+      return bucket === 'completed' || name.includes('hoàn thành');
+    }
+    return false;
+  };
+
+  const loadRows = async (scope) => {
+    let q = supabase
+      .from('logistics_pipeline_stages')
+      .select('id, name, bucket_slug, order_index')
+      .eq('is_active', true)
+      .order('order_index');
+    if (scope === 'company' && cid) q = q.eq('company_id', cid);
+    if (scope === 'global') q = q.is('company_id', null);
+    const { data, error } = await q;
+    if (error) return [];
+    return data || [];
+  };
+
+  try {
+    const scoped = cid ? await loadRows('company') : [];
+    const global = await loadRows('global');
+    const rows = scoped.length ? scoped : global;
+    const hit = rows.find(matchBucket);
+    return hit?.id || null;
+  } catch {
+    return null;
+  }
 }
 
 function isWorkshopCompanyColumnError(err) {
@@ -233,7 +302,14 @@ async function fetchActiveWorkshopTemplatesForArea(workshopArea, companyId, opts
  * Áp một bộ mẫu xưởng → tạo tasks dự án (batch insert; checklist sau khi có id).
  */
 async function applyWorkshopTemplateToProject(projectId, templateId, userId, opts = {}) {
-  const { data: project } = await supabase.from('projects').select('id').eq('id', projectId).maybeSingle();
+  let { data: project } = await supabase
+    .from('projects')
+    .select('id, company_id, logistics_company_id')
+    .eq('id', projectId)
+    .maybeSingle();
+  if (!project?.id) {
+    ({ data: project } = await supabase.from('projects').select('id, company_id').eq('id', projectId).maybeSingle());
+  }
   if (!project) {
     return { ok: false, error: 'Không tìm thấy dự án', statusCode: 404 };
   }
@@ -292,11 +368,21 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId, opt
     ? (opts.productionStageId ?? tpl.production_stage_id ?? null)
     : null;
 
-  const staged = items.map((item) => {
+  const logisticsCompanyId = tpl.workshop_area === 'logistics'
+    ? (project.logistics_company_id || project.company_id || null)
+    : null;
+
+  const staged = [];
+  for (const item of items) {
     const guessedSlug = guessStageSlugForTemplateItemTitle(tpl.workshop_area, item.title);
     const stageId = resolveStageIdBySlug(guessedSlug) || fallbackStageId;
-    return { item, guessedSlug, stageId, dueDate: null };
-  });
+    let logisticsPipelineStageId = null;
+    if (tpl.workshop_area === 'logistics') {
+      const bucket = guessLogisticsPipelineBucketFromTitle(item.title);
+      logisticsPipelineStageId = await resolveLogisticsPipelineStageIdByBucket(bucket, logisticsCompanyId);
+    }
+    staged.push({ item, guessedSlug, stageId, dueDate: null, logisticsPipelineStageId });
+  }
 
   const distinctStageIds = [...new Set(staged.map((s) => s.stageId).filter(Boolean))];
   const maxOrderByStage = {};
@@ -322,18 +408,21 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId, opt
       project_id: projectId,
       stage_id: s.stageId,
       title: s.item.title,
-      description: s.item.description || null,
+      // VC/LĐ: không đổ mô tả mẫu vào task — mô tả/ghi chú để NV tự nhập khi cần
+      description: tpl.workshop_area === 'logistics' ? null : (s.item.description || null),
       priority: s.item.priority || 'medium',
       status: 'todo',
       task_type: 'project',
       created_by_id: userId,
       due_date: s.dueDate,
-      order_index: maxOrderByStage[s.stageId],
+      order_index: s.item.order_index ?? maxOrderByStage[s.stageId],
+      assignee_id: s.item.default_assignee_id || null,
       metadata: {
         workshop_template_id: templateId,
         workshop_template_item_id: s.item.id,
         guessed_stage_slug: s.guessedSlug,
         workshop_area: tpl.workshop_area,
+        ...(s.logisticsPipelineStageId ? { logistics_pipeline_stage_id: s.logisticsPipelineStageId } : {}),
       },
     };
     if (tpl.workshop_area === 'production' && pipelineStageIdForTask) {
@@ -608,6 +697,8 @@ module.exports = {
   resolveDefaultWorkshopTemplateId,
   resolveProductionPipelineStageId,
   resolveLogisticsPipelineStageId,
+  resolveLogisticsPipelineStageIdByBucket,
+  guessLogisticsPipelineBucketFromTitle,
   normalizeChecklistForTaskInsert,
   resolveStageIdForWorkshopArea,
   scheduleNextWorkshopTaskAfterComplete,

@@ -1,5 +1,13 @@
 import { api } from '../api/client';
-import type { CrmDealSummary, CrmTask, KanbanStage, PersonRef, ProductionProjectDetail, ProjectActivity } from '../types';
+import type {
+  CrmDealSummary,
+  CrmTask,
+  KanbanStage,
+  PersonRef,
+  ProductionProjectDetail,
+  ProjectActivity,
+  TaskStaffNote,
+} from '../types';
 import { mapProjectRow } from './logisticsApi';
 
 export function isCrmProductionTaskDone(status: string): boolean {
@@ -243,7 +251,239 @@ export async function fetchCrmDealTasks(dealId: string): Promise<CrmTask[]> {
     params: { task_scope: 'logistics' },
   });
   const list = Array.isArray(data) ? data : [];
-  return list.map((row) => mapCrmTask(row as Record<string, unknown>));
+  return list.map((row) => ({ ...mapCrmTask(row as Record<string, unknown>), source: 'crm' as const }));
+}
+
+const VC_WORKSHOP_STAGE_LABEL: Record<string, string> = {
+  delivery_pending: 'Tiếp nhận VC',
+  delivery: 'Vận chuyển',
+  shipping: 'Vận chuyển',
+  installation: 'Lắp đặt',
+  installing: 'Lắp đặt',
+  'customer-care': 'Bảo hành / CSKH',
+  warranty: 'Bảo hành / CSKH',
+};
+
+function isLogisticsWorkshopTask(row: Record<string, unknown>): boolean {
+  const meta = row.metadata && typeof row.metadata === 'object'
+    ? (row.metadata as Record<string, unknown>)
+    : {};
+  if (meta.workshop_area === 'logistics' || meta.workshop_module === 'logistics') return true;
+  const stageSlug = row.stage && typeof row.stage === 'object'
+    ? String((row.stage as Record<string, unknown>).slug || '')
+    : '';
+  const slug = String(meta.guessed_stage_slug || stageSlug || '');
+  return ['delivery_pending', 'delivery', 'shipping', 'installation', 'installing', 'customer-care', 'warranty'].includes(slug);
+}
+
+function mapWorkshopTask(row: Record<string, unknown>): CrmTask {
+  const meta = row.metadata && typeof row.metadata === 'object'
+    ? (row.metadata as Record<string, unknown>)
+    : {};
+  const stageObj = row.stage && typeof row.stage === 'object'
+    ? (row.stage as Record<string, unknown>)
+    : null;
+  const guessed = String(meta.guessed_stage_slug || stageObj?.slug || 'delivery_pending');
+  const label = VC_WORKSHOP_STAGE_LABEL[guessed]
+    || (stageObj?.name != null ? String(stageObj.name) : null)
+    || guessed;
+  const statusRaw = String(row.status || 'todo');
+  const status = statusRaw === 'done' ? 'completed' : statusRaw === 'todo' ? 'pending' : statusRaw;
+  const due = row.due_date != null ? String(row.due_date) : null;
+  const description = row.description != null ? String(row.description) : null;
+  // Ghi chú nhân viên ≠ mô tả mẫu — không map description → notes
+  const staffNotes = Array.isArray(row.staff_notes) ? row.staff_notes as TaskStaffNote[] : undefined;
+  const notePreview = staffNotes?.[0]?.text
+    || (row.notes != null ? String(row.notes) : null);
+  return {
+    id: String(row.id || ''),
+    title: String(row.title || ''),
+    status,
+    stage_slug: guessed,
+    order_index: row.order_index != null ? Number(row.order_index) : undefined,
+    deadline: due,
+    due_date: due,
+    notes: notePreview,
+    description,
+    priority: row.priority != null ? String(row.priority) : null,
+    note_count: Number(row.note_count ?? staffNotes?.length ?? 0),
+    file_count: Number(row.file_count ?? 0),
+    staff_notes: staffNotes,
+    assignee: mapPerson(row.assignee),
+    assignees: row.assignee ? [mapPerson(row.assignee)!].filter(Boolean) : [],
+    pipeline_stage: {
+      name: label,
+      order_index: row.order_index != null ? Number(row.order_index) : undefined,
+    },
+    source: 'workshop',
+  };
+}
+
+/** Nhiệm vụ VC/LĐ trên bảng `tasks` (bộ mẫu xưởng logistics) — nguồn chính khi deal chưa có crm_tasks vc_*. */
+export async function fetchLogisticsWorkshopTasks(projectId: string): Promise<CrmTask[]> {
+  const { data } = await api.get<{ tasks?: unknown[] }>('/tasks', {
+    params: { project_id: projectId, page_size: 200 },
+  });
+  const list = Array.isArray(data?.tasks) ? data.tasks : [];
+  return list
+    .map((row) => row as Record<string, unknown>)
+    .filter(isLogisticsWorkshopTask)
+    .map(mapWorkshopTask);
+}
+
+function unwrapWorkshopTaskPayload(data: unknown, fallback: Record<string, unknown>): CrmTask {
+  const root = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
+  const row = (root.task && typeof root.task === 'object'
+    ? root.task
+    : root) as Record<string, unknown>;
+  return mapWorkshopTask({ ...fallback, ...row });
+}
+
+function toWorkshopStatus(status: string): string {
+  if (status === 'completed' || status === 'done') return 'done';
+  if (status === 'pending' || status === 'todo') return 'todo';
+  return status;
+}
+
+export async function updateWorkshopTaskStatus(taskId: string, status: string): Promise<CrmTask> {
+  const apiStatus = toWorkshopStatus(status);
+  const { data } = await api.patch<unknown>(`/tasks/${taskId}/status`, { status: apiStatus });
+  return unwrapWorkshopTaskPayload(data, { id: taskId, status: apiStatus });
+}
+
+export async function updateWorkshopTask(
+  taskId: string,
+  updates: Record<string, unknown>,
+): Promise<CrmTask> {
+  const body: Record<string, unknown> = { ...updates };
+  if (body.status != null) body.status = toWorkshopStatus(String(body.status));
+  if (body.deadline !== undefined && body.due_date === undefined) {
+    body.due_date = body.deadline;
+    delete body.deadline;
+  }
+  if (body.assignee_ids != null && Array.isArray(body.assignee_ids)) {
+    const ids = body.assignee_ids.map(String).filter(Boolean);
+    body.assignee_id = ids[0] || null;
+    delete body.assignee_ids;
+  }
+  // Không gửi notes lên PUT /tasks (bảng tasks không có cột notes)
+  delete body.notes;
+  delete body.staff_notes;
+  delete body.note_count;
+  delete body.source;
+  delete body.pipeline_stage;
+  delete body.assignees;
+  delete body.assignee;
+  delete body.file_count;
+  delete body.attachment_count;
+  delete body.deadline; // đã map sang due_date ở trên nếu cần
+  const { data } = await api.put<unknown>(`/tasks/${taskId}`, body);
+  return unwrapWorkshopTaskPayload(data, { id: taskId, ...body });
+}
+
+export async function deleteWorkshopTask(taskId: string): Promise<void> {
+  await api.delete(`/tasks/${taskId}`);
+}
+
+export type TaskAttachment = {
+  id: string;
+  name?: string | null;
+  doc_type?: string | null;
+  file_url?: string | null;
+  file_name?: string | null;
+  mime_type?: string | null;
+  notes?: string | null;
+};
+
+export async function fetchWorkshopTaskAttachments(taskId: string): Promise<TaskAttachment[]> {
+  const { data } = await api.get<{ attachments?: unknown[] }>(`/tasks/${taskId}/attachments`, {
+    params: { for_module: 'logistics' },
+  });
+  const list = Array.isArray(data?.attachments) ? data.attachments : [];
+  return list.map((row) => {
+    const r = row as Record<string, unknown>;
+    return {
+      id: String(r.id || ''),
+      name: r.file_name != null ? String(r.file_name) : (r.name != null ? String(r.name) : null),
+      doc_type: r.doc_type != null ? String(r.doc_type) : null,
+      file_url: r.file_url != null ? String(r.file_url) : null,
+      file_name: r.file_name != null ? String(r.file_name) : null,
+      mime_type: r.mime_type != null ? String(r.mime_type) : null,
+      notes: r.notes != null ? String(r.notes) : null,
+    };
+  });
+}
+
+export async function deleteWorkshopTaskAttachment(taskId: string, attachmentId: string): Promise<void> {
+  await api.delete(`/tasks/${taskId}/attachments/${attachmentId}`);
+}
+
+export async function uploadWorkshopTaskFiles(
+  taskId: string,
+  files: { uri: string; name: string; mime: string }[],
+): Promise<void> {
+  const { postMultipart } = await import('../api/client');
+  const form = new FormData();
+  for (const f of files) {
+    form.append('files', { uri: f.uri, name: f.name, type: f.mime } as unknown as Blob);
+  }
+  const { data: up } = await postMultipart<{
+    files: { file_url?: string; file_name?: string; file_size?: number; mime_type?: string }[];
+  }>('/upload', form);
+  const uploaded = up?.files || [];
+  const items = uploaded
+    .filter((u) => u.file_url)
+    .map((upf) => ({
+      original_name: upf.file_name || 'file',
+      file_name: upf.file_name,
+      file_url: upf.file_url,
+      file_size: upf.file_size,
+      mime_type: upf.mime_type,
+      allowed_share_modules: ['logistics'],
+    }));
+  if (!items.length) throw new Error('Upload không trả về file_url');
+  await api.post(`/tasks/${taskId}/attachments/bulk`, { items });
+}
+
+/** Ghi chú nhân viên trên nhiệm vụ xưởng — dùng task_comments (nhiều lần, không đụng mô tả). */
+export async function fetchWorkshopTaskNotes(taskId: string): Promise<TaskStaffNote[]> {
+  const { data } = await api.get<{ comments?: unknown[] }>(`/tasks/${taskId}/comments`);
+  const list = Array.isArray(data?.comments) ? data.comments : [];
+  return list.map((row) => {
+    const r = row as Record<string, unknown>;
+    const user = r.user && typeof r.user === 'object' ? (r.user as Record<string, unknown>) : null;
+    return {
+      id: String(r.id || ''),
+      text: String(r.content || ''),
+      created_at: r.created_at != null ? String(r.created_at) : null,
+      user_name: user?.full_name != null ? String(user.full_name) : null,
+    };
+  }).filter((n) => n.id && n.text.trim());
+}
+
+export async function addWorkshopTaskNote(taskId: string, text: string): Promise<TaskStaffNote> {
+  const content = text.trim();
+  if (!content) throw new Error('Thiếu nội dung ghi chú');
+  // Luôn POST /tasks/:id/comments — không PUT notes lên bảng tasks
+  const { data } = await api.post<{ comment?: Record<string, unknown>; error?: string }>(
+    `/tasks/${taskId}/comments`,
+    { content },
+  );
+  const r = data?.comment;
+  if (!r?.id) {
+    throw new Error((data as { error?: string })?.error || 'Không lưu được ghi chú');
+  }
+  const user = r.user && typeof r.user === 'object' ? (r.user as Record<string, unknown>) : null;
+  return {
+    id: String(r.id),
+    text: String(r.content || content),
+    created_at: r.created_at != null ? String(r.created_at) : new Date().toISOString(),
+    user_name: user?.full_name != null ? String(user.full_name) : null,
+  };
+}
+
+export async function deleteWorkshopTaskNote(taskId: string, noteId: string): Promise<void> {
+  await api.delete(`/tasks/${taskId}/comments/${noteId}`);
 }
 
 export async function fetchProjectActivities(projectId: string): Promise<ProjectActivity[]> {
@@ -306,16 +546,6 @@ export async function updateCrmTaskNotes(
   return mapCrmTask(data || { id: taskId, notes });
 }
 
-export type TaskAttachment = {
-  id: string;
-  name?: string | null;
-  doc_type?: string | null;
-  file_url?: string | null;
-  file_name?: string | null;
-  mime_type?: string | null;
-  notes?: string | null;
-};
-
 export async function fetchCrmTaskAttachments(dealId: string, taskId: string): Promise<TaskAttachment[]> {
   const { data } = await api.get<unknown>(`/crm/leads/${dealId}/tasks/${taskId}/attachments`);
   const list = Array.isArray(data) ? data : [];
@@ -339,6 +569,31 @@ export async function deleteCrmTaskAttachment(
   attachmentId: string,
 ): Promise<void> {
   await api.delete(`/crm/leads/${dealId}/tasks/${taskId}/attachments/${attachmentId}`);
+}
+
+export async function addCrmTaskNote(
+  dealId: string,
+  taskId: string,
+  text: string,
+  name?: string,
+): Promise<TaskAttachment> {
+  const { data } = await api.post<Record<string, unknown>>(
+    `/crm/leads/${dealId}/tasks/${taskId}/attachments`,
+    {
+      name: (name || 'Ghi chú').trim() || 'Ghi chú',
+      doc_type: 'task_note',
+      notes: text.trim(),
+    },
+  );
+  return {
+    id: String(data?.id || ''),
+    name: data?.name != null ? String(data.name) : 'Ghi chú',
+    doc_type: 'task_note',
+    notes: text.trim(),
+    file_url: null,
+    file_name: null,
+    mime_type: null,
+  };
 }
 
 export async function uploadCrmTaskFiles(

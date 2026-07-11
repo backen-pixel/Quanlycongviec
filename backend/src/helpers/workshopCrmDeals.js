@@ -110,8 +110,70 @@ async function attachCrmDealsToProjects(projects) {
   }));
 }
 
+async function batchLoadUsersByIds(ids) {
+  const unique = [...new Set((ids || []).filter(Boolean).map(String))];
+  if (!unique.length) return new Map();
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, full_name, avatar, email')
+      .in('id', unique);
+    if (error) throw error;
+    return new Map((data || []).map((u) => [String(u.id), u]));
+  } catch (e) {
+    console.warn('[workshopCrmDeals] batchLoadUsersByIds:', e.message);
+    return new Map();
+  }
+}
+
+/** Bổ sung full_name khi PostgREST embed users trên projects/crm_leads fail. */
+async function hydrateWorkshopProjectPeople(project, crmDeals = []) {
+  if (!project) return { project, crmDeals: crmDeals || [] };
+  const p = { ...project };
+  const deals = Array.isArray(crmDeals) ? crmDeals.map((d) => ({ ...d })) : [];
+  const userIds = [];
+
+  const personFields = [
+    ['production_person_id', 'production_person'],
+    ['logistics_person_id', 'logistics_person'],
+    ['installer_person_id', 'installer_person'],
+    ['sales_person_id', 'sales_person'],
+    ['supervisor_id', 'supervisor'],
+    ['project_manager_id', 'project_manager'],
+  ];
+  for (const [idField, objField] of personFields) {
+    const uid = p[idField];
+    if (uid && !p[objField]?.full_name) userIds.push(String(uid));
+  }
+  for (const d of deals) {
+    if (d.assigned_to && !d.assignee?.full_name) userIds.push(String(d.assigned_to));
+    if (d.lead_owner_id && !d.lead_owner?.full_name) userIds.push(String(d.lead_owner_id));
+  }
+
+  const byId = await batchLoadUsersByIds(userIds);
+  for (const [idField, objField] of personFields) {
+    const uid = p[idField];
+    if (uid && !p[objField]?.full_name) {
+      const u = byId.get(String(uid));
+      if (u) p[objField] = u;
+    }
+  }
+  const hydratedDeals = deals.map((d) => ({
+    ...d,
+    assignee: d.assignee?.full_name
+      ? d.assignee
+      : (d.assigned_to ? byId.get(String(d.assigned_to)) : null) || d.assignee || null,
+    lead_owner: d.lead_owner?.full_name
+      ? d.lead_owner
+      : (d.lead_owner_id ? byId.get(String(d.lead_owner_id)) : null) || d.lead_owner || null,
+  }));
+
+  return { project: p, crmDeals: hydratedDeals };
+}
+
 module.exports = {
   CRM_DEALS_LIST_EMBED,
   attachCrmDealsToProjects,
   loadCrmDealsForProjectDetail,
+  hydrateWorkshopProjectPeople,
 };

@@ -112,7 +112,8 @@ async function createProjectTask(req, body) {
 async function updateProjectTask(req, taskId, body) {
   const b = body;
   const update = { updated_at: new Date().toISOString() };
-  const fields = ['title', 'description', 'notes', 'status', 'priority', 'assignee_id', 'supervisor_id',
+  // tasks không có cột notes — ghi chú NV lưu ở task_comments
+  const fields = ['title', 'description', 'status', 'priority', 'assignee_id', 'supervisor_id',
     'due_date', 'start_date', 'estimated_hours', 'actual_hours', 'stage_id', 'order_index',
     'blocks_stage_advance', 'production_stage_id'];
   fields.forEach((f) => { if (b[f] !== undefined) update[f] = b[f]; });
@@ -124,13 +125,28 @@ async function updateProjectTask(req, taskId, body) {
   if (!old) return { error: 'Không tìm thấy nhiệm vụ', status: 404 };
 
   let { data, error } = await supabase.from('tasks').update(update).eq('id', taskId).select().single();
-  if (error && /(blocks_stage_advance|production_stage_id)/i.test(String(error.message || ''))) {
-    const { blocks_stage_advance: _b, production_stage_id: _p, ...legacy } = update;
+  if (error && /(blocks_stage_advance|production_stage_id|notes)/i.test(String(error.message || ''))) {
+    const { blocks_stage_advance: _b, production_stage_id: _p, notes: _n, ...legacy } = update;
     ({ data, error } = await supabase.from('tasks').update(legacy).eq('id', taskId).select().single());
   }
   if (error) return { error: error.message, status: 500 };
 
-  if (data?.project_id && (b.description !== undefined || b.notes !== undefined)) {
+  // Client cũ (PUT notes) → append task_comments thay vì cột tasks.notes
+  const noteText = b.notes != null ? String(b.notes).trim() : '';
+  if (noteText) {
+    try {
+      await supabase.from('task_comments').insert({
+        task_id: taskId,
+        user_id: req.user.userId,
+        content: noteText,
+        attachments: [],
+      });
+    } catch (noteErr) {
+      console.warn('[tasks] notes → task_comments:', noteErr.message || noteErr);
+    }
+  }
+
+  if (data?.project_id && (b.description !== undefined || noteText)) {
     try {
       const { upsertLeadDocumentFromProjectTask } = require('./syncProjectTaskToLeadDocument');
       await upsertLeadDocumentFromProjectTask(data, { userId: req.user.userId });

@@ -45,7 +45,7 @@ function shouldAutoOverwriteCrmStage(stage) {
   return isCrmPostWonManagedStage(s);
 }
 
-const WORKSHOP_STAGE_SLUGS = ['production', 'delivery', 'customer-care'];
+const WORKSHOP_STAGE_SLUGS = ['production', 'delivery', 'shipping', 'installation', 'installing', 'customer-care'];
 /** Khớp enum project_status trong DB (không có 'delivering' — dùng shipping/installing). */
 const WORKSHOP_STATUSES = ['producing', 'shipping', 'installing', 'warranty', 'completed'];
 const INTAKE_BUCKET = 'won_pending';

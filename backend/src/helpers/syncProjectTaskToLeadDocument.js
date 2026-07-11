@@ -19,7 +19,7 @@ async function resolveLeadIdForProject(projectId) {
 }
 
 function combinedTaskText(task) {
-  return [task.description, task.notes]
+  return [task.description]
     .filter((x) => x != null && String(x).trim())
     .map((x) => String(x).trim())
     .join('\n\n');

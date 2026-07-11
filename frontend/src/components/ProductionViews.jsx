@@ -1772,6 +1772,7 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
           <div className="border-t border-[#e4e6eb] bg-[#f0f2f5]">
             <CrmLeadCommentsPanel
               leadId={leadId}
+              forModule="production"
               onCountChange={() => onChanged?.()}
               onUnreadCountChange={setLeadUnreadCount}
             />

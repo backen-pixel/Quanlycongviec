@@ -35,6 +35,8 @@ type Props = {
   visible: boolean;
   dealId: string;
   existingMemberIds: Set<string>;
+  /** Ưu tiên chọn sẵn công ty VC/LĐ của dự án */
+  preferredCompanyId?: string | null;
   onClose: () => void;
   onAdded: () => void;
 };
@@ -47,6 +49,7 @@ export default function AddDealMembersSheet({
   visible,
   dealId,
   existingMemberIds,
+  preferredCompanyId,
   onClose,
   onAdded,
 }: Props) {
@@ -88,18 +91,21 @@ export default function AddDealMembersSheet({
     void fetchCrmCompaniesForMembers()
       .then((list) => {
         setCompanies(list);
+        const preferred = preferredCompanyId ? String(preferredCompanyId) : '';
         const userCo = user?.company_id ? String(user.company_id) : '';
         const initial =
-          userCo && list.some((c) => c.id === userCo)
-            ? userCo
-            : list.length === 1
-              ? list[0].id
-              : '';
+          preferred && list.some((c) => c.id === preferred)
+            ? preferred
+            : userCo && list.some((c) => c.id === userCo)
+              ? userCo
+              : list.length === 1
+                ? list[0].id
+                : '';
         setCompanyId(initial);
       })
       .catch(() => setCompanies([]))
       .finally(() => setLoadingCompanies(false));
-  }, [visible, user?.company_id, resetState]);
+  }, [visible, user?.company_id, preferredCompanyId, resetState]);
 
   useEffect(() => {
     if (!visible || !companyId) {
@@ -210,7 +216,7 @@ export default function AddDealMembersSheet({
           >
             {showCompanyPicker ? (
               <View style={styles.block}>
-                <Text style={styles.label}>Công ty</Text>
+                <Text style={styles.label}>Công ty VC/LĐ</Text>
                 <TapHighlight onPress={() => setCompanyPickerOpen(true)}>
                   <View style={styles.pickerRow}>
                     <Ionicons name="business-outline" size={16} color={colors.primary} />
@@ -221,7 +227,7 @@ export default function AddDealMembersSheet({
                   </View>
                 </TapHighlight>
                 {isSysAdmin && !companyId ? (
-                  <Text style={styles.hint}>Chọn công ty để xem nhân viên</Text>
+                  <Text style={styles.hint}>Chọn công ty vận chuyển lắp đặt để xem nhân viên</Text>
                 ) : null}
               </View>
             ) : null}
@@ -287,7 +293,7 @@ export default function AddDealMembersSheet({
               ) : pickableEmployees.length === 0 ? (
                 <Text style={styles.emptyTxt}>
                   {employees.length === 0
-                    ? 'Công ty chưa có nhân viên CRM'
+                    ? 'Công ty chưa có nhân viên VC/LĐ'
                     : 'Không còn NV phù hợp (đã là thành viên hoặc đã chọn)'}
                 </Text>
               ) : (
@@ -382,7 +388,7 @@ export default function AddDealMembersSheet({
 
       <FilterPickerModal
         visible={companyPickerOpen}
-        title="Chọn công ty"
+        title="Chọn công ty VC/LĐ"
         options={companies.map((c) => ({ id: c.id, label: c.name }))}
         selectedId={companyId}
         onSelect={(id) => {

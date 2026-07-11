@@ -1,9 +1,12 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -26,11 +29,21 @@ import {
   userInitials,
 } from '../lib/commentUtils';
 import {
+  fetchDealComments,
   fetchProjectComments,
+  isCommentImageAttachment,
+  postDealComment,
   postProjectComment,
+  resolveProjectDealId,
+  toggleDealCommentReaction,
   toggleProjectCommentReaction,
+  uploadCommentFiles,
+  type CommentAttachment,
   type ProjectComment,
 } from '../lib/logisticsApi';
+import { fetchDealIdForProject } from '../lib/projectDetailApi';
+import { resolveMediaUrl } from '../lib/mediaUtils';
+import ImageGalleryLightbox, { type GalleryImage } from './ImageGalleryLightbox';
 import TapHighlight from './TapHighlight';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
@@ -41,6 +54,32 @@ import type { ProductionProject } from '../types';
 type SortMode = 'newest' | 'oldest';
 
 const REPLY_DEPTH_STEP = 18;
+
+type PendingFile = {
+  key: string;
+  uri: string;
+  name: string;
+  mime: string;
+  isImage: boolean;
+};
+
+function humanFileSize(bytes?: number): string {
+  const n = Number(bytes || 0);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function fileIconName(att: CommentAttachment): keyof typeof Ionicons.glyphMap {
+  const mime = String(att.mime || '').toLowerCase();
+  const name = String(att.name || '').toLowerCase();
+  if (mime.startsWith('video/') || /\.(mp4|mov|mkv|webm)$/i.test(name)) return 'videocam-outline';
+  if (mime === 'application/pdf' || name.endsWith('.pdf')) return 'document-text-outline';
+  if (/\.(xlsx?|csv)$/i.test(name)) return 'grid-outline';
+  if (/\.(docx?|pptx?)$/i.test(name)) return 'document-outline';
+  return 'attach-outline';
+}
 
 type Props = {
   visible: boolean;
@@ -67,6 +106,11 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
   const [reactionBusy, setReactionBusy] = useState<string | null>(null);
   const [reactionPickerId, setReactionPickerId] = useState<string | null>(null);
   const [err, setErr] = useState('');
+  /** Có deal → bình luận CRM (đồng bộ deal); không → project_comments. */
+  const [dealId, setDealId] = useState<string | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [galleryIndex, setGalleryIndex] = useState(0);
 
   const styles = useMemo(
     () =>
@@ -166,6 +210,72 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
           borderRadius: Radii.full, overflow: 'hidden',
         },
         content: { color: colors.text, fontSize: 14, lineHeight: 20 },
+        attWrap: { marginTop: 8, gap: 6 },
+        attImages: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+        attThumb: {
+          width: 88,
+          height: 88,
+          borderRadius: Radii.md,
+          backgroundColor: colors.cardAlt,
+          overflow: 'hidden',
+          borderWidth: 1,
+          borderColor: colors.border,
+        },
+        attThumbImg: { width: '100%', height: '100%' },
+        attFileRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          paddingHorizontal: 10,
+          paddingVertical: 8,
+          borderRadius: Radii.md,
+          backgroundColor: colors.cardAlt,
+          borderWidth: 1,
+          borderColor: colors.border,
+        },
+        attFileBody: { flex: 1, minWidth: 0 },
+        attFileName: { color: colors.text, fontSize: 13, fontWeight: '700' },
+        attFileMeta: { color: colors.textFaint, fontSize: 11, marginTop: 2 },
+        pendingRow: {
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          gap: 8,
+          paddingHorizontal: Spacing.md,
+          paddingBottom: 8,
+        },
+        pendingChip: {
+          width: 64,
+          height: 64,
+          borderRadius: Radii.md,
+          overflow: 'hidden',
+          backgroundColor: colors.cardAlt,
+          borderWidth: 1,
+          borderColor: colors.border,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        pendingChipImg: { width: '100%', height: '100%' },
+        pendingRemove: {
+          position: 'absolute',
+          top: 2,
+          right: 2,
+          width: 20,
+          height: 20,
+          borderRadius: 10,
+          backgroundColor: 'rgba(0,0,0,0.55)',
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        attachBtn: {
+          width: 40,
+          height: 40,
+          borderRadius: 20,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: colors.cardAlt,
+          borderWidth: 1,
+          borderColor: colors.border,
+        },
         metaRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 6 },
         timeText: { color: colors.textFaint, fontSize: 11, fontWeight: '600' },
         actionPill: {
@@ -229,11 +339,16 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
     [colors],
   );
 
-  const loadComments = useCallback(async (silent = false) => {
+  const loadComments = useCallback(async (silent = false, leadIdOverride?: string | null) => {
     if (!project?.id) return;
     if (!silent) setLoading(true);
     try {
-      const rows = await fetchProjectComments(project.id);
+      const leadId = leadIdOverride !== undefined
+        ? leadIdOverride
+        : (dealId || resolveProjectDealId(project));
+      const rows = leadId
+        ? await fetchDealComments(leadId)
+        : await fetchProjectComments(project.id);
       setComments(rows);
       onPostedRef.current(rows.length);
     } catch (e) {
@@ -241,25 +356,69 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [project?.id]);
+  }, [project, dealId]);
+
+  useEffect(() => {
+    if (!visible || !project?.id) {
+      setDealId(null);
+      return undefined;
+    }
+    let cancelled = false;
+    const direct = resolveProjectDealId(project);
+    if (direct) {
+      setDealId(direct);
+      return undefined;
+    }
+    void fetchDealIdForProject(project.id)
+      .then((id) => {
+        if (!cancelled) setDealId(id);
+      })
+      .catch(() => {
+        if (!cancelled) setDealId(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, project]);
 
   useEffect(() => {
     if (!visible || !project?.id) return undefined;
     return subscribeSync((evt) => {
       if (evt.type !== 'project:comment_changed') return;
-      if (String(evt.payload.project_id || '') !== String(project.id)) return;
-      void loadComments(true);
+      const pid = String(evt.payload.project_id || '');
+      const lid = evt.payload.lead_id != null ? String(evt.payload.lead_id) : '';
+      if (pid && pid === String(project.id)) {
+        void loadComments(true);
+        return;
+      }
+      if (lid && dealId && lid === String(dealId)) {
+        void loadComments(true);
+      }
     });
-  }, [visible, project?.id, loadComments, subscribeSync]);
+  }, [visible, project?.id, dealId, loadComments, subscribeSync]);
 
   useEffect(() => {
     if (!visible || !project?.id) return undefined;
     return subscribeComment((n) => {
-      const pid = n.metadata?.project_id ? String(n.metadata.project_id) : n.entity_id ? String(n.entity_id) : '';
-      if (pid !== String(project.id)) return;
-      void loadComments(true);
+      const pid = n.metadata?.project_id ? String(n.metadata.project_id) : '';
+      const lid = n.entity_type === 'lead' && n.entity_id
+        ? String(n.entity_id)
+        : (n.metadata as Record<string, unknown> | undefined)?.lead_id != null
+          ? String((n.metadata as Record<string, unknown>).lead_id)
+          : '';
+      if (pid && pid === String(project.id)) {
+        void loadComments(true);
+        return;
+      }
+      if (lid && dealId && lid === String(dealId)) {
+        void loadComments(true);
+        return;
+      }
+      if (!pid && n.entity_id && String(n.entity_id) === String(project.id)) {
+        void loadComments(true);
+      }
     });
-  }, [visible, project?.id, loadComments, subscribeComment]);
+  }, [visible, project?.id, dealId, loadComments, subscribeComment]);
 
   useEffect(() => {
     if (!visible || !project?.id) {
@@ -267,11 +426,13 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
       setBody('');
       setReplyTo(null);
       setReactionPickerId(null);
+      setPendingFiles([]);
+      setGalleryOpen(false);
       setErr('');
       return;
     }
-    void loadComments(false);
-  }, [visible, project?.id, loadComments]);
+    void loadComments(false, dealId ?? resolveProjectDealId(project));
+  }, [visible, project?.id, dealId, loadComments, project]);
 
   const commentById = useMemo(() => {
     const m = new Map<string, ProjectComment>();
@@ -284,23 +445,126 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
     return flattenCommentTree(grouped, sort);
   }, [comments, sort]);
 
+  const allGalleryImages = useMemo((): GalleryImage[] => {
+    const out: GalleryImage[] = [];
+    for (const c of comments) {
+      for (const att of c.attachments || []) {
+        if (!isCommentImageAttachment(att)) continue;
+        const uri = resolveMediaUrl(att.url);
+        if (!uri) continue;
+        out.push({
+          uri,
+          title: att.name || 'Ảnh',
+          subtitle: c.user?.full_name || undefined,
+        });
+      }
+    }
+    return out;
+  }, [comments]);
+
+  const openGalleryAt = useCallback((uri: string) => {
+    const idx = allGalleryImages.findIndex((img) => img.uri === uri);
+    setGalleryIndex(idx >= 0 ? idx : 0);
+    setGalleryOpen(true);
+  }, [allGalleryImages]);
+
   const close = () => {
     if (posting) return;
     setBody('');
     setReplyTo(null);
+    setPendingFiles([]);
     setErr('');
     onClose();
   };
 
+  const addPending = (files: PendingFile[]) => {
+    setPendingFiles((prev) => [...prev, ...files].slice(0, 20));
+  };
+
+  const pickImages = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      setErr('Cần quyền thư viện ảnh để đính kèm.');
+      return;
+    }
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsMultipleSelection: true,
+      quality: 0.85,
+      selectionLimit: 12,
+    });
+    if (res.canceled || !res.assets?.length) return;
+    addPending(
+      res.assets.map((a, i) => {
+        const name = a.fileName || `anh-${Date.now()}-${i}.jpg`;
+        return {
+          key: `${a.uri}-${i}`,
+          uri: a.uri,
+          name,
+          mime: a.mimeType || 'image/jpeg',
+          isImage: true,
+        };
+      }),
+    );
+  };
+
+  const takePhoto = async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      setErr('Cần quyền camera để chụp ảnh.');
+      return;
+    }
+    const shot = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.85 });
+    if (shot.canceled || !shot.assets?.[0]) return;
+    const a = shot.assets[0];
+    const name = a.fileName || `anh-${Date.now()}.jpg`;
+    addPending([{
+      key: a.uri,
+      uri: a.uri,
+      name,
+      mime: a.mimeType || 'image/jpeg',
+      isImage: true,
+    }]);
+  };
+
+  const pickDocuments = async () => {
+    const pick = await DocumentPicker.getDocumentAsync({
+      copyToCacheDirectory: true,
+      multiple: true,
+    });
+    if (pick.canceled || !pick.assets?.length) return;
+    addPending(
+      pick.assets.map((a, i) => {
+        const name = a.name || `file-${i}`;
+        const mime = a.mimeType || 'application/octet-stream';
+        return {
+          key: `${a.uri}-${i}`,
+          uri: a.uri,
+          name,
+          mime,
+          isImage: mime.startsWith('image/') || /\.(jpe?g|png|gif|webp)$/i.test(name),
+        };
+      }),
+    );
+  };
+
   const submit = async () => {
     const text = body.trim();
-    if (!text || !project) return;
+    if ((!text && !pendingFiles.length) || !project) return;
     setPosting(true);
     setErr('');
     try {
-      await postProjectComment(project.id, text, replyTo?.id ?? null);
+      let uploaded: CommentAttachment[] = [];
+      if (pendingFiles.length) {
+        uploaded = await uploadCommentFiles(
+          pendingFiles.map((f) => ({ uri: f.uri, name: f.name, mime: f.mime })),
+        );
+      }
+      if (dealId) await postDealComment(dealId, text, replyTo?.id ?? null, uploaded);
+      else await postProjectComment(project.id, text, replyTo?.id ?? null, uploaded);
       setBody('');
       setReplyTo(null);
+      setPendingFiles([]);
       await loadComments(true);
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 150);
     } catch (e) {
@@ -314,7 +578,9 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
     if (!project || reactionBusy) return;
     setReactionBusy(comment.id);
     try {
-      const reactions = await toggleProjectCommentReaction(project.id, comment.id, emoji);
+      const reactions = dealId
+        ? await toggleDealCommentReaction(comment.id, emoji)
+        : await toggleProjectCommentReaction(project.id, comment.id, emoji);
       setComments((prev) =>
         prev.map((c) => (c.id === comment.id ? { ...c, reactions: reactions || c.reactions } : c)),
       );
@@ -365,7 +631,61 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
               ) : null}
               {isAuthor ? <Text style={styles.authorTag}>Tác giả</Text> : null}
             </View>
-            <Text style={styles.content}>{item.content}</Text>
+            {item.content?.trim() ? (
+              <Text style={styles.content}>{item.content}</Text>
+            ) : null}
+            {(item.attachments || []).length > 0 ? (
+              <View style={styles.attWrap}>
+                {(() => {
+                  const atts = item.attachments || [];
+                  const images = atts.filter(isCommentImageAttachment);
+                  const files = atts.filter((a) => !isCommentImageAttachment(a));
+                  return (
+                    <>
+                      {images.length > 0 ? (
+                        <View style={styles.attImages}>
+                          {images.map((img, ii) => {
+                            const uri = resolveMediaUrl(img.url);
+                            if (!uri) return null;
+                            return (
+                              <TapHighlight
+                                key={`${item.id}-img-${ii}`}
+                                style={styles.attThumb}
+                                onPress={() => openGalleryAt(uri)}
+                              >
+                                <Image source={{ uri }} style={styles.attThumbImg} resizeMode="cover" />
+                              </TapHighlight>
+                            );
+                          })}
+                        </View>
+                      ) : null}
+                      {files.map((f, fi) => {
+                        const uri = resolveMediaUrl(f.url);
+                        const sizeLabel = humanFileSize(f.size);
+                        return (
+                          <TapHighlight
+                            key={`${item.id}-file-${fi}`}
+                            style={styles.attFileRow}
+                            onPress={() => {
+                              if (uri) void Linking.openURL(uri);
+                            }}
+                          >
+                            <Ionicons name={fileIconName(f)} size={20} color={colors.primary} />
+                            <View style={styles.attFileBody}>
+                              <Text style={styles.attFileName} numberOfLines={1}>{f.name}</Text>
+                              {sizeLabel ? (
+                                <Text style={styles.attFileMeta}>{sizeLabel}</Text>
+                              ) : null}
+                            </View>
+                            <Ionicons name="open-outline" size={16} color={colors.textFaint} />
+                          </TapHighlight>
+                        );
+                      })}
+                    </>
+                  );
+                })()}
+              </View>
+            ) : null}
           </View>
 
           <View style={styles.metaRow}>
@@ -445,6 +765,11 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
               {project.code}
               {project.customer_name ? ` · ${project.customer_name}` : ''}
             </Text>
+            {dealId ? (
+              <Text style={[styles.projectCode, { marginTop: 4, color: colors.primary }]}>
+                Đồng bộ bình luận deal CRM
+              </Text>
+            ) : null}
           </View>
 
           <View style={styles.sortRow}>
@@ -504,8 +829,38 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
             </View>
           ) : null}
 
-          <View style={styles.composer}>
+          {pendingFiles.length > 0 ? (
+            <View style={styles.pendingRow}>
+              {pendingFiles.map((f) => (
+                <View key={f.key} style={styles.pendingChip}>
+                  {f.isImage ? (
+                    <Image source={{ uri: f.uri }} style={styles.pendingChipImg} resizeMode="cover" />
+                  ) : (
+                    <Ionicons name="document-outline" size={22} color={colors.primary} />
+                  )}
+                  <Pressable
+                    style={styles.pendingRemove}
+                    onPress={() => setPendingFiles((prev) => prev.filter((x) => x.key !== f.key))}
+                    hitSlop={6}
+                  >
+                    <Ionicons name="close" size={12} color="#fff" />
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
+          <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
             <View style={styles.composerRow}>
+              <TapHighlight style={styles.attachBtn} onPress={() => void takePhoto()} disabled={posting}>
+                <Ionicons name="camera-outline" size={20} color={colors.primary} />
+              </TapHighlight>
+              <TapHighlight style={styles.attachBtn} onPress={() => void pickImages()} disabled={posting}>
+                <Ionicons name="image-outline" size={20} color={colors.primary} />
+              </TapHighlight>
+              <TapHighlight style={styles.attachBtn} onPress={() => void pickDocuments()} disabled={posting}>
+                <Ionicons name="attach-outline" size={20} color={colors.primary} />
+              </TapHighlight>
               <TextInput
                 style={styles.composerInput}
                 value={body}
@@ -520,9 +875,12 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
                 editable={!posting}
               />
               <TouchableOpacity
-                style={[styles.sendBtn, (!body.trim() || posting) && styles.sendBtnDisabled]}
+                style={[
+                  styles.sendBtn,
+                  ((!body.trim() && !pendingFiles.length) || posting) && styles.sendBtnDisabled,
+                ]}
                 onPress={submit}
-                disabled={!body.trim() || posting}
+                disabled={(!body.trim() && !pendingFiles.length) || posting}
                 activeOpacity={0.85}
               >
                 {posting ? (
@@ -535,6 +893,13 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
           </View>
         </View>
       </KeyboardAvoidingView>
+
+      <ImageGalleryLightbox
+        visible={galleryOpen && allGalleryImages.length > 0}
+        images={allGalleryImages}
+        initialIndex={galleryIndex}
+        onClose={() => setGalleryOpen(false)}
+      />
     </Modal>
   );
 }

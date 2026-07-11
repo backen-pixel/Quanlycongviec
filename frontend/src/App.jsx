@@ -506,6 +506,7 @@ export default function App() {
             <Route path="/vc" element={<ProductionLayout />}>
               <Route index element={<Navigate to="dashboard" replace />} />
               <Route path="dashboard" element={<LogisticsDashboard />} />
+              <Route path="download-app" element={<DownloadAppPage />} />
               <Route path="pipeline-settings" element={<LogisticsPipelineSettingsPage />} />
               <Route path="task-templates" element={<LogisticsTaskTemplatesPage />} />
               <Route path="teams" element={<WorkshopTeamsPage />} />

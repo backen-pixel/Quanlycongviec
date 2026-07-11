@@ -536,6 +536,8 @@ export default function ProjectMembersTab({ project, dealId }: Props) {
 
           existingMemberIds={existingMemberIds}
 
+          preferredCompanyId={project.company_id || project.company?.id || null}
+
           onClose={() => setAddSheetOpen(false)}
 
           onAdded={() => void loadMembers(true)}

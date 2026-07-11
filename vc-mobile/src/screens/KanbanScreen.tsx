@@ -32,9 +32,10 @@ import {
   assignProjectWorkshopType,
   fetchProductionBoard,
   fetchProductionProject,
-  fetchProjectCommentIndex,
+  fetchCommentsIndexForProjects,
   fetchWorkshopTypes,
   moveProjectToStage,
+  resolveProjectDealId,
   type BoardFilters,
   type CommentIndexEntry,
   type CompanyOption,
@@ -158,7 +159,7 @@ export default function KanbanScreen() {
   const styles = useMemo(() => createKanbanStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { unreadCount, refreshUnread, commentToast, dismissCommentToast, projectMetaRef, subscribeComment, subscribeSync } = useNotifications();
+  const { unreadCount, refreshUnread, commentToast, dismissCommentToast, projectMetaRef, subscribeComment, subscribeSync, joinLeadRooms } = useNotifications();
   const { openProjectDetail, openMessages } = useRootNavigation();
   const myId = user?.id || user?.userId || null;
   const { unreadTotal: messageUnread } = useMessenger();
@@ -290,9 +291,17 @@ export default function KanbanScreen() {
 
   useEffect(() => {
     for (const p of board.projects) {
-      projectMetaRef.current.set(String(p.id), { code: p.code, name: p.name });
+      projectMetaRef.current.set(String(p.id), {
+        code: p.code,
+        name: p.name,
+        deal_id: resolveProjectDealId(p),
+      });
     }
-  }, [board.projects, projectMetaRef]);
+    const leadIds = board.projects
+      .map((p) => resolveProjectDealId(p))
+      .filter((id): id is string => Boolean(id));
+    if (leadIds.length) joinLeadRooms(leadIds);
+  }, [board.projects, projectMetaRef, joinLeadRooms]);
 
   useEffect(() => {
     if (!commentToast) return undefined;
@@ -347,7 +356,13 @@ export default function KanbanScreen() {
 
   useEffect(() => {
     board.projects.forEach((p) => {
-      if (p.id) projectMetaRef.current.set(p.id, { code: p.code, name: p.name });
+      if (p.id) {
+        projectMetaRef.current.set(p.id, {
+          code: p.code,
+          name: p.name,
+          deal_id: resolveProjectDealId(p),
+        });
+      }
     });
   }, [board.projects, projectMetaRef]);
 
@@ -355,17 +370,23 @@ export default function KanbanScreen() {
     return subscribeSync((evt) => {
       if (evt.type !== 'project:comment_changed') return;
       const pid = evt.payload.project_id ? String(evt.payload.project_id) : '';
-      if (!pid) return;
-      void fetchProjectCommentIndex([pid])
+      const lid = evt.payload.lead_id != null ? String(evt.payload.lead_id) : '';
+      const project = pid
+        ? board.projects.find((p) => String(p.id) === pid)
+        : lid
+          ? board.projects.find((p) => resolveProjectDealId(p) === lid)
+          : null;
+      if (!project?.id) return;
+      void fetchCommentsIndexForProjects([project])
         .then((idx) => {
-          const entry = idx[pid];
+          const entry = idx[project.id];
           if (entry) {
-            setCommentIndex((prev) => ({ ...prev, [pid]: entry }));
+            setCommentIndex((prev) => ({ ...prev, [project.id]: entry }));
           }
         })
         .catch(() => {});
     });
-  }, [subscribeSync]);
+  }, [subscribeSync, board.projects]);
 
   useEffect(() => {
     return subscribeComment((n) => {
@@ -664,9 +685,8 @@ export default function KanbanScreen() {
   // không tải cho toàn bộ vài nghìn dự án — tránh URL khổng lồ và query nặng.
   // Merge vào map cũ để badge các cột đã xem trước đó không mất.
   useEffect(() => {
-    const ids = pagedProjects.map((p) => p.id).filter(Boolean);
-    if (!ids.length) return;
-    void fetchProjectCommentIndex(ids)
+    if (!pagedProjects.length) return;
+    void fetchCommentsIndexForProjects(pagedProjects)
       .then((idx) => setCommentIndex((prev) => ({ ...prev, ...idx })))
       .catch(() => {});
   }, [pagedProjects]);

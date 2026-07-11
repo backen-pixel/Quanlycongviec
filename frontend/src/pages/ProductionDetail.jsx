@@ -33,6 +33,7 @@ import {
   Share2, Lock,
 } from 'lucide-react';
 import CRMTasksTab from '../components/CRMTasksTab';
+import WorkshopProjectTasksPanel from '../components/WorkshopProjectTasksPanel';
 import UnifiedTaskHistoryWidget from '../components/UnifiedTaskHistoryWidget';
 import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
@@ -43,9 +44,10 @@ import {
   buildCrmStageSlugLabelMapFromTasks,
   resolveCrmPipelineStageLabel,
 } from '../lib/crmStageSlugLabels';
+import { isProjectAlreadyInLogistics } from '../lib/projectLogistics';
 import { buildCrmLeadDocTaskSections, normalizeCrmChecklist } from '../lib/crmTaskDocumentTree';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
-import { buildSxPipelineStageMeta, resolveSxProjectDeposit, resolveSxProjectRemaining, resolveSxProjectPaymentProgress, getSxOrderDeliveryDateUrgency } from '../lib/sxPipelineRevenue';
+import { buildSxPipelineStageMeta, resolveSxProjectDeposit, resolveSxProjectPaymentProgress, getSxOrderDeliveryDateUrgency } from '../lib/sxPipelineRevenue';
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
 import SharedCRMNotes from '../components/SharedCRMNotes';
 import DriveAttachments from '../components/drive/DriveAttachments';
@@ -72,6 +74,19 @@ const LEGACY_TAB_MAP = {
 function calcProgressForTasks(taskList) {
   if (!taskList?.length) return 0;
   return Math.round((taskList.filter((t) => t.status === 'done').length / taskList.length) * 100);
+}
+
+/** Chuẩn hóa payload chi tiết dự án VC/SX từ API. */
+function normalizeWorkshopProjectDetail(proj) {
+  if (!proj) return proj;
+  const crmDeals = proj.crmDeals || proj.crm_deals || [];
+  return { ...proj, crmDeals };
+}
+
+function resolvePersonFromList(person, personId, users) {
+  if (person?.full_name) return person;
+  if (!personId || !Array.isArray(users) || !users.length) return person || null;
+  return users.find((u) => String(u.id) === String(personId)) || null;
 }
 
 /** Khớp cột Kanban SX — không fallback thẳng workflow_stages.id (namespace khác production_pipeline_stages). */
@@ -162,7 +177,7 @@ function WorkshopInfoPanel({
     setSaving(true);
     try {
       let payloadValue = value || null;
-      if (field === 'deposit_amount') {
+      if (field === 'deposit_amount' || field === 'estimated_value' || field === 'production_value') {
         const raw = value;
         if (raw === '' || raw == null) payloadValue = null;
         else {
@@ -171,6 +186,20 @@ function WorkshopInfoPanel({
         }
       }
       await api.put(`/projects/${project.id}`, { [field]: payloadValue });
+      // Giá trị đơn hàng: đồng bộ sang deal CRM (nguồn hiển thị ưu tiên)
+      if (field === 'estimated_value' && crmDeal?.id) {
+        try {
+          const { data } = await api.put(`/crm/leads/${crmDeal.id}`, {
+            estimated_value: payloadValue ?? 0,
+          });
+          onDealUpdate?.(data ? { ...crmDeal, ...data, estimated_value: payloadValue ?? 0 } : {
+            ...crmDeal,
+            estimated_value: payloadValue ?? 0,
+          });
+        } catch {
+          /* dự án đã lưu; deal sync lỗi không chặn */
+        }
+      }
       onUpdate?.();
       setEditing(null);
     } catch (e) { alert(e.response?.data?.error || 'Lỗi lưu'); }
@@ -207,9 +236,13 @@ function WorkshopInfoPanel({
     ...project,
     deal_deposit_amount: crmDeal?.deposit_amount ?? project.deal_deposit_amount ?? null,
   };
-  const orderTotalValue = isVC ? project.estimated_value : project.production_value;
+  /** Giá trị đơn hàng: ưu tiên deal CRM, fallback estimated_value trên dự án. */
+  const orderTotalValue = Number(crmDeal?.estimated_value) > 0
+    ? Number(crmDeal.estimated_value)
+    : (Number(project.estimated_value) || 0);
+  const productionTotalValue = Number(project.production_value) || 0;
   const depositValue = resolveSxProjectDeposit(financeProject);
-  const remainingValue = resolveSxProjectRemaining(financeProject);
+  const remainingValue = Math.max(0, orderTotalValue - depositValue);
 
   const reloadCrmFinance = useCallback(async () => {
     if (!project?.id) {
@@ -234,12 +267,18 @@ function WorkshopInfoPanel({
     project?.estimated_value,
     project?.deposit_amount,
     project?.collected_amount,
+    crmDeal?.estimated_value,
     crmDeal?.deposit_amount,
     financeRefreshKey,
   ]);
 
   const crmPaymentStats = crmFinance?.stats || null;
-  const paymentProgress = resolveSxProjectPaymentProgress(financeProject, crmPaymentStats);
+  // Tiến độ thu tiền theo giá trị đơn hàng (không lấy production_value)
+  const paymentProgress = resolveSxProjectPaymentProgress({
+    ...financeProject,
+    estimated_value: orderTotalValue,
+    production_value: null,
+  }, crmPaymentStats);
   const paymentInvoice = pickPaymentInvoice(crmFinance?.invoices);
 
   const startPaymentEdit = () => {
@@ -340,25 +379,45 @@ function WorkshopInfoPanel({
         </div>
       )}
 
-      <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== (isVC ? 'estimated_value' : 'production_value') && startEdit(isVC ? 'estimated_value' : 'production_value', isVC ? (project.estimated_value || '') : (project.production_value || ''))}>
+      <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'estimated_value' && startEdit('estimated_value', project.estimated_value || crmDeal?.estimated_value || '')}>
           <span className="text-sm mt-0.5 shrink-0">💰</span>
           <div className="flex-1 min-w-0">
             <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">{isVC ? 'Giá trị dự án' : 'Giá trị đơn hàng'}</p>
-            {editing === (isVC ? 'estimated_value' : 'production_value') ? (
+            {editing === 'estimated_value' ? (
               <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                 <input type="number" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
                   className="w-full px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" placeholder="0" />
-                <button onClick={() => save(isVC ? 'estimated_value' : 'production_value', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+                <button onClick={() => save('estimated_value', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
                 <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
               </div>
             ) : (
-              <p className="text-sm font-medium text-gray-900 flex items-center gap-1">{formatVND(orderTotalValue)} <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" /></p>
+              <p className="text-sm font-medium text-gray-900 flex items-center gap-1">{orderTotalValue > 0 ? formatVND(orderTotalValue) : '—'} <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" /></p>
             )}
           </div>
         </div>
 
       {!isVC && (
         <>
+          <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'production_value' && startEdit('production_value', project.production_value || '')}>
+            <span className="text-sm mt-0.5 shrink-0">🏭</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Giá trị sản xuất</p>
+              {editing === 'production_value' ? (
+                <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                  <input type="number" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
+                    className="w-full px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" placeholder="0" />
+                  <button onClick={() => save('production_value', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+                  <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+                </div>
+              ) : (
+                <p className="text-sm font-medium text-gray-900 flex items-center gap-1">
+                  {productionTotalValue > 0 ? formatVND(productionTotalValue) : '—'}
+                  <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" />
+                </p>
+              )}
+            </div>
+          </div>
+
           <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'deposit_amount' && startEdit('deposit_amount', project.deposit_amount ?? '')}>
             <span className="text-sm mt-0.5 shrink-0">💵</span>
             <div className="flex-1 min-w-0">
@@ -1765,7 +1824,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
   useEffect(() => {
     let cancelled = false;
-    const cid = project?.company_id || project?.company?.id || '';
+    const cid = moduleKey === 'vc'
+      ? (project?.logistics_company_id || project?.logistics_company?.id || project?.company_id || project?.company?.id || '')
+      : (project?.company_id || project?.company?.id || '');
     const forModule = moduleKey === 'vc' ? 'logistics' : 'production';
     api.get('/crm/employees-by-company', {
       params: {
@@ -1790,7 +1851,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       }).catch(() => {});
     }
     return () => { cancelled = true; };
-  }, [moduleKey, project?.company_id, project?.company?.id]);
+  }, [moduleKey, project?.company_id, project?.company?.id, project?.logistics_company_id, project?.logistics_company?.id]);
 
   useEffect(() => {
     const dealId = project?.crmDeals?.[0]?.id;
@@ -1886,8 +1947,10 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       return;
     }
     try {
-      const taskScope = moduleKey === 'vc' ? 'crm' : 'production';
-      const ownerCompanyId = project?.company_id || project?.company?.id || null;
+      const taskScope = moduleKey === 'vc' ? 'logistics' : 'production';
+      const ownerCompanyId = moduleKey === 'vc'
+        ? (project?.logistics_company_id || project?.logistics_company?.id || project?.company_id || project?.company?.id || null)
+        : (project?.company_id || project?.company?.id || null);
       const { data } = await api.get(`/crm/leads/${dealId}/tasks`, {
         params: {
           task_scope: taskScope,
@@ -1899,7 +1962,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     } catch {
       setCrmDealTaskSummary({ total: 0, completed: 0, percent: 0 });
     }
-  }, [moduleKey, summarizeCrmTasks, project?.company_id, project?.company?.id]);
+  }, [moduleKey, summarizeCrmTasks, project?.company_id, project?.company?.id, project?.logistics_company_id, project?.logistics_company?.id]);
 
   const handleCrmTaskSummaryChange = useCallback((summary) => {
     if (!summary || typeof summary.total !== 'number') return;
@@ -1926,7 +1989,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         ]),
         timeout,
       ]);
-      const proj = projRes.data?.project;
+      const proj = normalizeWorkshopProjectDetail(projRes.data?.project);
       if (proj?.id && String(proj.id) !== String(id)) {
         setLoading(false);
         navigate(`${MOD.routePrefix}/projects/${proj.id}`, { replace: true });
@@ -2028,7 +2091,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         api.get(`${MOD.apiPrefix}/projects/${id}`),
         api.get('/tasks', { params: { project_id: id } }).catch(() => ({ data: { tasks: [] } })),
       ]);
-      const proj = projRes.data?.project;
+      const proj = normalizeWorkshopProjectDetail(projRes.data?.project);
       const list = tasksRes.data?.tasks || tasksRes.data || [];
       setWorkshopTasksForProject(Array.isArray(list) ? list : []);
       const scopedTasks = pickWorkshopTasksForSummary(list);
@@ -2298,8 +2361,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         };
       } else {
         const sxStage = pipelineStages.find((s) => String(s.id) === String(stageId));
-        // Nếu cột SX có cờ "bàn giao VC" → mở modal chọn công ty VC thay vì patch stage thường
-        if (sxStage?.is_handover_to_logistics === true) {
+        // Cột bàn giao VC: hỏi lần đầu; đã bàn giao thì chuyển cột SX bình thường
+        if (sxStage?.is_handover_to_logistics === true && !isProjectAlreadyInLogistics(project)) {
           setHandoverModal({ projectId: id, projectName: project?.name || project?.code || '', targetSxStageId: sxStage?.id || stageId });
           return;
         }
@@ -2665,6 +2728,26 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     ? (project.vc_kanban_column_id || project.current_stage_id || project.current_stage?.id)
     : resolveSxKanbanCurrentStageId(project, safePipelineStages);
   const primaryCrmDeal = project.crmDeals?.[0];
+  const crmAssigneePerson = resolvePersonFromList(
+    primaryCrmDeal?.assignee || primaryCrmDeal?.lead_owner,
+    primaryCrmDeal?.assigned_to || primaryCrmDeal?.lead_owner_id,
+    safeTaskUsers,
+  );
+  const productionPerson = resolvePersonFromList(
+    project.production_person,
+    project.production_person_id,
+    safeTaskUsers,
+  );
+  const logisticsPerson = resolvePersonFromList(
+    project.logistics_person,
+    project.logistics_person_id,
+    safeTaskUsers,
+  );
+  const installerPerson = resolvePersonFromList(
+    project.installer_person,
+    project.installer_person_id,
+    safeTaskUsers,
+  );
   const canManageDeal = canManageWorkshopProjectFiles(user, primaryCrmDeal, project);
   const crmLeadId = resolveSxProjectLeadId({
     crm_lead_id: project.crm_lead_id,
@@ -2675,9 +2758,13 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const focusCrmTaskId = searchParams.get('crm_task');
   const displayCode = primaryCrmDeal?.code || project.code;
   const displayTitle = primaryCrmDeal?.title || project.name;
-  const taskCount = crmLeadId
-    ? (crmDealTaskSummary.total || 0)
-    : (productionTaskSummary.total || 0);
+  const taskCount = moduleKey === 'vc' && crmLeadId
+    ? (crmDealTaskSummary.total || productionTaskSummary.total || 0)
+    : moduleKey === 'vc'
+      ? (productionTaskSummary.total || 0)
+      : crmLeadId
+        ? (crmDealTaskSummary.total || 0)
+        : (productionTaskSummary.total || 0);
   const taskUsers = safeTaskUsers;
   const documentsForZipTotal = safeProjectDocs.length + visibleCrmSharedDocs.length + safeTaskFiles.length;
 
@@ -2863,14 +2950,14 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
           <div className="bg-white rounded-xl border p-5 space-y-3">
             <h3 className="text-sm font-bold text-gray-900 uppercase">Đội ngũ</h3>
-            {primaryCrmDeal && (
+            {(primaryCrmDeal || (moduleKey === 'vc' && crmLeadId)) && (
               <div className="space-y-2 pb-3 mb-3 border-b border-gray-100">
                 <p className="text-[10px] font-bold text-violet-600 uppercase tracking-wide">CRM</p>
-                <PersonCard label="Phụ trách CRM" person={primaryCrmDeal.assignee || primaryCrmDeal.lead_owner} showPlaceholder />
-                {primaryCrmDeal.sx_pipeline_stage?.name && (
+                <PersonCard label="Phụ trách CRM" person={crmAssigneePerson} showPlaceholder />
+                {primaryCrmDeal?.sx_pipeline_stage?.name && (
                   <div className="rounded-lg bg-violet-50 border border-violet-100 px-3 py-2">
                     <p className="text-[10px] text-violet-600 font-semibold uppercase">Deal trên Kanban SX</p>
-                    <p className="text-sm font-medium text-gray-900">{primaryCrmDeal.sx_pipeline_stage.name}</p>
+                    <p className="text-sm font-medium text-gray-900">{primaryCrmDeal?.sx_pipeline_stage?.name}</p>
                   </div>
                 )}
               </div>
@@ -2882,9 +2969,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               <PersonCard label="Giám sát" person={project.supervisor} />
               {moduleKey === 'vc' ? (
                 <>
-                  <PersonCard label="Phụ trách SX" person={project.production_person} showPlaceholder />
-                  <PersonCard label="Vận chuyển (VC)" person={project.logistics_person} showPlaceholder />
-                  <PersonCard label="Lắp đặt (LĐ)" person={project.installer_person} showPlaceholder />
+                  <PersonCard label="Phụ trách SX" person={productionPerson} showPlaceholder />
+                  <PersonCard label="Vận chuyển (VC)" person={logisticsPerson} showPlaceholder />
+                  <PersonCard label="Lắp đặt (LĐ)" person={installerPerson} showPlaceholder />
                 </>
               ) : (
                 <PersonCard label="Phụ trách chính" person={project.production_person} />
@@ -2912,7 +2999,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                 <select
                   value={
                     moduleKey === 'vc'
-                      ? (project.logistics_person?.id || project.logistics_person_id || '')
+                      ? (logisticsPerson?.id || project.logistics_person_id || '')
                       : (project.logistics_person?.id || project.logistics_person_id || project.production_person?.id || project.production_person_id || '')
                   }
                   onChange={(e) => setProductionPerson(e.target.value)}
@@ -3036,7 +3123,35 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     Xem tab <strong>Không gian chung</strong> để thấy toàn bộ nhiệm vụ hai bên.
                   </p>
                 )}
-                {tasksLeadId ? (
+                {moduleKey === 'vc' && tasksLeadId ? (
+                  <CRMTasksTab
+                    key="vc-logistics-tasks"
+                    leadId={tasksLeadId}
+                    leadType="deal"
+                    users={taskUsers}
+                    taskScope="logistics"
+                    taskCompanyScope="own"
+                    focusTaskId={focusCrmTaskId}
+                    onArtifactsSynced={refreshProjectSilently}
+                    onTaskSummaryChange={handleCrmTaskSummaryChange}
+                    linkedProjectId={project?.id || null}
+                    embeddedVcKanbanStages={project?.vcKanbanStages || null}
+                    vcTemplateCompanyId={project?.logistics_company_id || project?.logistics_company?.id || null}
+                    dealResponsible={primaryCrmDeal}
+                    workshopProject={project}
+                  />
+                ) : moduleKey === 'vc' ? (
+                  <WorkshopProjectTasksPanel
+                    project={project}
+                    workArea="logistics"
+                    workshopPipeline={safePipelineStages}
+                    tasks={workshopTasksForProject}
+                    users={taskUsers}
+                    onReload={refreshProjectSilently}
+                    crmDealDocs={crmDealDocs}
+                    crmSharedNotes={crmActivities.filter((a) => a?.shared_to_workshop !== false)}
+                  />
+                ) : tasksLeadId ? (
                   <CRMTasksTab
                     key="crm-tasks-own"
                     leadId={tasksLeadId}
@@ -3435,7 +3550,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               {activeTab === 'comments' && (
                 project?.id
                   ? (crmLeadId
-                    ? <CrmLeadCommentsPanel leadId={crmLeadId} onCountChange={setCommentCount} />
+                    ? <CrmLeadCommentsPanel leadId={crmLeadId} forModule="production" onCountChange={setCommentCount} />
                     : <ProjectCommentsPanel projectId={project.id} onCountChange={setCommentCount} />)
                   : <p className="text-sm text-gray-500 text-center py-8">Chưa có dữ liệu để bình luận.</p>
               )}

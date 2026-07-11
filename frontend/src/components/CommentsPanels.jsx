@@ -25,6 +25,7 @@ import UploadFileLightbox from './UploadFileLightbox';
 import { downloadUploadFile, publicFileUrl as pubUrl } from '../lib/publicFileUrl';
 import { handleCommentFilePaste } from '../lib/chatClipboard';
 import { CommentNewNotice, useCommentThreadLive } from './commentThreadLiveUx';
+import { isQuoteContractActivityComment } from '../lib/hideQuoteContractFromProduction';
 
 const REACTION_PICKER = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
@@ -906,7 +907,13 @@ function CommentThread({
 }
 
 /** Bình luận lead/deal CRM — realtime qua socket `lead:comment` */
-export function CrmLeadCommentsPanel({ leadId, onCountChange, onUnreadCountChange, quickReplyTemplates = [] }) {
+export function CrmLeadCommentsPanel({
+  leadId,
+  onCountChange,
+  onUnreadCountChange,
+  quickReplyTemplates = [],
+  forModule = null,
+}) {
   const { user } = useAuth();
   const selfUid = user?.userId || user?.id;
   const [comments, setComments] = useState([]);
@@ -980,7 +987,8 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange, onUnreadCountChang
     setLoading(true);
     setLoadError('');
     try {
-      const r = await api.get(`/crm/leads/${leadId}/comments`);
+      const params = forModule ? { for_module: forModule } : undefined;
+      const r = await api.get(`/crm/leads/${leadId}/comments`, { params });
       const rows = Array.isArray(r.data) ? r.data : [];
       setComments(rows.map((c) => ({ ...c, reactions: c.reactions || { summary: [], mine: null } })));
       onCountChange?.(rows.length);
@@ -991,7 +999,7 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange, onUnreadCountChang
     } finally {
       setLoading(false);
     }
-  }, [leadId, onCountChange]);
+  }, [leadId, forModule, onCountChange]);
 
   useEffect(() => { void load(); void loadReadMeta(); }, [load, loadReadMeta]);
 
@@ -1011,6 +1019,13 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange, onUnreadCountChang
     }
     const row = payload.comment;
     if (!row?.id) return;
+    // SX: ẩn bình luận hoạt động Báo giá / Hợp đồng (VPT & Phúc Đạt — khớp API for_module)
+    if (
+      String(forModule || '').toLowerCase() === 'production'
+      && isQuoteContractActivityComment(row.body)
+    ) {
+      return;
+    }
     if (action === 'updated') {
       setComments((prev) => replaceComment(prev, row));
       return;
@@ -1021,7 +1036,7 @@ export function CrmLeadCommentsPanel({ leadId, onCountChange, onUnreadCountChang
       return next;
     });
     handleIncomingComment(row);
-  }, [onCountChange, handleIncomingComment]);
+  }, [forModule, onCountChange, handleIncomingComment]);
 
   useLeadCommentSocket(leadId, handleLeadCommentEvent, applyReadReceipt);
 

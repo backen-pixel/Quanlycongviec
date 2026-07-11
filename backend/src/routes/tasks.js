@@ -59,7 +59,8 @@ r.get('/', async (req, res) => {
       *, projects(id,code,name),
       assignee:users!tasks_assignee_id_fkey(id,full_name,avatar),
       creator:users!tasks_created_by_id_fkey(id,full_name),
-      stage:workflow_stages(id,name,color)
+      stage:workflow_stages(id,name,color,slug),
+      checklists:task_checklists(id,title,is_completed,order_index)
     `, { count: 'exact' }).order('order_index').order('created_at', { ascending: false });
 
     if (project_id) q = q.eq('project_id', project_id);
@@ -389,8 +390,10 @@ r.get('/:id/comments', async (req, res) => {
 
 r.post('/:id/comments', async (req, res) => {
   try {
+    const content = String(req.body?.content || '').trim();
+    if (!content) return res.status(400).json({ error: 'Thiếu nội dung ghi chú' });
     const { data, error } = await supabase.from('task_comments').insert({
-      task_id: req.params.id, user_id: req.user.userId, content: req.body.content,
+      task_id: req.params.id, user_id: req.user.userId, content,
       attachments: req.body.attachments || [],
     }).select('*, user:users(id,full_name,avatar)').single();
     if (error) throw error;
@@ -420,7 +423,10 @@ r.post('/:id/comments', async (req, res) => {
     const io = req.app.get('io');
     notify(io, 'task:comment', { taskId: req.params.id, comment: data });
     res.status(201).json({ comment: data });
-  } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
+  } catch (e) {
+    console.error('[tasks] comment:', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
 });
 
 r.delete('/:taskId/comments/:commentId', async (req, res) => {

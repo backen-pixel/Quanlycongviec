@@ -14,7 +14,11 @@ const { applyWorkshopProjectVisibilityScope, userCanAccessCrossWorkshopProductio
 const { leadDocVisibleForModuleAndUser } = require('../helpers/documentShareScope');
 const { writeAuditLog } = require('../helpers/auditLog');
 const { applyProjectTenantScope, assertRowCompanyInTenant } = require('../helpers/tenantScope');
-const { attachCrmDealsToProjects, loadCrmDealsForProjectDetail } = require('../helpers/workshopCrmDeals');
+const {
+  attachCrmDealsToProjects,
+  loadCrmDealsForProjectDetail,
+  hydrateWorkshopProjectPeople,
+} = require('../helpers/workshopCrmDeals');
 const { validateLogisticsCompanyId } = require('../helpers/logisticsCompanyGate');
 const { isSystemAdmin } = require('../helpers/adminRole');
 
@@ -974,16 +978,22 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     const { stages: kStages } = await getResolvedLogisticsStages(pcid ? String(pcid) : null);
     const sortedK = [...kStages].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
     const [vcRow] = await enrichProjectsForLogistics([project], pcid ? String(pcid) : null);
+    const mergedCrmDeals = (crmDeals?.length ? crmDeals : vcRow.crm_deals) || [];
+    const { project: hydratedProject, crmDeals: hydratedDeals } = await hydrateWorkshopProjectPeople(
+      project,
+      mergedCrmDeals,
+    );
 
     res.json({
       project: {
-        ...project,
+        ...hydratedProject,
         vc_kanban_column_id: vcRow.vc_kanban_column_id,
         vc_intake: vcRow.vc_intake,
         taskProgress: calcTaskProgress(project.tasks),
         documents: docs,
         sharedDocuments: sharedDocs,
-        crmDeals: crmDeals || [],
+        crmDeals: hydratedDeals,
+        crm_deals: hydratedDeals,
         stageTransitions: transitions || [],
         recentComments: comments || [],
         incidents: incidents || [],

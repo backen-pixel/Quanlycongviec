@@ -383,7 +383,7 @@ function attachSxFinanceToProjects(projects, dealDepositByProjectId = {}) {
 }
 
 const CRM_DEALS_FOR_PROJECT_EMBED = `
-  id, code, title, type, estimated_value, created_at, sx_handover_at, region_id,
+  id, code, title, type, company_id, estimated_value, created_at, sx_handover_at, region_id,
   crm_region:company_regions!crm_leads_region_id_fkey(id, name, code),
   assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar),
   lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar),
@@ -392,7 +392,7 @@ const CRM_DEALS_FOR_PROJECT_EMBED = `
 
 // Một số DB cũ chưa có các cột `status`, `lost_reason` trên crm_leads.
 // Giữ select tối thiểu để không làm vỡ màn hình chi tiết xưởng.
-const CRM_DEALS_FOR_PROJECT_MIN = 'id, code, title, type, estimated_value, created_at';
+const CRM_DEALS_FOR_PROJECT_MIN = 'id, code, title, type, company_id, estimated_value, created_at';
 
 async function nextDealCode() {
   const year = new Date().getFullYear();
@@ -1836,6 +1836,25 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     ]);
 
     const documents = documentsRes.data || [];
+    let crmSummary = await loadCrmDealsSummaryForProductionProject(project.id);
+    const dealCompanyIds = new Set(
+      (crmSummary || [])
+        .map((d) => d.company_id)
+        .filter(Boolean)
+        .map(String),
+    );
+    if (!dealCompanyIds.size) {
+      try {
+        const { data: leadCos } = await supabase
+          .from('crm_leads')
+          .select('company_id')
+          .eq('project_id', project.id);
+        (leadCos || []).forEach((r) => {
+          if (r.company_id) dealCompanyIds.add(String(r.company_id));
+        });
+      } catch (_) {}
+    }
+    const primaryDealCompanyId = [...dealCompanyIds][0] || null;
     const isSxTaskDocForProject = (d) => (
       !!d?.project_id
       && !!d?.source_crm_task_id
@@ -1843,12 +1862,11 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     );
     const isVisibleSxDoc = (d) => (
       (isDocSharedToWorkshop(d) || isSxTaskDocForProject(d))
-      && leadDocVisibleForModuleAndUser(d, 'production', req.user)
+      && leadDocVisibleForModuleAndUser(d, 'production', req.user, { leadCompanyId: primaryDealCompanyId })
     );
     const sharedDocuments = documents.filter(isVisibleSxDoc);
     const hiddenDocuments = documents.filter((doc) => !isVisibleSxDoc(doc));
 
-    let crmSummary = await loadCrmDealsSummaryForProductionProject(project.id);
     // Nếu dự án được tạo thẳng từ module SX (không qua CRM / không có orders),
     // thì auto tạo 1 deal CRM "master" gắn project_id để:
     // - CRMTasksTab có leadId để load/gen sx_* tasks
@@ -2603,6 +2621,16 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
 
         // Kiểm tra cột SX có cờ is_handover_to_logistics → chuyển sang module VC
         try {
+          const { data: projVcCheck } = await supabase
+            .from('projects')
+            .select('status, vc_kanban_column_id, logistics_company_id')
+            .eq('id', projectId)
+            .maybeSingle();
+          const { isProjectAlreadyInLogistics } = require('../helpers/projectLogisticsScope');
+          if (isProjectAlreadyInLogistics(projVcCheck)) {
+            return;
+          }
+
           const sxPipeStage = await findSxPipelineStageRowForWorkflow(toStageId, companyIdForPipeline);
 
           if (sxPipeStage?.is_handover_to_logistics) {
@@ -3072,16 +3100,51 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
 
     const { data: project } = await supabase
       .from('projects')
-      .select('id, code, name, status, current_stage_id')
+      .select('id, code, name, status, current_stage_id, vc_kanban_column_id, logistics_company_id, sx_kanban_column_id')
       .eq('id', id)
       .single();
     if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    const { isProjectAlreadyInLogistics } = require('../helpers/projectLogisticsScope');
 
     // ── 0. Cột pipeline SX «Bàn giao VC» — ưu tiên id client gửi (kéo thả Kanban), fallback workflow cũ ──
     let sxHandoverPipelineStageId = req.body?.production_pipeline_stage_id
       || req.body?.sx_pipeline_stage_id
       || null;
     if (sxHandoverPipelineStageId) sxHandoverPipelineStageId = String(sxHandoverPipelineStageId);
+
+    if (isProjectAlreadyInLogistics(project)) {
+      if (sxHandoverPipelineStageId) {
+        const { data: colVerify } = await supabase
+          .from('production_pipeline_stages')
+          .select('id')
+          .eq('id', sxHandoverPipelineStageId)
+          .maybeSingle();
+        if (colVerify?.id) {
+          await supabase
+            .from('projects')
+            .update({ sx_kanban_column_id: sxHandoverPipelineStageId })
+            .eq('id', id);
+          await supabase
+            .from('crm_leads')
+            .update({ sx_pipeline_stage_id: sxHandoverPipelineStageId, updated_at: new Date().toISOString() })
+            .eq('project_id', id)
+            .eq('type', 'deal');
+        }
+      }
+      const { data: refreshed } = await supabase
+        .from('projects')
+        .select('id, code, name, status, current_stage_id, vc_kanban_column_id, logistics_company_id, sx_kanban_column_id, logistics_person_id, installer_person_id, delivery_team_id, installation_team_id')
+        .eq('id', id)
+        .maybeSingle();
+      return res.json({
+        project: refreshed || project,
+        already_in_logistics: true,
+        message: 'Dự án đã bàn giao VC/LĐ — chỉ cập nhật cột SX nếu có.',
+      });
+    }
+
+    // (sxHandoverPipelineStageId đã parse ở trên)
     try {
       if (sxHandoverPipelineStageId) {
         const { data: colVerify } = await supabase

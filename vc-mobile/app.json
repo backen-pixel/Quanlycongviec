@@ -2,7 +2,7 @@
   "expo": {
     "name": "Vận chuyển lắp đặt",
     "slug": "vc-mobile",
-    "version": "1.0.2",
+    "version": "1.0.10",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -22,7 +22,7 @@
     },
     "android": {
       "package": "vn.tubeppro.vcmobile",
-      "versionCode": 3,
+      "versionCode": 11,
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": false,
       "softwareKeyboardLayoutMode": "resize",
@@ -39,6 +39,7 @@
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
+        "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.USE_FULL_SCREEN_INTENT",
@@ -62,8 +63,9 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Cho phép truy cập ảnh để gửi trong tin nhắn.",
-          "cameraPermission": "Cho phép camera để chụp ảnh gửi tin nhắn."
+          "photosPermission": "Cho phép truy cập ảnh/video để đính kèm ghi chú nhiệm vụ.",
+          "cameraPermission": "Cho phép camera để chụp ảnh hoặc quay video ghi chú nhiệm vụ.",
+          "microphonePermission": "Cho phép micro khi quay video ghi chú."
         }
       ],
       [

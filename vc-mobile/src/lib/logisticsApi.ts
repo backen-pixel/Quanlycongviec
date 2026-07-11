@@ -328,14 +328,23 @@ export type ProjectCommentUser = {
   avatar?: string | null;
 };
 
+export type CommentAttachment = {
+  url: string;
+  name: string;
+  mime?: string;
+  size?: number;
+};
+
 export type ProjectComment = {
   id: string;
   project_id?: string;
+  lead_id?: string;
   user_id: string;
   parent_id?: string | null;
   content: string;
   created_at: string;
   updated_at?: string | null;
+  attachments?: CommentAttachment[];
   user?: ProjectCommentUser;
   reactions?: {
     summary: { emoji: string; count: number }[];
@@ -343,17 +352,77 @@ export type ProjectComment = {
   };
 };
 
+export function isCommentImageAttachment(att: CommentAttachment): boolean {
+  const mime = String(att.mime || '').toLowerCase();
+  if (mime.startsWith('image/')) return true;
+  return /\.(jpe?g|png|gif|webp|bmp|heic|heif|avif|svg)$/i.test(att.name || att.url || '');
+}
+
+function mapCommentAttachment(raw: unknown): CommentAttachment | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const a = raw as Record<string, unknown>;
+  const url = String(a.url || a.file_url || '').trim();
+  if (!url) return null;
+  return {
+    url,
+    name: String(a.name || a.file_name || 'file').trim() || 'file',
+    mime: String(a.type || a.mime_type || '').trim() || undefined,
+    size: Number.isFinite(Number(a.size ?? a.file_size)) ? Number(a.size ?? a.file_size) : undefined,
+  };
+}
+
+function mapCommentAttachments(raw: unknown): CommentAttachment[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map(mapCommentAttachment).filter(Boolean) as CommentAttachment[];
+}
+
+/** Deal CRM gắn dự án — bình luận dùng crm_lead_comments (đồng bộ tab deal). */
+export function resolveProjectDealId(project?: {
+  crm_deals?: Array<{ id?: string; type?: string } | null> | null;
+  crm_lead_id?: string | null;
+} | null): string | null {
+  if (!project) return null;
+  if (project.crm_lead_id) return String(project.crm_lead_id);
+  const deals = Array.isArray(project.crm_deals) ? project.crm_deals : [];
+  const deal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0];
+  return deal?.id ? String(deal.id) : null;
+}
+
+export function partitionProjectsByCommentSource(projects: ProductionProject[] = []) {
+  const projectOnlyIds: string[] = [];
+  const leadIds: string[] = [];
+  const leadIdToProjectId: Record<string, string> = {};
+  for (const p of projects || []) {
+    const pid = p?.id ? String(p.id) : '';
+    if (!pid) continue;
+    const leadId = resolveProjectDealId(p);
+    if (leadId) {
+      leadIds.push(leadId);
+      leadIdToProjectId[leadId] = pid;
+    } else {
+      projectOnlyIds.push(pid);
+    }
+  }
+  return {
+    projectOnlyIds: [...new Set(projectOnlyIds)],
+    leadIds: [...new Set(leadIds)],
+    leadIdToProjectId,
+  };
+}
+
 function mapCommentRow(raw: Record<string, unknown>): ProjectComment {
   const user = (raw.user || {}) as Record<string, unknown>;
   const reactions = (raw.reactions || { summary: [], mine: null }) as ProjectComment['reactions'];
   return {
     id: String(raw.id || ''),
     project_id: raw.project_id != null ? String(raw.project_id) : undefined,
+    lead_id: raw.lead_id != null ? String(raw.lead_id) : undefined,
     user_id: String(raw.user_id || ''),
     parent_id: raw.parent_id != null && raw.parent_id !== '' ? String(raw.parent_id) : null,
-    content: String(raw.content || ''),
+    content: String(raw.content || raw.body || ''),
     created_at: String(raw.created_at || ''),
     updated_at: raw.updated_at != null ? String(raw.updated_at) : null,
+    attachments: mapCommentAttachments(raw.attachments),
     user: {
       id: user.id != null ? String(user.id) : undefined,
       full_name: user.full_name != null ? String(user.full_name) : undefined,
@@ -372,6 +441,13 @@ export async function fetchProjectComments(projectId: string): Promise<ProjectCo
   return list.map((row) => mapCommentRow(row as Record<string, unknown>));
 }
 
+/** Bình luận deal CRM — cùng nguồn với tab Bình luận trên LeadDetail. */
+export async function fetchDealComments(dealId: string): Promise<ProjectComment[]> {
+  const { data } = await api.get<unknown>(`/crm/leads/${dealId}/comments`);
+  const list = Array.isArray(data) ? data : [];
+  return list.map((row) => mapCommentRow(row as Record<string, unknown>));
+}
+
 export async function fetchProjectCommentIndex(
   projectIds: string[],
 ): Promise<Record<string, CommentIndexEntry>> {
@@ -383,19 +459,113 @@ export async function fetchProjectCommentIndex(
   return data && typeof data === 'object' ? data : {};
 }
 
+export async function fetchDealCommentIndex(
+  leadIds: string[],
+): Promise<Record<string, CommentIndexEntry>> {
+  const ids = [...new Set(leadIds.map(String).filter(Boolean))];
+  if (!ids.length) return {};
+  const { data } = await api.get<Record<string, CommentIndexEntry>>('/crm/lead-comments/index', {
+    params: { lead_ids: ids.join(',') },
+  });
+  return data && typeof data === 'object' ? data : {};
+}
+
+/** Badge bình luận Kanban: có deal → crm_lead_comments; không deal → project_comments. */
+export async function fetchCommentsIndexForProjects(
+  projects: ProductionProject[],
+): Promise<Record<string, CommentIndexEntry>> {
+  const { projectOnlyIds, leadIds, leadIdToProjectId } = partitionProjectsByCommentSource(projects);
+  const merged: Record<string, CommentIndexEntry> = {};
+
+  if (projectOnlyIds.length) {
+    Object.assign(merged, await fetchProjectCommentIndex(projectOnlyIds).catch(() => ({})));
+  }
+  if (leadIds.length) {
+    const leadIndex = (await fetchDealCommentIndex(leadIds).catch(() => ({}))) as Record<string, CommentIndexEntry>;
+    for (const leadId of leadIds) {
+      const meta = leadIndex[leadId] || leadIndex[String(leadId)];
+      const pid = leadIdToProjectId[leadId];
+      if (pid && meta) merged[pid] = meta;
+    }
+  }
+  return merged;
+}
+
 export async function postProjectComment(
   projectId: string,
   content: string,
   parentId?: string | null,
+  attachments?: CommentAttachment[],
 ): Promise<ProjectComment> {
-  const payload: { content: string; parent_id?: string } = { content: content.trim() };
+  const payload: {
+    content: string;
+    parent_id?: string;
+    attachments?: { file_url: string; file_name: string; mime_type?: string; file_size?: number }[];
+  } = { content: content.trim() };
   if (parentId) payload.parent_id = parentId;
+  if (attachments?.length) {
+    payload.attachments = attachments.map((a) => ({
+      file_url: a.url,
+      file_name: a.name,
+      mime_type: a.mime,
+      file_size: a.size,
+    }));
+  }
   const { data } = await api.post<{ comment?: unknown } & Record<string, unknown>>(
     `/projects/${projectId}/comments`,
     payload,
   );
   const row = (data?.comment ?? data) as Record<string, unknown>;
   return mapCommentRow(row);
+}
+
+export async function postDealComment(
+  dealId: string,
+  content: string,
+  parentId?: string | null,
+  attachments?: CommentAttachment[],
+): Promise<ProjectComment> {
+  const payload: {
+    body: string;
+    parent_id?: number | string;
+    attachments?: { url: string; name: string; type?: string; size?: number }[];
+  } = { body: content.trim() };
+  if (parentId) {
+    const n = Number(parentId);
+    payload.parent_id = Number.isFinite(n) && n > 0 ? n : parentId;
+  }
+  if (attachments?.length) {
+    payload.attachments = attachments.map((a) => ({
+      url: a.url,
+      name: a.name,
+      type: a.mime,
+      size: a.size,
+    }));
+  }
+  const { data } = await api.post<Record<string, unknown>>(`/crm/leads/${dealId}/comments`, payload);
+  return mapCommentRow((data || {}) as Record<string, unknown>);
+}
+
+export async function uploadCommentFiles(
+  files: { uri: string; name: string; mime: string }[],
+): Promise<CommentAttachment[]> {
+  if (!files.length) return [];
+  const { postMultipart } = await import('../api/client');
+  const form = new FormData();
+  for (const f of files) {
+    form.append('files', { uri: f.uri, name: f.name, type: f.mime } as unknown as Blob);
+  }
+  const { data: up } = await postMultipart<{
+    files: { file_url?: string; file_name?: string; file_size?: number; mime_type?: string }[];
+  }>('/upload', form);
+  return (up?.files || [])
+    .filter((u) => u.file_url)
+    .map((u) => ({
+      url: String(u.file_url),
+      name: String(u.file_name || 'file'),
+      mime: u.mime_type || undefined,
+      size: u.file_size != null ? Number(u.file_size) : undefined,
+    }));
 }
 
 export async function toggleProjectCommentReaction(
@@ -405,6 +575,17 @@ export async function toggleProjectCommentReaction(
 ): Promise<ProjectComment['reactions']> {
   const { data } = await api.put<ProjectComment['reactions']>(
     `/projects/${projectId}/comments/${commentId}/reaction`,
+    { emoji },
+  );
+  return data || { summary: [], mine: null };
+}
+
+export async function toggleDealCommentReaction(
+  commentId: string,
+  emoji: string,
+): Promise<ProjectComment['reactions']> {
+  const { data } = await api.put<ProjectComment['reactions']>(
+    `/crm/lead-comments/${commentId}/reaction`,
     { emoji },
   );
   return data || { summary: [], mine: null };

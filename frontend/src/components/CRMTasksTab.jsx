@@ -163,6 +163,49 @@ function resolveSxTaskProductionStageId(task, sxStages) {
   return null;
 }
 
+/** Gom nhiệm vụ VC/LĐ (bảng tasks hoặc crm_tasks vc_*) vào cột logistics_pipeline_stages.id */
+function resolveVcTaskPipelineStageId(task, vcStages) {
+  const stages = vcStages || [];
+  if (!stages.length) return null;
+  const validIds = new Set(stages.map((s) => String(s.id)));
+  const meta = task?.metadata && typeof task.metadata === 'object' ? task.metadata : {};
+  const pid = task?.logistics_pipeline_stage_id || meta.logistics_pipeline_stage_id;
+  if (pid && validIds.has(String(pid))) return pid;
+
+  const slug = String(task?.stage_slug || '').trim();
+  if (slug.startsWith('vc_pl_')) {
+    const prefix = slug.slice(6);
+    const hit = stages.find((s) => s?.id && String(s.id).startsWith(prefix));
+    if (hit && validIds.has(String(hit.id))) return hit.id;
+  }
+
+  const wsSlug = String(meta.guessed_stage_slug || slug.replace(/^vc_ws_/, '') || '').toLowerCase();
+  const findByBucket = (pred) => stages.find((s) => pred(String(s.bucket_slug || '').toLowerCase(), String(s.name || '').toLowerCase()));
+
+  if (wsSlug === 'delivery_pending' || wsSlug === 'delivery-pending') {
+    const col = findByBucket((b, n) => b === 'delivery_pending' || n.includes('chờ vận'));
+    if (col?.id) return col.id;
+  }
+  if (wsSlug === 'installation' || wsSlug === 'installing') {
+    const col = findByBucket((b, n) => n.includes('lắp đặt') || b === 'installation');
+    if (col?.id) return col.id;
+  }
+  if (wsSlug === 'completed') {
+    const col = findByBucket((b, n) => b === 'completed' || n.includes('hoàn thành'));
+    if (col?.id) return col.id;
+  }
+  if (wsSlug === 'shipping' || wsSlug === 'delivery') {
+    const col = findByBucket((b, n) => n.includes('đang vận') || (n.includes('vận chuyển') && b !== 'delivery_pending'));
+    if (col?.id) return col.id;
+  }
+
+  return stages[0]?.id || null;
+}
+
+function isWorkshopProjectTaskRow(task) {
+  return !!task?._workshop_project_task;
+}
+
 function sxTaskBelongsToPipeline(task, sxStages) {
   if (!task) return false;
   const isSx = String(task?.stage_slug || '').startsWith('sx_') || !!task?.production_pipeline_stage_id;
@@ -461,7 +504,11 @@ export default function CRMTasksTab({
   linkedProjectId: linkedProjectIdProp = null,
   /** Cột pipeline SX từ ProductionDetail (sxKanbanStages) — khớp stepper, tránh fallback 9 cột cứng */
   embeddedSxKanbanStages = null,
+  /** Cột pipeline VC từ ProductionDetail (vcKanbanStages) */
+  embeddedVcKanbanStages = null,
   embeddedWorkshopTypeId = null,
+  /** Công ty VC/LĐ — load bộ mẫu logistics */
+  vcTemplateCompanyId = null,
   /** Mở & cuộn tới nhiệm vụ từ liên kết Giao việc (?crm_task=) */
   focusTaskId = null,
   dealResponsible = null,
@@ -513,11 +560,15 @@ export default function CRMTasksTab({
   }, [leadId, dealTaskView, leadType]);
 
   const isProductionScope = taskScope === 'production';
+  const isLogisticsScope = taskScope === 'logistics';
   const showSxTasksInUi = leadType === 'deal' && (isProductionScope || (hasSxTasks && dealTaskView === 'sx'));
-  const showCrmTemplatesUi = !showSxTasksInUi && !isProductionScope;
+  const showLogisticsWorkshopInUi = leadType === 'deal' && isLogisticsScope
+    && tasks.some((t) => isWorkshopProjectTaskRow(t) || String(t.stage_slug || '').startsWith('vc_'));
+  const showCrmTemplatesUi = !showSxTasksInUi && !isProductionScope && !showLogisticsWorkshopInUi;
 
   const [pipelineStages, setPipelineStages] = useState([]);
   const [sxPipelineStages, setSxPipelineStages] = useState([]);
+  const [vcPipelineStages, setVcPipelineStages] = useState([]);
   const [leadPipelineId, setLeadPipelineId] = useState(null);
   const [leadCurrentStageId, setLeadCurrentStageId] = useState(null);
   const [leadCompanyId, setLeadCompanyId] = useState(null);
@@ -566,7 +617,9 @@ export default function CRMTasksTab({
   const uiTasks = useMemo(() => {
     let list = tasks;
     if (leadType === 'deal') {
-      if (showSxTasksInUi) {
+      if (showLogisticsWorkshopInUi) {
+        list = tasks.filter((t) => isWorkshopProjectTaskRow(t) || String(t.stage_slug || '').startsWith('vc_'));
+      } else if (showSxTasksInUi) {
         list = tasks.filter((t) => isSxStageSlug(t.stage_slug) || t.production_pipeline_stage_id);
         // Chỉ hiển thị nhiệm vụ thuộc pipeline phân loại hiện tại (vd. Data đầu ra — không lẫn Đầu vào).
         if (projectWorkshopTypeId && sxPipelineStages.length > 0) {
@@ -580,7 +633,7 @@ export default function CRMTasksTab({
       list = list.filter((t) => isDelegatedSxTask(t));
     }
     return list;
-  }, [leadType, tasks, showSxTasksInUi, isSxStageSlug, projectWorkshopTypeId, sxPipelineStages, taskCompanyScope, isDelegatedSxTask]);
+  }, [leadType, tasks, showLogisticsWorkshopInUi, showSxTasksInUi, isSxStageSlug, projectWorkshopTypeId, sxPipelineStages, taskCompanyScope, isDelegatedSxTask]);
 
   const isTaskLevelCrossCompany = useCallback((task) => {
     const ownerId = ownerCompanyId;
@@ -703,9 +756,22 @@ export default function CRMTasksTab({
       order_index: s.order_index ?? i,
     })), [sxPipelineStages]);
 
+  const vcPipelineStagesAsUiStages = useMemo(() => sortAndDedupePipelineStages(
+    (vcPipelineStages?.length ? vcPipelineStages : embeddedVcKanbanStages) || [],
+  ).map((s, i) => ({
+    slug: s.id,
+    label: s.name || 'Giai đoạn',
+    icon: s.icon || '🚚',
+    color: s.color || '#ea580c',
+    isVcPipelineStage: true,
+    order_index: s.order_index ?? i,
+  })), [vcPipelineStages, embeddedVcKanbanStages]);
+
   const useSxPipelineTaskUi = isSxOrderTaskFlow && sxPipelineStagesAsUiStages.length > 0;
+  const useVcPipelineTaskUi = showLogisticsWorkshopInUi && vcPipelineStagesAsUiStages.length > 0;
 
   const STAGES = useMemo(() => {
+    if (useVcPipelineTaskUi) return vcPipelineStagesAsUiStages;
     if (useSxPipelineTaskUi) return sxPipelineStagesAsUiStages;
     // Tab SX: luôn dùng pipeline thật — không fallback 9 cột cứng (1️⃣ Tiếp nhận / Thiết kế và lên kế hoạch…).
     if (isProductionScope && isSxOrderTaskFlow) return sxPipelineStagesAsUiStages;
@@ -714,7 +780,7 @@ export default function CRMTasksTab({
     if (usePipelineTaskUi) return pipelineStagesAsUiStages;
     if (isLegacyCrmTaskSet && pipelineStages.length) return pipelineStagesAsUiStages;
     return leadType === 'deal' ? DEAL_STAGES : LEAD_STAGES;
-  }, [useSxPipelineTaskUi, sxPipelineStagesAsUiStages, isProductionScope, isSxOrderTaskFlow, projectWorkshopTypeId, usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages.length, pipelineStagesAsUiStages, leadType]);
+  }, [useVcPipelineTaskUi, vcPipelineStagesAsUiStages, useSxPipelineTaskUi, sxPipelineStagesAsUiStages, isProductionScope, isSxOrderTaskFlow, projectWorkshopTypeId, usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages.length, pipelineStagesAsUiStages, leadType]);
   const STAGE_OPTIONS = useMemo(() => {
     if (usePipelineTaskUi) return [...pipelineStagesAsUiStages, ...SX_ORDER_STAGES];
     return leadType === 'deal' ? [...DEAL_STAGES, ...SX_ORDER_STAGES] : LEAD_STAGES;
@@ -814,6 +880,11 @@ export default function CRMTasksTab({
     if (wkt) stages = filterSxPipelineStagesForWorkshopType(stages, wkt);
     setSxPipelineStages(sortAndDedupePipelineStages(stages));
   }, [embeddedSxKanbanStages, embeddedWorkshopTypeId]);
+
+  useEffect(() => {
+    if (!Array.isArray(embeddedVcKanbanStages) || !embeddedVcKanbanStages.length) return;
+    setVcPipelineStages(sortAndDedupePipelineStages(embeddedVcKanbanStages));
+  }, [embeddedVcKanbanStages]);
 
   const applyProjectDateFields = (p) => {
     if (!p) return;
@@ -962,11 +1033,43 @@ export default function CRMTasksTab({
         setSxPipelineStages([]);
       }
 
-      if (!isProductionScope) {
+      if (!isProductionScope && !isLogisticsScope) {
         const tplParams = pid ? { pipeline_id: pid, scope: 'pipeline' } : {};
         try {
           const tplRes = await api.get('/crm/task-templates', { params: tplParams });
           setTemplates(tplRes.data || []);
+        } catch {
+          setTemplates([]);
+        }
+      } else if (isLogisticsScope) {
+        const vcCid = vcTemplateCompanyId
+          || linkedProject?.logistics_company_id
+          || linkedProject?.logistics_company?.id
+          || leadRes?.data?.company_id
+          || null;
+        if (!(Array.isArray(embeddedVcKanbanStages) && embeddedVcKanbanStages.length)) {
+          if (vcCid) {
+            try {
+              const { data: vcStages } = await api.get('/logistics/pipeline-stages', {
+                params: { company_id: vcCid },
+                headers: { 'x-no-cache': '1' },
+              });
+              setVcPipelineStages(sortAndDedupePipelineStages(Array.isArray(vcStages) ? vcStages : []));
+            } catch {
+              setVcPipelineStages([]);
+            }
+          }
+        }
+        try {
+          const tplRes = await api.get('/production/task-templates', {
+            params: {
+              workshop_area: 'logistics',
+              active_only: 'true',
+              logistics_stage_id: 'global',
+              ...(vcCid ? { company_id: vcCid } : {}),
+            },
+          });
+          setTemplates(Array.isArray(tplRes.data) ? tplRes.data : []);
         } catch {
           setTemplates([]);
         }
@@ -983,7 +1086,7 @@ export default function CRMTasksTab({
       // Auto-expand stages that have tasks
       const stagesExp = {};
       displayTasks.forEach((t) => {
-        const k = t.production_pipeline_stage_id || t.pipeline_stage_id || t.stage_slug;
+        const k = t.logistics_pipeline_stage_id || t.production_pipeline_stage_id || t.pipeline_stage_id || t.stage_slug;
         if (k) stagesExp[k] = true;
       });
       setExpandedStages(stagesExp);
@@ -1000,7 +1103,7 @@ export default function CRMTasksTab({
     prevLeadIdForTasksRef.current = leadId;
     const silent = !first && !leadSwitched && refreshKey > 0;
     loadTasks({ silent });
-  }, [leadId, taskScope, taskCompanyScope, isProductionScope, refreshKey, sxTemplateCompanyId]);
+  }, [leadId, taskScope, taskCompanyScope, isProductionScope, isLogisticsScope, refreshKey, sxTemplateCompanyId, vcTemplateCompanyId, embeddedVcKanbanStages]);
 
   /** Realtime: web ↔ mobile — refetch khi nhiệm vụ CRM thay đổi qua socket */
   const loadTasksRef = useRef(loadTasks);
@@ -1054,6 +1157,14 @@ export default function CRMTasksTab({
 
   const applyTemplate = async (templateId) => {
     try {
+      if (isLogisticsScope && linkedProjectIdProp) {
+        const { data } = await api.post(`/production/projects/${linkedProjectIdProp}/tasks/from-template`, {
+          template_id: templateId,
+        });
+        alert(`Đã tạo ${data.count || 0} nhiệm vụ từ bộ mẫu VC/LĐ`);
+        await loadTasks();
+        return;
+      }
       const { data } = await api.post(`/crm/leads/${leadId}/tasks/from-template`, { template_id: templateId });
       alert(`Đã tạo ${data.count} công việc từ bộ mẫu`);
       const created = data.tasks || [];
@@ -1178,6 +1289,27 @@ export default function CRMTasksTab({
     const prevTask = prevTasks.find((t) => t.id === taskId);
     setTasks((p) => p.map((t) => (t.id === taskId ? { ...t, ...updates } : t)));
     try {
+      if (isWorkshopProjectTaskRow(prevTask)) {
+        const body = {};
+        if (updates.status != null) {
+          body.status = updates.status === 'completed' ? 'done' : updates.status === 'pending' ? 'todo' : updates.status;
+        }
+        if (updates.assignee_id !== undefined) body.assignee_id = updates.assignee_id || null;
+        if (updates.title !== undefined) body.title = updates.title;
+        if (updates.description !== undefined) body.description = updates.description;
+        if (updates.deadline !== undefined) body.due_date = updates.deadline;
+        if (updates.order_index !== undefined) body.order_index = updates.order_index;
+        const { data } = await api.put(`/tasks/${taskId}`, body);
+        setTasks((p) => p.map((t) => (t.id === taskId ? {
+          ...t,
+          ...updates,
+          status: updates.status ?? t.status,
+          deadline: updates.deadline !== undefined ? updates.deadline : t.deadline,
+          assignee_id: updates.assignee_id !== undefined ? updates.assignee_id : t.assignee_id,
+          ...(data?.task ? { assignee: data.task.assignee || t.assignee } : {}),
+        } : t)));
+        return;
+      }
       const lid = apiLeadIdForTaskId(taskId);
       const { data } = await api.put(`/crm/leads/${lid}/tasks/${taskId}`, updates);
       setTasks((p) => p.map((t) => (t.id === taskId ? mergeChecklistIntoTaskState(t, data, updates) : t)));
@@ -1192,6 +1324,22 @@ export default function CRMTasksTab({
   };
 
   const saveTaskChecklist = async (task, nextFullList, changedId = null) => {
+    if (isWorkshopProjectTaskRow(task)) {
+      const changed = changedId
+        ? nextFullList.find((c) => c.id === changedId)
+        : nextFullList[nextFullList.length - 1];
+      if (!changed?.id) return;
+      try {
+        await api.patch(`/tasks/${task.id}/checklists/${changed.id}`, {
+          is_completed: !!changed.done,
+          notes: changed.notes ?? changed.description ?? null,
+        });
+        setTasks((p) => p.map((t) => (t.id === task.id ? { ...t, checklist: nextFullList } : t)));
+      } catch (e) {
+        alert(e.response?.data?.error || e.message || 'Lỗi cập nhật checklist');
+      }
+      return;
+    }
     if (needsPartialChecklistSave(task)) {
       const changed = changedId
         ? nextFullList.find((c) => c.id === changedId)
@@ -1393,6 +1541,9 @@ export default function CRMTasksTab({
     try {
       await Promise.all(
         toComplete.map((t) => {
+          if (isWorkshopProjectTaskRow(t)) {
+            return api.put(`/tasks/${t.id}`, { status: 'done' });
+          }
           const lid = apiLeadIdForTaskId(t.id);
           return api.put(`/crm/leads/${lid}/tasks/${t.id}`, { status: 'completed' });
         }),
@@ -1800,7 +1951,15 @@ export default function CRMTasksTab({
     STAGES.forEach((s) => { map[s.slug] = []; });
     const usePipelineKeys = usePipelineTaskUi || (isLegacyCrmTaskSet && pipelineStages.length > 0);
 
-    if (useSxPipelineTaskUi || (isSxOrderTaskFlow && sxPipelineStages.length > 0)) {
+    if (useVcPipelineTaskUi || (showLogisticsWorkshopInUi && vcPipelineStagesAsUiStages.length > 0)) {
+      uiTasks.forEach((t) => {
+        const key = resolveVcTaskPipelineStageId(t, vcPipelineStages.length ? vcPipelineStages : embeddedVcKanbanStages);
+        if (key && map[key] !== undefined) map[key].push(t);
+        else if (key) {
+          map[key] = [t];
+        }
+      });
+    } else if (useSxPipelineTaskUi || (isSxOrderTaskFlow && sxPipelineStages.length > 0)) {
       uiTasks.forEach((t) => {
         const key = resolveSxTaskProductionStageId(t, sxPipelineStages);
         if (key && map[key] !== undefined) map[key].push(t);
@@ -1825,11 +1984,14 @@ export default function CRMTasksTab({
       map[k].sort((a, b) => (Number(a.order_index) || 0) - (Number(b.order_index) || 0));
     });
     return map;
-  }, [uiTasks, STAGES, useSxPipelineTaskUi, isSxOrderTaskFlow, sxPipelineStages, usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages, leadCurrentStageId, leadType]);
+  }, [uiTasks, STAGES, useVcPipelineTaskUi, showLogisticsWorkshopInUi, vcPipelineStagesAsUiStages, vcPipelineStages, embeddedVcKanbanStages, useSxPipelineTaskUi, isSxOrderTaskFlow, sxPipelineStages, usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages, leadCurrentStageId, leadType]);
 
   /** Khóa giai đoạn — dùng khi sắp xếp kéo thả trong tab Công việc deal. */
   const getTaskStageKey = useCallback((task) => {
     if (!task) return null;
+    if (useVcPipelineTaskUi || (showLogisticsWorkshopInUi && vcPipelineStagesAsUiStages.length > 0)) {
+      return resolveVcTaskPipelineStageId(task, vcPipelineStages.length ? vcPipelineStages : embeddedVcKanbanStages);
+    }
     if (useSxPipelineTaskUi || (isSxOrderTaskFlow && sxPipelineStages.length > 0)) {
       return resolveSxTaskProductionStageId(task, sxPipelineStages);
     }
@@ -1839,7 +2001,7 @@ export default function CRMTasksTab({
     }
     const fallbackSlug = leadType === 'deal' ? (DEAL_STAGES[0]?.slug || 'deal_new') : (LEAD_STAGES[0]?.slug || 'consulting');
     return task.stage_slug || fallbackSlug;
-  }, [useSxPipelineTaskUi, isSxOrderTaskFlow, sxPipelineStages, usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages, leadCurrentStageId, leadType]);
+  }, [useVcPipelineTaskUi, showLogisticsWorkshopInUi, vcPipelineStagesAsUiStages, vcPipelineStages, embeddedVcKanbanStages, useSxPipelineTaskUi, isSxOrderTaskFlow, sxPipelineStages, usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages, leadCurrentStageId, leadType]);
 
   /** Kéo thả chỉ sắp xếp trong cùng giai đoạn — không gộp nhiệm vụ (gộp checklist chỉ ở bộ mẫu SX). */
   const handleTaskDragEnd = useCallback(async (event) => {
@@ -1875,9 +2037,12 @@ export default function CRMTasksTab({
     )));
 
     try {
-      await Promise.all(reordered.map((t, i) =>
-        api.put(`/crm/leads/${apiLeadIdForTaskId(t.id)}/tasks/${t.id}`, { order_index: i }),
-      ));
+      await Promise.all(reordered.map((t, i) => {
+        if (isWorkshopProjectTaskRow(t)) {
+          return api.put(`/tasks/${t.id}`, { order_index: i });
+        }
+        return api.put(`/crm/leads/${apiLeadIdForTaskId(t.id)}/tasks/${t.id}`, { order_index: i });
+      }));
     } catch (e) {
       setTasks(prevTasks);
       alert(e.response?.data?.error || 'Lỗi sắp xếp nhiệm vụ');
@@ -1886,7 +2051,9 @@ export default function CRMTasksTab({
 
   const listStagesToRender = useMemo(() => {
     if (
-      useSxPipelineTaskUi
+      useVcPipelineTaskUi
+      || (showLogisticsWorkshopInUi && vcPipelineStagesAsUiStages.length > 0)
+      || useSxPipelineTaskUi
       || (isProductionScope && isSxOrderTaskFlow)
       || (isSxOrderTaskFlow && sxPipelineStages.length > 0)
       || usePipelineTaskUi
@@ -1905,7 +2072,7 @@ export default function CRMTasksTab({
         color: '#6B7280',
       });
     return [...withTasks, ...extras];
-  }, [STAGES, tasksByStage, useSxPipelineTaskUi, isProductionScope, isSxOrderTaskFlow, sxPipelineStages.length, usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages.length]);
+  }, [STAGES, tasksByStage, useVcPipelineTaskUi, showLogisticsWorkshopInUi, vcPipelineStagesAsUiStages.length, useSxPipelineTaskUi, isProductionScope, isSxOrderTaskFlow, sxPipelineStages.length, usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages.length]);
 
   const stageTemplatesMap = useMemo(() => {
     const map = {};
@@ -3667,6 +3834,15 @@ export default function CRMTasksTab({
             <button onClick={() => setShowTemplatePanel(p => !p)}
               className={`h-7 px-2.5 rounded-lg text-[10px] font-medium flex items-center gap-1 cursor-pointer transition-colors ${showTemplatePanel ? 'bg-amber-500 text-white' : 'bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100'}`}>
               <ClipboardList className="h-3 w-3" /> Gắn mẫu
+            </button>
+          )}
+          {showLogisticsWorkshopInUi && templates.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowTemplatePanel((p) => !p)}
+              className={`h-7 px-2.5 rounded-lg text-[10px] font-medium flex items-center gap-1 cursor-pointer transition-colors ${showTemplatePanel ? 'bg-orange-500 text-white' : 'bg-orange-50 text-orange-800 border border-orange-300 hover:bg-orange-100'}`}
+            >
+              <ClipboardList className="h-3 w-3" /> Gắn mẫu VC/LĐ
             </button>
           )}
           {!isSharedWorkspace && (

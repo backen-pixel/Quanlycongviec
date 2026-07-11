@@ -77,7 +77,14 @@ type NotificationCtx = {
   emitPresencePing: () => void;
   joinProjectRoom: (projectId: string) => void;
   leaveProjectRoom: (projectId: string) => void;
-  projectMetaRef: React.MutableRefObject<Map<string, { code?: string | null; name?: string | null }>>;
+  joinLeadRoom: (leadId: string) => void;
+  leaveLeadRoom: (leadId: string) => void;
+  joinLeadRooms: (leadIds: string[]) => void;
+  projectMetaRef: React.MutableRefObject<Map<string, {
+    code?: string | null;
+    name?: string | null;
+    deal_id?: string | null;
+  }>>;
 };
 
 const Ctx = createContext<NotificationCtx | null>(null);
@@ -97,8 +104,26 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const messengerNotifListenersRef = useRef<Set<MessengerNotifListener>>(new Set());
   const messengerMetaListenersRef = useRef<Set<MessengerMetaListener>>(new Set());
   const presenceListenersRef = useRef<Set<PresenceListener>>(new Set());
-  const projectMetaRef = useRef(new Map<string, { code?: string | null; name?: string | null }>());
+  const projectMetaRef = useRef(new Map<string, {
+    code?: string | null;
+    name?: string | null;
+    deal_id?: string | null;
+  }>());
+  const dealToProjectRef = useRef(new Map<string, string>());
   const recentMessengerNotifRef = useRef<Map<string, number>>(new Map());
+
+  useEffect(() => {
+    const syncDealMap = () => {
+      const next = new Map<string, string>();
+      for (const [pid, meta] of projectMetaRef.current.entries()) {
+        if (meta.deal_id) next.set(String(meta.deal_id), String(pid));
+      }
+      dealToProjectRef.current = next;
+    };
+    syncDealMap();
+    const t = setInterval(syncDealMap, 2000);
+    return () => clearInterval(t);
+  }, []);
 
   const refreshUnread = useCallback(() => {
     if (!token || busyRef.current) return;
@@ -172,6 +197,22 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const leaveProjectRoom = useCallback((projectId: string) => {
     if (!projectId) return;
     socketRef.current?.emit('leave:project', projectId);
+  }, []);
+
+  const joinLeadRoom = useCallback((leadId: string) => {
+    if (!leadId) return;
+    socketRef.current?.emit('join:lead', leadId);
+  }, []);
+
+  const leaveLeadRoom = useCallback((leadId: string) => {
+    if (!leadId) return;
+    socketRef.current?.emit('leave:lead', leadId);
+  }, []);
+
+  const joinLeadRooms = useCallback((leadIds: string[]) => {
+    for (const id of leadIds) {
+      if (id) socketRef.current?.emit('join:lead', id);
+    }
   }, []);
 
   const emitSync = useCallback((evt: SyncEvent) => {
@@ -333,6 +374,54 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       emitSync({ type: 'project:comment_changed', payload: { project_id: pid, action: 'deleted' } });
     };
 
+    const onLeadComment = (raw: unknown) => {
+      const evt = raw as {
+        lead_id?: string;
+        action?: string;
+        comment?: { user_id?: string; body?: string; content?: string };
+      };
+      const lid = evt.lead_id ? String(evt.lead_id) : '';
+      if (!lid) return;
+      const pid = dealToProjectRef.current.get(lid) || '';
+      emitSync({
+        type: 'project:comment_changed',
+        payload: {
+          project_id: pid || undefined,
+          lead_id: lid,
+          action: evt.action || 'created',
+        },
+      });
+
+      if (!pid || !projectMetaRef.current.has(pid)) return;
+      const commentUserId = evt.comment?.user_id;
+      void (async () => {
+        const myId = uid || (await getCurrentUserIdForNotifications());
+        if (commentUserId && myId && String(commentUserId) === String(myId)) return;
+        const meta = projectMetaRef.current.get(pid);
+        const preview = String(evt.comment?.body || evt.comment?.content || '').trim().slice(0, 120);
+        const built = {
+          id: `lead-cmt:${lid}:${Date.now()}`,
+          type: 'comment_added' as const,
+          title: `${meta?.code || meta?.name || 'Deal'} · Bình luận mới`,
+          message: preview ? `Vừa bình luận: ${preview}` : 'Có bình luận mới trên deal',
+          entity_type: 'lead',
+          entity_id: lid,
+          is_read: false,
+          created_at: new Date().toISOString(),
+          metadata: {
+            project_id: pid,
+            project_code: meta?.code,
+            project_name: meta?.name,
+            lead_id: lid,
+            comment_preview: preview || null,
+            ecosystem_module_key: 'logistics',
+          },
+        };
+        setUnreadCount((c) => c + 1);
+        emitComment(built);
+      })();
+    };
+
     const onServerNotif = (raw: unknown) => {
       const n = raw as SxCommentNotification & {
         metadata?: { ecosystem_module_key?: string; sender_name?: string; group_name?: string };
@@ -454,6 +543,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     s.on('project:comment', onProjectComment);
     s.on('project:comment:updated', onProjectCommentUpdated);
     s.on('project:comment:deleted', onProjectCommentDeleted);
+    s.on('lead:comment', onLeadComment);
     s.on('notification', onServerNotif);
 
     const onStageChanged = (raw: unknown) => {
@@ -593,6 +683,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       s.off('project:comment', onProjectComment);
       s.off('project:comment:updated', onProjectCommentUpdated);
       s.off('project:comment:deleted', onProjectCommentDeleted);
+      s.off('lead:comment', onLeadComment);
       s.off('notification', onServerNotif);
       s.off('project:stage_changed', onStageChanged);
       s.off('project:updated', onBoardChanged);
@@ -643,6 +734,9 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       emitPresencePing,
       joinProjectRoom,
       leaveProjectRoom,
+      joinLeadRoom,
+      leaveLeadRoom,
+      joinLeadRooms,
       projectMetaRef,
     }),
     [
@@ -668,6 +762,10 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       emitPresencePing,
       joinProjectRoom,
       leaveProjectRoom,
+      joinLeadRoom,
+      leaveLeadRoom,
+      joinLeadRooms,
+      projectMetaRef,
     ],
   );
 

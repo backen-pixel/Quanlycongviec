@@ -147,6 +147,14 @@ export type CrmDealSummary = {
   sx_pipeline_stage?: { id?: string; name?: string | null } | null;
 };
 
+/** Ghi chú nhân viên nhập trên nhiệm vụ (không phải mô tả/template). */
+export type TaskStaffNote = {
+  id: string;
+  text: string;
+  created_at?: string | null;
+  user_name?: string | null;
+};
+
 export type CrmTask = {
   id: string;
   title: string;
@@ -155,15 +163,20 @@ export type CrmTask = {
   order_index?: number;
   deadline?: string | null;
   due_date?: string | null;
+  /** Ghi chú nhân viên (preview / CRM inline). Mô tả mẫu nằm ở `description`. */
   notes?: string | null;
   description?: string | null;
   priority?: string | null;
   file_count?: number;
   note_count?: number;
   attachment_count?: number;
+  /** Danh sách ghi chú đã tải (workshop comments / CRM task_note). */
+  staff_notes?: TaskStaffNote[];
   assignee?: PersonRef | null;
   assignees?: PersonRef[];
   pipeline_stage?: { id?: string; name?: string | null; order_index?: number } | null;
+  /** crm = crm_tasks trên deal; workshop = bảng tasks (bộ mẫu VC/LĐ) */
+  source?: 'crm' | 'workshop';
 };
 
 export type ProjectActivity = {

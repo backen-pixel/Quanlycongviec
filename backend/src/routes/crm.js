@@ -13113,12 +13113,13 @@ r.get('/project/:projectId/lead-documents', async (req, res) => {
     // Find lead linked to this project
     const { data: lead } = await supabase
       .from('crm_leads')
-      .select('id')
+      .select('id, company_id')
       .eq('project_id', req.params.projectId)
       .limit(1)
       .single();
 
     if (!lead) return res.json([]);
+    const visOpts = { leadCompanyId: lead.company_id || null };
 
     const { data: docs } = await supabase
       .from('lead_documents')
@@ -13128,7 +13129,7 @@ r.get('/project/:projectId/lead-documents', async (req, res) => {
 
     let rows = docs || [];
     if (useMod) {
-      rows = rows.filter((d) => leadDocVisibleForModuleAndUser(d, useMod, req.user));
+      rows = rows.filter((d) => leadDocVisibleForModuleAndUser(d, useMod, req.user, visOpts));
     }
     res.json(rows);
   } catch (e) {
@@ -14512,6 +14513,21 @@ r.get('/leads/:id/tasks', async (req, res) => {
       });
       // Fallback: chưa có task vc_* trên deal → giống web VC (ẩn sx_*)
       data = vcOnly.length ? vcOnly : all.filter((t) => !String(t.stage_slug || '').startsWith('sx_'));
+
+      // Bộ nhiệm vụ VC/LĐ trên bảng `tasks` (workshop) — hiển thị cùng UI CRMTasksTab
+      if (lead?.project_id) {
+        try {
+          const { loadWorkshopLogisticsTasksForCrmLead } = require('../helpers/workshopProjectTasksForCrm');
+          const wsRows = await loadWorkshopLogisticsTasksForCrmLead(req.params.id, lead.project_id);
+          if (wsRows.length) {
+            const nativeVc = (data || []).filter((t) => !t._workshop_project_task);
+            const hasNativeVc = nativeVc.some((t) => String(t.stage_slug || '').startsWith('vc_'));
+            data = hasNativeVc ? [...nativeVc, ...wsRows] : wsRows;
+          }
+        } catch (wsErr) {
+          console.warn('[crm/leads/:id/tasks] workshop logistics:', wsErr.message);
+        }
+      }
     } else if (taskScope === 'crm') {
       data = (data || []).filter((t) => !String(t.stage_slug || '').startsWith('sx_'));
     }
@@ -15313,8 +15329,9 @@ r.get('/project/:projectId/shared-notes', async (req, res) => {
     const useMod = ['production', 'logistics', 'workshop'].includes(forModule) ? forModule : null;
 
     const { data: lead } = await supabase.from('crm_leads')
-      .select('id').eq('project_id', req.params.projectId).single();
+      .select('id, company_id').eq('project_id', req.params.projectId).single();
     if (!lead) return res.json([]);
+    const visOpts = { leadCompanyId: lead.company_id || null };
 
     const { data: allTasks } = await supabase.from('crm_tasks')
       .select('id, title, notes, stage_slug, shared_to_project, allowed_share_modules, default_allowed_companies, default_allowed_departments, assignee:users!crm_tasks_assignee_id_fkey(id,full_name), updated_at')
@@ -15332,7 +15349,7 @@ r.get('/project/:projectId/shared-notes', async (req, res) => {
       sharedAtts = (atts || []).filter((a) => {
         const taskRow = taskMap[a.task_id];
         return useMod
-          ? crmAttachmentVisibleForModuleAndUser(a, useMod, req.user, taskRow)
+          ? crmAttachmentVisibleForModuleAndUser(a, useMod, req.user, taskRow, visOpts)
           : a.shared_to_project === true && canUserViewDocByAllowlist(req.user, a, taskRow);
       });
     }
@@ -15340,7 +15357,7 @@ r.get('/project/:projectId/shared-notes', async (req, res) => {
     const result = (allTasks || [])
       .map((t) => {
         const taskShared = useMod
-          ? crmTaskVisibleForModuleAndUser(t, useMod, req.user)
+          ? crmTaskVisibleForModuleAndUser(t, useMod, req.user, visOpts)
           : t.shared_to_project === true;
         const canViewNotes = taskShared && canUserViewDocByAllowlist(req.user, t);
         const attachments = sharedAtts.filter((a) => a.task_id === t.id);
@@ -15377,8 +15394,11 @@ r.put('/leads/:leadId/tasks/:taskId/notes', async (req, res) => {
     if (notes?.trim()) {
       try {
         const { data: leadForSync } = await supabase.from('crm_leads')
-          .select('project_id').eq('id', req.params.leadId).single();
-        const taskDocOpts = { linkToProject: !!leadForSync?.project_id };
+          .select('project_id, company_id').eq('id', req.params.leadId).single();
+        const taskDocOpts = {
+          linkToProject: !!leadForSync?.project_id,
+          leadCompanyId: leadForSync?.company_id || null,
+        };
 
         const { data: existingAtt } = await supabase.from('crm_task_attachments')
           .select('id')
@@ -15537,8 +15557,11 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
     if (checklistId && !ckItem) return res.status(400).json({ error: 'Mục checklist không tồn tại' });
 
     const { data: leadForShare } = await supabase.from('crm_leads')
-      .select('project_id, title').eq('id', req.params.leadId).single();
-    const bulkShareOpts = { linkToProject: !!leadForShare?.project_id };
+      .select('project_id, title, company_id').eq('id', req.params.leadId).single();
+    const bulkShareOpts = {
+      linkToProject: !!leadForShare?.project_id,
+      leadCompanyId: leadForShare?.company_id || null,
+    };
     const defaultShare = getDefaultCrmAttachmentShare(task, bulkShareOpts, ckItem);
 
     // Insert tất cả attachments 1 lần
@@ -15654,8 +15677,11 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
     const ckItem = ckId ? findChecklistItem(taskForShare, ckId) : null;
     if (ckId && !ckItem) return res.status(400).json({ error: 'Mục checklist không tồn tại' });
     const { data: leadForShare } = await supabase.from('crm_leads')
-      .select('project_id, title').eq('id', req.params.leadId).single();
-    const singleShareOpts = { linkToProject: !!leadForShare?.project_id };
+      .select('project_id, title, company_id').eq('id', req.params.leadId).single();
+    const singleShareOpts = {
+      linkToProject: !!leadForShare?.project_id,
+      leadCompanyId: leadForShare?.company_id || null,
+    };
     const singleDefaultShare = getDefaultCrmAttachmentShare(taskForShare, singleShareOpts, ckItem);
 
     const insertRow = {
@@ -18214,6 +18240,7 @@ r.get('/leads/:id/comments', async (req, res) => {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
     const leadId = String(req.params.id || '').trim();
+    const forModule = String(req.query.for_module || '').toLowerCase().trim();
     let { data, error } = await supabase
       .from('crm_lead_comments')
       .select('id, lead_id, user_id, parent_id, body, attachments, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
@@ -18232,7 +18259,21 @@ r.get('/leads/:id/comments', async (req, res) => {
       if (commentsTableMissing(error)) return res.json([]);
       throw error;
     }
-    const list = data || [];
+    let list = data || [];
+    if (forModule === 'production' && list.length) {
+      const {
+        isHideQuoteContractCompany,
+        isQuoteContractActivityComment,
+      } = require('../helpers/hideQuoteContractFromProduction');
+      const { data: leadRow } = await supabase
+        .from('crm_leads')
+        .select('company_id')
+        .eq('id', leadId)
+        .maybeSingle();
+      if (isHideQuoteContractCompany(leadRow?.company_id)) {
+        list = list.filter((c) => !isQuoteContractActivityComment(c.body));
+      }
+    }
     if (!list.length) return res.json([]);
     const ids = list.map((c) => c.id);
     let rxMap = await fetchCrmCommentReactionsAggregate(supabase, ids, userId);

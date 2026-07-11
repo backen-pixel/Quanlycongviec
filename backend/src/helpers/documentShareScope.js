@@ -3,6 +3,11 @@
  */
 
 const { isAdminLike } = require('./adminRole');
+const {
+  shouldHideQuoteContractFromProduction,
+  isQuoteContractLeadDocument,
+  isHideQuoteContractCompany,
+} = require('./hideQuoteContractFromProduction');
 
 const SHARE_MODULE_KEYS = new Set(['production', 'logistics', 'workshop']);
 
@@ -81,10 +86,18 @@ function isLeadDocSharedToWorkshop(doc) {
  * @param {object} doc — lead_document
  * @param {'production'|'logistics'|'workshop'} moduleKey
  * @param {object} user — req.user shape
+ * @param {{ leadCompanyId?: string|null }} [opts]
  */
-function leadDocVisibleForModuleAndUser(doc, moduleKey, user) {
+function leadDocVisibleForModuleAndUser(doc, moduleKey, user, opts = {}) {
   const mod = String(moduleKey || '').toLowerCase().trim();
   if (SHARE_MODULE_KEYS.has(mod) && !isLeadDocSharedToWorkshop(doc)) {
+    return false;
+  }
+  if (
+    mod === 'production'
+    && isHideQuoteContractCompany(opts.leadCompanyId)
+    && isQuoteContractLeadDocument(doc)
+  ) {
     return false;
   }
   return canViewerSeeByCompanyAndDept(doc, user) && isVisibleInShareModule(doc, moduleKey);
@@ -104,8 +117,15 @@ function isCrmAttachmentSharedToProject(att) {
   return att?.shared_to_project === true;
 }
 
-function crmAttachmentVisibleForModuleAndUser(att, moduleKey, user, taskRow = null) {
+function crmAttachmentVisibleForModuleAndUser(att, moduleKey, user, taskRow = null, opts = {}) {
   if (!isCrmAttachmentSharedToProject(att)) return false;
+  if (shouldHideQuoteContractFromProduction({
+    companyId: opts.leadCompanyId,
+    task: taskRow,
+    moduleKey,
+  })) {
+    return false;
+  }
   return canViewerSeeByCompanyAndDept(att, user, taskRow) && isVisibleInShareModule(att, moduleKey);
 }
 
@@ -114,8 +134,15 @@ function isCrmTaskSharedToProject(task) {
   return task?.shared_to_project === true;
 }
 
-function crmTaskVisibleForModuleAndUser(task, moduleKey, user) {
+function crmTaskVisibleForModuleAndUser(task, moduleKey, user, opts = {}) {
   if (!isCrmTaskSharedToProject(task)) return false;
+  if (shouldHideQuoteContractFromProduction({
+    companyId: opts.leadCompanyId,
+    task,
+    moduleKey,
+  })) {
+    return false;
+  }
   return canViewerSeeByCompanyAndDept(task, user) && isVisibleInShareModule(task, moduleKey);
 }
 

@@ -470,7 +470,7 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
 
   const validateStep1 = (): string | null => {
     if (!title.trim()) return 'Nhập tên Deal.';
-    if (!companyId) return 'Chọn công ty SX.';
+    if (!companyId) return 'Chọn công ty VC/LĐ.';
     if (!workTypes.length) return 'Công ty chưa cấu hình phân loại xưởng.';
     if (!workshopTypeId) return 'Chọn phân loại xưởng.';
     if (regions.length > 0 && !regionId) return 'Chọn khu vực.';
@@ -573,7 +573,7 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
   };
 
   const pickerTitle =
-    picker === 'company' ? 'Chọn công ty SX'
+    picker === 'company' ? 'Chọn công ty VC/LĐ'
       : picker === 'workshop' ? 'Phân loại xưởng'
         : picker === 'region' ? 'Khu vực'
           : picker === 'external' ? 'Công ty ngoài / Đối tác'
@@ -642,7 +642,7 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
 
               <View style={styles.field}>
                 <Text style={styles.label}>
-                  Công ty SX <Text style={styles.required}>*</Text>
+                  Công ty VC/LĐ <Text style={styles.required}>*</Text>
                 </Text>
                 {canPickCompany ? (
                   <TouchableOpacity
@@ -718,7 +718,7 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
                     style={styles.linkBtn}
                     onPress={() => {
                       if (!companyId) {
-                        setErr('Chọn công ty SX trước khi thêm đối tác.');
+                        setErr('Chọn công ty VC/LĐ trước khi thêm đối tác.');
                         return;
                       }
                       if (externalCompanies.length) {
@@ -897,7 +897,7 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
               <Text style={styles.sectionTitle}>XÁC NHẬN</Text>
               <View style={styles.confirmBox}>
                 <View style={styles.confirmRow}>
-                  <Text style={styles.confirmLabel}>Công ty SX</Text>
+                  <Text style={styles.confirmLabel}>Công ty VC/LĐ</Text>
                   <Text style={[styles.confirmValue, styles.confirmValuePrimary]} numberOfLines={2}>
                     {companyName || '— Chọn —'}
                   </Text>
@@ -983,7 +983,7 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
                 <View style={styles.pickerEmpty}>
                   <Text style={styles.pickerEmptyText}>
                     {picker === 'company'
-                      ? 'Không có công ty SX — kiểm tra quyền hoặc cấu hình module Sản xuất.'
+                      ? 'Không có công ty VC/LĐ — kiểm tra quyền hoặc cấu hình module Vận chuyển lắp đặt.'
                       : picker === 'external'
                         ? 'Chưa có đối tác — chọn «Nhập công ty mới» bên dưới form.'
                         : 'Không có lựa chọn.'}

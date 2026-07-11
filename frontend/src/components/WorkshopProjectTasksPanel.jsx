@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
-import { taskBelongsToWorkshopModule } from '../lib/workshopTaskScope';
+import { taskBelongsToWorkshopModule, SX_STAGE_SLUGS, VC_STAGE_SLUGS } from '../lib/workshopTaskScope';
 import { isLeadDocVisibleInModule } from '../lib/documentShareScope';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 import { ClipboardList, X, ChevronDown, ChevronRight, UserPlus, Trash2, Save } from 'lucide-react';
@@ -33,7 +33,7 @@ export default function WorkshopProjectTasksPanel({
 }) {
   const stageSlug = workArea === 'logistics' ? 'delivery' : 'production';
   const defaultStage = (workshopPipeline || []).find((s) => s.slug === stageSlug)
-    || (workshopPipeline || []).find((s) => (workArea === 'logistics' ? LOGISTICS_SLUGS : PRODUCTION_SLUGS).has(s.slug));
+    || (workshopPipeline || []).find((s) => (workArea === 'logistics' ? VC_STAGE_SLUGS : SX_STAGE_SLUGS).has(s.slug));
   const defaultStageId = defaultStage?.id || null;
 
   const [title, setTitle] = useState('');
@@ -51,7 +51,15 @@ export default function WorkshopProjectTasksPanel({
   const [employeesByUnit, setEmployeesByUnit] = useState({});
   const [crmSharedTaskNotes, setCrmSharedTaskNotes] = useState([]);
 
-  const filtered = filterProjectTasksByWorkArea(tasks, workArea);
+  const filtered = useMemo(() => {
+    const rows = filterProjectTasksByWorkArea(tasks, workArea);
+    return [...rows].sort((a, b) => {
+      const ao = Number(a.order_index) || 0;
+      const bo = Number(b.order_index) || 0;
+      if (ao !== bo) return ao - bo;
+      return String(a.created_at || '').localeCompare(String(b.created_at || ''));
+    });
+  }, [tasks, workArea]);
   const shareMod = workArea === 'logistics' ? 'logistics' : 'production';
   const sharedCrmDocs = useMemo(
     () => (crmDealDocs || []).filter(
@@ -471,13 +479,13 @@ export default function WorkshopProjectTasksPanel({
                       </div>
                     )}
                     <div>
-                      <label className="text-[10px] font-semibold text-gray-500 uppercase">Ghi chú (mô tả nhiệm vụ)</label>
+                      <label className="text-[10px] font-semibold text-gray-500 uppercase">Mô tả (tuỳ chọn)</label>
                       <textarea
                         value={descDraft[task.id] !== undefined ? descDraft[task.id] : (task.description || '')}
                         onChange={(e) => setDescDraft((d) => ({ ...d, [task.id]: e.target.value }))}
                         rows={3}
                         className="w-full mt-1 px-2 py-1.5 border border-gray-200 rounded-lg text-sm"
-                        placeholder="Ghi chú nội dung, hướng dẫn thực hiện…"
+                        placeholder="Hướng dẫn thêm nếu cần — để trống nếu không dùng"
                       />
                       <button
                         type="button"
@@ -486,7 +494,7 @@ export default function WorkshopProjectTasksPanel({
                         className="mt-1 h-8 px-3 rounded-lg bg-sky-600 text-white text-xs font-medium inline-flex items-center gap-1 hover:bg-sky-700 disabled:opacity-50"
                       >
                         <Save className="h-3 w-3" />
-                        {savingDesc === task.id ? '…' : 'Lưu ghi chú'}
+                        {savingDesc === task.id ? '…' : 'Lưu mô tả'}
                       </button>
                     </div>
                     <div>

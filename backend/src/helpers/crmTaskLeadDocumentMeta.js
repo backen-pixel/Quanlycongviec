@@ -42,6 +42,7 @@ function getCrmStageGroupLabel(stageSlug, pipelineStageName = null) {
 }
 
 const { cleanShareModulesInput, parseJsonArray } = require('./documentShareScope');
+const { shouldBlockAutoShareQuoteContract } = require('./hideQuoteContractFromProduction');
 
 /**
  * Map cờ chia sẻ CRM (shared_to_project trên task/attachment) → lead_documents (shared_to_workshop).
@@ -78,6 +79,10 @@ function shareFromChecklistItem(checklistItem) {
 
 /** Cờ mặc định trên crm_task_attachments — deal đã có dự án SX thì tự chia sẻ sang xưởng. */
 function getDefaultCrmAttachmentShare(taskRow, opts = {}, checklistItem = null) {
+  // VPT / Phúc Đạt: không auto-chia sẻ file/ghi chú nhiệm vụ Báo giá & Hợp đồng sang SX
+  if (shouldBlockAutoShareQuoteContract({ companyId: opts.leadCompanyId, task: taskRow })) {
+    return { shared_to_project: false, allowed_share_modules: null };
+  }
   const fromCk = shareFromChecklistItem(checklistItem);
   if (fromCk) return fromCk;
   if (taskRow?.shared_to_project === true) {

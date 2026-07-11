@@ -24,6 +24,7 @@ import {
   calcCrmProductionTaskProgress,
   fetchCrmDealTasks,
   fetchDealIdForProject,
+  fetchLogisticsWorkshopTasks,
   fetchProductionProjectDetail,
   fetchProjectActivities,
   groupCrmTasksByStage,
@@ -69,11 +70,13 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
       let resolvedDealId = detail.crmDeals?.[0]?.id || null;
       if (!resolvedDealId) resolvedDealId = await fetchDealIdForProject(projectId);
       setDealId(resolvedDealId);
-      const [taskRows, actRows] = await Promise.all([
+      const [crmTasks, workshopTasks, actRows] = await Promise.all([
         resolvedDealId ? fetchCrmDealTasks(resolvedDealId) : Promise.resolve([]),
+        fetchLogisticsWorkshopTasks(projectId),
         fetchProjectActivities(projectId),
       ]);
-      setTasks(taskRows);
+      // Ưu tiên crm_tasks VC; nếu trống dùng nhiệm vụ bộ mẫu logistics trên dự án
+      setTasks(crmTasks.length ? crmTasks : workshopTasks);
       setActivities(actRows);
     } catch (e) {
       setErr(formatApiError(e));
@@ -387,17 +390,16 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
                     <Text style={styles.groupTitle}>{group.label}</Text>
                     <Text style={styles.groupCount}>{doneInGroup}/{group.tasks.length}</Text>
                   </View>
-                  {group.tasks.map((task) =>
-                    dealId ? (
+                  {group.tasks.map((task) => (
                       <ProjectCrmTaskRow
                         key={task.id}
                         task={task}
                         dealId={dealId}
+                        projectCompanyId={project?.company_id || project?.company?.id || null}
                         onUpdated={onTaskUpdated}
                         onDeleted={onTaskDeleted}
                       />
-                    ) : null,
-                  )}
+                    ))}
                 </View>
               );
             }) : (

@@ -22,6 +22,7 @@ export type ProjectBoardChangedPayload = {
 
 export type ProjectCommentChangedPayload = {
   project_id?: string;
+  lead_id?: string;
   action?: 'created' | 'updated' | 'deleted' | string;
   [key: string]: unknown;
 };
@@ -40,7 +41,13 @@ export function projectIdFromSyncEvent(evt: SyncEvent): string | null {
 }
 
 export function dealIdFromSyncEvent(evt: SyncEvent): string | null {
-  if (evt.type !== 'crm:task_changed') return null;
-  const lid = evt.payload.lead_id;
-  return lid != null && String(lid).trim() ? String(lid) : null;
+  if (evt.type === 'crm:task_changed') {
+    const lid = evt.payload.lead_id;
+    return lid != null && String(lid).trim() ? String(lid) : null;
+  }
+  if (evt.type === 'project:comment_changed') {
+    const lid = evt.payload.lead_id;
+    return lid != null && String(lid).trim() ? String(lid) : null;
+  }
+  return null;
 }

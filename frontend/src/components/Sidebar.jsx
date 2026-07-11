@@ -431,6 +431,15 @@ const VC_MENU_GROUPS = [
       { to: { pathname: '/admin/trash', search: '?tab=vc' }, icon: Trash2, label: 'Thùng rác VC', adminOnly: true, strictAdminOnly: true },
     ]
   },
+  {
+    id: 'vc-tools',
+    moduleKey: 'logistics',
+    title: '4. Hỗ trợ',
+    emoji: '🛠️',
+    items: [
+      { to: '/vc/download-app', icon: Download, label: 'Tải app VC/LĐ' },
+    ],
+  },
 ];
 
 function resolveGroupModuleContext(group) {

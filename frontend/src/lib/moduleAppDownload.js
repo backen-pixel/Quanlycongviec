@@ -18,6 +18,15 @@ export const MODULE_APP_DOWNLOAD = {
     packageName: 'vn.tubeppro.sxmobile',
     installHint: 'Tải file APK, mở và cho phép «Cài đặt từ nguồn không xác định» nếu máy hỏi.',
   },
+  vc: {
+    appKey: 'vc-mobile',
+    title: 'App Vận chuyển lắp đặt',
+    subtitle: 'Ứng dụng VC/LĐ trên điện thoại Android — Kanban, nhiệm vụ, ghi chú, camera',
+    emoji: '🚚',
+    accent: 'orange',
+    packageName: 'vn.tubeppro.vcmobile',
+    installHint: 'Tải file APK, mở và cho phép «Cài đặt từ nguồn không xác định» nếu máy hỏi.',
+  },
 };
 
 export function getModuleAppDownloadConfig(module) {
