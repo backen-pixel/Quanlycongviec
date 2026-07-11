@@ -11,6 +11,7 @@ const {
   memberDisplayName,
 } = require('./crmLeadCommentMentions');
 const { ensureLeadMembersFromProjectStaff } = require('./productionWorkshopTypeStaff');
+const { filterUserIdsForCrmLeadScopedNotification } = require('./deadlineModuleNotifications');
 
 async function loadDealCommentContext(supabase, leadId) {
   let leadTitle = '';
@@ -443,6 +444,38 @@ async function postCrmStageDefaultAssigneeComment(req, notifyMultiple, {
   }
 
   try {
+    const { data: leadRow } = await supabase
+      .from('crm_leads')
+      .select('id, title, code, type, company_id, region_id')
+      .eq('id', leadId)
+      .maybeSingle();
+
+    if (
+      leadRow
+      && String(newAssigneeId) !== String(senderId)
+    ) {
+      const label = leadRow.type === 'deal' ? 'Deal' : 'Lead';
+      const entityType = leadRow.type === 'deal' ? 'crm_deal' : 'crm_lead';
+      const titleLabel = leadRow.title || leadRow.code || label;
+      const stageSuffix = stageName ? ` khi vào cột «${stageName}»` : '';
+      const okOwners = await filterUserIdsForCrmLeadScopedNotification(
+        supabase,
+        { company_id: leadRow.company_id, region_id: leadRow.region_id },
+        [newAssigneeId],
+      );
+      if (okOwners.some((x) => String(x) === String(newAssigneeId))) {
+        await notifyMultiple(
+          req,
+          [newAssigneeId],
+          'lead_assigned',
+          `👤 ${label} được giao cho bạn`,
+          `${label} "${titleLabel}" được chuyển phụ trách cho bạn${stageSuffix}.`,
+          entityType,
+          leadId,
+        );
+      }
+    }
+
     const leadMembers = await fetchLeadMentionMembers(supabase, leadId);
     const mentionIds = resolveLeadCommentMentionIds(
       { mention_user_ids: [String(newAssigneeId)] },

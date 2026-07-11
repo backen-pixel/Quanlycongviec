@@ -98,6 +98,8 @@ import {
 } from '../lib/crmDealStageGate';
 import DealStageEventModal from '../components/DealStageEventModal';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
+import CrmStageAssigneeModal from '../components/CrmStageAssigneeModal';
+import { stageNeedsAssigneeConfirm } from '../lib/crmStageAssigneeConfirm';
 import {
   formatCrmRemainingMs,
   getCrmDeadlineUrgencyBadgeClass,
@@ -1177,6 +1179,9 @@ export default function CRMDashboard() {
   /** Cột yêu cầu deadline: mở modal chọn deadline (+ lý do) trước khi PATCH stage */
   const [deadlineCtx, setDeadlineCtx] = useState(null);
   const [deadlineBusy, setDeadlineBusy] = useState(false);
+  /** Cột bật chuyển PT: hỏi áp dụng cấu hình hay giữ PT hiện tại */
+  const [assigneeCtx, setAssigneeCtx] = useState(null);
+  const [assigneeBusy, setAssigneeBusy] = useState(false);
   /** Deal kéo sang Thắng, chưa có dự án: chọn công ty SX trước khi PATCH stage */
   const [dealWonProductionCtx, setDealWonProductionCtx] = useState(null);
   const [dealWonProductionCompanyId, setDealWonProductionCompanyId] = useState('');
@@ -4317,6 +4322,10 @@ export default function CRMDashboard() {
           if (data.stage_entered_at) mergePatch.stage_entered_at = data.stage_entered_at;
           if (data.kanban_deadline_at !== undefined) mergePatch.kanban_deadline_at = data.kanban_deadline_at;
           if (data.kanban_deadline_reason !== undefined) mergePatch.kanban_deadline_reason = data.kanban_deadline_reason;
+          if (data.assigned_to !== undefined) mergePatch.assigned_to = data.assigned_to;
+          if (data.lead_owner_id !== undefined) mergePatch.lead_owner_id = data.lead_owner_id;
+          if (data.assignee !== undefined) mergePatch.assignee = data.assignee;
+          if (data.lead_owner !== undefined) mergePatch.lead_owner = data.lead_owner;
           if (mergePatch.project_id) {
             mergePatch = await hydrateCrmLeadBadgeFields(api, leadId, mergePatch);
           }
@@ -4369,6 +4378,57 @@ export default function CRMDashboard() {
       }
     },
     [pipelineType, allLeads, allDeals, load, stagesLead, stagesDeal],
+  );
+
+  const proceedKanbanStageMove = useCallback(
+    async (leadId, newStageId, extraData, targetStage) => {
+      const rows = pipelineType === 'lead' ? allLeads : allDeals;
+      const card = rows.find((x) => String(x.id) === String(leadId));
+      const isRegularStage = targetStage
+        && !targetStage.is_won
+        && !targetStage.is_lost
+        && !targetStage.counts_as_completed_revenue;
+      const isSameStage = card && String(card.stage_id || '') === String(newStageId);
+
+      if (isRegularStage && !isSameStage && targetStage.requires_deadline && !extraData?.kanban_deadline_at) {
+        setDeadlineCtx({
+          leadId,
+          newStageId,
+          extraData,
+          targetStage,
+          card: card || null,
+          mode: 'stage_move',
+        });
+        return;
+      }
+
+      if (
+        isRegularStage
+        && !isSameStage
+        && stageNeedsAssigneeConfirm(targetStage, card)
+        && extraData?.apply_default_assignee === undefined
+      ) {
+        setAssigneeCtx({
+          leadId,
+          newStageId,
+          extraData,
+          targetStage,
+          card: card || null,
+        });
+        return;
+      }
+
+      if (pipelineType === 'deal' && targetStage && !targetStage.is_lost && targetStage.create_event_on_enter) {
+        const deal = allDeals.find((d) => d.id === leadId);
+        if (deal) {
+          setDealKanbanEventCtx({ leadId, newStageId, extraData, targetStage, deal });
+          return;
+        }
+      }
+
+      await applyKanbanStageChange(leadId, newStageId, extraData);
+    },
+    [pipelineType, allLeads, allDeals, applyKanbanStageChange],
   );
 
   const handleMoveStage = useCallback(
@@ -4476,29 +4536,10 @@ export default function CRMDashboard() {
               return;
             }
           } catch (_) { /* lỗi pre-check → bỏ qua */ }
-          if (targetStage.requires_deadline) {
-            setDeadlineCtx({
-              leadId,
-              newStageId,
-              extraData,
-              targetStage,
-              card: card || null,
-              mode: 'stage_move',
-            });
-            return;
-          }
         }
       }
 
-      if (pipelineType === 'deal' && targetStage && !targetStage.is_lost && targetStage.create_event_on_enter) {
-        const deal = allDeals.find((d) => d.id === leadId);
-        if (deal) {
-          setDealKanbanEventCtx({ leadId, newStageId, extraData, targetStage, deal });
-          return;
-        }
-      }
-
-      await applyKanbanStageChange(leadId, newStageId, extraData);
+      await proceedKanbanStageMove(leadId, newStageId, extraData, targetStage);
     },
     [
       pipelineType,
@@ -4506,9 +4547,9 @@ export default function CRMDashboard() {
       stagesDeal,
       allLeads,
       allDeals,
-      applyKanbanStageChange,
       isAdmin,
       productionCompaniesForSx,
+      proceedKanbanStageMove,
     ],
   );
 
@@ -4546,6 +4587,11 @@ export default function CRMDashboard() {
 
       if (targetStage.requires_deadline) {
         window.alert('Giai đoạn này yêu cầu đặt deadline khi vào — vui lòng kéo từng thẻ.');
+        return;
+      }
+
+      if (targetStage.apply_default_assignee_on_enter && targetStage.default_assignee_user_id) {
+        window.alert('Giai đoạn này yêu cầu xác nhận chuyển người phụ trách — vui lòng kéo từng thẻ.');
         return;
       }
 
@@ -4715,6 +4761,24 @@ export default function CRMDashboard() {
     }
   };
 
+  const finishAssigneeStageMove = async (applyDefaultAssignee, assigneeUserId = null) => {
+    const ctx = assigneeCtx;
+    if (!ctx) return;
+    setAssigneeBusy(true);
+    try {
+      const mergedExtra = { ...ctx.extraData, apply_default_assignee: applyDefaultAssignee };
+      if (applyDefaultAssignee && assigneeUserId) {
+        mergedExtra.assignee_user_id = assigneeUserId;
+      }
+      setAssigneeCtx(null);
+      await proceedKanbanStageMove(ctx.leadId, ctx.newStageId, mergedExtra, ctx.targetStage);
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi chuyển giai đoạn');
+    } finally {
+      setAssigneeBusy(false);
+    }
+  };
+
   /** Mở modal deadline từ nút trên thẻ (không đổi cột). */
   const openDeadlineFromCard = useCallback((item) => {
     setDeadlineCtx({
@@ -4772,13 +4836,18 @@ export default function CRMDashboard() {
         load({ silent: true });
         return;
       }
-      await applyKanbanStageChange(
+      const mergedExtra = {
+        ...ctx.extraData,
+        kanban_deadline_at: deadlineIso,
+        deadline_reason: reason || '',
+      };
+      setDeadlineCtx(null);
+      await proceedKanbanStageMove(
         ctx.leadId,
         ctx.newStageId,
-        { ...ctx.extraData, kanban_deadline_at: deadlineIso, deadline_reason: reason || '' },
-        { throwOnError: true },
+        mergedExtra,
+        ctx.targetStage,
       );
-      setDeadlineCtx(null);
       load({ silent: true });
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Lỗi cập nhật deadline');
@@ -7170,6 +7239,18 @@ export default function CRMDashboard() {
         onConfirm={confirmDealKanbanEvent}
         onMoveWithoutEvent={skipDealKanbanEvent}
         submitting={dealKanbanEventBusy}
+      />
+
+      <CrmStageAssigneeModal
+        open={!!assigneeCtx}
+        onClose={() => { if (!assigneeBusy) setAssigneeCtx(null); }}
+        card={assigneeCtx?.card}
+        targetStage={assigneeCtx?.targetStage}
+        entityLabel={pipelineType === 'deal' ? 'deal' : 'lead'}
+        employeeList={employeeFilterList}
+        submitting={assigneeBusy}
+        onConfirmTransfer={(userId) => finishAssigneeStageMove(true, userId)}
+        onKeepCurrent={() => finishAssigneeStageMove(false)}
       />
 
       <CrmDeadlineModal

@@ -584,7 +584,13 @@ export default function KanbanScreen() {
         const hay = `${p.code} ${p.name} ${p.customer_name || ''} ${p.customer_phone || ''}`.toLowerCase();
         if (!hay.includes(needle)) return false;
       }
-      if (quickFilter === 'mine' && String(p.production_person_id || '') !== String(myId || '')) return false;
+      if (quickFilter === 'mine') {
+        const mine = String(myId || '');
+        const isMine =
+          String(p.logistics_person_id || '') === mine
+          || String(p.installer_person_id || '') === mine;
+        if (!isMine) return false;
+      }
       if (quickFilter === 'overdue' && !p.is_overdue) return false;
       if (quickFilter === 'today' && !isToday(p.production_deadline || p.deadline)) return false;
       // filterCompany: server-side.
@@ -816,7 +822,7 @@ export default function KanbanScreen() {
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
           <Text style={styles.appTitle}>Vận chuyển lắp đặt</Text>
-          <Text style={styles.appSub}>Bảng điều hành sản xuất</Text>
+          <Text style={styles.appSub}>Bảng điều hành vận chuyển lắp đặt</Text>
         </View>
         <View style={styles.headerBtns}>
           <TapHighlight style={styles.iconBtn} onPress={() => openMessages('chats')} hitSlop={8}>
@@ -1133,7 +1139,10 @@ export default function KanbanScreen() {
           const deadlineStr = formatDate(item.production_deadline || item.deadline);
           const createdStr = formatDate(item.created_at);
           const vcTag = getVcTag(item);
-          const personName = item.production_person_name?.trim() || null;
+          const personName =
+            item.logistics_person_name?.trim()
+            || item.installer_person_name?.trim()
+            || null;
           const commentCount = commentIndex[item.id]?.count ?? 0;
 
           return (
@@ -1195,7 +1204,7 @@ export default function KanbanScreen() {
               {/* Người phụ trách */}
               <View style={styles.personRow}>
                 <Ionicons name="person-circle-outline" size={15} color={colors.textMuted} />
-                <Text style={styles.personLabel}>Phụ trách:</Text>
+                <Text style={styles.personLabel}>VC/LĐ:</Text>
                 <Text style={styles.personName} numberOfLines={1}>
                   {personName || 'Chưa gán'}
                 </Text>
@@ -1404,7 +1413,7 @@ export default function KanbanScreen() {
 
       <FilterPickerModal
         visible={workshopPickerOpen}
-        title="Công ty sản xuất"
+        title="Công ty vận chuyển"
         options={companyOptions}
         selectedId={filterCompany}
         onSelect={(id) => {

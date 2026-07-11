@@ -24,10 +24,10 @@ export type DriveEntityLink = {
   file?: DriveFile | null;
 };
 
-export type ProductionDriveEntityType = 'production_project';
+export type DriveEntityType = 'production_project' | 'vc_project';
 
 export async function fetchDriveEntityChildren(
-  entityType: ProductionDriveEntityType,
+  entityType: DriveEntityType,
   entityId: string,
   folderId?: string | null,
 ): Promise<DriveEntityChildren> {
@@ -43,7 +43,7 @@ export async function fetchDriveEntityChildren(
 }
 
 export async function fetchDriveLinksByEntity(
-  entityType: ProductionDriveEntityType,
+  entityType: DriveEntityType,
   entityId: string,
 ): Promise<DriveEntityLink[]> {
   const { data } = await api.get<{ links: DriveEntityLink[] }>(
@@ -63,7 +63,7 @@ export async function drivePreview(fileId: string) {
 }
 
 export async function createDriveEntityFolder(
-  entityType: ProductionDriveEntityType,
+  entityType: DriveEntityType,
   entityId: string,
   name: string,
   parentFolderId?: string | null,
@@ -76,7 +76,7 @@ export async function createDriveEntityFolder(
 }
 
 export async function uploadDriveEntityFile(input: {
-  entityType: ProductionDriveEntityType;
+  entityType: DriveEntityType;
   entityId: string;
   uri: string;
   name: string;

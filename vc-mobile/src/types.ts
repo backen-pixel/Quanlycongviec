@@ -44,6 +44,8 @@ export type ProductionProject = {
   production_person_name?: string | null;
   logistics_person_id?: string | null;
   logistics_person_name?: string | null;
+  installer_person_id?: string | null;
+  installer_person_name?: string | null;
   company_name?: string | null;
   company_id?: string | null;
   workshop_type_name?: string | null;
@@ -129,6 +131,8 @@ export type ProductionProjectDetail = ProductionProject & {
   project_manager?: PersonRef | null;
   supervisor?: PersonRef | null;
   production_person?: PersonRef | null;
+  logistics_person?: PersonRef | null;
+  installer_person?: PersonRef | null;
   shipping_person?: PersonRef | null;
   care_person?: PersonRef | null;
   current_stage?: { id?: string; slug?: string; name?: string; color?: string | null } | null;

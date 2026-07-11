@@ -481,7 +481,7 @@ export default function WorkScreen() {
         <Text style={styles.empty}>
           {userId
             ? filter === 'all'
-              ? 'Chưa có nhiệm vụ sản xuất nào được giao cho bạn.'
+              ? 'Chưa có nhiệm vụ vận chuyển lắp đặt nào được giao cho bạn.'
               : 'Không có nhiệm vụ nào trong bộ lọc này.'
             : 'Đăng nhập để xem công việc được giao.'}
         </Text>
