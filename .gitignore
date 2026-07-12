@@ -1,7 +1,10 @@
-# APK debug copy at repo root (tải lên điện thoại; không nên commit)
+# APK / mobile release binaries — KHÔNG commit (quá nặng)
 TuBep-VoiceSync-debug.apk
 crm-mobile-debug.apk
 *.apk
+*.aab
+*.ipa
+backend/uploads/app-releases/
 
 # Cursor local config
 .cursor/
