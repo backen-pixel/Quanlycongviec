@@ -1,0 +1,26 @@
+# APK / mobile release binaries — KHÔNG commit (quá nặng)
+TuBep-VoiceSync-debug.apk
+crm-mobile-debug.apk
+*.apk
+*.aab
+*.ipa
+backend/uploads/app-releases/
+
+# Cursor local config
+.cursor/
+
+# Local env files (contain secrets)
+backend/.env
+frontend/.env
+.env
+scripts/knowledge/.auth-session.json
+scripts/knowledge/node_modules/
+
+# Local data store cho external API keys (chứa secret) — KHÔNG commit
+backend/data/api-keys.json
+
+# APK reverse-engineering dumps (local only, chứa file name reserved trên Windows)
+.apk-analysis/
+
+# Database dump files
+backend/uploads/_clone/*.dump

@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "description": "Kỹ năng mặc định — bot đọc file JSON này khi khởi động / reload. Sửa file rồi gọi POST /api/ai-chat-bot/skills/library/reload hoặc nhắn bot «tải lại skill json».",
+  "skills": [
+    {
+      "code": "phucdat_kd_nv_tab_day_cycle",
+      "skill_type": "scheduled_report",
+      "title": "Tab NV Phúc Đạt · KD · 8h sáng + 20h tối",
+      "summary": "BC tab Nhân viên phòng KD Phúc Đạt — sáng recap hôm qua, tối snapshot hôm nay",
+      "enabled": true,
+      "when_to_use": "User muốn lịch tab NV Phúc Đạt kinh doanh 8h sáng và 20h tối",
+      "instruction": "Báo cáo tab nhân viên Phúc Đạt phòng kinh doanh 8h sáng 8h tối ngày hôm trước",
+      "config": {
+        "report_type": "org_overview",
+        "company_name": "Phúc Đạt",
+        "department_name": "kinh doanh",
+        "run_times": ["08:00", "20:00"],
+        "time_scope": "day_cycle"
+      }
+    },
+    {
+      "code": "phucdat_kd_org_3slots",
+      "skill_type": "scheduled_report",
+      "summary": "Báo cáo doanh thu / org overview phòng kinh doanh Phúc Đạt — 3 lần/ngày",
+      "enabled": true,
+      "when_to_use": "User hỏi BC tổ chức Phúc Đạt phòng KD hoặc gõ /skill phucdat_kd_org_3slots",
+      "instruction": "User thích nhận BC tổ chức phòng KD Phúc Đạt lúc 8h, 12h và 18h",
+      "config": {
+        "report_type": "org_overview",
+        "company_name": "Phúc Đạt",
+        "department_name": "kinh doanh",
+        "run_times": ["08:00", "12:00", "18:00"],
+        "time_scope": "today"
+      }
+    },
+    {
+      "code": "daily_brief_morning",
+      "skill_type": "scheduled_report",
+      "title": "Tóm tắt việc sáng · 8h",
+      "summary": "Daily brief cho thành viên kênh — 8h sáng",
+      "enabled": true,
+      "config": {
+        "report_type": "daily_brief",
+        "run_times": ["08:00"],
+        "time_scope": "today"
+      }
+    },
+    {
+      "code": "lead_deadline_afternoon",
+      "skill_type": "scheduled_report",
+      "title": "Cảnh báo lead hết hạn · 17h",
+      "summary": "Lead trễ hạn + sắp hết hạn ngày mai",
+      "enabled": true,
+      "config": {
+        "report_type": "lead_deadline",
+        "run_times": ["17:00"],
+        "time_scope": "today"
+      }
+    }
+  ]
+}

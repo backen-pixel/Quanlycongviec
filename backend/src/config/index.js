@@ -1,0 +1,103 @@
+require('dotenv').config();
+const { resolveRedisUrl } = require('./redisUrl');
+
+/** SPA production trên Render — dùng cho deep-link bot/push khi env còn trỏ domain cũ. */
+const DEFAULT_PRODUCTION_FRONTEND_URL = 'https://tubep-frontend-s30w.onrender.com';
+const LEGACY_FRONTEND_HOSTS = new Set([
+  'beppro.io',
+  'www.beppro.io',
+  'app.tubep.vn',
+  'www.app.tubep.vn',
+  'crm.tubeppro.com',
+  'www.crm.tubeppro.com',
+]);
+
+function normalizeOriginUrl(raw, fallback) {
+  const trimmed = String(raw || '').trim().replace(/\/+$/, '');
+  if (!trimmed) return fallback;
+  try {
+    const u = new URL(trimmed);
+    if (LEGACY_FRONTEND_HOSTS.has(u.hostname.toLowerCase())) {
+      return DEFAULT_PRODUCTION_FRONTEND_URL;
+    }
+    return trimmed;
+  } catch {
+    return fallback;
+  }
+}
+
+function resolveFrontendUrl() {
+  const devFallback = 'http://localhost:5173';
+  const prodFallback = DEFAULT_PRODUCTION_FRONTEND_URL;
+  const fallback = process.env.NODE_ENV === 'production' ? prodFallback : devFallback;
+  const fromEnv = process.env.FRONTEND_URL
+    || (process.env.CORS_ORIGINS || '').split(',')[0]
+    || '';
+  return normalizeOriginUrl(fromEnv, fallback);
+}
+
+function resolveCorsOrigins() {
+  const fallback =
+    'http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:3000,http://127.0.0.1:3000,http://localhost:4173';
+  const raw = process.env.CORS_ORIGINS || fallback;
+  const seen = new Set();
+  return raw
+    .split(',')
+    .map((s) => normalizeOriginUrl(s.trim(), ''))
+    .filter(Boolean)
+    .filter((origin) => {
+      if (seen.has(origin)) return false;
+      seen.add(origin);
+      return true;
+    });
+}
+
+module.exports = {
+  port: parseInt(process.env.PORT || '4000'),
+  jwtSecret: process.env.JWT_SECRET || 'change-this',
+  corsOrigins: resolveCorsOrigins(),
+  supabaseUrl: process.env.SUPABASE_URL,
+  supabaseAnonKey: process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || '',
+  supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || '',
+  redisUrl: resolveRedisUrl(),
+  supabaseDbUrl: process.env.SUPABASE_DB_URL || '',
+  supabaseDbDirectUrl: process.env.SUPABASE_DB_DIRECT_URL || '',
+  supabaseBackupUrl: process.env.SUPABASE_BACKUP_URL || '',
+  supabaseBackupAnonKey: process.env.SUPABASE_BACKUP_ANON_KEY || process.env.SUPABASE_BACKUP_PUBLISHABLE_KEY || '',
+  supabaseBackupServiceKey: process.env.SUPABASE_BACKUP_SERVICE_ROLE_KEY || process.env.SUPABASE_BACKUP_SECRET_KEY || '',
+  supabaseBackupDbUrl: process.env.SUPABASE_BACKUP_DB_URL || '',
+  supabaseBackupDbDirectUrl: process.env.SUPABASE_BACKUP_DB_DIRECT_URL || '',
+  /** Backup client + chuyển DB thủ công (trang Giám sát). Không bật chuyển tự động một mình. */
+  supabaseFailoverEnabled: process.env.SUPABASE_FAILOVER_ENABLED === '1',
+  /** Tự chuyển Primary↔Backup khi probe/fetch lỗi — mặc định tắt; chỉ bật khi =1. */
+  supabaseAutoFailoverEnabled: process.env.SUPABASE_AUTO_FAILOVER === '1',
+  supabaseHealthIntervalMs: Math.max(5000, parseInt(process.env.SUPABASE_HEALTH_INTERVAL_MS || '15000', 10)),
+  supabaseFailThreshold: Math.max(1, parseInt(process.env.SUPABASE_FAIL_THRESHOLD || '3', 10)),
+  supabaseAutoFailback: process.env.SUPABASE_AUTO_FAILBACK === '1',
+  supabaseReplicationEnabled: process.env.SUPABASE_REPLICATION_ENABLED === '1',
+  /** Ghi log thay đổi khi chuyển DB (Primary queue + Backup failback_log) — không bật failover tự động. */
+  supabaseSwitchLogEnabled: process.env.SUPABASE_SWITCH_LOG_ENABLED === '1',
+  pgPoolDisabled: process.env.PG_POOL_DISABLED === '1',
+  responseCacheDisabled: process.env.RESPONSE_CACHE_DISABLED === '1',
+  // URL gốc frontend web — deep-link bot AI, email SaaS, push.
+  frontendUrl: resolveFrontendUrl(),
+  // ── Google Drive integration (module Drive) ──
+  // Hỗ trợ 2 chế độ xác thực — đặt MỘT trong hai:
+  //  (A) Service Account: GDRIVE_SERVICE_ACCOUNT_JSON (chuỗi JSON đầy đủ key.json)
+  //                       hoặc GDRIVE_SERVICE_ACCOUNT_FILE (đường dẫn file key.json).
+  //  (B) OAuth Refresh Token (cho tài khoản cá nhân/Workspace):
+  //                       GDRIVE_OAUTH_CLIENT_ID + GDRIVE_OAUTH_CLIENT_SECRET + GDRIVE_OAUTH_REFRESH_TOKEN.
+  //                       File sẽ thuộc về user đã uỷ quyền (dùng quota của user đó).
+  gdriveServiceAccountJson: process.env.GDRIVE_SERVICE_ACCOUNT_JSON || '',
+  gdriveServiceAccountFile: process.env.GDRIVE_SERVICE_ACCOUNT_FILE || '',
+  gdriveOauthClientId: process.env.GDRIVE_OAUTH_CLIENT_ID || '',
+  gdriveOauthClientSecret: process.env.GDRIVE_OAUTH_CLIENT_SECRET || '',
+  gdriveOauthRefreshToken: process.env.GDRIVE_OAUTH_REFRESH_TOKEN || '',
+  // Folder gốc trên Google Drive (đã share quyền Editor cho service account hoặc thuộc về user OAuth). Bắt buộc.
+  gdriveRootFolderId: process.env.GDRIVE_ROOT_FOLDER_ID || '',
+  // (Tuỳ chọn, chỉ Service Account) Email Workspace user để impersonate qua domain-wide delegation.
+  gdriveImpersonateUser: process.env.GDRIVE_IMPERSONATE_USER || '',
+  // Bật/tắt job sync incremental (changes.list). Mặc định bật.
+  gdriveSyncEnabled: process.env.GDRIVE_SYNC_DISABLED !== '1',
+  gdriveSyncIntervalMs: Math.max(60_000, parseInt(process.env.GDRIVE_SYNC_INTERVAL_MS || '300000', 10)),
+};

@@ -1,0 +1,1096 @@
+{
+  "generated_at": "2026-06-24T02:06:50.371Z",
+  "total_routes": 217,
+  "by_file": {
+    "core.js": 202,
+    "routes/followupCare.js": 8,
+    "routes/planner.js": 7
+  },
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/_version",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/sla-at-risk",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/sla-remind",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/alerts/follow-ups",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/auto-lead-blocked-phones",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/auto-lead-blocked-phones",
+      "file": "core.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/auto-lead-blocked-phones/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/auto-project-config",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/auto-project-config",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/company-regions",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/company-regions",
+      "file": "core.js"
+    },
+    {
+      "method": "PATCH",
+      "path": "/company-regions/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/company-regions/:id/regeocode",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/contract-signed-revenue",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/customers",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/customers",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/customers-overview",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/customers-overview/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/customers/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/dashboard",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/deals",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/deals/:id/auto-create-project",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/documents/:docId/visibility",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/employees-by-company",
+      "file": "core.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/followup-care/dismiss",
+      "file": "routes/followupCare.js"
+    },
+    {
+      "method": "POST",
+      "path": "/followup-care/dismiss",
+      "file": "routes/followupCare.js"
+    },
+    {
+      "method": "POST",
+      "path": "/followup-care/dismiss-all",
+      "file": "routes/followupCare.js"
+    },
+    {
+      "method": "POST",
+      "path": "/followup-care/dismiss/undo",
+      "file": "routes/followupCare.js"
+    },
+    {
+      "method": "GET",
+      "path": "/followup-care/notifications",
+      "file": "routes/followupCare.js"
+    },
+    {
+      "method": "GET",
+      "path": "/invoices",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/invoices",
+      "file": "core.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/invoices/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/invoices/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/invoices/:id/items",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/invoices/:id/misa-publish",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/invoices/:id/misa-send-email",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/invoices/:id/misa-status",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/invoices/:id/payments",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/invoices/:id/pdf",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/kanban-bootstrap",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/kanban-rows",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/lead-care-marks",
+      "file": "routes/followupCare.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/lead-comments/:cid",
+      "file": "core.js"
+    },
+    {
+      "method": "PATCH",
+      "path": "/lead-comments/:cid",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/lead-comments/:cid/reaction",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/lead-comments/index",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/lead-types",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/lead-types",
+      "file": "core.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/lead-types/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/lead-types/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads-by-fb-page",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads-deadlines",
+      "file": "core.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/leads/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/activities",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/activities",
+      "file": "core.js"
+    },
+    {
+      "method": "PATCH",
+      "path": "/leads/:id/activities/:activityId",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:id/activities/:activityId/share",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/activities/upload",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/assignments",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/assignments",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/badge",
+      "file": "core.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/leads/:id/care-mark",
+      "file": "routes/followupCare.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/care-mark",
+      "file": "routes/followupCare.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/chat",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/chat",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:id/chat/:msgId/pin",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/chat/:msgId/react",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/chat/drive",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/chat/pinned",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/chat/upload",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/comments",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/comments",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/convert-to-deal",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/convert-to-lead",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/convert-to-project",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/create-project",
+      "file": "core.js"
+    },
+    {
+      "method": "PATCH",
+      "path": "/leads/:id/deadline",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/deadline-history",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/detail",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/documents",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/documents",
+      "file": "core.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/leads/:id/documents/:docId",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/documents/bulk",
+      "file": "core.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/leads/:id/interacted",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/interacted",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/members",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/members",
+      "file": "core.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/leads/:id/members/:userId",
+      "file": "core.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/leads/:id/pin",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/pin",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/preview-project-tasks",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/project-setup",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/project-tasks",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/reopen",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/repair-pipeline-display",
+      "file": "core.js"
+    },
+    {
+      "method": "PATCH",
+      "path": "/leads/:id/stage",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/stage-advance-check",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/sx-handover",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/sync-stage",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/task-attachments",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/task-documents",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/tasks",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/tasks",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/tasks/:taskId/import-quotation-excel",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/tasks/ensure-missing",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/tasks/ensure-missing-sx",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/tasks/from-template",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/tasks/generate-production-template",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/tasks/resync-pipeline",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/zalo-notify-preview",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/zalo-notify-send",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/zalo-template-fill",
+      "file": "core.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/leads/:leadId/tasks/:taskId",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:leadId/tasks/:taskId",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:leadId/tasks/:taskId/attachments",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:leadId/tasks/:taskId/attachments",
+      "file": "core.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/leads/:leadId/tasks/:taskId/attachments/:attId",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:leadId/tasks/:taskId/attachments/:attId/share-scope",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:leadId/tasks/:taskId/attachments/:attId/toggle-share",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:leadId/tasks/:taskId/attachments/bulk",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:leadId/tasks/:taskId/checklist/:checklistId/notes",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:leadId/tasks/:taskId/notes",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:leadId/tasks/:taskId/restore-checklist",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:leadId/tasks/:taskId/toggle-share",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/bulk-assign",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/cleanup-duplicates",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/merge-duplicates",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/merge-selected",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/picker",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/leads/scan-duplicates",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/stage-history-summary",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/ledger-net-by-leads",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/live-version",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/orders",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/orders",
+      "file": "core.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/orders/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/orders/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/orders/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/orders/:id/create-invoice",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/orders/:id/pdf",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/pipeline-stages",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/pipeline-stages",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/pipeline-stages-reorder",
+      "file": "core.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/pipeline-stages/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/pipeline-stages/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/pipeline-stages/:id/assign-production-columns",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/pipeline-stages/:id/production-columns",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/pipelines",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/pipelines",
+      "file": "core.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/pipelines/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/pipelines/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/pipelines/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/pipelines/:id/copy",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/planner/columns",
+      "file": "routes/planner.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/planner/columns/:id",
+      "file": "routes/planner.js"
+    },
+    {
+      "method": "PATCH",
+      "path": "/planner/columns/:id",
+      "file": "routes/planner.js"
+    },
+    {
+      "method": "POST",
+      "path": "/planner/columns/:id/items",
+      "file": "routes/planner.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/planner/items/:id",
+      "file": "routes/planner.js"
+    },
+    {
+      "method": "GET",
+      "path": "/planner/me",
+      "file": "routes/planner.js"
+    },
+    {
+      "method": "POST",
+      "path": "/planner/reorder",
+      "file": "routes/planner.js"
+    },
+    {
+      "method": "POST",
+      "path": "/products",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/products-list",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/products/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/project/:projectId/auto-invoice",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/project/:projectId/lead-documents",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/project/:projectId/shared-notes",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/project/:projectId/summary",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/projects/:projectId/documents",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/quotations",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/quotations",
+      "file": "core.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/quotations/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/quotations/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/quotations/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/quotations/:id/convert-to-order",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/quotations/:id/history",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/quotations/:id/pdf",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/quotations/excel-sheets",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/quotations/parse-excel",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/referrers",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/referrers",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/reports/org-overview",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/reports/org-overview/export.pdf",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/reports/staff-lead-deal",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/reports/staff-lead-deal/:userId/pipelines",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/reports/staff-lead-deal/:userId/pipelines/export.pdf",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/reports/staff-lead-deal/export.pdf",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/settings/deadline-config",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/settings/deadline-config",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/settings/deal-stage-report-buckets",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/settings/deal-stage-report-buckets",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/source-categories",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/source-categories",
+      "file": "core.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/source-categories/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/source-categories/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/sources",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/sources",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/sources/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/stage-counts",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/task-templates",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/task-templates",
+      "file": "core.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/task-templates/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/task-templates/:id",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/task-templates/:tplId/items",
+      "file": "core.js"
+    },
+    {
+      "method": "DELETE",
+      "path": "/task-templates/:tplId/items/:itemId",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/task-templates/:tplId/items/:itemId",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/task-templates/apply-to-company-regions",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/task-templates/set-default-bundle",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/overview",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/planner",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/web-dashboard-bootstrap",
+      "file": "core.js"
+    },
+    {
+      "method": "GET",
+      "path": "/zalo-notify-settings",
+      "file": "core.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/zalo-notify-settings",
+      "file": "core.js"
+    },
+    {
+      "method": "POST",
+      "path": "/zalo-notify-test",
+      "file": "core.js"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "id": "custom",
+  "name": "🌲 Rừng xanh",
+  "sidebar": "#1a2e1a",
+  "sidebarHover": "#243824",
+  "sidebarActive": "#2d4a2d",
+  "sidebarText": "#8fb88f",
+  "pageBg": "#f0f5f0",
+  "accent": "#16a34a",
+  "textHeading": "#1a2e1a",
+  "textBody": "#2d4a2d",
+  "textMuted": "#5a7a5a",
+  "textCard": "#1f3a1f",
+  "bgImage": null,
+  "bgOverlay": "rgba(0,0,0,0.03)"
+}
