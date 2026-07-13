@@ -112,6 +112,7 @@ r.post('/project-types', requirePermission('projects', 'edit'), async (req, res)
         applies_to,
         order_index: b.order_index ?? nextOrder,
         is_active: b.is_active !== false,
+        description: b.description != null ? String(b.description).trim() || null : null,
         updated_at: new Date().toISOString(),
       })
       .select('*')
@@ -148,6 +149,7 @@ r.put('/project-types/:id', requirePermission('projects', 'edit'), async (req, r
       update.applies_to = ['production', 'logistics', 'both'].includes(at) ? at : 'both';
     }
     if (b.name !== undefined) update.name = String(b.name).trim();
+    if (b.description !== undefined) update.description = String(b.description).trim() || null;
     const { data, error } = await supabase
       .from('workshop_project_types')
       .update(update)

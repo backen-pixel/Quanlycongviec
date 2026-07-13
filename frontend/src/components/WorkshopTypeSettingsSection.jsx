@@ -106,6 +106,7 @@ export default function WorkshopTypeSettingsSection({ moduleContext, accent = 't
         applies_to: t.applies_to,
         order_index: t.order_index,
         is_active: t.is_active,
+        description: t.description ?? '',
       });
       await loadTypes();
       onTypesChanged?.();
@@ -256,6 +257,12 @@ export default function WorkshopTypeSettingsSection({ moduleContext, accent = 't
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
+                  <input
+                    value={t.description || ''}
+                    onChange={(e) => setTypes((prev) => prev.map((x) => (x.id === t.id ? { ...x, description: e.target.value } : x)))}
+                    placeholder="Mô tả / gợi ý (hiện ở bước chuyển CRM sang Sản xuất)…"
+                    className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-600"
+                  />
                 </li>
               ))}
             </ul>

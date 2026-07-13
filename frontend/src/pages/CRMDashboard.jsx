@@ -7144,6 +7144,20 @@ export default function CRMDashboard() {
                 ⚠️ Công ty này chưa có phân loại — vào Cài đặt → Pipeline Sản xuất để tạo phân loại trước.
               </p>
             )}
+            {dealWonProductionWorkshopTypes.some((t) => t.description?.trim()) && (
+              <div className="mb-2 space-y-1">
+                {dealWonProductionWorkshopTypes.filter((t) => t.description?.trim()).map((t) => (
+                  <p
+                    key={t.id}
+                    className={`text-[11px] rounded-lg px-2 py-1.5 border ${String(t.id) === String(dealWonProductionWorkshopTypeId)
+                      ? 'bg-teal-50 border-teal-200 text-teal-800'
+                      : 'bg-gray-50 border-gray-100 text-gray-500'}`}
+                  >
+                    💡 <strong>{t.name}</strong>: {t.description}
+                  </p>
+                ))}
+              </div>
+            )}
             {dealWonProductionError && (
               <p className="text-xs text-red-600 mb-3">{dealWonProductionError}</p>
             )}
@@ -7253,6 +7267,20 @@ export default function CRMDashboard() {
               <p className="text-[11px] text-amber-600 mb-2">
                 ⚠️ Công ty này chưa có phân loại — tạo phân loại tại Cài đặt → Pipeline Sản xuất trước.
               </p>
+            )}
+            {dealAutoCreateWorkshopTypes.some((t) => t.description?.trim()) && (
+              <div className="mb-2 space-y-1">
+                {dealAutoCreateWorkshopTypes.filter((t) => t.description?.trim()).map((t) => (
+                  <p
+                    key={t.id}
+                    className={`text-[11px] rounded-lg px-2 py-1.5 border ${String(t.id) === String(dealAutoCreateWorkshopTypeId)
+                      ? 'bg-amber-50 border-amber-200 text-amber-800'
+                      : 'bg-gray-50 border-gray-100 text-gray-500'}`}
+                  >
+                    💡 <strong>{t.name}</strong>: {t.description}
+                  </p>
+                ))}
+              </div>
             )}
             {dealAutoCreatePickError && (
               <p className="text-xs text-red-600 mb-3">{dealAutoCreatePickError}</p>

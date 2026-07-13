@@ -656,6 +656,20 @@ export default function NewDealModal({
                         : 'Chưa có phân loại cho công ty đặt hàng này — kiểm tra cài đặt pipeline SX hoặc đơn đã tạo trước đó.'}
                     </p>
                   )}
+                  {visibleWorkTypes.some((t) => t.description?.trim()) && (
+                    <div className="mt-1.5 space-y-1">
+                      {visibleWorkTypes.filter((t) => t.description?.trim()).map((t) => (
+                        <p
+                          key={t.id}
+                          className={`text-[11px] rounded-lg px-2 py-1.5 border ${String(t.id) === String(formData.workshop_type_id)
+                            ? 'bg-teal-50 border-teal-200 text-teal-800'
+                            : 'bg-gray-50 border-gray-100 text-gray-500'}`}
+                        >
+                          💡 <strong>{t.name}</strong>: {t.description}
+                        </p>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
