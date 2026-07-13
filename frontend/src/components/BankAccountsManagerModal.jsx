@@ -4,7 +4,7 @@ import { Building2, X } from 'lucide-react';
 import BankAccountsManager from './BankAccountsManager';
 
 /** Popup quản lý tài khoản NH — mở nhanh từ chi tiết deal, không rời trang. */
-export default function BankAccountsManagerModal({ onClose, onChanged }) {
+export default function BankAccountsManagerModal({ onClose, onChanged, initialRegionId, initialRegionName }) {
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -35,7 +35,11 @@ export default function BankAccountsManagerModal({ onClose, onChanged }) {
         </div>
 
         <div className="flex-1 overflow-y-auto p-6">
-          <BankAccountsManager onChanged={onChanged} />
+          <BankAccountsManager
+            onChanged={onChanged}
+            initialRegionId={initialRegionId}
+            initialRegionName={initialRegionName}
+          />
         </div>
 
         <div className="px-6 py-4 border-t bg-gray-50 rounded-b-2xl flex justify-end">

@@ -29,7 +29,7 @@ function stageStatusFromAmounts(planned, received) {
 async function assertAccountingDeal(leadId, clientCompanyId) {
   const { data: lead, error } = await supabase
     .from('crm_leads')
-    .select('id, type, code, title, company_id, external_company_id, external_company_name, project_id, customer_id, assigned_to, deposit_amount, deposit_received, deposit_label, estimated_value, phone, description, created_at, updated_at')
+    .select('id, type, code, title, company_id, region_id, external_company_id, external_company_name, project_id, customer_id, assigned_to, deposit_amount, deposit_received, deposit_label, estimated_value, phone, description, created_at, updated_at')
     .eq('id', leadId)
     .maybeSingle();
   if (error) throw error;
@@ -40,25 +40,46 @@ async function assertAccountingDeal(leadId, clientCompanyId) {
   return { lead };
 }
 
-async function listBankAccounts(companyId, { activeOnly = false } = {}) {
+/**
+ * @param {string} companyId
+ * @param {object} opts
+ * @param {boolean} opts.activeOnly
+ * @param {string|null} opts.regionId — nếu truyền: chỉ lấy STK của khu vực này + STK dùng chung (region_id null)
+ */
+async function listBankAccounts(companyId, { activeOnly = false, regionId = null } = {}) {
   let q = supabase
     .from('company_bank_accounts')
-    .select('*')
+    .select('*, region:company_regions(id, name, code)')
     .eq('company_id', companyId)
     .order('is_default', { ascending: false })
     .order('created_at', { ascending: true });
+  if (activeOnly) q = q.eq('is_active', true);
+  if (regionId) q = q.or(`region_id.eq.${regionId},region_id.is.null`);
+  const { data, error } = await q;
+  if (error) throw error;
+  return data || [];
+}
+
+async function listCompanyRegions(companyId, { activeOnly = true } = {}) {
+  let q = supabase
+    .from('company_regions')
+    .select('id, name, code, order_index')
+    .eq('company_id', companyId)
+    .order('order_index', { ascending: true })
+    .order('name', { ascending: true });
   if (activeOnly) q = q.eq('is_active', true);
   const { data, error } = await q;
   if (error) throw error;
   return data || [];
 }
 
-async function clearDefaultBankAccount(companyId, exceptId = null) {
+async function clearDefaultBankAccount(companyId, exceptId = null, regionId = null) {
   let q = supabase
     .from('company_bank_accounts')
     .update({ is_default: false, updated_at: new Date().toISOString() })
     .eq('company_id', companyId)
     .eq('is_default', true);
+  q = regionId ? q.eq('region_id', regionId) : q.is('region_id', null);
   if (exceptId) q = q.neq('id', exceptId);
   await q;
 }
@@ -418,7 +439,8 @@ async function fetchAccountingDealDetail(leadId, clientCompanyId) {
         stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost),
         customer:customers(id, full_name, phone, email, address),
         assignee:users!crm_leads_assigned_to_fkey(id, full_name, phone),
-        company:companies(id, name, short_name)
+        company:companies(id, name, short_name),
+        region:company_regions!crm_leads_region_id_fkey(id, name, code)
       `)
       .eq('id', leadId)
       .maybeSingle(),
@@ -450,7 +472,7 @@ async function fetchAccountingDealDetail(leadId, clientCompanyId) {
     collectMergedDocuments(leadId, projectId),
     listPaymentStages(leadId),
     listDealPayments(leadId),
-    listBankAccounts(clientCompanyId, { activeOnly: true }),
+    listBankAccounts(clientCompanyId, { activeOnly: true, regionId: leadBase.region_id || null }),
   ]);
 
   const lead = leadFullRes.data || leadBase;
@@ -470,6 +492,7 @@ async function fetchAccountingDealDetail(leadId, clientCompanyId) {
       customer: unwrapEmbed(lead.customer),
       assignee: unwrapEmbed(lead.assignee),
       company: unwrapEmbed(lead.company),
+      region: unwrapEmbed(lead.region),
     },
     project,
     value_sync: valueSync,
@@ -487,6 +510,7 @@ module.exports = {
   DEFAULT_PAYMENT_STAGE_LABELS,
   assertAccountingDeal,
   listBankAccounts,
+  listCompanyRegions,
   clearDefaultBankAccount,
   ensureDefaultPaymentStages,
   listPaymentStages,

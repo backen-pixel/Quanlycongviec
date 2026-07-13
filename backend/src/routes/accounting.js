@@ -14,6 +14,7 @@ const {
 const {
   assertAccountingDeal,
   listBankAccounts,
+  listCompanyRegions,
   clearDefaultBankAccount,
   listPaymentStages,
   listDealPayments,
@@ -148,6 +149,19 @@ r.get('/export', async (req, res) => {
   }
 });
 
+/** GET /accounting/regions — khu vực (chi nhánh) của công ty kế toán, để chia STK/lọc theo khu vực */
+r.get('/regions', async (req, res) => {
+  try {
+    const ctx = await resolveClientCompanyContext(req);
+    if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
+    const regions = await listCompanyRegions(ctx.clientCompanyId, { activeOnly: true });
+    res.json({ client_company: ctx.company, regions });
+  } catch (e) {
+    console.error('[accounting/regions]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải khu vực' });
+  }
+});
+
 /** GET /accounting/me — thông tin phạm vi kế toán của user hiện tại */
 r.get('/me', async (req, res) => {
   try {
@@ -170,7 +184,8 @@ r.get('/bank-accounts', async (req, res) => {
     const ctx = await resolveClientCompanyContext(req);
     if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
     const activeOnly = req.query.active_only === '1' || req.query.active_only === 'true';
-    const accounts = await listBankAccounts(ctx.clientCompanyId, { activeOnly });
+    const regionId = req.query.region_id || null;
+    const accounts = await listBankAccounts(ctx.clientCompanyId, { activeOnly, regionId });
     res.json({ client_company: ctx.company, accounts });
   } catch (e) {
     console.error('[accounting/bank-accounts GET]', e);
@@ -183,7 +198,7 @@ r.post('/bank-accounts', async (req, res) => {
     const ctx = await resolveClientCompanyContext(req);
     if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
     const {
-      bank_name, account_number, account_holder, branch, is_default, is_active,
+      bank_name, account_number, account_holder, branch, is_default, is_active, region_id,
     } = req.body || {};
     if (!bank_name || !String(bank_name).trim()) {
       return res.status(400).json({ error: 'Thiếu tên ngân hàng' });
@@ -191,13 +206,24 @@ r.post('/bank-accounts', async (req, res) => {
     if (!account_number || !String(account_number).trim()) {
       return res.status(400).json({ error: 'Thiếu số tài khoản' });
     }
+    const regionId = region_id ? String(region_id) : null;
+    if (regionId) {
+      const { data: regionRow } = await supabase
+        .from('company_regions')
+        .select('id')
+        .eq('id', regionId)
+        .eq('company_id', ctx.clientCompanyId)
+        .maybeSingle();
+      if (!regionRow) return res.status(400).json({ error: 'Khu vực không thuộc công ty này' });
+    }
     const wantDefault = is_default === true;
-    if (wantDefault) await clearDefaultBankAccount(ctx.clientCompanyId);
+    if (wantDefault) await clearDefaultBankAccount(ctx.clientCompanyId, null, regionId);
 
     const { data, error } = await supabase
       .from('company_bank_accounts')
       .insert({
         company_id: ctx.clientCompanyId,
+        region_id: regionId,
         bank_name: String(bank_name).trim(),
         account_number: String(account_number).trim(),
         account_holder: account_holder ? String(account_holder).trim() : null,
@@ -205,7 +231,7 @@ r.post('/bank-accounts', async (req, res) => {
         is_default: wantDefault,
         is_active: is_active !== false,
       })
-      .select('*')
+      .select('*, region:company_regions(id, name, code)')
       .maybeSingle();
     if (error) throw error;
     res.status(201).json({ account: data });
@@ -237,8 +263,22 @@ r.put('/bank-accounts/:id', async (req, res) => {
     }
     if (b.branch !== undefined) patch.branch = b.branch ? String(b.branch).trim() : null;
     if (b.is_active !== undefined) patch.is_active = !!b.is_active;
+    if (b.region_id !== undefined) {
+      const regionId = b.region_id ? String(b.region_id) : null;
+      if (regionId) {
+        const { data: regionRow } = await supabase
+          .from('company_regions')
+          .select('id')
+          .eq('id', regionId)
+          .eq('company_id', ctx.clientCompanyId)
+          .maybeSingle();
+        if (!regionRow) return res.status(400).json({ error: 'Khu vực không thuộc công ty này' });
+      }
+      patch.region_id = regionId;
+    }
+    const effectiveRegionId = patch.region_id !== undefined ? patch.region_id : existing.region_id;
     if (b.is_default === true) {
-      await clearDefaultBankAccount(ctx.clientCompanyId, id);
+      await clearDefaultBankAccount(ctx.clientCompanyId, id, effectiveRegionId);
       patch.is_default = true;
     } else if (b.is_default === false) {
       patch.is_default = false;
@@ -248,7 +288,7 @@ r.put('/bank-accounts/:id', async (req, res) => {
       .from('company_bank_accounts')
       .update(patch)
       .eq('id', id)
-      .select('*')
+      .select('*, region:company_regions(id, name, code)')
       .maybeSingle();
     if (error) throw error;
     res.json({ account: data });

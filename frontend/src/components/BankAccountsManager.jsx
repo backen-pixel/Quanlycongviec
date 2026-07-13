@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Plus, Save, Trash2, Star, Loader2, RefreshCw,
+  Plus, Save, Trash2, Star, Loader2, RefreshCw, MapPin,
 } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -12,21 +12,25 @@ const EMPTY = {
   account_holder: '',
   branch: '',
   is_default: false,
+  region_id: '',
 };
 
 /**
  * Quản lý tài khoản NH của công ty kế toán — logic dùng chung cho trang riêng
  * (/ketoan/bank-accounts) và popup mở nhanh từ chi tiết deal.
+ * Chia theo công ty (client_company_id) + khu vực (region_id, tùy chọn — trống = dùng chung mọi khu vực).
  */
-export default function BankAccountsManager({ onChanged }) {
+export default function BankAccountsManager({ onChanged, initialRegionId, initialRegionName }) {
   const { user } = useAuth();
   const [accounts, setAccounts] = useState([]);
+  const [regions, setRegions] = useState([]);
   const [company, setCompany] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [form, setForm] = useState(EMPTY);
   const [editingId, setEditingId] = useState(null);
+  const [regionFilter, setRegionFilter] = useState(initialRegionId || '');
 
   const clientCompanyId = isAccountingUser(user) ? user?.company_id : null;
   const adminParams = !isAccountingUser(user) && clientCompanyId
@@ -41,9 +45,13 @@ export default function BankAccountsManager({ onChanged }) {
       if (!isAccountingUser(user) && user?.company_id) {
         params.client_company_id = user.company_id;
       }
-      const { data } = await api.get('/accounting/bank-accounts', { params });
-      setAccounts(data.accounts || []);
-      setCompany(data.client_company || null);
+      const [accRes, regRes] = await Promise.all([
+        api.get('/accounting/bank-accounts', { params }),
+        api.get('/accounting/regions', { params }),
+      ]);
+      setAccounts(accRes.data.accounts || []);
+      setCompany(accRes.data.client_company || null);
+      setRegions(regRes.data.regions || []);
     } catch (e) {
       setError(e.response?.data?.error || e.message || 'Lỗi tải tài khoản');
     } finally {
@@ -53,6 +61,10 @@ export default function BankAccountsManager({ onChanged }) {
   }, [user]);
 
   useEffect(() => { load(); }, [load]);
+
+  const visibleAccounts = regionFilter
+    ? accounts.filter((a) => !a.region_id || a.region_id === regionFilter)
+    : accounts;
 
   const resetForm = () => {
     setForm(EMPTY);
@@ -67,6 +79,7 @@ export default function BankAccountsManager({ onChanged }) {
       account_holder: a.account_holder || '',
       branch: a.branch || '',
       is_default: !!a.is_default,
+      region_id: a.region_id || '',
     });
   };
 
@@ -88,6 +101,7 @@ export default function BankAccountsManager({ onChanged }) {
         branch: form.branch.trim() || null,
         is_default: !!form.is_default,
         is_active: true,
+        region_id: form.region_id || null,
       };
       if (editingId) {
         await api.put(`/accounting/bank-accounts/${editingId}`, body, { params });
@@ -122,17 +136,36 @@ export default function BankAccountsManager({ onChanged }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-xs text-gray-500">
-          {company?.name || company?.short_name || 'Công ty kế toán'} — dùng khi ghi nhận chuyển khoản theo giai đoạn
+          {company?.name || company?.short_name || 'Công ty kế toán'}
+          {initialRegionName && (
+            <> · deal đang ở khu vực <span className="font-semibold text-gray-700">{initialRegionName}</span></>
+          )}
+          {' '}— dùng khi ghi nhận chuyển khoản theo giai đoạn
         </p>
-        <button
-          type="button"
-          onClick={load}
-          className="h-8 px-3 rounded-lg border border-gray-200 text-xs flex items-center gap-1.5 hover:bg-gray-50 cursor-pointer shrink-0"
-        >
-          <RefreshCw className="h-3.5 w-3.5" /> Tải lại
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {regions.length > 0 && (
+            <select
+              value={regionFilter}
+              onChange={(e) => setRegionFilter(e.target.value)}
+              className="h-8 px-2 rounded-lg border border-gray-200 text-xs bg-white cursor-pointer"
+              title="Lọc STK theo khu vực"
+            >
+              <option value="">Tất cả khu vực</option>
+              {regions.map((r) => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
+            </select>
+          )}
+          <button
+            type="button"
+            onClick={load}
+            className="h-8 px-3 rounded-lg border border-gray-200 text-xs flex items-center gap-1.5 hover:bg-gray-50 cursor-pointer"
+          >
+            <RefreshCw className="h-3.5 w-3.5" /> Tải lại
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -178,6 +211,23 @@ export default function BankAccountsManager({ onChanged }) {
               onChange={(e) => setForm((f) => ({ ...f, branch: e.target.value }))}
             />
           </div>
+          {regions.length > 0 && (
+            <div>
+              <label className="text-xs font-medium text-gray-600 flex items-center gap-1">
+                <MapPin className="h-3 w-3" /> Khu vực
+              </label>
+              <select
+                className="mt-1 w-full h-9 px-3 rounded-lg border border-gray-200 text-sm bg-white cursor-pointer"
+                value={form.region_id}
+                onChange={(e) => setForm((f) => ({ ...f, region_id: e.target.value }))}
+              >
+                <option value="">— Dùng chung mọi khu vực —</option>
+                {regions.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
         <label className="inline-flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
           <input
@@ -213,17 +263,18 @@ export default function BankAccountsManager({ onChanged }) {
               <th className="py-2.5 px-3">STK</th>
               <th className="py-2.5 px-3">Chủ TK</th>
               <th className="py-2.5 px-3">Chi nhánh</th>
+              <th className="py-2.5 px-3">Khu vực</th>
               <th className="py-2.5 px-3 w-28" />
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading && (
-              <tr><td colSpan={5} className="py-10 text-center text-gray-400">Đang tải...</td></tr>
+              <tr><td colSpan={6} className="py-10 text-center text-gray-400">Đang tải...</td></tr>
             )}
-            {!loading && accounts.length === 0 && (
-              <tr><td colSpan={5} className="py-10 text-center text-gray-400">Chưa có tài khoản nào</td></tr>
+            {!loading && visibleAccounts.length === 0 && (
+              <tr><td colSpan={6} className="py-10 text-center text-gray-400">Chưa có tài khoản nào</td></tr>
             )}
-            {!loading && accounts.map((a) => (
+            {!loading && visibleAccounts.map((a) => (
               <tr key={a.id} className={!a.is_active ? 'opacity-50' : ''}>
                 <td className="py-3 px-3 font-medium text-gray-900">
                   {a.bank_name}
@@ -239,6 +290,15 @@ export default function BankAccountsManager({ onChanged }) {
                 <td className="py-3 px-3 font-mono tabular-nums">{a.account_number}</td>
                 <td className="py-3 px-3 text-gray-700">{a.account_holder || '—'}</td>
                 <td className="py-3 px-3 text-gray-500">{a.branch || '—'}</td>
+                <td className="py-3 px-3">
+                  {a.region?.name ? (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded-full">
+                      <MapPin className="h-3 w-3" /> {a.region.name}
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-gray-400">Chung</span>
+                  )}
+                </td>
                 <td className="py-3 px-3">
                   <div className="flex gap-1 justify-end">
                     {a.is_active && (

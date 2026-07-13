@@ -836,7 +836,7 @@ export default function AccountingDealDetail() {
                               >
                                 <option value="">— Chọn STK —</option>
                                 {bankAccounts.map((a) => (
-                                  <option key={a.id} value={a.id}>{a.bank_name} · {a.account_number}</option>
+                                  <option key={a.id} value={a.id}>{a.bank_name} · {a.account_number}{a.region?.name ? ` (${a.region.name})` : ''}</option>
                                 ))}
                               </select>
                             )}
@@ -933,7 +933,7 @@ export default function AccountingDealDetail() {
                     >
                       <option value="">— Chọn STK —</option>
                       {bankAccounts.map((a) => (
-                        <option key={a.id} value={a.id}>{a.bank_name} · {a.account_number}{a.is_default ? ' (mặc định)' : ''}</option>
+                        <option key={a.id} value={a.id}>{a.bank_name} · {a.account_number}{a.region?.name ? ` (${a.region.name})` : ''}{a.is_default ? ' ★' : ''}</option>
                       ))}
                     </select>
                   </div>
@@ -1037,7 +1037,7 @@ export default function AccountingDealDetail() {
                     >
                       <option value="">— Chọn STK —</option>
                       {bankAccounts.map((a) => (
-                        <option key={a.id} value={a.id}>{a.bank_name} · {a.account_number}</option>
+                        <option key={a.id} value={a.id}>{a.bank_name} · {a.account_number}{a.region?.name ? ` (${a.region.name})` : ''}</option>
                       ))}
                     </select>
                   </div>
@@ -1139,6 +1139,8 @@ export default function AccountingDealDetail() {
         <BankAccountsManagerModal
           onClose={() => setBankModalOpen(false)}
           onChanged={load}
+          initialRegionId={lead?.region_id || null}
+          initialRegionName={lead?.region?.name || null}
         />
       )}
     </div>
