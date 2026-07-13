@@ -2296,7 +2296,10 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       }
 
       let projectUpd = {};
-      if (colChanged) projectUpd.sx_pipeline_stage_entered_at = nowIso;
+      if (colChanged) {
+        projectUpd.sx_pipeline_stage_entered_at = nowIso;
+        projectUpd.sx_kanban_column_id = colId;
+      }
       if (isColChange && isCompletedCol) {
         projectUpd.sx_kanban_deadline_at = null;
         projectUpd.sx_kanban_deadline_reason = null;
@@ -2306,7 +2309,7 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
         projectUpd.sx_kanban_deadline_reason = reason || null;
       }
       if (colRow.workflow_stage_id) {
-        projectUpd = { current_stage_id: colRow.workflow_stage_id };
+        const stageFields = { current_stage_id: colRow.workflow_stage_id };
         const { data: targetStage } = await supabase
           .from('workflow_stages')
           .select('slug')
@@ -2314,8 +2317,9 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
           .maybeSingle();
         const statusMap = { production: 'producing', delivery: 'shipping', 'customer-care': 'warranty' };
         if (targetStage?.slug && statusMap[targetStage.slug]) {
-          projectUpd.status = statusMap[targetStage.slug];
+          stageFields.status = statusMap[targetStage.slug];
         }
+        projectUpd = { ...projectUpd, ...stageFields };
       }
       if (Object.keys(projectUpd).length) {
         let { error: projUpdErr } = await supabase.from('projects').update(projectUpd).eq('id', id);
@@ -2330,6 +2334,11 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
               code: 'migration_required',
             });
           }
+        }
+        if (projUpdErr && String(projUpdErr.message || '').includes('sx_kanban_column_id')) {
+          const fallbackUpd = { ...projectUpd };
+          delete fallbackUpd.sx_kanban_column_id;
+          ({ error: projUpdErr } = await supabase.from('projects').update(fallbackUpd).eq('id', id));
         }
         if (projUpdErr) throw projUpdErr;
       }
@@ -3098,11 +3107,28 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
       if (String(insTeam.type || '') !== 'installation') return res.status(400).json({ error: 'Đội lắp đặt không hợp lệ.' });
     }
 
-    const { data: project } = await supabase
+    const HANDOVER_VC_PROJECT_SELECT =
+      'id, code, name, status, current_stage_id, vc_kanban_column_id, logistics_company_id, sx_kanban_column_id';
+    const HANDOVER_VC_PROJECT_SELECT_FALLBACK =
+      'id, code, name, status, current_stage_id, vc_kanban_column_id, logistics_company_id';
+
+    let { data: project, error: projectLoadErr } = await supabase
       .from('projects')
-      .select('id, code, name, status, current_stage_id, vc_kanban_column_id, logistics_company_id, sx_kanban_column_id')
+      .select(HANDOVER_VC_PROJECT_SELECT)
       .eq('id', id)
-      .single();
+      .maybeSingle();
+    // Migration 423 chưa apply — retry không có sx_kanban_column_id
+    if (projectLoadErr && String(projectLoadErr.message || '').includes('sx_kanban_column_id')) {
+      ({ data: project, error: projectLoadErr } = await supabase
+        .from('projects')
+        .select(HANDOVER_VC_PROJECT_SELECT_FALLBACK)
+        .eq('id', id)
+        .maybeSingle());
+    }
+    if (projectLoadErr) {
+      console.error('[production/handover-vc] load project:', projectLoadErr.message);
+      return res.status(500).json({ error: 'Lỗi tải dự án', details: projectLoadErr.message });
+    }
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
     const { isProjectAlreadyInLogistics } = require('../helpers/projectLogisticsScope');
@@ -3121,10 +3147,13 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
           .eq('id', sxHandoverPipelineStageId)
           .maybeSingle();
         if (colVerify?.id) {
-          await supabase
+          const { error: sxColUpdErr } = await supabase
             .from('projects')
             .update({ sx_kanban_column_id: sxHandoverPipelineStageId })
             .eq('id', id);
+          if (sxColUpdErr && !String(sxColUpdErr.message || '').includes('sx_kanban_column_id')) {
+            console.warn('[production/handover-vc] update sx_kanban_column_id:', sxColUpdErr.message);
+          }
           await supabase
             .from('crm_leads')
             .update({ sx_pipeline_stage_id: sxHandoverPipelineStageId, updated_at: new Date().toISOString() })
@@ -3132,13 +3161,23 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
             .eq('type', 'deal');
         }
       }
-      const { data: refreshed } = await supabase
+      let { data: refreshed, error: refreshedErr } = await supabase
         .from('projects')
-        .select('id, code, name, status, current_stage_id, vc_kanban_column_id, logistics_company_id, sx_kanban_column_id, logistics_person_id, installer_person_id, delivery_team_id, installation_team_id')
+        .select(`${HANDOVER_VC_PROJECT_SELECT}, logistics_person_id, installer_person_id, delivery_team_id, installation_team_id`)
         .eq('id', id)
         .maybeSingle();
+      if (refreshedErr && String(refreshedErr.message || '').includes('sx_kanban_column_id')) {
+        ({ data: refreshed } = await supabase
+          .from('projects')
+          .select(`${HANDOVER_VC_PROJECT_SELECT_FALLBACK}, logistics_person_id, installer_person_id, delivery_team_id, installation_team_id`)
+          .eq('id', id)
+          .maybeSingle());
+      }
       return res.json({
-        project: refreshed || project,
+        project: {
+          ...(refreshed || project),
+          ...(sxHandoverPipelineStageId ? { sx_kanban_column_id: sxHandoverPipelineStageId } : {}),
+        },
         already_in_logistics: true,
         message: 'Dự án đã bàn giao VC/LĐ — chỉ cập nhật cột SX nếu có.',
       });
@@ -3244,6 +3283,7 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
     if (deliveryTeamId) projectUpdate.delivery_team_id = deliveryTeamId;
     if (installationTeamId) projectUpdate.installation_team_id = installationTeamId;
     if (vcStageId) projectUpdate.vc_kanban_column_id = vcStageId;
+    if (sxHandoverPipelineStageId) projectUpdate.sx_kanban_column_id = sxHandoverPipelineStageId;
 
     const { error: updateError } = await supabase
       .from('projects')
@@ -3260,7 +3300,17 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
             logistics_company_id: logisticsCompanyId,
             ...(deliveryTeamId ? { delivery_team_id: deliveryTeamId } : {}),
             ...(installationTeamId ? { installation_team_id: installationTeamId } : {}),
+            ...(sxHandoverPipelineStageId ? { sx_kanban_column_id: sxHandoverPipelineStageId } : {}),
           })
+          .eq('id', id);
+        if (retryErr) throw retryErr;
+      } else if (updateError.message?.includes('sx_kanban_column_id')) {
+        // Migration 423 chưa apply — bàn giao vẫn chạy, chỉ thiếu persist cột SX trên projects
+        const retryUpdate = { ...projectUpdate };
+        delete retryUpdate.sx_kanban_column_id;
+        const { error: retryErr } = await supabase
+          .from('projects')
+          .update(retryUpdate)
           .eq('id', id);
         if (retryErr) throw retryErr;
       } else if (updateError.message?.includes('logistics_company_id')) {
@@ -3275,6 +3325,7 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
             ...(vcStageId ? { vc_kanban_column_id: vcStageId } : {}),
             ...(resolvedLogisticsPersonId ? { logistics_person_id: resolvedLogisticsPersonId } : {}),
             ...(resolvedInstallerPersonId ? { installer_person_id: resolvedInstallerPersonId } : {}),
+            ...(sxHandoverPipelineStageId ? { sx_kanban_column_id: sxHandoverPipelineStageId } : {}),
           })
           .eq('id', id);
         if (retryErr) throw retryErr;
