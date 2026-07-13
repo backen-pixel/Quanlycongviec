@@ -7201,10 +7201,30 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   } = reqQuery;
   const referrerNameTrim = String(referrer_name || '').trim();
   const customerCompanyTrim = String(customer_company || '').trim();
+  const searchTrim = String(search || '').trim();
   const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 2000);
   const parsedOffset = Math.max(parseInt(offset) || 0, 0);
   const useLite = resolveCrmLeadsKanbanLite(reqQuery, opts);
   const skipDeadline = resolveCrmLeadsSkipDeadline(reqQuery, opts);
+  // crm_leads.phone hầu như luôn NULL (SĐT thật nằm ở customers.phone qua customer_id) —
+  // tìm thêm customer_id khớp SĐT/tên KH để không bị "lọc không ra lead" khi search bằng SĐT.
+  let customerIdsForSearch = null;
+  if (searchTrim) {
+    const { data: custSearchRows, error: custSearchErr } = await supabase
+      .from('customers')
+      .select('id')
+      .or(`phone.ilike.%${searchTrim}%,full_name.ilike.%${searchTrim}%`)
+      .limit(1000);
+    if (!custSearchErr) customerIdsForSearch = (custSearchRows || []).map((r) => r.id);
+  }
+  const buildSearchOr = () => {
+    if (!searchTrim) return null;
+    const parts = [`title.ilike.%${searchTrim}%`, `code.ilike.%${searchTrim}%`, `phone.ilike.%${searchTrim}%`];
+    if (customerIdsForSearch && customerIdsForSearch.length) {
+      parts.push(`customer_id.in.(${customerIdsForSearch.join(',')})`);
+    }
+    return parts.join(',');
+  };
   let customerIdsForCompanyFilter = null;
   if (customerCompanyTrim && customerCompanyTrim !== '__none__') {
     const { data: custRows, error: custErr } = await supabase
@@ -7266,7 +7286,8 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     const dt = sanitizeIsoDateQueryParam(date_to);
     if (df) q = q.gte('created_at', df);
     if (dt) q = q.lte('created_at', `${dt}T23:59:59.999Z`);
-    if (search) q = q.or(`title.ilike.%${search}%,code.ilike.%${search}%,phone.ilike.%${search}%`);
+    const searchOr = buildSearchOr();
+    if (searchOr) q = q.or(searchOr);
     if (scopeReq) q = applyCrmLeadRegionFilterToQuery(q, scopeReq);
     return q;
   };
@@ -7299,7 +7320,8 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     const dt = sanitizeIsoDateQueryParam(date_to);
     if (df) q = q.gte('created_at', df);
     if (dt) q = q.lte('created_at', `${dt}T23:59:59.999Z`);
-    if (search) q = q.or(`title.ilike.%${search}%,code.ilike.%${search}%,phone.ilike.%${search}%`);
+    const searchOrPage = buildSearchOr();
+    if (searchOrPage) q = q.or(searchOrPage);
     if (scopeReq) q = applyCrmLeadRegionFilterToQuery(q, scopeReq);
     let { data, error } = await q.range(from, from + need - 1);
     if (error && isVcRelationshipError(error)) {
@@ -7443,11 +7465,18 @@ r.get('/leads/picker', async (req, res) => {
     if (customerId) query = query.eq('customer_id', customerId);
 
     if (q) {
-      // Search theo code / title / SĐT / tên KH (dùng OR PostgREST)
+      // Search theo code / title / SĐT / tên KH — crm_leads.phone hầu như luôn NULL,
+      // SĐT thật nằm ở customers.phone qua customer_id nên cần tìm thêm customer_id khớp.
       const safe = q.replace(/[(),]/g, ' ').replace(/\s+/g, '%');
-      query = query.or(
-        `code.ilike.%${safe}%,title.ilike.%${safe}%,phone.ilike.%${safe}%`,
-      );
+      const { data: custMatchRows } = await supabase
+        .from('customers')
+        .select('id')
+        .or(`phone.ilike.%${safe}%,full_name.ilike.%${safe}%`)
+        .limit(1000);
+      const custMatchIds = (custMatchRows || []).map((r) => r.id);
+      const orParts = [`code.ilike.%${safe}%`, `title.ilike.%${safe}%`, `phone.ilike.%${safe}%`];
+      if (custMatchIds.length) orParts.push(`customer_id.in.(${custMatchIds.join(',')})`);
+      query = query.or(orParts.join(','));
     }
 
     const { data, error } = await query;
