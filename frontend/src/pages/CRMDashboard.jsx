@@ -50,9 +50,11 @@ import {
 } from '../lib/crmDashboardCache';
 import { userSeesAllCrmDealsScoped, filterCrmRegionsForUser, resolveCrmRegionApiParam } from '../lib/crmDealAccess';
 import {
+  companyHasRegionPipelines,
   findDefaultAdminCrmCompanyPhucDat,
   getStoredCrmFilterCompanyId,
   narrowPipelinesToDefaultForCompany,
+  resolvePipelineForCompanyRegion,
   setStoredCrmFilterCompanyId,
 } from '../lib/crmCompanyFilter';
 import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
@@ -1123,6 +1125,28 @@ export default function CRMDashboard() {
     if (snapshotHasProperty(P, 'dealKhSplit')) return !!P.dealKhSplit;
     return readStoredDealKhSplitPreference(isAdminLike(user));
   });
+
+  /** Công ty đang xem trên Kanban (khớp logic resolvedCompanyId dùng khi load dữ liệu). */
+  const kanbanEffectiveCompanyId = useMemo(() => {
+    if (isCompanyScopedAdmin && user?.company_id) return String(user.company_id);
+    if (!isAdmin && user?.company_id) return String(filterCompany || user.company_id);
+    return filterCompany || '';
+  }, [isCompanyScopedAdmin, isAdmin, user?.company_id, filterCompany]);
+
+  /** Công ty đã tách pipeline CRM theo khu vực → Kanban bắt buộc chọn 1 khu vực cụ thể mới hiển thị. */
+  const isCrmRegionSplitCompany = useMemo(
+    () => companyHasRegionPipelines(pipelinesAll, kanbanEffectiveCompanyId),
+    [pipelinesAll, kanbanEffectiveCompanyId],
+  );
+  const crmRegionPickRequired =
+    isCrmRegionSplitCompany && (!filterRegion || filterRegion === '__none__');
+  /** Danh sách khu vực để gợi ý chọn nhanh khi Kanban đang yêu cầu chọn khu vực. */
+  const crmRegionQuickPickOptions = useMemo(() => {
+    if (!crmRegionPickRequired) return [];
+    return (companyRegions || []).filter(
+      (r) => String(r.company_id || '') === String(kanbanEffectiveCompanyId) && r.is_active !== false,
+    );
+  }, [crmRegionPickRequired, companyRegions, kanbanEffectiveCompanyId]);
 
   const { dealTabStages, customerTabStages, postWonStages, wonAnchorOrder, wonStage } = useMemo(
     () => splitDealStagesForCrmTabs(stagesDeal),
@@ -2834,7 +2858,13 @@ export default function CRMDashboard() {
       );
       if (pipelinesPreloaded && isAdmin && resolvedCompanyId) {
         const byCo = pipelinesPreloaded.filter((p) => String(p.company_id || '') === String(resolvedCompanyId));
-        const def = byCo.find((p) => p.is_default) || byCo[0];
+        // Công ty đã tách pipeline theo khu vực + đang lọc 1 khu vực cụ thể → dùng đúng
+        // pipeline của khu vực đó, không lấy mặc định công ty (khác stage với khu vực khác).
+        const regionPipeline =
+          filterRegion && filterRegion !== '__none__'
+            ? resolvePipelineForCompanyRegion(pipelinesPreloaded, resolvedCompanyId, filterRegion)
+            : null;
+        const def = regionPipeline || byCo.find((p) => p.is_default) || byCo[0];
         const pid = def?.id;
         if (pid) {
           stagesLeadParams = { type: 'lead', pipeline_id: pid };
@@ -6664,7 +6694,31 @@ export default function CRMDashboard() {
           )}
 
           {/* Kanban View */}
-          {viewMode === 'kanban' && (
+          {viewMode === 'kanban' && crmRegionPickRequired && (
+            <div className="rounded-xl border border-dashed border-indigo-200 bg-indigo-50/60 p-8 text-center">
+              <p className="text-sm font-semibold text-indigo-900 mb-1">Công ty này đã tách pipeline theo khu vực</p>
+              <p className="text-xs text-indigo-700 mb-4">
+                Mỗi khu vực có bộ giai đoạn (cột) riêng — vui lòng chọn 1 khu vực cụ thể để xem Kanban.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                {crmRegionQuickPickOptions.map((reg) => (
+                  <button
+                    key={reg.id}
+                    type="button"
+                    onClick={() => patchCrmFilters({
+                      filterRegion: String(reg.id),
+                      filterAssignee: '',
+                      filterAssigneeName: '',
+                    })}
+                    className="h-9 px-4 rounded-lg bg-white border border-indigo-300 text-indigo-800 text-sm font-medium hover:bg-indigo-100 cursor-pointer shadow-sm"
+                  >
+                    {reg.name}{reg.code ? ` (${reg.code})` : ''}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {viewMode === 'kanban' && !crmRegionPickRequired && (
           <div data-tour="kanban-pipeline" className="rounded-xl">
             <KanbanView
               pipeline={kanbanPipelineForView}

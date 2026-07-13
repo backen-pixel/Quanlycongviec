@@ -113,3 +113,27 @@ export function narrowPipelinesToDefaultForCompany(allPipelines, companyId) {
   const def = forCo.find((p) => p.is_default) || forCo[0];
   return def ? [def] : [];
 }
+
+/**
+ * True nếu công ty đã tách pipeline CRM theo khu vực (≥2 pipeline active của công ty
+ * này có `region_id` khác nhau, không null) — dùng để quyết định có bắt buộc chọn
+ * khu vực trước khi hiển thị Kanban hay không.
+ */
+export function companyHasRegionPipelines(allPipelines, companyId) {
+  if (!companyId) return false;
+  const all = Array.isArray(allPipelines) ? allPipelines : [];
+  const regionIds = new Set(
+    all
+      .filter((p) => String(p.company_id || '') === String(companyId) && p.region_id)
+      .map((p) => String(p.region_id)),
+  );
+  return regionIds.size >= 2;
+}
+
+/** Pipeline riêng của một khu vực cụ thể trong công ty (null nếu không có / chưa tách theo khu vực). */
+export function resolvePipelineForCompanyRegion(allPipelines, companyId, regionId) {
+  if (!companyId || !regionId || regionId === '__none__') return null;
+  const all = Array.isArray(allPipelines) ? allPipelines : [];
+  const forCo = all.filter((p) => String(p.company_id || '') === String(companyId));
+  return forCo.find((p) => String(p.region_id || '') === String(regionId)) || null;
+}

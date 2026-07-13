@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND } from '../lib/utils';
 import { Plus, Trash2, Save, ArrowLeft, Search, ShoppingCart, AlignLeft, Loader2, Download } from 'lucide-react';
@@ -7,17 +7,20 @@ import ProductSearchPicker from '../components/ProductSearchPicker';
 import ProductAutocompleteCell from '../components/ProductAutocompleteCell';
 import CustomerSearchPicker from '../components/CustomerSearchPicker';
 import SaveToast from '../components/SaveToast';
+import { ORDER_EXCEL_DRAFT_KEY } from '../components/ExcelQuotationImport';
 
 export default function OrderForm() {
   const { id } = useParams();
   const isEdit = !!id;
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const location = useLocation();
 
   const [form, setForm] = useState({
     title: '', customer_id: '', customer_name: '', customer_phone: '', customer_address: '',
     payment_terms: '', delivery_date: '', notes: '',
     discount_type: 'percent', discount_value: 0,
-    status: 'draft', code: '',
+    status: 'draft', code: '', lead_id: '',
   });
   const [items, setItems] = useState([{
     name: '', description: '', product_code: '', unit: 'bộ', quantity: 1, unit_price: 0,
@@ -32,6 +35,7 @@ export default function OrderForm() {
   const [statusLoading, setStatusLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [showProductPicker, setShowProductPicker] = useState(false);
+  const excelHydratedRef = useRef(false);
 
   useEffect(() => {
     api.get('/customers', { params: { limit: 5000 } }).then(r => setCustomers(r.data.customers || r.data || []));
@@ -44,7 +48,7 @@ export default function OrderForm() {
           customer_phone: d.customer_phone || '', customer_address: d.customer_address || '',
           payment_terms: d.payment_terms || '', delivery_date: d.delivery_date || '',
           notes: d.notes || '', discount_type: d.discount_type || 'percent', discount_value: d.discount_value || 0,
-          status: d.status || 'draft', code: d.code || '',
+          status: d.status || 'draft', code: d.code || '', lead_id: d.lead_id || '',
         });
         if (d.items?.length) setItems(d.items.map(i => {
           if (i.notes === '__SECTION__') return { row_type: 'section', name: i.name, notes: '__SECTION__' };
@@ -60,8 +64,62 @@ export default function OrderForm() {
           };
         }));
       });
+    } else if (searchParams.get('from_excel') === '1' && !excelHydratedRef.current) {
+      excelHydratedRef.current = true;
+      try {
+        let parsed = location.state?.excelDraft || null;
+        if (!parsed) {
+          const raw = sessionStorage.getItem(ORDER_EXCEL_DRAFT_KEY);
+          if (raw) parsed = JSON.parse(raw);
+        }
+        try { sessionStorage.removeItem(ORDER_EXCEL_DRAFT_KEY); } catch (_) { /* ignore */ }
+        if (parsed) {
+          const dform = parsed.form || {};
+          const urlLead = searchParams.get('lead_id') || '';
+          setForm((f) => ({
+            ...f,
+            title: dform.title || f.title,
+            customer_name: dform.customer_name || '',
+            customer_phone: dform.customer_phone || '',
+            customer_address: dform.customer_address || '',
+            lead_id: dform.lead_id || urlLead || '',
+            notes: dform.notes || '',
+            payment_terms: dform.payment_terms || '',
+            discount_type: dform.discount_type || 'amount',
+            discount_value: dform.discount_value ?? 0,
+          }));
+          if (parsed.items?.length) {
+            setItems(parsed.items.map((i) => ({
+              name: i.name || '',
+              description: i.description || '',
+              product_code: '',
+              unit: i.unit || 'bộ',
+              quantity: i.quantity ?? 1,
+              unit_price: i.unit_price ?? 0,
+              discount_percent: i.discount_percent ?? 0,
+              vat_rate: i.vat_rate ?? 0,
+              height: i.height ?? '',
+              width: i.width ?? '',
+              length: i.length ?? '',
+              dimensions: i.dimensions || '',
+              material: '',
+              color: '',
+              promo_code: '',
+              is_promo: false,
+              spec_factor: i.spec_factor ?? 0,
+              notes: i.notes || '',
+              is_freebie: !!i.is_freebie,
+              lock_amount: !!i.lock_amount,
+              imported_amount: typeof i.imported_amount === 'number' ? i.imported_amount : undefined,
+            })));
+          }
+        }
+      } catch (_) { /* ignore */ }
+    } else if (!isEdit) {
+      const urlLead = searchParams.get('lead_id') || '';
+      if (urlLead) setForm((f) => ({ ...f, lead_id: urlLead }));
     }
-  }, [id]);
+  }, [id, isEdit, searchParams, location.state]);
 
   const selectCustomer = (c) => {
     if (c) setForm(f => ({ ...f, customer_id: c.id, customer_name: c.full_name, customer_phone: c.phone || '', customer_address: c.address || '' }));
@@ -130,21 +188,28 @@ export default function OrderForm() {
   const _isSaving = useRef(false);
   const save = async () => {
     if (_isSaving.current) return;
-    if (!isEdit || !id) {
-      navigate('/crm/orders', { replace: true });
-      return;
-    }
     if (!form.title && !form.customer_name) return alert('Nhập tiêu đề hoặc khách hàng');
     if (items.filter(i => i.row_type !== 'section').every(i => !i.name)) return alert('Thêm ít nhất 1 sản phẩm');
     _isSaving.current = true;
     setSaveStatus('loading');
-    setSaveMsg('Đang cập nhật đơn hàng...');
+    setSaveMsg(isEdit ? 'Đang cập nhật đơn hàng...' : 'Đang tạo đơn hàng...');
     try {
-      const payload = { ...form, items: calcs.rows };
-      await api.put(`/crm/orders/${id}`, payload);
-      setSaveMsg('Cập nhật đơn hàng thành công!');
-      setSaveStatus('success');
-      setTimeout(() => navigate(`/crm/orders/${id}`), 1200);
+      const payload = {
+        ...form,
+        lead_id: form.lead_id || null,
+        items: calcs.rows,
+      };
+      if (isEdit && id) {
+        await api.put(`/crm/orders/${id}`, payload);
+        setSaveMsg('Cập nhật đơn hàng thành công!');
+        setSaveStatus('success');
+        setTimeout(() => navigate(`/crm/orders/${id}`), 1200);
+      } else {
+        const { data } = await api.post('/crm/orders', payload);
+        setSaveMsg('Tạo đơn hàng thành công!');
+        setSaveStatus('success');
+        setTimeout(() => navigate(`/crm/orders/${data.id}`), 1200);
+      }
     } catch (e) {
       setSaveMsg(e.response?.data?.error || 'Có lỗi xảy ra khi lưu');
       setSaveStatus('error');
@@ -167,7 +232,7 @@ export default function OrderForm() {
           <div>
             <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
               <ShoppingCart className="h-5 w-5 text-emerald-600" />
-              Sửa đơn hàng
+              {isEdit ? 'Sửa đơn hàng' : 'Tạo đơn hàng mới'}
             </h1>
             {isEdit && form.code && <p className="text-xs text-emerald-600 font-bold">{form.code}</p>}
           </div>

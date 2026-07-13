@@ -185,6 +185,8 @@ const CalcRunPage = lazyWithRetry(() => import('./pages/calc/CalcRunPage'));
 const CalcImport3DPage = lazyWithRetry(() => import('./pages/calc/CalcImport3DPage'));
 const CalcHistoryPage = lazyWithRetry(() => import('./pages/calc/CalcHistoryPage'));
 const AccountingDashboard = lazyWithRetry(() => import('./pages/AccountingDashboard'));
+const AccountingDealDetail = lazyWithRetry(() => import('./pages/AccountingDealDetail'));
+const AccountingBankAccountsPage = lazyWithRetry(() => import('./pages/AccountingBankAccountsPage'));
 const AccountingLayout = lazyWithRetry(() => import('./layouts/AccountingLayout'));
 const PlatformLayout = lazyWithRetry(() => import('./layouts/PlatformLayout'));
 const PlatformDashboard = lazyWithRetry(() => import('./pages/platform/PlatformDashboard'));
@@ -449,7 +451,7 @@ export default function App() {
             <Route path="/crm/quotations/new" element={<QuotationForm />} />
             <Route path="/crm/quotations/:id" element={<QuotationForm />} />
             <Route path="/crm/orders" element={<OrdersPage />} />
-            <Route path="/crm/orders/new" element={<Navigate to="/crm/orders" replace />} />
+            <Route path="/crm/orders/new" element={<OrderForm />} />
             <Route path="/crm/orders/:id/edit" element={<OrderForm />} />
             <Route path="/crm/orders/:id" element={<OrderDetail />} />
             <Route path="/crm/invoices" element={<InvoicesPage />} />
@@ -521,6 +523,8 @@ export default function App() {
             <Route path="/ketoan" element={<AccountingLayout />}>
               <Route index element={<Navigate to="dashboard" replace />} />
               <Route path="dashboard" element={<AccountingDashboard />} />
+              <Route path="deals/:leadId" element={<AccountingDealDetail />} />
+              <Route path="bank-accounts" element={<AccountingBankAccountsPage />} />
             </Route>
             <Route path="/ecosystem-permissions" element={<EcosystemPermissionsPage />} />
             <Route path="/guide" element={<GuidePage />} />

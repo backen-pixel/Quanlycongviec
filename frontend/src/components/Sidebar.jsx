@@ -383,6 +383,7 @@ const KETOAN_MENU_GROUPS = [
     emoji: '🧾',
     items: [
       { to: '/ketoan/dashboard', icon: LayoutDashboard, label: 'Tổng hợp deal SX', end: true },
+      { to: '/ketoan/bank-accounts', icon: CreditCard, label: 'Tài khoản NH' },
       { to: '/crm/quotations', icon: FileText, label: 'Báo giá' },
       { to: '/crm/orders', icon: ShoppingCart, label: 'Đơn hàng' },
       { to: '/crm/invoices', icon: Receipt, label: 'Hóa đơn' },

@@ -1,0 +1,5211 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>Cấu trúc chi tiết — Hệ sinh thái · CRM · KH · Đơn hàng · SX</title>
+  <style>
+    @page { size: A4 landscape; margin: 12mm 10mm 14mm 10mm; }
+    * { box-sizing: border-box; }
+    body { font-family: "Segoe UI", Arial, sans-serif; font-size: 8.5pt; line-height: 1.4; color: #1e293b; margin: 0; }
+    h1 { font-size: 16pt; color: #312e81; margin: 0 0 4px; }
+    .subtitle { font-size: 9.5pt; color: #475569; }
+    .meta { font-size: 8pt; color: #64748b; margin-bottom: 14px; padding-bottom: 8px; border-bottom: 2px solid #c7d2fe; }
+    h2 { font-size: 11pt; color: #4338ca; margin: 14px 0 6px; page-break-after: avoid; border-left: 4px solid #6366f1; padding-left: 8px; }
+    h3 { font-size: 9.5pt; color: #1e40af; margin: 10px 0 4px; page-break-after: avoid; }
+    h3 .count { font-size: 8pt; color: #64748b; font-weight: normal; }
+    .tbl-desc { margin: 0 0 4px; color: #475569; font-size: 8pt; }
+    .flow, .diagram, .notes {
+      background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 5px;
+      padding: 8px 10px; font-family: Consolas, monospace; font-size: 7.5pt;
+      white-space: pre-wrap; margin: 6px 0 10px; page-break-inside: avoid;
+    }
+    .notes { font-family: "Segoe UI", Arial, sans-serif; font-size: 8pt; background: #f0fdf4; border-color: #bbf7d0; }
+    table.fields, table.summary { width: 100%; border-collapse: collapse; font-size: 7pt; margin: 0 0 10px; }
+    table.fields th, table.fields td, table.summary th, table.summary td {
+      border: 1px solid #e2e8f0; padding: 3px 5px; vertical-align: top; text-align: left;
+    }
+    table.fields th, table.summary th { background: #f1f5f9; color: #334155; }
+    table.fields td.def { font-family: Consolas, monospace; font-size: 6.5pt; max-width: 120px; word-break: break-all; }
+    table.fields td.hint { color: #475569; font-size: 6.5pt; }
+    table.rel-table { width: 100%; border-collapse: collapse; font-size: 6.5pt; margin: 0 0 12px; }
+    table.rel-table th, table.rel-table td { border: 1px solid #e2e8f0; padding: 2px 4px; vertical-align: top; }
+    table.rel-table th { background: #ede9fe; color: #4338ca; }
+    table.rel-table td.arrow { text-align: center; color: #6366f1; font-weight: bold; width: 16px; }
+    .svg-wrap { margin: 8px 0 14px; page-break-inside: avoid; border: 1px solid #e2e8f0; border-radius: 6px; padding: 6px 8px; background: #fafafa; }
+    .svg-title { margin: 0 0 4px; font-size: 8.5pt; color: #4338ca; font-weight: 600; }
+    h4 { font-size: 8.5pt; color: #475569; margin: 8px 0 4px; }
+    .page-break { page-break-before: always; }
+    code { font-family: Consolas, monospace; font-size: 7pt; background: #f1f5f9; padding: 0 3px; border-radius: 2px; }
+    .table-block { page-break-inside: avoid; margin-bottom: 8px; }
+    ol { margin: 4px 0; padding-left: 18px; }
+    li { margin: 2px 0; }
+    .footer-note { margin-top: 16px; font-size: 7pt; color: #94a3b8; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 6px; }
+  </style>
+</head>
+<body>
+  <h1>Cấu trúc chi tiết hệ thống QLCV</h1>
+  <p class="subtitle">Hệ sinh thái · CRM · Khách hàng · Đơn hàng · Sản xuất — trường dữ liệu &amp; sơ đồ liên kết</p>
+  <p class="meta">TuBep Pro · 33 bảng · Cập nhật: 10/7/2026 · Landscape A4</p>
+  <h2>1. Luồng nghiệp vụ tổng quát</h2><div class="flow">Tenant / Khối (ecosystem_units)
+  → Công ty (companies)
+    → Khách hàng (customers)
+      → Lead (crm_leads, type = 'lead')
+        → Deal (crm_leads, type = 'deal')
+          → Báo giá (quotations) → Đơn hàng (orders)
+            → Dự án SX (projects) → Nhiệm vụ (tasks)</div><div class="notes"><strong>Quy ước:</strong> Bảng <code>crm_leads</code> chứa cả Lead và Deal (<code>type</code>). Stage <code>is_won=true</code> → tự tạo <code>projects</code>. Có 2 loại task: <code>crm_tasks</code> (CRM) và <code>tasks</code> (SX).</div><h2>2. Sơ đồ liên kết bảng (ER)</h2><div class="svg-wrap">
+    <p class="svg-title">2.1 Sơ đồ tổng thể — Luồng liên kết chính</p>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 380" width="100%" height="auto">
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/>
+        </marker>
+      </defs>
+      <rect x="20" y="20" width="90" height="34" rx="5" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="65" y="41">tenants</tspan></text><line x1="110" y1="37" x2="140" y2="37" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="140" y="20" width="110" height="34" rx="5" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="195" y="41">ecosystem_units</tspan></text><line x1="250" y1="37" x2="280" y2="37" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="280" y="20" width="100" height="34" rx="5" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="330" y="41">companies</tspan></text><line x1="380" y1="37" x2="410" y2="37" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="410" y="20" width="100" height="34" rx="5" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="460" y="41">users</tspan></text><line x1="330" y1="54" x2="330" y2="78" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="270" y="78" width="120" height="34" rx="5" fill="#ecfdf5" stroke="#059669" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="330" y="99">customers</tspan></text><line x1="200" y1="95" x2="170" y2="95" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="50" y="78" width="120" height="34" rx="5" fill="#eff6ff" stroke="#2563eb" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="110" y="99">crm_pipelines</tspan></text><line x1="170" y1="95" x2="200" y2="95" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="190" y="78" width="130" height="34" rx="5" fill="#eff6ff" stroke="#2563eb" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="255" y="99">crm_pipeline_stages</tspan></text><line x1="330" y1="112" x2="330" y2="138" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="250" y="138" width="160" height="40" rx="5" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="330" y="156">crm_leads</tspan><tspan x="330" y="168">(Lead + Deal)</tspan></text><line x1="250" y1="158" x2="120" y2="158" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><line x1="120" y1="158" x2="120" y2="188" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="60" y="188" width="120" height="34" rx="5" fill="#eff6ff" stroke="#2563eb" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="120" y="209">crm_tasks</tspan></text><line x1="330" y1="178" x2="330" y2="188" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="270" y="188" width="120" height="34" rx="5" fill="#fff7ed" stroke="#ea580c" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="330" y="209">quotations</tspan></text><line x1="410" y1="158" x2="500" y2="158" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><line x1="500" y1="158" x2="500" y2="188" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="440" y="188" width="120" height="34" rx="5" fill="#fff7ed" stroke="#ea580c" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="500" y="209">orders</tspan></text><line x1="330" y1="178" x2="330" y2="248" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="260" y="248" width="140" height="40" rx="5" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="330" y="272">projects</tspan></text><line x1="330" y1="288" x2="330" y2="318" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="280" y="318" width="100" height="34" rx="5" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="330" y="339">tasks</tspan></text><line x1="400" y1="268" x2="470" y2="268" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="470" y="248" width="150" height="40" rx="5" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="545" y="266">production_</tspan><tspan x="545" y="278">pipeline_stages</tspan></text><text x="600" y="30" font-size="8" fill="#64748b" font-family="Segoe UI,sans-serif">──▶ liên kết FK / nghiệp vụ</text><text x="600" y="48" font-size="8" fill="#64748b" font-family="Segoe UI,sans-serif">crm_leads.project_id ↔ projects (deal chốt)</text>
+    </svg>
+  </div><div class="svg-wrap">
+    <p class="svg-title">2.2 Hệ sinh thái — Liên kết tổ chức</p>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 290" width="100%" height="auto">
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/>
+        </marker>
+      </defs>
+      <rect x="300" y="15" width="100" height="32" rx="5" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="350" y="35">tenants</tspan></text><line x1="350" y1="47" x2="350" y2="68" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="280" y="68" width="140" height="32" rx="5" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="350" y="88">ecosystem_levels</tspan></text><line x1="350" y1="100" x2="350" y2="120" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="250" y="120" width="200" height="36" rx="5" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="350" y="136">ecosystem_units</tspan><tspan x="350" y="148">(parent_id → self)</tspan></text><line x1="350" y1="156" x2="350" y2="178" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="290" y="178" width="120" height="32" rx="5" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="350" y="198">companies</tspan></text><line x1="230" y1="136" x2="120" y2="136" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="30" y="120" width="160" height="32" rx="5" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="110" y="140">ecosystem_unit_members</tspan></text><line x1="120" y1="152" x2="120" y2="178" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="60" y="178" width="120" height="32" rx="5" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="120" y="198">users</tspan></text><line x1="450" y1="136" x2="560" y2="136" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="560" y="120" width="170" height="32" rx="5" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="645" y="140">ecosystem_module_scopes</tspan></text><line x1="350" y1="210" x2="350" y2="232" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="280" y="232" width="140" height="32" rx="5" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="350" y="252">company_regions</tspan></text>
+    </svg>
+  </div><div class="svg-wrap">
+    <p class="svg-title">2.3 CRM — crm_leads là trung tâm liên kết</p>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 280" width="100%" height="auto">
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/>
+        </marker>
+      </defs>
+      <rect x="30" y="30" width="110" height="32" rx="5" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="85" y="50">companies</tspan></text><line x1="85" y1="62" x2="85" y2="85" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="30" y="85" width="110" height="32" rx="5" fill="#eff6ff" stroke="#2563eb" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="85" y="105">crm_pipelines</tspan></text><line x1="140" y1="101" x2="200" y2="101" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="200" y="85" width="140" height="32" rx="5" fill="#eff6ff" stroke="#2563eb" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="270" y="105">crm_pipeline_stages</tspan></text><line x1="200" y1="117" x2="200" y2="145" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="160" y="145" width="220" height="44" rx="5" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="270" y="165">crm_leads ★</tspan><tspan x="270" y="177">(type: lead | deal)</tspan></text><line x1="85" y1="30" x2="200" y2="30" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><line x1="200" y1="30" x2="200" y2="85" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="300" y="30" width="100" height="32" rx="5" fill="#ecfdf5" stroke="#059669" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="350" y="50">customers</tspan></text><line x1="350" y1="62" x2="280" y2="145" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="420" y="85" width="100" height="32" rx="5" fill="#eff6ff" stroke="#2563eb" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="470" y="105">crm_sources</tspan></text><line x1="470" y1="117" x2="320" y2="145" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="540" y="85" width="110" height="32" rx="5" fill="#eff6ff" stroke="#2563eb" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="595" y="105">crm_lead_types</tspan></text><line x1="595" y1="117" x2="340" y2="145" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><line x1="270" y1="189" x2="85" y2="189" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><line x1="85" y1="189" x2="85" y2="220" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="30" y="220" width="110" height="30" rx="5" fill="#eff6ff" stroke="#2563eb" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="85" y="239">crm_tasks</tspan></text><line x1="270" y1="189" x2="205" y2="189" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><line x1="205" y1="189" x2="205" y2="220" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="150" y="220" width="110" height="30" rx="5" fill="#eff6ff" stroke="#2563eb" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="205" y="239">crm_activities</tspan></text><line x1="270" y1="189" x2="335" y2="189" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><line x1="335" y1="189" x2="335" y2="220" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="280" y="220" width="110" height="30" rx="5" fill="#eff6ff" stroke="#2563eb" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="335" y="239">crm_lead_comments</tspan></text><line x1="270" y1="189" x2="485" y2="189" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><line x1="485" y1="189" x2="485" y2="220" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="430" y="220" width="110" height="30" rx="5" fill="#eff6ff" stroke="#2563eb" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="485" y="239">lead_members</tspan></text><line x1="270" y1="189" x2="615" y2="189" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><line x1="615" y1="189" x2="615" y2="220" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="560" y="220" width="110" height="30" rx="5" fill="#eff6ff" stroke="#2563eb" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="615" y="239">lead_documents</tspan></text><line x1="380" y1="167" x2="520" y2="167" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="520" y="150" width="100" height="34" rx="5" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="570" y="171">projects</tspan></text><text x="430" y="162" font-size="7" fill="#0f766e" font-family="Consolas">project_id (deal chốt)</text>
+    </svg>
+  </div><div class="svg-wrap">
+    <p class="svg-title">2.4 Đơn hàng &amp; Báo giá — Chuỗi quotation → order → invoice</p>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 220" width="100%" height="auto">
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/>
+        </marker>
+      </defs>
+      <rect x="40" y="40" width="120" height="36" rx="5" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="100" y="62">crm_leads</tspan></text><rect x="40" y="120" width="120" height="32" rx="5" fill="#ecfdf5" stroke="#059669" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="100" y="140">customers</tspan></text><line x1="100" y1="76" x2="100" y2="120" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><line x1="160" y1="58" x2="240" y2="58" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="240" y="40" width="120" height="36" rx="5" fill="#fff7ed" stroke="#ea580c" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="300" y="62">quotations</tspan></text><line x1="300" y1="76" x2="300" y2="100" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="240" y="100" width="120" height="32" rx="5" fill="#fff7ed" stroke="#ea580c" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="300" y="120">quotation_items</tspan></text><line x1="360" y1="58" x2="440" y2="58" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="440" y="40" width="110" height="36" rx="5" fill="#fff7ed" stroke="#c2410c" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="495" y="62">orders</tspan></text><line x1="495" y1="76" x2="495" y2="100" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="440" y="100" width="110" height="32" rx="5" fill="#fff7ed" stroke="#c2410c" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="495" y="120">order_items</tspan></text><line x1="550" y1="58" x2="620" y2="58" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="620" y="40" width="100" height="36" rx="5" fill="#fef3c7" stroke="#b45309" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="670" y="62">invoices</tspan></text><line x1="160" y1="136" x2="260" y2="136" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><line x1="260" y1="76" x2="260" y2="120" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="500" y="150" width="100" height="32" rx="5" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="550" y="170">projects</tspan></text><line x1="495" y1="132" x2="550" y2="150" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/>
+    </svg>
+  </div><div class="svg-wrap">
+    <p class="svg-title">2.5 Sản xuất — projects trung tâm, gắn pipeline &amp; tasks</p>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 240" width="100%" height="auto">
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/>
+        </marker>
+      </defs>
+      <rect x="40" y="50" width="130" height="40" rx="5" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="105" y="68">crm_leads</tspan><tspan x="105" y="80">(deal chốt)</tspan></text><line x1="105" y1="90" x2="105" y2="120" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><line x1="170" y1="70" x2="230" y2="70" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="230" y="50" width="120" height="40" rx="5" fill="#ccfbf1" stroke="#0f766e" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="290" y="74">projects ★</tspan></text><rect x="40" y="120" width="100" height="32" rx="5" fill="#ecfdf5" stroke="#059669" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="90" y="140">customers</tspan></text><line x1="90" y1="120" x2="230" y2="80" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="380" y="30" width="100" height="32" rx="5" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="430" y="50">companies</tspan></text><line x1="430" y1="62" x2="320" y2="70" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="380" y="80" width="160" height="32" rx="5" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="460" y="100">workshop_project_types</tspan></text><line x1="460" y1="112" x2="350" y2="90" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="530" y="50" width="180" height="40" rx="5" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="620" y="74">production_pipeline_stages</tspan></text><line x1="530" y1="70" x2="350" y2="70" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><line x1="290" y1="90" x2="290" y2="130" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="250" y="130" width="100" height="32" rx="5" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="300" y="150">tasks</tspan></text><line x1="300" y1="162" x2="300" y2="185" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="240" y="185" width="120" height="30" rx="5" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="300" y="204">task_checklists</tspan></text><line x1="350" y1="90" x2="400" y2="130" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="400" y="130" width="150" height="32" rx="5" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="475" y="150">project_production_staff</tspan></text><line x1="350" y1="90" x2="400" y2="175" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="400" y="175" width="160" height="32" rx="5" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="480" y="195">project_company_assignments</tspan></text><rect x="560" y="120" width="120" height="32" rx="5" fill="#ecfeff" stroke="#0891b2" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="620" y="140">workflow_stages</tspan></text><line x1="620" y1="120" x2="620" y2="90" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><rect x="560" y="170" width="130" height="32" rx="5" fill="#eff6ff" stroke="#2563eb" stroke-width="1.2"/>
+    <text text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#1e293b" font-weight="600"><tspan x="625" y="190">crm_pipeline_stages</tspan></text><line x1="625" y1="170" x2="625" y2="90" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrow)"/><text x="555" y="210" font-size="7" fill="#64748b">crm_target_stage_id (đồng bộ CRM)</text>
+    </svg>
+  </div><div class="page-break"></div><h3>2.6 Bảng tổng hợp liên kết (63 quan hệ)</h3><h4>Hệ sinh thái (10)</h4><table class="rel-table">
+    <thead><tr><th>Bảng nguồn</th><th>Cột FK</th><th></th><th>Bảng đích</th><th>Cột đích</th><th>Cardinality</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+    <td><code>tenants</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>companies</code></td>
+    <td><code>tenant_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>ecosystem_levels</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>ecosystem_units</code></td>
+    <td><code>level_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>ecosystem_units</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>ecosystem_units</code></td>
+    <td><code>parent_id</code></td>
+    <td>1-N</td>
+    <td class="hint">cây phân cấp</td>
+  </tr><tr>
+    <td><code>ecosystem_units</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>companies</code></td>
+    <td><code>division_unit_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>companies</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>ecosystem_units</code></td>
+    <td><code>company_id</code></td>
+    <td>1-1</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>ecosystem_units</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>ecosystem_unit_members</code></td>
+    <td><code>unit_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>users</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>ecosystem_unit_members</code></td>
+    <td><code>user_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>ecosystem_units</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>ecosystem_module_scopes</code></td>
+    <td><code>division_unit_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>companies</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>company_regions</code></td>
+    <td><code>company_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>companies</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>users</code></td>
+    <td><code>company_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr></tbody>
+  </table><h4>Khách hàng (4)</h4><table class="rel-table">
+    <thead><tr><th>Bảng nguồn</th><th>Cột FK</th><th></th><th>Bảng đích</th><th>Cột đích</th><th>Cardinality</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+    <td><code>companies</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>customers</code></td>
+    <td><code>company_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>users</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>customers</code></td>
+    <td><code>assigned_to</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>customers</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>customer_interactions</code></td>
+    <td><code>customer_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>users</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>customer_interactions</code></td>
+    <td><code>user_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr></tbody>
+  </table><h4>CRM (20)</h4><table class="rel-table">
+    <thead><tr><th>Bảng nguồn</th><th>Cột FK</th><th></th><th>Bảng đích</th><th>Cột đích</th><th>Cardinality</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+    <td><code>companies</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>crm_pipelines</code></td>
+    <td><code>company_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>crm_pipelines</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>crm_pipeline_stages</code></td>
+    <td><code>pipeline_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>companies</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>crm_sources</code></td>
+    <td><code>company_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>companies</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>crm_lead_types</code></td>
+    <td><code>company_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>customers</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>crm_leads</code></td>
+    <td><code>customer_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>crm_pipeline_stages</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>crm_leads</code></td>
+    <td><code>stage_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>crm_pipelines</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>crm_leads</code></td>
+    <td><code>pipeline_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>companies</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>crm_leads</code></td>
+    <td><code>company_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>crm_sources</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>crm_leads</code></td>
+    <td><code>source_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>crm_lead_types</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>crm_leads</code></td>
+    <td><code>lead_type_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>company_regions</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>crm_leads</code></td>
+    <td><code>region_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>users</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>crm_leads</code></td>
+    <td><code>assigned_to</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>crm_leads</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>crm_leads</code></td>
+    <td><code>parent_lead_id</code></td>
+    <td>1-N</td>
+    <td class="hint">deal con</td>
+  </tr><tr>
+    <td><code>crm_leads</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>crm_tasks</code></td>
+    <td><code>lead_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>crm_pipeline_stages</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>crm_tasks</code></td>
+    <td><code>pipeline_stage_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>crm_leads</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>crm_activities</code></td>
+    <td><code>lead_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>crm_leads</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>crm_lead_comments</code></td>
+    <td><code>lead_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>crm_leads</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>lead_members</code></td>
+    <td><code>lead_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>crm_leads</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>lead_documents</code></td>
+    <td><code>lead_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>production_pipeline_stages</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>crm_leads</code></td>
+    <td><code>sx_pipeline_stage_id</code></td>
+    <td>1-N</td>
+    <td class="hint">deal vào xưởng</td>
+  </tr></tbody>
+  </table><h4>Đơn hàng &amp; Báo giá (13)</h4><table class="rel-table">
+    <thead><tr><th>Bảng nguồn</th><th>Cột FK</th><th></th><th>Bảng đích</th><th>Cột đích</th><th>Cardinality</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+    <td><code>customers</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>quotations</code></td>
+    <td><code>customer_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>crm_leads</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>quotations</code></td>
+    <td><code>lead_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>projects</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>quotations</code></td>
+    <td><code>project_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>quotations</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>quotation_items</code></td>
+    <td><code>quotation_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>quotations</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>orders</code></td>
+    <td><code>quotation_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>crm_leads</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>orders</code></td>
+    <td><code>lead_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>projects</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>orders</code></td>
+    <td><code>project_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>customers</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>orders</code></td>
+    <td><code>customer_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>orders</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>order_items</code></td>
+    <td><code>order_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>quotation_items</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>order_items</code></td>
+    <td><code>quotation_item_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>orders</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>invoices</code></td>
+    <td><code>order_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>quotations</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>invoices</code></td>
+    <td><code>quotation_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>crm_leads</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>invoices</code></td>
+    <td><code>lead_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr></tbody>
+  </table><h4>Sản xuất (16)</h4><table class="rel-table">
+    <thead><tr><th>Bảng nguồn</th><th>Cột FK</th><th></th><th>Bảng đích</th><th>Cột đích</th><th>Cardinality</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+    <td><code>crm_leads</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>projects</code></td>
+    <td><code>—</code></td>
+    <td>1-1</td>
+    <td class="hint">deal chốt → autoCreateProject; crm_leads.project_id</td>
+  </tr><tr>
+    <td><code>projects</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>crm_leads</code></td>
+    <td><code>project_id</code></td>
+    <td>1-1</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>customers</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>projects</code></td>
+    <td><code>customer_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>companies</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>projects</code></td>
+    <td><code>company_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>production_pipeline_stages</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>projects</code></td>
+    <td><code>current_stage_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>workshop_project_types</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>projects</code></td>
+    <td><code>workshop_type_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>companies</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>production_pipeline_stages</code></td>
+    <td><code>company_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>workflow_stages</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>production_pipeline_stages</code></td>
+    <td><code>workflow_stage_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>crm_pipeline_stages</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>production_pipeline_stages</code></td>
+    <td><code>crm_target_stage_id</code></td>
+    <td>1-N</td>
+    <td class="hint">đồng bộ CRM</td>
+  </tr><tr>
+    <td><code>projects</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>tasks</code></td>
+    <td><code>project_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>production_pipeline_stages</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>tasks</code></td>
+    <td><code>production_stage_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>tasks</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>task_checklists</code></td>
+    <td><code>task_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>projects</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>project_company_assignments</code></td>
+    <td><code>project_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>projects</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>project_production_staff</code></td>
+    <td><code>project_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>users</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>project_production_staff</code></td>
+    <td><code>user_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr><tr>
+    <td><code>projects</code></td>
+    <td><code>id</code></td>
+    <td class="arrow">→</td>
+    <td><code>lead_documents</code></td>
+    <td><code>project_id</code></td>
+    <td>1-N</td>
+    <td class="hint"></td>
+  </tr></tbody>
+  </table><h2>3. Hệ sinh thái — Tổ chức &amp; phân quyền</h2><div class="table-block">
+        <h3><code>tenants</code> <span class="count">15 trường</span></h3>
+        <p class="tbl-desc">Tenant SaaS — khách hàng của nền tảng</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>domain</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>is_active</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">true</td>
+      <td class="hint">Cờ boolean</td>
+    </tr><tr>
+      <td><code>logo_url</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>max_companies</code></td>
+      <td>integer</td>
+      <td>NULL</td>
+      <td class="def">5</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>max_users</code></td>
+      <td>integer</td>
+      <td>NULL</td>
+      <td class="def">50</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>name</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>quotas</code></td>
+      <td>jsonb</td>
+      <td>NOT NULL</td>
+      <td class="def">'{}'::jsonb</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>settings</code></td>
+      <td>jsonb</td>
+      <td>NULL</td>
+      <td class="def">'{}'::jsonb</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>slug</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>subscription_end</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>subscription_start</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>tier</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">'free'::character varying</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>updated_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>ecosystem_levels</code> <span class="count">8 trường</span></h3>
+        <p class="tbl-desc">Cấp tổ chức (Tập đoàn → Khối → Công ty…)</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>color</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">'#3B82F6'::character varying</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>depth</code></td>
+      <td>integer</td>
+      <td>NOT NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>description</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>icon</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>name</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>slug</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>ecosystem_units</code> <span class="count">22 trường</span></h3>
+        <p class="tbl-desc">Đơn vị trong cây tổ chức (Khối/Division)</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>address</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>code</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Mã tự sinh (LEAD-…, BG-…, TB-…)</td>
+    </tr><tr>
+      <td><code>color</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>company_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → companies</td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>department_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → department</td>
+    </tr><tr>
+      <td><code>description</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>email</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>icon</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>is_active</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">true</td>
+      <td class="hint">Cờ boolean</td>
+    </tr><tr>
+      <td><code>level_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → ecosystem_levels</td>
+    </tr><tr>
+      <td><code>logo_url</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>name</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>order_index</code></td>
+      <td>integer</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>parent_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → bản ghi cha (cây phân cấp)</td>
+    </tr><tr>
+      <td><code>phone</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>short_name</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>stage_group_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → stage_group</td>
+    </tr><tr>
+      <td><code>team_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → team</td>
+    </tr><tr>
+      <td><code>tenant_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → tenants</td>
+    </tr><tr>
+      <td><code>updated_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>ecosystem_unit_members</code> <span class="count">7 trường</span></h3>
+        <p class="tbl-desc">Nhân sự thuộc đơn vị hệ sinh thái</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>can_manage_children</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">false</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>is_primary</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">false</td>
+      <td class="hint">Cờ boolean</td>
+    </tr><tr>
+      <td><code>joined_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>unit_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → unit</td>
+    </tr><tr>
+      <td><code>unit_role</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">'member'::character varying</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>user_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → user</td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>ecosystem_module_scopes</code> <span class="count">4 trường</span></h3>
+        <p class="tbl-desc">Module được phép theo khối</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>division_unit_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → ecosystem_units (khối)</td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>module_key</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>companies</code> <span class="count">13 trường</span></h3>
+        <p class="tbl-desc">Công ty nghiệp vụ (CRM, SX, VC…)</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>address</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>division_unit_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → ecosystem_units (khối)</td>
+    </tr><tr>
+      <td><code>email</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>is_active</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">true</td>
+      <td class="hint">Cờ boolean</td>
+    </tr><tr>
+      <td><code>logo_url</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>name</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>phone</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>short_name</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>tax_code</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>tenant_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → tenants</td>
+    </tr><tr>
+      <td><code>updated_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>company_regions</code> <span class="count">14 trường</span></h3>
+        <p class="tbl-desc">Khu vực / chi nhánh trong công ty</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>address</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>code</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Mã tự sinh (LEAD-…, BG-…, TB-…)</td>
+    </tr><tr>
+      <td><code>company_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → companies</td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>division_unit_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → ecosystem_units (khối)</td>
+    </tr><tr>
+      <td><code>geocoded_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>is_active</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">true</td>
+      <td class="hint">Cờ boolean</td>
+    </tr><tr>
+      <td><code>lat</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>lng</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>map_url</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>name</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>order_index</code></td>
+      <td>integer</td>
+      <td>NOT NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>updated_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>users</code> <span class="count">30 trường</span></h3>
+        <p class="tbl-desc">Nhân viên hệ thống</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>address</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>auth_provider</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'password'::text</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>avatar</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>bio</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>company_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → companies</td>
+    </tr><tr>
+      <td><code>cover_url</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>date_of_birth</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>department_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → department</td>
+    </tr><tr>
+      <td><code>drive_module</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>email</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>emergency_contact</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>full_name</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>google_id</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → google</td>
+    </tr><tr>
+      <td><code>hire_date</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>is_active</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">true</td>
+      <td class="hint">Cờ boolean</td>
+    </tr><tr>
+      <td><code>is_bot</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">false</td>
+      <td class="hint">Cờ boolean</td>
+    </tr><tr>
+      <td><code>last_login_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>notes</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>password</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>phone</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>position</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>primary_division_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → primary_division</td>
+    </tr><tr>
+      <td><code>role</code></td>
+      <td>enum</td>
+      <td>NOT NULL</td>
+      <td class="def">'staff'::user_role</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>salary</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>skills</code></td>
+      <td>jsonb</td>
+      <td>NULL</td>
+      <td class="def">'[]'::jsonb</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>team_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → team</td>
+    </tr><tr>
+      <td><code>tenant_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → tenants</td>
+    </tr><tr>
+      <td><code>updated_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr></tbody>
+  </table>
+      </div><h2>4. Khách hàng</h2><div class="table-block">
+        <h3><code>customers</code> <span class="count">26 trường</span></h3>
+        <p class="tbl-desc">Hồ sơ khách hàng cuối</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>address</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>assigned_to</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → users (NV phụ trách)</td>
+    </tr><tr>
+      <td><code>birthday</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>city</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>company</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>company_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → companies</td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>district</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>email</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>facebook_id</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → facebook</td>
+    </tr><tr>
+      <td><code>full_name</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>gender</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>last_quotation_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>last_quotation_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>notes</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>phone</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>source</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>status</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">'new'::character varying</td>
+      <td class="hint">Trạng thái nghiệp vụ</td>
+    </tr><tr>
+      <td><code>status_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → status</td>
+    </tr><tr>
+      <td><code>tags</code></td>
+      <td>jsonb</td>
+      <td>NULL</td>
+      <td class="def">'[]'::jsonb</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>tax_code</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>total_quotation_value</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>total_revenue</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>updated_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>zalo_id</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → zalo</td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>customer_interactions</code> <span class="count">10 trường</span></h3>
+        <p class="tbl-desc">Lịch sử tương tác với khách hàng</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>content</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>customer_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → customers</td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>interaction_date</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>next_action</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>next_action_date</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>title</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>type</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Loại bản ghi (lead/deal, call/meeting…)</td>
+    </tr><tr>
+      <td><code>user_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → user</td>
+    </tr></tbody>
+  </table>
+      </div><h2>5. CRM — Bán hàng</h2><div class="table-block">
+        <h3><code>crm_pipelines</code> <span class="count">12 trường</span></h3>
+        <p class="tbl-desc">Ống bán hàng theo công ty</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>allow_employee_delete_deal</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">true</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>allow_employee_delete_lead</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">true</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>company_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → companies</td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>description</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>is_active</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">true</td>
+      <td class="hint">Cờ boolean</td>
+    </tr><tr>
+      <td><code>is_default</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">false</td>
+      <td class="hint">Cờ boolean</td>
+    </tr><tr>
+      <td><code>name</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>updated_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>zalo_merge_template_data</code></td>
+      <td>jsonb</td>
+      <td>NOT NULL</td>
+      <td class="def">'{}'::jsonb</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>zalo_template_id</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → zalo_template</td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>crm_pipeline_stages</code> <span class="count">28 trường</span></h3>
+        <p class="tbl-desc">Cột Kanban CRM</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>allow_revert_to_lead</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">false</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>canonical_slug</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>color</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'#3b82f6'::text</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>counts_as_completed_revenue</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>counts_as_expected_revenue</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>counts_as_won_revenue</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>create_event_on_enter</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>deadline_default_days</code></td>
+      <td>integer</td>
+      <td>NOT NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>deadline_default_hours</code></td>
+      <td>integer</td>
+      <td>NOT NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>deal_report_bucket</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>default_probability</code></td>
+      <td>smallint</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>description</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>icon</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>is_active</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">true</td>
+      <td class="hint">Cờ boolean</td>
+    </tr><tr>
+      <td><code>is_lost</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">false</td>
+      <td class="hint">Stage thua</td>
+    </tr><tr>
+      <td><code>is_won</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">false</td>
+      <td class="hint">Stage chốt/thắng → tạo dự án SX</td>
+    </tr><tr>
+      <td><code>name</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>order_index</code></td>
+      <td>integer</td>
+      <td>NOT NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>pipeline_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → crm_pipelines</td>
+    </tr><tr>
+      <td><code>pipeline_type</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'lead'::text</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>requires_deadline</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">false</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>send_zalo_on_enter</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">false</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>show_deadline_box</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">false</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>show_sx_transfer</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">false</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>sla_days</code></td>
+      <td>integer</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>sync_role</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>crm_leads</code> <span class="count">52 trường</span></h3>
+        <p class="tbl-desc">Lead + Deal (cùng một bảng, phân biệt bằng type)</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>actual_close_date</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>assigned_to</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → users (NV phụ trách)</td>
+    </tr><tr>
+      <td><code>code</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Mã tự sinh (LEAD-…, BG-…, TB-…)</td>
+    </tr><tr>
+      <td><code>company_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → companies</td>
+    </tr><tr>
+      <td><code>construction_start_date</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>created_by</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → users (người tạo)</td>
+    </tr><tr>
+      <td><code>customer_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → customers</td>
+    </tr><tr>
+      <td><code>deposit_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Số tiền đặt cọc</td>
+    </tr><tr>
+      <td><code>deposit_label</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>deposit_received</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>description</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>estimated_value</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint">Giá trị ước tính (VNĐ)</td>
+    </tr><tr>
+      <td><code>expected_close_date</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>expected_construction_time</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>expected_production_end_date</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>expected_production_start_date</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>external_company_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → external_company</td>
+    </tr><tr>
+      <td><code>external_company_name</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>first_touch_time</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>info_complete</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>install_address</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>kanban_deadline_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>kanban_deadline_reason</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>last_activity_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>lead_owner_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → lead_owner</td>
+    </tr><tr>
+      <td><code>lead_seen_by</code></td>
+      <td>jsonb</td>
+      <td>NOT NULL</td>
+      <td class="def">'{}'::jsonb</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>lead_temperature</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>lead_type_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → lead_type</td>
+    </tr><tr>
+      <td><code>lost_reason</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>next_follow_up</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>parent_lead_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → parent_lead</td>
+    </tr><tr>
+      <td><code>phone</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>pipeline_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → crm_pipelines</td>
+    </tr><tr>
+      <td><code>probability</code></td>
+      <td>integer</td>
+      <td>NULL</td>
+      <td class="def">50</td>
+      <td class="hint">% xác suất chốt</td>
+    </tr><tr>
+      <td><code>project_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → projects</td>
+    </tr><tr>
+      <td><code>referrer_name</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>region_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → region</td>
+    </tr><tr>
+      <td><code>source_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → source</td>
+    </tr><tr>
+      <td><code>stage_entered_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>stage_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → crm_pipeline_stages / workflow_stages</td>
+    </tr><tr>
+      <td><code>sx_handover_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm bàn giao sang SX</td>
+    </tr><tr>
+      <td><code>sx_handover_confirmed_by</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>sx_pipeline_stage_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Cột Kanban SX trên deal (deal vào xưởng)</td>
+    </tr><tr>
+      <td><code>sx_template_company_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → sx_template_company</td>
+    </tr><tr>
+      <td><code>title</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>type</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'lead'::text</td>
+      <td class="hint">Loại bản ghi (lead/deal, call/meeting…)</td>
+    </tr><tr>
+      <td><code>updated_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>use_order_tasks</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">false</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>vc_pipeline_stage_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → vc_pipeline_stage</td>
+    </tr><tr>
+      <td><code>weighted_value</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Giá trị có trọng số (tự tính)</td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>crm_tasks</code> <span class="count">36 trường</span></h3>
+        <p class="tbl-desc">Nhiệm vụ trên Lead/Deal</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>allowed_share_modules</code></td>
+      <td>jsonb</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>assignee_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → assignee</td>
+    </tr><tr>
+      <td><code>blocks_stage_advance</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">false</td>
+      <td class="hint">Chặn chuyển cột nếu chưa hoàn thành</td>
+    </tr><tr>
+      <td><code>checklist</code></td>
+      <td>jsonb</td>
+      <td>NULL</td>
+      <td class="def">'[]'::jsonb</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>clears_delivery_deadline_on_complete</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">false</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>completed_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>completion_requires_customer_contact</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">false</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>completion_requires_customer_note</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">false</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>completion_requires_file_or_note</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">false</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>created_by</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → users (người tạo)</td>
+    </tr><tr>
+      <td><code>deadline</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>default_allowed_companies</code></td>
+      <td>jsonb</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>default_allowed_departments</code></td>
+      <td>jsonb</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>description</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>executor_company_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → executor_company</td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>lead_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → crm_leads</td>
+    </tr><tr>
+      <td><code>notes</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>order_index</code></td>
+      <td>integer</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>pipeline_stage_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → pipeline_stage</td>
+    </tr><tr>
+      <td><code>priority</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'medium'::text</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>production_pipeline_stage_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → production_pipeline_stage</td>
+    </tr><tr>
+      <td><code>quick_verdict</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>quick_verdict_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>quick_verdict_by</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>quick_verdict_reason</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>required_evidence_file_types</code></td>
+      <td>jsonb</td>
+      <td>NOT NULL</td>
+      <td class="def">'[]'::jsonb</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>requires_quick_verdict</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">false</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>shared_to_project</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">false</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>show_excel_quotation_upload</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">false</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>stage_slug</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>status</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'pending'::text</td>
+      <td class="hint">Trạng thái nghiệp vụ</td>
+    </tr><tr>
+      <td><code>supervisor_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → supervisor</td>
+    </tr><tr>
+      <td><code>title</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>updated_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>crm_sources</code> <span class="count">8 trường</span></h3>
+        <p class="tbl-desc">Nguồn lead (Facebook, Zalo, GT…)</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>category_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → category</td>
+    </tr><tr>
+      <td><code>color</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>company_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → companies</td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>icon</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>is_active</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">true</td>
+      <td class="hint">Cờ boolean</td>
+    </tr><tr>
+      <td><code>name</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>crm_lead_types</code> <span class="count">11 trường</span></h3>
+        <p class="tbl-desc">Phân loại Lead/Deal theo công ty</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>applies_to</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">'both'::text</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>color</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>company_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → companies</td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>default_production_company_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → default_production_company</td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>is_active</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">true</td>
+      <td class="hint">Cờ boolean</td>
+    </tr><tr>
+      <td><code>name</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>order_index</code></td>
+      <td>integer</td>
+      <td>NOT NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>updated_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>workshop_production_templates</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">false</td>
+      <td class="hint"></td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>crm_activities</code> <span class="count">14 trường</span></h3>
+        <p class="tbl-desc">Hoạt động CRM (gọi, gặp, gửi BG…)</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>activity_date</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>allowed_share_modules</code></td>
+      <td>jsonb</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>attachments</code></td>
+      <td>jsonb</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>created_by</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → users (người tạo)</td>
+    </tr><tr>
+      <td><code>customer_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → customers</td>
+    </tr><tr>
+      <td><code>description</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>duration_minutes</code></td>
+      <td>integer</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>lead_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → crm_leads</td>
+    </tr><tr>
+      <td><code>outcome</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>shared_to_workshop</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">false</td>
+      <td class="hint">Chia sẻ sang module SX</td>
+    </tr><tr>
+      <td><code>title</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>type</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Loại bản ghi (lead/deal, call/meeting…)</td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>crm_lead_comments</code> <span class="count">9 trường</span></h3>
+        <p class="tbl-desc">Bình luận trên Lead/Deal</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>attachments</code></td>
+      <td>jsonb</td>
+      <td>NOT NULL</td>
+      <td class="def">'[]'::jsonb</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>body</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NOT NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>deleted_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>bigint</td>
+      <td>NOT NULL</td>
+      <td class="def">nextval('crm_lead_comments_id_seq'::r…</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>lead_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → crm_leads</td>
+    </tr><tr>
+      <td><code>parent_id</code></td>
+      <td>bigint</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → bản ghi cha (cây phân cấp)</td>
+    </tr><tr>
+      <td><code>updated_at</code></td>
+      <td>timestamptz</td>
+      <td>NOT NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>user_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → user</td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>lead_members</code> <span class="count">6 trường</span></h3>
+        <p class="tbl-desc">Thành viên tham gia Lead/Deal</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>added_by</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>lead_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → crm_leads</td>
+    </tr><tr>
+      <td><code>role</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'member'::text</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>user_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → user</td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>lead_documents</code> <span class="count">24 trường</span></h3>
+        <p class="tbl-desc">Tài liệu đính kèm Lead/Deal/Project</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>allowed_companies</code></td>
+      <td>jsonb</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>allowed_departments</code></td>
+      <td>jsonb</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>allowed_share_modules</code></td>
+      <td>jsonb</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>created_by</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → users (người tạo)</td>
+    </tr><tr>
+      <td><code>crm_stage_group_label</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>crm_stage_slug</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>doc_type</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'other'::text</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>file_name</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>file_size</code></td>
+      <td>integer</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>file_url</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>lead_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → crm_leads</td>
+    </tr><tr>
+      <td><code>mime_type</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>name</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>notes</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>project_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → projects</td>
+    </tr><tr>
+      <td><code>shared_to_workshop</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">false</td>
+      <td class="hint">Chia sẻ sang module SX</td>
+    </tr><tr>
+      <td><code>source_attachment_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → source_attachment</td>
+    </tr><tr>
+      <td><code>source_checklist_id</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → source_checklist</td>
+    </tr><tr>
+      <td><code>source_crm_task_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → source_crm_task</td>
+    </tr><tr>
+      <td><code>source_drive_file_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → source_drive_file</td>
+    </tr><tr>
+      <td><code>source_file_attachment_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → source_file_attachment</td>
+    </tr><tr>
+      <td><code>source_project_task_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → source_project_task</td>
+    </tr></tbody>
+  </table>
+      </div><h2>6. Đơn hàng &amp; Báo giá</h2><div class="table-block">
+        <h3><code>quotations</code> <span class="count">45 trường</span></h3>
+        <p class="tbl-desc">Báo giá</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>accepted_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>approved_by</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>code</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Mã tự sinh (LEAD-…, BG-…, TB-…)</td>
+    </tr><tr>
+      <td><code>company_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → companies</td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>created_by</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → users (người tạo)</td>
+    </tr><tr>
+      <td><code>customer_address</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>customer_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → customers</td>
+    </tr><tr>
+      <td><code>customer_name</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>customer_phone</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>delivery_terms</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>deposit_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Số tiền đặt cọc</td>
+    </tr><tr>
+      <td><code>deposit_label</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>deposit_received</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>description</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>discount_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>discount_type</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'percent'::text</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>discount_value</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>fulfillment_label</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>fulfillment_lead_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → fulfillment_lead</td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>lead_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → crm_leads</td>
+    </tr><tr>
+      <td><code>notes</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>payment_terms</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>project_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → projects</td>
+    </tr><tr>
+      <td><code>region_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → region</td>
+    </tr><tr>
+      <td><code>rejected_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>rejection_reason</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>remaining_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>remaining_note</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>sale_discount_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>sale_discount_type</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'amount'::text</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>sale_discount_value</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>sent_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>source_excel_file_name</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>source_excel_file_url</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>source_task_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → source_task</td>
+    </tr><tr>
+      <td><code>status</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'draft'::text</td>
+      <td class="hint">Trạng thái nghiệp vụ</td>
+    </tr><tr>
+      <td><code>subtotal</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>tax_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>tax_rate</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">10</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>title</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>total</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint">Tổng tiền sau thuế/giảm giá</td>
+    </tr><tr>
+      <td><code>updated_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>valid_until</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>quotation_items</code> <span class="count">31 trường</span></h3>
+        <p class="tbl-desc">Dòng chi tiết báo giá</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>color</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>description</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>dimensions</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>discount_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>discount_percent</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>group_name</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>height</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>is_promo</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">false</td>
+      <td class="hint">Cờ boolean</td>
+    </tr><tr>
+      <td><code>item_order</code></td>
+      <td>integer</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>length</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>material</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>name</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>notes</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>product_code</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>product_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → product</td>
+    </tr><tr>
+      <td><code>promo_code</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>quantity</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">1</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>quotation_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → quotations</td>
+    </tr><tr>
+      <td><code>spec_factor</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>standard_area</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>tax_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>total</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint">Tổng tiền sau thuế/giảm giá</td>
+    </tr><tr>
+      <td><code>unit</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'bộ'::text</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>unit_price</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>vat_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>vat_rate</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>weight</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>width</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>orders</code> <span class="count">53 trường</span></h3>
+        <p class="tbl-desc">Đơn hàng chính thức</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>cancel_reason</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>cancelled_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>code</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Mã tự sinh (LEAD-…, BG-…, TB-…)</td>
+    </tr><tr>
+      <td><code>company_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → companies</td>
+    </tr><tr>
+      <td><code>confirmed_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>created_by</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → users (người tạo)</td>
+    </tr><tr>
+      <td><code>customer_address</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>customer_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → customers</td>
+    </tr><tr>
+      <td><code>customer_name</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>customer_phone</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>delivered_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>delivery_address</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>delivery_date</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>delivery_terms</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>deposit_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Số tiền đặt cọc</td>
+    </tr><tr>
+      <td><code>deposit_label</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>deposit_received</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>description</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>discount_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>discount_type</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'percent'::text</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>discount_value</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>display_label</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>fulfillment_lead_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → fulfillment_lead</td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>lead_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → crm_leads</td>
+    </tr><tr>
+      <td><code>logistics_project_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → logistics_project</td>
+    </tr><tr>
+      <td><code>notes</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>order_date</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">CURRENT_DATE</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>order_kind</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">'sales'::text</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>order_phase</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">'draft'::text</td>
+      <td class="hint">Giai đoạn đơn (draft/confirmed/…)</td>
+    </tr><tr>
+      <td><code>paid_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>payment_status</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'unpaid'::text</td>
+      <td class="hint">Trạng thái thanh toán</td>
+    </tr><tr>
+      <td><code>payment_terms</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>project_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → projects</td>
+    </tr><tr>
+      <td><code>quotation_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → quotations</td>
+    </tr><tr>
+      <td><code>region_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → region</td>
+    </tr><tr>
+      <td><code>remaining_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>remaining_note</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>shipped_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>sort_index</code></td>
+      <td>integer</td>
+      <td>NOT NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>status</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'draft'::text</td>
+      <td class="hint">Trạng thái nghiệp vụ</td>
+    </tr><tr>
+      <td><code>subtotal</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>sx_company_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → sx_company</td>
+    </tr><tr>
+      <td><code>sx_construction_assignee_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → sx_construction_assignee</td>
+    </tr><tr>
+      <td><code>sx_expected_end_date</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>sx_start_date</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>tax_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>tax_rate</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">10</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>title</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>total</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint">Tổng tiền sau thuế/giảm giá</td>
+    </tr><tr>
+      <td><code>updated_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>valid_until</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>order_items</code> <span class="count">32 trường</span></h3>
+        <p class="tbl-desc">Dòng chi tiết đơn hàng</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>color</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>description</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>dimensions</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>discount_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>discount_percent</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>group_name</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>height</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>is_promo</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">false</td>
+      <td class="hint">Cờ boolean</td>
+    </tr><tr>
+      <td><code>item_order</code></td>
+      <td>integer</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>length</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>material</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>name</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>notes</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>order_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → orders</td>
+    </tr><tr>
+      <td><code>product_code</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>product_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → product</td>
+    </tr><tr>
+      <td><code>promo_code</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>quantity</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">1</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>quotation_item_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → quotation_item</td>
+    </tr><tr>
+      <td><code>spec_factor</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>standard_area</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>tax_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>total</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint">Tổng tiền sau thuế/giảm giá</td>
+    </tr><tr>
+      <td><code>unit</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'bộ'::text</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>unit_price</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>vat_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>vat_rate</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>weight</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>width</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>invoices</code> <span class="count">45 trường</span></h3>
+        <p class="tbl-desc">Hóa đơn (MISA-style)</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>bank_account</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>cancelled_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>code</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Mã tự sinh (LEAD-…, BG-…, TB-…)</td>
+    </tr><tr>
+      <td><code>company_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → companies</td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>created_by</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → users (người tạo)</td>
+    </tr><tr>
+      <td><code>customer_address</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>customer_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → customers</td>
+    </tr><tr>
+      <td><code>customer_name</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>customer_phone</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>customer_tax_code</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>description</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>discount_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>discount_type</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'percent'::text</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>discount_value</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>due_date</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>invoice_date</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">CURRENT_DATE</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>invoice_number</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>issued_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>lead_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → crm_leads</td>
+    </tr><tr>
+      <td><code>misa_error_message</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>misa_inv_series</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>misa_invoice_no</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>misa_lookup_code</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>misa_published_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>misa_ref_id</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → misa_ref</td>
+    </tr><tr>
+      <td><code>misa_status</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'not_sent'::text</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>notes</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>order_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → orders</td>
+    </tr><tr>
+      <td><code>paid_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>paid_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>payment_method</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>payment_status</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'unpaid'::text</td>
+      <td class="hint">Trạng thái thanh toán</td>
+    </tr><tr>
+      <td><code>project_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → projects</td>
+    </tr><tr>
+      <td><code>quotation_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → quotations</td>
+    </tr><tr>
+      <td><code>region_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → region</td>
+    </tr><tr>
+      <td><code>sent_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>status</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'draft'::text</td>
+      <td class="hint">Trạng thái nghiệp vụ</td>
+    </tr><tr>
+      <td><code>subtotal</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>tax_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>tax_rate</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">10</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>title</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>total</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint">Tổng tiền sau thuế/giảm giá</td>
+    </tr><tr>
+      <td><code>updated_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr></tbody>
+  </table>
+      </div><h2>7. Sản xuất</h2><div class="table-block">
+        <h3><code>projects</code> <span class="count">63 trường</span></h3>
+        <p class="tbl-desc">Dự án sản xuất / lắp đặt</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>care_person_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → care_person</td>
+    </tr><tr>
+      <td><code>code</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Mã tự sinh (LEAD-…, BG-…, TB-…)</td>
+    </tr><tr>
+      <td><code>collected_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>company_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → companies</td>
+    </tr><tr>
+      <td><code>completed_date</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>construction_start_date</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>consult_date</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>consulting_person_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → consulting_person</td>
+    </tr><tr>
+      <td><code>contract_person_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → contract_person</td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>created_by</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → users (người tạo)</td>
+    </tr><tr>
+      <td><code>current_stage_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → production_pipeline_stages (cột Kanban SX hiện tại)</td>
+    </tr><tr>
+      <td><code>customer_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → customers</td>
+    </tr><tr>
+      <td><code>deadline</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>delivery_date</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>delivery_team_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → delivery_team</td>
+    </tr><tr>
+      <td><code>deposit_amount</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Số tiền đặt cọc</td>
+    </tr><tr>
+      <td><code>description</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>design_deadline</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>design_person_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → design_person</td>
+    </tr><tr>
+      <td><code>designer_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → designer</td>
+    </tr><tr>
+      <td><code>dimensions</code></td>
+      <td>jsonb</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>estimated_value</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Giá trị ước tính (VNĐ)</td>
+    </tr><tr>
+      <td><code>expected_production_start_date</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>final_value</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>flow_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → flow</td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>install_address</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>install_date</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>installation_person_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → installation_person</td>
+    </tr><tr>
+      <td><code>installation_team_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → installation_team</td>
+    </tr><tr>
+      <td><code>installer_person_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → installer_person</td>
+    </tr><tr>
+      <td><code>kitchen_type</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>logistics_company_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → logistics_company</td>
+    </tr><tr>
+      <td><code>logistics_person_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → logistics_person</td>
+    </tr><tr>
+      <td><code>material</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>name</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>notes</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>order_date</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>priority</code></td>
+      <td>enum</td>
+      <td>NULL</td>
+      <td class="def">'medium'::task_priority</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>production_deadline</code></td>
+      <td>date</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>production_note</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>production_person_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → production_person</td>
+    </tr><tr>
+      <td><code>production_start_date</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>production_value</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>production_workshop_team_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → production_workshop_team</td>
+    </tr><tr>
+      <td><code>project_manager_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → project_manager</td>
+    </tr><tr>
+      <td><code>quotation_files</code></td>
+      <td>jsonb</td>
+      <td>NULL</td>
+      <td class="def">'[]'::jsonb</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>quotation_person_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → quotation_person</td>
+    </tr><tr>
+      <td><code>sales_person_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → sales_person</td>
+    </tr><tr>
+      <td><code>shipping_person_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → shipping_person</td>
+    </tr><tr>
+      <td><code>status</code></td>
+      <td>enum</td>
+      <td>NOT NULL</td>
+      <td class="def">'new'::project_status</td>
+      <td class="hint">Trạng thái nghiệp vụ</td>
+    </tr><tr>
+      <td><code>supervisor_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → supervisor</td>
+    </tr><tr>
+      <td><code>sx_kanban_deadline_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>sx_kanban_deadline_reason</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>sx_pipeline_stage_entered_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>tags</code></td>
+      <td>jsonb</td>
+      <td>NULL</td>
+      <td class="def">'[]'::jsonb</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>updated_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>vc_delete_reason</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>vc_deleted_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>vc_deleted_by</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>vc_kanban_column_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → vc_kanban_column</td>
+    </tr><tr>
+      <td><code>workshop_type_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → workshop_project_types</td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>production_pipeline_stages</code> <span class="count">23 trường</span></h3>
+        <p class="tbl-desc">Cột Kanban sản xuất</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>bucket_slug</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>color</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">'#0f766e'::text</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>company_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → companies</td>
+    </tr><tr>
+      <td><code>converts_workshop_type</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">false</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>counts_as_collected_revenue</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>counts_as_completed_revenue</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>counts_as_won_revenue</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>crm_sync_type</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>crm_target_stage_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → crm_target_stage</td>
+    </tr><tr>
+      <td><code>default_probability</code></td>
+      <td>integer</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>icon</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>is_active</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">true</td>
+      <td class="hint">Cờ boolean</td>
+    </tr><tr>
+      <td><code>is_handover_to_logistics</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">false</td>
+      <td class="hint">Cờ boolean</td>
+    </tr><tr>
+      <td><code>name</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>order_index</code></td>
+      <td>integer</td>
+      <td>NOT NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>progress_percent</code></td>
+      <td>integer</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>requires_deadline</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">false</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>sla_days</code></td>
+      <td>integer</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>target_workshop_type_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → target_workshop_type</td>
+    </tr><tr>
+      <td><code>workflow_stage_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → workflow_stages</td>
+    </tr><tr>
+      <td><code>workshop_type_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → workshop_project_types</td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>workflow_stages</code> <span class="count">10 trường</span></h3>
+        <p class="tbl-desc">Giai đoạn quy trình chuẩn</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>color</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">'#3B82F6'::character varying</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>company_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → companies</td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>description</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>icon</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>is_active</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">true</td>
+      <td class="hint">Cờ boolean</td>
+    </tr><tr>
+      <td><code>name</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>order_index</code></td>
+      <td>integer</td>
+      <td>NOT NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>slug</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>workshop_project_types</code> <span class="count">8 trường</span></h3>
+        <p class="tbl-desc">Phân loại dự án xưởng</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>applies_to</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">'both'::text</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>company_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → companies</td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>is_active</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">true</td>
+      <td class="hint">Cờ boolean</td>
+    </tr><tr>
+      <td><code>name</code></td>
+      <td>text</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>order_index</code></td>
+      <td>integer</td>
+      <td>NOT NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>updated_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>tasks</code> <span class="count">24 trường</span></h3>
+        <p class="tbl-desc">Nhiệm vụ sản xuất trên dự án</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>actual_hours</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>assignee_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → assignee</td>
+    </tr><tr>
+      <td><code>attachments</code></td>
+      <td>jsonb</td>
+      <td>NULL</td>
+      <td class="def">'[]'::jsonb</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>blocks_stage_advance</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">false</td>
+      <td class="hint">Chặn chuyển cột nếu chưa hoàn thành</td>
+    </tr><tr>
+      <td><code>completed_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>created_by_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → created_by</td>
+    </tr><tr>
+      <td><code>deadline</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>description</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>due_date</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>estimated_hours</code></td>
+      <td>numeric</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>metadata</code></td>
+      <td>jsonb</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>order_index</code></td>
+      <td>integer</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>priority</code></td>
+      <td>enum</td>
+      <td>NULL</td>
+      <td class="def">'medium'::task_priority</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>production_stage_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → production_pipeline_stages</td>
+    </tr><tr>
+      <td><code>project_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → projects</td>
+    </tr><tr>
+      <td><code>stage_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → crm_pipeline_stages / workflow_stages</td>
+    </tr><tr>
+      <td><code>start_date</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Ngày (date)</td>
+    </tr><tr>
+      <td><code>status</code></td>
+      <td>enum</td>
+      <td>NOT NULL</td>
+      <td class="def">'todo'::task_status</td>
+      <td class="hint">Trạng thái nghiệp vụ</td>
+    </tr><tr>
+      <td><code>task_type</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">'project'::character varying</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>title</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>updated_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>workflow_line_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → workflow_line</td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>task_checklists</code> <span class="count">14 trường</span></h3>
+        <p class="tbl-desc">Checklist trong nhiệm vụ SX</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>assigned_user_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → assigned_user</td>
+    </tr><tr>
+      <td><code>assignee_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → assignee</td>
+    </tr><tr>
+      <td><code>attachments</code></td>
+      <td>jsonb</td>
+      <td>NULL</td>
+      <td class="def">'[]'::jsonb</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>completed_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>completed_by</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>deadline</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>is_completed</code></td>
+      <td>boolean</td>
+      <td>NULL</td>
+      <td class="def">false</td>
+      <td class="hint">Cờ boolean</td>
+    </tr><tr>
+      <td><code>notes</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>order_index</code></td>
+      <td>integer</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>task_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → task</td>
+    </tr><tr>
+      <td><code>title</code></td>
+      <td>varchar</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>updated_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>project_company_assignments</code> <span class="count">12 trường</span></h3>
+        <p class="tbl-desc">Giao dự án cho công ty/khối khác</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>company_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → companies</td>
+    </tr><tr>
+      <td><code>company_unit_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → company_unit</td>
+    </tr><tr>
+      <td><code>completed_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>division_unit_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → ecosystem_units (khối)</td>
+    </tr><tr>
+      <td><code>handoff_notes</code></td>
+      <td>text</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>order_index</code></td>
+      <td>integer</td>
+      <td>NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>project_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → projects</td>
+    </tr><tr>
+      <td><code>started_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>status</code></td>
+      <td>varchar</td>
+      <td>NULL</td>
+      <td class="def">'pending'::character varying</td>
+      <td class="hint">Trạng thái nghiệp vụ</td>
+    </tr><tr>
+      <td><code>template_set_id</code></td>
+      <td>uuid</td>
+      <td>NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → template_set</td>
+    </tr></tbody>
+  </table>
+      </div><div class="table-block">
+        <h3><code>project_production_staff</code> <span class="count">6 trường</span></h3>
+        <p class="tbl-desc">Nhiều NV sản xuất trên 1 dự án</p>
+        <table class="fields">
+    <thead><tr><th>Trường</th><th>Kiểu</th><th>Ràng buộc</th><th>Mặc định</th><th>Ghi chú</th></tr></thead>
+    <tbody><tr>
+      <td><code>created_at</code></td>
+      <td>timestamptz</td>
+      <td>NULL</td>
+      <td class="def">now()</td>
+      <td class="hint">Thời điểm (timestamp)</td>
+    </tr><tr>
+      <td><code>id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">gen_random_uuid()</td>
+      <td class="hint">Khóa chính UUID</td>
+    </tr><tr>
+      <td><code>is_primary</code></td>
+      <td>boolean</td>
+      <td>NOT NULL</td>
+      <td class="def">false</td>
+      <td class="hint">Cờ boolean</td>
+    </tr><tr>
+      <td><code>order_index</code></td>
+      <td>integer</td>
+      <td>NOT NULL</td>
+      <td class="def">0</td>
+      <td class="hint"></td>
+    </tr><tr>
+      <td><code>project_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → projects</td>
+    </tr><tr>
+      <td><code>user_id</code></td>
+      <td>uuid</td>
+      <td>NOT NULL</td>
+      <td class="def">—</td>
+      <td class="hint">FK → user</td>
+    </tr></tbody>
+  </table>
+      </div><h2>8. Bảng liên kết chi tiết &amp; Ghi chú</h2><h3>Ghi chú quan trọng</h3><ol>
+        <li><code>crm_leads</code> = Lead + Deal — không có bảng deals riêng.</li>
+        <li>Deal chốt → <code>projects</code> + <code>crm_leads.project_id</code>.</li>
+        <li><code>orders</code> liên kết quotation, lead, project.</li>
+        <li><code>production_pipeline_stages</code> = cột Kanban SX; <code>workflow_stages</code> = giai đoạn chuẩn.</li>
+        <li><code>lead_documents</code> + <code>crm_lead_comments</code> dùng chia sẻ file CRM ↔ SX.</li>
+        <li>Liên kết dựa trên cột <code>*_id</code> và quy tắc nghiệp vụ (một số không có FK constraint trong DB).</li>
+      </ol><h3>Tổng hợp số trường & liên kết / bảng</h3>
+        <table class="summary"><thead><tr><th>Bảng</th><th>Mô tả</th><th>Số trường</th><th>Số liên kết</th></tr></thead><tbody><tr><td><code>tenants</code></td><td>Tenant SaaS — khách hàng của nền tảng</td><td>15</td><td>1</td></tr><tr><td><code>ecosystem_levels</code></td><td>Cấp tổ chức (Tập đoàn → Khối → Công ty…)</td><td>8</td><td>1</td></tr><tr><td><code>ecosystem_units</code></td><td>Đơn vị trong cây tổ chức (Khối/Division)</td><td>22</td><td>6</td></tr><tr><td><code>ecosystem_unit_members</code></td><td>Nhân sự thuộc đơn vị hệ sinh thái</td><td>7</td><td>2</td></tr><tr><td><code>ecosystem_module_scopes</code></td><td>Module được phép theo khối</td><td>4</td><td>1</td></tr><tr><td><code>companies</code></td><td>Công ty nghiệp vụ (CRM, SX, VC…)</td><td>13</td><td>12</td></tr><tr><td><code>company_regions</code></td><td>Khu vực / chi nhánh trong công ty</td><td>14</td><td>2</td></tr><tr><td><code>users</code></td><td>Nhân viên hệ thống</td><td>30</td><td>6</td></tr><tr><td><code>customers</code></td><td>Hồ sơ khách hàng cuối</td><td>26</td><td>7</td></tr><tr><td><code>customer_interactions</code></td><td>Lịch sử tương tác với khách hàng</td><td>10</td><td>2</td></tr><tr><td><code>crm_pipelines</code></td><td>Ống bán hàng theo công ty</td><td>12</td><td>3</td></tr><tr><td><code>crm_pipeline_stages</code></td><td>Cột Kanban CRM</td><td>28</td><td>4</td></tr><tr><td><code>crm_leads</code></td><td>Lead + Deal (cùng một bảng, phân biệt bằng type)</td><td>52</td><td>20</td></tr><tr><td><code>crm_tasks</code></td><td>Nhiệm vụ trên Lead/Deal</td><td>36</td><td>2</td></tr><tr><td><code>crm_sources</code></td><td>Nguồn lead (Facebook, Zalo, GT…)</td><td>8</td><td>2</td></tr><tr><td><code>crm_lead_types</code></td><td>Phân loại Lead/Deal theo công ty</td><td>11</td><td>2</td></tr><tr><td><code>crm_activities</code></td><td>Hoạt động CRM (gọi, gặp, gửi BG…)</td><td>14</td><td>1</td></tr><tr><td><code>crm_lead_comments</code></td><td>Bình luận trên Lead/Deal</td><td>9</td><td>1</td></tr><tr><td><code>lead_members</code></td><td>Thành viên tham gia Lead/Deal</td><td>6</td><td>1</td></tr><tr><td><code>lead_documents</code></td><td>Tài liệu đính kèm Lead/Deal/Project</td><td>24</td><td>2</td></tr><tr><td><code>quotations</code></td><td>Báo giá</td><td>45</td><td>6</td></tr><tr><td><code>quotation_items</code></td><td>Dòng chi tiết báo giá</td><td>31</td><td>2</td></tr><tr><td><code>orders</code></td><td>Đơn hàng chính thức</td><td>53</td><td>6</td></tr><tr><td><code>order_items</code></td><td>Dòng chi tiết đơn hàng</td><td>32</td><td>2</td></tr><tr><td><code>invoices</code></td><td>Hóa đơn (MISA-style)</td><td>45</td><td>3</td></tr><tr><td><code>projects</code></td><td>Dự án sản xuất / lắp đặt</td><td>63</td><td>12</td></tr><tr><td><code>production_pipeline_stages</code></td><td>Cột Kanban sản xuất</td><td>23</td><td>6</td></tr><tr><td><code>workflow_stages</code></td><td>Giai đoạn quy trình chuẩn</td><td>10</td><td>1</td></tr><tr><td><code>workshop_project_types</code></td><td>Phân loại dự án xưởng</td><td>8</td><td>1</td></tr><tr><td><code>tasks</code></td><td>Nhiệm vụ sản xuất trên dự án</td><td>24</td><td>3</td></tr><tr><td><code>task_checklists</code></td><td>Checklist trong nhiệm vụ SX</td><td>14</td><td>1</td></tr><tr><td><code>project_company_assignments</code></td><td>Giao dự án cho công ty/khối khác</td><td>12</td><td>1</td></tr><tr><td><code>project_production_staff</code></td><td>Nhiều NV sản xuất trên 1 dự án</td><td>6</td><td>2</td></tr></tbody></table>
+  <p class="footer-note">TuBep Pro · Tài liệu schema nội bộ · Sinh tự động từ information_schema</p>
+</body>
+</html>

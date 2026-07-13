@@ -7,15 +7,54 @@ import { useAuth } from '../lib/auth';
 import { Upload, FileSpreadsheet, X, AlertTriangle, Loader2, Eye, ChevronDown, ChevronUp, FileEdit, Briefcase } from 'lucide-react';
 import LeadDealPicker from './LeadDealPicker';
 import QuotationSourceExcelLink, { uploadQuotationSourceExcel } from './QuotationSourceExcelLink';
+import { fetchUploadArrayBuffer } from '../lib/publicFileUrl';
 
 /** Dùng chung với QuotationForm (đọc draft khi from_excel=1) */
 export const QUOTATION_EXCEL_DRAFT_KEY = 'quotation_excel_draft_v1';
+export const ORDER_EXCEL_DRAFT_KEY = 'order_excel_draft_v1';
+export const INVOICE_EXCEL_DRAFT_KEY = 'invoice_excel_draft_v1';
+
+const DOC_TYPE_CONFIG = {
+  quotation: {
+    title: 'Import báo giá từ Excel',
+    subtitle: 'Upload .xlsx → Xem trước → Áp dụng vào form báo giá → Chỉnh sửa → Lưu',
+    entityLabel: 'báo giá',
+    applyLabel: 'Áp dụng vào báo giá',
+    draftKey: QUOTATION_EXCEL_DRAFT_KEY,
+    navigatePath: '/crm/quotations/new',
+    titlePrefix: 'Báo giá',
+    dealAttachHint: 'Báo giá nên gắn vào deal để phân loại theo công ty / khu vực / nhân viên.',
+    dealAttachedLabel: 'Báo giá gắn vào deal hiện tại',
+  },
+  order: {
+    title: 'Import đơn hàng từ Excel',
+    subtitle: 'Upload .xlsx → Xem trước → Áp dụng vào form đơn hàng → Chỉnh sửa → Lưu',
+    entityLabel: 'đơn hàng',
+    applyLabel: 'Áp dụng vào đơn hàng',
+    draftKey: ORDER_EXCEL_DRAFT_KEY,
+    navigatePath: '/crm/orders/new',
+    titlePrefix: 'Đơn hàng',
+    dealAttachHint: 'Đơn hàng nên gắn vào deal để theo dõi công nợ và sản xuất.',
+    dealAttachedLabel: 'Đơn hàng gắn vào deal hiện tại',
+  },
+  invoice: {
+    title: 'Import hóa đơn từ Excel',
+    subtitle: 'Upload .xlsx → Xem trước → Áp dụng vào form hóa đơn → Chỉnh sửa → Lưu',
+    entityLabel: 'hóa đơn',
+    applyLabel: 'Áp dụng vào hóa đơn',
+    draftKey: INVOICE_EXCEL_DRAFT_KEY,
+    navigatePath: '/crm/invoices/new',
+    titlePrefix: 'Hóa đơn',
+    dealAttachHint: 'Hóa đơn nên gắn vào deal để đối soát thanh toán.',
+    dealAttachedLabel: 'Hóa đơn gắn vào deal hiện tại',
+  },
+};
 
 /**
  * Từ kết quả parse-excel → payload nội bộ (form + dòng hàng) để đổ vào trang sửa báo giá.
  * (Logic giữ đồng bộ với tính spec_factor / CK / freebie như bản tạo trực tiếp cũ.)
  */
-export function buildQuotationDraftFromPreview(preview, file, user, leadId, sourceFile = null) {
+export function buildQuotationDraftFromPreview(preview, file, user, leadId, sourceFile = null, docType = 'quotation') {
   const itemsPayload = preview.items
     .filter((i) => !i.is_group)
     .map((i) => {
@@ -109,17 +148,19 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId, sour
   }
 
   const fileTitle = file?.name?.replace(/\.[^.]+$/, '').trim() || '';
+  const cfg = DOC_TYPE_CONFIG[docType] || DOC_TYPE_CONFIG.quotation;
 
   const todayISO = new Date().toISOString().slice(0, 10);
 
   return {
     form: {
-      title: preview.title || fileTitle || `Báo giá ${preview.customer_name || ''}`.trim(),
+      title: preview.title || fileTitle || `${cfg.titlePrefix} ${preview.customer_name || ''}`.trim(),
       customer_name: preview.customer_name || '',
       customer_phone: preview.customer_phone || '',
       customer_address: preview.customer_address || '',
       lead_id: leadId || '',
       valid_until: todayISO,
+      due_date: todayISO,
       discount_type: 'amount',
       discount_value: computedDiscount,
       notes: notesParts.join('\n\n'),
@@ -139,6 +180,7 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId, sour
       sourceFile: sourceFile || null,
       importedAt: new Date().toISOString(),
       requireReviewConfirm: true,
+      docType,
     },
   };
 }
@@ -160,14 +202,20 @@ async function attachExcelToTaskNotes(taskId, leadId, uploaded) {
   });
 }
 
-export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportDone, onClose, onSourceAttached }) {
+export default function ExcelQuotationImport({
+  dealId, leadId, taskId, onImportDone, onClose, onSourceAttached,
+  docType = 'quotation',
+  initialFileUrl, initialFileName, initialSourceFile,
+}) {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const cfg = DOC_TYPE_CONFIG[docType] || DOC_TYPE_CONFIG.quotation;
   const [file, setFile] = useState(null);
-  const [sourceFile, setSourceFile] = useState(null);
+  const [sourceFile, setSourceFile] = useState(initialSourceFile || null);
   const [uploadingSource, setUploadingSource] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [loadingSheets, setLoadingSheets] = useState(false);
+  const [loadingInitialFile, setLoadingInitialFile] = useState(!!initialFileUrl);
   const [sheets, setSheets] = useState([]); // { name, rowCount, isQuotation }[]
   const [selectedSheet, setSelectedSheet] = useState('');
   const [preview, setPreview] = useState(null); // parsed data
@@ -295,15 +343,14 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
     setParsing(false);
   };
 
-  const handleFileSelect = async (e) => {
-    const f = e.target.files?.[0];
+  const processFile = async (f, { keepSourceFile = false } = {}) => {
     if (!f) return;
     if (!f.name.match(/\.(xlsx?|csv)$/i)) {
       setError('Chỉ hỗ trợ file .xlsx, .xls');
       return;
     }
     setFile(f);
-    setSourceFile(null);
+    if (!keepSourceFile) setSourceFile(null);
     setError('');
     setPreview(null);
     setSheets([]);
@@ -330,30 +377,61 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
     setLoadingSheets(false);
   };
 
-  /** Đưa dữ liệu sang trang «Tạo báo giá» để chỉnh sửa; chỉ khi bấm Lưu ở đó mới tạo báo giá & liên kết deal/task. */
+  const handleFileSelect = async (e) => {
+    const f = e.target.files?.[0];
+    if (f) await processFile(f);
+  };
+
+  /** Nạp sẵn file Excel đã có trong Tài liệu (không cần chọn lại thủ công). */
+  useEffect(() => {
+    if (!initialFileUrl) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoadingInitialFile(true);
+        setError('');
+        const buf = await fetchUploadArrayBuffer(initialFileUrl);
+        if (cancelled) return;
+        const name = initialFileName || 'tai-lieu-excel.xlsx';
+        const f = new File([buf], name, {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        });
+        await processFile(f, { keepSourceFile: !!initialSourceFile });
+      } catch (err) {
+        if (!cancelled) setError(err.message || 'Không tải được file Excel đã chọn');
+      } finally {
+        if (!cancelled) setLoadingInitialFile(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialFileUrl]);
+
+  /** Đưa dữ liệu sang form BG/ĐH/HĐ để chỉnh sửa; chỉ khi bấm Lưu mới tạo bản ghi. */
   const handleApplyToQuotationForm = () => {
     if (!preview) return;
     setSaving(true);
     try {
       const resolvedLead = effectiveLeadId || '';
-      const draft = buildQuotationDraftFromPreview(preview, file, user, resolvedLead, sourceFile);
+      const draft = buildQuotationDraftFromPreview(preview, file, user, resolvedLead, sourceFile, docType);
       const payload = { version: 1, ...draft };
+      const draftKey = cfg.draftKey;
 
       // Cách CHÍNH: truyền draft qua history state — in-memory, không đụng quota Storage.
       // sessionStorage chỉ là fallback cho F5; nếu hết quota → bỏ qua, vẫn import được.
       const serialized = JSON.stringify(payload);
       try {
-        sessionStorage.removeItem(QUOTATION_EXCEL_DRAFT_KEY);
+        sessionStorage.removeItem(draftKey);
       } catch (_) { /* ignore */ }
       try {
-        sessionStorage.setItem(QUOTATION_EXCEL_DRAFT_KEY, serialized);
+        sessionStorage.setItem(draftKey, serialized);
       } catch (storageErr) {
         // QuotaExceededError → dọn các key dễ phình, thử lại 1 lần. Vẫn lỗi thì kệ — đã có history state.
         try {
           sessionStorage.removeItem('crm_pipeline_ui_v1');
         } catch (_) { /* ignore */ }
         try {
-          sessionStorage.setItem(QUOTATION_EXCEL_DRAFT_KEY, serialized);
+          sessionStorage.setItem(draftKey, serialized);
         } catch (_) { /* ignore — fallback dùng history state */ }
         console.warn('[excel-import] sessionStorage quota exceeded; using router state fallback', storageErr);
       }
@@ -361,11 +439,11 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
       const q = new URLSearchParams();
       q.set('from_excel', '1');
       if (resolvedLead) q.set('lead_id', resolvedLead);
-      navigate(`/crm/quotations/new?${q.toString()}`, { state: { excelDraft: payload } });
+      navigate(`${cfg.navigatePath}?${q.toString()}`, { state: { excelDraft: payload } });
       onClose?.();
       if (onImportDone) {
         try {
-          onImportDone({ draft_only: true });
+          onImportDone({ draft_only: true, docType });
         } catch (_) {}
       }
     } catch (e) {
@@ -402,8 +480,8 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
               <FileSpreadsheet className="h-5 w-5 text-emerald-600" />
             </div>
             <div>
-              <h2 id="excel-import-title" className="text-lg font-bold text-gray-900">Import báo giá từ Excel</h2>
-              <p className="text-xs text-gray-500">Upload .xlsx → Xem trước → Áp dụng vào form báo giá → Chỉnh sửa → Lưu</p>
+              <h2 id="excel-import-title" className="text-lg font-bold text-gray-900">{cfg.title}</h2>
+              <p className="text-xs text-gray-500">{cfg.subtitle}</p>
             </div>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer">
@@ -419,13 +497,13 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
               <h3 className={`text-sm font-bold flex items-center gap-2 ${pickedDeal ? 'text-emerald-900' : 'text-amber-900'}`}>
                 <Briefcase className="h-4 w-4" />
                 {contextLeadId
-                  ? (dealChangedFromContext ? 'Bạn đã đổi sang deal khác' : 'Báo giá gắn vào deal hiện tại')
+                  ? (dealChangedFromContext ? 'Bạn đã đổi sang deal khác' : cfg.dealAttachedLabel)
                   : (pickedDeal ? 'Đã chọn deal liên kết' : 'Chọn deal trước khi import')}
               </h3>
               <p className="text-[11px] mt-1 text-gray-700">
                 {contextLeadId && !dealChangedFromContext
-                  ? `Đang mở từ ${taskId ? 'nhiệm vụ' : 'deal'} hiện tại — báo giá sẽ tự gắn deal này. Có thể đổi sang deal khác bên dưới nếu cần.`
-                  : 'Báo giá nên gắn vào deal để phân loại theo công ty / khu vực / nhân viên. Có thể bỏ qua nếu thực sự không gắn deal nào (sẽ bị đánh dấu "mồ côi" trong danh sách).'}
+                  ? `Đang mở từ ${taskId ? 'nhiệm vụ' : 'deal'} hiện tại — ${cfg.entityLabel} sẽ tự gắn deal này. Có thể đổi sang deal khác bên dưới nếu cần.`
+                  : `${cfg.dealAttachHint} Có thể bỏ qua nếu thực sự không gắn deal nào (sẽ bị đánh dấu "mồ côi" trong danh sách).`}
               </p>
 
               <div className="mt-3 space-y-2">
@@ -467,8 +545,16 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
             </div>
           )}
 
+          {/* Đang tự tải file Excel có sẵn (mở từ Tài liệu deal) */}
+          {loadingInitialFile && (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="h-8 w-8 animate-spin text-blue-500 mr-3" />
+              <p className="text-sm text-gray-600">Đang tải file Excel đã chọn từ tài liệu…</p>
+            </div>
+          )}
+
           {/* Upload area */}
-          {!preview && !parsing && !loadingSheets && sheets.length <= 1 && (
+          {!loadingInitialFile && !preview && !parsing && !loadingSheets && sheets.length <= 1 && (
             <div
               onClick={() => fileRef.current?.click()}
               className="border-2 border-dashed border-gray-300 rounded-xl p-10 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/50 transition-all"
@@ -484,7 +570,7 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
           )}
 
           {/* Đang liệt kê sheet */}
-          {loadingSheets && (
+          {!loadingInitialFile && loadingSheets && (
             <div className="flex items-center justify-center py-16">
               <Loader2 className="h-8 w-8 animate-spin text-blue-500 mr-3" />
               <p className="text-sm text-gray-600">Đang đọc danh sách sheet…</p>
@@ -918,7 +1004,7 @@ export default function ExcelQuotationImport({ dealId, leadId, taskId, onImportD
                   className="h-9 px-6 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-bold flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition"
                 >
                   {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileEdit className="h-4 w-4" />}
-                  {saving ? 'Đang mở…' : `Áp dụng vào báo giá (${itemCount} dòng)`}
+                  {saving ? 'Đang mở…' : `${cfg.applyLabel} (${itemCount} dòng)`}
                 </button>
               )}
             </div>

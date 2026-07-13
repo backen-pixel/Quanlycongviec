@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND } from '../lib/utils';
 import { Plus, Trash2, Save, ArrowLeft, Search, Receipt, AlignLeft, Loader2, Download } from 'lucide-react';
@@ -7,16 +7,20 @@ import ProductSearchPicker from '../components/ProductSearchPicker';
 import ProductAutocompleteCell from '../components/ProductAutocompleteCell';
 import CustomerSearchPicker from '../components/CustomerSearchPicker';
 import SaveToast from '../components/SaveToast';
+import { INVOICE_EXCEL_DRAFT_KEY } from '../components/ExcelQuotationImport';
 
 export default function InvoiceForm() {
   const { id } = useParams();
   const isEdit = !!id;
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const location = useLocation();
 
   const [form, setForm] = useState({
     title: '', customer_id: '', customer_name: '', customer_phone: '', customer_address: '',
     customer_tax_code: '', payment_terms: '', due_date: '', notes: '',
     discount_type: 'percent', discount_value: 0,
+    lead_id: '',
   });
   const [items, setItems] = useState([{
     name: '', description: '', product_code: '', unit: 'bộ', quantity: 1, unit_price: 0,
@@ -30,6 +34,7 @@ export default function InvoiceForm() {
   const [showProductPicker, setShowProductPicker] = useState(false);
   const [statusLoading, setStatusLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const excelHydratedRef = useRef(false);
 
   useEffect(() => {
     api.get('/customers', { params: { limit: 5000 } }).then(r => setCustomers(r.data.customers || r.data || []));
@@ -44,6 +49,7 @@ export default function InvoiceForm() {
           due_date: d.due_date || '', notes: d.notes || '',
           discount_type: d.discount_type || 'percent', discount_value: d.discount_value || 0,
           code: d.code || '', payment_status: d.payment_status || 'unpaid',
+          lead_id: d.lead_id || '',
         });
         if (d.items?.length) setItems(d.items.map(i => {
           if (i.notes === '__SECTION__') return { row_type: 'section', name: i.name, notes: '__SECTION__' };
@@ -57,8 +63,58 @@ export default function InvoiceForm() {
           };
         }));
       });
+    } else if (searchParams.get('from_excel') === '1' && !excelHydratedRef.current) {
+      excelHydratedRef.current = true;
+      try {
+        let parsed = location.state?.excelDraft || null;
+        if (!parsed) {
+          const raw = sessionStorage.getItem(INVOICE_EXCEL_DRAFT_KEY);
+          if (raw) parsed = JSON.parse(raw);
+        }
+        try { sessionStorage.removeItem(INVOICE_EXCEL_DRAFT_KEY); } catch (_) { /* ignore */ }
+        if (parsed) {
+          const dform = parsed.form || {};
+          const urlLead = searchParams.get('lead_id') || '';
+          setForm((f) => ({
+            ...f,
+            title: dform.title || f.title,
+            customer_name: dform.customer_name || '',
+            customer_phone: dform.customer_phone || '',
+            customer_address: dform.customer_address || '',
+            lead_id: dform.lead_id || urlLead || '',
+            notes: dform.notes || '',
+            payment_terms: dform.payment_terms || '',
+            due_date: dform.due_date || dform.valid_until || '',
+            discount_type: dform.discount_type || 'amount',
+            discount_value: dform.discount_value ?? 0,
+          }));
+          if (parsed.items?.length) {
+            setItems(parsed.items.map((i) => ({
+              name: i.name || '',
+              description: i.description || '',
+              product_code: '',
+              unit: i.unit || 'bộ',
+              quantity: i.quantity ?? 1,
+              unit_price: i.unit_price ?? 0,
+              discount_percent: i.discount_percent ?? 0,
+              vat_rate: i.vat_rate ?? 0,
+              height: i.height ?? '',
+              width: i.width ?? '',
+              length: i.length ?? '',
+              spec_factor: i.spec_factor ?? 0,
+              notes: i.notes || '',
+              is_freebie: !!i.is_freebie,
+              lock_amount: !!i.lock_amount,
+              imported_amount: typeof i.imported_amount === 'number' ? i.imported_amount : undefined,
+            })));
+          }
+        }
+      } catch (_) { /* ignore */ }
+    } else if (!isEdit) {
+      const urlLead = searchParams.get('lead_id') || '';
+      if (urlLead) setForm((f) => ({ ...f, lead_id: urlLead }));
     }
-  }, [id]);
+  }, [id, isEdit, searchParams, location.state]);
 
   const selectCustomer = (c) => {
     if (c) setForm(f => ({ ...f, customer_id: c.id, customer_name: c.full_name, customer_phone: c.phone || '', customer_address: c.address || '', customer_tax_code: c.tax_code || '' }));
@@ -133,6 +189,7 @@ export default function InvoiceForm() {
     try {
       const payload = {
         ...form,
+        lead_id: form.lead_id || null,
         subtotal: calcs.subtotal,
         discount_amount: calcs.discountAmt,
         tax_amount: calcs.totalVat,

@@ -9380,7 +9380,6 @@ r.post('/leads/:id/convert-to-lead', async (req, res) => {
       stage_entered_at: nowIso,
       updated_at: nowIso,
       lost_reason: null,
-      lost_at: null,
     };
 
     const { data: updatedLead, error: updateErr } = await supabase

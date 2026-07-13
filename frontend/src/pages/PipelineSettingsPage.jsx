@@ -243,6 +243,7 @@ function StageStatusBadges({ stage, linkedSx, linkedVc, syncRoleLabels }) {
   if (s.create_event_on_enter) badges.push({ key: 'event', cls: 'bg-emerald-50 text-emerald-800 border-emerald-200', icon: IconCalendar, text: 'Sự kiện' });
   if (s.apply_default_assignee_on_enter) badges.push({ key: 'assignee', cls: 'bg-indigo-50 text-indigo-800 border-indigo-200', icon: IconUser, text: 'Chuyển PT' });
   if (s.allow_revert_to_lead) badges.push({ key: 'revert', cls: 'bg-amber-50 text-amber-800 border-amber-200', icon: IconRotateClockwise, text: 'Trả Lead' });
+  if (s.is_revert_to_lead_target) badges.push({ key: 'revert-target', cls: 'bg-amber-50 text-amber-800 border-amber-200', icon: IconRotateClockwise, text: 'Nhận Lead trả về' });
   if (s.sync_role) {
     badges.push({ key: 'sync', cls: 'bg-indigo-50 text-indigo-700 border-indigo-200', icon: IconBuildingFactory, text: syncRoleLabels[s.sync_role] || s.sync_role });
   }
@@ -687,6 +688,37 @@ export default function PipelineSettingsPage() {
     }
   };
 
+  /**
+   * Bật/tắt "Cột nhận Lead khi Trả về Lead" cho từng cột lead. Nên chỉ có 1 cột/pipeline
+   * được bật — khi bật cột mới, tự tắt các cột lead khác cùng pipeline đang bật cờ này.
+   */
+  const toggleRevertToLeadTargetColumn = async (stage) => {
+    if (stage.pipeline_type !== 'lead') return;
+    const turningOn = !stage.is_revert_to_lead_target;
+    if (turningOn) {
+      const others = (stages || []).filter(
+        (s) => s.pipeline_id === stage.pipeline_id && s.id !== stage.id && s.is_revert_to_lead_target,
+      );
+      if (others.length) {
+        const ok = confirm(
+          `Pipeline đang có ${others.length} cột lead khác nhận "Trả về Lead". Tắt cột đó và đặt "${stage.name}" làm cột nhận duy nhất?`,
+        );
+        if (!ok) return;
+      }
+      for (const o of others) {
+        await api.put(`/crm/pipeline-stages/${o.id}`, { is_revert_to_lead_target: false });
+      }
+    }
+    try {
+      await api.put(`/crm/pipeline-stages/${stage.id}`, {
+        is_revert_to_lead_target: turningOn,
+      });
+      load();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi');
+    }
+  };
+
   /** Bật/tắt ghi nhận quá hạn khi lead/deal không chuyển tiếp khỏi cột (sla_days=0). */
   const toggleSlaColumn = async (stage) => {
     if (stage.is_won || stage.is_lost) return;
@@ -812,6 +844,7 @@ export default function PipelineSettingsPage() {
       sla_days: '',
       requires_deadline: false,
       allow_revert_to_lead: false,
+      is_revert_to_lead_target: false,
       apply_default_assignee_on_enter: false,
       default_assignee_user_id: '',
     });
@@ -837,6 +870,7 @@ export default function PipelineSettingsPage() {
       sla_days: stage.sla_days != null && stage.sla_days !== '' ? String(stage.sla_days) : '',
       requires_deadline: !!stage.requires_deadline,
       allow_revert_to_lead: !!stage.allow_revert_to_lead,
+      is_revert_to_lead_target: !!stage.is_revert_to_lead_target,
       apply_default_assignee_on_enter: !!stage.apply_default_assignee_on_enter,
       default_assignee_user_id: stage.default_assignee_user_id || '',
     });
@@ -1243,6 +1277,23 @@ export default function PipelineSettingsPage() {
                     </button>
                   )}
                 </>
+              )}
+              {s.pipeline_type === 'lead' && !s.is_won && !s.is_lost && (
+                <button
+                  type="button"
+                  onClick={() => toggleRevertToLeadTargetColumn(s)}
+                  className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                    s.is_revert_to_lead_target
+                      ? 'bg-amber-100 text-amber-800 border-amber-300'
+                      : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-amber-300 hover:text-amber-700'
+                  }`}
+                  title={s.is_revert_to_lead_target
+                    ? 'Đang là cột nhận deal khi bấm "Trả về Lead". Nhấn để tắt.'
+                    : 'Bật để đặt cột này làm nơi nhận deal khi bấm "Trả về Lead" (thay cho cột lead đầu tiên).'}
+                >
+                  <RotateCcw className="h-3 w-3" />
+                  {s.is_revert_to_lead_target ? 'Nhận Lead trả về' : 'Nhận Trả về Lead'}
+                </button>
               )}
               <button
                 type="button"
@@ -2284,6 +2335,20 @@ function StageForm({
               className="rounded border-amber-400"
             />
             <RotateCcw className="h-3.5 w-3.5 text-amber-600" /> Cho phép trả Deal về Lead
+          </label>
+        )}
+        {pipelineType === 'lead' && (
+          <label
+            className="flex items-center gap-2 text-xs cursor-pointer text-amber-900 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200"
+            title="Tick để đặt cột này làm nơi nhận deal khi bấm 'Trả về Lead'. Nếu không cột lead nào được tick, hệ thống dùng cột lead đầu tiên (theo thứ tự) như trước."
+          >
+            <input
+              type="checkbox"
+              checked={!!form.is_revert_to_lead_target}
+              onChange={(e) => setForm((f) => ({ ...f, is_revert_to_lead_target: e.target.checked }))}
+              className="rounded border-amber-400"
+            />
+            <RotateCcw className="h-3.5 w-3.5 text-amber-600" /> Cột nhận Lead khi "Trả về Lead"
           </label>
         )}
         {!form.is_won && !form.is_lost && (

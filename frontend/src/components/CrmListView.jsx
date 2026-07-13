@@ -14,7 +14,7 @@ import {
   isoWeekAndParts,
   MILESTONE_SLUG_GROUPS,
 } from '../lib/crmListViewColumns';
-import { Columns3, X, Check, Pin, CheckCircle2, FileSpreadsheet, RotateCcw } from 'lucide-react';
+import { Columns3, X, Check, Pin, CheckCircle2, FileSpreadsheet, RotateCcw, Zap } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import EmployeePicker from './EmployeePicker';
 
@@ -187,10 +187,12 @@ function RevertDealToLeadModal({ item, onClose, onDone }) {
     setSubmitting(true);
     setError('');
     try {
-      await api.post(`/crm/leads/${item.id}/convert-to-lead`, {
+      const { data } = await api.post(`/crm/leads/${item.id}/convert-to-lead`, {
         assigned_to: newOwner,
         reason: reason.trim() || undefined,
       });
+      // eslint-disable-next-line no-alert
+      alert(`✅ ${data?.message || 'Đã trả Deal về Lead.'}`);
       onDone?.();
     } catch (e) {
       setError(e.response?.data?.error || 'Có lỗi khi trả deal về Lead.');
@@ -285,6 +287,184 @@ function RevertDealToLeadModal({ item, onClose, onDone }) {
                 className="flex-1 h-9 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-semibold disabled:opacity-50"
               >
                 {submitting ? 'Đang xử lý...' : '↩️ Trả về Lead'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ConvertLeadToDealModal({ item, onClose, onDone }) {
+  const [newOwner, setNewOwner] = useState(item?.assigned_to || item?.lead_owner_id || '');
+  const [regionId, setRegionId] = useState(item?.region_id ? String(item.region_id) : '');
+  const [regions, setRegions] = useState([]);
+  const [regionsLoading, setRegionsLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  if (!item) return null;
+  const companyIdForItem = item.company_id || item.company?.id || '';
+  const hasCustomer = !!item.customer_id;
+  const needsRegionPick = !item.region_id;
+
+  useEffect(() => {
+    if (!needsRegionPick || !companyIdForItem) return;
+    let cancel = false;
+    setRegionsLoading(true);
+    api
+      .get('/crm/company-regions', { params: { company_id: companyIdForItem, for_module: 'crm' } })
+      .then((r) => {
+        if (cancel) return;
+        const list = Array.isArray(r.data) ? r.data : [];
+        setRegions(list.filter((x) => x.is_active !== false));
+      })
+      .catch(() => {
+        if (!cancel) setRegions([]);
+      })
+      .finally(() => {
+        if (!cancel) setRegionsLoading(false);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [needsRegionPick, companyIdForItem]);
+
+  const canSubmit = hasCustomer && !!companyIdForItem && (!needsRegionPick || !!regionId) && !submitting;
+
+  const handleSubmit = async () => {
+    if (!hasCustomer) {
+      setError('Lead chưa liên kết khách hàng — vào chi tiết Lead để chọn khách hàng trước.');
+      return;
+    }
+    if (needsRegionPick && !regionId) {
+      setError('Vui lòng chọn khu vực trước khi chuyển sang Deal.');
+      return;
+    }
+    setSubmitting(true);
+    setError('');
+    try {
+      const { data } = await api.post(`/crm/leads/${item.id}/convert-to-deal`, {
+        ...(newOwner ? { assigned_to: newOwner } : {}),
+        company_id: companyIdForItem || undefined,
+        ...(needsRegionPick ? { region_id: regionId } : {}),
+      });
+      // eslint-disable-next-line no-alert
+      alert(`✅ ${data?.message || 'Đã chuyển Lead sang Deal.'}`);
+      onDone?.();
+    } catch (e) {
+      setError(e.response?.data?.error || 'Có lỗi khi chuyển Lead sang Deal.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl"
+        onClick={(ev) => ev.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-base font-bold flex items-center gap-2">
+            <Zap className="h-4 w-4 text-emerald-600" />
+            Chuyển Lead sang Deal
+          </h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 hover:bg-gray-100 rounded"
+            aria-label="Đóng"
+          >
+            <X className="h-4 w-4 text-gray-500" />
+          </button>
+        </div>
+
+        {!hasCustomer ? (
+          <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-lg p-3">
+            Lead <strong>{item.code || ''}</strong> chưa liên kết khách hàng — vào chi tiết Lead để chọn khách hàng trước khi chuyển Deal.
+          </div>
+        ) : !companyIdForItem ? (
+          <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-lg p-3">
+            Lead <strong>{item.code || ''}</strong> chưa có công ty — vào chi tiết Lead để chọn công ty trước khi chuyển Deal.
+          </div>
+        ) : (
+          <>
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm text-emerald-900 mb-3">
+              Lead <strong>{item.code || ''}</strong>
+              {item.title ? ` · ${item.title}` : ''} sẽ chuyển sang <strong>Deal</strong> và đặt
+              lại cột đầu tiên của pipeline Deal.
+            </div>
+
+            <div className="space-y-3 mb-4">
+              {needsRegionPick && (
+                <div>
+                  <label className="text-xs font-bold text-gray-700 mb-1 block">
+                    📍 Khu vực <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={regionId}
+                    onChange={(e) => setRegionId(e.target.value)}
+                    disabled={regionsLoading || regions.length === 0}
+                    className="w-full h-10 px-3 border rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-400"
+                  >
+                    <option value="">
+                      {regionsLoading
+                        ? 'Đang tải khu vực…'
+                        : regions.length === 0
+                          ? '-- Công ty chưa có khu vực --'
+                          : '-- Chọn khu vực --'}
+                    </option>
+                    {regions.map((reg) => (
+                      <option key={reg.id} value={reg.id}>{reg.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div>
+                <label className="text-xs font-bold text-gray-700 mb-1 block">
+                  👤 Người phụ trách Deal
+                </label>
+                <EmployeePicker
+                  companyId={companyIdForItem}
+                  value={newOwner}
+                  onChange={(uid) => setNewOwner(uid || '')}
+                  placeholder="Chọn nhân viên phụ trách..."
+                  size="md"
+                />
+                <p className="text-[10px] text-gray-500 mt-1">
+                  Mặc định giữ nguyên người phụ trách hiện tại — đổi nếu muốn giao cho người khác.
+                </p>
+              </div>
+
+              {error && (
+                <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-lg p-2">
+                  {error}
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={submitting}
+                className="flex-1 h-9 border rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={handleSubmit}
+                disabled={!canSubmit}
+                className="flex-1 h-9 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-semibold disabled:opacity-50"
+              >
+                {submitting ? 'Đang xử lý...' : '🚀 Chuyển sang Deal'}
               </button>
             </div>
           </>
@@ -412,6 +592,7 @@ export function ListView({
   const [parentCodes, setParentCodes] = useState({});
   const [historyLoading, setHistoryLoading] = useState(false);
   const [revertTarget, setRevertTarget] = useState(null);
+  const [convertTarget, setConvertTarget] = useState(null);
 
   // Lazy render: hiện 150 dòng đầu, tự tải thêm theo batch 300 khi cuộn gần đáy.
   // First paint nhanh, batch lớn để giảm số lần re-render khi scroll dài.
@@ -789,7 +970,8 @@ export function ListView({
                 >
                   {visibleColumns.map((col) => {
                     const isRevert = col.key === 'revert_to_lead';
-                    const raw = isRevert ? '' : getCellValue(item, col);
+                    const isConvert = col.key === 'convert_to_deal';
+                    const raw = isRevert || isConvert ? '' : getCellValue(item, col);
                     const isStage = col.key === 'stage';
                     const isDaysTotal = col.key === 'days_total';
                     const isDaysStage = col.key === 'days_in_stage';
@@ -828,6 +1010,23 @@ export function ListView({
                             >
                               <RotateCcw className="h-3 w-3" />
                               Trả về Lead
+                            </button>
+                          ) : (
+                            <span className="text-gray-300 text-[11px]">—</span>
+                          )
+                        ) : isConvert ? (
+                          item.type !== 'deal' && !item.project_id ? (
+                            <button
+                              type="button"
+                              title="Chuyển Lead sang Deal — chọn người phụ trách mới hoặc giữ nguyên"
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                setConvertTarget(item);
+                              }}
+                              className="inline-flex items-center gap-1 h-7 px-2 rounded-md border border-emerald-300 bg-emerald-50 text-emerald-800 text-[11px] font-semibold hover:bg-emerald-100"
+                            >
+                              <Zap className="h-3 w-3" />
+                              Chuyển Deal
                             </button>
                           ) : (
                             <span className="text-gray-300 text-[11px]">—</span>
@@ -974,6 +1173,20 @@ export function ListView({
               revertTarget.type = 'lead';
             }
             setRevertTarget(null);
+          }}
+        />
+      )}
+
+      {convertTarget && (
+        <ConvertLeadToDealModal
+          item={convertTarget}
+          onClose={() => setConvertTarget(null)}
+          onDone={() => {
+            // Optimistic: tạm thời ẩn hành động (đợi socket 'crm:dashboard_changed' refresh kanban).
+            if (convertTarget) {
+              convertTarget.type = 'deal';
+            }
+            setConvertTarget(null);
           }}
         />
       )}

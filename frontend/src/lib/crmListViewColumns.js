@@ -80,7 +80,8 @@ export function buildStaticListColumns(pipelineType) {
     { key: 'company', label: 'Công ty', group: 'Cơ bản', defaultVisible: true },
     { key: 'expected_close', label: 'Hạn chốt dự kiến', group: 'Thời gian', defaultVisible: false },
     { key: 'revert_to_lead', label: 'Trả về Lead', group: 'Hành động', defaultVisible: isDeal, dealOnly: true, align: 'center' },
-  ].filter((c) => !c.dealOnly || isDeal);
+    { key: 'convert_to_deal', label: 'Chuyển Deal', group: 'Hành động', defaultVisible: !isDeal, leadOnly: true, align: 'center' },
+  ].filter((c) => (!c.dealOnly || isDeal) && (!c.leadOnly || !isDeal));
 }
 
 /** Cột động theo từng cột pipeline của công ty đang xem */

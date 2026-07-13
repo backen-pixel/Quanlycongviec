@@ -467,7 +467,7 @@ export default function AccountingDashboard() {
                   className={`transition-colors hover:bg-indigo-50/30 ${d.sx_production_done && d.financial_status !== 'invoiced' ? 'bg-amber-50/40' : ''}`}
                 >
                   <td className="py-3 px-3">
-                    <Link to={`/crm/leads/${d.id}`} className="font-semibold text-indigo-700 hover:underline">
+                    <Link to={`/ketoan/deals/${d.id}`} className="font-semibold text-indigo-700 hover:underline">
                       {d.code || d.title}
                     </Link>
                     <p className="text-gray-800 truncate max-w-[14rem]" title={d.title}>{d.title}</p>
@@ -532,8 +532,15 @@ export default function AccountingDashboard() {
                   <td className="py-3 px-3">
                     <div className="flex items-center gap-1">
                       <Link
+                        to={`/ketoan/deals/${d.id}`}
+                        title="Chi tiết kế toán"
+                        className="p-1.5 rounded-lg text-teal-600 hover:text-teal-800 hover:bg-teal-50"
+                      >
+                        <Receipt className="h-4 w-4" />
+                      </Link>
+                      <Link
                         to={`/crm/leads/${d.id}`}
-                        title="Mở deal"
+                        title="Mở deal CRM"
                         className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50"
                       >
                         <ExternalLink className="h-4 w-4" />

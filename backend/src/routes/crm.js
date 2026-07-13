@@ -4726,6 +4726,23 @@ r.put('/pipelines/:id', async (req, res) => {
     if (req.body.allow_employee_delete_deal !== undefined) {
       update.allow_employee_delete_deal = !!req.body.allow_employee_delete_deal;
     }
+    if (req.body.region_id !== undefined) {
+      const rawRegion = req.body.region_id;
+      if (rawRegion === null || String(rawRegion).trim() === '') {
+        update.region_id = null;
+      } else {
+        let companyIdForCheck = update.company_id;
+        if (!companyIdForCheck) {
+          const { data: curPl } = await supabase.from('crm_pipelines').select('company_id').eq('id', req.params.id).maybeSingle();
+          companyIdForCheck = curPl?.company_id || null;
+        }
+        const { data: region } = await supabase.from('company_regions').select('id, company_id').eq('id', rawRegion).maybeSingle();
+        if (!region || (companyIdForCheck && String(region.company_id || '') !== String(companyIdForCheck))) {
+          return res.status(400).json({ error: 'Khu vực không thuộc công ty của pipeline' });
+        }
+        update.region_id = rawRegion;
+      }
+    }
     update.updated_at = new Date().toISOString();
     let { data, error } = await supabase.from('crm_pipelines').update(update)
       .eq('id', req.params.id).select('*, company:companies(id, name)').single();
@@ -4996,6 +5013,7 @@ r.post('/pipeline-stages', async (req, res) => {
       description: stageDesc,
       ...(b.requires_deadline !== undefined ? { requires_deadline: !!b.requires_deadline } : {}),
       ...(b.allow_revert_to_lead !== undefined ? { allow_revert_to_lead: !!b.allow_revert_to_lead } : {}),
+      ...(b.is_revert_to_lead_target !== undefined ? { is_revert_to_lead_target: !!b.is_revert_to_lead_target } : {}),
       ...(slaInsert !== undefined ? { sla_days: slaInsert } : {}),
       ...(b.counts_as_won_revenue !== undefined
         ? { counts_as_won_revenue: b.counts_as_won_revenue == null ? null : !!b.counts_as_won_revenue }
@@ -5015,6 +5033,10 @@ r.post('/pipeline-stages', async (req, res) => {
     }
     if (error && /allow_revert_to_lead/.test(error.message || '')) {
       delete insertObj.allow_revert_to_lead;
+      ({ data, error } = await supabase.from('crm_pipeline_stages').insert(insertObj).select().single());
+    }
+    if (error && /is_revert_to_lead_target/.test(error.message || '')) {
+      delete insertObj.is_revert_to_lead_target;
       ({ data, error } = await supabase.from('crm_pipeline_stages').insert(insertObj).select().single());
     }
     if (error && /apply_default_assignee_on_enter|default_assignee_user_id/.test(error.message || '')) {
@@ -5050,6 +5072,7 @@ r.put('/pipeline-stages/:id', async (req, res) => {
     if (b.requires_deadline !== undefined) update.requires_deadline = !!b.requires_deadline;
     if (b.show_sx_transfer !== undefined) update.show_sx_transfer = !!b.show_sx_transfer;
     if (b.allow_revert_to_lead !== undefined) update.allow_revert_to_lead = !!b.allow_revert_to_lead;
+    if (b.is_revert_to_lead_target !== undefined) update.is_revert_to_lead_target = !!b.is_revert_to_lead_target;
     if (b.counts_as_won_revenue !== undefined) {
       update.counts_as_won_revenue = b.counts_as_won_revenue == null ? null : !!b.counts_as_won_revenue;
     }
@@ -5101,6 +5124,11 @@ r.put('/pipeline-stages/:id', async (req, res) => {
     }
     if (error && /allow_revert_to_lead/.test(error.message || '')) {
       delete update.allow_revert_to_lead;
+      ({ data, error } = await supabase.from('crm_pipeline_stages').update(update)
+        .eq('id', req.params.id).select().single());
+    }
+    if (error && /is_revert_to_lead_target/.test(error.message || '')) {
+      delete update.is_revert_to_lead_target;
       ({ data, error } = await supabase.from('crm_pipeline_stages').update(update)
         .eq('id', req.params.id).select().single());
     }
@@ -8595,7 +8623,14 @@ r.post('/leads', async (req, res) => {
       body.region_id = defR?.id || null;
     }
     if (!body.pipeline_id) {
-      body.pipeline_id = await ensureDefaultCrmPipelineForCompany(body.company_id);
+      // Ưu tiên pipeline riêng của khu vực (nếu công ty đã tách pipeline theo khu vực);
+      // không có thì rơi về pipeline mặc định của công ty.
+      body.pipeline_id = body.region_id
+        ? await getPipelineIdForCompanyRegion(body.company_id, body.region_id)
+        : null;
+      if (!body.pipeline_id) {
+        body.pipeline_id = await ensureDefaultCrmPipelineForCompany(body.company_id);
+      }
     }
     if (body.pipeline_id) {
       const { data: pl } = await supabase.from('crm_pipelines').select('id, company_id').eq('id', body.pipeline_id).maybeSingle();
@@ -8718,7 +8753,14 @@ r.post('/deals', async (req, res) => {
 
     // Resolve pipeline_id + first stage by company (company-scoped pipelines)
     if (!body.pipeline_id) {
-      body.pipeline_id = await ensureDefaultCrmPipelineForCompany(body.company_id);
+      // Ưu tiên pipeline riêng của khu vực (nếu công ty đã tách pipeline theo khu vực);
+      // không có thì rơi về pipeline mặc định của công ty.
+      body.pipeline_id = body.region_id
+        ? await getPipelineIdForCompanyRegion(body.company_id, body.region_id)
+        : null;
+      if (!body.pipeline_id) {
+        body.pipeline_id = await ensureDefaultCrmPipelineForCompany(body.company_id);
+      }
     }
     if (!body.pipeline_id) return res.status(500).json({ error: 'Công ty chưa có pipeline CRM' });
     const { data: pl } = await supabase.from('crm_pipelines').select('id, company_id').eq('id', body.pipeline_id).maybeSingle();
@@ -10053,6 +10095,12 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       }
       pipelineForDeal = pl.id;
     }
+    // Ưu tiên pipeline riêng của khu vực đã chọn (khi công ty đã tách pipeline theo khu vực) —
+    // quan trọng khi khu vực chọn ở màn "Chuyển sang Deal" khác khu vực gốc của lead.
+    if (!pipelineForDeal && companyId && regionId) {
+      const regionPid = await getPipelineIdForCompanyRegion(companyId, regionId);
+      if (regionPid) pipelineForDeal = regionPid;
+    }
     if (!pipelineForDeal && lead.pipeline_id && companyId) {
       const { data: pl } = await supabase.from('crm_pipelines').select('id, company_id').eq('id', lead.pipeline_id).maybeSingle();
       if (pl && String(pl.company_id || '') === String(companyId)) pipelineForDeal = pl.id;
@@ -10263,16 +10311,36 @@ r.post('/leads/:id/convert-to-lead', async (req, res) => {
       pipelineForLead = def?.id || null;
     }
 
-    let stageQ = supabase
+    // Ưu tiên cột lead được đánh dấu "is_revert_to_lead_target" (Cài đặt Pipeline);
+    // nếu không có cột nào được đánh dấu (hoặc chưa chạy migration) → fallback cột lead đầu tiên.
+    let targetStageQ = supabase
       .from('crm_pipeline_stages')
       .select('id')
       .eq('pipeline_type', 'lead')
       .eq('is_active', true)
+      .eq('is_revert_to_lead_target', true)
       .order('order_index')
       .limit(1);
-    if (pipelineForLead) stageQ = stageQ.eq('pipeline_id', pipelineForLead);
-    const { data: firstLeadStage, error: stagePickErr } = await stageQ.maybeSingle();
-    if (stagePickErr) throw stagePickErr;
+    if (pipelineForLead) targetStageQ = targetStageQ.eq('pipeline_id', pipelineForLead);
+    let firstLeadStage = null;
+    {
+      const { data: targetStage, error: targetErr } = await targetStageQ.maybeSingle();
+      if (targetErr && !/is_revert_to_lead_target/.test(targetErr.message || '')) throw targetErr;
+      firstLeadStage = targetStage || null;
+    }
+    if (!firstLeadStage) {
+      let stageQ = supabase
+        .from('crm_pipeline_stages')
+        .select('id')
+        .eq('pipeline_type', 'lead')
+        .eq('is_active', true)
+        .order('order_index')
+        .limit(1);
+      if (pipelineForLead) stageQ = stageQ.eq('pipeline_id', pipelineForLead);
+      const { data: fallbackStage, error: stagePickErr } = await stageQ.maybeSingle();
+      if (stagePickErr) throw stagePickErr;
+      firstLeadStage = fallbackStage || null;
+    }
     if (!firstLeadStage) {
       return res.status(500).json({
         error: pipelineForLead
@@ -10291,7 +10359,6 @@ r.post('/leads/:id/convert-to-lead', async (req, res) => {
       stage_entered_at: nowIso,
       updated_at: nowIso,
       lost_reason: null,
-      lost_at: null,
     };
 
     const { data: updatedLead, error: updateErr } = await supabase
@@ -12711,12 +12778,15 @@ r.post('/invoices', async (req, res) => {
     const code = await nextCode('HD');
 
     // Sanitize: empty strings → null for UUID fields
-    ['customer_id', 'order_id', 'quotation_id', 'project_id', 'company_id'].forEach(f => {
+    ['customer_id', 'order_id', 'quotation_id', 'project_id', 'company_id', 'lead_id'].forEach(f => {
       if (invoiceData[f] === '' || invoiceData[f] === undefined) invoiceData[f] = null;
     });
 
     let invCo = invoiceData.company_id || null;
-    if (invoiceData.order_id) {
+    if (invoiceData.lead_id) {
+      const { data: lrow } = await supabase.from('crm_leads').select('company_id').eq('id', invoiceData.lead_id).maybeSingle();
+      if (lrow?.company_id) invCo = lrow.company_id;
+    } else if (invoiceData.order_id) {
       const { data: orow } = await supabase.from('orders').select('company_id').eq('id', invoiceData.order_id).maybeSingle();
       if (orow?.company_id) invCo = orow.company_id;
     } else if (invoiceData.quotation_id) {
@@ -12730,6 +12800,8 @@ r.post('/invoices', async (req, res) => {
     const { data: inv, error } = await supabase.from('invoices').insert({
       code,
       company_id: invCo,
+      lead_id: invoiceData.lead_id || null,
+      order_id: invoiceData.order_id || null,
       customer_id: invoiceData.customer_id,
       customer_name: invoiceData.customer_name || null,
       customer_phone: invoiceData.customer_phone || null,

@@ -169,6 +169,11 @@ async function getPipelineIdForCompanyRegion(companyId, regionId) {
     if (!pipelines.length) return null;
     if (pipelines.length === 1) return pipelines[0].id;
 
+    // 0) Khớp trực tiếp theo crm_pipelines.region_id (khóa ngoại chính thức) —
+    // ưu tiên tuyệt đối, không cần suy đoán theo tên/lịch sử lead.
+    const direct = pipelines.find((p) => String(p.region_id || '') === rid);
+    if (direct) return direct.id;
+
     const { data: region } = await supabase
       .from('company_regions')
       .select('id, name, code, company_id')
