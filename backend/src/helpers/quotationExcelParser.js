@@ -112,12 +112,21 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
     function buildColMap(headerRow, subRow) {
       const cm = {};
       const upper = headerRow.map(c => String(c || '').trim().toUpperCase());
+      // "QUY CÁCH" đơn lẻ (không kèm chữ khác, ví dụ "QUY CÁCH SẢN PHẨM") + dòng phụ đề ngay dưới
+      // có Cao/Ngang/Sâu/Rộng → đây là header nhóm kích thước, KHÔNG phải cột mô tả (mẫu Vạn Phú Thành).
+      const subUpperPeek = (subRow || []).map((c) => String(c || '').trim().toUpperCase());
+      const subRowIsDimensionBreakdown = subUpperPeek.some(
+        (l) => l.includes('NGANG') || l.includes('SÂU') || l.includes('RỘNG') || (l.includes('CAO') && !l.includes('CHIẾT') && !l.includes('CK')),
+      );
       // Pass thứ tự ưu tiên: description → name → các cột khác (để DIỄN GIẢI HẠNG MỤC không match name)
       upper.forEach((label, ci) => {
         if (!label) return;
+        const isBareQuyCach = (label === 'QUY CÁCH' || label === 'QUY CACH') && subRowIsDimensionBreakdown;
         if (
-          label.includes('DIỄN GIẢI') || label.includes('MÔ TẢ') || label.includes('CHI TIẾT') ||
-          label.includes('QUY CÁCH') || label.includes('QUY CACH')
+          !isBareQuyCach && (
+            label.includes('DIỄN GIẢI') || label.includes('MÔ TẢ') || label.includes('CHI TIẾT') ||
+            label.includes('QUY CÁCH') || label.includes('QUY CACH')
+          )
         ) {
           if (cm.description === undefined) cm.description = ci;
         }
@@ -146,10 +155,23 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
           if (cm.height === undefined) cm.height = ci;
         } else if (
           label.includes('% CHIẾT KHẤU') || label.includes('%CHIẾT KHẤU') ||
-          (label.includes('CHIẾT KHẤU') && (label.includes('%') || label === 'CK%')) ||
-          label === '%CK' || label === '% CK'
+          (label.includes('CHIẾT KHẤU') && label.includes('%')) ||
+          label === '%CK' || label === '% CK' || label === 'CK%' || label === 'CK %'
         ) {
+          // Cột "CK%" đứng riêng (không kèm chữ CHIẾT KHẤU đầy đủ) — mẫu báo giá phổ biến
+          // dạng "... Thành tiền | CK% | Ghi chú". Phải nhận đúng để đọc thẳng %, KHÔNG suy luận lại.
           if (cm.discount_percent === undefined) cm.discount_percent = ci;
+        } else if (
+          (label.includes('SỐ TIỀN') || label.includes('TIỀN')) &&
+          (label.includes('CHIẾT KHẤU') || label.includes('CK')) &&
+          !label.includes('THÀNH')
+        ) {
+          // "SỐ TIỀN CHIẾT KHẤU" / "TIỀN CK" — cột số tiền chiết khấu tuyệt đối theo dòng
+          // (đọc thẳng, không suy luận).
+          if (cm.discount_amount === undefined) cm.discount_amount = ci;
+        } else if (label.includes('ĐƠN GIÁ') && label.includes('SAU') && label.includes('CHIẾT KHẤU')) {
+          // "ĐƠN GIÁ SAU CHIẾT KHẤU" — đơn giá đã trừ CK, chỉ dùng để đối chiếu/hiển thị.
+          if (cm.unit_price_after_discount === undefined) cm.unit_price_after_discount = ci;
         } else if (
           label.includes('ĐƠN GIÁ') &&
           !label.includes('SAU') && !label.includes('SỐ TIỀN') && !label.includes('CHIẾT KHẤU')
@@ -171,8 +193,8 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
         const subUpper = subRow.map(c => String(c || '').trim().toUpperCase());
         subUpper.forEach((label, ci) => {
           if (!label) return;
-          if (label.includes('NGANG')) {
-            cm.length = ci; subAdvance = true;
+          if (label.includes('NGANG') || (label.includes('DÀI') && !label.includes('BẢO'))) {
+            if (cm.length === undefined || cm.length === ci) { cm.length = ci; subAdvance = true; }
           } else if (label.includes('SÂU') || label.includes('RỘNG')) {
             if (cm.width === undefined || cm.width === ci) cm.width = ci;
             subAdvance = true;
@@ -547,7 +569,7 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
         notesCell,
       ].filter(Boolean).join('\n\n');
 
-      // % CHIẾT KHẤU per-row: hỗ trợ "35%", "0.35", "0,35"
+      // % CHIẾT KHẤU per-row: hỗ trợ "35%", "0.35", "0,35" — đọc thẳng từ Excel, KHÔNG suy luận/tính lại.
       let rowDiscount = 0;
       if (colMap.discount_percent !== undefined) {
         const raw = row[colMap.discount_percent];
@@ -556,12 +578,25 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
           if (!isNaN(n) && n > 0) rowDiscount = n <= 1 ? n * 100 : n;
         }
       }
+      // SỐ TIỀN CHIẾT KHẤU per-row (giá trị tuyệt đối) — đọc thẳng, giữ nguyên số Excel.
+      const rowDiscountAmount = colMap.discount_amount !== undefined
+        ? parseVietnameseMoney(row[colMap.discount_amount]) || 0
+        : 0;
+      // ĐƠN GIÁ SAU CHIẾT KHẤU per-row — chỉ để đối chiếu/hiển thị, không dùng để suy luận % CK.
+      const rowUnitPriceAfterDiscount = colMap.unit_price_after_discount !== undefined
+        ? parseVietnameseMoney(row[colMap.unit_price_after_discount]) || 0
+        : 0;
       const effectiveGroupCK = rowDiscount > 0 ? rowDiscount : currentGroupDiscount;
 
       items.push({
         is_group: false,
         group_name: currentGroup,
         group_discount_percent: effectiveGroupCK,
+        // ── Đọc trực tiếp % / số tiền chiết khấu theo dòng từ Excel (nếu mẫu có cột riêng) ──
+        // Ưu tiên dùng nguyên các giá trị này ở bước build draft, không suy luận lại từ tỉ lệ.
+        row_discount_percent: rowDiscount,
+        row_discount_amount: rowDiscountAmount,
+        unit_price_after_discount: rowUnitPriceAfterDiscount || null,
         sku: skuRaw || null,
         name: itemName,
         description: mergedDescription,

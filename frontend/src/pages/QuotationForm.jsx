@@ -502,19 +502,24 @@ export default function QuotationForm() {
         grossAmount = qty * price;
       }
       
-      // ── Excel fidelity: nếu lock_amount → giữ NGUYÊN imported_amount, tính ngược discount_amount.
+      // ── Excel fidelity: nếu lock_amount → giữ NGUYÊN imported_amount.
+      // Nếu Excel còn có "SỐ TIỀN CHIẾT KHẤU" riêng (imported_discount_amount) → dùng thẳng,
+      // KHÔNG suy ra từ (grossAmount - amount) vì grossAmount có thể lệch (VD mẫu dùng "Dài" làm SL).
+      const importedDiscountAmount = typeof i.imported_discount_amount === 'number' ? i.imported_discount_amount : null;
       let amount, discountAmount;
       if (i.lock_amount && typeof i.imported_amount === 'number' && !i.is_freebie) {
         amount = i.imported_amount;
-        discountAmount = Math.max(0, grossAmount - amount);
+        discountAmount = importedDiscountAmount !== null ? importedDiscountAmount : Math.max(0, grossAmount - amount);
       } else {
-        discountAmount = grossAmount * (i.discount_percent || 0) / 100;
+        discountAmount = importedDiscountAmount !== null ? importedDiscountAmount : (grossAmount * (i.discount_percent || 0) / 100);
         amount = grossAmount - discountAmount;
       }
       const vatRate = i.vat_rate || 0;
       const vatAmount = amount * vatRate / 100;
       const total = amount + vatAmount;
-      return { ...i, amount, gross_amount: grossAmount, discount_amount: discountAmount, vat_rate: vatRate, vat_amount: vatAmount, tax_amount: vatAmount, total, actual_area: actualArea, area_ratio: areaRatio };
+      // Đơn giá sau CK — chỉ để đối chiếu/hiển thị (đơn giá gốc trừ %CK), không tham gia công thức Thành tiền.
+      const unitPriceAfterDiscount = price * (1 - (i.discount_percent || 0) / 100);
+      return { ...i, amount, gross_amount: grossAmount, discount_amount: discountAmount, unit_price_after_discount: unitPriceAfterDiscount, vat_rate: vatRate, vat_amount: vatAmount, tax_amount: vatAmount, total, actual_area: actualArea, area_ratio: areaRatio };
     });
     const subtotal = rows.reduce((s, r) => s + r.amount, 0);
     const {
@@ -675,6 +680,9 @@ export default function QuotationForm() {
     if (FIELDS_BREAK_LOCK.has(field) && item.lock_amount) {
       next.lock_amount = false;
       next.imported_amount = undefined;
+    }
+    if (field === 'discount_percent' && item.imported_discount_amount != null) {
+      next.imported_discount_amount = undefined;
     }
     return next;
   }));
@@ -875,31 +883,36 @@ export default function QuotationForm() {
         </div>
 
         <div className="overflow-x-auto border rounded-lg" style={{ maxHeight: '65vh' }}>
-          <table className="min-w-[2200px] w-full text-xs">
-            <thead className="sticky top-0 z-10"><tr className="bg-gray-50 text-[10px] text-gray-500 uppercase tracking-wider">
-              <th className="py-2.5 px-1.5 text-left" style={{width:36}}>STT</th>
-              <th className="py-2.5 px-1.5 text-left" style={{width:100}}>Mã HH</th>
-              <th className="py-2.5 px-1.5 text-left" style={{minWidth:180}}>Tên hàng hóa</th>
-              <th className="py-2.5 px-1.5 text-left" style={{width:140}}>Diễn giải</th>
-              <th className="py-2.5 px-1.5 text-center" style={{width:50}}>ĐVT</th>
-              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:65}} title="Ngang (mm)">Ngang</th>
-              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:60}} title="Sâu (mm)">Sâu</th>
-              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:60}} title="Cao (mm)">Cao</th>
-              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:85}} title="Diện tích chuẩn (mm²)">DT Chuẩn</th>
-              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:85}} title="Diện tích thực tế = Ngang × Cao">DT Thực</th>
-              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:60}} title="Hệ số quy cách">HS QC</th>
-              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:50}}>SL</th>
-              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:120}}>Đơn giá</th>
-              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:120}}>Thành tiền</th>
-              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:50}}>CK%</th>
-              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:100}}>Tiền CK</th>
-              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:50}}>%VAT</th>
-              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:100}}>Tiền thuế</th>
-              <th className="py-2.5 px-1.5 text-right whitespace-nowrap" style={{width:130}}>Tổng tiền</th>
-              <th className="py-2.5 px-1.5 text-left" style={{width:80}}>CTKM</th>
-              <th className="py-2.5 px-1.5 text-center" style={{width:36}}>KM</th>
-              <th className="py-2.5 px-1.5" style={{width:36}}></th>
-            </tr></thead>
+          <table className="min-w-[2320px] w-full text-xs">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-gray-50 text-[10px] text-gray-500 uppercase tracking-wider">
+                <th rowSpan={2} className="py-2.5 px-1.5 text-left align-bottom" style={{width:36}}>STT</th>
+                <th rowSpan={2} className="py-2.5 px-1.5 text-left align-bottom" style={{width:100}}>Mã HH</th>
+                <th rowSpan={2} className="py-2.5 px-1.5 text-left align-bottom" style={{minWidth:180}}>Tên hàng hóa</th>
+                <th rowSpan={2} className="py-2.5 px-1.5 text-left align-bottom" style={{width:140}}>Diễn giải</th>
+                <th rowSpan={2} className="py-2.5 px-1.5 text-center align-bottom" style={{width:50}}>ĐVT</th>
+                <th colSpan={3} className="py-1.5 px-1.5 text-center border-b border-gray-200" style={{width:185}}>Quy cách</th>
+                <th rowSpan={2} className="py-2.5 px-1.5 text-right align-bottom whitespace-nowrap" style={{width:85}} title="Diện tích chuẩn (mm²)">DT Chuẩn</th>
+                <th rowSpan={2} className="py-2.5 px-1.5 text-right align-bottom whitespace-nowrap" style={{width:85}} title="Diện tích thực tế = Ngang × Cao">DT Thực</th>
+                <th rowSpan={2} className="py-2.5 px-1.5 text-right align-bottom whitespace-nowrap" style={{width:50}}>SL</th>
+                <th rowSpan={2} className="py-2.5 px-1.5 text-right align-bottom whitespace-nowrap" style={{width:120}}>Đơn giá</th>
+                <th rowSpan={2} className="py-2.5 px-1.5 text-right align-bottom whitespace-nowrap" style={{width:50}}>% Chiết Khấu</th>
+                <th rowSpan={2} className="py-2.5 px-1.5 text-right align-bottom whitespace-nowrap" style={{width:120}} title="Đơn giá đã trừ %CK — chỉ để đối chiếu">Đơn Giá Sau CK</th>
+                <th rowSpan={2} className="py-2.5 px-1.5 text-right align-bottom whitespace-nowrap" style={{width:100}}>Số Tiền CK</th>
+                <th rowSpan={2} className="py-2.5 px-1.5 text-right align-bottom whitespace-nowrap" style={{width:120}}>Thành Tiền</th>
+                <th rowSpan={2} className="py-2.5 px-1.5 text-right align-bottom whitespace-nowrap" style={{width:50}}>%VAT</th>
+                <th rowSpan={2} className="py-2.5 px-1.5 text-right align-bottom whitespace-nowrap" style={{width:100}}>Tiền thuế</th>
+                <th rowSpan={2} className="py-2.5 px-1.5 text-right align-bottom whitespace-nowrap" style={{width:130}}>Tổng tiền</th>
+                <th rowSpan={2} className="py-2.5 px-1.5 text-left align-bottom" style={{width:80}}>CTKM</th>
+                <th rowSpan={2} className="py-2.5 px-1.5 text-center align-bottom" style={{width:36}}>KM</th>
+                <th rowSpan={2} className="py-2.5 px-1.5 align-bottom" style={{width:36}}></th>
+              </tr>
+              <tr className="bg-gray-50 text-[10px] text-gray-500 uppercase tracking-wider">
+                <th className="py-1.5 px-1.5 text-right whitespace-nowrap" style={{width:60}} title="Cao (mm)">Cao</th>
+                <th className="py-1.5 px-1.5 text-right whitespace-nowrap" style={{width:65}} title="Ngang (mm)">Ngang</th>
+                <th className="py-1.5 px-1.5 text-right whitespace-nowrap" style={{width:60}} title="Sâu (mm)">Sâu</th>
+              </tr>
+            </thead>
             <tbody>
               {(() => { let itemNo = 0; return items.map((item, idx) => {
                 if (item.row_type === 'section') return (
@@ -1021,9 +1034,9 @@ export default function QuotationForm() {
                       </div>
                     </td>
                     <td className="py-1 px-1"><input value={item.unit} onChange={e => updateItem(idx, 'unit', e.target.value)} className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-center" /></td>
+                    <td className="py-1 px-1"><NumericInput value={item.height || ''} onChange={v => updateItem(idx, 'height', v)} placeholder="mm" title="Cao (mm)" allowEmpty className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1"><NumericInput value={item.length || ''} onChange={v => updateItem(idx, 'length', v)} placeholder="mm" title="Ngang (mm)" allowEmpty className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1"><NumericInput value={item.width || ''} onChange={v => updateItem(idx, 'width', v)} placeholder="mm" title="Sâu (mm)" allowEmpty className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
-                    <td className="py-1 px-1"><NumericInput value={item.height || ''} onChange={v => updateItem(idx, 'height', v)} placeholder="mm" title="Cao (mm)" allowEmpty className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
                     {/* DT Chuẩn — diện tích chuẩn: Ngang × Cao (mm²) — tự tính từ dimensions SP */}
                     <td className="py-1 px-1">
                       <NumericInput value={item.standard_area || ''} onChange={v => updateItem(idx, 'standard_area', v)} placeholder="0" title={item.standard_area ? `DT Chuẩn: ${formatNum(item.standard_area)} mm²` : 'Diện tích chuẩn (mm²)'} allowEmpty className={`w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right ${parseFloat(item.standard_area) > 0 ? 'text-teal-700 font-semibold' : ''}`} />
@@ -1039,9 +1052,36 @@ export default function QuotationForm() {
                         <span className="text-gray-300">—</span>
                       )}
                     </td>
-                    <td className="py-1 px-1"><NumericInput value={item.spec_factor || ''} onChange={v => updateItem(idx, 'spec_factor', v)} placeholder="0" title="Hệ số quy cách" allowEmpty className={`w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right ${parseFloat(item.spec_factor) > 0 ? 'text-indigo-700 font-semibold' : ''}`} /></td>
                     <td className="py-1 px-1"><NumericInput value={item.quantity} onChange={v => updateItem(idx, 'quantity', v)} placeholder="1" className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1"><NumericInput value={item.unit_price} onChange={v => updateItem(idx, 'unit_price', v)} placeholder="0" className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1 px-1"><NumericInput value={item.discount_percent || 0} onChange={v => updateItem(idx, 'discount_percent', v)} className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
+                    <td className="py-1 px-1 text-right text-xs text-gray-500 whitespace-nowrap" title="Đơn giá đã trừ %CK — chỉ để đối chiếu, không dùng để tính Thành tiền">
+                      {item.is_freebie || item.notes === 'HỖ TRỢ' ? <span className="text-gray-300">—</span> : formatVND(row.unit_price_after_discount || 0)}
+                    </td>
+                    <td className="py-1 px-1">
+                      {item.is_freebie || item.notes === 'HỖ TRỢ' ? (
+                        <span className="block text-right text-xs text-green-600 font-bold">—</span>
+                      ) : (
+                        <NumericInput
+                          value={Math.round(row.discount_amount || 0) || ''}
+                          onChange={(v) => {
+                            const gross = row.gross_amount || 0;
+                            const amt = parseFloat(v) || 0;
+                            if (gross > 0) {
+                              // Tính ngược % CK từ số tiền CK; cap ở [0, 100]
+                              const pct = Math.max(0, Math.min(100, Math.round((amt / gross) * 10000) / 100));
+                              updateItem(idx, 'discount_percent', pct);
+                            } else if (amt === 0) {
+                              updateItem(idx, 'discount_percent', 0);
+                            }
+                          }}
+                          placeholder="0"
+                          allowEmpty
+                          title="Số tiền CK (đ) — gõ vào sẽ tự tính lại % CK theo Thành tiền gốc"
+                          className="w-full px-1.5 py-1 border border-gray-200 hover:border-orange-400 focus:border-orange-500 focus:ring-1 focus:ring-orange-300 rounded text-xs outline-none bg-transparent text-right text-orange-700 font-medium"
+                        />
+                      )}
+                    </td>
                     <td className="py-1 px-1 text-right text-xs font-medium whitespace-nowrap text-gray-900">
                       {item.is_freebie || item.notes === 'HỖ TRỢ' ? (
                         <span className="text-green-600 font-bold">HỖ TRỢ</span>
@@ -1069,31 +1109,6 @@ export default function QuotationForm() {
                         />
                       )}
                     </td>
-                    <td className="py-1 px-1"><NumericInput value={item.discount_percent || 0} onChange={v => updateItem(idx, 'discount_percent', v)} className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
-                    <td className="py-1 px-1">
-                      {item.is_freebie || item.notes === 'HỖ TRỢ' ? (
-                        <span className="block text-right text-xs text-green-600 font-bold">—</span>
-                      ) : (
-                        <NumericInput
-                          value={Math.round(row.discount_amount || 0) || ''}
-                          onChange={(v) => {
-                            const gross = row.gross_amount || 0;
-                            const amt = parseFloat(v) || 0;
-                            if (gross > 0) {
-                              // Tính ngược % CK từ số tiền CK; cap ở [0, 100]
-                              const pct = Math.max(0, Math.min(100, Math.round((amt / gross) * 10000) / 100));
-                              updateItem(idx, 'discount_percent', pct);
-                            } else if (amt === 0) {
-                              updateItem(idx, 'discount_percent', 0);
-                            }
-                          }}
-                          placeholder="0"
-                          allowEmpty
-                          title="Số tiền CK (đ) — gõ vào sẽ tự tính lại % CK theo Thành tiền gốc"
-                          className="w-full px-1.5 py-1 border border-gray-200 hover:border-orange-400 focus:border-orange-500 focus:ring-1 focus:ring-orange-300 rounded text-xs outline-none bg-transparent text-right text-orange-700 font-medium"
-                        />
-                      )}
-                    </td>
                     <td className="py-1 px-1"><NumericInput value={item.vat_rate || 0} onChange={v => updateItem(idx, 'vat_rate', v)} className="w-full px-1.5 py-1 border border-gray-200 hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded text-xs outline-none bg-transparent text-right" /></td>
                     <td className="py-1 px-1 text-right text-xs text-gray-600 whitespace-nowrap">{formatVND(row.tax_amount || 0)}</td>
                     <td className="py-1 px-1 text-right text-xs font-bold whitespace-nowrap text-blue-700">{formatVND(row.total || 0)}</td>
@@ -1105,28 +1120,28 @@ export default function QuotationForm() {
                   {isLastInGroup && gd && (
                     <>
                       <tr className="bg-indigo-50/70">
-                        <td colSpan={13} className="py-2 px-3 text-right text-sm font-bold text-indigo-800">
+                        <td colSpan={15} className="py-2 px-3 text-right text-sm font-bold text-indigo-800">
                           Tổng {currentGroupName.replace(/^[IVXLCDM]+\.\s*/, '').split(/\s*[-–]\s*/)[0]}:
                         </td>
                         <td className="py-2 px-2 text-right text-sm font-bold text-indigo-800">{formatVND(gd.subtotal)}</td>
-                        <td colSpan={8}></td>
+                        <td colSpan={6}></td>
                       </tr>
                       {gd.discountTotal > 0 && (
                         <tr className="bg-indigo-50/70">
-                          <td colSpan={13} className="py-2 px-3 text-right text-sm font-bold text-red-600">
+                          <td colSpan={15} className="py-2 px-3 text-right text-sm font-bold text-red-600">
                             Chiết khấu nhóm:
                           </td>
                           <td className="py-2 px-2 text-right text-sm font-bold text-red-600">-{formatVND(gd.discountTotal)}</td>
-                          <td colSpan={8}></td>
+                          <td colSpan={6}></td>
                         </tr>
                       )}
                       {gd.discountTotal > 0 && (
                         <tr className="bg-indigo-100/60">
-                          <td colSpan={13} className="py-2 px-3 text-right text-sm font-bold text-indigo-900">
+                          <td colSpan={15} className="py-2 px-3 text-right text-sm font-bold text-indigo-900">
                             Tổng sau CK:
                           </td>
                           <td className="py-2 px-2 text-right text-sm font-bold text-indigo-900">{formatVND(gd.afterDiscount)}</td>
-                          <td colSpan={8}></td>
+                          <td colSpan={6}></td>
                         </tr>
                       )}
                     </>

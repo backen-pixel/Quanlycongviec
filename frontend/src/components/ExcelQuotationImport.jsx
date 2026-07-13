@@ -51,6 +51,29 @@ const DOC_TYPE_CONFIG = {
 };
 
 /**
+ * % chiết khấu hiệu lực của 1 dòng preview — ưu tiên đọc THẲNG từ cột riêng trong Excel
+ * (% CHIẾT KHẤU hoặc SỐ TIỀN CHIẾT KHẤU theo dòng), chỉ suy luận từ CK% header nhóm khi
+ * Excel không có cột chiết khấu riêng cho dòng đó. Dùng chung cho preview & apply-to-form.
+ */
+function resolveEffectiveDiscountPercent(item) {
+  if (item.is_freebie) return 0;
+  const rowPct = item.row_discount_percent || 0;
+  if (rowPct > 0) return rowPct;
+  const qty = item.quantity || 1;
+  const price = item.unit_price || 0;
+  const rowAmt = item.row_discount_amount || 0;
+  if (rowAmt > 0 && qty > 0 && price > 0) {
+    return Math.round((rowAmt / (qty * price)) * 10000) / 100;
+  }
+  const headerCK = item.group_discount_percent || 0;
+  const amt = item.amount || 0;
+  if (headerCK > 0 && price > 0 && qty > 0 && amt > 0 && amt / (qty * price) < 0.995) {
+    return headerCK;
+  }
+  return 0;
+}
+
+/**
  * Từ kết quả parse-excel → payload nội bộ (form + dòng hàng) để đổ vào trang sửa báo giá.
  * (Logic giữ đồng bộ với tính spec_factor / CK / freebie như bản tạo trực tiếp cũ.)
  */
@@ -64,12 +87,22 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId, sour
       let price = i.unit_price || 0;
       const excelAmount = i.amount || 0;
       const headerCK = i.group_discount_percent || 0;
+      // Đọc thẳng từ cột riêng của Excel (nếu mẫu có % CHIẾT KHẤU / SỐ TIỀN CHIẾT KHẤU theo dòng)
+      const rowPct = i.row_discount_percent || 0;
+      const rowAmt = i.row_discount_amount || 0;
+      const hasExplicitDiscountCol = rowPct > 0 || rowAmt > 0;
 
       if (i.is_freebie) {
         itemDiscount = 0;
         specFactor = 0;
         price = 0;
+      } else if (hasExplicitDiscountCol) {
+        // Excel có cột % CHIẾT KHẤU / SỐ TIỀN CHIẾT KHẤU riêng cho dòng này → đọc & lấy nguyên,
+        // KHÔNG suy luận/tính lại từ tỉ lệ Thành tiền (đúng yêu cầu: import lấy kết quả 100%).
+        itemDiscount = resolveEffectiveDiscountPercent(i);
+        specFactor = 0;
       } else if (price > 0 && qty > 0 && excelAmount > 0) {
+        // Không có cột chiết khấu riêng theo dòng → fallback: suy luận từ tỉ lệ Thành tiền / (SL × Đơn giá)
         const rawRatio = excelAmount / (qty * price);
         if (rawRatio > 1.005) {
           specFactor = Math.round(rawRatio * 1000) / 1000;
@@ -90,6 +123,9 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId, sour
       // Khi user chỉnh qty/price/discount_percent/spec_factor trong form, lock sẽ tự bị gỡ
       // (xem updateItem trong QuotationForm). Backend cũng honor lock qua lock_amount.
       const lockedAmount = i.is_freebie ? 0 : (excelAmount > 0 ? excelAmount : null);
+      // ── Khoá LUÔN số tiền chiết khấu nếu Excel có cột "SỐ TIỀN CHIẾT KHẤU" riêng —
+      // tránh backend tự suy (grossAmount - amount) bị sai khi SL không đúng 1:1 với Thành tiền.
+      const lockedDiscountAmount = !i.is_freebie && rowAmt > 0 ? rowAmt : null;
 
       return {
         name: i.name,
@@ -110,6 +146,7 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId, sour
         // ── Excel fidelity: giữ NGUYÊN số tiền Excel ──
         imported_amount: lockedAmount,
         lock_amount: lockedAmount !== null,
+        imported_discount_amount: lockedDiscountAmount,
       };
     });
 
@@ -851,15 +888,9 @@ export default function ExcelQuotationImport({
                           // Group items (collapsible)
                           ...(isExpanded ? group.items.map((item, ii) => {
                             globalStt++;
-                            const headerCK = item.group_discount_percent || 0;
-                            const price = item.unit_price || 0;
-                            const qty = item.quantity || 1;
                             const amt = item.amount || 0;
-                            let effectiveCK = 0;
                             const isFreebie = item.is_freebie;
-                            if (!isFreebie && headerCK > 0 && price > 0 && qty > 0 && amt > 0) {
-                              if (amt / (qty * price) < 0.995) effectiveCK = headerCK;
-                            }
+                            const effectiveCK = resolveEffectiveDiscountPercent(item);
                             const amountAfterCK = isFreebie ? 0 : amt;
                             return (
                               <tr key={`gi-${gi}-${ii}`} className="border-b hover:bg-gray-50/50">

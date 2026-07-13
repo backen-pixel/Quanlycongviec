@@ -11874,6 +11874,50 @@ r.get('/quotations/:id/history', async (req, res) => {
   }
 });
 
+// ═══ SHARED: Chuẩn hoá + tính toán items cho Báo giá / Đơn hàng / Hóa đơn ═══
+// Dùng CHUNG 1 logic cho cả 3 loại chứng từ để đảm bảo tính nhất quán:
+// - spec_factor (hệ số quy cách) nhân vào SL*Đơn giá để ra gross amount
+// - Excel fidelity: lock_amount + imported_amount → giữ NGUYÊN "Thành tiền" gốc từ Excel
+// - imported_discount_amount → giữ NGUYÊN "Số tiền CK" gốc từ Excel (không suy luận lại)
+function buildProcessedCommercialItems(items) {
+  return (items || []).map(item => {
+    const specFactor = parseFloat(item.spec_factor) || 0;
+    const grossAmount = specFactor > 0
+      ? specFactor * (item.quantity || 1) * (item.unit_price || 0)
+      : (item.quantity || 1) * (item.unit_price || 0);
+    const importedAmount = (typeof item.imported_amount === 'number' && Number.isFinite(item.imported_amount))
+      ? item.imported_amount
+      : null;
+    const importedDiscountAmount = (typeof item.imported_discount_amount === 'number' && Number.isFinite(item.imported_discount_amount))
+      ? item.imported_discount_amount
+      : null;
+    const isLocked = !!item.lock_amount && importedAmount !== null;
+    let amount, discountAmount;
+    if (isLocked) {
+      amount = importedAmount;
+      discountAmount = importedDiscountAmount !== null ? importedDiscountAmount : Math.max(0, grossAmount - amount);
+    } else {
+      discountAmount = importedDiscountAmount !== null ? importedDiscountAmount : (grossAmount * (item.discount_percent || 0) / 100);
+      amount = grossAmount - discountAmount;
+    }
+    const vatRate = item.vat_rate || 0;
+    const vatAmount = amount * vatRate / 100;
+    const total = amount + vatAmount;
+    return {
+      product_id: item.product_id || null, product_code: item.product_code || null,
+      name: item.name, description: item.description || null,
+      unit: item.unit || 'bộ', quantity: item.quantity || 1, unit_price: item.unit_price || 0,
+      spec_factor: specFactor || null, standard_area: item.standard_area || null,
+      height: item.height || null, width: item.width || null, length: item.length || null, weight: item.weight || null,
+      discount_percent: item.discount_percent || 0, discount_amount: discountAmount,
+      amount, vat_rate: vatRate, vat_amount: vatAmount, tax_amount: vatAmount, total,
+      dimensions: item.dimensions || null, material: item.material || null, color: item.color || null, notes: item.notes || null,
+      promo_code: item.promo_code || null, is_promo: item.is_promo || false,
+      group_name: item.group_name || null,
+    };
+  });
+}
+
 r.post('/quotations', async (req, res) => {
   try {
     const { items, quotation_source, ...quoteData } = req.body;
@@ -11948,39 +11992,7 @@ r.post('/quotations', async (req, res) => {
     
     // Calc totals with per-item VAT + spec_factor (hệ số quy cách)
     // ── Excel fidelity: nếu item.lock_amount && imported_amount → giữ NGUYÊN số tiền Excel ──
-    const processedItems = (items || []).map(item => {
-      const specFactor = parseFloat(item.spec_factor) || 0;
-      const grossAmount = specFactor > 0
-        ? specFactor * (item.quantity || 1) * (item.unit_price || 0)
-        : (item.quantity || 1) * (item.unit_price || 0);
-      const importedAmount = (typeof item.imported_amount === 'number' && Number.isFinite(item.imported_amount))
-        ? item.imported_amount
-        : null;
-      const isLocked = !!item.lock_amount && importedAmount !== null;
-      let amount, discountAmount;
-      if (isLocked) {
-        amount = importedAmount;
-        discountAmount = Math.max(0, grossAmount - amount);
-      } else {
-        discountAmount = grossAmount * (item.discount_percent || 0) / 100;
-        amount = grossAmount - discountAmount;
-      }
-      const vatRate = item.vat_rate || 0;
-      const vatAmount = amount * vatRate / 100;
-      const total = amount + vatAmount;
-      return {
-        product_id: item.product_id || null, product_code: item.product_code || null,
-        name: item.name, description: item.description || null,
-        unit: item.unit || 'bộ', quantity: item.quantity || 1, unit_price: item.unit_price || 0,
-        spec_factor: specFactor || null,
-        height: item.height || null, width: item.width || null, length: item.length || null, weight: item.weight || null,
-        discount_percent: item.discount_percent || 0, discount_amount: discountAmount,
-        amount, vat_rate: vatRate, vat_amount: vatAmount, tax_amount: vatAmount, total,
-        dimensions: item.dimensions || null, material: item.material || null, color: item.color || null, notes: item.notes || null,
-        promo_code: item.promo_code || null, is_promo: item.is_promo || false,
-        group_name: item.group_name || null,
-      };
-    });
+    const processedItems = buildProcessedCommercialItems(items);
     const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
     const discountAmt = quoteData.discount_type === 'percent' 
       ? subtotal * (quoteData.discount_value || 0) / 100 
@@ -12327,39 +12339,7 @@ r.put('/quotations/:id', async (req, res) => {
     
     // Calc totals with per-item VAT + spec_factor (hệ số quy cách)
     // ── Excel fidelity: nếu item.lock_amount && imported_amount → giữ NGUYÊN số tiền Excel ──
-    const processedItems = (rawItems || []).map(item => {
-      const specFactor = parseFloat(item.spec_factor) || 0;
-      const grossAmount = specFactor > 0
-        ? specFactor * (item.quantity || 1) * (item.unit_price || 0)
-        : (item.quantity || 1) * (item.unit_price || 0);
-      const importedAmount = (typeof item.imported_amount === 'number' && Number.isFinite(item.imported_amount))
-        ? item.imported_amount
-        : null;
-      const isLocked = !!item.lock_amount && importedAmount !== null;
-      let amount, discountAmount;
-      if (isLocked) {
-        amount = importedAmount;
-        discountAmount = Math.max(0, grossAmount - amount);
-      } else {
-        discountAmount = grossAmount * (item.discount_percent || 0) / 100;
-        amount = grossAmount - discountAmount;
-      }
-      const vatRate = item.vat_rate || 0;
-      const vatAmount = amount * vatRate / 100;
-      const total = amount + vatAmount;
-      return {
-        product_id: item.product_id || null, product_code: item.product_code || null,
-        name: item.name, description: item.description || null,
-        unit: item.unit || 'bộ', quantity: item.quantity || 1, unit_price: item.unit_price || 0,
-        spec_factor: specFactor || null,
-        height: item.height || null, width: item.width || null, length: item.length || null, weight: item.weight || null,
-        discount_percent: item.discount_percent || 0, discount_amount: discountAmount,
-        amount, vat_rate: vatRate, vat_amount: vatAmount, tax_amount: vatAmount, total,
-        dimensions: item.dimensions || null, material: item.material || null, color: item.color || null, notes: item.notes || null,
-        promo_code: item.promo_code || null, is_promo: item.is_promo || false,
-        group_name: item.group_name || null,
-      };
-    });
+    const processedItems = buildProcessedCommercialItems(rawItems);
     const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
     const discountAmt = quoteData.discount_type === 'percent' 
       ? subtotal * (quoteData.discount_value || 0) / 100 
@@ -12573,7 +12553,8 @@ r.get('/orders/:id', async (req, res) => {
 
 r.put('/orders/:id', async (req, res) => {
   try {
-    const updates = { ...req.body, updated_at: new Date().toISOString() };
+    const { items: itemsBody, ...updatesFromBody } = req.body;
+    const updates = { ...updatesFromBody, updated_at: new Date().toISOString() };
     // Sanitize: empty strings → null for UUID fields
     ['customer_id', 'lead_id', 'quotation_id', 'project_id'].forEach(f => {
       if (updates[f] === '') updates[f] = null;
@@ -12582,6 +12563,28 @@ r.put('/orders/:id', async (req, res) => {
     if (updates.status === 'shipped' && !updates.shipped_at) updates.shipped_at = new Date().toISOString();
     if (updates.status === 'delivered' && !updates.delivered_at) updates.delivered_at = new Date().toISOString();
     if (updates.status === 'cancelled' && !updates.cancelled_at) updates.cancelled_at = new Date().toISOString();
+
+    // ── Re-tính totals + lưu lại order_items khi có gửi items (form Sửa đơn hàng) ──
+    // Cùng logic Excel fidelity với /quotations: lock_amount/imported_amount giữ nguyên số tiền gốc.
+    if (Array.isArray(itemsBody)) {
+      const processedItems = buildProcessedCommercialItems(itemsBody);
+      const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
+      const discountAmt = updates.discount_type === 'percent' ? subtotal * (updates.discount_value || 0) / 100 : (updates.discount_value || 0);
+      const afterDiscount = subtotal - discountAmt;
+      const taxAmt = processedItems.reduce((s, i) => s + (i.vat_amount || 0), 0);
+      updates.subtotal = subtotal;
+      updates.discount_amount = discountAmt;
+      updates.tax_amount = taxAmt;
+      updates.total = afterDiscount + taxAmt;
+
+      await supabase.from('order_items').delete().eq('order_id', req.params.id);
+      if (processedItems.length) {
+        await supabase.from('order_items').insert(processedItems.map((item, i) => ({
+          ...item, order_id: req.params.id, item_order: i,
+        })));
+      }
+    }
+
     const { data, error } = await supabase.from('orders').update(updates).eq('id', req.params.id).select('*').single();
     if (error) throw error;
 
@@ -12636,12 +12639,9 @@ r.post('/orders', async (req, res) => {
     orderCo = oCoWrite.companyId;
     orderData.company_id = orderCo;
 
-    const processedItems = (items || []).map(item => {
-      const amount = (item.quantity || 1) * (item.unit_price || 0) * (1 - (item.discount_percent || 0) / 100);
-      const vatRate = item.vat_rate || 0;
-      const vatAmount = amount * vatRate / 100;
-      return { ...item, amount, vat_rate: vatRate, vat_amount: vatAmount };
-    });
+    // Calc totals with per-item VAT + spec_factor (hệ số quy cách) — cùng logic với /quotations
+    // Excel fidelity: nếu item.lock_amount && imported_amount → giữ NGUYÊN số tiền Excel.
+    const processedItems = buildProcessedCommercialItems(items);
     const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
     const discountAmt = orderData.discount_type === 'percent' ? subtotal * (orderData.discount_value || 0) / 100 : (orderData.discount_value || 0);
     const afterDiscount = subtotal - discountAmt;
@@ -12724,12 +12724,15 @@ r.post('/orders/:id/create-invoice', async (req, res) => {
 
     if (oItems?.length) {
       await supabase.from('invoice_items').insert(oItems.map(oi => ({
-        invoice_id: invoice.id, product_id: oi.product_id, order_item_id: oi.id,
+        invoice_id: invoice.id, product_id: oi.product_id, product_code: oi.product_code, order_item_id: oi.id,
         item_order: oi.item_order, name: oi.name, description: oi.description,
         unit: oi.unit, quantity: oi.quantity, unit_price: oi.unit_price,
-        discount_percent: oi.discount_percent, amount: oi.amount,
-        vat_rate: oi.vat_rate || 0, vat_amount: oi.vat_amount || 0,
-        notes: oi.notes,
+        spec_factor: oi.spec_factor || null, standard_area: oi.standard_area || null,
+        height: oi.height || null, width: oi.width || null, length: oi.length || null, weight: oi.weight || null,
+        discount_percent: oi.discount_percent, discount_amount: oi.discount_amount || 0, amount: oi.amount,
+        vat_rate: oi.vat_rate || 0, vat_amount: oi.vat_amount || 0, tax_amount: oi.tax_amount || oi.vat_amount || 0,
+        total: oi.total || oi.amount, promo_code: oi.promo_code || null, is_promo: oi.is_promo || false,
+        group_name: oi.group_name || null, notes: oi.notes,
       })));
     }
 
@@ -12825,30 +12828,46 @@ r.post('/invoices', async (req, res) => {
     const iCoWrite = enforceCommercialDocCompanyOnWrite(req, res, invCo, 'Hóa đơn');
     if (!iCoWrite.ok) return;
     invCo = iCoWrite.companyId;
-    
+
+    // Calc totals with per-item VAT + spec_factor (hệ số quy cách) — cùng logic với /quotations, /orders
+    // Excel fidelity: nếu item.lock_amount && imported_amount → giữ NGUYÊN số tiền Excel.
+    const processedItems = buildProcessedCommercialItems(items);
+    const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
+    const discountAmt = invoiceData.discount_type === 'percent' ? subtotal * (invoiceData.discount_value || 0) / 100 : (invoiceData.discount_value || 0);
+    const afterDiscount = subtotal - discountAmt;
+    const taxAmt = processedItems.reduce((s, i) => s + (i.vat_amount || 0), 0);
+
     const { data: inv, error } = await supabase.from('invoices').insert({
       code,
       company_id: invCo,
       lead_id: invoiceData.lead_id || null,
       order_id: invoiceData.order_id || null,
+      quotation_id: invoiceData.quotation_id || null,
+      project_id: invoiceData.project_id || null,
       customer_id: invoiceData.customer_id,
       customer_name: invoiceData.customer_name || null,
       customer_phone: invoiceData.customer_phone || null,
       customer_address: invoiceData.customer_address || null,
       customer_tax_code: invoiceData.customer_tax_code || null,
       title: invoiceData.title || null,
-      subtotal: invoiceData.subtotal || 0,
+      subtotal,
       discount_type: invoiceData.discount_type || null,
       discount_value: invoiceData.discount_value || 0,
-      discount_amount: invoiceData.discount_amount || 0,
-      tax_amount: invoiceData.tax_amount || 0,
-      total: invoiceData.total || 0,
+      discount_amount: discountAmt,
+      tax_amount: taxAmt,
+      total: afterDiscount + taxAmt,
       notes: invoiceData.notes || null,
       due_date: invoiceData.due_date || null,
       payment_terms: invoiceData.payment_terms || null,
       created_by: req.user.userId,
     }).select('*').single();
     if (error) throw error;
+
+    if (processedItems.length) {
+      await supabase.from('invoice_items').insert(processedItems.map((item, i) => ({
+        ...item, invoice_id: inv.id, item_order: i,
+      })));
+    }
 
     // 🔔 NOTIFICATION: Hóa đơn mới
     try {
@@ -12866,31 +12885,69 @@ r.post('/invoices', async (req, res) => {
   }
 });
 
-// Add items to invoice (batch)
+// Add items to invoice (batch) — legacy endpoint, giữ để tương thích ngược
 r.post('/invoices/:id/items', async (req, res) => {
   try {
     const { items } = req.body;
     if (!items?.length) return res.status(400).json({ error: 'Không có hàng hóa' });
-    const itemRows = items.map((item, i) => ({
-      invoice_id: req.params.id,
-      product_id: item.product_id || null,
-      product_code: item.product_code || null,
-      item_order: i,
-      name: item.name,
-      description: item.description || null,
-      unit: item.unit || 'bộ',
-      quantity: item.quantity || 1,
-      unit_price: item.unit_price || 0,
-      discount_percent: item.discount_percent || 0,
-      discount_amount: item.discount_amount || 0,
-      amount: item.amount || 0,
-      vat_rate: item.vat_rate || 0,
-      vat_amount: item.vat_amount || 0,
-      notes: item.notes || null,
-    }));
+    const processedItems = buildProcessedCommercialItems(items);
+    const itemRows = processedItems.map((item, i) => ({ ...item, invoice_id: req.params.id, item_order: i }));
     const { data, error } = await supabase.from('invoice_items').insert(itemRows).select();
     if (error) throw error;
     res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══ UPDATE INVOICE (giống PUT /orders/:id) ═══
+r.put('/invoices/:id', async (req, res) => {
+  try {
+    const { items: itemsBody, ...updatesFromBody } = req.body;
+    const updates = { ...updatesFromBody, updated_at: new Date().toISOString() };
+    // Sanitize: empty strings → null for UUID fields
+    ['customer_id', 'order_id', 'quotation_id', 'project_id', 'company_id', 'lead_id'].forEach(f => {
+      if (updates[f] === '') updates[f] = null;
+    });
+    if (updates.payment_status === 'paid' && !updates.paid_at) updates.paid_at = new Date().toISOString();
+
+    // ── Re-tính totals + lưu lại invoice_items khi có gửi items (form Sửa hóa đơn) ──
+    // Cùng logic Excel fidelity với /quotations, /orders: lock_amount/imported_amount giữ nguyên số tiền gốc.
+    if (Array.isArray(itemsBody)) {
+      const processedItems = buildProcessedCommercialItems(itemsBody);
+      const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
+      const discountAmt = updates.discount_type === 'percent' ? subtotal * (updates.discount_value || 0) / 100 : (updates.discount_value || 0);
+      const afterDiscount = subtotal - discountAmt;
+      const taxAmt = processedItems.reduce((s, i) => s + (i.vat_amount || 0), 0);
+      updates.subtotal = subtotal;
+      updates.discount_amount = discountAmt;
+      updates.tax_amount = taxAmt;
+      updates.total = afterDiscount + taxAmt;
+
+      await supabase.from('invoice_items').delete().eq('invoice_id', req.params.id);
+      if (processedItems.length) {
+        await supabase.from('invoice_items').insert(processedItems.map((item, i) => ({
+          ...item, invoice_id: req.params.id, item_order: i,
+        })));
+      }
+    }
+
+    const { data, error } = await supabase.from('invoices').update(updates).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+
+    // 🔔 NOTIFICATION: Cập nhật hóa đơn
+    try {
+      const statusLabels = { paid: 'Đã thanh toán đủ', partial: 'Thanh toán 1 phần', unpaid: 'Chưa thanh toán' };
+      const statusLabel = statusLabels[updates.payment_status] || '';
+      const t = await getNotifyTargets(data.lead_id);
+      const allIds = [...new Set([...t.ownerIds, ...t.adminIds])];
+      if (allIds.length && updates.payment_status) await notifyMultiple(req, allIds, 'invoice_updated',
+        `🧾 HĐ ${data.code} — ${statusLabel}`,
+        `Hóa đơn ${data.code} cập nhật trạng thái: ${statusLabel}`,
+        'invoice', data.id);
+    } catch (ne) { console.warn('[NOTIFY] invoice_updated:', ne.message); }
+
+    res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -14177,6 +14234,10 @@ r.post('/leads/:id/tasks/:taskId/import-quotation-excel', excelUpload.single('fi
     if (!parseRes.items?.length) return res.status(400).json({ error: 'Không tìm thấy sản phẩm trong file Excel' });
 
     // 4. Build quotation payload from parsed data
+    // ── Excel fidelity: đọc THẲNG % / số tiền chiết khấu theo dòng khi Excel có cột riêng
+    // (row_discount_percent / row_discount_amount, xem quotationExcelParser.js) — không suy luận
+    // lại từ tỉ lệ Thành tiền. Chỉ fallback khi Excel không có cột chiết khấu rõ ràng theo dòng.
+    // Cũng khoá luôn Thành tiền (imported_amount/lock_amount) theo giá trị Excel gốc.
     const items = parseRes.items.filter(i => !i.is_group).map(i => {
       const qty = i.quantity || 1;
       const price = i.unit_price || 0;
@@ -14184,10 +14245,16 @@ r.post('/leads/:id/tasks/:taskId/import-quotation-excel', excelUpload.single('fi
       let specFactor = 0, itemDiscount = 0;
 
       if (i.is_freebie) {
-        return { name: i.name, description: i.description || '', unit: i.unit || 'bộ', quantity: qty, unit_price: 0, spec_factor: 0, discount_percent: 0, vat_rate: 0, height: i.height || '', width: i.width || '', length: i.length || '', dimensions: [i.length, i.width, i.height].filter(Boolean).join(' x ') || '', group_name: i.group_name || '', notes: 'HỖ TRỢ' };
+        return { name: i.name, description: i.description || '', unit: i.unit || 'bộ', quantity: qty, unit_price: 0, spec_factor: 0, discount_percent: 0, vat_rate: 0, height: i.height || '', width: i.width || '', length: i.length || '', dimensions: [i.length, i.width, i.height].filter(Boolean).join(' x ') || '', group_name: i.group_name || '', notes: 'HỖ TRỢ', imported_amount: 0, lock_amount: true };
       }
 
-      if (price > 0 && qty > 0 && excelAmount > 0) {
+      const rowPct = i.row_discount_percent || 0;
+      const rowAmt = i.row_discount_amount || 0;
+      if (rowPct > 0) {
+        itemDiscount = rowPct;
+      } else if (rowAmt > 0 && qty > 0 && price > 0) {
+        itemDiscount = Math.round((rowAmt / (qty * price)) * 10000) / 100;
+      } else if (price > 0 && qty > 0 && excelAmount > 0) {
         const rawRatio = excelAmount / (qty * price);
         if (rawRatio > 1.005) specFactor = Math.round(rawRatio * 1000) / 1000;
         else if (rawRatio < 0.995) {
@@ -14197,11 +14264,21 @@ r.post('/leads/:id/tasks/:taskId/import-quotation-excel', excelUpload.single('fi
         }
       }
 
-      return { name: i.name, description: i.description || '', unit: i.unit || 'bộ', quantity: qty, unit_price: price, spec_factor: specFactor, discount_percent: itemDiscount, vat_rate: i.vat_rate || 0, height: i.height || '', width: i.width || '', length: i.length || '', dimensions: [i.length, i.width, i.height].filter(Boolean).join(' x ') || '', group_name: i.group_name || '', notes: i.notes || '' };
+      return {
+        name: i.name, description: i.description || '', unit: i.unit || 'bộ', quantity: qty, unit_price: price,
+        spec_factor: specFactor, discount_percent: itemDiscount, vat_rate: i.vat_rate || 0,
+        height: i.height || '', width: i.width || '', length: i.length || '',
+        dimensions: [i.length, i.width, i.height].filter(Boolean).join(' x ') || '',
+        group_name: i.group_name || '', notes: i.notes || '',
+        imported_amount: excelAmount > 0 ? excelAmount : null,
+        lock_amount: excelAmount > 0,
+        imported_discount_amount: rowAmt > 0 ? rowAmt : null,
+      };
     });
 
     // Compute discount
     const itemsGrossTotal = items.reduce((s, i) => {
+      if (i.lock_amount && typeof i.imported_amount === 'number') return s + i.imported_amount;
       const f = parseFloat(i.spec_factor) || 0;
       const gross = f > 0 ? f * (i.quantity || 1) * (i.unit_price || 0) : (i.quantity || 1) * (i.unit_price || 0);
       return s + (gross - gross * (i.discount_percent || 0) / 100);
