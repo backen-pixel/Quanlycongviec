@@ -16,6 +16,7 @@ const {
 const { isVptCompanyCommercialDocViewer } = require('../../../helpers/dealParticipantProduction');
 const { parseVietnameseMoney, parseExcelMoneyFromMappedColumn } = require('../../../helpers/excelVnNumbers');
 const { snapshotOrderRowFromQuotation, mapQuotationItemsToOrderRows } = require('../../../helpers/orderFromQuotation');
+const { syncQuotationItemsWithProductCatalog } = require('../../../helpers/quotationProductSync');
 const { isPostgresUniqueViolation } = require('../../../helpers/projectCode');
 const { crmRouteErrorText } = require('../shared/crmRouteHelpers');
 const { emitCrmDashboardChanged, nextCode } = require('../shared/crmMutationHelpers');
@@ -319,6 +320,13 @@ r.post('/quotations', async (req, res) => {
         group_name: item.group_name || null,
       };
     });
+
+    // ═══ ĐỒNG BỘ SẢN PHẨM: gán product_id theo tên (cùng công ty); chưa có thì tạo mới ═══
+    // Phải chạy TRƯỚC khi build itemRows/insert để product_id được lưu đúng vào quotation_items.
+    try {
+      await syncQuotationItemsWithProductCatalog(processedItems, commercialCo);
+    } catch (e) { console.warn('[QUOTATION] Product sync error:', e.message); }
+
     const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
     const discountAmt = quoteData.discount_type === 'percent' 
       ? subtotal * (quoteData.discount_value || 0) / 100 
@@ -366,26 +374,6 @@ r.post('/quotations', async (req, res) => {
     } catch (he) {
       if (!String(he.message || '').includes('does not exist')) console.warn('[quotation_edit_history]', he.message);
     }
-
-    // ═══ ĐỒNG BỘ SẢN PHẨM: chỉ liên kết product_id theo tên, KHÔNG cập nhật giá / không tạo mới ═══
-    const syncedProducts = [];
-    try {
-      for (const item of processedItems) {
-        if (!item.name || item.name.trim().length < 3) continue;
-        // Tìm sản phẩm theo tên gần đúng (case-insensitive)
-        const nameSearch = item.name.trim();
-        const { data: existing } = await supabase.from('products')
-          .select('id, name')
-          .ilike('name', `%${nameSearch}%`)
-          .limit(1);
-        if (existing?.length) {
-          item.product_id = existing[0].id; // Gán product_id vào item
-          syncedProducts.push({ name: item.name, product_id: existing[0].id });
-        }
-        // Không tìm thấy → giữ nguyên, không tạo mới
-      }
-      console.log('[QUOTATION] Product link:', syncedProducts.length, 'items linked');
-    } catch (e) { console.warn('[QUOTATION] Product link error:', e.message); }
 
     // ═══ AUTO-LINK: Tìm deal qua customer nếu chưa có lead_id ═══
     let linkedLeadId = quote.lead_id;
@@ -671,6 +659,12 @@ r.put('/quotations/:id', async (req, res) => {
         group_name: item.group_name || null,
       };
     });
+
+    // ═══ ĐỒNG BỘ SẢN PHẨM: gán product_id theo tên (cùng công ty); chưa có thì tạo mới ═══
+    try {
+      await syncQuotationItemsWithProductCatalog(processedItems, commercialCoPut);
+    } catch (e) { console.warn('[QUOTATION PUT] Product sync error:', e.message); }
+
     const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
     const discountAmt = quoteData.discount_type === 'percent' 
       ? subtotal * (quoteData.discount_value || 0) / 100 

@@ -35,6 +35,10 @@ import {
 } from '../../lib/crmCommentMentions';
 import { colorFromName, initialsFromName } from '../../lib/media';
 import { subscribeAppSocket } from '../../lib/appSocket';
+import {
+  fetchNotificationPrefs,
+  isCommentShowOnScreenEnabled,
+} from '../../lib/notificationPrefs';
 import { Radii, Spacing, useColors, type ThemeColors } from '../../theme';
 import Avatar from '../Avatar';
 import CrmCommentBody from './CrmCommentBody';
@@ -129,6 +133,8 @@ export default function LeadCommentsTab({ leadId }: { leadId: string }) {
   const { user } = useAuth();
   const myId = currentUserId(user);
 
+  const [showOnScreen, setShowOnScreen] = useState(true);
+  const [prefsReady, setPrefsReady] = useState(false);
   const [items, setItems] = useState<LeadComment[]>([]);
   const [members, setMembers] = useState<LeadMember[]>([]);
   const [loading, setLoading] = useState(true);
@@ -149,6 +155,15 @@ export default function LeadCommentsTab({ leadId }: { leadId: string }) {
     if (!silent) setLoading(true);
     setError(null);
     try {
+      const prefs = await fetchNotificationPrefs();
+      const allowed = isCommentShowOnScreenEnabled(prefs);
+      setShowOnScreen(allowed);
+      setPrefsReady(true);
+      if (!allowed) {
+        setItems([]);
+        setMembers([]);
+        return;
+      }
       const [comments, mems] = await Promise.all([
         fetchLeadComments(leadId),
         fetchLeadMembers(leadId),
@@ -168,6 +183,7 @@ export default function LeadCommentsTab({ leadId }: { leadId: string }) {
   }, [load]);
 
   useEffect(() => {
+    if (!showOnScreen) return undefined;
     return subscribeAppSocket((socket) => {
       socket.emit('join:lead', leadId);
       const handler = (payload?: { lead_id?: string; action?: string; comment?: LeadComment; comment_id?: string | number }) => {
@@ -197,7 +213,7 @@ export default function LeadCommentsTab({ leadId }: { leadId: string }) {
         socket.off('lead:comment', handler);
       };
     });
-  }, [leadId]);
+  }, [leadId, showOnScreen]);
 
   const byParent = useMemo(() => groupCommentsByParent(items), [items]);
   const flatRows = useMemo(() => flattenCommentTree(byParent), [byParent]);
@@ -343,8 +359,18 @@ export default function LeadCommentsTab({ leadId }: { leadId: string }) {
     );
   };
 
-  if (loading && !items.length) {
+  if (loading && !items.length && !prefsReady) {
     return <ActivityIndicator color={Colors.blue} style={{ marginTop: 32 }} />;
+  }
+
+  if (prefsReady && !showOnScreen) {
+    return (
+      <EmptyState
+        icon="notifications-outline"
+        title="Đã tắt hiện bình luận trên màn hình"
+        hint="Bình luận mới vẫn vào chuông Thông báo. Bật lại trong Cài đặt thông báo trên web: «Hiện bình luận trên màn hình»."
+      />
+    );
   }
 
   return (

@@ -2,6 +2,8 @@
  * KPI doanh thu / thanh toán dashboard Sản xuất theo cột production_pipeline_stages.
  */
 
+const { isSxColumnSlaOverdue } = require('./crmPipelineSla');
+
 const INTAKE_BUCKET = 'won_pending';
 const VC_SHIPPED_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
 
@@ -143,7 +145,6 @@ function computeSxRevenueKpis(projects, stages, dealProbByProjectId = {}) {
   let overdue = 0;
   let debtCount = 0;
   let collectedCount = 0;
-  const now = new Date();
 
   for (const p of list) {
     const val = resolveSxProjectValue(p);
@@ -161,7 +162,7 @@ function computeSxRevenueKpis(projects, stages, dealProbByProjectId = {}) {
     if (projectIsProducing(p, st)) producing += 1;
     if (projectIsAwaitingDelivery(p, st)) awaitingDelivery += 1;
     if (projectIsShipped(p)) shipped += 1;
-    if (p.deadline && new Date(p.deadline) < now && p.status !== 'completed') overdue += 1;
+    if (isSxColumnSlaOverdue(p, col)) overdue += 1;
     if (col && col.bucket_slug !== INTAKE_BUCKET && val > 0) {
       const prob = resolveSxProjectProbability(p, col, dealProbByProjectId[String(p.id)]);
       if (prob != null) weightedPipeline += val * (prob / 100);

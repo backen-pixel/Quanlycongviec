@@ -31,6 +31,10 @@ import {
   toggleProjectCommentReaction,
   type ProjectComment,
 } from '../lib/productionApi';
+import {
+  fetchNotificationPrefs,
+  isCommentShowOnScreenEnabled,
+} from '../lib/notificationPrefs';
 import TapHighlight from './TapHighlight';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
@@ -67,6 +71,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
   const [reactionBusy, setReactionBusy] = useState<string | null>(null);
   const [reactionPickerId, setReactionPickerId] = useState<string | null>(null);
   const [err, setErr] = useState('');
+  const [showOnScreen, setShowOnScreen] = useState(true);
 
   const styles = useMemo(
     () =>
@@ -233,6 +238,14 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
     if (!project?.id) return;
     if (!silent) setLoading(true);
     try {
+      const prefs = await fetchNotificationPrefs();
+      const allowed = isCommentShowOnScreenEnabled(prefs);
+      setShowOnScreen(allowed);
+      if (!allowed) {
+        setComments([]);
+        onPostedRef.current(0);
+        return;
+      }
       const rows = await fetchProjectComments(project.id);
       setComments(rows);
       onPostedRef.current(rows.length);
@@ -244,22 +257,22 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
   }, [project?.id]);
 
   useEffect(() => {
-    if (!visible || !project?.id) return undefined;
+    if (!visible || !project?.id || !showOnScreen) return undefined;
     return subscribeSync((evt) => {
       if (evt.type !== 'project:comment_changed') return;
       if (String(evt.payload.project_id || '') !== String(project.id)) return;
       void loadComments(true);
     });
-  }, [visible, project?.id, loadComments, subscribeSync]);
+  }, [visible, project?.id, showOnScreen, loadComments, subscribeSync]);
 
   useEffect(() => {
-    if (!visible || !project?.id) return undefined;
+    if (!visible || !project?.id || !showOnScreen) return undefined;
     return subscribeComment((n) => {
       const pid = n.metadata?.project_id ? String(n.metadata.project_id) : n.entity_id ? String(n.entity_id) : '';
       if (pid !== String(project.id)) return;
       void loadComments(true);
     });
-  }, [visible, project?.id, loadComments, subscribeComment]);
+  }, [visible, project?.id, showOnScreen, loadComments, subscribeComment]);
 
   useEffect(() => {
     if (!visible || !project?.id) {
@@ -268,6 +281,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
       setReplyTo(null);
       setReactionPickerId(null);
       setErr('');
+      setShowOnScreen(true);
       return;
     }
     void loadComments(false);
@@ -482,6 +496,14 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
                 <ActivityIndicator color={colors.primary} />
                 <Text style={styles.emptyText}>Đang tải bình luận…</Text>
               </View>
+            ) : !showOnScreen ? (
+              <View style={styles.emptyWrap}>
+                <Ionicons name="notifications-outline" size={36} color={colors.textFaint} />
+                <Text style={styles.emptyText}>Đã tắt hiện bình luận trên màn hình</Text>
+                <Text style={styles.emptyHint}>
+                  Bình luận mới vẫn vào chuông Thông báo. Bật lại trong Cài đặt thông báo trên web.
+                </Text>
+              </View>
             ) : flatList.length === 0 ? (
               <View style={styles.emptyWrap}>
                 <Ionicons name="chatbubbles-outline" size={36} color={colors.textFaint} />
@@ -493,7 +515,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
             )}
           </ScrollView>
 
-          {replyTo ? (
+          {showOnScreen && replyTo ? (
             <View style={styles.replyBar}>
               <Text style={styles.replyText} numberOfLines={1}>
                 Trả lời <Text style={styles.replyName}>{replyTo.name}</Text>
@@ -504,6 +526,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
             </View>
           ) : null}
 
+          {showOnScreen ? (
           <View style={styles.composer}>
             <View style={styles.composerRow}>
               <TextInput
@@ -533,6 +556,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
               </TouchableOpacity>
             </View>
           </View>
+          ) : null}
         </View>
       </KeyboardAvoidingView>
     </Modal>

@@ -59,7 +59,6 @@ import {
   computeSxRevenueKpis,
   resolveSxProjectValue,
   getSxPipelineStageSlaTone,
-  isSxColumnSlaOverdue,
   resolveSxHandoverColumnId,
   shouldHideSxKanbanDeadlineOnCard,
   shouldIgnoreSxOrderDeliveryOverdue,
@@ -1623,7 +1622,6 @@ export default function ProductionDashboard() {
   const scopeKpis = useMemo(() => {
     const list = scopeProjects;
     const revenue = computeSxRevenueKpis(list, pipeline);
-    const columnSlaOverdue = list.filter((p) => isSxColumnSlaOverdue(p)).length;
     if (!list.length) {
       return {
         total: 0, producing: 0, awaiting_delivery: 0, shipped: 0, completed: 0, overdue: 0,
@@ -1647,6 +1645,7 @@ export default function ProductionDashboard() {
       delivering: revenue.awaitingDelivery,
       customer_care: list.filter((p) => p.current_stage?.slug === 'customer-care' || p.status === 'warranty').length,
       completed: list.filter((p) => p.status === 'completed').length,
+      // Trùng số thẻ trễ SLA cột (badge «SLA quá hạn»); cột «Bỏ quá hạn» / «Đã công» = 0
       overdue: revenue.overdue,
       intake_pending: list.filter((p) => p.sx_intake).length,
       avg_progress: Math.round(list.reduce((s, p) => s + (p.progress || 0), 0) / list.length),
@@ -1657,7 +1656,7 @@ export default function ProductionDashboard() {
       debt_count: revenue.debtCount,
       collected_count: revenue.collectedCount,
       weighted_pipeline_value: revenue.weightedPipeline,
-      column_sla_overdue: columnSlaOverdue,
+      column_sla_overdue: revenue.overdue,
     };
   }, [scopeProjects, kpis, pipeline]);
 
@@ -2658,7 +2657,7 @@ export default function ProductionDashboard() {
             <KPICard accent="bg-teal-500" label="Đang sản xuất" value={scopeKpis.producing} descriptor={scopeKpis.producing > 0 ? `${scopeKpis.producing} dự án` : '—'} />
             <KPICard accent="bg-slate-500" label="Chờ vận chuyển" value={scopeKpis.awaiting_delivery} descriptor={scopeKpis.awaiting_delivery > 0 ? 'ở cột bàn giao VC' : '—'} />
             <KPICard accent="bg-blue-500" label="Đã vận chuyển" value={scopeKpis.shipped} descriptor={scopeKpis.shipped > 0 ? 'đang / đã giao' : '—'} />
-            <KPICard accent="bg-red-500" label="Quá hạn" value={scopeKpis.overdue} descriptor={scopeKpis.overdue > 0 ? 'cần xử lý' : 'không có'} valueTone={scopeKpis.overdue > 0 ? 'danger' : undefined} />
+            <KPICard accent="bg-red-500" label="Quá hạn" value={scopeKpis.overdue} descriptor={scopeKpis.overdue > 0 ? 'trễ SLA cột' : 'không có'} valueTone={scopeKpis.overdue > 0 ? 'danger' : undefined} />
             <KPICard
               accent="bg-amber-500"
               label="Công nợ"
@@ -3493,7 +3492,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   const hideColumnDeadline = shouldHideSxKanbanDeadlineOnCard(item, sxStage);
   const columnSlaTone = hideColumnDeadline
     ? null
-    : getSxPipelineStageSlaTone(item.sx_pipeline_stage_entered_at, item.sx_pipeline_stage);
+    : getSxPipelineStageSlaTone(item.sx_pipeline_stage_entered_at, sxStage);
   const manualDlUrgency = !hideColumnDeadline && item.sx_kanban_deadline_at
     ? getCrmDeadlineUrgencyFromIso(item.sx_kanban_deadline_at)
     : null;

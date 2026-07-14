@@ -9,6 +9,8 @@ const DEFAULT_PREFS = {
   task_completed: true,
   deadline_warning: true,
   comment_added: true,
+  /** Hiện thread bình luận trên màn hình deal/dự án/task; tắt = chỉ còn trong chuông thông báo */
+  comment_show_on_screen: true,
   stage_changed: true,
   deal_won: true,
   approval_request: true,

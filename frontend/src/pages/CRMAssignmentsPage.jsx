@@ -30,6 +30,7 @@ import {
   assignmentSourceFieldLabel,
   isProductionAssignmentsPage,
 } from '../lib/assignmentSourceLink';
+import CommentDisplayHiddenBanner, { useCommentShowOnScreenEnabled } from '../components/CommentDisplayHiddenBanner';
 
 /**
  * Trang "Giao việc CRM" — độc lập với module Công việc và CRM tasks gắn lead.
@@ -2483,6 +2484,7 @@ function groupAssignmentCommentsByParent(flat) {
 }
 
 function CommentSection({ assignmentId }) {
+  const showOnScreen = useCommentShowOnScreenEnabled();
   const { apiBase } = useAssignmentsPageContext();
   const { user } = useAuth();
   const isAdmin = ['admin', 'manager', 'sales_admin'].includes(user?.role);
@@ -2501,9 +2503,16 @@ function CommentSection({ assignmentId }) {
       setComments(r.data?.comments || []);
     } catch { setComments([]); }
     setLoading(false);
-  }, [assignmentId]);
+  }, [apiBase, assignmentId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!showOnScreen) {
+      setComments([]);
+      setLoading(false);
+      return;
+    }
+    void load();
+  }, [showOnScreen, load]);
 
   const commentsByParent = useMemo(() => groupAssignmentCommentsByParent(comments), [comments]);
 
@@ -2605,6 +2614,18 @@ function CommentSection({ assignmentId }) {
       </div>
     ));
   };
+
+  if (!showOnScreen) {
+    return (
+      <div className="border-t pt-3">
+        <h4 className="text-sm font-semibold text-gray-800 flex items-center gap-1.5 mb-2">
+          <MessageSquare className="h-4 w-4" />
+          Ghi chú & bình luận
+        </h4>
+        <CommentDisplayHiddenBanner />
+      </div>
+    );
+  }
 
   return (
     <div className="border-t pt-3">

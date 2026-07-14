@@ -43,6 +43,10 @@ import {
 } from '../lib/logisticsApi';
 import { fetchDealIdForProject } from '../lib/projectDetailApi';
 import { resolveMediaUrl } from '../lib/mediaUtils';
+import {
+  fetchNotificationPrefs,
+  isCommentShowOnScreenEnabled,
+} from '../lib/notificationPrefs';
 import ImageGalleryLightbox, { type GalleryImage } from './ImageGalleryLightbox';
 import TapHighlight from './TapHighlight';
 import { useAuth } from '../context/AuthContext';
@@ -106,6 +110,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
   const [reactionBusy, setReactionBusy] = useState<string | null>(null);
   const [reactionPickerId, setReactionPickerId] = useState<string | null>(null);
   const [err, setErr] = useState('');
+  const [showOnScreen, setShowOnScreen] = useState(true);
   /** Có deal → bình luận CRM (đồng bộ deal); không → project_comments. */
   const [dealId, setDealId] = useState<string | null>(null);
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
@@ -343,6 +348,14 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
     if (!project?.id) return;
     if (!silent) setLoading(true);
     try {
+      const prefs = await fetchNotificationPrefs();
+      const allowed = isCommentShowOnScreenEnabled(prefs);
+      setShowOnScreen(allowed);
+      if (!allowed) {
+        setComments([]);
+        onPostedRef.current(0);
+        return;
+      }
       const leadId = leadIdOverride !== undefined
         ? leadIdOverride
         : (dealId || resolveProjectDealId(project));
@@ -382,7 +395,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
   }, [visible, project]);
 
   useEffect(() => {
-    if (!visible || !project?.id) return undefined;
+    if (!visible || !project?.id || !showOnScreen) return undefined;
     return subscribeSync((evt) => {
       if (evt.type !== 'project:comment_changed') return;
       const pid = String(evt.payload.project_id || '');
@@ -395,10 +408,10 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
         void loadComments(true);
       }
     });
-  }, [visible, project?.id, dealId, loadComments, subscribeSync]);
+  }, [visible, project?.id, dealId, showOnScreen, loadComments, subscribeSync]);
 
   useEffect(() => {
-    if (!visible || !project?.id) return undefined;
+    if (!visible || !project?.id || !showOnScreen) return undefined;
     return subscribeComment((n) => {
       const pid = n.metadata?.project_id ? String(n.metadata.project_id) : '';
       const lid = n.entity_type === 'lead' && n.entity_id
@@ -418,7 +431,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
         void loadComments(true);
       }
     });
-  }, [visible, project?.id, dealId, loadComments, subscribeComment]);
+  }, [visible, project?.id, dealId, showOnScreen, loadComments, subscribeComment]);
 
   useEffect(() => {
     if (!visible || !project?.id) {
@@ -429,6 +442,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
       setPendingFiles([]);
       setGalleryOpen(false);
       setErr('');
+      setShowOnScreen(true);
       return;
     }
     void loadComments(false, dealId ?? resolveProjectDealId(project));
@@ -807,6 +821,14 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
                 <ActivityIndicator color={colors.primary} />
                 <Text style={styles.emptyText}>Đang tải bình luận…</Text>
               </View>
+            ) : !showOnScreen ? (
+              <View style={styles.emptyWrap}>
+                <Ionicons name="notifications-outline" size={36} color={colors.textFaint} />
+                <Text style={styles.emptyText}>Đã tắt hiện bình luận trên màn hình</Text>
+                <Text style={styles.emptyHint}>
+                  Bình luận mới vẫn vào chuông Thông báo. Bật lại trong Cài đặt thông báo trên web.
+                </Text>
+              </View>
             ) : flatList.length === 0 ? (
               <View style={styles.emptyWrap}>
                 <Ionicons name="chatbubbles-outline" size={36} color={colors.textFaint} />
@@ -818,7 +840,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
             )}
           </ScrollView>
 
-          {replyTo ? (
+          {showOnScreen && replyTo ? (
             <View style={styles.replyBar}>
               <Text style={styles.replyText} numberOfLines={1}>
                 Trả lời <Text style={styles.replyName}>{replyTo.name}</Text>
@@ -829,7 +851,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
             </View>
           ) : null}
 
-          {pendingFiles.length > 0 ? (
+          {showOnScreen && pendingFiles.length > 0 ? (
             <View style={styles.pendingRow}>
               {pendingFiles.map((f) => (
                 <View key={f.key} style={styles.pendingChip}>
@@ -850,6 +872,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
             </View>
           ) : null}
 
+          {showOnScreen ? (
           <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
             <View style={styles.composerRow}>
               <TapHighlight style={styles.attachBtn} onPress={() => void takePhoto()} disabled={posting}>
@@ -891,6 +914,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
               </TouchableOpacity>
             </View>
           </View>
+          ) : null}
         </View>
       </KeyboardAvoidingView>
 

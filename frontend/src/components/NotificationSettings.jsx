@@ -1,6 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Bell, Phone, X } from 'lucide-react';
+import { Bell, ChevronDown, ChevronRight, Phone, X } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
@@ -43,6 +43,7 @@ import {
   fetchGlobalCallRingtoneConfig,
   invalidateGlobalCallRingtoneCache,
 } from '../lib/callRingtoneServer';
+import CommentDisplayUsersSetup from './CommentDisplayUsersSetup';
 
 const PREFS_FALLBACK = {
   browser_push: true,
@@ -51,6 +52,7 @@ const PREFS_FALLBACK = {
   task_completed: true,
   deadline_warning: true,
   comment_added: true,
+  comment_show_on_screen: true,
   stage_changed: true,
   deal_won: true,
   approval_request: true,
@@ -166,10 +168,18 @@ const MODULE_SECTIONS = [
         examples: ['Một hạng mục checklist hoàn thành (có thông báo cho người liên quan)'],
       },
       {
-        key: 'comment_added',
-        label: 'Bình luận',
-        sub: 'Có bình luận mới trên task, dự án hoặc luồng bạn tham gia.',
-        examples: ['Ai đó nhắc bạn trong comment', 'Bình luận mới trên công việc bạn theo dõi'],
+        key: '_comments_setup',
+        collapsible: true,
+        label: 'Setup thông báo bình luận',
+        sub: 'Bấm để mở: bật/tắt chuông khi có bình luận mới. Ai được hiện thread trên màn hình cấu hình ở mục đầu trang.',
+        children: [
+          {
+            key: 'comment_added',
+            label: 'Nhận thông báo bình luận',
+            sub: 'Chuông / toast / push khi có bình luận mới trên task, dự án hoặc luồng bạn tham gia.',
+            examples: ['Ai đó nhắc bạn trong comment', 'Bình luận mới trên công việc bạn theo dõi'],
+          },
+        ],
       },
     ],
   },
@@ -211,6 +221,8 @@ export default function NotificationSettings({ isOpen, onClose, anchorPanel = nu
   const canManageGlobalCallRing = isAdminLike(user);
   const [modulePrefs, setModulePrefs] = useState(() => ({ ...PREFS_FALLBACK }));
   const [savingPrefKey, setSavingPrefKey] = useState(null);
+  /** Nhóm collapsible trong Cài đặt TB — mặc định thu gọn, bấm mới hiện chi tiết. */
+  const [expandedPrefGroups, setExpandedPrefGroups] = useState(() => ({}));
   const [pushSupported, setPushSupported] = useState(false);
   const [pushSubscribed, setPushSubscribed] = useState(false);
   const [pushHint, setPushHint] = useState('');
@@ -681,6 +693,17 @@ export default function NotificationSettings({ isOpen, onClose, anchorPanel = nu
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          <CommentDisplayUsersSetup
+            enabledSelfPref={modulePrefs.comment_show_on_screen !== false}
+            onSelfPrefSynced={(on) => {
+              setModulePrefs((prev) => {
+                const merged = { ...prev, comment_show_on_screen: !!on };
+                setNotificationPrefsCache(merged);
+                return merged;
+              });
+            }}
+          />
+
           {pushSupported && (
             <div className="border rounded-xl p-4 bg-blue-50/50">
               <div className="flex items-center justify-between">
@@ -717,6 +740,78 @@ export default function NotificationSettings({ isOpen, onClose, anchorPanel = nu
                 <p className="text-[11px] font-bold text-slate-700">{sec.title}</p>
                 <div className="space-y-2">
                   {sec.rows.map((row) => {
+                    if (row.collapsible && Array.isArray(row.children)) {
+                      const open = !!expandedPrefGroups[row.key];
+                      const childOns = row.children.map((c) => modulePrefs[c.key] !== false);
+                      const allOn = childOns.every(Boolean);
+                      const someOn = childOns.some(Boolean);
+                      return (
+                        <div key={row.key} className="rounded-lg bg-white border border-slate-100 overflow-hidden">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedPrefGroups((prev) => ({ ...prev, [row.key]: !prev[row.key] }))}
+                            className="w-full flex items-start gap-2 px-2 py-2.5 text-left cursor-pointer hover:bg-slate-50/80 transition"
+                            aria-expanded={open}
+                          >
+                            <span className="mt-0.5 shrink-0 text-slate-500">
+                              {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm text-slate-800 font-medium">{row.label}</p>
+                              {row.sub ? <p className="text-[10px] text-slate-600 mt-1 leading-snug">{row.sub}</p> : null}
+                            </div>
+                            <span
+                              className={`shrink-0 mt-0.5 text-[10px] font-bold px-2 py-1 rounded-full ${
+                                allOn
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : someOn
+                                    ? 'bg-amber-100 text-amber-800'
+                                    : 'bg-slate-200 text-slate-600'
+                              }`}
+                            >
+                              {allOn ? 'Đang bật' : someOn ? 'Một phần' : 'Đang tắt'}
+                            </span>
+                          </button>
+                          {open ? (
+                            <div className="border-t border-slate-100 px-2 pb-2 pt-1.5 space-y-2 bg-slate-50/50">
+                              {row.children.map((child) => {
+                                const on = modulePrefs[child.key] !== false;
+                                return (
+                                  <div key={child.key} className="flex items-start justify-between gap-2 rounded-lg bg-white px-2 py-2 border border-slate-100">
+                                    <div className="min-w-0 flex-1">
+                                      <p className="text-sm text-slate-800 font-medium">{child.label}</p>
+                                      {child.sub ? <p className="text-[10px] text-slate-600 mt-1 leading-snug">{child.sub}</p> : null}
+                                      {child.examples?.length ? (
+                                        <div className="mt-1.5 pl-0.5">
+                                          <p className="text-[9px] font-semibold text-slate-500 uppercase tracking-wide">Ví dụ khi bật</p>
+                                          <ul className="mt-0.5 space-y-0.5 list-disc list-inside text-[10px] text-slate-500 leading-snug">
+                                            {child.examples.map((ex) => (
+                                              <li key={ex}>{ex}</li>
+                                            ))}
+                                          </ul>
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      disabled={savingPrefKey !== null}
+                                      onClick={() => void toggleModulePref(child.key, !on)}
+                                      className={`shrink-0 h-8 px-3 rounded-full text-xs font-bold transition ${
+                                        on ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
+                                      } ${savingPrefKey ? 'opacity-60' : 'hover:opacity-90'}`}
+                                      title={on ? 'Nhấn để tắt' : 'Nhấn để bật'}
+                                    >
+                                      {savingPrefKey === child.key ? '…' : on ? 'Đang bật' : 'Đang tắt'}
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    }
+
                     const on = modulePrefs[row.key] !== false;
                     return (
                       <div key={row.key} className="flex items-start justify-between gap-2 rounded-lg bg-white px-2 py-2.5 border border-slate-100">

@@ -520,6 +520,7 @@ export default function NotificationCenter({ socket }) {
             task_completed: true,
             deadline_warning: true,
             comment_added: true,
+            comment_show_on_screen: true,
             stage_changed: true,
             deal_won: true,
             approval_request: true,

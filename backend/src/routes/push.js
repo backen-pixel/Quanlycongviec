@@ -6,6 +6,7 @@ const { isNotificationTypeAllowed } = require('../helpers/notificationPrefTypes'
 const { DEFAULT_PREFS, invalidateNotificationPrefsCache } = require('../helpers/notificationPrefsUser');
 const { isExpiryDeadlineNotificationType } = require('../helpers/notificationOperationalFilter');
 const { isRestTableMissingError } = require('../helpers/pushDeviceTokensPg');
+const { isAdminLike, hasCompanyId } = require('../helpers/adminRole');
 let webpush;
 try { webpush = require('web-push'); } catch { webpush = null; }
 
@@ -139,6 +140,7 @@ r.put('/preferences', async (req, res) => {
     const allowed = [
       'browser_push', 'sound',
       'task_assigned', 'task_completed', 'deadline_warning', 'comment_added',
+      'comment_show_on_screen',
       'stage_changed', 'deal_won', 'approval_request', 'checklist_completed',
       'lead_assigned', 'order_confirmed', 'invoice_overdue',
       'lead_new', 'deal_new', 'production_deadlines', 'crm_lead_deadlines', 'logistics_deadlines',
@@ -149,6 +151,10 @@ r.put('/preferences', async (req, res) => {
     allowed.forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
+    // Hiển thị BL trên màn hình do admin chọn NV — user thường không tự đổi
+    if (update.comment_show_on_screen !== undefined && !isAdminLike(req.user)) {
+      delete update.comment_show_on_screen;
+    }
 
     // Upsert: create if not exists, update if exists
     const { data, error } = await supabase.from('notification_preferences')
@@ -166,6 +172,159 @@ r.put('/preferences', async (req, res) => {
     console.error('Update preferences error:', e.message);
     // Graceful fallback if table doesn't exist
     res.json({ success: true, message: 'Preferences saved (default)' });
+  }
+});
+
+function resolveCommentDisplayCompanyId(req) {
+  const fromBody = req.body?.company_id;
+  const fromQuery = req.query?.company_id;
+  const requested = fromBody != null && String(fromBody).trim() !== ''
+    ? String(fromBody).trim()
+    : (fromQuery != null && String(fromQuery).trim() !== '' ? String(fromQuery).trim() : null);
+  if (hasCompanyId(req.user)) {
+    const own = String(req.user.company_id).trim();
+    if (requested && requested !== own) return { error: 'Chỉ cấu hình trong phạm vi công ty của bạn', status: 403 };
+    return { companyId: own };
+  }
+  if (!requested) return { error: 'Thiếu company_id', status: 400 };
+  return { companyId: requested };
+}
+
+async function listActiveUsersForCompany(companyId) {
+  // Phần lớn NV gắn công ty qua departments.company_id (users.company_id thường null).
+  const { data: depts, error: deptErr } = await supabase
+    .from('departments')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('is_active', true);
+  if (deptErr) throw deptErr;
+  const deptIds = (depts || []).map((d) => d.id);
+
+  const byId = new Map();
+  const cols = 'id, full_name, email, avatar, role, position, department_id, is_active';
+
+  if (deptIds.length) {
+    const { data: viaDept, error } = await supabase
+      .from('users')
+      .select(cols)
+      .in('department_id', deptIds)
+      .neq('is_active', false)
+      .order('full_name', { ascending: true });
+    if (error) throw error;
+    for (const u of viaDept || []) byId.set(String(u.id), u);
+  }
+
+  const { data: viaCompany, error: coErr } = await supabase
+    .from('users')
+    .select(cols)
+    .eq('company_id', companyId)
+    .neq('is_active', false)
+    .order('full_name', { ascending: true });
+  if (coErr) throw coErr;
+  for (const u of viaCompany || []) byId.set(String(u.id), u);
+
+  return [...byId.values()].sort((a, b) =>
+    String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'),
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /push/comment-display-users — Admin: danh sách NV + trạng thái hiện BL trên màn hình
+// ═══════════════════════════════════════════════════════════════════════════
+r.get('/comment-display-users', async (req, res) => {
+  try {
+    if (!isAdminLike(req.user)) {
+      return res.status(403).json({ error: 'Cần quyền quản trị' });
+    }
+    const resolved = resolveCommentDisplayCompanyId(req);
+    if (resolved.error) return res.status(resolved.status).json({ error: resolved.error });
+    const { companyId } = resolved;
+
+    const users = await listActiveUsersForCompany(companyId);
+    const ids = users.map((u) => u.id);
+    let prefsByUser = {};
+    if (ids.length) {
+      const { data: prefs, error: prefsErr } = await supabase
+        .from('notification_preferences')
+        .select('user_id, comment_show_on_screen')
+        .in('user_id', ids);
+      if (prefsErr) throw prefsErr;
+      prefsByUser = Object.fromEntries((prefs || []).map((p) => [p.user_id, p.comment_show_on_screen !== false]));
+    }
+
+    res.json({
+      company_id: companyId,
+      users: users.map((u) => ({
+        id: u.id,
+        full_name: u.full_name,
+        email: u.email,
+        avatar: u.avatar,
+        role: u.role,
+        position: u.position,
+        comment_show_on_screen: prefsByUser[u.id] !== false,
+      })),
+    });
+  } catch (e) {
+    console.error('Get comment-display-users error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PUT /push/comment-display-users — Admin: chọn NV được hiện bình luận trên màn hình
+// Body: { company_id?, user_ids: string[] }
+// ═══════════════════════════════════════════════════════════════════════════
+r.put('/comment-display-users', async (req, res) => {
+  try {
+    if (!isAdminLike(req.user)) {
+      return res.status(403).json({ error: 'Cần quyền quản trị' });
+    }
+    const resolved = resolveCommentDisplayCompanyId(req);
+    if (resolved.error) return res.status(resolved.status).json({ error: resolved.error });
+    const { companyId } = resolved;
+
+    const userIds = Array.isArray(req.body?.user_ids)
+      ? [...new Set(req.body.user_ids.map((id) => String(id)).filter(Boolean))]
+      : null;
+    if (!userIds) {
+      return res.status(400).json({ error: 'Thiếu user_ids (mảng)' });
+    }
+
+    const users = await listActiveUsersForCompany(companyId);
+    const allowed = new Set(users.map((u) => String(u.id)));
+    const enabledIds = userIds.filter((id) => allowed.has(id));
+    const disabledIds = users.map((u) => String(u.id)).filter((id) => !enabledIds.includes(id));
+    const now = new Date().toISOString();
+
+    const upsertRows = [
+      ...enabledIds.map((user_id) => ({
+        user_id,
+        comment_show_on_screen: true,
+        updated_at: now,
+      })),
+      ...disabledIds.map((user_id) => ({
+        user_id,
+        comment_show_on_screen: false,
+        updated_at: now,
+      })),
+    ];
+
+    if (upsertRows.length) {
+      const { error } = await supabase.from('notification_preferences').upsert(upsertRows, { onConflict: 'user_id' });
+      if (error) throw error;
+      for (const row of upsertRows) invalidateNotificationPrefsCache(row.user_id);
+    }
+
+    res.json({
+      ok: true,
+      company_id: companyId,
+      enabled_count: enabledIds.length,
+      disabled_count: disabledIds.length,
+      user_ids: enabledIds,
+    });
+  } catch (e) {
+    console.error('Update comment-display-users error:', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 

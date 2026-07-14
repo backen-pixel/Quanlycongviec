@@ -26,6 +26,7 @@ import { downloadUploadFile, publicFileUrl as pubUrl } from '../lib/publicFileUr
 import { handleCommentFilePaste } from '../lib/chatClipboard';
 import { CommentNewNotice, useCommentThreadLive } from './commentThreadLiveUx';
 import { isQuoteContractActivityComment } from '../lib/hideQuoteContractFromProduction';
+import CommentDisplayHiddenBanner, { useCommentShowOnScreenEnabled } from './CommentDisplayHiddenBanner';
 
 const REACTION_PICKER = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
@@ -914,8 +915,10 @@ export function CrmLeadCommentsPanel({
   quickReplyTemplates = [],
   forModule = null,
 }) {
+  const showOnScreen = useCommentShowOnScreenEnabled();
   const { user } = useAuth();
   const selfUid = user?.userId || user?.id;
+  const activeLeadId = showOnScreen ? leadId : null;
   const [comments, setComments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [body, setBody] = useState('');
@@ -940,9 +943,9 @@ export function CrmLeadCommentsPanel({
   }, []);
 
   const loadReadMeta = useCallback(async () => {
-    if (!leadId) return;
+    if (!activeLeadId) return;
     try {
-      const r = await api.get(`/crm/leads/${leadId}/comments/read-receipts`);
+      const r = await api.get(`/crm/leads/${activeLeadId}/comments/read-receipts`);
       const next = new Map();
       for (const row of r.data?.receipts || []) {
         if (row?.user_id && row?.last_read_at) next.set(String(row.user_id), row.last_read_at);
@@ -953,17 +956,17 @@ export function CrmLeadCommentsPanel({
     } catch {
       setReadReceipts(new Map());
     }
-  }, [leadId]);
+  }, [activeLeadId]);
 
   const markCommentsRead = useCallback(async () => {
-    if (!leadId || !selfUid) return;
+    if (!activeLeadId || !selfUid) return;
     try {
-      const r = await api.patch(`/crm/leads/${leadId}/comments/read`);
+      const r = await api.patch(`/crm/leads/${activeLeadId}/comments/read`);
       if (r.data?.last_read_at) {
         applyReadReceipt({ user_id: selfUid, last_read_at: r.data.last_read_at });
       }
     } catch { /* bảng chưa migrate — bỏ qua */ }
-  }, [leadId, selfUid, applyReadReceipt]);
+  }, [activeLeadId, selfUid, applyReadReceipt]);
 
   const {
     scrollRef,
@@ -983,12 +986,12 @@ export function CrmLeadCommentsPanel({
   }, [unreadCount, onUnreadCountChange]);
 
   const load = useCallback(async () => {
-    if (!leadId) return;
+    if (!activeLeadId) return;
     setLoading(true);
     setLoadError('');
     try {
       const params = forModule ? { for_module: forModule } : undefined;
-      const r = await api.get(`/crm/leads/${leadId}/comments`, { params });
+      const r = await api.get(`/crm/leads/${activeLeadId}/comments`, { params });
       const rows = Array.isArray(r.data) ? r.data : [];
       setComments(rows.map((c) => ({ ...c, reactions: c.reactions || { summary: [], mine: null } })));
       onCountChange?.(rows.length);
@@ -999,13 +1002,25 @@ export function CrmLeadCommentsPanel({
     } finally {
       setLoading(false);
     }
-  }, [leadId, forModule, onCountChange]);
-
-  useEffect(() => { void load(); void loadReadMeta(); }, [load, loadReadMeta]);
+  }, [activeLeadId, forModule, onCountChange]);
 
   useEffect(() => {
-    if (!loading) void markCommentsRead();
-  }, [loading, comments.length, markCommentsRead]);
+    if (!showOnScreen) {
+      setComments([]);
+      setLoading(false);
+      setLoadError('');
+      onCountChange?.(0);
+      onUnreadCountChange?.(0);
+      return;
+    }
+    void load();
+    void loadReadMeta();
+  }, [showOnScreen, load, loadReadMeta, onCountChange, onUnreadCountChange]);
+
+  useEffect(() => {
+    if (!showOnScreen || loading) return;
+    void markCommentsRead();
+  }, [showOnScreen, loading, comments.length, markCommentsRead]);
 
   const handleLeadCommentEvent = useCallback((payload) => {
     const action = payload?.action || 'created';
@@ -1038,19 +1053,19 @@ export function CrmLeadCommentsPanel({
     handleIncomingComment(row);
   }, [forModule, onCountChange, handleIncomingComment]);
 
-  useLeadCommentSocket(leadId, handleLeadCommentEvent, applyReadReceipt);
+  useLeadCommentSocket(activeLeadId, handleLeadCommentEvent, applyReadReceipt);
 
   const submit = useCallback(async ({ mention_user_ids, attachmentList } = {}) => {
     const v = body.trim();
     const files = attachmentList ?? pendingFiles;
-    if (!v && !files.length) return;
+    if (!activeLeadId || (!v && !files.length)) return;
     setPosting(true);
     try {
       const payload = { body: v };
       if (replyTo?.id != null) payload.parent_id = replyTo.id;
       if (mention_user_ids?.length) payload.mention_user_ids = mention_user_ids;
       if (files.length) payload.attachments = files;
-      const r = await api.post(`/crm/leads/${leadId}/comments`, payload);
+      const r = await api.post(`/crm/leads/${activeLeadId}/comments`, payload);
       const row = r.data || {};
       setComments((prev) => {
         const next = upsertComment(prev, row);
@@ -1066,7 +1081,7 @@ export function CrmLeadCommentsPanel({
     } finally {
       setPosting(false);
     }
-  }, [body, pendingFiles, leadId, replyTo, onCountChange, handleIncomingComment]);
+  }, [body, pendingFiles, activeLeadId, replyTo, onCountChange, handleIncomingComment]);
 
   const handleFilesUploaded = useCallback((files) => {
     const uploaded = (files || []).filter((f) => f?.file_url || f?.url);
@@ -1118,6 +1133,8 @@ export function CrmLeadCommentsPanel({
     }
   };
 
+  if (!showOnScreen) return <CommentDisplayHiddenBanner />;
+
   return (
     <CommentThread
       comments={comments}
@@ -1166,7 +1183,9 @@ export function CrmLeadCommentsPanel({
 
 /** Bình luận dự án sản xuất — realtime qua socket `project:comment` */
 export function ProjectCommentsPanel({ projectId, onCountChange }) {
+  const showOnScreen = useCommentShowOnScreenEnabled();
   const { user } = useAuth();
+  const activeProjectId = showOnScreen ? projectId : null;
   const [comments, setComments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [body, setBody] = useState('');
@@ -1191,9 +1210,9 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
   }, []);
 
   const loadReadMeta = useCallback(async () => {
-    if (!projectId) return;
+    if (!activeProjectId) return;
     try {
-      const r = await api.get(`/projects/${projectId}/comments/read-receipts`);
+      const r = await api.get(`/projects/${activeProjectId}/comments/read-receipts`);
       const next = new Map();
       for (const row of r.data?.receipts || []) {
         if (row?.user_id && row?.last_read_at) next.set(String(row.user_id), row.last_read_at);
@@ -1204,23 +1223,23 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
       setReadReceipts(new Map());
       setCommentMembers([]);
     }
-  }, [projectId]);
+  }, [activeProjectId]);
 
   const markCommentsRead = useCallback(async () => {
-    if (!projectId || !selfUid) return;
+    if (!activeProjectId || !selfUid) return;
     try {
-      const r = await api.patch(`/projects/${projectId}/comments/read`);
+      const r = await api.patch(`/projects/${activeProjectId}/comments/read`);
       if (r.data?.last_read_at) {
         applyReadReceipt({ user_id: selfUid, last_read_at: r.data.last_read_at });
       }
     } catch { /* bảng chưa migrate — bỏ qua */ }
-  }, [projectId, selfUid, applyReadReceipt]);
+  }, [activeProjectId, selfUid, applyReadReceipt]);
 
   const load = useCallback(async () => {
-    if (!projectId) return;
+    if (!activeProjectId) return;
     setLoading(true);
     try {
-      const r = await api.get(`/projects/${projectId}/comments`);
+      const r = await api.get(`/projects/${activeProjectId}/comments`);
       const rows = Array.isArray(r.data?.comments) ? r.data.comments : [];
       setComments(rows.map((c) => ({ ...c, reactions: c.reactions || { summary: [], mine: null } })));
       onCountChange?.(rows.length);
@@ -1230,16 +1249,23 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
     } finally {
       setLoading(false);
     }
-  }, [projectId, onCountChange]);
+  }, [activeProjectId, onCountChange]);
 
   useEffect(() => {
+    if (!showOnScreen) {
+      setComments([]);
+      setLoading(false);
+      onCountChange?.(0);
+      return;
+    }
     void load();
     void loadReadMeta();
-  }, [load, loadReadMeta]);
+  }, [showOnScreen, load, loadReadMeta, onCountChange]);
 
   useEffect(() => {
-    if (!loading) void markCommentsRead();
-  }, [loading, comments.length, markCommentsRead]);
+    if (!showOnScreen || loading) return;
+    void markCommentsRead();
+  }, [showOnScreen, loading, comments.length, markCommentsRead]);
 
   const handleProjectCommentEvent = useCallback((payload) => {
     const action = payload?.action;
@@ -1267,18 +1293,18 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
     });
   }, [onCountChange]);
 
-  useProjectCommentSocket(projectId, handleProjectCommentEvent, applyReadReceipt);
+  useProjectCommentSocket(activeProjectId, handleProjectCommentEvent, applyReadReceipt);
 
   const submit = useCallback(async (attachmentList) => {
     const v = body.trim();
     const files = attachmentList ?? pendingFiles;
-    if (!v && !files.length) return;
+    if (!activeProjectId || (!v && !files.length)) return;
     setPosting(true);
     try {
       const payload = { content: v };
       if (replyTo?.id != null) payload.parent_id = replyTo.id;
       if (files.length) payload.attachments = files;
-      const r = await api.post(`/projects/${projectId}/comments`, payload);
+      const r = await api.post(`/projects/${activeProjectId}/comments`, payload);
       const row = r.data?.comment || r.data;
       if (row?.id) {
         setComments((prev) => {
@@ -1295,7 +1321,7 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
     } finally {
       setPosting(false);
     }
-  }, [body, pendingFiles, projectId, replyTo, onCountChange, load]);
+  }, [body, pendingFiles, activeProjectId, replyTo, onCountChange, load]);
 
   const handleFilesUploaded = useCallback((files) => {
     const uploaded = (files || []).filter((f) => f?.file_url || f?.url);
@@ -1307,9 +1333,9 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
 
   const saveEdit = async () => {
     const v = editingBody.trim();
-    if (!v) return;
+    if (!v || !activeProjectId) return;
     try {
-      const r = await api.patch(`/projects/${projectId}/comments/${editingId}`, { content: v });
+      const r = await api.patch(`/projects/${activeProjectId}/comments/${editingId}`, { content: v });
       const row = r.data || {};
       setComments((prev) => replaceComment(prev, { ...row, id: editingId }));
       setEditingId(null);
@@ -1320,9 +1346,9 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
   };
 
   const removeComment = async (c) => {
-    if (!window.confirm('Xóa bình luận này?')) return;
+    if (!activeProjectId || !window.confirm('Xóa bình luận này?')) return;
     try {
-      await api.delete(`/projects/${projectId}/comments/${c.id}`);
+      await api.delete(`/projects/${activeProjectId}/comments/${c.id}`);
       setComments((prev) => {
         const next = removeCommentById(prev, c.id);
         onCountChange?.(next.length);
@@ -1334,10 +1360,10 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
   };
 
   const pickReaction = async (c, emoji) => {
-    if (reactionBusy != null) return;
+    if (!activeProjectId || reactionBusy != null) return;
     setReactionBusy(c.id);
     try {
-      const r = await api.put(`/projects/${projectId}/comments/${c.id}/reaction`, { emoji });
+      const r = await api.put(`/projects/${activeProjectId}/comments/${c.id}/reaction`, { emoji });
       const reactions = r.data || { summary: [], mine: null };
       setComments((prev) => prev.map((x) => (x.id === c.id ? { ...x, reactions } : x)));
     } catch (e) {
@@ -1346,6 +1372,8 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
       setReactionBusy(null);
     }
   };
+
+  if (!showOnScreen) return <CommentDisplayHiddenBanner />;
 
   return (
     <CommentThread

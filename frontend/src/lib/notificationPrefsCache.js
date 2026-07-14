@@ -5,6 +5,7 @@ let prefs = {
   task_completed: true,
   deadline_warning: true,
   comment_added: true,
+  comment_show_on_screen: true,
   stage_changed: true,
   deal_won: true,
   approval_request: true,
@@ -245,10 +246,27 @@ export function getNotificationPresetId() {
   }
 }
 
+const PREFS_CHANGED_EVENT = 'qlcv:notification-prefs-changed';
+
 export function setNotificationPrefsCache(next) {
   if (next && typeof next === 'object') {
     prefs = { ...prefs, ...next };
+    try {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(PREFS_CHANGED_EVENT));
+      }
+    } catch { /* ignore */ }
   }
+}
+
+/** Subscribe to prefs cache updates (React: lắng nghe rồi setState). */
+export function subscribeNotificationPrefsChanged(listener) {
+  if (typeof window === 'undefined' || typeof listener !== 'function') return () => {};
+  const handler = () => {
+    try { listener(); } catch { /* ignore */ }
+  };
+  window.addEventListener(PREFS_CHANGED_EVENT, handler);
+  return () => window.removeEventListener(PREFS_CHANGED_EVENT, handler);
 }
 
 export function setNotificationVolumePercent(percent) {
@@ -306,4 +324,9 @@ export function isNotificationTypeEnabled(type, entityType, metadata = null) {
   const key = preferenceKeyForNotificationType(type, entityType, metadata);
   if (!key) return true;
   return prefs[key] !== false;
+}
+
+/** Hiện thread bình luận trên màn hình (deal/dự án/task). Tắt = chỉ còn trong chuông thông báo. */
+export function isCommentShowOnScreenEnabled() {
+  return prefs.comment_show_on_screen !== false;
 }

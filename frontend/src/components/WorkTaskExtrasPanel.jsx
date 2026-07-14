@@ -12,6 +12,7 @@ import UploadFileLightbox, {
   isUploadImageFile,
 } from './UploadFileLightbox';
 import { FilePreviewOpenLink } from '../context/FilePreviewContext';
+import CommentDisplayHiddenBanner, { useCommentShowOnScreenEnabled } from './CommentDisplayHiddenBanner';
 
 function compressImage(file, maxWidth = 1920, quality = 0.8) {
   return new Promise((resolve) => {
@@ -489,6 +490,7 @@ function CrmTaskNotesAttachments({ task }) {
 }
 
 function AssignmentComments({ task }) {
+  const showOnScreen = useCommentShowOnScreenEnabled();
   const assignmentId = task.source_id;
   const [comments, setComments] = useState([]);
   const [content, setContent] = useState('');
@@ -505,7 +507,14 @@ function AssignmentComments({ task }) {
     setLoading(false);
   }, [assignmentId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!showOnScreen) {
+      setComments([]);
+      setLoading(false);
+      return;
+    }
+    void load();
+  }, [showOnScreen, load]);
 
   const submit = async () => {
     if (!content.trim()) return;
@@ -520,6 +529,7 @@ function AssignmentComments({ task }) {
     setSaving(false);
   };
 
+  if (!showOnScreen) return <CommentDisplayHiddenBanner />;
   if (loading) return <p className="text-xs text-gray-400 py-4 text-center">Đang tải…</p>;
 
   return (
@@ -558,6 +568,7 @@ function AssignmentComments({ task }) {
 }
 
 function ProductionTaskComments({ task }) {
+  const showOnScreen = useCommentShowOnScreenEnabled();
   const taskId = task.source_id;
   const [comments, setComments] = useState([]);
   const [content, setContent] = useState('');
@@ -565,6 +576,11 @@ function ProductionTaskComments({ task }) {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    if (!showOnScreen) {
+      setComments([]);
+      setLoading(false);
+      return undefined;
+    }
     let cancelled = false;
     api.get(`/tasks/${taskId}`).then((r) => {
       if (!cancelled) {
@@ -575,7 +591,7 @@ function ProductionTaskComments({ task }) {
       if (!cancelled) setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [taskId]);
+  }, [showOnScreen, taskId]);
 
   const submit = async () => {
     if (!content.trim()) return;
@@ -591,6 +607,7 @@ function ProductionTaskComments({ task }) {
     setSaving(false);
   };
 
+  if (!showOnScreen) return <CommentDisplayHiddenBanner />;
   if (loading) return <p className="text-xs text-gray-400 py-4 text-center">Đang tải…</p>;
 
   return (

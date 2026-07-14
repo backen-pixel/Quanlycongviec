@@ -185,7 +185,8 @@ export function computeSxRevenueKpis(projects, stages) {
     if (projectIsProducing(p, st)) producing += 1;
     if (projectIsAwaitingDelivery(p, st)) awaitingDelivery += 1;
     if (projectIsShipped(p)) shipped += 1;
-    if (isSxProjectDeliveryDateOverdue(p, col)) overdue += 1;
+    // Quá hạn KPI = trễ SLA cột (khớp badge «SLA quá hạn» trên thẻ / «Bỏ quá hạn cột»)
+    if (isSxColumnSlaOverdue(p, col)) overdue += 1;
     if (col && col.bucket_slug !== INTAKE_BUCKET && val > 0) {
       const prob = resolveSxProjectProbability(p, col);
       if (prob != null) weightedPipeline += val * (prob / 100);
@@ -274,10 +275,10 @@ export function getSxPipelineStageSlaTone(stageEnteredAt, stage) {
   return { level: 'ok', remainingMs, deadlineTs };
 }
 
-export function isSxColumnSlaOverdue(project) {
+export function isSxColumnSlaOverdue(project, stage) {
   const tone = getSxPipelineStageSlaTone(
     project?.sx_pipeline_stage_entered_at,
-    project?.sx_pipeline_stage,
+    stage || project?.sx_pipeline_stage,
   );
   return tone?.level === 'overdue';
 }

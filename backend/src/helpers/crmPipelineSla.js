@@ -44,6 +44,31 @@ function isSxProjectDateOverdue(project, dateField) {
   return new Date(raw) < new Date();
 }
 
+const INTAKE_BUCKET = 'won_pending';
+
+/** Tone SLA cột SX — null nếu không áp dụng (đồng bộ frontend sxPipelineRevenue). */
+function getSxPipelineStageSlaTone(stageEnteredAt, stage) {
+  if (!stageEnteredAt || !stage) return null;
+  if (isSxPipelineStageNoDeadline(stage)) return null;
+  if (stage.bucket_slug === INTAKE_BUCKET) return null;
+  const slaDays = effectivePipelineStageSlaDays(stage.sla_days);
+  if (slaDays == null) return null;
+  const deadlineTs = new Date(stageEnteredAt).getTime() + slaDays * 86400000;
+  const remainingMs = deadlineTs - Date.now();
+  if (remainingMs < 0) return { level: 'overdue', remainingMs, deadlineTs };
+  if (remainingMs <= 24 * 3600000) return { level: 'soon', remainingMs, deadlineTs };
+  if (remainingMs <= 3 * 24 * 3600000) return { level: 'warn', remainingMs, deadlineTs };
+  return { level: 'ok', remainingMs, deadlineTs };
+}
+
+function isSxColumnSlaOverdue(project, stage) {
+  const tone = getSxPipelineStageSlaTone(
+    project?.sx_pipeline_stage_entered_at,
+    stage || project?.sx_pipeline_stage,
+  );
+  return tone?.level === 'overdue';
+}
+
 module.exports = {
   DEFAULT_PIPELINE_STAGE_SLA_DAYS,
   isPipelineStageSlaDisabled,
@@ -52,4 +77,6 @@ module.exports = {
   isSxPipelineStageNoDeadline,
   shouldIgnoreSxOrderDeliveryOverdue,
   isSxProjectDateOverdue,
+  getSxPipelineStageSlaTone,
+  isSxColumnSlaOverdue,
 };
