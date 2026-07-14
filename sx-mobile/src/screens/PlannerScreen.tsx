@@ -17,6 +17,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { fetchPersonalPlanner, fetchProductionBoard } from '../lib/productionApi';
+import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
 import { formatMoneyAmount, Radii, Spacing, stageColor } from '../theme';
 import type { PersonalPlanner, ProductionBoard, ProductionProject } from '../types';
 
@@ -38,9 +39,11 @@ export default function PlannerScreen() {
   const isSystemAdmin = user?.role === 'admin' && !user?.company_id;
   const scopedCompanyId = isSystemAdmin ? undefined : (user?.company_id || undefined);
   const [tab, setTab] = useState<SubTab>('by_owner');
-  const [board, setBoard] = useState<ProductionBoard>({ stages: [], projects: [], kpis: null });
+  const [board, setBoard] = useState<ProductionBoard>(
+    () => getCachedBoard({ companyId: scopedCompanyId }) ?? { stages: [], projects: [], kpis: null },
+  );
   const [personal, setPersonal] = useState<PersonalPlanner>({ columns: [], items: [] });
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !getCachedBoard({ companyId: scopedCompanyId }));
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ownerVisible, setOwnerVisible] = useState<Record<string, number>>({});
@@ -71,7 +74,12 @@ export default function PlannerScreen() {
     setError(null);
     try {
       const [boardData, personalData] = await Promise.all([
-        fetchProductionBoard(mode === 'silent', { companyId: scopedCompanyId }),
+        fetchProductionBoard(mode === 'silent', { companyId: scopedCompanyId }, {
+          onPartial: (partial) => {
+            setBoard(partial);
+            if (mode === 'init') setLoading(false);
+          },
+        }),
         fetchPersonalPlanner().catch(() => ({ columns: [], items: [] }) as PersonalPlanner),
       ]);
       setBoard(boardData);
@@ -86,8 +94,8 @@ export default function PlannerScreen() {
   }, [scopedCompanyId]);
 
   useEffect(() => {
-    void load('init');
-  }, [load]);
+    void load(isCachedBoardFresh({ companyId: scopedCompanyId }) ? 'silent' : 'init');
+  }, [load, scopedCompanyId]);
 
   useProductionRealtime({
     onRefresh: () => load('silent'),

@@ -44,6 +44,27 @@ function isSxProjectDateOverdue(project, dateField) {
   return new Date(raw) < new Date();
 }
 
+/**
+ * Quá hạn ngày giao/SX — khớp frontend `isSxProjectDeliveryDateOverdue`.
+ * Ưu tiên: delivery_date → production_deadline → deadline.
+ * So sánh theo ngày lịch (không tính «hôm nay đã qua giờ»).
+ * Bỏ qua khi cột «Đã công» hoặc sla_days=0 («Bỏ quá hạn»).
+ */
+function isSxProjectDeliveryDateOverdue(project, stage) {
+  const st = stage || project?.sx_pipeline_stage;
+  if (shouldIgnoreSxOrderDeliveryOverdue(st)) return false;
+  const raw = project?.delivery_date || project?.production_deadline || project?.deadline;
+  if (!raw || project?.status === 'completed') return false;
+  const t = new Date(raw);
+  if (Number.isNaN(t.getTime())) return false;
+  const startOfDay = (d) => {
+    const x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    return x;
+  };
+  return startOfDay(t).getTime() < startOfDay(new Date()).getTime();
+}
+
 module.exports = {
   DEFAULT_PIPELINE_STAGE_SLA_DAYS,
   isPipelineStageSlaDisabled,
@@ -52,4 +73,5 @@ module.exports = {
   isSxPipelineStageNoDeadline,
   shouldIgnoreSxOrderDeliveryOverdue,
   isSxProjectDateOverdue,
+  isSxProjectDeliveryDateOverdue,
 };

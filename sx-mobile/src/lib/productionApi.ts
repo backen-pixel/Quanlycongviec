@@ -1,9 +1,10 @@
 import { api } from '../api/client';
+import { normalizeCommentAttachments } from './commentAttachments';
+import { setCachedBoard } from './productionBoardCache';
 import type {
   KanbanStage,
   PersonalPlanner,
   ProductionBoard,
-  ProductionDashboard,
   ProductionProject,
 } from '../types';
 
@@ -26,12 +27,21 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
     priority: (raw.priority as string) || null,
     deadline: (raw.deadline as string) || null,
     production_deadline: (raw.production_deadline as string) || null,
+    order_date: (raw.order_date as string) || null,
+    delivery_date: (raw.delivery_date as string) || null,
     created_at: (raw.created_at as string) || null,
+    updated_at: (raw.updated_at as string) || null,
     estimated_value: Number(raw.estimated_value || 0),
     progress: Number(raw.progress || 0),
+    sx_pipeline_percent:
+      raw.sx_pipeline_percent != null && raw.sx_pipeline_percent !== ''
+        ? Number(raw.sx_pipeline_percent)
+        : null,
     task_total: Number(raw.task_total || 0),
     done_tasks: Number(raw.done_tasks || 0),
     is_overdue: Boolean(raw.is_overdue),
+    is_delivery_overdue: Boolean(raw.is_delivery_overdue),
+    is_production_overdue: Boolean(raw.is_production_overdue),
     sx_intake: Boolean(raw.sx_intake),
     sx_won_deal: Boolean(raw.sx_won_deal),
     current_stage_id: (raw.current_stage_id as string) ?? stage.id ?? null,
@@ -73,6 +83,11 @@ function mapStageRow(raw: Record<string, unknown>, index: number): KanbanStage {
     is_handover_to_logistics: Boolean(raw.is_handover_to_logistics),
     counts_as_completed_revenue: Boolean(raw.counts_as_completed_revenue),
     counts_as_collected_revenue: Boolean(raw.counts_as_collected_revenue),
+    sla_days: raw.sla_days != null && raw.sla_days !== '' ? Number(raw.sla_days) : null,
+    progress_percent:
+      raw.progress_percent != null && raw.progress_percent !== ''
+        ? Number(raw.progress_percent)
+        : null,
     count: raw.count != null ? Number(raw.count) : undefined,
     total_value: raw.total_value != null ? Number(raw.total_value) : undefined,
   };
@@ -157,6 +172,40 @@ export function resolveColumnId(
   return intake?.id || sortedStages[0]?.id || null;
 }
 
+/** Cột «Đã công» hoặc sla_days=0 — khớp web `shouldIgnoreSxOrderDeliveryOverdue`. */
+function shouldIgnoreSxOrderDeliveryOverdue(stage: KanbanStage | null | undefined): boolean {
+  if (!stage) return false;
+  if (stage.counts_as_completed_revenue) return true;
+  if (stage.sla_days === 0) return true;
+  return false;
+}
+
+/**
+ * Quá hạn KPI/card — khớp web `isSxProjectDeliveryDateOverdue`.
+ * Ngày: delivery_date → production_deadline → deadline.
+ * So sánh theo ngày lịch (khớp cột Deadline trên web).
+ */
+export function isSxProjectDeliveryDateOverdue(
+  project: ProductionProject,
+  stages: KanbanStage[],
+): boolean {
+  const colId = project.resolved_column_id ?? project.sx_kanban_column_id ?? null;
+  const stage = colId
+    ? stages.find((s) => String(s.id) === String(colId))
+    : undefined;
+  if (shouldIgnoreSxOrderDeliveryOverdue(stage)) return false;
+  const raw = project.delivery_date || project.production_deadline || project.deadline;
+  if (!raw || project.status === 'completed') return false;
+  const t = new Date(raw);
+  if (Number.isNaN(t.getTime())) return false;
+  const startOfDay = (d: Date) => {
+    const x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    return x;
+  };
+  return startOfDay(t).getTime() < startOfDay(new Date()).getTime();
+}
+
 export type BoardFilters = {
   /** Lọc theo công ty xưởng SX (company_id). */
   companyId?: string;
@@ -170,17 +219,35 @@ export type BoardFilters = {
 };
 
 /**
- * Lấy toàn bộ dự án sản xuất (đủ trang) từ /production/projects.
- * Tối ưu cho dữ liệu lớn (vài nghìn card): tải trang 1 để biết tổng số trang,
- * rồi tải các trang còn lại SONG SONG theo từng lô (concurrency có giới hạn) thay vì
- * tuần tự — giảm độ trễ mạng từ N×round-trip xuống còn ~ceil(N/CONCURRENCY)×round-trip.
+ * Tải board: stages + trang dự án đầu song song → UI sớm;
+ * các trang còn lại tải nền (onPartial cập nhật dần).
+ * Không gọi /dashboard (KPI app tính client-side).
+ * BE tối đa limit=500/trang — khớp mặc định web.
  */
-const PROJECTS_PAGE_LIMIT = 200;
-const PROJECTS_MAX_PAGES = 40;
-const PROJECTS_FETCH_CONCURRENCY = 5;
+const PROJECTS_PAGE_LIMIT = 500;
+const PROJECTS_MAX_PAGES = 16;
+const PROJECTS_FETCH_CONCURRENCY = 4;
 
-async function fetchAllProjects(noCache = false, filters: BoardFilters = {}): Promise<ProductionProject[]> {
-  const buildParams = (page: number): Record<string, unknown> => {
+export type FetchBoardOptions = {
+  /** Gọi sau trang đầu (và mỗi lô nền) — UI hiện sớm. */
+  onPartial?: (board: ProductionBoard) => void;
+  /** false = chỉ ~500 dự án đầu. Mặc định true. */
+  loadRemaining?: boolean;
+};
+
+export async function fetchProductionBoard(
+  noCache = false,
+  filters: BoardFilters = {},
+  options: FetchBoardOptions = {},
+): Promise<ProductionBoard> {
+  const loadRemaining = options.loadRemaining !== false;
+
+  const stageParams: Record<string, unknown> = {};
+  if (noCache) stageParams._t = Date.now();
+  if (filters.companyId) stageParams.company_id = filters.companyId;
+  if (filters.workshopTypeId) stageParams.workshop_type_id = filters.workshopTypeId;
+
+  const buildProjectParams = (page: number): Record<string, unknown> => {
     const params: Record<string, unknown> = { page, limit: PROJECTS_PAGE_LIMIT };
     if (noCache) params._t = Date.now();
     if (filters.companyId) params.company_id = filters.companyId;
@@ -188,21 +255,70 @@ async function fetchAllProjects(noCache = false, filters: BoardFilters = {}): Pr
     if (filters.workshopTypeId) params.workshop_type_id = filters.workshopTypeId;
     return params;
   };
+
   const getPage = async (page: number) => {
     const { data } = await api.get<{
       projects?: Array<Record<string, unknown>>;
       totalPages?: number;
-    }>('/production/projects', { params: buildParams(page) });
+    }>('/production/projects', { params: buildProjectParams(page) });
     return {
       rows: Array.isArray(data?.projects) ? data.projects : [],
       totalPages: Number(data?.totalPages || 1),
     };
   };
 
-  const first = await getPage(1);
-  const out: ProductionProject[] = first.rows.map(mapProjectRow);
-  const totalPages = Math.min(first.totalPages, PROJECTS_MAX_PAGES);
-  if (totalPages <= 1 || first.rows.length < PROJECTS_PAGE_LIMIT) return out;
+  const [stageRes, first] = await Promise.all([
+    api
+      .get<Array<Record<string, unknown>>>('/production/pipeline-stages', {
+        params: Object.keys(stageParams).length ? stageParams : undefined,
+      })
+      .then((r) => (Array.isArray(r.data) ? r.data : []))
+      .catch(() => [] as Array<Record<string, unknown>>),
+    getPage(1),
+  ]);
+
+  const stages = stageRes
+    .map((s, i) => mapStageRow(s, i))
+    .sort((a, b) => a.order_index - b.order_index);
+
+  const attachColumns = (list: ProductionProject[]) =>
+    list.map((p) => {
+      const colId = resolveColumnId(p, stages);
+      const col = stages.find((s) => String(s.id) === String(colId));
+      const pipelinePct =
+        p.sx_pipeline_percent != null && Number.isFinite(Number(p.sx_pipeline_percent))
+          ? Number(p.sx_pipeline_percent)
+          : col?.progress_percent != null && Number.isFinite(Number(col.progress_percent))
+            ? Number(col.progress_percent)
+            : null;
+      return {
+        ...p,
+        resolved_column_id: colId,
+        sx_pipeline_percent: pipelinePct,
+        // Ghi đè flag BE bằng công thức web (kể cả khi BE cũ chưa deploy).
+        is_overdue: isSxProjectDeliveryDateOverdue(p, stages),
+      };
+    });
+
+  const projects: ProductionProject[] = first.rows.map(mapProjectRow);
+  const emit = (list: ProductionProject[]) => {
+    const board: ProductionBoard = {
+      stages,
+      projects: attachColumns(list),
+      kpis: null,
+    };
+    setCachedBoard(filters, board);
+    options.onPartial?.(board);
+    return board;
+  };
+
+  emit(projects);
+
+  const totalPages = Math.min(Math.max(1, first.totalPages), PROJECTS_MAX_PAGES);
+  const hasMore = loadRemaining && totalPages > 1 && first.rows.length >= PROJECTS_PAGE_LIMIT;
+  if (!hasMore) {
+    return emit(projects);
+  }
 
   const remaining: number[] = [];
   for (let p = 2; p <= totalPages; p += 1) remaining.push(p);
@@ -211,65 +327,12 @@ async function fetchAllProjects(noCache = false, filters: BoardFilters = {}): Pr
     const batch = remaining.slice(i, i + PROJECTS_FETCH_CONCURRENCY);
     const results = await Promise.all(batch.map((p) => getPage(p)));
     results.forEach((r) => {
-      for (const row of r.rows) out.push(mapProjectRow(row));
+      for (const row of r.rows) projects.push(mapProjectRow(row));
     });
+    emit(projects);
   }
-  return out;
-}
 
-/**
- * Tải board đồng bộ với web:
- *  - Cột Kanban từ /production/pipeline-stages (lọc theo companyId + workshopTypeId)
- *  - Dự án từ /production/projects (cùng companyId + dealCompanyId + workshopTypeId)
- *  - KPI từ /production/dashboard (best-effort)
- * Resolve cột client-side (giống web) và gắn vào resolved_column_id.
- */
-export async function fetchProductionBoard(noCache = false, filters: BoardFilters = {}): Promise<ProductionBoard> {
-  const stageParams: Record<string, unknown> = {};
-  if (noCache) stageParams._t = Date.now();
-  if (filters.companyId) stageParams.company_id = filters.companyId;
-  if (filters.workshopTypeId) stageParams.workshop_type_id = filters.workshopTypeId;
-
-  const dashParams: Record<string, unknown> = {};
-  if (noCache) dashParams._t = Date.now();
-  if (filters.companyId) dashParams.company_id = filters.companyId;
-  if (filters.dealCompanyId) dashParams.deal_company_id = filters.dealCompanyId;
-
-  // Khớp web: luôn gửi workshop_type_id xuống /projects để BE enrich đúng cột theo phân loại.
-  const projectFilters: BoardFilters = {
-    companyId: filters.companyId,
-    dealCompanyId: filters.dealCompanyId,
-    workshopTypeId: filters.workshopTypeId,
-  };
-
-  const [stageRes, projects, kpis] = await Promise.all([
-    api
-      .get<Array<Record<string, unknown>>>('/production/pipeline-stages', {
-        params: Object.keys(stageParams).length ? stageParams : undefined,
-      })
-      .then((r) => (Array.isArray(r.data) ? r.data : []))
-      .catch(() => [] as Array<Record<string, unknown>>),
-    fetchAllProjects(noCache, projectFilters),
-    api
-      .get<{ kpis?: ProductionDashboard }>('/production/dashboard', {
-        params: Object.keys(dashParams).length ? dashParams : undefined,
-      })
-      .then((r) => r.data?.kpis ?? null)
-      .catch(() => null),
-  ]);
-
-  const stages = stageRes.map((s, i) => mapStageRow(s, i)).sort((a, b) => a.order_index - b.order_index);
-
-  const resolved = projects.map((p) => {
-    const colId = resolveColumnId(p, stages);
-    return {
-      ...p,
-      // Đồng bộ với web: sau resolve, sx_kanban_column_id = cột hiển thị (KPI + bucket dùng chung).
-      sx_kanban_column_id: colId,
-      resolved_column_id: colId,
-    };
-  });
-  return { stages, projects: resolved, kpis };
+  return emit(projects);
 }
 
 export async function fetchProductionProject(projectId: string): Promise<ProductionProject> {
@@ -433,6 +496,7 @@ export type ProjectComment = {
   content: string;
   created_at: string;
   updated_at?: string | null;
+  attachments?: import('./commentAttachments').CommentAttachment[];
   user?: ProjectCommentUser;
   reactions?: {
     summary: { emoji: string; count: number }[];
@@ -451,6 +515,7 @@ function mapCommentRow(raw: Record<string, unknown>): ProjectComment {
     content: String(raw.content || ''),
     created_at: String(raw.created_at || ''),
     updated_at: raw.updated_at != null ? String(raw.updated_at) : null,
+    attachments: normalizeCommentAttachments(raw.attachments),
     user: {
       id: user.id != null ? String(user.id) : undefined,
       full_name: user.full_name != null ? String(user.full_name) : undefined,
@@ -484,9 +549,15 @@ export async function postProjectComment(
   projectId: string,
   content: string,
   parentId?: string | null,
+  attachments?: import('./commentAttachments').CommentAttachment[] | null,
 ): Promise<ProjectComment> {
-  const payload: { content: string; parent_id?: string } = { content: content.trim() };
+  const payload: {
+    content: string;
+    parent_id?: string;
+    attachments?: import('./commentAttachments').CommentAttachment[];
+  } = { content: content.trim() };
   if (parentId) payload.parent_id = parentId;
+  if (attachments?.length) payload.attachments = attachments;
   const { data } = await api.post<{ comment?: unknown } & Record<string, unknown>>(
     `/projects/${projectId}/comments`,
     payload,

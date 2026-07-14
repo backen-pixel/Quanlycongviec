@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -14,10 +14,11 @@ import { formatApiError } from '../api/client';
 import TapHighlight from '../components/TapHighlight';
 import { useTheme } from '../context/ThemeContext';
 import { fetchProductionBoard } from '../lib/productionApi';
+import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { useRootNavigation } from '../navigation/useRootNavigation';
-import { Radii, Spacing, getTaskProgressColor, stageColor } from '../theme';
-import type { ProductionBoard } from '../types';
+import { Radii, Spacing, stageColor } from '../theme';
+import type { KanbanStage, ProductionBoard, ProductionProject } from '../types';
 
 function formatDate(value?: string | null): string {
   if (!value) return '';
@@ -32,8 +33,11 @@ export default function ProjectListScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { openProjectDetail } = useRootNavigation();
-  const [board, setBoard] = useState<ProductionBoard>({ stages: [], projects: [], kpis: null });
-  const [loading, setLoading] = useState(true);
+  const cachedBoard = getCachedBoard();
+  const [board, setBoard] = useState<ProductionBoard>(
+    () => getCachedBoard() ?? { stages: [], projects: [], kpis: null },
+  );
+  const [loading, setLoading] = useState(!cachedBoard);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -84,8 +88,17 @@ export default function ProjectListScreen() {
         stageTagText: { color: colors.white, fontSize: 10, fontWeight: '700' },
         name: { color: colors.text, fontSize: 15, fontWeight: '700', marginTop: 8 },
         meta: { color: colors.textMuted, fontSize: 12, marginTop: 4 },
-        progressTrack: { height: 6, borderRadius: Radii.full, backgroundColor: colors.cardAlt, overflow: 'hidden', marginTop: 10 },
-        progressFill: { height: 6, borderRadius: Radii.full },
+        dateRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+        dateChip: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 4,
+          paddingHorizontal: 8,
+          paddingVertical: 4,
+          borderRadius: Radii.md,
+          borderWidth: 1,
+        },
+        dateChipText: { fontSize: 11, fontWeight: '700' },
       }),
     [colors],
   );
@@ -95,7 +108,12 @@ export default function ProjectListScreen() {
     else if (mode === 'refresh') setRefreshing(true);
     setError(null);
     try {
-      setBoard(await fetchProductionBoard(mode === 'silent'));
+      setBoard(await fetchProductionBoard(mode === 'silent', {}, {
+        onPartial: (partial) => {
+          setBoard(partial);
+          if (mode === 'init') setLoading(false);
+        },
+      }));
     } catch (e) {
       if (mode !== 'silent') setError(formatApiError(e));
     } finally {
@@ -105,18 +123,13 @@ export default function ProjectListScreen() {
   }, []);
 
   useEffect(() => {
-    void load('init');
+    // Có cache còn tươi → làm mới nền (không hiện spinner); ngược lại tải bình thường.
+    void load(isCachedBoardFresh() ? 'silent' : 'init');
   }, [load]);
 
   useProductionRealtime({
     onRefresh: () => load('silent'),
   });
-
-  const stageNameById = useMemo(() => {
-    const map = new Map<string, { name: string; color: string }>();
-    board.stages.forEach((s, i) => map.set(s.id, { name: s.name, color: stageColor(s.color, i) }));
-    return map;
-  }, [board.stages]);
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -125,6 +138,20 @@ export default function ProjectListScreen() {
       `${p.code} ${p.name} ${p.customer_name || ''} ${p.customer_phone || ''}`.toLowerCase().includes(needle),
     );
   }, [board.projects, search]);
+
+  const stageById = useMemo(() => {
+    const m = new Map<string, KanbanStage>();
+    board.stages.forEach((s) => m.set(String(s.id), s));
+    return m;
+  }, [board.stages]);
+
+  const renderItem = useCallback(
+    ({ item }: { item: ProductionProject }) => {
+      const stage = item.resolved_column_id ? stageById.get(String(item.resolved_column_id)) : undefined;
+      return <ProjectRow item={item} stage={stage} styles={styles} onPress={openProjectDetail} />;
+    },
+    [stageById, styles, openProjectDetail],
+  );
 
   if (loading) {
     return (
@@ -160,39 +187,75 @@ export default function ProjectListScreen() {
 
       <FlatList
         data={filtered}
-        keyExtractor={(item) => item.id}
+        keyExtractor={keyExtractor}
         contentContainerStyle={{ padding: Spacing.md, paddingBottom: 24 }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={() => load('refresh')} tintColor={colors.primary} />
         }
         ListEmptyComponent={<Text style={styles.empty}>Không có dự án phù hợp</Text>}
-        renderItem={({ item }) => {
-          const stage = item.resolved_column_id ? stageNameById.get(item.resolved_column_id) : null;
-          const progress = Math.max(0, Math.min(100, Number(item.progress || 0)));
-          const progressColor = getTaskProgressColor(progress, colors);
-          return (
-            <TapHighlight style={styles.row} onPress={() => openProjectDetail(item.id)}>
-              <View style={styles.rowTop}>
-                <Text style={styles.code}>{item.code}</Text>
-                {stage ? (
-                  <View style={[styles.stageTag, { backgroundColor: stage.color }]}>
-                    <Text style={styles.stageTagText} numberOfLines={1}>{stage.name}</Text>
-                  </View>
-                ) : null}
-              </View>
-              <Text style={styles.name} numberOfLines={1}>{item.name}</Text>
-              <Text style={styles.meta} numberOfLines={1}>
-                {item.customer_name || '--'}
-                {item.customer_phone ? ` • ${item.customer_phone}` : ''}
-                {item.deadline ? ` • ${formatDate(item.deadline)}` : ''}
-              </Text>
-              <View style={styles.progressTrack}>
-                <View style={[styles.progressFill, { width: `${progress}%`, backgroundColor: progressColor }]} />
-              </View>
-            </TapHighlight>
-          );
-        }}
+        initialNumToRender={12}
+        maxToRenderPerBatch={12}
+        windowSize={9}
+        removeClippedSubviews
+        renderItem={renderItem}
       />
     </View>
   );
 }
+
+const keyExtractor = (item: ProductionProject) => item.id;
+
+type ProjectRowProps = {
+  item: ProductionProject;
+  stage?: KanbanStage;
+  styles: ReturnType<typeof StyleSheet.create>;
+  onPress: (id: string) => void;
+};
+
+const ProjectRow = memo(function ProjectRow({ item, stage, styles, onPress }: ProjectRowProps) {
+  const orderStr = formatDate(item.order_date);
+  const deliveryStr = formatDate(item.delivery_date);
+  const deliveryOverdue = Boolean(item.is_delivery_overdue || item.is_overdue);
+  return (
+    <TapHighlight style={styles.row} onPress={() => onPress(item.id)}>
+      <View style={styles.rowTop}>
+        <Text style={styles.code}>{item.code}</Text>
+        {stage ? (
+          <View style={[styles.stageTag, { backgroundColor: stage.color || stageColor(null, 0) }]}>
+            <Text style={styles.stageTagText} numberOfLines={1}>{stage.name}</Text>
+          </View>
+        ) : null}
+      </View>
+      <Text style={styles.name} numberOfLines={1}>{item.name}</Text>
+      <Text style={styles.meta} numberOfLines={1}>
+        {item.customer_name || '--'}
+        {item.customer_phone ? ` • ${item.customer_phone}` : ''}
+      </Text>
+      <View style={styles.dateRow}>
+        <View style={[styles.dateChip, { backgroundColor: '#EEF2FF', borderColor: '#C7D2FE' }]}>
+          <Text style={[styles.dateChipText, { color: '#4338CA' }]}>
+            Đặt {orderStr || '—'}
+          </Text>
+        </View>
+        <View
+          style={[
+            styles.dateChip,
+            {
+              backgroundColor: deliveryOverdue && deliveryStr ? '#FEF2F2' : '#ECFDF5',
+              borderColor: deliveryOverdue && deliveryStr ? '#FECACA' : '#A7F3D0',
+            },
+          ]}
+        >
+          <Text
+            style={[
+              styles.dateChipText,
+              { color: deliveryOverdue && deliveryStr ? '#B91C1C' : '#047857' },
+            ]}
+          >
+            Giao {deliveryStr || '—'}
+          </Text>
+        </View>
+      </View>
+    </TapHighlight>
+  );
+});

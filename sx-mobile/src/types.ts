@@ -11,6 +11,10 @@ export type KanbanStage = {
   is_handover_to_logistics?: boolean;
   counts_as_completed_revenue?: boolean;
   counts_as_collected_revenue?: boolean;
+  /** null = mặc định; 0 = bỏ quá hạn ngày giao/deadline. */
+  sla_days?: number | null;
+  /** % tiến độ pipeline gắn với cột (khớp web sx_pipeline_percent). */
+  progress_percent?: number | null;
   count?: number;
   total_value?: number;
 };
@@ -26,12 +30,20 @@ export type ProductionProject = {
   priority?: string | null;
   deadline?: string | null;
   production_deadline?: string | null;
+  order_date?: string | null;
+  delivery_date?: string | null;
   created_at?: string | null;
+  updated_at?: string | null;
   estimated_value?: number | null;
+  /** % hoàn thành nhiệm vụ SX (CRM/workflow). */
   progress?: number;
+  /** % tiến độ theo cột pipeline (khớp web). Ưu tiên hiển thị trên card Kanban. */
+  sx_pipeline_percent?: number | null;
   task_total?: number;
   done_tasks?: number;
   is_overdue?: boolean;
+  is_delivery_overdue?: boolean;
+  is_production_overdue?: boolean;
   sx_intake?: boolean;
   sx_won_deal?: boolean;
   current_stage_id?: string | null;
@@ -148,6 +160,7 @@ export type CrmTask = {
   order_index?: number;
   deadline?: string | null;
   due_date?: string | null;
+  created_at?: string | null;
   notes?: string | null;
   description?: string | null;
   priority?: string | null;
@@ -156,6 +169,7 @@ export type CrmTask = {
   attachment_count?: number;
   assignee?: PersonRef | null;
   assignees?: PersonRef[];
+  creator?: PersonRef | null;
   pipeline_stage?: { id?: string; name?: string | null; order_index?: number } | null;
 };
 

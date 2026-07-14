@@ -81,6 +81,61 @@ export function reactionTotal(comment: ProjectComment): number {
   return (comment.reactions?.summary || []).reduce((acc, s) => acc + (s.count || 0), 0);
 }
 
+/** Đồng bộ với web: bình luận hệ thống bắt đầu bằng emoji prefix. */
+const SYSTEM_COMMENT_PREFIXES = ['🔄', '⏰', '📎', '👤', '📋', '✅', '🗑️', '🔀', '🚚'];
+
+export function isSystemComment(body?: string | null): boolean {
+  if (!body) return false;
+  const trimmed = String(body).trim();
+  return SYSTEM_COMMENT_PREFIXES.some((p) => trimmed.startsWith(p));
+}
+
+export type SystemFileLink = { label: string; url: string };
+
+/** Trích link file dạng «label|url» trong body bình luận hệ thống (giống web). */
+export function extractSystemFileLink(text?: string | null): SystemFileLink | null {
+  if (!text) return null;
+  const m = String(text).match(/«([^»|]+)\|([^»]+)»/);
+  if (!m) return null;
+  return { label: m[1], url: m[2] };
+}
+
+export function isImageFileName(name?: string | null): boolean {
+  return /\.(jpe?g|png|gif|webp|bmp|svg|heic|heif|avif)$/i.test(String(name || ''));
+}
+
+export type SystemBodySegment =
+  | { kind: 'text'; text: string }
+  | { kind: 'link'; label: string; url: string }
+  | { kind: 'strong'; text: string };
+
+/** Chia body hệ thống thành các đoạn text / link «label|url» / «text» đậm. */
+export function parseSystemCommentBody(text?: string | null): SystemBodySegment[] {
+  const src = String(text || '');
+  if (!src) return [];
+  const segments: SystemBodySegment[] = [];
+  const regex = /«([^»]+)»/g;
+  let lastIdx = 0;
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(src)) !== null) {
+    if (m.index > lastIdx) segments.push({ kind: 'text', text: src.slice(lastIdx, m.index) });
+    const inner = m[1];
+    const pipeIdx = inner.indexOf('|');
+    if (pipeIdx > 0 && pipeIdx < inner.length - 1) {
+      segments.push({
+        kind: 'link',
+        label: inner.slice(0, pipeIdx),
+        url: inner.slice(pipeIdx + 1),
+      });
+    } else {
+      segments.push({ kind: 'strong', text: inner });
+    }
+    lastIdx = m.index + m[0].length;
+  }
+  if (lastIdx < src.length) segments.push({ kind: 'text', text: src.slice(lastIdx) });
+  return segments;
+}
+
 export function reactionTopEmojis(comment: ProjectComment, limit = 3): string[] {
   return (comment.reactions?.summary || [])
     .filter((s) => s.count > 0)

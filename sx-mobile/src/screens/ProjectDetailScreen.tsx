@@ -1,8 +1,12 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
+  Platform,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -11,6 +15,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ProductionPipelineStepper from '../components/projectDetail/ProductionPipelineStepper';
+import ProjectCommentsTab from '../components/projectDetail/ProjectCommentsTab';
 import ProjectCrmTaskRow from '../components/projectDetail/ProjectCrmTaskRow';
 import ProjectDocumentsTab from '../components/projectDetail/ProjectDocumentsTab';
 import ProjectDriveTab from '../components/projectDetail/ProjectDriveTab';
@@ -28,14 +33,16 @@ import {
   fetchProjectActivities,
   groupCrmTasksByStage,
   isCrmProductionTaskDone,
-  taskDeadline,
+  updateProjectDates,
 } from '../lib/projectDetailApi';
+import { fetchThreadComments, resolveCommentSource } from '../lib/commentApi';
 import type { RootStackParamList } from '../navigation/RootNavigator';
 import { formatMoneyAmount, Radii, Spacing, getTaskProgressColor } from '../theme';
 import type { CrmTask, ProductionProjectDetail, ProjectActivity } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ProjectDetail'>;
-type TabKey = 'tasks' | 'documents' | 'drive' | 'info' | 'team' | 'schedule';
+type TabKey = 'tasks' | 'documents' | 'drive' | 'info' | 'team' | 'schedule' | 'comments';
+type EditableDateField = 'order_date' | 'delivery_date' | 'deadline';
 
 function formatDate(value?: string | null): string {
   if (!value) return '';
@@ -46,19 +53,36 @@ function formatDate(value?: string | null): string {
   }
 }
 
+function toYmd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function parseDateValue(value?: string | null): Date {
+  if (!value) return new Date();
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? new Date() : d;
+}
+
 export default function ProjectDetailScreen({ route, navigation }: Props) {
   const { projectId } = route.params;
   const { colors } = useTheme();
-  const { joinProjectRoom, leaveProjectRoom } = useNotifications();
+  const { joinProjectRoom, leaveProjectRoom, joinLeadRoom, leaveLeadRoom } = useNotifications();
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<TabKey>('tasks');
   const [project, setProject] = useState<ProductionProjectDetail | null>(null);
   const [tasks, setTasks] = useState<CrmTask[]>([]);
   const [dealId, setDealId] = useState<string | null>(null);
   const [activities, setActivities] = useState<ProjectActivity[]>([]);
+  const [commentCount, setCommentCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState('');
+  const [editingDateField, setEditingDateField] = useState<EditableDateField | null>(null);
+  const [dateDraft, setDateDraft] = useState<Date>(new Date());
+  const [dateSaving, setDateSaving] = useState(false);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -66,15 +90,20 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     try {
       const detail = await fetchProductionProjectDetail(projectId);
       setProject(detail);
-      let resolvedDealId = detail.crmDeals?.[0]?.id || null;
+      let resolvedDealId =
+        detail.crmDeals?.find((d) => String((d as { type?: string }).type || '') === 'deal')?.id
+        || detail.crmDeals?.[0]?.id
+        || null;
       if (!resolvedDealId) resolvedDealId = await fetchDealIdForProject(projectId);
       setDealId(resolvedDealId);
-      const [taskRows, actRows] = await Promise.all([
+      const [taskRows, actRows, commentRows] = await Promise.all([
         resolvedDealId ? fetchCrmDealTasks(resolvedDealId) : Promise.resolve([]),
         fetchProjectActivities(projectId),
+        fetchThreadComments(resolveCommentSource(projectId, resolvedDealId)).catch(() => []),
       ]);
       setTasks(taskRows);
       setActivities(actRows);
+      setCommentCount(commentRows.length);
     } catch (e) {
       setErr(formatApiError(e));
     } finally {
@@ -90,6 +119,12 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     joinProjectRoom(projectId);
     return () => leaveProjectRoom(projectId);
   }, [projectId, joinProjectRoom, leaveProjectRoom]);
+
+  useEffect(() => {
+    if (!dealId) return undefined;
+    joinLeadRoom(dealId);
+    return () => leaveLeadRoom(dealId);
+  }, [dealId, joinLeadRoom, leaveLeadRoom]);
 
   useProductionRealtime({
     projectId,
@@ -114,6 +149,91 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
   }, []);
 
+  const openDateEditor = useCallback((field: EditableDateField, current?: string | null) => {
+    setDateDraft(parseDateValue(current));
+    setEditingDateField(field);
+  }, []);
+
+  const cancelDateEditor = useCallback(() => {
+    setEditingDateField(null);
+  }, []);
+
+  const saveDateField = useCallback(async (field: EditableDateField, value: string | null) => {
+    if (!project) return;
+    setDateSaving(true);
+    try {
+      const patch =
+        field === 'order_date'
+          ? { order_date: value }
+          : field === 'delivery_date'
+            ? { delivery_date: value }
+            : { deadline: value };
+      await updateProjectDates(projectId, patch);
+      setProject((prev) => {
+        if (!prev) return prev;
+        const next = { ...prev, ...patch };
+        if (field === 'delivery_date') next.production_deadline = value;
+        return next;
+      });
+      setEditingDateField(null);
+    } catch (e) {
+      Alert.alert('Lỗi', formatApiError(e));
+    } finally {
+      setDateSaving(false);
+    }
+  }, [project, projectId]);
+
+  const onDatePickerChange = useCallback((_: DateTimePickerEvent, date?: Date) => {
+    if (Platform.OS === 'android') {
+      // Android đóng picker ngay; nếu có date thì lưu
+      const field = editingDateField;
+      setEditingDateField(null);
+      if (date && field) void saveDateField(field, toYmd(date));
+      return;
+    }
+    if (date) setDateDraft(date);
+  }, [editingDateField, saveDateField]);
+
+  const scheduleMilestones = useMemo(() => {
+    if (!project) {
+      return [] as Array<{
+        key: string;
+        label: string;
+        date: string | null;
+        icon: keyof typeof Ionicons.glyphMap;
+        accent: string;
+        hint: string;
+      }>;
+    }
+    return [
+      {
+        key: 'order',
+        label: 'Ngày đặt hàng',
+        date: project.order_date || null,
+        icon: 'cart-outline' as const,
+        accent: colors.primary,
+        hint: 'Thời điểm khách đặt hàng',
+      },
+      {
+        key: 'delivery',
+        label: 'Ngày giao hàng',
+        date: project.delivery_date || project.production_deadline || null,
+        icon: 'car-outline' as const,
+        accent: '#0D9488',
+        hint: 'Mốc giao hàng dự kiến',
+      },
+      {
+        key: 'deadline',
+        label: 'Hạn dự án',
+        date: project.deadline || null,
+        icon: 'flag-outline' as const,
+        accent: '#D97706',
+        hint: 'Hạn hoàn thành dự án',
+      },
+    ];
+  }, [project, colors.primary]);
+
+  /** Nhóm theo quy trình SX — cùng thứ tự web (stage + order_index). */
   const taskGroups = useMemo(() => groupCrmTasksByStage(tasks), [tasks]);
   const { done: taskDone, total: taskTotal, percent: progress } = useMemo(
     () => calcCrmProductionTaskProgress(
@@ -186,6 +306,8 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         progressFill: { height: '100%', borderRadius: Radii.full },
         progressPct: { color: colors.textFaint, fontSize: 11, fontWeight: '700', marginTop: 6, textAlign: 'right' },
         tabs: {
+          flexGrow: 0,
+          flexShrink: 0,
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: colors.border,
           backgroundColor: colors.bgElevated,
@@ -251,6 +373,44 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         infoRow: { gap: 2 },
         infoLabel: { color: colors.textFaint, fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
         infoValue: { color: colors.text, fontSize: 14, fontWeight: '600' },
+        infoEditRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          paddingVertical: 8,
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: colors.border,
+        },
+        infoEditBody: { flex: 1, minWidth: 0, gap: 2 },
+        infoEditHint: { color: colors.primary, fontSize: 11, fontWeight: '700' },
+        dateEditorBox: {
+          marginTop: 6,
+          gap: 8,
+          padding: 10,
+          borderRadius: Radii.md,
+          backgroundColor: colors.cardAlt,
+          borderWidth: 1,
+          borderColor: colors.border,
+        },
+        dateEditorActions: { flexDirection: 'row', gap: 8, justifyContent: 'flex-end' },
+        dateBtn: {
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          borderRadius: Radii.md,
+          backgroundColor: colors.primary,
+        },
+        dateBtnMuted: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
+        dateBtnDanger: { backgroundColor: colors.dangerSoft, borderWidth: 1, borderColor: colors.danger },
+        dateBtnTxt: { color: '#FFF', fontWeight: '800', fontSize: 12 },
+        dateBtnTxtMuted: { color: colors.text, fontWeight: '700', fontSize: 12 },
+        dateBtnTxtDanger: { color: colors.danger, fontWeight: '800', fontSize: 12 },
+        sectionTitle: {
+          color: colors.text,
+          fontSize: 14,
+          fontWeight: '800',
+          marginBottom: 8,
+          marginTop: 4,
+        },
         personRow: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -261,13 +421,55 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         },
         personLabel: { color: colors.textMuted, fontSize: 12, fontWeight: '600', width: 110 },
         personName: { flex: 1, color: colors.text, fontSize: 14, fontWeight: '700' },
-        scheduleItem: {
+        scheduleCard: {
           backgroundColor: colors.card,
-          borderRadius: Radii.md,
+          borderRadius: Radii.lg,
           borderWidth: 1,
           borderColor: colors.border,
-          padding: 12,
-          marginBottom: 8,
+          overflow: 'hidden',
+        },
+        scheduleRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 14,
+          paddingHorizontal: 16,
+          paddingVertical: 18,
+        },
+        scheduleRowDivider: {
+          height: StyleSheet.hairlineWidth,
+          backgroundColor: colors.border,
+          marginLeft: 70,
+        },
+        scheduleIconWrap: {
+          width: 44,
+          height: 44,
+          borderRadius: 14,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        scheduleBody: { flex: 1, minWidth: 0, gap: 4 },
+        scheduleLabel: {
+          color: colors.textMuted,
+          fontSize: 12,
+          fontWeight: '700',
+          letterSpacing: 0.2,
+          textTransform: 'uppercase',
+        },
+        scheduleDate: {
+          color: colors.text,
+          fontSize: 20,
+          fontWeight: '800',
+          letterSpacing: -0.3,
+        },
+        scheduleDateEmpty: {
+          color: colors.textFaint,
+          fontSize: 17,
+          fontWeight: '700',
+        },
+        scheduleHint: {
+          color: colors.textFaint,
+          fontSize: 12,
+          fontWeight: '500',
         },
         errBox: {
           margin: Spacing.lg,
@@ -293,6 +495,34 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
 
   const displayTitle = project?.crmDeals?.[0]?.title || project?.name || 'Dự án';
   const displayCode = project?.crmDeals?.[0]?.code || project?.code || '';
+  const isFullHeightTab = tab === 'comments' || tab === 'documents' || tab === 'drive' || tab === 'team';
+
+  const tabsBar = (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.tabs}
+      contentContainerStyle={styles.tabsInner}
+    >
+      {([
+        ['tasks', `Công việc${taskTotal ? ` (${taskTotal})` : ''}`],
+        ['comments', `Bình luận${commentCount ? ` (${commentCount})` : ''}`],
+        ['documents', `Tài liệu${docCount ? ` (${docCount})` : ''}`],
+        ['drive', 'Drive'],
+        ['info', 'Thông tin'],
+        ['team', 'Đội ngũ'],
+        ['schedule', 'Lịch'],
+      ] as [TabKey, string][]).map(([key, label]) => (
+        <TapHighlight
+          key={key}
+          style={[styles.tabBtn, tab === key && styles.tabBtnActive]}
+          onPress={() => setTab(key)}
+        >
+          <Text style={[styles.tabText, tab === key && styles.tabTextActive]}>{label}</Text>
+        </TapHighlight>
+      ))}
+    </ScrollView>
+  );
 
   return (
     <View style={styles.root}>
@@ -313,10 +543,11 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
       ) : null}
 
       <View style={{ flex: 1 }}>
+        {isFullHeightTab ? tabsBar : null}
+        {isFullHeightTab ? null : (
         <ScrollView
-          scrollEnabled={tab === 'tasks' || tab === 'info' || tab === 'schedule'}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={colors.primary} />}
-          contentContainerStyle={{ paddingBottom: tab === 'documents' || tab === 'drive' || tab === 'team' ? 0 : insets.bottom + 24 }}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
           nestedScrollEnabled
         >
           <View style={styles.content}>
@@ -353,29 +584,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           </View>
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.tabs}
-          contentContainerStyle={styles.tabsInner}
-        >
-          {([
-            ['tasks', `Công việc${taskTotal ? ` (${taskTotal})` : ''}`],
-            ['documents', `Tài liệu${docCount ? ` (${docCount})` : ''}`],
-            ['drive', 'Drive'],
-            ['info', 'Thông tin'],
-            ['team', 'Đội ngũ'],
-            ['schedule', 'Lịch'],
-          ] as [TabKey, string][]).map(([key, label]) => (
-            <TapHighlight
-              key={key}
-              style={[styles.tabBtn, tab === key && styles.tabBtnActive]}
-              onPress={() => setTab(key)}
-            >
-              <Text style={[styles.tabText, tab === key && styles.tabTextActive]}>{label}</Text>
-            </TapHighlight>
-          ))}
-        </ScrollView>
+        {tabsBar}
 
         <View style={{ padding: Spacing.lg }}>
           {tab === 'tasks' && (
@@ -412,54 +621,137 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
                 ['Điện thoại', project.customer?.phone || project.customer_phone || '—'],
                 ['Công ty', project.company?.short_name || project.company?.name || project.company_name || '—'],
                 ['Loại xưởng', project.workshop_type?.name || project.workshop_type_name || '—'],
-                ['Hạn SX', formatDate(project.production_deadline) || '—'],
-                ['Hạn dự án', formatDate(project.deadline) || '—'],
-                ['Mô tả', project.description?.trim() || project.notes?.trim() || '—'],
               ].map(([label, value]) => (
                 <View key={label} style={styles.infoRow}>
                   <Text style={styles.infoLabel}>{label}</Text>
                   <Text style={styles.infoValue}>{value}</Text>
                 </View>
               ))}
+
+              {(
+                [
+                  { field: 'order_date' as const, label: 'Ngày đặt hàng', value: project.order_date },
+                  {
+                    field: 'delivery_date' as const,
+                    label: 'Ngày giao hàng',
+                    value: project.delivery_date || project.production_deadline,
+                  },
+                  { field: 'deadline' as const, label: 'Hạn dự án', value: project.deadline },
+                ] as const
+              ).map((row) => (
+                <View key={row.field}>
+                  <Pressable
+                    style={styles.infoEditRow}
+                    onPress={() => openDateEditor(row.field, row.value)}
+                  >
+                    <View style={styles.infoEditBody}>
+                      <Text style={styles.infoLabel}>{row.label}</Text>
+                      <Text style={styles.infoValue}>{formatDate(row.value) || '—'}</Text>
+                      <Text style={styles.infoEditHint}>Chạm để chỉnh sửa</Text>
+                    </View>
+                    <Ionicons name="calendar-outline" size={18} color={colors.primary} />
+                  </Pressable>
+                  {editingDateField === row.field ? (
+                    <View style={styles.dateEditorBox}>
+                      {(Platform.OS === 'ios' || editingDateField === row.field) ? (
+                        <DateTimePicker
+                          value={dateDraft}
+                          mode="date"
+                          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                          onChange={onDatePickerChange}
+                          locale="vi-VN"
+                        />
+                      ) : null}
+                      {Platform.OS === 'ios' ? (
+                        <View style={styles.dateEditorActions}>
+                          <Pressable
+                            style={[styles.dateBtn, styles.dateBtnDanger]}
+                            onPress={() => void saveDateField(row.field, null)}
+                            disabled={dateSaving}
+                          >
+                            <Text style={styles.dateBtnTxtDanger}>Xóa</Text>
+                          </Pressable>
+                          <Pressable
+                            style={[styles.dateBtn, styles.dateBtnMuted]}
+                            onPress={cancelDateEditor}
+                            disabled={dateSaving}
+                          >
+                            <Text style={styles.dateBtnTxtMuted}>Huỷ</Text>
+                          </Pressable>
+                          <Pressable
+                            style={styles.dateBtn}
+                            onPress={() => void saveDateField(row.field, toYmd(dateDraft))}
+                            disabled={dateSaving}
+                          >
+                            {dateSaving ? (
+                              <ActivityIndicator color="#FFF" size="small" />
+                            ) : (
+                              <Text style={styles.dateBtnTxt}>Lưu</Text>
+                            )}
+                          </Pressable>
+                        </View>
+                      ) : (
+                        <View style={styles.dateEditorActions}>
+                          <Pressable
+                            style={[styles.dateBtn, styles.dateBtnDanger]}
+                            onPress={() => void saveDateField(row.field, null)}
+                            disabled={dateSaving}
+                          >
+                            <Text style={styles.dateBtnTxtDanger}>Xóa ngày</Text>
+                          </Pressable>
+                          <Pressable
+                            style={[styles.dateBtn, styles.dateBtnMuted]}
+                            onPress={cancelDateEditor}
+                          >
+                            <Text style={styles.dateBtnTxtMuted}>Đóng</Text>
+                          </Pressable>
+                        </View>
+                      )}
+                    </View>
+                  ) : null}
+                </View>
+              ))}
+
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Mô tả</Text>
+                <Text style={styles.infoValue}>{project.description?.trim() || project.notes?.trim() || '—'}</Text>
+              </View>
             </View>
           )}
 
           {tab === 'schedule' && (
             <>
-              {project?.production_deadline ? (
-                <View style={styles.scheduleItem}>
-                  <Text style={styles.infoLabel}>Hạn sản xuất</Text>
-                  <Text style={styles.infoValue}>{formatDate(project.production_deadline)}</Text>
-                </View>
-              ) : null}
-              {project?.deadline ? (
-                <View style={styles.scheduleItem}>
-                  <Text style={styles.infoLabel}>Hạn dự án</Text>
-                  <Text style={styles.infoValue}>{formatDate(project.deadline)}</Text>
-                </View>
-              ) : null}
-              {tasks.filter((t) => taskDeadline(t)).map((t) => (
-                <View key={t.id} style={styles.scheduleItem}>
-                  <Text style={styles.infoLabel}>{formatDate(taskDeadline(t))}</Text>
-                  <Text style={styles.infoValue}>{t.title}</Text>
-                </View>
-              ))}
-              {activities.slice(0, 10).map((a) => (
-                <View key={a.id} style={styles.scheduleItem}>
-                  <Text style={styles.infoLabel}>{formatDate(a.created_at)} · Hoạt động</Text>
-                  <Text style={styles.infoValue}>{a.title || a.content || '—'}</Text>
-                </View>
-              ))}
-              {!project?.deadline && !tasks.some((t) => taskDeadline(t)) && !activities.length ? (
-                <Text style={styles.empty}>Chưa có lịch hẹn</Text>
-              ) : null}
+              <Text style={styles.sectionTitle}>Mốc thời gian dự án</Text>
+              <View style={styles.scheduleCard}>
+                {scheduleMilestones.map((m, index) => {
+                  const dateText = formatDate(m.date);
+                  return (
+                    <View key={m.key}>
+                      {index > 0 ? <View style={styles.scheduleRowDivider} /> : null}
+                      <View style={styles.scheduleRow}>
+                        <View style={[styles.scheduleIconWrap, { backgroundColor: `${m.accent}18` }]}>
+                          <Ionicons name={m.icon} size={22} color={m.accent} />
+                        </View>
+                        <View style={styles.scheduleBody}>
+                          <Text style={styles.scheduleLabel}>{m.label}</Text>
+                          <Text style={dateText ? styles.scheduleDate : styles.scheduleDateEmpty}>
+                            {dateText || 'Chưa có'}
+                          </Text>
+                          <Text style={styles.scheduleHint}>{m.hint}</Text>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
             </>
           )}
         </View>
         </ScrollView>
+        )}
 
         {tab === 'documents' ? (
-          <View style={{ flex: 1, minHeight: 320 }}>
+          <View style={{ flex: 1 }}>
             <ProjectDocumentsTab
               projectId={projectId}
               dealId={dealId}
@@ -468,14 +760,25 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           </View>
         ) : null}
 
+        {tab === 'comments' ? (
+          <View style={{ flex: 1 }}>
+            <ProjectCommentsTab
+              projectId={projectId}
+              dealId={dealId}
+              authorTagUserId={project?.production_person_id}
+              onCountChange={setCommentCount}
+            />
+          </View>
+        ) : null}
+
         {tab === 'drive' ? (
-          <View style={{ flex: 1, minHeight: 320 }}>
+          <View style={{ flex: 1 }}>
             <ProjectDriveTab projectId={projectId} />
           </View>
         ) : null}
 
         {tab === 'team' && project ? (
-          <View style={{ flex: 1, minHeight: 320 }}>
+          <View style={{ flex: 1 }}>
             <ProjectMembersTab project={project} dealId={dealId} />
           </View>
         ) : null}

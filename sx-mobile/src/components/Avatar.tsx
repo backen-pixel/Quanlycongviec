@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { memo, useMemo } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { resolveMediaUrl } from '../lib/messengerApi';
@@ -13,7 +13,7 @@ type Props = {
   avatarUrl?: string | null;
 };
 
-export default function Avatar({
+function Avatar({
   name,
   initials,
   size = 40,
@@ -53,6 +53,8 @@ export default function Avatar({
     </View>
   );
 }
+
+export default memo(Avatar);
 
 function makeStyles(c: ReturnType<typeof useTheme>['colors']) {
   return StyleSheet.create({

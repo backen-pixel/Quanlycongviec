@@ -16,7 +16,9 @@ type Options = {
 function eventMatchesMode(evt: SyncEvent, modes?: Options['modes']): boolean {
   if (!modes?.length) return true;
   if (evt.type === 'crm:task_changed') return modes.includes('task');
-  if (evt.type === 'project:comment_changed') return modes.includes('comment');
+  if (evt.type === 'project:comment_changed' || evt.type === 'lead:comment_changed') {
+    return modes.includes('comment');
+  }
   return modes.includes('board');
 }
 

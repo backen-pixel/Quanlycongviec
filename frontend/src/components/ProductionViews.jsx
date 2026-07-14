@@ -1120,7 +1120,7 @@ function startOfDay(d) {
   return x;
 }
 
-function resolveSxDeadlineBucket(item, todayMs) {
+function resolveSxDeadlineBucket(item, todayMs, stageForIgnore = null) {
   const raw = item.delivery_date || item.production_deadline || item.deadline;
   if (!raw) return { bucket: 'none', ts: null, source: null };
   const t = new Date(raw).getTime();
@@ -1132,7 +1132,11 @@ function resolveSxDeadlineBucket(item, todayMs) {
   const dayMs = 86400000;
   const diffDays = Math.floor((startOfDay(t).getTime() - today.getTime()) / dayMs);
   if (diffDays < 0) {
-    if (shouldIgnoreSxOrderDeliveryOverdue(item.sx_pipeline_stage)) {
+    // Dùng cột đang hiển thị (stageForIgnore) — cùng nguồn với KPI / shouldHide.
+    if (shouldIgnoreSxOrderDeliveryOverdue(stageForIgnore || item.sx_pipeline_stage)) {
+      return { bucket: 'later', ts: t, source };
+    }
+    if (String(item.status || '') === 'completed') {
       return { bucket: 'later', ts: t, source };
     }
     return { bucket: 'overdue', ts: t, source };
@@ -1239,7 +1243,8 @@ export function ProductionDeadlineView({ pipeline }) {
     pipeline.forEach((s) => {
       s.items.forEach((item) => {
         if (shouldHideSxKanbanDeadlineOnCard(item, s)) return;
-        let { bucket, ts, source } = resolveSxDeadlineBucket(item, todayMs);
+        if (String(item.status || '') === 'completed') return;
+        let { bucket, ts, source } = resolveSxDeadlineBucket(item, todayMs, s);
         const ovr = localOverride[String(item.id)];
         if (ovr) {
           bucket = ovr.bucket;

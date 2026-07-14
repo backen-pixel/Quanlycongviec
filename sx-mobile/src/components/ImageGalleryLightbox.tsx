@@ -60,7 +60,8 @@ export default function ImageGalleryLightbox({
   const goTo = useCallback(
     (next: number) => {
       if (!images.length) return;
-      const i = Math.min(Math.max(next, 0), images.length - 1);
+      // Vòng lặp: cuối → đầu, đầu → cuối
+      const i = ((next % images.length) + images.length) % images.length;
       setIndex(i);
       mainRef.current?.scrollToIndex({ index: i, animated: true });
       thumbRef.current?.scrollToIndex({ index: i, animated: true, viewPosition: 0.5 });
@@ -85,10 +86,22 @@ export default function ImageGalleryLightbox({
       <StatusBar barStyle="light-content" />
       <View style={styles.root}>
         <View style={[styles.topBar, { paddingTop: insets.top + 4 }]}>
+          {images.length > 1 ? (
+            <Pressable style={styles.iconBtn} onPress={() => goTo(index - 1)} hitSlop={12}>
+              <Ionicons name="chevron-back" size={24} color="#fff" />
+            </Pressable>
+          ) : (
+            <View style={styles.iconBtnPlaceholder} />
+          )}
           <View style={styles.topMeta}>
             <Text style={styles.counter}>{index + 1} / {images.length}</Text>
             {current?.title ? <Text style={styles.title} numberOfLines={1}>{current.title}</Text> : null}
           </View>
+          {images.length > 1 ? (
+            <Pressable style={[styles.iconBtn, { marginRight: 8 }]} onPress={() => goTo(index + 1)} hitSlop={12}>
+              <Ionicons name="chevron-forward" size={24} color="#fff" />
+            </Pressable>
+          ) : null}
           <Pressable style={styles.iconBtn} onPress={onClose} hitSlop={12}>
             <Ionicons name="close" size={26} color="#fff" />
           </Pressable>
@@ -117,16 +130,12 @@ export default function ImageGalleryLightbox({
 
         {images.length > 1 ? (
           <>
-            {index > 0 ? (
-              <Pressable style={[styles.navBtn, styles.navLeft]} onPress={() => goTo(index - 1)} hitSlop={16}>
-                <Ionicons name="chevron-back" size={32} color="#fff" />
-              </Pressable>
-            ) : null}
-            {index < images.length - 1 ? (
-              <Pressable style={[styles.navBtn, styles.navRight]} onPress={() => goTo(index + 1)} hitSlop={16}>
-                <Ionicons name="chevron-forward" size={32} color="#fff" />
-              </Pressable>
-            ) : null}
+            <Pressable style={[styles.navBtn, styles.navLeft]} onPress={() => goTo(index - 1)} hitSlop={20}>
+              <Ionicons name="chevron-back" size={34} color="#fff" />
+            </Pressable>
+            <Pressable style={[styles.navBtn, styles.navRight]} onPress={() => goTo(index + 1)} hitSlop={20}>
+              <Ionicons name="chevron-forward" size={34} color="#fff" />
+            </Pressable>
           </>
         ) : null}
 
@@ -182,6 +191,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  iconBtnPlaceholder: { width: 40, height: 40 },
   slide: {
     width: SCREEN_W,
     flex: 1,
@@ -192,16 +202,18 @@ const styles = StyleSheet.create({
   navBtn: {
     position: 'absolute',
     top: '45%',
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 3,
   },
-  navLeft: { left: 8 },
-  navRight: { right: 8 },
+  navLeft: { left: 10 },
+  navRight: { right: 10 },
   thumbBar: {
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: 'rgba(255,255,255,0.15)',

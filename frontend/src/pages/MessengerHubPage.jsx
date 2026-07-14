@@ -954,11 +954,15 @@ export default function MessengerHubPage() {
     const trimmed = String(nickname || '').trim();
     try {
       let displayName = trimmed;
+      const groupPayload = selectedGroupId ? { group_id: selectedGroupId } : {};
       if (!trimmed) {
-        const { data } = await api.delete(`/messenger/nicknames/${targetUserId}`);
+        const { data } = await api.delete(`/messenger/nicknames/${targetUserId}`, { data: groupPayload });
         displayName = data?.display_name || '';
       } else {
-        const { data } = await api.put(`/messenger/nicknames/${targetUserId}`, { nickname: trimmed });
+        const { data } = await api.put(`/messenger/nicknames/${targetUserId}`, {
+          nickname: trimmed,
+          ...groupPayload,
+        });
         displayName = data?.display_name || trimmed;
       }
       const patchMemberUser = (m) => {

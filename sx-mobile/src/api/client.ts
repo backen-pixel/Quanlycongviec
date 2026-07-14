@@ -10,6 +10,15 @@ export const api = axios.create({
   timeout: 30000,
 });
 
+/** Cache token trong RAM — tránh đọc AsyncStorage mỗi request (chậm khi tải nhiều trang). */
+let memoryToken: string | null | undefined;
+
+async function resolveAuthToken(): Promise<string | null> {
+  if (memoryToken !== undefined) return memoryToken;
+  memoryToken = await AsyncStorage.getItem(TOKEN_KEY);
+  return memoryToken;
+}
+
 let onUnauthorized: (() => void) | null = null;
 
 export function setUnauthorizedHandler(fn: (() => void) | null) {
@@ -17,7 +26,7 @@ export function setUnauthorizedHandler(fn: (() => void) | null) {
 }
 
 api.interceptors.request.use(async (config) => {
-  const token = await AsyncStorage.getItem(TOKEN_KEY);
+  const token = await resolveAuthToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
@@ -38,12 +47,13 @@ api.interceptors.response.use(
 );
 
 export async function setStoredToken(token: string | null) {
+  memoryToken = token;
   if (token) await AsyncStorage.setItem(TOKEN_KEY, token);
   else await AsyncStorage.removeItem(TOKEN_KEY);
 }
 
 export async function getStoredToken() {
-  return AsyncStorage.getItem(TOKEN_KEY);
+  return resolveAuthToken();
 }
 
 /** Chuẩn hoá thông báo lỗi để hiển thị toast/alert. */
@@ -76,7 +86,7 @@ export async function postMultipart<T = unknown>(
 ): Promise<{ data: T }> {
   const p = path.startsWith('/') ? path : `/${path}`;
   const url = `${API_PREFIX}${p}`;
-  const token = await AsyncStorage.getItem(TOKEN_KEY);
+  const token = await resolveAuthToken();
   const timeoutMs = options?.timeoutMs ?? 120000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

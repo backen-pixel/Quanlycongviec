@@ -1,4 +1,5 @@
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import type { NavigatorScreenParams } from '@react-navigation/native';
 import React, { useMemo } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
@@ -13,12 +14,16 @@ import BubbleChatScreen from '../screens/BubbleChatScreen';
 import MessagesScreen from '../screens/MessagesScreen';
 import ProjectDetailScreen from '../screens/ProjectDetailScreen';
 import UpdateFromServerScreen from '../screens/UpdateFromServerScreen';
-import MainTabs from './MainTabs';
+import OverdueProjectsScreen from '../screens/OverdueProjectsScreen';
+import SettingsScreen from '../screens/SettingsScreen';
+import MainTabs, { type MainTabParamList } from './MainTabs';
 
 export type RootStackParamList = {
   Login: undefined;
-  Main: undefined;
+  Main: NavigatorScreenParams<MainTabParamList> | undefined;
   ProjectDetail: { projectId: string };
+  OverdueProjects: undefined;
+  Settings: undefined;
   Messages: { tab?: 'chats' | 'calls' } | undefined;
   ChatDetail: {
     threadId: string;
@@ -80,6 +85,11 @@ export default function RootNavigator() {
             options={{ animation: 'slide_from_right' }}
           />
           <Stack.Screen
+            name="OverdueProjects"
+            component={OverdueProjectsScreen}
+            options={{ animation: 'slide_from_right' }}
+          />
+          <Stack.Screen
             name="Messages"
             component={MessagesScreen}
             options={{ animation: 'slide_from_right' }}
@@ -116,6 +126,11 @@ export default function RootNavigator() {
           <Stack.Screen
             name="UpdateFromServer"
             component={UpdateFromServerScreen}
+            options={{ animation: 'slide_from_right' }}
+          />
+          <Stack.Screen
+            name="Settings"
+            component={SettingsScreen}
             options={{ animation: 'slide_from_right' }}
           />
           <Stack.Screen

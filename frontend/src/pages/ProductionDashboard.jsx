@@ -64,6 +64,7 @@ import {
   shouldHideSxKanbanDeadlineOnCard,
   shouldIgnoreSxOrderDeliveryOverdue,
   getSxOrderDeliveryDateUrgency,
+  isSxProjectDeliveryDateOverdue,
   VC_KANBAN_STATUSES,
 } from '../lib/sxPipelineRevenue';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
@@ -1623,6 +1624,15 @@ export default function ProductionDashboard() {
     const list = scopeProjects;
     const revenue = computeSxRevenueKpis(list, pipeline);
     const columnSlaOverdue = list.filter((p) => isSxColumnSlaOverdue(p)).length;
+    // Đếm «Quá hạn» khớp cột Deadline: theo cột đang hiển thị + ngày lịch.
+    const overdueFromDeadlineView = (filteredKanbanPipeline || []).reduce((n, col) => {
+      const items = col?.items || [];
+      return n + items.filter((p) => {
+        if (String(p.status || '') === 'completed') return false;
+        if (shouldHideSxKanbanDeadlineOnCard(p, col)) return false;
+        return isSxProjectDeliveryDateOverdue(p, col);
+      }).length;
+    }, 0);
     if (!list.length) {
       return {
         total: 0, producing: 0, awaiting_delivery: 0, shipped: 0, completed: 0, overdue: 0,
@@ -1646,7 +1656,7 @@ export default function ProductionDashboard() {
       delivering: revenue.awaitingDelivery,
       customer_care: list.filter((p) => p.current_stage?.slug === 'customer-care' || p.status === 'warranty').length,
       completed: list.filter((p) => p.status === 'completed').length,
-      overdue: revenue.overdue,
+      overdue: overdueFromDeadlineView,
       intake_pending: list.filter((p) => p.sx_intake).length,
       avg_progress: Math.round(list.reduce((s, p) => s + (p.progress || 0), 0) / list.length),
       won_revenue_value: revenue.wonRevenue,
@@ -1658,7 +1668,7 @@ export default function ProductionDashboard() {
       weighted_pipeline_value: revenue.weightedPipeline,
       column_sla_overdue: columnSlaOverdue,
     };
-  }, [scopeProjects, kpis, pipeline]);
+  }, [scopeProjects, kpis, pipeline, filteredKanbanPipeline]);
 
   const togglePinFlag = useCallback(async (item, next) => {
     const leadId = resolveSxProjectLeadId(item);

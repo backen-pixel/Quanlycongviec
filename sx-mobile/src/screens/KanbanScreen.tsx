@@ -1,9 +1,10 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   AppState,
   FlatList,
+  PanResponder,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -21,9 +22,9 @@ import FilterPickerModal from '../components/FilterPickerModal';
 import ProductionFilterSheet from '../components/ProductionFilterSheet';
 import MoveColumnModal from '../components/MoveColumnModal';
 import ProjectCommentModal from '../components/ProjectCommentModal';
+import KanbanDealTimeline from '../components/KanbanDealTimeline';
 import Toast, { type ToastKind, type ToastState } from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
-import { useMessenger } from '../context/MessengerContext';
 import { useNotifications } from '../context/NotificationContext';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import {
@@ -41,6 +42,8 @@ import {
   type CompanyOption,
   type WorkshopTypeOption,
 } from '../lib/productionApi';
+import { getCachedBoard } from '../lib/productionBoardCache';
+import { loadKanbanFilters, saveKanbanFilters } from '../lib/kanbanFilterStorage';
 import {
   isMetallaOrHucabiCompanyId,
   isSystemAdmin,
@@ -55,7 +58,7 @@ import {
 import { ensureNotificationPermission } from '../lib/pushRegistration';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { useTheme } from '../context/ThemeContext';
-import { type AppColors, colorWithAlpha, getTaskProgressColor, HIT_TARGET, Radii, Spacing, stageColor } from '../theme';
+import { type AppColors, colorWithAlpha, HIT_TARGET, Radii, Spacing, stageColor } from '../theme';
 import type { KanbanStage, ProductionBoard, ProductionProject } from '../types';
 
 type QuickFilter = 'all' | 'mine' | 'overdue' | 'today';
@@ -84,11 +87,17 @@ const ORPHAN_STAGE: KanbanStage = {
   is_handover_to_logistics: false,
 };
 
-function formatDate(value?: string | null): string {
+function formatDateTime(value?: string | null): string {
   if (!value) return '';
   try {
     const d = new Date(value);
-    return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    return d.toLocaleString('vi-VN', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   } catch {
     return '';
   }
@@ -143,8 +152,17 @@ function stageById(stages: KanbanStage[], colId?: string | null): KanbanStage | 
   return stages.find((s) => String(s.id) === String(colId));
 }
 
-function projectColumnId(p: ProductionProject): string | null {
+/** Cột hiển thị Kanban (resolve client) — không dùng cho KPI. */
+function displayColumnId(p: ProductionProject): string | null {
   return p.resolved_column_id ?? p.sx_kanban_column_id ?? null;
+}
+
+/**
+ * Cột KPI — khớp web `projectIsProducing` / `computeSxRevenueKpis`:
+ * chỉ dùng `sx_kanban_column_id` từ BE, không dùng cột resolve client.
+ */
+function kpiColumnId(p: ProductionProject): string | null {
+  return p.sx_kanban_column_id ?? null;
 }
 
 /** Đã bàn giao / đang vận chuyển — khớp web `projectIsShipped`. */
@@ -156,7 +174,7 @@ function isShipped(p: ProductionProject): boolean {
 /** Ở cột bàn giao VC, chưa vận chuyển — khớp web `projectIsAwaitingDelivery`. */
 function isAwaitingDelivery(p: ProductionProject, stages: KanbanStage[]): boolean {
   if (isShipped(p)) return false;
-  const col = stageById(stages, projectColumnId(p));
+  const col = stageById(stages, kpiColumnId(p));
   return Boolean(col?.is_handover_to_logistics);
 }
 
@@ -165,14 +183,14 @@ function countsAsCompletedRevenue(p: ProductionProject, stages: KanbanStage[]): 
     (s) => s.bucket_slug !== INTAKE_BUCKET && s.counts_as_completed_revenue,
   );
   if (completedCols.length) {
-    const colId = String(projectColumnId(p) || '');
+    const colId = String(kpiColumnId(p) || '');
     return completedCols.some((s) => String(s.id) === colId);
   }
   return String(p.status || '') === 'completed';
 }
 
 function countsAsCollectedRevenue(p: ProductionProject, stages: KanbanStage[]): boolean {
-  const colId = String(projectColumnId(p) || '');
+  const colId = String(kpiColumnId(p) || '');
   if (!colId) return false;
   return stages.some(
     (s) => s.bucket_slug !== INTAKE_BUCKET
@@ -188,7 +206,7 @@ function isProducing(p: ProductionProject, stages: KanbanStage[]): boolean {
   if (isAwaitingDelivery(p, stages)) return false;
   if (countsAsCompletedRevenue(p, stages)) return false;
   if (countsAsCollectedRevenue(p, stages)) return false;
-  const col = stageById(stages, projectColumnId(p));
+  const col = stageById(stages, kpiColumnId(p));
   if (col?.bucket_slug === INTAKE_BUCKET) return false;
   return true;
 }
@@ -212,17 +230,22 @@ export default function KanbanScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { unreadCount, refreshUnread, commentToast, dismissCommentToast, projectMetaRef, subscribeComment, subscribeSync } = useNotifications();
-  const { openProjectDetail, openMessages } = useRootNavigation();
+  const { openProjectDetail } = useRootNavigation();
   const myId = user?.id || user?.userId || null;
-  const { unreadTotal: messageUnread } = useMessenger();
 
-  const [board, setBoard] = useState<ProductionBoard>({ stages: [], projects: [], kpis: null });
-  const [loading, setLoading] = useState(true);
+  const [board, setBoard] = useState<ProductionBoard>(
+    () => getCachedBoard() ?? { stages: [], projects: [], kpis: null },
+  );
+  const [loading, setLoading] = useState(() => !getCachedBoard());
+  const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [filtersHydrated, setFiltersHydrated] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [movingId, setMovingId] = useState<string | null>(null);
   const movingIdRef = useRef<string | null>(null);
+  const loadSeqRef = useRef(0);
+  const lastSilentAtRef = useRef(0);
   const [toast, setToast] = useState<ToastState>(null);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
@@ -359,25 +382,70 @@ export default function KanbanScreen() {
   }, []);
 
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
+    const seq = ++loadSeqRef.current;
     if (mode === 'init') setLoading(true);
     if (mode === 'refresh') setRefreshing(true);
     setError(null);
+    setLoadingMore(false);
     try {
       const filters: BoardFilters = {
+        // Chỉ lọc xưởng khi user chọn trên pill — «Tất cả xưởng» = không gửi company_id.
         companyId: filterCompanyRef.current || undefined,
         dealCompanyId: filterDealCompanyRef.current || undefined,
         workshopTypeId: filterWorkTypeIdRef.current || undefined,
       };
-      const data = await fetchProductionBoard(mode === 'silent', filters);
+      let firstPaint = false;
+      const data = await fetchProductionBoard(mode === 'silent', filters, {
+        onPartial: (partial) => {
+          if (seq !== loadSeqRef.current) return;
+          setBoard(partial);
+          setActiveIndex((prev) => Math.min(prev, Math.max(0, partial.stages.length - 1)));
+          if (!firstPaint) {
+            firstPaint = true;
+            // Hiện UI ngay sau trang đầu (~500), phần còn lại tải nền.
+            setLoading(false);
+            setRefreshing(false);
+            setLoadingMore(partial.projects.length >= 500);
+          }
+        },
+      });
+      if (seq !== loadSeqRef.current) return;
       setBoard(data);
       setActiveIndex((prev) => Math.min(prev, Math.max(0, data.stages.length - 1)));
+      setLoadingMore(false);
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       if (mode !== 'silent') setError(formatApiError(e));
+      setLoadingMore(false);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
+
+  // Khôi phục bộ lọc lần trước — load board không phải chờ fetch workshop types.
+  useEffect(() => {
+    let cancel = false;
+    void loadKanbanFilters().then((snap) => {
+      if (cancel) return;
+      if (snap?.filterCompany) setFilterCompany(String(snap.filterCompany));
+      if (snap?.filterDealCompany) setFilterDealCompany(String(snap.filterDealCompany));
+      if (snap?.filterWorkTypeId) setFilterWorkTypeId(String(snap.filterWorkTypeId));
+      setFiltersHydrated(true);
+    });
+    return () => { cancel = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!filtersHydrated) return;
+    void saveKanbanFilters({
+      filterCompany,
+      filterDealCompany,
+      filterWorkTypeId,
+    });
+  }, [filtersHydrated, filterCompany, filterDealCompany, filterWorkTypeId]);
 
   // Đồng bộ refs với state để load() luôn dùng filter mới nhất.
   useEffect(() => { filterCompanyRef.current = filterCompany; }, [filterCompany]);
@@ -385,16 +453,26 @@ export default function KanbanScreen() {
   useEffect(() => { filterWorkTypeIdRef.current = filterWorkTypeId; }, [filterWorkTypeId]);
 
   // Chờ phân loại sẵn sàng (giống web) trước khi load board — tránh enrich sai cột.
+  // Nếu đã có filterWorkTypeId (cache) → load ngay, song song với fetch danh sách loại.
   const boardFiltersReady = useMemo(() => {
-    if (workTypesCompanyId !== companyForTypes) return false;
+    if (!filtersHydrated) return false;
     if (!companyForTypes) return true;
+    if (filterWorkTypeId) return true;
+    if (workTypesCompanyId !== companyForTypes) return false;
     if (workTypes.length === 0) return true;
-    return !!filterWorkTypeId;
-  }, [workTypesCompanyId, companyForTypes, workTypes.length, filterWorkTypeId]);
+    return false;
+  }, [
+    filtersHydrated,
+    companyForTypes,
+    filterWorkTypeId,
+    workTypesCompanyId,
+    workTypes.length,
+  ]);
 
   useEffect(() => {
     if (!boardFiltersReady) return;
-    void load('init');
+    // Đã có board cache → làm mới nền, không hiện spinner toàn màn.
+    void load(getCachedBoard() ? 'silent' : 'init');
   }, [load, boardFiltersReady]);
 
   // Re-fetch board khi company hoặc phân loại đổi (bỏ qua lần mount đầu tiên).
@@ -419,7 +497,12 @@ export default function KanbanScreen() {
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && !movingIdRef.current) void load('silent');
+      if (state !== 'active' || movingIdRef.current) return;
+      const now = Date.now();
+      // Tránh reload full board mỗi lần chạm app (rất chậm).
+      if (now - lastSilentAtRef.current < 45_000) return;
+      lastSilentAtRef.current = now;
+      void load('silent');
     });
     return () => sub.remove();
   }, [load]);
@@ -633,7 +716,6 @@ export default function KanbanScreen() {
 
   const workTypeOptions = useMemo(
     () => [
-      { id: '', label: 'Tất cả phân loại' },
       { id: 'none', label: 'Chưa phân loại' },
       ...workTypes.map((t) => ({ id: t.id, label: t.name })),
     ],
@@ -644,6 +726,20 @@ export default function KanbanScreen() {
     () => workTypes.map((t) => ({ id: t.id, label: t.name })),
     [workTypes],
   );
+
+  // Callback ổn định cho card → React.memo bỏ qua render lại các thẻ không đổi.
+  const classifyOptionsRef = useRef(classifyWorkTypeOptions);
+  classifyOptionsRef.current = classifyWorkTypeOptions;
+  const handleCardOpen = useCallback((id: string) => openProjectDetail(id), [openProjectDetail]);
+  const handleCardComment = useCallback((p: ProductionProject) => setCommentProject(p), []);
+  const handleCardMove = useCallback((p: ProductionProject) => setMoveModalProject(p), []);
+  const handleCardClassify = useCallback((p: ProductionProject) => {
+    if (!classifyOptionsRef.current.length) {
+      showToast('Chưa cấu hình phân loại cho công ty này', 'error');
+      return;
+    }
+    setClassifyModalProject(p);
+  }, [showToast]);
 
   // selectedCompanyLabel — không cần vì công ty hiện dạng chips ngang
   const selectedWorkTypeLabel = workTypeOptions.find((o) => o.id === filterWorkTypeId)?.label || 'Phân loại';
@@ -693,7 +789,76 @@ export default function KanbanScreen() {
   const isOrphanColumn = activeStage?.id === ORPHAN_COL_ID;
   const canPrev = activeIndex > 0;
   const canNext = activeIndex < displayStages.length - 1;
+  const canPrevRef = useRef(canPrev);
+  const canNextRef = useRef(canNext);
+  const stageCountRef = useRef(displayStages.length);
+  canPrevRef.current = canPrev;
+  canNextRef.current = canNext;
+  stageCountRef.current = displayStages.length;
+
+  /** Vuốt ngang trên danh sách thẻ → chuyển cột (trái = cột sau, phải = cột trước). */
+  const columnSwipeResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_e, g) => {
+          const ax = Math.abs(g.dx);
+          const ay = Math.abs(g.dy);
+          return ax > 28 && ax > ay * 1.35;
+        },
+        onMoveShouldSetPanResponderCapture: (_e, g) => {
+          const ax = Math.abs(g.dx);
+          const ay = Math.abs(g.dy);
+          return ax > 40 && ax > ay * 1.6;
+        },
+        onPanResponderTerminationRequest: () => false,
+        onPanResponderRelease: (_e, g) => {
+          if (Math.abs(g.dx) < 56) return;
+          if (g.dx < 0 && canNextRef.current) {
+            setActiveIndex((i) => Math.min(stageCountRef.current - 1, i + 1));
+          } else if (g.dx > 0 && canPrevRef.current) {
+            setActiveIndex((i) => Math.max(0, i - 1));
+          }
+        },
+      }),
+    [],
+  );
+
   const accent = stageColor(activeStage?.color, activeIndex);
+
+  const activeStageName = activeStage?.name;
+  const renderCard = useCallback(
+    ({ item }: { item: ProductionProject }) => (
+      <KanbanCard
+        item={item}
+        styles={styles}
+        colors={colors}
+        stages={stages}
+        accent={accent}
+        activeStageName={activeStageName}
+        commentCount={commentIndex[item.id]?.count ?? 0}
+        isMoving={movingId === item.id}
+        isOrphanColumn={isOrphanColumn}
+        onOpen={handleCardOpen}
+        onComment={handleCardComment}
+        onMove={handleCardMove}
+        onClassify={handleCardClassify}
+      />
+    ),
+    [
+      styles,
+      colors,
+      stages,
+      accent,
+      activeStageName,
+      commentIndex,
+      movingId,
+      isOrphanColumn,
+      handleCardOpen,
+      handleCardComment,
+      handleCardMove,
+      handleCardClassify,
+    ],
+  );
 
   const projectsByStage = useMemo(() => {
     const map = new Map<string, ProductionProject[]>();
@@ -704,7 +869,7 @@ export default function KanbanScreen() {
         map.get(ORPHAN_COL_ID)!.push(p);
         return;
       }
-      const key = p.resolved_column_id;
+      const key = displayColumnId(p);
       if (key && map.has(key)) map.get(key)!.push(p);
     });
     return map;
@@ -844,20 +1009,13 @@ export default function KanbanScreen() {
     const producing = list.filter((p) => isProducing(p, stages)).length;
     const awaitingDelivery = list.filter((p) => isAwaitingDelivery(p, stages)).length;
     const shipped = list.filter((p) => isShipped(p)).length;
-    const completed = list.filter((p) => countsAsCompletedRevenue(p, stages) || p.status === 'completed').length;
-    const intake = list.filter((p) => {
-      if (p.sx_intake) return true;
-      const col = stageById(stages, projectColumnId(p));
-      return col?.bucket_slug === INTAKE_BUCKET;
-    }).length;
     const overdue = list.filter((p) => p.is_overdue).length;
     return [
       { label: 'Tổng', value: list.length, color: colors.text },
       { label: 'Đang SX', value: producing, color: colors.primary },
       { label: 'Chờ vận chuyển', value: awaitingDelivery, color: '#94A3B8' },
       { label: 'Đã vận chuyển', value: shipped, color: '#38BDF8' },
-      { label: 'Hoàn tất', value: completed, color: colors.success },
-      { label: 'Kế hoạch', value: intake, color: colors.textMuted },
+      { label: 'Hoàn tất', value: list.filter((p) => p.status === 'completed').length, color: colors.success },
       ...(overdue > 0 ? [{ label: 'Quá hạn', value: overdue, color: colors.danger }] : []),
     ];
   }, [filteredProjects, stages, colors]);
@@ -893,17 +1051,11 @@ export default function KanbanScreen() {
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
           <Text style={styles.appTitle}>Quản lý sản xuất</Text>
-          <Text style={styles.appSub}>Bảng điều hành sản xuất</Text>
+          <Text style={styles.appSub}>
+            {loadingMore ? 'Đang tải thêm dự án…' : 'Bảng điều hành sản xuất'}
+          </Text>
         </View>
         <View style={styles.headerBtns}>
-          <TapHighlight style={styles.iconBtn} onPress={() => openMessages('chats')} hitSlop={8}>
-            <Ionicons name="chatbubbles-outline" size={20} color={colors.text} />
-            {messageUnread > 0 ? (
-              <View style={[styles.notifBadge, styles.msgBadge]}>
-                <Text style={styles.notifBadgeText}>{messageUnread > 99 ? '99+' : messageUnread}</Text>
-              </View>
-            ) : null}
-          </TapHighlight>
           <TapHighlight style={styles.iconBtn} onPress={() => void openNotifications()} hitSlop={8}>
             <Ionicons name="notifications-outline" size={20} color={colors.text} />
             {unreadCount > 0 ? (
@@ -1161,7 +1313,8 @@ export default function KanbanScreen() {
 
       </View>{/* end fixedTop */}
 
-      {/* ── CARD LIST ── */}
+      {/* ── CARD LIST (vuốt ngang đổi cột) ── */}
+      <View style={styles.listFlex} {...columnSwipeResponder.panHandlers}>
       <FlatList
         style={styles.listFlex}
         data={pagedProjects}
@@ -1198,209 +1351,9 @@ export default function KanbanScreen() {
             </Text>
           </View>
         }
-        renderItem={({ item }) => {
-          const progress = Math.max(0, Math.min(100, Number(item.progress || 0)));
-          const progressColor = getTaskProgressColor(progress, colors);
-          const isMoving = movingId === item.id;
-          const workTypeName = item.workshop_type_name;
-          const workTypeColor = workTypeName ? typeColor(workTypeName) : null;
-          const stageName = item.stage_name;
-          const avatarBg = avatarColor(item.customer_name);
-          const avatarLetters = initials(item.customer_name);
-          const deadlineStr = formatDate(item.production_deadline || item.deadline);
-          const createdStr = formatDate(item.created_at);
-          const vcTag = getVcTag(item, stages);
-          const personName = item.production_person_name?.trim() || null;
-          const commentCount = commentIndex[item.id]?.count ?? 0;
-
-          return (
-            <View style={[styles.card, { borderLeftColor: accent }]}>
-              <Pressable onPress={() => openProjectDetail(item.id)}>
-              {/* Row 1: code + tags + date */}
-              <View style={styles.cardRow1}>
-                <Text style={styles.cardCode}>{item.code}</Text>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  style={styles.cardTagsScroll}
-                  contentContainerStyle={styles.cardTags}
-                >
-                  {workTypeName ? (
-                    <View style={[styles.tag, styles.tagGap, { backgroundColor: `${workTypeColor}22`, borderColor: workTypeColor! }]}>
-                      <Text style={[styles.tagText, { color: workTypeColor! }]} numberOfLines={1}>{workTypeName}</Text>
-                    </View>
-                  ) : null}
-                  {stageName && stageName !== activeStage?.name ? (
-                    <View style={[styles.tagStage, styles.tagGap]}>
-                      <Text style={styles.tagStageText} numberOfLines={1}>{stageName}</Text>
-                    </View>
-                  ) : null}
-                  {vcTag ? (
-                    <View style={[styles.tag, styles.tagGap, { backgroundColor: vcTag.bg, borderColor: vcTag.border }]}>
-                      <Text style={[styles.tagText, { color: vcTag.color }]}>{vcTag.label}</Text>
-                    </View>
-                  ) : null}
-                  {item.is_overdue ? (
-                    <View style={[styles.tagOverdue, styles.tagGap]}>
-                      <Text style={styles.tagOverdueText}>Quá hạn</Text>
-                    </View>
-                  ) : null}
-                </ScrollView>
-              </View>
-
-              {/* Card name */}
-              <Text style={styles.cardName} numberOfLines={2}>{item.name}</Text>
-
-              {/* Row 2: avatar + customer */}
-              <View style={styles.customerRow}>
-                <View style={[styles.avatar, { backgroundColor: avatarBg }]}>
-                  <Text style={styles.avatarText}>{avatarLetters}</Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.customerName} numberOfLines={1}>
-                    {item.customer_name || '—'}
-                    {item.customer_phone ? (
-                      <Text style={styles.customerPhone}> · {item.customer_phone}</Text>
-                    ) : null}
-                  </Text>
-                  {item.company_name ? (
-                    <Text style={styles.companyName} numberOfLines={1}>{item.company_name}</Text>
-                  ) : null}
-                </View>
-              </View>
-
-              {/* Người phụ trách */}
-              <View style={styles.personRow}>
-                <Ionicons name="person-circle-outline" size={15} color={colors.textMuted} />
-                <Text style={styles.personLabel}>Phụ trách:</Text>
-                <Text style={styles.personName} numberOfLines={1}>
-                  {personName || 'Chưa gán'}
-                </Text>
-              </View>
-
-              {/* Stage info if in intake/unassigned */}
-              {!item.stage_name ? (
-                <Text style={styles.stageHint}>Chưa phân giao đoạn</Text>
-              ) : null}
-
-              {/* Tasks + progress */}
-              {(item.task_total || 0) > 0 ? (
-                <View style={styles.progressSection}>
-                  <View style={styles.taskCountRow}>
-                    <Ionicons name="checkbox-outline" size={13} color={progressColor} />
-                    <Text style={styles.taskCount}>
-                      <Text style={{ color: progressColor, fontWeight: '800' }}>{item.done_tasks || 0}</Text>
-                      <Text style={{ color: colors.textMuted }}>/{item.task_total} nhiệm vụ</Text>
-                    </Text>
-                  </View>
-                  <View style={styles.progressRow}>
-                    <View style={[styles.progressTrack, { backgroundColor: colorWithAlpha(progressColor, 0.18) }]}>
-                      <View
-                        style={[
-                          styles.progressFill,
-                          { width: `${progress}%`, backgroundColor: progressColor },
-                        ]}
-                      />
-                    </View>
-                    <Text style={[styles.progressPct, { color: progressColor }]}>{progress}%</Text>
-                  </View>
-                </View>
-              ) : null}
-
-              </Pressable>
-              {/* Bottom: deadline + created + icon actions */}
-              <View style={styles.cardBottom}>
-                <View style={styles.cardBottomLeft}>
-                  <View style={styles.dateMetaBox}>
-                    <View style={styles.dateMetaItem}>
-                      <Ionicons
-                        name="calendar-outline"
-                        size={14}
-                        color={item.is_overdue ? colors.danger : colors.primary}
-                      />
-                      <View style={styles.dateMetaTextWrap}>
-                        <Text style={styles.dateMetaLabel}>Deadline</Text>
-                        <Text
-                          style={[
-                            styles.dateMetaValue,
-                            item.is_overdue && styles.dateMetaValueOverdue,
-                            !deadlineStr && styles.dateMetaValueEmpty,
-                          ]}
-                          numberOfLines={1}
-                        >
-                          {deadlineStr || '—'}
-                        </Text>
-                      </View>
-                    </View>
-                    <View style={styles.dateMetaDivider} />
-                    <View style={styles.dateMetaItem}>
-                      <Ionicons name="time-outline" size={14} color={colors.textMuted} />
-                      <View style={styles.dateMetaTextWrap}>
-                        <Text style={styles.dateMetaLabel}>Ngày tạo</Text>
-                        <Text
-                          style={[styles.dateMetaValue, !createdStr && styles.dateMetaValueEmpty]}
-                          numberOfLines={1}
-                        >
-                          {createdStr || '—'}
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-                </View>
-                <View style={styles.cardActions}>
-                  <TapHighlight
-                    style={styles.cardActionBtn}
-                    onPress={() => setCommentProject(item)}
-                    accessibilityLabel="Bình luận"
-                  >
-                    <Ionicons name="chatbubble-ellipses-outline" size={18} color={colors.primary} />
-                    {commentCount > 0 ? (
-                      <View style={styles.actionBadge}>
-                        <Text style={styles.actionBadgeText}>
-                          {commentCount > 99 ? '99+' : commentCount}
-                        </Text>
-                      </View>
-                    ) : null}
-                  </TapHighlight>
-                  {isOrphanColumn ? (
-                    <TapHighlight
-                      style={[styles.cardActionBtn, styles.cardActionBtnClassify]}
-                      onPress={() => {
-                        if (!classifyWorkTypeOptions.length) {
-                          showToast('Chưa cấu hình phân loại cho công ty này', 'error');
-                          return;
-                        }
-                        setClassifyModalProject(item);
-                      }}
-                      disabled={isMoving}
-                      accessibilityLabel="Phân loại"
-                    >
-                      {isMoving ? (
-                        <ActivityIndicator size="small" color={colors.white} />
-                      ) : (
-                        <Ionicons name="layers-outline" size={18} color={colors.white} />
-                      )}
-                    </TapHighlight>
-                  ) : (
-                    <TapHighlight
-                      style={[styles.cardActionBtn, styles.cardActionBtnPrimary]}
-                      onPress={() => setMoveModalProject(item)}
-                      disabled={isMoving}
-                      accessibilityLabel="Chuyển cột"
-                    >
-                      {isMoving ? (
-                        <ActivityIndicator size="small" color={colors.white} />
-                      ) : (
-                        <Ionicons name="swap-horizontal" size={18} color={colors.white} />
-                      )}
-                    </TapHighlight>
-                  )}
-                </View>
-              </View>
-            </View>
-          );
-        }}
+        renderItem={renderCard}
       />
+      </View>
 
       <MoveColumnModal
         visible={!!moveModalProject}
@@ -1529,6 +1482,168 @@ export default function KanbanScreen() {
   );
 }
 
+type KanbanCardProps = {
+  item: ProductionProject;
+  styles: ReturnType<typeof createKanbanStyles>;
+  colors: AppColors;
+  stages: KanbanStage[];
+  accent: string;
+  activeStageName?: string;
+  commentCount: number;
+  isMoving: boolean;
+  isOrphanColumn: boolean;
+  onOpen: (id: string) => void;
+  onComment: (p: ProductionProject) => void;
+  onMove: (p: ProductionProject) => void;
+  onClassify: (p: ProductionProject) => void;
+};
+
+const KanbanCard = memo(function KanbanCard({
+  item,
+  styles,
+  colors,
+  stages,
+  accent,
+  activeStageName,
+  commentCount,
+  isMoving,
+  isOrphanColumn,
+  onOpen,
+  onComment,
+  onMove,
+  onClassify,
+}: KanbanCardProps) {
+  const workTypeName = item.workshop_type_name;
+  const workTypeColor = workTypeName ? typeColor(workTypeName) : null;
+  const stageName = item.stage_name;
+  const avatarBg = avatarColor(item.customer_name);
+  const avatarLetters = initials(item.customer_name);
+  const vcTag = getVcTag(item, stages);
+  const personName = item.production_person_name?.trim() || null;
+  const delivered = isShipped(item) || countsAsCompletedRevenue(item, stages);
+  const updatedStr = formatDateTime(item.updated_at || item.created_at);
+
+  return (
+    <View style={[styles.card, { borderLeftColor: accent }]}>
+      <Pressable onPress={() => onOpen(item.id)}>
+      {/* Row 1: code + tags */}
+      <View style={styles.cardRow1}>
+        <Text style={styles.cardCode}>{item.code}</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.cardTagsScroll}
+          contentContainerStyle={styles.cardTags}
+        >
+          {workTypeName ? (
+            <View style={[styles.tag, styles.tagGap, { backgroundColor: `${workTypeColor}22`, borderColor: workTypeColor! }]}>
+              <Text style={[styles.tagText, { color: workTypeColor! }]} numberOfLines={1}>{workTypeName}</Text>
+            </View>
+          ) : null}
+          {stageName && stageName !== activeStageName ? (
+            <View style={[styles.tagStage, styles.tagGap]}>
+              <Text style={styles.tagStageText} numberOfLines={1}>{stageName}</Text>
+            </View>
+          ) : null}
+          {vcTag ? (
+            <View style={[styles.tag, styles.tagGap, { backgroundColor: vcTag.bg, borderColor: vcTag.border }]}>
+              <Text style={[styles.tagText, { color: vcTag.color }]}>{vcTag.label}</Text>
+            </View>
+          ) : null}
+          {item.is_overdue && !delivered ? (
+            <View style={[styles.tagOverdue, styles.tagGap]}>
+              <Text style={styles.tagOverdueText}>Quá hạn</Text>
+            </View>
+          ) : null}
+        </ScrollView>
+      </View>
+
+      <Text style={styles.cardName} numberOfLines={2}>{item.name}</Text>
+
+      <View style={styles.customerRow}>
+        <View style={[styles.avatar, { backgroundColor: avatarBg }]}>
+          <Text style={styles.avatarText}>{avatarLetters}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.customerName} numberOfLines={1}>
+            {item.customer_name || '—'}
+            {item.customer_phone ? (
+              <Text style={styles.customerPhone}> · {item.customer_phone}</Text>
+            ) : null}
+          </Text>
+          {item.company_name ? (
+            <Text style={styles.companyName} numberOfLines={1}>{item.company_name}</Text>
+          ) : null}
+        </View>
+      </View>
+
+      <View style={styles.personRow}>
+        <Ionicons name="person-circle-outline" size={15} color={colors.textMuted} />
+        <Text style={styles.personLabel}>Phụ trách:</Text>
+        <Text style={styles.personName} numberOfLines={1}>
+          {personName || 'Chưa gán'}
+        </Text>
+      </View>
+
+      {!item.stage_name ? (
+        <Text style={styles.stageHint}>Chưa phân giao đoạn</Text>
+      ) : null}
+
+      <KanbanDealTimeline project={item} isDelivered={delivered} />
+      </Pressable>
+
+      <View style={styles.cardBottom}>
+        <TapHighlight
+          style={styles.cardActionBtn}
+          onPress={() => onComment(item)}
+          accessibilityLabel="Bình luận"
+        >
+          <Ionicons name="chatbubble-ellipses-outline" size={18} color={colors.primary} />
+          {commentCount > 0 ? (
+            <View style={styles.actionBadge}>
+              <Text style={styles.actionBadgeText}>
+                {commentCount > 99 ? '99+' : commentCount}
+              </Text>
+            </View>
+          ) : null}
+        </TapHighlight>
+
+        <Text style={styles.cardUpdated} numberOfLines={1}>
+          {updatedStr ? `Cập nhật lần cuối ${updatedStr}` : ' '}
+        </Text>
+
+        {isOrphanColumn ? (
+          <TapHighlight
+            style={[styles.cardActionBtn, styles.cardActionBtnClassify]}
+            onPress={() => onClassify(item)}
+            disabled={isMoving}
+            accessibilityLabel="Phân loại"
+          >
+            {isMoving ? (
+              <ActivityIndicator size="small" color={colors.white} />
+            ) : (
+              <Ionicons name="layers-outline" size={18} color={colors.white} />
+            )}
+          </TapHighlight>
+        ) : (
+          <TapHighlight
+            style={[styles.cardActionBtn, styles.cardActionBtnPrimary]}
+            onPress={() => onMove(item)}
+            disabled={isMoving}
+            accessibilityLabel="Chuyển cột"
+          >
+            {isMoving ? (
+              <ActivityIndicator size="small" color={colors.white} />
+            ) : (
+              <Ionicons name="swap-horizontal" size={18} color={colors.white} />
+            )}
+          </TapHighlight>
+        )}
+      </View>
+    </View>
+  );
+});
+
 function createKanbanStyles(c: AppColors) {
   return StyleSheet.create({
   container: { flex: 1, backgroundColor: c.bg },
@@ -1562,7 +1677,6 @@ function createKanbanStyles(c: AppColors) {
     backgroundColor: c.danger, alignItems: 'center', justifyContent: 'center',
     borderWidth: 2, borderColor: c.bg,
   },
-  msgBadge: { backgroundColor: '#6C5CE7' },
   notifBadgeText: { color: c.white, fontSize: 10, fontWeight: '800' },
   commentToast: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
@@ -1735,23 +1849,24 @@ function createKanbanStyles(c: AppColors) {
 
   stageHint: { color: c.textFaint, fontSize: 11, marginBottom: 4, fontStyle: 'italic' },
 
-  progressSection: { marginTop: 6 },
-  taskCountRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 5 },
-  taskCount: { color: c.textMuted, fontSize: 11, fontWeight: '600' },
-  progressRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  progressTrack: {
-    flex: 1, height: 8, borderRadius: Radii.full,
-    overflow: 'hidden',
-  },
-  progressFill: { height: 8, borderRadius: Radii.full },
-  progressPct: { fontSize: 11, fontWeight: '800', width: 34, textAlign: 'right' },
-
   cardBottom: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    marginTop: 10, gap: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 12,
+    gap: 8,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: c.border,
   },
-  cardBottomLeft: { flex: 1, minWidth: 0 },
-  cardActions: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 },
+  cardUpdated: {
+    flex: 1,
+    minWidth: 0,
+    color: c.textFaint,
+    fontSize: 10,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
   cardActionBtn: {
     width: 38, height: 38, borderRadius: Radii.md,
     alignItems: 'center', justifyContent: 'center',
@@ -1771,24 +1886,6 @@ function createKanbanStyles(c: AppColors) {
     alignItems: 'center', justifyContent: 'center',
   },
   actionBadgeText: { color: c.white, fontSize: 9, fontWeight: '800', lineHeight: 11 },
-  dateMetaBox: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
-    backgroundColor: c.cardAlt,
-    borderRadius: Radii.md,
-    borderWidth: 1,
-    borderColor: c.border,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    gap: 10,
-  },
-  dateMetaItem: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 },
-  dateMetaTextWrap: { flex: 1, minWidth: 0 },
-  dateMetaLabel: { color: c.textFaint, fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3 },
-  dateMetaValue: { color: c.text, fontSize: 12, fontWeight: '800', marginTop: 1 },
-  dateMetaValueOverdue: { color: c.danger },
-  dateMetaValueEmpty: { color: c.textMuted, fontWeight: '600' },
-  dateMetaDivider: { width: 1, backgroundColor: c.border, marginVertical: 2 },
 
   emptyBox: { alignItems: 'center', paddingVertical: 52, gap: 10 },
   emptyText: { color: c.textMuted, fontSize: 13, textAlign: 'center' },

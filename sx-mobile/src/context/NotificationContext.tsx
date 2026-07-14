@@ -77,6 +77,8 @@ type NotificationCtx = {
   emitPresencePing: () => void;
   joinProjectRoom: (projectId: string) => void;
   leaveProjectRoom: (projectId: string) => void;
+  joinLeadRoom: (leadId: string) => void;
+  leaveLeadRoom: (leadId: string) => void;
   projectMetaRef: React.MutableRefObject<Map<string, { code?: string | null; name?: string | null }>>;
 };
 
@@ -172,6 +174,16 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const leaveProjectRoom = useCallback((projectId: string) => {
     if (!projectId) return;
     socketRef.current?.emit('leave:project', projectId);
+  }, []);
+
+  const joinLeadRoom = useCallback((leadId: string) => {
+    if (!leadId) return;
+    socketRef.current?.emit('join:lead', leadId);
+  }, []);
+
+  const leaveLeadRoom = useCallback((leadId: string) => {
+    if (!leadId) return;
+    socketRef.current?.emit('leave:lead', leadId);
   }, []);
 
   const emitSync = useCallback((evt: SyncEvent) => {
@@ -330,6 +342,21 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       emitSync({ type: 'project:comment_changed', payload: { project_id: pid, action: 'deleted' } });
     };
 
+    const onLeadComment = (raw: unknown) => {
+      const evt = raw as {
+        lead_id?: string;
+        action?: string;
+        comment?: { user_id?: string };
+        comment_id?: string | number;
+      };
+      const lid = evt.lead_id ? String(evt.lead_id) : '';
+      if (!lid) return;
+      emitSync({
+        type: 'lead:comment_changed',
+        payload: { lead_id: lid, action: evt.action || 'created' },
+      });
+    };
+
     const onServerNotif = (raw: unknown) => {
       const n = raw as SxCommentNotification & {
         metadata?: { ecosystem_module_key?: string; sender_name?: string; group_name?: string };
@@ -444,6 +471,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     s.on('project:comment', onProjectComment);
     s.on('project:comment:updated', onProjectCommentUpdated);
     s.on('project:comment:deleted', onProjectCommentDeleted);
+    s.on('lead:comment', onLeadComment);
     s.on('notification', onServerNotif);
 
     const onStageChanged = (raw: unknown) => {
@@ -587,6 +615,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       s.off('project:comment', onProjectComment);
       s.off('project:comment:updated', onProjectCommentUpdated);
       s.off('project:comment:deleted', onProjectCommentDeleted);
+      s.off('lead:comment', onLeadComment);
       s.off('notification', onServerNotif);
       s.off('project:stage_changed', onStageChanged);
       s.off('project:updated', onBoardChanged);
@@ -638,6 +667,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       emitPresencePing,
       joinProjectRoom,
       leaveProjectRoom,
+      joinLeadRoom,
+      leaveLeadRoom,
       projectMetaRef,
     }),
     [
@@ -663,6 +694,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       emitPresencePing,
       joinProjectRoom,
       leaveProjectRoom,
+      joinLeadRoom,
+      leaveLeadRoom,
     ],
   );
 

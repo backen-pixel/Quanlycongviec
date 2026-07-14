@@ -62,7 +62,14 @@ export function formatReadTime(iso: string): string {
 }
 
 export function senderDisplayName(message: MessengerMessage): string {
-  return message.user?.full_name?.trim() || 'Thành viên';
+  const u = message.user;
+  return (
+    u?.display_name?.trim()
+    || u?.group_nickname?.trim()
+    || u?.nickname?.trim()
+    || u?.full_name?.trim()
+    || 'Thành viên'
+  );
 }
 
 export function senderAvatarUrl(message: MessengerMessage): string | null {

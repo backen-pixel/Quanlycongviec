@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { memo, useMemo } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
 import { resolveMediaUrl } from '../../lib/messengerApi';
 import { avatarColorFromName, initialsFromName } from '../../lib/messengerTheme';
@@ -13,7 +13,7 @@ type Props = {
   children?: React.ReactNode;
 };
 
-export default function MessengerAvatar({
+function MessengerAvatar({
   name,
   size = 48,
   color,
@@ -76,3 +76,5 @@ export default function MessengerAvatar({
     </View>
   );
 }
+
+export default memo(MessengerAvatar);
