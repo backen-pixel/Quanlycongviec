@@ -288,13 +288,6 @@ export function shouldIgnoreSxOrderDeliveryOverdue(stage) {
   return false;
 }
 
-/** So sánh theo ngày lịch (local) — khớp view Deadline «Quá hạn». */
-function startOfLocalDay(d) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
 /** Mức cảnh báo ngày giao / deadline đặt hàng — null nếu không có ngày. */
 export function getSxOrderDeliveryDateUrgency(dateIso, stage) {
   if (!dateIso) return null;
