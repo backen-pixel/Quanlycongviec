@@ -73,6 +73,7 @@ function mapCrmTask(raw: Record<string, unknown>): CrmTask {
     order_index: raw.order_index != null ? Number(raw.order_index) : undefined,
     deadline,
     due_date: deadline ?? (raw.due_date != null ? String(raw.due_date) : null),
+    created_at: raw.created_at != null ? String(raw.created_at) : null,
     notes: raw.notes != null ? String(raw.notes) : null,
     description: raw.description != null ? String(raw.description) : null,
     priority: raw.priority != null ? String(raw.priority) : null,
@@ -81,6 +82,7 @@ function mapCrmTask(raw: Record<string, unknown>): CrmTask {
     attachment_count: Number(raw.attachment_count ?? 0),
     assignee: mapPerson(raw.assignee),
     assignees,
+    creator: mapPerson(raw.creator),
     pipeline_stage: raw.pipeline_stage && typeof raw.pipeline_stage === 'object'
       ? {
           id: (raw.pipeline_stage as Record<string, unknown>).id != null
@@ -98,19 +100,25 @@ function mapCrmTask(raw: Record<string, unknown>): CrmTask {
 }
 
 /** Thứ tự giai đoạn SX — khớp CRMTasksTab.jsx SX_ORDER_STAGES */
-const SX_STAGE_ORDER: { slug: string; label: string }[] = [
-  { slug: 'sx_tiep_nhan', label: 'Tiếp nhận' },
-  { slug: 'sx_thiet_ke_ke_hoach', label: 'Thiết kế và lên kế hoạch' },
-  { slug: 'sx_kiem_tra_cheo', label: 'Kiểm tra chéo' },
-  { slug: 'sx_vat_tu', label: 'Vật tư' },
-  { slug: 'sx_san_xuat_thung', label: 'Sản xuất thùng' },
-  { slug: 'sx_san_xuat_alu', label: 'Sản xuất alu' },
-  { slug: 'sx_hoan_thien', label: 'Hoàn thiện' },
-  { slug: 'sx_dong_goi', label: 'Đóng gói' },
-  { slug: 'sx_giao_hang', label: 'Giao hàng' },
+export const SX_STAGE_ORDER: { slug: string; label: string; icon: string; color: string }[] = [
+  { slug: 'sx_tiep_nhan', label: 'Tiếp nhận', icon: '1', color: '#2563EB' },
+  { slug: 'sx_thiet_ke_ke_hoach', label: 'Thiết kế và lên kế hoạch', icon: '2', color: '#7C3AED' },
+  { slug: 'sx_kiem_tra_cheo', label: 'Kiểm tra chéo', icon: '3', color: '#0EA5E9' },
+  { slug: 'sx_vat_tu', label: 'Vật tư', icon: '4', color: '#D97706' },
+  { slug: 'sx_san_xuat_thung', label: 'Sản xuất thùng', icon: '5', color: '#059669' },
+  { slug: 'sx_san_xuat_alu', label: 'Sản xuất alu', icon: '6', color: '#0891B2' },
+  { slug: 'sx_hoan_thien', label: 'Hoàn thiện', icon: '7', color: '#16A34A' },
+  { slug: 'sx_dong_goi', label: 'Đóng gói', icon: '8', color: '#EA580C' },
+  { slug: 'sx_giao_hang', label: 'Giao hàng', icon: '9', color: '#DC2626' },
 ];
 
 const SX_STAGE_INDEX = new Map(SX_STAGE_ORDER.map((s, i) => [s.slug, i]));
+
+export function getSxStageVisual(slug?: string | null): { icon: string; color: string } {
+  const normalized = normalizeCrmTaskStageSlug(slug);
+  const hit = SX_STAGE_ORDER.find((s) => s.slug === normalized);
+  return { icon: hit?.icon || '•', color: hit?.color || '#64748B' };
+}
 
 /** Chuẩn hoá stage_slug (bỏ hậu tố uuid pipeline) — khớp web CRMTasksTab */
 export function normalizeCrmTaskStageSlug(slug?: string | null): string {
@@ -276,6 +284,27 @@ export async function fetchDealIdForProject(projectId: string): Promise<string |
   } catch {
     return null;
   }
+}
+
+/** Cập nhật ngày dự án (đồng bộ web PUT /projects/:id). */
+export async function updateProjectDates(
+  projectId: string,
+  patch: Partial<{
+    order_date: string | null;
+    delivery_date: string | null;
+    deadline: string | null;
+    production_deadline: string | null;
+  }>,
+): Promise<void> {
+  const body: Record<string, string | null> = {};
+  (['order_date', 'delivery_date', 'deadline', 'production_deadline'] as const).forEach((k) => {
+    if (patch[k] !== undefined) body[k] = patch[k] as string | null;
+  });
+  // Giống CRM web: lưu ngày giao hàng cũng ghi production_deadline
+  if (patch.delivery_date !== undefined) {
+    body.production_deadline = patch.delivery_date;
+  }
+  await api.put(`/projects/${projectId}`, body);
 }
 
 export function taskDeadline(task: CrmTask): string | null {

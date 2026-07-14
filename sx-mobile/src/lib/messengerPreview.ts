@@ -27,7 +27,11 @@ export function buildMessengerMessagePreview(
     return mine ? 'Đã thu hồi tin nhắn' : 'Tin nhắn bị thu hồi';
   }
 
-  if (message.is_system && message.message_type !== 'call') return null;
+  if (message.is_system && message.message_type !== 'call') {
+    const raw = String(message.content || '').trim();
+    if (!raw) return null;
+    return raw.length > maxLen ? `${raw.slice(0, maxLen - 1)}…` : raw;
+  }
 
   if (message.message_type === 'call') {
     const line = String(message.content || '').trim() || 'Cuộc gọi';

@@ -355,6 +355,10 @@ export default function MessagesScreen() {
           data={filtered}
           keyExtractor={(i) => i.id}
           contentContainerStyle={{ paddingBottom: 120 }}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={9}
+          removeClippedSubviews
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={Colors.primary} />
           }

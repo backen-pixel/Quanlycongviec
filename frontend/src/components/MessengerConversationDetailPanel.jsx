@@ -38,6 +38,15 @@ import {
   getUserPresence,
 } from '../lib/userPresenceDisplay';
 import { useRelativeTimeTick } from '../hooks/useRelativeTimeTick';
+import {
+  CHAT_WALLPAPER_CHANGED,
+  clearChatWallpaper,
+  dataUrlToBlob,
+  fetchChatWallpaper,
+  fileToWallpaperDataUrl,
+  getChatWallpaper,
+  uploadChatWallpaper,
+} from '../lib/chatWallpaperStorage';
 
 const AVATAR_GRADIENTS = [
   'linear-gradient(135deg, #f43f5e, #ec4899)',
@@ -205,8 +214,28 @@ export default function MessengerConversationDetailPanel({
   const [membersExpanded, setMembersExpanded] = useState(false);
   const [mediaLightboxIndex, setMediaLightboxIndex] = useState(null);
   const [videoPreview, setVideoPreview] = useState(null);
+  const [wallpaper, setWallpaperState] = useState(() => getChatWallpaper(selectedGroupId));
+  const [wallpaperBusy, setWallpaperBusy] = useState(false);
   const memberMenuRef = useRef(null);
   const membersSectionRef = useRef(null);
+  const wallpaperInputRef = useRef(null);
+
+  useEffect(() => {
+    setWallpaperState(getChatWallpaper(selectedGroupId));
+    let alive = true;
+    void fetchChatWallpaper(selectedGroupId).then((w) => {
+      if (alive) setWallpaperState(w);
+    });
+    const onWp = (e) => {
+      if (e?.detail?.threadId && String(e.detail.threadId) !== String(selectedGroupId)) return;
+      setWallpaperState(getChatWallpaper(selectedGroupId));
+    };
+    window.addEventListener(CHAT_WALLPAPER_CHANGED, onWp);
+    return () => {
+      alive = false;
+      window.removeEventListener(CHAT_WALLPAPER_CHANGED, onWp);
+    };
+  }, [selectedGroupId]);
 
   const isDirect = !!selected?.is_direct;
   const title = selected?.title || groupDetail?.name || 'Hội thoại';
@@ -816,6 +845,67 @@ export default function MessengerConversationDetailPanel({
               Ghim hội thoại
             </span>
             <ToggleSwitch checked={pinned} onChange={(v) => onTogglePin?.(v)} />
+          </div>
+          <div className="rounded-xl border border-slate-100 bg-slate-50/80 p-2.5 space-y-2">
+            <div className="flex items-center gap-2 text-[13px] text-slate-700">
+              <ImageIcon className="h-4 w-4 text-violet-500" />
+              <span className="font-medium">Hình nền chat</span>
+              {wallpaper.type === 'image' ? (
+                <span className="text-[10px] font-semibold text-violet-700 bg-violet-100 px-1.5 py-0.5 rounded-full">Đang dùng</span>
+              ) : null}
+            </div>
+            {wallpaper.type === 'image' ? (
+              <div
+                className="h-16 rounded-lg border border-slate-200 bg-cover bg-center"
+                style={{ backgroundImage: `url(${wallpaper.uri})` }}
+              />
+            ) : null}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={wallpaperBusy || !selectedGroupId}
+                onClick={() => wallpaperInputRef.current?.click()}
+                className="h-8 px-2.5 rounded-lg bg-violet-600 text-white text-[11px] font-semibold hover:bg-violet-700 disabled:opacity-50"
+              >
+                {wallpaperBusy ? 'Đang tải…' : 'Chọn ảnh'}
+              </button>
+              <button
+                type="button"
+                disabled={wallpaperBusy || wallpaper.type !== 'image' || !selectedGroupId}
+                onClick={() => {
+                  setWallpaperBusy(true);
+                  void clearChatWallpaper(selectedGroupId)
+                    .then(() => setWallpaperState({ type: 'none' }))
+                    .catch((err) => alert(err?.response?.data?.error || err?.message || 'Không xóa được hình nền'))
+                    .finally(() => setWallpaperBusy(false));
+                }}
+                className="h-8 px-2.5 rounded-lg border border-slate-200 bg-white text-slate-700 text-[11px] font-semibold hover:bg-slate-50 disabled:opacity-40"
+              >
+                Nền mặc định
+              </button>
+            </div>
+            <p className="text-[10px] text-slate-500 leading-snug">Đồng bộ với app Xưởng SX trên cùng tài khoản.</p>
+            <input
+              ref={wallpaperInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (!file || !selectedGroupId) return;
+                setWallpaperBusy(true);
+                fileToWallpaperDataUrl(file)
+                  .then((dataUrl) => {
+                    const blob = dataUrlToBlob(dataUrl);
+                    const uploadFile = new File([blob], file.name || 'wallpaper.jpg', { type: blob.type || 'image/jpeg' });
+                    return uploadChatWallpaper(selectedGroupId, uploadFile);
+                  })
+                  .then((w) => setWallpaperState(w))
+                  .catch((err) => alert(err?.response?.data?.error || err?.message || 'Không đặt được hình nền'))
+                  .finally(() => setWallpaperBusy(false));
+              }}
+            />
           </div>
           <button
             type="button"

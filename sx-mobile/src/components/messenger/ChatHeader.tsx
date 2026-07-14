@@ -1,23 +1,12 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-
-import React, { useMemo, useState } from 'react';
-
-import { ActivityIndicator, Alert, StyleSheet, Text, View } from 'react-native';
-
+import React, { useMemo } from 'react';
+import { Alert, StyleSheet, Text, View } from 'react-native';
 import TapHighlight from '../TapHighlight';
-
 import MessengerAvatar from './MessengerAvatar';
-
-import { useCall } from '../../context/CallContext';
-
 import { useTheme } from '../../context/ThemeContext';
-
-import { fetchMessengerGroupDetail } from '../../lib/messengerApi';
-
+import { alertCallFeatureLocked } from '../../lib/callFeatureLock';
 import { getMessengerColors } from '../../lib/messengerTheme';
-
-import { Radii, Spacing } from '../../theme';
-
+import { Spacing } from '../../theme';
 
 
 type Props = {
@@ -84,119 +73,12 @@ export default function ChatHeader({
 
   const mc = getMessengerColors(colors, isDark);
 
-  const { startCall, startVideoCall, startGroupCall, status: callStatus } = useCall();
-
-  const [calling, setCalling] = useState(false);
-
-
-
   const onCall = async () => {
-
-    if (callStatus !== 'idle' || calling) {
-
-      Alert.alert('Cuộc gọi', 'Đang có cuộc gọi khác.');
-
-      return;
-
-    }
-
-    if (isDirect) {
-
-      if (!peerId) {
-
-        Alert.alert('Cuộc gọi', 'Không xác định được người nhận.');
-
-        return;
-
-      }
-
-      setCalling(true);
-
-      try {
-
-        await startCall({ id: String(peerId), name: displayName, avatar: avatarUrl || null });
-
-      } finally {
-
-        setCalling(false);
-
-      }
-
-      return;
-
-    }
-
-    setCalling(true);
-
-    try {
-
-      const detail = await fetchMessengerGroupDetail(threadId);
-
-      const members = (detail.members || [])
-
-        .filter((m) => String(m.id) !== String(myUserId))
-
-        .map((m) => ({ id: m.id, name: m.name, avatar: m.avatar }));
-
-      if (!members.length) {
-
-        Alert.alert('Cuộc gọi nhóm', 'Nhóm không có thành viên khác.');
-
-        return;
-
-      }
-
-      await startGroupCall({ id: threadId, name: displayName, members });
-
-    } catch {
-
-      Alert.alert('Cuộc gọi nhóm', 'Không thể bắt đầu cuộc gọi nhóm.');
-
-    } finally {
-
-      setCalling(false);
-
-    }
-
+    alertCallFeatureLocked(Alert);
   };
 
-
-
   const onVideoCall = async () => {
-    if (callStatus !== 'idle' || calling) {
-      Alert.alert('Cuộc gọi', 'Đang có cuộc gọi khác.');
-      return;
-    }
-    if (isDirect) {
-      if (!peerId) {
-        Alert.alert('Gọi video', 'Không xác định được người nhận.');
-        return;
-      }
-      setCalling(true);
-      try {
-        await startVideoCall({ id: String(peerId), name: displayName, avatar: avatarUrl || null });
-      } finally {
-        setCalling(false);
-      }
-      return;
-    }
-
-    setCalling(true);
-    try {
-      const detail = await fetchMessengerGroupDetail(threadId);
-      const members = (detail.members || [])
-        .filter((m) => String(m.id) !== String(myUserId))
-        .map((m) => ({ id: m.id, name: m.name, avatar: m.avatar }));
-      if (!members.length) {
-        Alert.alert('Cuộc gọi nhóm', 'Nhóm không có thành viên khác.');
-        return;
-      }
-      await startGroupCall({ id: threadId, name: displayName, members }, 'video');
-    } catch {
-      Alert.alert('Cuộc gọi nhóm', 'Không thể bắt đầu cuộc gọi video nhóm.');
-    } finally {
-      setCalling(false);
-    }
+    alertCallFeatureLocked(Alert);
   };
 
 
@@ -345,24 +227,12 @@ export default function ChatHeader({
 
       <View style={styles.actions}>
 
-        <TapHighlight style={styles.callBtn} onPress={onCall} disabled={calling}>
-
-          {calling ? (
-
-            <ActivityIndicator size="small" color={mc.accent} />
-
-          ) : (
-
-            <Ionicons name="call" size={18} color={mc.accent} />
-
-          )}
-
+        <TapHighlight style={styles.callBtn} onPress={onCall}>
+          <Ionicons name="call" size={18} color={mc.accent} />
         </TapHighlight>
 
-        <TapHighlight style={styles.callBtn} onPress={onVideoCall} disabled={calling}>
-
+        <TapHighlight style={styles.callBtn} onPress={onVideoCall}>
           <Ionicons name="videocam" size={18} color={mc.accent} />
-
         </TapHighlight>
 
         {onSearch ? (

@@ -69,6 +69,16 @@ import {
   isMessengerMessageHidden,
   loadMessengerHiddenConfig,
 } from '../lib/messengerHiddenHistory';
+import { getMessageClusterMeta } from '../lib/messengerMessageCluster';
+import {
+  CHAT_WALLPAPER_CHANGED,
+  fetchChatWallpaper,
+  getChatWallpaper,
+} from '../lib/chatWallpaperStorage';
+
+/** Màu bubble gửi đi — khớp app SX (#6C5CE7). */
+const MSG_BUBBLE_OUT = '#6C5CE7';
+const MSG_BUBBLE_IN = '#F1F5F9';
 
 function clearChatFileInputs(...refs) {
   refs.filter(Boolean).forEach((r) => {
@@ -633,19 +643,19 @@ function ReplyQuoteInBubble({ parent, isMe, onJump, isGroupChat = false }) {
       onClick={() => onJump?.(parent.id)}
       className={`w-full text-left mb-1.5 rounded-md px-2 py-1.5 border-l-2 transition-colors ${
         isMe
-          ? 'bg-blue-700/30 border-blue-200 hover:bg-blue-700/40 text-blue-50'
-          : 'bg-slate-100 border-blue-400 hover:bg-slate-200 text-slate-700'
+          ? 'bg-white/15 border-violet-200 hover:bg-white/25 text-violet-50'
+          : 'bg-white/80 border-violet-400 hover:bg-white text-slate-700'
       }`}
     >
-      <p className={`text-[10px] truncate ${isMe ? 'text-blue-100' : ''}`}>
+      <p className={`text-[10px] truncate ${isMe ? 'text-violet-100' : ''}`}>
         ↩{' '}
         {isMe || !isGroupChat ? (
-          <span className={`font-semibold ${isMe ? 'text-blue-100' : 'text-blue-700'}`}>{author}</span>
+          <span className={`font-semibold ${isMe ? 'text-violet-100' : 'text-violet-700'}`}>{author}</span>
         ) : (
           <GroupSenderName userId={parent.user_id} name={author} isGroupChat className="text-[10px]" />
         )}
       </p>
-      <p className={`text-[11px] truncate ${isMe ? 'text-blue-50/90' : 'text-slate-600'}`}>
+      <p className={`text-[11px] truncate ${isMe ? 'text-white/85' : 'text-slate-600'}`}>
         {previewOfMessage(parent)}
       </p>
     </button>
@@ -2004,6 +2014,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     hiddenIds: new Set(),
     clearedBefore: null,
   }));
+  const [wallpaper, setWallpaper] = useState(() => getChatWallpaper(groupId));
   // Typing indicator: Map<userId, { name, isBot, ts }>
   const [typingMap, setTypingMap] = useState(() => new Map());
   const typingThrottleRef = useRef(0);
@@ -2106,6 +2117,23 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   useEffect(() => {
     return registerMessengerGroupPresence(groupId);
   }, [groupId, registerMessengerGroupPresence]);
+
+  useEffect(() => {
+    setWallpaper(getChatWallpaper(groupId));
+    let alive = true;
+    void fetchChatWallpaper(groupId).then((w) => {
+      if (alive) setWallpaper(w);
+    });
+    const onWp = (e) => {
+      if (e?.detail?.threadId && String(e.detail.threadId) !== String(groupId)) return;
+      setWallpaper(getChatWallpaper(groupId));
+    };
+    window.addEventListener(CHAT_WALLPAPER_CHANGED, onWp);
+    return () => {
+      alive = false;
+      window.removeEventListener(CHAT_WALLPAPER_CHANGED, onWp);
+    };
+  }, [groupId]);
 
   useEffect(() => {
     if (!groupId) return;
@@ -2832,7 +2860,25 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
         </div>
       ) : null}
 
-      <div ref={scrollContainerRef} className={`flex-1 min-h-0 overflow-y-auto ${compact ? 'px-2.5 py-2' : 'px-4 py-3'} space-y-1 ${hubLayout ? 'bg-slate-50/60' : 'bg-gradient-to-b from-slate-50/60 via-white/40 to-violet-50/40 rounded-t-xl'}`}>
+      <div
+        ref={scrollContainerRef}
+        className={`flex-1 min-h-0 overflow-y-auto ${compact ? 'px-2.5 py-2' : 'px-4 py-3'} ${
+          wallpaper.type === 'image'
+            ? 'rounded-t-xl'
+            : hubLayout
+              ? 'bg-slate-50/60'
+              : 'bg-gradient-to-b from-slate-50/60 via-white/40 to-violet-50/40 rounded-t-xl'
+        }`}
+        style={
+          wallpaper.type === 'image'
+            ? {
+                backgroundImage: `linear-gradient(rgba(248,250,252,0.42), rgba(241,245,249,0.55)), url(${wallpaper.uri})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+              }
+            : undefined
+        }
+      >
         {messages.map((m, idx) => {
           if (isMessengerMessageHidden(m, hiddenConfig)) return null;
           const isMe = String(m.user_id) === String(uid);
@@ -2841,12 +2887,11 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           const selectable = !m.is_system && m.message_type !== 'system' && !isCallLog && !isMessengerMessageRecalled(m);
           const isBot = !!m.user?.is_bot;
           const isGroupChat = !groupMeta?.is_direct;
-          const mentionedIds = !isGroupChat
-            ? [
-                ...(Array.isArray(m.mention_user_ids) ? m.mention_user_ids : []),
-                ...resolveMentionIdsFromContent(m.content || '', groupMeta?.members || [], { excludeUserId: uid }),
-              ]
-            : [];
+          const cluster = getMessageClusterMeta(m, messages, idx, uid, isGroupChat);
+          const mentionedIds = [
+            ...(Array.isArray(m.mention_user_ids) ? m.mention_user_ids : []),
+            ...resolveMentionIdsFromContent(m.content || '', groupMeta?.members || [], { excludeUserId: uid }),
+          ];
           const mentioned = mentionedIds.map(String).includes(String(uid));
           if (isCallLog && !isBot) {
             const callActorName = messengerDisplayName(m.user, 'Thành viên');
@@ -2912,9 +2957,10 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
           const bubbleless = isSticker || isAudioOnly || isImageOnly || isFileOnly;
           const recalledLabel = isMe ? 'Đã thu hồi tin nhắn' : 'Tin nhắn bị thu hồi';
 
+          const showName = !isMe && cluster.showSenderName;
           const bareMediaBlock = (align) => (
             <>
-              {!isMe && (
+              {showName && (
                 <GroupSenderName
                   userId={m.user_id}
                   name={senderName}
@@ -2934,6 +2980,48 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
             </>
           );
 
+          const textBubbleClass = isBot
+            ? 'bg-gradient-to-br from-indigo-50 to-purple-50 text-gray-900 rounded-bl-md border border-indigo-200'
+            : isMe
+              ? 'text-white rounded-br-md'
+              : 'text-gray-800 rounded-bl-md border border-slate-200/80';
+          const textBubbleStyle = isBot
+            ? undefined
+            : isMe
+              ? { backgroundColor: MSG_BUBBLE_OUT }
+              : { backgroundColor: MSG_BUBBLE_IN };
+
+          const textBubbleInner = (
+            <>
+              {showName && (
+                <div className="flex items-center gap-1 mb-0.5 flex-wrap">
+                  <GroupSenderName
+                    userId={m.user_id}
+                    name={senderName}
+                    isBot={isBot}
+                    isGroupChat={isGroupChat}
+                    className="text-[10px]"
+                  />
+                  {isBot && (
+                    <span className="px-1.5 py-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-[8px] font-bold">
+                      BOT
+                    </span>
+                  )}
+                </div>
+              )}
+              {mentioned && !isMe && (
+                <p className="text-[9px] font-semibold mb-1 text-amber-700 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5 inline-block">
+                  Bạn được nhắc (@)
+                </p>
+              )}
+              {parent && <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} isGroupChat={isGroupChat} />}
+              <div className={isBot && isAiBotReportContent(contentStr) ? 'break-words' : 'text-[13.5px] leading-relaxed whitespace-pre-wrap break-words'}>
+                {renderMessengerTextContent(m.content, isMe, uid, { isBot })}
+              </div>
+              {renderAttachmentsGrouped(m, { alignEnd: isMe, isMe })}
+            </>
+          );
+
           return (
             <Fragment key={m.id}>
               {showDateSep && (
@@ -2943,14 +3031,19 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                   </span>
                 </div>
               )}
+              {cluster.showClusterDivider && !showDateSep ? (
+                <div className="h-1.5" aria-hidden />
+              ) : null}
               <div
                 ref={(el) => {
                   if (el) messageRefs.current.set(String(m.id), el);
                   else messageRefs.current.delete(String(m.id));
                 }}
-                className={`group/msg flex items-start ${isMe ? 'justify-end' : 'justify-start'} gap-2 transition-colors rounded-lg ${
-                  isHighlight ? 'ring-2 ring-amber-300 bg-amber-50/60' : ''
-                } ${selectMode && msgSelected ? 'bg-violet-50/70 ring-1 ring-violet-200/80' : ''}`}
+                className={`group/msg flex items-end ${isMe ? 'justify-end' : 'justify-start'} gap-2 transition-colors rounded-lg ${
+                  cluster.clusterTight ? 'mt-0.5' : 'mt-2'
+                } ${isHighlight ? 'ring-2 ring-amber-300 bg-amber-50/60' : ''} ${
+                  selectMode && msgSelected ? 'bg-violet-50/70 ring-1 ring-violet-200/80' : ''
+                }`}
               >
                 {selectMode && selectable ? (
                   <button
@@ -2967,22 +3060,27 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                   </button>
                 ) : null}
                 {!isMe && (
-                  isBot ? (
-                    <div className="h-7 w-7 mt-1 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-md ring-2 ring-white shrink-0">
-                      <span className="text-white text-sm">🤖</span>
-                    </div>
+                  cluster.showAvatar ? (
+                    isBot ? (
+                      <div className="h-7 w-7 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-md ring-2 ring-white shrink-0">
+                        <span className="text-white text-sm">🤖</span>
+                      </div>
+                    ) : (
+                      <div className="shrink-0">
+                        <Avatar name={senderName} url={m.user?.avatar} size={7} />
+                      </div>
+                    )
                   ) : (
-                    <div className="shrink-0 mt-1">
-                      <Avatar name={senderName} url={m.user?.avatar} size={7} />
-                    </div>
+                    <div className="w-7 shrink-0" aria-hidden />
                   )
                 )}
                 <div className={`min-w-0 ${isBot && isAiBotReportContent(contentStr) ? 'max-w-[min(92%,440px)]' : 'max-w-[78%]'}`}>
                   {recalled ? (
                     <div
                       className={`flex items-center gap-2 px-3 py-2 rounded-2xl border text-[13px] italic text-slate-500 ${
-                        isMe ? 'bg-violet-50/80 border-violet-200/60' : 'bg-slate-50 border-slate-200'
+                        isMe ? 'border-violet-200/60' : 'border-slate-200'
                       }`}
+                      style={{ backgroundColor: isMe ? 'rgba(108,92,231,0.08)' : MSG_BUBBLE_IN }}
                     >
                       <Undo2 className="h-3.5 w-3.5 shrink-0" />
                       {recalledLabel}
@@ -3002,7 +3100,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                     >
                       {isSticker ? (
                         <>
-                          {!isMe && (
+                          {showName && (
                             <GroupSenderName
                               userId={m.user_id}
                               name={senderName}
@@ -3018,29 +3116,8 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                       ) : isImageOnly || isFileOnly || isAudioOnly ? (
                         bareMediaBlock(isMe ? 'end' : 'start')
                       ) : (
-                        <div
-                          className={`rounded-3xl px-4 py-2.5 shadow-sm ${
-                            isBot
-                              ? 'bg-gradient-to-br from-indigo-50 to-purple-50 text-gray-900 rounded-bl-md border border-indigo-200'
-                              : isMe
-                                ? 'bg-gradient-to-br from-violet-500 to-violet-600 text-white rounded-br-md'
-                                : 'bg-white text-gray-800 rounded-bl-md border border-slate-200/80'
-                          }`}
-                        >
-                          {!isMe && (
-                            <GroupSenderName
-                              userId={m.user_id}
-                              name={senderName}
-                              isBot={isBot}
-                              isGroupChat={isGroupChat}
-                              className="text-[10px] mb-0.5 block"
-                            />
-                          )}
-                          {parent && <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} isGroupChat={isGroupChat} />}
-                          <div className={isBot && isAiBotReportContent(contentStr) ? 'break-words' : 'text-[13.5px] leading-relaxed whitespace-pre-wrap break-words'}>
-                            {renderMessengerTextContent(m.content, isMe, uid, { isBot })}
-                          </div>
-                          {renderAttachmentsGrouped(m, { alignEnd: isMe, isMe })}
+                        <div className={`rounded-3xl px-4 py-2.5 shadow-sm ${textBubbleClass}`} style={textBubbleStyle}>
+                          {textBubbleInner}
                         </div>
                       )}
                     </div>
@@ -3069,7 +3146,7 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                     >
                       {isSticker ? (
                         <>
-                          {!isMe && (
+                          {showName && (
                             <GroupSenderName
                               userId={m.user_id}
                               name={senderName}
@@ -3085,49 +3162,16 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
                       ) : isImageOnly || isFileOnly || isAudioOnly ? (
                         bareMediaBlock(isMe ? 'end' : 'start')
                       ) : (
-                        <div
-                          className={`rounded-3xl px-4 py-2.5 shadow-sm ${
-                            isBot
-                              ? 'bg-gradient-to-br from-indigo-50 to-purple-50 text-gray-900 rounded-bl-md border border-indigo-200'
-                              : isMe
-                                ? 'bg-gradient-to-br from-violet-500 to-violet-600 text-white rounded-br-md'
-                                : 'bg-white text-gray-800 rounded-bl-md border border-slate-200/80'
-                          }`}
-                        >
-                          {!isMe && (
-                            <div className="flex items-center gap-1 mb-0.5 flex-wrap">
-                              <GroupSenderName
-                                userId={m.user_id}
-                                name={senderName}
-                                isBot={isBot}
-                                isGroupChat={isGroupChat}
-                                className="text-[10px]"
-                              />
-                              {isBot && (
-                                <span className="px-1.5 py-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-[8px] font-bold">
-                                  BOT
-                                </span>
-                              )}
-                            </div>
-                          )}
-                          {mentioned && (
-                            <p className="text-[9px] font-semibold mb-1 text-amber-700 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5 inline-block">
-                              Bạn được nhắc (@)
-                            </p>
-                          )}
-                          {parent && <ReplyQuoteInBubble parent={parent} isMe={isMe} onJump={jumpToMessage} isGroupChat={isGroupChat} />}
-                          <div className={isBot && isAiBotReportContent(contentStr) ? 'break-words' : 'text-[13.5px] leading-relaxed whitespace-pre-wrap break-words'}>
-                            {renderMessengerTextContent(m.content, isMe, uid, { isBot })}
-                          </div>
-                          {renderAttachmentsGrouped(m, { alignEnd: isMe, isMe })}
+                        <div className={`rounded-3xl px-4 py-2.5 shadow-sm ${textBubbleClass}`} style={textBubbleStyle}>
+                          {textBubbleInner}
                         </div>
                       )}
                     </MessengerMessageHoverActions>
                   )}
-                  {!recalled ? (
+                  {!recalled && cluster.showTimeMeta ? (
                     <p
                       className={`text-[10px] mt-1 px-1 flex flex-wrap items-center gap-x-0.5 ${
-                        isMe ? 'justify-end text-slate-400' : 'justify-start text-slate-400'
+                        isMe ? 'justify-end text-slate-500' : 'justify-start text-slate-500'
                       }`}
                     >
                       <span>{formatTime(m.created_at)}</span>

@@ -1,6 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useMemo } from 'react';
 import {
+  Alert,
   Modal,
   Pressable,
   Share,
@@ -182,7 +183,14 @@ export default function FileActionsSheet({ visible, file, onDismiss }: Props) {
       iconBg: isDark ? '#064E3B' : '#ECFDF5',
       title: 'Tải về',
       sub: 'Lưu vào thiết bị',
-      onPress: () => run(() => saveMessengerAttachment(file.url, file)),
+      onPress: () => run(async () => {
+        try {
+          const r = await saveMessengerAttachment(file.url, file);
+          Alert.alert('Đã tải về', `${r.displayName}\n\nLưu tại: ${r.locationHint}`);
+        } catch (e) {
+          Alert.alert('Tải file', (e as Error)?.message || 'Không tải được file.');
+        }
+      }),
     },
     {
       key: 'shareInApp',

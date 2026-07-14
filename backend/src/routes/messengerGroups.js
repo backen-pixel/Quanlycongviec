@@ -998,13 +998,16 @@ async function enrichDirectGroupResponse(group, authUserId, nickMap = null) {
     .eq('id', other)
     .maybeSingle();
   const map = nickMap || await fetchMessengerNicknameMap(authUserId, [other]);
-  const display_name = resolveMessengerDisplayName(pu, map);
+  const peerNick = other ? (map.get(String(other)) || null) : null;
+  const display_name = peerNick || pu?.full_name || pu?.email || group.name;
   return {
     ...group,
     peer_id: other,
     display_name,
     peer_avatar: pu?.avatar || null,
     peer_full_name: pu?.full_name || pu?.email || null,
+    peer_nickname: peerNick,
+    nickname: peerNick,
   };
 }
 
@@ -1406,6 +1409,50 @@ r.get('/nicknames', async (req, res) => {
   }
 });
 
+/** Tin hệ thống trong hội thoại (biệt danh, rời nhóm, …) + emit realtime. */
+async function postMessengerSystemMessage(io, { groupId, userId, content }) {
+  if (!groupId || !content) return null;
+  const { data: inserted, error } = await supabase
+    .from('messenger_group_messages')
+    .insert({
+      group_id: groupId,
+      user_id: userId || null,
+      content: String(content).slice(0, 500),
+      message_type: 'system',
+      is_system: true,
+    })
+    .select('id')
+    .single();
+  if (error || !inserted?.id) {
+    if (error) console.warn('[messenger] system msg:', error.message);
+    return null;
+  }
+  const full = await fetchMessengerMessageById(inserted.id);
+  if (io && full) io.to(`messenger_group:${groupId}`).emit('messenger_group:chat', full);
+  return full;
+}
+
+async function resolveDirectGroupIdBetween(userA, userB) {
+  if (!userA || !userB) return null;
+  const key = directPairKey(userA, userB);
+  const { data } = await supabase
+    .from('messenger_groups')
+    .select('id')
+    .eq('direct_pair_key', key)
+    .maybeSingle();
+  return data?.id ? String(data.id) : null;
+}
+
+async function userLabelForSystem(userId, fallback = 'Ai đó') {
+  if (!userId) return fallback;
+  const { data } = await supabase
+    .from('users')
+    .select('full_name, email')
+    .eq('id', userId)
+    .maybeSingle();
+  return String(data?.full_name || data?.email || fallback).trim() || fallback;
+}
+
 r.put('/nicknames/:targetUserId', async (req, res) => {
   try {
     const viewerId = req.authUserId;
@@ -1436,6 +1483,20 @@ r.put('/nicknames/:targetUserId', async (req, res) => {
       { onConflict: 'viewer_user_id,target_user_id' },
     );
     if (error) return res.status(400).json({ error: error.message });
+
+    const groupId =
+      parseUuidParam(req.body?.group_id)
+      || (await resolveDirectGroupIdBetween(viewerId, targetId));
+    if (groupId) {
+      const viewerName = await userLabelForSystem(viewerId, 'Ai đó');
+      const targetName = targetUser.full_name || targetUser.email || 'đồng nghiệp';
+      await postMessengerSystemMessage(req.app.get('io'), {
+        groupId,
+        userId: viewerId,
+        content: `${viewerName} đã đặt biệt danh cho ${targetName} thành «${nickname}»`,
+      });
+    }
+
     res.json({
       target_user_id: targetId,
       nickname,
@@ -1464,6 +1525,20 @@ r.delete('/nicknames/:targetUserId', async (req, res) => {
       .delete()
       .eq('viewer_user_id', viewerId)
       .eq('target_user_id', targetId);
+
+    const groupId =
+      parseUuidParam(req.body?.group_id)
+      || (await resolveDirectGroupIdBetween(viewerId, targetId));
+    if (groupId) {
+      const viewerName = await userLabelForSystem(viewerId, 'Ai đó');
+      const targetName = targetUser?.full_name || targetUser?.email || 'đồng nghiệp';
+      await postMessengerSystemMessage(req.app.get('io'), {
+        groupId,
+        userId: viewerId,
+        content: `${viewerName} đã xóa biệt danh của ${targetName}`,
+      });
+    }
+
     res.json({
       target_user_id: targetId,
       nickname: null,
@@ -1518,6 +1593,15 @@ r.put('/groups/:groupId/nicknames/:targetUserId', async (req, res) => {
       { onConflict: 'viewer_user_id,group_id,target_user_id' },
     );
     if (error) return res.status(400).json({ error: error.message });
+
+    const viewerName = await userLabelForSystem(viewerId, 'Ai đó');
+    const targetName = targetUser.full_name || targetUser.email || 'thành viên';
+    await postMessengerSystemMessage(req.app.get('io'), {
+      groupId,
+      userId: viewerId,
+      content: `${viewerName} đã đặt biệt danh cho ${targetName} thành «${nickname}»`,
+    });
+
     res.json({
       group_id: groupId,
       target_user_id: targetId,
@@ -1553,6 +1637,15 @@ r.delete('/groups/:groupId/nicknames/:targetUserId', async (req, res) => {
       .eq('viewer_user_id', viewerId)
       .eq('group_id', groupId)
       .eq('target_user_id', targetId);
+
+    const viewerName = await userLabelForSystem(viewerId, 'Ai đó');
+    const targetName = targetUser?.full_name || targetUser?.email || 'thành viên';
+    await postMessengerSystemMessage(req.app.get('io'), {
+      groupId,
+      userId: viewerId,
+      content: `${viewerName} đã xóa biệt danh của ${targetName}`,
+    });
+
     res.json({
       group_id: groupId,
       target_user_id: targetId,
@@ -1714,6 +1807,158 @@ r.patch('/groups/:id/avatar', messengerMemoryUpload.single('file'), async (req, 
       io.to(`messenger_group:${gid}`).emit('messenger_group:updated', { group_id: gid, avatar: avatarUrl });
     }
     res.json({ avatar: avatarUrl });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+let _messengerChatWallpapersReady = null;
+
+async function ensureMessengerChatWallpapersTable() {
+  if (_messengerChatWallpapersReady === true) return true;
+  if (_messengerChatWallpapersReady === false) return false;
+  try {
+    await pgSessionQuery(`
+      CREATE TABLE IF NOT EXISTS messenger_chat_wallpapers (
+        viewer_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        group_id UUID NOT NULL REFERENCES messenger_groups(id) ON DELETE CASCADE,
+        wallpaper_url TEXT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (viewer_user_id, group_id)
+      )
+    `);
+    await pgSessionQuery(`
+      CREATE INDEX IF NOT EXISTS idx_messenger_chat_wallpapers_group
+        ON messenger_chat_wallpapers (group_id)
+    `);
+    _messengerChatWallpapersReady = true;
+    return true;
+  } catch {
+    _messengerChatWallpapersReady = false;
+    return false;
+  }
+}
+
+function isMissingChatWallpapersTableError(err) {
+  const msg = String(err?.message || err || '').toLowerCase();
+  const code = String(err?.code || '');
+  return (
+    code === '42P01'
+    || code === 'PGRST205'
+    || msg.includes('messenger_chat_wallpapers')
+    || (msg.includes('relation') && msg.includes('does not exist'))
+  );
+}
+
+/** GET hình nền chat (per-user) — đồng bộ web / app. */
+r.get('/groups/:id/wallpaper', async (req, res) => {
+  try {
+    const gid = req.params.id;
+    const uid = req.authUserId;
+    const ok = await assertGroupMember(gid, uid);
+    if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
+    const ready = await ensureMessengerChatWallpapersTable();
+    if (!ready) return res.json({ wallpaper_url: null });
+    const { data, error } = await supabase
+      .from('messenger_chat_wallpapers')
+      .select('wallpaper_url, updated_at')
+      .eq('viewer_user_id', uid)
+      .eq('group_id', gid)
+      .maybeSingle();
+    if (error) {
+      if (isMissingChatWallpapersTableError(error)) return res.json({ wallpaper_url: null });
+      throw error;
+    }
+    const url = data?.wallpaper_url ? String(data.wallpaper_url).trim() : null;
+    res.json({ wallpaper_url: url || null, updated_at: data?.updated_at || null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Đặt / xóa hình nền chat (per-user).
+ * - multipart `file` → upload ảnh
+ * - body `{ clear: true }` hoặc DELETE → về nền mặc định
+ * - body `{ wallpaper_url }` → gán URL đã có (ít dùng)
+ */
+r.put('/groups/:id/wallpaper', messengerMemoryUpload.single('file'), async (req, res) => {
+  try {
+    const gid = req.params.id;
+    const uid = req.authUserId;
+    const ok = await assertGroupMember(gid, uid);
+    if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
+    const ready = await ensureMessengerChatWallpapersTable();
+    if (!ready) return res.status(503).json({ error: 'Chưa sẵn sàng lưu hình nền — chạy migration 418' });
+
+    const clear = req.body?.clear === true || req.body?.clear === 'true' || req.body?.clear === '1';
+    let wallpaperUrl = null;
+
+    if (clear) {
+      wallpaperUrl = null;
+    } else if (req.file) {
+      const mime = (req.file.mimetype || '').toLowerCase();
+      if (!mime.startsWith('image/')) return res.status(400).json({ error: 'Chỉ chấp nhận file ảnh' });
+      const stored = await storeMessengerUploadedFile(gid, req.file);
+      wallpaperUrl = stored.url;
+    } else if (req.body?.wallpaper_url != null) {
+      const raw = String(req.body.wallpaper_url || '').trim();
+      wallpaperUrl = raw || null;
+    } else {
+      return res.status(400).json({ error: 'Thiếu file ảnh hoặc clear=true' });
+    }
+
+    const row = {
+      viewer_user_id: uid,
+      group_id: gid,
+      wallpaper_url: wallpaperUrl,
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabase
+      .from('messenger_chat_wallpapers')
+      .upsert(row, { onConflict: 'viewer_user_id,group_id' });
+    if (error) {
+      if (isMissingChatWallpapersTableError(error)) {
+        return res.status(503).json({ error: 'Bảng hình nền chưa tồn tại — chạy migration 418' });
+      }
+      throw error;
+    }
+
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`user:${uid}`).emit('messenger_chat:wallpaper', {
+        group_id: gid,
+        wallpaper_url: wallpaperUrl,
+      });
+    }
+    res.json({ wallpaper_url: wallpaperUrl });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.delete('/groups/:id/wallpaper', async (req, res) => {
+  try {
+    const gid = req.params.id;
+    const uid = req.authUserId;
+    const ok = await assertGroupMember(gid, uid);
+    if (!ok) return res.status(403).json({ error: 'Bạn không thuộc nhóm này' });
+    const ready = await ensureMessengerChatWallpapersTable();
+    if (!ready) return res.json({ wallpaper_url: null });
+    const { error } = await supabase
+      .from('messenger_chat_wallpapers')
+      .upsert({
+        viewer_user_id: uid,
+        group_id: gid,
+        wallpaper_url: null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'viewer_user_id,group_id' });
+    if (error && !isMissingChatWallpapersTableError(error)) throw error;
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`user:${uid}`).emit('messenger_chat:wallpaper', { group_id: gid, wallpaper_url: null });
+    }
+    res.json({ wallpaper_url: null });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

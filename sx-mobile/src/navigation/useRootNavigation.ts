@@ -21,13 +21,33 @@ export function useRootNavigation() {
     [navigation],
   );
 
+  const openOverdueProjects = useCallback(() => {
+    let nav: typeof navigation | undefined = navigation;
+    while (nav) {
+      const names = nav.getState?.()?.routeNames || [];
+      if (names.includes('OverdueProjects')) {
+        nav.navigate('OverdueProjects');
+        return;
+      }
+      nav = nav.getParent() as typeof navigation | undefined;
+    }
+  }, [navigation]);
+
   const openMessages = useCallback(
-    (tab: 'chats' | 'calls' = 'chats') => {
+    (_tab: 'chats' | 'calls' = 'chats') => {
       let nav: typeof navigation | undefined = navigation;
       while (nav) {
         const names = nav.getState?.()?.routeNames || [];
+        if (names.includes('Overview') && names.includes('Messages')) {
+          (nav as { navigate: (name: string) => void }).navigate('Messages');
+          return;
+        }
+        if (names.includes('Main')) {
+          nav.navigate('Main', { screen: 'Messages' });
+          return;
+        }
         if (names.includes('Messages')) {
-          nav.navigate('Messages', { tab });
+          nav.navigate('Messages', { tab: _tab });
           return;
         }
         nav = nav.getParent() as typeof navigation | undefined;
@@ -36,5 +56,5 @@ export function useRootNavigation() {
     [navigation],
   );
 
-  return { openProjectDetail, openMessages, navigation };
+  return { openProjectDetail, openOverdueProjects, openMessages, navigation };
 }

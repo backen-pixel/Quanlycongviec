@@ -3,6 +3,8 @@ import type { MessengerMessage } from '../types/messenger';
 export const MESSAGE_CLUSTER_MS = 60_000;
 
 export function isSameSenderCluster(a: MessengerMessage, b: MessengerMessage): boolean {
+  if (a.is_system || b.is_system) return false;
+  if (a.message_type === 'call' || b.message_type === 'call') return false;
   if (String(a.user_id) !== String(b.user_id)) return false;
   const ta = new Date(a.created_at).getTime();
   const tb = new Date(b.created_at).getTime();
@@ -26,7 +28,9 @@ export function getMessageClusterMeta(
   myUserId: string,
   isGroupChat: boolean,
 ): MessageClusterMeta {
-  if (!isGroupChat || String(item.user_id) === String(myUserId)) {
+  const mine = String(item.user_id) === String(myUserId);
+  // Tin của mình: không avatar/tên; thời gian vẫn dưới bubble (meta).
+  if (mine) {
     return {
       showAvatar: false,
       showSenderName: false,
@@ -36,16 +40,19 @@ export function getMessageClusterMeta(
     };
   }
 
+  // Tin đến (1-1 và nhóm): gom cụm + avatar/tên như ảnh Zalo.
   const older = listData[index + 1];
   const newer = listData[index - 1];
   const sameClusterAsOlder = older ? isSameSenderCluster(item, older) : false;
   const sameClusterAsNewer = newer ? isSameSenderCluster(item, newer) : false;
+  const isHead = !sameClusterAsOlder;
 
   return {
-    showAvatar: !sameClusterAsOlder,
-    showSenderName: !sameClusterAsOlder,
-    showClusterDivider: !sameClusterAsOlder && index < listData.length - 1,
+    showAvatar: isHead,
+    showSenderName: isHead,
+    showClusterDivider: isGroupChat && isHead && index < listData.length - 1,
     clusterTight: sameClusterAsNewer,
-    showTimeInBubble: !sameClusterAsNewer,
+    // 1-1: giờ trên tin đầu cụm (như ảnh); nhóm: giờ trên tin cuối cụm
+    showTimeInBubble: isGroupChat ? !sameClusterAsNewer : isHead,
   };
 }

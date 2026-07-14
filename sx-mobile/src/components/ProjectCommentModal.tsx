@@ -26,15 +26,14 @@ import {
   userInitials,
 } from '../lib/commentUtils';
 import {
-  fetchProjectComments,
-  postProjectComment,
-  toggleProjectCommentReaction,
-  type ProjectComment,
-} from '../lib/productionApi';
-import {
-  fetchNotificationPrefs,
-  isCommentShowOnScreenEnabled,
-} from '../lib/notificationPrefs';
+  fetchThreadComments,
+  postThreadComment,
+  resolveCommentSource,
+  toggleThreadCommentReaction,
+} from '../lib/commentApi';
+import { fetchDealIdForProject } from '../lib/projectDetailApi';
+import type { ProjectComment } from '../lib/productionApi';
+import CommentAttachmentsBlock from './CommentAttachmentsBlock';
 import TapHighlight from './TapHighlight';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
@@ -56,12 +55,13 @@ type Props = {
 export default function ProjectCommentModal({ visible, project, onClose, onPosted }: Props) {
   const { colors } = useTheme();
   const { user } = useAuth();
-  const { subscribeComment, subscribeSync } = useNotifications();
+  const { subscribeSync, joinLeadRoom, leaveLeadRoom } = useNotifications();
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
   const onPostedRef = useRef(onPosted);
   onPostedRef.current = onPosted;
 
+  const [dealId, setDealId] = useState<string | null>(null);
   const [comments, setComments] = useState<ProjectComment[]>([]);
   const [loading, setLoading] = useState(false);
   const [sort, setSort] = useState<SortMode>('newest');
@@ -71,7 +71,11 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
   const [reactionBusy, setReactionBusy] = useState<string | null>(null);
   const [reactionPickerId, setReactionPickerId] = useState<string | null>(null);
   const [err, setErr] = useState('');
-  const [showOnScreen, setShowOnScreen] = useState(true);
+
+  const source = useMemo(
+    () => (project?.id ? resolveCommentSource(project.id, dealId) : null),
+    [project?.id, dealId],
+  );
 
   const styles = useMemo(
     () =>
@@ -235,18 +239,10 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
   );
 
   const loadComments = useCallback(async (silent = false) => {
-    if (!project?.id) return;
+    if (!source) return;
     if (!silent) setLoading(true);
     try {
-      const prefs = await fetchNotificationPrefs();
-      const allowed = isCommentShowOnScreenEnabled(prefs);
-      setShowOnScreen(allowed);
-      if (!allowed) {
-        setComments([]);
-        onPostedRef.current(0);
-        return;
-      }
-      const rows = await fetchProjectComments(project.id);
+      const rows = await fetchThreadComments(source);
       setComments(rows);
       onPostedRef.current(rows.length);
     } catch (e) {
@@ -254,38 +250,62 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [project?.id]);
-
-  useEffect(() => {
-    if (!visible || !project?.id || !showOnScreen) return undefined;
-    return subscribeSync((evt) => {
-      if (evt.type !== 'project:comment_changed') return;
-      if (String(evt.payload.project_id || '') !== String(project.id)) return;
-      void loadComments(true);
-    });
-  }, [visible, project?.id, showOnScreen, loadComments, subscribeSync]);
-
-  useEffect(() => {
-    if (!visible || !project?.id || !showOnScreen) return undefined;
-    return subscribeComment((n) => {
-      const pid = n.metadata?.project_id ? String(n.metadata.project_id) : n.entity_id ? String(n.entity_id) : '';
-      if (pid !== String(project.id)) return;
-      void loadComments(true);
-    });
-  }, [visible, project?.id, showOnScreen, loadComments, subscribeComment]);
+  }, [source]);
 
   useEffect(() => {
     if (!visible || !project?.id) {
+      setDealId(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const fromDeals = Array.isArray((project as { crmDeals?: { id?: string; type?: string }[] }).crmDeals)
+        ? (project as { crmDeals?: { id?: string; type?: string }[] }).crmDeals
+        : null;
+      const direct =
+        fromDeals?.find((d) => String(d?.type || '') === 'deal')?.id
+        || fromDeals?.[0]?.id
+        || null;
+      const resolved = direct || (await fetchDealIdForProject(project.id));
+      if (!cancelled) setDealId(resolved);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, project]);
+
+  useEffect(() => {
+    if (!visible || !dealId) return undefined;
+    joinLeadRoom(dealId);
+    return () => leaveLeadRoom(dealId);
+  }, [visible, dealId, joinLeadRoom, leaveLeadRoom]);
+
+  useEffect(() => {
+    if (!visible || !source) return undefined;
+    return subscribeSync((evt) => {
+      if (source.kind === 'lead') {
+        if (evt.type !== 'lead:comment_changed') return;
+        if (String(evt.payload.lead_id || '') !== String(source.leadId)) return;
+        void loadComments(true);
+        return;
+      }
+      if (evt.type !== 'project:comment_changed') return;
+      if (String(evt.payload.project_id || '') !== String(source.projectId)) return;
+      void loadComments(true);
+    });
+  }, [visible, source, loadComments, subscribeSync]);
+
+  useEffect(() => {
+    if (!visible || !source) {
       setComments([]);
       setBody('');
       setReplyTo(null);
       setReactionPickerId(null);
       setErr('');
-      setShowOnScreen(true);
       return;
     }
     void loadComments(false);
-  }, [visible, project?.id, loadComments]);
+  }, [visible, source, loadComments]);
 
   const commentById = useMemo(() => {
     const m = new Map<string, ProjectComment>();
@@ -308,11 +328,11 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
 
   const submit = async () => {
     const text = body.trim();
-    if (!text || !project) return;
+    if (!text || !source) return;
     setPosting(true);
     setErr('');
     try {
-      await postProjectComment(project.id, text, replyTo?.id ?? null);
+      await postThreadComment(source, text, replyTo?.id ?? null);
       setBody('');
       setReplyTo(null);
       await loadComments(true);
@@ -325,10 +345,10 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
   };
 
   const pickReaction = async (comment: ProjectComment, emoji: string) => {
-    if (!project || reactionBusy) return;
+    if (!source || reactionBusy) return;
     setReactionBusy(comment.id);
     try {
-      const reactions = await toggleProjectCommentReaction(project.id, comment.id, emoji);
+      const reactions = await toggleThreadCommentReaction(source, comment.id, emoji);
       setComments((prev) =>
         prev.map((c) => (c.id === comment.id ? { ...c, reactions: reactions || c.reactions } : c)),
       );
@@ -380,6 +400,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
               {isAuthor ? <Text style={styles.authorTag}>Tác giả</Text> : null}
             </View>
             <Text style={styles.content}>{item.content}</Text>
+            <CommentAttachmentsBlock attachments={item.attachments} />
           </View>
 
           <View style={styles.metaRow}>
@@ -496,14 +517,6 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
                 <ActivityIndicator color={colors.primary} />
                 <Text style={styles.emptyText}>Đang tải bình luận…</Text>
               </View>
-            ) : !showOnScreen ? (
-              <View style={styles.emptyWrap}>
-                <Ionicons name="notifications-outline" size={36} color={colors.textFaint} />
-                <Text style={styles.emptyText}>Đã tắt hiện bình luận trên màn hình</Text>
-                <Text style={styles.emptyHint}>
-                  Bình luận mới vẫn vào chuông Thông báo. Bật lại trong Cài đặt thông báo trên web.
-                </Text>
-              </View>
             ) : flatList.length === 0 ? (
               <View style={styles.emptyWrap}>
                 <Ionicons name="chatbubbles-outline" size={36} color={colors.textFaint} />
@@ -515,7 +528,7 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
             )}
           </ScrollView>
 
-          {showOnScreen && replyTo ? (
+          {replyTo ? (
             <View style={styles.replyBar}>
               <Text style={styles.replyText} numberOfLines={1}>
                 Trả lời <Text style={styles.replyName}>{replyTo.name}</Text>
@@ -526,7 +539,6 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
             </View>
           ) : null}
 
-          {showOnScreen ? (
           <View style={styles.composer}>
             <View style={styles.composerRow}>
               <TextInput
@@ -556,7 +568,6 @@ export default function ProjectCommentModal({ visible, project, onClose, onPoste
               </TouchableOpacity>
             </View>
           </View>
-          ) : null}
         </View>
       </KeyboardAvoidingView>
     </Modal>

@@ -1,12 +1,15 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  DeviceEventEmitter,
   FlatList,
+  ImageBackground,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -36,6 +39,13 @@ import { useMessenger } from '../context/MessengerContext';
 import { getAppSocket, subscribeAppSocket } from '../lib/appSocket';
 import { useTheme } from '../context/ThemeContext';
 import {
+  getChatWallpaperValue,
+  syncChatWallpaperFromServer,
+  wallpaperBackgroundColor,
+  wallpaperImageUri,
+  type ChatWallpaper,
+} from '../lib/chatWallpaperStorage';
+import {
   fetchMessengerGroupDetail,
   fetchReadReceipts,
   formatMessageTime,
@@ -44,7 +54,6 @@ import {
   type MessengerGroupMember,
 } from '../lib/messengerApi';
 import { getMessageClusterMeta } from '../lib/messengerMessageCluster';
-import { isMessengerCallLogMessage } from '../lib/messengerCallLog';
 import {
   buildStickerContent,
   isSameDay,
@@ -65,6 +74,7 @@ import { canRecallMessage, shareMessengerMessage } from '../lib/messengerShare';
 import { setMessengerFileForwardContext } from '../lib/messengerFileForwardContext';
 import { sendMessengerWithFiles } from '../lib/messengerUpload';
 import { Overlay } from '../lib/floatingBubbleOverlay';
+import { SX_OPEN_CHAT_SEARCH } from '../lib/messengerEvents';
 import { avatarColorFromName, getMessengerColors } from '../lib/messengerTheme';
 import type { RootStackParamList } from '../navigation/RootNavigator';
 import { Spacing } from '../theme';
@@ -125,8 +135,24 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [seenRevealedId, setSeenRevealedId] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
+  const [wallpaper, setWallpaper] = useState<ChatWallpaper>({ type: 'none' });
   const listRef = useRef<FlatList<MessengerMessage>>(null);
   const initialScrollDone = useRef(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      let alive = true;
+      void getChatWallpaperValue(threadId).then((w) => {
+        if (alive) setWallpaper(w);
+      });
+      void syncChatWallpaperFromServer(threadId).then((w) => {
+        if (alive) setWallpaper(w);
+      });
+      return () => {
+        alive = false;
+      };
+    }, [threadId]),
+  );
 
   const peerPresence: UserPresence | null = thread?.peerId
     ? getPeerPresence(thread.peerId)
@@ -166,7 +192,7 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
   }, [messages]);
 
   const visibleMessages = useMemo(
-    () => messages.filter((m) => !m.is_system || isMessengerCallLogMessage(m)),
+    () => messages,
     [messages],
   );
 
@@ -276,6 +302,17 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
     setSearchOpen(true);
     navigation.setParams({ openSearch: undefined });
   }, [openSearchParam, navigation]);
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(
+      SX_OPEN_CHAT_SEARCH,
+      (payload?: { threadId?: string }) => {
+        if (payload?.threadId && String(payload.threadId) !== String(threadId)) return;
+        setSearchOpen(true);
+      },
+    );
+    return () => sub.remove();
+  }, [threadId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -607,7 +644,7 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
       StyleSheet.create({
         root: { flex: 1, backgroundColor: colors.bg },
         body: { flex: 1 },
-        listWrap: { flex: 1 },
+        listWrap: { flex: 1, overflow: 'hidden' },
         list: { paddingHorizontal: Spacing.lg, paddingVertical: 12 },
         center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
         replyPreview: {
@@ -731,7 +768,15 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
             <ActivityIndicator size="large" color={mc.accent} />
           </View>
         ) : (
-          <View style={styles.listWrap}>
+          <View style={[styles.listWrap, wallpaperBackgroundColor(wallpaper) ? { backgroundColor: wallpaperBackgroundColor(wallpaper)! } : null]}>
+            {wallpaperImageUri(wallpaper) ? (
+              <ImageBackground
+                source={{ uri: wallpaperImageUri(wallpaper)! }}
+                style={StyleSheet.absoluteFillObject}
+                resizeMode="cover"
+                imageStyle={{ opacity: 0.35 }}
+              />
+            ) : null}
             <Text style={styles.swipeHint}>Vuốt tin sang để trả lời · Nhấn giữ để tùy chọn</Text>
             <FlatList
               ref={listRef}
@@ -740,6 +785,10 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
               data={listData}
               keyExtractor={(item) => item.id}
               contentContainerStyle={styles.list}
+              initialNumToRender={15}
+              maxToRenderPerBatch={12}
+              windowSize={11}
+              removeClippedSubviews
               maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="on-drag"

@@ -1,4 +1,4 @@
-﻿const { Router } = require('express');
+const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/newPermission');
@@ -103,7 +103,7 @@ const {
   normalizePipelineStageApiRow,
   mapSwitchWorkshopTypeBodyToDb,
 } = require('../helpers/productionPipelineSchema');
-const { normalizePipelineStageSlaDaysForDb, isSxProjectDateOverdue } = require('../helpers/crmPipelineSla');
+const { normalizePipelineStageSlaDaysForDb, isSxProjectDateOverdue, isSxProjectDeliveryDateOverdue } = require('../helpers/crmPipelineSla');
 const { computeSxRevenueKpis, resolveSxProjectValue, resolveSxProjectDeposit, resolveSxProjectRemaining } = require('../helpers/sxPipelineRevenue');
 const {
   leadDocVisibleForModuleAndUser,
@@ -1484,7 +1484,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       progress: calcTaskProgress(project.tasks),
       task_total: project.tasks?.length || 0,
       done_tasks: project.tasks?.filter((task) => task.status === 'done').length || 0,
-      is_overdue: isSxProjectDateOverdue(project, 'deadline'),
+      is_overdue: isSxProjectDeliveryDateOverdue(project, project.sx_pipeline_stage),
       is_production_overdue: isSxProjectDateOverdue(project, 'production_deadline'),
       is_delivery_overdue: isSxProjectDateOverdue(project, 'delivery_date'),
     }));

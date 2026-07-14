@@ -288,6 +288,13 @@ export function shouldIgnoreSxOrderDeliveryOverdue(stage) {
   return false;
 }
 
+/** So sánh theo ngày lịch (local) — khớp view Deadline «Quá hạn». */
+function startOfLocalDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
 /** Mức cảnh báo ngày giao / deadline đặt hàng — null nếu không có ngày. */
 export function getSxOrderDeliveryDateUrgency(dateIso, stage) {
   if (!dateIso) return null;
@@ -296,7 +303,8 @@ export function getSxOrderDeliveryDateUrgency(dateIso, stage) {
   if (shouldIgnoreSxOrderDeliveryOverdue(stage)) {
     return { level: 'ok', overdue: false, soon: false };
   }
-  const overdue = dd < new Date();
+  // Quá hạn = trước hôm nay (theo ngày), không tính «hôm nay đã qua giờ».
+  const overdue = startOfLocalDay(dd).getTime() < startOfLocalDay(new Date()).getTime();
   const soon = !overdue && dd < new Date(Date.now() + 3 * 86400000);
   return {
     level: overdue ? 'overdue' : soon ? 'soon' : 'ok',
@@ -310,7 +318,10 @@ export function isSxProjectDeliveryDateOverdue(project, stage) {
   if (shouldIgnoreSxOrderDeliveryOverdue(st)) return false;
   const raw = project?.delivery_date || project?.production_deadline || project?.deadline;
   if (!raw || project?.status === 'completed') return false;
-  return new Date(raw) < new Date();
+  const t = new Date(raw);
+  if (Number.isNaN(t.getTime())) return false;
+  // Khớp cột Deadline: chỉ quá hạn khi ngày hạn < hôm nay (không tính cùng ngày).
+  return startOfLocalDay(t).getTime() < startOfLocalDay(new Date()).getTime();
 }
 
 /** SLA cột pipeline SX — null nếu không áp dụng. */

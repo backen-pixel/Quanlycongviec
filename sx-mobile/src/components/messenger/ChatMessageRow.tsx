@@ -2,6 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useMemo, useRef } from 'react';
 import {
   Animated,
+  Alert,
   Dimensions,
   Image,
   Linking,
@@ -23,7 +24,8 @@ import {
   stripStickerPrefix,
 } from '../../lib/messengerMedia';
 import { messageDisplayText, formatReplyPreview } from '../../lib/messengerPreview';
-import { callLogDisplayText, isMessengerCallLogMessage } from '../../lib/messengerCallLog';
+import { callLogDisplayText, extractCallLogPayloadFromMessage, isMessengerCallLogMessage } from '../../lib/messengerCallLog';
+import { alertCallFeatureLocked } from '../../lib/callFeatureLock';
 import { groupReactions } from '../../lib/messengerReactions';
 import {
   formatMessageSeenLabel,
@@ -125,8 +127,11 @@ export default function ChatMessageRow({
   );
 
   const senderName = senderDisplayName(item);
-  const senderColor = senderNameColor(item.user_id, senderName);
-  const groupIncoming = isGroupChat && !mine;
+  const senderColor = isGroupChat
+    ? senderNameColor(item.user_id, senderName)
+    : (isDark ? '#FFFFFF' : '#111827');
+  /** Tin đến (1-1 hoặc nhóm): avatar + tên trong bubble + giờ trong bubble. */
+  const peerIncoming = !mine;
   const seenBy = useMemo(
     () => (mine ? getSeenByForMessage(item, readReceipts, myId, groupMembers) : []),
     [mine, item, readReceipts, myId, groupMembers],
@@ -163,15 +168,19 @@ export default function ChatMessageRow({
     }),
   ).current;
 
+  const peerBubbleBg = isDark ? '#2C2F36' : '#F1F5F9';
+  const peerBubbleRadius = peerIncoming ? 16 : 18;
+
   const styles = useMemo(
     () =>
       StyleSheet.create({
         row: {
           flexDirection: 'row',
-          marginBottom: clusterTight ? 4 : 10,
+          marginBottom: clusterTight ? 3 : 10,
           justifyContent: mine ? 'flex-end' : 'flex-start',
-          alignItems: groupIncoming ? 'flex-start' : 'flex-end',
+          alignItems: peerIncoming ? 'flex-start' : 'flex-end',
           gap: 8,
+          paddingHorizontal: 4,
         },
         clusterDivider: {
           height: StyleSheet.hairlineWidth,
@@ -181,7 +190,7 @@ export default function ChatMessageRow({
           marginBottom: 10,
           opacity: 0.85,
         },
-        avatarSlot: { width: 34, flexShrink: 0 },
+        avatarSlot: { width: 36, flexShrink: 0, marginTop: 2 },
         col: { maxWidth: SW * 0.78, flexShrink: 1 },
         senderNameInBubble: {
           fontSize: 13,
@@ -215,19 +224,18 @@ export default function ChatMessageRow({
         },
         timeInBubble: {
           fontSize: 11,
-          color: colors.textFaint,
-          marginTop: 4,
+          color: isDark ? '#6B7280' : colors.textFaint,
+          marginTop: 6,
           alignSelf: 'flex-start',
         },
         bubble: {
           paddingHorizontal: 14,
           paddingVertical: 10,
-          borderRadius: 18,
-          borderBottomRightRadius: mine ? 4 : 18,
-          borderBottomLeftRadius: mine ? 18 : 4,
-          backgroundColor: mine ? mc.bubbleOut : mc.bubbleIn,
-          borderWidth: mine ? 0 : 1,
-          borderColor: mc.bubbleInBorder,
+          borderRadius: peerIncoming ? peerBubbleRadius : 18,
+          borderBottomRightRadius: mine ? 4 : peerBubbleRadius,
+          borderBottomLeftRadius: mine ? 18 : peerBubbleRadius,
+          backgroundColor: mine ? mc.bubbleOut : peerBubbleBg,
+          borderWidth: 0,
           overflow: 'hidden',
         },
         mediaBubble: { padding: 0, backgroundColor: 'transparent', borderWidth: 0 },
@@ -236,12 +244,11 @@ export default function ChatMessageRow({
           marginTop: 6,
           paddingHorizontal: 14,
           paddingVertical: 10,
-          borderRadius: 18,
-          borderBottomRightRadius: mine ? 4 : 18,
-          borderBottomLeftRadius: mine ? 18 : 4,
-          backgroundColor: mine ? mc.bubbleOut : mc.bubbleIn,
-          borderWidth: mine ? 0 : 1,
-          borderColor: mc.bubbleInBorder,
+          borderRadius: peerIncoming ? peerBubbleRadius : 18,
+          borderBottomRightRadius: mine ? 4 : peerBubbleRadius,
+          borderBottomLeftRadius: mine ? 18 : peerBubbleRadius,
+          backgroundColor: mine ? mc.bubbleOut : peerBubbleBg,
+          borderWidth: 0,
         },
         videoWrap: {
           width: SW * 0.62,
@@ -267,7 +274,7 @@ export default function ChatMessageRow({
           borderColor: colors.border,
         },
         recalledTxt: { color: colors.textMuted, fontSize: 13, fontStyle: 'italic' },
-        text: { color: mine ? '#FFFFFF' : colors.text, fontSize: 15, lineHeight: 21 },
+        text: { color: mine ? '#FFFFFF' : isDark ? '#FFFFFF' : colors.text, fontSize: 15, lineHeight: 21 },
         link: { color: mine ? '#BFDBFE' : mc.accent, textDecorationLine: 'underline' },
         meta: {
           flexDirection: 'row',
@@ -300,7 +307,58 @@ export default function ChatMessageRow({
         reactionPillMine: { borderColor: mc.accent },
         reactionEmoji: { fontSize: 13 },
         reactionCount: { fontSize: 10, color: colors.textMuted, fontWeight: '700' },
-        callLogRow: { alignItems: 'center', marginVertical: 8, paddingHorizontal: 12 },
+        callLogRow: {
+          flexDirection: 'row',
+          alignItems: 'flex-end',
+          gap: 10,
+          marginVertical: 8,
+          paddingHorizontal: 12,
+          maxWidth: '100%',
+        },
+        callLogRowMine: { justifyContent: 'flex-end' },
+        eventRowCenter: {
+          alignItems: 'center',
+          marginVertical: 8,
+          paddingHorizontal: 16,
+        },
+        callCard: {
+          maxWidth: SW * 0.78,
+          minWidth: 210,
+          backgroundColor: isDark ? colors.card : '#F1F5F9',
+          borderRadius: 18,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: colors.border,
+          overflow: 'hidden',
+        },
+        callCardBody: {
+          flexDirection: 'row',
+          alignItems: 'flex-start',
+          gap: 12,
+          paddingHorizontal: 14,
+          paddingTop: 12,
+          paddingBottom: 12,
+        },
+        callCardIconWrap: {
+          width: 40,
+          height: 40,
+          borderRadius: 20,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: isDark ? '#2A3140' : '#E2E8F0',
+        },
+        callCardTextCol: { flex: 1, minWidth: 0, gap: 3 },
+        callCardTitle: { fontSize: 14, fontWeight: '800', color: colors.text },
+        callCardKind: { color: colors.textMuted, fontSize: 13, fontWeight: '500', lineHeight: 18 },
+        callCardTime: { color: colors.textFaint, fontSize: 11, marginTop: 2 },
+        callCardAction: {
+          marginHorizontal: 10,
+          marginBottom: 10,
+          borderRadius: 12,
+          paddingVertical: 10,
+          alignItems: 'center',
+          backgroundColor: isDark ? '#2A3140' : '#E2E8F0',
+        },
+        callCardActionTxt: { color: colors.text, fontSize: 14, fontWeight: '800' },
         callLogPill: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -318,7 +376,7 @@ export default function ChatMessageRow({
         callLogText: { color: isDark ? '#6EE7B7' : '#047857', fontSize: 12, fontWeight: '600' },
         callLogTime: { color: isDark ? '#34D399' : '#10B981', fontSize: 11 },
       }),
-    [colors, isDark, mc, mine, clusterTight, groupIncoming],
+    [colors, isDark, mc, mine, clusterTight, peerIncoming, peerBubbleBg, peerBubbleRadius],
   );
 
   const renderRichText = (text: string) => (
@@ -333,19 +391,19 @@ export default function ChatMessageRow({
     />
   );
 
-  const senderLabel = showSenderName && groupIncoming ? (
+  const senderLabel = showSenderName && peerIncoming ? (
     <Text style={[styles.senderNameMedia, { color: senderColor }]} numberOfLines={1}>
       {senderName}
     </Text>
   ) : null;
 
-  const senderLabelInBubble = showSenderName && groupIncoming ? (
+  const senderLabelInBubble = showSenderName && peerIncoming ? (
     <Text style={[styles.senderNameInBubble, { color: senderColor }]} numberOfLines={1}>
       {senderName}
     </Text>
   ) : null;
 
-  const timeInBubbleEl = groupIncoming && showTimeInBubble ? (
+  const timeInBubbleEl = peerIncoming && showTimeInBubble ? (
     <Text style={styles.timeInBubble}>{timeStr}</Text>
   ) : null;
 
@@ -508,12 +566,95 @@ export default function ChatMessageRow({
   };
 
   if (isCallLog) {
+    const payload = extractCallLogPayloadFromMessage(item);
+    const isVideo = payload?.kind === 'video';
+    const kindLabel = isVideo ? 'Cuộc gọi video' : 'Cuộc gọi thoại';
+    const callerId = String(payload?.callerId || payload?.hostId || '');
+    const isOutgoing = !!(myId && callerId && String(myId) === callerId);
+    const status = payload?.status || 'completed';
+    const missedLike = status === 'missed' || status === 'cancelled' || status === 'rejected' || status === 'busy';
+
+    let title = callLogText || 'Cuộc gọi';
+    let titleColor = colors.text;
+    if (!isOutgoing && (status === 'missed' || status === 'cancelled')) {
+      title = 'Bạn bị nhỡ';
+      titleColor = '#DC2626';
+    } else if (isOutgoing && status === 'missed') {
+      title = 'Không trả lời';
+      titleColor = '#EA580C';
+    } else if (status === 'completed') {
+      title = isOutgoing ? 'Cuộc gọi đi' : 'Cuộc gọi đến';
+      titleColor = colors.text;
+    } else if (status === 'rejected') {
+      title = isOutgoing ? 'Bị từ chối' : 'Đã từ chối';
+      titleColor = '#DC2626';
+    }
+
+    const peerName = senderName || 'Liên hệ';
+    const showPeerAvatar = !mine;
+    const durationLabel =
+      status === 'completed' && payload?.durationSec
+        ? ` · ${Math.floor((payload.durationSec || 0) / 60)}:${String((payload.durationSec || 0) % 60).padStart(2, '0')}`
+        : '';
+
     return (
-      <View style={styles.callLogRow}>
-        <View style={styles.callLogPill}>
-          <Ionicons name="call" size={12} color={isDark ? '#6EE7B7' : '#047857'} />
-          <Text style={styles.callLogText}>{callLogText}</Text>
-          <Text style={styles.callLogTime}> · {timeStr}</Text>
+      <View style={[styles.callLogRow, mine && styles.callLogRowMine]}>
+        {showPeerAvatar ? (
+          <Avatar
+            name={peerName}
+            size={40}
+            color={avatarColorFromName(peerName)}
+            avatarUrl={senderAvatarUrl(item)}
+          />
+        ) : null}
+        <View style={styles.callCard}>
+          <View style={styles.callCardBody}>
+            <View style={styles.callCardIconWrap}>
+              <Ionicons
+                name={missedLike ? 'call' : isVideo ? 'videocam' : 'call'}
+                size={18}
+                color={missedLike ? '#DC2626' : colors.text}
+              />
+            </View>
+            <View style={styles.callCardTextCol}>
+              <Text style={[styles.callCardTitle, { color: titleColor }]} numberOfLines={2}>
+                {title}
+              </Text>
+              <Text style={styles.callCardKind} numberOfLines={2}>
+                {kindLabel}
+                {durationLabel}
+              </Text>
+              <Text style={styles.callCardTime}>{timeStr}</Text>
+            </View>
+          </View>
+          <Pressable style={styles.callCardAction} onPress={() => alertCallFeatureLocked(Alert)}>
+            <Text style={styles.callCardActionTxt}>Gọi lại</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  const isSystemEvent = !recalled && !!item.is_system;
+  if (isSystemEvent) {
+    const content = String(item.content || '').trim() || 'Thông báo hệ thống';
+    const isNick = /biệt danh/i.test(content);
+    const title = isNick ? 'Biệt danh' : 'Thông báo';
+    const iconName = isNick ? 'pencil' : 'information-circle-outline';
+
+    return (
+      <View style={styles.eventRowCenter}>
+        <View style={[styles.callCard, { alignSelf: 'center', maxWidth: SW * 0.88 }]}>
+          <View style={styles.callCardBody}>
+            <View style={styles.callCardIconWrap}>
+              <Ionicons name={iconName as 'pencil'} size={18} color={mc.accent} />
+            </View>
+            <View style={styles.callCardTextCol}>
+              <Text style={styles.callCardTitle}>{title}</Text>
+              <Text style={styles.callCardKind}>{content}</Text>
+              <Text style={styles.callCardTime}>{timeStr}</Text>
+            </View>
+          </View>
         </View>
       </View>
     );
@@ -523,12 +664,12 @@ export default function ChatMessageRow({
     <View>
       {showClusterDivider ? <View style={styles.clusterDivider} /> : null}
       <View style={styles.row}>
-      {!mine && isGroupChat ? (
+      {!mine ? (
         <View style={styles.avatarSlot}>
           {showAvatar ? (
             <Avatar
               name={senderName}
-              size={34}
+              size={36}
               color={avatarColorFromName(senderName)}
               avatarUrl={senderAvatarUrl(item)}
             />
@@ -566,10 +707,10 @@ export default function ChatMessageRow({
           </View>
         ) : null}
 
-        {!groupIncoming ? (
-          <Pressable style={styles.meta} onPress={mine ? tapMine : undefined} disabled={!mine}>
+        {mine ? (
+          <Pressable style={styles.meta} onPress={tapMine}>
             <Text style={styles.time}>{timeStr}</Text>
-            {mine && seenRevealed ? (
+            {seenRevealed ? (
               isGroupChat ? (
                 <Pressable
                   onPress={(e) => {

@@ -48,6 +48,10 @@ export type MessengerMessage = {
   user?: {
     id?: string;
     full_name?: string | null;
+    display_name?: string | null;
+    nickname?: string | null;
+    group_nickname?: string | null;
+    contact_nickname?: string | null;
     avatar?: string | null;
   } | null;
 };

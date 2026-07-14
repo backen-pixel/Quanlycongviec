@@ -118,7 +118,10 @@ function AppShell() {
     [colors, isDark],
   );
 
-  if (otaPhase === 'checking' || otaPhase === 'downloading') {
+  // Chỉ chặn UI khi đang TẢI bản OTA mới. Giai đoạn "checking" chạy nền để app
+  // hiển thị ngay (dùng dữ liệu/đăng nhập đã cache) — nếu có bản mới, phase sẽ
+  // chuyển sang "downloading" và tự reload.
+  if (otaPhase === 'downloading') {
     return <OtaBlockingScreen phase={otaPhase} />;
   }
 
