@@ -11,7 +11,7 @@ import { FbCrmAvatar, FbCrmCommentComposer, formatCrmCommentFullDateTime, format
 import { upsertComment, CommentAttachmentsBlock, CrmLeadCommentsPanel } from './CommentsPanels';
 import { FilePreview, FileUploadButton } from './FileUpload';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
-import { shouldHideSxKanbanDeadlineOnCard, shouldIgnoreSxOrderDeliveryOverdue } from '../lib/sxPipelineRevenue';
+import { shouldHideSxKanbanDeadlineOnCard, resolveSxDeadlineBucket } from '../lib/sxPipelineRevenue';
 import { formatStaffDisplayName, getStaffInitials } from '../lib/utils';
 import { resolveSxProjectLeadId, resolveSxProjectLeadIdAsync } from '../lib/sxProjectComments';
 import {
@@ -1120,33 +1120,6 @@ function startOfDay(d) {
   return x;
 }
 
-function resolveSxDeadlineBucket(item, todayMs) {
-  const raw = item.delivery_date || item.production_deadline || item.deadline;
-  if (!raw) return { bucket: 'none', ts: null, source: null };
-  const t = new Date(raw).getTime();
-  if (!Number.isFinite(t)) return { bucket: 'none', ts: null, source: null };
-  const source = item.delivery_date
-    ? 'delivery_date'
-    : (item.production_deadline ? 'production_deadline' : 'deadline');
-  const today = startOfDay(new Date(todayMs));
-  const dayMs = 86400000;
-  const diffDays = Math.floor((startOfDay(t).getTime() - today.getTime()) / dayMs);
-  if (diffDays < 0) {
-    if (shouldIgnoreSxOrderDeliveryOverdue(item.sx_pipeline_stage)) {
-      return { bucket: 'later', ts: t, source };
-    }
-    return { bucket: 'overdue', ts: t, source };
-  }
-  if (diffDays === 0) return { bucket: 'today', ts: t, source };
-  const dow = today.getDay() === 0 ? 7 : today.getDay();
-  const daysToEndOfWeek = 7 - dow;
-  if (diffDays <= daysToEndOfWeek) return { bucket: 'this_week', ts: t, source };
-  if (diffDays <= daysToEndOfWeek + 7) return { bucket: 'next_week', ts: t, source };
-  const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getTime();
-  if (t <= endOfMonth) return { bucket: 'this_month', ts: t, source };
-  return { bucket: 'later', ts: t, source };
-}
-
 /** Trả về ISO date YYYY-MM-DD đại diện cho bucket khi kéo-thả. null = clear. */
 function targetDateForSxBucket(bucketKey) {
   const fmt = (d) => {
@@ -1239,7 +1212,7 @@ export function ProductionDeadlineView({ pipeline }) {
     pipeline.forEach((s) => {
       s.items.forEach((item) => {
         if (shouldHideSxKanbanDeadlineOnCard(item, s)) return;
-        let { bucket, ts, source } = resolveSxDeadlineBucket(item, todayMs);
+        let { bucket, ts, source } = resolveSxDeadlineBucket(item, todayMs, s);
         const ovr = localOverride[String(item.id)];
         if (ovr) {
           bucket = ovr.bucket;

@@ -153,6 +153,56 @@ export function resolveSxProjectProbability(project, stage, dealProbability) {
   return null;
 }
 
+function startOfLocalDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+/**
+ * Bucket deadline view SX — khớp ProductionDeadlineView.
+ * Ưu tiên delivery_date → production_deadline → deadline.
+ */
+export function resolveSxDeadlineBucket(item, todayMs = Date.now(), stage = null) {
+  const raw = item?.delivery_date || item?.production_deadline || item?.deadline;
+  if (!raw) return { bucket: 'none', ts: null, source: null };
+  const t = new Date(raw).getTime();
+  if (!Number.isFinite(t)) return { bucket: 'none', ts: null, source: null };
+  const source = item.delivery_date
+    ? 'delivery_date'
+    : (item.production_deadline ? 'production_deadline' : 'deadline');
+  const today = startOfLocalDay(new Date(todayMs));
+  const dayMs = 86400000;
+  const diffDays = Math.floor((startOfLocalDay(t).getTime() - today.getTime()) / dayMs);
+  const st = stage || item?.sx_pipeline_stage;
+  if (diffDays < 0) {
+    if (shouldIgnoreSxOrderDeliveryOverdue(st) || isSxPipelineStageNoDeadline(st)) {
+      return { bucket: 'later', ts: t, source };
+    }
+    return { bucket: 'overdue', ts: t, source };
+  }
+  if (diffDays === 0) return { bucket: 'today', ts: t, source };
+  const dow = today.getDay() === 0 ? 7 : today.getDay();
+  const daysToEndOfWeek = 7 - dow;
+  if (diffDays <= daysToEndOfWeek) return { bucket: 'this_week', ts: t, source };
+  if (diffDays <= daysToEndOfWeek + 7) return { bucket: 'next_week', ts: t, source };
+  const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getTime();
+  if (t <= endOfMonth) return { bucket: 'this_month', ts: t, source };
+  return { bucket: 'later', ts: t, source };
+}
+
+/** Số thẻ cột «Quá hạn» trên Deadline view (cùng quy tắc gom bucket). */
+export function countSxDeadlineViewOverdue(pipelineColumns, todayMs = Date.now()) {
+  let n = 0;
+  for (const col of Array.isArray(pipelineColumns) ? pipelineColumns : []) {
+    for (const item of col.items || []) {
+      if (shouldHideSxKanbanDeadlineOnCard(item, col)) continue;
+      if (resolveSxDeadlineBucket(item, todayMs, col).bucket === 'overdue') n += 1;
+    }
+  }
+  return n;
+}
+
 export function computeSxRevenueKpis(projects, stages) {
   const list = Array.isArray(projects) ? projects : [];
   const st = Array.isArray(stages) ? stages : [];
@@ -167,11 +217,11 @@ export function computeSxRevenueKpis(projects, stages) {
   let overdue = 0;
   let debtCount = 0;
   let collectedCount = 0;
-  const now = new Date();
+  const nowMs = Date.now();
 
   for (const p of list) {
     const val = resolveSxProjectValue(p);
-    const col = stageById(st, p.sx_kanban_column_id);
+    const col = stageById(st, p.sx_kanban_column_id) || p.sx_pipeline_stage;
     if (projectCountsAsSxWonRevenue(p, st)) wonRevenue += val;
     if (projectCountsAsSxCompletedRevenue(p, st)) completedRevenue += val;
     if (projectCountsAsSxCollectedRevenue(p, st)) {
@@ -185,8 +235,11 @@ export function computeSxRevenueKpis(projects, stages) {
     if (projectIsProducing(p, st)) producing += 1;
     if (projectIsAwaitingDelivery(p, st)) awaitingDelivery += 1;
     if (projectIsShipped(p)) shipped += 1;
-    // Quá hạn KPI = trễ SLA cột (khớp badge «SLA quá hạn» trên thẻ / «Bỏ quá hạn cột»)
-    if (isSxColumnSlaOverdue(p, col)) overdue += 1;
+    // Quá hạn KPI = cột «Quá hạn» của Deadline view
+    if (!shouldHideSxKanbanDeadlineOnCard(p, col)
+      && resolveSxDeadlineBucket(p, nowMs, col).bucket === 'overdue') {
+      overdue += 1;
+    }
     if (col && col.bucket_slug !== INTAKE_BUCKET && val > 0) {
       const prob = resolveSxProjectProbability(p, col);
       if (prob != null) weightedPipeline += val * (prob / 100);

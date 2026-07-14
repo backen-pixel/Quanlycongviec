@@ -2,10 +2,33 @@
  * KPI doanh thu / thanh toán dashboard Sản xuất theo cột production_pipeline_stages.
  */
 
-const { isSxColumnSlaOverdue } = require('./crmPipelineSla');
+const {
+  shouldIgnoreSxOrderDeliveryOverdue,
+  isSxPipelineStageNoDeadline,
+} = require('./crmPipelineSla');
 
 const INTAKE_BUCKET = 'won_pending';
 const VC_SHIPPED_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
+
+function startOfLocalDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+/** Bucket «Quá hạn» Deadline view — khớp frontend resolveSxDeadlineBucket. */
+function isSxDeadlineViewOverdue(project, stage, todayMs = Date.now()) {
+  if (isSxPipelineStageNoDeadline(stage)) return false;
+  const raw = project?.delivery_date || project?.production_deadline || project?.deadline;
+  if (!raw) return false;
+  const t = new Date(raw).getTime();
+  if (!Number.isFinite(t)) return false;
+  const today = startOfLocalDay(new Date(todayMs));
+  const diffDays = Math.floor((startOfLocalDay(t).getTime() - today.getTime()) / 86400000);
+  if (diffDays >= 0) return false;
+  if (shouldIgnoreSxOrderDeliveryOverdue(stage || project?.sx_pipeline_stage)) return false;
+  return true;
+}
 
 function stageById(stages, colId) {
   if (!colId || !Array.isArray(stages)) return null;
@@ -148,7 +171,7 @@ function computeSxRevenueKpis(projects, stages, dealProbByProjectId = {}) {
 
   for (const p of list) {
     const val = resolveSxProjectValue(p);
-    const col = stageById(st, p.sx_kanban_column_id);
+    const col = stageById(st, p.sx_kanban_column_id) || p.sx_pipeline_stage;
     if (projectCountsAsSxWonRevenue(p, st)) wonRevenue += val;
     if (projectCountsAsSxCompletedRevenue(p, st)) completedRevenue += val;
     if (projectCountsAsSxCollectedRevenue(p, st)) {
@@ -162,7 +185,7 @@ function computeSxRevenueKpis(projects, stages, dealProbByProjectId = {}) {
     if (projectIsProducing(p, st)) producing += 1;
     if (projectIsAwaitingDelivery(p, st)) awaitingDelivery += 1;
     if (projectIsShipped(p)) shipped += 1;
-    if (isSxColumnSlaOverdue(p, col)) overdue += 1;
+    if (isSxDeadlineViewOverdue(p, col)) overdue += 1;
     if (col && col.bucket_slug !== INTAKE_BUCKET && val > 0) {
       const prob = resolveSxProjectProbability(p, col, dealProbByProjectId[String(p.id)]);
       if (prob != null) weightedPipeline += val * (prob / 100);
@@ -204,5 +227,6 @@ module.exports = {
   projectIsAwaitingDelivery,
   projectIsShipped,
   resolveSxProjectProbability,
+  isSxDeadlineViewOverdue,
   computeSxRevenueKpis,
 };
