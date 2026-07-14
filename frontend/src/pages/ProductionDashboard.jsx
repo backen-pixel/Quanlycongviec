@@ -70,8 +70,7 @@ import { isProjectAlreadyInLogistics } from '../lib/projectLogistics';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import NewDealModal from '../components/NewDealModal';
-import { DashboardLoader } from '../components/DashboardLoader';
-import { createCrmLoadProgressController } from '../lib/crmDashboardLoadProgress';
+import { DashboardLoaderGate } from '../components/DashboardLoaderGate';
 import { isClickOutside } from '../lib/domUtils';
 import { getCrmDeadlineUrgencyFromIso, getCrmDeadlineUrgencyBadgeClass } from '../lib/crmLeadDeadlineDisplay';
 import { showCopyToast } from '../lib/copyToast';
@@ -295,12 +294,8 @@ export default function ProductionDashboard() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [firstLoaded, setFirstLoaded] = useState(false);
-  const [sxLoadProgress, setSxLoadProgress] = useState(0);
   const loadSeqRef = useRef(0);
-  const sxLoadProgressCtrlRef = useRef(null);
-  if (sxLoadProgressCtrlRef.current === null) {
-    sxLoadProgressCtrlRef.current = createCrmLoadProgressController(setSxLoadProgress);
-  }
+  const sxLoaderGateRef = useRef(null);
   const [searchQuery, setSearchQuery] = useState(() => (typeof P0?.searchQuery === 'string' ? P0.searchQuery : ''));
   const [priorityFilter, setPriorityFilter] = useState(() => (typeof P0?.priorityFilter === 'string' ? P0.priorityFilter : ''));
   const [stageFilter, setStageFilter] = useState(() => (typeof P0?.stageFilter === 'string' ? P0.stageFilter : ''));
@@ -585,10 +580,6 @@ export default function ProductionDashboard() {
 
   const canPickProductionCreateCompany = crossWorkshopViewer || isDealParticipantProductionViewer(user) || isAccountingUser(user);
 
-  const sxLoadProgressDisplay = (loading && !firstLoaded)
-    ? Math.max(0, Math.min(100, sxLoadProgress))
-    : 0;
-
   const sxLoaderCompanyName = useMemo(() => {
     if (filterCompany) {
       const c = companies.find((x) => String(x.id) === String(filterCompany));
@@ -617,8 +608,8 @@ export default function ProductionDashboard() {
       : (showVptSxWorkshopFilter && filterSxWorkshopCompany ? filterSxWorkshopCompany : undefined);
     if (silent) setSyncing(true);
     else {
-    setLoading(true);
-      sxLoadProgressCtrlRef.current?.start();
+      setLoading(true);
+      sxLoaderGateRef.current?.start();
     }
     const markLoadComplete = () => {
       if (isStale()) return;
@@ -626,7 +617,7 @@ export default function ProductionDashboard() {
         setSyncing(false);
         return;
       }
-      sxLoadProgressCtrlRef.current?.finish(() => {
+      sxLoaderGateRef.current?.finish(() => {
         if (isStale()) return;
         setLoading(false);
         setFirstLoaded(true);
@@ -668,8 +659,8 @@ export default function ProductionDashboard() {
       if (!isStale()) {
         if (silent) setSyncing(false);
         else {
-          sxLoadProgressCtrlRef.current?.reset();
-    setLoading(false);
+          sxLoaderGateRef.current?.reset();
+          setLoading(false);
           setFirstLoaded(true);
         }
       }
@@ -699,7 +690,7 @@ export default function ProductionDashboard() {
     const t = window.setTimeout(() => {
       if (firstLoaded) return;
       console.warn('[sx-dashboard] load timeout — hiển thị dashboard');
-      sxLoadProgressCtrlRef.current?.reset();
+      sxLoaderGateRef.current?.reset();
       setLoading(false);
       setFirstLoaded(true);
       void load({ bustCache: true });
@@ -1464,33 +1455,27 @@ export default function ProductionDashboard() {
   /** Realtime Kanban SX: kéo thẻ / sửa nhiệm vụ / badge CRM / board changed */
   const loadRef = useRef(load);
   loadRef.current = load;
-  useEffect(() => () => sxLoadProgressCtrlRef.current?.dispose(), []);
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return undefined;
     let timer = null;
-    const schedule = () => {
+    /** Debounce dài hơn — gộp nhiều sự kiện; bỏ badge/task CRM (không cần reload cả board). */
+    const scheduleBoardRefresh = () => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
         loadRef.current?.({ silent: true });
-      }, 800);
+      }, 2000);
     };
-    const onStage = () => schedule();
-    const onTask = () => schedule();
-    const onBoard = () => schedule();
-    const onBadge = () => schedule();
+    const onStage = () => scheduleBoardRefresh();
+    const onBoard = () => scheduleBoardRefresh();
     socket.on('project:stage_changed', onStage);
-    socket.on('crm:task_changed', onTask);
     socket.on('production:board_changed', onBoard);
-    socket.on('crm:badge_updated', onBadge);
     return () => {
       if (timer) clearTimeout(timer);
       socket.off('project:stage_changed', onStage);
-      socket.off('crm:task_changed', onTask);
       socket.off('production:board_changed', onBoard);
-      socket.off('crm:badge_updated', onBadge);
     };
   }, []);
 
@@ -2848,9 +2833,10 @@ export default function ProductionDashboard() {
 
       <div className="relative min-h-[min(700px,calc(100vh-128px))]">
         {sxMainContentLoading ? (
-          <DashboardLoader
+          <DashboardLoaderGate
+            ref={sxLoaderGateRef}
+            show
             variant="production"
-            progress={sxLoadProgressDisplay}
             companyName={sxLoaderCompanyName}
             tourId="sx-loading"
           />

@@ -8,8 +8,8 @@ const FINISH_MS = 520;
 const LERP_CREEP = 0.11;
 /** Lerp nhanh hơn khi API xong — đảm bảo kịp lên 100% trước khi ẩn loader */
 const LERP_FINISH = 0.34;
-/** Tối thiểu hiển thị loader (load nhanh vẫn mượt) */
-const MIN_TOTAL_MS = 1200;
+/** Tối thiểu hiển thị loader (đủ mượt, không giữ lâu khi API nhanh) */
+const MIN_TOTAL_MS = 700;
 /** Bắt đầu giai đoạn kết thúc khi đã qua MIN_TOTAL và creep đủ cao */
 const MIN_CREEP_BEFORE_FINISH = STALL_PCT * 0.82;
 

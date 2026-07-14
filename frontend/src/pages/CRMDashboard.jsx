@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue, memo, startTransition } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef, useDeferredValue, memo, startTransition } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -13,6 +13,7 @@ import {
   Zap, CheckCircle2, TrendingUp, TrendingDown, AlertTriangle, Building2, Rocket, Pin,
   Clock, List, LayoutGrid, GitMerge, UserCheck, Trash2, CheckSquare, BarChart3,
   MessageSquare, MinusSquare, Settings, Pencil, RotateCcw, Save, Briefcase, XCircle, Layers, Factory,
+  Loader2,
 } from 'lucide-react';
 import { ListView, PlannerView, DeadlineView, CommentsView } from '../components/CRMViews';
 import AssignedTasksToolbarButton from '../components/AssignedTasksToolbarButton';
@@ -133,8 +134,7 @@ import {
 import AnchoredDropdownMenu from '../components/AnchoredDropdownMenu';
 import SearchInlineFilterChips, { SearchClearButton } from '../components/SearchInlineFilterChips';
 import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
-import { CrmDashboardLoader, CrmDashboardLoaderCompact } from '../components/CrmDashboardLoader';
-import { createCrmLoadProgressController } from '../lib/crmDashboardLoadProgress';
+import { DashboardLoaderGate } from '../components/DashboardLoaderGate';
 import { isClickOutside } from '../lib/domUtils';
 
 const LEAD_PRIORITY_COLORS = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
@@ -1173,8 +1173,6 @@ export default function CRMDashboard() {
   const [firstLoading, setFirstLoading] = useState(true);
   const firstLoadingRef = useRef(true);
   firstLoadingRef.current = firstLoading;
-  /** 0 = ẩn; 1–100 khi đang load CRM (100 = xong, rồi reset). */
-  const [crmLoadProgress, setCrmLoadProgress] = useState(0);
   const [viewMode, setViewMode] = useState(() => {
     const v = P?.viewMode;
     return ['kanban', 'list', 'planner', 'deadline', 'comments', 'calendar'].includes(v) ? v : 'kanban';
@@ -1256,10 +1254,8 @@ export default function CRMDashboard() {
   const loadRef = useRef(null);
   /** Tăng mỗi lần gọi load — bỏ qua kết quả cũ nếu đã có load mới hơn */
   const loadSeqRef = useRef(0);
-  const crmLoadProgressCtrlRef = useRef(null);
-  if (crmLoadProgressCtrlRef.current === null) {
-    crmLoadProgressCtrlRef.current = createCrmLoadProgressController(setCrmLoadProgress);
-  }
+  /** Island loader — RAF % không re-render cả CRMDashboard */
+  const crmLoaderGateRef = useRef(null);
   /** load() vừa setFilterCompany — tránh useEffect filterCompany gọi load() lần 2 */
   const suppressFilterCompanyLoadRef = useRef(false);
   const loadDebounceTimerRef = useRef(null);
@@ -1620,7 +1616,8 @@ export default function CRMDashboard() {
     return companies.length > 0;
   }, [user, isAdmin, isCompanyScopedAdmin, companies.length]);
 
-  useEffect(() => {
+  // useLayoutEffect: hydrate cache trước paint → tránh nháy loader khi đã có session cache
+  useLayoutEffect(() => {
     if (!crmDashboardDataReady) return;
     if (suppressFilterCompanyLoadRef.current) {
       suppressFilterCompanyLoadRef.current = false;
@@ -1703,7 +1700,7 @@ export default function CRMDashboard() {
           if (c.fbPages) setFbPages(c.fbPages);
           if (Array.isArray(c.companies) && c.companies.length) setCompanies(c.companies);
           if (Array.isArray(c.users) && c.users.length) setUsers(c.users);
-          // Stale-while-revalidate: hiện Kanban từ cache ngay; đồng bộ ngầm vẫn chạy thanh tiến trình
+          // Stale-while-revalidate: hiện Kanban từ cache ngay; cold start (không cache) mới hiện loader 0→100%
           setFirstLoading(false);
           lastHydratedCacheKeyRef.current = cacheKey;
           const activeTab = pipelineType === 'deal' ? 'deal' : 'lead';
@@ -1721,7 +1718,6 @@ export default function CRMDashboard() {
       /* cache hydrate lỗi — fallback về fetch bình thường */
     }
     if (veryFreshCacheHit) {
-      // Cache rất tươi: hiển thị ngay, không gọi API / không reset thanh tiến trình
       setFirstLoading(false);
       setLastSyncAt(new Date());
       return undefined;
@@ -2720,18 +2716,16 @@ export default function CRMDashboard() {
   }, [wonAssignModal, wonAssignLeadId, allLeads]);
 
   const startCrmLoadProgress = useCallback(() => {
-    crmLoadProgressCtrlRef.current?.start();
+    crmLoaderGateRef.current?.start();
   }, []);
 
   const finishCrmLoadProgress = useCallback((onDone) => {
-    crmLoadProgressCtrlRef.current?.finish(onDone);
+    crmLoaderGateRef.current?.finish(onDone);
   }, []);
 
   const resetCrmLoadProgress = useCallback(() => {
-    crmLoadProgressCtrlRef.current?.reset();
+    crmLoaderGateRef.current?.reset();
   }, []);
-
-  useEffect(() => () => crmLoadProgressCtrlRef.current?.dispose(), []);
 
   const companyHasNoPipeline = useMemo(() => {
     if (!dashboardScopeCompanyId) return false;
@@ -2752,21 +2746,8 @@ export default function CRMDashboard() {
     syncing,
   ]);
 
-  const crmMainContentLoading = firstLoading;
-
-  /** Tab Lead/Deal đang xem — cần có cột pipeline mới render được thẻ Kanban. */
-  const crmActiveTabStagesReady = useMemo(
-    () => (pipelineType === 'lead' ? stagesLead.length : stagesDeal.length) > 0,
-    [pipelineType, stagesLead.length, stagesDeal.length],
-  );
-
-  /** Loader toàn màn khi tab hiện tại chưa có cột; overlay chỉ lần tải đầu (không khi đồng bộ ngầm). */
-  const crmShowFullLoader = firstLoading && !crmActiveTabStagesReady && !companyHasNoPipeline;
-  const crmShowLoaderOverlay = firstLoading && crmActiveTabStagesReady;
-
-  const crmLoadProgressDisplay = firstLoading
-    ? Math.max(0, Math.min(100, crmLoadProgress))
-    : 0;
+  /** Cold start (không cache): thay nội dung bằng loader. Có cache → Kanban hiện ngay. */
+  const crmMainContentLoading = firstLoading && !companyHasNoPipeline;
 
   const showNoPipelineMainViews = useMemo(
     () =>
@@ -2814,6 +2795,7 @@ export default function CRMDashboard() {
       isStale = () => mySeq !== loadSeqRef.current;
     }
 
+    // Giống SX: % chỉ lần tải đầu (firstLoading); silent sau đó chỉ chip «Đang cập nhật…».
     const shouldTrackProgress = !background && (!silent || firstLoadingRef.current);
     if (silent && !background) setSyncing(true);
     if (shouldTrackProgress) startCrmLoadProgress();
@@ -5470,24 +5452,27 @@ export default function CRMDashboard() {
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0 ml-auto">
-          {crmShowFullLoader ? (
-            <span className="inline-flex items-center gap-1 shrink-0 rounded-full border border-violet-200/80 bg-violet-50/90 px-1.5 py-0.5 text-[10px]">
+          {firstLoading ? (
+            <span className="inline-flex items-center gap-1.5 shrink-0 rounded-full border border-violet-200/80 bg-violet-50/90 px-2 py-0.5 text-[11px] font-semibold text-violet-800">
               <span className="relative flex h-1.5 w-1.5">
                 <span className="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-60 animate-ping" />
                 <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-violet-600" />
               </span>
-              <span className="font-semibold text-violet-800 whitespace-nowrap">Đang tải…</span>
+              Đang tải…
             </span>
-          ) : firstLoading ? (
-            <CrmDashboardLoaderCompact progress={crmLoadProgressDisplay} label="Đang tải" />
+          ) : syncing ? (
+            <span className="inline-flex items-center gap-1.5 shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+              <Loader2 className="h-3 w-3 animate-spin text-violet-600" />
+              Đang cập nhật…
+            </span>
           ) : lastSyncAt ? (
             <span
               className="inline-flex items-center gap-1 text-slate-500 shrink-0 text-[10px]"
-              title="Tự cập nhật realtime qua Socket.IO + đồng bộ ngầm mỗi 15s"
+              title="Tự cập nhật realtime qua Socket.IO + đồng bộ ngầm"
             >
-              <span className={`inline-block rounded-full ${syncing ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500'} h-1.5 w-1.5`} />
+              <span className="inline-block rounded-full bg-emerald-500 h-1.5 w-1.5" />
               <span className="whitespace-nowrap hidden lg:inline">
-                {syncing ? 'Đang đồng bộ…' : `Cập nhật ${lastSyncAt.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}`}
+                {`Cập nhật ${lastSyncAt.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}`}
               </span>
             </span>
           ) : null}
@@ -6573,12 +6558,17 @@ export default function CRMDashboard() {
       </section>
       </div>
 
-      {crmShowFullLoader ? (
-        <CrmDashboardLoader
-          progress={crmLoadProgressDisplay}
-          pipelineType={pipelineType}
-          companyName={scopedCompanyName}
-        />
+      {crmMainContentLoading ? (
+        <div className="relative min-h-[min(700px,calc(100vh-128px))]">
+          <DashboardLoaderGate
+            ref={crmLoaderGateRef}
+            show
+            variant="crm"
+            pipelineType={pipelineType}
+            companyName={scopedCompanyName}
+            tourId="crm-loading"
+          />
+        </div>
       ) : showNoPipelineMainViews ? (
         <div
           data-tour="crm-no-pipeline"
@@ -6608,20 +6598,6 @@ export default function CRMDashboard() {
         </div>
       ) : (
         <div className="relative min-h-[min(700px,calc(100vh-128px))]">
-          {crmShowLoaderOverlay && (
-            <div
-              className="absolute inset-0 z-20 flex items-start justify-center pt-4 sm:pt-8 bg-white/65 backdrop-blur-[2px] rounded-xl"
-              aria-live="polite"
-              aria-busy="true"
-            >
-              <CrmDashboardLoader
-                className="w-full max-w-md shadow-2xl pointer-events-none"
-                progress={crmLoadProgressDisplay}
-                pipelineType={pipelineType}
-                companyName={scopedCompanyName}
-              />
-            </div>
-          )}
         <>
           {(viewMode === 'kanban' || viewMode === 'deadline') && manualMergeIds.length > 0 && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm">
