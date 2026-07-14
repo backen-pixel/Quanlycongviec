@@ -9166,11 +9166,10 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
       });
       const customerId = customer?.id || customer?.customer?.id;
 
-      // 2. Giai đoạn đầu pipeline đúng công ty
-      const { data: stages } = await api.get('/crm/pipeline-stages', {
-        params: { type: 'lead', ...(formData.company_id ? { company_id: formData.company_id } : {}) },
-      });
-      const firstStage = stages?.[0];
+      // 2. Giai đoạn đầu + pipeline: để backend tự xác định theo company_id + region_id
+      // (không tự fetch/gán stage_id ở đây — công ty có nhiều pipeline theo khu vực thì
+      // stage đầu tiên có thể thuộc pipeline khác với pipeline sẽ được backend gán theo region,
+      // khiến lead bị lệch cột/không hiện trên Kanban đúng pipeline).
 
       // 3. Create lead with customer_id
       await api.post('/crm/leads', {
@@ -9182,7 +9181,6 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
         lead_type_id: formData.lead_type_id || null,
         assigned_to: formData.assigned_to || null,
         type: 'lead',
-        stage_id: firstStage?.id,
         estimated_value: parseFloat(formData.estimated_value) || 0,
         probability: parseInt(formData.probability) || 50,
         referrer_name: resolvedReferrerName || null,
