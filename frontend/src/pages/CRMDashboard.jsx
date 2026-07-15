@@ -1143,10 +1143,10 @@ export default function CRMDashboard() {
   /** Danh sách khu vực để gợi ý chọn nhanh khi Kanban đang yêu cầu chọn khu vực. */
   const crmRegionQuickPickOptions = useMemo(() => {
     if (!crmRegionPickRequired) return [];
-    return (companyRegions || []).filter(
+    return filterCrmRegionsForUser(companyRegions || [], user).filter(
       (r) => String(r.company_id || '') === String(kanbanEffectiveCompanyId) && r.is_active !== false,
     );
-  }, [crmRegionPickRequired, companyRegions, kanbanEffectiveCompanyId]);
+  }, [crmRegionPickRequired, companyRegions, kanbanEffectiveCompanyId, user]);
 
   const { dealTabStages, customerTabStages, postWonStages, wonAnchorOrder, wonStage } = useMemo(
     () => splitDealStagesForCrmTabs(stagesDeal),
@@ -2154,15 +2154,20 @@ export default function CRMDashboard() {
     }
   }, [user?.company_id, isAdmin, isCompanyScopedAdmin]);
 
-  const resolvePipelineIdForCompany = useCallback((companyId) => {
+  const resolvePipelineIdForCompany = useCallback((companyId, regionId) => {
     if (!companyId) return null;
     const list = pipelinesAllRef.current?.length
       ? pipelinesAllRef.current
       : (pipelines || []);
+    const rid = regionId !== undefined ? regionId : filterRegion;
+    if (rid && rid !== '__none__') {
+      const byRegion = resolvePipelineForCompanyRegion(list, companyId, rid);
+      if (byRegion?.id) return byRegion.id;
+    }
     const byCompany = list.filter((p) => String(p.company_id || '') === String(companyId));
     const def = byCompany.find((p) => p.is_default);
     return (def || byCompany[0] || null)?.id || null;
-  }, [pipelines]);
+  }, [pipelines, filterRegion]);
 
   /** Xóa Kanban cũ ngay khi đổi công ty (tránh hiển thị nhầm dữ liệu công ty trước). */
   const resetKanbanForFilterChange = useCallback(() => {
@@ -2665,6 +2670,16 @@ export default function CRMDashboard() {
     [companyRegions, user],
   );
 
+  /** NV chỉ được gán 1 khu vực → tự chọn để hiện Kanban đúng pipeline (tránh load pipeline mặc định HQ trống). */
+  useEffect(() => {
+    if (!isCrmRegionSplitCompany) return;
+    if (filterRegion && filterRegion !== '__none__') return;
+    if (visibleCompanyRegions.length !== 1) return;
+    const onlyId = String(visibleCompanyRegions[0].id || '');
+    if (!onlyId) return;
+    setFilterRegion(onlyId);
+  }, [isCrmRegionSplitCompany, visibleCompanyRegions, filterRegion]);
+
   const filterPanelScopeCompanyId = useMemo(
     () => resolveCrmFilterScopeCompanyId({
       filterCompany,
@@ -2758,15 +2773,18 @@ export default function CRMDashboard() {
   );
 
   const buildStagesParams = useCallback((type) => {
-    // Admin: khi đã chọn company filter → nạp stages đúng pipeline của công ty đó
-    if (isAdmin && filterCompany) {
-      const pid = resolvePipelineIdForCompany(filterCompany);
+    // Ưu tiên pipeline đúng khu vực đang lọc (công ty tách pipeline theo region).
+    const scopeCid = (isAdmin && filterCompany)
+      ? filterCompany
+      : (filterCompany || user?.company_id || '');
+    if (scopeCid) {
+      const pid = resolvePipelineIdForCompany(scopeCid);
       if (pid) return { type, pipeline_id: pid };
       return { type };
     }
-    // Non-admin: backend đã tự scope theo company user (fallback default pipeline)
+    // Non-admin chưa có company: backend fallback default pipeline
     return { type };
-  }, [isAdmin, filterCompany, resolvePipelineIdForCompany]);
+  }, [isAdmin, filterCompany, user?.company_id, resolvePipelineIdForCompany]);
 
   useEffect(() => {
     const onSeen = (e) => {
@@ -2838,10 +2856,11 @@ export default function CRMDashboard() {
         pipelines,
         resolvedCompanyId || null,
       );
-      if (pipelinesPreloaded && isAdmin && resolvedCompanyId) {
+      if (pipelinesPreloaded && resolvedCompanyId) {
         const byCo = pipelinesPreloaded.filter((p) => String(p.company_id || '') === String(resolvedCompanyId));
         // Công ty đã tách pipeline theo khu vực + đang lọc 1 khu vực cụ thể → dùng đúng
         // pipeline của khu vực đó, không lấy mặc định công ty (khác stage với khu vực khác).
+        // Áp dụng cho cả NV (staff) — trước đây chỉ admin nên Kanban NV trống dù có lead/deal.
         const regionPipeline =
           filterRegion && filterRegion !== '__none__'
             ? resolvePipelineForCompanyRegion(pipelinesPreloaded, resolvedCompanyId, filterRegion)
@@ -4165,12 +4184,13 @@ export default function CRMDashboard() {
 
   const companyPipelineIdsForList = useMemo(() => {
     if (!dashboardScopeCompanyId) return new Set();
+    const list = (pipelinesAll?.length ? pipelinesAll : pipelines) || [];
     return new Set(
-      (pipelines || [])
+      list
         .filter((p) => String(p.company_id || '') === String(dashboardScopeCompanyId))
         .map((p) => String(p.id)),
     );
-  }, [pipelines, dashboardScopeCompanyId]);
+  }, [pipelines, pipelinesAll, dashboardScopeCompanyId]);
 
   /** Cột «Thời gian từng cột» chỉ stage pipeline của công ty đang xem */
   const listViewCompanyPipelineStages = useMemo(() => {
