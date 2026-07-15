@@ -1757,11 +1757,6 @@ export default function ProductionDashboard() {
     const alreadyInLogistics = isProjectAlreadyInLogistics(current);
     const isHandover = targetCol?.is_handover_to_logistics === true;
 
-    if (alreadyInLogistics && !isHandover) {
-      alert('Deal đã bàn giao sang Vận chuyển nên không thể kéo về cột khác.');
-      return;
-    }
-
     // Kéo vào cột ảo «Chưa phân loại» → bỏ workshop_type_id của project.
     if (targetCol?.__virtual && targetCol?.id === '__orphan_no_type__') {
       try {
