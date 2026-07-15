@@ -15,17 +15,21 @@ const MCP_ENDPOINT_PUBLIC = `${PUBLIC_API_ORIGIN}/api/mcp`;
 
 /** Fetch trong browser: DEV dùng relative → Vite proxy (tránh CORS 5173→4000) */
 const MCP_BASE = `${resolveApiOrigin()}/api/mcp`.replace(/([^:]\/)\/+/g, '$1');
-const MCP_ENDPOINT = MCP_BASE;
 const MCP_PROTOCOL = '2025-06-18';
 
+/** Link MCP cho Cursor/Claude — chỉ cần URL, auth = uuid key */
+function buildMcpConnectUrl(origin, keyId) {
+  if (!keyId) return '';
+  return `${String(origin || '').replace(/\/$/, '')}/api/mcp/${keyId}`;
+}
+
 const ENDPOINTS = [
-  ['POST', '/', 'MCP endpoint chuẩn — JSON-RPC 2.0 (Streamable HTTP)'],
-  ['GET', '/', 'Legacy HTTP+SSE (2024-11-05) — event endpoint'],
-  ['GET', '/ping', 'Health check + phiên bản protocol'],
-  ['POST', '/rpc', 'Alias → POST / (backward-compat)'],
-  ['GET', '/tools', 'tools/list (REST shortcut)'],
-  ['POST', '/tools/call', 'tools/call → CallToolResult'],
-  ['GET', '/reports/org-overview', 'BC tổ chức JSON đầy đủ — ?date_from=&date_to='],
+  ['POST', '/{uuid}', 'MCP endpoint (khuyến nghị) — auth bằng UUID trên URL'],
+  ['GET', '/{uuid}', 'Legacy HTTP+SSE — event endpoint giữ /{uuid}'],
+  ['GET', '/{uuid}/ping', 'Health check (không cần header)'],
+  ['POST', '/', 'Legacy — cần header X-Api-Key'],
+  ['GET', '/ping', 'Legacy ping — cần X-Api-Key'],
+  ['GET', '/reports/org-overview', 'BC tổ chức JSON — ?date_from=&date_to='],
   ['GET', '/reports/org-overview/summary', 'BC JSON gọn'],
   ['GET', '/reports/org-overview/text', 'BC text format'],
 ];
@@ -97,9 +101,9 @@ function ConnectorField({ label, value, placeholder, optional, onCopy, copied, c
   );
 }
 
-function buildClaudeConnectorPaste({ name, url, headers }) {
+function buildClaudeConnectorPaste({ name, url }) {
   const lines = [
-    '=== Claude.ai — Add custom connector ===',
+    '=== Claude.ai / Cursor — Remote MCP ===',
     '',
     `Name: ${name}`,
     `Remote MCP server URL: ${url}`,
@@ -108,10 +112,9 @@ function buildClaudeConnectorPaste({ name, url, headers }) {
     'OAuth Client ID: (để trống)',
     'OAuth Client Secret: (để trống)',
     '',
-    'Request headers:',
-    ...Object.entries(headers).map(([k, v]) => `${k}: ${v}`),
+    'Request headers: (không cần)',
     '',
-    'Lưu ý: QLCV xác thực bằng API key (header X-Api-Key), không dùng OAuth.',
+    'Lưu ý: Auth nằm trong URL /api/mcp/{uuid}. Thu hồi = Tắt/Xóa key trên QLCV.',
   ];
   return lines.join('\n');
 }
@@ -156,20 +159,11 @@ function getOrCreateMcpClientId() {
   }
 }
 
-function buildOpenClawConfig(baseUrl, keyPreview, clientId = 'qlcv-your-client-id') {
+function buildOpenClawConfig(connectUrl) {
   return JSON.stringify({
     mcpServers: {
-      qlcv_reports: {
-        type: 'http',
-        url: baseUrl,
-        headers: {
-          'X-Api-Key': keyPreview === 'YOUR_API_KEY' ? keyPreview : '<access_token-sau-khi-rotate>',
-          'X-User-Id': '<uuid-manager-co-quyen-bc>',
-          Accept: 'application/json, text/event-stream',
-          'MCP-Protocol-Version': MCP_PROTOCOL,
-          'Mcp-Client-Id': clientId,
-        },
-        description: 'Báo cáo CRM — initialize nhận Mcp-Session-Id, gửi lại mỗi request',
+      'qlcv-reports': {
+        url: connectUrl || 'https://tubep-backend.onrender.com/api/mcp/<key-uuid>',
       },
     },
   }, null, 2);
@@ -189,11 +183,10 @@ function buildMcpJsonRpcExample(method, params, id = 1) {
   }, null, 2);
 }
 
-function buildCurlOrgOverview(key, userId, periodParams) {
+function buildCurlOrgOverview(connectUrl, periodParams) {
   const qs = new URLSearchParams(periodParams).toString();
-  const headers = [`  -H "X-Api-Key: ${key}"`];
-  if (userId) headers.push(`  -H "X-User-Id: ${userId}"`);
-  return `curl "${MCP_ENDPOINT_PUBLIC}/reports/org-overview?${qs}" \\\n${headers.join(' \\\n')}`;
+  const base = connectUrl || `${MCP_ENDPOINT_PUBLIC}/<key-uuid>`;
+  return `curl "${base}/reports/org-overview?${qs}"`;
 }
 
 export default function McpReportApiPage() {
@@ -411,15 +404,13 @@ export default function McpReportApiPage() {
   };
 
   const mcpFetch = async (path, opts = {}) => {
-    const key = keySecret;
-    if (!key) throw new Error('Cần key thật — chọn key và bấm Rotate để test');
+    if (!selectedKeyId) throw new Error('Chọn key MCP trước khi test');
     const headers = {
-      'X-Api-Key': key,
       Accept: 'application/json, text/event-stream',
       ...(opts.headers || {}),
     };
     if (actAsUserId) headers['X-User-Id'] = actAsUserId;
-    const res = await fetch(`${MCP_BASE}${path}`, { ...opts, headers });
+    const res = await fetch(`${MCP_BASE}/${selectedKeyId}${path}`, { ...opts, headers });
     if (res.status === 202) return { ok: true, status: 202, data: { accepted: true } };
     const data = await res.json().catch(() => ({}));
     return { ok: res.ok, status: res.status, data, sessionId: res.headers.get('Mcp-Session-Id') };
@@ -436,12 +427,10 @@ export default function McpReportApiPage() {
   };
 
   const mcpRpc = async (method, params = {}, { id = 1, sessionId, clientId, extraHeaders = {}, notification = false } = {}) => {
-    const key = keySecret;
-    if (!key) throw new Error('Cần key thật — chọn key và bấm Rotate để test');
+    if (!selectedKeyId) throw new Error('Chọn key MCP trước khi test');
     const effectiveClientId = clientId || mcpClientId;
     const effectiveSessionId = method === 'initialize' ? undefined : (sessionId || mcpSessionId);
     const headers = {
-      'X-Api-Key': key,
       'Content-Type': 'application/json',
       Accept: 'application/json, text/event-stream',
       'MCP-Protocol-Version': MCP_PROTOCOL,
@@ -464,7 +453,7 @@ export default function McpReportApiPage() {
     };
     if (!notification && id != null) body.id = id;
 
-    const res = await fetch(MCP_ENDPOINT, {
+    const res = await fetch(`${MCP_BASE}/${selectedKeyId}`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
@@ -528,24 +517,18 @@ export default function McpReportApiPage() {
     setTestLoading('');
   };
 
-  const displayKey = keySecret || newKeyValue || (selectedKey?.preview || 'YOUR_API_KEY');
+  const mcpConnectUrlPublic = useMemo(
+    () => buildMcpConnectUrl(PUBLIC_API_ORIGIN, selectedKeyId),
+    [selectedKeyId],
+  );
 
   const claudeConnectorName = useMemo(() => {
     if (selectedKey?.name) return `QLCV — ${selectedKey.name}`;
     return 'QLCV — Báo cáo CRM';
   }, [selectedKey?.name]);
 
-  const claudeRequestHeaders = useMemo(() => {
-    const headers = {
-      Accept: 'application/json, text/event-stream',
-      'MCP-Protocol-Version': MCP_PROTOCOL,
-    };
-    if (keySecret) headers['X-Api-Key'] = keySecret;
-    if (actAsUserId) headers['X-User-Id'] = actAsUserId;
-    return headers;
-  }, [keySecret, actAsUserId]);
-
-  const claudeConnectorReady = Boolean(keySecret && actAsUserId);
+  /** Chỉ cần chọn key có act-as — UUID trên URL là đủ */
+  const claudeConnectorReady = Boolean(selectedKeyId && selectedKey?.default_assigned_to);
 
   const createFormBcUsers = useMemo(
     () => filterBcReportUsers(users, createForm.company_id || null),
@@ -571,7 +554,8 @@ export default function McpReportApiPage() {
             MCP API — Báo cáo tổ chức
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            MCP Streamable HTTP — báo cáo tổ chức + đọc GET CRM (lead/deal, pipeline, KH, BG/ĐH/HĐ) cho Claude.ai / OpenClaw / Cursor.
+            Kết nối Cursor / Claude chỉ cần URL <code className="bg-gray-100 px-1 rounded text-xs">/api/mcp/&#123;uuid&#125;</code>
+            {' '}— báo cáo tổ chức + đọc CRM.
           </p>
         </div>
       </div>
@@ -650,8 +634,8 @@ export default function McpReportApiPage() {
         {showCreateForm && (
           <div className="border border-violet-100 bg-violet-50/60 rounded-xl p-4 space-y-3">
             <p className="text-[11px] text-violet-800">
-              Key dùng cho OpenClaw / agent gọi <code className="bg-violet-100 px-1 rounded">/api/mcp</code>.
-              Chọn user act-as có quyền xem «Báo cáo theo tổ chức» (manager / admin).
+              Key tạo link MCP <code className="bg-violet-100 px-1 rounded">/api/mcp/&#123;uuid&#125;</code> cho Cursor / Claude.
+              Chọn user act-as có quyền «Báo cáo theo tổ chức» (manager / admin).
             </p>
             <div>
               <label className="text-xs font-medium text-gray-600 block mb-1">Tên key <span className="text-red-500">*</span></label>
@@ -763,8 +747,17 @@ export default function McpReportApiPage() {
                 <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
                   <button
                     type="button"
+                    onClick={() => copyText(buildMcpConnectUrl(PUBLIC_API_ORIGIN, k.id), `${k.id}_link`)}
+                    title="Copy link MCP (dán vào Cursor / Claude)"
+                    className="h-7 px-2 rounded-lg text-[10px] font-medium cursor-pointer flex items-center gap-1 transition bg-violet-50 text-violet-700 hover:bg-violet-100 border border-violet-200"
+                  >
+                    {copiedId === `${k.id}_link` ? <Check className="h-3.5 w-3.5" /> : <Plug className="h-3.5 w-3.5" />}
+                    Link MCP
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => copyAccessToken(k.id, k.preview)}
-                    title="Sao chép access token"
+                    title="Sao chép access token (legacy header)"
                     className={`h-7 px-2 rounded-lg text-[10px] font-medium cursor-pointer flex items-center gap-1 transition ${
                       getKeyTokens(k.id)?.access_token
                         ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
@@ -835,12 +828,11 @@ export default function McpReportApiPage() {
             <div>
               <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
                 <Plug className="h-4 w-4 text-violet-600" />
-                Kết nối Claude.ai
-                <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Beta</span>
+                Kết nối Cursor / Claude.ai
               </h2>
               <p className="text-xs text-gray-500 mt-1 max-w-xl">
-                Điền form <strong>Add custom connector</strong> trong Claude (Settings → Connectors).
-                Chọn key + user act-as ở trên, rotate key nếu chưa có access token.
+                Chỉ cần dán URL <code className="bg-gray-100 px-1 rounded">/api/mcp/&#123;uuid&#125;</code> — không cần header.
+                Cursor: Settings → MCP. Claude: Settings → Connectors.
               </p>
             </div>
             <button
@@ -848,8 +840,7 @@ export default function McpReportApiPage() {
               onClick={() => copyText(
                 buildClaudeConnectorPaste({
                   name: claudeConnectorName,
-                  url: MCP_ENDPOINT_PUBLIC,
-                  headers: claudeRequestHeaders,
+                  url: mcpConnectUrlPublic,
                 }),
                 'claude_all',
               )}
@@ -866,8 +857,7 @@ export default function McpReportApiPage() {
           {!claudeConnectorReady && (
             <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
               {!selectedKeyId && 'Chọn API key ở mục trên. '}
-              {selectedKeyId && !keySecret && 'Bấm Rotate / copy Access để có token thật. '}
-              {!actAsUserId && 'Chọn user act-as (X-User-Id) có quyền báo cáo tổ chức.'}
+              {selectedKeyId && !selectedKey?.default_assigned_to && 'Key chưa có user act-as — tạo lại key hoặc cập nhật default_assigned_to.'}
             </div>
           )}
 
@@ -881,8 +871,8 @@ export default function McpReportApiPage() {
 
           <ConnectorField
             label="Remote MCP server URL"
-            value={MCP_ENDPOINT_PUBLIC}
-            onCopy={copyText}
+            value={mcpConnectUrlPublic || '(chọn key để hiện URL)'}
+            onCopy={mcpConnectUrlPublic ? copyText : undefined}
             copied={copiedId === 'claude_url'}
             copyKey="claude_url"
           />
@@ -911,52 +901,25 @@ export default function McpReportApiPage() {
                   placeholder="(để trống)"
                 />
                 <p className="text-[10px] text-gray-500">
-                  QLCV dùng <strong>API key</strong> (không OAuth). Không điền OAuth — dùng Request headers bên dưới.
+                  Auth nằm trong URL (uuid key). OAuth và Request headers <strong>không cần</strong>.
                 </p>
               </div>
             )}
           </div>
 
-          <div className="rounded-xl border border-violet-100 bg-violet-50/40 p-4 space-y-3">
-            <p className="text-xs font-semibold text-violet-900">Request headers</p>
+          <div className="rounded-xl border border-violet-100 bg-violet-50/40 p-4 space-y-2">
+            <p className="text-xs font-semibold text-violet-900">Cursor — mcp.json</p>
+            <CodeBlock lang="json" code={buildOpenClawConfig(mcpConnectUrlPublic)} />
             <p className="text-[10px] text-violet-800">
-              Trong dialog Claude, thêm từng header (hoặc dùng mục tương đương).{' '}
-              <code className="bg-violet-100 px-1 rounded">Authorization</code> không dùng — gửi qua{' '}
-              <code className="bg-violet-100 px-1 rounded">X-Api-Key</code>.
+              Thu hồi truy cập = Tắt / Xóa key trên QLCV (UUID trên URL sẽ 401).
             </p>
-            <div className="space-y-2">
-              {Object.entries(claudeRequestHeaders).map(([headerName, headerValue]) => (
-                <div key={headerName} className="flex items-center gap-2 text-xs">
-                  <code className="shrink-0 w-40 sm:w-48 text-[11px] text-gray-600 font-mono">{headerName}</code>
-                  <code className="flex-1 min-w-0 truncate bg-white border border-gray-200 rounded-lg px-2 py-1.5 font-mono text-[11px] text-gray-800" title={headerValue}>
-                    {headerName === 'X-Api-Key' && headerValue
-                      ? `${headerValue.slice(0, 10)}…${headerValue.slice(-6)}`
-                      : headerValue}
-                  </code>
-                  <button
-                    type="button"
-                    onClick={() => copyText(headerValue, `claude_h_${headerName}`)}
-                    disabled={!headerValue}
-                    className="h-7 px-2 shrink-0 bg-white border border-gray-200 hover:bg-gray-50 rounded-lg text-[10px] cursor-pointer disabled:opacity-40"
-                  >
-                    {copiedId === `claude_h_${headerName}` ? '✓' : 'Copy'}
-                  </button>
-                </div>
-              ))}
-              {!keySecret && (
-                <p className="text-[10px] text-amber-700">Thiếu X-Api-Key — rotate key để lấy access token.</p>
-              )}
-              {!actAsUserId && (
-                <p className="text-[10px] text-amber-700">Thiếu X-User-Id — chọn user act-as trong phần Test hoặc khi tạo key.</p>
-              )}
-            </div>
           </div>
 
           <ol className="text-[11px] text-gray-600 space-y-1 list-decimal list-inside">
-            <li>Claude → <strong>Settings</strong> → <strong>Connectors</strong> → <strong>Add custom connector</strong></li>
-            <li>Copy <strong>Name</strong> và <strong>Remote MCP server URL</strong> vào form</li>
-            <li>OAuth để trống; thêm <strong>Request headers</strong> như bảng trên</li>
-            <li>Bấm <strong>Add</strong>, sau đó bật connector trong cuộc hội thoại</li>
+            <li>Chọn key → bấm <strong>Link MCP</strong> (hoặc Copy URL ở trên)</li>
+            <li>Cursor → <strong>Settings → MCP</strong> → thêm server với field <code>url</code></li>
+            <li>Claude → <strong>Settings → Connectors → Add custom connector</strong> → dán cùng URL; OAuth để trống</li>
+            <li>Reload MCP / bật connector trong hội thoại</li>
           </ol>
         </div>
       </div>
@@ -1089,15 +1052,15 @@ export default function McpReportApiPage() {
               </button>
             </div>
 
-            {keySecret && (
-              <div className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 font-mono break-all">
-                Key test: {keySecret.slice(0, 12)}… (chỉ hiện trong phiên này)
+            {mcpConnectUrlPublic && (
+              <div className="text-[11px] text-violet-800 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2 font-mono break-all">
+                URL test: {mcpConnectUrlPublic}
               </div>
             )}
 
-            {!keySecret && selectedKeyId && (
+            {selectedKeyId && !selectedKey?.default_assigned_to && (
               <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                Hệ thống không lưu key thật. Bấm <strong>Rotate key để test</strong> để nhận key mới (key cũ bị vô hiệu).
+                Key chưa có act-as — chọn <strong>X-User-Id</strong> bên trên khi test tools có quyền BC.
               </p>
             )}
 
@@ -1115,7 +1078,7 @@ export default function McpReportApiPage() {
                   key={kind}
                   type="button"
                   onClick={() => runTest(kind)}
-                  disabled={!!testLoading || !keySecret}
+                  disabled={!!testLoading || !selectedKeyId}
                   className="h-8 px-3 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-xs font-medium disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
                 >
                   {testLoading === kind ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : null}
@@ -1200,8 +1163,7 @@ export default function McpReportApiPage() {
         <CodeBlock
           lang="bash"
           code={buildCurlOrgOverview(
-            displayKey,
-            actAsUserId,
+            mcpConnectUrlPublic,
             testPeriodParams.date_from
               ? testPeriodParams
               : { date_from: '2026-03-01', date_to: '2026-03-31' },
@@ -1223,8 +1185,8 @@ export default function McpReportApiPage() {
           />
         </div>
         <div>
-          <p className="text-xs font-medium text-gray-600 mb-2">OpenClaw / Cursor — cấu hình MCP HTTP</p>
-          <CodeBlock lang="json" code={buildOpenClawConfig(MCP_ENDPOINT_PUBLIC, displayKey, mcpClientId)} />
+          <p className="text-xs font-medium text-gray-600 mb-2">Cursor — mcp.json (chỉ URL)</p>
+          <CodeBlock lang="json" code={buildOpenClawConfig(mcpConnectUrlPublic)} />
         </div>
       </div>
     </div>

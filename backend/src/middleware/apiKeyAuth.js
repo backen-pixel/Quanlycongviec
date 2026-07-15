@@ -1,7 +1,11 @@
 /**
  * Xác thực qua API key — đọc/ghi vào bảng Supabase `external_api_keys`.
- * Ưu tiên header `X-Api-Key`; nếu thiếu thì nhận từ query (Postman Params, iframe, …).
- * Lưu ý: key trên URL dễ lọt access log — nên dùng header khi có thể.
+ *
+ * Nguồn token (ưu tiên):
+ *   1. Authorization Bearer / X-Api-Key / query api_key|access_token
+ *   2. Path param :connectId (UUID key id hoặc tbp_… trên /api/mcp/{id})
+ *
+ * Cursor / Claude remote MCP: chỉ cần URL `/api/mcp/{uuid}` (uuid = external_api_keys.id).
  *
  * Trước đây dùng file `backend/data/api-keys.json`, không bền trên Render
  * (filesystem ephemeral, mỗi lần deploy/restart sẽ mất). Đã chuyển sang DB.
@@ -75,13 +79,32 @@ async function findKeyByRefreshToken(refreshToken) {
 }
 
 async function findKeyById(id) {
+  const idStr = String(id || '').trim();
+  if (!idStr) return null;
+  const cached = _getCache(`id:${idStr}`);
+  if (cached !== undefined) return cached;
   const { data, error } = await supabase
     .from('external_api_keys')
     .select(SELECT_COLS)
-    .eq('id', id)
+    .eq('id', idStr)
     .maybeSingle();
   if (error) throw error;
+  _setCache(`id:${idStr}`, data || null);
   return data || null;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUuid(value) {
+  return UUID_RE.test(String(value || '').trim());
+}
+
+/** Resolve row từ UUID (key id) hoặc access token tbp_… */
+async function resolveKeyCredential(credential) {
+  const raw = String(credential || '').trim();
+  if (!raw) return null;
+  if (isUuid(raw)) return findKeyById(raw);
+  return findKeyByValue(raw);
 }
 
 async function insertKey(record) {
@@ -165,7 +188,10 @@ async function migrateLegacyFileOnce() {
 
 // ── Middleware ──────────────────────────────────────────────────────────────
 
-/** Header X-Api-Key, Authorization Bearer, hoặc query api_key / access_token */
+/**
+ * Bearer / X-Api-Key / query — hoặc path :connectId (URL dạng /api/mcp/{uuid}).
+ * Path token ưu tiên thấp hơn header (header thắng nếu cả hai có).
+ */
 function extractApiKey(req) {
   const bearer = String(req.headers.authorization || '').trim();
   if (bearer.toLowerCase().startsWith('bearer ')) {
@@ -177,18 +203,24 @@ function extractApiKey(req) {
   if (h) return String(h).trim();
 
   const q = req.query;
-  if (!q || typeof q !== 'object') return null;
+  if (q && typeof q === 'object') {
+    const single = q['x-api-key'] ?? q['X-Api-Key'] ?? q.api_key ?? q.apiKey ?? q.access_token;
+    if (single != null && String(single).trim() !== '') return String(single).trim();
 
-  const single = q['x-api-key'] ?? q['X-Api-Key'] ?? q.api_key ?? q.apiKey ?? q.access_token;
-  if (single != null && String(single).trim() !== '') return String(single).trim();
-
-  for (const name of Object.keys(q)) {
-    const lower = String(name).toLowerCase();
-    if (lower === 'x-api-key' || lower === 'api_key' || lower === 'apikey') {
-      const v = q[name];
-      if (v != null && String(v).trim() !== '') return String(v).trim();
+    for (const name of Object.keys(q)) {
+      const lower = String(name).toLowerCase();
+      if (lower === 'x-api-key' || lower === 'api_key' || lower === 'apikey') {
+        const v = q[name];
+        if (v != null && String(v).trim() !== '') return String(v).trim();
+      }
     }
   }
+
+  const connectId = req.params?.connectId;
+  if (connectId != null && String(connectId).trim() !== '') {
+    return String(connectId).trim();
+  }
+
   return null;
 }
 
@@ -196,13 +228,13 @@ async function apiKeyAuth(req, res, next) {
   const key = extractApiKey(req);
   if (!key) {
     return res.status(401).json({
-      error: 'Thiếu access token: header X-Api-Key, Authorization Bearer, hoặc query ?api_key= / ?access_token=',
+      error: 'Thiếu access token: URL /api/mcp/{uuid}, header X-Api-Key, Authorization Bearer, hoặc query ?api_key= / ?access_token=',
     });
   }
 
   try {
     await migrateLegacyFileOnce();
-    const found = await findKeyByValue(String(key).trim());
+    const found = await resolveKeyCredential(key);
     if (!found || found.active === false) {
       return res.status(401).json({ error: 'API key không hợp lệ hoặc đã bị thu hồi' });
     }
@@ -235,6 +267,8 @@ module.exports = {
   findKeyById,
   findKeyByValue,
   findKeyByRefreshToken,
+  resolveKeyCredential,
+  isUuid,
   insertKey,
   updateKey,
   deleteKey,

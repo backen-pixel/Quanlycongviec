@@ -218,10 +218,8 @@ function validateConnectionHeaders(req, sessionId, session, method) {
   if (!session) {
     return { ok: false, code: -32002, message: 'Session không tồn tại hoặc đã hết hạn — initialize lại' };
   }
-  if (!hClient) {
-    return { ok: false, code: -32020, message: 'Thiếu header Mcp-Client-Id' };
-  }
-  if (hClient !== session.clientId) {
+  // Mcp-Client-Id là mở rộng — chỉ kiểm tra khi client gửi
+  if (hClient && session.clientId && hClient !== session.clientId) {
     return {
       ok: false,
       code: -32020,
@@ -240,15 +238,15 @@ function extractProtocolVersion(req, body) {
 
 function validateAcceptHeader(req) {
   const accept = getHeader(req, 'Accept') || '';
+  // Client chuẩn (Cursor) có thể gửi */* hoặc chỉ application/json — không bắt buộc SSE.
+  if (!accept || accept === '*/*' || accept.includes('*/*')) return { ok: true };
   const hasJson = accept.includes('application/json');
   const hasSse = accept.includes('text/event-stream');
-  if (!hasJson || !hasSse) {
-    return {
-      ok: false,
-      message: 'Accept header phải gồm application/json và text/event-stream',
-    };
-  }
-  return { ok: true };
+  if (hasJson || hasSse) return { ok: true };
+  return {
+    ok: false,
+    message: 'Accept header phải gồm application/json và/hoặc text/event-stream',
+  };
 }
 
 function decodeHeaderValue(value) {
@@ -264,6 +262,10 @@ function decodeHeaderValue(value) {
   return value;
 }
 
+/**
+ * Header Mcp-Method / Mcp-Name là mở rộng QLCV (không bắt buộc MCP spec).
+ * Chỉ validate khi client có gửi — Cursor/Claude chuẩn không gửi vẫn OK.
+ */
 function validateModernHeaders(req, body, protocolVersion) {
   if (!isModernProtocol(protocolVersion)) return { ok: true };
 
@@ -272,10 +274,7 @@ function validateModernHeaders(req, body, protocolVersion) {
   const mcpName = getHeader(req, 'Mcp-Name');
   const headerVer = getHeader(req, 'MCP-Protocol-Version');
 
-  if (!headerVer) {
-    return { ok: false, code: -32020, message: 'Thiếu header MCP-Protocol-Version' };
-  }
-  if (headerVer !== protocolVersion) {
+  if (headerVer && headerVer !== protocolVersion) {
     return {
       ok: false,
       code: -32020,
@@ -283,10 +282,7 @@ function validateModernHeaders(req, body, protocolVersion) {
     };
   }
 
-  if (!mcpMethod) {
-    return { ok: false, code: -32020, message: 'Thiếu header Mcp-Method' };
-  }
-  if (mcpMethod !== method) {
+  if (mcpMethod && mcpMethod !== method) {
     return {
       ok: false,
       code: -32020,
@@ -294,13 +290,10 @@ function validateModernHeaders(req, body, protocolVersion) {
     };
   }
 
-  if (method === 'tools/call') {
+  if (method === 'tools/call' && mcpName) {
     const bodyName = body.params?.name;
-    if (!mcpName) {
-      return { ok: false, code: -32020, message: 'Thiếu header Mcp-Name cho tools/call' };
-    }
     const decodedName = decodeHeaderValue(mcpName);
-    if (decodedName !== bodyName) {
+    if (bodyName && decodedName !== bodyName) {
       return {
         ok: false,
         code: -32020,
@@ -309,13 +302,10 @@ function validateModernHeaders(req, body, protocolVersion) {
     }
   }
 
-  if (method === 'resources/read') {
+  if (method === 'resources/read' && mcpName) {
     const bodyUri = body.params?.uri;
-    if (!mcpName) {
-      return { ok: false, code: -32020, message: 'Thiếu header Mcp-Name cho resources/read' };
-    }
     const decodedUri = decodeHeaderValue(mcpName);
-    if (decodedUri !== bodyUri) {
+    if (bodyUri && decodedUri !== bodyUri) {
       return {
         ok: false,
         code: -32020,
@@ -659,7 +649,9 @@ async function handleMcpPost(req, body) {
 function buildLegacySseEndpointUrl(req) {
   const proto = getHeader(req, 'X-Forwarded-Proto') || req.protocol || 'https';
   const host = getHeader(req, 'X-Forwarded-Host') || getHeader(req, 'Host') || req.get?.('host');
-  return `${proto}://${host}/api/mcp`;
+  const connectId = req.params?.connectId || req.apiKey?.id;
+  const path = connectId ? `/api/mcp/${connectId}` : '/api/mcp';
+  return `${proto}://${host}${path}`;
 }
 
 module.exports = {

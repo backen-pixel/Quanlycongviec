@@ -1,18 +1,20 @@
 /**
  * MCP API — Model Context Protocol chuẩn (Streamable HTTP).
  *
- * Transport:
- *   POST /api/mcp          — MCP endpoint (JSON-RPC 2.0, Streamable HTTP)
- *   GET  /api/mcp          — Legacy HTTP+SSE (2024-11-05 backward compat)
+ * Transport (URL-token — khuyến nghị Cursor / Claude):
+ *   POST /api/mcp/:connectId     — MCP endpoint (connectId = external_api_keys.id)
+ *   GET  /api/mcp/:connectId     — Legacy HTTP+SSE
+ *   GET  /api/mcp/:connectId/ping
  *
- * Auth: X-Api-Key (+ X-User-Id cho quyền BC).
- *
- * REST shortcuts (không thay MCP endpoint):
+ * Transport (legacy — header X-Api-Key):
+ *   POST /api/mcp
+ *   GET  /api/mcp
  *   GET  /api/mcp/ping
- *   GET  /api/mcp/reports/org-overview?...
+ *
+ * Act-as: X-User-Id hoặc default_assigned_to trên key.
  */
 const { Router } = require('express');
-const { apiKeyAuth } = require('../middleware/apiKeyAuth');
+const { apiKeyAuth, isUuid } = require('../middleware/apiKeyAuth');
 const {
   getMcpReportTools,
   callMcpReportTool,
@@ -28,6 +30,12 @@ const {
 } = require('../helpers/mcpServer');
 
 const r = Router();
+
+/** Express 5 không hỗ trợ regex trong :param — lọc UUID bằng middleware */
+function onlyUuidConnectId(req, res, next) {
+  if (!isUuid(req.params.connectId)) return next('route');
+  return next();
+}
 
 const _rateBucket = new Map();
 function checkRateLimit({ apiKeyId, ip, windowMs = 60_000, limit = 90 }) {
@@ -62,11 +70,8 @@ async function handleToolError(res, e) {
   return res.status(status).json({ error: e.message || 'Lỗi MCP' });
 }
 
-r.use(apiKeyAuth);
-r.use(mcpRateLimit);
-
 /**
- * POST /api/mcp — MCP endpoint chuẩn (Streamable HTTP).
+ * POST — MCP endpoint chuẩn (Streamable HTTP).
  * Mỗi request = một JSON-RPC message.
  */
 async function mcpPostHandler(req, res) {
@@ -91,13 +96,11 @@ async function mcpPostHandler(req, res) {
   }
 }
 
-r.post('/', mcpPostHandler);
-
 /**
- * GET /api/mcp — Legacy HTTP+SSE (protocol 2024-11-05).
- * Client cũ mở SSE, nhận event `endpoint` trỏ về POST URL.
+ * GET — Legacy HTTP+SSE (protocol 2024-11-05).
+ * Client cũ mở SSE, nhận event `endpoint` trỏ về POST URL (giữ /{uuid} nếu có).
  */
-r.get('/', (req, res) => {
+function mcpSseHandler(req, res) {
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -111,20 +114,18 @@ r.get('/', (req, res) => {
   }, 25_000);
 
   req.on('close', () => clearInterval(keepAlive));
-});
+}
 
-/** POST /api/mcp/rpc — alias backward-compat → cùng handler MCP chuẩn */
-r.post('/rpc', mcpPostHandler);
-
-/** GET /api/mcp/ping — health check (ngoài MCP spec, tiện debug) */
-r.get('/ping', (req, res) => {
+function mcpPingHandler(req, res) {
+  const connectId = req.params?.connectId || req.apiKey?.id || null;
   res.json({
     ok: true,
     mcp: true,
     server: SERVER_NAME,
     version: SERVER_VERSION,
     protocol_versions: SUPPORTED_PROTOCOL_VERSIONS,
-    endpoint: 'POST /api/mcp',
+    endpoint: connectId ? `POST /api/mcp/${connectId}` : 'POST /api/mcp',
+    connect_url: connectId ? `/api/mcp/${connectId}` : null,
     connection: {
       session_id: '(nhận sau initialize — header Mcp-Session-Id)',
       client_id: '(gửi Mcp-Client-Id hoặc params.client_id khi initialize)',
@@ -134,68 +135,78 @@ r.get('/ping', (req, res) => {
     company_id: req.apiKey.company_id,
     act_as_user: req.apiKey.default_assigned_to || null,
   });
-});
+}
 
-/**
- * GET /api/mcp/tools — MCP tools/list (JSON thuần, không JSON-RPC envelope).
- * @deprecated Dùng POST /api/mcp với method tools/list
- */
-r.get('/tools', (_req, res) => {
-  res.json({ tools: getMcpReportTools() });
-});
+function registerMcpHandlers(router) {
+  router.post('/', mcpPostHandler);
+  router.get('/', mcpSseHandler);
+  router.post('/rpc', mcpPostHandler);
+  router.get('/ping', mcpPingHandler);
 
-/**
- * POST /api/mcp/tools/call — MCP CallToolResult (không JSON-RPC envelope).
- * @deprecated Dùng POST /api/mcp với method tools/call
- */
-r.post('/tools/call', async (req, res) => {
-  try {
-    const name = req.body?.name || req.body?.tool;
-    const args = req.body?.arguments || req.body?.args || {};
-    if (!name) return res.status(400).json({ error: 'Thiếu name (tên tool)' });
-    const result = await callMcpReportTool(String(name), args, req);
-    res.json(buildCallToolResult(result));
-  } catch (e) {
-    if (e.status === 404 || e.status === 403) return handleToolError(res, e);
-    return res.status(200).json({
-      content: [{ type: 'text', text: e.message || 'Lỗi' }],
-      isError: true,
-    });
-  }
-});
+  router.get('/tools', (_req, res) => {
+    res.json({ tools: getMcpReportTools() });
+  });
 
-/** GET /api/mcp/reports/org-overview — REST shortcut */
-r.get('/reports/org-overview', async (req, res) => {
-  try {
-    res.set('Cache-Control', 'no-store');
-    const args = queryToReportArgs(req.query);
-    const result = await callMcpReportTool('get_org_overview_report_full', args, req);
-    res.json(result);
-  } catch (e) {
-    return handleToolError(res, e);
-  }
-});
+  router.post('/tools/call', async (req, res) => {
+    try {
+      const name = req.body?.name || req.body?.tool;
+      const args = req.body?.arguments || req.body?.args || {};
+      if (!name) return res.status(400).json({ error: 'Thiếu name (tên tool)' });
+      const result = await callMcpReportTool(String(name), args, req);
+      res.json(buildCallToolResult(result));
+    } catch (e) {
+      if (e.status === 404 || e.status === 403) return handleToolError(res, e);
+      return res.status(200).json({
+        content: [{ type: 'text', text: e.message || 'Lỗi' }],
+        isError: true,
+      });
+    }
+  });
 
-r.get('/reports/org-overview/summary', async (req, res) => {
-  try {
-    res.set('Cache-Control', 'no-store');
-    const args = queryToReportArgs(req.query);
-    const result = await callMcpReportTool('get_org_overview_report', args, req);
-    res.json(result);
-  } catch (e) {
-    return handleToolError(res, e);
-  }
-});
+  router.get('/reports/org-overview', async (req, res) => {
+    try {
+      res.set('Cache-Control', 'no-store');
+      const args = queryToReportArgs(req.query);
+      const result = await callMcpReportTool('get_org_overview_report_full', args, req);
+      res.json(result);
+    } catch (e) {
+      return handleToolError(res, e);
+    }
+  });
 
-r.get('/reports/org-overview/text', async (req, res) => {
-  try {
-    res.set('Cache-Control', 'no-store');
-    const args = queryToReportArgs(req.query);
-    const result = await callMcpReportTool('format_org_overview_report_text', args, req);
-    res.json(result);
-  } catch (e) {
-    return handleToolError(res, e);
-  }
-});
+  router.get('/reports/org-overview/summary', async (req, res) => {
+    try {
+      res.set('Cache-Control', 'no-store');
+      const args = queryToReportArgs(req.query);
+      const result = await callMcpReportTool('get_org_overview_report', args, req);
+      res.json(result);
+    } catch (e) {
+      return handleToolError(res, e);
+    }
+  });
+
+  router.get('/reports/org-overview/text', async (req, res) => {
+    try {
+      res.set('Cache-Control', 'no-store');
+      const args = queryToReportArgs(req.query);
+      const result = await callMcpReportTool('format_org_overview_report_text', args, req);
+      res.json(result);
+    } catch (e) {
+      return handleToolError(res, e);
+    }
+  });
+}
+
+/** /api/mcp/{uuid} — auth từ path (Cursor / Claude chỉ cần URL) */
+const tokenRouter = Router({ mergeParams: true });
+tokenRouter.use(apiKeyAuth);
+tokenRouter.use(mcpRateLimit);
+registerMcpHandlers(tokenRouter);
+r.use('/:connectId', onlyUuidConnectId, tokenRouter);
+
+/** /api/mcp — legacy header/query auth */
+r.use(apiKeyAuth);
+r.use(mcpRateLimit);
+registerMcpHandlers(r);
 
 module.exports = r;
