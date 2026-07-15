@@ -3420,11 +3420,20 @@ export default function CRMDashboard() {
 
   // ── Computed: nguồn thông minh - non-FB giữ nguyên, FB → [FB] Tên Page ──
   const smartSources = useMemo(() => {
-    // Non-FB sources (chỉ đang dùng)
+    // Non-FB sources (chỉ đang dùng) — trừ nguồn "Zalo" (đúng tên, kênh chính): luôn hiện
+    // như FB pages, không phụ thuộc việc lead/deal đang tải có đang dùng nguồn này hay
+    // không — ví dụ hầu hết lead Zalo đã ở giai đoạn "Mất" nên dễ bị lọc khỏi danh sách
+    // đang tải. Các biến thể khác (vd. "Zalo OA") vẫn theo quy tắc cũ (chỉ đang dùng) để
+    // tránh hiện 2 lựa chọn "Zalo" gây nhầm khi 1 trong 2 gần như không có dữ liệu.
     const allItems = [...allLeads, ...allDeals];
     const usedIds = new Set(allItems.map(l => l.source_id).filter(Boolean));
     const nonFb = sources
-      .filter(s => usedIds.has(s.id) && !(s.name || '').toLowerCase().includes('facebook'))
+      .filter(s => {
+        const name = (s.name || '').toLowerCase().trim();
+        if (name.includes('facebook')) return false;
+        if (name === 'zalo') return true;
+        return usedIds.has(s.id);
+      })
       .map(s => ({ id: s.id, type: 'source', label: `${s.icon || ''} ${s.name}`.trim() }));
     const seenFb = new Set();
     const fb = fbPages
@@ -3461,6 +3470,41 @@ export default function CRMDashboard() {
     })();
   }, [filterSource, pipelineType, filterCompany, user?.company_id]);
 
+  // ── Lọc theo nguồn thường (không phải trang FB): allLeads/allDeals chỉ chứa 1 phần
+  // (tải theo trang) — nếu lead/deal khớp nguồn đang lọc rơi ngoài phần đã tải (ví dụ
+  // đã "Mất" từ lâu, không còn ở đầu danh sách), lọc client sẽ không thấy kết quả nào.
+  // Tải bổ sung toàn bộ bản ghi khớp nguồn từ server, giữ ở state riêng (KHÔNG gộp
+  // trực tiếp vào allLeads/allDeals) — bộ nạp chính vẫn có thể setAllLeads/setAllDeals
+  // (ghi đè toàn bộ, không merge) song song do đổi tab/filter khác, dễ xoá mất phần vừa
+  // gộp. State riêng này được hợp nhất vào kết quả ngay trong filterItemsForPipeline.
+  const [extraSourceMatchedRows, setExtraSourceMatchedRows] = useState([]);
+  const lastPlainSourceFetch = useRef('');
+  useEffect(() => {
+    if (!filterSource || filterSource.startsWith('fbp:')) {
+      lastPlainSourceFetch.current = '';
+      setExtraSourceMatchedRows([]);
+      return;
+    }
+    const co = filterCompany || (user?.company_id ? String(user.company_id) : '');
+    const key = `${filterSource}|${pipelineType}|${co}`;
+    if (lastPlainSourceFetch.current === key) return;
+    lastPlainSourceFetch.current = key;
+    setExtraSourceMatchedRows([]);
+    (async () => {
+      try {
+        const common = {
+          type: pipelineType === 'deal' ? 'deal' : 'lead',
+          source_id: filterSource,
+          ...(co ? { company_id: co } : {}),
+        };
+        const { rows } = await fetchCrmKanbanRowsPage(api, common, { loadAll: true });
+        if (!rows?.length) return;
+        if (lastPlainSourceFetch.current !== key) return; // filter đã đổi trong lúc chờ — bỏ kết quả cũ
+        setExtraSourceMatchedRows(rows);
+      } catch { /* giữ nguyên state hiện có nếu lỗi */ }
+    })();
+  }, [filterSource, pipelineType, filterCompany, user?.company_id]);
+
   // ── Client-side search + filter (instant, no API) ──
   const hasPhoneNumber = useCallback((item) => {
     return !!((item.customer?.phone && item.customer.phone.trim()) || (item.phone && item.phone.trim()));
@@ -3477,6 +3521,14 @@ export default function CRMDashboard() {
   /** pipelineKind: 'lead' | 'deal' — một người phụ trách (assigned_to đồng bộ lead_owner) */
   const filterItemsForPipeline = useCallback((items, _pipelineKind, textQueryOverride) => {
     let result = items;
+
+    // Hợp nhất thêm bản ghi khớp nguồn tải bổ sung (xem effect ở trên) — tránh gộp
+    // trực tiếp vào allLeads/allDeals vì dễ bị bộ nạp chính ghi đè mất khi đổi tab/filter.
+    if (extraSourceMatchedRows.length) {
+      const wantDeal = _pipelineKind === 'deal';
+      const extra = extraSourceMatchedRows.filter((r) => (String(r.type || '') === 'deal') === wantDeal);
+      if (extra.length) result = dedupeCrmKanbanRows([...result, ...extra]);
+    }
 
     // Company filter
     if (filterCompany) {
@@ -3609,6 +3661,7 @@ export default function CRMDashboard() {
     filterCustomerCompany,
     filterPhone,
     fbPageLeadIds,
+    extraSourceMatchedRows,
     hasPhoneNumber,
   ]);
 

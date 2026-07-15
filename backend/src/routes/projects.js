@@ -32,6 +32,7 @@ const {
   assertRowCompanyInTenant,
   intersectCompanyIdsWithTenant,
 } = require('../helpers/tenantScope');
+const { applyAllActiveWorkshopTemplatesForArea } = require('../helpers/workshopApplyTemplates');
 
 const r = Router();
 r.use(auth);
@@ -1103,19 +1104,35 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
       stage = st || null;
     } catch (_) { stage = null; }
 
-    // VC intake column id (if available)
+    // VC intake column id (if available) — ưu tiên theo công ty
     let vcIntakeColId = null;
-    if (initialStatus === 'shipping') {
+    if (initialStatus === 'shipping' || initialStatus === 'installing') {
       try {
-        const { data: col, error: colErr } = await supabase
+        const wantInstall = initialStatus === 'installing';
+        let colQ = supabase
           .from('logistics_pipeline_stages')
-          .select('id')
-          .eq('bucket_slug', 'delivery_pending')
+          .select('id, name, bucket_slug, order_index, company_id')
           .eq('is_active', true)
-          .order('order_index', { ascending: true })
-          .limit(1)
-          .maybeSingle();
-        if (!colErr && col?.id) vcIntakeColId = col.id;
+          .order('order_index', { ascending: true });
+        if (projectCompanyId) colQ = colQ.eq('company_id', projectCompanyId);
+        const { data: cols } = await colQ;
+        const rows = cols || [];
+        const isInstallName = (s) => {
+          const name = String(s?.name || '').toLowerCase();
+          const slug = String(s?.bucket_slug || '').toLowerCase();
+          return slug.includes('install') || name.includes('lắp') || name.includes('lap dat');
+        };
+        let hit = null;
+        if (wantInstall) {
+          hit = rows.find(isInstallName) || null;
+        } else {
+          hit = rows.find((s) => s.bucket_slug === 'delivery_pending')
+            || rows.find((s) => String(s.name || '').toLowerCase().includes('chờ vận'))
+            || rows.find((s) => !isInstallName(s))
+            || rows[0]
+            || null;
+        }
+        if (hit?.id) vcIntakeColId = hit.id;
       } catch (_) { vcIntakeColId = null; }
     }
 
@@ -1311,10 +1328,12 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
     }
 
     // ── AUTO-CREATE TASKS PER WORKFLOW LINE for consulting stage ──
+    // Dự án tạo thẳng ở VC/LĐ/bảo hành: không gen task_templates vòng đời CRM/SX.
+    const isLogisticsCreate = ['shipping', 'installing', 'warranty', 'completed'].includes(initialStatus);
     // If workflow lines exist, create template tasks for EACH consulting line
     // If no lines, use legacy single-person mode
     const consultingPersonId = b.consulting_person_id || b.sales_person_id || null;
-    if (stage?.id) {
+    if (!isLogisticsCreate && stage?.id) {
       const { data: templates } = await supabase.from('task_templates')
         .select('*').eq('stage_id', stage.id).eq('is_active', true).order('order_index');
 
@@ -1405,6 +1424,8 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
 
     // ── AUTO-CREATE TASKS FOR ALL REMAINING STAGES ──
     // After consulting tasks, generate tasks for all other stages too
+    // (bỏ qua khi tạo thẳng dự án VC/LĐ)
+    if (!isLogisticsCreate) {
     const allStageSlugs = ['design', 'quotation', 'contract', 'production', 'delivery', 'customer-care'];
     const stagePersonMap = {
       design: b.design_person_id || b.designer_id,
@@ -1487,6 +1508,29 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
           }
         }
       } catch (e) { console.warn(`Auto-create tasks for ${slug} failed:`, e.message); }
+    }
+    } // end !isLogisticsCreate
+
+    // Gen bộ nhiệm vụ VC/LĐ từ workshop_task_templates (idempotent)
+    if (isLogisticsCreate) {
+      try {
+        const logCo = b.logistics_company_id || data.company_id || projectCompanyId || null;
+        if (logCo && data.logistics_company_id == null && b.logistics_company_id) {
+          await supabase.from('projects').update({ logistics_company_id: logCo }).eq('id', data.id);
+        } else if (logCo && !data.logistics_company_id) {
+          await supabase.from('projects').update({ logistics_company_id: logCo }).eq('id', data.id).catch(() => {});
+        }
+        const out = await applyAllActiveWorkshopTemplatesForArea(data.id, req.user.userId, {
+          workshopArea: 'logistics',
+          companyId: logCo,
+          logisticsStageId: data.vc_kanban_column_id || vcIntakeColId || null,
+        });
+        if (!out?.ok) {
+          console.warn('[POST /projects] gen logistics templates:', out?.error || 'unknown');
+        }
+      } catch (tplErr) {
+        console.warn('[POST /projects] gen logistics templates:', tplErr.message);
+      }
     }
 
     // NOTE: Không tự tạo Đơn 1/2/... từ dự án. Đơn hàng chỉ tạo thủ công tại tab Đơn hàng.

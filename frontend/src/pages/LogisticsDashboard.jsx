@@ -3,13 +3,14 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isSystemAdmin } from '../lib/adminRole';
+import { isInstallVcStage } from '../lib/managementDashboardUtils';
 import {
   canPickWorkshopCompany,
   isCrossWorkshopProductionViewer,
   workshopCompaniesForCrossViewer,
 } from '../lib/crossWorkshopProduction';
 import { getSocket } from '../lib/socket';
-import { formatVND, formatDate } from '../lib/utils';
+import { formatVND } from '../lib/utils';
 import {
   getWorkshopDateRange, WS_TIME_PRESETS, WS_KANBAN_LOAD_OPTIONS, WS_KANBAN_LOAD_ALL_MAX,
   workshopCreatedInRange, fetchWorkshopProjectPages,
@@ -18,25 +19,40 @@ import {
   Truck, CheckCircle2, AlertTriangle, Search, X, Calendar,
   Package, Users, LayoutGrid, List, Plus,
   CheckSquare, UserCheck, Loader2, Wrench, ShieldCheck,
-  Filter, Clock, Layers, Trash2,
+  Filter, Clock, Layers, Trash2, Settings, BarChart3,
+  ChevronDown, ChevronUp, MessageSquare, Phone, ExternalLink,
 } from 'lucide-react';
 import { LogisticsListView, LogisticsPlannerView, LogisticsCalendarView } from '../components/LogisticsViews';
 import NewLogisticsProjectModal from '../components/NewLogisticsProjectModal';
 import WorkshopPipelineKanbanScroll from '../components/WorkshopPipelineKanbanScroll';
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
+import KanbanCardQuickMove from '../components/KanbanCardQuickMove';
 import { useKanbanColumnTheme, KANBAN_CARDS_BODY_CLASS } from '../lib/kanbanColumnTheme';
 import WorkshopStaffFilterPanel from '../components/WorkshopStaffFilterPanel';
 import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
 } from '../lib/workshopPipelineStorage';
-import ModuleQuickActions from '../shared/components/ModuleQuickActions';
 
 const INTAKE_BUCKET = 'delivery_pending';
 
 const WS_DASH_VIEW_MODES = ['kanban', 'list', 'planner', 'calendar'];
 
+const DEFAULT_VC_STAGES = [
+  { id: 'vc_intake', name: 'Chờ vận chuyển', slug: 'delivery_pending', icon: '📦', color: '#f97316', bucket_slug: INTAKE_BUCKET },
+  { id: 'vc_ship', name: 'Đang vận chuyển', slug: 'delivery', icon: '🚚', color: '#ea580c' },
+  { id: 'vc_install', name: 'Đang lắp đặt', slug: 'installation', icon: '🔧', color: '#d97706' },
+  { id: 'vc_warranty', name: 'Bảo hành', slug: 'customer-care', icon: '🤝', color: '#0f766e' },
+];
+
+/** Tab pipeline VC — tách «Vận chuyển» / «Lắp đặt» giống 2 tab Deal/Đơn hàng của CRM. */
+const VC_PIPELINE_TABS = [
+  { id: 'shipping', label: 'Vận chuyển', icon: '🚚' },
+  { id: 'install', label: 'Lắp đặt', icon: '🔧' },
+];
+
 const LS_VC = 'vc_dash_filters_v1';
+const LS_VC_KPI_PANEL = 'vc_kpi_panel_open';
 function readVcDashPersisted() {
   if (typeof window === 'undefined') return null;
   try {
@@ -51,11 +67,14 @@ function readVcDashPersisted() {
   }
 }
 
-const PRIORITY_COLORS = {
-  high: 'bg-red-100 text-red-700',
-  medium: 'bg-amber-100 text-amber-700',
-  low: 'bg-gray-100 text-gray-600',
-};
+function readVcKpiPanelOpen() {
+  try {
+    const v = localStorage.getItem(LS_VC_KPI_PANEL);
+    if (v === '0') return false;
+    if (v === '1') return true;
+  } catch { /* ignore */ }
+  return true;
+}
 
 export default function LogisticsDashboard() {
   const P0 = useMemo(() => readVcDashPersisted(), []);
@@ -75,6 +94,7 @@ export default function LogisticsDashboard() {
     const v = P0?.viewMode;
     return WS_DASH_VIEW_MODES.includes(v) ? v : 'kanban';
   });
+  const [vcPipelineTab, setVcPipelineTab] = useState(() => (P0?.vcPipelineTab === 'install' ? 'install' : 'shipping'));
   const [showNewProject, setShowNewProject] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteReason, setDeleteReason] = useState('');
@@ -89,6 +109,7 @@ export default function LogisticsDashboard() {
   const [showAdvFilter, setShowAdvFilter] = useState(false);
   const [filterWorkTypeId, setFilterWorkTypeId] = useState(() => P0?.filterWorkTypeId ?? '');
   const [workTypes, setWorkTypes] = useState([]);
+  const [kpiPanelOpen, setKpiPanelOpen] = useState(() => readVcKpiPanelOpen());
 
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [allUsers, setAllUsers] = useState([]);
@@ -225,12 +246,12 @@ export default function LogisticsDashboard() {
       localStorage.setItem(LS_VC, JSON.stringify({
         filterCompany, timePreset, customFrom, customTo, kanbanLoadKey,
         filterPersonId, filterPersonName, filterRegion, filterPhone, filterWorkTypeId,
-        searchQuery, priorityFilter, stageFilter, viewMode,
+        searchQuery, priorityFilter, stageFilter, viewMode, vcPipelineTab,
       }));
     } catch { /* ignore */ }
   }, [
     filterCompany, timePreset, customFrom, customTo, kanbanLoadKey, filterPersonId, filterPersonName,
-    filterRegion, filterPhone, filterWorkTypeId, searchQuery, priorityFilter, stageFilter, viewMode,
+    filterRegion, filterPhone, filterWorkTypeId, searchQuery, priorityFilter, stageFilter, viewMode, vcPipelineTab,
   ]);
 
   useEffect(() => {
@@ -283,11 +304,6 @@ export default function LogisticsDashboard() {
     };
   }, [scopeProjects, kpis]);
 
-  const totalValue = useMemo(
-    () => scopeProjects.reduce((sum, p) => sum + (Number(p.estimated_value) || 0), 0),
-    [scopeProjects],
-  );
-
   const toggleSelect = useCallback((id, e) => {
     e?.stopPropagation();
     setSelectedIds(prev => {
@@ -331,14 +347,7 @@ export default function LogisticsDashboard() {
   }, [bulkPersonId, selectedIds, load, clearSelection]);
 
   const kanbanPipeline = useMemo(() => {
-    const baseStages = pipeline.length
-      ? pipeline
-      : [
-          { id: 'vc_intake', name: 'Chờ vận chuyển', slug: 'delivery_pending', icon: '📦', color: '#f97316', bucket_slug: INTAKE_BUCKET },
-          { id: 'vc_ship', name: 'Đang vận chuyển', slug: 'delivery', icon: '🚚', color: '#ea580c' },
-          { id: 'vc_install', name: 'Đang lắp đặt', slug: 'installation', icon: '🔧', color: '#d97706' },
-          { id: 'vc_warranty', name: 'Bảo hành', slug: 'customer-care', icon: '🤝', color: '#0f766e' },
-        ];
+    const baseStages = pipeline.length ? pipeline : DEFAULT_VC_STAGES;
 
     const stageIds = new Set(baseStages.map((s) => s.id));
     const orphans = scopeProjects.filter((p) => !p.vc_kanban_column_id || !stageIds.has(p.vc_kanban_column_id));
@@ -353,8 +362,39 @@ export default function LogisticsDashboard() {
     }));
   }, [pipeline, scopeProjects]);
 
+  /** Số dự án theo từng tab «Vận chuyển» / «Lắp đặt» — dùng để hiện badge trên tab. */
+  const vcTabCounts = useMemo(() => {
+    let shipping = 0;
+    let install = 0;
+    kanbanPipeline.forEach((stage) => {
+      const n = stage.items?.length || 0;
+      if (isInstallVcStage(stage)) install += n;
+      else shipping += n;
+    });
+    return { shipping, install };
+  }, [kanbanPipeline]);
+
+  /** Tách pipeline VC theo tab — cột nào tên chứa "lắp" (hoặc bucket_slug chứa "install") vào tab Lắp đặt. */
+  const tabKanbanPipeline = useMemo(() => {
+    return kanbanPipeline.filter((stage) => (
+      vcPipelineTab === 'install' ? isInstallVcStage(stage) : !isInstallVcStage(stage)
+    ));
+  }, [kanbanPipeline, vcPipelineTab]);
+
+  const switchVcTab = useCallback((tab) => {
+    setVcPipelineTab(tab);
+    setStageFilter((prev) => {
+      if (!prev) return prev;
+      const baseStages = pipeline.length ? pipeline : DEFAULT_VC_STAGES;
+      const stillValid = baseStages.some((s) => (
+        String(s.id) === String(prev) && (tab === 'install' ? isInstallVcStage(s) : !isInstallVcStage(s))
+      ));
+      return stillValid ? prev : '';
+    });
+  }, [pipeline]);
+
   const filteredKanbanPipeline = useMemo(() => {
-    const result = kanbanPipeline.map((stage) => ({
+    const result = tabKanbanPipeline.map((stage) => ({
       ...stage,
       items: stage.items.filter((p) => {
         if (searchQuery) {
@@ -373,7 +413,7 @@ export default function LogisticsDashboard() {
     }));
     filteredKanbanPipelineRef.current = result;
     return result;
-  }, [kanbanPipeline, searchQuery, priorityFilter, stageFilter]);
+  }, [tabKanbanPipeline, searchQuery, priorityFilter, stageFilter]);
 
   const filteredProjectCount = useMemo(
     () => filteredKanbanPipeline.reduce((n, s) => n + s.items.length, 0),
@@ -423,21 +463,53 @@ export default function LogisticsDashboard() {
       return;
     }
 
-    // Optimistic update: dùng workflow_stage nếu có, không thì dùng thông tin từ cột
-    const wid = targetCol?.workflow_stage_id;
+    const willJumpToInstall = !!targetCol?.is_handover_to_install && !isInstallVcStage(targetCol);
+    if (willJumpToInstall) {
+      const current = projects.find((p) => String(p.id) === String(projectId));
+      const label = current?.name || current?.code || 'dự án';
+      if (!window.confirm(`Chuyển «${label}» từ Vận chuyển sang Lắp đặt?`)) return;
+    }
+
+    // Optimistic: nếu nhảy LĐ thì đặt vào cột lắp đặt đầu tiên (nếu biết), không thì giữ target
+    const installCol = willJumpToInstall
+      ? (kanbanPipeline || []).find((s) => isInstallVcStage(s))
+      : null;
+    const landCol = installCol || targetCol;
+    const wid = landCol?.workflow_stage_id;
     const optimisticStage = wid
-      ? { id: wid, slug: targetCol.slug || targetCol.bucket_slug, name: targetCol.name, color: targetCol.color, icon: targetCol.icon }
-      : { id: targetCol.id, slug: targetCol.bucket_slug || targetCol.slug, name: targetCol.name, color: targetCol.color, icon: targetCol.icon };
+      ? { id: wid, slug: landCol.slug || landCol.bucket_slug, name: landCol.name, color: landCol.color, icon: landCol.icon }
+      : { id: landCol.id, slug: landCol.bucket_slug || landCol.slug, name: landCol.name, color: landCol.color, icon: landCol.icon };
     setProjects((prev) => prev.map((p) => (p.id === projectId
-      ? { ...p, current_stage: optimisticStage, vc_kanban_column_id: targetCol.id, vc_intake: false } : p)));
+      ? {
+        ...p,
+        current_stage: optimisticStage,
+        vc_kanban_column_id: landCol.id,
+        vc_intake: false,
+        ...(willJumpToInstall ? { status: 'installing' } : {}),
+      } : p)));
+
+    if (willJumpToInstall) setVcPipelineTab('install');
 
     try {
-      // Luôn gửi vc_stage_id (logistics_pipeline_stages.id); thêm stage_id nếu có workflow_stage_id
+      // Gửi id cột gate (có cờ → LĐ); backend tự nhảy sang cột Lắp đặt
       const body = { vc_stage_id: targetCol.id };
-      if (wid) body.stage_id = wid;
-      await api.patch(`/logistics/projects/${projectId}/stage`, body);
+      if (targetCol?.workflow_stage_id) body.stage_id = targetCol.workflow_stage_id;
+      const { data } = await api.patch(`/logistics/projects/${projectId}/stage`, body);
+      if (data?.jumped_to_install && data?.install_stage_id) {
+        setProjects((prev) => prev.map((p) => (p.id === projectId
+          ? {
+            ...p,
+            vc_kanban_column_id: data.install_stage_id,
+            status: 'installing',
+            current_stage: {
+              ...(p.current_stage || {}),
+              id: data.install_stage_id,
+              name: data.install_stage_name || p.current_stage?.name,
+            },
+          } : p)));
+      }
     } catch (e) { console.error(e); load(); }
-  }, [load]);
+  }, [load, projects, kanbanPipeline, setVcPipelineTab]);
 
   const handleDeleteCard = useCallback((projectId, projectLabel) => {
     if (!projectId) return;
@@ -488,9 +560,7 @@ export default function LogisticsDashboard() {
   );
   const advFilterCount =
     staffFilterActiveCount + (filterPhone ? 1 : 0) + (hasTimeFilter ? 1 : 0)
-    + (filterWorkTypeId ? 1 : 0)
-    + (String(searchQuery || '').trim() ? 1 : 0) + (priorityFilter ? 1 : 0) + (stageFilter ? 1 : 0)
-    + (viewMode !== 'kanban' ? 1 : 0);
+    + (filterWorkTypeId ? 1 : 0) + (priorityFilter ? 1 : 0) + (stageFilter ? 1 : 0);
 
   const hasActiveFilter = !!(
     searchQuery || priorityFilter || stageFilter || hasTimeFilter
@@ -509,6 +579,56 @@ export default function LogisticsDashboard() {
     resetStaffFilters();
   }, [resetStaffFilters]);
 
+  const toggleKpiPanel = useCallback(() => {
+    setKpiPanelOpen((prev) => {
+      const next = !prev;
+      try { localStorage.setItem(LS_VC_KPI_PANEL, next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+
+  /** KPI theo tab đang mở — giống CRM đổi KPI theo Lead/Deal. */
+  const tabKpis = useMemo(() => {
+    const list = tabKanbanPipeline.flatMap((s) => s.items || []);
+    const overdue = list.filter(
+      (p) => p.deadline && new Date(p.deadline) < new Date() && p.status !== 'completed',
+    ).length;
+    const valueSum = list.reduce((sum, p) => sum + (Number(p.estimated_value) || 0), 0);
+    if (vcPipelineTab === 'install') {
+      return {
+        total: list.length,
+        shipping: 0,
+        installing: list.filter((p) => p.status === 'installing' || p.current_stage?.slug === 'installation').length || list.length,
+        warranty: 0,
+        completed: list.filter((p) => p.status === 'completed').length,
+        overdue,
+        valueSum,
+        avgProgress: list.length
+          ? Math.round(list.reduce((s, p) => s + (p.progress || 0), 0) / list.length)
+          : 0,
+      };
+    }
+    return {
+      total: list.length,
+      shipping: list.filter((p) => p.status === 'shipping' || p.current_stage?.slug === 'delivery').length,
+      installing: 0,
+      warranty: list.filter((p) => p.status === 'warranty' || p.current_stage?.slug === 'customer-care').length,
+      completed: list.filter((p) => p.status === 'completed').length,
+      overdue,
+      valueSum,
+      avgProgress: list.length
+        ? Math.round(list.reduce((s, p) => s + (p.progress || 0), 0) / list.length)
+        : 0,
+    };
+  }, [tabKanbanPipeline, vcPipelineTab]);
+
+  const ctrlH = 'h-8';
+  const ctrlIcon = 'h-7 w-7';
+  const ctrlTxt = 'text-xs';
+  const toolbarBtn = `${ctrlH} px-2 rounded-md ${ctrlTxt} font-medium inline-flex items-center gap-1 cursor-pointer transition-colors shrink-0`;
+  const activeTabLabel = vcPipelineTab === 'install' ? 'Lắp đặt' : 'Vận chuyển';
+  const tabCountLabel = (n) => (n > 0 ? ` ${n.toLocaleString('vi-VN')}` : '');
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -518,138 +638,210 @@ export default function LogisticsDashboard() {
   }
 
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold" style={{ color: '#000000' }}>🚚 Quản lý Vận chuyển</h1>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap shrink-0">
-          <button
-            onClick={() => setShowNewProject(true)}
-            className="h-9 px-4 bg-orange-600 hover:bg-orange-700 text-white rounded-lg font-medium flex items-center gap-2 cursor-pointer transition-all duration-200 text-sm"
-          >
-            <Plus className="h-4 w-4" /> + Thêm dự án VC
-          </button>
-          <Link to="/vc/pipeline-settings" className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 text-sm font-medium hover:bg-gray-50" title="Cấu hình cột pipeline riêng cho module VC">
-            Cài đặt pipeline VC
-          </Link>
-          <span className="hidden md:inline-block w-px h-6 bg-gray-200 mx-1" aria-hidden />
-          <ModuleQuickActions trashTab="vc" />
-        </div>
-      </div>
-
-      {/* KPI — thống kê theo bộ lọc thời gian / công ty / SĐT / người VC */}
-      <div className="space-y-1.5">
-        <p className="text-[11px] text-gray-500">
-          Tổng giá trị ước tính (sau bộ lọc phạm vi):{' '}
-          <strong className="text-orange-800 tabular-nums">{formatVND(totalValue)}</strong>
-        </p>
-        <div className="grid grid-cols-3 md:grid-cols-6 gap-1 md:gap-1.5">
-          <KPICard icon={<Package className="h-3.5 w-3.5" />} iconBgColor="bg-orange-100" iconColor="text-orange-600" label="Tổng dự án VC" value={scopeKpis.total} />
-          <KPICard icon={<Truck className="h-3.5 w-3.5" />} iconBgColor="bg-orange-100" iconColor="text-orange-600" label="Đang vận chuyển" value={scopeKpis.shipping} />
-          <KPICard icon={<Wrench className="h-3.5 w-3.5" />} iconBgColor="bg-amber-100" iconColor="text-amber-600" label="Đang lắp đặt" value={scopeKpis.installing} />
-          <KPICard icon={<ShieldCheck className="h-3.5 w-3.5" />} iconBgColor="bg-teal-100" iconColor="text-teal-600" label="Bảo hành" value={scopeKpis.warranty} />
-          <KPICard icon={<CheckCircle2 className="h-3.5 w-3.5" />} iconBgColor="bg-green-100" iconColor="text-green-600" label="Hoàn thành" value={scopeKpis.completed} />
-          <KPICard
-            icon={<AlertTriangle className="h-3.5 w-3.5" />}
-            iconBgColor={scopeKpis.overdue > 0 ? 'bg-red-100' : 'bg-gray-100'}
-            iconColor={scopeKpis.overdue > 0 ? 'text-red-600' : 'text-gray-400'}
-            label="Quá hạn"
-            value={scopeKpis.overdue > 0 ? <span className="text-red-600">{scopeKpis.overdue}</span> : scopeKpis.overdue}
-          />
-        </div>
-      </div>
-
-      {/* Công ty — chip ngang; kế toán: VPT + HCB + Metalla */}
-      {canPickCompany && workshopCompanyPickerList.length > 0 && (
-        <div className="flex items-center gap-1.5 overflow-x-auto max-w-full shrink-0 pb-0.5 scrollbar-thin scrollbar-thumb-gray-200">
-          {(isAdmin ? [{ id: '', name: 'Tất cả' }, ...workshopCompanyPickerList] : workshopCompanyPickerList).map((c) => {
-            const active = filterCompany === c.id;
-            return (
-              <button
-                key={c.id || 'all'}
-                type="button"
-                onClick={() => {
-                  if (active) return;
-                  handleStaffFilterCompanyChange(c.id);
-                }}
-                className={`shrink-0 h-9 px-3 rounded-full text-xs font-semibold border transition-all cursor-pointer whitespace-nowrap ${
-                  active
-                    ? 'bg-orange-600 border-orange-600 text-white shadow-sm'
-                    : 'bg-white border-gray-200 text-gray-600 hover:border-orange-300 hover:text-orange-700 hover:bg-orange-50'
-                }`}
-              >
-                {active && <span className="mr-1">✓</span>}
-                {c.id === '' ? 'Tất cả' : (c.short_name || c.name)}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Bộ lọc gọn: khi đóng chỉ còn 1 hàng */}
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setShowAdvFilter((s) => !s)}
-            className={`h-9 px-3 rounded-lg border text-sm font-medium flex items-center gap-1.5 shrink-0 ${
-              showAdvFilter || advFilterCount
-                ? 'border-orange-300 bg-orange-50 text-orange-900'
-                : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
-            }`}
-          >
-            <Filter className="h-3.5 w-3.5" />
-            Bộ lọc và tìm kiếm
-            {advFilterCount > 0 && (
-              <span className="text-[10px] font-bold bg-orange-600 text-white rounded-full min-w-[1.1rem] px-1 text-center">
-                {advFilterCount}
+    <div className="space-y-3">
+      {/* Panel điều khiển VC — tabs / tìm kiếm / KPI giống CRM */}
+      <div className="ui-solid-white rounded-xl border border-slate-200/90 bg-white shadow-sm overflow-hidden">
+        <div className="border-b border-slate-200/60">
+          {/* Hàng 1 — tab pipeline & hành động */}
+          <div className="flex items-center justify-between gap-1.5 flex-wrap px-2.5 py-1 sm:px-3 bg-slate-50/50">
+            <div className="flex items-center gap-1 min-w-0">
+              <div data-tour="vc-pipeline-tabs" className="inline-flex gap-px p-0.5 bg-slate-200/60 border border-slate-300/50 rounded-lg shrink-0">
+                {VC_PIPELINE_TABS.map((t) => {
+                  const active = vcPipelineTab === t.id;
+                  const count = t.id === 'install' ? vcTabCounts.install : vcTabCounts.shipping;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => switchVcTab(t.id)}
+                      className={`rounded-md font-semibold transition-colors flex items-center gap-1 px-2 py-1 text-[11px] whitespace-nowrap cursor-pointer ${
+                        active
+                          ? (t.id === 'install' ? 'bg-white text-amber-700 shadow-sm' : 'bg-white text-orange-700 shadow-sm')
+                          : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                      }`}
+                    >
+                      <span aria-hidden>{t.icon}</span>
+                      {t.label}{tabCountLabel(count)}
+                    </button>
+                  );
+                })}
+              </div>
+              {scopeKpis.overdue > 0 && (
+                <span
+                  className="relative inline-flex items-center justify-center h-7 w-7 rounded-md border border-red-200 bg-red-50 text-red-600"
+                  title={`${scopeKpis.overdue} dự án quá hạn`}
+                >
+                  <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2.5} />
+                  <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-0.5 rounded-full bg-red-600 text-white text-[8px] font-bold flex items-center justify-center tabular-nums leading-none">
+                    {scopeKpis.overdue > 99 ? '99+' : scopeKpis.overdue}
+                  </span>
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-1 shrink-0 ml-auto">
+              <span className="hidden lg:inline-flex items-center gap-1 text-[10px] text-slate-500 mr-1" title="Số thẻ sau lọc / tiến độ TB">
+                <span className="inline-block rounded-full bg-emerald-500 h-1.5 w-1.5" />
+                {filteredProjectCount.toLocaleString('vi-VN')} thẻ · TB {tabKpis.avgProgress}%
               </span>
-            )}
-          </button>
-          {hasActiveFilter && !showAdvFilter && (
-            <button
-              type="button"
-              onClick={clearAllFilters}
-              className="h-9 px-3 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 cursor-pointer flex items-center gap-1.5"
-            >
-              <X className="h-3.5 w-3.5" /> Xóa bộ lọc
-            </button>
-          )}
-          <span className="text-[11px] text-gray-500 ml-auto">
-            Tải: <strong>{projects.length}</strong> · Tiến độ TB <strong className="text-orange-700">{scopeKpis.avg_progress}%</strong>
-            {' · '}<strong>{filteredProjectCount}</strong> thẻ sau lọc
-          </span>
-        </div>
+              <button
+                type="button"
+                onClick={() => navigate('/admin/trash?tab=vc')}
+                className={`${ctrlIcon} shrink-0 border border-slate-200 text-slate-500 hover:bg-red-50 hover:text-red-600 hover:border-red-200 rounded-md flex items-center justify-center cursor-pointer transition-colors`}
+                title="Thùng rác — dự án VC đã xóa"
+                aria-label="Thùng rác"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+              <Link
+                to="/vc/pipeline-settings"
+                className={`${ctrlIcon} shrink-0 border border-slate-200 text-slate-500 hover:bg-orange-50 hover:text-orange-700 hover:border-orange-200 rounded-md flex items-center justify-center transition-colors`}
+                title="Cài đặt pipeline VC"
+                aria-label="Cài đặt pipeline"
+              >
+                <Settings className="h-3.5 w-3.5" />
+              </Link>
+              <button
+                type="button"
+                onClick={() => setShowNewProject(true)}
+                className={`${ctrlH} shrink-0 px-2.5 rounded-md font-semibold flex items-center gap-1 cursor-pointer transition-colors text-white shadow-sm bg-orange-600 hover:bg-orange-700`}
+              >
+                <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
+                <span className={ctrlTxt}>Thêm dự án</span>
+              </button>
+            </div>
+          </div>
 
-        {showAdvFilter && (
-          <div className="space-y-3 p-3 rounded-xl border border-dashed border-gray-200 bg-gray-50/80">
-            <div className="relative w-full max-w-xl">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Tìm mã, tên dự án, KH, SĐT, ghi chú..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full h-9 pl-9 pr-8 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              />
-              {searchQuery && (
-                <button type="button" onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer">
-                  <X className="h-4 w-4" />
+          {/* Hàng 2 — tìm kiếm & chế độ xem */}
+          <div className="flex flex-wrap items-center gap-1 px-2.5 py-1 sm:px-3 border-t border-slate-200/50">
+            <div
+              className={`group/search flex items-center shrink-0 flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem] rounded-md border transition-colors ${
+                searchQuery.trim()
+                  ? 'border-orange-300 bg-orange-50/80'
+                  : 'border-slate-200 bg-white hover:border-slate-300'
+              }`}
+            >
+              <div className="relative flex-1 min-w-0 flex items-center pl-7 pr-1">
+                <Search
+                  className={`absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none ${
+                    searchQuery.trim() ? 'text-orange-600' : 'text-slate-400'
+                  }`}
+                />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={vcPipelineTab === 'install' ? 'Tìm dự án lắp đặt, KH, SĐT, mã…' : 'Tìm dự án VC, KH, SĐT, mã…'}
+                  className={`flex-1 min-w-[3.5rem] ${ctrlH} bg-transparent border-0 ${ctrlTxt} font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-0 ${searchQuery ? 'pr-7' : ''}`}
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                    aria-label="Xóa tìm kiếm"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAdvFilter((s) => !s)}
+                className={`${ctrlH} px-2 border-l border-slate-200/80 rounded-r-md text-xs font-medium inline-flex items-center gap-1 cursor-pointer transition-colors ${
+                  showAdvFilter || advFilterCount
+                    ? 'bg-orange-50 text-orange-800'
+                    : 'bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+                title={showAdvFilter ? 'Thu gọn bộ lọc' : 'Bộ lọc nâng cao'}
+                aria-label="Bộ lọc"
+              >
+                <Filter className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Bộ lọc</span>
+                {advFilterCount > 0 && (
+                  <span className="text-[10px] font-bold bg-orange-600 text-white rounded-full min-w-[1.1rem] px-1 text-center">
+                    {advFilterCount}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            <div className="flex items-center gap-0.5 shrink-0 ml-auto pl-1 border-l border-slate-200/80">
+              <div className="inline-flex items-center gap-px p-0.5 rounded-md bg-slate-100 border border-slate-200/80">
+                {[
+                  { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
+                  { id: 'list', icon: List, label: 'Danh sách' },
+                  { id: 'planner', icon: Users, label: 'Planner' },
+                  { id: 'calendar', icon: Calendar, label: 'Lịch' },
+                ].map((v) => (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => setViewMode(v.id)}
+                    className={`${toolbarBtn} ${
+                      viewMode === v.id
+                        ? 'bg-white text-orange-700 shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                    title={v.label}
+                  >
+                    <v.icon className="h-3.5 w-3.5" />
+                    <span className="hidden md:inline">{v.label}</span>
+                  </button>
+                ))}
+              </div>
+              {hasActiveFilter && (
+                <button
+                  type="button"
+                  onClick={clearAllFilters}
+                  className={`${ctrlH} px-2 bg-white text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded-md ${ctrlTxt} transition cursor-pointer border border-slate-200`}
+                  title="Xóa bộ lọc"
+                >
+                  <X className="h-3.5 w-3.5" />
                 </button>
               )}
             </div>
+          </div>
+        </div>
 
+        {/* Công ty — chip ngang (giống CRM) */}
+        {canPickCompany && workshopCompanyPickerList.length > 0 && (
+          <div className="flex items-center gap-1.5 overflow-x-auto max-w-full px-2.5 sm:px-3 py-1.5 border-b border-slate-200/50 scrollbar-thin scrollbar-thumb-gray-200">
+            {(isAdmin ? [{ id: '', name: 'Tất cả' }, ...workshopCompanyPickerList] : workshopCompanyPickerList).map((c) => {
+              const active = filterCompany === c.id;
+              return (
+                <button
+                  key={c.id || 'all'}
+                  type="button"
+                  onClick={() => {
+                    if (active) return;
+                    handleStaffFilterCompanyChange(c.id);
+                  }}
+                  className={`shrink-0 h-7 px-2.5 rounded-full text-[11px] font-semibold border transition-all cursor-pointer whitespace-nowrap ${
+                    active
+                      ? 'bg-orange-600 border-orange-600 text-white shadow-sm'
+                      : 'bg-white border-gray-200 text-gray-600 hover:border-orange-300 hover:text-orange-700 hover:bg-orange-50'
+                  }`}
+                >
+                  {active && <span className="mr-1">✓</span>}
+                  {c.id === '' ? 'Tất cả' : (c.short_name || c.name)}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Bộ lọc nâng cao */}
+        {showAdvFilter && (
+          <div className="space-y-3 p-3 border-b border-slate-200/60 bg-slate-50/80">
             <div className="flex flex-wrap items-end gap-2">
               <div>
-                <p className="text-[10px] font-semibold text-gray-500 mb-0.5">Thời gian tạo</p>
-                <div className="inline-flex items-center gap-0.5 rounded-lg border border-gray-200 bg-white px-1.5 h-9">
+                <p className="text-[10px] font-semibold text-orange-800/90 uppercase tracking-wide mb-1">Thời gian tạo</p>
+                <div className="inline-flex items-center gap-0.5 rounded-lg border border-gray-200 bg-white px-1.5 h-8">
                   <Clock className="h-3.5 w-3.5 text-gray-400 ml-0.5 shrink-0" />
                   <select
                     value={timePreset}
                     onChange={(e) => setTimePreset(e.target.value)}
-                    className="h-8 pr-1 text-xs sm:text-sm bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[8rem]"
+                    className="h-7 pr-1 text-xs bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[8rem]"
                   >
                     {WS_TIME_PRESETS.map((o) => (
                       <option key={o.key || 'all'} value={o.key}>{o.label}</option>
@@ -659,17 +851,17 @@ export default function LogisticsDashboard() {
               </div>
               {timePreset === 'custom' && (
                 <div className="flex items-center gap-1 flex-wrap">
-                  <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} className="h-9 px-2 border border-gray-200 rounded-lg text-xs bg-white" />
+                  <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} className="h-8 px-2 border border-gray-200 rounded-lg text-xs bg-white" />
                   <span className="text-gray-400">–</span>
-                  <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} className="h-9 px-2 border border-gray-200 rounded-lg text-xs bg-white" />
+                  <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} className="h-8 px-2 border border-gray-200 rounded-lg text-xs bg-white" />
                 </div>
               )}
               <div>
-                <p className="text-[10px] font-semibold text-gray-500 mb-0.5">Tải tối đa</p>
+                <p className="text-[10px] font-semibold text-orange-800/90 uppercase tracking-wide mb-1">Tải tối đa</p>
                 <select
                   value={kanbanLoadKey}
                   onChange={(e) => setKanbanLoadKey(e.target.value)}
-                  className="h-9 px-2 border border-gray-200 rounded-lg text-xs sm:text-sm bg-amber-50/80"
+                  className="h-8 px-2 border border-gray-200 rounded-lg text-xs bg-amber-50/80"
                   title="Số bản ghi tối đa từ server"
                 >
                   {WS_KANBAN_LOAD_OPTIONS.map((o) => (
@@ -705,22 +897,22 @@ export default function LogisticsDashboard() {
 
             <div className="flex flex-wrap items-end gap-2">
               <div className="flex flex-col gap-0.5 min-w-[10rem]">
-                <label className="text-[10px] text-gray-500 font-medium">Giai đoạn</label>
+                <label className="text-[10px] font-semibold text-orange-800/90 uppercase tracking-wide">Giai đoạn</label>
                 <select
                   value={stageFilter}
                   onChange={(e) => setStageFilter(e.target.value)}
-                  className="h-8 w-40 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-orange-400 cursor-pointer"
+                  className="h-8 w-40 px-2 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-orange-400 cursor-pointer"
                 >
                   <option value="">Tất cả giai đoạn</option>
-                  {pipeline.map((stage) => (
+                  {tabKanbanPipeline.map((stage) => (
                     <option key={stage.id} value={stage.id}>{stage.icon || '•'} {stage.name}</option>
                   ))}
                 </select>
               </div>
               {companyForTypes && (
                 <div className="flex flex-col gap-0.5">
-                  <label className="text-[10px] text-gray-500 font-medium">Phân loại</label>
-                  <div className="inline-flex items-center gap-1 h-8 px-2 bg-gray-50 border border-gray-200 rounded-lg" title="Cài đặt pipeline">
+                  <label className="text-[10px] font-semibold text-orange-800/90 uppercase tracking-wide">Phân loại</label>
+                  <div className="inline-flex items-center gap-1 h-8 px-2 bg-white border border-gray-200 rounded-lg">
                     <Layers className="h-3.5 w-3.5 text-slate-500 shrink-0" />
                     <select
                       value={filterWorkTypeId}
@@ -736,11 +928,11 @@ export default function LogisticsDashboard() {
                 </div>
               )}
               <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] text-gray-500 font-medium">Ưu tiên</label>
+                <label className="text-[10px] font-semibold text-orange-800/90 uppercase tracking-wide">Ưu tiên</label>
                 <select
                   value={priorityFilter}
                   onChange={(e) => setPriorityFilter(e.target.value)}
-                  className="h-8 w-28 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-orange-400 cursor-pointer"
+                  className="h-8 w-28 px-2 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-orange-400 cursor-pointer"
                 >
                   <option value="">Tất cả</option>
                   <option value="high">Cao</option>
@@ -749,51 +941,146 @@ export default function LogisticsDashboard() {
                 </select>
               </div>
               <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] text-gray-500 font-medium">SĐT</label>
+                <label className="text-[10px] font-semibold text-orange-800/90 uppercase tracking-wide">SĐT</label>
                 <select
                   value={filterPhone}
                   onChange={(e) => setFilterPhone(e.target.value)}
-                  className="h-8 w-36 px-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-orange-400 cursor-pointer"
+                  className="h-8 w-36 px-2 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-orange-400 cursor-pointer"
                 >
                   <option value="">Không lọc</option>
                   <option value="has">Có SĐT</option>
                   <option value="no">Chưa có SĐT</option>
                 </select>
               </div>
-            </div>
-
-                        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-gray-200/80">
-              <p className="text-[10px] font-semibold text-gray-500 w-full sm:w-auto sm:mr-1">Chế độ xem</p>
-              {[
-                { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
-                { id: 'list', icon: List, label: 'Danh sách' },
-                { id: 'planner', icon: Users, label: 'Planner' },
-                { id: 'calendar', icon: Calendar, label: 'Lịch' },
-              ].map((v) => (
-                <button
-                  key={v.id}
-                  type="button"
-                  onClick={() => setViewMode(v.id)}
-                  className={`h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer transition-colors ${
-                    viewMode === v.id ? 'bg-orange-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-100'
-                  }`}
-                >
-                  <v.icon className="h-3.5 w-3.5" />
-                  {v.label}
-                </button>
-              ))}
               {hasActiveFilter && (
                 <button
                   type="button"
                   onClick={clearAllFilters}
-                  className="h-8 px-3 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-white cursor-pointer flex items-center gap-1.5 sm:ml-auto"
+                  className="h-8 px-3 rounded-lg border border-orange-300 bg-white text-xs font-semibold text-orange-700 hover:bg-orange-50 cursor-pointer inline-flex items-center gap-1"
                 >
-                  <X className="h-3.5 w-3.5" /> Xóa bộ lọc
+                  <X className="h-3.5 w-3.5" /> Đặt lại
                 </button>
               )}
             </div>
           </div>
         )}
+
+        {/* KPI — có thể thu gọn như CRM */}
+        <section data-tour="vc-kpis" className="border-t border-slate-200/60 bg-slate-50/30">
+          <button
+            type="button"
+            onClick={toggleKpiPanel}
+            aria-expanded={kpiPanelOpen}
+            className="w-full flex items-center gap-1.5 px-2.5 py-1 sm:px-3 text-left cursor-pointer transition-colors hover:bg-slate-100/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 focus-visible:ring-inset"
+          >
+            <BarChart3 className="h-3.5 w-3.5 shrink-0 text-orange-600" aria-hidden />
+            <span className="text-[11px] font-semibold text-slate-800 shrink-0 whitespace-nowrap">
+              KPI
+              <span className={`ml-1 font-medium ${vcPipelineTab === 'install' ? 'text-amber-600' : 'text-orange-600'}`}>
+                · {activeTabLabel}
+              </span>
+            </span>
+            {!kpiPanelOpen && (
+              <span className="min-w-0 flex-1 truncate text-[10px] text-slate-500 ml-2">
+                Tổng {tabKpis.total.toLocaleString('vi-VN')}
+                {vcPipelineTab === 'install'
+                  ? ` · Lắp đặt ${tabKpis.installing}`
+                  : ` · VC ${tabKpis.shipping} · BH ${tabKpis.warranty}`}
+                {tabKpis.overdue > 0 ? ` · Quá hạn ${tabKpis.overdue}` : ''}
+                {' · '}{formatVND(tabKpis.valueSum)}
+              </span>
+            )}
+            <span className="shrink-0 ml-auto flex items-center gap-0.5 text-[10px] font-medium text-slate-500">
+              <span className="hidden sm:inline">{kpiPanelOpen ? 'Thu gọn' : 'Mở rộng'}</span>
+              {kpiPanelOpen
+                ? <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+                : <ChevronDown className="h-3.5 w-3.5" aria-hidden />}
+            </span>
+          </button>
+
+          {kpiPanelOpen && (
+            <div className={`border-t border-orange-100/70 bg-white/40 px-2 sm:px-3 pb-2 pt-2 grid items-stretch gap-2 ${
+              vcPipelineTab === 'install'
+                ? 'grid-cols-2 sm:grid-cols-4'
+                : 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-6'
+            }`}
+            >
+              <KPICard
+                compact
+                icon={<Package className="h-3 w-3" />}
+                iconBgColor="bg-orange-100"
+                iconColor="text-orange-600"
+                label={vcPipelineTab === 'install' ? 'Tổng lắp đặt' : 'Tổng vận chuyển'}
+                value={tabKpis.total}
+              />
+              {vcPipelineTab === 'install' ? (
+                <KPICard
+                  compact
+                  icon={<Wrench className="h-3 w-3" />}
+                  iconBgColor="bg-amber-100"
+                  iconColor="text-amber-600"
+                  label="Đang lắp đặt"
+                  value={tabKpis.installing}
+                />
+              ) : (
+                <>
+                  <KPICard
+                    compact
+                    icon={<Truck className="h-3 w-3" />}
+                    iconBgColor="bg-orange-100"
+                    iconColor="text-orange-600"
+                    label="Đang vận chuyển"
+                    value={tabKpis.shipping}
+                  />
+                  <KPICard
+                    compact
+                    icon={<ShieldCheck className="h-3 w-3" />}
+                    iconBgColor="bg-teal-100"
+                    iconColor="text-teal-600"
+                    label="Bảo hành"
+                    value={tabKpis.warranty}
+                  />
+                </>
+              )}
+              <KPICard
+                compact
+                icon={<CheckCircle2 className="h-3 w-3" />}
+                iconBgColor="bg-green-100"
+                iconColor="text-green-600"
+                label="Hoàn thành"
+                value={tabKpis.completed}
+              />
+              <KPICard
+                compact
+                icon={<AlertTriangle className="h-3 w-3" />}
+                iconBgColor={tabKpis.overdue > 0 ? 'bg-red-100' : 'bg-gray-100'}
+                iconColor={tabKpis.overdue > 0 ? 'text-red-600' : 'text-gray-400'}
+                label="Quá hạn"
+                value={tabKpis.overdue}
+              />
+              {vcPipelineTab === 'install' && (
+                <KPICard
+                  compact
+                  icon={<Package className="h-3 w-3" />}
+                  iconBgColor="bg-emerald-100"
+                  iconColor="text-emerald-600"
+                  label="Giá trị"
+                  value={formatVND(tabKpis.valueSum)}
+                />
+              )}
+              {vcPipelineTab !== 'install' && (
+                <KPICard
+                  compact
+                  icon={<Package className="h-3 w-3" />}
+                  iconBgColor="bg-emerald-100"
+                  iconColor="text-emerald-600"
+                  label="Giá trị"
+                  value={formatVND(tabKpis.valueSum)}
+                />
+              )}
+            </div>
+          )}
+        </section>
       </div>
 
       {/* Bulk action bar */}
@@ -821,7 +1108,7 @@ export default function LogisticsDashboard() {
 
       {viewMode === 'kanban' && (
         <KanbanView pipeline={filteredKanbanPipeline} onMoveStage={handleMoveStage} onDelete={handleDeleteCard}
-          calculateDays={calculateDays} selectedIds={selectedIds} onToggleSelect={toggleSelect} />
+          calculateDays={calculateDays} selectedIds={selectedIds} onToggleSelect={toggleSelect} vcPipelineTab={vcPipelineTab} />
       )}
       {viewMode === 'list' && <LogisticsListView pipeline={filteredKanbanPipeline} calculateDays={calculateDays} />}
       {viewMode === 'planner' && <LogisticsPlannerView pipeline={filteredKanbanPipeline} />}
@@ -949,21 +1236,47 @@ export default function LogisticsDashboard() {
   );
 }
 
-// KPI Card
-function KPICard({ icon, iconBgColor, iconColor, label, value }) {
+// KPI Card — compact giống CRM
+function KPICard({ icon, iconBgColor, iconColor, label, value, compact }) {
+  const isNumeric = typeof value === 'number';
+  const displayValue = isNumeric ? value.toLocaleString('vi-VN') : value;
+  const isMoneyLike = !isNumeric && typeof displayValue === 'string' && /₫|VND|\.000/.test(String(displayValue));
   return (
-    <div className="min-w-0 flex items-center gap-1.5 p-2 md:gap-2 md:p-2 rounded-lg border border-gray-200 bg-white shadow-sm hover:shadow-md transition-shadow duration-200">
+    <div
+      className={`group relative h-full min-w-0 flex flex-col items-center justify-center text-center rounded-lg border border-orange-200/80 bg-white shadow-sm outline-none transition-all duration-200 hover:shadow-md hover:border-orange-300/80 ${
+        compact ? 'gap-1 px-2 py-2' : 'gap-1.5 px-2 py-2.5'
+      }`}
+    >
       <div className={`shrink-0 rounded-md ${iconBgColor} ${iconColor} p-1`}>{icon}</div>
-      <div className="min-w-0 flex-1 flex flex-col justify-center gap-0">
-        <p className="text-[10px] md:text-[11px] text-gray-500 font-semibold uppercase tracking-wide truncate leading-none">{label}</p>
-        <p className="text-sm md:text-base font-bold tabular-nums leading-tight" style={{ color: '#000000' }}>{value}</p>
+      <div className="min-w-0 w-full flex flex-col items-center justify-center gap-0.5">
+        <p
+          className={`text-orange-700/80 font-semibold uppercase tracking-wide leading-tight max-w-full truncate px-0.5 ${
+            compact ? 'text-[9px]' : 'text-[10px] md:text-[11px]'
+          }`}
+          title={label}
+        >
+          {label}
+        </p>
+        <p
+          className={`font-bold tabular-nums leading-snug max-w-full truncate px-0.5 ${
+            compact
+              ? (isMoneyLike ? 'text-[11px] sm:text-xs' : 'text-sm')
+              : (isMoneyLike ? 'text-xs md:text-sm' : 'text-sm md:text-base')
+          }`}
+          style={{ color: '#000000' }}
+          title={String(displayValue)}
+        >
+          {displayValue}
+        </p>
       </div>
     </div>
   );
 }
 
 // Kanban Stage Column
-const KanbanStageCard = memo(function KanbanStageCard({ stage, items, onMoveStage, onDelete, calculateDays, selectedIds, onToggleSelect, columnIndex = 0 }) {
+const KanbanStageCard = memo(function KanbanStageCard({
+  stage, items, onMoveStage, onDelete, calculateDays, selectedIds, onToggleSelect, columnIndex = 0, pipelineStages = [], vcPipelineTab = 'shipping',
+}) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
   const [columnMaxH, setColumnMaxH] = useState('70vh');
@@ -976,8 +1289,11 @@ const KanbanStageCard = memo(function KanbanStageCard({ stage, items, onMoveStag
       isSelected={selectedIds?.has(item.id)}
       onToggleSelect={onToggleSelect}
       onDelete={onDelete}
+      onMoveStage={onMoveStage}
+      pipelineStages={pipelineStages}
+      vcPipelineTab={vcPipelineTab}
     />
-  ), [stage, calculateDays, selectedIds, onToggleSelect, onDelete]);
+  ), [stage, calculateDays, selectedIds, onToggleSelect, onDelete, onMoveStage, pipelineStages, vcPipelineTab]);
 
   useEffect(() => {
     const measure = () => {
@@ -1011,6 +1327,14 @@ const KanbanStageCard = memo(function KanbanStageCard({ stage, items, onMoveStag
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="text-lg shrink-0">{stage.icon || '📦'}</span>
             <h3 className="font-semibold truncate kanban-stage-title" style={{ color: '#000000' }}>{stage.name}</h3>
+            {stage.is_handover_to_install && !isInstallVcStage(stage) && (
+              <span
+                className="shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-teal-100 text-teal-800 border border-teal-200"
+                title="Kéo dự án vào cột này → nhảy sang Lắp đặt"
+              >
+                → LĐ
+              </span>
+            )}
           </div>
           <span
             className="px-2 py-1 text-xs font-bold rounded tabular-nums"
@@ -1051,10 +1375,12 @@ const KanbanStageCard = memo(function KanbanStageCard({ stage, items, onMoveStag
 });
 
 // Kanban Card
-const KanbanCard = memo(function KanbanCard({ item, stage, calculateDays, isSelected, onToggleSelect, onDelete }) {
+const KanbanCard = memo(function KanbanCard({
+  item, stage, calculateDays, isSelected, onToggleSelect, onDelete, onMoveStage, pipelineStages = [], vcPipelineTab = 'shipping',
+}) {
   const navigate = useNavigate();
   const handleDragStart = (e) => {
-    if (e.target.closest?.('[data-workshop-bulk-checkbox]')) {
+    if (e.target.closest?.('[data-workshop-bulk-checkbox]') || e.target.closest?.('[data-vc-quick-btn]')) {
       e.preventDefault();
       return;
     }
@@ -1062,18 +1388,31 @@ const KanbanCard = memo(function KanbanCard({ item, stage, calculateDays, isSele
     e.dataTransfer.setData('projectId', item.id);
   };
   const stageColor = stage.color || '#f97316';
-  const doneTasks = item.done_tasks ?? 0;
-  const totalTasks = item.task_total ?? 0;
-  const pipelinePercent = item.vc_pipeline_percent;
-  const taskPercent = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : (item.progress || 0);
+  const isInstallTab = vcPipelineTab === 'install';
+  const doneTasks = isInstallTab
+    ? (item.done_tasks_install ?? 0)
+    : (item.done_tasks_vc ?? item.done_tasks ?? 0);
+  const totalTasks = isInstallTab
+    ? (item.task_total_install ?? 0)
+    : (item.task_total_vc ?? item.task_total ?? 0);
+  const taskBadgeTitle = isInstallTab ? 'Nhiệm vụ Lắp đặt' : 'Nhiệm vụ Vận chuyển';
   const deals = Array.isArray(item.crm_deals) ? item.crm_deals : [];
   const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
   const crmAssignee = primaryDeal?.assignee || primaryDeal?.lead_owner || item.sales_person || null;
   const sxAssignee = item.production_person || null;
   const vcAssignee = item.logistics_person || null;
   const ldAssignee = item.installer_person || null;
+  const customerPhone = String(item.customer?.phone || '').trim();
   const getInitials = (name) => !name ? '?' : name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2);
   const isNew = item.created_at && (Date.now() - new Date(item.created_at).getTime()) < 86400000;
+
+  const goTab = (tab) => {
+    markWorkshopPipelineCardFocus(item.id, 'vc');
+    const qs = new URLSearchParams();
+    if (tab) qs.set('tab', tab);
+    qs.set('vcTab', isInstallTab ? 'install' : 'shipping');
+    navigate(`/vc/projects/${item.id}?${qs.toString()}`);
+  };
 
   const PersonChip = ({ label, person, tone = 'gray' }) => {
     if (!person?.full_name) return null;
@@ -1108,7 +1447,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, calculateDays, isSele
       draggable
       onDragStart={handleDragStart}
       onClick={(e) => {
-        if (e.target.closest?.('[data-workshop-bulk-checkbox]')) return;
+        if (e.target.closest?.('[data-workshop-bulk-checkbox]') || e.target.closest?.('[data-vc-quick-btn]')) return;
         markWorkshopPipelineCardFocus(item.id, 'vc');
         navigate(`/vc/projects/${item.id}`);
       }}
@@ -1203,42 +1542,100 @@ const KanbanCard = memo(function KanbanCard({ item, stage, calculateDays, isSele
         </div>
       )}
 
-      {/* % hoàn thành theo cột pipeline VC (setup %) — ưu tiên hiển thị */}
-      {pipelinePercent !== null && pipelinePercent !== undefined ? (
-        <div className="mt-2">
-          <div className="flex items-center justify-between mb-0.5">
-            <span className="text-[10px] text-gray-400">🚚 % hoàn thành (theo cột)</span>
-            <span className="text-[10px] font-bold text-orange-700">{Number(pipelinePercent) || 0}%</span>
-          </div>
-          <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all duration-300 bg-orange-500"
-              style={{ width: `${Math.max(0, Math.min(100, Number(pipelinePercent) || 0))}%` }}
-            />
-          </div>
-        </div>
-      ) : (
-        totalTasks > 0 && (
-          <div className="mt-2">
-            <div className="flex items-center justify-between mb-0.5">
-              <span className="text-[10px] text-gray-400">✅ Hoàn thành <span className="text-gray-500">{doneTasks}/{totalTasks} việc</span></span>
-              <span className={`text-[10px] font-bold ${taskPercent >= 100 ? 'text-green-600' : taskPercent >= 50 ? 'text-orange-600' : 'text-amber-600'}`}>{taskPercent}%</span>
-            </div>
-            <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all duration-300 ${taskPercent >= 100 ? 'bg-green-500' : taskPercent >= 50 ? 'bg-orange-500' : 'bg-amber-500'}`}
-                style={{ width: `${taskPercent}%` }}
-              />
-            </div>
-          </div>
-        )
+      {typeof onMoveStage === 'function' && stage?.is_handover_to_install && !isInstallVcStage(stage) && (
+        <button
+          type="button"
+          data-vc-quick-btn
+          onClick={(e) => {
+            e.stopPropagation();
+            onMoveStage(item.id, stage);
+          }}
+          className="mt-1.5 w-full flex items-center justify-center gap-1 py-1 rounded text-[10px] font-semibold bg-teal-50 text-teal-800 border border-teal-200 hover:bg-teal-100 cursor-pointer"
+          title="Chuyển dự án sang Lắp đặt"
+        >
+          <Wrench className="h-3 w-3" />
+          Chuyển LĐ
+        </button>
       )}
+
+      {/* Nút chức năng nhanh — thay thanh % hoàn thành */}
+      <div
+        className="mt-2 flex items-center justify-between gap-1.5 pt-1.5 border-t border-gray-100"
+        data-vc-quick-btn
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onDragStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+      >
+        <div className="min-w-0 text-[10px] text-gray-400 truncate">
+          {totalTasks > 0 ? (
+            <span title={taskBadgeTitle}>✅ {doneTasks}/{totalTasks}</span>
+          ) : (
+            <span className="opacity-60">—</span>
+          )}
+        </div>
+        <div className="flex items-center gap-0.5 shrink-0 rounded-full border border-orange-100 bg-white px-1 py-0.5 shadow-sm">
+          {typeof onMoveStage === 'function' && Array.isArray(pipelineStages) && pipelineStages.length > 1 && (
+            <KanbanCardQuickMove
+              stages={pipelineStages}
+              currentStageId={stage.id}
+              onMove={(target) => onMoveStage(item.id, target)}
+              theme="sx"
+              blockVirtualTargets={false}
+            />
+          )}
+          {customerPhone && (
+            <a
+              href={`tel:${customerPhone}`}
+              data-vc-quick-btn
+              title={`Gọi ${customerPhone}`}
+              onClick={(e) => e.stopPropagation()}
+              className="h-5 w-5 inline-flex items-center justify-center rounded-full text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50"
+            >
+              <Phone className="h-3 w-3" />
+            </a>
+          )}
+          <button
+            type="button"
+            data-vc-quick-btn
+            title="Công việc"
+            onClick={(e) => { e.stopPropagation(); goTab('tasks'); }}
+            className="relative h-5 w-5 inline-flex items-center justify-center rounded-full text-orange-500 hover:text-orange-700 hover:bg-orange-50 cursor-pointer"
+          >
+            <CheckSquare className="h-3 w-3" />
+            {totalTasks > 0 && doneTasks < totalTasks && (
+              <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-amber-500" />
+            )}
+          </button>
+          <button
+            type="button"
+            data-vc-quick-btn
+            title="Bình luận"
+            onClick={(e) => { e.stopPropagation(); goTab('comments'); }}
+            className="h-5 w-5 inline-flex items-center justify-center rounded-full text-blue-500 hover:text-blue-700 hover:bg-blue-50 cursor-pointer"
+          >
+            <MessageSquare className="h-3 w-3" />
+          </button>
+          <button
+            type="button"
+            data-vc-quick-btn
+            title="Mở chi tiết"
+            onClick={(e) => { e.stopPropagation(); goTab(''); }}
+            className="h-5 w-5 inline-flex items-center justify-center rounded-full text-slate-500 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
+          >
+            <ExternalLink className="h-3 w-3" />
+          </button>
+        </div>
+      </div>
     </div>
   );
 });
 
 // Kanban View Container
-function KanbanView({ pipeline, onMoveStage, onDelete, calculateDays, selectedIds, onToggleSelect }) {
+function KanbanView({ pipeline, onMoveStage, onDelete, calculateDays, selectedIds, onToggleSelect, vcPipelineTab = 'shipping' }) {
+  const pipelineStages = useMemo(
+    () => (pipeline || []).map(({ items, ...stage }) => stage),
+    [pipeline],
+  );
   return (
     <WorkshopPipelineKanbanScroll cardSelector="[data-vc-kanban-card]">
       <div className={`flex gap-0 min-w-max ui-kanban-fixed`}>
@@ -1253,6 +1650,8 @@ function KanbanView({ pipeline, onMoveStage, onDelete, calculateDays, selectedId
             calculateDays={calculateDays}
             selectedIds={selectedIds}
             onToggleSelect={onToggleSelect}
+            pipelineStages={pipelineStages}
+            vcPipelineTab={vcPipelineTab}
           />
         ))}
       </div>

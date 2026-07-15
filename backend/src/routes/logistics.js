@@ -21,9 +21,33 @@ const {
 } = require('../helpers/workshopCrmDeals');
 const { validateLogisticsCompanyId } = require('../helpers/logisticsCompanyGate');
 const { isSystemAdmin } = require('../helpers/adminRole');
+const {
+  isInstallLogisticsStageRow,
+  attachSplitLogisticsTaskStats,
+} = require('../helpers/logisticsTaskSplit');
+const { applyAllActiveWorkshopTemplatesForArea } = require('../helpers/workshopApplyTemplates');
 
 const r = Router();
 r.use(auth);
+
+/** Embed tasks đủ metadata để tách VC / Lắp đặt trên card Kanban. */
+const TASKS_EMBED = 'tasks(id, status, title, metadata, stage:workflow_stages(slug))';
+const TASKS_EMBED_NO_STAGE = 'tasks(id, status, title, metadata)';
+
+function buildInstallStageIdSet(stages) {
+  const set = new Set();
+  for (const s of stages || []) {
+    if (isInstallLogisticsStageRow(s) && s.id && !String(s.id).startsWith('__')) {
+      set.add(String(s.id));
+    }
+  }
+  return set;
+}
+
+function withLogisticsTaskStats(projects, stages) {
+  const installSet = buildInstallStageIdSet(stages);
+  return (projects || []).map((p) => attachSplitLogisticsTaskStats(p, installSet));
+}
 
 const LOGISTICS_STAGE_SLUGS = ['delivery', 'installation', 'customer-care'];
 const LOGISTICS_STATUSES = ['shipping', 'installing', 'warranty', 'completed'];
@@ -64,14 +88,22 @@ const IS_VC_DELETED_AT_MISSING = (err) =>
 const IS_VC_DELETE_REASON_MISSING = (err) =>
   !!err && String(err.message || '').toLowerCase().includes('vc_delete_reason');
 
-const VC_SELECT_FULL = `id, company_id, name, color, icon, order_index, is_active, progress_percent, workflow_stage_id, bucket_slug, crm_sync_type,
+const VC_SELECT_FULL = `id, company_id, name, color, icon, order_index, is_active, progress_percent, workflow_stage_id, bucket_slug, crm_sync_type, is_handover_to_install,
       crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index),
       workflow_stage:workflow_stages(id, slug, name, color, icon)`;
 
 /** Khi DB chưa có cột company_id — truy vấn không lọc theo công ty */
-const VC_SELECT_NO_COMPANY = `id, name, color, icon, order_index, is_active, progress_percent, workflow_stage_id, bucket_slug, crm_sync_type,
+const VC_SELECT_NO_COMPANY = `id, name, color, icon, order_index, is_active, progress_percent, workflow_stage_id, bucket_slug, crm_sync_type, is_handover_to_install,
       crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index),
       workflow_stage:workflow_stages(id, slug, name, color, icon)`;
+
+async function resolveFirstInstallLogisticsColumn(companyId) {
+  const rows = await loadLogisticsPipelineRows(true, companyId);
+  const sorted = [...(rows || [])]
+    .filter((r) => r.is_active !== false)
+    .sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+  return sorted.find((r) => r.bucket_slug !== INTAKE_BUCKET && isInstallLogisticsStageRow(r)) || null;
+}
 
 function isLogisticsCompanyIdMissing(err) {
   if (!err) return false;
@@ -96,7 +128,7 @@ async function loadLogisticsPipelineRows(includeInactive = false, companyId = nu
     if (error && isLogisticsCompanyIdMissing(error)) {
       return loadLogisticsPipelineRows(includeInactive, companyId, true);
     }
-    if (error && error.message?.includes('progress_percent')) {
+    if (error && (error.message?.includes('progress_percent') || error.message?.includes('is_handover_to_install'))) {
       const slim = legacyUnscoped
         ? 'id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index), workflow_stage:workflow_stages(id, slug, name, color, icon)'
         : 'id, company_id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index), workflow_stage:workflow_stages(id, slug, name, color, icon)';
@@ -108,6 +140,9 @@ async function loadLogisticsPipelineRows(includeInactive = false, companyId = nu
       if (!legacyUnscoped && cid && scope === 'scoped') q2 = q2.eq('company_id', cid);
       if (!legacyUnscoped && scope === 'global') q2 = q2.is('company_id', null);
       ({ data, error } = await q2);
+      if (!error && Array.isArray(data)) {
+        data = data.map((r) => ({ ...r, is_handover_to_install: !!r.is_handover_to_install }));
+      }
       if (error && isLogisticsCompanyIdMissing(error)) {
         return loadLogisticsPipelineRows(includeInactive, companyId, true);
       }
@@ -273,7 +308,7 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
     const b = req.body;
     if (!b.name?.trim()) return res.status(400).json({ error: 'Thiếu tên cột' });
     const insertCompanyId = effectiveWorkshopCompanyId(req, b.company_id);
-    if (b.bucket_slug && b.bucket_slug !== INTAKE_BUCKET) {
+    if (b.bucket_slug && b.bucket_slug !== INTAKE_BUCKET && b.bucket_slug !== 'installation') {
       return res.status(400).json({ error: 'bucket_slug không hợp lệ' });
     }
     const scopedRows = await loadLogisticsPipelineRows(true, insertCompanyId);
@@ -323,15 +358,22 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
       .from(VC_PIPELINE_TABLE).select('bucket_slug').eq('id', req.params.id).single();
     const update = {};
     ['name', 'color', 'icon', 'order_index', 'is_active', 'workflow_stage_id', 'bucket_slug',
-      'crm_sync_type', 'crm_target_stage_id', 'progress_percent'].forEach((f) => {
+      'crm_sync_type', 'crm_target_stage_id', 'progress_percent', 'is_handover_to_install'].forEach((f) => {
       if (b[f] !== undefined) update[f] = b[f];
     });
     if (existingRow?.bucket_slug === INTAKE_BUCKET) {
       update.workflow_stage_id = null;
       update.crm_sync_type = null;
       update.crm_target_stage_id = null;
+      update.is_handover_to_install = false;
     }
-    if (update.bucket_slug && update.bucket_slug !== INTAKE_BUCKET) {
+    if (update.bucket_slug === 'installation' || update.crm_sync_type === 'installation') {
+      update.is_handover_to_install = false;
+    }
+    if (update.is_handover_to_install !== undefined) {
+      update.is_handover_to_install = !!update.is_handover_to_install;
+    }
+    if (update.bucket_slug && update.bucket_slug !== INTAKE_BUCKET && update.bucket_slug !== 'installation') {
       return res.status(400).json({ error: 'bucket_slug không hợp lệ' });
     }
     const vcSelect = 'id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, workflow_stage:workflow_stages(id, slug, name, color, icon)';
@@ -408,7 +450,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
         production_person:users!projects_production_person_id_fkey(id, full_name, avatar),
         installer_person:users!projects_installer_person_id_fkey(id, full_name, avatar),
         workshop_type:workshop_project_types(id, name, applies_to),
-        tasks(id, status)`)
+        ${TASKS_EMBED}`)
       .or(orFilter);
     query = applyVcNotDeletedFilter(query);
 
@@ -429,7 +471,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
           company:companies!projects_company_id_fkey(id, name, short_name),
           logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
           workshop_type:workshop_project_types(id, name, applies_to),
-          tasks(id, status)`)
+          ${TASKS_EMBED}`)
         .or(orFilter);
       if (division_id) qNoSoft = qNoSoft.eq('division_id', division_id);
       if (company_id) qNoSoft = qNoSoft.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
@@ -448,7 +490,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
           customer:customers(id, full_name),
           company:companies!projects_company_id_fkey(id, name, short_name),
           logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
-          tasks(id, status)`)
+          ${TASKS_EMBED}`)
         .or(orFilter);
       if (division_id) q2 = q2.eq('division_id', division_id);
       if (company_id) q2 = q2.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
@@ -464,7 +506,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
           customer:customers(id, full_name),
           company:companies!projects_company_id_fkey(id, name, short_name),
           logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
-          tasks(id, status)`)
+          ${TASKS_EMBED}`)
         .or(orFilter);
       if (division_id) q2 = q2.eq('division_id', division_id);
       if (company_id) q2 = q2.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
@@ -479,7 +521,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
             customer:customers(id, full_name),
             company:companies!projects_company_id_fkey(id, name, short_name),
             logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
-            tasks(id, status)`)
+            ${TASKS_EMBED}`)
           .or(orFilter);
         if (division_id) q3 = q3.eq('division_id', division_id);
         if (company_id) q3 = q3.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
@@ -493,12 +535,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
     const projects = projectsRaw || [];
 
     const enrichedVc = await enrichProjectsForLogistics(projects, company_id);
-    const enhanced = enrichedVc.map((p) => ({
-      ...p,
-      progress: calcTaskProgress(p.tasks),
-      task_total: p.tasks?.length || 0,
-      done_tasks: p.tasks?.filter((t) => t.status === 'done').length || 0,
-    }));
+    const enhanced = withLogisticsTaskStats(enrichedVc, sortedKanban);
 
     const overdueCount = enhanced.filter((p) =>
       p.deadline && new Date(p.deadline) < new Date() && p.status !== 'completed'
@@ -552,7 +589,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
         installer_person:users!projects_installer_person_id_fkey(id, full_name, avatar),
         sales_person:users!projects_sales_person_id_fkey(id, full_name),
         workshop_type:workshop_project_types(id, name, applies_to),
-        tasks(id, status)`, { count: 'exact' })
+        ${TASKS_EMBED}`, { count: 'exact' })
       .or(orFilter);
     query = applyProjectTenantScope(query, req);
     query = applyVcNotDeletedFilter(query);
@@ -583,7 +620,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
           installer_person:users!projects_installer_person_id_fkey(id, full_name, avatar),
           sales_person:users!projects_sales_person_id_fkey(id, full_name),
           workshop_type:workshop_project_types(id, name, applies_to),
-          tasks(id, status)`, { count: 'exact' })
+          ${TASKS_EMBED}`, { count: 'exact' })
         .or(orFilter);
       if (search) qNoSoft = qNoSoft.or(`name.ilike.%${search}%,code.ilike.%${search}%`);
       if (priority) qNoSoft = qNoSoft.eq('priority', priority);
@@ -615,7 +652,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
           customer:customers(id, full_name, phone),
           company:companies!projects_company_id_fkey(id, name, short_name),
           logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
-          tasks(id, status)`, { count: 'exact' })
+          ${TASKS_EMBED}`, { count: 'exact' })
         .or(orFilter);
       if (division_id) fb2q = fb2q.eq('division_id', division_id);
       if (company_id) fb2q = fb2q.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
@@ -635,7 +672,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
             current_stage_id,
             current_stage:workflow_stages(id, slug, name, color, icon),
             customer:customers(id, full_name, phone),
-            tasks(id, status)`)
+            ${TASKS_EMBED}`)
           .or(orFilter);
         if (division_id) fb3q = fb3q.eq('division_id', division_id);
         if (company_id) fb3q = fb3q.eq('company_id', company_id);
@@ -651,12 +688,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
     if (error && projects.length === 0) throw error;
 
     const enrichedVc = await enrichProjectsForLogistics(projects, company_id);
-    const enhanced = enrichedVc.map((p) => ({
-      ...p,
-      progress: calcTaskProgress(p.tasks),
-      task_total: p.tasks?.length || 0,
-      done_tasks: p.tasks?.filter((t) => t.status === 'done').length || 0,
-    }));
+    const enhanced = withLogisticsTaskStats(enrichedVc, sortedKanban);
 
     res.json({ projects: enhanced, total: enhanced.length });
   } catch (e) {
@@ -691,7 +723,7 @@ const LOGISTICS_DETAIL_SELECT_FULL = `
         assignee:users!projects_assigned_to_fkey(id, full_name),
         delivery_team:workshop_teams!projects_delivery_team_id_fkey(id, name, color, type),
         installation_team:workshop_teams!projects_installation_team_id_fkey(id, name, color, type),
-        tasks(id, title, status, priority, due_date, stage_id, stage:workflow_stages(id, slug, name))`;
+        tasks(id, title, status, priority, due_date, stage_id, metadata, stage:workflow_stages(id, slug, name))`;
 
 const LOGISTICS_DETAIL_SELECT_NO_TEAMS = `
         id, company_id, code, name, estimated_value, status, deadline, created_at, notes, priority,
@@ -707,7 +739,7 @@ const LOGISTICS_DETAIL_SELECT_NO_TEAMS = `
         sales_person:users!projects_sales_person_id_fkey(id, full_name),
         supervisor:users!projects_supervisor_id_fkey(id, full_name),
         assignee:users!projects_assigned_to_fkey(id, full_name),
-        tasks(id, title, status, priority, due_date, stage_id, stage:workflow_stages(id, slug, name))`;
+        tasks(id, title, status, priority, due_date, stage_id, metadata, stage:workflow_stages(id, slug, name))`;
 
 const LOGISTICS_DETAIL_SELECT_NO_VC_K = `
         id, company_id, code, name, estimated_value, status, deadline, created_at, notes, priority,
@@ -722,7 +754,7 @@ const LOGISTICS_DETAIL_SELECT_NO_VC_K = `
         sales_person:users!projects_sales_person_id_fkey(id, full_name),
         supervisor:users!projects_supervisor_id_fkey(id, full_name),
         assignee:users!projects_assigned_to_fkey(id, full_name),
-        tasks(id, title, status, priority, due_date, stage_id, stage:workflow_stages(id, slug, name))`;
+        tasks(id, title, status, priority, due_date, stage_id, metadata, stage:workflow_stages(id, slug, name))`;
 
 // Fallback cực thấp: DB chưa có FK projects → users / workshop_teams
 const LOGISTICS_DETAIL_SELECT_NO_USERS = `
@@ -734,7 +766,7 @@ const LOGISTICS_DETAIL_SELECT_NO_USERS = `
         customer:customers(id, full_name, phone, email, address),
         company:companies!projects_company_id_fkey(id, name, short_name),
         logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
-        tasks(id, title, status, priority, due_date, stage_id, stage:workflow_stages(id, slug, name))`;
+        tasks(id, title, status, priority, due_date, stage_id, metadata, stage:workflow_stages(id, slug, name))`;
 
 function vcStripWorkshopTypeEmbed(sel) {
   return sel.replace(VC_WORKSHOP_TYPE_EMBED, '');
@@ -978,6 +1010,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     const { stages: kStages } = await getResolvedLogisticsStages(pcid ? String(pcid) : null);
     const sortedK = [...kStages].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
     const [vcRow] = await enrichProjectsForLogistics([project], pcid ? String(pcid) : null);
+    const [statsRow] = withLogisticsTaskStats([{ ...project, tasks: project.tasks }], sortedK);
     const mergedCrmDeals = (crmDeals?.length ? crmDeals : vcRow.crm_deals) || [];
     const { project: hydratedProject, crmDeals: hydratedDeals } = await hydrateWorkshopProjectPeople(
       project,
@@ -989,7 +1022,13 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
         ...hydratedProject,
         vc_kanban_column_id: vcRow.vc_kanban_column_id,
         vc_intake: vcRow.vc_intake,
-        taskProgress: calcTaskProgress(project.tasks),
+        taskProgress: statsRow?.progress ?? calcTaskProgress(project.tasks),
+        task_total: statsRow?.task_total ?? 0,
+        done_tasks: statsRow?.done_tasks ?? 0,
+        task_total_vc: statsRow?.task_total_vc ?? 0,
+        done_tasks_vc: statsRow?.done_tasks_vc ?? 0,
+        task_total_install: statsRow?.task_total_install ?? 0,
+        done_tasks_install: statsRow?.done_tasks_install ?? 0,
         documents: docs,
         sharedDocuments: sharedDocs,
         crmDeals: hydratedDeals,
@@ -1022,7 +1061,7 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
 
     const { data: project } = await supabase
       .from('projects')
-      .select('id, current_stage_id, code, name, status, company_id')
+      .select('id, current_stage_id, code, name, status, company_id, logistics_company_id')
       .eq('id', id)
       .single();
     if (!project) return res.status(404).json({ error: 'Project not found' });
@@ -1062,15 +1101,43 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     // Nếu chỉ có vc_stage_id, tìm workflow_stage_id tương ứng (nếu có)
     let resolvedStageId = stage_id || null;
     let vcPipeStageRow = null;
+    let effectiveVcStageId = vc_stage_id || null;
+    let jumpedToInstall = false;
     if (vc_stage_id) {
-      const { data: vcRow } = await supabase
+      let { data: vcRow } = await supabase
         .from(VC_PIPELINE_TABLE)
-        .select('id, name, crm_sync_type, crm_target_stage_id, workflow_stage_id')
+        .select('id, name, crm_sync_type, crm_target_stage_id, workflow_stage_id, bucket_slug, is_handover_to_install')
         .eq('id', vc_stage_id)
         .maybeSingle();
+      if (!vcRow) {
+        const r2 = await supabase
+          .from(VC_PIPELINE_TABLE)
+          .select('id, name, crm_sync_type, crm_target_stage_id, workflow_stage_id, bucket_slug')
+          .eq('id', vc_stage_id)
+          .maybeSingle();
+        vcRow = r2.data ? { ...r2.data, is_handover_to_install: false } : null;
+      }
       vcPipeStageRow = vcRow;
       if (vcRow?.workflow_stage_id && !resolvedStageId) {
         resolvedStageId = vcRow.workflow_stage_id;
+      }
+
+      // Cột VC gắn «Chuyển LĐ» → nhảy sang cột Lắp đặt đầu tiên
+      if (
+        vcRow?.is_handover_to_install
+        && vcRow.bucket_slug !== INTAKE_BUCKET
+        && !isInstallLogisticsStageRow(vcRow)
+      ) {
+        const companyId = project.logistics_company_id || project.company_id || null;
+        const installCol = await resolveFirstInstallLogisticsColumn(companyId);
+        if (installCol?.id && String(installCol.id) !== String(vc_stage_id)) {
+          jumpedToInstall = true;
+          effectiveVcStageId = installCol.id;
+          vcPipeStageRow = installCol;
+          if (installCol.workflow_stage_id) {
+            resolvedStageId = installCol.workflow_stage_id;
+          }
+        }
       }
     }
 
@@ -1086,8 +1153,12 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
 
     const updatePayload = {};
     if (resolvedStageId) updatePayload.current_stage_id = resolvedStageId;
-    if (vc_stage_id) updatePayload.vc_kanban_column_id = vc_stage_id;
-    if (statusMap[targetStage?.slug]) updatePayload.status = statusMap[targetStage.slug];
+    if (effectiveVcStageId) updatePayload.vc_kanban_column_id = effectiveVcStageId;
+    if (jumpedToInstall || isInstallLogisticsStageRow(vcPipeStageRow)) {
+      updatePayload.status = 'installing';
+    } else if (statusMap[targetStage?.slug]) {
+      updatePayload.status = statusMap[targetStage.slug];
+    }
 
     // Thử update với vc_kanban_column_id; nếu cột chưa tồn tại, fallback không có cột đó
     let { error: updateError } = await supabase.from('projects').update(updatePayload).eq('id', id);
@@ -1143,7 +1214,7 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
       }
 
       // Luôn cập nhật vc_pipeline_stage_id cho deal CRM
-      const syncId = vcPipeStage?.id || vc_stage_id || null;
+      const syncId = vcPipeStage?.id || effectiveVcStageId || vc_stage_id || null;
       if (syncId) {
         await syncVcPipelineStageToLead(id, syncId);
         const io = req.app.get('io');
@@ -1175,6 +1246,32 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
       console.warn('[logistics/stage] crm_sync_type:', crmSyncErr.message);
     }
 
+    // Gen bộ nhiệm vụ theo cột pipeline VC/LĐ khi chuyển cột (idempotent theo workshop_template_id)
+    try {
+      let targetCol = vcPipeStageRow;
+      if (!targetCol && effectiveVcStageId) {
+        const { data } = await supabase
+          .from(VC_PIPELINE_TABLE)
+          .select('id, name, crm_sync_type, bucket_slug')
+          .eq('id', effectiveVcStageId)
+          .maybeSingle();
+        targetCol = data;
+      }
+      if (targetCol && effectiveVcStageId) {
+        const logCo = project.logistics_company_id || project.company_id || null;
+        const out = await applyAllActiveWorkshopTemplatesForArea(id, userId, {
+          workshopArea: 'logistics',
+          companyId: logCo,
+          logisticsStageId: effectiveVcStageId,
+        });
+        if (!out?.ok) {
+          console.warn('[logistics/stage] gen logistics templates:', out?.error || 'unknown');
+        }
+      }
+    } catch (tplErr) {
+      console.warn('[logistics/stage] gen logistics templates:', tplErr.message);
+    }
+
     // Thông báo nhân viên VC
     try {
       const { data: vcUsers } = await supabase
@@ -1200,7 +1297,14 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     const io = req.app.get('io');
     if (io) io.emit('project:stage_changed', updated);
 
-    res.json({ project: updated });
+    res.json({
+      project: updated,
+      ...(jumpedToInstall ? {
+        jumped_to_install: true,
+        install_stage_id: effectiveVcStageId,
+        install_stage_name: vcPipeStageRow?.name || null,
+      } : {}),
+    });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });

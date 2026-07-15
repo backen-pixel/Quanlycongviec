@@ -1,17 +1,21 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import UserSelect from '../components/UserSelect';
+import { resolveApiOrigin } from '../lib/apiOrigin';
 import {
-  ArrowLeft, Bot, Check, Copy, Key, RefreshCw, Shield, Code2, Send,
-  CheckCircle2, ChevronDown, ChevronRight, ExternalLink, ListTree, Plus,
+  ArrowLeft, Bot, Check, Copy, Key, RefreshCw, Code2, Send,
+  CheckCircle2, ChevronDown, ChevronRight, ListTree, Plus,
   ToggleLeft, ToggleRight, Trash2, Plug,
 } from 'lucide-react';
 
+/** URL công khai (Claude / copy connector) — ưu tiên VITE_API_URL */
 const PUBLIC_API_ORIGIN = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '') || window.location.origin;
-const MCP_BASE = `${PUBLIC_API_ORIGIN}/api/mcp`;
+const MCP_ENDPOINT_PUBLIC = `${PUBLIC_API_ORIGIN}/api/mcp`;
 
-const MCP_ENDPOINT = `${MCP_BASE}`;
+/** Fetch trong browser: DEV dùng relative → Vite proxy (tránh CORS 5173→4000) */
+const MCP_BASE = `${resolveApiOrigin()}/api/mcp`.replace(/([^:]\/)\/+/g, '$1');
+const MCP_ENDPOINT = MCP_BASE;
 const MCP_PROTOCOL = '2025-06-18';
 
 const ENDPOINTS = [
@@ -189,7 +193,7 @@ function buildCurlOrgOverview(key, userId, periodParams) {
   const qs = new URLSearchParams(periodParams).toString();
   const headers = [`  -H "X-Api-Key: ${key}"`];
   if (userId) headers.push(`  -H "X-User-Id: ${userId}"`);
-  return `curl "${MCP_BASE}/reports/org-overview?${qs}" \\\n${headers.join(' \\\n')}`;
+  return `curl "${MCP_ENDPOINT_PUBLIC}/reports/org-overview?${qs}" \\\n${headers.join(' \\\n')}`;
 }
 
 export default function McpReportApiPage() {
@@ -567,35 +571,9 @@ export default function McpReportApiPage() {
             MCP API — Báo cáo tổ chức
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            MCP server chuẩn (Streamable HTTP) — báo cáo «Theo tổ chức» cho Claude.ai / OpenClaw / Cursor.
+            MCP Streamable HTTP — báo cáo tổ chức + đọc GET CRM (lead/deal, pipeline, KH, BG/ĐH/HĐ) cho Claude.ai / OpenClaw / Cursor.
           </p>
         </div>
-      </div>
-
-      <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 space-y-2">
-        <div className="flex items-center gap-2 text-violet-900 font-semibold text-sm">
-          <Shield className="h-4 w-4" />
-          Xác thực &amp; quyền
-        </div>
-        <ul className="text-xs text-violet-800 space-y-1 list-disc list-inside">
-          <li>Tạo key ngay tại mục <strong>API Key</strong> bên dưới (dùng chung bảng với{' '}
-            <Link to="/settings/api-keys" className="underline font-medium inline-flex items-center gap-0.5">
-              API Key tích hợp <ExternalLink className="h-3 w-3" />
-            </Link>)
-          </li>
-          <li><strong>Kết nối MCP:</strong> <code className="bg-violet-100 px-1 rounded">initialize</code> → nhận <code className="bg-violet-100 px-1 rounded">session_id</code> + <code className="bg-violet-100 px-1 rounded">client_id</code> → gửi header <code className="bg-violet-100 px-1 rounded">Mcp-Session-Id</code> + <code className="bg-violet-100 px-1 rounded">Mcp-Client-Id</code> mỗi request sau đó</li>
-          <li>Header <code className="bg-violet-100 px-1 rounded">X-Api-Key</code> hoặc <code className="bg-violet-100 px-1 rounded">Authorization: Bearer &lt;access_token&gt;</code></li>
-          <li><code className="bg-violet-100 px-1 rounded">refresh_token</code> — đổi access mới qua <code className="bg-violet-100 px-1 rounded">POST /api/external/oauth/token</code></li>
-          <li>Endpoint MCP: <code className="bg-violet-100 px-1 rounded">POST {MCP_ENDPOINT}</code> (JSON-RPC 2.0)</li>
-          <li>Header <code className="bg-violet-100 px-1 rounded">Accept: application/json, text/event-stream</code> bắt buộc</li>
-          <li>Header <code className="bg-violet-100 px-1 rounded">MCP-Protocol-Version</code> + <code className="bg-violet-100 px-1 rounded">Mcp-Method</code> (+ <code className="bg-violet-100 px-1 rounded">Mcp-Name</code> khi tools/call)</li>
-          <li>Header <code className="bg-violet-100 px-1 rounded">X-User-Id</code>: user có quyền xem BC (mặc định = default_assigned_to trên key)</li>
-          <li>Key phải gắn <strong>công ty</strong>; user act-as phải thuộc cùng công ty (trừ system admin)</li>
-          <li><strong>Kỳ báo cáo</strong> không cấu hình trên gateway — OpenClaw/client gửi <code className="bg-violet-100 px-1 rounded">date_from</code> + <code className="bg-violet-100 px-1 rounded">date_to</code> (hoặc <code className="bg-violet-100 px-1 rounded">time_scope</code>) <em>mỗi request</em></li>
-        </ul>
-        <code className="block text-[11px] font-mono text-violet-700 bg-white border border-violet-100 rounded-lg px-3 py-2 mt-2">
-          MCP: POST {MCP_ENDPOINT} · client_id: {mcpClientId || '—'} · session_id: {mcpSessionId || '(chưa initialize)'}
-        </code>
       </div>
 
       {newKeyValue && (
@@ -870,7 +848,7 @@ export default function McpReportApiPage() {
               onClick={() => copyText(
                 buildClaudeConnectorPaste({
                   name: claudeConnectorName,
-                  url: MCP_ENDPOINT,
+                  url: MCP_ENDPOINT_PUBLIC,
                   headers: claudeRequestHeaders,
                 }),
                 'claude_all',
@@ -903,7 +881,7 @@ export default function McpReportApiPage() {
 
           <ConnectorField
             label="Remote MCP server URL"
-            value={MCP_ENDPOINT}
+            value={MCP_ENDPOINT_PUBLIC}
             onCopy={copyText}
             copied={copiedId === 'claude_url'}
             copyKey="claude_url"
@@ -1169,7 +1147,7 @@ export default function McpReportApiPage() {
         >
           <span className="flex items-center gap-2">
             <ListTree className="h-4 w-4 text-violet-600" />
-            Tool MCP ({tools?.length ?? '13+'})
+            Tool MCP ({tools?.length ?? '40+'})
           </span>
           {showTools ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
@@ -1178,16 +1156,28 @@ export default function McpReportApiPage() {
             {(tools || [
               'get_org_overview_report_full',
               'get_org_overview_report',
-              'format_org_overview_report_text',
-              'format_all_employees_report_text',
-              'get_employee_activity_report',
-              'format_employee_activity_report_text',
-              'get_employee_leads_drill',
-              'get_employee_breakdown',
-              'list_departments_in_company',
-              'list_employees_in_scope',
-              'list_companies_in_scope',
-              'get_overdue_breakdown',
+              'crm_api_get',
+              'search_crm_leads',
+              'get_crm_lead_detail',
+              'get_crm_stage_counts',
+              'list_crm_pipelines',
+              'list_crm_pipeline_stages',
+              'list_crm_customers',
+              'list_crm_quotations',
+              'get_crm_quotation',
+              'list_crm_orders',
+              'get_crm_order',
+              'list_crm_invoices',
+              'get_crm_invoice',
+              'list_crm_lead_tasks',
+              'get_crm_lead_activities',
+              'list_crm_lead_documents',
+              'get_crm_dashboard',
+              'get_crm_kanban_bootstrap',
+              'find_users_by_name',
+              'list_pipelines_for_company',
+              'get_pipeline_breakdown',
+              'get_company_lead_summary',
               'resolve_time_range',
             ]).map((t) => (
               <li key={typeof t === 'string' ? t : t.name} className="font-mono text-violet-800">
@@ -1234,7 +1224,7 @@ export default function McpReportApiPage() {
         </div>
         <div>
           <p className="text-xs font-medium text-gray-600 mb-2">OpenClaw / Cursor — cấu hình MCP HTTP</p>
-          <CodeBlock lang="json" code={buildOpenClawConfig(MCP_ENDPOINT, displayKey, mcpClientId)} />
+          <CodeBlock lang="json" code={buildOpenClawConfig(MCP_ENDPOINT_PUBLIC, displayKey, mcpClientId)} />
         </div>
       </div>
     </div>

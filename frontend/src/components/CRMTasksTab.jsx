@@ -9,6 +9,7 @@ import { canManageWorkshopProjectFiles, isDealResponsibleUser } from '../lib/fil
 import { fetchPipelineStagesById, filterSxPipelineStagesForWorkshopType, sortAndDedupePipelineStages } from '../lib/crmPipelineStages';
 import { formatDateTime, formatVND } from '../lib/utils';
 import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetimeLocal';
+import { taskBelongsToVcSubTab, isInstallLogisticsPipelineStage } from '../lib/workshopTaskScope';
 import {
   Plus, CheckCircle2, Circle, Clock, User, Eye, Trash2, ChevronDown, ChevronRight,
   Calendar, List, Users, Target, AlertTriangle, X, Save, ListChecks, ClipboardList,
@@ -514,6 +515,9 @@ export default function CRMTasksTab({
   dealResponsible = null,
   /** Dự án SX gắn deal — dùng để xác định quyền xóa file (NV phụ trách SX / đội SX). */
   workshopProject = null,
+  /** Tab VC/LĐ khi taskScope=logistics: shipping | install | all */
+  initialVcAreaTab = null,
+  onVcAreaTabChange = null,
 }) {
   const { user } = useAuth();
   const canManageDeal = workshopProject
@@ -521,6 +525,11 @@ export default function CRMTasksTab({
     : isDealResponsibleUser(user, dealResponsible);
   const isAdmin = isAdminLike(user);
   const [tasks, setTasks] = useState([]);
+  const [vcAreaTab, setVcAreaTab] = useState(() => (
+    initialVcAreaTab === 'shipping' || initialVcAreaTab === 'install' || initialVcAreaTab === 'all'
+      ? initialVcAreaTab
+      : 'shipping'
+  ));
   const isSxStageSlug = useMemo(() => (slug) => String(slug || '').startsWith('sx_'), []);
   const hasSxTasks = useMemo(() => tasks.some((t) => isSxStageSlug(t.stage_slug)), [tasks, isSxStageSlug]);
   const hasCrmDealTasks = useMemo(
@@ -619,6 +628,22 @@ export default function CRMTasksTab({
     if (leadType === 'deal') {
       if (showLogisticsWorkshopInUi) {
         list = tasks.filter((t) => isWorkshopProjectTaskRow(t) || String(t.stage_slug || '').startsWith('vc_'));
+        if (vcAreaTab === 'shipping' || vcAreaTab === 'install') {
+          const vcStages = vcPipelineStages?.length
+            ? vcPipelineStages
+            : (Array.isArray(embeddedVcKanbanStages) ? embeddedVcKanbanStages : []);
+          list = list.filter((t) => {
+            const sid = resolveVcTaskPipelineStageId(t, vcStages);
+            if (sid && vcStages.length) {
+              const stage = vcStages.find((s) => String(s.id) === String(sid));
+              if (stage) {
+                const install = isInstallLogisticsPipelineStage(stage);
+                return vcAreaTab === 'install' ? install : !install;
+              }
+            }
+            return taskBelongsToVcSubTab(t, vcAreaTab, vcStages);
+          });
+        }
       } else if (showSxTasksInUi) {
         list = tasks.filter((t) => isSxStageSlug(t.stage_slug) || t.production_pipeline_stage_id);
         // Chỉ hiển thị nhiệm vụ thuộc pipeline phân loại hiện tại (vd. Data đầu ra — không lẫn Đầu vào).
@@ -633,7 +658,7 @@ export default function CRMTasksTab({
       list = list.filter((t) => isDelegatedSxTask(t));
     }
     return list;
-  }, [leadType, tasks, showLogisticsWorkshopInUi, showSxTasksInUi, isSxStageSlug, projectWorkshopTypeId, sxPipelineStages, taskCompanyScope, isDelegatedSxTask]);
+  }, [leadType, tasks, showLogisticsWorkshopInUi, showSxTasksInUi, isSxStageSlug, projectWorkshopTypeId, sxPipelineStages, taskCompanyScope, isDelegatedSxTask, vcAreaTab, vcPipelineStages, embeddedVcKanbanStages]);
 
   const isTaskLevelCrossCompany = useCallback((task) => {
     const ownerId = ownerCompanyId;
@@ -2050,6 +2075,7 @@ export default function CRMTasksTab({
   }, [viewMode, tasks, tasksByStage, getTaskStageKey, apiLeadIdForTaskId]);
 
   const listStagesToRender = useMemo(() => {
+    let stages;
     if (
       useVcPipelineTaskUi
       || (showLogisticsWorkshopInUi && vcPipelineStagesAsUiStages.length > 0)
@@ -2059,20 +2085,34 @@ export default function CRMTasksTab({
       || usePipelineTaskUi
       || (isLegacyCrmTaskSet && pipelineStages.length)
     ) {
-      return STAGES;
+      stages = STAGES;
+    } else {
+      const withTasks = STAGES.filter((s) => (tasksByStage[s.slug]?.length || 0) > 0);
+      const known = new Set(STAGES.map((s) => s.slug));
+      const extras = Object.keys(tasksByStage)
+        .filter((k) => k && !known.has(k) && tasksByStage[k]?.length)
+        .map((k) => ALL_STAGES.find((s) => s.slug === k) || {
+          slug: k,
+          label: k,
+          icon: '📌',
+          color: '#6B7280',
+        });
+      stages = [...withTasks, ...extras];
     }
-    const withTasks = STAGES.filter((s) => (tasksByStage[s.slug]?.length || 0) > 0);
-    const known = new Set(STAGES.map((s) => s.slug));
-    const extras = Object.keys(tasksByStage)
-      .filter((k) => k && !known.has(k) && tasksByStage[k]?.length)
-      .map((k) => ALL_STAGES.find((s) => s.slug === k) || {
-        slug: k,
-        label: k,
-        icon: '📌',
-        color: '#6B7280',
+    if (showLogisticsWorkshopInUi && (vcAreaTab === 'shipping' || vcAreaTab === 'install')) {
+      const vcStages = vcPipelineStages.length ? vcPipelineStages : (embeddedVcKanbanStages || []);
+      stages = stages.filter((s) => {
+        const raw = vcStages.find((x) => String(x.id) === String(s.slug)) || s;
+        const install = isInstallLogisticsPipelineStage(raw);
+        const hasTasks = (tasksByStage[s.slug]?.length || 0) > 0;
+        if (!hasTasks && String(s.slug) !== String(leadCurrentStageId)) {
+          // keep empty stages only when matching area
+        }
+        return vcAreaTab === 'install' ? install : !install;
       });
-    return [...withTasks, ...extras];
-  }, [STAGES, tasksByStage, useVcPipelineTaskUi, showLogisticsWorkshopInUi, vcPipelineStagesAsUiStages.length, useSxPipelineTaskUi, isProductionScope, isSxOrderTaskFlow, sxPipelineStages.length, usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages.length]);
+    }
+    return stages;
+  }, [STAGES, tasksByStage, useVcPipelineTaskUi, showLogisticsWorkshopInUi, vcPipelineStagesAsUiStages.length, useSxPipelineTaskUi, isProductionScope, isSxOrderTaskFlow, sxPipelineStages.length, usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages.length, vcAreaTab, vcPipelineStages, embeddedVcKanbanStages, leadCurrentStageId]);
 
   const stageTemplatesMap = useMemo(() => {
     const map = {};
@@ -3780,6 +3820,29 @@ export default function CRMTasksTab({
               {stats.overdue > 0 && <span className="text-red-600 ml-1">• {stats.overdue} quá hạn</span>}
             </div>
           </div>
+          {showLogisticsWorkshopInUi && (
+            <div className="flex items-center gap-1 bg-gray-50 border border-gray-200 rounded-lg p-0.5">
+              {[
+                { id: 'shipping', label: 'Vận chuyển' },
+                { id: 'install', label: 'Lắp đặt' },
+                { id: 'all', label: 'Tất cả' },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => {
+                    setVcAreaTab(tab.id);
+                    if (typeof onVcAreaTabChange === 'function') onVcAreaTabChange(tab.id);
+                  }}
+                  className={`h-6 px-2 rounded-md text-[10px] font-semibold cursor-pointer ${
+                    vcAreaTab === tab.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-1">
           {leadType === 'deal' && hasSxTasks && !isProductionScope && !isSharedWorkspace && (

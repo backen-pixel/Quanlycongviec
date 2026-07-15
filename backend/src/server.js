@@ -86,7 +86,19 @@ const corsMainApp = cors({
 const corsExternalApi = cors({
   origin: true,
   credentials: false,
-  allowedHeaders: ['Content-Type', 'Accept', 'X-Api-Key', 'X-User-Id'],
+  allowedHeaders: [
+    'Content-Type',
+    'Accept',
+    'Authorization',
+    'X-Api-Key',
+    'X-User-Id',
+    'MCP-Protocol-Version',
+    'Mcp-Method',
+    'Mcp-Name',
+    'Mcp-Client-Id',
+    'Mcp-Session-Id',
+  ],
+  exposedHeaders: ['Mcp-Session-Id', 'Mcp-Client-Id'],
   methods: ['GET', 'POST', 'OPTIONS'],
   maxAge: CORS_PREFLIGHT_MAX_AGE,
 });
@@ -348,9 +360,15 @@ app.use('/api/logistics', require('./routes/logistics'));
 app.use('/api/accounting', require('./routes/accounting'));
 app.use('/api/workshop', require('./routes/workshopTypes'));
 app.use('/api/workshop-teams', require('./routes/workshopTeams'));
+try { app.use('/api/procurement', require('./routes/procurement')); } catch (e) { console.warn('⚠️ Procurement Lite route failed:', e.message); }
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/external', require('./routes/external'));
-try { app.use('/api/mcp', require('./routes/mcp')); } catch (e) { console.warn('⚠️ MCP route failed to load:', e.message); }
+try {
+  app.use('/api/mcp', (req, res, next) => {
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    next();
+  }, require('./routes/mcp'));
+} catch (e) { console.warn('⚠️ MCP route failed to load:', e.message); }
 try { app.use('/api/turn', require('./routes/turn')); } catch (e) { console.warn('⚠️ TURN route failed to load:', e.message); }
 try { app.use('/api/push', require('./routes/push')); } catch (e) { console.warn('⚠️ Push route failed to load:', e.message); }
 try { app.use('/api/devices', require('./routes/devices')); } catch (e) { console.warn('⚠️ Devices route failed to load:', e.message); }

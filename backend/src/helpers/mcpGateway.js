@@ -1,10 +1,15 @@
 /**
  * MCP Gateway — logic dùng chung cho /api/mcp (OpenClaw / agent bên ngoài).
- * Báo cáo tổ chức dùng cùng engine với trang «Báo cáo theo tổ chức» và AI bot.
+ * Báo cáo tổ chức + CRM GET (bridge) dùng quyền user act-as.
  */
 const { supabase } = require('../config/supabase');
 const { isSystemAdmin } = require('./adminRole');
 const { OPENAI_TOOL_DEFINITIONS, executeTool } = require('./aiReportTools');
+const {
+  MCP_CRM_READ_TOOL_SET,
+  getMcpCrmReadTools,
+  callMcpCrmReadTool,
+} = require('./mcpCrmReadBridge');
 
 /** Tool báo cáo được phép qua MCP (không expose quản trị bot / skill). */
 const MCP_REPORT_TOOL_NAMES = [
@@ -22,6 +27,16 @@ const MCP_REPORT_TOOL_NAMES = [
   'list_companies_in_scope',
   'get_overdue_breakdown',
   'resolve_time_range',
+  // Đọc CRM thêm (AI tools sẵn có)
+  'find_users_by_name',
+  'list_pipelines_for_company',
+  'get_pipeline_breakdown',
+  'get_company_lead_summary',
+  'format_company_report_text',
+  'get_lead_deal_risk_report',
+  'format_lead_deal_risk_text',
+  'get_user_profile_card',
+  'resolve_assignee_scope',
 ];
 
 const MCP_REPORT_TOOL_SET = new Set(MCP_REPORT_TOOL_NAMES);
@@ -95,6 +110,14 @@ function getMcpReportTools() {
 
   const names = new Set(patched.map((t) => t.name));
   if (!names.has(fullTool.name)) patched.unshift(fullTool);
+
+  // CRM GET tools (bridge)
+  for (const t of getMcpCrmReadTools()) {
+    if (!names.has(t.name)) {
+      patched.push(t);
+      names.add(t.name);
+    }
+  }
   return patched;
 }
 
@@ -110,7 +133,7 @@ async function resolveMcpActAsUser(req) {
 
   const { data: user, error } = await supabase
     .from('users')
-    .select('id, full_name, role, company_id, department_id, is_active')
+    .select('id, email, full_name, role, company_id, department_id, tenant_id, is_active')
     .eq('id', userId)
     .maybeSingle();
   if (error) throw error;
@@ -161,8 +184,12 @@ function assertCompanyScope(args, apiKey) {
   }
 }
 
+function isMcpToolAllowed(name) {
+  return MCP_REPORT_TOOL_SET.has(name) || MCP_CRM_READ_TOOL_SET.has(name);
+}
+
 async function callMcpReportTool(name, args = {}, req) {
-  if (!MCP_REPORT_TOOL_SET.has(name)) {
+  if (!isMcpToolAllowed(name)) {
     const err = new Error(`Tool không được phép: ${name}`);
     err.status = 404;
     throw err;
@@ -172,6 +199,20 @@ async function callMcpReportTool(name, args = {}, req) {
   const ctx = buildMcpToolContext(req, user);
   const merged = normalizeReportArgs(args, ctx);
   assertCompanyScope(merged, req.apiKey);
+
+  if (MCP_CRM_READ_TOOL_SET.has(name)) {
+    // Default company_id từ key cho alias list (không ghi đè path crm_api_get)
+    if (name !== 'crm_api_get' && !merged.company_id && ctx.last_company_id) {
+      merged.company_id = ctx.last_company_id;
+    }
+    if (name === 'crm_api_get' && merged.query && typeof merged.query === 'object') {
+      const q = { ...merged.query };
+      if (!q.company_id && ctx.last_company_id) q.company_id = ctx.last_company_id;
+      assertCompanyScope(q, req.apiKey);
+      merged.query = q;
+    }
+    return callMcpCrmReadTool(name, merged, user);
+  }
 
   if (name === 'get_org_overview_report_full') {
     const { getOrgOverviewReportFull } = require('./orgOverviewReportAi');

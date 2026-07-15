@@ -2,7 +2,7 @@
 import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
-import { taskBelongsToWorkshopModule } from '../lib/workshopTaskScope';
+import { taskBelongsToWorkshopModule, taskBelongsToVcSubTab } from '../lib/workshopTaskScope';
 import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
 import {
   isLeadDocVisibleInModule,
@@ -51,11 +51,12 @@ import { buildSxPipelineStageMeta, resolveSxProjectDeposit, resolveSxProjectPaym
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
 import SharedCRMNotes from '../components/SharedCRMNotes';
 import DriveAttachments from '../components/drive/DriveAttachments';
+import ProjectProcurementTab from '../components/ProjectProcurementTab';
 import { driveLinksCountByEntity } from '../lib/drive';
 import { canManageWorkshopProjectFiles } from '../lib/fileOwnership';
 
 /** Cùng tên tab với LeadDetail (chi tiết deal) — bỏ facebook và calls */
-const DEAL_TAB_KEYS = new Set(['tasks', 'shared-workspace', 'documents', 'notes', 'comments', 'team', 'approvals', 'incidents']);
+const DEAL_TAB_KEYS = new Set(['tasks', 'shared-workspace', 'documents', 'notes', 'comments', 'team', 'approvals', 'incidents', 'procurement']);
 const LEGACY_TAB_MAP = {
   timeline: 'comments',
   'crm-notes': 'notes',
@@ -1497,15 +1498,6 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     : { apiPrefix: '/production', routePrefix: '/sx', label: 'Sản xuất', icon: '🏭', stageField: 'sx_kanban_column_id', stagesKey: 'sxKanbanStages' };
   const isVC = moduleKey === 'vc';
 
-  // Chỉ tính nhiệm vụ đúng khu SX hoặc VC (metadata.workshop_area + slug), không lẫn bộ mẫu giữa hai module.
-  const pickWorkshopTasksForSummary = useCallback(
-    (list) =>
-      (Array.isArray(list) ? list : []).filter((t) =>
-        taskBelongsToWorkshopModule(t, isVC ? 'vc' : 'sx'),
-      ),
-    [isVC],
-  );
-
   const { id } = useParams();
   const navigate = useNavigate();
   const goToDashboard = () => {
@@ -1530,6 +1522,22 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const tabAllowed = (t) => DEAL_TAB_KEYS.has(t);
   const [activeTab, setActiveTab] = useState(
     tabAllowed(normalizedUrlTab) ? normalizedUrlTab : 'tasks',
+  );
+  const vcSubTab = useMemo(() => {
+    if (!isVC) return null;
+    const raw = String(searchParams.get('vcTab') || '').toLowerCase();
+    return raw === 'install' ? 'install' : raw === 'shipping' ? 'shipping' : null;
+  }, [isVC, searchParams]);
+
+  // Chỉ tính nhiệm vụ đúng khu SX hoặc VC; khi có vcTab thì tách LĐ / VC.
+  const pickWorkshopTasksForSummary = useCallback(
+    (list) =>
+      (Array.isArray(list) ? list : []).filter((t) => {
+        if (!taskBelongsToWorkshopModule(t, isVC ? 'vc' : 'sx')) return false;
+        if (isVC && vcSubTab) return taskBelongsToVcSubTab(t, vcSubTab);
+        return true;
+      }),
+    [isVC, vcSubTab],
   );
   const [crmUsers, setCrmUsers] = useState([]);
   const [crmActivities, setCrmActivities] = useState([]);
@@ -3110,6 +3118,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               {tabBtn('incidents', incidents.filter(i => i.status === 'open' || i.status === 'in_progress').length > 0
                 ? `⚠️ Sự cố (${incidents.filter(i => i.status === 'open' || i.status === 'in_progress').length})`
                 : '⚠️ Sự cố')}
+              {moduleKey !== 'vc' && tabBtn('procurement', '📦 Vật tư / Mua hàng')}
               {tabBtn('team', '👥 Thành viên')}
               {tabBtn('approvals', '✅ Gửi duyệt')}
             </div>
@@ -3139,6 +3148,15 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     vcTemplateCompanyId={project?.logistics_company_id || project?.logistics_company?.id || null}
                     dealResponsible={primaryCrmDeal}
                     workshopProject={project}
+                    initialVcAreaTab={vcSubTab || undefined}
+                    onVcAreaTabChange={(tab) => {
+                      setSearchParams((prev) => {
+                        const next = new URLSearchParams(prev);
+                        if (tab === 'shipping' || tab === 'install') next.set('vcTab', tab);
+                        else next.delete('vcTab');
+                        return next;
+                      }, { replace: true });
+                    }}
                   />
                 ) : moduleKey === 'vc' ? (
                   <WorkshopProjectTasksPanel
@@ -3150,6 +3168,15 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     onReload={refreshProjectSilently}
                     crmDealDocs={crmDealDocs}
                     crmSharedNotes={crmActivities.filter((a) => a?.shared_to_workshop !== false)}
+                    initialVcAreaTab={vcSubTab || undefined}
+                    onVcAreaTabChange={(tab) => {
+                      setSearchParams((prev) => {
+                        const next = new URLSearchParams(prev);
+                        if (tab === 'shipping' || tab === 'install') next.set('vcTab', tab);
+                        else next.delete('vcTab');
+                        return next;
+                      }, { replace: true });
+                    }}
                   />
                 ) : tasksLeadId ? (
                   <CRMTasksTab
@@ -3453,6 +3480,14 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               )}
 
               {/* Sự cố */}
+              {activeTab === 'procurement' && moduleKey !== 'vc' && project?.id && (
+                <ProjectProcurementTab
+                  projectId={project.id}
+                  companyId={project.company_id || project.company?.id || null}
+                  users={taskUsers?.length ? taskUsers : (allUsers || [])}
+                />
+              )}
+
               {activeTab === 'incidents' && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">

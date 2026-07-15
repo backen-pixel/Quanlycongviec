@@ -125,7 +125,16 @@ export function getColumnLabel(moduleTab, col) {
 }
 
 export function isInstallVcStage(stage) {
+  if (!stage) return false;
+  if (String(stage.crm_sync_type || '').toLowerCase() === 'installation') return true;
   const name = String(stage?.name || '').toLowerCase();
   const slug = String(stage?.bucket_slug || '').toLowerCase();
-  return slug.includes('install') || name.includes('lắp') || name.includes('lap dat') || name.includes('lắp đặt');
+  const wfSlug = String(stage?.slug || stage?.workflow_stage?.slug || '').toLowerCase();
+  return (
+    slug.includes('install')
+    || wfSlug.includes('install')
+    || name.includes('lắp')
+    || name.includes('lap dat')
+    || name.includes('lắp đặt')
+  );
 }
