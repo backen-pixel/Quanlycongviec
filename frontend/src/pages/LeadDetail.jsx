@@ -57,12 +57,29 @@ import {
 } from '../lib/crmDealStageGate';
 import { sortAndDedupePipelineStages } from '../lib/crmPipelineStages';
 import DealStageEventModal from '../components/DealStageEventModal';
+import EventCreateModal from '../components/EventCreateModal';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, MessageCircle, Edit2, Trash2, X, Save, Building2, FolderKanban,
   FileUp, FileText, Zap, ChevronDown, Send, RefreshCw, Users, ClipboardCheck, Loader2, Mic, RotateCcw, Download,
   Pin, CheckCircle2,
 } from 'lucide-react';
+
+function formatLeadDealEventTitle(lead, customer) {
+  const title = (lead?.title || '').trim() || (lead?.code ? String(lead.code).trim() : '') || (lead?.type === 'deal' ? 'Deal' : 'Lead');
+  const cust = (customer?.full_name || customer?.name || lead?.customer?.full_name || lead?.customer_name || '').trim();
+  return cust ? `${title} - ${cust}` : title;
+}
+
+function leadDealEventLocation(lead, customer) {
+  return (
+    customer?.address
+    || lead?.customer?.address
+    || lead?.install_address
+    || customer?.install_address
+    || ''
+  );
+}
 
 /** Khớp backend: chỉ cột deal có tên chứa «Hoàn thành» mới dùng gửi Zalo OA */
 function isCrmDealStageHoanThanhName(name) {
@@ -137,6 +154,8 @@ export default function LeadDetail() {
   const [allUsers, setAllUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddActivity, setShowAddActivity] = useState(false);
+  const [showCreateEvent, setShowCreateEvent] = useState(false);
+  const [createEventTypes, setCreateEventTypes] = useState([]);
   const [showConvertModal, setShowConvertModal] = useState(false);
   const [showRevertModal, setShowRevertModal] = useState(false);
   const [showAddDoc, setShowAddDoc] = useState(false);
@@ -1579,6 +1598,19 @@ export default function LeadDetail() {
           <button onClick={() => navigate(`/crm/quotations/new?lead_id=${id}`)} className="h-9 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer">
             <FileText className="h-4 w-4" /> Báo giá
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setShowCreateEvent(true);
+              if (!createEventTypes.length) {
+                api.get('/events/event-types').then((r) => setCreateEventTypes(r.data || [])).catch(() => {});
+              }
+            }}
+            className="h-9 px-3 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer"
+            title="Tạo sự kiện liên kết với lead/deal này"
+          >
+            <Calendar className="h-4 w-4" /> Tạo sự kiện
+          </button>
           <button onClick={() => setShowExcelImport(true)} className="h-9 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer">
             📥 Import Excel
           </button>
@@ -2581,6 +2613,24 @@ export default function LeadDetail() {
         onMoveWithoutEvent={skipDealDetailEvent}
         submitting={dealDetailEventBusy}
       />
+
+      {showCreateEvent && lead && (
+        <EventCreateModal
+          eventTypes={createEventTypes}
+          users={allUsers}
+          defaultModule="crm"
+          defaultLeadId={id}
+          defaultLead={{ ...lead, customer: lead.customer || customer }}
+          lockLead
+          defaultCustomerId={lead.customer_id || customer?.id || ''}
+          defaultAssigneeId={lead.assigned_to || lead.lead_owner_id || ''}
+          defaultTitle={formatLeadDealEventTitle(lead, customer)}
+          defaultLocation={leadDealEventLocation(lead, customer)}
+          defaultDescription={lead.description || ''}
+          onClose={() => setShowCreateEvent(false)}
+          onSaved={() => setShowCreateEvent(false)}
+        />
+      )}
 
       {/* Modal lý do thua */}
       {showLostModal && (
