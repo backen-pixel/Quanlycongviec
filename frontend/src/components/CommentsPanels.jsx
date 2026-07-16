@@ -62,12 +62,32 @@ function renderSystemCommentBody(text) {
     if (pipeIdx > 0 && pipeIdx < inner.length - 1) {
       const label = inner.slice(0, pipeIdx);
       const url = inner.slice(pipeIdx + 1);
-      parts.push(
-        <a key={m.index} href={pubUrl(url)} target="_blank" rel="noopener noreferrer"
-          className="font-semibold text-blue-600 hover:underline">
-          {`«${label}»`}
-        </a>,
-      );
+      const href = pubUrl(url);
+      if (isImageFileName(label)) {
+        parts.push(
+          <a key={m.index} href={href} target="_blank" rel="noopener noreferrer"
+            className="font-semibold text-blue-600 hover:underline">
+            {`«${label}»`}
+          </a>,
+        );
+      } else {
+        parts.push(
+          <button
+            key={m.index}
+            type="button"
+            className="font-semibold text-blue-600 hover:underline inline p-0 m-0 bg-transparent border-0 cursor-pointer"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              downloadUploadFile(url, label || 'tai-lieu').catch((err) => {
+                alert(err?.message || 'Không tải được file');
+              });
+            }}
+          >
+            {`«${label}»`}
+          </button>,
+        );
+      }
     } else {
       parts.push(<strong key={m.index} className="font-semibold text-[#050505]">{`«${inner}»`}</strong>);
     }

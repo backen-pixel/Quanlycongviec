@@ -129,24 +129,38 @@ export function getFileDownloadAnchorProps(pathOrUrl, opts = {}) {
 
 /** Tải file về máy — blob same-origin; cross-origin fallback mở tab mới. */
 export async function downloadUploadFile(pathOrUrl, fileName = 'tai-lieu') {
+  const safeName = String(fileName || 'tai-lieu').trim() || 'tai-lieu';
   try {
     const buf = await fetchUploadArrayBuffer(pathOrUrl);
+    if (!buf || buf.byteLength < 1) {
+      throw new Error('File tải về rỗng hoặc hỏng');
+    }
     const blob = new Blob([buf]);
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = blobUrl;
-    a.download = fileName;
+    a.download = safeName;
+    a.rel = 'noopener';
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(blobUrl);
-  } catch {
-    const props = getFileDownloadAnchorProps(pathOrUrl, { fileName });
+    // Không revoke ngay — Chrome thường hủy download nếu revoke trước khi bắt đầu ghi file.
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+  } catch (err) {
+    const props = getFileDownloadAnchorProps(pathOrUrl, { fileName: safeName });
     if (props?.href) {
-      window.open(props.href, '_blank', 'noopener,noreferrer');
+      // Anchor + click giữ user-gesture tốt hơn window.open sau await (tránh popup blocker).
+      const a = document.createElement('a');
+      a.href = props.href;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.download = safeName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
       return;
     }
-    throw new Error('Không tải được file');
+    throw new Error(err?.message || 'Không tải được file');
   }
 }
 
