@@ -188,6 +188,7 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId, sour
   const cfg = DOC_TYPE_CONFIG[docType] || DOC_TYPE_CONFIG.quotation;
 
   const todayISO = new Date().toISOString().slice(0, 10);
+  const isInvoice = docType === 'invoice';
 
   return {
     form: {
@@ -196,8 +197,7 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId, sour
       customer_phone: preview.customer_phone || '',
       customer_address: preview.customer_address || '',
       lead_id: leadId || '',
-      valid_until: todayISO,
-      due_date: todayISO,
+      ...(isInvoice ? { due_date: todayISO } : { valid_until: todayISO }),
       discount_type: 'amount',
       discount_value: computedDiscount,
       notes: notesParts.join('\n\n'),

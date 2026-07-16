@@ -596,7 +596,8 @@ export default function QuotationForm() {
     setSaveMsg(isEdit ? 'Đang cập nhật báo giá...' : 'Đang tạo báo giá...');
     try {
       const effectivePayment = isCustomPayment ? customPaymentTerms : form.payment_terms;
-      const payload = { ...form, payment_terms: effectivePayment, items: calcs.rows };
+      const { due_date: _dropDueDate, ...formWithoutDueDate } = form;
+      const payload = { ...formWithoutDueDate, payment_terms: effectivePayment, items: calcs.rows };
       const excelSrc = excelImportMeta?.fileUrl
         ? {
             source_excel_file_url: excelImportMeta.fileUrl,
