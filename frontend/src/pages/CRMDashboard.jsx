@@ -54,9 +54,11 @@ import {
   companyHasRegionPipelines,
   findDefaultAdminCrmCompanyPhucDat,
   getStoredCrmFilterCompanyId,
+  isLikelyEmptyCrmLeadCompany,
   narrowPipelinesToDefaultForCompany,
   resolvePipelineForCompanyRegion,
   setStoredCrmFilterCompanyId,
+  sortCrmCompaniesForAdminFilter,
 } from '../lib/crmCompanyFilter';
 import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
 import { effectivePipelineStageSlaDays } from '../lib/crmPipelineSla';
@@ -1585,16 +1587,37 @@ export default function CRMDashboard() {
   useEffect(() => {
     if (user == null) return;
     if (companyFilterFromLsRef.current) return;
+    if (hadSessionSnapshotRef.current && snapshotHasProperty(P, 'filterCompany')) {
+      companyFilterFromLsRef.current = true;
+      return;
+    }
+    if (!isAdmin || isCompanyScopedAdmin) {
+      companyFilterFromLsRef.current = true;
+      return;
+    }
+    // Chờ danh sách công ty CRM để bỏ qua Metalla/NextGo (0 lead) đã lưu trong LS.
+    if (!companies?.length) return;
     companyFilterFromLsRef.current = true;
-    if (hadSessionSnapshotRef.current && snapshotHasProperty(P, 'filterCompany')) return;
-    if (!isAdmin || isCompanyScopedAdmin) return;
     try {
       const s = getStoredCrmFilterCompanyId();
-      if (s) setFilterCompany(s);
+      if (!s) return;
+      const hit = companies.find((c) => String(c.id) === String(s));
+      if (!hit || isLikelyEmptyCrmLeadCompany(hit)) {
+        setStoredCrmFilterCompanyId('');
+        setFilterCompany('');
+        return;
+      }
+      setFilterCompany(s);
     } catch {
       // ignore
     }
-  }, [isAdmin, isCompanyScopedAdmin, user, P]);
+  }, [isAdmin, isCompanyScopedAdmin, user, P, companies]);
+
+  /** Sắp xếp dropdown công ty — Phúc Đạt / VPT trước, Metalla/NextGo cuối. */
+  const companiesForFilter = useMemo(
+    () => sortCrmCompaniesForAdminFilter(companies),
+    [companies],
+  );
 
   useEffect(() => {
     if (user == null) return;
@@ -6077,7 +6100,7 @@ export default function CRMDashboard() {
                         className={filterSelectCls}
                       >
                         <option value="">Tất cả công ty</option>
-                        {companies.map((c) => (
+                        {companiesForFilter.map((c) => (
                           <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
                         ))}
                       </select>
@@ -6765,6 +6788,33 @@ export default function CRMDashboard() {
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+          {viewMode === 'kanban' && !crmRegionPickRequired && !firstLoading && !syncing
+            && (pipelineType === 'lead' ? leads : activeDeals).length === 0 && (
+            <div className="rounded-xl border border-dashed border-amber-200 bg-amber-50/70 p-6 text-center mb-3">
+              <p className="text-sm font-semibold text-amber-950 mb-1">
+                Không có {pipelineType === 'lead' ? 'lead' : 'deal'} trong bộ lọc hiện tại
+              </p>
+              <p className="text-xs text-amber-800/90 max-w-xl mx-auto">
+                {filterCompany
+                  ? 'Thử chọn «Tất cả công ty», hoặc công ty có dữ liệu (Phúc Đạt / Vạn Phú Thành). Với Vạn Phú Thành cần chọn thêm khu vực (TP.HCM / Q2 / Cần Thơ). Đặt thời gian = «Tất cả».'
+                  : 'Thử xóa bộ lọc NV/nguồn/giai đoạn, đặt thời gian = «Tất cả», và kiểm tra tab Lead/Deal.'}
+              </p>
+              {isAdmin && !isCompanyScopedAdmin && (
+                <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      patchCrmFilters({ filterCompany: '', filterRegion: '', filterAssignee: '', filterAssigneeName: '' });
+                      handleTimePresetChange(CRM_DEFAULT_TIME_PRESET);
+                    }}
+                    className="h-8 px-3 rounded-lg bg-white border border-amber-300 text-amber-900 text-xs font-medium hover:bg-amber-100 cursor-pointer"
+                  >
+                    Xóa lọc công ty + thời gian
+                  </button>
+                </div>
+              )}
             </div>
           )}
           {viewMode === 'kanban' && !crmRegionPickRequired && (

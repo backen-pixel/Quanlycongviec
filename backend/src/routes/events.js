@@ -707,8 +707,12 @@ r.post('/', async (req, res) => {
       }
       if (!evCompanyId) evCompanyId = leadCid;
     }
-    if (!canPickEventsCompanyScope(req.user) && !evCompanyId) {
-      return res.status(400).json({ error: 'Thiếu công ty — gắn lead/deal hoặc gán công ty cho tài khoản' });
+    if (!evCompanyId) {
+      return res.status(400).json({
+        error: canPickEventsCompanyScope(req.user)
+          ? 'Thiếu công ty — chọn công ty trên trang Sự kiện (bộ lọc) hoặc gắn lead/deal trước khi tạo'
+          : 'Thiếu công ty — gắn lead/deal hoặc gán công ty cho tài khoản',
+      });
     }
     insert.company_id = evCompanyId;
 

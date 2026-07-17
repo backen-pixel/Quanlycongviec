@@ -711,7 +711,15 @@ export default function EventsFeedPage() {
               Xuất Excel
             </button>
           )}
-          <button onClick={() => { setEditEvent(null); setCreatePresetDay(null); setShowCreate(true); }}
+          <button onClick={() => {
+            if (canPickCompany && !filterCompanyId) {
+              alert('Chọn công ty ở bộ lọc phía trên trước khi tạo sự kiện — nếu không, sự kiện sẽ không hiện trên lịch khi đang lọc theo công ty.');
+              return;
+            }
+            setEditEvent(null);
+            setCreatePresetDay(null);
+            setShowCreate(true);
+          }}
             className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer">
             <Plus className="h-4 w-4" /> Tạo sự kiện
           </button>
@@ -910,6 +918,10 @@ export default function EventsFeedPage() {
                 onNextMonth={() => { if (calMonth === 12) { setCalMonth(1); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); }}
                 onSelectDay={setSelectedDay}
                 onOpenCreateForDay={(day) => {
+                  if (canPickCompany && !filterCompanyId) {
+                    alert('Chọn công ty ở bộ lọc phía trên trước khi tạo sự kiện.');
+                    return;
+                  }
                   setEditEvent(null);
                   setCreatePresetDay({ year: calYear, month: calMonth, day });
                   setSelectedDay(day);
@@ -1018,6 +1030,7 @@ export default function EventsFeedPage() {
           presetDay={editEvent ? null : createPresetDay}
           eventTypes={eventTypes}
           users={users}
+          defaultCompanyId={filterCompanyId || user?.company_id || ''}
           defaultModule={filterModule || (allowedModules && allowedModules.find((m) => m !== 'general')) || 'crm'}
           allowedModules={isAdmin || isSystemAdmin ? null : allowedModules}
           allowGeneralModule={isAdmin || isSystemAdmin}

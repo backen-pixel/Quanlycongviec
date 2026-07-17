@@ -2619,6 +2619,7 @@ export default function LeadDetail() {
           eventTypes={createEventTypes}
           users={allUsers}
           defaultModule="crm"
+          defaultCompanyId={lead.company_id || ''}
           defaultLeadId={id}
           defaultLead={{ ...lead, customer: lead.customer || customer }}
           lockLead

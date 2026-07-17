@@ -447,6 +447,8 @@ function EventDateTime24hPickers({ label, required, value, onChange, hint }) {
 export default function EventCreateModal({
   event, presetDay, eventTypes = [], users = [], onClose, onSaved,
   defaultModule = 'crm', allowedModules = null, allowGeneralModule = false,
+  /** Công ty gắn sự kiện — bắt buộc khi không có lead (để lịch lọc theo công ty vẫn thấy). */
+  defaultCompanyId = '',
   defaultLeadId = '',
   defaultLead = null,
   lockLead = false,
@@ -535,13 +537,26 @@ export default function EventCreateModal({
     }
     setSaving(true);
     try {
+      const leadId = form.lead_id || defaultLeadId || defaultLead?.id || '';
+      const companyId = String(
+        defaultCompanyId
+        || defaultLead?.company_id
+        || event?.company_id
+        || '',
+      ).trim();
+      if (!isEdit && !leadId && !companyId) {
+        alert('Chọn công ty trên trang Sự kiện (bộ lọc phía trên) trước khi tạo sự kiện không gắn lead/deal.');
+        setSaving(false);
+        return;
+      }
       const payload = {
         ...form,
-        lead_id: form.lead_id || defaultLeadId || defaultLead?.id || '',
+        lead_id: leadId,
         participant_ids: participantIds,
         start_time: datetimeLocalValueToIso(form.start_time),
         end_time: form.end_time ? datetimeLocalValueToIso(form.end_time) : null,
       };
+      if (companyId) payload.company_id = companyId;
       if (isEdit) {
         await api.put(`/events/${event.id}`, payload);
       } else {

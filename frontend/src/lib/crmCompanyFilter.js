@@ -87,6 +87,33 @@ export function findDefaultAdminCrmCompanyPhucDat(companies) {
   return hit?.id ? String(hit.id) : '';
 }
 
+/** Công ty CRM thường chưa có lead (dễ làm admin tưởng "mất dữ liệu" nếu giữ bộ lọc cũ). */
+export function isLikelyEmptyCrmLeadCompany(company) {
+  if (!company) return false;
+  const t = `${company.name || ''} ${company.short_name || ''}`.toLowerCase();
+  return t.includes('metalla') || t.includes('nextgo');
+}
+
+/**
+ * Sắp xếp dropdown công ty CRM: Phúc Đạt → Vạn Phú Thành → còn lại (Metalla/NextGo cuối).
+ * Tránh Metalla (0 lead) đứng đầu danh sách.
+ */
+export function sortCrmCompaniesForAdminFilter(companies) {
+  const list = Array.isArray(companies) ? [...companies] : [];
+  const rank = (c) => {
+    const t = `${c?.name || ''} ${c?.short_name || ''}`.toLowerCase();
+    if (t.includes('phúc đạt') || t.includes('phuc dat') || (t.includes('phúc') && t.includes('đạt'))) return 0;
+    if (t.includes('vạn phú') || t.includes('van phu')) return 1;
+    if (t.includes('metalla') || t.includes('nextgo')) return 9;
+    return 5;
+  };
+  return list.sort((a, b) => {
+    const d = rank(a) - rank(b);
+    if (d !== 0) return d;
+    return String(a?.name || '').localeCompare(String(b?.name || ''), 'vi');
+  });
+}
+
 /**
  * Công ty mặc định trên form cài đặt CRM / admin tổng mở dashboard:
  * → đã lưu (bộ lọc pipeline / dashboard) nếu còn trong danh sách
@@ -96,9 +123,11 @@ export function resolveDefaultCrmAdminCompanyId(companies) {
   if (!companies?.length) return '';
   const stored = getStoredCrmFilterCompanyId();
   if (stored && companies.some((c) => String(c.id) === String(stored))) {
-    return String(stored);
+    const hit = companies.find((c) => String(c.id) === String(stored));
+    // Bỏ qua Metalla/NextGo đã lưu — admin hay kẹt bộ lọc 0 lead.
+    if (!isLikelyEmptyCrmLeadCompany(hit)) return String(stored);
   }
-  return companies[0]?.id ? String(companies[0].id) : '';
+  return findDefaultAdminCrmCompanyPhucDat(companies) || (companies[0]?.id ? String(companies[0].id) : '');
 }
 
 /**
