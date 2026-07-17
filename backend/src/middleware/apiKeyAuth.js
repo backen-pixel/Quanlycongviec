@@ -38,7 +38,7 @@ function invalidateCache(key) {
 
 // ── CRUD helpers (Supabase-backed) ──────────────────────────────────────────
 const SELECT_COLS = `id, name, key, refresh_token, active, default_assigned_to, company_id, region_id,
-  default_source_category_id, default_lead_type_id, default_pipeline_id,
+  default_source_category_id, default_lead_type_id, default_pipeline_id, mcp_scopes, allowed_company_ids,
   webhook_url, created_by, created_at, rotated_at, rotated_by`;
 
 async function listKeys() {
@@ -238,9 +238,18 @@ async function apiKeyAuth(req, res, next) {
     if (!found || found.active === false) {
       return res.status(401).json({ error: 'API key không hợp lệ hoặc đã bị thu hồi' });
     }
-    if (!found.company_id) {
-      return res.status(401).json({ error: 'API key thiếu company_id (cần rotate/tạo lại key)' });
+    if (!found.company_id && !(Array.isArray(found.mcp_scopes) && found.mcp_scopes.length)) {
+      // Key không gắn công ty chỉ hợp lệ khi có mcp_scopes (MCP multi-company).
+      // External lead webhook vẫn nên dùng key có company_id.
     }
+
+    const scopes = Array.isArray(found.mcp_scopes) && found.mcp_scopes.length
+      ? found.mcp_scopes.map((s) => String(s).trim()).filter(Boolean)
+      : ['reports', 'crm_read'];
+
+    const allowedCompanies = Array.isArray(found.allowed_company_ids)
+      ? found.allowed_company_ids.map((x) => String(x)).filter(Boolean)
+      : [];
 
     req.apiKey = {
       id: found.id,
@@ -253,6 +262,9 @@ async function apiKeyAuth(req, res, next) {
       default_lead_type_id: found.default_lead_type_id || null,
       default_pipeline_id: found.default_pipeline_id || null,
       webhook_url: found.webhook_url || null,
+      mcp_scopes: scopes,
+      allowed_company_ids: allowedCompanies,
+      all_companies: !found.company_id && allowedCompanies.length === 0,
     };
     next();
   } catch (e) {

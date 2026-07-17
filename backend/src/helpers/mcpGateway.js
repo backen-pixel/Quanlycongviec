@@ -3,13 +3,38 @@
  * Báo cáo tổ chức + CRM GET (bridge) dùng quyền user act-as.
  */
 const { supabase } = require('../config/supabase');
-const { isSystemAdmin } = require('./adminRole');
+const { isAdminLike, isSystemAdmin } = require('./adminRole');
 const { OPENAI_TOOL_DEFINITIONS, executeTool } = require('./aiReportTools');
 const {
   MCP_CRM_READ_TOOL_SET,
   getMcpCrmReadTools,
   callMcpCrmReadTool,
 } = require('./mcpCrmReadBridge');
+
+/** Role được xem BC đầy đủ trong phạm vi công ty (không ép assigned_to = self). */
+const MCP_ORG_WIDE_ROLES = new Set([
+  'admin', 'sales_admin', 'platform_admin',
+  'manager', 'director', 'supervisor', 'region_admin',
+  'superadmin', 'super_admin',
+]);
+
+function normalizeRole(role) {
+  return String(role || '').trim().toLowerCase();
+}
+
+function isMcpOrgWideViewer(user) {
+  if (isAdminLike(user) || isSystemAdmin(user)) return true;
+  return MCP_ORG_WIDE_ROLES.has(normalizeRole(user?.role));
+}
+
+/** Danh sách company_id key được phép — null = tất cả. */
+function getKeyAllowedCompanyIds(apiKey) {
+  if (apiKey?.company_id) return [String(apiKey.company_id)];
+  const list = Array.isArray(apiKey?.allowed_company_ids)
+    ? apiKey.allowed_company_ids.map((x) => String(x)).filter(Boolean)
+    : [];
+  return list.length ? list : null;
+}
 
 /** Tool báo cáo được phép qua MCP (không expose quản trị bot / skill). */
 const MCP_REPORT_TOOL_NAMES = [
@@ -80,7 +105,13 @@ function openAiToolToMcp(def) {
   };
 }
 
-function getMcpReportTools() {
+function getMcpReportTools(apiKey = null) {
+  const scopes = Array.isArray(apiKey?.mcp_scopes) && apiKey.mcp_scopes.length
+    ? apiKey.mcp_scopes
+    : ['reports', 'crm_read'];
+  const allowReports = scopes.includes('reports');
+  const allowCrm = scopes.includes('crm_read');
+
   const fromOpenAi = OPENAI_TOOL_DEFINITIONS
     .filter((d) => MCP_REPORT_TOOL_SET.has(d.function?.name))
     .map(openAiToolToMcp);
@@ -118,7 +149,32 @@ function getMcpReportTools() {
       names.add(t.name);
     }
   }
-  return patched;
+
+  return patched.filter((t) => {
+    if (MCP_CRM_READ_TOOL_SET.has(t.name)) return allowCrm;
+    return allowReports;
+  });
+}
+
+function assertMcpScopeForTool(name, apiKey) {
+  const scopes = Array.isArray(apiKey?.mcp_scopes) && apiKey.mcp_scopes.length
+    ? apiKey.mcp_scopes
+    : ['reports', 'crm_read'];
+  if (MCP_CRM_READ_TOOL_SET.has(name)) {
+    if (!scopes.includes('crm_read')) {
+      const err = new Error('API key không có quyền crm_read');
+      err.status = 403;
+      throw err;
+    }
+    return;
+  }
+  if (MCP_REPORT_TOOL_SET.has(name) || name === 'get_org_overview_report_full') {
+    if (!scopes.includes('reports')) {
+      const err = new Error('API key không có quyền reports');
+      err.status = 403;
+      throw err;
+    }
+  }
 }
 
 async function resolveMcpActAsUser(req) {
@@ -156,13 +212,19 @@ async function resolveMcpActAsUser(req) {
 }
 
 function buildMcpToolContext(req, user) {
-  const keyCompanyId = req.apiKey?.company_id || null;
+  const allowed = getKeyAllowedCompanyIds(req.apiKey);
+  const keyCompanyId = req.apiKey?.company_id
+    || (allowed?.length === 1 ? allowed[0] : null)
+    || null;
   return {
     sender_user_id: user.id,
     personal_recipient_user_id: user.id,
     last_company_id: keyCompanyId || user.company_id || null,
     days_offset: 0,
     mcp_api_key_name: req.apiKey?.name || null,
+    mcp_all_companies: !getKeyAllowedCompanyIds(req.apiKey),
+    mcp_allowed_company_ids: getKeyAllowedCompanyIds(req.apiKey),
+    mcp_org_wide: isMcpOrgWideViewer(user),
   };
 }
 
@@ -174,11 +236,19 @@ function normalizeReportArgs(args = {}, ctx) {
   return out;
 }
 
+/** Nhân viên thường → chỉ data của chính mình. Admin/sales_admin/manager… → xem cả phạm vi. */
+function applyActAsVisibility(args = {}, user) {
+  if (isMcpOrgWideViewer(user)) return { ...args };
+  return { ...args, assigned_to: String(user.id) };
+}
+
 function assertCompanyScope(args, apiKey) {
-  const keyCompanyId = apiKey?.company_id;
-  if (!keyCompanyId || !args?.company_id) return;
-  if (String(args.company_id) !== String(keyCompanyId)) {
-    const err = new Error('company_id phải trùng công ty gắn với API key');
+  const cid = args?.company_id;
+  if (!cid) return;
+  const allowed = getKeyAllowedCompanyIds(apiKey);
+  if (!allowed) return; // tất cả công ty
+  if (!allowed.includes(String(cid))) {
+    const err = new Error('company_id không nằm trong danh sách công ty được phép của API key');
     err.status = 403;
     throw err;
   }
@@ -195,10 +265,19 @@ async function callMcpReportTool(name, args = {}, req) {
     throw err;
   }
 
+  assertMcpScopeForTool(name, req.apiKey);
+
   const user = await resolveMcpActAsUser(req);
   const ctx = buildMcpToolContext(req, user);
-  const merged = normalizeReportArgs(args, ctx);
+  let merged = normalizeReportArgs(args, ctx);
+  merged = applyActAsVisibility(merged, user);
   assertCompanyScope(merged, req.apiKey);
+
+  // Với key chọn nhiều công ty: nếu chưa truyền company_id và có đúng 1 công ty → mặc định
+  const allowed = getKeyAllowedCompanyIds(req.apiKey);
+  if (!merged.company_id && allowed?.length === 1) {
+    merged.company_id = allowed[0];
+  }
 
   if (MCP_CRM_READ_TOOL_SET.has(name)) {
     // Default company_id từ key cho alias list (không ghi đè path crm_api_get)

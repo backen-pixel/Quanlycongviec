@@ -176,12 +176,16 @@ const externalLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Rate limit exceeded' },
 });
+const {
+  mcpIpBurstLimiter,
+  mcpIpWindowLimiter,
+} = require('./helpers/mcpRateLimit');
 app.use('/api/auth', (req, res, next) => {
   if (req.path === '/me') return authMeLimiter(req, res, next);
   return authLimiter(req, res, next);
 });
 app.use('/api/external', externalLimiter);
-app.use('/api/mcp', externalLimiter);
+app.use('/api/mcp', mcpIpBurstLimiter, mcpIpWindowLimiter);
 
 // Friendly JSON parse error — đặc biệt cho /api/external/* (webhook bên thứ 3)
 app.use((err, req, res, next) => {

@@ -206,6 +206,13 @@ r.get('/api-keys', async (req, res) => {
       default_source_category_id: k.default_source_category_id || null,
       default_lead_type_id: k.default_lead_type_id || null,
       default_pipeline_id: k.default_pipeline_id || null,
+      mcp_scopes: Array.isArray(k.mcp_scopes) && k.mcp_scopes.length
+        ? k.mcp_scopes
+        : ['reports', 'crm_read'],
+      allowed_company_ids: Array.isArray(k.allowed_company_ids)
+        ? k.allowed_company_ids
+        : [],
+      all_companies: !k.company_id && !(Array.isArray(k.allowed_company_ids) && k.allowed_company_ids.length),
       webhook_url: k.webhook_url || null,
       created_at: k.created_at,
     })));
@@ -215,9 +222,13 @@ r.get('/api-keys', async (req, res) => {
 });
 
 // Helper: kiểm tra region_id thuộc đúng company_id (chống gán nhầm khu vực
-// của công ty khác).
+// của công ty khác). company_id null = tất cả công ty → không cần region.
 async function assertRegionMatchesCompany(region_id, company_id) {
-  if (!region_id || !company_id) return { ok: false, error: 'Thiếu khu vực hoặc công ty' };
+  if (!company_id) {
+    if (region_id) return { ok: false, error: 'Key «Tất cả công ty» không gắn khu vực' };
+    return { ok: true };
+  }
+  if (!region_id) return { ok: false, error: 'Thiếu khu vực hoặc công ty' };
   const { supabase } = require('../config/supabase');
   const { data, error } = await supabase
     .from('company_regions')
@@ -231,6 +242,33 @@ async function assertRegionMatchesCompany(region_id, company_id) {
   }
   if (data.is_active === false) return { ok: false, error: 'Khu vực đã bị tắt' };
   return { ok: true };
+}
+
+const ALLOWED_MCP_SCOPES = new Set(['reports', 'crm_read']);
+
+function normalizeMcpScopes(input) {
+  let arr = input;
+  if (typeof input === 'string') {
+    arr = input.split(/[,\s]+/);
+  }
+  if (!Array.isArray(arr)) return ['reports', 'crm_read'];
+  const out = [...new Set(arr.map((s) => String(s).trim()).filter((s) => ALLOWED_MCP_SCOPES.has(s)))];
+  return out.length ? out : ['reports', 'crm_read'];
+}
+
+function normalizeAllowedCompanyIds(input) {
+  if (input == null || input === '') return [];
+  let arr = input;
+  if (typeof input === 'string') {
+    try {
+      const parsed = JSON.parse(input);
+      arr = Array.isArray(parsed) ? parsed : input.split(/[,\s]+/);
+    } catch {
+      arr = input.split(/[,\s]+/);
+    }
+  }
+  if (!Array.isArray(arr)) return [];
+  return [...new Set(arr.map((x) => String(x).trim()).filter(Boolean))];
 }
 
 // POST /api/settings/api-keys — tạo key mới
@@ -248,18 +286,45 @@ r.post('/api-keys', async (req, res) => {
       default_source_category_id,
       default_lead_type_id,
       default_pipeline_id,
+      mcp_scopes,
+      all_companies,
+      allowed_company_ids,
     } = req.body;
     if (!name || !String(name).trim()) {
       return res.status(400).json({ error: 'Nhập tên để nhận biết key này (VD: "Website form", "Zap")' });
     }
-    if (!company_id) {
-      return res.status(400).json({ error: 'Thiếu company_id — mỗi API key phải gắn cố định 1 công ty' });
+
+    const allowedList = normalizeAllowedCompanyIds(allowed_company_ids);
+    const wantAllCompanies = all_companies === true
+      || company_id === 'all'
+      || (all_companies !== false && !company_id && allowedList.length === 0 && (company_id === '' || company_id == null));
+
+    let effectiveCompanyId = null;
+    let effectiveRegionId = null;
+    let effectiveAllowed = [];
+
+    if (wantAllCompanies || all_companies === true || company_id === 'all') {
+      effectiveCompanyId = null;
+      effectiveRegionId = null;
+      effectiveAllowed = [];
+    } else if (allowedList.length > 1) {
+      effectiveCompanyId = null;
+      effectiveRegionId = null;
+      effectiveAllowed = allowedList;
+    } else if (allowedList.length === 1 || company_id) {
+      effectiveCompanyId = allowedList[0] || company_id;
+      effectiveRegionId = region_id || null;
+      effectiveAllowed = effectiveCompanyId ? [String(effectiveCompanyId)] : [];
+      if (!effectiveRegionId) {
+        return res.status(400).json({ error: 'Thiếu region_id — bắt buộc khi gắn 1 công ty' });
+      }
+      const chk = await assertRegionMatchesCompany(effectiveRegionId, effectiveCompanyId);
+      if (!chk.ok) return res.status(400).json({ error: chk.error });
+    } else {
+      return res.status(400).json({ error: 'Chọn công ty (1 / nhiều) hoặc «Tất cả công ty»' });
     }
-    if (!region_id) {
-      return res.status(400).json({ error: 'Thiếu region_id — phải chọn khu vực mặc định cho key' });
-    }
-    const chk = await assertRegionMatchesCompany(region_id, company_id);
-    if (!chk.ok) return res.status(400).json({ error: chk.error });
+
+    const scopes = normalizeMcpScopes(mcp_scopes);
     const pair = buildTokenPair();
     const record = await insertKey({
       name: String(name).trim(),
@@ -267,15 +332,22 @@ r.post('/api-keys', async (req, res) => {
       refresh_token: pair.refresh_token,
       active: true,
       default_assigned_to: default_assigned_to || null,
-      company_id,
-      region_id,
+      company_id: effectiveCompanyId,
+      region_id: effectiveRegionId,
+      allowed_company_ids: effectiveAllowed.length ? effectiveAllowed : null,
       default_source_category_id: default_source_category_id || null,
       default_lead_type_id: default_lead_type_id || null,
       default_pipeline_id: default_pipeline_id || null,
+      mcp_scopes: scopes,
       webhook_url: webhook_url || null,
       created_by: req.user.userId,
     });
-    res.status(201).json(formatOneTimeTokenResponse(record));
+    res.status(201).json({
+      ...formatOneTimeTokenResponse(record),
+      mcp_scopes: scopes,
+      allowed_company_ids: effectiveAllowed,
+      all_companies: !effectiveCompanyId && effectiveAllowed.length === 0,
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -292,14 +364,33 @@ r.patch('/api-keys/:id', async (req, res) => {
     const {
       name, default_assigned_to, active, webhook_url, company_id,
       region_id, default_source_category_id, default_lead_type_id, default_pipeline_id,
+      mcp_scopes, all_companies, allowed_company_ids,
     } = req.body;
     const patch = {};
     if (name != null) patch.name = String(name).trim();
     if (default_assigned_to !== undefined) patch.default_assigned_to = default_assigned_to || null;
     if (active !== undefined) patch.active = !!active;
     if (webhook_url !== undefined) patch.webhook_url = webhook_url || null;
-    if (company_id !== undefined) patch.company_id = company_id || null;
-    if (region_id !== undefined) patch.region_id = region_id || null;
+    if (mcp_scopes !== undefined) patch.mcp_scopes = normalizeMcpScopes(mcp_scopes);
+    if (allowed_company_ids !== undefined) {
+      const list = normalizeAllowedCompanyIds(allowed_company_ids);
+      patch.allowed_company_ids = list.length ? list : null;
+      if (list.length > 1) {
+        patch.company_id = null;
+        patch.region_id = null;
+      } else if (list.length === 1) {
+        patch.company_id = list[0];
+      }
+    }
+
+    if (all_companies === true || company_id === 'all') {
+      patch.company_id = null;
+      patch.region_id = null;
+      patch.allowed_company_ids = null;
+    } else {
+      if (company_id !== undefined && allowed_company_ids === undefined) patch.company_id = company_id || null;
+      if (region_id !== undefined) patch.region_id = region_id || null;
+    }
     if (default_source_category_id !== undefined) patch.default_source_category_id = default_source_category_id || null;
     if (default_lead_type_id !== undefined) patch.default_lead_type_id = default_lead_type_id || null;
     if (default_pipeline_id !== undefined) patch.default_pipeline_id = default_pipeline_id || null;
@@ -307,11 +398,12 @@ r.patch('/api-keys/:id', async (req, res) => {
     // Nếu đổi region hoặc company → kiểm tra khớp (dùng giá trị mới nếu có)
     const effectiveRegion = patch.region_id !== undefined ? patch.region_id : cur.region_id;
     const effectiveCompany = patch.company_id !== undefined ? patch.company_id : cur.company_id;
-    if ((patch.region_id !== undefined || patch.company_id !== undefined) && effectiveRegion) {
+    if (patch.region_id !== undefined || patch.company_id !== undefined) {
       const chk = await assertRegionMatchesCompany(effectiveRegion, effectiveCompany);
       if (!chk.ok) return res.status(400).json({ error: chk.error });
     }
     const updated = await updateKey(req.params.id, patch);
+    const allowed = Array.isArray(updated.allowed_company_ids) ? updated.allowed_company_ids : [];
     res.json({
       id: updated.id,
       name: updated.name,
@@ -322,6 +414,11 @@ r.patch('/api-keys/:id', async (req, res) => {
       default_source_category_id: updated.default_source_category_id || null,
       default_lead_type_id: updated.default_lead_type_id || null,
       default_pipeline_id: updated.default_pipeline_id || null,
+      mcp_scopes: Array.isArray(updated.mcp_scopes) && updated.mcp_scopes.length
+        ? updated.mcp_scopes
+        : ['reports', 'crm_read'],
+      allowed_company_ids: allowed,
+      all_companies: !updated.company_id && allowed.length === 0,
       webhook_url: updated.webhook_url || null,
     });
   } catch (e) {

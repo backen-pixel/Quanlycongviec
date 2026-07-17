@@ -397,7 +397,7 @@ async function dispatchMethod(method, params, req, sessionId, fallbackVersion) {
   }
 
   if (normalized === 'tools/list') {
-    const allTools = getMcpReportTools();
+    const allTools = getMcpReportTools(req.apiKey);
     const { items, nextCursor } = paginateList(allTools, params?.cursor);
     const out = { tools: items };
     if (nextCursor) out.nextCursor = nextCursor;

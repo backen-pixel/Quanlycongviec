@@ -40,7 +40,7 @@ Both servers must run simultaneously. Vite proxies `/api` and `/socket.io` to `l
 ### Backend Structure
 
 **Route mounting** (`server.js` lines 280–330): All routes under `/api/*`. Key prefixes:
-- `/api/crm` — CRM pipeline, leads, deals, tasks, attachments, org reports (~18K lines in `crm.js`)
+- `/api/crm` — CRM pipeline, leads, deals, tasks, attachments, org reports (composed from `routes/crm/`; thin entry `routes/crm.js` → `routes/crm/index.js`)
 - `/api/production`, `/api/logistics` — Workshop modules (Sản xuất, Vận chuyển)
 - `/api/workshop` — Project type classifications per company
 - `/api/auth` — JWT authentication (token in `localStorage`, verified via `middleware/auth.js`)
@@ -66,7 +66,7 @@ Both servers must run simultaneously. Vite proxies `/api` and `/socket.io` to `l
 
 **API client** (`lib/api.js`): Axios instance with `baseURL = origin + '/api'`. Interceptors auto-attach JWT token and activity context (device_id, geo).
 
-**Large page files**: `CRMDashboard.jsx` (~9K lines) contains KanbanView, KanbanStageCard, KanbanCard components inline. `crm.js` backend is ~18K lines. These are the main files you'll edit for CRM features.
+**Large page files**: `CRMDashboard.jsx` (~9K lines) contains KanbanView, KanbanStageCard, KanbanCard components inline. CRM backend routes live under `backend/src/routes/crm/` (`index.js` composition root + `routes/*.js` feature modules + `shared/helpersBundle.js`). Edit the feature module matching the endpoint cluster, not a monolith.
 
 ### Role & Permission System
 
@@ -112,7 +112,7 @@ fetch(`https://api.supabase.com/v1/projects/${ref}/database/query`, {
 - All UI text is in **Vietnamese**
 - Table `crm_leads` holds both leads AND deals (distinguished by `type` column, NOT a separate `leads` table)
 - Pipeline stage order uses `order_index` column (NOT `order`)
-- Backend route files can be very large — `crm.js` is 18K+ lines. Search by function/route name, don't read the whole file
-- When adding a new field to `crm_pipeline_stages`, also update the PUT route's whitelist in `crm.js` (look for `forEach(f =>`)
+- CRM routes: search under `backend/src/routes/crm/routes/` by cluster (pipelines, leadLifecycle, commercialDocs, …); shared helpers in `crm/shared/`
+- When adding a new field to `crm_pipeline_stages`, also update the PUT route's whitelist in `crm/routes/pipelines.js` (look for `forEach(f =>`)
 - `supabase.from('table').select('*')` returns all columns — new DB columns are automatically available in API responses
 - Git: avoid committing files in `backend/uploads/_clone/` (large dump files). Already in `.gitignore`

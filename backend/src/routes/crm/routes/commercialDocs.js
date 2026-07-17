@@ -1,74 +1,13 @@
 /**
- * CRM Commercial docs — báo giá, đơn hàng, hóa đơn (+ PDF, parse Excel).
+ * CRM routes: commercialDocs
+ * Auto-extracted — handlers close over shared helpers via IIFE.
  */
-const path = require('path');
-const fs = require('fs');
 const { Router } = require('express');
-const multer = require('multer');
-const XLSX = require('xlsx');
-const PDFDocument = require('pdfkit');
-const { supabase } = require('../../../config/supabase');
-const defaultCompanyInfo = require('../../../config/companyInfo');
-const {
-  applyCrmLeadRegionFilterToQuery,
-  assertRegionBelongsToCompany,
-} = require('../../../helpers/crmRegionScope');
-const { isVptCompanyCommercialDocViewer } = require('../../../helpers/dealParticipantProduction');
-const { parseVietnameseMoney, parseExcelMoneyFromMappedColumn } = require('../../../helpers/excelVnNumbers');
-const { snapshotOrderRowFromQuotation, mapQuotationItemsToOrderRows } = require('../../../helpers/orderFromQuotation');
-const { syncQuotationItemsWithProductCatalog } = require('../../../helpers/quotationProductSync');
-const { isPostgresUniqueViolation } = require('../../../helpers/projectCode');
-const { crmRouteErrorText } = require('../shared/crmRouteHelpers');
-const { emitCrmDashboardChanged, nextCode } = require('../shared/crmMutationHelpers');
-const {
-  resolveCommercialDocListCompanyScope,
-  enforceCommercialDocCompanyOnWrite,
-} = require('../shared/commercialDocScope');
-const { userIsAdmin, scopedAdminCompanyId, requireUserCompanyId } = require('../shared/requestScope');
-const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } = require('../../../helpers/notifications');
-
-let misaService = null;
-try { misaService = require('../../../services/misaService'); } catch (e) { console.warn('⚠️ misaService not loaded:', e.message); }
-let autoFlowFns = {};
-try { autoFlowFns = require('../../../helpers/autoFlow'); } catch (e) { console.warn('⚠️ autoFlow not loaded:', e.message); }
-const { onQuotationAccepted = async () => null, onOrderConfirmed = async () => null } = autoFlowFns;
-
-const excelUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const helpers = require('../shared/helpersBundle');
 
 const r = Router();
 
-async function notifyMultiple(req, userIds, type, title, message, entityType, entityId, metadata) {
-  return notifyMultipleShared(req, userIds, type, title, message, entityType, entityId, metadata || null);
-}
-
-// QUOTATIONS (Báo giá)
-// ═══════════════════════════════════════════════════════════════════════════
-/** Lead/Deal detail: chứng từ có lead_id HOẶC cùng customer_id (nhiều BG tạo từ KH chưa gắn lead). */
-async function applyLeadOrCustomerSalesFilter(queryBuilder, leadIdVal) {
-  const lid = String(leadIdVal || '');
-  if (!lid || !/^[0-9a-f-]{36}$/i.test(lid)) return queryBuilder;
-  const { data: leadRow } = await supabase.from('crm_leads').select('customer_id').eq('id', lid).maybeSingle();
-  const cid = leadRow?.customer_id ? String(leadRow.customer_id) : '';
-  if (cid && /^[0-9a-f-]{36}$/i.test(cid)) {
-    return queryBuilder.or(`lead_id.eq.${lid},customer_id.eq.${cid}`);
-  }
-  return queryBuilder.eq('lead_id', lid);
-}
-
-/** Admin hệ thống xem/sửa mọi báo giá; admin công ty toàn công ty; NV chỉ báo giá do mình tạo. */
-function userMayAccessQuotationRow(req, row) {
-  if (!row) return false;
-  const sac = scopedAdminCompanyId(req);
-  if (sac) return String(row.company_id || '') === String(sac);
-  if (userIsAdmin(req.user?.role)) return true;
-  const uid = req.user?.userId;
-  const cid = req.user?.company_id;
-  if (!uid || !cid) return false;
-  if (String(row.company_id || '') !== String(cid)) return false;
-  if (isVptCompanyCommercialDocViewer(req.user)) return true;
-  return String(row.created_by || '') === String(uid);
-}
-
+(function (ALLOWED_DEADLINE_FIELDS, CRM_COMMENT_ALLOWED_REACTION_EMOJI, CRM_LEAD_KANBAN_LITE_SELECT, CRM_LEAD_LIST_SELECT, CRM_LEAD_LIST_SELECT_BASE, CRM_LEAD_LIST_SELECT_EXTRA, CRM_LEAD_REGION_EMBED, CRM_NEW_LEAD_MAX_AGE_MS, CRM_TASK_SELECT, CRM_UUID_RE, CUSTOMERS_IN_CHUNK, CUSTOMERS_OVERVIEW_NO_MATCH_ID, DEAL_PRE_CONTRACT_SLUGS_STAFF, DEAL_REPORT_BUCKET_VALUES, DEFAULT_CHECKLISTS, DEFAULT_DEADLINE_BUCKETS, DEFAULT_PIPELINE_STAGE_SLA_DAYS, FOLLOWUP_TIME_BUCKETS, PDFDocument, QUOTATIONS_SOURCE_EXCEL_COLS, Router, SCAN_DUP_LITE_SELECT, STAFF_LEAD_DEAL_REPORT_ROLES, SURVEY_EVENT_SELECT, SURVEY_EVENT_TYPES, XLSX, ZALO_APP_SETTING_KEY, _crmLeadSelectMigrationChecked, _crmLeadTypeColorAvailable, _vcPipelineStageAvailable, addPhoneToAutoLeadBlocklist, aggregateCrmCommentReactions, aggregateOrgReportRows, appendFulfillmentChildTasksForMasterDeal, applyAllActiveWorkshopTemplatesForArea, applyAssigneesToInsertedCrmTasks, applyCrmLeadRegionFilterToQuery, applyCrmTaskTemplatesToCompanyRegions, applyCustomerIdInFilter, applyCustomersOverviewSearch, applyDefaultWorkshopTemplatesForNewProject, applyLeadOrCustomerSalesFilter, applyProductionTemplateToFulfillmentLead, applyProductionTemplatesOnPipelineEnter, applyStageIdFilterToQuery, applyWorkshopTemplateToProject, artifactNamePrefix, assertCanFlagLead, assertCategoryFitsSource, assertCrmAssigneeUserMatchesLeadCompany, assertCrmEmployeeDeleteAllowed, assertCrmStageAdvanceAllowed, assertDealCrmManualStageChange, assertDealResponsible, assertDivisionAllowedForCompany, assertLeadDocumentOwner, assertLeadReadableByRegionScope, assertRegionBelongsToCompany, assertUserCanAssignCrmRegion, assignProductionCompanyDealResponsibility, attachAssigneesToCrmTasks, attachAssignmentIdsToCrmTasks, attachCrmNextOpenTaskDeadline, attachLeadNewFlagForList, attachLeadReplyParents, attachLeadUserFlagsForList, auth, autoCreateProjectFromWonDeal, autoFlowFns, autoGenCrmTasksForNewLead, buildAssignmentNotificationInsert, buildChecklistLeadDocumentRow, buildCrmDashboardMinimalKpis, buildCrmLeadsRpcFilterParams, buildCustomersOverviewSummary, buildDealTemplateData, buildDefaultDeadlineConfig, buildFirstStageIdByPipeline, buildPipelineStagesMap, buildProcessedCommercialItems, buildQuotedStageOrderByPipeline, buildScanDuplicateGroups, buildWonStageOrderByPipeline, canUserViewDocByAllowlist, chatUpload, chunkArray, classifyDealStageForStaffReport, commentsTableMissing, companyRegionExtraColumnsMissing, companyRegionGeoColumnsMissing, computeCrmDashboardLightStats, computeCrmLiveVersionMs, computeCustomersOverviewSummary, computeIsNewLeadForUser, computeOrgOverviewReportData, computeStaffLeadDealReportData, computeStaffPipelineDetailPayload, countOpenOverdueCrmTasksForLeadIds, createCrmAssignment, createCrmLeadTask, createFulfillmentChildDeal, createNotif, createNotification, createProjectFromLead, crmExecutorFieldsFromTemplateItem, crmLeadCommentAttachmentsColumnMissing, crmLeadCommentReadReceiptsTableMissing, crmLeadRowVisibleToRequestUser, crmListUsesLegacyFilters, crmNoteActivityUpload, crmReportAsOfMs, crmReportCreatedAtFromIso, crmReportCreatedAtToIso, crmReportDayKeyVn, crmRouteErrorText, crmTaskDeadlineModuleKey, crmTaskMeetsCompletionRequirements, crmTaskMeetsRequiredFileTypes, crmTaskRequiresCompletionEvidence, crmTemplateMatchesLeadType, deadlineToDateOnlyIso, defaultCompanyInfo, defaultKpiLedgerMonthStartYmd, deleteCrmLeadTask, deleteMirroredAssignmentFileForTaskAttachment, duplicateLeadIdsFromLiteRows, ecosystemModuleKeyForCrmDeadline, effectivePipelineStageSlaDays, emitCrmBadgeUpdateForProject, emitCrmDashboardChanged, emitCrmTaskChanged, emptyStaffLeadDealAgg, endOfCalendarDayAfterEntered, enforceCommercialDocCompanyOnWrite, enforceQuotaForRequest, ensureDealLeadDocumentsForModuleTransition, ensureDefaultCrmPipelineForCompany, ensureMissingCrmTasksForLead, ensureMissingCrmTasksForPipelineStage, ensureMissingSxTasksForLead, excelUpload, executeLeadMerge, executeZaloDealStageNotify, fetchActivityCustomerIds, fetchAllLeadsForSlaWatchlist, fetchAssignmentForTask, fetchCrmCommentReactionsAggregate, fetchCrmLeadCommentNotifyUserIds, fetchCrmLeadDetailRow, fetchCrmLeadWithPipelineBadges, fetchCrmLeadsByIdsOrdered, fetchCrmLeadsForDashboardBatched, fetchCrmLeadsForOrgReportBatched, fetchCrmLeadsForUserDetailBatched, fetchCrmLeadsLiteForDuplicateScan, fetchCrmLeadsPageViaRpc, fetchCrmPipelineZaloSlice, fetchCrmSurveyEventsChunk, fetchCrmSurveyVisitsForOrgReport, fetchLeadCommentAudienceMembers, fetchLeadCommentAudienceMembersForRead, fetchLeadIdsForCrmRegion, fetchLeadMentionMembers, fetchOrgActivityFeed, fetchPipelineWithStagesById, fetchScopedCrmBundles, fillTemplateDataFromStructure, filterCrmTasksForLeadType, filterUserIdsForCrmLeadScopedNotification, findChecklistItem, followupDismissExpiresAt, fontBold, fontRegular, formatMoney, formatVNDPdf, formatVnPhoneLocal0From84, fs, generateDocPdf, generateFlowTasks, generateStepTasks, getAppSettingValue, getCompanyInfo, getCompanyRegionsList, getCrmLeadListSelect, getCrmLeadRegionConstraint, getCrmLeadTypesList, getCrmLeadsListLegacy, getCrmSourceCategoriesList, getCrmSourcesList, getDefaultCrmAttachmentShare, getDefaultDealZaloTemplateStructure, getDefaultLeadDocumentShareForDeal, getDefaultPipelineIdForCompany, getLeadDocumentFieldsFromCrmTask, getNotifyTargets, getOverdueFollowUps, getPipelineIdForCompanyRegion, getPipelineZaloSlice, getPipelinesList, getProjectCRMSummary, getStagesByPipelineId, getStaleLeads, getZaloNotifySettings, hydrateCrmLeadsByIdsWithStaff, hydrateCrmLeadsRpcPage, hydrateScanDuplicateLeads, insertQuotationRow, invalidateAppSettingKey, invalidatePipelinesAndStages, invalidateRegions, invalidateSources, invalidateTenantUsageCache, invokeCrmLeadsStageCountsRpc, isAdminLike, isAllowedLeadCommentAttachmentUrl, isChotSanXuatCrmTaskTitle, isCrmCompanyAdminUser, isCrmDealAssigneeLocked, isCrmLeadTypeColorMissingError, isCrmModuleAdmin, isCrmPipelinesTableMissingError, isCrmRegionAdminUser, isCrmSystemAdminUser, isDealStageHoanThanhForZalo, isDefaultAssigneeIdsColumnError, isExecutorColumnError, isPlatformAdmin, isPostgresUniqueViolation, isQuotationsSourceExcelColumnMissingError, isSxRelationshipError, isSystemAdmin, isUuidString, isValidDealZaloTemplateStructure, isVcRelationshipError, isVptCompanyCommercialDocViewer, lastNominatimGeocodeAt, leadChatFilesMulter, leadChatJsonOrFiles, listQuotationExcelSheets, loadCrmTaskAttachmentCountMap, loadOrgReportStageMap, loadZaloLinkedLeadIdSet, logDealActivityComment, logDealDeadlineChangeComment, logDealStageChangeComment, logKanbanDeadlineUnifiedHistory, logLeadCommentMentionActivity, logProjectFileActivity, mapCustomerOverviewRow, mapLeadDisplayPhone, mapQuotationItemsToOrderRows, maskCustomerPhoneDisplay, maskZaloAccessTokenPreview, maybeSendZaloOnDealStageEnter, mergeCrmStageDefaultAssigneeIntoUpdates, mergeCustomerIntoTarget, misaService, multer, nextCode, nextTbProjectCode, normalizeCrmActivityAttachments, normalizeCrmLeadCommentAttachments, normalizeCrmStageDefaultAssigneeUserId, normalizeCrmUserRole, normalizeLeadSeenByKeys, normalizeOrgReportSurveyVisitRow, normalizePipelineStageSlaDaysForDb, normalizePipelineStagesList, normalizeRegionIdList, normalizeTemplateChecklistForCrmTask, normalizeTemplateItemAssigneeIds, normalizeTimestamp, normalizeTitleFold, normalizeVnPhoneTo84, notifyDealCommentMentions, notifyDealCommentParticipants, notifyMultiple, notifyMultipleShared, notifyNewCrmAssignmentAssignees, notifyProductionDocumentUploaded, onLeadWon, onOrderConfirmed, onProjectCompleted, onQuotationAccepted, orgReportAttachFirstStageRates, orgReportBumpFirstStageMetrics, orgReportBumpMetrics, orgReportBumpOpenOverdue, orgReportBumpReceptionMetrics, orgReportCancelRatePct, orgReportClosedWonDealCount, orgReportClosedWonValue, orgReportCompareSummary, orgReportConversionRate, orgReportDayKey, orgReportDealCloseValueRatePct, orgReportDealCountsExpected, orgReportDealIsClosedWon, orgReportDealIsCompleted, orgReportDealIsQuotedOrAfter, orgReportDealProbability, orgReportDealSplitBuckets, orgReportExtendedDealMetrics, orgReportFirstStageOnTimeRatePct, orgReportFirstStageOverdueRatePct, orgReportIsReceptionOverdue, orgReportIsSlaOverdue, orgReportKpiPeriodStart, orgReportNumEst, orgReportOverdueRatePct, orgReportOwnerId, orgReportPctDelta, orgReportPreviousPeriod, orgReportQuoteValueCloseRatePct, orgReportQuoteWinRatePct, orgReportReceptionOverdueRatePct, orgReportReceptionSlaMinutes, orgReportStageIsClosed, orgReportStageIsLostOrCancelled, orgReportTotalDealCount, parseChecklist, parseCrmLeadsPageRpc, parseCrmReportDateRange, parseCrmStageCountsNumericMap, parseCrmStageCountsRpc, parseExcelMoneyFromMappedColumn, parseLeadIdUuidList, parseLeadIdsCsvQuery, parseLeadIdsFromBody, parseLeadSeenByRaw, parseQuotationExcelBuffer, parseStageIdsFromQuery, parseUuidArrayJsonb, parseVietnameseMeasure, parseVietnameseMoney, path, persistAssignmentNotification, pgCrmDuplicateLeadIds, pickDealZaloTemplatePayload, pipeOrgOverviewReportPdf, pipeStaffLeadDealSummaryPdf, pipeStaffPipelineDetailPdf, pipelineHasExplicitCompleted, pipelineHasExplicitExpected, pipelineHasExplicitWon, plannerTableMissing, postCrmStageDefaultAssigneeComment, primaryTemplateItemAssigneeId, rcInvalidateTags, reactionsTableMissing, redactCrmTaskNotesForViewer, regionGeocodeInflight, repairCrmDealPipelineDisplay, requireUserCompanyId, requireUserCompanyIdResolved, resolveAssignmentIdForTask, resolveCanonicalCrmLeadId, resolveCommercialDocListCompanyScope, resolveCrmBundleTemplateScope, resolveCrmLeadsDeadlinesMap, resolveCrmLeadsKanbanLite, resolveCrmLeadsMergedQuery, resolveCrmLeadsSkipDeadline, resolveCrmLedgerNetByLeadIdsPayload, resolveCrmReportScope, resolveCrmTaskWriteLeadId, resolveExecutorCompanyId, resolveKanbanStagesForCompany, resolveLeadCommentMentionIds, resolveProductionCompanyForDealStage, resolveProductionHandoverResponsibleUserId, resolveReopenTargetStageId, resolveRpcRegionIdsForCrmList, resolveTenantIdForQuota, resolveZaloDealTemplateId, respondIfCrmPipelinesTableMissing, responseCache, restoreCrmTaskChecklistFromWorkshopTemplate, resyncCrmPipelineTasksForLead, sanitizeIsoDateQueryParam, scheduleRegionGeocoding, scopedAdminCompanyId, scopedCrmCompanyIdForWrite, sendZaloTemplateMessage, setLeadFlag, shallowMergeTemplateData, skipSxWorkQuickComplete, snapshotOrderRowFromQuotation, stripCrmAssigneeFromWonStageUpdates, stripCrmLeadTypeColorFromSelect, stripQuotationsSourceExcelFields, sumCrmKpiLedgerNetByLeadIds, sumCrmKpiLedgerNetByUserForOrgReport, sumCrmKpiLedgerNetByUserIds, sumCrmKpiLedgerNetByUserIdsInDateRange, supabase, syncAllTaskArtifactsToAssignment, syncChecklistItemNotes, syncCrmLeadSxPipelineFromProject, syncQuotationDepositToDealAndProject, syncSxKanbanFromCrmProductionStage, syncTaskAttachmentToAssignment, templateItemAssigneePatch, toCrmTaskChecklist, unifyCrmLeadResponsibleFields, updateCrmLeadTask, updateQuotationRow, upsertZaloNotifySettings, userCanAccessCrmLeadAsParticipant, userCanAccessCrmLeadViaVisibility, userCanAssignAnyCrmRegion, userCanBypassCrmDeleteRestriction, userHasSeenLeadInSeenBy, userIsAdmin, userIsCrmCompanyOrRegionAdmin, userMayAccessQuotationRow, userSeesAllCrmDeals, userSeesAllCrmDealsForScope, userSeesAllCrmLeads, userSeesAllCrmLeadsForScope, uuidQueryOrNull, validateProductionCompanyId) {
 r.get('/quotations', async (req, res) => {
   try {
     const {
@@ -287,46 +226,7 @@ r.post('/quotations', async (req, res) => {
     
     // Calc totals with per-item VAT + spec_factor (hệ số quy cách)
     // ── Excel fidelity: nếu item.lock_amount && imported_amount → giữ NGUYÊN số tiền Excel ──
-    const processedItems = (items || []).map(item => {
-      const specFactor = parseFloat(item.spec_factor) || 0;
-      const grossAmount = specFactor > 0
-        ? specFactor * (item.quantity || 1) * (item.unit_price || 0)
-        : (item.quantity || 1) * (item.unit_price || 0);
-      const importedAmount = (typeof item.imported_amount === 'number' && Number.isFinite(item.imported_amount))
-        ? item.imported_amount
-        : null;
-      const isLocked = !!item.lock_amount && importedAmount !== null;
-      let amount, discountAmount;
-      if (isLocked) {
-        amount = importedAmount;
-        discountAmount = Math.max(0, grossAmount - amount);
-      } else {
-        discountAmount = grossAmount * (item.discount_percent || 0) / 100;
-        amount = grossAmount - discountAmount;
-      }
-      const vatRate = item.vat_rate || 0;
-      const vatAmount = amount * vatRate / 100;
-      const total = amount + vatAmount;
-      return {
-        product_id: item.product_id || null, product_code: item.product_code || null,
-        name: item.name, description: item.description || null,
-        unit: item.unit || 'bộ', quantity: item.quantity || 1, unit_price: item.unit_price || 0,
-        spec_factor: specFactor || null,
-        height: item.height || null, width: item.width || null, length: item.length || null, weight: item.weight || null,
-        discount_percent: item.discount_percent || 0, discount_amount: discountAmount,
-        amount, vat_rate: vatRate, vat_amount: vatAmount, tax_amount: vatAmount, total,
-        dimensions: item.dimensions || null, material: item.material || null, color: item.color || null, notes: item.notes || null,
-        promo_code: item.promo_code || null, is_promo: item.is_promo || false,
-        group_name: item.group_name || null,
-      };
-    });
-
-    // ═══ ĐỒNG BỘ SẢN PHẨM: gán product_id theo tên (cùng công ty); chưa có thì tạo mới ═══
-    // Phải chạy TRƯỚC khi build itemRows/insert để product_id được lưu đúng vào quotation_items.
-    try {
-      await syncQuotationItemsWithProductCatalog(processedItems, commercialCo);
-    } catch (e) { console.warn('[QUOTATION] Product sync error:', e.message); }
-
+    const processedItems = buildProcessedCommercialItems(items);
     const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
     const discountAmt = quoteData.discount_type === 'percent' 
       ? subtotal * (quoteData.discount_value || 0) / 100 
@@ -374,6 +274,26 @@ r.post('/quotations', async (req, res) => {
     } catch (he) {
       if (!String(he.message || '').includes('does not exist')) console.warn('[quotation_edit_history]', he.message);
     }
+
+    // ═══ ĐỒNG BỘ SẢN PHẨM: chỉ liên kết product_id theo tên, KHÔNG cập nhật giá / không tạo mới ═══
+    const syncedProducts = [];
+    try {
+      for (const item of processedItems) {
+        if (!item.name || item.name.trim().length < 3) continue;
+        // Tìm sản phẩm theo tên gần đúng (case-insensitive)
+        const nameSearch = item.name.trim();
+        const { data: existing } = await supabase.from('products')
+          .select('id, name')
+          .ilike('name', `%${nameSearch}%`)
+          .limit(1);
+        if (existing?.length) {
+          item.product_id = existing[0].id; // Gán product_id vào item
+          syncedProducts.push({ name: item.name, product_id: existing[0].id });
+        }
+        // Không tìm thấy → giữ nguyên, không tạo mới
+      }
+      console.log('[QUOTATION] Product link:', syncedProducts.length, 'items linked');
+    } catch (e) { console.warn('[QUOTATION] Product link error:', e.message); }
 
     // ═══ AUTO-LINK: Tìm deal qua customer nếu chưa có lead_id ═══
     let linkedLeadId = quote.lead_id;
@@ -519,17 +439,21 @@ r.post('/quotations', async (req, res) => {
       }
     }
 
+    // Sync tiền cọc + trạng thái cọc → deal + dự án SX
+    if (linkedLeadId) {
+      try {
+        const depSync = await syncQuotationDepositToDealAndProject(quote, linkedLeadId);
+        if (depSync.synced) quote.deposit_synced = true;
+      } catch (syncErr) {
+        console.warn('[QUOTATION] Sync deposit error:', syncErr.message);
+      }
+    }
+
     res.status(201).json({ ...quote, synced_products: syncedProducts });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
-
-// Helper format money cho notes
-function formatMoney(n) {
-  if (!n) return '0 đ';
-  return new Intl.NumberFormat('vi-VN').format(Math.round(n)) + ' đ';
-}
 
 r.put('/quotations/:id', async (req, res) => {
   try {
@@ -626,45 +550,7 @@ r.put('/quotations/:id', async (req, res) => {
     
     // Calc totals with per-item VAT + spec_factor (hệ số quy cách)
     // ── Excel fidelity: nếu item.lock_amount && imported_amount → giữ NGUYÊN số tiền Excel ──
-    const processedItems = (rawItems || []).map(item => {
-      const specFactor = parseFloat(item.spec_factor) || 0;
-      const grossAmount = specFactor > 0
-        ? specFactor * (item.quantity || 1) * (item.unit_price || 0)
-        : (item.quantity || 1) * (item.unit_price || 0);
-      const importedAmount = (typeof item.imported_amount === 'number' && Number.isFinite(item.imported_amount))
-        ? item.imported_amount
-        : null;
-      const isLocked = !!item.lock_amount && importedAmount !== null;
-      let amount, discountAmount;
-      if (isLocked) {
-        amount = importedAmount;
-        discountAmount = Math.max(0, grossAmount - amount);
-      } else {
-        discountAmount = grossAmount * (item.discount_percent || 0) / 100;
-        amount = grossAmount - discountAmount;
-      }
-      const vatRate = item.vat_rate || 0;
-      const vatAmount = amount * vatRate / 100;
-      const total = amount + vatAmount;
-      return {
-        product_id: item.product_id || null, product_code: item.product_code || null,
-        name: item.name, description: item.description || null,
-        unit: item.unit || 'bộ', quantity: item.quantity || 1, unit_price: item.unit_price || 0,
-        spec_factor: specFactor || null,
-        height: item.height || null, width: item.width || null, length: item.length || null, weight: item.weight || null,
-        discount_percent: item.discount_percent || 0, discount_amount: discountAmount,
-        amount, vat_rate: vatRate, vat_amount: vatAmount, tax_amount: vatAmount, total,
-        dimensions: item.dimensions || null, material: item.material || null, color: item.color || null, notes: item.notes || null,
-        promo_code: item.promo_code || null, is_promo: item.is_promo || false,
-        group_name: item.group_name || null,
-      };
-    });
-
-    // ═══ ĐỒNG BỘ SẢN PHẨM: gán product_id theo tên (cùng công ty); chưa có thì tạo mới ═══
-    try {
-      await syncQuotationItemsWithProductCatalog(processedItems, commercialCoPut);
-    } catch (e) { console.warn('[QUOTATION PUT] Product sync error:', e.message); }
-
+    const processedItems = buildProcessedCommercialItems(rawItems);
     const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
     const discountAmt = quoteData.discount_type === 'percent' 
       ? subtotal * (quoteData.discount_value || 0) / 100 
@@ -734,11 +620,21 @@ r.put('/quotations/:id', async (req, res) => {
         'quotation', data.id);
     } catch (ne) { console.warn('[NOTIFY] quotation_updated:', ne.message); }
 
+    // Sync tiền cọc + trạng thái cọc → deal + dự án SX
+    if (data?.lead_id) {
+      try {
+        await syncQuotationDepositToDealAndProject(data, data.lead_id);
+      } catch (syncErr) {
+        console.warn('[QUOTATION] Sync deposit on update error:', syncErr.message);
+      }
+    }
+
     res.json({ ...data, auto: autoResult });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
+
 r.post('/quotations/:id/convert-to-order', async (req, res) => {
   try {
     const { data: quote } = await supabase.from('quotations').select('*').eq('id', req.params.id).single();
@@ -780,7 +676,6 @@ r.post('/quotations/:id/convert-to-order', async (req, res) => {
   }
 });
 
-// ═══ DELETE QUOTATION ═══
 r.delete('/quotations/:id', async (req, res) => {
   try {
     const { data: delScope } = await supabase
@@ -815,9 +710,6 @@ r.delete('/quotations/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// ORDERS (Đơn hàng)
-// ═══════════════════════════════════════════════════════════════════════════
 r.get('/orders', async (req, res) => {
   try {
     const { status, search, limit = 50, lead_id, company_id: coQ } = req.query;
@@ -869,7 +761,8 @@ r.get('/orders/:id', async (req, res) => {
 
 r.put('/orders/:id', async (req, res) => {
   try {
-    const updates = { ...req.body, updated_at: new Date().toISOString() };
+    const { items: itemsBody, ...updatesFromBody } = req.body;
+    const updates = { ...updatesFromBody, updated_at: new Date().toISOString() };
     // Sanitize: empty strings → null for UUID fields
     ['customer_id', 'lead_id', 'quotation_id', 'project_id'].forEach(f => {
       if (updates[f] === '') updates[f] = null;
@@ -878,6 +771,28 @@ r.put('/orders/:id', async (req, res) => {
     if (updates.status === 'shipped' && !updates.shipped_at) updates.shipped_at = new Date().toISOString();
     if (updates.status === 'delivered' && !updates.delivered_at) updates.delivered_at = new Date().toISOString();
     if (updates.status === 'cancelled' && !updates.cancelled_at) updates.cancelled_at = new Date().toISOString();
+
+    // ── Re-tính totals + lưu lại order_items khi có gửi items (form Sửa đơn hàng) ──
+    // Cùng logic Excel fidelity với /quotations: lock_amount/imported_amount giữ nguyên số tiền gốc.
+    if (Array.isArray(itemsBody)) {
+      const processedItems = buildProcessedCommercialItems(itemsBody);
+      const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
+      const discountAmt = updates.discount_type === 'percent' ? subtotal * (updates.discount_value || 0) / 100 : (updates.discount_value || 0);
+      const afterDiscount = subtotal - discountAmt;
+      const taxAmt = processedItems.reduce((s, i) => s + (i.vat_amount || 0), 0);
+      updates.subtotal = subtotal;
+      updates.discount_amount = discountAmt;
+      updates.tax_amount = taxAmt;
+      updates.total = afterDiscount + taxAmt;
+
+      await supabase.from('order_items').delete().eq('order_id', req.params.id);
+      if (processedItems.length) {
+        await supabase.from('order_items').insert(processedItems.map((item, i) => ({
+          ...item, order_id: req.params.id, item_order: i,
+        })));
+      }
+    }
+
     const { data, error } = await supabase.from('orders').update(updates).eq('id', req.params.id).select('*').single();
     if (error) throw error;
 
@@ -932,12 +847,9 @@ r.post('/orders', async (req, res) => {
     orderCo = oCoWrite.companyId;
     orderData.company_id = orderCo;
 
-    const processedItems = (items || []).map(item => {
-      const amount = (item.quantity || 1) * (item.unit_price || 0) * (1 - (item.discount_percent || 0) / 100);
-      const vatRate = item.vat_rate || 0;
-      const vatAmount = amount * vatRate / 100;
-      return { ...item, amount, vat_rate: vatRate, vat_amount: vatAmount };
-    });
+    // Calc totals with per-item VAT + spec_factor (hệ số quy cách) — cùng logic với /quotations
+    // Excel fidelity: nếu item.lock_amount && imported_amount → giữ NGUYÊN số tiền Excel.
+    const processedItems = buildProcessedCommercialItems(items);
     const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
     const discountAmt = orderData.discount_type === 'percent' ? subtotal * (orderData.discount_value || 0) / 100 : (orderData.discount_value || 0);
     const afterDiscount = subtotal - discountAmt;
@@ -996,7 +908,6 @@ r.post('/orders', async (req, res) => {
   }
 });
 
-// Convert: Order → Invoice
 r.post('/orders/:id/create-invoice', async (req, res) => {
   try {
     const { data: order } = await supabase.from('orders').select('*').eq('id', req.params.id).single();
@@ -1020,12 +931,15 @@ r.post('/orders/:id/create-invoice', async (req, res) => {
 
     if (oItems?.length) {
       await supabase.from('invoice_items').insert(oItems.map(oi => ({
-        invoice_id: invoice.id, product_id: oi.product_id, order_item_id: oi.id,
+        invoice_id: invoice.id, product_id: oi.product_id, product_code: oi.product_code, order_item_id: oi.id,
         item_order: oi.item_order, name: oi.name, description: oi.description,
         unit: oi.unit, quantity: oi.quantity, unit_price: oi.unit_price,
-        discount_percent: oi.discount_percent, amount: oi.amount,
-        vat_rate: oi.vat_rate || 0, vat_amount: oi.vat_amount || 0,
-        notes: oi.notes,
+        spec_factor: oi.spec_factor || null, standard_area: oi.standard_area || null,
+        height: oi.height || null, width: oi.width || null, length: oi.length || null, weight: oi.weight || null,
+        discount_percent: oi.discount_percent, discount_amount: oi.discount_amount || 0, amount: oi.amount,
+        vat_rate: oi.vat_rate || 0, vat_amount: oi.vat_amount || 0, tax_amount: oi.tax_amount || oi.vat_amount || 0,
+        total: oi.total || oi.amount, promo_code: oi.promo_code || null, is_promo: oi.is_promo || false,
+        group_name: oi.group_name || null, notes: oi.notes,
       })));
     }
 
@@ -1035,7 +949,6 @@ r.post('/orders/:id/create-invoice', async (req, res) => {
   }
 });
 
-// ═══ DELETE ORDER ═══
 r.delete('/orders/:id', async (req, res) => {
   try {
     // Get info before delete
@@ -1057,9 +970,6 @@ r.delete('/orders/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// INVOICES (Hóa đơn)
-// ═══════════════════════════════════════════════════════════════════════════
 r.get('/invoices', async (req, res) => {
   try {
     const { status, search, limit = 50, lead_id, company_id: coQ } = req.query;
@@ -1096,19 +1006,21 @@ r.get('/invoices/:id', async (req, res) => {
   }
 });
 
-// Create invoice directly (not from order)
 r.post('/invoices', async (req, res) => {
   try {
     const { items, ...invoiceData } = req.body;
     const code = await nextCode('HD');
 
     // Sanitize: empty strings → null for UUID fields
-    ['customer_id', 'order_id', 'quotation_id', 'project_id', 'company_id'].forEach(f => {
+    ['customer_id', 'order_id', 'quotation_id', 'project_id', 'company_id', 'lead_id'].forEach(f => {
       if (invoiceData[f] === '' || invoiceData[f] === undefined) invoiceData[f] = null;
     });
 
     let invCo = invoiceData.company_id || null;
-    if (invoiceData.order_id) {
+    if (invoiceData.lead_id) {
+      const { data: lrow } = await supabase.from('crm_leads').select('company_id').eq('id', invoiceData.lead_id).maybeSingle();
+      if (lrow?.company_id) invCo = lrow.company_id;
+    } else if (invoiceData.order_id) {
       const { data: orow } = await supabase.from('orders').select('company_id').eq('id', invoiceData.order_id).maybeSingle();
       if (orow?.company_id) invCo = orow.company_id;
     } else if (invoiceData.quotation_id) {
@@ -1119,27 +1031,45 @@ r.post('/invoices', async (req, res) => {
     if (!iCoWrite.ok) return;
     invCo = iCoWrite.companyId;
 
+    // Calc totals with per-item VAT + spec_factor (hệ số quy cách) — cùng logic với /quotations, /orders
+    // Excel fidelity: nếu item.lock_amount && imported_amount → giữ NGUYÊN số tiền Excel.
+    const processedItems = buildProcessedCommercialItems(items);
+    const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
+    const discountAmt = invoiceData.discount_type === 'percent' ? subtotal * (invoiceData.discount_value || 0) / 100 : (invoiceData.discount_value || 0);
+    const afterDiscount = subtotal - discountAmt;
+    const taxAmt = processedItems.reduce((s, i) => s + (i.vat_amount || 0), 0);
+
     const { data: inv, error } = await supabase.from('invoices').insert({
       code,
       company_id: invCo,
+      lead_id: invoiceData.lead_id || null,
+      order_id: invoiceData.order_id || null,
+      quotation_id: invoiceData.quotation_id || null,
+      project_id: invoiceData.project_id || null,
       customer_id: invoiceData.customer_id,
       customer_name: invoiceData.customer_name || null,
       customer_phone: invoiceData.customer_phone || null,
       customer_address: invoiceData.customer_address || null,
       customer_tax_code: invoiceData.customer_tax_code || null,
       title: invoiceData.title || null,
-      subtotal: invoiceData.subtotal || 0,
+      subtotal,
       discount_type: invoiceData.discount_type || null,
       discount_value: invoiceData.discount_value || 0,
-      discount_amount: invoiceData.discount_amount || 0,
-      tax_amount: invoiceData.tax_amount || 0,
-      total: invoiceData.total || 0,
+      discount_amount: discountAmt,
+      tax_amount: taxAmt,
+      total: afterDiscount + taxAmt,
       notes: invoiceData.notes || null,
       due_date: invoiceData.due_date || null,
       payment_terms: invoiceData.payment_terms || null,
       created_by: req.user.userId,
     }).select('*').single();
     if (error) throw error;
+
+    if (processedItems.length) {
+      await supabase.from('invoice_items').insert(processedItems.map((item, i) => ({
+        ...item, invoice_id: inv.id, item_order: i,
+      })));
+    }
 
     // 🔔 NOTIFICATION: Hóa đơn mới
     try {
@@ -1157,28 +1087,12 @@ r.post('/invoices', async (req, res) => {
   }
 });
 
-// Add items to invoice (batch)
 r.post('/invoices/:id/items', async (req, res) => {
   try {
     const { items } = req.body;
     if (!items?.length) return res.status(400).json({ error: 'Không có hàng hóa' });
-    const itemRows = items.map((item, i) => ({
-      invoice_id: req.params.id,
-      product_id: item.product_id || null,
-      product_code: item.product_code || null,
-      item_order: i,
-      name: item.name,
-      description: item.description || null,
-      unit: item.unit || 'bộ',
-      quantity: item.quantity || 1,
-      unit_price: item.unit_price || 0,
-      discount_percent: item.discount_percent || 0,
-      discount_amount: item.discount_amount || 0,
-      amount: item.amount || 0,
-      vat_rate: item.vat_rate || 0,
-      vat_amount: item.vat_amount || 0,
-      notes: item.notes || null,
-    }));
+    const processedItems = buildProcessedCommercialItems(items);
+    const itemRows = processedItems.map((item, i) => ({ ...item, invoice_id: req.params.id, item_order: i }));
     const { data, error } = await supabase.from('invoice_items').insert(itemRows).select();
     if (error) throw error;
     res.status(201).json(data);
@@ -1187,7 +1101,58 @@ r.post('/invoices/:id/items', async (req, res) => {
   }
 });
 
-// Record payment
+r.put('/invoices/:id', async (req, res) => {
+  try {
+    const { items: itemsBody, ...updatesFromBody } = req.body;
+    const updates = { ...updatesFromBody, updated_at: new Date().toISOString() };
+    // Sanitize: empty strings → null for UUID fields
+    ['customer_id', 'order_id', 'quotation_id', 'project_id', 'company_id', 'lead_id'].forEach(f => {
+      if (updates[f] === '') updates[f] = null;
+    });
+    if (updates.payment_status === 'paid' && !updates.paid_at) updates.paid_at = new Date().toISOString();
+
+    // ── Re-tính totals + lưu lại invoice_items khi có gửi items (form Sửa hóa đơn) ──
+    // Cùng logic Excel fidelity với /quotations, /orders: lock_amount/imported_amount giữ nguyên số tiền gốc.
+    if (Array.isArray(itemsBody)) {
+      const processedItems = buildProcessedCommercialItems(itemsBody);
+      const subtotal = processedItems.reduce((s, i) => s + (i.amount || 0), 0);
+      const discountAmt = updates.discount_type === 'percent' ? subtotal * (updates.discount_value || 0) / 100 : (updates.discount_value || 0);
+      const afterDiscount = subtotal - discountAmt;
+      const taxAmt = processedItems.reduce((s, i) => s + (i.vat_amount || 0), 0);
+      updates.subtotal = subtotal;
+      updates.discount_amount = discountAmt;
+      updates.tax_amount = taxAmt;
+      updates.total = afterDiscount + taxAmt;
+
+      await supabase.from('invoice_items').delete().eq('invoice_id', req.params.id);
+      if (processedItems.length) {
+        await supabase.from('invoice_items').insert(processedItems.map((item, i) => ({
+          ...item, invoice_id: req.params.id, item_order: i,
+        })));
+      }
+    }
+
+    const { data, error } = await supabase.from('invoices').update(updates).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+
+    // 🔔 NOTIFICATION: Cập nhật hóa đơn
+    try {
+      const statusLabels = { paid: 'Đã thanh toán đủ', partial: 'Thanh toán 1 phần', unpaid: 'Chưa thanh toán' };
+      const statusLabel = statusLabels[updates.payment_status] || '';
+      const t = await getNotifyTargets(data.lead_id);
+      const allIds = [...new Set([...t.ownerIds, ...t.adminIds])];
+      if (allIds.length && updates.payment_status) await notifyMultiple(req, allIds, 'invoice_updated',
+        `🧾 HĐ ${data.code} — ${statusLabel}`,
+        `Hóa đơn ${data.code} cập nhật trạng thái: ${statusLabel}`,
+        'invoice', data.id);
+    } catch (ne) { console.warn('[NOTIFY] invoice_updated:', ne.message); }
+
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.post('/invoices/:id/payments', async (req, res) => {
   try {
     const body = { ...req.body };
@@ -1229,7 +1194,6 @@ r.post('/invoices/:id/payments', async (req, res) => {
   }
 });
 
-// ═══ DELETE INVOICE ═══
 r.delete('/invoices/:id', async (req, res) => {
   try {
     // Get info before delete
@@ -1253,9 +1217,6 @@ r.delete('/invoices/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ═══ MISA meInvoice — Phát hành hóa đơn điện tử ═══
-
-// POST /invoices/:id/misa-publish — Phát hành HĐĐT lên MISA meInvoice
 r.post('/invoices/:id/misa-publish', async (req, res) => {
   try {
     if (!misaService) return res.status(503).json({ error: 'MISA service chưa được cấu hình' });
@@ -1310,7 +1271,6 @@ r.post('/invoices/:id/misa-publish', async (req, res) => {
   }
 });
 
-// POST /invoices/:id/misa-send-email — Gửi email HĐĐT qua MISA
 r.post('/invoices/:id/misa-send-email', async (req, res) => {
   try {
     if (!misaService) return res.status(503).json({ error: 'MISA service chưa được cấu hình' });
@@ -1345,7 +1305,6 @@ r.post('/invoices/:id/misa-send-email', async (req, res) => {
   }
 });
 
-// GET /invoices/:id/misa-status — Kiểm tra trạng thái HĐĐT từ MISA
 r.get('/invoices/:id/misa-status', async (req, res) => {
   try {
     if (!misaService) return res.status(503).json({ error: 'MISA service chưa được cấu hình' });
@@ -1379,438 +1338,74 @@ r.get('/invoices/:id/misa-status', async (req, res) => {
   }
 });
 
-function formatVNDPdf(n) {
-  if (!n && n !== 0) return '0';
-  return new Intl.NumberFormat('vi-VN').format(Math.round(n));
-}
-
-// Load company settings (from data file or default config)
-const path = require('path');
-const fs = require('fs');
-const defaultCompanyInfo = require('../../../config/companyInfo');
-
-function getCompanyInfo() {
+r.get('/products-list', async (req, res) => {
   try {
-    const filePath = path.join(__dirname, '../../../data/company-info.json');
-    if (fs.existsSync(filePath)) {
-      const raw = fs.readFileSync(filePath, 'utf-8');
-      return { ...defaultCompanyInfo, ...JSON.parse(raw) };
-    }
-  } catch (e) { /* fallback to default */ }
-  return { ...defaultCompanyInfo };
-}
+    const rawQ = req.query.company_id && String(req.query.company_id).trim();
+    const pScope = resolveCommercialDocListCompanyScope(req, res, rawQ);
+    if (!pScope.ok) return;
+    const effectiveCompanyId = pScope.companyId;
+    let q = supabase.from('products').select('*').order('name');
+    if (effectiveCompanyId) q = q.eq('company_id', effectiveCompanyId);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
-// Register Vietnamese-capable fonts
-const fontRegular = path.join(__dirname, '../../../assets/fonts/DejaVuSans.ttf');
-const fontBold = path.join(__dirname, '../../../assets/fonts/DejaVuSans-Bold.ttf');
-
-function generateDocPdf(res, doc, items, docType) {
-  const company = getCompanyInfo();
-  const margin = 40;
-  const pdf = new PDFDocument({ size: 'A4', margin, bufferPages: true });
-
-  // Register Vietnamese fonts
-  pdf.registerFont('VN', fontRegular);
-  pdf.registerFont('VN-Bold', fontBold);
-
-  res.setHeader('Content-Type', 'application/pdf');
-  const safeCode = (doc.code || 'unknown').replace(/[^a-zA-Z0-9\-]/g, '_');
-  res.setHeader('Content-Disposition', `inline; filename="${safeCode}.pdf"`);
-  pdf.pipe(res);
-
-  const pageW = pdf.page.width - margin * 2;
-  const tableX = margin;
-
-  // ════════════════════════════════════════════════════════════════════
-  // COMPANY HEADER (logo left, info right)
-  // ════════════════════════════════════════════════════════════════════
-  const headerStartY = margin;
-  const logoW = 80;
-  const infoX = margin + logoW + 15;
-  const infoW = pageW - logoW - 15;
-
-  // Try to draw logo
-  let logoDrawn = false;
-  if (company.logoPath) {
-    try {
-      const logoFile = path.resolve(__dirname, '../../../', company.logoPath);
-      if (fs.existsSync(logoFile)) {
-        pdf.image(logoFile, margin, headerStartY, { width: logoW, height: 70 });
-        logoDrawn = true;
+r.put('/products/:id', async (req, res) => {
+  try {
+    const { data: existing, error: exErr } = await supabase.from('products').select('company_id, category_id').eq('id', req.params.id).maybeSingle();
+    if (exErr) throw exErr;
+    if (!existing) return res.status(404).json({ error: 'Không tìm thấy sản phẩm' });
+    if (!userIsAdmin(req.user?.role)) {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      if (existing.company_id && String(existing.company_id) !== String(cid)) {
+        return res.status(403).json({ error: 'Không có quyền sửa sản phẩm công ty khác' });
       }
-    } catch (e) { /* skip logo */ }
-  }
-
-  const textStartX = logoDrawn ? infoX : margin;
-  const textWidth = logoDrawn ? infoW : pageW;
-
-  // Company name
-  pdf.font('VN-Bold').fontSize(13).fillColor('#1a1a1a');
-  pdf.text(company.name, textStartX, headerStartY, { width: textWidth });
-  
-  // Addresses
-  pdf.font('VN').fontSize(8).fillColor('#444');
-  (company.addresses || []).forEach(addr => {
-    pdf.text(addr, textStartX, pdf.y, { width: textWidth });
-  });
-
-  // Website
-  if (company.website) {
-    pdf.fillColor('#2563EB').text(company.website, textStartX, pdf.y, { width: textWidth, link: company.website });
-    pdf.fillColor('#444');
-  }
-
-  // Hotline & contacts
-  if (company.hotline) {
-    pdf.font('VN-Bold').fontSize(8).fillColor('#444');
-    pdf.text(`Hotline: ${company.hotline}`, textStartX, pdf.y, { width: textWidth, continued: false });
-  }
-  (company.contacts || []).forEach(c => {
-    pdf.font('VN').fontSize(8).fillColor('#444');
-    pdf.text(c, textStartX, pdf.y, { width: textWidth });
-  });
-  if (company.taxCode) {
-    pdf.font('VN').fontSize(8).text(`MST: ${company.taxCode}`, textStartX, pdf.y, { width: textWidth });
-  }
-
-  // Separator line
-  const afterHeaderY = Math.max(pdf.y, headerStartY + 75) + 8;
-  pdf.moveTo(margin, afterHeaderY).lineTo(margin + pageW, afterHeaderY).lineWidth(1.5).strokeColor('#2563EB').stroke();
-
-  // ════════════════════════════════════════════════════════════════════
-  // DOCUMENT TITLE
-  // ════════════════════════════════════════════════════════════════════
-  let title = '';
-  if (docType === 'quotation') title = company.quotationTitle || 'BÁO GIÁ KHỐI LƯỢNG CÔNG TRÌNH';
-  else if (docType === 'order') title = company.orderTitle || 'ĐƠN HÀNG';
-  else title = company.invoiceTitle || 'HÓA ĐƠN BÁN HÀNG';
-
-  pdf.y = afterHeaderY + 15;
-  pdf.font('VN-Bold').fontSize(16).fillColor('#1a1a1a');
-  pdf.text(title, margin, pdf.y, { align: 'center', width: pageW });
-  
-  pdf.font('VN').fontSize(9).fillColor('#555');
-  pdf.text(`Số: ${doc.code || ''}`, margin, pdf.y, { align: 'center', width: pageW });
-  if (doc.created_at) {
-    pdf.text(`Ngày: ${new Date(doc.created_at).toLocaleDateString('vi-VN')}`, margin, pdf.y, { align: 'center', width: pageW });
-  }
-  pdf.moveDown(0.8);
-
-  // ════════════════════════════════════════════════════════════════════
-  // GREETING TEXT
-  // ════════════════════════════════════════════════════════════════════
-  if (company.greeting) {
-    pdf.font('VN').fontSize(9).fillColor('#333');
-    const shortName = company.name.replace(/^Công Ty /i, '').split(' ').pop() || company.name;
-    pdf.text(`${company.name} ${company.greeting}`, margin, pdf.y, { width: pageW });
-    if (docType === 'quotation') {
-      pdf.text(`${shortName} xin gửi đến quý khách bảng báo giá khối lượng công trình như sau:`, margin, pdf.y, { width: pageW });
     }
-    pdf.moveDown(0.5);
-  }
-
-  // ════════════════════════════════════════════════════════════════════
-  // CUSTOMER INFO
-  // ════════════════════════════════════════════════════════════════════
-  pdf.font('VN-Bold').fontSize(9).fillColor('#1a1a1a');
-  if (doc.customer_name) pdf.text(`Khách hàng: ${doc.customer_name}`, margin);
-  pdf.font('VN').fontSize(9).fillColor('#333');
-  if (doc.customer_phone) pdf.text(`Điện thoại: ${doc.customer_phone}`, margin);
-  if (doc.customer_address) pdf.text(`Địa chỉ: ${doc.customer_address}`, margin);
-  if (doc.customer?.tax_code) pdf.text(`MST: ${doc.customer.tax_code}`, margin);
-  pdf.moveDown(0.6);
-
-  // ════════════════════════════════════════════════════════════════════
-  // ITEMS TABLE
-  // ════════════════════════════════════════════════════════════════════
-  // Column definitions: STT | Hạng mục thi công | ĐVT | Quy cách | Số lượng | Diện tích | Đơn giá | Thành tiền | %VAT | Tiền thuế | Ghi chú
-  const colWidths = [25, 120, 30, 55, 35, 45, 60, 65, 28, 52];
-  const colLabels = ['STT', 'Hạng mục thi công', 'ĐVT', 'Quy cách', 'SL', 'D.tích (m²)', 'Đơn giá', 'Thành tiền', 'VAT%', 'Tiền thuế'];
-  const colAligns = ['center', 'left', 'center', 'center', 'right', 'right', 'right', 'right', 'right', 'right'];
-
-  let tableY = pdf.y;
-  const rowH = 22;
-  const headerH = 26;
-
-  // Draw header background
-  pdf.rect(tableX, tableY, pageW, headerH).fill('#2563EB');
-  pdf.font('VN-Bold').fontSize(7).fillColor('#FFFFFF');
-  let cx = tableX;
-  for (let c = 0; c < colLabels.length; c++) {
-    pdf.text(colLabels[c], cx + 2, tableY + 4, { width: colWidths[c] - 4, align: colAligns[c] });
-    cx += colWidths[c];
-  }
-  tableY += headerH;
-  pdf.fillColor('#000000');
-
-  // Draw column lines for header
-  pdf.strokeColor('#FFFFFF').lineWidth(0.3);
-  cx = tableX;
-  for (let c = 0; c < colWidths.length; c++) {
-    if (c > 0) pdf.moveTo(cx, tableY - headerH).lineTo(cx, tableY).stroke();
-    cx += colWidths[c];
-  }
-
-  // Draw rows
-  (items || []).forEach((item, idx) => {
-    if (tableY + rowH > pdf.page.height - 120) {
-      pdf.addPage();
-      tableY = margin;
-    }
-
-    const bg = idx % 2 === 0 ? '#F8FAFC' : '#FFFFFF';
-    pdf.rect(tableX, tableY, pageW, rowH).fill(bg);
-    pdf.fillColor('#000000');
-
-    const amount = item.amount || ((item.quantity || 0) * (item.unit_price || 0) * (1 - (item.discount_percent || 0) / 100));
-    const vatRate = item.vat_rate || 0;
-    const vatAmount = item.vat_amount || (amount * vatRate / 100);
-    const area = item.dimensions ? '' : ''; // area comes from quantity * dimensions if applicable
-    
-    const values = [
-      String(idx + 1),
-      item.name || '',
-      item.unit || '',
-      item.dimensions || '',
-      String(item.quantity || 0),
-      item.dimensions ? '' : '',
-      formatVNDPdf(item.unit_price || 0),
-      formatVNDPdf(amount),
-      vatRate > 0 ? `${vatRate}%` : '0',
-      formatVNDPdf(vatAmount),
-    ];
-
-    cx = tableX;
-    pdf.font('VN').fontSize(7).fillColor('#1a1a1a');
-    for (let c = 0; c < values.length; c++) {
-      pdf.text(values[c], cx + 2, tableY + 5, { width: colWidths[c] - 4, align: colAligns[c] });
-      cx += colWidths[c];
-    }
-
-    // Row border
-    pdf.moveTo(tableX, tableY + rowH).lineTo(tableX + pageW, tableY + rowH).lineWidth(0.3).strokeColor('#D1D5DB').stroke();
-    
-    // Column lines
-    cx = tableX;
-    pdf.strokeColor('#E5E7EB').lineWidth(0.2);
-    for (let c = 0; c < colWidths.length; c++) {
-      if (c > 0) pdf.moveTo(cx, tableY).lineTo(cx, tableY + rowH).stroke();
-      cx += colWidths[c];
-    }
-
-    tableY += rowH;
-  });
-
-  // Table outer border
-  const tableStartY = pdf.y; // approximate
-  pdf.rect(tableX, pdf.y, pageW, 0).strokeColor('#333').lineWidth(0.5);
-  pdf.moveTo(tableX, tableY).lineTo(tableX + pageW, tableY).lineWidth(0.8).strokeColor('#333').stroke();
-
-  // ════════════════════════════════════════════════════════════════════
-  // TOTALS
-  // ════════════════════════════════════════════════════════════════════
-  tableY += 8;
-  const subtotal = (items || []).reduce((s, i) => s + (i.amount || ((i.quantity || 0) * (i.unit_price || 0) * (1 - (i.discount_percent || 0) / 100))), 0);
-  const discountAmt = doc.discount_amount || 0;
-  const afterRebate = subtotal - discountAmt;
-  const saleDiscountAmt = doc.sale_discount_amount != null
-    ? Number(doc.sale_discount_amount) || 0
-    : (doc.sale_discount_type === 'percent'
-      ? afterRebate * (doc.sale_discount_value || 0) / 100
-      : (doc.sale_discount_value || 0));
-  const afterAllDiscounts = Math.max(0, afterRebate - saleDiscountAmt);
-  const totalVat = (items || []).reduce((s, i) => {
-    const amt = i.amount || ((i.quantity || 0) * (i.unit_price || 0) * (1 - (i.discount_percent || 0) / 100));
-    return s + (i.vat_amount || (amt * (i.vat_rate || 0) / 100));
-  }, 0);
-  const total = afterAllDiscounts + totalVat;
-
-  const rightX = tableX + pageW - 220;
-  const valX = rightX + 120;
-  const valW = 100;
-
-  const drawTotal = (label, value, opts = {}) => {
-    const { bold, color, underline } = opts;
-    pdf.font(bold ? 'VN-Bold' : 'VN').fontSize(bold ? 10 : 9);
-    pdf.fillColor(color || '#1a1a1a');
-    pdf.text(label, rightX, tableY, { width: 120, align: 'left' });
-    pdf.text(value, valX, tableY, { width: valW, align: 'right' });
-    if (underline) {
-      tableY += (bold ? 16 : 14);
-      pdf.moveTo(rightX, tableY - 2).lineTo(rightX + 220, tableY - 2).lineWidth(0.5).strokeColor('#333').stroke();
-      tableY += 4;
+    const b = { ...req.body };
+    if (!userIsAdmin(req.user?.role)) delete b.company_id;
+    if (userIsAdmin(req.user?.role) && Object.prototype.hasOwnProperty.call(b, 'company_id')) {
+      b.company_id = String(b.company_id || '').trim() || null;
     } else {
-      tableY += (bold ? 16 : 14);
+      const newCat = b.category_id !== undefined ? b.category_id : existing.category_id;
+      if (newCat) {
+        const { data: cat } = await supabase.from('product_categories').select('company_id').eq('id', newCat).maybeSingle();
+        if (cat?.company_id) b.company_id = cat.company_id;
+      }
     }
-    pdf.fillColor('#1a1a1a');
-  };
+    b.updated_at = new Date().toISOString();
+    const { data, error } = await supabase.from('products').update(b).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
-  drawTotal('Cộng tiền hàng:', formatVNDPdf(subtotal) + ' đ');
-  if (discountAmt > 0) drawTotal('Chiết khấu:', '-' + formatVNDPdf(discountAmt) + ' đ');
-  if (discountAmt > 0) drawTotal('Sau chiết khấu:', formatVNDPdf(afterRebate) + ' đ');
-  if (saleDiscountAmt > 0) drawTotal('Giảm giá:', '-' + formatVNDPdf(saleDiscountAmt) + ' đ');
-  if (saleDiscountAmt > 0) drawTotal('Cộng trước thuế:', formatVNDPdf(afterAllDiscounts) + ' đ');
-  drawTotal('Thuế GTGT:', formatVNDPdf(totalVat) + ' đ');
-  drawTotal('TỔNG CỘNG:', formatVNDPdf(total) + ' VNĐ', { bold: true, color: '#1D4ED8', underline: true });
+r.post('/products', async (req, res) => {
+  try {
+    const row = { ...req.body };
+    if (userIsAdmin(req.user?.role)) {
+      if (row.company_id !== undefined) row.company_id = String(row.company_id || '').trim() || null;
+    } else {
+      const cid = requireUserCompanyId(req, res);
+      if (!cid) return;
+      row.company_id = cid;
+    }
+    if (!row.company_id && row.category_id) {
+      const { data: cat } = await supabase.from('product_categories').select('company_id').eq('id', row.category_id).maybeSingle();
+      if (cat?.company_id) row.company_id = cat.company_id;
+    }
+    const { data, error } = await supabase.from('products').insert(row).select('*').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
-  // ════════════════════════════════════════════════════════════════════
-  // PAYMENT TERMS & NOTES
-  // ════════════════════════════════════════════════════════════════════
-  tableY += 6;
-  if (doc.payment_terms) {
-    pdf.font('VN-Bold').fontSize(9).fillColor('#1a1a1a');
-    pdf.text('Điều khoản thanh toán:', margin, tableY, { width: pageW });
-    tableY = pdf.y + 2;
-    pdf.font('VN').fontSize(8).fillColor('#333');
-    pdf.text(doc.payment_terms, margin + 10, tableY, { width: pageW - 10 });
-    tableY = pdf.y + 6;
-  }
-
-  if (doc.valid_until) {
-    pdf.font('VN-Bold').fontSize(9).fillColor('#1a1a1a');
-    pdf.text(`Hiệu lực báo giá: đến ngày ${new Date(doc.valid_until).toLocaleDateString('vi-VN')}`, margin, tableY, { width: pageW });
-    tableY = pdf.y + 4;
-  }
-
-  if (company.warrantyText) {
-    pdf.font('VN-Bold').fontSize(9).fillColor('#1a1a1a');
-    pdf.text('Bảo hành:', margin, tableY, { width: pageW });
-    tableY = pdf.y + 2;
-    pdf.font('VN').fontSize(8).fillColor('#333');
-    pdf.text(company.warrantyText, margin + 10, tableY, { width: pageW - 10 });
-    tableY = pdf.y + 6;
-  }
-
-  if (doc.notes) {
-    pdf.font('VN-Bold').fontSize(9).fillColor('#1a1a1a');
-    pdf.text('Ghi chú:', margin, tableY, { width: pageW });
-    tableY = pdf.y + 2;
-    pdf.font('VN').fontSize(8).fillColor('#333');
-    pdf.text(doc.notes, margin + 10, tableY, { width: pageW - 10 });
-    tableY = pdf.y + 6;
-  }
-
-  // Bank info
-  if (company.bankAccount && company.bankName) {
-    pdf.font('VN-Bold').fontSize(9).fillColor('#1a1a1a');
-    pdf.text('Thông tin chuyển khoản:', margin, tableY, { width: pageW });
-    tableY = pdf.y + 2;
-    pdf.font('VN').fontSize(8).fillColor('#333');
-    pdf.text(`STK: ${company.bankAccount} — ${company.bankName}`, margin + 10, tableY, { width: pageW - 10 });
-    tableY = pdf.y + 6;
-  }
-
-  // ════════════════════════════════════════════════════════════════════
-  // SIGNATURES
-  // ════════════════════════════════════════════════════════════════════
-  if (tableY + 90 > pdf.page.height - margin) pdf.addPage();
-  tableY = Math.max(tableY + 25, pdf.y + 25);
-
-  const sigLeft = company.signatureLeft || 'Đại diện khách hàng';
-  const sigRight = company.signatureRight || 'Đại diện công ty';
-
-  pdf.font('VN-Bold').fontSize(9).fillColor('#1a1a1a');
-  pdf.text(sigLeft, margin, tableY, { width: pageW / 2, align: 'center' });
-  pdf.text(sigRight, margin + pageW / 2, tableY, { width: pageW / 2, align: 'center' });
-  tableY += 14;
-  pdf.font('VN').fontSize(7).fillColor('#888');
-  pdf.text('(Ký, ghi rõ họ tên)', margin, tableY, { width: pageW / 2, align: 'center' });
-  pdf.text('(Ký, ghi rõ họ tên)', margin + pageW / 2, tableY, { width: pageW / 2, align: 'center' });
-
-  pdf.end();
-}
-
-function parseExcelDepositReceivedFromRow(row) {
-  const blob = (row || []).map((c) => String(c ?? '').trim()).filter(Boolean).join(' ');
-  if (/\bĐÃ\s*(NHẬN|THU|ĐÓNG)\b/i.test(blob)) return true;
-  if (/\bCHƯA\s*(NHẬN|THU|ĐÓNG)\b/i.test(blob)) return false;
-  return null;
-}
-
-/** Dòng tiền Cọc / Còn lại — không có chữ TỔNG/CỘNG (tránh trùng với dòng tổng hạng mục). */
-function isExcelDepositOrRemainSummaryRow(name, stt, fullRowText) {
-  const bundle = `${name || ''} ${stt || ''} ${fullRowText || ''}`.trim();
-  if (!bundle) return false;
-  const u = bundle.toUpperCase();
-  if (/\bTỔNG\b/.test(u) || /\bCỘNG\b/.test(u)) return false;
-  return /\bCỌC\b/.test(u) || /\bCÒN\s*LẠI\b/.test(u);
-}
-
-/**
- * Nhận diện ô/dòng Excel là thông tin liên hệ NVKD — KT… (không gán SĐT này vào khách hàng).
- * Tránh nhầm khi mẫu có "SĐT" / "Số điện thoại" gắn với phụ trách.
- */
-function excelHeaderTextIsStaffContactContext(upper) {
-  const u = String(upper || '').trim().toUpperCase();
-  if (!u) return false;
-  if (/KHÁCH\s*HÀNG|KHACH\s*HANG|SĐT\s*KH\b|SDT\s*KH\b|LIÊN\s*HỆ\s*KH|LIÊN\s*LẠC\s*KH/i.test(u)) return false;
-  if (u.includes('NVKD') || u.includes('NV KD') || u.includes('PHỤ TRÁCH KD')) return true;
-  if (u.includes('KT PHỤ TRÁCH') || u.includes('KỸ THUẬT PHỤ TRÁCH') || u.includes('KĨ THUẬT PHỤ TRÁCH')) return true;
-  if (u.includes('NGƯỜI PHỤ TRÁCH') || u.includes('NGUOI PHU TRACH')) return true;
-  if (u.includes('LIÊN HỆ NV') || u.includes('LIEN HE NV')) return true;
-  if (/^SĐT\s*(NVKD|NV|KD|KT)\b/i.test(u) || /^SDT\s*(NVKD|NV|KD|KT)\b/i.test(u)) return true;
-  if (/SỐ\s*ĐIỆN\s*THOẠI/i.test(u) && (u.includes('NVKD') || u.includes('PHỤ TRÁCH') || u.includes('KỸ THUẬT') || u.includes('KĨ THUẬT'))) return true;
-  return false;
-}
-
-function excelRowLooksLikeStaffPhoneContext(rowArr) {
-  const blob = (rowArr || []).map((c) => String(c ?? '').trim().toUpperCase()).filter(Boolean).join(' | ');
-  return excelHeaderTextIsStaffContactContext(blob);
-}
-
-/** Nhận diện mẫu Excel báo giá Bao Bì NextGo (cột QUY CÁCH SẢN PHẨM / header công ty NextGo). */
-function excelDetectNextGoQuotationFormat(rows, headerIdx) {
-  if (headerIdx >= 0) {
-    const hdr = (rows[headerIdx] || []).map((c) => String(c || '').trim().toUpperCase()).join(' ');
-    if (hdr.includes('QUY CÁCH') || hdr.includes('QUY CACH')) return true;
-  }
-  const scanUntil = headerIdx >= 0 ? headerIdx : Math.min(rows.length, 15);
-  for (let i = 0; i < scanUntil; i++) {
-    const blob = (rows[i] || []).map((c) => String(c || '').trim().toUpperCase()).join(' ');
-    if (blob.includes('NEXTGO') || blob.includes('BAO BÌ NEXTGO') || blob.includes('BAO BI NEXTGO')) return true;
-  }
-  return false;
-}
-
-/** Row có giống header báo giá (STT + HẠNG MỤC / TÊN HÀNG) — dùng cho excel-sheets + parse-excel. */
-function excelLooksLikeHeaderRow(rowArr) {
-  const upper = (rowArr || []).map((c) => String(c || '').trim().toUpperCase());
-  const hasStt = upper.some((c) => c === 'STT' || c === 'TT');
-  const hasName = upper.some(
-    (c) =>
-      (c.includes('HẠNG MỤC') || c.includes('TÊN HÀNG') || c.includes('TÊN SẢN PHẨM') ||
-        c.includes('NỘI DUNG') || c.includes('MÃ HÀNG'))
-      && !c.includes('DIỄN GIẢI'),
-  );
-  return hasStt && hasName;
-}
-
-function resolveExcelWorksheet(wb, sheetName) {
-  const names = wb.SheetNames || [];
-  if (!names.length) return { sheetName: null, ws: null };
-  const requested = String(sheetName || '').trim();
-  const resolved = requested && names.includes(requested) ? requested : names[0];
-  return { sheetName: resolved, ws: wb.Sheets[resolved] };
-}
-
-const excelUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
-
-/** Liệt kê sheet trong file Excel + gợi ý sheet giống báo giá (heuristic header). */
 r.post('/quotations/excel-sheets', excelUpload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Chưa chọn file' });
-    const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellFormula: false });
-    const names = wb.SheetNames || [];
-    if (!names.length) return res.status(400).json({ error: 'File không có sheet' });
-    const sheets = names.map((name) => {
-      const ws = wb.Sheets[name];
-      const rows = ws ? XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true }) : [];
-      const rowCount = rows.length;
-      const isQuotation = rows.slice(0, 30).some((r) => excelLooksLikeHeaderRow(r || []));
-      return { name, rowCount, isQuotation };
-    });
-    const defaultSheet = sheets.find((s) => s.isQuotation)?.name || sheets[0]?.name || null;
-    res.json({ sheets, defaultSheet, totalSheets: sheets.length });
+    res.json(listQuotationExcelSheets(req.file.buffer));
   } catch (e) {
     console.error('[excel-sheets]', e);
     res.status(500).json({ error: e.message || 'Lỗi đọc file' });
@@ -1820,601 +1415,11 @@ r.post('/quotations/excel-sheets', excelUpload.single('file'), async (req, res) 
 r.post('/quotations/parse-excel', excelUpload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Chưa chọn file' });
-
-    // cellFormula:false → chỉ đọc cached value, không parse/tính lại công thức Excel
-    const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellFormula: false });
-    const { sheetName: parsedSheetName, ws } = resolveExcelWorksheet(wb, req.body?.sheet_name);
-    if (!ws) return res.status(400).json({ error: 'File không có sheet' });
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
-
-    if (!rows.length) return res.status(400).json({ error: 'File rỗng' });
-
-    // ── 1. Detect header row ──
-    // Helper: từ 1 row (đã upper-cased) build colMap; row2 (nếu có) là sub-header (merge cell "Quy Cách"…).
-    // Format mới (Vạn Phú Thành): có thêm DIỄN GIẢI HẠNG MỤC, ĐƠN GIÁ SAU CHIẾT KHẤU, SỐ TIỀN CHIẾT KHẤU,
-    // % CHIẾT KHẤU per-row, MÃ HÀNG, SỐ LƯỢNG. Phải tránh ghi đè name bằng "DIỄN GIẢI HẠNG MỤC".
-    function buildColMap(headerRow, subRow) {
-      const cm = {};
-      const upper = headerRow.map(c => String(c || '').trim().toUpperCase());
-      // Pass thứ tự ưu tiên: description → name → các cột khác (để DIỄN GIẢI HẠNG MỤC không match name)
-      upper.forEach((label, ci) => {
-        if (!label) return;
-        if (
-          label.includes('DIỄN GIẢI') || label.includes('MÔ TẢ') || label.includes('CHI TIẾT') ||
-          label.includes('QUY CÁCH') || label.includes('QUY CACH')
-        ) {
-          if (cm.description === undefined) cm.description = ci;
-        }
-      });
-      upper.forEach((label, ci) => {
-        if (!label) return;
-        if (label === 'STT' || label === 'TT') {
-          if (cm.stt === undefined) cm.stt = ci;
-        } else if (
-          (label.includes('HẠNG MỤC') || label.includes('TÊN HÀNG') ||
-           label.includes('TÊN SẢN PHẨM') || label === 'TÊN SP' || label.includes('NỘI DUNG'))
-          && !label.includes('DIỄN GIẢI') && !label.includes('MÔ TẢ') && !label.includes('CHI TIẾT')
-        ) {
-          if (cm.name === undefined) cm.name = ci;
-        } else if (label.includes('MÃ HÀNG') || label === 'MÃ SP' || label.includes('MÃ SẢN PHẨM')) {
-          if (cm.sku === undefined) cm.sku = ci;
-        } else if (label === 'ĐVT' || label.includes('ĐƠN VỊ')) {
-          if (cm.unit === undefined) cm.unit = ci;
-        } else if (label.includes('KHỐI LƯỢNG') || label.includes('SỐ LƯỢNG') || label === 'SL' || label === 'KL') {
-          if (cm.quantity === undefined) cm.quantity = ci;
-        } else if (label.includes('NGANG') || (label.includes('DÀI') && !label.includes('BẢO'))) {
-          if (cm.length === undefined) cm.length = ci;
-        } else if (label.includes('SÂU') || label.includes('RỘNG')) {
-          if (cm.width === undefined) cm.width = ci;
-        } else if (label.includes('CAO') && !label.includes('CHIẾT') && !label.includes('CK')) {
-          if (cm.height === undefined) cm.height = ci;
-        } else if (
-          label.includes('% CHIẾT KHẤU') || label.includes('%CHIẾT KHẤU') ||
-          (label.includes('CHIẾT KHẤU') && (label.includes('%') || label === 'CK%')) ||
-          label === '%CK' || label === '% CK'
-        ) {
-          if (cm.discount_percent === undefined) cm.discount_percent = ci;
-        } else if (
-          label.includes('ĐƠN GIÁ') &&
-          !label.includes('SAU') && !label.includes('SỐ TIỀN') && !label.includes('CHIẾT KHẤU')
-        ) {
-          if (cm.unit_price === undefined) cm.unit_price = ci;
-        } else if (label.includes('THÀNH TIỀN') || label.includes('T.TIỀN') || label.includes('TT (VNĐ)')) {
-          if (cm.amount === undefined) cm.amount = ci;
-        } else if (label.includes('GHI CHÚ') || label.includes('NOTE')) {
-          if (cm.notes === undefined) cm.notes = ci;
-        } else if (label.includes('VAT') || label.includes('THUẾ')) {
-          if (cm.vat_rate === undefined) cm.vat_rate = ci;
-        }
-      });
-
-      // Sub-header (merge cell QUY CÁCH → NGANG/SÂU/CAO). Cho phép override length nếu super-header
-      // chỉ là "DÀI (m)" đơn lẻ và sub-row có cả NGANG: ưu tiên NGANG.
-      let subAdvance = false;
-      if (subRow && subRow.length) {
-        const subUpper = subRow.map(c => String(c || '').trim().toUpperCase());
-        subUpper.forEach((label, ci) => {
-          if (!label) return;
-          if (label.includes('NGANG')) {
-            cm.length = ci; subAdvance = true;
-          } else if (label.includes('SÂU') || label.includes('RỘNG')) {
-            if (cm.width === undefined || cm.width === ci) cm.width = ci;
-            subAdvance = true;
-          } else if (label.includes('CAO') && !label.includes('CHIẾT') && !label.includes('CK')) {
-            if (cm.height === undefined || cm.height === ci) cm.height = ci;
-            subAdvance = true;
-          } else if ((label.includes('KHỐI LƯỢNG') || label.includes('SỐ LƯỢNG') || label === 'SL' || label === 'KL') && cm.quantity === undefined) {
-            cm.quantity = ci; subAdvance = true;
-          } else if ((label.includes('% CHIẾT KHẤU') || label === 'CK%' || label === '%CK') && cm.discount_percent === undefined) {
-            cm.discount_percent = ci; subAdvance = true;
-          }
-        });
-      }
-      return { cm, subAdvance };
-    }
-
-    let headerIdx = -1;
-    let colMap = {};
-    for (let i = 0; i < Math.min(rows.length, 30); i++) {
-      if (!excelLooksLikeHeaderRow(rows[i] || [])) continue;
-      const { cm, subAdvance } = buildColMap(rows[i], rows[i + 1] || []);
-      colMap = cm;
-      headerIdx = subAdvance ? i + 1 : i;
-      break;
-    }
-    if (headerIdx < 0) return res.status(400).json({ error: 'Không tìm thấy dòng tiêu đề (cần có STT + HẠNG MỤC)' });
-    const isNextGoFormat = excelDetectNextGoQuotationFormat(rows, headerIdx);
-    console.log('[parse-excel] sheet:', parsedSheetName, 'headerIdx:', headerIdx, 'format:', isNextGoFormat ? 'nextgo' : 'default', 'colMap:', JSON.stringify(colMap));
-
-    // ── Fill merged cells trong cột DIỄN GIẢI / GHI CHÚ / TÊN SP / STT ──
-    // Excel cho phép 1 ô mô tả gộp nhiều dòng sản phẩm. `sheet_to_json` chỉ giữ
-    // giá trị ô đầu, các ô dưới rỗng → fan-out giá trị xuống các dòng con để mỗi
-    // sản phẩm đều mang theo mô tả/ghi chú/tên nhóm (mẫu NextGo: STT + Tên SP merge dọc).
-    const wsMerges = Array.isArray(ws['!merges']) ? ws['!merges'] : [];
-    const mergeFanOutCols = [];
-    if (colMap.description !== undefined) mergeFanOutCols.push(colMap.description);
-    if (colMap.notes !== undefined) mergeFanOutCols.push(colMap.notes);
-    if (colMap.name !== undefined) mergeFanOutCols.push(colMap.name);
-    if (colMap.stt !== undefined) mergeFanOutCols.push(colMap.stt);
-    if (wsMerges.length && mergeFanOutCols.length) {
-      let filledDesc = 0;
-      for (const m of wsMerges) {
-        if (!m || !m.s || !m.e) continue;
-        if (m.s.r === m.e.r) continue; // chỉ xử lý merge dọc
-        if (m.e.r <= headerIdx) continue; // bỏ qua merge ở vùng header/khách hàng
-        const col = m.s.c;
-        if (!mergeFanOutCols.includes(col)) continue;
-        const topRow = rows[m.s.r];
-        if (!topRow) continue;
-        const val = topRow[col];
-        if (val === undefined || val === null || String(val).trim() === '') continue;
-        for (let rr = Math.max(m.s.r + 1, headerIdx + 1); rr <= m.e.r; rr++) {
-          if (!rows[rr]) continue;
-          const cur = rows[rr][col];
-          if (cur === undefined || cur === null || String(cur).trim() === '') {
-            rows[rr][col] = val;
-            filledDesc += 1;
-          }
-        }
-      }
-      if (filledDesc > 0) console.log('[parse-excel] merged-cell fan-out:', filledDesc, 'cell(s)');
-    }
-
-    // ── 2. Extract customer info — parse each cell separately ──
-    let customer_name = '', customer_phone = '', customer_address = '', kts_info = '', title = '';
-    for (let i = 0; i < headerIdx; i++) {
-      // Check each cell individually for better parsing
-      for (let ci = 0; ci < (rows[i]?.length || 0); ci++) {
-        const cell = String(rows[i][ci] || '').trim();
-        if (!cell) continue;
-        const cellUpper = cell.toUpperCase();
-
-        // Skip company headers
-        if (cellUpper.includes('CÔNG TY') || cellUpper.includes('HOTLINE') || cellUpper.includes('MST') || cellUpper.includes('WEBSITE') || cellUpper.includes('WWW.')) continue;
-
-        // KT Phụ trách (detect before customer to avoid mixing).
-        // "PHỤ TRÁCH KD" (format Vạn Phú Thành) cũng rơi vào nhánh này.
-        if (cellUpper.includes('KT PHỤ TRÁCH') || cellUpper.includes('KỸ THUẬT PHỤ TRÁCH') ||
-            cellUpper.includes('KĨ THUẬT PHỤ TRÁCH') || cellUpper.includes('NVKD') ||
-            cellUpper.includes('PHỤ TRÁCH KD')) {
-          const match = cell.match(/[:;\-]\s*(.+)/);
-          if (match) kts_info = match[1].replace(/[-–]\s*(0\d{8,10})/, ' - $1').trim();
-          else kts_info = cell;
-          continue;
-        }
-        if (excelHeaderTextIsStaffContactContext(cellUpper)) {
-          const match = cell.match(/[:;\-]\s*(.+)/);
-          if (match) kts_info = match[1].replace(/[-–]\s*(0\d{8,10})/, ' - $1').trim();
-          else kts_info = cell;
-          continue;
-        }
-
-        // Customer name — label "Khách hàng:" / "Tên khách hàng;" (Vạn Phú Thành dùng `;`)
-        // NextGo: "Kính gửi:" cũng chứa tên khách
-        if (
-          cellUpper.includes('KHÁCH HÀNG') || cellUpper.includes('KHACH HANG') ||
-          cellUpper.includes('KÍNH GỬI') || cellUpper.includes('KINH GUI')
-        ) {
-          const match = cell.match(/[:;\-]\s*(.+)/);
-          if (match) {
-            let namePart = match[1].trim();
-            // Bỏ đoạn NVKD / phụ trách / … (tránh lấy SĐT nhân viên làm SĐT khách)
-            namePart = namePart.replace(
-              /\s*(;|,|[-–])\s*(NVKD|NV\s*KD|PHỤ\s*TRÁCH\s*KD|PHỤ\s*TRÁCH\s*(NV|KINH\s*DOANH)|KT\s*(PHỤ\s*TRÁCH)?|KĨ?\s*THUẬT|NGƯỜI\s*PHỤ\s*TRÁCH|LIÊN\s*HỆ\s*NV)\s*[:;]?\s*.*$/i,
-              '',
-            ).trim();
-            // Remove KT info if embedded
-            namePart = namePart.replace(/\s*[-–]?\s*(Kĩ|Kỹ|KT)\s*(Thuật|thuật)?\s*(Phụ|phụ)\s*(Trách|trách)\s*[:]\s*.*/i, '').trim();
-            // Extract phone from name
-            const phoneMatch = namePart.match(/(0\d{8,10})/);
-            if (phoneMatch) {
-              customer_phone = phoneMatch[1];
-              customer_name = namePart.replace(phoneMatch[0], '').replace(/[-–\s]+$/, '').trim();
-            } else {
-              customer_name = namePart;
-            }
-          }
-          continue;
-        }
-
-        // Address
-        if (cellUpper.includes('ĐỊA CHỈ') || cellUpper.includes('ĐC:')) {
-          const match = cell.match(/[:;\-]\s*(.+)/);
-          if (match) {
-            let addr = match[1].trim();
-            // Remove phone if embedded in address
-            addr = addr.replace(/\s*(SĐT|SDT|ĐT)\s*[:;]\s*0\d{8,10}/i, '').trim();
-            customer_address = addr;
-          }
-          continue;
-        }
-
-        // SĐT standalone cell — chỉ gán khách khi nhãn không phải SĐT NVKD / phụ trách…
-        if (cellUpper.includes('SĐT') || cellUpper.includes('SDT') || cellUpper.includes('ĐT:')) {
-          const phoneMatch = cell.match(/(0\d{8,10})/);
-          if (phoneMatch) {
-            if (excelHeaderTextIsStaffContactContext(cellUpper)) {
-              const tail = cell.replace(/^\s*(SỐ\s*ĐIỆN\s*THOẠI|SĐT|SDT|ĐT)\s*[:;]?\s*/i, '').trim();
-              if (kts_info && !kts_info.includes(phoneMatch[1])) kts_info += ` — ${tail || phoneMatch[1]}`;
-              else if (!kts_info) kts_info = tail || phoneMatch[1];
-            } else if (!customer_phone) {
-              customer_phone = phoneMatch[1];
-            } else if (phoneMatch[1] !== customer_phone && !kts_info.includes(phoneMatch[1])) {
-              if (kts_info) kts_info += ` — ${phoneMatch[1]}`;
-              else kts_info = phoneMatch[1];
-            }
-          }
-          continue;
-        }
-
-        // Phone in cell (not company phone) — nếu cùng dòng có nhãn NVKD/Phụ trách thì gắn vào KT/NVKD
-        if (/^0\d{8,10}$/.test(cell)) {
-          if (!customer_phone && excelRowLooksLikeStaffPhoneContext(rows[i])) {
-            if (kts_info && !kts_info.includes(cell)) kts_info += ` — ${cell}`;
-            else if (!kts_info) kts_info = cell;
-          } else if (!customer_phone) {
-            customer_phone = cell;
-          }
-          continue;
-        }
-
-        // Title (BÁO GIÁ...)
-        if (cellUpper.includes('BÁO GIÁ') && !title) {
-          title = cell;
-          continue;
-        }
-      }
-    }
-
-    // ── 3. Parse items — stop at GHI CHÚ / notes section ──
-    const items = [];
-    let currentGroup = '';
-    let currentProductName = ''; // NextGo: tên SP merge dọc — dòng con kế thừa
-    let lastProductDesc = ''; // NextGo: quy cách ở dòng đầu, các dòng SL khác kế thừa
-    let currentGroupDiscount = 0; // CK% từ header nhóm
-    let summaryRows = []; // collect all TỔNG/CK rows
-    let reachedNotes = false;
-    let notesText = [];
-
-    for (let i = headerIdx + 1; i < rows.length; i++) {
-      const row = rows[i];
-      if (!row || row.every(c => !c && c !== 0)) continue;
-
-      // ── Mini-header lặp lại trong body (vd. format Vạn Phú Thành: row 17 cho section II,
-      // row 23 cho section III có "MÃ HÀNG / Số Lượng"). Strategy:
-      //   1) override các role trong newCm,
-      //   2) clear bất kỳ role cũ nào đang trỏ vào col index đã được newCm gán role khác
-      //      (vd. section III col E = "Số Lượng" → role length cũ ở col 4 phải bị xoá).
-      if (excelLooksLikeHeaderRow(row)) {
-        const { cm: newCm, subAdvance: newSub } = buildColMap(row, rows[i + 1] || []);
-        const merged = { ...colMap, ...newCm };
-        const newColsByIdx = {};
-        for (const [role, idx] of Object.entries(newCm)) {
-          if (typeof idx === 'number') newColsByIdx[idx] = role;
-        }
-        for (const role of Object.keys(merged)) {
-          const idx = merged[role];
-          if (typeof idx === 'number' && newColsByIdx[idx] && newColsByIdx[idx] !== role) {
-            delete merged[role];
-          }
-        }
-        colMap = merged;
-        if (newSub) i += 1;
-        console.log('[parse-excel] re-detected mini-header at row', i, 'colMap:', JSON.stringify(colMap));
-        continue;
-      }
-
-      const stt = colMap.stt !== undefined ? String(row[colMap.stt] || '').trim() : '';
-      const nameRaw = colMap.name !== undefined ? String(row[colMap.name] || '').trim() : '';
-      const skuRaw = colMap.sku !== undefined ? String(row[colMap.sku] || '').trim() : '';
-      const descEarly = colMap.description !== undefined ? String(row[colMap.description] || '').trim() : '';
-      if (nameRaw) {
-        if (nameRaw !== currentProductName) lastProductDesc = '';
-        currentProductName = nameRaw;
-      }
-      // Nếu có cả MÃ HÀNG + TÊN SẢN PHẨM (section III) → name = TÊN, prefix mã vào notes/description bên dưới.
-      const name = nameRaw || (isNextGoFormat && currentProductName ? currentProductName : '') || skuRaw;
-      const nameUpper = name.toUpperCase();
-
-      // Collect all text from this row
-      const fullRowText = row.map(c => String(c || '').trim()).filter(Boolean).join(' ');
-
-      // Debug first 25 data rows
-      if (i - headerIdx <= 25) {
-        console.log(`[parse-excel] row ${i}: stt=[${stt}] name=[${name?.slice(0,30)}] cells=`, JSON.stringify(row.slice(0, 10)));
-      }
-      const fullRowUpper = fullRowText.toUpperCase();
-
-      // Detect "GHI CHÚ" / notes section → stop parsing items, collect notes
-      const isNotesSection = nameUpper === 'GHI CHÚ' || nameUpper.startsWith('GHI CHÚ:') || 
-        fullRowUpper === 'GHI CHÚ' || stt.toUpperCase().startsWith('GHI CHÚ') ||
-        fullRowUpper.startsWith('GHI CHÚ') || fullRowUpper.startsWith('LƯU Ý') ||
-        fullRowUpper.startsWith('ĐIỀU KHOẢN') || fullRowUpper.startsWith('QUY ĐỊNH');
-      if (isNotesSection) {
-        reachedNotes = true;
-        // Include this row's text as first note line (if has content beyond "GHI CHÚ")
-        const noteContent = fullRowText.replace(/^GHI\s*CHÚ:?\s*/i, '').trim();
-        if (noteContent) notesText.push(noteContent);
-        continue;
-      }
-      if (reachedNotes) {
-        if (fullRowText) notesText.push(fullRowText);
-        continue;
-      }
-
-      // ── IMPORTANT: Detect GROUP HEADERS before summary rows ──
-      // Group headers like "II. PHỤ KIỆN - CHIẾT KHẤU 35%" contain "CHIẾT KHẤU"
-      // which would wrongly match summary detection. Check Roman numeral first.
-      const sttUpper = stt.toUpperCase();
-      const sttIsNumber = /^\d/.test(stt);
-      const workingNameEarly = name || (!sttIsNumber && stt ? stt : '') || '';
-      const isRomanGroupEarly = /^[IVX]+[\.\)\s]/.test(workingNameEarly) || /^[IVX]+[\.\)\s]/.test(fullRowText.trim());
-      const hasUnitEarly = colMap.unit !== undefined && String(row[colMap.unit] || '').trim();
-      const hasPriceEarly = parseExcelMoneyFromMappedColumn(row, colMap.unit_price) > 0;
-
-      if (isRomanGroupEarly && !hasPriceEarly) {
-        const groupName = workingNameEarly || fullRowText.trim();
-        currentGroup = groupName;
-        const ckMatch = groupName.match(/(?:CHIẾT\s*KHẤU|CK)\s*(\d+)\s*%/i);
-        currentGroupDiscount = ckMatch ? parseFloat(ckMatch[1]) : 0;
-        items.push({
-          is_group: true, group_name: groupName, name: groupName,
-          description: '', unit: '', quantity: 0, unit_price: 0, amount: 0,
-          height: null, width: null, length: null, notes: '',
-          group_discount_percent: currentGroupDiscount,
-        });
-        console.log('[parse-excel] GROUP:', groupName.slice(0, 50), 'CK:', currentGroupDiscount);
-        continue;
-      }
-
-      // Detect summary rows: TỔNG TỦ, TỔNG PHỤ KIỆN, TỔNG 2 HẠNG MỤC, CHIẾT KHẤU, TỔNG SAU CK
-      // Check both name column and full row text (summary rows often span merged cells)
-      const isSummary = nameUpper.includes('TỔNG') || nameUpper.includes('CỘNG') ||
-        nameUpper.includes('CHIẾT KHẤU') || nameUpper.includes('PHẦN TỪ') ||
-        fullRowUpper.includes('TỔNG') || fullRowUpper.includes('CHIẾT KHẤU');
-      // Summary rows: no STT number, OR STT contains summary text itself (merged cells)
-      const sttIsSummary = sttUpper.includes('TỔNG') || sttUpper.includes('CHIẾT KHẤU') || sttUpper.includes('PHẦN TỦ') || sttUpper.includes('PHẦN TỪ');
-      if (isSummary && (!stt || sttIsSummary || !sttIsNumber)) {
-        // Find amount: try amount column, then scan row for largest number
-        let amt = colMap.amount !== undefined ? parseVietnameseMoney(row[colMap.amount]) : 0;
-        if (amt === 0) {
-          // Scan all cells for a number (summary amount might be in unexpected column)
-          for (let ci = 0; ci < row.length; ci++) {
-            const cellVal = parseVietnameseMoney(row[ci]);
-            if (cellVal > 1000 && cellVal > amt) amt = cellVal;
-          }
-        }
-        const summaryLabel = name || stt || fullRowText;
-        summaryRows.push({ label: summaryLabel, amount: amt });
-        console.log('[parse-excel] summary row:', { label: summaryLabel.slice(0,40), amt, stt, rawAmtCell: row[colMap.amount] });
-        continue;
-      }
-
-      // ── Dòng Cọc / Còn lại (khối tiền cuối báo giá — có thể có «ĐÃ NHẬN» ở cột phụ) ──
-      if (isExcelDepositOrRemainSummaryRow(name, stt, fullRowText)) {
-        let amt = colMap.amount !== undefined ? parseVietnameseMoney(row[colMap.amount]) : 0;
-        if (amt === 0) {
-          for (let ci = 0; ci < row.length; ci++) {
-            const cellVal = parseVietnameseMoney(row[ci]);
-            if (cellVal >= 1000 && cellVal > amt) amt = cellVal;
-          }
-        }
-        const summaryLabel = name || stt || fullRowText;
-        const labelU = summaryLabel.toUpperCase();
-        const rowKind = labelU.includes('CÒN LẠI') ? 'remaining' : 'deposit';
-        const deposit_received = rowKind === 'deposit' ? parseExcelDepositReceivedFromRow(row) : null;
-        summaryRows.push({
-          label: summaryLabel,
-          amount: amt,
-          row_kind: rowKind,
-          deposit_received,
-        });
-        console.log('[parse-excel] deposit/remain row:', {
-          label: summaryLabel.slice(0, 48),
-          amt,
-          rowKind,
-          deposit_received,
-        });
-        continue;
-      }
-
-      // Skip truly empty rows (no text at all)
-      // Note: don't skip if name is empty but STT has text (merged cells)
-      const effectiveName = name || (sttIsNumber ? '' : stt) || '';
-      const rowUnitPrice = parseExcelMoneyFromMappedColumn(row, colMap.unit_price);
-      const rowAmount = parseExcelMoneyFromMappedColumn(row, colMap.amount);
-      if (!effectiveName && !name && !descEarly && rowUnitPrice <= 0 && rowAmount <= 0) continue;
-
-      // Detect group title: has name but no STT number AND no unit_price
-      const sttNum = parseInt(stt);
-      const hasUnit = colMap.unit !== undefined && String(row[colMap.unit] || '').trim();
-      const hasPrice = rowUnitPrice > 0;
-      const workingName = effectiveName || name;
-      const isGroupRow = (isNaN(sttNum) || !stt || sttIsSummary) && !hasPrice && workingName.length > 5;
-
-      // Also check Roman numeral pattern: I., II., III., IV. at start
-      const isRomanGroup = /^[IVX]+[\.\)\s]/.test(workingName);
-
-      if ((isGroupRow && !hasUnit) || isRomanGroup) {
-        currentGroup = workingName;
-        // Parse chiết khấu % từ header nhóm: "PHỤ KIỆN BẾP (CHIẾT KHẤU 35%)" hoặc "CK 35%"
-        const ckMatch = workingName.match(/(?:CHIẾT\s*KHẤU|CK)\s*(\d+)\s*%/i);
-        currentGroupDiscount = ckMatch ? parseFloat(ckMatch[1]) : 0;
-        items.push({
-          is_group: true, group_name: workingName, name: workingName,
-          description: '', unit: '', quantity: 0, unit_price: 0, amount: 0,
-          height: null, width: null, length: null, notes: '',
-          group_discount_percent: currentGroupDiscount,
-        });
-        continue;
-      }
-
-      // Normal item row — must have unit_price or amount
-      if (!hasPrice && rowAmount <= 0) continue;
-
-      // Detect "HỖ TRỢ" / "MIỄN PHÍ" / "TẶNG" in amount column → freebie item (CK 100%)
-      const rawAmountCell = colMap.amount !== undefined ? String(row[colMap.amount] || '').trim() : '';
-      const parsedAmount = rowAmount;
-      const isFreebieText = /HỖ\s*TRỢ|MIỄN\s*PHÍ|TẶNG|FREE|KM|KHUYẾN/i.test(rawAmountCell);
-      const isFreebie = isFreebieText && parsedAmount === 0;
-
-      const descCell = colMap.description !== undefined ? String(row[colMap.description] || '').trim() : '';
-      const notesCell = colMap.notes !== undefined ? String(row[colMap.notes] || '').trim() : '';
-      if (descCell) lastProductDesc = descCell;
-      const effectiveDescCell = descCell || (isNextGoFormat ? lastProductDesc : '');
-      const itemName = name || (isNextGoFormat && effectiveDescCell ? currentProductName || effectiveDescCell.split('\n')[0].slice(0, 120) : '') || skuRaw;
-      // Nếu có MÃ HÀNG riêng (section III VPT): prefix vào description để khỏi mất thông tin.
-      const skuPrefix = (skuRaw && skuRaw !== name) ? `[${skuRaw}] ` : '';
-      const mergedDescription = [
-        skuPrefix ? `${skuPrefix.trim()}` : '',
-        effectiveDescCell,
-        notesCell,
-      ].filter(Boolean).join('\n\n');
-
-      // % CHIẾT KHẤU per-row: hỗ trợ "35%", "0.35", "0,35"
-      let rowDiscount = 0;
-      if (colMap.discount_percent !== undefined) {
-        const raw = row[colMap.discount_percent];
-        if (raw != null && raw !== '') {
-          const n = typeof raw === 'number' ? raw : parseFloat(String(raw).replace('%', '').replace(',', '.'));
-          if (!isNaN(n) && n > 0) rowDiscount = n <= 1 ? n * 100 : n;
-        }
-      }
-      const effectiveGroupCK = rowDiscount > 0 ? rowDiscount : currentGroupDiscount;
-
-      items.push({
-        is_group: false,
-        group_name: currentGroup,
-        group_discount_percent: effectiveGroupCK,
-        sku: skuRaw || null,
-        name: itemName,
-        description: mergedDescription,
-        unit: colMap.unit !== undefined ? String(row[colMap.unit] || '').trim() : 'bộ',
-        length: colMap.length !== undefined ? (parseVietnameseMeasure(row[colMap.length]) ?? null) : null,
-        width: colMap.width !== undefined ? (parseVietnameseMeasure(row[colMap.width]) ?? null) : null,
-        height: colMap.height !== undefined ? (parseVietnameseMeasure(row[colMap.height]) ?? null) : null,
-        quantity: colMap.quantity !== undefined ? (parseVietnameseMeasure(row[colMap.quantity]) ?? 1) : 1,
-        unit_price: rowUnitPrice,
-        amount: parsedAmount,
-        vat_rate: colMap.vat_rate !== undefined ? parseFloat(row[colMap.vat_rate]) || 0 : 0,
-        notes: notesCell,
-        is_freebie: isFreebie,
-      });
-    }
-
-    // ── 4. Calculate totals from summary rows ──
-    // Priority: "TỔNG 2 HẠNG MỤC" or "TỔNG SAU CHIẾT KHẤU" > last TỔNG row
-    let grandTotal = 0, subtotalBeforeDiscount = 0, discountAmount = 0;
-
-    // Track group subtotals + discount amounts for CK% calculation
-    // Strategy: assign TỔNG/CK rows to groups in order (simpler than name matching)
-    const groupTotals = {}; // { groupName: subtotal }
-    const groupDiscounts = {}; // { groupName: discountAmount }
-    const groupNamesOrdered = items.filter(i => i.is_group).map(g => g.name);
-    const groupsWithoutHeaderCK = items.filter(i => i.is_group && !i.group_discount_percent).map(g => g.name);
-    let nextTotalGroupIdx = 0;
-
-    for (const sr of summaryRows) {
-      const label = sr.label.toUpperCase();
-      if (label.includes('TỔNG') && label.includes('HẠNG MỤC')) {
-        grandTotal = sr.amount; // "TỔNG 2 HẠNG MỤC" = final total
-      } else if (label.includes('SAU') && (label.includes('CHIẾT KHẤU') || label.includes('CK'))) {
-        // "TỔNG TỦ SAU CHIẾT KHẤU" — skip for group calc, use as grandTotal fallback
-        if (!grandTotal) grandTotal = sr.amount;
-      } else if (label.includes('CHIẾT KHẤU') || label.includes('PHẦN TỪ') || label.includes('PHẦN TỦ')) {
-        discountAmount += sr.amount;
-        // Assign discount to first group without header CK that doesn't have discount yet
-        const target = groupsWithoutHeaderCK.find(gn => !groupDiscounts[gn]);
-        if (target) groupDiscounts[target] = (groupDiscounts[target] || 0) + sr.amount;
-      } else if (label.includes('TỔNG')) {
-        subtotalBeforeDiscount += sr.amount;
-        // Assign to groups in file order
-        if (nextTotalGroupIdx < groupNamesOrdered.length) {
-          groupTotals[groupNamesOrdered[nextTotalGroupIdx]] = sr.amount;
-          nextTotalGroupIdx++;
-        }
-      }
-    }
-    console.log('[parse-excel] summaryRows:', JSON.stringify(summaryRows.map(s => ({ l: s.label.slice(0,35), a: s.amount }))));
-    console.log('[parse-excel] groupTotals:', JSON.stringify(groupTotals));
-    console.log('[parse-excel] groupDiscounts:', JSON.stringify(groupDiscounts));
-
-    // ── 5. Calculate CK% for groups that don't have it from header ──
-    // E.g. "PHẦN TỦ CHIẾT KHẤU 1,998,101" + "TỔNG TỦ 66,603,375" → CK% = 1998101/66603375 ≈ 3%
-    // NOTE: CK from summary = applied to GROUP TOTAL (Thành tiền items are BEFORE discount)
-    //       CK from header = applied PER ITEM (Thành tiền already includes discount)
-    // → Mark differently: group_summary_discount_percent (not applied per-item in Thành tiền)
-    console.log('[parse-excel] groupTotals:', JSON.stringify(groupTotals));
-    console.log('[parse-excel] groupDiscounts:', JSON.stringify(groupDiscounts));
-    console.log('[parse-excel] groups:', items.filter(i => i.is_group).map(g => ({ name: g.name.slice(0,30), gdk: g.group_discount_percent })));
-    for (const groupItem of items.filter(i => i.is_group && !i.group_discount_percent)) {
-      const gTotal = groupTotals[groupItem.name];
-      const gDiscount = groupDiscounts[groupItem.name];
-      console.log('[parse-excel] checking group:', groupItem.name.slice(0,30), 'gTotal:', gTotal, 'gDiscount:', gDiscount);
-      if (gTotal > 0 && gDiscount > 0) {
-        const ckPercent = Math.round((gDiscount / gTotal) * 10000) / 100; // round 2 decimal
-        groupItem.group_summary_discount_percent = ckPercent;
-        // Apply to child items as summary-level discount (NOT already in Thành tiền)
-        let applied = 0;
-        items.forEach(i => {
-          if (!i.is_group && i.group_name === groupItem.name) {
-            i.group_summary_discount_percent = ckPercent;
-            applied++;
-          }
-        });
-        console.log('[parse-excel] applied summaryCK', ckPercent, '% to', applied, 'items in group:', groupItem.name.slice(0,30));
-      }
-    }
-
-    // If no grand total found, sum item amounts
-    const itemsTotal = items.filter(i => !i.is_group).reduce((s, i) => s + (i.amount || i.quantity * i.unit_price), 0);
-    if (!grandTotal) grandTotal = itemsTotal - discountAmount;
-    if (!subtotalBeforeDiscount) subtotalBeforeDiscount = itemsTotal;
-
-    let deposit_amount = null;
-    let deposit_received = null;
-    let deposit_label = '';
-    let remaining_amount = null;
-    let remaining_note = '';
-    for (const sr of summaryRows) {
-      if (sr.row_kind === 'deposit') {
-        if (sr.amount > 0) deposit_amount = sr.amount;
-        deposit_label = sr.label || deposit_label;
-        if (sr.deposit_received === true || sr.deposit_received === false) deposit_received = sr.deposit_received;
-      }
-      if (sr.row_kind === 'remaining') {
-        remaining_amount = sr.amount > 0 ? sr.amount : remaining_amount;
-        remaining_note = sr.label || remaining_note;
-      }
-    }
-
-    res.json({
-      customer_name,
-      customer_phone,
-      customer_address,
-      kts_info,
-      title,
-      items,
-      notes: notesText.join('\n'),
-      summary: {
-        subtotal: subtotalBeforeDiscount,
-        discount_amount: discountAmount,
-        total: grandTotal,
-        summary_rows: summaryRows,
-        deposit_amount,
-        deposit_received,
-        deposit_label,
-        remaining_amount,
-        remaining_note,
-      },
-      columns_detected: colMap,
-      header_row: headerIdx,
-      total_rows: rows.length,
-      excel_format: isNextGoFormat ? 'nextgo' : 'default',
-    });
+    const data = await parseQuotationExcelBuffer(req.file.buffer, { sheetName: req.body?.sheet_name });
+    res.json(data);
   } catch (e) {
     console.error('[parse-excel]', e);
-    res.status(500).json({ error: 'Lỗi đọc file Excel: ' + e.message });
+    res.status(500).json({ error: e.message?.startsWith('Lỗi đọc file Excel') ? e.message : 'Lỗi đọc file Excel: ' + e.message });
   }
 });
 
@@ -2459,5 +1464,6 @@ r.get('/invoices/:id/pdf', async (req, res) => {
     generateDocPdf(res, invoice, items || [], 'invoice');
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+}).call(null, helpers["ALLOWED_DEADLINE_FIELDS"], helpers["CRM_COMMENT_ALLOWED_REACTION_EMOJI"], helpers["CRM_LEAD_KANBAN_LITE_SELECT"], helpers["CRM_LEAD_LIST_SELECT"], helpers["CRM_LEAD_LIST_SELECT_BASE"], helpers["CRM_LEAD_LIST_SELECT_EXTRA"], helpers["CRM_LEAD_REGION_EMBED"], helpers["CRM_NEW_LEAD_MAX_AGE_MS"], helpers["CRM_TASK_SELECT"], helpers["CRM_UUID_RE"], helpers["CUSTOMERS_IN_CHUNK"], helpers["CUSTOMERS_OVERVIEW_NO_MATCH_ID"], helpers["DEAL_PRE_CONTRACT_SLUGS_STAFF"], helpers["DEAL_REPORT_BUCKET_VALUES"], helpers["DEFAULT_CHECKLISTS"], helpers["DEFAULT_DEADLINE_BUCKETS"], helpers["DEFAULT_PIPELINE_STAGE_SLA_DAYS"], helpers["FOLLOWUP_TIME_BUCKETS"], helpers["PDFDocument"], helpers["QUOTATIONS_SOURCE_EXCEL_COLS"], helpers["Router"], helpers["SCAN_DUP_LITE_SELECT"], helpers["STAFF_LEAD_DEAL_REPORT_ROLES"], helpers["SURVEY_EVENT_SELECT"], helpers["SURVEY_EVENT_TYPES"], helpers["XLSX"], helpers["ZALO_APP_SETTING_KEY"], helpers["_crmLeadSelectMigrationChecked"], helpers["_crmLeadTypeColorAvailable"], helpers["_vcPipelineStageAvailable"], helpers["addPhoneToAutoLeadBlocklist"], helpers["aggregateCrmCommentReactions"], helpers["aggregateOrgReportRows"], helpers["appendFulfillmentChildTasksForMasterDeal"], helpers["applyAllActiveWorkshopTemplatesForArea"], helpers["applyAssigneesToInsertedCrmTasks"], helpers["applyCrmLeadRegionFilterToQuery"], helpers["applyCrmTaskTemplatesToCompanyRegions"], helpers["applyCustomerIdInFilter"], helpers["applyCustomersOverviewSearch"], helpers["applyDefaultWorkshopTemplatesForNewProject"], helpers["applyLeadOrCustomerSalesFilter"], helpers["applyProductionTemplateToFulfillmentLead"], helpers["applyProductionTemplatesOnPipelineEnter"], helpers["applyStageIdFilterToQuery"], helpers["applyWorkshopTemplateToProject"], helpers["artifactNamePrefix"], helpers["assertCanFlagLead"], helpers["assertCategoryFitsSource"], helpers["assertCrmAssigneeUserMatchesLeadCompany"], helpers["assertCrmEmployeeDeleteAllowed"], helpers["assertCrmStageAdvanceAllowed"], helpers["assertDealCrmManualStageChange"], helpers["assertDealResponsible"], helpers["assertDivisionAllowedForCompany"], helpers["assertLeadDocumentOwner"], helpers["assertLeadReadableByRegionScope"], helpers["assertRegionBelongsToCompany"], helpers["assertUserCanAssignCrmRegion"], helpers["assignProductionCompanyDealResponsibility"], helpers["attachAssigneesToCrmTasks"], helpers["attachAssignmentIdsToCrmTasks"], helpers["attachCrmNextOpenTaskDeadline"], helpers["attachLeadNewFlagForList"], helpers["attachLeadReplyParents"], helpers["attachLeadUserFlagsForList"], helpers["auth"], helpers["autoCreateProjectFromWonDeal"], helpers["autoFlowFns"], helpers["autoGenCrmTasksForNewLead"], helpers["buildAssignmentNotificationInsert"], helpers["buildChecklistLeadDocumentRow"], helpers["buildCrmDashboardMinimalKpis"], helpers["buildCrmLeadsRpcFilterParams"], helpers["buildCustomersOverviewSummary"], helpers["buildDealTemplateData"], helpers["buildDefaultDeadlineConfig"], helpers["buildFirstStageIdByPipeline"], helpers["buildPipelineStagesMap"], helpers["buildProcessedCommercialItems"], helpers["buildQuotedStageOrderByPipeline"], helpers["buildScanDuplicateGroups"], helpers["buildWonStageOrderByPipeline"], helpers["canUserViewDocByAllowlist"], helpers["chatUpload"], helpers["chunkArray"], helpers["classifyDealStageForStaffReport"], helpers["commentsTableMissing"], helpers["companyRegionExtraColumnsMissing"], helpers["companyRegionGeoColumnsMissing"], helpers["computeCrmDashboardLightStats"], helpers["computeCrmLiveVersionMs"], helpers["computeCustomersOverviewSummary"], helpers["computeIsNewLeadForUser"], helpers["computeOrgOverviewReportData"], helpers["computeStaffLeadDealReportData"], helpers["computeStaffPipelineDetailPayload"], helpers["countOpenOverdueCrmTasksForLeadIds"], helpers["createCrmAssignment"], helpers["createCrmLeadTask"], helpers["createFulfillmentChildDeal"], helpers["createNotif"], helpers["createNotification"], helpers["createProjectFromLead"], helpers["crmExecutorFieldsFromTemplateItem"], helpers["crmLeadCommentAttachmentsColumnMissing"], helpers["crmLeadCommentReadReceiptsTableMissing"], helpers["crmLeadRowVisibleToRequestUser"], helpers["crmListUsesLegacyFilters"], helpers["crmNoteActivityUpload"], helpers["crmReportAsOfMs"], helpers["crmReportCreatedAtFromIso"], helpers["crmReportCreatedAtToIso"], helpers["crmReportDayKeyVn"], helpers["crmRouteErrorText"], helpers["crmTaskDeadlineModuleKey"], helpers["crmTaskMeetsCompletionRequirements"], helpers["crmTaskMeetsRequiredFileTypes"], helpers["crmTaskRequiresCompletionEvidence"], helpers["crmTemplateMatchesLeadType"], helpers["deadlineToDateOnlyIso"], helpers["defaultCompanyInfo"], helpers["defaultKpiLedgerMonthStartYmd"], helpers["deleteCrmLeadTask"], helpers["deleteMirroredAssignmentFileForTaskAttachment"], helpers["duplicateLeadIdsFromLiteRows"], helpers["ecosystemModuleKeyForCrmDeadline"], helpers["effectivePipelineStageSlaDays"], helpers["emitCrmBadgeUpdateForProject"], helpers["emitCrmDashboardChanged"], helpers["emitCrmTaskChanged"], helpers["emptyStaffLeadDealAgg"], helpers["endOfCalendarDayAfterEntered"], helpers["enforceCommercialDocCompanyOnWrite"], helpers["enforceQuotaForRequest"], helpers["ensureDealLeadDocumentsForModuleTransition"], helpers["ensureDefaultCrmPipelineForCompany"], helpers["ensureMissingCrmTasksForLead"], helpers["ensureMissingCrmTasksForPipelineStage"], helpers["ensureMissingSxTasksForLead"], helpers["excelUpload"], helpers["executeLeadMerge"], helpers["executeZaloDealStageNotify"], helpers["fetchActivityCustomerIds"], helpers["fetchAllLeadsForSlaWatchlist"], helpers["fetchAssignmentForTask"], helpers["fetchCrmCommentReactionsAggregate"], helpers["fetchCrmLeadCommentNotifyUserIds"], helpers["fetchCrmLeadDetailRow"], helpers["fetchCrmLeadWithPipelineBadges"], helpers["fetchCrmLeadsByIdsOrdered"], helpers["fetchCrmLeadsForDashboardBatched"], helpers["fetchCrmLeadsForOrgReportBatched"], helpers["fetchCrmLeadsForUserDetailBatched"], helpers["fetchCrmLeadsLiteForDuplicateScan"], helpers["fetchCrmLeadsPageViaRpc"], helpers["fetchCrmPipelineZaloSlice"], helpers["fetchCrmSurveyEventsChunk"], helpers["fetchCrmSurveyVisitsForOrgReport"], helpers["fetchLeadCommentAudienceMembers"], helpers["fetchLeadCommentAudienceMembersForRead"], helpers["fetchLeadIdsForCrmRegion"], helpers["fetchLeadMentionMembers"], helpers["fetchOrgActivityFeed"], helpers["fetchPipelineWithStagesById"], helpers["fetchScopedCrmBundles"], helpers["fillTemplateDataFromStructure"], helpers["filterCrmTasksForLeadType"], helpers["filterUserIdsForCrmLeadScopedNotification"], helpers["findChecklistItem"], helpers["followupDismissExpiresAt"], helpers["fontBold"], helpers["fontRegular"], helpers["formatMoney"], helpers["formatVNDPdf"], helpers["formatVnPhoneLocal0From84"], helpers["fs"], helpers["generateDocPdf"], helpers["generateFlowTasks"], helpers["generateStepTasks"], helpers["getAppSettingValue"], helpers["getCompanyInfo"], helpers["getCompanyRegionsList"], helpers["getCrmLeadListSelect"], helpers["getCrmLeadRegionConstraint"], helpers["getCrmLeadTypesList"], helpers["getCrmLeadsListLegacy"], helpers["getCrmSourceCategoriesList"], helpers["getCrmSourcesList"], helpers["getDefaultCrmAttachmentShare"], helpers["getDefaultDealZaloTemplateStructure"], helpers["getDefaultLeadDocumentShareForDeal"], helpers["getDefaultPipelineIdForCompany"], helpers["getLeadDocumentFieldsFromCrmTask"], helpers["getNotifyTargets"], helpers["getOverdueFollowUps"], helpers["getPipelineIdForCompanyRegion"], helpers["getPipelineZaloSlice"], helpers["getPipelinesList"], helpers["getProjectCRMSummary"], helpers["getStagesByPipelineId"], helpers["getStaleLeads"], helpers["getZaloNotifySettings"], helpers["hydrateCrmLeadsByIdsWithStaff"], helpers["hydrateCrmLeadsRpcPage"], helpers["hydrateScanDuplicateLeads"], helpers["insertQuotationRow"], helpers["invalidateAppSettingKey"], helpers["invalidatePipelinesAndStages"], helpers["invalidateRegions"], helpers["invalidateSources"], helpers["invalidateTenantUsageCache"], helpers["invokeCrmLeadsStageCountsRpc"], helpers["isAdminLike"], helpers["isAllowedLeadCommentAttachmentUrl"], helpers["isChotSanXuatCrmTaskTitle"], helpers["isCrmCompanyAdminUser"], helpers["isCrmDealAssigneeLocked"], helpers["isCrmLeadTypeColorMissingError"], helpers["isCrmModuleAdmin"], helpers["isCrmPipelinesTableMissingError"], helpers["isCrmRegionAdminUser"], helpers["isCrmSystemAdminUser"], helpers["isDealStageHoanThanhForZalo"], helpers["isDefaultAssigneeIdsColumnError"], helpers["isExecutorColumnError"], helpers["isPlatformAdmin"], helpers["isPostgresUniqueViolation"], helpers["isQuotationsSourceExcelColumnMissingError"], helpers["isSxRelationshipError"], helpers["isSystemAdmin"], helpers["isUuidString"], helpers["isValidDealZaloTemplateStructure"], helpers["isVcRelationshipError"], helpers["isVptCompanyCommercialDocViewer"], helpers["lastNominatimGeocodeAt"], helpers["leadChatFilesMulter"], helpers["leadChatJsonOrFiles"], helpers["listQuotationExcelSheets"], helpers["loadCrmTaskAttachmentCountMap"], helpers["loadOrgReportStageMap"], helpers["loadZaloLinkedLeadIdSet"], helpers["logDealActivityComment"], helpers["logDealDeadlineChangeComment"], helpers["logDealStageChangeComment"], helpers["logKanbanDeadlineUnifiedHistory"], helpers["logLeadCommentMentionActivity"], helpers["logProjectFileActivity"], helpers["mapCustomerOverviewRow"], helpers["mapLeadDisplayPhone"], helpers["mapQuotationItemsToOrderRows"], helpers["maskCustomerPhoneDisplay"], helpers["maskZaloAccessTokenPreview"], helpers["maybeSendZaloOnDealStageEnter"], helpers["mergeCrmStageDefaultAssigneeIntoUpdates"], helpers["mergeCustomerIntoTarget"], helpers["misaService"], helpers["multer"], helpers["nextCode"], helpers["nextTbProjectCode"], helpers["normalizeCrmActivityAttachments"], helpers["normalizeCrmLeadCommentAttachments"], helpers["normalizeCrmStageDefaultAssigneeUserId"], helpers["normalizeCrmUserRole"], helpers["normalizeLeadSeenByKeys"], helpers["normalizeOrgReportSurveyVisitRow"], helpers["normalizePipelineStageSlaDaysForDb"], helpers["normalizePipelineStagesList"], helpers["normalizeRegionIdList"], helpers["normalizeTemplateChecklistForCrmTask"], helpers["normalizeTemplateItemAssigneeIds"], helpers["normalizeTimestamp"], helpers["normalizeTitleFold"], helpers["normalizeVnPhoneTo84"], helpers["notifyDealCommentMentions"], helpers["notifyDealCommentParticipants"], helpers["notifyMultiple"], helpers["notifyMultipleShared"], helpers["notifyNewCrmAssignmentAssignees"], helpers["notifyProductionDocumentUploaded"], helpers["onLeadWon"], helpers["onOrderConfirmed"], helpers["onProjectCompleted"], helpers["onQuotationAccepted"], helpers["orgReportAttachFirstStageRates"], helpers["orgReportBumpFirstStageMetrics"], helpers["orgReportBumpMetrics"], helpers["orgReportBumpOpenOverdue"], helpers["orgReportBumpReceptionMetrics"], helpers["orgReportCancelRatePct"], helpers["orgReportClosedWonDealCount"], helpers["orgReportClosedWonValue"], helpers["orgReportCompareSummary"], helpers["orgReportConversionRate"], helpers["orgReportDayKey"], helpers["orgReportDealCloseValueRatePct"], helpers["orgReportDealCountsExpected"], helpers["orgReportDealIsClosedWon"], helpers["orgReportDealIsCompleted"], helpers["orgReportDealIsQuotedOrAfter"], helpers["orgReportDealProbability"], helpers["orgReportDealSplitBuckets"], helpers["orgReportExtendedDealMetrics"], helpers["orgReportFirstStageOnTimeRatePct"], helpers["orgReportFirstStageOverdueRatePct"], helpers["orgReportIsReceptionOverdue"], helpers["orgReportIsSlaOverdue"], helpers["orgReportKpiPeriodStart"], helpers["orgReportNumEst"], helpers["orgReportOverdueRatePct"], helpers["orgReportOwnerId"], helpers["orgReportPctDelta"], helpers["orgReportPreviousPeriod"], helpers["orgReportQuoteValueCloseRatePct"], helpers["orgReportQuoteWinRatePct"], helpers["orgReportReceptionOverdueRatePct"], helpers["orgReportReceptionSlaMinutes"], helpers["orgReportStageIsClosed"], helpers["orgReportStageIsLostOrCancelled"], helpers["orgReportTotalDealCount"], helpers["parseChecklist"], helpers["parseCrmLeadsPageRpc"], helpers["parseCrmReportDateRange"], helpers["parseCrmStageCountsNumericMap"], helpers["parseCrmStageCountsRpc"], helpers["parseExcelMoneyFromMappedColumn"], helpers["parseLeadIdUuidList"], helpers["parseLeadIdsCsvQuery"], helpers["parseLeadIdsFromBody"], helpers["parseLeadSeenByRaw"], helpers["parseQuotationExcelBuffer"], helpers["parseStageIdsFromQuery"], helpers["parseUuidArrayJsonb"], helpers["parseVietnameseMeasure"], helpers["parseVietnameseMoney"], helpers["path"], helpers["persistAssignmentNotification"], helpers["pgCrmDuplicateLeadIds"], helpers["pickDealZaloTemplatePayload"], helpers["pipeOrgOverviewReportPdf"], helpers["pipeStaffLeadDealSummaryPdf"], helpers["pipeStaffPipelineDetailPdf"], helpers["pipelineHasExplicitCompleted"], helpers["pipelineHasExplicitExpected"], helpers["pipelineHasExplicitWon"], helpers["plannerTableMissing"], helpers["postCrmStageDefaultAssigneeComment"], helpers["primaryTemplateItemAssigneeId"], helpers["rcInvalidateTags"], helpers["reactionsTableMissing"], helpers["redactCrmTaskNotesForViewer"], helpers["regionGeocodeInflight"], helpers["repairCrmDealPipelineDisplay"], helpers["requireUserCompanyId"], helpers["requireUserCompanyIdResolved"], helpers["resolveAssignmentIdForTask"], helpers["resolveCanonicalCrmLeadId"], helpers["resolveCommercialDocListCompanyScope"], helpers["resolveCrmBundleTemplateScope"], helpers["resolveCrmLeadsDeadlinesMap"], helpers["resolveCrmLeadsKanbanLite"], helpers["resolveCrmLeadsMergedQuery"], helpers["resolveCrmLeadsSkipDeadline"], helpers["resolveCrmLedgerNetByLeadIdsPayload"], helpers["resolveCrmReportScope"], helpers["resolveCrmTaskWriteLeadId"], helpers["resolveExecutorCompanyId"], helpers["resolveKanbanStagesForCompany"], helpers["resolveLeadCommentMentionIds"], helpers["resolveProductionCompanyForDealStage"], helpers["resolveProductionHandoverResponsibleUserId"], helpers["resolveReopenTargetStageId"], helpers["resolveRpcRegionIdsForCrmList"], helpers["resolveTenantIdForQuota"], helpers["resolveZaloDealTemplateId"], helpers["respondIfCrmPipelinesTableMissing"], helpers["responseCache"], helpers["restoreCrmTaskChecklistFromWorkshopTemplate"], helpers["resyncCrmPipelineTasksForLead"], helpers["sanitizeIsoDateQueryParam"], helpers["scheduleRegionGeocoding"], helpers["scopedAdminCompanyId"], helpers["scopedCrmCompanyIdForWrite"], helpers["sendZaloTemplateMessage"], helpers["setLeadFlag"], helpers["shallowMergeTemplateData"], helpers["skipSxWorkQuickComplete"], helpers["snapshotOrderRowFromQuotation"], helpers["stripCrmAssigneeFromWonStageUpdates"], helpers["stripCrmLeadTypeColorFromSelect"], helpers["stripQuotationsSourceExcelFields"], helpers["sumCrmKpiLedgerNetByLeadIds"], helpers["sumCrmKpiLedgerNetByUserForOrgReport"], helpers["sumCrmKpiLedgerNetByUserIds"], helpers["sumCrmKpiLedgerNetByUserIdsInDateRange"], helpers["supabase"], helpers["syncAllTaskArtifactsToAssignment"], helpers["syncChecklistItemNotes"], helpers["syncCrmLeadSxPipelineFromProject"], helpers["syncQuotationDepositToDealAndProject"], helpers["syncSxKanbanFromCrmProductionStage"], helpers["syncTaskAttachmentToAssignment"], helpers["templateItemAssigneePatch"], helpers["toCrmTaskChecklist"], helpers["unifyCrmLeadResponsibleFields"], helpers["updateCrmLeadTask"], helpers["updateQuotationRow"], helpers["upsertZaloNotifySettings"], helpers["userCanAccessCrmLeadAsParticipant"], helpers["userCanAccessCrmLeadViaVisibility"], helpers["userCanAssignAnyCrmRegion"], helpers["userCanBypassCrmDeleteRestriction"], helpers["userHasSeenLeadInSeenBy"], helpers["userIsAdmin"], helpers["userIsCrmCompanyOrRegionAdmin"], helpers["userMayAccessQuotationRow"], helpers["userSeesAllCrmDeals"], helpers["userSeesAllCrmDealsForScope"], helpers["userSeesAllCrmLeads"], helpers["userSeesAllCrmLeadsForScope"], helpers["uuidQueryOrNull"], helpers["validateProductionCompanyId"]);
 
 module.exports = r;

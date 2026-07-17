@@ -15,6 +15,7 @@
  */
 const { Router } = require('express');
 const { apiKeyAuth, isUuid } = require('../middleware/apiKeyAuth');
+const { mcpKeyRateLimit, MCP_RATE_LIMITS } = require('../helpers/mcpRateLimit');
 const {
   getMcpReportTools,
   callMcpReportTool,
@@ -35,27 +36,6 @@ const r = Router();
 function onlyUuidConnectId(req, res, next) {
   if (!isUuid(req.params.connectId)) return next('route');
   return next();
-}
-
-const _rateBucket = new Map();
-function checkRateLimit({ apiKeyId, ip, windowMs = 60_000, limit = 90 }) {
-  const now = Date.now();
-  const bucketKey = `${apiKeyId || 'unknown'}:${ip || 'unknown'}`;
-  const cur = _rateBucket.get(bucketKey) || { t: now, c: 0 };
-  if (now - cur.t > windowMs) {
-    _rateBucket.set(bucketKey, { t: now, c: 1 });
-    return { ok: true };
-  }
-  if (cur.c >= limit) return { ok: false };
-  cur.c += 1;
-  _rateBucket.set(bucketKey, cur);
-  return { ok: true };
-}
-
-function mcpRateLimit(req, res, next) {
-  const rl = checkRateLimit({ apiKeyId: req.apiKey?.id, ip: req.ip });
-  if (!rl.ok) return res.status(429).json({ error: 'Rate limit exceeded' });
-  next();
 }
 
 function applyMcpResponseHeaders(res, { sessionId, clientId, setSessionOnInit, setClientOnInit }) {
@@ -126,6 +106,9 @@ function mcpPingHandler(req, res) {
     protocol_versions: SUPPORTED_PROTOCOL_VERSIONS,
     endpoint: connectId ? `POST /api/mcp/${connectId}` : 'POST /api/mcp',
     connect_url: connectId ? `/api/mcp/${connectId}` : null,
+    rate_limits: MCP_RATE_LIMITS,
+    mcp_scopes: req.apiKey?.mcp_scopes || ['reports', 'crm_read'],
+    all_companies: !req.apiKey?.company_id,
     connection: {
       session_id: '(nhận sau initialize — header Mcp-Session-Id)',
       client_id: '(gửi Mcp-Client-Id hoặc params.client_id khi initialize)',
@@ -143,8 +126,8 @@ function registerMcpHandlers(router) {
   router.post('/rpc', mcpPostHandler);
   router.get('/ping', mcpPingHandler);
 
-  router.get('/tools', (_req, res) => {
-    res.json({ tools: getMcpReportTools() });
+  router.get('/tools', (req, res) => {
+    res.json({ tools: getMcpReportTools(req.apiKey) });
   });
 
   router.post('/tools/call', async (req, res) => {
@@ -200,13 +183,13 @@ function registerMcpHandlers(router) {
 /** /api/mcp/{uuid} — auth từ path (Cursor / Claude chỉ cần URL) */
 const tokenRouter = Router({ mergeParams: true });
 tokenRouter.use(apiKeyAuth);
-tokenRouter.use(mcpRateLimit);
+tokenRouter.use(mcpKeyRateLimit);
 registerMcpHandlers(tokenRouter);
 r.use('/:connectId', onlyUuidConnectId, tokenRouter);
 
 /** /api/mcp — legacy header/query auth */
 r.use(apiKeyAuth);
-r.use(mcpRateLimit);
+r.use(mcpKeyRateLimit);
 registerMcpHandlers(r);
 
 module.exports = r;

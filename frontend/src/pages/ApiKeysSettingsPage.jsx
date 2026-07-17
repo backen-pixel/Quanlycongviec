@@ -202,7 +202,9 @@ export default function ApiKeysSettingsPage() {
       return;
     }
     if (window.confirm(
-      `Chưa có access token — chỉ thấy mask "${preview}".\n\nRotate để nhận cặp access + refresh token mới?`,
+      `Access token không còn hiện (chỉ lúc tạo/rotate).\n\n`
+      + `Đổi access token (rotate) sẽ vô hiệu tbp_… CŨ của key này — các key khác không bị ảnh hưởng.\n`
+      + `MCP Cursor: dùng URL /api/mcp/{uuid} (không cần rotate).\n\nTiếp tục rotate?`,
     )) rotateKey(id);
   };
 
@@ -213,7 +215,8 @@ export default function ApiKeysSettingsPage() {
       return;
     }
     if (window.confirm(
-      `Chưa có refresh token cho key "${preview}".\n\nRotate để tạo cặp token mới?`,
+      `Chưa có refresh token trong phiên này.\n`
+      + `Rotate chỉ đổi token của key này (key khác vẫn giữ nguyên).\n\nTiếp tục?`,
     )) rotateKey(id);
   };
 
@@ -333,6 +336,10 @@ export default function ApiKeysSettingsPage() {
   };
 
   const rotateKey = async (id) => {
+    if (!window.confirm(
+      'Đổi access token (rotate) chỉ vô hiệu cặp tbp_… của KEY NÀY.\n'
+      + 'Các key khác vẫn dùng bình thường. Tiếp tục?',
+    )) return;
     try {
       const { data } = await api.post(`/settings/api-keys/${id}/rotate`);
       storeKeyTokens(id, data);
@@ -783,14 +790,15 @@ export default function ApiKeysSettingsPage() {
                           <button
                             onClick={() => rotateKey(k.id)}
                             className="h-7 px-3 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-medium cursor-pointer"
-                            title="Tạo key mới (rotate). Key cũ sẽ bị vô hiệu ngay."
+                            title="Đổi access token của key này. Key khác không bị ảnh hưởng. Link MCP UUID không đổi."
                           >
-                            Rotate key để test
+                            Đổi access token
                           </button>
                         </div>
                         {!keySecrets[k.id]?.access_token ? (
                           <div className="text-[11px] text-gray-500">
-                            Vì bảo mật, hệ thống không hiển thị lại key thật. Bấm <b>Rotate</b> để nhận key mới 1 lần, rồi mới ping/test được.
+                            Access token chỉ hiện 1 lần lúc tạo. <b>Tạo key mới</b> không thu hồi key khác.
+                            Bấm <b>Đổi access token</b> chỉ nếu cần tbp_… mới cho key này (header X-Api-Key).
                           </div>
                         ) : (
                           <div className="space-y-2">

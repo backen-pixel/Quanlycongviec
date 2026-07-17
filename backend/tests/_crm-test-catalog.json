@@ -1,0 +1,808 @@
+{
+  "a": [
+    {
+      "id": 1,
+      "name": "Thin entry crm.js re-export ./crm/index.js"
+    },
+    {
+      "id": 2,
+      "name": "Composition root index.js tồn tại và mount feature routers"
+    },
+    {
+      "id": 3,
+      "name": "Đủ 14 file feature router"
+    },
+    {
+      "id": 4,
+      "name": "helpersBundle.js tồn tại và export được"
+    },
+    {
+      "id": 5,
+      "name": "5 facade shared tồn tại"
+    },
+    {
+      "id": 6,
+      "name": "route-manifest.json có đúng 224 route"
+    },
+    {
+      "id": 7,
+      "name": "core.js chỉ còn stub trỏ index"
+    },
+    {
+      "id": 8,
+      "name": "Backup core.js.bak còn để so sánh (khuyến nghị)"
+    },
+    {
+      "id": 9,
+      "name": "Load CRM router thành công (handle function)"
+    },
+    {
+      "id": 10,
+      "name": "Export computeOrgOverviewReportData còn trên router"
+    },
+    {
+      "id": 11,
+      "name": "Parent middleware: auth + cache + enforceCrmDealAssigneeAccess"
+    },
+    {
+      "id": 12,
+      "name": "Đúng 14 nested feature routers trên parent stack"
+    },
+    {
+      "id": 13,
+      "name": "Mount order: leadsList / leadDuplicates trước leadLifecycle"
+    },
+    {
+      "id": 14,
+      "name": "GET /leads/picker nằm ở leadsList, không ở leadLifecycle"
+    },
+    {
+      "id": 15,
+      "name": "POST /leads ở leadLifecycle; GET /leads ở leadsList"
+    },
+    {
+      "id": 16,
+      "name": "Live router có đúng 224 endpoint"
+    },
+    {
+      "id": 17,
+      "name": "Tập endpoint live ≡ bak (không thiếu)"
+    },
+    {
+      "id": 18,
+      "name": "Tập endpoint live ≡ bak (không thừa)"
+    },
+    {
+      "id": 19,
+      "name": "Các path tĩnh quan trọng còn trong live set"
+    },
+    {
+      "id": 20,
+      "name": "helpersBundle: supabase / nextCode / userIsAdmin"
+    },
+    {
+      "id": 21,
+      "name": "helpersBundle: Zalo / pipeline helpers"
+    },
+    {
+      "id": 22,
+      "name": "helpersBundle: autoFlow bindings (onLeadWon, createProjectFromLead)"
+    },
+    {
+      "id": 23,
+      "name": "helpersBundle: commercial quotation helpers"
+    },
+    {
+      "id": 24,
+      "name": "Facade requestScope / reportHelpers trỏ đúng hàm"
+    },
+    {
+      "id": 25,
+      "name": "Mỗi feature module đăng ký ≥1 route"
+    },
+    {
+      "id": 26,
+      "name": "Unauth GET /api/crm/_version → 401/403"
+    },
+    {
+      "id": 27,
+      "name": "Auth: có JWT (env/arg/login)"
+    },
+    {
+      "id": 28,
+      "name": "GET /api/crm/_version → 200 ok"
+    },
+    {
+      "id": 29,
+      "name": "GET /api/crm/pipelines → 200"
+    },
+    {
+      "id": 30,
+      "name": "GET /api/crm/pipeline-stages → 200 hoặc 400"
+    },
+    {
+      "id": 31,
+      "name": "GET /api/crm/lead-types → 200 (taxonomy)"
+    },
+    {
+      "id": 32,
+      "name": "GET /api/crm/sources → 200 (taxonomy)"
+    },
+    {
+      "id": 33,
+      "name": "GET /api/crm/leads/picker không bị :id nuốt"
+    },
+    {
+      "id": 34,
+      "name": "GET /api/crm/leads/scan-duplicates → 200 (leadDuplicates)"
+    },
+    {
+      "id": 35,
+      "name": "GET /api/crm/leads?type=deal&limit=5 → 200 + lấy sample"
+    },
+    {
+      "id": 36,
+      "name": "GET /api/crm/kanban-bootstrap?type=lead → 200"
+    },
+    {
+      "id": 37,
+      "name": "GET /api/crm/web-dashboard-bootstrap → 200"
+    },
+    {
+      "id": 38,
+      "name": "GET /api/crm/dashboard?type=lead&light=1 → 200"
+    },
+    {
+      "id": 39,
+      "name": "GET /api/crm/live-version → 200/304"
+    },
+    {
+      "id": 40,
+      "name": "GET /api/crm/leads/:id → 200 (lifecycle)"
+    },
+    {
+      "id": 41,
+      "name": "GET /api/crm/leads/:id/detail → 200"
+    },
+    {
+      "id": 42,
+      "name": "GET /api/crm/leads/:id/tasks → 200 (crmTasks)"
+    },
+    {
+      "id": 43,
+      "name": "GET /api/crm/leads/:id/comments → 200 (leadComments)"
+    },
+    {
+      "id": 44,
+      "name": "GET /api/crm/leads/:id/members + chat (membersChat)"
+    },
+    {
+      "id": 45,
+      "name": "Commercial docs: quotations / orders / invoices → 200"
+    },
+    {
+      "id": 46,
+      "name": "GET /api/crm/task-templates + tasks/overview → 200"
+    },
+    {
+      "id": 47,
+      "name": "Customers + company-regions (customers module)"
+    },
+    {
+      "id": 48,
+      "name": "Follow-up / planner: notifications + planner/me → 200"
+    },
+    {
+      "id": 49,
+      "name": "Reports: staff-lead-deal + org-overview → 200/403"
+    },
+    {
+      "id": 50,
+      "name": "computeOrgOverviewReportData callable (AI export contract)"
+    }
+  ],
+  "b": [
+    {
+      "id": 51,
+      "name": "Mỗi feature file dùng IIFE helpersBundle (không mất closure)"
+    },
+    {
+      "id": 52,
+      "name": "Manifest by_file khớp số route thực trong từng module"
+    },
+    {
+      "id": 53,
+      "name": "Không trùng method+path giữa các feature modules"
+    },
+    {
+      "id": 54,
+      "name": "Static /leads/* paths không nằm trong leadLifecycle"
+    },
+    {
+      "id": 55,
+      "name": "leadDuplicates chỉ chứa cụm merge/scan/bulk"
+    },
+    {
+      "id": 56,
+      "name": "commercialDocs chứa quotations/orders/invoices/products"
+    },
+    {
+      "id": 57,
+      "name": "taxonomy chứa lead-types / sources / zalo-notify-settings"
+    },
+    {
+      "id": 58,
+      "name": "reports chứa org-overview + staff-lead-deal + SLA admin"
+    },
+    {
+      "id": 59,
+      "name": "followupPlanner chứa care-mark / pin / deadline-config / planner"
+    },
+    {
+      "id": 60,
+      "name": "index.js không đăng ký route handler trực tiếp (chỉ middleware + use)"
+    },
+    {
+      "id": 61,
+      "name": "helpersBundle require depth ../../../ (từ shared/)"
+    },
+    {
+      "id": 62,
+      "name": "Feature routes require depth ../../../ cho helpers động"
+    },
+    {
+      "id": 63,
+      "name": "Load CRM + helpersBundle OK"
+    },
+    {
+      "id": 64,
+      "name": "helpers: emitCrmDashboardChanged + unifyCrmLeadResponsibleFields"
+    },
+    {
+      "id": 65,
+      "name": "helpers: countOpenOverdueCrmTasksForLeadIds + fetchCrmLeadsForDashboardBatched"
+    },
+    {
+      "id": 66,
+      "name": "Có JWT"
+    },
+    {
+      "id": 67,
+      "name": "GET /api/crm/referrers → 200 (taxonomy)"
+    },
+    {
+      "id": 68,
+      "name": "GET /api/crm/source-categories → 200"
+    },
+    {
+      "id": 69,
+      "name": "GET /api/crm/zalo-notify-settings → 200"
+    },
+    {
+      "id": 70,
+      "name": "GET /api/crm/employees-by-company → 200/400"
+    },
+    {
+      "id": 71,
+      "name": "GET /api/crm/alerts/follow-ups → 200/400"
+    },
+    {
+      "id": 72,
+      "name": "GET /api/crm/admin/sla-at-risk → 200/403"
+    },
+    {
+      "id": 73,
+      "name": "GET /api/crm/kanban-rows → 200/400"
+    },
+    {
+      "id": 74,
+      "name": "GET /api/crm/contract-signed-revenue → 200/400"
+    },
+    {
+      "id": 75,
+      "name": "GET /api/crm/ledger-net-by-leads → 200/400"
+    },
+    {
+      "id": 76,
+      "name": "GET /api/crm/stage-counts → 200/400 (leadsList)"
+    },
+    {
+      "id": 77,
+      "name": "GET /api/crm/leads-deadlines → 200/400"
+    },
+    {
+      "id": 78,
+      "name": "GET /api/crm/leads-by-fb-page → 200/400"
+    },
+    {
+      "id": 79,
+      "name": "GET /api/crm/leads?type=lead&limit=3 + lưu sample lead"
+    },
+    {
+      "id": 80,
+      "name": "POST /api/crm/leads/stage-history-summary → 200/400"
+    },
+    {
+      "id": 81,
+      "name": "GET /api/crm/leads/:id/documents → 200/403"
+    },
+    {
+      "id": 82,
+      "name": "GET /api/crm/leads/:id/task-documents → 200/403"
+    },
+    {
+      "id": 83,
+      "name": "GET /api/crm/leads/:id/activities → 200/403"
+    },
+    {
+      "id": 84,
+      "name": "GET /api/crm/leads/:id/assignments → 200/403"
+    },
+    {
+      "id": 85,
+      "name": "GET /api/crm/leads/:id/deadline-history → 200/403/400"
+    },
+    {
+      "id": 86,
+      "name": "GET /api/crm/leads/:id/badge → 200/403"
+    },
+    {
+      "id": 87,
+      "name": "GET /api/crm/leads/:id/task-attachments → 200/403"
+    },
+    {
+      "id": 88,
+      "name": "GET tasks list + optional task attachments route"
+    },
+    {
+      "id": 89,
+      "name": "GET /api/crm/leads/:id/comments/read-receipts → 200/403"
+    },
+    {
+      "id": 90,
+      "name": "GET /api/crm/lead-comments/index → 200"
+    },
+    {
+      "id": 91,
+      "name": "GET /api/crm/lead-care-marks → 200/400"
+    },
+    {
+      "id": 92,
+      "name": "GET /api/crm/settings/deadline-config → 200/403"
+    },
+    {
+      "id": 93,
+      "name": "GET /api/crm/settings/deal-stage-report-buckets → 200/400"
+    },
+    {
+      "id": 94,
+      "name": "GET /api/crm/auto-lead-blocked-phones → 200/403"
+    },
+    {
+      "id": 95,
+      "name": "GET /api/crm/auto-project-config → 200/403"
+    },
+    {
+      "id": 96,
+      "name": "GET /api/crm/customers-overview → 200/400"
+    },
+    {
+      "id": 97,
+      "name": "GET /api/crm/products-list + pipelines/:id nếu có"
+    },
+    {
+      "id": 98,
+      "name": "GET quotations/:id nếu có mẫu (commercialDocs)"
+    },
+    {
+      "id": 99,
+      "name": "GET /api/crm/tasks/planner + reports/org-activity-feed"
+    },
+    {
+      "id": 100,
+      "name": "Shadow check: /leads/scan-duplicates & /leads/picker vẫn 200 (không :id)"
+    }
+  ],
+  "ui": [
+    {
+      "id": 1,
+      "name": "Thin entry crm.js → crm/index.js"
+    },
+    {
+      "id": 2,
+      "name": "index.js mount đủ 14 feature modules"
+    },
+    {
+      "id": 3,
+      "name": "UI /crm/dashboard map → dashboard + leadsList modules tồn tại"
+    },
+    {
+      "id": 4,
+      "name": "UI /crm/quotations|orders|invoices → commercialDocs.js"
+    },
+    {
+      "id": 5,
+      "name": "UI /crm/pipeline-settings → pipelines.js"
+    },
+    {
+      "id": 6,
+      "name": "UI /crm/sources-settings → taxonomy.js"
+    },
+    {
+      "id": 7,
+      "name": "UI /crm/customers → customers.js"
+    },
+    {
+      "id": 8,
+      "name": "UI /crm/tasks → crmTasks.js + taskTemplates.js"
+    },
+    {
+      "id": 9,
+      "name": "UI /crm/follow-up-care → followupPlanner.js"
+    },
+    {
+      "id": 10,
+      "name": "UI /crm/reports/* → reports.js"
+    },
+    {
+      "id": 11,
+      "name": "UI /crm/leads/:id → leadLifecycle + crmTasks + leadComments + membersChat"
+    },
+    {
+      "id": 12,
+      "name": "Frontend App.jsx vẫn khai báo các route CRM chính"
+    },
+    {
+      "id": 13,
+      "name": "leadsList mount trước leadLifecycle (UI picker/kanban an toàn)"
+    },
+    {
+      "id": 14,
+      "name": "helpersBundle + facades tồn tại (UI phụ thuộc shared helpers)"
+    },
+    {
+      "id": 15,
+      "name": "route-manifest 224 endpoint"
+    },
+    {
+      "id": 16,
+      "name": "Load CRM router + computeOrgOverviewReportData (UI báo cáo org)"
+    },
+    {
+      "id": 17,
+      "name": "Mỗi UI_PAGE_MAP module file tồn tại"
+    },
+    {
+      "id": 18,
+      "name": "Không trùng route giữa modules (tránh UI gọi nhầm handler)"
+    },
+    {
+      "id": 19,
+      "name": "Parent middleware auth+cache+assignee (mọi trang CRM)"
+    },
+    {
+      "id": 20,
+      "name": "Frontend pages CRM tồn tại (file)"
+    },
+    {
+      "id": 21,
+      "name": "Backend /api sống"
+    },
+    {
+      "id": 22,
+      "name": "Lấy JWT (token/login)"
+    },
+    {
+      "id": 23,
+      "name": "API auth gate: /_version unauth 401"
+    },
+    {
+      "id": 24,
+      "name": "API auth OK: /_version 200"
+    },
+    {
+      "id": 25,
+      "name": "API cho UI /crm/dashboard (dashboard+leadsList)"
+    },
+    {
+      "id": 26,
+      "name": "API cho UI /crm/pipeline (leadsList+pipelines)"
+    },
+    {
+      "id": 27,
+      "name": "API cho UI /crm/quotations (commercialDocs)"
+    },
+    {
+      "id": 28,
+      "name": "API cho UI /crm/orders (commercialDocs)"
+    },
+    {
+      "id": 29,
+      "name": "API cho UI /crm/invoices (commercialDocs)"
+    },
+    {
+      "id": 30,
+      "name": "API cho UI /crm/products (commercialDocs)"
+    },
+    {
+      "id": 31,
+      "name": "API cho UI /crm/customers (customers)"
+    },
+    {
+      "id": 32,
+      "name": "API cho UI /crm/tasks (crmTasks+taskTemplates)"
+    },
+    {
+      "id": 33,
+      "name": "API cho UI /crm/task-templates (taskTemplates)"
+    },
+    {
+      "id": 34,
+      "name": "API cho UI /crm/follow-up-care (followupPlanner)"
+    },
+    {
+      "id": 35,
+      "name": "API cho UI /crm/pipeline-settings (pipelines)"
+    },
+    {
+      "id": 36,
+      "name": "API cho UI /crm/sources-settings (taxonomy)"
+    },
+    {
+      "id": 37,
+      "name": "API cho UI /crm/reports/org-overview (reports)"
+    },
+    {
+      "id": 38,
+      "name": "API cho UI /crm/reports/staff-lead-deal (reports)"
+    },
+    {
+      "id": 39,
+      "name": "API cho UI /crm/admin/sla-watchlist (reports)"
+    },
+    {
+      "id": 40,
+      "name": "API cho UI /crm/deadline-settings (followupPlanner)"
+    },
+    {
+      "id": 41,
+      "name": "API cho UI /crm/auto-project-config (leadLifecycle)"
+    },
+    {
+      "id": 42,
+      "name": "API cho UI /crm/blocked-phones (leadLifecycle)"
+    },
+    {
+      "id": 43,
+      "name": "API cho UI /crm/settings/deal-stage-report (reports)"
+    },
+    {
+      "id": 44,
+      "name": "API leads list → sample cho UI LeadDetail"
+    },
+    {
+      "id": 45,
+      "name": "API LeadDetail bundle: detail+tasks+comments+members+chat"
+    },
+    {
+      "id": 46,
+      "name": "API picker (UI chọn deal) không bị :id shadow"
+    },
+    {
+      "id": 47,
+      "name": "API kanban-bootstrap (UI dashboard/pipeline)"
+    },
+    {
+      "id": 48,
+      "name": "API web-dashboard-bootstrap"
+    },
+    {
+      "id": 49,
+      "name": "API stage-counts (UI cột kanban)"
+    },
+    {
+      "id": 50,
+      "name": "API company-regions (UI filter chi nhánh)"
+    },
+    {
+      "id": 51,
+      "name": "API referrers + source-categories (UI sources settings)"
+    },
+    {
+      "id": 52,
+      "name": "API zalo-notify-settings (UI taxonomy/zalo)"
+    },
+    {
+      "id": 53,
+      "name": "API products-list (UI /crm/products)"
+    },
+    {
+      "id": 54,
+      "name": "API task-templates (UI templates page)"
+    },
+    {
+      "id": 55,
+      "name": "API planner/me + tasks/planner (UI planner)"
+    },
+    {
+      "id": 56,
+      "name": "Frontend Vite sống (:5173)"
+    },
+    {
+      "id": 57,
+      "name": "Khởi tạo Playwright browser + inject JWT"
+    },
+    {
+      "id": 58,
+      "name": "UI mo /crm/dashboard (Dashboard) — render + CRM API khong 5xx"
+    },
+    {
+      "id": 59,
+      "name": "UI mo /crm/pipeline (Pipeline/Kanban) — render + CRM API khong 5xx"
+    },
+    {
+      "id": 60,
+      "name": "UI mo /crm/quotations (Bao gia) — render + CRM API khong 5xx"
+    },
+    {
+      "id": 61,
+      "name": "UI mo /crm/orders (Don hang) — render + CRM API khong 5xx"
+    },
+    {
+      "id": 62,
+      "name": "UI mo /crm/invoices (Hoa don) — render + CRM API khong 5xx"
+    },
+    {
+      "id": 63,
+      "name": "UI mo /crm/products (San pham) — render + CRM API khong 5xx"
+    },
+    {
+      "id": 64,
+      "name": "UI mo /crm/customers (Khach hang) — render + CRM API khong 5xx"
+    },
+    {
+      "id": 65,
+      "name": "UI mo /crm/tasks (Nhiem vu CRM) — render + CRM API khong 5xx"
+    },
+    {
+      "id": 66,
+      "name": "UI mo /crm/task-templates (Mau nhiem vu) — render + CRM API khong 5xx"
+    },
+    {
+      "id": 67,
+      "name": "UI mo /crm/follow-up-care (CSKH follow-up) — render + CRM API khong 5xx"
+    },
+    {
+      "id": 68,
+      "name": "UI mo /crm/pipeline-settings (Cai dat pipeline) — render + CRM API khong 5xx"
+    },
+    {
+      "id": 69,
+      "name": "UI mo /crm/sources-settings (Nguon lead) — render + CRM API khong 5xx"
+    },
+    {
+      "id": 70,
+      "name": "UI mo /crm/reports/org-overview (BC to chuc) — render + CRM API khong 5xx"
+    },
+    {
+      "id": 71,
+      "name": "UI mo /crm/reports/staff-lead-deal (BC NV lead-deal) — render + CRM API khong 5xx"
+    },
+    {
+      "id": 72,
+      "name": "UI mo /crm/deadline-settings (Cai dat deadline) — render + CRM API khong 5xx"
+    },
+    {
+      "id": 73,
+      "name": "UI mo /crm/auto-project-config (Auto project config) — render + CRM API khong 5xx"
+    },
+    {
+      "id": 74,
+      "name": "UI mo /crm/blocked-phones (SDT chan) — render + CRM API khong 5xx"
+    },
+    {
+      "id": 75,
+      "name": "UI mo /crm/assignments (Assignments) — render + CRM API khong 5xx"
+    },
+    {
+      "id": 76,
+      "name": "UI mo /crm/categories (Categories) — render + CRM API khong 5xx"
+    },
+    {
+      "id": 77,
+      "name": "UI LeadDetail /crm/leads/:id — tabs dữ liệu từ lifecycle/tasks/comments"
+    },
+    {
+      "id": 78,
+      "name": "UI LeadDetail: network có /tasks hoặc /comments hoặc /detail"
+    },
+    {
+      "id": 79,
+      "name": "UI Dashboard: gọi live-version hoặc dashboard hoặc kanban API"
+    },
+    {
+      "id": 80,
+      "name": "UI Quotations: gọi /api/crm/quotations"
+    },
+    {
+      "id": 81,
+      "name": "UI Orders: gọi /api/crm/orders"
+    },
+    {
+      "id": 82,
+      "name": "UI Invoices: gọi /api/crm/invoices"
+    },
+    {
+      "id": 83,
+      "name": "UI Customers: gọi /api/crm/customers"
+    },
+    {
+      "id": 84,
+      "name": "UI Tasks overview: gọi /tasks/overview hoặc /task-templates"
+    },
+    {
+      "id": 85,
+      "name": "UI Sources settings: gọi /sources hoặc /lead-types"
+    },
+    {
+      "id": 86,
+      "name": "UI Pipeline settings: gọi /pipelines"
+    },
+    {
+      "id": 87,
+      "name": "UI Follow-up care: gọi followup-care hoặc care-marks"
+    },
+    {
+      "id": 88,
+      "name": "UI Org overview report: gọi /reports/org-overview"
+    },
+    {
+      "id": 89,
+      "name": "UI Staff lead-deal report: không 5xx"
+    },
+    {
+      "id": 90,
+      "name": "UI điều hướng dashboard → quotations không crash"
+    },
+    {
+      "id": 91,
+      "name": "UI điều hướng quotations → lead detail → back dashboard"
+    },
+    {
+      "id": 92,
+      "name": "UI console: không ReferenceError helpersBundle trên dashboard"
+    },
+    {
+      "id": 93,
+      "name": "UI console: không lỗi IIFE/split trên LeadDetail"
+    },
+    {
+      "id": 94,
+      "name": "UI network: /leads/picker nếu mở (không 404 :id)"
+    },
+    {
+      "id": 95,
+      "name": "UI network: /leads/scan-duplicates từ origin frontend"
+    },
+    {
+      "id": 96,
+      "name": "UI Products page + products-list API"
+    },
+    {
+      "id": 97,
+      "name": "UI Task templates page không 5xx"
+    },
+    {
+      "id": 98,
+      "name": "UI Auto-project-config page không 5xx"
+    },
+    {
+      "id": 99,
+      "name": "UI SPA: reload LeadDetail vẫn OK (client router + API)"
+    },
+    {
+      "id": 100,
+      "name": "Đóng browser + tổng kết UI runner sạch"
+    }
+  ]
+}

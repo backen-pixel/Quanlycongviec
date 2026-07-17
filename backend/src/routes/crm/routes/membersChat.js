@@ -1,5 +1,5 @@
 /**
- * CRM routes: taskTemplates
+ * CRM routes: membersChat
  * Auto-extracted — handlers close over shared helpers via IIFE.
  */
 const { Router } = require('express');
@@ -8,537 +8,514 @@ const helpers = require('../shared/helpersBundle');
 const r = Router();
 
 (function (ALLOWED_DEADLINE_FIELDS, CRM_COMMENT_ALLOWED_REACTION_EMOJI, CRM_LEAD_KANBAN_LITE_SELECT, CRM_LEAD_LIST_SELECT, CRM_LEAD_LIST_SELECT_BASE, CRM_LEAD_LIST_SELECT_EXTRA, CRM_LEAD_REGION_EMBED, CRM_NEW_LEAD_MAX_AGE_MS, CRM_TASK_SELECT, CRM_UUID_RE, CUSTOMERS_IN_CHUNK, CUSTOMERS_OVERVIEW_NO_MATCH_ID, DEAL_PRE_CONTRACT_SLUGS_STAFF, DEAL_REPORT_BUCKET_VALUES, DEFAULT_CHECKLISTS, DEFAULT_DEADLINE_BUCKETS, DEFAULT_PIPELINE_STAGE_SLA_DAYS, FOLLOWUP_TIME_BUCKETS, PDFDocument, QUOTATIONS_SOURCE_EXCEL_COLS, Router, SCAN_DUP_LITE_SELECT, STAFF_LEAD_DEAL_REPORT_ROLES, SURVEY_EVENT_SELECT, SURVEY_EVENT_TYPES, XLSX, ZALO_APP_SETTING_KEY, _crmLeadSelectMigrationChecked, _crmLeadTypeColorAvailable, _vcPipelineStageAvailable, addPhoneToAutoLeadBlocklist, aggregateCrmCommentReactions, aggregateOrgReportRows, appendFulfillmentChildTasksForMasterDeal, applyAllActiveWorkshopTemplatesForArea, applyAssigneesToInsertedCrmTasks, applyCrmLeadRegionFilterToQuery, applyCrmTaskTemplatesToCompanyRegions, applyCustomerIdInFilter, applyCustomersOverviewSearch, applyDefaultWorkshopTemplatesForNewProject, applyLeadOrCustomerSalesFilter, applyProductionTemplateToFulfillmentLead, applyProductionTemplatesOnPipelineEnter, applyStageIdFilterToQuery, applyWorkshopTemplateToProject, artifactNamePrefix, assertCanFlagLead, assertCategoryFitsSource, assertCrmAssigneeUserMatchesLeadCompany, assertCrmEmployeeDeleteAllowed, assertCrmStageAdvanceAllowed, assertDealCrmManualStageChange, assertDealResponsible, assertDivisionAllowedForCompany, assertLeadDocumentOwner, assertLeadReadableByRegionScope, assertRegionBelongsToCompany, assertUserCanAssignCrmRegion, assignProductionCompanyDealResponsibility, attachAssigneesToCrmTasks, attachAssignmentIdsToCrmTasks, attachCrmNextOpenTaskDeadline, attachLeadNewFlagForList, attachLeadReplyParents, attachLeadUserFlagsForList, auth, autoCreateProjectFromWonDeal, autoFlowFns, autoGenCrmTasksForNewLead, buildAssignmentNotificationInsert, buildChecklistLeadDocumentRow, buildCrmDashboardMinimalKpis, buildCrmLeadsRpcFilterParams, buildCustomersOverviewSummary, buildDealTemplateData, buildDefaultDeadlineConfig, buildFirstStageIdByPipeline, buildPipelineStagesMap, buildProcessedCommercialItems, buildQuotedStageOrderByPipeline, buildScanDuplicateGroups, buildWonStageOrderByPipeline, canUserViewDocByAllowlist, chatUpload, chunkArray, classifyDealStageForStaffReport, commentsTableMissing, companyRegionExtraColumnsMissing, companyRegionGeoColumnsMissing, computeCrmDashboardLightStats, computeCrmLiveVersionMs, computeCustomersOverviewSummary, computeIsNewLeadForUser, computeOrgOverviewReportData, computeStaffLeadDealReportData, computeStaffPipelineDetailPayload, countOpenOverdueCrmTasksForLeadIds, createCrmAssignment, createCrmLeadTask, createFulfillmentChildDeal, createNotif, createNotification, createProjectFromLead, crmExecutorFieldsFromTemplateItem, crmLeadCommentAttachmentsColumnMissing, crmLeadCommentReadReceiptsTableMissing, crmLeadRowVisibleToRequestUser, crmListUsesLegacyFilters, crmNoteActivityUpload, crmReportAsOfMs, crmReportCreatedAtFromIso, crmReportCreatedAtToIso, crmReportDayKeyVn, crmRouteErrorText, crmTaskDeadlineModuleKey, crmTaskMeetsCompletionRequirements, crmTaskMeetsRequiredFileTypes, crmTaskRequiresCompletionEvidence, crmTemplateMatchesLeadType, deadlineToDateOnlyIso, defaultCompanyInfo, defaultKpiLedgerMonthStartYmd, deleteCrmLeadTask, deleteMirroredAssignmentFileForTaskAttachment, duplicateLeadIdsFromLiteRows, ecosystemModuleKeyForCrmDeadline, effectivePipelineStageSlaDays, emitCrmBadgeUpdateForProject, emitCrmDashboardChanged, emitCrmTaskChanged, emptyStaffLeadDealAgg, endOfCalendarDayAfterEntered, enforceCommercialDocCompanyOnWrite, enforceQuotaForRequest, ensureDealLeadDocumentsForModuleTransition, ensureDefaultCrmPipelineForCompany, ensureMissingCrmTasksForLead, ensureMissingCrmTasksForPipelineStage, ensureMissingSxTasksForLead, excelUpload, executeLeadMerge, executeZaloDealStageNotify, fetchActivityCustomerIds, fetchAllLeadsForSlaWatchlist, fetchAssignmentForTask, fetchCrmCommentReactionsAggregate, fetchCrmLeadCommentNotifyUserIds, fetchCrmLeadDetailRow, fetchCrmLeadWithPipelineBadges, fetchCrmLeadsByIdsOrdered, fetchCrmLeadsForDashboardBatched, fetchCrmLeadsForOrgReportBatched, fetchCrmLeadsForUserDetailBatched, fetchCrmLeadsLiteForDuplicateScan, fetchCrmLeadsPageViaRpc, fetchCrmPipelineZaloSlice, fetchCrmSurveyEventsChunk, fetchCrmSurveyVisitsForOrgReport, fetchLeadCommentAudienceMembers, fetchLeadCommentAudienceMembersForRead, fetchLeadIdsForCrmRegion, fetchLeadMentionMembers, fetchOrgActivityFeed, fetchPipelineWithStagesById, fetchScopedCrmBundles, fillTemplateDataFromStructure, filterCrmTasksForLeadType, filterUserIdsForCrmLeadScopedNotification, findChecklistItem, followupDismissExpiresAt, fontBold, fontRegular, formatMoney, formatVNDPdf, formatVnPhoneLocal0From84, fs, generateDocPdf, generateFlowTasks, generateStepTasks, getAppSettingValue, getCompanyInfo, getCompanyRegionsList, getCrmLeadListSelect, getCrmLeadRegionConstraint, getCrmLeadTypesList, getCrmLeadsListLegacy, getCrmSourceCategoriesList, getCrmSourcesList, getDefaultCrmAttachmentShare, getDefaultDealZaloTemplateStructure, getDefaultLeadDocumentShareForDeal, getDefaultPipelineIdForCompany, getLeadDocumentFieldsFromCrmTask, getNotifyTargets, getOverdueFollowUps, getPipelineIdForCompanyRegion, getPipelineZaloSlice, getPipelinesList, getProjectCRMSummary, getStagesByPipelineId, getStaleLeads, getZaloNotifySettings, hydrateCrmLeadsByIdsWithStaff, hydrateCrmLeadsRpcPage, hydrateScanDuplicateLeads, insertQuotationRow, invalidateAppSettingKey, invalidatePipelinesAndStages, invalidateRegions, invalidateSources, invalidateTenantUsageCache, invokeCrmLeadsStageCountsRpc, isAdminLike, isAllowedLeadCommentAttachmentUrl, isChotSanXuatCrmTaskTitle, isCrmCompanyAdminUser, isCrmDealAssigneeLocked, isCrmLeadTypeColorMissingError, isCrmModuleAdmin, isCrmPipelinesTableMissingError, isCrmRegionAdminUser, isCrmSystemAdminUser, isDealStageHoanThanhForZalo, isDefaultAssigneeIdsColumnError, isExecutorColumnError, isPlatformAdmin, isPostgresUniqueViolation, isQuotationsSourceExcelColumnMissingError, isSxRelationshipError, isSystemAdmin, isUuidString, isValidDealZaloTemplateStructure, isVcRelationshipError, isVptCompanyCommercialDocViewer, lastNominatimGeocodeAt, leadChatFilesMulter, leadChatJsonOrFiles, listQuotationExcelSheets, loadCrmTaskAttachmentCountMap, loadOrgReportStageMap, loadZaloLinkedLeadIdSet, logDealActivityComment, logDealDeadlineChangeComment, logDealStageChangeComment, logKanbanDeadlineUnifiedHistory, logLeadCommentMentionActivity, logProjectFileActivity, mapCustomerOverviewRow, mapLeadDisplayPhone, mapQuotationItemsToOrderRows, maskCustomerPhoneDisplay, maskZaloAccessTokenPreview, maybeSendZaloOnDealStageEnter, mergeCrmStageDefaultAssigneeIntoUpdates, mergeCustomerIntoTarget, misaService, multer, nextCode, nextTbProjectCode, normalizeCrmActivityAttachments, normalizeCrmLeadCommentAttachments, normalizeCrmStageDefaultAssigneeUserId, normalizeCrmUserRole, normalizeLeadSeenByKeys, normalizeOrgReportSurveyVisitRow, normalizePipelineStageSlaDaysForDb, normalizePipelineStagesList, normalizeRegionIdList, normalizeTemplateChecklistForCrmTask, normalizeTemplateItemAssigneeIds, normalizeTimestamp, normalizeTitleFold, normalizeVnPhoneTo84, notifyDealCommentMentions, notifyDealCommentParticipants, notifyMultiple, notifyMultipleShared, notifyNewCrmAssignmentAssignees, notifyProductionDocumentUploaded, onLeadWon, onOrderConfirmed, onProjectCompleted, onQuotationAccepted, orgReportAttachFirstStageRates, orgReportBumpFirstStageMetrics, orgReportBumpMetrics, orgReportBumpOpenOverdue, orgReportBumpReceptionMetrics, orgReportCancelRatePct, orgReportClosedWonDealCount, orgReportClosedWonValue, orgReportCompareSummary, orgReportConversionRate, orgReportDayKey, orgReportDealCloseValueRatePct, orgReportDealCountsExpected, orgReportDealIsClosedWon, orgReportDealIsCompleted, orgReportDealIsQuotedOrAfter, orgReportDealProbability, orgReportDealSplitBuckets, orgReportExtendedDealMetrics, orgReportFirstStageOnTimeRatePct, orgReportFirstStageOverdueRatePct, orgReportIsReceptionOverdue, orgReportIsSlaOverdue, orgReportKpiPeriodStart, orgReportNumEst, orgReportOverdueRatePct, orgReportOwnerId, orgReportPctDelta, orgReportPreviousPeriod, orgReportQuoteValueCloseRatePct, orgReportQuoteWinRatePct, orgReportReceptionOverdueRatePct, orgReportReceptionSlaMinutes, orgReportStageIsClosed, orgReportStageIsLostOrCancelled, orgReportTotalDealCount, parseChecklist, parseCrmLeadsPageRpc, parseCrmReportDateRange, parseCrmStageCountsNumericMap, parseCrmStageCountsRpc, parseExcelMoneyFromMappedColumn, parseLeadIdUuidList, parseLeadIdsCsvQuery, parseLeadIdsFromBody, parseLeadSeenByRaw, parseQuotationExcelBuffer, parseStageIdsFromQuery, parseUuidArrayJsonb, parseVietnameseMeasure, parseVietnameseMoney, path, persistAssignmentNotification, pgCrmDuplicateLeadIds, pickDealZaloTemplatePayload, pipeOrgOverviewReportPdf, pipeStaffLeadDealSummaryPdf, pipeStaffPipelineDetailPdf, pipelineHasExplicitCompleted, pipelineHasExplicitExpected, pipelineHasExplicitWon, plannerTableMissing, postCrmStageDefaultAssigneeComment, primaryTemplateItemAssigneeId, rcInvalidateTags, reactionsTableMissing, redactCrmTaskNotesForViewer, regionGeocodeInflight, repairCrmDealPipelineDisplay, requireUserCompanyId, requireUserCompanyIdResolved, resolveAssignmentIdForTask, resolveCanonicalCrmLeadId, resolveCommercialDocListCompanyScope, resolveCrmBundleTemplateScope, resolveCrmLeadsDeadlinesMap, resolveCrmLeadsKanbanLite, resolveCrmLeadsMergedQuery, resolveCrmLeadsSkipDeadline, resolveCrmLedgerNetByLeadIdsPayload, resolveCrmReportScope, resolveCrmTaskWriteLeadId, resolveExecutorCompanyId, resolveKanbanStagesForCompany, resolveLeadCommentMentionIds, resolveProductionCompanyForDealStage, resolveProductionHandoverResponsibleUserId, resolveReopenTargetStageId, resolveRpcRegionIdsForCrmList, resolveTenantIdForQuota, resolveZaloDealTemplateId, respondIfCrmPipelinesTableMissing, responseCache, restoreCrmTaskChecklistFromWorkshopTemplate, resyncCrmPipelineTasksForLead, sanitizeIsoDateQueryParam, scheduleRegionGeocoding, scopedAdminCompanyId, scopedCrmCompanyIdForWrite, sendZaloTemplateMessage, setLeadFlag, shallowMergeTemplateData, skipSxWorkQuickComplete, snapshotOrderRowFromQuotation, stripCrmAssigneeFromWonStageUpdates, stripCrmLeadTypeColorFromSelect, stripQuotationsSourceExcelFields, sumCrmKpiLedgerNetByLeadIds, sumCrmKpiLedgerNetByUserForOrgReport, sumCrmKpiLedgerNetByUserIds, sumCrmKpiLedgerNetByUserIdsInDateRange, supabase, syncAllTaskArtifactsToAssignment, syncChecklistItemNotes, syncCrmLeadSxPipelineFromProject, syncQuotationDepositToDealAndProject, syncSxKanbanFromCrmProductionStage, syncTaskAttachmentToAssignment, templateItemAssigneePatch, toCrmTaskChecklist, unifyCrmLeadResponsibleFields, updateCrmLeadTask, updateQuotationRow, upsertZaloNotifySettings, userCanAccessCrmLeadAsParticipant, userCanAccessCrmLeadViaVisibility, userCanAssignAnyCrmRegion, userCanBypassCrmDeleteRestriction, userHasSeenLeadInSeenBy, userIsAdmin, userIsCrmCompanyOrRegionAdmin, userMayAccessQuotationRow, userSeesAllCrmDeals, userSeesAllCrmDealsForScope, userSeesAllCrmLeads, userSeesAllCrmLeadsForScope, uuidQueryOrNull, validateProductionCompanyId) {
-r.get('/tasks/overview', async (req, res) => {
+r.get('/leads/:id/members', async (req, res) => {
   try {
-    let effectiveCompanyId = null;
-    if (!isSystemAdmin(req.user)) {
-      const cid = requireUserCompanyId(req, res);
-      if (!cid) return;
-      effectiveCompanyId = cid;
-    } else {
-      const q = req.query.company_id;
-      effectiveCompanyId = q && String(q).trim() ? String(q).trim() : null;
+    try {
+      const { ensureLeadMembersFromProjectStaff } = require('../../../helpers/productionWorkshopTypeStaff');
+      await ensureLeadMembersFromProjectStaff(req.params.id);
+    } catch (syncErr) {
+      console.warn('[crm/leads/members] sync production staff:', syncErr.message);
     }
+    const merged = await fetchLeadMentionMembers(supabase, req.params.id);
+    res.json(merged);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
-    let leadIds = null;
-    if (effectiveCompanyId) {
-      const { data: leads, error: leErr } = await supabase.from('crm_leads').select('id').eq('company_id', effectiveCompanyId);
-      if (leErr) throw leErr;
-      leadIds = (leads || []).map((x) => x.id);
-      if (!leadIds.length) return res.json([]);
-    }
+r.post('/leads/:id/members', async (req, res) => {
+  try {
+    const { user_id, role = 'member', members: batchMembers } = req.body;
 
-    const { status, assignee_id, stage_slug, type } = req.query;
-    const taskScope = String(req.query?.task_scope || 'all').toLowerCase();
-    let q = supabase.from('crm_tasks')
-      .select('*, lead:crm_leads(id,title,code,type,project_id,customer:customers(id,full_name)), assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)')
-      .order('deadline', { ascending: true, nullsFirst: false });
-    if (leadIds?.length) q = q.in('lead_id', leadIds);
-    if (status) q = q.eq('status', status);
-    if (assignee_id) q = q.eq('assignee_id', assignee_id);
-    if (stage_slug) q = q.eq('stage_slug', stage_slug);
-    const { data, error } = await q;
-    if (error) throw error;
-    let rows = data || [];
-    if (type) rows = rows.filter((t) => (t.lead?.type || '') === type);
-    if (taskScope === 'production') {
-      rows = rows.filter((t) => String(t.stage_slug || '').startsWith('sx_') || t.production_pipeline_stage_id);
-    } else if (taskScope === 'logistics') {
-      const vcRows = rows.filter((t) => {
-        const slug = String(t.stage_slug || '');
-        if (slug.startsWith('vc_')) return true;
-        const meta = t.metadata && typeof t.metadata === 'object' ? t.metadata : {};
-        return meta.workshop_module === 'logistics' || meta.workshop_area === 'logistics';
+    // Batch mode: members: [{ user_id, role }]
+    const toAdd = batchMembers?.length
+      ? batchMembers.map(m => ({ user_id: m.user_id, role: m.role || 'member' }))
+      : user_id ? [{ user_id, role }] : [];
+
+    if (!toAdd.length) return res.status(400).json({ error: 'Thiếu user_id hoặc members[]' });
+
+    const { data: adder } = await supabase.from('users').select('full_name').eq('id', req.user.userId).single();
+    const { data: leadInfo } = await supabase.from('crm_leads').select('code,title').eq('id', req.params.id).single();
+    const leadLabel = leadInfo ? `${leadInfo.code || ''} ${leadInfo.title || ''}`.trim() : 'nhóm trao đổi';
+    const results = [];
+
+    for (const item of toAdd) {
+      const { data, error } = await supabase.from('lead_members')
+        .upsert({ lead_id: req.params.id, user_id: item.user_id, role: item.role, added_by: req.user.userId }, { onConflict: 'lead_id,user_id' })
+        .select('*, user:users!lead_members_user_id_fkey(id, full_name, email, avatar, role)')
+        .single();
+      if (error) { console.error('Add member error:', error); continue; }
+      results.push(data);
+
+      const memberName = data?.user?.full_name || 'Thành viên';
+      const ROLE_LABELS = { member: 'Tham gia', supervisor: 'Giám sát', responsible: 'Chịu trách nhiệm', viewer: 'Xem' };
+      const roleLabel = ROLE_LABELS[item.role] || item.role;
+
+      // System message
+      await supabase.from('lead_messages').insert({
+        lead_id: req.params.id, user_id: req.user.userId,
+        content: `${adder?.full_name || 'Admin'} đã thêm ${memberName} (${roleLabel}) vào nhóm`,
+        message_type: 'system', is_system: true,
       });
-      // Chưa có task vc_* → ẩn sx_* (khớp tab VC)
-      rows = vcRows.length ? vcRows : rows.filter((t) => !String(t.stage_slug || '').startsWith('sx_'));
-    } else if (taskScope === 'crm') {
-      rows = rows.filter((t) => !String(t.stage_slug || '').startsWith('sx_'));
+
+      // Notify added user
+      await createNotification(req, item.user_id, 'lead_member_added', '👥 Bạn được thêm vào nhóm',
+        `${adder?.full_name || 'Admin'} đã thêm bạn vào ${leadLabel} với vai trò ${roleLabel}`, 'lead', req.params.id,
+        { nav_tab: 'team' });
     }
-    res.json(rows);
+
+    // Notify existing members
+    const { data: otherMembers } = await supabase.from('lead_members')
+      .select('user_id').eq('lead_id', req.params.id)
+      .not('user_id', 'in', `(${toAdd.map(m => m.user_id).join(',')})`)
+      .neq('user_id', req.user.userId);
+    if (otherMembers?.length) {
+      const names = results.map(r => r?.user?.full_name).filter(Boolean).join(', ');
+      await notifyMultipleShared(req, otherMembers.map(m => m.user_id), 'lead_member_added',
+        '👥 Thành viên mới', `${adder?.full_name || 'Admin'} đã thêm ${names} vào ${leadLabel}`,
+        'lead', req.params.id, { nav_tab: 'team' });
+    }
+
+    // Emit realtime
+    const io = req.app.get('io');
+    if (io) io.to(`lead:${req.params.id}`).emit('lead:member_added', results);
+
+    res.json(results.length === 1 ? results[0] : results);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-r.get('/tasks/planner', async (req, res) => {
+r.get('/leads/:id/assignments', async (req, res) => {
   try {
-    let effectiveCompanyId = null;
-    if (!isSystemAdmin(req.user)) {
-      const cid = requireUserCompanyId(req, res);
-      if (!cid) return;
-      effectiveCompanyId = cid;
-    } else {
-      const q = req.query.company_id;
-      effectiveCompanyId = q && String(q).trim() ? String(q).trim() : null;
-    }
-    let leadIds = null;
-    if (effectiveCompanyId) {
-      const { data: leads, error: leErr } = await supabase.from('crm_leads').select('id').eq('company_id', effectiveCompanyId);
-      if (leErr) throw leErr;
-      leadIds = (leads || []).map((x) => x.id);
-      if (!leadIds.length) return res.json({ assignees: [], unassigned: [] });
-    }
-
-    let tq = supabase.from('crm_tasks')
-      .select('*, lead:crm_leads(id,title,code,type), assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar)')
-      .in('status', ['pending', 'in_progress'])
-      .order('deadline', { ascending: true, nullsFirst: false });
-    if (leadIds?.length) tq = tq.in('lead_id', leadIds);
-    const { data, error } = await tq;
-    if (error) throw error;
-
-    // Group by assignee
-    const byAssignee = {};
-    const unassigned = [];
-    (data || []).forEach(t => {
-      if (t.assignee_id) {
-        if (!byAssignee[t.assignee_id]) byAssignee[t.assignee_id] = { user: t.assignee, tasks: [] };
-        byAssignee[t.assignee_id].tasks.push(t);
-      } else {
-        unassigned.push(t);
-      }
-    });
-    res.json({ assignees: Object.values(byAssignee), unassigned });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-r.get('/task-templates', async (req, res) => {
-  try {
-    // Tham số:
-    //   ?pipeline_id=<uuid>  → trả về cả bộ mẫu thuộc pipeline đó (pipeline_stage_id IN stages của pipeline)
-    //                          VÀ bộ mẫu Global (pipeline_stage_id IS NULL).
-    //   ?company_id=<uuid>   → mọi bộ mẫu pipeline của công ty (qua stages thuộc pipelines công ty).
-    //   ?scope=global        → chỉ trả về bộ mẫu Global (pipeline_stage_id IS NULL).
-    //   ?scope=pipeline      → chỉ trả về bộ mẫu thuộc pipeline (pipeline_stage_id NOT NULL).
-    //   (mặc định)           → trả về TẤT CẢ (giữ tương thích frontend cũ).
-    const pipelineId = req.query.pipeline_id ? String(req.query.pipeline_id).trim() : null;
-    const companyId = req.query.company_id ? String(req.query.company_id).trim() : null;
-    const scope = String(req.query.scope || '').trim();
-
     let q = supabase
-      .from('crm_task_templates')
-      .select('*, items:crm_task_template_items(*), pipeline_stage:crm_pipeline_stages!crm_task_templates_pipeline_stage_id_fkey(id, name, color, icon, order_index, pipeline_id, pipeline_type)')
-      .eq('is_active', true)
-      .order('order_index');
-
-    if (scope === 'global') {
-      q = q.is('pipeline_stage_id', null);
-    } else if (scope === 'pipeline') {
-      q = q.not('pipeline_stage_id', 'is', null);
+      .from('crm_assignments')
+      .select(`
+        id, company_id, column_id, lead_id, title, description,
+        assignee_id, created_by_id, priority, status, deadline,
+        position, created_at, updated_at, completed_at,
+        assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar),
+        created_by:users!crm_assignments_created_by_id_fkey(id, full_name, email, avatar),
+        lead:crm_leads(id, code, title, type)
+      `)
+      .eq('lead_id', req.params.id)
+      .order('created_at', { ascending: false });
+    let { data, error } = await q;
+    if (error && /lead_id/.test(error.message || '')) {
+      return res.json({ assignments: [] });
     }
-
-    if (pipelineId) {
-      const { data: stages, error: stErr } = await supabase
-        .from('crm_pipeline_stages')
-        .select('id')
-        .eq('pipeline_id', pipelineId);
-      if (stErr) throw stErr;
-      const stageIds = (stages || []).map((s) => s.id);
-      if (stageIds.length === 0) {
-        // Pipeline không có stage nào → chỉ trả global
-        q = q.is('pipeline_stage_id', null);
-      } else if (scope === 'pipeline') {
-        q = q.in('pipeline_stage_id', stageIds);
-      } else {
-        const orClause = `pipeline_stage_id.in.(${stageIds.join(',')}),pipeline_stage_id.is.null`;
-        q = q.or(orClause);
-      }
-    } else if (companyId) {
-      const { data: companyPipelines, error: plErr } = await supabase
-        .from('crm_pipelines')
-        .select('id')
-        .eq('company_id', companyId);
-      if (plErr) throw plErr;
-      const pipelineIds = (companyPipelines || []).map((p) => p.id);
-      if (!pipelineIds.length) {
-        if (scope === 'pipeline') return res.json([]);
-        q = q.is('pipeline_stage_id', null);
-      } else {
-        const { data: stages, error: stErr } = await supabase
-          .from('crm_pipeline_stages')
-          .select('id')
-          .in('pipeline_id', pipelineIds);
-        if (stErr) throw stErr;
-        const stageIds = (stages || []).map((s) => s.id);
-        if (!stageIds.length) {
-          if (scope === 'pipeline') return res.json([]);
-          q = q.is('pipeline_stage_id', null);
-        } else {
-          q = q.in('pipeline_stage_id', stageIds);
-        }
-      }
-    }
-
-    const { data, error } = await q;
-    if (error) {
-      // Fallback nếu chưa chạy migration 214 (column pipeline_stage_id chưa có)
-      if (String(error.message || '').includes('pipeline_stage_id')) {
-        const { data: fbData, error: fbErr } = await supabase
-          .from('crm_task_templates')
-          .select('*, items:crm_task_template_items(*)')
-          .eq('is_active', true)
-          .order('order_index');
-        if (fbErr) throw fbErr;
-        return res.json(fbData || []);
-      }
-      throw error;
-    }
-    res.json(data || []);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-r.post('/task-templates', async (req, res) => {
-  try {
-    const b = req.body;
-    // Auto-detect pipeline_type from stage_slug
-    let autoType = b.stage_slug?.startsWith('deal_') ? 'deal' : (b.pipeline_type || 'both');
-    // Slug hiệu lực: ưu tiên slug user gửi; nếu gắn vào pipeline_stage_id thì derive từ stage thật.
-    // Mục đích: tương thích với DB chưa chạy migration 215 (stage_slug NOT NULL).
-    let effectiveStageSlug = b.stage_slug || null;
-
-    if (b.pipeline_stage_id) {
-      const { data: st } = await supabase
-        .from('crm_pipeline_stages')
-        .select('pipeline_type, name, id')
-        .eq('id', b.pipeline_stage_id)
-        .maybeSingle();
-      if (st?.pipeline_type) autoType = st.pipeline_type;
-      if (!effectiveStageSlug && st) {
-        // Tạo 1 slug ngắn cho legacy column. Prefix tránh trùng với slug global cũ.
-        const baseName = (st.name || '').toString().toLowerCase().normalize('NFD')
-          .replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-        const shortId = String(st.id || '').slice(0, 8);
-        effectiveStageSlug = `pl_${baseName || 'stage'}_${shortId}`.slice(0, 60);
-      }
-    }
-    // Nếu vẫn không có slug (rất hiếm: không gắn pipeline_stage_id, cũng không gửi slug)
-    if (!effectiveStageSlug) effectiveStageSlug = 'pl_unassigned';
-
-    const insertBody = {
-      name: b.name,
-      stage_slug: effectiveStageSlug,
-      description: b.description || null,
-      is_default: b.is_default || false,
-      order_index: b.order_index || 0,
-      pipeline_type: autoType,
-    };
-    if (b.pipeline_stage_id) insertBody.pipeline_stage_id = b.pipeline_stage_id;
-
-    const { data, error } = await supabase.from('crm_task_templates').insert(insertBody).select().single();
     if (error) throw error;
-    res.status(201).json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-r.put('/task-templates/set-default-bundle', async (req, res) => {
-  try {
-    const pipelineId = req.body.pipeline_id && String(req.body.pipeline_id).trim();
-    const leadTypeRaw = String(req.body.lead_type || 'both').toLowerCase();
-    const leadType = ['lead', 'deal', 'both'].includes(leadTypeRaw) ? leadTypeRaw : 'both';
-    const markDefault = req.body.is_default !== false;
-    const templateIds = Array.isArray(req.body.template_ids)
-      ? req.body.template_ids.map(String).filter(Boolean)
-      : null;
-
-    if (!pipelineId) return res.status(400).json({ error: 'Thiếu pipeline_id' });
-
-    const { data: pipelineRow, error: plErr } = await supabase
-      .from('crm_pipelines')
-      .select('id, company_id')
-      .eq('id', pipelineId)
-      .maybeSingle();
-    if (plErr) throw plErr;
-    if (!pipelineRow) return res.status(400).json({ error: 'Pipeline không tồn tại' });
-
-    const sac = scopedAdminCompanyId(req);
-    if (!isCrmSystemAdminUser(req.user) && !isAdminLike(req.user)) {
-      if (sac && pipelineRow.company_id && String(sac) !== String(pipelineRow.company_id)) {
-        return res.status(403).json({ error: 'Pipeline không thuộc công ty của bạn' });
-      }
+    const list = data || [];
+    if (list.length) {
+      const ids = list.map((x) => x.id);
+      const { data: rows } = await supabase
+        .from('crm_assignment_assignees')
+        .select('assignment_id, user_id, user:users(id, full_name, email, avatar)')
+        .in('assignment_id', ids);
+      const byId = new Map();
+      (rows || []).forEach((r) => {
+        if (!byId.has(r.assignment_id)) byId.set(r.assignment_id, []);
+        if (r.user) byId.get(r.assignment_id).push(r.user);
+      });
+      list.forEach((a) => {
+        a.assignees = byId.get(a.id) || (a.assignee ? [a.assignee] : []);
+      });
     }
-
-    const { stageIds, templateIds: scopeTemplateIds } = await resolveCrmBundleTemplateScope(
-      supabase,
-      pipelineId,
-      leadType,
-    );
-    if (!stageIds.length) {
-      return res.status(400).json({ error: 'Pipeline không có giai đoạn phù hợp loại Lead/Deal đã chọn' });
-    }
-
-    // Chỉ bỏ mặc định các bộ thuộc ĐÚNG pipeline + loại Lead/Deal này — không đụng pipeline khác.
-    if (scopeTemplateIds.length) {
-      const { error: clearErr } = await supabase
-        .from('crm_task_templates')
-        .update({ is_default: false })
-        .in('id', scopeTemplateIds);
-      if (clearErr) throw clearErr;
-    }
-
-    if (!markDefault) {
-      return res.json({ ok: true, updated: 0, is_default: false, pipeline_id: pipelineId, lead_type: leadType });
-    }
-
-    let ids = templateIds;
-    if (!ids?.length) {
-      ids = scopeTemplateIds;
-    } else {
-      const allowed = new Set(scopeTemplateIds.map(String));
-      ids = ids.filter((id) => allowed.has(String(id)));
-    }
-
-    if (!ids.length) {
-      return res.status(400).json({ error: 'Không có bộ mẫu nào để đặt mặc định cho pipeline này' });
-    }
-
-    const { data: updated, error: updErr } = await supabase
-      .from('crm_task_templates')
-      .update({ is_default: true })
-      .in('id', ids)
-      .select('id, name, is_default, order_index, pipeline_stage_id');
-    if (updErr) throw updErr;
-
-    res.json({
-      ok: true,
-      updated: updated?.length || 0,
-      is_default: true,
-      pipeline_id: pipelineId,
-      lead_type: leadType,
-      templates: (updated || []).sort((a, b) => (a.order_index || 0) - (b.order_index || 0)),
-    });
+    res.json({ assignments: list });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-r.put('/task-templates/:id', async (req, res) => {
+r.post('/leads/:id/assignments', async (req, res) => {
   try {
-    const update = {};
-    ['name', 'stage_slug', 'description', 'is_default', 'is_active', 'order_index', 'pipeline_type', 'pipeline_stage_id'].forEach(f => {
-      if (req.body[f] !== undefined) update[f] = req.body[f];
-    });
-
-    if (update.is_default === true) {
-      const { data: cur } = await supabase
-        .from('crm_task_templates')
-        .select('pipeline_stage_id, pipeline_type')
-        .eq('id', req.params.id)
-        .maybeSingle();
-      const stageId = update.pipeline_stage_id || cur?.pipeline_stage_id || null;
-      const tplType = update.pipeline_type || cur?.pipeline_type || null;
-      if (stageId) {
-        const { data: siblings } = await supabase
-          .from('crm_task_templates')
-          .select('id, pipeline_type')
-          .eq('pipeline_stage_id', stageId)
-          .neq('id', req.params.id);
-        const toClear = (siblings || [])
-          .filter((row) => {
-            if (!tplType) return true;
-            const pt = String(row.pipeline_type || '').toLowerCase();
-            const tt = String(tplType || '').toLowerCase();
-            if (!pt || pt === 'both') return true;
-            if (!tt || tt === 'both') return true;
-            return pt === tt;
-          })
-          .map((row) => row.id);
-        if (toClear.length) {
-          await supabase
-            .from('crm_task_templates')
-            .update({ is_default: false })
-            .in('id', toClear);
-        }
-      }
-    }
-
-    // Nếu user chuyển sang gắn pipeline_stage_id và muốn clear stage_slug → derive slug từ stage thật
-    // (tránh vi phạm NOT NULL khi DB chưa chạy migration 215).
-    if (update.pipeline_stage_id && (update.stage_slug === null || update.stage_slug === '')) {
-      const { data: st } = await supabase
-        .from('crm_pipeline_stages')
-        .select('id, name')
-        .eq('id', update.pipeline_stage_id)
-        .maybeSingle();
-      if (st) {
-        const baseName = (st.name || '').toString().toLowerCase().normalize('NFD')
-          .replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-        const shortId = String(st.id || '').slice(0, 8);
-        update.stage_slug = `pl_${baseName || 'stage'}_${shortId}`.slice(0, 60);
-      } else {
-        delete update.stage_slug; // không update gì để giữ slug cũ
-      }
-    } else if (update.stage_slug === null || update.stage_slug === '') {
-      // Không cho phép set NULL trực tiếp (vi phạm constraint), bỏ field này
-      delete update.stage_slug;
-    }
-
-    const { data, error } = await supabase.from('crm_task_templates').update(update).eq('id', req.params.id).select().single();
-    if (error) throw error;
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-r.delete('/task-templates/:id', async (req, res) => {
-  try {
-    await supabase.from('crm_task_template_items').delete().eq('template_id', req.params.id);
-    const { error } = await supabase.from('crm_task_templates').delete().eq('id', req.params.id);
-    if (error) throw error;
-    res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-r.post('/task-templates/apply-to-company-regions', async (req, res) => {
-  try {
+    const leadId = req.params.id;
     const b = req.body || {};
-    const companyId = b.company_id && String(b.company_id).trim();
-    if (!companyId) return res.status(400).json({ error: 'Thiếu company_id' });
-
-    const sac = scopedAdminCompanyId(req);
-    if (!isCrmSystemAdminUser(req.user) && !isAdminLike(req.user)) {
-      if (!sac || String(sac) !== String(companyId)) {
-        return res.status(403).json({ error: 'Chỉ admin công ty hoặc admin hệ thống mới áp dụng bộ mẫu cho toàn công ty' });
-      }
+    const rawIds = Array.isArray(b.assignee_ids) ? b.assignee_ids.filter(Boolean) : [];
+    if (!rawIds.length) {
+      return res.status(400).json({ error: 'Chọn ít nhất một thành viên để giao việc' });
     }
 
-    let pipelineId = b.pipeline_id && String(b.pipeline_id).trim();
-    if (pipelineId) {
-      const { data: pl } = await supabase
-        .from('crm_pipelines')
-        .select('id, company_id')
-        .eq('id', pipelineId)
-        .maybeSingle();
-      if (!pl) return res.status(400).json({ error: 'Pipeline không tồn tại' });
-      if (pl.company_id && String(pl.company_id) !== String(companyId)) {
-        return res.status(400).json({ error: 'Pipeline không thuộc công ty đã chọn' });
-      }
-    } else {
-      pipelineId = await getDefaultPipelineIdForCompany(companyId);
-    }
-    if (!pipelineId) {
-      return res.status(400).json({ error: 'Công ty chưa có pipeline CRM (chọn pipeline hoặc tạo pipeline mặc định)' });
+    const { data: memRows } = await supabase
+      .from('lead_members')
+      .select('user_id')
+      .eq('lead_id', leadId);
+    const memberSet = new Set((memRows || []).map((m) => String(m.user_id)));
+    const invalid = rawIds.filter((id) => !memberSet.has(String(id)));
+    if (invalid.length) {
+      return res.status(400).json({
+        error: 'Chỉ gán nhiệm vụ cho nhân viên đang tham gia lead/deal này',
+        invalid_user_ids: invalid,
+      });
     }
 
-    const regionIds = normalizeRegionIdList(b.region_ids);
-    if (regionIds.length) {
-      for (const rid of regionIds) {
-        const chk = await assertRegionBelongsToCompany(supabase, companyId, rid);
-        if (!chk.ok) return res.status(400).json({ error: chk.error || 'Khu vực không hợp lệ' });
-      }
-    }
+    const { data: leadInfo } = await supabase
+      .from('crm_leads')
+      .select('code, title, type')
+      .eq('id', leadId)
+      .maybeSingle();
+    const leadLabel = leadInfo
+      ? `${leadInfo.code || ''} ${leadInfo.title || ''}`.trim()
+      : 'lead/deal';
 
-    const leadTypeRaw = String(b.lead_type || 'both').toLowerCase();
-    const leadType = ['lead', 'deal', 'both'].includes(leadTypeRaw) ? leadTypeRaw : 'both';
-
-    const result = await applyCrmTaskTemplatesToCompanyRegions({
-      companyId,
-      pipelineId,
-      leadType,
-      regionIds: regionIds.length ? regionIds : null,
-      userId: req.user?.userId,
+    const result = await createCrmAssignment(req, {
+      title: b.title,
+      description: b.description,
+      assignee_ids: rawIds,
+      column_id: b.column_id,
+      company_id: b.company_id,
+      priority: b.priority,
+      status: b.status,
+      deadline: b.deadline,
+      lead_id: leadId,
     });
+    if (result.error) return res.status(result.status || 500).json({ error: result.error });
 
-    if (!result.ok) {
-      return res.status(400).json(result);
+    const data = result.data?.assignment;
+    const assigneeIds = result.data?.assignee_ids || [];
+    const leadSuffix = leadLabel ? ` (${leadLabel})` : '';
+    for (const uid of assigneeIds) {
+      if (String(uid) === String(req.user.userId)) continue;
+      const notif = await persistAssignmentNotification(supabase, uid, {
+        type: 'crm_assignment_assigned',
+        title: '📋 Bạn vừa được giao nhiệm vụ CRM',
+        message: `"${data.title}"${leadSuffix}${data.deadline ? ' — hạn ' + new Date(data.deadline).toLocaleString('vi-VN') : ''}`,
+        assignmentId: data.id,
+        metadata: { lead_id: leadId, nav_path: '/crm/assignments', open: data.id },
+      });
+      try {
+        const io = req.app.get('io');
+        if (io) io.to(`user:${uid}`).emit('notification', notif || buildAssignmentNotificationInsert(uid, {
+          type: 'crm_assignment_assigned',
+          title: '📋 Bạn vừa được giao nhiệm vụ CRM',
+          message: `"${data.title}"${leadSuffix}`,
+          assignmentId: data.id,
+        }));
+      } catch { /* ignore */ }
+    }
+    if (assigneeIds.length) emitNotifyBadge(req.app, 'assignments');
+
+    if (assigneeIds.length) {
+      const { data: asnRows } = await supabase
+        .from('crm_assignment_assignees')
+        .select('user:users(id, full_name, email, avatar)')
+        .eq('assignment_id', data.id);
+      data.assignees = (asnRows || []).map((r) => r.user).filter(Boolean);
     }
 
-    res.json(result);
+    void rcInvalidateTags(['crm:assignments']);
+    res.status(result.status).json({ assignment: data });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-r.post('/task-templates/:tplId/items', async (req, res) => {
+r.delete('/leads/:id/members/:userId', async (req, res) => {
   try {
-    const b = req.body;
-    const { data: existing } = await supabase.from('crm_task_template_items').select('order_index').eq('template_id', req.params.tplId).order('order_index', { ascending: false }).limit(1);
-    const nextOrder = (existing?.[0]?.order_index || 0) + 1;
-    let { data, error } = await supabase.from('crm_task_template_items').insert({
-      template_id: req.params.tplId,
-      title: b.title, description: b.description || null,
-      priority: b.priority || 'medium', deadline_days: b.deadline_days || 0,
-      order_index: nextOrder, checklist: b.checklist || [],
-      executor_company_id: b.executor_company_id || null,
-      completion_requires_file_or_note: !!b.completion_requires_file_or_note
-        || (Array.isArray(b.required_evidence_file_types) && b.required_evidence_file_types.length > 0),
-      required_evidence_file_types: Array.isArray(b.required_evidence_file_types) ? b.required_evidence_file_types : [],
-      completion_requires_customer_note: !!b.completion_requires_customer_note,
-      completion_requires_customer_contact: !!b.completion_requires_customer_contact,
-      requires_quick_verdict: !!b.requires_quick_verdict,
-      blocks_stage_advance: !!b.blocks_stage_advance,
-      show_excel_quotation_upload: !!b.show_excel_quotation_upload,
-      ...templateItemAssigneePatch(b),
-    }).select().single();
-    if (error && /required_evidence_file_types|requires_quick_verdict/.test(error.message || '')) {
-      return res.status(503).json({
-        error: 'Database chưa có cột minh chứng (migration 315/316). Chạy database/315_task_required_evidence_file_types.sql trên Supabase rồi thử lại.',
-        code: 'db_migration_required_evidence',
-      });
-    }
-    if (error && isExecutorColumnError(error)) {
-      return res.status(503).json({
-        error: 'Database chưa có cột giao việc chéo (migration 323). Chạy database/323_crm_task_template_executor_company.sql trên Supabase rồi thử lại.',
-        code: 'db_migration_executor_company',
-      });
-    }
-    if (error && isDefaultAssigneeIdsColumnError(error)) {
-      return res.status(503).json({
-        error: 'Database chưa có cột default_assignee_ids (migration 331). Chạy database/331_template_item_default_assignee_ids.sql trên Supabase rồi thử lại.',
-        code: 'db_migration_default_assignee_ids',
-      });
-    }
-    if (error) throw error;
-    res.status(201).json(data);
+    // Lấy tên người bị xóa
+    const { data: removedUser } = await supabase.from('users').select('full_name').eq('id', req.params.userId).single();
+    
+    await supabase.from('lead_members')
+      .delete().eq('lead_id', req.params.id).eq('user_id', req.params.userId);
+
+    // Tin nhắn hệ thống
+    const { data: remover } = await supabase.from('users').select('full_name').eq('id', req.user.userId).single();
+    await supabase.from('lead_messages').insert({
+      lead_id: req.params.id, user_id: req.user.userId,
+      content: `${remover?.full_name || 'Admin'} đã xóa ${removedUser?.full_name || 'thành viên'} khỏi nhóm`,
+      message_type: 'system', is_system: true,
+    });
+
+    const io = req.app.get('io');
+    if (io) io.to(`lead:${req.params.id}`).emit('lead:member_removed', { user_id: req.params.userId });
+
+    res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-r.put('/task-templates/:tplId/items/:itemId', async (req, res) => {
+r.get('/leads/:id/chat', async (req, res) => {
   try {
-    const update = {};
-    ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments', 'default_shared_to_project', 'default_allowed_share_modules', 'executor_company_id', 'completion_requires_file_or_note', 'required_evidence_file_types', 'completion_requires_customer_note', 'completion_requires_customer_contact', 'requires_quick_verdict', 'blocks_stage_advance', 'show_excel_quotation_upload'].forEach(f => {
-      if (req.body[f] !== undefined) update[f] = req.body[f];
-    });
-    Object.assign(update, templateItemAssigneePatch(req.body));
-    if (req.body.executor_company_id === '' || req.body.executor_company_id === null) {
-      update.executor_company_id = null;
-    }
-    if (req.body.default_shared_to_project === false) {
-      update.default_allowed_share_modules = null;
-    }
-    let { data, error } = await supabase.from('crm_task_template_items')
-      .update(update).eq('id', req.params.itemId).select().single();
-    if (error && /default_shared_to_project|default_allowed_share_modules/.test(error.message || '')) {
-      return res.status(503).json({
-        error: 'Database chưa có cột chia sẻ mẫu — chạy database/409_crm_template_item_share_defaults.sql trên Supabase rồi thử lại.',
-        code: 'db_migration_template_share_defaults',
+    const { data } = await supabase.from('lead_messages')
+      .select('*, user:users(id, full_name, avatar)')
+      .eq('lead_id', req.params.id)
+      .order('created_at', { ascending: true })
+      .limit(500);
+    const msgIds = (data || []).map(m => m.id);
+    let reactionsMap = {};
+    if (msgIds.length) {
+      const { data: reactions } = await supabase.from('lead_message_reactions')
+        .select('*, user:users(id, full_name)').in('message_id', msgIds);
+      (reactions || []).forEach(r => {
+        if (!reactionsMap[r.message_id]) reactionsMap[r.message_id] = [];
+        reactionsMap[r.message_id].push(r);
       });
     }
-    if (error && /required_evidence_file_types|completion_requires_file_or_note|requires_quick_verdict/.test(error.message || '')) {
-      return res.status(503).json({
-        error: 'Database chưa có cột minh chứng (migration 315/316). Chạy database/315_task_required_evidence_file_types.sql trên Supabase rồi thử lại.',
-        code: 'db_migration_required_evidence',
-      });
+    const withReply = await attachLeadReplyParents(data || []);
+    const result = withReply.map(m => ({ ...m, reactions: reactionsMap[m.id] || [] }));
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.post('/leads/:id/chat', leadChatJsonOrFiles, async (req, res) => {
+  try {
+    const uid = req.user?.userId ?? req.user?.id;
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
+    const { content, reply_to } = req.body;
+    const files = req.files || [];
+    const attachments = files.map(f => ({
+      name: f.originalname,
+      url: `/uploads/lead-chat/${f.filename}`,
+      type: f.mimetype,
+      size: f.size
+    }));
+
+    if (!content && !attachments.length) return res.status(400).json({ error: 'Thiếu nội dung' });
+
+    const { data: inserted, error } = await supabase.from('lead_messages').insert({
+      lead_id: req.params.id,
+      user_id: String(uid),
+      content: content || '',
+      attachments: attachments.length ? attachments : null,
+      reply_to: reply_to || null,
+    }).select('id').single();
+
+    if (error) return res.status(400).json({ error: error.message });
+
+    const { data: basic } = await supabase.from('lead_messages')
+      .select('*, user:users!lead_messages_user_id_fkey(id, full_name, avatar)')
+      .eq('id', inserted.id)
+      .single();
+    const [hydrated] = await attachLeadReplyParents([basic]);
+    const data = hydrated || basic;
+
+    const io = req.app.get('io');
+    if (io) io.to(`lead:${req.params.id}`).emit('lead:chat', data);
+
+    // Notify các thành viên khác (text message) — bật bubble + status-bar trên mobile
+    try {
+      const { data: chatMembers } = await supabase.from('lead_members')
+        .select('user_id')
+        .eq('lead_id', req.params.id)
+        .neq('user_id', String(uid));
+      if (chatMembers?.length) {
+        const senderName = data?.user?.full_name || 'Ai đó';
+        const senderAvatar = data?.user?.avatar || '';
+        const preview = (content || '').toString().slice(0, 200) || '[Tin nhắn]';
+        let leadName = '';
+        try {
+          const { data: leadRow } = await supabase.from('leads')
+            .select('name')
+            .eq('id', req.params.id)
+            .single();
+          leadName = leadRow?.name || '';
+        } catch { /* ignore */ }
+        await notifyMultipleShared(
+          req,
+          chatMembers.map(m => m.user_id),
+          'lead_chat',
+          `Tin nhắn mới: ${senderName}`,
+          preview,
+          'lead',
+          req.params.id,
+          {
+            nav_tab: 'chat',
+            sender_name: senderName,
+            sender_avatar: senderAvatar,
+            group_name: leadName,
+            bubble_key: `lead:${req.params.id}`,
+            bubble_wake: true,
+            message_id: data?.id ? String(data.id) : '',
+            sender_id: String(uid),
+            message_type: 'text',
+          },
+        );
+      }
+    } catch (notifyErr) {
+      console.warn('[lead-chat-notify]', notifyErr?.message || notifyErr);
     }
-    if (error && isExecutorColumnError(error)) {
-      return res.status(503).json({
-        error: 'Database chưa có cột giao việc chéo (migration 323). Chạy database/323_crm_task_template_executor_company.sql trên Supabase rồi thử lại.',
-        code: 'db_migration_executor_company',
-      });
-    }
-    if (error && isDefaultAssigneeIdsColumnError(error)) {
-      return res.status(503).json({
-        error: 'Database chưa có cột default_assignee_ids (migration 331). Chạy database/331_template_item_default_assignee_ids.sql trên Supabase rồi thử lại.',
-        code: 'db_migration_default_assignee_ids',
-      });
-    }
-    if (error) throw error;
+
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-r.delete('/task-templates/:tplId/items/:itemId', async (req, res) => {
+r.post('/leads/:id/chat/drive', async (req, res) => {
   try {
-    const { error } = await supabase.from('crm_task_template_items').delete().eq('id', req.params.itemId);
-    if (error) throw error;
-    res.json({ success: true });
+    const uid = req.user?.userId ?? req.user?.id;
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
+    const { file_ids, content, reply_to } = req.body || {};
+    const { buildDriveChatAttachments } = require('../../../helpers/driveChatAttachments');
+    const attachments = await buildDriveChatAttachments(req.user, file_ids);
+    if (!attachments.length) return res.status(403).json({ error: 'Không có quyền với file Drive đã chọn' });
+    if (!content && !attachments.length) return res.status(400).json({ error: 'Thiếu nội dung' });
+
+    const { data: inserted, error } = await supabase.from('lead_messages').insert({
+      lead_id: req.params.id,
+      user_id: String(uid),
+      content: content || '',
+      message_type: 'file',
+      attachments,
+      reply_to: reply_to || null,
+    }).select('id').single();
+    if (error) return res.status(400).json({ error: error.message });
+
+    const { data: basic } = await supabase.from('lead_messages')
+      .select('*, user:users!lead_messages_user_id_fkey(id, full_name, avatar)')
+      .eq('id', inserted.id)
+      .single();
+    const [hydrated] = await attachLeadReplyParents([basic]);
+    const data = hydrated || basic;
+
+    const io = req.app.get('io');
+    if (io) io.to(`lead:${req.params.id}`).emit('lead:chat', data);
+
+    try {
+      const { data: chatMembers } = await supabase.from('lead_members')
+        .select('user_id')
+        .eq('lead_id', req.params.id)
+        .neq('user_id', String(uid));
+      if (chatMembers?.length) {
+        const senderName = data?.user?.full_name || 'Ai đó';
+        const senderAvatar = data?.user?.avatar || '';
+        const preview = attachments.length === 1
+          ? `[☁️ ${attachments[0].name || 'File Drive'}]`
+          : `[☁️ ${attachments.length} file Drive]`;
+        let leadName = '';
+        try {
+          const { data: leadRow } = await supabase.from('leads')
+            .select('name')
+            .eq('id', req.params.id)
+            .single();
+          leadName = leadRow?.name || '';
+        } catch { /* ignore */ }
+        await notifyMultipleShared(
+          req,
+          chatMembers.map((m) => m.user_id),
+          'lead_chat',
+          `Tin nhắn mới: ${senderName}`,
+          preview,
+          'lead',
+          req.params.id,
+          {
+            nav_tab: 'chat',
+            sender_name: senderName,
+            sender_avatar: senderAvatar,
+            group_name: leadName,
+            bubble_key: `lead:${req.params.id}`,
+            bubble_wake: true,
+            message_id: data?.id ? String(data.id) : '',
+            sender_id: String(uid),
+            message_type: 'file',
+          },
+        );
+      }
+    } catch (notifyErr) {
+      console.warn('[lead-chat-drive-notify]', notifyErr?.message || notifyErr);
+    }
+
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.post('/leads/:id/chat/upload', chatUpload.single('file'), async (req, res) => {
+  try {
+    const uid = req.user?.userId ?? req.user?.id;
+    if (!uid) return res.status(401).json({ error: 'Token không có user id' });
+    if (!req.file) return res.status(400).json({ error: 'Không có file' });
+    const mime = req.file.mimetype;
+    let message_type = 'file';
+    if (mime.startsWith('image/')) message_type = 'image';
+    else if (mime.startsWith('video/')) message_type = 'video';
+    else if (mime.startsWith('audio/')) message_type = 'audio';
+
+    const attachment_url = `/uploads/lead-chat/${req.file.filename}`;
+    const { data: inserted, error } = await supabase.from('lead_messages').insert({
+      lead_id: req.params.id, user_id: String(uid),
+      content: req.body.content || '', message_type,
+      attachment_url, attachment_name: req.file.originalname,
+      attachment_size: req.file.size, attachment_mime: mime,
+      reply_to: req.body.reply_to || null,
+    }).select('id').single();
+    if (error) return res.status(400).json({ error: error.message });
+
+    const { data: basic } = await supabase.from('lead_messages')
+      .select('*, user:users(id, full_name, avatar)')
+      .eq('id', inserted.id)
+      .single();
+    const [hydrated] = await attachLeadReplyParents([basic]);
+    const data = hydrated || basic;
+
+    const io = req.app.get('io');
+    if (io) io.to(`lead:${req.params.id}`).emit('lead:chat', data);
+
+    // Notify các thành viên khác (upload file cũng cần thông báo)
+    const { data: uploadMembers } = await supabase.from('lead_members')
+      .select('user_id')
+      .eq('lead_id', req.params.id)
+      .neq('user_id', String(uid));
+    if (uploadMembers?.length) {
+      const senderName = data?.user?.full_name || 'Ai đó';
+      const senderAvatar = data?.user?.avatar || '';
+      const preview = message_type === 'image' ? '[🖼️ Hình ảnh]' : message_type === 'video' ? '[🎬 Video]' : message_type === 'audio' ? '[🎙️ Ghi âm]' : `[📎 ${req.file.originalname || 'Tệp'}]`;
+      let leadName = '';
+      try {
+        const { data: leadRow } = await supabase.from('leads').select('name').eq('id', req.params.id).single();
+        leadName = leadRow?.name || '';
+      } catch { /* ignore */ }
+      await notifyMultipleShared(req, uploadMembers.map(m => m.user_id), 'lead_chat',
+        `Tin nhắn mới: ${senderName}`, preview, 'lead', req.params.id, {
+          nav_tab: 'chat',
+          sender_name: senderName,
+          sender_avatar: senderAvatar,
+          group_name: leadName,
+          bubble_key: `lead:${req.params.id}`,
+          bubble_wake: true,
+          message_id: data?.id ? String(data.id) : '',
+          sender_id: String(uid),
+          message_type: message_type,
+        });
+    }
+
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.post('/leads/:id/chat/:msgId/react', async (req, res) => {
+  try {
+    const { emoji } = req.body;
+    if (!emoji) return res.status(400).json({ error: 'Thiếu emoji' });
+    // Toggle: nếu đã có thì xóa, chưa có thì thêm
+    const { data: existing } = await supabase.from('lead_message_reactions')
+      .select('id').eq('message_id', req.params.msgId).eq('user_id', req.user.userId).eq('emoji', emoji).single();
+    if (existing) {
+      await supabase.from('lead_message_reactions').delete().eq('id', existing.id);
+    } else {
+      await supabase.from('lead_message_reactions').insert({
+        message_id: req.params.msgId, user_id: req.user.userId, emoji,
+      });
+    }
+    // Reload reactions cho message này
+    const { data: reactions } = await supabase.from('lead_message_reactions')
+      .select('*, user:users(id, full_name)').eq('message_id', req.params.msgId);
+    const io = req.app.get('io');
+    if (io) io.to(`lead:${req.params.id}`).emit('lead:reactions', { message_id: req.params.msgId, reactions });
+    res.json({ reactions });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.put('/leads/:id/chat/:msgId/pin', async (req, res) => {
+  try {
+    const { data: msg } = await supabase.from('lead_messages').select('is_pinned').eq('id', req.params.msgId).single();
+    const newPin = !msg?.is_pinned;
+    await supabase.from('lead_messages').update({ is_pinned: newPin }).eq('id', req.params.msgId);
+    const io = req.app.get('io');
+    if (io) io.to(`lead:${req.params.id}`).emit('lead:pin', { message_id: req.params.msgId, is_pinned: newPin });
+    res.json({ is_pinned: newPin });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.get('/leads/:id/chat/pinned', async (req, res) => {
+  try {
+    const { data } = await supabase.from('lead_messages')
+      .select('*, user:users(id, full_name, avatar)')
+      .eq('lead_id', req.params.id).eq('is_pinned', true)
+      .order('created_at', { ascending: false });
+    res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 }).call(null, helpers["ALLOWED_DEADLINE_FIELDS"], helpers["CRM_COMMENT_ALLOWED_REACTION_EMOJI"], helpers["CRM_LEAD_KANBAN_LITE_SELECT"], helpers["CRM_LEAD_LIST_SELECT"], helpers["CRM_LEAD_LIST_SELECT_BASE"], helpers["CRM_LEAD_LIST_SELECT_EXTRA"], helpers["CRM_LEAD_REGION_EMBED"], helpers["CRM_NEW_LEAD_MAX_AGE_MS"], helpers["CRM_TASK_SELECT"], helpers["CRM_UUID_RE"], helpers["CUSTOMERS_IN_CHUNK"], helpers["CUSTOMERS_OVERVIEW_NO_MATCH_ID"], helpers["DEAL_PRE_CONTRACT_SLUGS_STAFF"], helpers["DEAL_REPORT_BUCKET_VALUES"], helpers["DEFAULT_CHECKLISTS"], helpers["DEFAULT_DEADLINE_BUCKETS"], helpers["DEFAULT_PIPELINE_STAGE_SLA_DAYS"], helpers["FOLLOWUP_TIME_BUCKETS"], helpers["PDFDocument"], helpers["QUOTATIONS_SOURCE_EXCEL_COLS"], helpers["Router"], helpers["SCAN_DUP_LITE_SELECT"], helpers["STAFF_LEAD_DEAL_REPORT_ROLES"], helpers["SURVEY_EVENT_SELECT"], helpers["SURVEY_EVENT_TYPES"], helpers["XLSX"], helpers["ZALO_APP_SETTING_KEY"], helpers["_crmLeadSelectMigrationChecked"], helpers["_crmLeadTypeColorAvailable"], helpers["_vcPipelineStageAvailable"], helpers["addPhoneToAutoLeadBlocklist"], helpers["aggregateCrmCommentReactions"], helpers["aggregateOrgReportRows"], helpers["appendFulfillmentChildTasksForMasterDeal"], helpers["applyAllActiveWorkshopTemplatesForArea"], helpers["applyAssigneesToInsertedCrmTasks"], helpers["applyCrmLeadRegionFilterToQuery"], helpers["applyCrmTaskTemplatesToCompanyRegions"], helpers["applyCustomerIdInFilter"], helpers["applyCustomersOverviewSearch"], helpers["applyDefaultWorkshopTemplatesForNewProject"], helpers["applyLeadOrCustomerSalesFilter"], helpers["applyProductionTemplateToFulfillmentLead"], helpers["applyProductionTemplatesOnPipelineEnter"], helpers["applyStageIdFilterToQuery"], helpers["applyWorkshopTemplateToProject"], helpers["artifactNamePrefix"], helpers["assertCanFlagLead"], helpers["assertCategoryFitsSource"], helpers["assertCrmAssigneeUserMatchesLeadCompany"], helpers["assertCrmEmployeeDeleteAllowed"], helpers["assertCrmStageAdvanceAllowed"], helpers["assertDealCrmManualStageChange"], helpers["assertDealResponsible"], helpers["assertDivisionAllowedForCompany"], helpers["assertLeadDocumentOwner"], helpers["assertLeadReadableByRegionScope"], helpers["assertRegionBelongsToCompany"], helpers["assertUserCanAssignCrmRegion"], helpers["assignProductionCompanyDealResponsibility"], helpers["attachAssigneesToCrmTasks"], helpers["attachAssignmentIdsToCrmTasks"], helpers["attachCrmNextOpenTaskDeadline"], helpers["attachLeadNewFlagForList"], helpers["attachLeadReplyParents"], helpers["attachLeadUserFlagsForList"], helpers["auth"], helpers["autoCreateProjectFromWonDeal"], helpers["autoFlowFns"], helpers["autoGenCrmTasksForNewLead"], helpers["buildAssignmentNotificationInsert"], helpers["buildChecklistLeadDocumentRow"], helpers["buildCrmDashboardMinimalKpis"], helpers["buildCrmLeadsRpcFilterParams"], helpers["buildCustomersOverviewSummary"], helpers["buildDealTemplateData"], helpers["buildDefaultDeadlineConfig"], helpers["buildFirstStageIdByPipeline"], helpers["buildPipelineStagesMap"], helpers["buildProcessedCommercialItems"], helpers["buildQuotedStageOrderByPipeline"], helpers["buildScanDuplicateGroups"], helpers["buildWonStageOrderByPipeline"], helpers["canUserViewDocByAllowlist"], helpers["chatUpload"], helpers["chunkArray"], helpers["classifyDealStageForStaffReport"], helpers["commentsTableMissing"], helpers["companyRegionExtraColumnsMissing"], helpers["companyRegionGeoColumnsMissing"], helpers["computeCrmDashboardLightStats"], helpers["computeCrmLiveVersionMs"], helpers["computeCustomersOverviewSummary"], helpers["computeIsNewLeadForUser"], helpers["computeOrgOverviewReportData"], helpers["computeStaffLeadDealReportData"], helpers["computeStaffPipelineDetailPayload"], helpers["countOpenOverdueCrmTasksForLeadIds"], helpers["createCrmAssignment"], helpers["createCrmLeadTask"], helpers["createFulfillmentChildDeal"], helpers["createNotif"], helpers["createNotification"], helpers["createProjectFromLead"], helpers["crmExecutorFieldsFromTemplateItem"], helpers["crmLeadCommentAttachmentsColumnMissing"], helpers["crmLeadCommentReadReceiptsTableMissing"], helpers["crmLeadRowVisibleToRequestUser"], helpers["crmListUsesLegacyFilters"], helpers["crmNoteActivityUpload"], helpers["crmReportAsOfMs"], helpers["crmReportCreatedAtFromIso"], helpers["crmReportCreatedAtToIso"], helpers["crmReportDayKeyVn"], helpers["crmRouteErrorText"], helpers["crmTaskDeadlineModuleKey"], helpers["crmTaskMeetsCompletionRequirements"], helpers["crmTaskMeetsRequiredFileTypes"], helpers["crmTaskRequiresCompletionEvidence"], helpers["crmTemplateMatchesLeadType"], helpers["deadlineToDateOnlyIso"], helpers["defaultCompanyInfo"], helpers["defaultKpiLedgerMonthStartYmd"], helpers["deleteCrmLeadTask"], helpers["deleteMirroredAssignmentFileForTaskAttachment"], helpers["duplicateLeadIdsFromLiteRows"], helpers["ecosystemModuleKeyForCrmDeadline"], helpers["effectivePipelineStageSlaDays"], helpers["emitCrmBadgeUpdateForProject"], helpers["emitCrmDashboardChanged"], helpers["emitCrmTaskChanged"], helpers["emptyStaffLeadDealAgg"], helpers["endOfCalendarDayAfterEntered"], helpers["enforceCommercialDocCompanyOnWrite"], helpers["enforceQuotaForRequest"], helpers["ensureDealLeadDocumentsForModuleTransition"], helpers["ensureDefaultCrmPipelineForCompany"], helpers["ensureMissingCrmTasksForLead"], helpers["ensureMissingCrmTasksForPipelineStage"], helpers["ensureMissingSxTasksForLead"], helpers["excelUpload"], helpers["executeLeadMerge"], helpers["executeZaloDealStageNotify"], helpers["fetchActivityCustomerIds"], helpers["fetchAllLeadsForSlaWatchlist"], helpers["fetchAssignmentForTask"], helpers["fetchCrmCommentReactionsAggregate"], helpers["fetchCrmLeadCommentNotifyUserIds"], helpers["fetchCrmLeadDetailRow"], helpers["fetchCrmLeadWithPipelineBadges"], helpers["fetchCrmLeadsByIdsOrdered"], helpers["fetchCrmLeadsForDashboardBatched"], helpers["fetchCrmLeadsForOrgReportBatched"], helpers["fetchCrmLeadsForUserDetailBatched"], helpers["fetchCrmLeadsLiteForDuplicateScan"], helpers["fetchCrmLeadsPageViaRpc"], helpers["fetchCrmPipelineZaloSlice"], helpers["fetchCrmSurveyEventsChunk"], helpers["fetchCrmSurveyVisitsForOrgReport"], helpers["fetchLeadCommentAudienceMembers"], helpers["fetchLeadCommentAudienceMembersForRead"], helpers["fetchLeadIdsForCrmRegion"], helpers["fetchLeadMentionMembers"], helpers["fetchOrgActivityFeed"], helpers["fetchPipelineWithStagesById"], helpers["fetchScopedCrmBundles"], helpers["fillTemplateDataFromStructure"], helpers["filterCrmTasksForLeadType"], helpers["filterUserIdsForCrmLeadScopedNotification"], helpers["findChecklistItem"], helpers["followupDismissExpiresAt"], helpers["fontBold"], helpers["fontRegular"], helpers["formatMoney"], helpers["formatVNDPdf"], helpers["formatVnPhoneLocal0From84"], helpers["fs"], helpers["generateDocPdf"], helpers["generateFlowTasks"], helpers["generateStepTasks"], helpers["getAppSettingValue"], helpers["getCompanyInfo"], helpers["getCompanyRegionsList"], helpers["getCrmLeadListSelect"], helpers["getCrmLeadRegionConstraint"], helpers["getCrmLeadTypesList"], helpers["getCrmLeadsListLegacy"], helpers["getCrmSourceCategoriesList"], helpers["getCrmSourcesList"], helpers["getDefaultCrmAttachmentShare"], helpers["getDefaultDealZaloTemplateStructure"], helpers["getDefaultLeadDocumentShareForDeal"], helpers["getDefaultPipelineIdForCompany"], helpers["getLeadDocumentFieldsFromCrmTask"], helpers["getNotifyTargets"], helpers["getOverdueFollowUps"], helpers["getPipelineIdForCompanyRegion"], helpers["getPipelineZaloSlice"], helpers["getPipelinesList"], helpers["getProjectCRMSummary"], helpers["getStagesByPipelineId"], helpers["getStaleLeads"], helpers["getZaloNotifySettings"], helpers["hydrateCrmLeadsByIdsWithStaff"], helpers["hydrateCrmLeadsRpcPage"], helpers["hydrateScanDuplicateLeads"], helpers["insertQuotationRow"], helpers["invalidateAppSettingKey"], helpers["invalidatePipelinesAndStages"], helpers["invalidateRegions"], helpers["invalidateSources"], helpers["invalidateTenantUsageCache"], helpers["invokeCrmLeadsStageCountsRpc"], helpers["isAdminLike"], helpers["isAllowedLeadCommentAttachmentUrl"], helpers["isChotSanXuatCrmTaskTitle"], helpers["isCrmCompanyAdminUser"], helpers["isCrmDealAssigneeLocked"], helpers["isCrmLeadTypeColorMissingError"], helpers["isCrmModuleAdmin"], helpers["isCrmPipelinesTableMissingError"], helpers["isCrmRegionAdminUser"], helpers["isCrmSystemAdminUser"], helpers["isDealStageHoanThanhForZalo"], helpers["isDefaultAssigneeIdsColumnError"], helpers["isExecutorColumnError"], helpers["isPlatformAdmin"], helpers["isPostgresUniqueViolation"], helpers["isQuotationsSourceExcelColumnMissingError"], helpers["isSxRelationshipError"], helpers["isSystemAdmin"], helpers["isUuidString"], helpers["isValidDealZaloTemplateStructure"], helpers["isVcRelationshipError"], helpers["isVptCompanyCommercialDocViewer"], helpers["lastNominatimGeocodeAt"], helpers["leadChatFilesMulter"], helpers["leadChatJsonOrFiles"], helpers["listQuotationExcelSheets"], helpers["loadCrmTaskAttachmentCountMap"], helpers["loadOrgReportStageMap"], helpers["loadZaloLinkedLeadIdSet"], helpers["logDealActivityComment"], helpers["logDealDeadlineChangeComment"], helpers["logDealStageChangeComment"], helpers["logKanbanDeadlineUnifiedHistory"], helpers["logLeadCommentMentionActivity"], helpers["logProjectFileActivity"], helpers["mapCustomerOverviewRow"], helpers["mapLeadDisplayPhone"], helpers["mapQuotationItemsToOrderRows"], helpers["maskCustomerPhoneDisplay"], helpers["maskZaloAccessTokenPreview"], helpers["maybeSendZaloOnDealStageEnter"], helpers["mergeCrmStageDefaultAssigneeIntoUpdates"], helpers["mergeCustomerIntoTarget"], helpers["misaService"], helpers["multer"], helpers["nextCode"], helpers["nextTbProjectCode"], helpers["normalizeCrmActivityAttachments"], helpers["normalizeCrmLeadCommentAttachments"], helpers["normalizeCrmStageDefaultAssigneeUserId"], helpers["normalizeCrmUserRole"], helpers["normalizeLeadSeenByKeys"], helpers["normalizeOrgReportSurveyVisitRow"], helpers["normalizePipelineStageSlaDaysForDb"], helpers["normalizePipelineStagesList"], helpers["normalizeRegionIdList"], helpers["normalizeTemplateChecklistForCrmTask"], helpers["normalizeTemplateItemAssigneeIds"], helpers["normalizeTimestamp"], helpers["normalizeTitleFold"], helpers["normalizeVnPhoneTo84"], helpers["notifyDealCommentMentions"], helpers["notifyDealCommentParticipants"], helpers["notifyMultiple"], helpers["notifyMultipleShared"], helpers["notifyNewCrmAssignmentAssignees"], helpers["notifyProductionDocumentUploaded"], helpers["onLeadWon"], helpers["onOrderConfirmed"], helpers["onProjectCompleted"], helpers["onQuotationAccepted"], helpers["orgReportAttachFirstStageRates"], helpers["orgReportBumpFirstStageMetrics"], helpers["orgReportBumpMetrics"], helpers["orgReportBumpOpenOverdue"], helpers["orgReportBumpReceptionMetrics"], helpers["orgReportCancelRatePct"], helpers["orgReportClosedWonDealCount"], helpers["orgReportClosedWonValue"], helpers["orgReportCompareSummary"], helpers["orgReportConversionRate"], helpers["orgReportDayKey"], helpers["orgReportDealCloseValueRatePct"], helpers["orgReportDealCountsExpected"], helpers["orgReportDealIsClosedWon"], helpers["orgReportDealIsCompleted"], helpers["orgReportDealIsQuotedOrAfter"], helpers["orgReportDealProbability"], helpers["orgReportDealSplitBuckets"], helpers["orgReportExtendedDealMetrics"], helpers["orgReportFirstStageOnTimeRatePct"], helpers["orgReportFirstStageOverdueRatePct"], helpers["orgReportIsReceptionOverdue"], helpers["orgReportIsSlaOverdue"], helpers["orgReportKpiPeriodStart"], helpers["orgReportNumEst"], helpers["orgReportOverdueRatePct"], helpers["orgReportOwnerId"], helpers["orgReportPctDelta"], helpers["orgReportPreviousPeriod"], helpers["orgReportQuoteValueCloseRatePct"], helpers["orgReportQuoteWinRatePct"], helpers["orgReportReceptionOverdueRatePct"], helpers["orgReportReceptionSlaMinutes"], helpers["orgReportStageIsClosed"], helpers["orgReportStageIsLostOrCancelled"], helpers["orgReportTotalDealCount"], helpers["parseChecklist"], helpers["parseCrmLeadsPageRpc"], helpers["parseCrmReportDateRange"], helpers["parseCrmStageCountsNumericMap"], helpers["parseCrmStageCountsRpc"], helpers["parseExcelMoneyFromMappedColumn"], helpers["parseLeadIdUuidList"], helpers["parseLeadIdsCsvQuery"], helpers["parseLeadIdsFromBody"], helpers["parseLeadSeenByRaw"], helpers["parseQuotationExcelBuffer"], helpers["parseStageIdsFromQuery"], helpers["parseUuidArrayJsonb"], helpers["parseVietnameseMeasure"], helpers["parseVietnameseMoney"], helpers["path"], helpers["persistAssignmentNotification"], helpers["pgCrmDuplicateLeadIds"], helpers["pickDealZaloTemplatePayload"], helpers["pipeOrgOverviewReportPdf"], helpers["pipeStaffLeadDealSummaryPdf"], helpers["pipeStaffPipelineDetailPdf"], helpers["pipelineHasExplicitCompleted"], helpers["pipelineHasExplicitExpected"], helpers["pipelineHasExplicitWon"], helpers["plannerTableMissing"], helpers["postCrmStageDefaultAssigneeComment"], helpers["primaryTemplateItemAssigneeId"], helpers["rcInvalidateTags"], helpers["reactionsTableMissing"], helpers["redactCrmTaskNotesForViewer"], helpers["regionGeocodeInflight"], helpers["repairCrmDealPipelineDisplay"], helpers["requireUserCompanyId"], helpers["requireUserCompanyIdResolved"], helpers["resolveAssignmentIdForTask"], helpers["resolveCanonicalCrmLeadId"], helpers["resolveCommercialDocListCompanyScope"], helpers["resolveCrmBundleTemplateScope"], helpers["resolveCrmLeadsDeadlinesMap"], helpers["resolveCrmLeadsKanbanLite"], helpers["resolveCrmLeadsMergedQuery"], helpers["resolveCrmLeadsSkipDeadline"], helpers["resolveCrmLedgerNetByLeadIdsPayload"], helpers["resolveCrmReportScope"], helpers["resolveCrmTaskWriteLeadId"], helpers["resolveExecutorCompanyId"], helpers["resolveKanbanStagesForCompany"], helpers["resolveLeadCommentMentionIds"], helpers["resolveProductionCompanyForDealStage"], helpers["resolveProductionHandoverResponsibleUserId"], helpers["resolveReopenTargetStageId"], helpers["resolveRpcRegionIdsForCrmList"], helpers["resolveTenantIdForQuota"], helpers["resolveZaloDealTemplateId"], helpers["respondIfCrmPipelinesTableMissing"], helpers["responseCache"], helpers["restoreCrmTaskChecklistFromWorkshopTemplate"], helpers["resyncCrmPipelineTasksForLead"], helpers["sanitizeIsoDateQueryParam"], helpers["scheduleRegionGeocoding"], helpers["scopedAdminCompanyId"], helpers["scopedCrmCompanyIdForWrite"], helpers["sendZaloTemplateMessage"], helpers["setLeadFlag"], helpers["shallowMergeTemplateData"], helpers["skipSxWorkQuickComplete"], helpers["snapshotOrderRowFromQuotation"], helpers["stripCrmAssigneeFromWonStageUpdates"], helpers["stripCrmLeadTypeColorFromSelect"], helpers["stripQuotationsSourceExcelFields"], helpers["sumCrmKpiLedgerNetByLeadIds"], helpers["sumCrmKpiLedgerNetByUserForOrgReport"], helpers["sumCrmKpiLedgerNetByUserIds"], helpers["sumCrmKpiLedgerNetByUserIdsInDateRange"], helpers["supabase"], helpers["syncAllTaskArtifactsToAssignment"], helpers["syncChecklistItemNotes"], helpers["syncCrmLeadSxPipelineFromProject"], helpers["syncQuotationDepositToDealAndProject"], helpers["syncSxKanbanFromCrmProductionStage"], helpers["syncTaskAttachmentToAssignment"], helpers["templateItemAssigneePatch"], helpers["toCrmTaskChecklist"], helpers["unifyCrmLeadResponsibleFields"], helpers["updateCrmLeadTask"], helpers["updateQuotationRow"], helpers["upsertZaloNotifySettings"], helpers["userCanAccessCrmLeadAsParticipant"], helpers["userCanAccessCrmLeadViaVisibility"], helpers["userCanAssignAnyCrmRegion"], helpers["userCanBypassCrmDeleteRestriction"], helpers["userHasSeenLeadInSeenBy"], helpers["userIsAdmin"], helpers["userIsCrmCompanyOrRegionAdmin"], helpers["userMayAccessQuotationRow"], helpers["userSeesAllCrmDeals"], helpers["userSeesAllCrmDealsForScope"], helpers["userSeesAllCrmLeads"], helpers["userSeesAllCrmLeadsForScope"], helpers["uuidQueryOrNull"], helpers["validateProductionCompanyId"]);

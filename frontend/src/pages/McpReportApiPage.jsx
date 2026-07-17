@@ -6,7 +6,7 @@ import { resolveApiOrigin } from '../lib/apiOrigin';
 import {
   ArrowLeft, Bot, Check, Copy, Key, RefreshCw, Code2, Send,
   CheckCircle2, ChevronDown, ChevronRight, ListTree, Plus,
-  ToggleLeft, ToggleRight, Trash2, Plug,
+  ToggleLeft, ToggleRight, Trash2, Plug, Shield,
 } from 'lucide-react';
 
 /** URL công khai (Claude / copy connector) — ưu tiên VITE_API_URL */
@@ -68,6 +68,34 @@ function filterBcReportUsers(list, companyId) {
     out = out.filter((u) => !u.company_id || String(u.company_id) === String(companyId));
   }
   return out.sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
+}
+
+function permFormFromKey(k) {
+  if (!k) {
+    return {
+      all_companies: false,
+      company_ids: [],
+      region_id: '',
+      default_assigned_to: '',
+      mcp_scopes: ['reports', 'crm_read'],
+    };
+  }
+  const allowed = Array.isArray(k.allowed_company_ids) ? k.allowed_company_ids.filter(Boolean) : [];
+  const all = !!k.all_companies || (!k.company_id && allowed.length === 0);
+  let company_ids = [];
+  if (!all) {
+    if (allowed.length) company_ids = [...allowed];
+    else if (k.company_id) company_ids = [k.company_id];
+  }
+  return {
+    all_companies: all,
+    company_ids,
+    region_id: k.region_id || '',
+    default_assigned_to: k.default_assigned_to || '',
+    mcp_scopes: Array.isArray(k.mcp_scopes) && k.mcp_scopes.length
+      ? [...k.mcp_scopes]
+      : ['reports', 'crm_read'],
+  };
 }
 
 function ConnectorField({ label, value, placeholder, optional, onCopy, copied, copyKey }) {
@@ -202,8 +230,10 @@ export default function McpReportApiPage() {
   const [createForm, setCreateForm] = useState({
     name: '',
     company_id: '',
+    company_ids: [],
     region_id: '',
     default_assigned_to: '',
+    mcp_scopes: ['reports', 'crm_read'],
   });
   const [newKeyValue, setNewKeyValue] = useState(null);
   const [newRefreshToken, setNewRefreshToken] = useState(null);
@@ -223,6 +253,11 @@ export default function McpReportApiPage() {
   const [mcpSessionId, setMcpSessionId] = useState('');
   const [mcpClientId, setMcpClientId] = useState(() => getOrCreateMcpClientId());
   const [showClaudeAdvanced, setShowClaudeAdvanced] = useState(true);
+  const [permForm, setPermForm] = useState(() => permFormFromKey(null));
+  const [permRegions, setPermRegions] = useState([]);
+  const [loadingPermRegions, setLoadingPermRegions] = useState(false);
+  const [savingPerms, setSavingPerms] = useState(false);
+  const [permSavedOk, setPermSavedOk] = useState(false);
 
   const loadData = async () => {
     setLoading(true);
@@ -248,27 +283,57 @@ export default function McpReportApiPage() {
   }, []);
 
   useEffect(() => {
-    if (!createForm.company_id) {
+    const singleId = createForm.company_id !== 'all' && createForm.company_ids.length === 1
+      ? createForm.company_ids[0]
+      : (createForm.company_id && createForm.company_id !== 'all' ? createForm.company_id : '');
+    if (!singleId) {
       setRegions([]);
       return;
     }
     setLoadingRegions(true);
-    api.get('/crm/company-regions', { params: { company_id: createForm.company_id } })
+    api.get('/crm/company-regions', { params: { company_id: singleId } })
       .then((rRes) => {
         const rs = Array.isArray(rRes.data) ? rRes.data : (rRes.data?.regions || []);
         setRegions(rs.filter((r) => r.is_active !== false));
       })
       .catch(() => setRegions([]))
       .finally(() => setLoadingRegions(false));
-  }, [createForm.company_id]);
+  }, [createForm.company_id, createForm.company_ids]);
 
   const selectedKey = keys.find((k) => k.id === selectedKeyId);
+
+  useEffect(() => {
+    const k = keys.find((x) => x.id === selectedKeyId);
+    setPermForm(permFormFromKey(k || null));
+    setPermSavedOk(false);
+  // Chỉ đồng bộ khi đổi key đang chọn (không reset khi bật/tắt Active)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedKeyId]);
 
   useEffect(() => {
     if (selectedKey?.default_assigned_to && !actAsUserId) {
       setActAsUserId(selectedKey.default_assigned_to);
     }
   }, [selectedKey, actAsUserId]);
+
+  const permCompanyIdsKey = (permForm.company_ids || []).join(',');
+  useEffect(() => {
+    const singleId = !permForm.all_companies && permForm.company_ids?.length === 1
+      ? permForm.company_ids[0]
+      : '';
+    if (!singleId) {
+      setPermRegions([]);
+      return;
+    }
+    setLoadingPermRegions(true);
+    api.get('/crm/company-regions', { params: { company_id: singleId } })
+      .then((rRes) => {
+        const rs = Array.isArray(rRes.data) ? rRes.data : (rRes.data?.regions || []);
+        setPermRegions(rs.filter((r) => r.is_active !== false));
+      })
+      .catch(() => setPermRegions([]))
+      .finally(() => setLoadingPermRegions(false));
+  }, [permForm.all_companies, permCompanyIdsKey]);
 
   const copyText = (text, id) => {
     navigator.clipboard.writeText(text).then(() => {
@@ -282,16 +347,26 @@ export default function McpReportApiPage() {
       setError('Nhập tên key (VD: OpenClaw MCP — Phúc Đạt)');
       return;
     }
-    if (!createForm.company_id) {
-      setError('Chọn công ty gắn với key');
+    const allCompanies = createForm.company_id === 'all';
+    const selectedIds = allCompanies
+      ? []
+      : (createForm.company_ids?.length
+        ? createForm.company_ids
+        : (createForm.company_id && createForm.company_id !== 'all' ? [createForm.company_id] : []));
+    if (!allCompanies && selectedIds.length === 0) {
+      setError('Chọn ít nhất 1 công ty hoặc «Tất cả công ty»');
       return;
     }
-    if (!createForm.region_id) {
-      setError('Chọn khu vực (bắt buộc theo schema API key)');
+    if (!allCompanies && selectedIds.length === 1 && !createForm.region_id) {
+      setError('Chọn khu vực (bắt buộc khi gắn đúng 1 công ty)');
       return;
     }
     if (!createForm.default_assigned_to) {
-      setError('Chọn user act-as — cần quyền xem báo cáo tổ chức');
+      setError('Chọn user act-as — admin/sales_admin xem tất cả trong phạm vi; nhân viên chỉ xem data của mình');
+      return;
+    }
+    if (!createForm.mcp_scopes?.length) {
+      setError('Chọn ít nhất một quyền: Báo cáo hoặc Đọc CRM');
       return;
     }
     setCreating(true);
@@ -299,9 +374,12 @@ export default function McpReportApiPage() {
     try {
       const { data } = await api.post('/settings/api-keys', {
         name: createForm.name.trim(),
-        company_id: createForm.company_id,
-        region_id: createForm.region_id,
+        all_companies: allCompanies,
+        company_id: allCompanies ? null : (selectedIds.length === 1 ? selectedIds[0] : null),
+        region_id: (!allCompanies && selectedIds.length === 1) ? createForm.region_id : null,
+        allowed_company_ids: allCompanies ? [] : selectedIds,
         default_assigned_to: createForm.default_assigned_to,
+        mcp_scopes: createForm.mcp_scopes,
       });
       const createdKey = data.access_token || data.key;
       setNewKeyValue(createdKey);
@@ -309,7 +387,14 @@ export default function McpReportApiPage() {
       setKeySecret(createdKey);
       if (data.id) storeKeyTokens(data.id, data);
       if (data.default_assigned_to) setActAsUserId(data.default_assigned_to);
-      setCreateForm({ name: '', company_id: '', region_id: '', default_assigned_to: '' });
+      setCreateForm({
+        name: '',
+        company_id: '',
+        company_ids: [],
+        region_id: '',
+        default_assigned_to: '',
+        mcp_scopes: ['reports', 'crm_read'],
+      });
       setShowCreateForm(false);
       await loadData();
       if (data.id) setSelectedKeyId(data.id);
@@ -342,11 +427,72 @@ export default function McpReportApiPage() {
     }
   };
 
+  const resetPermForm = () => {
+    setPermForm(permFormFromKey(selectedKey || null));
+    setPermSavedOk(false);
+    setError('');
+  };
+
+  const saveKeyPerms = async () => {
+    if (!selectedKeyId || !selectedKey) {
+      setError('Chọn key MCP trước khi lưu phân quyền');
+      return;
+    }
+    if (!permForm.mcp_scopes?.length) {
+      setError('Chọn ít nhất một quyền MCP: Báo cáo hoặc Đọc CRM');
+      return;
+    }
+    if (!permForm.default_assigned_to) {
+      setError('Chọn user act-as');
+      return;
+    }
+    const ids = permForm.all_companies ? [] : (permForm.company_ids || []);
+    if (!permForm.all_companies && ids.length === 0) {
+      setError('Chọn ít nhất 1 công ty hoặc bật «Tất cả công ty»');
+      return;
+    }
+    if (!permForm.all_companies && ids.length === 1 && !permForm.region_id) {
+      setError('Chọn khu vực khi gắn đúng 1 công ty');
+      return;
+    }
+    setSavingPerms(true);
+    setError('');
+    setPermSavedOk(false);
+    try {
+      const { data } = await api.patch(`/settings/api-keys/${selectedKeyId}`, {
+        all_companies: !!permForm.all_companies,
+        company_id: permForm.all_companies ? null : (ids.length === 1 ? ids[0] : null),
+        region_id: (!permForm.all_companies && ids.length === 1) ? (permForm.region_id || null) : null,
+        allowed_company_ids: permForm.all_companies ? [] : ids,
+        default_assigned_to: permForm.default_assigned_to,
+        mcp_scopes: permForm.mcp_scopes,
+      });
+      setKeys((prev) => prev.map((k) => (k.id === selectedKeyId ? {
+        ...k,
+        ...data,
+        all_companies: data.all_companies,
+        allowed_company_ids: data.allowed_company_ids || [],
+        mcp_scopes: data.mcp_scopes || [],
+      } : k)));
+      setPermForm(permFormFromKey(data));
+      if (data.default_assigned_to) setActAsUserId(data.default_assigned_to);
+      setPermSavedOk(true);
+      setTimeout(() => setPermSavedOk(false), 2500);
+    } catch (e) {
+      setError(e.response?.data?.error || 'Lỗi lưu phân quyền');
+    }
+    setSavingPerms(false);
+  };
+
   const rotateKey = async (id) => {
-    if (!window.confirm('Rotate key sẽ vô hiệu key cũ ngay. Tiếp tục?')) return;
+    if (!window.confirm(
+      'Đổi access token (rotate) chỉ vô hiệu cặp tbp_… / refresh của KEY NÀY.\n'
+      + '• Link MCP /api/mcp/{uuid} KHÔNG đổi — Cursor/Claude vẫn dùng được.\n'
+      + '• Các key khác không bị ảnh hưởng.\n\nTiếp tục?',
+    )) return;
     try {
       const { data } = await api.post(`/settings/api-keys/${id}/rotate`);
-      setKeySecrets((s) => ({ ...s, [id]: { access_token: data.access_token || data.key, refresh_token: data.refresh_token || '' } }));
+      setKeySecrets((s) => ({ ...s, [id]: { access_token: data.access_token || data.key, refresh_token: data.refresh_token || null } }));
       setNewKeyValue(data.access_token || data.key);
       setNewRefreshToken(data.refresh_token || null);
       if (selectedKeyId === id) setKeySecret(data.access_token || data.key);
@@ -369,7 +515,10 @@ export default function McpReportApiPage() {
       ...s,
       [id]: { access_token: access, refresh_token: refresh },
     }));
-    if (access) setKeySecret(access);
+    // Không ghi đè keySecret nếu đang test key khác
+    if (selectedKeyId === id || !selectedKeyId) {
+      if (access) setKeySecret(access);
+    }
   };
 
   const getKeyTokens = (id) => {
@@ -387,9 +536,12 @@ export default function McpReportApiPage() {
       copyText(tokens.access_token, `${id}_access`);
       return;
     }
-    if (window.confirm(
-      `Chưa có access token — chỉ thấy mask "${preview}".\n\nRotate để nhận cặp access + refresh token mới?`,
-    )) rotateKey(id);
+    // MCP ưu tiên Link UUID — không ép rotate
+    window.alert(
+      `Access token không còn hiện sau lần tạo (bảo mật).\n\n`
+      + `• Cursor / Claude: dùng nút «Link MCP» (URL /api/mcp/{uuid}) — không cần access token.\n`
+      + `• Chỉ bấm Rotate nếu tích hợp cũ dùng header X-Api-Key (sẽ vô hiệu tbp_… cũ của key này).`,
+    );
   };
 
   const copyRefreshToken = (id, preview) => {
@@ -398,9 +550,10 @@ export default function McpReportApiPage() {
       copyText(tokens.refresh_token, `${id}_refresh`);
       return;
     }
-    if (window.confirm(
-      `Chưa có refresh token cho key "${preview}".\n\nRotate để tạo cặp token mới?`,
-    )) rotateKey(id);
+    window.alert(
+      `Refresh token chỉ hiện 1 lần lúc tạo/rotate.\n`
+      + `Nếu cần token mới cho key này → dùng «Đổi access token» (không ảnh hưởng key khác / Link MCP).`,
+    );
   };
 
   const mcpFetch = async (path, opts = {}) => {
@@ -531,8 +684,34 @@ export default function McpReportApiPage() {
   const claudeConnectorReady = Boolean(selectedKeyId && selectedKey?.default_assigned_to);
 
   const createFormBcUsers = useMemo(
-    () => filterBcReportUsers(users, createForm.company_id || null),
-    [users, createForm.company_id],
+    () => {
+      const ids = createForm.company_ids || [];
+      if (createForm.company_id === 'all') return filterBcReportUsers(users, null);
+      if (ids.length === 1) return filterBcReportUsers(users, ids[0]);
+      if (ids.length > 1) {
+        const set = new Set(ids);
+        return filterBcReportUsers(users, null).filter((u) => !u.company_id || set.has(u.company_id));
+      }
+      if (createForm.company_id && createForm.company_id !== 'all') {
+        return filterBcReportUsers(users, createForm.company_id);
+      }
+      return filterBcReportUsers(users, null);
+    },
+    [users, createForm.company_id, createForm.company_ids],
+  );
+
+  const permFormBcUsers = useMemo(
+    () => {
+      if (permForm.all_companies) return filterBcReportUsers(users, null);
+      const ids = permForm.company_ids || [];
+      if (ids.length === 1) return filterBcReportUsers(users, ids[0]);
+      if (ids.length > 1) {
+        const set = new Set(ids);
+        return filterBcReportUsers(users, null).filter((u) => !u.company_id || set.has(u.company_id));
+      }
+      return filterBcReportUsers(users, selectedKey?.company_id || null);
+    },
+    [users, permForm.all_companies, permForm.company_ids, selectedKey?.company_id],
   );
 
   const testBcUsers = useMemo(
@@ -556,6 +735,10 @@ export default function McpReportApiPage() {
           <p className="text-sm text-gray-500 mt-0.5">
             Kết nối Cursor / Claude chỉ cần URL <code className="bg-gray-100 px-1 rounded text-xs">/api/mcp/&#123;uuid&#125;</code>
             {' '}— báo cáo tổ chức + đọc CRM.
+          </p>
+          <p className="text-[11px] text-gray-500 mt-1">
+            Phân quyền: công ty gắn key · role act-as (admin/sales_admin xem tất trong phạm vi; NV chỉ data mình) · scope BC/CRM.
+            Rate limit: ~25/10s IP · ~80/phút IP · ~60/phút key → 429.
           </p>
         </div>
       </div>
@@ -603,7 +786,8 @@ export default function McpReportApiPage() {
             )}
           </div>
           <p className="text-[11px] text-emerald-700">
-            Key đã được chọn sẵn trong panel test — có thể bấm Ping / BC summary ngay.
+            Key mới đã được chọn để test. <strong>Các key cũ vẫn Active</strong> — tạo mới không thu hồi key khác.
+            Cursor/Claude dùng <strong>Link MCP</strong> (UUID), không cần access token.
           </p>
           <button
             type="button"
@@ -634,8 +818,9 @@ export default function McpReportApiPage() {
         {showCreateForm && (
           <div className="border border-violet-100 bg-violet-50/60 rounded-xl p-4 space-y-3">
             <p className="text-[11px] text-violet-800">
-              Key tạo link MCP <code className="bg-violet-100 px-1 rounded">/api/mcp/&#123;uuid&#125;</code> cho Cursor / Claude.
-              Chọn user act-as có quyền «Báo cáo theo tổ chức» (manager / admin).
+              Key tạo link MCP <code className="bg-violet-100 px-1 rounded">/api/mcp/&#123;uuid&#125;</code>.
+              Có thể chọn <strong>Tất cả công ty</strong> và giới hạn quyền (Báo cáo / Đọc CRM).
+              User act-as phải có quyền BC tương ứng.
             </p>
             <div>
               <label className="text-xs font-medium text-gray-600 block mb-1">Tên key <span className="text-red-500">*</span></label>
@@ -646,40 +831,107 @@ export default function McpReportApiPage() {
                 className="w-full h-9 px-3 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-300"
               />
             </div>
-            <div className="grid sm:grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-medium text-gray-600 block mb-1">Công ty <span className="text-red-500">*</span></label>
-                <select
-                  value={createForm.company_id}
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-gray-600 block">Công ty được phép <span className="text-red-500">*</span></label>
+              <label className="flex items-center gap-2 text-xs text-violet-800 font-medium cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={createForm.company_id === 'all'}
                   onChange={(e) => setCreateForm((f) => ({
                     ...f,
-                    company_id: e.target.value,
+                    company_id: e.target.checked ? 'all' : '',
+                    company_ids: [],
                     region_id: '',
-                    default_assigned_to: '',
                   }))}
-                  className="w-full h-9 px-3 border border-gray-200 rounded-lg text-sm"
-                >
-                  <option value="">— Chọn công ty —</option>
-                  {companies.map((c) => (
-                    <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-gray-600 block mb-1">Khu vực <span className="text-red-500">*</span></label>
-                <select
-                  value={createForm.region_id}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, region_id: e.target.value }))}
-                  disabled={!createForm.company_id || loadingRegions}
-                  className="w-full h-9 px-3 border border-gray-200 rounded-lg text-sm disabled:bg-gray-100"
-                >
-                  <option value="">
-                    {!createForm.company_id ? '— Chọn công ty trước —' : loadingRegions ? 'Đang tải…' : '— Chọn khu vực —'}
-                  </option>
-                  {regions.map((rg) => (
-                    <option key={rg.id} value={rg.id}>{rg.name}{rg.code ? ` (${rg.code})` : ''}</option>
-                  ))}
-                </select>
+                />
+                🌐 Tất cả công ty
+              </label>
+              {createForm.company_id !== 'all' && (
+                <div className="max-h-36 overflow-y-auto border border-gray-200 rounded-lg p-2 space-y-1 bg-white">
+                  {companies.map((c) => {
+                    const id = c.id;
+                    const checked = (createForm.company_ids || []).includes(id);
+                    return (
+                      <label key={id} className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => setCreateForm((f) => {
+                            const set = new Set(f.company_ids || []);
+                            if (set.has(id)) set.delete(id);
+                            else set.add(id);
+                            const ids = [...set];
+                            return {
+                              ...f,
+                              company_ids: ids,
+                              company_id: ids.length === 1 ? ids[0] : '',
+                              region_id: ids.length === 1 ? f.region_id : '',
+                            };
+                          })}
+                        />
+                        {c.short_name || c.name}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              {(createForm.company_ids?.length === 1 || (createForm.company_id && createForm.company_id !== 'all')) && (
+                <div>
+                  <label className="text-xs font-medium text-gray-600 block mb-1">
+                    Khu vực <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={createForm.region_id}
+                    onChange={(e) => setCreateForm((f) => ({ ...f, region_id: e.target.value }))}
+                    disabled={loadingRegions}
+                    className="w-full h-9 px-3 border border-gray-200 rounded-lg text-sm disabled:bg-gray-100"
+                  >
+                    <option value="">{loadingRegions ? 'Đang tải…' : '— Chọn khu vực —'}</option>
+                    {regions.map((rg) => (
+                      <option key={rg.id} value={rg.id}>{rg.name}{rg.code ? ` (${rg.code})` : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {createForm.company_ids?.length > 1 && (
+                <p className="text-[10px] text-amber-700">Đã chọn {createForm.company_ids.length} công ty — không gắn 1 khu vực cố định.</p>
+              )}
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600 block mb-1.5">
+                Quyền hạn MCP <span className="text-red-500">*</span>
+              </label>
+              <div className="flex flex-wrap gap-3">
+                {[
+                  ['reports', 'Báo cáo tổ chức', 'get_org_overview_*, BC nhân viên…'],
+                  ['crm_read', 'Đọc CRM', 'lead/deal, pipeline, BG/ĐH/HĐ (GET)'],
+                ].map(([id, label, hint]) => {
+                  const checked = createForm.mcp_scopes.includes(id);
+                  return (
+                    <label
+                      key={id}
+                      className={`flex items-start gap-2 px-3 py-2 rounded-lg border cursor-pointer text-xs ${
+                        checked ? 'border-violet-300 bg-violet-50' : 'border-gray-200 bg-white'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={checked}
+                        onChange={() => setCreateForm((f) => {
+                          const set = new Set(f.mcp_scopes);
+                          if (set.has(id)) set.delete(id);
+                          else set.add(id);
+                          return { ...f, mcp_scopes: [...set] };
+                        })}
+                      />
+                      <span>
+                        <span className="font-medium text-gray-800 block">{label}</span>
+                        <span className="text-[10px] text-gray-500">{hint}</span>
+                      </span>
+                    </label>
+                  );
+                })}
               </div>
             </div>
             <div>
@@ -696,9 +948,9 @@ export default function McpReportApiPage() {
                 className="rounded-lg"
               />
               <p className="text-[10px] text-gray-400 mt-1">
-                {createFormBcUsers.length} NV có quyền BC
-                {createForm.company_id ? ' trong công ty đã chọn' : ''}
-                — tìm theo tên, email hoặc UUID.
+                Phân quyền data theo <strong>role act-as</strong>: admin / sales_admin / manager → xem tất trong phạm vi công ty;
+                nhân viên thường → chỉ lead/deal của chính mình.
+                {createForm.company_id === 'all' ? ' · Phạm vi: tất cả công ty.' : ''}
               </p>
             </div>
             <div className="flex gap-2 pt-1">
@@ -738,10 +990,20 @@ export default function McpReportApiPage() {
                   </div>
                   <code className="text-[11px] text-gray-500 font-mono">{k.preview}</code>
                   <p className="text-[10px] text-gray-400 mt-0.5 truncate">
-                    {k.company_id && (companies.find((c) => c.id === k.company_id)?.short_name || '—')}
+                    {k.all_companies
+                      ? '🌐 Tất cả công ty'
+                      : (Array.isArray(k.allowed_company_ids) && k.allowed_company_ids.length > 1
+                        ? `${k.allowed_company_ids.length} công ty`
+                        : (companies.find((c) => c.id === k.company_id)?.short_name
+                          || companies.find((c) => k.allowed_company_ids?.[0] && c.id === k.allowed_company_ids[0])?.short_name
+                          || '—'))}
                     {k.default_assigned_to && (
                       <> · Act-as: {users.find((u) => u.id === k.default_assigned_to)?.full_name || '—'}</>
                     )}
+                    {' · '}
+                    {(k.mcp_scopes || ['reports', 'crm_read']).map((s) => (
+                      s === 'reports' ? 'BC' : s === 'crm_read' ? 'CRM' : s
+                    )).join('+')}
                   </p>
                 </div>
                 <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
@@ -795,6 +1057,27 @@ export default function McpReportApiPage() {
                   </button>
                   <button
                     type="button"
+                    onClick={() => {
+                      setSelectedKeyId(k.id);
+                      const tokens = getKeyTokens(k.id);
+                      if (tokens?.access_token) setKeySecret(tokens.access_token);
+                      if (k.default_assigned_to) setActAsUserId(k.default_assigned_to);
+                      setTimeout(() => {
+                        document.getElementById('mcp-perm-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                      }, 120);
+                    }}
+                    title="Quản lý phân quyền key này"
+                    className={`h-7 px-2 rounded-lg text-[10px] font-medium cursor-pointer flex items-center gap-1 ${
+                      selectedKeyId === k.id
+                        ? 'bg-violet-50 text-violet-800 border border-violet-300'
+                        : 'bg-white border border-gray-200 text-gray-600 hover:bg-violet-50'
+                    }`}
+                  >
+                    <Shield className="h-3 w-3" />
+                    Phân quyền
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => toggleActive(k.id, k.active)}
                     title={k.active ? 'Tắt key' : 'Bật key'}
                     className="p-1.5 hover:bg-gray-100 rounded-lg cursor-pointer"
@@ -821,6 +1104,178 @@ export default function McpReportApiPage() {
           <p className="text-sm text-gray-400 text-center py-4">Chưa có key — bấm «Tạo key MCP» để bắt đầu.</p>
         )}
       </div>
+
+      {selectedKey && (
+        <div
+          id="mcp-perm-panel"
+          className="bg-white rounded-xl border border-violet-200 shadow-sm overflow-hidden"
+        >
+          <div className="px-5 py-4 border-b border-violet-100 bg-gradient-to-b from-violet-50 to-white">
+            <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+              <Shield className="h-4 w-4 text-violet-600" />
+              Phân quyền MCP — {selectedKey.name}
+            </h2>
+            <p className="text-xs text-gray-500 mt-1">
+              Sửa công ty được phép, quyền tool (BC / CRM) và user act-as cho key đang chọn.
+              Link MCP <code className="bg-white px-1 rounded border">/api/mcp/{selectedKey.id}</code> không đổi.
+            </p>
+          </div>
+          <div className="p-5 space-y-4">
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-gray-600 block">Công ty được phép</label>
+              <label className="flex items-center gap-2 text-xs text-violet-800 font-medium cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!!permForm.all_companies}
+                  onChange={(e) => setPermForm((f) => ({
+                    ...f,
+                    all_companies: e.target.checked,
+                    company_ids: e.target.checked ? [] : f.company_ids,
+                    region_id: e.target.checked ? '' : f.region_id,
+                  }))}
+                />
+                🌐 Tất cả công ty
+              </label>
+              {!permForm.all_companies && (
+                <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-2 space-y-1 bg-white">
+                  {companies.map((c) => {
+                    const id = c.id;
+                    const checked = (permForm.company_ids || []).includes(id);
+                    return (
+                      <label key={id} className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => setPermForm((f) => {
+                            const set = new Set(f.company_ids || []);
+                            if (set.has(id)) set.delete(id);
+                            else set.add(id);
+                            const next = [...set];
+                            return {
+                              ...f,
+                              all_companies: false,
+                              company_ids: next,
+                              region_id: next.length === 1 ? f.region_id : '',
+                            };
+                          })}
+                        />
+                        {c.short_name || c.name}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              {!permForm.all_companies && permForm.company_ids?.length === 1 && (
+                <div>
+                  <label className="text-xs font-medium text-gray-600 block mb-1">
+                    Khu vực <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={permForm.region_id}
+                    onChange={(e) => setPermForm((f) => ({ ...f, region_id: e.target.value }))}
+                    disabled={loadingPermRegions}
+                    className="w-full h-9 px-3 border border-gray-200 rounded-lg text-sm disabled:bg-gray-100"
+                  >
+                    <option value="">{loadingPermRegions ? 'Đang tải…' : '— Chọn khu vực —'}</option>
+                    {permRegions.map((rg) => (
+                      <option key={rg.id} value={rg.id}>{rg.name}{rg.code ? ` (${rg.code})` : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {!permForm.all_companies && permForm.company_ids?.length > 1 && (
+                <p className="text-[10px] text-amber-700">
+                  Đã chọn {permForm.company_ids.length} công ty — không gắn 1 khu vực cố định.
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-gray-600 block mb-1.5">Quyền hạn MCP</label>
+              <div className="flex flex-wrap gap-3">
+                {[
+                  ['reports', 'Báo cáo tổ chức', 'get_org_overview_*, BC nhân viên…'],
+                  ['crm_read', 'Đọc CRM', 'lead/deal, pipeline, BG/ĐH/HĐ (GET)'],
+                ].map(([id, label, hint]) => {
+                  const checked = (permForm.mcp_scopes || []).includes(id);
+                  return (
+                    <label
+                      key={id}
+                      className={`flex items-start gap-2 px-3 py-2 rounded-lg border cursor-pointer text-xs ${
+                        checked ? 'border-violet-300 bg-violet-50' : 'border-gray-200 bg-white'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={checked}
+                        onChange={() => setPermForm((f) => {
+                          const set = new Set(f.mcp_scopes || []);
+                          if (set.has(id)) set.delete(id);
+                          else set.add(id);
+                          return { ...f, mcp_scopes: [...set] };
+                        })}
+                      />
+                      <span>
+                        <span className="font-medium text-gray-800 block">{label}</span>
+                        <span className="text-[10px] text-gray-500">{hint}</span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-gray-600 block mb-1">User act-as (mặc định)</label>
+              <UserSelect
+                value={permForm.default_assigned_to}
+                onChange={(id) => setPermForm((f) => ({ ...f, default_assigned_to: id }))}
+                users={permFormBcUsers}
+                size="md"
+                placeholder="Tìm admin / sales_admin / manager…"
+                emptyLabel="— Chọn user act-as —"
+                className="rounded-lg"
+              />
+              <p className="text-[10px] text-gray-400 mt-1">
+                Admin / sales_admin / manager → xem tất trong phạm vi công ty;
+                nhân viên thường → chỉ data của mình. Có thể ghi đè tạm bằng X-User-Id khi test.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={saveKeyPerms}
+                disabled={savingPerms}
+                className="h-8 px-4 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-xs font-medium disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+              >
+                {savingPerms ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Shield className="h-3.5 w-3.5" />}
+                {savingPerms ? 'Đang lưu…' : 'Lưu phân quyền'}
+              </button>
+              <button
+                type="button"
+                onClick={resetPermForm}
+                disabled={savingPerms}
+                className="h-8 px-3 border border-gray-200 text-gray-600 rounded-lg text-xs cursor-pointer hover:bg-gray-50"
+              >
+                Hoàn tác
+              </button>
+              {permSavedOk && (
+                <span className="text-xs text-emerald-600 flex items-center gap-1">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Đã lưu
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!selectedKeyId && keys.length > 0 && (
+        <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+          Bấm <strong>Chọn</strong> hoặc <strong>Phân quyền</strong> trên một key để chỉnh công ty / scope / act-as.
+        </div>
+      )}
 
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-100 bg-gradient-to-b from-gray-50 to-white">
@@ -857,7 +1312,7 @@ export default function McpReportApiPage() {
           {!claudeConnectorReady && (
             <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
               {!selectedKeyId && 'Chọn API key ở mục trên. '}
-              {selectedKeyId && !selectedKey?.default_assigned_to && 'Key chưa có user act-as — tạo lại key hoặc cập nhật default_assigned_to.'}
+              {selectedKeyId && !selectedKey?.default_assigned_to && 'Key chưa có user act-as — mở panel Phân quyền bên trên để chọn.'}
             </div>
           )}
 
@@ -1045,11 +1500,15 @@ export default function McpReportApiPage() {
                 type="button"
                 onClick={rotateForTest}
                 disabled={!selectedKeyId}
-                className="h-9 px-3 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-medium disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                className="h-9 px-3 border border-orange-200 bg-white hover:bg-orange-50 text-orange-700 rounded-lg text-xs font-medium disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                title="Chỉ đổi tbp_… của key đang chọn — Link MCP UUID không đổi; key khác không ảnh hưởng"
               >
                 <Key className="h-3.5 w-3.5" />
-                Rotate key để test
+                Đổi access token (tuỳ chọn)
               </button>
+              <span className="text-[10px] text-gray-500">
+                Test MCP không cần rotate — dùng URL bên dưới.
+              </span>
             </div>
 
             {mcpConnectUrlPublic && (
