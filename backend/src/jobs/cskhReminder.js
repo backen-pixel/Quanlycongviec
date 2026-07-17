@@ -252,7 +252,11 @@ async function runOnce(io) {
       let insertedTotal = 0;
       for (let i = 0; i < notifs.length; i += BATCH) {
         const chunk = notifs.slice(i, i + BATCH);
-        const { data: inserted } = await supabase.from('notifications').insert(chunk).select('id, user_id');
+        // Phải select đủ field — toast/socket dùng title, message, type, metadata (trước đây chỉ id+user_id → toast trống).
+        const { data: inserted } = await supabase
+          .from('notifications')
+          .insert(chunk)
+          .select('id, user_id, type, title, message, entity_type, entity_id, metadata, created_at, is_read');
         if (inserted?.length && io) {
           inserted.forEach((n) => io.to(`user:${n.user_id}`).emit('notification', n));
         }
@@ -270,11 +274,18 @@ async function runOnce(io) {
   }
 }
 
+/** Tạm tắt cron CSKH (toast spam 13h30). Bật lại: đổi thành false hoặc xóa flag. */
+const CSKH_CRON_TEMP_DISABLED = true;
+
 let started = false;
 function start(io) {
   if (started) return;
-  if (process.env.CSKH_CRON_DISABLED === '1') {
-    console.log('[cskh-cron] Disabled by env CSKH_CRON_DISABLED=1');
+  if (CSKH_CRON_TEMP_DISABLED || process.env.CSKH_CRON_DISABLED === '1') {
+    console.log(
+      CSKH_CRON_TEMP_DISABLED
+        ? '[cskh-cron] Tạm tắt (CSKH_CRON_TEMP_DISABLED=true)'
+        : '[cskh-cron] Disabled by env CSKH_CRON_DISABLED=1',
+    );
     return;
   }
   started = true;
