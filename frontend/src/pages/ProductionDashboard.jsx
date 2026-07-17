@@ -1465,7 +1465,8 @@ export default function ProductionDashboard() {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-        loadRef.current?.({ silent: true });
+        // bustCache: tránh GET /production/projects trả snapshot cũ (ttl 20s) → thẻ kéo xong bị nhảy về cột trước
+        loadRef.current?.({ silent: true, bustCache: true });
       }, 2000);
     };
     const onStage = () => scheduleBoardRefresh();

@@ -364,13 +364,15 @@ function kanbanColumnIdForProject(project, sortedStages, wonIdSet, leadMeta = nu
   const leadCol = leadMeta?.sx_pipeline_stage_id;
   const leadColValid = leadCol && stageIds.has(String(leadCol)) ? leadCol : null;
 
-  // Deal thắng mới vào xưởng (chưa có current_stage_id) → cột đầu; đã vào SX giữ cột deal.
+  // Deal thắng mới vào xưởng (chưa có current_stage_id) → cột đầu; đã vào SX giữ cột deal / sx_kanban.
   if (wonIdSet.has(project.id)) {
     const inWorkshop = Boolean(project.current_stage_id);
     if (!inWorkshop && !leadMeta?.sx_handover_at) {
       return firstSxPipelineColumnId(sorted);
     }
     if (leadColValid) return leadColValid;
+    const projectSx = project?.sx_kanban_column_id;
+    if (projectSx && stageIds.has(String(projectSx))) return String(projectSx);
     return firstSxPipelineColumnId(sorted);
   }
 
@@ -949,20 +951,33 @@ function agentDebugLog(location, message, data, hypothesisId) {
 }
 
 async function syncCrmLeadSxPipelineFromProject(projectId) {
-  const { data: project } = await supabase
+  let { data: project, error: projectLoadErr } = await supabase
     .from('projects')
-    .select('id, current_stage_id, status, company_id, workshop_type_id')
+    .select('id, current_stage_id, status, company_id, workshop_type_id, sx_kanban_column_id')
     .eq('id', projectId)
     .single();
+  if (projectLoadErr && String(projectLoadErr.message || '').includes('sx_kanban_column_id')) {
+    ({ data: project } = await supabase
+      .from('projects')
+      .select('id, current_stage_id, status, company_id, workshop_type_id')
+      .eq('id', projectId)
+      .single());
+  }
   if (!project) {
     agentDebugLog('workshopKanban.js:syncCrm', 'project not found', { projectId }, 'E');
     return;
   }
 
   const stageUuid = await resolveSxPipelineStageUuidForProject(project);
+  // Ưu tiên cột Kanban vừa ghi trên project (HCB: nhiều cột chung 1 workflow_stage_id).
+  // Tránh sync nền ghi đè lead về cột đầu pipeline.
+  const preferredSxCol =
+    (project.sx_kanban_column_id && String(project.sx_kanban_column_id))
+    || (stageUuid && String(stageUuid))
+    || null;
 
   // Deal mới CRM → SX (chờ xưởng, chưa có workflow): gán cột đầu pipeline — không ghi đè khi đã producing.
-  if (stageUuid && !project.current_stage_id) {
+  if (preferredSxCol && !project.current_stage_id) {
     const { data: intakeLeads } = await supabase
       .from('crm_leads')
       .select('id')
@@ -972,7 +987,7 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
     if (intakeLeads?.length) {
       await supabase
         .from('crm_leads')
-        .update({ sx_pipeline_stage_id: stageUuid, updated_at: new Date().toISOString() })
+        .update({ sx_pipeline_stage_id: preferredSxCol, updated_at: new Date().toISOString() })
         .in('id', intakeLeads.map((l) => l.id));
     }
   }
@@ -981,8 +996,8 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
   let pipeRows = pipeRows0 || [];
 
   // Nếu project.company_id lệch với company của deal CRM
-  const hasStageUuidInRows = stageUuid && pipeRows.some((r) => r?.id && String(r.id) === String(stageUuid));
-  if (stageUuid && !hasStageUuidInRows) {
+  const hasStageUuidInRows = preferredSxCol && pipeRows.some((r) => r?.id && String(r.id) === String(preferredSxCol));
+  if (preferredSxCol && !hasStageUuidInRows) {
     try {
       const { data: leadCompanyRow } = await supabase
         .from('crm_leads')
@@ -1036,7 +1051,7 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
   // Tìm cột hiện tại trong pipeline config
   const currentRow =
     prodPipeAll.find((r) => leadPipelineColId && String(r.id) === String(leadPipelineColId))
-    || prodPipeAll.find((r) => stageUuid && String(r.id) === String(stageUuid))
+    || prodPipeAll.find((r) => preferredSxCol && String(r.id) === String(preferredSxCol))
     || prodPipeAll.find((r) => project.current_stage_id && r.workflow_stage_id && String(r.workflow_stage_id) === String(project.current_stage_id));
 
   agentDebugLog(
@@ -1046,7 +1061,8 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
       projectId,
       projectCompanyId: project.company_id || null,
       currentStageId: project.current_stage_id || null,
-      stageUuid: stageUuid || null,
+      stageUuid: preferredSxCol || stageUuid || null,
+      projectSxKanbanColumnId: project.sx_kanban_column_id || null,
       currentRowId: currentRow?.id || null,
       currentRowName: currentRow?.name || null,
       currentRowOrder: currentRow?.order_index ?? null,
@@ -1068,7 +1084,7 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
     await Promise.all(
       (leads || []).map((lead) => {
         const patch = {};
-        if (stageUuid) patch.sx_pipeline_stage_id = stageUuid;
+        if (preferredSxCol) patch.sx_pipeline_stage_id = preferredSxCol;
         const st = Array.isArray(lead.stage) ? lead.stage[0] : lead.stage;
         const canOverwrite = shouldAutoOverwriteCrmStage(lead.stage);
         const skipReasons = [];
@@ -1140,7 +1156,8 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
     (leads || []).map(async (lead) => {
       const update = {};
       // Không ghi null — tránh xóa badge SX khi chưa map được cột pipeline.
-      if (stageUuid) update.sx_pipeline_stage_id = stageUuid;
+      // Ưu tiên sx_kanban_column_id trên project (sau kéo Kanban) thay vì resolve theo workflow chung.
+      if (preferredSxCol) update.sx_pipeline_stage_id = preferredSxCol;
 
       // Chỉ đổi cột CRM sau khi Sale đã bàn giao SX (sx_handover_at) — trước đó chỉ cập nhật badge.
       // Race-guard: bỏ qua nếu Sale đang để deal ở cột pre-Thắng (Đàm phán/Báo giá…) hoặc Thua.

@@ -1183,7 +1183,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
         .from('projects')
         .select(`
           id, code, name, estimated_value, production_value, deposit_amount, collected_amount, status, deadline, created_at, company_id,
-          sx_pipeline_stage_entered_at, sx_kanban_deadline_at, sx_kanban_deadline_reason,
+          sx_pipeline_stage_entered_at, sx_kanban_deadline_at, sx_kanban_deadline_reason, sx_kanban_column_id,
           current_stage_id${wtScalar},
           current_stage:workflow_stages(id, slug, name, color, icon),
           customer:customers(id, full_name),
@@ -1242,7 +1242,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
           .from('projects')
           .select(`
           id, code, name, estimated_value, production_value, deposit_amount, collected_amount, status, deadline, created_at, company_id,
-          sx_pipeline_stage_entered_at,
+          sx_pipeline_stage_entered_at, sx_kanban_column_id,
           current_stage_id${wtScalar},
           current_stage:workflow_stages(id, slug, name, color, icon),
           customer:customers(id, full_name),
@@ -1363,7 +1363,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       .from('projects')
       .select(`
         id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, ${MIGRATION_300_COLS} created_at, status, notes, company_id,
-        production_deadline, production_note, vc_kanban_column_id,
+        production_deadline, production_note, vc_kanban_column_id, sx_kanban_column_id,
         current_stage_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         vc_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug),
@@ -1425,6 +1425,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     const needsFallback = error && (
       error.message?.includes('production_deadline') ||
       error.message?.includes('vc_kanban_column_id') ||
+      error.message?.includes('sx_kanban_column_id') ||
       error.message?.includes('logistics_pipeline_stages') ||
       error.message?.includes('workshop_project_types') ||
       error.message?.includes('workshop_type_id') ||

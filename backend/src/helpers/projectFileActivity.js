@@ -1,5 +1,5 @@
 const { supabase } = require('../config/supabase');
-const { isAdminLike } = require('./adminRole');
+const { isAdminLike, isProductionAdmin } = require('./adminRole');
 
 const PROJECT_COMMENT_SELECT = '*, user:users!project_comments_user_id_fkey(id,full_name,avatar)';
 
@@ -110,7 +110,8 @@ async function resolveDealRow(leadId, projectId) {
 }
 
 function isDealResponsibleUser(req, dealRow) {
-  if (isAdminLike(req.user)) return true;
+  // admin-like + production_admin: được thao tác Kanban SX (khớp requireProductionKanbanEdit / checkPermission)
+  if (isAdminLike(req.user) || isProductionAdmin(req.user)) return true;
   const uid = getRequestUserId(req);
   if (!uid || !dealRow) return false;
   const uidStr = String(uid);
