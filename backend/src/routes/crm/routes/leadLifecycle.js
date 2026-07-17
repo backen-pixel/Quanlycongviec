@@ -1512,11 +1512,17 @@ r.post('/leads/:id/convert-to-lead', async (req, res) => {
     if (lead.type !== 'deal') {
       return res.status(400).json({ error: 'Chỉ áp dụng cho Deal (bản ghi này đã là Lead).' });
     }
-    if (lead.project_id) {
-      return res.status(400).json({ error: 'Deal đã có dự án SX — không thể trả về Lead. Hủy/xóa dự án trước nếu thật sự cần.' });
+    const unlinkProject = !!req.body?.unlink_project;
+    if (lead.project_id && !unlinkProject) {
+      return res.status(400).json({
+        error: 'Deal đã có dự án SX — tích «Gỡ liên kết dự án SX» trong form hoặc hủy/xóa dự án trước.',
+        code: 'HAS_PROJECT',
+        project_id: lead.project_id,
+      });
     }
 
     // Quyền: admin công ty/khu vực hoặc đang là người phụ trách deal hiện tại.
+    // Gỡ liên kết dự án SX khi trả về Lead chỉ dành cho admin công ty/khu vực.
     const uid = req.user?.userId;
     const isOwnerNow =
       uid &&
@@ -1524,6 +1530,9 @@ r.post('/leads/:id/convert-to-lead', async (req, res) => {
         String(lead.lead_owner_id || '') === String(uid));
     if (!userIsCrmCompanyOrRegionAdmin(req) && !isOwnerNow) {
       return res.status(403).json({ error: 'Bạn không có quyền trả deal này về Lead.' });
+    }
+    if (lead.project_id && unlinkProject && !userIsCrmCompanyOrRegionAdmin(req)) {
+      return res.status(403).json({ error: 'Chỉ admin công ty/khu vực mới được gỡ liên kết dự án SX khi trả về Lead.' });
     }
 
     // Bắt buộc chọn lại người phụ trách khi trả về Lead.
@@ -1599,6 +1608,9 @@ r.post('/leads/:id/convert-to-lead', async (req, res) => {
       updated_at: nowIso,
       lost_reason: null,
     };
+    if (lead.project_id && unlinkProject) {
+      updatePayload.project_id = null;
+    }
 
     const { data: updatedLead, error: updateErr } = await supabase
       .from('crm_leads')
@@ -1609,13 +1621,16 @@ r.post('/leads/:id/convert-to-lead', async (req, res) => {
     if (updateErr) throw updateErr;
 
     try {
+      const unlinkNote = lead.project_id && unlinkProject
+        ? ` Đã gỡ liên kết dự án SX (${lead.project_id}) khỏi deal (không xóa dự án trên module SX).`
+        : '';
       await supabase.from('crm_activities').insert({
         lead_id: req.params.id,
         type: 'note',
         title: '↩️ Trả deal về Lead',
-        description: req.body?.reason
+        description: (req.body?.reason
           ? `Deal được trả về Lead. Lý do: ${String(req.body.reason).slice(0, 500)}`
-          : 'Deal được trả về Lead, gán lại người phụ trách.',
+          : 'Deal được trả về Lead, gán lại người phụ trách.') + unlinkNote,
         created_by: req.user.userId,
       });
     } catch (_) { /* ignore activity log error */ }
@@ -3153,6 +3168,42 @@ r.post('/deals/:id/auto-create-project', async (req, res) => {
   } catch (e) {
     console.error('[auto-project] Error:', e.message);
     res.status(500).json({ error: e.message });
+  }
+});
+
+/** Admin chọn lại công ty SX + phân loại (deal đã có dự án) — thay NV + tạo lại NV mẫu. */
+r.post('/deals/:id/reassign-sx', async (req, res) => {
+  try {
+    if (!isAdminLike(req.user)) {
+      return res.status(403).json({ error: 'Chỉ admin được chọn lại công ty / phân loại SX' });
+    }
+    const productionCompanyId = req.body?.production_company_id || null;
+    const workshopTypeId = req.body?.workshop_type_id || null;
+    if (!productionCompanyId) {
+      return res.status(400).json({ error: 'Vui lòng chọn công ty Sản xuất', requires_production_company: true });
+    }
+    if (!workshopTypeId) {
+      return res.status(400).json({ error: 'Vui lòng chọn phân loại sản xuất' });
+    }
+    const { reassignDealSxCompanyAndType } = require('../../../helpers/reassignDealSx');
+    const result = await reassignDealSxCompanyAndType({
+      dealId: req.params.id,
+      userId: req.user.userId,
+      productionCompanyId,
+      workshopTypeId,
+      req,
+    });
+    try {
+      const { emitProductionBoardRealtime } = require('../../../helpers/workshopIntakeNotify');
+      const io = req.app.get('io');
+      await emitProductionBoardRealtime(result.project_id, io, 'reassign_sx');
+    } catch (emitErr) {
+      console.warn('[reassign-sx] emit board:', emitErr.message);
+    }
+    res.json(result);
+  } catch (e) {
+    console.error('[reassign-sx]', e.message);
+    res.status(e.status || 500).json({ error: e.message || 'Lỗi chọn lại SX' });
   }
 });
 

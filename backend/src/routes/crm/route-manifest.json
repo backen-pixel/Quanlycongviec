@@ -129,6 +129,11 @@
       "file": "routes/leadLifecycle.js"
     },
     {
+      "method": "POST",
+      "path": "/deals/:id/reassign-sx",
+      "file": "routes/leadLifecycle.js"
+    },
+    {
       "method": "PUT",
       "path": "/documents/:docId/visibility",
       "file": "routes/leadLifecycle.js"

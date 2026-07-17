@@ -188,6 +188,13 @@ const AccountingDashboard = lazyWithRetry(() => import('./pages/AccountingDashbo
 const AccountingDealDetail = lazyWithRetry(() => import('./pages/AccountingDealDetail'));
 const AccountingBankAccountsPage = lazyWithRetry(() => import('./pages/AccountingBankAccountsPage'));
 const AccountingLayout = lazyWithRetry(() => import('./layouts/AccountingLayout'));
+const PurchasingLayout = lazyWithRetry(() => import('./layouts/PurchasingLayout'));
+const PurchasingInboxPage = lazyWithRetry(() => import('./pages/PurchasingInboxPage'));
+const PurchasingBrandsPage = lazyWithRetry(() => import('./pages/PurchasingBrandsPage'));
+const PurchasingCategoriesPage = lazyWithRetry(() => import('./pages/PurchasingCategoriesPage'));
+const PurchasingProductsPage = lazyWithRetry(() => import('./pages/PurchasingProductsPage'));
+const PurchaseOrderForm = lazyWithRetry(() => import('./pages/PurchaseOrderForm'));
+const PurchaseOrderDetail = lazyWithRetry(() => import('./pages/PurchaseOrderDetail'));
 const PlatformLayout = lazyWithRetry(() => import('./layouts/PlatformLayout'));
 const PlatformDashboard = lazyWithRetry(() => import('./pages/platform/PlatformDashboard'));
 const PlatformTenantsPage = lazyWithRetry(() => import('./pages/platform/PlatformTenantsPage'));
@@ -525,6 +532,16 @@ export default function App() {
               <Route path="dashboard" element={<AccountingDashboard />} />
               <Route path="deals/:leadId" element={<AccountingDealDetail />} />
               <Route path="bank-accounts" element={<AccountingBankAccountsPage />} />
+            </Route>
+            <Route path="/mua-hang" element={<PurchasingLayout />}>
+              <Route index element={<PurchasingInboxPage />} />
+              <Route path="orders" element={<PurchasingInboxPage />} />
+              <Route path="orders/new" element={<PurchaseOrderForm />} />
+              <Route path="orders/:id" element={<PurchaseOrderDetail />} />
+              <Route path="orders/:id/edit" element={<PurchaseOrderForm />} />
+              <Route path="brands" element={<PurchasingBrandsPage />} />
+              <Route path="categories" element={<PurchasingCategoriesPage />} />
+              <Route path="products" element={<PurchasingProductsPage />} />
             </Route>
             <Route path="/ecosystem-permissions" element={<EcosystemPermissionsPage />} />
             <Route path="/guide" element={<GuidePage />} />

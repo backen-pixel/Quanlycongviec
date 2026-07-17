@@ -127,6 +127,90 @@ export function getFileDownloadAnchorProps(pathOrUrl, opts = {}) {
   };
 }
 
+/** In ảnh upload — mở cửa sổ tạm, tải blob (tránh CORS), rồi gọi print. */
+export async function printUploadImage(pathOrUrl, title = 'Ảnh') {
+  const printWin = window.open('', '_blank');
+  if (!printWin) {
+    throw new Error('Trình duyệt đã chặn cửa sổ in. Cho phép popup rồi thử lại.');
+  }
+
+  const safeTitle = String(title || 'Ảnh')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+  printWin.document.write(
+    `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${safeTitle}</title>`
+    + '<style>html,body{margin:0;padding:0;background:#fff}'
+    + 'img{max-width:100%;height:auto;display:block;margin:0 auto}'
+    + '@media print{html,body{height:auto}img{max-width:100%;page-break-inside:avoid}}</style>'
+    + '</head><body><p id="print-status" style="font-family:sans-serif;padding:16px;color:#666">Đang tải ảnh…</p></body></html>',
+  );
+  printWin.document.close();
+
+  let src = '';
+  let revoke = null;
+  try {
+    const buf = await fetchUploadArrayBuffer(pathOrUrl);
+    if (!buf || buf.byteLength < 1) throw new Error('File rỗng');
+    const blobUrl = URL.createObjectURL(new Blob([buf]));
+    src = blobUrl;
+    revoke = () => URL.revokeObjectURL(blobUrl);
+  } catch {
+    src = publicFileUrl(pathOrUrl);
+  }
+
+  if (!src) {
+    try { printWin.close(); } catch { /* ignore */ }
+    throw new Error('Không tìm thấy ảnh để in');
+  }
+
+  const body = printWin.document.body;
+  body.innerHTML = '';
+  const img = printWin.document.createElement('img');
+  img.id = 'print-img';
+  img.alt = String(title || 'Ảnh');
+  img.src = src;
+  body.appendChild(img);
+
+  const cleanup = () => {
+    if (revoke) {
+      try { revoke(); } catch { /* ignore */ }
+      revoke = null;
+    }
+    try { printWin.close(); } catch { /* ignore */ }
+  };
+
+  const doPrint = () => {
+    try {
+      printWin.focus();
+      printWin.print();
+    } catch { /* ignore */ }
+    try {
+      printWin.addEventListener('afterprint', cleanup, { once: true });
+    } catch {
+      window.setTimeout(cleanup, 1000);
+    }
+    // Fallback nếu afterprint không chạy (một số trình duyệt)
+    window.setTimeout(cleanup, 120_000);
+  };
+
+  if (img.complete && img.naturalWidth > 0) {
+    doPrint();
+    return;
+  }
+  img.onload = doPrint;
+  img.onerror = () => {
+    body.innerHTML =
+      '<p style="font-family:sans-serif;padding:16px;color:#b91c1c">Không tải được ảnh để in.</p>';
+    if (revoke) {
+      try { revoke(); } catch { /* ignore */ }
+      revoke = null;
+    }
+  };
+}
+
 /** Tải file về máy — blob same-origin; cross-origin fallback mở tab mới. */
 export async function downloadUploadFile(pathOrUrl, fileName = 'tai-lieu') {
   const safeName = String(fileName || 'tai-lieu').trim() || 'tai-lieu';

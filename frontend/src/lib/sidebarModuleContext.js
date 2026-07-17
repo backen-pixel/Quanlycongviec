@@ -60,7 +60,7 @@ export function isCongViecPrimaryPath(pathname) {
 }
 
 export function isWorkPrimaryPath(pathname) {
-  if (pathname.startsWith('/crm') || pathname.startsWith('/sx') || pathname.startsWith('/vc') || pathname.startsWith('/ketoan')) return false;
+  if (pathname.startsWith('/crm') || pathname.startsWith('/sx') || pathname.startsWith('/vc') || pathname.startsWith('/ketoan') || pathname.startsWith('/mua-hang')) return false;
   if (isCongViecPrimaryPath(pathname)) return false;
   return (
     pathname === '/' ||
@@ -94,6 +94,7 @@ export function resolveModuleFromPathname(pathname) {
   if (pathname.startsWith('/sx')) return 'sx';
   if (pathname.startsWith('/vc')) return 'vc';
   if (pathname.startsWith('/ketoan')) return 'ketoan';
+  if (pathname.startsWith('/mua-hang')) return 'muahang';
   if (pathname.startsWith('/calc')) return 'calc';
   if (pathname.startsWith('/knowledge')) return 'knowledge';
   if (isCongViecPrimaryPath(pathname)) return 'congviec';
@@ -104,7 +105,7 @@ export function resolveModuleFromPathname(pathname) {
 export function readStoredModule() {
   try {
     const v = sessionStorage.getItem(STORAGE_KEY);
-    if (v === 'crm' || v === 'work' || v === 'congviec' || v === 'sx' || v === 'vc' || v === 'calc' || v === 'knowledge' || v === 'ketoan') return v;
+    if (v === 'crm' || v === 'work' || v === 'congviec' || v === 'sx' || v === 'vc' || v === 'calc' || v === 'knowledge' || v === 'ketoan' || v === 'muahang') return v;
   } catch { /* ignore */ }
   return null;
 }

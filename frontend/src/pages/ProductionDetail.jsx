@@ -16,7 +16,7 @@ import DocumentShareModulePicker from '../components/DocumentShareModulePicker';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
-import { publicFileUrl as pubUrl, downloadUploadFile } from '../lib/publicFileUrl';
+import { publicFileUrl as pubUrl, downloadUploadFile, printUploadImage } from '../lib/publicFileUrl';
 import { FilePreviewOpenLink } from '../context/FilePreviewContext';
 import UploadFileLightbox, {
   buildUploadLightboxItem,
@@ -1093,6 +1093,19 @@ function TaskFileRow({
                 Xem
               </FilePreviewOpenLink>
             ) : null}
+            {isImage && rawRef && (
+              <button
+                type="button"
+                onClick={() => {
+                  printUploadImage(rawRef, file.file_name || 'Ảnh').catch((err) => {
+                    alert(err?.message || 'Không in được ảnh');
+                  });
+                }}
+                className="text-[10px] text-violet-600 hover:underline cursor-pointer"
+              >
+                In
+              </button>
+            )}
             {canDownload && (
               <FileDownloadButton
                 rawRef={rawRef}
@@ -1291,6 +1304,19 @@ function DocRow({
                     Xem
                   </FilePreviewOpenLink>
                 ) : null}
+              {isImage && rawFileRef && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    printUploadImage(rawFileRef, fileName || displayTitle || 'Ảnh').catch((err) => {
+                      alert(err?.message || 'Không in được ảnh');
+                    });
+                  }}
+                  className={`hover:underline ${nested ? 'text-[10px]' : 'text-xs'} text-violet-600 cursor-pointer`}
+                >
+                  In
+                </button>
+              )}
               <FileDownloadButton
                 rawRef={rawFileRef}
                 fileName={fileName || displayTitle || 'tai-lieu'}

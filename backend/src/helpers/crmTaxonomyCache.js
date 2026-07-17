@@ -37,10 +37,17 @@ const crmRegionsCache = createTTLCache({
 });
 
 // ─── Invalidators ──────────────────────────────────────────────────────────
-function invalidatePipelinesAndStages() {
-  crmPipelinesCache.invalidateRemote(null).catch(() => {});
-  crmStagesCache.invalidateRemote(null).catch(() => {});
-  _bumpCrmHttpCache();
+/**
+ * Xoá L1/L2 taxonomy + HTTP responseCache (`crm:taxonomy` trên GET /pipelines,
+ * /pipeline-stages). Await trước khi trả response mutation để client load()
+ * không nhận bản cache cũ.
+ */
+async function invalidatePipelinesAndStages() {
+  await Promise.all([
+    crmPipelinesCache.invalidateRemote(null).catch(() => {}),
+    crmStagesCache.invalidateRemote(null).catch(() => {}),
+  ]);
+  await _bumpCrmHttpCache();
 }
 function invalidateSources() {
   crmSourcesCache.invalidateRemote(null).catch(() => {});
@@ -51,10 +58,11 @@ function invalidateRegions() {
   _bumpCrmHttpCache();
 }
 
-function _bumpCrmHttpCache() {
+async function _bumpCrmHttpCache() {
   try {
     const { invalidateTags } = require('../middleware/responseCache');
-    void invalidateTags(['crm:pipelines', 'crm:sources', 'orgtree']);
+    // GET /crm/pipelines và /crm/pipeline-stages dùng tag `crm:taxonomy`
+    await invalidateTags(['crm:taxonomy', 'crm:pipelines', 'crm:sources', 'orgtree']);
   } catch { /* ignore */ }
 }
 

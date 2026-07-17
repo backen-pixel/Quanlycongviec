@@ -40,6 +40,7 @@ export const FEATURE_LABELS = {
   ai_assistant: 'AI Bot',
   drive: 'Drive lưu trữ',
   accounting: 'Kế toán',
+  purchasing: 'Mua hàng',
   api_access: 'API Access (Tích hợp)',
 };
 

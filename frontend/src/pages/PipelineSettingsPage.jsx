@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
-import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar, CheckCircle2, Clock, Factory, Search, X, TrendingUp, RotateCcw, UserCircle } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar, CheckCircle2, Clock, Factory, Search, X, TrendingUp, RotateCcw, UserCircle, AlertTriangle } from 'lucide-react';
 import {
   IconSettings,
   IconTags,
@@ -336,6 +336,23 @@ export default function PipelineSettingsPage() {
   const [deletePermLead, setDeletePermLead] = useState(true);
   const [deletePermDeal, setDeletePermDeal] = useState(true);
   const [deletePermSaving, setDeletePermSaving] = useState(false);
+  const [toast, setToast] = useState(null); // { text, kind: 'ok'|'err' }
+  const [mutatingStageId, setMutatingStageId] = useState(null);
+
+  const showToast = useCallback((text, kind = 'ok') => {
+    setToast({ text: String(text || ''), kind: kind === 'err' ? 'err' : 'ok' });
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return undefined;
+    const t = setTimeout(() => setToast(null), toast.kind === 'err' ? 4500 : 2500);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const applyStageUpdate = useCallback((updated) => {
+    if (!updated?.id) return;
+    setStages((prev) => prev.map((s) => (String(s.id) === String(updated.id) ? { ...s, ...updated } : s)));
+  }, []);
 
   // Lead/Deal types (company-scoped)
   const [leadTypes, setLeadTypes] = useState([]);
@@ -349,8 +366,9 @@ export default function PipelineSettingsPage() {
   });
   const [productionCompaniesForSx, setProductionCompaniesForSx] = useState([]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (opts = {}) => {
+    const silent = !!opts.silent;
+    if (!silent) setLoading(true);
     try {
       const [pipelinesRes, companiesRes] = await Promise.all([
         api.get('/crm/pipelines').catch(() => ({ data: [] })),
@@ -397,9 +415,31 @@ export default function PipelineSettingsPage() {
       }
       setSxStages((sxRes.data || []).filter((s) => s.bucket_slug !== 'won_pending'));
       setVcStages((vcRes.data || []).filter((s) => s.bucket_slug !== 'delivery_pending'));
-    } catch {}
-    setLoading(false);
-  }, [isAdmin, selectedCompanyId, selectedPipelineId, user?.company_id]);
+    } catch (e) {
+      if (!silent) showToast(e?.response?.data?.error || e?.message || 'Không tải được pipeline', 'err');
+    }
+    if (!silent) setLoading(false);
+  }, [isAdmin, selectedCompanyId, selectedPipelineId, user?.company_id, showToast]);
+
+  /** Gọi API sửa stage → cập nhật state ngay → reload → toast. */
+  const mutateStage = useCallback(async (stageId, request, successMsg) => {
+    if (mutatingStageId) return null;
+    setMutatingStageId(stageId || '__busy__');
+    try {
+      const res = await request();
+      const data = res?.data;
+      if (data && data.id) applyStageUpdate(data);
+      await load({ silent: true });
+      if (successMsg) showToast(successMsg, 'ok');
+      return data;
+    } catch (e) {
+      const msg = e?.response?.data?.error || e?.message || 'Cập nhật thất bại';
+      showToast(msg, 'err');
+      throw e;
+    } finally {
+      setMutatingStageId(null);
+    }
+  }, [mutatingStageId, applyStageUpdate, load, showToast]);
 
   // Load Lead/Deal types for selected company
   useEffect(() => {
@@ -621,22 +661,26 @@ export default function PipelineSettingsPage() {
 
   const toggleZaloColumn = async (stage) => {
     if (stage.pipeline_type !== 'deal') return;
+    const next = !stage.send_zalo_on_enter;
     try {
-      await api.put(`/crm/pipeline-stages/${stage.id}`, { send_zalo_on_enter: !stage.send_zalo_on_enter });
-      load();
-    } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi');
-    }
+      await mutateStage(
+        stage.id,
+        () => api.put(`/crm/pipeline-stages/${stage.id}`, { send_zalo_on_enter: next }),
+        next ? 'Đã bật gửi Zalo khi vào cột' : 'Đã tắt gửi Zalo khi vào cột',
+      );
+    } catch { /* toast đã hiện */ }
   };
 
   const toggleCreateEventColumn = async (stage) => {
     if (stage.pipeline_type !== 'deal') return;
+    const next = !stage.create_event_on_enter;
     try {
-      await api.put(`/crm/pipeline-stages/${stage.id}`, { create_event_on_enter: !stage.create_event_on_enter });
-      load();
-    } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi');
-    }
+      await mutateStage(
+        stage.id,
+        () => api.put(`/crm/pipeline-stages/${stage.id}`, { create_event_on_enter: next }),
+        next ? 'Đã bật hỏi tạo sự kiện' : 'Đã tắt hỏi tạo sự kiện',
+      );
+    } catch { /* toast đã hiện */ }
   };
 
   /**
@@ -650,42 +694,46 @@ export default function PipelineSettingsPage() {
   const toggleLostColumn = async (stage) => {
     const turningOn = !stage.is_lost;
     try {
-      await api.put(`/crm/pipeline-stages/${stage.id}`, {
-        is_lost: turningOn,
-        is_won: turningOn ? false : stage.is_won,
-      });
-      load();
-    } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi');
-    }
+      await mutateStage(
+        stage.id,
+        () => api.put(`/crm/pipeline-stages/${stage.id}`, {
+          is_lost: turningOn,
+          is_won: turningOn ? false : stage.is_won,
+        }),
+        turningOn ? `Đã đặt "${stage.name}" là cột Mất` : `Đã bỏ cột Mất cho "${stage.name}"`,
+      );
+    } catch { /* toast đã hiện */ }
   };
 
   /** Bật/tắt bắt buộc đặt deadline khi kéo thẻ tới cột này. */
   const toggleRequiresDeadlineColumn = async (stage) => {
     if (stage.is_won || stage.is_lost) return;
+    const next = !stage.requires_deadline;
     try {
-      await api.put(`/crm/pipeline-stages/${stage.id}`, { requires_deadline: !stage.requires_deadline });
-      load();
-    } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi');
-    }
+      await mutateStage(
+        stage.id,
+        () => api.put(`/crm/pipeline-stages/${stage.id}`, { requires_deadline: next }),
+        next ? `Đã bật bắt buộc deadline cho "${stage.name}"` : `Đã tắt bắt buộc deadline cho "${stage.name}"`,
+      );
+    } catch { /* toast đã hiện */ }
   };
 
   /**
-   * Bật/tắt "Cho phép trả Deal về Lead" cho từng cột deal. Khi bật:
-   * thẻ deal đang ở cột này mới hiện nút "Trả về Lead" (chi tiết + cột Danh sách).
+   * Bật/tắt "Cho phép trả Deal về Lead" cho từng cột deal. Khi bật ít nhất 1 cột:
+   * mọi deal (chưa thắng, chưa có dự án SX) trên pipeline hiện nút "Trả về Lead"
+   * (chi tiết + cột Danh sách).
    */
   const toggleAllowRevertToLeadColumn = async (stage) => {
     if (stage.pipeline_type !== 'deal') return;
     if (stage.is_won) return;
+    const next = !stage.allow_revert_to_lead;
     try {
-      await api.put(`/crm/pipeline-stages/${stage.id}`, {
-        allow_revert_to_lead: !stage.allow_revert_to_lead,
-      });
-      load();
-    } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi');
-    }
+      await mutateStage(
+        stage.id,
+        () => api.put(`/crm/pipeline-stages/${stage.id}`, { allow_revert_to_lead: next }),
+        next ? `Đã bật Trả về Lead (pipeline)` : `Đã tắt Trả về Lead trên "${stage.name}"`,
+      );
+    } catch { /* toast đã hiện */ }
   };
 
   /**
@@ -710,13 +758,14 @@ export default function PipelineSettingsPage() {
       }
     }
     try {
-      await api.put(`/crm/pipeline-stages/${stage.id}`, {
-        is_revert_to_lead_target: turningOn,
-      });
-      load();
-    } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi');
-    }
+      await mutateStage(
+        stage.id,
+        () => api.put(`/crm/pipeline-stages/${stage.id}`, { is_revert_to_lead_target: turningOn }),
+        turningOn
+          ? `Đã đặt "${stage.name}" nhận Lead trả về`
+          : `Đã bỏ nhận Lead trả về trên "${stage.name}"`,
+      );
+    } catch { /* toast đã hiện */ }
   };
 
   /** Bật/tắt ghi nhận quá hạn khi lead/deal không chuyển tiếp khỏi cột (sla_days=0). */
@@ -724,13 +773,12 @@ export default function PipelineSettingsPage() {
     if (stage.is_won || stage.is_lost) return;
     const turningOff = !isPipelineStageSlaDisabled(stage.sla_days);
     try {
-      await api.put(`/crm/pipeline-stages/${stage.id}`, {
-        sla_days: turningOff ? 0 : null,
-      });
-      load();
-    } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi');
-    }
+      await mutateStage(
+        stage.id,
+        () => api.put(`/crm/pipeline-stages/${stage.id}`, { sla_days: turningOff ? 0 : null }),
+        turningOff ? `Đã tắt SLA cho "${stage.name}"` : `Đã bật lại SLA cho "${stage.name}"`,
+      );
+    } catch { /* toast đã hiện */ }
   };
 
   const toggleWonColumn = async (stage) => {
@@ -756,24 +804,27 @@ export default function PipelineSettingsPage() {
           await api.put(`/crm/pipeline-stages/${o.id}`, { is_won: false });
         }
       }
-      await api.put(`/crm/pipeline-stages/${stage.id}`, {
-        is_won: turningOn,
-        is_lost: turningOn ? false : stage.is_lost,
-      });
-      load();
-    } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi');
-    }
+      await mutateStage(
+        stage.id,
+        () => api.put(`/crm/pipeline-stages/${stage.id}`, {
+          is_won: turningOn,
+          is_lost: turningOn ? false : stage.is_lost,
+        }),
+        turningOn ? `Đã đặt "${stage.name}" là cột Thắng` : `Đã bỏ cột Thắng cho "${stage.name}"`,
+      );
+    } catch { /* toast đã hiện */ }
   };
 
   const toggleShowSxTransfer = async (stage) => {
     if (stage.pipeline_type !== 'deal') return;
+    const next = !stage.show_sx_transfer;
     try {
-      await api.put(`/crm/pipeline-stages/${stage.id}`, { show_sx_transfer: !stage.show_sx_transfer });
-      load();
-    } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi');
-    }
+      await mutateStage(
+        stage.id,
+        () => api.put(`/crm/pipeline-stages/${stage.id}`, { show_sx_transfer: next }),
+        next ? `Đã bật chuyển SX trên "${stage.name}"` : `Đã tắt chuyển SX trên "${stage.name}"`,
+      );
+    } catch { /* toast đã hiện */ }
   };
 
   const visiblePipelines = useMemo(() => {
@@ -877,51 +928,66 @@ export default function PipelineSettingsPage() {
   };
 
   const saveNew = async () => {
-    if (!form.name.trim()) return alert('Nhập tên giai đoạn');
+    if (!form.name.trim()) return showToast('Nhập tên giai đoạn', 'err');
     if (form.apply_default_assignee_on_enter && !form.default_assignee_user_id) {
-      return alert('Chọn người phụ trách trước khi bật «Chuyển người phụ trách».');
+      return showToast('Chọn người phụ trách trước khi bật «Chuyển người phụ trách».', 'err');
     }
+    if (!selectedPipelineId) return showToast('Chọn pipeline trước', 'err');
     try {
-      if (!selectedPipelineId) return alert('Chọn pipeline trước');
       const payload = { ...form, pipeline_type: adding, pipeline_id: selectedPipelineId };
       if (payload.default_probability === '') delete payload.default_probability;
       if (payload.sla_days === '' || payload.sla_days == null) delete payload.sla_days;
       else payload.sla_days = Number(payload.sla_days);
       await api.post('/crm/pipeline-stages', payload);
       setAdding(null);
-      load();
-    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+      await load({ silent: true });
+      showToast(`Đã thêm giai đoạn "${form.name.trim()}"`, 'ok');
+    } catch (e) {
+      showToast(e.response?.data?.error || 'Thêm giai đoạn thất bại', 'err');
+    }
   };
 
   const saveEdit = async () => {
-    if (!form.name.trim()) return alert('Nhập tên giai đoạn');
+    if (!form.name.trim()) return showToast('Nhập tên giai đoạn', 'err');
     if (form.apply_default_assignee_on_enter && !form.default_assignee_user_id) {
-      return alert('Chọn người phụ trách trước khi bật «Chuyển người phụ trách».');
+      return showToast('Chọn người phụ trách trước khi bật «Chuyển người phụ trách».', 'err');
     }
     try {
       const payload = { ...form };
       if (payload.default_probability === '') payload.default_probability = null;
       if (payload.sla_days === '' || payload.sla_days == null) payload.sla_days = null;
       else payload.sla_days = Number(payload.sla_days);
-      await api.put(`/crm/pipeline-stages/${editId}`, payload);
+      const { data } = await api.put(`/crm/pipeline-stages/${editId}`, payload);
+      if (data?.id) applyStageUpdate(data);
       setEditId(null);
-      load();
-    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+      await load({ silent: true });
+      showToast(`Đã lưu giai đoạn "${form.name.trim()}"`, 'ok');
+    } catch (e) {
+      showToast(e.response?.data?.error || 'Lưu giai đoạn thất bại', 'err');
+    }
   };
 
   const del = async (id) => {
     if (!confirm('Xóa giai đoạn này?')) return;
     try {
       await api.delete(`/crm/pipeline-stages/${id}`);
-      load();
-    } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+      setStages((prev) => prev.filter((s) => String(s.id) !== String(id)));
+      await load({ silent: true });
+      showToast('Đã xóa giai đoạn', 'ok');
+    } catch (e) {
+      showToast(e.response?.data?.error || 'Xóa giai đoạn thất bại', 'err');
+    }
   };
 
   const toggleActive = async (stage) => {
+    const next = !stage.is_active;
     try {
-      await api.put(`/crm/pipeline-stages/${stage.id}`, { is_active: !stage.is_active });
-      load();
-    } catch (e) { alert('Lỗi'); }
+      await mutateStage(
+        stage.id,
+        () => api.put(`/crm/pipeline-stages/${stage.id}`, { is_active: next }),
+        next ? `Đã hiện cột "${stage.name}"` : `Đã ẩn cột "${stage.name}"`,
+      );
+    } catch { /* toast đã hiện */ }
   };
 
   const moveStage = async (stage, dir) => {
@@ -936,8 +1002,15 @@ export default function PipelineSettingsPage() {
     const reorder = newList.map((s, i) => ({ id: s.id, order_index: i + 1 }));
     try {
       await api.put('/crm/pipeline-stages-reorder', { stages: reorder });
-      load();
-    } catch (e) { alert('Lỗi sắp xếp: ' + (e.response?.data?.error || e.message)); }
+      setStages((prev) => {
+        const byId = new Map(reorder.map((r) => [String(r.id), r.order_index]));
+        return prev.map((s) => (byId.has(String(s.id)) ? { ...s, order_index: byId.get(String(s.id)) } : s));
+      });
+      await load({ silent: true });
+      showToast('Đã sắp xếp lại giai đoạn', 'ok');
+    } catch (e) {
+      showToast('Lỗi sắp xếp: ' + (e.response?.data?.error || e.message), 'err');
+    }
   };
 
   // ─── Kéo thả sắp xếp stage ─────────────────────────────────────────────────
@@ -983,10 +1056,11 @@ export default function PipelineSettingsPage() {
     }));
     try {
       await api.put('/crm/pipeline-stages-reorder', { stages: reorder });
-      load();
+      await load({ silent: true });
+      showToast('Đã sắp xếp lại giai đoạn', 'ok');
     } catch (err) {
-      alert('Lỗi sắp xếp: ' + (err.response?.data?.error || err.message));
-      load();
+      showToast('Lỗi sắp xếp: ' + (err.response?.data?.error || err.message), 'err');
+      await load({ silent: true });
     }
   };
 
@@ -1269,8 +1343,8 @@ export default function PipelineSettingsPage() {
                           : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-amber-300 hover:text-amber-700'
                       }`}
                       title={s.allow_revert_to_lead
-                        ? 'Đang cho phép trả deal ở cột này về Lead. Nhấn để tắt.'
-                        : 'Bật để cho phép trả deal đang ở cột này về Lead (chi tiết + cột Danh sách hiện nút "Trả về Lead").'}
+                        ? 'Pipeline đang cho phép trả Deal về Lead (nhờ cột này). Nhấn để tắt.'
+                        : 'Bật để bật chức năng Trả về Lead cho cả pipeline Deal (nút hiện trên mọi deal chưa thắng / chưa có dự án SX).'}
                     >
                       <RotateCcw className="h-3 w-3" />
                       {s.allow_revert_to_lead ? 'Cho trả Lead' : 'Trả về Lead'}
@@ -1340,6 +1414,27 @@ export default function PipelineSettingsPage() {
 
   return (
     <div className="min-h-full bg-white">
+      {toast && (
+        <div
+          className={`fixed top-4 right-4 z-[80] max-w-sm px-4 py-3 rounded-xl shadow-lg text-sm font-medium flex items-start gap-2 ${
+            toast.kind === 'err' ? 'bg-red-600 text-white' : 'bg-emerald-600 text-white'
+          }`}
+          role="status"
+        >
+          {toast.kind === 'err'
+            ? <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+            : <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />}
+          <span className="leading-snug">{toast.text}</span>
+          <button
+            type="button"
+            className="ml-1 opacity-80 hover:opacity-100 shrink-0"
+            onClick={() => setToast(null)}
+            aria-label="Đóng"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
       <div className="p-4 md:p-6 max-w-[1400px] mx-auto space-y-5">
         <div className="flex items-start gap-3">
           <IconSettings className="w-6 h-6 text-violet-600 shrink-0" stroke={1.75} />
@@ -2326,7 +2421,7 @@ function StageForm({
         {pipelineType === 'deal' && !form.is_won && (
           <label
             className="flex items-center gap-2 text-xs cursor-pointer text-amber-900 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200"
-            title="Tick để cho phép trả deal đang ở cột này về Lead. Khi tick: header chi tiết và cột 'Trả về Lead' ở view Danh sách CRM sẽ hiện nút Trả về Lead."
+            title="Tick để bật chức năng Trả Deal về Lead cho pipeline. Khi tick: mọi deal chưa thắng / chưa có dự án SX sẽ hiện nút Trả về Lead (chi tiết + Danh sách)."
           >
             <input
               type="checkbox"

@@ -7,7 +7,7 @@ import {
   shareModuleLabels,
 } from '../lib/documentShareScope';
 import DocumentShareModulePicker from '../components/DocumentShareModulePicker';
-import { publicFileUrl, getFileOpenAnchorProps, getFileDownloadAnchorProps } from '../lib/publicFileUrl';
+import { publicFileUrl, getFileOpenAnchorProps, getFileDownloadAnchorProps, printUploadImage } from '../lib/publicFileUrl';
 import UploadFileLightbox, {
   collectUploadLightboxItems,
   findUploadLightboxIndex,
@@ -28,6 +28,7 @@ import UnifiedTaskHistoryWidget from '../components/UnifiedTaskHistoryWidget';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
 import ExcelQuotationImport from '../components/ExcelQuotationImport';
 import QuotationSourceExcelLink from '../components/QuotationSourceExcelLink';
+import { PO_STATUS, PO_COLORS } from './PurchasingInboxPage';
 import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import EmployeePicker from '../components/EmployeePicker';
 import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
@@ -62,7 +63,7 @@ import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, DollarSign, User, Target,
   Plus, Clock, MessageSquare, MessageCircle, Edit2, Trash2, X, Save, Building2, FolderKanban,
   FileUp, FileText, Zap, ChevronDown, Send, RefreshCw, Users, ClipboardCheck, Loader2, Mic, RotateCcw, Download,
-  Pin, CheckCircle2,
+  Pin, CheckCircle2, ShoppingCart, Package, Search, Eye,
 } from 'lucide-react';
 
 function formatLeadDealEventTitle(lead, customer) {
@@ -179,6 +180,29 @@ export default function LeadDetail() {
   const [showExcelImport, setShowExcelImport] = useState(false);
   /** Báo giá deal có file Excel gốc — mở lại từ header */
   const [dealExcelQuotations, setDealExcelQuotations] = useState([]);
+  /** Đặt hàng gắn deal — CRUD đơn giản trên tab */
+  const [dealPurchaseOrders, setDealPurchaseOrders] = useState([]);
+  const [poStatusFilter, setPoStatusFilter] = useState('');
+  const [poFormOpen, setPoFormOpen] = useState(false);
+  const [poEditing, setPoEditing] = useState(null);
+  const [poSaving, setPoSaving] = useState(false);
+  const [poForm, setPoForm] = useState({
+    title: '',
+    notes: '',
+    status: 'draft',
+    order_date: new Date().toISOString().slice(0, 10),
+    items: [],
+  });
+  const [poCatalog, setPoCatalog] = useState({ brands: [], categories: [], products: [] });
+  const [poCatBrand, setPoCatBrand] = useState('');
+  const [poCatCategory, setPoCatCategory] = useState('');
+  const [poCatSearch, setPoCatSearch] = useState('');
+  const [poCatalogLoading, setPoCatalogLoading] = useState(false);
+  const [poManualName, setPoManualName] = useState('');
+  const [poManualQty, setPoManualQty] = useState(1);
+  const [poManualPrice, setPoManualPrice] = useState('');
+  const [poDetail, setPoDetail] = useState(null);
+  const [poDetailLoading, setPoDetailLoading] = useState(false);
   // const [notesExpanded, setNotesExpanded] = useState(localStorage.getItem('crm_notes_default_open') === 'true'); // TBD
   const [showLostModal, setShowLostModal] = useState(false);
   const [lostReason, setLostReason] = useState('');
@@ -215,6 +239,12 @@ export default function LeadDetail() {
   const [pickProjectCompanyId, setPickProjectCompanyId] = useState('');
   const [pickProjectCompanyWorkTypeId, setPickProjectCompanyWorkTypeId] = useState('');
   const [pickProjectCompanyErr, setPickProjectCompanyErr] = useState('');
+  /** Admin chọn lại công ty + phân loại SX khi đã có dự án */
+  const [reassignSxOpen, setReassignSxOpen] = useState(false);
+  const [reassignSxCompanyId, setReassignSxCompanyId] = useState('');
+  const [reassignSxWorkTypeId, setReassignSxWorkTypeId] = useState('');
+  const [reassignSxErr, setReassignSxErr] = useState('');
+  const [reassignSxBusy, setReassignSxBusy] = useState(false);
   /**
    * Phân loại theo công ty SX cho 2 modal won-pick / pick-project-company.
    * Cùng dùng 1 list — modal nào mở thì useEffect bên dưới fetch theo company của modal đó.
@@ -231,15 +261,16 @@ export default function LeadDetail() {
   const [driveFileCount, setDriveFileCount] = useState(0);
 
   /**
-   * Fetch danh sách phân loại theo công ty SX đang chọn ở 2 modal:
+   * Fetch danh sách phân loại theo công ty SX đang chọn ở các modal:
    *   - dealStageWonPick (kéo deal sang Thắng)
    *   - pickProjectCompanyOpen (tạo dự án xưởng cho deal đã Thắng)
-   * Modal nào mở mới fetch theo company của modal đó.
+   *   - reassignSxOpen (admin chọn lại công ty / phân loại)
    */
   useEffect(() => {
     let activeCompanyId = '';
     if (dealStageWonPick && dealStageWonCompanyId) activeCompanyId = dealStageWonCompanyId;
     else if (pickProjectCompanyOpen && pickProjectCompanyId) activeCompanyId = pickProjectCompanyId;
+    else if (reassignSxOpen && reassignSxCompanyId) activeCompanyId = reassignSxCompanyId;
     if (!activeCompanyId) {
       setWonModalWorkTypes([]);
       return undefined;
@@ -251,7 +282,6 @@ export default function LeadDetail() {
         if (cancelled) return;
         const rows = Array.isArray(r.data) ? r.data : (r.data?.data || []);
         setWonModalWorkTypes(rows);
-        // Reset workshop_type_id của modal đang mở nếu không thuộc công ty mới
         const inList = (id) => rows.some((t) => String(t.id) === String(id));
         if (dealStageWonPick && dealStageWonWorkTypeId && !inList(dealStageWonWorkTypeId)) {
           setDealStageWonWorkTypeId('');
@@ -259,12 +289,15 @@ export default function LeadDetail() {
         if (pickProjectCompanyOpen && pickProjectCompanyWorkTypeId && !inList(pickProjectCompanyWorkTypeId)) {
           setPickProjectCompanyWorkTypeId('');
         }
+        if (reassignSxOpen && reassignSxWorkTypeId && !inList(reassignSxWorkTypeId)) {
+          setReassignSxWorkTypeId('');
+        }
       })
       .catch(() => { if (!cancelled) setWonModalWorkTypes([]); })
       .finally(() => { if (!cancelled) setWonModalWorkTypesLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dealStageWonPick, dealStageWonCompanyId, pickProjectCompanyOpen, pickProjectCompanyId]);
+  }, [dealStageWonPick, dealStageWonCompanyId, pickProjectCompanyOpen, pickProjectCompanyId, reassignSxOpen, reassignSxCompanyId]);
 
   // Auto-create project (chạy ngầm)
   const [autoCreateStatus, setAutoCreateStatus] = useState(null); // null | 'loading' | 'success' | 'error'
@@ -374,7 +407,6 @@ export default function LeadDetail() {
     }
     const allowed = new Set([
       'tasks',
-      'kpi_ledger',
       'documents',
       'notes',
       'facebook',
@@ -384,10 +416,27 @@ export default function LeadDetail() {
       'activities',
       'calls',
       'voice_crm',
-      'approvals',
+      'drive',
+      'deal_scores',
+      'purchase_orders',
+      'orders',
     ]);
-    if (t === 'orders') {
+    if (t === 'orders' || t === 'purchase_orders' || t === 'dat-hang') {
+      setActiveTab('purchase_orders');
+      const next = new URLSearchParams(searchParams);
+      next.delete('tab');
+      setSearchParams(next, { replace: true });
+      return;
+    }
+    if (t === 'kpi_ledger' || t === 'approvals') {
       setActiveTab('tasks');
+      const next = new URLSearchParams(searchParams);
+      next.delete('tab');
+      setSearchParams(next, { replace: true });
+      return;
+    }
+    if (t === 'activities') {
+      setActiveTab('notes');
       const next = new URLSearchParams(searchParams);
       next.delete('tab');
       setSearchParams(next, { replace: true });
@@ -398,15 +447,6 @@ export default function LeadDetail() {
       next.delete('tab');
       setSearchParams(next, { replace: true });
       return;
-    }
-    if (t === 'approvals') {
-      if (!lead || String(lead.id) !== String(id)) return;
-      if (lead.type !== 'deal') {
-        const next = new URLSearchParams(searchParams);
-        next.delete('tab');
-        setSearchParams(next, { replace: true });
-        return;
-      }
     }
     if (t === 'facebook' || t === 'zalo') {
       if (!lead || String(lead.id) !== String(id)) return;
@@ -434,10 +474,148 @@ export default function LeadDetail() {
       .catch(() => setDealExcelQuotations([]));
   }, [id]);
 
+  const loadDealPurchaseOrders = useCallback(() => {
+    if (!id) return;
+    api
+      .get('/purchasing/orders', { params: { lead_id: id } })
+      .then((r) => {
+        const rows = Array.isArray(r.data) ? r.data : [];
+        setDealPurchaseOrders(rows.slice(0, 50));
+      })
+      .catch(() => setDealPurchaseOrders([]));
+  }, [id]);
+
+  const loadPoCatalog = useCallback(async () => {
+    setPoCatalogLoading(true);
+    try {
+      const params = {};
+      if (poCatBrand) params.brand_id = poCatBrand;
+      if (poCatCategory) params.category_id = poCatCategory;
+      const [bRes, cRes, pRes] = await Promise.all([
+        api.get('/purchasing/brands'),
+        api.get('/purchasing/categories'),
+        api.get('/purchasing/products', { params }),
+      ]);
+      setPoCatalog({
+        brands: bRes.data || [],
+        categories: cRes.data || [],
+        products: pRes.data || [],
+      });
+    } catch {
+      setPoCatalog((prev) => ({ ...prev, products: [] }));
+    }
+    setPoCatalogLoading(false);
+  }, [poCatBrand, poCatCategory]);
+
+  const openPoCreateForm = useCallback(() => {
+    setPoEditing(null);
+    setPoForm({
+      title: lead?.title ? `Đặt hàng — ${lead.title}` : '',
+      notes: '',
+      status: 'draft',
+      order_date: new Date().toISOString().slice(0, 10),
+      items: [],
+    });
+    setPoCatBrand('');
+    setPoCatCategory('');
+    setPoCatSearch('');
+    setPoManualName('');
+    setPoManualQty(1);
+    setPoManualPrice('');
+    setPoFormOpen(true);
+  }, [lead?.title]);
+
+  const addPoManualItem = useCallback(() => {
+    const name = poManualName.trim();
+    if (!name) return alert('Nhập tên hạng mục / SP');
+    const qty = Number(poManualQty) || 1;
+    const price = Number(poManualPrice) || 0;
+    setPoForm((f) => ({
+      ...f,
+      items: [
+        ...(f.items || []),
+        {
+          product_id: null,
+          name,
+          unit: 'cái',
+          quantity: qty,
+          unit_price: price,
+          amount: Math.round(qty * price * 100) / 100,
+          brand_name: null,
+          sku: null,
+          image_url: null,
+        },
+      ],
+    }));
+    setPoManualName('');
+    setPoManualQty(1);
+    setPoManualPrice('');
+  }, [poManualName, poManualQty, poManualPrice]);
+
+  const togglePoProduct = useCallback((p) => {
+    setPoForm((f) => {
+      const idx = (f.items || []).findIndex((it) => String(it.product_id) === String(p.id));
+      if (idx >= 0) {
+        return { ...f, items: f.items.filter((_, i) => i !== idx) };
+      }
+      const price = Number(p.cost_price) || Number(p.selling_price) || 0;
+      return {
+        ...f,
+        items: [
+          ...(f.items || []),
+          {
+            product_id: p.id,
+            name: p.name,
+            description: p.description || '',
+            unit: p.unit || 'cái',
+            quantity: 1,
+            unit_price: price,
+            amount: price,
+            brand_name: p.brand?.name || null,
+            sku: p.sku || p.code || null,
+            image_url: p.image_url || null,
+          },
+        ],
+      };
+    });
+  }, []);
+
+  const updatePoItem = useCallback((idx, patch) => {
+    setPoForm((f) => {
+      const items = [...(f.items || [])];
+      const next = { ...items[idx], ...patch };
+      next.amount = Math.round((Number(next.quantity) || 0) * (Number(next.unit_price) || 0) * 100) / 100;
+      items[idx] = next;
+      return { ...f, items };
+    });
+  }, []);
+
+  const removePoItem = useCallback((idx) => {
+    setPoForm((f) => ({ ...f, items: (f.items || []).filter((_, i) => i !== idx) }));
+  }, []);
+
+  const openPoDetail = useCallback(async (orderId) => {
+    setPoDetailLoading(true);
+    setPoDetail({ id: orderId });
+    try {
+      const { data } = await api.get(`/purchasing/orders/${orderId}`);
+      setPoDetail(data);
+    } catch (e) {
+      setPoDetail(null);
+      alert(e.response?.data?.error || 'Lỗi tải chi tiết');
+    }
+    setPoDetailLoading(false);
+  }, []);
+
   useEffect(() => {
-    if (lead?.type === 'deal') loadDealExcelQuotations();
-    else setDealExcelQuotations([]);
-  }, [lead?.type, lead?.id, loadDealExcelQuotations]);
+    if (lead?.type === 'deal') {
+      loadDealExcelQuotations();
+      loadDealPurchaseOrders();
+    } else {
+      setDealExcelQuotations([]);
+      setDealPurchaseOrders([]);
+    }
+  }, [lead?.type, lead?.id, loadDealExcelQuotations, loadDealPurchaseOrders]);
 
   const load = async (opts = {}) => {
     const silent = !!opts.silent;
@@ -631,6 +809,20 @@ export default function LeadDetail() {
       setActiveTab('tasks');
     }
   }, [lead?.type, activeTab, isDealHoanThanhForZalo]);
+
+  useEffect(() => {
+    if (activeTab === 'purchase_orders') loadDealPurchaseOrders();
+  }, [activeTab, loadDealPurchaseOrders]);
+
+  useEffect(() => {
+    if (poFormOpen) loadPoCatalog();
+  }, [poFormOpen, loadPoCatalog]);
+
+  /** Tab Ghi chú + Hoạt động đã gộp; ẩn KPI / Gửi duyệt */
+  useEffect(() => {
+    if (activeTab === 'activities') setActiveTab('notes');
+    else if (activeTab === 'kpi_ledger' || activeTab === 'approvals') setActiveTab('tasks');
+  }, [activeTab]);
 
   const noteActivities = useMemo(
     () => (activities || []).filter((a) => a.type === 'note'),
@@ -1139,6 +1331,53 @@ export default function LeadDetail() {
     await autoCreateProject(id, pickProjectCompanyId, pickProjectCompanyWorkTypeId || null);
   };
 
+  const openReassignSxModal = () => {
+    setReassignSxErr('');
+    setReassignSxCompanyId(lead?.sx_template_company_id || '');
+    setReassignSxWorkTypeId('');
+    setReassignSxOpen(true);
+  };
+
+  const submitReassignSx = async () => {
+    if (!reassignSxCompanyId) {
+      setReassignSxErr('Vui lòng chọn công ty Sản xuất.');
+      return;
+    }
+    if (wonModalWorkTypes.length > 0 && !reassignSxWorkTypeId) {
+      setReassignSxErr('Vui lòng chọn phân loại sản xuất.');
+      return;
+    }
+    if (!reassignSxWorkTypeId) {
+      setReassignSxErr('Vui lòng chọn phân loại sản xuất.');
+      return;
+    }
+    const ok = confirm(
+      'Chọn lại sẽ thay thành viên SX theo phân loại mới và tạo lại nhiệm vụ mẫu xưởng / CRM sx_*. Tiến độ các nhiệm vụ mẫu cũ sẽ mất. Tiếp tục?',
+    );
+    if (!ok) return;
+    setReassignSxBusy(true);
+    setReassignSxErr('');
+    try {
+      const { data } = await api.post(`/crm/deals/${id}/reassign-sx`, {
+        production_company_id: reassignSxCompanyId,
+        workshop_type_id: reassignSxWorkTypeId,
+      });
+      setReassignSxOpen(false);
+      setReassignSxCompanyId('');
+      setReassignSxWorkTypeId('');
+      await load({ silent: true });
+      setCrmTasksRefreshKey((k) => k + 1);
+      alert(
+        data?.company_name
+          ? `Đã chọn lại SX: ${data.company_name} · ${data.workshop_type_name || ''}`
+          : 'Đã chọn lại công ty / phân loại SX',
+      );
+    } catch (e) {
+      setReassignSxErr(e.response?.data?.error || e.message || 'Lỗi chọn lại SX');
+    }
+    setReassignSxBusy(false);
+  };
+
   const confirmDealDetailEvent = async ({ startIso, endIso, titlePreview, locPreview }) => {
     const ctx = dealDetailEventCtx;
     if (!ctx || !lead) return;
@@ -1266,11 +1505,9 @@ export default function LeadDetail() {
   const isPipelineComplete = stages.some(s => s.id === lead.stage_id && s.is_won);
   const canConvert = (lead.type === 'lead' || !lead.type || lead.type === '') && !lead.project_id;
   const currentStageObj = stages.find((s) => s.id === lead.stage_id) || null;
-  const canRevertToLead =
-    lead.type === 'deal'
-    && !lead.project_id
-    && !currentStageObj?.is_won
-    && currentStageObj?.allow_revert_to_lead === true;
+  // Luôn hiện nút trên Deal — không phụ thuộc flag stage (cache taxonomy dễ làm mất cờ).
+  // Backend vẫn chọn cột lead đích (is_revert_to_lead_target / cột lead đầu).
+  const canRevertToLead = lead.type === 'deal';
 
   const canDeleteLeadDeal = canUserDeleteCrmLeadDeal({
     pipeline: pipelineConfig,
@@ -1588,16 +1825,6 @@ export default function LeadDetail() {
               <RotateCcw className="h-4 w-4" /> Trả về Lead
             </button>
           )}
-          {/* Deal Thắng + chưa có project → nút Tạo dự án */}
-          {lead.type === 'deal' && isPipelineComplete && !lead.project_id && (
-            <button onClick={() => navigate(`/projects/create?deal_id=${id}`)}
-              className="h-9 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer">
-              <FolderKanban className="h-4 w-4" /> Tạo dự án
-            </button>
-          )}
-          <button onClick={() => navigate(`/crm/quotations/new?lead_id=${id}`)} className="h-9 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer">
-            <FileText className="h-4 w-4" /> Báo giá
-          </button>
           <button
             type="button"
             onClick={() => {
@@ -1614,47 +1841,6 @@ export default function LeadDetail() {
           <button onClick={() => setShowExcelImport(true)} className="h-9 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer">
             📥 Import Excel
           </button>
-          {lead.type === 'deal' && dealExcelQuotations.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5 max-w-full">
-              {dealExcelQuotations.map((q) => (
-                <QuotationSourceExcelLink
-                  key={q.id}
-                  fileUrl={q.source_excel_file_url}
-                  fileName={q.source_excel_file_name || q.code}
-                  compact
-                  className="max-w-[11rem]"
-                />
-              ))}
-            </div>
-          )}
-          {lead.type === 'deal' && isDealHoanThanhForZalo && (
-            <button
-              type="button"
-              disabled={zaloQuickSendLoading}
-              onClick={() => quickSendZaloOa()}
-              title="Điền mẫu từ deal (cấu trúc trong Cài đặt Pipeline → Zalo OA) và gửi tin Zalo OA"
-              className="h-9 px-3 bg-[#0068FF] hover:bg-[#0056d4] text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-            >
-              {zaloQuickSendLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
-              Gửi Zalo
-            </button>
-          )}
-          {lead.project_id && (
-            <>
-              <Link to={`/sx/projects/${lead.project_id}`} className="h-9 px-3 bg-teal-100 text-teal-800 rounded-lg text-sm font-medium flex items-center gap-1.5">
-                <FolderKanban className="h-4 w-4" /> Xưởng / SX
-              </Link>
-              <Link to={`/projects/${lead.project_id}`} className="h-9 px-3 bg-emerald-100 text-emerald-700 rounded-lg text-sm font-medium flex items-center gap-1.5">
-                <FolderKanban className="h-4 w-4" /> Dự án đầy đủ
-              </Link>
-            </>
-          )}
-          {canDeleteLeadDeal && (
-            <button onClick={deleteLead} className="h-9 px-3 text-red-500 border border-red-200 rounded-lg text-sm flex items-center gap-1.5 cursor-pointer hover:bg-red-50">
-              <Trash2 className="h-4 w-4" />
-            </button>
-          )}
-
         </div>
       </div>
 
@@ -1798,13 +1984,13 @@ export default function LeadDetail() {
           {/* Quick Stats Card */}
           <div className="grid grid-cols-3 gap-2">
             <div className="bg-blue-50 rounded-lg border border-blue-100 p-3 text-center cursor-pointer hover:bg-blue-100/80 transition-colors"
-              onClick={() => setActiveTab('activities')}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setActiveTab('activities'); }}
+              onClick={() => setActiveTab('notes')}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setActiveTab('notes'); }}
               role="button"
               tabIndex={0}
-              title="Xem tab Hoạt động"
+              title="Xem tab Ghi chú & Hoạt động"
             >
-              <p className="text-xs text-gray-600 mb-1">Hoạt động</p>
+              <p className="text-xs text-gray-600 mb-1">Ghi chú / HĐ</p>
               <p className="text-xl font-bold text-blue-600">{activities.length}</p>
             </div>
             <div className="bg-amber-50 rounded-lg border border-amber-100 p-3 text-center">
@@ -1825,7 +2011,7 @@ export default function LeadDetail() {
             <div className="flex border-b">
               <button
                 onClick={() => setActiveTab('tasks')}
-                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'tasks'
                     ? 'text-blue-600 border-b-2 border-blue-600'
                     : 'text-gray-600 hover:text-gray-900'
@@ -1835,62 +2021,80 @@ export default function LeadDetail() {
                 ✅ Công việc
               </button>
               <button
-                onClick={() => setActiveTab('kpi_ledger')}
-                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
-                  activeTab === 'kpi_ledger'
-                    ? 'text-blue-600 border-b-2 border-blue-600'
+                onClick={() => setActiveTab('purchase_orders')}
+                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                  activeTab === 'purchase_orders'
+                    ? 'text-amber-700 border-b-2 border-amber-500'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
-                title="Điểm cộng/trừ theo sổ cái CRM (task, stage, won/lost, SLA) trong tháng"
+                title="Lệnh đặt hàng của deal — lọc theo trạng thái"
               >
-                📊 Điểm KPI
+                🛒 Đặt hàng
+                {dealPurchaseOrders.length > 0 && (
+                  <span className={`absolute top-1 right-1.5 min-w-[1.15rem] h-[1.15rem] px-1 rounded-full text-[10px] font-bold leading-none flex items-center justify-center ${
+                    activeTab === 'purchase_orders' ? 'bg-amber-500 text-white' : 'bg-amber-100 text-amber-800'
+                  }`}>
+                    {dealPurchaseOrders.length}
+                  </span>
+                )}
               </button>
               <button
                 onClick={() => setActiveTab('documents')}
-                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'documents'
                     ? 'text-blue-600 border-b-2 border-blue-600'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
-                📋 Tài liệu ({documentsTabTotal})
+                📋 Tài liệu
+                {documentsTabTotal > 0 && (
+                  <span className={`absolute top-1 right-1.5 min-w-[1.15rem] h-[1.15rem] px-1 rounded-full text-[10px] font-bold leading-none flex items-center justify-center ${
+                    activeTab === 'documents' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'
+                  }`}>
+                    {documentsTabTotal}
+                  </span>
+                )}
               </button>
               <button
                 onClick={() => setActiveTab('drive')}
-                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'drive'
                     ? 'text-blue-600 border-b-2 border-blue-600'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
                 title="File trên Google Drive đã gắn vào lead/deal này"
               >
-                ☁️ Drive ({driveFileCount})
+                ☁️ Drive
+                {driveFileCount > 0 && (
+                  <span className={`absolute top-1 right-1.5 min-w-[1.15rem] h-[1.15rem] px-1 rounded-full text-[10px] font-bold leading-none flex items-center justify-center ${
+                    activeTab === 'drive' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'
+                  }`}>
+                    {driveFileCount}
+                  </span>
+                )}
               </button>
               <button
                 onClick={() => setActiveTab('notes')}
-                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'notes'
                     ? 'text-blue-600 border-b-2 border-blue-600'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
+                title="Ghi chú và lịch sử hoạt động"
               >
-                📝 Ghi chú ({noteActivities.length})
-              </button>
-              <button
-                onClick={() => setActiveTab('activities')}
-                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
-                  activeTab === 'activities'
-                    ? 'text-blue-600 border-b-2 border-blue-600'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-                title="Lịch sử hoạt động, gọi điện, @ nhắc trong bình luận"
-              >
-                📋 Hoạt động ({activities.length})
+                📝 Ghi chú & HĐ
+                {activities.length > 0 && (
+                  <span className={`absolute top-1 right-1.5 min-w-[1.15rem] h-[1.15rem] px-1 rounded-full text-[10px] font-bold leading-none flex items-center justify-center ${
+                    activeTab === 'notes' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'
+                  }`}>
+                    {activities.length}
+                  </span>
+                )}
               </button>
               {inboxChannel === 'facebook' && (
               <button
                 onClick={() => setActiveTab('facebook')}
-                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'facebook'
                     ? 'text-blue-600 border-b-2 border-blue-600'
                     : 'text-gray-600 hover:text-gray-900'
@@ -1902,7 +2106,7 @@ export default function LeadDetail() {
               {inboxChannel === 'zalo' && (
               <button
                 onClick={() => setActiveTab('zalo')}
-                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'zalo'
                     ? 'text-blue-600 border-b-2 border-blue-600'
                     : 'text-gray-600 hover:text-gray-900'
@@ -1913,7 +2117,7 @@ export default function LeadDetail() {
               )}
               <button
                 onClick={() => setActiveTab('team')}
-                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'team'
                     ? 'text-blue-600 border-b-2 border-blue-600'
                     : 'text-gray-600 hover:text-gray-900'
@@ -1923,17 +2127,24 @@ export default function LeadDetail() {
               </button>
               <button
                 onClick={() => setActiveTab('comments')}
-                className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'comments'
                     ? 'text-blue-600 border-b-2 border-blue-600'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
-                💬 Bình luận{commentCount > 0 ? ` (${commentCount})` : ''}
+                💬 Bình luận
+                {commentCount > 0 && (
+                  <span className={`absolute top-1 right-1.5 min-w-[1.15rem] h-[1.15rem] px-1 rounded-full text-[10px] font-bold leading-none flex items-center justify-center ${
+                    activeTab === 'comments' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'
+                  }`}>
+                    {commentCount}
+                  </span>
+                )}
               </button>
               <button
                 onClick={() => setActiveTab('voice_crm')}
-                className={`flex-1 py-3 px-4 text-sm font-medium transition-all inline-flex items-center justify-center gap-1 ${
+                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all inline-flex items-center justify-center gap-1 ${
                   activeTab === 'voice_crm'
                     ? 'text-violet-600 border-b-2 border-violet-600'
                     : 'text-gray-600 hover:text-gray-900'
@@ -1942,22 +2153,10 @@ export default function LeadDetail() {
                 <Mic className="h-3.5 w-3.5 shrink-0" />
                 Ghi âm
               </button>
-              {lead?.type === 'deal' && (
-                <button
-                  onClick={() => setActiveTab('approvals')}
-                  className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
-                    activeTab === 'approvals'
-                      ? 'text-blue-600 border-b-2 border-blue-600'
-                      : 'text-gray-600 hover:text-gray-900'
-                  }`}
-                >
-                  ✅ Gửi duyệt deal
-                </button>
-              )}
               {lead?.type === 'deal' && isDealHoanThanhForZalo && (
                 <button
                   onClick={() => setActiveTab('deal_scores')}
-                  className={`flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                  className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                     activeTab === 'deal_scores'
                       ? 'text-blue-600 border-b-2 border-blue-600'
                       : 'text-gray-600 hover:text-gray-900'
@@ -1992,6 +2191,534 @@ export default function LeadDetail() {
                   />
                 </div>
                 </>
+              ) : activeTab === 'purchase_orders' ? (
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-gray-900">Đặt hàng</h3>
+                      <p className="text-xs text-gray-500 mt-0.5">{dealPurchaseOrders.length} bản ghi · chọn SP từ catalog</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={openPoCreateForm}
+                      className="h-8 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Plus className="h-3.5 w-3.5" /> Thêm
+                    </button>
+                  </div>
+                  <div className="flex gap-2 overflow-x-auto pb-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setPoStatusFilter('')}
+                      className={`px-3 py-1.5 rounded-full text-xs font-medium border cursor-pointer whitespace-nowrap inline-flex items-center gap-1.5 ${!poStatusFilter ? 'bg-amber-600 text-white border-amber-600' : 'hover:bg-gray-50'}`}
+                    >
+                      Tất cả
+                      <span className={`min-w-[1.1rem] h-4 px-1 rounded-full text-[10px] font-bold flex items-center justify-center ${!poStatusFilter ? 'bg-white/25 text-white' : 'bg-gray-100 text-gray-600'}`}>
+                        {dealPurchaseOrders.length}
+                      </span>
+                    </button>
+                    {Object.entries(PO_STATUS).map(([k, v]) => {
+                      const n = dealPurchaseOrders.filter((o) => o.status === k).length;
+                      if (!n) return null;
+                      return (
+                        <button
+                          key={k}
+                          type="button"
+                          onClick={() => setPoStatusFilter(poStatusFilter === k ? '' : k)}
+                          className={`px-3 py-1.5 rounded-full text-xs font-medium border cursor-pointer whitespace-nowrap inline-flex items-center gap-1.5 ${poStatusFilter === k ? 'bg-amber-600 text-white border-amber-600' : PO_COLORS[k]}`}
+                        >
+                          {v}
+                          <span className={`min-w-[1.1rem] h-4 px-1 rounded-full text-[10px] font-bold flex items-center justify-center ${poStatusFilter === k ? 'bg-white/25 text-white' : 'bg-black/5'}`}>
+                            {n}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {(() => {
+                    const filtered = poStatusFilter
+                      ? dealPurchaseOrders.filter((o) => o.status === poStatusFilter)
+                      : dealPurchaseOrders;
+                    if (!filtered.length) {
+                      return (
+                        <div className="text-center py-10 text-gray-400">
+                          <ShoppingCart className="h-10 w-10 mx-auto mb-2 opacity-30" />
+                          <p className="text-sm">Chưa có đặt hàng</p>
+                          <button
+                            type="button"
+                            onClick={openPoCreateForm}
+                            className="mt-3 h-9 px-4 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium cursor-pointer"
+                          >
+                            Thêm mới
+                          </button>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="overflow-auto rounded-lg border" style={{ maxHeight: 'min(480px, 60vh)' }}>
+                        <table className="w-full text-sm">
+                          <thead className="bg-gray-50 sticky top-0">
+                            <tr className="border-b text-left text-xs text-gray-500 uppercase">
+                              <th className="py-2.5 px-3">Mã</th>
+                              <th className="py-2.5 px-3">Tiêu đề</th>
+                              <th className="py-2.5 px-3 text-right">Tổng</th>
+                              <th className="py-2.5 px-3">Trạng thái</th>
+                              <th className="py-2.5 px-3">Ngày</th>
+                              <th className="py-2.5 px-3 w-32" />
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filtered.map((o) => (
+                              <tr key={o.id} className="border-b hover:bg-amber-50/40">
+                                <td className="py-2.5 px-3 font-bold text-amber-700">{o.code}</td>
+                                <td className="py-2.5 px-3 font-medium">{o.title || '—'}</td>
+                                <td className="py-2.5 px-3 text-right font-semibold">{formatVND(o.total || 0)}</td>
+                                <td className="py-2.5 px-3">
+                                  <span className={`text-xs px-2 py-0.5 rounded font-medium ${PO_COLORS[o.status] || ''}`}>
+                                    {PO_STATUS[o.status] || o.status}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 text-gray-500 text-xs">{formatDate(o.order_date || o.created_at)}</td>
+                                <td className="py-2.5 px-3">
+                                  <div className="flex gap-1 justify-end">
+                                    <button
+                                      type="button"
+                                      className="p-1.5 text-gray-400 hover:text-amber-700 cursor-pointer"
+                                      title="Xem chi tiết"
+                                      onClick={() => openPoDetail(o.id)}
+                                    >
+                                      <Eye className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="p-1.5 text-gray-400 hover:text-amber-600 cursor-pointer"
+                                      title="Sửa"
+                                      onClick={async () => {
+                                        try {
+                                          const { data } = await api.get(`/purchasing/orders/${o.id}`);
+                                          setPoEditing(data);
+                                          setPoForm({
+                                            title: data.title || '',
+                                            notes: data.notes || '',
+                                            status: data.status || 'draft',
+                                            order_date: data.order_date || '',
+                                            items: (data.items || []).map((it) => ({
+                                              product_id: it.product_id,
+                                              name: it.name,
+                                              description: it.description,
+                                              unit: it.unit || 'cái',
+                                              quantity: it.quantity ?? 1,
+                                              unit_price: it.unit_price ?? 0,
+                                              amount: it.amount ?? 0,
+                                              brand_name: it.brand_name,
+                                              sku: it.sku,
+                                              image_url: it.image_url,
+                                            })),
+                                          });
+                                          setPoCatBrand('');
+                                          setPoCatCategory('');
+                                          setPoCatSearch('');
+                                          setPoManualName('');
+                                          setPoManualQty(1);
+                                          setPoManualPrice('');
+                                          setPoFormOpen(true);
+                                        } catch (e) {
+                                          alert(e.response?.data?.error || 'Lỗi tải');
+                                        }
+                                      }}
+                                    >
+                                      <Edit2 className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="p-1.5 text-gray-400 hover:text-red-600 cursor-pointer"
+                                      title="Xóa"
+                                      onClick={async () => {
+                                        if (!confirm(`Xóa ${o.code}?`)) return;
+                                        try {
+                                          await api.delete(`/purchasing/orders/${o.id}`);
+                                          loadDealPurchaseOrders();
+                                        } catch (e) {
+                                          alert(e.response?.data?.error || 'Lỗi xóa');
+                                        }
+                                      }}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })()}
+
+                  {poDetail && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                      <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+                        <div className="flex items-center justify-between p-5 pb-3 border-b shrink-0">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h2 className="font-bold text-lg">{poDetail.code || 'Chi tiết đặt hàng'}</h2>
+                              {poDetail.status && (
+                                <span className={`text-xs px-2 py-0.5 rounded font-medium ${PO_COLORS[poDetail.status] || ''}`}>
+                                  {PO_STATUS[poDetail.status] || poDetail.status}
+                                </span>
+                              )}
+                            </div>
+                            {poDetail.title && (
+                              <p className="text-sm text-gray-600 mt-0.5 truncate">{poDetail.title}</p>
+                            )}
+                          </div>
+                          <button type="button" onClick={() => setPoDetail(null)} className="p-1 cursor-pointer shrink-0">
+                            <X className="h-5 w-5 text-gray-400" />
+                          </button>
+                        </div>
+                        <div className="p-5 overflow-y-auto flex-1 min-h-0 space-y-4">
+                          {poDetailLoading || !poDetail.code ? (
+                            <div className="flex justify-center py-12">
+                              <Loader2 className="h-8 w-8 animate-spin text-amber-600" />
+                            </div>
+                          ) : (
+                            <>
+                              <div className="grid grid-cols-2 gap-3 text-sm">
+                                <div className="rounded-lg border p-3">
+                                  <div className="text-[11px] uppercase text-gray-400 font-medium">Ngày đặt</div>
+                                  <div className="font-medium mt-0.5">{formatDate(poDetail.order_date || poDetail.created_at)}</div>
+                                </div>
+                                <div className="rounded-lg border p-3">
+                                  <div className="text-[11px] uppercase text-gray-400 font-medium">Tổng tiền</div>
+                                  <div className="font-bold text-amber-700 mt-0.5">{formatVND(poDetail.total || 0)}</div>
+                                </div>
+                                <div className="rounded-lg border p-3 col-span-2">
+                                  <div className="text-[11px] uppercase text-gray-400 font-medium">Khách hàng</div>
+                                  <div className="font-medium mt-0.5">{poDetail.customer_name || '—'}</div>
+                                  {poDetail.customer_phone && (
+                                    <div className="text-xs text-gray-500">{poDetail.customer_phone}</div>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="rounded-lg border overflow-hidden">
+                                <table className="w-full text-sm">
+                                  <thead className="bg-gray-50">
+                                    <tr className="border-b text-left text-xs text-gray-500 uppercase">
+                                      <th className="py-2 px-3">Sản phẩm</th>
+                                      <th className="py-2 px-3 text-right">SL</th>
+                                      <th className="py-2 px-3 text-right">Đơn giá</th>
+                                      <th className="py-2 px-3 text-right">Thành tiền</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {(poDetail.items || []).map((it) => (
+                                      <tr key={it.id || `${it.name}-${it.item_order}`} className="border-b">
+                                        <td className="py-2 px-3">
+                                          <div className="font-medium">{it.name}</div>
+                                          {(it.brand_name || it.sku) && (
+                                            <div className="text-[10px] text-gray-400">{[it.brand_name, it.sku].filter(Boolean).join(' · ')}</div>
+                                          )}
+                                        </td>
+                                        <td className="py-2 px-3 text-right">{it.quantity} {it.unit || ''}</td>
+                                        <td className="py-2 px-3 text-right">{formatVND(it.unit_price || 0)}</td>
+                                        <td className="py-2 px-3 text-right font-medium">{formatVND(it.amount || 0)}</td>
+                                      </tr>
+                                    ))}
+                                    {!(poDetail.items || []).length && (
+                                      <tr>
+                                        <td colSpan={4} className="py-6 text-center text-gray-400 text-sm">Không có dòng hàng</td>
+                                      </tr>
+                                    )}
+                                  </tbody>
+                                </table>
+                                <div className="px-3 py-2.5 border-t text-sm flex flex-col items-end gap-0.5 bg-gray-50/50">
+                                  <div className="flex gap-6"><span className="text-gray-500">Tạm tính</span><span className="w-28 text-right">{formatVND(poDetail.subtotal || 0)}</span></div>
+                                  <div className="flex gap-6"><span className="text-gray-500">VAT ({poDetail.tax_rate ?? 10}%)</span><span className="w-28 text-right">{formatVND(poDetail.tax_amount || 0)}</span></div>
+                                  <div className="flex gap-6 font-bold"><span>Tổng</span><span className="w-28 text-right text-amber-700">{formatVND(poDetail.total || 0)}</span></div>
+                                </div>
+                              </div>
+                              {poDetail.notes && (
+                                <div className="rounded-lg border p-3 text-sm">
+                                  <div className="text-[11px] uppercase text-gray-400 font-medium mb-1">Ghi chú</div>
+                                  <p className="whitespace-pre-wrap text-gray-700">{poDetail.notes}</p>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                        <div className="flex justify-end gap-2 p-5 pt-3 border-t shrink-0">
+                          <button type="button" onClick={() => setPoDetail(null)} className="h-9 px-4 border rounded-lg text-sm cursor-pointer">
+                            Đóng
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {poFormOpen && (() => {
+                    const selectedIds = new Set((poForm.items || []).map((it) => String(it.product_id)).filter((x) => x && x !== 'null' && x !== 'undefined'));
+                    const q = poCatSearch.trim().toLowerCase();
+                    const filteredProducts = (poCatalog.products || []).filter((p) => {
+                      if (!q) return true;
+                      return (p.name || '').toLowerCase().includes(q)
+                        || (p.code || '').toLowerCase().includes(q)
+                        || (p.sku || '').toLowerCase().includes(q)
+                        || (p.brand?.name || '').toLowerCase().includes(q);
+                    });
+                                    const filteredCategories = poCatalog.categories || [];
+                                    const itemsSubtotal = (poForm.items || []).reduce(
+                      (s, it) => s + (Number(it.quantity) || 0) * (Number(it.unit_price) || 0),
+                      0,
+                    );
+                    return (
+                      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                        <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+                          <div className="flex items-center justify-between p-5 pb-3 border-b shrink-0">
+                            <h2 className="font-bold text-lg">{poEditing ? 'Sửa đặt hàng' : 'Thêm đặt hàng'}</h2>
+                            <button type="button" onClick={() => setPoFormOpen(false)} className="p-1 cursor-pointer"><X className="h-5 w-5 text-gray-400" /></button>
+                          </div>
+                          <div className="p-5 space-y-3 overflow-y-auto flex-1 min-h-0">
+                            <div className="rounded-lg border border-amber-100 bg-amber-50/60 px-3 py-2.5 text-sm">
+                              <div className="text-[11px] uppercase font-medium text-amber-700/80">Gắn deal</div>
+                              <div className="font-semibold text-gray-900 mt-0.5">
+                                {customer?.full_name || lead?.title || '—'}
+                                {lead?.code ? <span className="text-gray-400 font-normal text-xs ml-2">{lead.code}</span> : null}
+                              </div>
+                              <p className="text-[11px] text-gray-500 mt-0.5">Tiêu đề LDH tự theo deal · hiện liên kết ở module Mua hàng</p>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="text-xs font-medium text-gray-600">Ngày</label>
+                                <input type="date" value={poForm.order_date} onChange={(e) => setPoForm({ ...poForm, order_date: e.target.value })} className="w-full h-10 px-3 border rounded-lg text-sm mt-1" />
+                              </div>
+                              <div>
+                                <label className="text-xs font-medium text-gray-600">Trạng thái</label>
+                                <select value={poForm.status} onChange={(e) => setPoForm({ ...poForm, status: e.target.value })} className="w-full h-10 px-3 border rounded-lg text-sm mt-1">
+                                  {Object.entries(PO_STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                                </select>
+                              </div>
+                            </div>
+
+                            <div className="rounded-lg border bg-gray-50 p-3 space-y-2">
+                              <div className="text-xs font-semibold text-gray-700">Nhập tên hoặc chọn từ catalog</div>
+                              <div className="flex flex-wrap gap-2 items-end">
+                                <div className="flex-1 min-w-[160px]">
+                                  <label className="text-[11px] text-gray-500">Tên hàng *</label>
+                                  <input
+                                    value={poManualName}
+                                    onChange={(e) => setPoManualName(e.target.value)}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addPoManualItem(); } }}
+                                    placeholder="Gõ tên hạng mục / SP rồi Thêm"
+                                    className="w-full h-9 px-2.5 border rounded-lg text-sm bg-white mt-0.5"
+                                  />
+                                </div>
+                                <div className="w-20">
+                                  <label className="text-[11px] text-gray-500">SL</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={poManualQty}
+                                    onChange={(e) => setPoManualQty(e.target.value)}
+                                    className="w-full h-9 px-2 border rounded-lg text-sm bg-white mt-0.5"
+                                  />
+                                </div>
+                                <div className="w-28">
+                                  <label className="text-[11px] text-gray-500">Đơn giá</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    value={poManualPrice}
+                                    onChange={(e) => setPoManualPrice(e.target.value)}
+                                    className="w-full h-9 px-2 border rounded-lg text-sm bg-white mt-0.5"
+                                  />
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={addPoManualItem}
+                                  className="h-9 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-medium cursor-pointer"
+                                >
+                                  + Thêm
+                                </button>
+                              </div>
+                              <div className="text-[11px] text-gray-500 pt-1">Hoặc lọc & tick SP catalog:</div>
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">                                <select
+                                  value={poCatBrand}
+                                  onChange={(e) => setPoCatBrand(e.target.value)}
+                                  className="h-9 px-2 border rounded-lg text-sm bg-white"
+                                >
+                                  <option value="">Tất cả thương hiệu</option>
+                                  {(poCatalog.brands || []).map((b) => (
+                                    <option key={b.id} value={b.id}>{b.name}</option>
+                                  ))}
+                                </select>
+                                <select
+                                  value={poCatCategory}
+                                  onChange={(e) => setPoCatCategory(e.target.value)}
+                                  className="h-9 px-2 border rounded-lg text-sm bg-white"
+                                >
+                                  <option value="">Tất cả danh mục</option>
+                                  {filteredCategories.map((c) => (
+                                    <option key={c.id} value={c.id}>{c.name}</option>
+                                  ))}
+                                </select>
+                                <div className="relative">
+                                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+                                  <input
+                                    value={poCatSearch}
+                                    onChange={(e) => setPoCatSearch(e.target.value)}
+                                    placeholder="Tìm tên / mã / SKU"
+                                    className="w-full h-9 pl-8 pr-2 border rounded-lg text-sm bg-white"
+                                  />
+                                </div>
+                              </div>
+                              <div className="border rounded-lg bg-white max-h-44 overflow-y-auto">
+                                {poCatalogLoading ? (
+                                  <p className="text-center text-xs text-gray-400 py-6">Đang tải catalog...</p>
+                                ) : filteredProducts.length === 0 ? (
+                                  <p className="text-center text-xs text-gray-400 py-6">Không có sản phẩm phù hợp</p>
+                                ) : (
+                                  filteredProducts.slice(0, 80).map((p) => {
+                                    const checked = selectedIds.has(String(p.id));
+                                    return (
+                                      <label
+                                        key={p.id}
+                                        className={`flex items-center gap-2.5 px-3 py-2 border-b last:border-0 cursor-pointer hover:bg-amber-50/60 ${checked ? 'bg-amber-50' : ''}`}
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={checked}
+                                          onChange={() => togglePoProduct(p)}
+                                          className="rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                                        />
+                                        {p.image_url ? (
+                                          <img src={p.image_url} alt="" className="h-8 w-8 rounded object-cover shrink-0" />
+                                        ) : (
+                                          <div className="h-8 w-8 rounded bg-gray-100 flex items-center justify-center shrink-0">
+                                            <Package className="h-3.5 w-3.5 text-gray-400" />
+                                          </div>
+                                        )}
+                                        <div className="min-w-0 flex-1">
+                                          <div className="text-sm font-medium truncate">{p.name}</div>
+                                          <div className="text-[10px] text-gray-400 truncate">
+                                            {[p.brand?.name, p.code || p.sku].filter(Boolean).join(' · ')}
+                                          </div>
+                                        </div>
+                                        <div className="text-xs font-medium text-gray-600 shrink-0">
+                                          {formatVND(Number(p.cost_price) || Number(p.selling_price) || 0)}
+                                        </div>
+                                      </label>
+                                    );
+                                  })
+                                )}
+                              </div>
+                              {selectedIds.size > 0 && (
+                                <p className="text-[11px] text-amber-700 font-medium">Đã chọn {selectedIds.size} SP · tick lại để bỏ</p>
+                              )}
+                            </div>
+
+                            {(poForm.items || []).length > 0 && (
+                              <div className="space-y-2">
+                                <div className="text-xs font-semibold text-gray-700">Dòng hàng đã chọn</div>
+                                {(poForm.items || []).map((it, idx) => (
+                                  <div key={`${it.product_id || it.name}-${idx}`} className="flex flex-wrap items-center gap-2 border rounded-lg p-2.5">
+                                    <div className="min-w-0 flex-1 basis-[140px]">
+                                      <input
+                                        value={it.name || ''}
+                                        onChange={(e) => updatePoItem(idx, { name: e.target.value })}
+                                        className="w-full h-8 px-2 border rounded text-sm font-medium"
+                                        placeholder="Tên hàng"
+                                      />
+                                      {(it.brand_name || it.sku) && (
+                                        <div className="text-[10px] text-gray-400 mt-0.5">{[it.brand_name, it.sku].filter(Boolean).join(' · ')}</div>
+                                      )}
+                                    </div>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      title="Số lượng"
+                                      value={it.quantity}
+                                      onChange={(e) => updatePoItem(idx, { quantity: e.target.value })}
+                                      className="w-20 h-8 px-2 border rounded text-sm"
+                                    />
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      title="Đơn giá"
+                                      value={it.unit_price}
+                                      onChange={(e) => updatePoItem(idx, { unit_price: e.target.value })}
+                                      className="w-28 h-8 px-2 border rounded text-sm"
+                                    />
+                                    <span className="text-xs font-semibold w-24 text-right">{formatVND(it.amount || 0)}</span>
+                                    <button type="button" onClick={() => removePoItem(idx)} className="p-1.5 text-gray-400 hover:text-red-600 cursor-pointer">
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
+                                ))}
+                                <div className="text-right text-sm font-semibold text-gray-800">
+                                  Tạm tính: {formatVND(itemsSubtotal)}
+                                </div>
+                              </div>
+                            )}
+
+                            <div>
+                              <label className="text-xs font-medium text-gray-600">Ghi chú</label>
+                              <textarea value={poForm.notes} onChange={(e) => setPoForm({ ...poForm, notes: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm mt-1" rows={2} />
+                            </div>
+                          </div>
+                          <div className="flex justify-end gap-2 p-5 pt-3 border-t shrink-0">
+                            <button type="button" onClick={() => setPoFormOpen(false)} className="h-9 px-4 border rounded-lg text-sm cursor-pointer">Hủy</button>
+                            <button
+                              type="button"
+                              disabled={poSaving}
+                              onClick={async () => {
+                                if (!(poForm.items || []).length) return alert('Thêm ít nhất 1 dòng hàng (nhập tên hoặc chọn catalog)');
+                                if ((poForm.items || []).some((it) => !String(it.name || '').trim())) return alert('Mỗi dòng cần có tên');
+                                setPoSaving(true);
+                                try {
+                                  const payload = {
+                                    lead_id: id,
+                                    company_id: lead?.company_id || undefined,
+                                    sync_title_from_lead: true,
+                                    notes: poForm.notes || null,
+                                    status: poForm.status,
+                                    order_date: poForm.order_date || null,
+                                    customer_name: customer?.full_name || lead?.title || null,
+                                    customer_phone: customer?.phone || null,
+                                    items: (poForm.items || []).map((it, i) => ({
+                                      product_id: it.product_id || null,
+                                      name: it.name,
+                                      description: it.description || null,
+                                      unit: it.unit || 'cái',
+                                      quantity: Number(it.quantity) || 1,
+                                      unit_price: Number(it.unit_price) || 0,
+                                      amount: Math.round((Number(it.quantity) || 1) * (Number(it.unit_price) || 0) * 100) / 100,
+                                      brand_name: it.brand_name || null,
+                                      sku: it.sku || null,
+                                      image_url: it.image_url || null,
+                                      item_order: i,
+                                    })),
+                                  };
+                                  if (poEditing) await api.put(`/purchasing/orders/${poEditing.id}`, payload);
+                                  else await api.post('/purchasing/orders', payload);
+                                  setPoFormOpen(false);
+                                  loadDealPurchaseOrders();
+                                } catch (e) {
+                                  alert(e.response?.data?.error || 'Lỗi lưu');
+                                }
+                                setPoSaving(false);
+                              }}
+                              className="h-9 px-4 bg-amber-600 text-white rounded-lg text-sm font-medium cursor-pointer disabled:opacity-50"
+                            >
+                              {poSaving ? 'Đang lưu...' : 'Lưu'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
               ) : activeTab === 'kpi_ledger' ? (
                 <LeadKpiLedgerPanel leadId={id} />
               ) : activeTab === 'documents' ? (
@@ -2092,71 +2819,71 @@ export default function LeadDetail() {
                     )}
                   </>
                 </>
-              ) : activeTab === 'activities' ? (
-                <>
-                  <div className="flex items-center justify-between mb-4">
-                    <button onClick={() => setShowAddActivity(true)} className="h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
-                      <Plus className="h-3.5 w-3.5" /> Thêm
-                    </button>
-                  </div>
-
-                  {activities.length === 0 ? (
-                    <div className="text-center py-8">
-                      <MessageSquare className="h-10 w-10 text-gray-200 mx-auto mb-2" />
-                      <p className="text-sm text-gray-400">Chưa có hoạt động</p>
+              ) : activeTab === 'activities' || activeTab === 'notes' ? (
+                <div className="space-y-6">
+                  <CrmChatNotesPanel
+                    variant="embedded"
+                    leadId={id}
+                    notes={noteActivities}
+                    onPosted={() => load({ silent: true })}
+                    currentUserId={user?.id || user?.userId}
+                    canEditAnyNote={isAdminLike(user) || user?.role === 'manager'}
+                    includeVoiceTimeline
+                    contextLine={
+                      lead
+                        ? `${lead.type === 'deal' ? '🎯 Deal' : '💼 Lead'} ${[lead.code, lead.title].filter(Boolean).join(' — ')}`
+                        : ''
+                    }
+                    contextBadge={lead?.code || ''}
+                  />
+                  <div className="border-t pt-5">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-sm font-semibold text-gray-800">Hoạt động</h3>
+                      <button onClick={() => setShowAddActivity(true)} className="h-8 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer">
+                        <Plus className="h-3.5 w-3.5" /> Thêm
+                      </button>
                     </div>
-                  ) : (
-                    <div className="space-y-2 min-h-[280px] max-h-[min(560px,70vh)] overflow-y-auto">
-                      {/* Vertical timeline line */}
-                      <div className="relative">
-                        <div className="absolute left-5 top-0 bottom-0 w-0.5 bg-gradient-to-b from-blue-300 to-blue-100" />
-                        {activities.map((act) => {
-                          const typeInfo = ACTIVITY_TYPES.find(t => t.value === act.type) || ACTIVITY_TYPES[4];
-                          return (
-                            <div key={act.id} className="p-3 bg-gray-50 rounded-lg border relative z-10 ml-4">
-                              <div className="absolute -left-5 top-4 w-3 h-3 bg-blue-600 rounded-full border-2 border-white" />
-                              <div className="flex items-start gap-2">
-                                <span className="text-lg shrink-0">{typeInfo.icon}</span>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <p className="text-sm font-medium" style={{ color: '#000000' }}>{act.title}</p>
-                                    <span className="text-[10px] text-gray-400 shrink-0">{formatDate(act.activity_date)}</span>
+                    {activities.length === 0 ? (
+                      <div className="text-center py-8">
+                        <MessageSquare className="h-10 w-10 text-gray-200 mx-auto mb-2" />
+                        <p className="text-sm text-gray-400">Chưa có hoạt động</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 min-h-[200px] max-h-[min(420px,55vh)] overflow-y-auto">
+                        <div className="relative">
+                          <div className="absolute left-5 top-0 bottom-0 w-0.5 bg-gradient-to-b from-blue-300 to-blue-100" />
+                          {activities.map((act) => {
+                            const typeInfo = ACTIVITY_TYPES.find(t => t.value === act.type) || ACTIVITY_TYPES[4];
+                            return (
+                              <div key={act.id} className="p-3 bg-gray-50 rounded-lg border relative z-10 ml-4 mb-2">
+                                <div className="absolute -left-5 top-4 w-3 h-3 bg-blue-600 rounded-full border-2 border-white" />
+                                <div className="flex items-start gap-2">
+                                  <span className="text-lg shrink-0">{typeInfo.icon}</span>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <p className="text-sm font-medium" style={{ color: '#000000' }}>{act.title}</p>
+                                      <span className="text-[10px] text-gray-400 shrink-0">{formatDate(act.activity_date)}</span>
+                                    </div>
+                                    {act.creator?.full_name && (
+                                      <p className="text-[10px] text-gray-400 mt-0.5">{act.creator.full_name}</p>
+                                    )}
+                                    {act.description && <p className="text-xs text-gray-600 mt-1 whitespace-pre-wrap">{act.description}</p>}
+                                    {act.outcome && <p className="text-xs text-blue-600 font-medium mt-1">→ {act.outcome}</p>}
                                   </div>
-                                  {act.creator?.full_name && (
-                                    <p className="text-[10px] text-gray-400 mt-0.5">{act.creator.full_name}</p>
-                                  )}
-                                  {act.description && <p className="text-xs text-gray-600 mt-1 whitespace-pre-wrap">{act.description}</p>}
-                                  {act.outcome && <p className="text-xs text-blue-600 font-medium mt-1">→ {act.outcome}</p>}
                                 </div>
                               </div>
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </>
+                    )}
+                  </div>
+                </div>
               ) : activeTab === 'drive' ? (
                 <DriveAttachments
                   entityType={lead?.type === 'deal' ? 'deal' : 'lead'}
                   entityId={id}
                   onCountChange={setDriveFileCount}
-                />
-              ) : activeTab === 'notes' ? (
-                <CrmChatNotesPanel
-                  variant="embedded"
-                  leadId={id}
-                  notes={noteActivities}
-                  onPosted={() => load({ silent: true })}
-                  currentUserId={user?.id || user?.userId}
-                  canEditAnyNote={isAdminLike(user) || user?.role === 'manager'}
-                  includeVoiceTimeline
-                  contextLine={
-                    lead
-                      ? `${lead.type === 'deal' ? '🎯 Deal' : '💼 Lead'} ${[lead.code, lead.title].filter(Boolean).join(' — ')}`
-                      : ''
-                  }
-                  contextBadge={lead?.code || ''}
                 />
               ) : activeTab === 'facebook' ? (
                 <FacebookChatTab leadId={id} companyId={lead?.company_id} />
@@ -2602,6 +3329,80 @@ export default function LeadDetail() {
         </div>
       )}
 
+      {reassignSxOpen && lead?.type === 'deal' && lead?.project_id && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
+          onClick={() => { if (!reassignSxBusy) { setReassignSxOpen(false); setReassignSxErr(''); } }}
+        >
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-2">
+              <RotateCcw className="h-6 w-6 text-orange-600" />
+              <h3 className="text-lg font-bold text-gray-900">Chọn lại công ty / phân loại SX</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              Dùng khi chuyển nhầm. Hệ thống <strong>giữ cùng dự án</strong>, cập nhật công ty + phân loại,
+              <strong> thay thành viên</strong> theo mặc định phân loại mới và <strong>tạo lại nhiệm vụ mẫu</strong>
+              (tiến độ NV mẫu cũ sẽ mất).
+            </p>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Công ty SX <span className="text-red-600">*</span></label>
+            <select
+              value={reassignSxCompanyId}
+              onChange={(e) => { setReassignSxCompanyId(e.target.value); setReassignSxWorkTypeId(''); setReassignSxErr(''); }}
+              disabled={reassignSxBusy}
+              className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white disabled:bg-gray-50"
+            >
+              <option value="">— Chọn công ty —</option>
+              {productionCompaniesSx.map((c) => (
+                <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+              ))}
+            </select>
+            {reassignSxCompanyId && (
+              <div className="mt-3">
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Phân loại sản xuất <span className="text-red-600">*</span>
+                </label>
+                <select
+                  value={reassignSxWorkTypeId}
+                  onChange={(e) => { setReassignSxWorkTypeId(e.target.value); setReassignSxErr(''); }}
+                  disabled={reassignSxBusy || wonModalWorkTypesLoading || wonModalWorkTypes.length === 0}
+                  className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400"
+                >
+                  <option value="">
+                    {wonModalWorkTypesLoading
+                      ? 'Đang tải phân loại…'
+                      : (wonModalWorkTypes.length === 0
+                          ? '— Công ty chưa có phân loại nào —'
+                          : '— Chọn phân loại —')}
+                  </option>
+                  {wonModalWorkTypes.map((t) => (
+                    <option key={t.id} value={t.id}>📦 {t.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {reassignSxErr && <p className="text-xs text-red-600 mt-2">{reassignSxErr}</p>}
+            <div className="flex gap-2 mt-4">
+              <button
+                type="button"
+                disabled={reassignSxBusy}
+                className="flex-1 h-10 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                onClick={() => { setReassignSxOpen(false); setReassignSxErr(''); }}
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={reassignSxBusy}
+                className="flex-1 h-10 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50"
+                onClick={() => submitReassignSx()}
+              >
+                {reassignSxBusy ? 'Đang xử lý…' : 'Xác nhận chọn lại'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <DealStageEventModal
         open={!!dealDetailEventCtx}
         onClose={() => {
@@ -2848,6 +3649,19 @@ function DocumentRow({ doc, onDelete, onOpenImage, readOnlyWorkshop = false, can
                   Mở
                 </a>
               ) : null}
+              {isImage && rawFileRef && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    printUploadImage(rawFileRef, doc.file_name || doc.name || 'Ảnh').catch((err) => {
+                      alert(err?.message || 'Không in được ảnh');
+                    });
+                  }}
+                  className="text-xs text-violet-600 hover:underline cursor-pointer"
+                >
+                  In
+                </button>
+              )}
               {fileDownloadProps && (
                 <a {...fileDownloadProps} className="text-xs text-emerald-600 hover:underline">
                   Tải
@@ -3310,6 +4124,17 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
   const [sxHandoverNotice, setSxHandoverNotice] = useState('');
   const [sxHandoverExpanded, setSxHandoverExpanded] = useState(false);
   const [depositDraft, setDepositDraft] = useState({ amount: '', received: '', label: '' });
+  /** Admin chuyển công ty SX — nút mở popup + đếm ngược 5s xác nhận */
+  const [sxAssignOpen, setSxAssignOpen] = useState(false);
+  const [sxAssignCompanyId, setSxAssignCompanyId] = useState('');
+  const [sxAssignTypeId, setSxAssignTypeId] = useState('');
+  const [sxAssignTypes, setSxAssignTypes] = useState([]);
+  const [sxAssignTypesLoading, setSxAssignTypesLoading] = useState(false);
+  const [sxAssignBusy, setSxAssignBusy] = useState(false);
+  const [sxAssignNotice, setSxAssignNotice] = useState('');
+  const [sxAssignBaseline, setSxAssignBaseline] = useState({ companyId: '', typeId: '', typeName: '', companyName: '' });
+  const [sxConfirmWait, setSxConfirmWait] = useState(0);
+  const sxConfirmTimerRef = useRef(null);
 
   useEffect(() => {
     if (lead?.type !== 'deal' || lead?.sx_handover_at) return;
@@ -3325,6 +4150,58 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
     setSxHandoverNotice('');
     setSxHandoverExpanded(false);
   }, [lead?.id, lead?.type, lead?.project_id, lead?.sx_handover_at, lead?.sx_template_company_id, lead?.construction_start_date, lead?.expected_production_start_date, lead?.expected_production_end_date]);
+
+  // Load công ty + phân loại hiện tại từ dự án SX
+  useEffect(() => {
+    if (lead?.type !== 'deal' || !lead?.project_id) {
+      setSxAssignBaseline({ companyId: '', typeId: '', typeName: '', companyName: '' });
+      setSxAssignNotice('');
+      return undefined;
+    }
+    let cancelled = false;
+    api.get(`/production/projects/${lead.project_id}`)
+      .then((r) => {
+        if (cancelled) return;
+        const p = r.data?.project || r.data;
+        const cid = p?.company_id ? String(p.company_id) : (lead.sx_template_company_id ? String(lead.sx_template_company_id) : '');
+        const tid = p?.workshop_type_id ? String(p.workshop_type_id) : '';
+        const tname = p?.workshop_type?.name || '';
+        const cname = p?.company?.short_name || p?.company?.name || '';
+        setSxAssignBaseline({ companyId: cid, typeId: tid, typeName: tname, companyName: cname });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        const cid = lead.sx_template_company_id ? String(lead.sx_template_company_id) : '';
+        setSxAssignBaseline({ companyId: cid, typeId: '', typeName: '', companyName: '' });
+      });
+    return () => { cancelled = true; };
+  }, [lead?.id, lead?.type, lead?.project_id, lead?.sx_template_company_id, lead?.updated_at]);
+
+  useEffect(() => {
+    if (!sxAssignOpen || !sxAssignCompanyId) {
+      if (!sxAssignOpen) setSxAssignTypes([]);
+      return undefined;
+    }
+    let cancelled = false;
+    setSxAssignTypesLoading(true);
+    api.get('/workshop/project-types', { params: { company_id: sxAssignCompanyId, module: 'production' } })
+      .then((r) => {
+        if (cancelled) return;
+        const rows = Array.isArray(r.data) ? r.data : (r.data?.data || []);
+        setSxAssignTypes(rows);
+        if (sxAssignTypeId && !rows.some((t) => String(t.id) === String(sxAssignTypeId))) {
+          setSxAssignTypeId('');
+        }
+      })
+      .catch(() => { if (!cancelled) setSxAssignTypes([]); })
+      .finally(() => { if (!cancelled) setSxAssignTypesLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sxAssignOpen, sxAssignCompanyId]);
+
+  useEffect(() => () => {
+    if (sxConfirmTimerRef.current) clearInterval(sxConfirmTimerRef.current);
+  }, []);
 
   useEffect(() => {
     api.get('/companies', { params: { for_module: 'crm' } }).then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
@@ -3537,6 +4414,104 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
     const next = !deadlineHistoryOpen;
     setDeadlineHistoryOpen(next);
     if (next && deadlineHistory.length === 0) loadDeadlineHistory();
+  };
+
+  const clearSxConfirmTimer = () => {
+    if (sxConfirmTimerRef.current) {
+      clearInterval(sxConfirmTimerRef.current);
+      sxConfirmTimerRef.current = null;
+    }
+    setSxConfirmWait(0);
+  };
+
+  const startSxConfirmCountdown = () => {
+    clearSxConfirmTimer();
+    setSxConfirmWait(5);
+    sxConfirmTimerRef.current = setInterval(() => {
+      setSxConfirmWait((n) => {
+        if (n <= 1) {
+          if (sxConfirmTimerRef.current) {
+            clearInterval(sxConfirmTimerRef.current);
+            sxConfirmTimerRef.current = null;
+          }
+          return 0;
+        }
+        return n - 1;
+      });
+    }, 1000);
+  };
+
+  const closeSxAssignModal = () => {
+    if (sxAssignBusy) return;
+    clearSxConfirmTimer();
+    setSxAssignOpen(false);
+    setSxAssignNotice('');
+  };
+
+  const openSxAssignModal = () => {
+    clearSxConfirmTimer();
+    setSxAssignCompanyId(sxAssignBaseline.companyId || '');
+    setSxAssignTypeId(sxAssignBaseline.typeId || '');
+    setSxAssignNotice('');
+    setSxAssignOpen(true);
+    startSxConfirmCountdown();
+  };
+
+  const onSxCompanyChange = (nextId) => {
+    const next = String(nextId || '');
+    const prev = String(sxAssignCompanyId || '');
+    if (next === prev) return;
+    setSxAssignCompanyId(next);
+    if (next && next !== String(sxAssignBaseline.companyId || '')) {
+      setSxAssignTypeId('');
+      setSxAssignNotice('Đã đổi công ty — hãy chọn lại phân loại.');
+    } else if (next === String(sxAssignBaseline.companyId || '')) {
+      setSxAssignTypeId(sxAssignBaseline.typeId || '');
+      setSxAssignNotice('');
+    } else {
+      setSxAssignTypeId('');
+      setSxAssignNotice('');
+    }
+    startSxConfirmCountdown();
+  };
+
+  const sxAssignDirty = String(sxAssignCompanyId || '') !== String(sxAssignBaseline.companyId || '')
+    || String(sxAssignTypeId || '') !== String(sxAssignBaseline.typeId || '');
+  const sxCompanyChanged = String(sxAssignCompanyId || '') !== String(sxAssignBaseline.companyId || '');
+  const sxNeedRepickType = sxCompanyChanged && !sxAssignTypeId;
+  const sxCanConfirm = sxAssignDirty && !!sxAssignCompanyId && !!sxAssignTypeId && !sxNeedRepickType && sxConfirmWait === 0 && !sxAssignBusy;
+
+  const saveSxAssign = async () => {
+    if (!lead?.project_id || !sxCanConfirm) return;
+    setSxAssignBusy(true);
+    setSxAssignNotice('');
+    try {
+      const { data } = await api.post(`/crm/deals/${lead.id}/reassign-sx`, {
+        production_company_id: sxAssignCompanyId,
+        workshop_type_id: sxAssignTypeId,
+      });
+      const typeName = data?.workshop_type_name
+        || sxAssignTypes.find((t) => String(t.id) === String(sxAssignTypeId))?.name
+        || '';
+      const companyName = data?.company_name
+        || (productionCompaniesSx || []).find((c) => String(c.id) === String(sxAssignCompanyId))?.short_name
+        || (productionCompaniesSx || []).find((c) => String(c.id) === String(sxAssignCompanyId))?.name
+        || '';
+      setSxAssignBaseline({
+        companyId: String(data?.to_company_id || sxAssignCompanyId),
+        typeId: String(data?.to_workshop_type_id || sxAssignTypeId),
+        typeName,
+        companyName,
+      });
+      clearSxConfirmTimer();
+      setSxAssignOpen(false);
+      setSxAssignNotice(`Đã chuyển: ${companyName || 'SX'}${typeName ? ` · ${typeName}` : ''}`);
+      onUpdate();
+    } catch (e) {
+      setSxAssignNotice(e.response?.data?.error || e.message || 'Lỗi chuyển SX');
+      startSxConfirmCountdown();
+    }
+    setSxAssignBusy(false);
   };
 
   const editableRowProps = { editing, setEditing, saving, onSave: saveField };
@@ -3993,6 +4968,145 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
 
       {lead?.type === 'deal' && lead?.project_id && (
         <div className="flex flex-col gap-1.5">
+          {/* Chuyển công ty SX — nút mở popup */}
+          <div className="rounded-lg border border-orange-200 bg-orange-50/50 p-2.5 my-0.5 space-y-2">
+            <p className="text-[10px] font-bold text-orange-800 uppercase tracking-wider">
+              🏭 Công ty SX
+            </p>
+            <div className="text-sm text-gray-800 space-y-0.5">
+              <p className="font-medium truncate">
+                {sxAssignBaseline.companyName
+                  || (productionCompaniesSx || []).find((c) => String(c.id) === String(sxAssignBaseline.companyId))?.short_name
+                  || (productionCompaniesSx || []).find((c) => String(c.id) === String(sxAssignBaseline.companyId))?.name
+                  || lead.sx_pipeline_stage?.company?.short_name
+                  || lead.sx_pipeline_stage?.company?.name
+                  || '—'}
+              </p>
+              <p className="text-xs text-gray-500 truncate">
+                Phân loại: {sxAssignBaseline.typeName || '—'}
+              </p>
+            </div>
+            {sxAssignNotice && !sxAssignOpen && (
+              <p className="text-[11px] text-emerald-700">{sxAssignNotice}</p>
+            )}
+            {isAdminLike(currentUser) && (
+              <button
+                type="button"
+                onClick={openSxAssignModal}
+                className="w-full h-9 rounded-lg text-xs font-semibold bg-orange-600 text-white hover:bg-orange-700 cursor-pointer"
+              >
+                Chuyển công ty SX
+              </button>
+            )}
+          </div>
+
+          {sxAssignOpen && (
+            <div
+              className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4"
+              onClick={closeSxAssignModal}
+            >
+              <div
+                className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-3"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-900">Chuyển công ty SX</h3>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Chọn công ty + phân loại. Đổi công ty thì phải chọn lại phân loại. Xác nhận sau 5 giây (có thể hủy).
+                    </p>
+                  </div>
+                  <button type="button" onClick={closeSxAssignModal} disabled={sxAssignBusy} className="p-1 cursor-pointer disabled:opacity-40">
+                    <X className="h-5 w-5 text-gray-400" />
+                  </button>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-gray-600">Công ty sản xuất *</label>
+                  <select
+                    value={sxAssignCompanyId}
+                    onChange={(e) => onSxCompanyChange(e.target.value)}
+                    disabled={sxAssignBusy}
+                    className="mt-1 w-full h-10 px-3 border rounded-xl text-sm bg-white disabled:bg-gray-50"
+                  >
+                    <option value="">— Chọn công ty —</option>
+                    {(productionCompaniesSx || []).map((c) => (
+                      <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className={sxNeedRepickType ? 'rounded-xl ring-2 ring-amber-400/80 p-2 bg-amber-50/70' : ''}>
+                  <label className={`text-xs font-medium ${sxNeedRepickType ? 'text-amber-800' : 'text-gray-600'}`}>
+                    Phân loại * {sxNeedRepickType ? '(chọn lại)' : ''}
+                  </label>
+                  <select
+                    value={sxAssignTypeId}
+                    onChange={(e) => {
+                      setSxAssignTypeId(e.target.value);
+                      setSxAssignNotice('');
+                      startSxConfirmCountdown();
+                    }}
+                    disabled={sxAssignBusy || !sxAssignCompanyId || sxAssignTypesLoading}
+                    className="mt-1 w-full h-10 px-3 border rounded-xl text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400"
+                  >
+                    <option value="">
+                      {!sxAssignCompanyId
+                        ? '— Chọn công ty trước —'
+                        : sxAssignTypesLoading
+                          ? 'Đang tải…'
+                          : sxAssignTypes.length === 0
+                            ? '— Chưa có phân loại —'
+                            : sxNeedRepickType
+                              ? '— Chọn lại phân loại —'
+                              : '— Chọn phân loại —'}
+                    </option>
+                    {sxAssignTypes.map((t) => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {sxAssignNotice && (
+                  <p className={`text-xs ${sxAssignNotice.includes('Đã đổi') ? 'text-amber-800' : 'text-red-600'}`}>
+                    {sxAssignNotice}
+                  </p>
+                )}
+
+                <p className="text-[11px] text-gray-500 leading-snug">
+                  Sau khi xác nhận: thay thành viên SX mặc định và tạo lại nhiệm vụ mẫu (tiến độ NV mẫu cũ sẽ mất).
+                </p>
+
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={sxAssignBusy}
+                    onClick={closeSxAssignModal}
+                    className="flex-1 h-10 border rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 cursor-pointer disabled:opacity-50"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!sxCanConfirm}
+                    onClick={() => void saveSxAssign()}
+                    className="flex-1 h-10 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-sm font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {sxAssignBusy
+                      ? 'Đang chuyển…'
+                      : sxConfirmWait > 0
+                        ? `Xác nhận (${sxConfirmWait}s)`
+                        : !sxAssignDirty
+                          ? 'Chưa thay đổi'
+                          : sxNeedRepickType || !sxAssignTypeId
+                            ? 'Chọn phân loại'
+                            : 'Xác nhận chuyển'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Trạng thái Sản xuất */}
           {lead.sx_pipeline_stage && (() => {
             const sx = lead.sx_pipeline_stage;
@@ -4304,13 +5418,19 @@ function RevertToLeadModal({ leadId, lead, onClose, onSuccess }) {
   const [submitting, setSubmitting] = useState(false);
   const [newOwner, setNewOwner] = useState(lead?.assigned_to || lead?.lead_owner_id || '');
   const [reason, setReason] = useState('');
+  const [unlinkProject, setUnlinkProject] = useState(false);
   const [error, setError] = useState('');
 
-  const canSubmit = !!newOwner && !submitting;
+  const hasProject = !!lead?.project_id;
+  const canSubmit = !!newOwner && !submitting && (!hasProject || unlinkProject);
 
   const handleSubmit = async () => {
     if (!newOwner) {
       setError('Vui lòng chọn người phụ trách Lead mới.');
+      return;
+    }
+    if (hasProject && !unlinkProject) {
+      setError('Deal đang có dự án SX — cần tích xác nhận gỡ liên kết dự án.');
       return;
     }
     setSubmitting(true);
@@ -4319,6 +5439,7 @@ function RevertToLeadModal({ leadId, lead, onClose, onSuccess }) {
       const { data } = await api.post(`/crm/leads/${leadId}/convert-to-lead`, {
         assigned_to: newOwner,
         reason: reason.trim() || undefined,
+        ...(hasProject ? { unlink_project: true } : {}),
       });
       if (data?.message) {
         // eslint-disable-next-line no-alert
@@ -4348,8 +5469,26 @@ function RevertToLeadModal({ leadId, lead, onClose, onSuccess }) {
         <div className="space-y-4 mb-6">
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-900">
             Deal <strong>{lead?.code || ''}</strong> sẽ được chuyển về trạng thái <strong>Lead</strong> và đặt lại
-            về cột đầu tiên của pipeline. Mọi dữ liệu (báo giá, tài liệu, lịch sử) vẫn được giữ nguyên.
+            về cột nhận Lead trả về của pipeline. Mọi dữ liệu (báo giá, tài liệu, lịch sử) vẫn được giữ nguyên.
           </div>
+
+          {hasProject && (
+            <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 space-y-2">
+              <p className="text-sm text-orange-900 font-medium">
+                Deal này đã có dự án SX. Trả về Lead sẽ <strong>gỡ liên kết</strong> dự án khỏi deal
+                (không xóa dự án trên module Xưởng/SX). Chỉ admin công ty/khu vực mới thực hiện được.
+              </p>
+              <label className="flex items-start gap-2 text-sm text-orange-950 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 rounded border-orange-400"
+                  checked={unlinkProject}
+                  onChange={(e) => setUnlinkProject(e.target.checked)}
+                />
+                <span>Tôi xác nhận gỡ liên kết dự án SX khỏi deal này</span>
+              </label>
+            </div>
+          )}
 
           {(lead?.lead_owner || lead?.assignee) && (
             <div className="bg-purple-50 rounded-xl p-3 border border-purple-200">

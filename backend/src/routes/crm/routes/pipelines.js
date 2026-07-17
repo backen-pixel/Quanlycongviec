@@ -93,7 +93,7 @@ r.post('/pipelines', async (req, res) => {
     ];
     await supabase.from('crm_pipeline_stages').insert(stages);
 
-    invalidatePipelinesAndStages();
+    await invalidatePipelinesAndStages();
     res.status(201).json(data);
   } catch (e) {
     if (respondIfCrmPipelinesTableMissing(res, e)) return;
@@ -168,7 +168,7 @@ r.put('/pipelines/:id', async (req, res) => {
         .eq('id', req.params.id).select('*, company:companies(id, name)').single());
     }
     if (error) throw error;
-    invalidatePipelinesAndStages();
+    await invalidatePipelinesAndStages();
     res.json(data);
   } catch (e) {
     if (respondIfCrmPipelinesTableMissing(res, e)) return;
@@ -197,7 +197,7 @@ r.delete('/pipelines/:id', async (req, res) => {
     // Delete stages first, then pipeline
     await supabase.from('crm_pipeline_stages').delete().eq('pipeline_id', req.params.id);
     await supabase.from('crm_pipelines').delete().eq('id', req.params.id);
-    invalidatePipelinesAndStages();
+    await invalidatePipelinesAndStages();
     res.json({ message: 'Đã xóa pipeline' });
   } catch (e) {
     if (respondIfCrmPipelinesTableMissing(res, e)) return;
@@ -280,7 +280,7 @@ r.post('/pipelines/:id/copy', async (req, res) => {
       await supabase.from('crm_pipeline_stages').insert(inserts);
     }
 
-    invalidatePipelinesAndStages();
+    await invalidatePipelinesAndStages();
     res.status(201).json({ pipeline: created, stages_copied: stages.length });
   } catch (e) {
     if (respondIfCrmPipelinesTableMissing(res, e)) return;
@@ -435,7 +435,7 @@ r.post('/pipeline-stages', async (req, res) => {
       ({ data, error } = await supabase.from('crm_pipeline_stages').insert(insertObj).select().single());
     }
     if (error) throw error;
-    invalidatePipelinesAndStages();
+    await invalidatePipelinesAndStages();
     res.status(201).json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -529,7 +529,7 @@ r.put('/pipeline-stages/:id', async (req, res) => {
         .eq('id', req.params.id).select().single());
     }
     if (error) throw error;
-    invalidatePipelinesAndStages();
+    await invalidatePipelinesAndStages();
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -639,7 +639,7 @@ r.delete('/pipeline-stages/:id', async (req, res) => {
       .eq('stage_id', req.params.id);
     if (count > 0) return res.status(400).json({ error: `Không thể xóa — ${count} lead/deal đang dùng giai đoạn này` });
     await supabase.from('crm_pipeline_stages').delete().eq('id', req.params.id);
-    invalidatePipelinesAndStages();
+    await invalidatePipelinesAndStages();
     res.json({ message: 'Đã xóa' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -650,7 +650,7 @@ r.put('/pipeline-stages-reorder', async (req, res) => {
     for (const s of stages || []) {
       await supabase.from('crm_pipeline_stages').update({ order_index: s.order_index }).eq('id', s.id);
     }
-    invalidatePipelinesAndStages();
+    await invalidatePipelinesAndStages();
     res.json({ message: 'Đã sắp xếp lại' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

@@ -995,10 +995,7 @@ export function ListView({
                         title={typeof raw === 'string' && !stackedCell ? raw : undefined}
                       >
                         {isRevert ? (
-                          item.type === 'deal'
-                          && !item.project_id
-                          && item._stage?.allow_revert_to_lead === true
-                          && !item._stage?.is_won ? (
+                          item.type === 'deal' ? (
                             <button
                               type="button"
                               title="Trả deal về Lead và chọn lại người phụ trách"

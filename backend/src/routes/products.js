@@ -403,7 +403,7 @@ r.get('/', async (req, res) => {
     const sc = resolveProductsCompanyScope(req, res);
     if (!sc.ok) return;
     const { search, category_id, status, page = 1, limit = 50 } = req.query;
-    let q = supabase.from('products').select('*, category:product_categories(id,name,slug)', { count: 'exact' });
+    let q = supabase.from('products').select('*, category:product_categories(id,name,slug), brand:product_brands(id,name,code)', { count: 'exact' });
     if (sc.companyId) q = q.eq('company_id', sc.companyId);
 
     // Multi-word search: "tủ trên" → match "tủ bếp trên" (mỗi từ phải xuất hiện trong name hoặc code)
@@ -428,7 +428,7 @@ r.get('/:id', async (req, res) => {
   try {
     const ok = await assertProductInScope(req, res, req.params.id);
     if (!ok) return;
-    const { data, error } = await supabase.from('products').select('*, category:product_categories(id,name,slug)')
+    const { data, error } = await supabase.from('products').select('*, category:product_categories(id,name,slug), brand:product_brands(id,name,code)')
       .eq('id', req.params.id).single();
     if (error) throw error;
 
@@ -468,7 +468,7 @@ r.post('/', async (req, res) => {
 
     const { data, error } = await supabase.from('products').insert({
       code, name: b.name, description: b.description || null,
-      category_id: b.category_id || null, sku: b.sku || null, unit: b.unit || 'cái',
+      category_id: b.category_id || null, brand_id: b.brand_id || null, sku: b.sku || null, unit: b.unit || 'cái',
       base_price: basePrice, cost_price: b.cost_price || 0, selling_price: sellingPrice,
       vat_rate: b.vat_rate ?? 10,
       image_url: b.image_url || null, dimensions: b.dimensions || null,
@@ -482,7 +482,7 @@ r.post('/', async (req, res) => {
       code_style: b.code_style || null, code_glass: b.code_glass || null,
       code_type_std: b.code_type_std || null, code_side: b.code_side || null,
       code_size: b.code_size || null,
-    }).select('*, category:product_categories(id,name)').single();
+    }).select('*, category:product_categories(id,name), brand:product_brands(id,name,code)').single();
     if (error) throw error;
     res.status(201).json({ product: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
@@ -496,7 +496,7 @@ r.put('/:id', async (req, res) => {
     const { data: curRow } = await supabase.from('products').select('category_id').eq('id', id).maybeSingle();
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
-    const fields = ['name', 'description', 'category_id', 'sku', 'unit', 'base_price', 'cost_price',
+    const fields = ['name', 'description', 'category_id', 'brand_id', 'sku', 'unit', 'base_price', 'cost_price',
       'selling_price', 'vat_rate',
       'image_url', 'dimensions', 'material', 'color', 'finish', 'specifications', 'status',
       'stock_quantity', 'min_stock', 'tags',
@@ -518,7 +518,7 @@ r.put('/:id', async (req, res) => {
     }
 
     const { data, error } = await supabase.from('products').update(update).eq('id', id)
-      .select('*, category:product_categories(id,name)').single();
+      .select('*, category:product_categories(id,name), brand:product_brands(id,name,code)').single();
     if (error) throw error;
     res.json({ product: data });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }

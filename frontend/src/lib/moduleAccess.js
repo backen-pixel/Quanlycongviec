@@ -1,5 +1,5 @@
 /** Khớp backend `helpers/ecosystemModuleScope.js` KNOWN_MODULE_KEYS — các module ngoài CRM */
-export const NON_CRM_MODULE_KEYS = ['production', 'logistics', 'projects', 'tasks', 'customers', 'accounting'];
+export const NON_CRM_MODULE_KEYS = ['production', 'logistics', 'projects', 'tasks', 'customers', 'accounting', 'purchasing'];
 
 /**
  * Nhân viên chỉ được phép khối kinh doanh / CRM: ecosystem chỉ bật `crm`, tắt hết module khác.

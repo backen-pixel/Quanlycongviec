@@ -10,7 +10,7 @@ import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut, Lock,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, UsersRound,
-  Target, FileText, ShoppingCart, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic,
+  Target, FileText, ShoppingCart, ShoppingBag, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic, Award, Plus,
   BookOpen, FolderTree, Factory, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot, Download, UserMinus,
   Sigma, Calculator, FileUp, History as HistoryIcon, HardDrive, Database, Globe, CreditCard, Sparkles, Pin,
 } from 'lucide-react';
@@ -401,6 +401,30 @@ const KETOAN_MENU_GROUPS = [
   },
 ];
 
+// MUA HÀNG menu structure
+const MUAHANG_MENU_GROUPS = [
+  {
+    id: 'muahang-orders',
+    moduleKey: 'purchasing',
+    title: '1. Lệnh đặt hàng',
+    emoji: '🛒',
+    items: [
+      { to: '/mua-hang', icon: ShoppingBag, label: 'Inbox Mua hàng', end: true },
+    ],
+  },
+  {
+    id: 'muahang-catalog',
+    moduleKey: 'purchasing',
+    title: '2. Catalog',
+    emoji: '📦',
+    items: [
+      { to: '/mua-hang/brands', icon: Award, label: 'Thương hiệu' },
+      { to: '/mua-hang/categories', icon: FolderTree, label: 'Danh mục' },
+      { to: '/mua-hang/products', icon: Package, label: 'Sản phẩm' },
+    ],
+  },
+];
+
 // LOGISTICS (VẬN CHUYỂN) menu structure
 const VC_MENU_GROUPS = [
   {
@@ -448,6 +472,7 @@ function resolveGroupModuleContext(group) {
   if (group.moduleKey === 'production' || String(group.id || '').startsWith('sx')) return 'sx';
   if (group.moduleKey === 'logistics' || String(group.id || '').startsWith('vc')) return 'vc';
   if (group.moduleKey === 'accounting' || String(group.id || '').startsWith('ketoan')) return 'ketoan';
+  if (group.moduleKey === 'purchasing' || String(group.id || '').startsWith('muahang')) return 'muahang';
   if (group.moduleKey === 'tinhtoan' || String(group.id || '').startsWith('calc')) return 'calc';
   if (String(group.id || '').startsWith('knowledge')) return 'knowledge';
   return 'work';
@@ -785,33 +810,37 @@ export default function Sidebar() {
   const isCalc = !isKnowledge && (location.pathname.startsWith('/calc') || activeModule === 'calc');
   const isCRM = !isKnowledge && !isCalc && isCrmSidebarActive(location.pathname, activeModule, crmOnly);
   const isKetoan = !isKnowledge && !isCalc && (location.pathname.startsWith('/ketoan') || activeModule === 'ketoan');
-  const isSX = !isKnowledge && !isCalc && !isKetoan && (location.pathname.startsWith('/sx') || activeModule === 'sx');
-  const isVC = !isKnowledge && !isCalc && !isKetoan && (location.pathname.startsWith('/vc') || activeModule === 'vc');
-  const isCongViec = !isKnowledge && !isCalc && !isKetoan && !isSX && !isVC && !isCRM
+  const isMuahang = !isKnowledge && !isCalc && !isKetoan && (location.pathname.startsWith('/mua-hang') || activeModule === 'muahang');
+  const isSX = !isKnowledge && !isCalc && !isKetoan && !isMuahang && (location.pathname.startsWith('/sx') || activeModule === 'sx');
+  const isVC = !isKnowledge && !isCalc && !isKetoan && !isMuahang && (location.pathname.startsWith('/vc') || activeModule === 'vc');
+  const isCongViec = !isKnowledge && !isCalc && !isKetoan && !isMuahang && !isSX && !isVC && !isCRM
     && (isCongViecPrimaryPath(location.pathname) || activeModule === 'congviec');
   const sidebarModuleKey = isKnowledge ? 'knowledge'
     : isCalc ? 'calc'
       : isKetoan ? 'ketoan'
-        : isVC ? 'vc'
-          : isSX ? 'sx'
-            : isCongViec ? 'congviec'
-              : isCRM ? 'crm'
-                : 'platform';
+        : isMuahang ? 'muahang'
+          : isVC ? 'vc'
+            : isSX ? 'sx'
+              : isCongViec ? 'congviec'
+                : isCRM ? 'crm'
+                  : 'platform';
   const activeMenuGroups = isKnowledge
     ? KNOWLEDGE_MENU_GROUPS
     : isCalc
       ? CALC_MENU_GROUPS
       : isKetoan
         ? KETOAN_MENU_GROUPS
-        : isVC
-          ? VC_MENU_GROUPS
-          : isSX
-            ? SX_MENU_GROUPS
-            : isCongViec
-              ? CONGVIEC_MENU_GROUPS
-              : isCRM
-                ? null
-                : MENU_GROUPS;
+        : isMuahang
+          ? MUAHANG_MENU_GROUPS
+          : isVC
+            ? VC_MENU_GROUPS
+            : isSX
+              ? SX_MENU_GROUPS
+              : isCongViec
+                ? CONGVIEC_MENU_GROUPS
+                : isCRM
+                  ? null
+                  : MENU_GROUPS;
 
   const sidebarUserId = user?.id || user?.userId || null;
 
@@ -956,6 +985,7 @@ export default function Sidebar() {
         isKnowledge={isKnowledge}
         isCalc={isCalc}
         isKetoan={isKetoan}
+        isMuahang={isMuahang}
         isVC={isVC}
         isSX={isSX}
         isCRM={isCRM}
@@ -991,6 +1021,7 @@ export default function Sidebar() {
             isKnowledge={isKnowledge}
             isCalc={isCalc}
             isKetoan={isKetoan}
+            isMuahang={isMuahang}
             isVC={isVC}
             isSX={isSX}
           isCRM={isCRM}

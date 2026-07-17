@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../lib/api';
-import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
+import { publicFileUrl, getFileOpenAnchorProps, printUploadImage } from '../lib/publicFileUrl';
 import UploadFileLightbox, {
   buildUploadLightboxItem,
   collectUploadLightboxItems,
@@ -8,7 +8,7 @@ import UploadFileLightbox, {
 } from './UploadFileLightbox';
 import {
   FileText, Paperclip, ChevronDown, ChevronRight, CheckCircle2, ShieldCheck,
-  FolderOpen, ClipboardList, StickyNote, ExternalLink, Download, ZoomIn
+  FolderOpen, ClipboardList, StickyNote, ExternalLink, Download, ZoomIn, Printer
 } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
 import {
@@ -442,6 +442,21 @@ function LeadDocumentCard({ doc, onVisibilitySaved, onOpenImage }) {
               title="Phóng to ảnh"
             >
               <ZoomIn className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {isImage && fileHref && (
+            <button
+              type="button"
+              className="p-1.5 text-violet-600 hover:bg-violet-50 rounded-lg transition-colors"
+              onClick={(e) => {
+                e.stopPropagation();
+                printUploadImage(rawFileRef, doc.file_name || doc.name || 'Ảnh').catch((err) => {
+                  alert(err?.message || 'Không in được ảnh');
+                });
+              }}
+              title="In ảnh"
+            >
+              <Printer className="h-3.5 w-3.5" />
             </button>
           )}
           {isFile && fileOpenProps && !isImage && (

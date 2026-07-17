@@ -365,6 +365,7 @@ app.use('/api/accounting', require('./routes/accounting'));
 app.use('/api/workshop', require('./routes/workshopTypes'));
 app.use('/api/workshop-teams', require('./routes/workshopTeams'));
 try { app.use('/api/procurement', require('./routes/procurement')); } catch (e) { console.warn('⚠️ Procurement Lite route failed:', e.message); }
+try { app.use('/api/purchasing', require('./routes/purchasing')); } catch (e) { console.warn('⚠️ Purchasing route failed:', e.message); }
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/external', require('./routes/external'));
 try {

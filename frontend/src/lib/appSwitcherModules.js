@@ -4,6 +4,7 @@ import {
   Factory,
   Truck,
   Receipt,
+  ShoppingBag,
   Sigma,
   GraduationCap,
   Layers,
@@ -18,6 +19,7 @@ export const CONGVIEC_MODULE_ICON = '/icons/work-module.png?v=4';
 export const SX_MODULE_ICON = '/icons/sx-module.png?v=3';
 export const VC_MODULE_ICON = '/icons/vc-module.png?v=3';
 export const KETOAN_MODULE_ICON = '/icons/ketoan-module.png?v=3';
+export const MUAHANG_MODULE_ICON = '/icons/muahang-module.png?v=1';
 export const CALC_MODULE_ICON = '/icons/calc-module.png?v=3';
 export const KNOWLEDGE_MODULE_ICON = '/icons/knowledge-module.png?v=3';
 
@@ -140,6 +142,24 @@ export const APP_MODULE_DEFINITIONS = [
     mod: 'accounting',
   },
   {
+    id: 'muahang',
+    path: '/mua-hang',
+    name: 'Mua hàng',
+    desc: 'Lệnh đặt hàng, thương hiệu & catalog SP',
+    Icon: ShoppingBag,
+    imageUrl: MUAHANG_MODULE_ICON,
+    iconClass: 'bg-transparent shadow-none',
+    category: 'Vận hành',
+    categoryClass: 'bg-orange-50 text-orange-800 border-orange-100',
+    sidebarAccent: {
+      ring: 'ring-orange-400/35 hover:ring-orange-300/55',
+      card: 'bg-gradient-to-br from-orange-500/22 via-orange-500/8 to-transparent hover:from-orange-500/30',
+      iconWrap: 'bg-orange-500/18 ring-1 ring-orange-300/30 shadow-inner shadow-orange-900/20',
+      dot: 'bg-orange-400',
+    },
+    mod: 'purchasing',
+  },
+  {
     id: 'calc',
     path: '/calc',
     name: 'Tính toán',
@@ -203,7 +223,7 @@ export function writeAppSwitcherFavorites(paths) {
 }
 
 export function defaultAppSwitcherFavorites(allPaths) {
-  const preferred = ['/crm', '/sx', '/work/unified', '/dashboard', '/knowledge', '/vc'];
+  const preferred = ['/crm', '/sx', '/mua-hang', '/work/unified', '/dashboard', '/knowledge', '/vc'];
   const picked = preferred.filter((p) => allPaths.includes(p));
   if (picked.length >= 2) return picked.slice(0, 5);
   return allPaths.slice(0, 5);
@@ -221,6 +241,7 @@ export function resolveActiveAppModuleId({
   isKnowledge,
   isCalc,
   isKetoan,
+  isMuahang,
   isVC,
   isSX,
   isCRM,
@@ -229,6 +250,7 @@ export function resolveActiveAppModuleId({
   if (isKnowledge) return 'knowledge';
   if (isCalc) return 'calc';
   if (isKetoan) return 'ketoan';
+  if (isMuahang) return 'muahang';
   if (isVC) return 'vc';
   if (isSX) return 'sx';
   if (isCRM) return 'crm';

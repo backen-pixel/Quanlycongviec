@@ -19,7 +19,7 @@ const ACCOUNTING_VIEW_MODULES = new Set(['crm', 'production', 'logistics', 'proj
 const WORKSHOP_PARTICIPANT_VIEW_MODULES = new Set(['production', 'logistics', 'projects']);
 
 /** Khớp module_key dùng trong ecosystem_module_scopes và Sidebar */
-const KNOWN_MODULE_KEYS = ['crm', 'production', 'logistics', 'projects', 'tasks', 'customers', 'tinhtoan', 'accounting'];
+const KNOWN_MODULE_KEYS = ['crm', 'production', 'logistics', 'projects', 'tasks', 'customers', 'tinhtoan', 'accounting', 'purchasing'];
 
 // Set<string> không JSON-serializable → cache `string[] | null`, convert sang Set khi trả về.
 const scopeCache = createTTLCache({
