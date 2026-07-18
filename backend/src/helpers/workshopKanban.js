@@ -64,7 +64,7 @@ async function getWorkshopStageMap() {
 
 /** Cache ngắn — mỗi trang Kanban gọi lại hàm này; 1000+ deal quét crm_leads rất đắt. */
 let _wonDealProjectIdsCache = { at: 0, ids: null };
-const WON_DEAL_IDS_TTL_MS = 30_000;
+const WON_DEAL_IDS_TTL_MS = 90_000;
 
 async function getWonDealProjectIds() {
   const now = Date.now();

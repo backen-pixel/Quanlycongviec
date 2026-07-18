@@ -409,7 +409,7 @@ export default function KanbanScreen() {
         if (mode === 'init') setLoading(false);
       }
       let firstPaint = Boolean(cached && mode !== 'refresh');
-      const data = await fetchProductionBoard(mode === 'silent', filters, {
+      const data = await fetchProductionBoard(mode === 'refresh', filters, {
         onPartial: (partial) => {
           if (seq !== loadSeqRef.current) return;
           setBoard(partial);
@@ -505,8 +505,13 @@ export default function KanbanScreen() {
   useEffect(() => { movingIdRef.current = movingId; }, [movingId]);
 
   useProductionRealtime({
-    onRefresh: () => {
+    onRefresh: (info) => {
       if (movingIdRef.current) return;
+      if (info?.patched) {
+        const cached = getCachedBoard(currentBoardFilters()) || getAnyCachedBoard();
+        if (cached) setBoard(cached);
+        return;
+      }
       void load('silent');
     },
     modes: REALTIME_BOARD_TASK,

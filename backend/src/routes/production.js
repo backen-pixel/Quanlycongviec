@@ -1378,11 +1378,12 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     const offset = (parsedPage - 1) * parsedLimit;
     const { ids: stageIds } = await getWorkshopStageMap();
     const wonIds = await getWonDealProjectIds();
-    // Truyền workshop_type_id để pipeline khớp với phân loại đang lọc trên dashboard
-    const { stages: kanbanStages } = await getResolvedKanbanStages(company_id, {
-      workshopTypeId: workshop_type_id || null,
-    });
-    const sortedKanban = [...kanbanStages].sort((a, b) => a.order_index - b.order_index);
+    // Web cần resolve stages cho enrich; mobile tự resolve cột phía client.
+    if (!mobileLite) {
+      await getResolvedKanbanStages(company_id, {
+        workshopTypeId: workshop_type_id || null,
+      });
+    }
 
     const projectListSelect = mobileLite
       ? `
@@ -1428,9 +1429,12 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
         tasks(id, status)
       `;
 
+    const selectOpts = mobileLite
+      ? (parsedPage > 1 ? {} : { count: 'estimated' })
+      : { count: 'exact' };
     let query = supabase
       .from('projects')
-      .select(projectListSelect, { count: 'exact' });
+      .select(projectListSelect, selectOpts);
 
     query = applyProjectTenantScope(query, req);
 
@@ -1540,7 +1544,10 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     }
     if (error) throw error;
 
-    const enrichedSx = await enrichProjectsForSx(projects, wonIds, company_id, workshop_type_id || null);
+    // Mobile tự resolve cột phía client — bỏ enrich CRM meta (tiết kiệm 1 round-trip / trang).
+    const enrichedSx = mobileLite
+      ? (projects || [])
+      : await enrichProjectsForSx(projects, wonIds, company_id, workshop_type_id || null);
 
     const mapPipelineProgress = (project) => {
       const pipelinePct = project.sx_pipeline_percent != null
@@ -1606,9 +1613,11 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
 
     const payload = {
       projects: projectsOut,
-      total: count || projectsOut.length,
+      total: count != null ? count : (parsedPage - 1) * parsedLimit + projectsOut.length,
       page: parsedPage,
-      totalPages: Math.ceil((count || projectsOut.length) / parsedLimit),
+      totalPages: count != null
+        ? Math.max(1, Math.ceil(count / parsedLimit))
+        : (projectsOut.length < parsedLimit ? parsedPage : parsedPage + 1),
     };
     // Mobile / kanban board không cần mảng wonIds (có thể rất lớn) — giảm JSON response.
     if (!mobileLite && !kanbanBoard) payload.won_deal_project_ids = wonIds;

@@ -1,10 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '../api/client';
 import {
-  fetchProductionBoard,
   fetchProjectCommentIndex,
   fetchProjectComments,
 } from './productionApi';
+import { getAnyCachedBoard } from './productionBoardCache';
 
 const USER_KEY = 'sx_user_json';
 const SEEN_KEY = 'sx_comment_seen_v1';
@@ -225,13 +225,23 @@ async function buildLocalCommentNotifications(
   unreadOnly: boolean,
 ): Promise<{ notifications: SxCommentNotification[]; unread_count: number }> {
   const currentUserId = await getCurrentUserId();
-  const board = await fetchProductionBoard(true);
-  const projectIds = board.projects.map((p) => p.id).filter(Boolean);
+  // Không tải full board chỉ để dựng notif — dùng cache nếu có.
+  const board = getAnyCachedBoard();
+  if (!board?.projects?.length) {
+    return { notifications: [], unread_count: 0 };
+  }
+  // Giới hạn index comment — tránh N request khi 1000+ dự án.
+  const projectIds = board.projects
+    .map((p) => p.id)
+    .filter(Boolean)
+    .slice(0, 120);
+  const idSet = new Set(projectIds);
   const index = projectIds.length ? await fetchProjectCommentIndex(projectIds) : {};
   const seen = await getSeenMap();
 
   const items: SxCommentNotification[] = [];
   for (const p of board.projects) {
+    if (!idSet.has(p.id)) continue;
     const entry = index[p.id];
     if (!entry?.last_at || !entry.last_user_id) continue;
     if (currentUserId && String(entry.last_user_id) === String(currentUserId)) continue;

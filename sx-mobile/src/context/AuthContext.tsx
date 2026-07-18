@@ -9,7 +9,7 @@ import {
   startSystemBubbleOverlay,
 } from '../lib/floatingBubbleOverlay';
 import { clearKanbanFilters } from '../lib/kanbanFilterStorage';
-import { clearBoardCache } from '../lib/productionBoardCache';
+import { clearBoardCache, hydrateBoardCacheFromDisk } from '../lib/productionBoardCache';
 import { registerPushToken, unregisterPushToken } from '../lib/pushRegistration';
 import { startDeviceHeartbeat, stopDeviceHeartbeat } from '../lib/deviceHeartbeat';
 
@@ -47,6 +47,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       try {
+        await hydrateBoardCacheFromDisk();
         const [t, u] = await Promise.all([getStoredToken(), AsyncStorage.getItem(USER_KEY)]);
         if (t && u) {
           setToken(t);

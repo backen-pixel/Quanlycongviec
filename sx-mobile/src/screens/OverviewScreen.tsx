@@ -218,7 +218,7 @@ export default function OverviewScreen() {
       const [board, myTasks, notifList] = await Promise.all([
         skipBoard
           ? Promise.resolve(cachedBoard!)
-          : fetchProductionBoard(mode === 'silent', boardFilters, {
+          : fetchProductionBoard(mode === 'refresh', boardFilters, {
               onPartial: (partial) => {
                 if (seq !== loadSeqRef.current) return;
                 const kpi = computeSxBoardKpis(partial.projects, partial.stages);
@@ -272,7 +272,17 @@ export default function OverviewScreen() {
   }, [canPickCompany, user?.company_id, persistCompanyFilter, load]);
 
   useProductionRealtime({
-    onRefresh: () => void load('silent'),
+    onRefresh: (info) => {
+      if (info?.patched) {
+        const cached = getAnyCachedBoard();
+        if (cached) {
+          setKpis(computeSxBoardKpis(cached.projects, cached.stages));
+          setPriority(pickPriorityProjects(cached.projects, 5));
+        }
+        return;
+      }
+      void load('silent');
+    },
     modes: REALTIME_BOARD_TASK,
     debounceMs: 1500,
   });

@@ -17,7 +17,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { fetchPersonalPlanner, fetchProductionBoard } from '../lib/productionApi';
-import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
+import { getCachedBoard, getAnyCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
 import { formatMoneyAmount, Radii, Spacing, stageColor } from '../theme';
 import type { PersonalPlanner, ProductionBoard, ProductionProject } from '../types';
@@ -88,7 +88,7 @@ export default function PlannerScreen() {
         if (mode === 'init') setLoading(false);
       }
       const [boardData, personalData] = await Promise.all([
-        fetchProductionBoard(mode === 'silent', boardFilters, {
+        fetchProductionBoard(mode === 'refresh', boardFilters, {
           onPartial: (partial) => {
             if (seq !== loadSeqRef.current) return;
             setBoard(partial);
@@ -117,7 +117,14 @@ export default function PlannerScreen() {
   }, [load, scopedCompanyId]);
 
   useProductionRealtime({
-    onRefresh: () => void load('silent'),
+    onRefresh: (info) => {
+      if (info?.patched) {
+        const cached = getCachedBoard({ companyId: scopedCompanyId }) || getAnyCachedBoard();
+        if (cached) setBoard(cached);
+        return;
+      }
+      void load('silent');
+    },
     modes: REALTIME_BOARD_TASK,
     debounceMs: 1500,
   });

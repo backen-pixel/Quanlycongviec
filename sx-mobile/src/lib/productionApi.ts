@@ -264,10 +264,12 @@ export type BoardFilters = {
  * Không gọi /dashboard (KPI app tính client-side).
  * BE tối đa limit=500/trang — khớp mặc định web.
  * `view=mobile` → payload/enrich nhẹ phía BE.
+ *
+ * @param bustCache true chỉ khi user kéo refresh — silent/init dùng HTTP cache 20s.
  */
 const PROJECTS_PAGE_LIMIT = 500;
-const PROJECTS_MAX_PAGES = 16;
-const PROJECTS_FETCH_CONCURRENCY = 4;
+const PROJECTS_MAX_PAGES = 20;
+const PROJECTS_FETCH_CONCURRENCY = 5;
 
 export type FetchBoardOptions = {
   /** Gọi sau trang đầu (và mỗi lô nền) — UI hiện sớm. */
@@ -304,14 +306,14 @@ function attachColumnsIndexed(
 }
 
 export async function fetchProductionBoard(
-  noCache = false,
+  bustCache = false,
   filters: BoardFilters = {},
   options: FetchBoardOptions = {},
 ): Promise<ProductionBoard> {
   const loadRemaining = options.loadRemaining !== false;
 
   const stageParams: Record<string, unknown> = {};
-  if (noCache) stageParams._t = Date.now();
+  if (bustCache) stageParams._t = Date.now();
   if (filters.companyId) stageParams.company_id = filters.companyId;
   if (filters.workshopTypeId) stageParams.workshop_type_id = filters.workshopTypeId;
 
@@ -321,7 +323,8 @@ export async function fetchProductionBoard(
       limit: PROJECTS_PAGE_LIMIT,
       view: 'mobile',
     };
-    if (noCache) params._t = Date.now();
+    // Chỉ bust cache khi user refresh — silent dùng responseCache BE (20s).
+    if (bustCache) params._t = Date.now();
     if (filters.companyId) params.company_id = filters.companyId;
     if (filters.dealCompanyId) params.deal_company_id = filters.dealCompanyId;
     if (filters.workshopTypeId) params.workshop_type_id = filters.workshopTypeId;
