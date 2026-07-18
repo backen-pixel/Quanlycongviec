@@ -337,14 +337,16 @@ async function createWorkshopIntakeOrder(opts) {
     if (resolved.externalName) externalCoTrim = resolved.externalName;
   }
 
+  // Bắt buộc công ty ngoài / đối tác cho mọi đơn xưởng (app + web).
+  if (!resolvedExternalId && !externalCoTrim) {
+    return {
+      ok: false,
+      error: 'Chọn hoặc nhập công ty ngoài / đối tác',
+      statusCode: 400,
+    };
+  }
+
   if (isPartnerWorkshop) {
-    if (!resolvedExternalId && !externalCoTrim) {
-      return {
-        ok: false,
-        error: 'Chọn công ty chủ deal (công ty đặt hàng từ CRM)',
-        statusCode: 400,
-      };
-    }
     if (resolvedExternalId) {
       const { data: clientCo, error: coErr } = await supabase
         .from('companies')

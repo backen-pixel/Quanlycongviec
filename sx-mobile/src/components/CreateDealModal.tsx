@@ -474,8 +474,11 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
     if (!workTypes.length) return 'Công ty chưa cấu hình phân loại xưởng.';
     if (!workshopTypeId) return 'Chọn phân loại xưởng.';
     if (regions.length > 0 && !regionId) return 'Chọn khu vực.';
+    if (!resolvedExternalName) {
+      return 'Chọn hoặc nhập công ty ngoài / đối tác.';
+    }
     if (externalPick === '__new__' && !externalNewName.trim()) {
-      return 'Nhập tên công ty bên ngoài hoặc bỏ chọn.';
+      return 'Nhập tên công ty ngoài / đối tác.';
     }
     return null;
   };
@@ -710,56 +713,50 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
 
               <View style={styles.field}>
                 <Text style={styles.label}>
-                  Công ty ngoài / Đối tác{' '}
-                  <Text style={{ color: colors.textFaint, fontWeight: '500' }}>(không bắt buộc)</Text>
+                  Công ty ngoài / Đối tác <Text style={styles.required}>*</Text>
                 </Text>
-                {!showExternalForm && !externalPick ? (
+                <TouchableOpacity
+                  style={[styles.selectBtn, !resolvedExternalName && styles.inputError]}
+                  onPress={() => {
+                    if (!companyId) {
+                      setErr('Chọn công ty SX trước khi chọn đối tác.');
+                      return;
+                    }
+                    setPicker('external');
+                  }}
+                  disabled={busy}
+                  activeOpacity={0.85}
+                >
+                  <Text style={[styles.selectText, !resolvedExternalName && styles.selectPlaceholder]}>
+                    {resolvedExternalName || '-- Chọn --'}
+                  </Text>
+                  <Ionicons name="chevron-down" size={18} color={colors.textFaint} />
+                </TouchableOpacity>
+                {externalPick === '__new__' && (
+                  <TextInput
+                    style={[styles.input, { marginTop: 8 }, !externalNewName.trim() && styles.inputError]}
+                    placeholder="VD: Công ty đối tác B2B"
+                    placeholderTextColor={colors.textFaint}
+                    value={externalNewName}
+                    onChangeText={setExternalNewName}
+                    editable={!busy}
+                  />
+                )}
+                {!externalCompanies.length && companyId ? (
                   <TouchableOpacity
-                    style={styles.linkBtn}
+                    style={[styles.linkBtn, { marginTop: 8 }]}
                     onPress={() => {
-                      if (!companyId) {
-                        setErr('Chọn công ty SX trước khi thêm đối tác.');
-                        return;
-                      }
-                      if (externalCompanies.length) {
-                        setPicker('external');
-                      } else {
-                        setExternalPick('__new__');
-                        setShowExternalForm(true);
-                        setErr('');
-                      }
+                      setExternalPick('__new__');
+                      setShowExternalForm(true);
+                      setErr('');
                     }}
                     disabled={busy}
                     activeOpacity={0.85}
                   >
                     <Ionicons name="add-circle-outline" size={18} color={colors.primary} />
-                    <Text style={styles.linkBtnText}>Thêm đơn vị gia công / đối tác bên ngoài</Text>
+                    <Text style={styles.linkBtnText}>Nhập công ty ngoài mới</Text>
                   </TouchableOpacity>
-                ) : (
-                  <>
-                    <TouchableOpacity
-                      style={styles.selectBtn}
-                      onPress={() => setPicker('external')}
-                      disabled={busy || !companyId}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={styles.selectText}>
-                        {resolvedExternalName || '— Không chọn —'}
-                      </Text>
-                      <Ionicons name="chevron-down" size={18} color={colors.textFaint} />
-                    </TouchableOpacity>
-                    {externalPick === '__new__' && (
-                      <TextInput
-                        style={[styles.input, { marginTop: 8 }, !externalNewName.trim() && styles.inputError]}
-                        placeholder="VD: Công ty đối tác B2B"
-                        placeholderTextColor={colors.textFaint}
-                        value={externalNewName}
-                        onChangeText={setExternalNewName}
-                        editable={!busy}
-                      />
-                    )}
-                  </>
-                )}
+                ) : null}
               </View>
 
               <View style={styles.field}>

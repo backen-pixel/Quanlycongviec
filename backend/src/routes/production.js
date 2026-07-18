@@ -5056,7 +5056,10 @@ r.get('/notifications/comments/unread-count', requirePermission('projects', 'vie
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-    const { unread_count } = await fetchSxProductionNotificationsForUser(userId, { limit: 1 });
+    const { unread_count } = await fetchSxProductionNotificationsForUser(userId, {
+      unreadOnly: true,
+      limit: 500,
+    });
     res.json({ unread_count });
   } catch (e) {
     console.error('GET /production/notifications/comments/unread-count:', e);
