@@ -396,6 +396,7 @@ function MetricBlock({ label, value, tone = 'slate', full = false, title }) {
     violet: 'bg-violet-50 border-violet-100 text-violet-900',
     sky: 'bg-sky-50 border-sky-100 text-sky-900',
     rose: 'bg-rose-50 border-rose-100 text-rose-900',
+    fuchsia: 'bg-fuchsia-50 border-fuchsia-100 text-fuchsia-900',
     indigo: 'bg-indigo-50 border-indigo-100 text-indigo-900',
     slate: 'bg-slate-50 border-slate-100 text-slate-800',
   };
@@ -412,18 +413,44 @@ function MetricBlock({ label, value, tone = 'slate', full = false, title }) {
 
 function OverdueKpiGrid({ row, summary, compact = false, preferRow = false }) {
   const src = preferRow && row ? row : (summary || row || {});
-  const overdue = src?.overdue_count ?? 0;
-  const overduePct = src?.overdue_rate_pct;
+  const leadOverdue = src?.lead_overdue_count ?? 0;
+  const dealOverdue = src?.deal_overdue_count ?? 0;
+  const leadPct = src?.lead_overdue_rate_pct;
+  const dealPct = src?.deal_overdue_rate_pct;
+  const leadOpen = src?.lead_open_count ?? 0;
+  const dealOpen = src?.deal_open_count ?? 0;
   const kpi = src?.kpi_ledger_net ?? 0;
-  const open = src?.open_count ?? 0;
+  // Fallback dữ liệu cũ chưa tách lead/deal
+  const legacyOverdue = src?.overdue_count ?? 0;
+  const legacyPct = src?.overdue_rate_pct;
+  const legacyOpen = src?.open_count ?? 0;
+  const hasSplit = (src?.lead_open_count != null) || (src?.deal_open_count != null)
+    || leadOverdue > 0 || dealOverdue > 0;
   return (
     <div className={`grid grid-cols-2 gap-2 ${compact ? 'mt-2' : 'mt-3'}`}>
-      <MetricBlock
-        label="Quá hạn SLA"
-        value={overduePct != null ? `${overdue} (${overduePct}%)` : String(overdue)}
-        tone="rose"
-        title={open ? `${overdue} / ${open} lead-deal đang mở quá hạn SLA cột` : undefined}
-      />
+      {hasSplit ? (
+        <>
+          <MetricBlock
+            label="QH SLA Lead"
+            value={leadPct != null ? `${leadOverdue} (${leadPct}%)` : String(leadOverdue)}
+            tone="rose"
+            title={leadOpen ? `${leadOverdue} / ${leadOpen} lead đang mở` : undefined}
+          />
+          <MetricBlock
+            label="QH SLA Deal"
+            value={dealPct != null ? `${dealOverdue} (${dealPct}%)` : String(dealOverdue)}
+            tone="fuchsia"
+            title={dealOpen ? `${dealOverdue} / ${dealOpen} deal đang mở` : undefined}
+          />
+        </>
+      ) : (
+        <MetricBlock
+          label="Quá hạn SLA"
+          value={legacyPct != null ? `${legacyOverdue} (${legacyPct}%)` : String(legacyOverdue)}
+          tone="rose"
+          title={legacyOpen ? `${legacyOverdue} / ${legacyOpen} đang mở` : undefined}
+        />
+      )}
       <MetricBlock label="Điểm KPI" value={formatKpiLedgerNet(kpi)} tone="indigo" />
     </div>
   );
@@ -678,13 +705,22 @@ function EmployeeCharts({ detail, loading, row, receptionSlaMinutes = 15 }) {
         <MetricBlock label="GT thắng" value={formatVND(summary?.won_value ?? row?.won_value ?? 0)} tone="sky" />
         <MetricBlock label="GT hoàn thành" value={formatVND(summary?.completed_value ?? summary?.project_completed_value ?? row?.completed_value ?? 0)} tone="violet" />
         <MetricBlock
-          label="Quá hạn SLA cột"
+          label="QH SLA Lead"
           value={
-            (summary?.overdue_rate_pct ?? row?.overdue_rate_pct) != null
-              ? `${summary?.overdue_count ?? row?.overdue_count ?? 0} (${summary?.overdue_rate_pct ?? row?.overdue_rate_pct}%)`
-              : String(summary?.overdue_count ?? row?.overdue_count ?? 0)
+            (summary?.lead_overdue_rate_pct ?? row?.lead_overdue_rate_pct) != null
+              ? `${summary?.lead_overdue_count ?? row?.lead_overdue_count ?? 0} (${summary?.lead_overdue_rate_pct ?? row?.lead_overdue_rate_pct}%)`
+              : String(summary?.lead_overdue_count ?? row?.lead_overdue_count ?? summary?.overdue_count ?? row?.overdue_count ?? 0)
           }
           tone="rose"
+        />
+        <MetricBlock
+          label="QH SLA Deal"
+          value={
+            (summary?.deal_overdue_rate_pct ?? row?.deal_overdue_rate_pct) != null
+              ? `${summary?.deal_overdue_count ?? row?.deal_overdue_count ?? 0} (${summary?.deal_overdue_rate_pct ?? row?.deal_overdue_rate_pct}%)`
+              : String(summary?.deal_overdue_count ?? row?.deal_overdue_count ?? 0)
+          }
+          tone="fuchsia"
         />
         <MetricBlock
           label="Quá hạn tiếp nhận"

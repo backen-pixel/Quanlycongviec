@@ -1503,6 +1503,10 @@ function emptyStaffLeadDealAgg() {
     completed_value: 0,
     open_count: 0,
     overdue_count: 0,
+    lead_open_count: 0,
+    lead_overdue_count: 0,
+    deal_open_count: 0,
+    deal_overdue_count: 0,
     reception_eligible_count: 0,
     reception_overdue_count: 0,
     first_stage_open_count: 0,
@@ -1773,7 +1777,7 @@ function orgReportCompareSummary(current, previous) {
     'quote_deal_count', 'quote_value', 'won_or_later_deal_count', 'won_or_later_value',
     'customer_order_count', 'customer_order_value',
     'expected_value', 'weighted_value', 'completed_deal_count', 'completed_value',
-    'overdue_count', 'kpi_ledger_net', 'reception_overdue_count',
+    'overdue_count', 'lead_overdue_count', 'deal_overdue_count', 'kpi_ledger_net', 'reception_overdue_count',
   ];
   const out = {};
   for (const key of metrics) {
@@ -1875,8 +1879,9 @@ function buildWonStageOrderByPipeline(stageMap) {
 
 function orgReportDealSplitBuckets(st, wonStageOrderByPipe) {
   if (!st) return { inDealTab: true, inCustomerTab: false };
-  if (st.is_lost || st.canonical_slug === 'lost' || st.deal_report_bucket === 'lost') {
-    return { inDealTab: true, inCustomerTab: false };
+  // Thua/Hủy: không vào Deal (pipeline) và không gộp Đơn hàng
+  if (orgReportStageIsLostOrCancelled(st)) {
+    return { inDealTab: false, inCustomerTab: false };
   }
   const pid = st.pipeline_id ? String(st.pipeline_id) : null;
   const ordRaw = Number(st.order_index);
@@ -1914,7 +1919,7 @@ function orgReportDealIsClosedWon(st, wonStageOrderByPipe, stagesInPipe) {
 function orgReportExtendedDealMetrics(dealRow, st, stagesInPipe) {
   const v = orgReportNumEst(dealRow.estimated_value);
   const isWon = !!st?.is_won;
-  const isLost = !!st?.is_lost;
+  const isLost = orgReportStageIsLostOrCancelled(st);
   const isCompleted = orgReportDealIsCompleted(st, stagesInPipe);
   const countsExpected = orgReportDealCountsExpected(st, stagesInPipe);
   const pct = orgReportDealProbability(dealRow, st);
@@ -1944,11 +1949,20 @@ function orgReportIsSlaOverdue(row, st, asOfMs = Date.now()) {
   return dueAt.getTime() < asOfMs;
 }
 
-function orgReportBumpOpenOverdue(target, row, st, asOfMs = Date.now()) {
+/**
+ * @param {'lead'|'deal'} [kind]
+ */
+function orgReportBumpOpenOverdue(target, row, st, asOfMs = Date.now(), kind = null) {
   if (orgReportStageIsClosed(st)) return;
   target.open_count += 1;
-  if (orgReportIsSlaOverdue(row, st, asOfMs)) {
-    target.overdue_count += 1;
+  const overdue = orgReportIsSlaOverdue(row, st, asOfMs);
+  if (overdue) target.overdue_count += 1;
+  if (kind === 'lead') {
+    target.lead_open_count = (target.lead_open_count || 0) + 1;
+    if (overdue) target.lead_overdue_count = (target.lead_overdue_count || 0) + 1;
+  } else if (kind === 'deal') {
+    target.deal_open_count = (target.deal_open_count || 0) + 1;
+    if (overdue) target.deal_overdue_count = (target.deal_overdue_count || 0) + 1;
   }
 }
 
@@ -1957,6 +1971,28 @@ function orgReportOverdueRatePct(m) {
   const overdue = Number(m?.overdue_count) || 0;
   if (!open) return null;
   return Math.round((overdue / open) * 1000) / 10;
+}
+
+function orgReportLeadOverdueRatePct(m) {
+  const open = Number(m?.lead_open_count) || 0;
+  const overdue = Number(m?.lead_overdue_count) || 0;
+  if (!open) return null;
+  return Math.round((overdue / open) * 1000) / 10;
+}
+
+function orgReportDealOverdueRatePct(m) {
+  const open = Number(m?.deal_open_count) || 0;
+  const overdue = Number(m?.deal_overdue_count) || 0;
+  if (!open) return null;
+  return Math.round((overdue / open) * 1000) / 10;
+}
+
+function orgReportAttachOverdueRates(m) {
+  return {
+    overdue_rate_pct: orgReportOverdueRatePct(m),
+    lead_overdue_rate_pct: orgReportLeadOverdueRatePct(m),
+    deal_overdue_rate_pct: orgReportDealOverdueRatePct(m),
+  };
 }
 
 function orgReportReceptionOverdueRatePct(m) {
@@ -2091,9 +2127,11 @@ async function orgReportReceptionSlaMinutes(_companyId) {
 }
 
 function orgReportCancelRatePct(m) {
+  // Deal thua không còn nằm trong deal_count → cộng lost_deal_count vào mẫu số
   const total = (Number(m?.lead_count) || 0)
     + (Number(m?.deal_count) || 0)
-    + (Number(m?.customer_order_count) || 0);
+    + (Number(m?.customer_order_count) || 0)
+    + (Number(m?.lost_deal_count) || 0);
   if (!total) return null;
   const lost = (Number(m?.lost_lead_count) || 0) + (Number(m?.lost_deal_count) || 0);
   return Math.round((lost / total) * 1000) / 10;
@@ -2121,16 +2159,20 @@ function orgReportQuoteValueCloseRatePct(m) {
   return Math.round((closedValue / quoteValue) * 1000) / 10;
 }
 
-/** Tỉ lệ giá trị chốt / tổng GT deal trong kỳ (pipeline + đơn hàng khi tách tab). */
+/** Tỉ lệ giá trị chốt / tổng GT deal trong kỳ (pipeline + đơn hàng + thua khi tách). */
 function orgReportDealCloseValueRatePct(m) {
-  const dealValue = (Number(m?.deal_pipeline_value) || 0) + (Number(m?.customer_order_value) || 0);
+  const dealValue = (Number(m?.deal_pipeline_value) || 0)
+    + (Number(m?.customer_order_value) || 0)
+    + (Number(m?.lost_value) || 0);
   const closedValue = orgReportClosedWonValue(m);
   if (!dealValue) return null;
   return Math.round((closedValue / dealValue) * 1000) / 10;
 }
 
 function orgReportTotalDealCount(m) {
-  return (Number(m?.deal_count) || 0) + (Number(m?.customer_order_count) || 0);
+  return (Number(m?.deal_count) || 0)
+    + (Number(m?.customer_order_count) || 0)
+    + (Number(m?.lost_deal_count) || 0);
 }
 
 function aggregateOrgReportRows(leadRows, dealRows, stageMap, opts = {}) {
@@ -2173,18 +2215,19 @@ function aggregateOrgReportRows(leadRows, dealRows, stageMap, opts = {}) {
     const sid = l.source_id ? String(l.source_id) : NONE_SOURCE;
     const ltKey = leadTypeKeyForRow(l);
 
-    orgReportBumpMetrics(summary, { value: v, isLost: !!st?.is_lost }, null);
-    orgReportBumpMetrics(ensureBucket(companyMap, cid), { value: v, isLost: !!st?.is_lost }, null);
-    orgReportBumpMetrics(ensureBucket(regionMap, rid), { value: v, isLost: !!st?.is_lost }, null);
-    orgReportBumpMetrics(ensureBucket(employeeMap, uid), { value: v, isLost: !!st?.is_lost }, null);
-    orgReportBumpMetrics(ensureBucket(sourceMap, sid), { value: v, isLost: !!st?.is_lost }, null);
-    orgReportBumpMetrics(ensureBucket(leadTypeMap, ltKey), { value: v, isLost: !!st?.is_lost }, null);
-    orgReportBumpOpenOverdue(summary, l, st, asOfMs);
-    orgReportBumpOpenOverdue(ensureBucket(companyMap, cid), l, st, asOfMs);
-    orgReportBumpOpenOverdue(ensureBucket(regionMap, rid), l, st, asOfMs);
-    orgReportBumpOpenOverdue(ensureBucket(employeeMap, uid), l, st, asOfMs);
-    orgReportBumpOpenOverdue(ensureBucket(sourceMap, sid), l, st, asOfMs);
-    orgReportBumpOpenOverdue(ensureBucket(leadTypeMap, ltKey), l, st, asOfMs);
+    const leadLost = orgReportStageIsLostOrCancelled(st);
+    orgReportBumpMetrics(summary, { value: v, isLost: leadLost }, null);
+    orgReportBumpMetrics(ensureBucket(companyMap, cid), { value: v, isLost: leadLost }, null);
+    orgReportBumpMetrics(ensureBucket(regionMap, rid), { value: v, isLost: leadLost }, null);
+    orgReportBumpMetrics(ensureBucket(employeeMap, uid), { value: v, isLost: leadLost }, null);
+    orgReportBumpMetrics(ensureBucket(sourceMap, sid), { value: v, isLost: leadLost }, null);
+    orgReportBumpMetrics(ensureBucket(leadTypeMap, ltKey), { value: v, isLost: leadLost }, null);
+    orgReportBumpOpenOverdue(summary, l, st, asOfMs, 'lead');
+    orgReportBumpOpenOverdue(ensureBucket(companyMap, cid), l, st, asOfMs, 'lead');
+    orgReportBumpOpenOverdue(ensureBucket(regionMap, rid), l, st, asOfMs, 'lead');
+    orgReportBumpOpenOverdue(ensureBucket(employeeMap, uid), l, st, asOfMs, 'lead');
+    orgReportBumpOpenOverdue(ensureBucket(sourceMap, sid), l, st, asOfMs, 'lead');
+    orgReportBumpOpenOverdue(ensureBucket(leadTypeMap, ltKey), l, st, asOfMs, 'lead');
     orgReportBumpReceptionMetrics(summary, l, slaMinutes, asOfMs);
     orgReportBumpReceptionMetrics(ensureBucket(companyMap, cid), l, slaMinutes, asOfMs);
     orgReportBumpReceptionMetrics(ensureBucket(regionMap, rid), l, slaMinutes, asOfMs);
@@ -2199,7 +2242,7 @@ function aggregateOrgReportRows(leadRows, dealRows, stageMap, opts = {}) {
     orgReportBumpFirstStageMetrics(ensureBucket(leadTypeMap, ltKey), l, stageMap, firstStageByPipe, asOfMs);
 
     if (l.stage_id) {
-      orgReportBumpMetrics(ensureBucket(funnelMap, String(l.stage_id)), { value: v, isLost: !!st?.is_lost }, null);
+      orgReportBumpMetrics(ensureBucket(funnelMap, String(l.stage_id)), { value: v, isLost: leadLost }, null);
     }
 
     if (ck) {
@@ -2249,12 +2292,12 @@ function aggregateOrgReportRows(leadRows, dealRows, stageMap, opts = {}) {
     orgReportBumpMetrics(ensureBucket(employeeMap, uid), null, dealPatch);
     orgReportBumpMetrics(ensureBucket(sourceMap, sid), null, dealPatch);
     orgReportBumpMetrics(ensureBucket(leadTypeMap, leadTypeKeyForRow(l)), null, dealPatch);
-    orgReportBumpOpenOverdue(summary, l, st, asOfMs);
-    orgReportBumpOpenOverdue(ensureBucket(companyMap, cid), l, st, asOfMs);
-    orgReportBumpOpenOverdue(ensureBucket(regionMap, rid), l, st, asOfMs);
-    orgReportBumpOpenOverdue(ensureBucket(employeeMap, uid), l, st, asOfMs);
-    orgReportBumpOpenOverdue(ensureBucket(sourceMap, sid), l, st, asOfMs);
-    orgReportBumpOpenOverdue(ensureBucket(leadTypeMap, leadTypeKeyForRow(l)), l, st, asOfMs);
+    orgReportBumpOpenOverdue(summary, l, st, asOfMs, 'deal');
+    orgReportBumpOpenOverdue(ensureBucket(companyMap, cid), l, st, asOfMs, 'deal');
+    orgReportBumpOpenOverdue(ensureBucket(regionMap, rid), l, st, asOfMs, 'deal');
+    orgReportBumpOpenOverdue(ensureBucket(employeeMap, uid), l, st, asOfMs, 'deal');
+    orgReportBumpOpenOverdue(ensureBucket(sourceMap, sid), l, st, asOfMs, 'deal');
+    orgReportBumpOpenOverdue(ensureBucket(leadTypeMap, leadTypeKeyForRow(l)), l, st, asOfMs, 'deal');
     orgReportBumpFirstStageMetrics(summary, l, stageMap, firstStageByPipe, asOfMs);
     orgReportBumpFirstStageMetrics(ensureBucket(companyMap, cid), l, stageMap, firstStageByPipe, asOfMs);
     orgReportBumpFirstStageMetrics(ensureBucket(regionMap, rid), l, stageMap, firstStageByPipe, asOfMs);
@@ -2295,11 +2338,13 @@ function aggregateOrgReportRows(leadRows, dealRows, stageMap, opts = {}) {
       if (!timelineMap[ck]) {
         timelineMap[ck] = { date: ck, lead_count: 0, deal_count: 0, customer_order_count: 0, won_value: 0, pipeline_value: 0 };
       }
-      timelineMap[ck].deal_count += dealKhSplit ? (splitBuckets.inDealTab ? 1 : 0) : 1;
-      if (dealKhSplit && splitBuckets.inCustomerTab) {
-        timelineMap[ck].customer_order_count = (timelineMap[ck].customer_order_count || 0) + 1;
+      if (!ext.isLost) {
+        timelineMap[ck].deal_count += dealKhSplit ? (splitBuckets.inDealTab ? 1 : 0) : 1;
+        if (dealKhSplit && splitBuckets.inCustomerTab) {
+          timelineMap[ck].customer_order_count = (timelineMap[ck].customer_order_count || 0) + 1;
+        }
+        timelineMap[ck].pipeline_value += v;
       }
-      timelineMap[ck].pipeline_value += v;
       if (isClosedWon) timelineMap[ck].won_value += v;
     }
   }
@@ -2309,12 +2354,14 @@ function aggregateOrgReportRows(leadRows, dealRows, stageMap, opts = {}) {
     pipeline_value: summary.lead_pipeline_value + summary.deal_pipeline_value + (summary.customer_order_value || 0),
     conversion_rate: orgReportConversionRate(
       orgReportClosedWonDealCount(summary),
-      (summary.deal_count || 0) + (summary.customer_order_count || 0),
+      orgReportTotalDealCount(summary),
     ),
     quote_win_rate_pct: orgReportQuoteWinRatePct(summary),
     quote_close_value_rate_pct: orgReportQuoteValueCloseRatePct(summary),
     deal_close_value_rate_pct: orgReportDealCloseValueRatePct(summary),
     overdue_rate_pct: orgReportOverdueRatePct(summary),
+    lead_overdue_rate_pct: orgReportLeadOverdueRatePct(summary),
+    deal_overdue_rate_pct: orgReportDealOverdueRatePct(summary),
     reception_overdue_rate_pct: orgReportReceptionOverdueRatePct(summary),
     ...orgReportAttachFirstStageRates(summary),
     cancel_rate_pct: orgReportCancelRatePct(summary),
@@ -2372,15 +2419,18 @@ function orgReportBumpMetrics(target, patchLead, patchDeal) {
     if (leadLost) target.lost_lead_count += 1;
   }
   if (patchDeal) {
-    const inPipe = patchDeal.inDealTab !== false;
-    const inCust = !!patchDeal.inCustomerTab;
+    const isLost = !!patchDeal.isLost;
+    // Thua/Hủy: chỉ vào lost_* — không gộp Deal (pipeline) hay Đơn hàng
+    const inPipe = !isLost && patchDeal.inDealTab !== false;
+    const inCust = !isLost && !!patchDeal.inCustomerTab;
+
+    if (isLost) {
+      target.lost_deal_count += 1;
+      target.lost_value += patchDeal.value || 0;
+    }
     if (inPipe) {
       target.deal_count += 1;
       target.deal_pipeline_value += patchDeal.value;
-      if (patchDeal.isLost) {
-        target.lost_deal_count += 1;
-        target.lost_value += patchDeal.value;
-      }
       target.expected_value += patchDeal.expected_value || 0;
       target.weighted_value += patchDeal.weighted_value || 0;
     }
@@ -2388,18 +2438,20 @@ function orgReportBumpMetrics(target, patchLead, patchDeal) {
       target.customer_order_count += 1;
       target.customer_order_value += patchDeal.value || 0;
     }
-    if (patchDeal.quote_deal_count) {
+    if (!isLost && patchDeal.quote_deal_count) {
       target.quote_deal_count += 1;
       target.quote_value += patchDeal.quote_value || 0;
     }
-    if (patchDeal.isWon) {
+    if (!isLost && patchDeal.isWon) {
       target.won_deal_count += 1;
       target.won_value += patchDeal.value;
       target.won_or_later_deal_count += patchDeal.won_or_later_deal_count || 1;
       target.won_or_later_value += patchDeal.won_or_later_value || patchDeal.value;
     }
-    target.completed_deal_count += patchDeal.completed_deal_count || 0;
-    target.completed_value += patchDeal.completed_value || 0;
+    if (!isLost) {
+      target.completed_deal_count += patchDeal.completed_deal_count || 0;
+      target.completed_value += patchDeal.completed_value || 0;
+    }
   }
 }
 
@@ -2710,7 +2762,7 @@ async function computeOrgOverviewReportData(req, res) {
           pipeline_value: m.lead_pipeline_value + m.deal_pipeline_value + (m.customer_order_value || 0),
           conversion_rate: orgReportConversionRate(
             orgReportClosedWonDealCount(m),
-            (m.deal_count || 0) + (m.customer_order_count || 0),
+            orgReportTotalDealCount(m),
           ),
           quote_win_rate_pct: orgReportQuoteWinRatePct(m),
           quote_close_value_rate_pct: orgReportQuoteValueCloseRatePct(m),
@@ -2722,6 +2774,8 @@ async function computeOrgOverviewReportData(req, res) {
             )
             : null,
           overdue_rate_pct: orgReportOverdueRatePct(m),
+          lead_overdue_rate_pct: orgReportLeadOverdueRatePct(m),
+          deal_overdue_rate_pct: orgReportDealOverdueRatePct(m),
           reception_overdue_rate_pct: orgReportReceptionOverdueRatePct(m),
           ...orgReportAttachFirstStageRates(m),
           cancel_rate_pct: orgReportCancelRatePct(m),

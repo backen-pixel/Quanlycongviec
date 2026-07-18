@@ -178,7 +178,9 @@ function reportLostTotal(r) {
 }
 
 function orgReportTotalDealCount(m) {
-  return (Number(m?.deal_count) || 0) + (Number(m?.customer_order_count) || 0);
+  return (Number(m?.deal_count) || 0)
+    + (Number(m?.customer_order_count) || 0)
+    + (Number(m?.lost_deal_count) || 0);
 }
 
 function employeeDealTotal(r) {
@@ -541,7 +543,12 @@ async function formatOrgOverviewReportText(params = {}) {
   if (s.expected_value > 0 || s.weighted_value > 0) {
     lines.push(`🎯 Dự kiến: ${fmtMoneyShort(s.expected_value)} · Kỳ vọng: ${fmtMoneyShort(s.weighted_value)}`);
   }
-  if (s.overdue_count > 0 || s.open_count > 0) {
+  if (s.lead_overdue_count > 0 || s.lead_open_count > 0 || s.deal_overdue_count > 0 || s.deal_open_count > 0) {
+    lines.push(
+      `⏱ QH SLA Lead: *${fmtInt(s.lead_overdue_count || 0)}*/${fmtInt(s.lead_open_count || 0)}`
+      + ` · Deal: *${fmtInt(s.deal_overdue_count || 0)}*/${fmtInt(s.deal_open_count || 0)}`,
+    );
+  } else if (s.overdue_count > 0 || s.open_count > 0) {
     lines.push(`⏱ Mở: ${fmtInt(s.open_count || 0)} · Quá SLA: *${fmtInt(s.overdue_count || 0)}*`
       + (s.overdue_rate_pct != null ? ` (${s.overdue_rate_pct}%)` : ''));
   }

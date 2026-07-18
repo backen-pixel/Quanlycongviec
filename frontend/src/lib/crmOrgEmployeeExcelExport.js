@@ -13,7 +13,9 @@ const VND_KEYS = new Set([
 ]);
 const INT_KEYS = new Set([
   'lead_count', 'deal_count', 'customer_order_count', 'quote_deal_count',
-  'won_or_later_deal_count', 'lost_deal_count', 'overdue_count', 'reception_overdue_count',
+  'won_or_later_deal_count', 'lost_deal_count',
+  'overdue_count', 'lead_overdue_count', 'deal_overdue_count',
+  'reception_overdue_count',
   'delivered_deal_count', 'won_vs_total',
   'on_time_deal_count', 'late_deal_count', 'no_evidence_deal_count',
 ]);
@@ -30,7 +32,12 @@ const SN6 = '6. Chi tiết KPI Công nợ';
 function closedWonCount(r) { return r?.won_or_later_deal_count ?? r?.won_deal_count ?? 0; }
 function closedWonValue(r) { return r?.won_or_later_value ?? r?.won_value ?? r?.completed_value ?? 0; }
 function cancelLostTotal(r) { return (r?.lost_lead_count ?? 0) + (r?.lost_deal_count ?? 0); }
-function cancelTotalCount(r) { return (r?.lead_count ?? 0) + (r?.deal_count ?? 0) + (r?.customer_order_count ?? 0); }
+function cancelTotalCount(r) {
+  return (r?.lead_count ?? 0)
+    + (r?.deal_count ?? 0)
+    + (r?.customer_order_count ?? 0)
+    + (r?.lost_deal_count ?? 0);
+}
 
 export function ensureExportMetricColumns(metricCols) {
   if (!metricCols?.length) return [{ key: 'kpi_ledger_net', label: 'Điểm KPI', align: 'right' }];

@@ -8,7 +8,6 @@ import EmployeeReportPanel, { LeadTypeBreakdownChart, FirstStageSlaChart } from 
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import {
-  readStoredDealKhSplitPreference,
   splitDealStagesForCrmTabs,
   storeDealKhSplitPreference,
 } from '../lib/crmPipelineTabs';
@@ -64,7 +63,10 @@ function reportCancelLostTotal(r) {
 }
 
 function reportCancelTotalCount(r) {
-  return (r?.lead_count ?? 0) + (r?.deal_count ?? 0) + (r?.customer_order_count ?? 0);
+  return (r?.lead_count ?? 0)
+    + (r?.deal_count ?? 0)
+    + (r?.customer_order_count ?? 0)
+    + (r?.lost_deal_count ?? 0);
 }
 
 const DEAL_ONLY_METRIC_KEYS = new Set([
@@ -87,6 +89,7 @@ const DEAL_ONLY_METRIC_KEYS = new Set([
   'expected_value',
   'weighted_value',
   'overdue_count',
+  'deal_overdue_count',
   'first_stage_on_time_rate_pct',
   'pipeline_value',
   'lost_deal_count',
@@ -95,15 +98,17 @@ const DEAL_ONLY_METRIC_KEYS = new Set([
 const LEAD_ONLY_METRIC_KEYS = new Set([
   'lead_count',
   'reception_overdue_count',
+  'lead_overdue_count',
 ]);
 
 function buildDealStackedRows(items, nameKey, max = 12) {
   return (items || [])
-    .filter((r) => (r.deal_count || 0) > 0)
+    .filter((r) => (r.deal_count || 0) > 0 || (r.lost_deal_count || 0) > 0 || (r.customer_order_count || 0) > 0)
     .slice(0, max)
     .map((r) => {
       const closed = reportClosedWonCount(r);
-      const open = Math.max(0, (r.deal_count || 0) - closed - (r.lost_deal_count || 0));
+      // deal_count = Deal (pipeline) mở — đã tách thua / đơn hàng
+      const open = Math.max(0, r.deal_count || 0);
       return {
         name: truncLabel(r[nameKey], 14),
         'Đã chốt': closed,
@@ -1177,13 +1182,27 @@ const METRIC_COLS_BASE = [
     render: (r) => formatVND(r.weighted_value || 0),
   },
   {
-    key: 'overdue_count',
-    label: 'Quá hạn SLA',
+    key: 'lead_overdue_count',
+    label: 'QH SLA Lead',
     align: 'right',
     render: (r) => {
-      const n = r.overdue_count ?? 0;
-      const pct = r.overdue_rate_pct;
-      return pct != null ? `${n} (${pct}%)` : String(n);
+      const n = r.lead_overdue_count ?? 0;
+      const pct = r.lead_overdue_rate_pct;
+      const open = r.lead_open_count ?? 0;
+      if (!open && !n) return '—';
+      return pct != null ? `${n}/${open} (${pct}%)` : String(n);
+    },
+  },
+  {
+    key: 'deal_overdue_count',
+    label: 'QH SLA Deal',
+    align: 'right',
+    render: (r) => {
+      const n = r.deal_overdue_count ?? 0;
+      const pct = r.deal_overdue_rate_pct;
+      const open = r.deal_open_count ?? 0;
+      if (!open && !n) return '—';
+      return pct != null ? `${n}/${open} (${pct}%)` : String(n);
     },
   },
   {
@@ -1220,7 +1239,7 @@ const METRIC_COLS_BASE = [
     align: 'right',
     render: (r) => formatVND(r.pipeline_value ?? (r.lead_pipeline_value || 0) + (r.deal_pipeline_value || 0)),
   },
-  { key: 'lost_deal_count', label: 'Thua', align: 'right' },
+  { key: 'lost_deal_count', label: 'Deal thua', align: 'right' },
 ];
 
 function buildMetricCols(dealKhSplit, typeView = 'all') {
@@ -1252,6 +1271,18 @@ function buildMetricCols(dealKhSplit, typeView = 'all') {
     ...orderCols,
     ...head.slice(insertAt),
   ];
+  // Đưa cột Thua ngay sau Deal/Đơn hàng khi tách — dễ đối chiếu, không gộp vào pipeline
+  if (dealKhSplit) {
+    const lostIdx = cols.findIndex((c) => c.key === 'lost_deal_count');
+    const afterOrders = cols.findIndex((c) => c.key === 'customer_order_count');
+    const afterDeal = cols.findIndex((c) => c.key === 'deal_count');
+    const targetAt = (afterOrders >= 0 ? afterOrders : afterDeal) + 1;
+    if (lostIdx >= 0 && targetAt > 0 && lostIdx !== targetAt) {
+      const [lostCol] = cols.splice(lostIdx, 1);
+      const insertPos = lostIdx < targetAt ? targetAt - 1 : targetAt;
+      cols.splice(insertPos, 0, lostCol);
+    }
+  }
   if (typeView === 'lead') {
     cols = cols.filter((c) => !DEAL_ONLY_METRIC_KEYS.has(c.key));
   } else if (typeView === 'deal') {
@@ -1296,8 +1327,11 @@ export default function CrmOrgOverviewReport() {
   }));
   const [regionId, setRegionId] = useState(() => P0?.regionId || '');
   const [typeView, setTypeView] = useState(() => P0?.typeView || 'all');
-  const [dealKhSplitEnabled, setDealKhSplitEnabled] = useState(() => readStoredDealKhSplitPreference(isAdmin));
-  const [hasCustomerTab, setHasCustomerTab] = useState(false);
+  // BC tổ chức: mặc định luôn tách Deal / Đơn hàng / Thua (không theo preference Kanban)
+  const [dealKhSplitEnabled, setDealKhSplitEnabled] = useState(() => (
+    P0?.dealKhSplit != null ? !!P0.dealKhSplit : true
+  ));
+  const [hasCustomerTab, setHasCustomerTab] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -1361,9 +1395,10 @@ export default function CrmOrgOverviewReport() {
         dateFrom, dateTo, typeView,
         companyId: filter.companyId, departmentId: filter.departmentId,
         userId: filter.userId, regionId,
+        dealKhSplit: dealKhSplitEnabled,
       }));
     } catch { /* ignore */ }
-  }, [dateFrom, dateTo, typeView, filter.companyId, filter.departmentId, filter.userId, regionId]);
+  }, [dateFrom, dateTo, typeView, filter.companyId, filter.departmentId, filter.userId, regionId, dealKhSplitEnabled]);
 
   useEffect(() => {
     let cancel = false;
@@ -1574,10 +1609,9 @@ export default function CrmOrgOverviewReport() {
     let lost = 0;
     let open = 0;
     for (const r of displayData?.by_employee || []) {
-      const totalDeals = (r.deal_count || 0) + (r.customer_order_count || 0);
       won += reportClosedWonCount(r);
       lost += r.lost_deal_count || 0;
-      open += Math.max(0, totalDeals - reportClosedWonCount(r) - (r.lost_deal_count || 0));
+      open += Math.max(0, r.deal_count || 0);
     }
     return [
       { name: 'Đã chốt', value: won, color: '#059669' },
@@ -1859,11 +1893,12 @@ export default function CrmOrgOverviewReport() {
             <option value="deal">Chỉ Deal</option>
           </select>
 
-          {hasCustomerTab && (
+          {typeView !== 'lead' && (
             <div
               className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 shrink-0"
               role="group"
               aria-label="Gộp hoặc tách đơn hàng"
+              title={hasCustomerTab ? undefined : 'Chưa có cột sau Thắng — Đơn hàng có thể = 0'}
             >
               <button
                 type="button"
@@ -1985,14 +2020,34 @@ export default function CrmOrgOverviewReport() {
       ) : displayData ? (
         <>
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 [&>*]:min-w-0">
-            <KpiCard
-              label="Quá hạn SLA"
-              value={summary.overdue_count ?? 0}
-              compare={compare}
-              compareKey="overdue_count"
-              sub={summary.overdue_rate_pct != null ? `${summary.overdue_rate_pct}% trên ${summary.open_count ?? 0} đang mở` : `${summary.open_count ?? 0} đang mở`}
-              accent="border-rose-200 bg-gradient-to-br from-rose-50 to-white"
-            />
+            {typeView !== 'deal' && (
+              <KpiCard
+                label="QH SLA Lead"
+                value={summary.lead_overdue_count ?? 0}
+                compare={compare}
+                compareKey="lead_overdue_count"
+                sub={
+                  summary.lead_overdue_rate_pct != null
+                    ? `${summary.lead_overdue_rate_pct}% trên ${summary.lead_open_count ?? 0} lead đang mở`
+                    : `${summary.lead_open_count ?? 0} lead đang mở`
+                }
+                accent="border-rose-200 bg-gradient-to-br from-rose-50 to-white"
+              />
+            )}
+            {typeView !== 'lead' && (
+              <KpiCard
+                label="QH SLA Deal"
+                value={summary.deal_overdue_count ?? 0}
+                compare={compare}
+                compareKey="deal_overdue_count"
+                sub={
+                  summary.deal_overdue_rate_pct != null
+                    ? `${summary.deal_overdue_rate_pct}% trên ${summary.deal_open_count ?? 0} deal đang mở`
+                    : `${summary.deal_open_count ?? 0} deal đang mở`
+                }
+                accent="border-fuchsia-200 bg-gradient-to-br from-fuchsia-50 to-white"
+              />
+            )}
             <KpiCard
               label="Quá hạn tiếp nhận"
               value={
@@ -2041,25 +2096,43 @@ export default function CrmOrgOverviewReport() {
             />
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 [&>*]:min-w-0">
-            <KpiCard label="Lead" value={summary.lead_count ?? 0} compare={compare} compareKey="lead_count" accent="border-blue-200 bg-blue-50" />
-            <KpiCard
-              label={dealKhSplitActive ? 'Deal (pipeline)' : 'Deal'}
-              value={summary.deal_count ?? 0}
-              compare={compare}
-              compareKey="deal_count"
-              accent="border-cyan-200 bg-cyan-50"
-              sub={dealKhSplitActive ? 'Trước cột Thắng + Thua' : undefined}
-            />
-            {dealKhSplitActive && (
-              <KpiCard
-                label="Đơn hàng"
-                value={summary.customer_order_count ?? 0}
-                compare={compare}
-                compareKey="customer_order_count"
-                sub={formatVND(summary.customer_order_value ?? 0)}
-                accent="border-teal-200 bg-teal-50"
-              />
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 [&>*]:min-w-0">
+            {typeView !== 'deal' && (
+              <KpiCard label="Lead" value={summary.lead_count ?? 0} compare={compare} compareKey="lead_count" accent="border-blue-200 bg-blue-50" />
+            )}
+            {typeView !== 'lead' && (
+              <>
+                <KpiCard
+                  label={dealKhSplitActive ? 'Deal (pipeline)' : 'Deal'}
+                  value={
+                    dealKhSplitActive
+                      ? (summary.deal_count ?? 0)
+                      : (summary.deal_count ?? 0) + (summary.customer_order_count ?? 0)
+                  }
+                  compare={compare}
+                  compareKey="deal_count"
+                  accent="border-cyan-200 bg-cyan-50"
+                  sub={dealKhSplitActive ? 'Trước cột Thắng · không gồm Thua / Đơn hàng' : 'Đã gộp với đơn hàng'}
+                />
+                {dealKhSplitActive && (
+                  <KpiCard
+                    label="Đơn hàng"
+                    value={summary.customer_order_count ?? 0}
+                    compare={compare}
+                    compareKey="customer_order_count"
+                    sub={formatVND(summary.customer_order_value ?? 0)}
+                    accent="border-teal-200 bg-teal-50"
+                  />
+                )}
+                <KpiCard
+                  label="Deal thua"
+                  value={summary.lost_deal_count ?? 0}
+                  compare={compare}
+                  compareKey="lost_deal_count"
+                  sub={formatVND(summary.lost_value ?? 0)}
+                  accent="border-rose-200 bg-rose-50"
+                />
+              </>
             )}
             <KpiCard
               label="Pipeline"
@@ -2067,19 +2140,22 @@ export default function CrmOrgOverviewReport() {
               compare={compare}
               compareKey="pipeline_value"
               accent="border-indigo-200 bg-indigo-50"
+              sub={dealKhSplitActive ? 'Lead + Deal pipeline + Đơn hàng (không gồm thua)' : undefined}
             />
-            <KpiCard
-              label="Tỷ lệ chốt/tổng deal"
-              value={`${summary.conversion_rate ?? 0}%`}
-              compare={compare}
-              compareKey="conversion_rate"
-              sub={
-                summary.deal_close_value_rate_pct != null
-                  ? `${reportClosedWonCount(summary)}/${summary.deal_count ?? 0} deal · GT ${summary.deal_close_value_rate_pct}%`
-                  : `${reportClosedWonCount(summary)}/${summary.deal_count ?? 0} deal`
-              }
-              accent="border-slate-200 bg-slate-50"
-            />
+            {typeView !== 'lead' && (
+              <KpiCard
+                label="Tỷ lệ chốt/tổng deal"
+                value={`${summary.conversion_rate ?? 0}%`}
+                compare={compare}
+                compareKey="conversion_rate"
+                sub={
+                  summary.deal_close_value_rate_pct != null
+                    ? `${reportClosedWonCount(summary)}/${(summary.deal_count ?? 0) + (summary.customer_order_count ?? 0) + (summary.lost_deal_count ?? 0)} deal · GT ${summary.deal_close_value_rate_pct}%`
+                    : `${reportClosedWonCount(summary)}/${(summary.deal_count ?? 0) + (summary.customer_order_count ?? 0) + (summary.lost_deal_count ?? 0)} deal`
+                }
+                accent="border-slate-200 bg-slate-50"
+              />
+            )}
             <KpiCard
               label="Tỷ lệ hủy"
               value={summary.cancel_rate_pct != null ? `${summary.cancel_rate_pct}%` : '—'}
@@ -2135,8 +2211,8 @@ export default function CrmOrgOverviewReport() {
               value={`${summary.conversion_rate ?? 0}%`}
               sub={
                 summary.deal_close_value_rate_pct != null
-                  ? `${reportClosedWonCount(summary)}/${summary.deal_count ?? 0} deal · GT ${summary.deal_close_value_rate_pct}%`
-                  : `${reportClosedWonCount(summary)}/${summary.deal_count ?? 0} deal`
+                  ? `${reportClosedWonCount(summary)}/${(summary.deal_count ?? 0) + (summary.customer_order_count ?? 0) + (summary.lost_deal_count ?? 0)} deal · GT ${summary.deal_close_value_rate_pct}%`
+                  : `${reportClosedWonCount(summary)}/${(summary.deal_count ?? 0) + (summary.customer_order_count ?? 0) + (summary.lost_deal_count ?? 0)} deal`
               }
               accent="border-violet-200 bg-violet-50"
             />
