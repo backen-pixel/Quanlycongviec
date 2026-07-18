@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import {
   openChatFromBubble,
   openProjectCommentFromNotif,
+  navigateToMainTab,
 } from '../navigation/navigationRef';
 
 function parseMeta(data: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
@@ -46,10 +47,28 @@ function extractChatPayload(data: Record<string, unknown> | undefined): { groupI
   return { groupId, title };
 }
 
+function isAssignmentNotification(data: Record<string, unknown> | undefined): boolean {
+  if (!data) return false;
+  const type = String(data.type || '');
+  if (
+    type === 'crm_assignment_assigned'
+    || type === 'crm_assignment_comment'
+    || type.startsWith('crm_assignment')
+    || type === 'crm_task_assigned'
+  ) {
+    return true;
+  }
+  return String(data.entity_type || '') === 'crm_assignment';
+}
+
 function handleNotificationData(data: Record<string, unknown> | undefined): void {
   const chat = extractChatPayload(data);
   if (chat) {
     openChatFromBubble(chat.groupId, chat.title);
+    return;
+  }
+  if (isAssignmentNotification(data)) {
+    navigateToMainTab('Work');
     return;
   }
   const pid = extractProjectId(data);

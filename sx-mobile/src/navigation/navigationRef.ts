@@ -50,6 +50,17 @@ export function openProjectCommentFromNotif(projectId: string): void {
   navigationRef.navigate('ProjectDetail', { projectId });
 }
 
+/** Chuyển về tab chính (Overview / Kanban / Work / Messages…). */
+export function navigateToMainTab(tab: 'Overview' | 'Kanban' | 'Work' | 'Messages' | 'Profile'): void {
+  if (!navigationRef.isReady()) return;
+  navigationRef.dispatch(
+    CommonActions.navigate({
+      name: 'Main',
+      params: { screen: tab },
+    }),
+  );
+}
+
 export function navigateToShareToChat(): void {
   const go = () => {
     if (!navigationRef.isReady()) return false;

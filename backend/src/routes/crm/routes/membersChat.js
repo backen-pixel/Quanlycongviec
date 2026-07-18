@@ -170,24 +170,39 @@ r.post('/leads/:id/assignments', async (req, res) => {
     const data = result.data?.assignment;
     const assigneeIds = result.data?.assignee_ids || [];
     const leadSuffix = leadLabel ? ` (${leadLabel})` : '';
+    const pushFn = req.app?.get?.('pushNotification');
     for (const uid of assigneeIds) {
       if (String(uid) === String(req.user.userId)) continue;
+      const message = `"${data.title}"${leadSuffix}${data.deadline ? ' — hạn ' + new Date(data.deadline).toLocaleString('vi-VN') : ''}`;
+      const meta = {
+        lead_id: leadId,
+        nav_path: '/crm/assignments',
+        open: data.id,
+        module_key: 'crm',
+        ecosystem_module_key: 'crm',
+      };
       const notif = await persistAssignmentNotification(supabase, uid, {
         type: 'crm_assignment_assigned',
         title: '📋 Bạn vừa được giao nhiệm vụ CRM',
-        message: `"${data.title}"${leadSuffix}${data.deadline ? ' — hạn ' + new Date(data.deadline).toLocaleString('vi-VN') : ''}`,
+        message,
         assignmentId: data.id,
-        metadata: { lead_id: leadId, nav_path: '/crm/assignments', open: data.id },
+        metadata: meta,
       });
-      try {
-        const io = req.app.get('io');
-        if (io) io.to(`user:${uid}`).emit('notification', notif || buildAssignmentNotificationInsert(uid, {
-          type: 'crm_assignment_assigned',
-          title: '📋 Bạn vừa được giao nhiệm vụ CRM',
-          message: `"${data.title}"${leadSuffix}`,
-          assignmentId: data.id,
-        }));
-      } catch { /* ignore */ }
+      const payload = notif || buildAssignmentNotificationInsert(uid, {
+        type: 'crm_assignment_assigned',
+        title: '📋 Bạn vừa được giao nhiệm vụ CRM',
+        message,
+        assignmentId: data.id,
+        metadata: meta,
+      });
+      if (typeof pushFn === 'function') {
+        void pushFn(uid, payload);
+      } else {
+        try {
+          const io = req.app.get('io');
+          if (io) io.to(`user:${uid}`).emit('notification', payload);
+        } catch { /* ignore */ }
+      }
     }
     if (assigneeIds.length) emitNotifyBadge(req.app, 'assignments');
 

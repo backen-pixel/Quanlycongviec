@@ -352,12 +352,33 @@ const { emitNotifyBadge } = require('../helpers/notifyBadge');
 function pushNotif(req, userId, payload) {
   if (!userId || !payload) return;
   try {
-    const io = req.app.get('io');
-    if (io) io.to(`user:${userId}`).emit('notification', payload);
     const push = req.app.get('pushNotification');
-    if (typeof push === 'function') void push(userId, payload);
+    // Ưu tiên pushNotification (socket + FCM). Fallback socket thuần nếu chưa gắn helper.
+    if (typeof push === 'function') {
+      void push(userId, payload);
+    } else {
+      const io = req.app.get('io');
+      if (io) io.to(`user:${userId}`).emit('notification', payload);
+    }
     emitNotifyBadge(req.app, 'assignments');
   } catch { /* ignore */ }
+}
+
+function assignmentNotifCopy(assignment) {
+  const isProd = String(assignment?.assignment_module || '').toLowerCase() === 'production';
+  return {
+    isProd,
+    title: isProd
+      ? '📋 Bạn vừa được giao nhiệm vụ Sản xuất'
+      : '📋 Bạn vừa được giao nhiệm vụ CRM',
+    metadata: {
+      module_key: isProd ? 'production' : 'crm',
+      ecosystem_module_key: isProd ? 'production' : 'crm',
+      nav_path: isProd ? '/sx/assignments' : '/crm/assignments',
+      open: assignment?.id,
+      lead_id: assignment?.lead_id || null,
+    },
+  };
 }
 
 async function persistNotification(userId, payload) {
@@ -596,19 +617,23 @@ r.post('/', async (req, res) => {
     const finalAssignees = result.data?.assignee_ids?.length
       ? result.data.assignee_ids
       : (data?.assignee_id ? [data.assignee_id] : []);
+    const copy = assignmentNotifCopy(data);
     for (const uid of finalAssignees) {
       if (String(uid) === String(req.user.userId)) continue;
+      const message = `"${data.title}"${data.deadline ? ' — hạn ' + new Date(data.deadline).toLocaleString('vi-VN') : ''}`;
       const notif = await persistNotification(uid, {
         type: 'crm_assignment_assigned',
-        title: '📋 Bạn vừa được giao nhiệm vụ CRM',
-        message: `"${data.title}"${data.deadline ? ' — hạn ' + new Date(data.deadline).toLocaleString('vi-VN') : ''}`,
+        title: copy.title,
+        message,
         entity_id: data.id,
+        metadata: copy.metadata,
       });
       pushNotif(req, uid, notif || buildAssignmentNotificationInsert(uid, {
         type: 'crm_assignment_assigned',
-        title: '📋 Bạn vừa được giao nhiệm vụ CRM',
-        message: `"${data.title}"${data.deadline ? ' — hạn ' + new Date(data.deadline).toLocaleString('vi-VN') : ''}`,
+        title: copy.title,
+        message,
         assignmentId: data.id,
+        metadata: copy.metadata,
       }));
     }
     await attachAssigneesToAssignments([data]);
@@ -694,13 +719,22 @@ r.put('/:id', async (req, res) => {
       for (const uid of newAssignees) {
         if (prev.has(String(uid))) continue;
         if (String(uid) === String(req.user.userId)) continue;
+        const copy = assignmentNotifCopy(data);
+        const message = `"${data.title}"${data.deadline ? ' — hạn ' + new Date(data.deadline).toLocaleString('vi-VN') : ''}`;
         const notif = await persistNotification(uid, {
           type: 'crm_assignment_assigned',
-          title: '📋 Bạn vừa được giao nhiệm vụ CRM',
-          message: `"${data.title}"${data.deadline ? ' — hạn ' + new Date(data.deadline).toLocaleString('vi-VN') : ''}`,
+          title: copy.title,
+          message,
           entity_id: data.id,
+          metadata: copy.metadata,
         });
-        pushNotif(req, uid, notif);
+        pushNotif(req, uid, notif || buildAssignmentNotificationInsert(uid, {
+          type: 'crm_assignment_assigned',
+          title: copy.title,
+          message,
+          assignmentId: data.id,
+          metadata: copy.metadata,
+        }));
       }
     }
 
@@ -1083,11 +1117,28 @@ r.post('/:id/comments', async (req, res) => {
       for (const uid of targets) {
         const notif = await persistNotification(uid, {
           type: 'crm_assignment_comment',
-          title: '💬 Bình luận mới trên nhiệm vụ CRM',
+          title: '💬 Bình luận mới trên nhiệm vụ',
           message: `"${a?.title || ''}": ${preview}`,
           entity_id: a?.id,
+          metadata: {
+            module_key: 'crm',
+            ecosystem_module_key: 'crm',
+            nav_path: '/crm/assignments',
+            open: a?.id,
+          },
         });
-        pushNotif(req, uid, notif);
+        pushNotif(req, uid, notif || buildAssignmentNotificationInsert(uid, {
+          type: 'crm_assignment_comment',
+          title: '💬 Bình luận mới trên nhiệm vụ',
+          message: `"${a?.title || ''}": ${preview}`,
+          assignmentId: a?.id,
+          metadata: {
+            module_key: 'crm',
+            ecosystem_module_key: 'crm',
+            nav_path: '/crm/assignments',
+            open: a?.id,
+          },
+        }));
       }
     } catch (notifErr) { console.warn('[crm_assignment_comment] notify:', notifErr.message); }
 

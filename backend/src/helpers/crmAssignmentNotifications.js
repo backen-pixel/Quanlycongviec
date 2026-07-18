@@ -4,11 +4,6 @@
  */
 const { supabase } = require('../config/supabase');
 const { emitNotifyBadge } = require('./notifyBadge');
-const {
-  ecosystemModuleKeyForCrmDeadline,
-  crmTaskDeadlineModuleKey,
-  filterUserIdsForCrmLeadScopedNotification,
-} = require('./deadlineModuleNotifications');
 
 function assignmentIdStr(assignmentId) {
   if (assignmentId == null || assignmentId === '') return null;
@@ -47,7 +42,9 @@ async function persistAssignmentNotification(supabase, userId, payload) {
 }
 
 /**
- * Gửi TB «Bạn vừa được giao nhiệm vụ CRM» → mở /crm/assignments?open=id
+ * Gửi TB «Bạn vừa được giao nhiệm vụ» → mở /crm/assignments hoặc /sx/assignments
+ * Người được giao tường minh phải nhận TB — không lọc theo company/region lead
+ * (NV xưởng thường khác company_id so với deal CRM).
  */
 async function notifyNewCrmAssignmentAssignees(req, {
   assignmentId,
@@ -61,9 +58,9 @@ async function notifyNewCrmAssignmentAssignees(req, {
 }) {
   if (!assignmentId || !userIds?.length) return;
   const actorId = req?.user?.userId;
-  const raw = [...new Set(userIds.filter(Boolean).map(String))]
+  const targets = [...new Set(userIds.filter(Boolean).map(String))]
     .filter((uid) => !actorId || String(uid) !== String(actorId));
-  if (!raw.length) return;
+  if (!targets.length) return;
 
   const isProduction = assignmentModule === 'production'
     || String(stageSlug || '').startsWith('sx_');
@@ -73,15 +70,6 @@ async function notifyNewCrmAssignmentAssignees(req, {
     ? '📋 Bạn vừa được giao nhiệm vụ Sản xuất'
     : '📋 Bạn vừa được giao nhiệm vụ CRM';
 
-  const eco = ecosystemModuleKeyForCrmDeadline(crmTaskDeadlineModuleKey(stageSlug));
-  const scoped = await filterUserIdsForCrmLeadScopedNotification(
-    supabase,
-    { company_id: lead?.company_id, region_id: lead?.region_id },
-    raw,
-    eco,
-  );
-  if (!scoped.length) return;
-
   const leadLabel = [lead?.code, lead?.title].filter(Boolean).join(' ').trim();
   const leadSuffix = leadLabel ? ` (${leadLabel})` : '';
   const dl = deadline ? ` — hạn ${new Date(deadline).toLocaleString('vi-VN')}` : '';
@@ -90,7 +78,7 @@ async function notifyNewCrmAssignmentAssignees(req, {
   const io = req?.app?.get?.('io');
   const pushFn = req?.app?.get?.('pushNotification');
 
-  for (const uid of scoped) {
+  for (const uid of targets) {
     const notif = await persistAssignmentNotification(supabase, uid, {
       type: 'crm_assignment_assigned',
       title: notifTitle,
@@ -112,13 +100,19 @@ async function notifyNewCrmAssignmentAssignees(req, {
       assignmentId,
       metadata: {
         module_key: moduleKey,
-        lead_id: lead?.id,
+        ecosystem_module_key: moduleKey,
+        lead_id: lead?.id || null,
+        crm_task_id: crmTaskId || null,
         nav_path: navPath,
         open: assignmentId,
       },
     });
-    if (io) io.to(`user:${uid}`).emit('notification', payload);
-    if (pushFn && notif) pushFn(uid, notif);
+    // pushNotification = socket + FCM; vẫn emit socket khi persist lỗi để app đang mở nhận được.
+    if (typeof pushFn === 'function') {
+      void pushFn(uid, payload);
+    } else if (io) {
+      io.to(`user:${uid}`).emit('notification', payload);
+    }
     emitNotifyBadge(req?.app, 'assignments');
   }
 }
