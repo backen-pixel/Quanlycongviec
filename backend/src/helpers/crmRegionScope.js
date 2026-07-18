@@ -56,7 +56,9 @@ function applyCrmLeadRegionFilterToQuery(q, req) {
   if (!c.ids.length) {
     return q.eq('region_id', '00000000-0000-0000-0000-000000000000');
   }
-  return q.in('region_id', c.ids);
+  // Chưa gắn khu vực (NULL) vẫn giữ trong legacy list — khớp RPC 444 (assignee/member lọc riêng).
+  const list = c.ids.map((id) => `"${id}"`).join(',');
+  return q.or(`region_id.in.(${list}),region_id.is.null`);
 }
 
 /** UUID không tồn tại — dùng khi p_region_ids rỗng để RPC trả 0 dòng. */
@@ -123,7 +125,22 @@ function assertLeadReadableByRegionScope(req, leadRow) {
   const c = getCrmLeadRegionConstraint(req);
   if (c.mode !== 'in' || !c.ids?.length) return { ok: true };
   const rid = leadRow?.region_id;
-  if (!rid || !c.ids.includes(String(rid))) {
+  // Chưa gắn khu vực: cho phụ trách / chủ sở hữu / admin khu vực xem (khớp list RPC 444).
+  if (!rid) {
+    const uid = req.user?.userId;
+    if (
+      uid
+      && (
+        String(leadRow.assigned_to || '') === String(uid)
+        || String(leadRow.lead_owner_id || '') === String(uid)
+      )
+    ) {
+      return { ok: true };
+    }
+    if (isCrmRegionAdminUser(req.user)) return { ok: true };
+    return { ok: false, error: 'Không có quyền xem lead/deal khu vực này' };
+  }
+  if (!c.ids.includes(String(rid))) {
     return { ok: false, error: 'Không có quyền xem lead/deal khu vực này' };
   }
   return { ok: true };
