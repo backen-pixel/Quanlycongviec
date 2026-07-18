@@ -202,11 +202,18 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
       return undefined;
     }
     void refreshThreads(false);
+    let lastActiveRefresh = 0;
     const onState = (state: AppStateStatus) => {
-      if (state === 'active') {
-        void refreshThreads(true);
+      if (state !== 'active') return;
+      const now = Date.now();
+      // Tránh spam API mỗi lần chạm app (throttle 45s).
+      if (now - lastActiveRefresh < 45_000) {
         emitPresencePing();
+        return;
       }
+      lastActiveRefresh = now;
+      void refreshThreads(true);
+      emitPresencePing();
     };
     const sub = AppState.addEventListener('change', onState);
     emitPresencePing();

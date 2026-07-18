@@ -144,11 +144,16 @@ export default function WorkScreen() {
     setUpdatingId(task.id);
     try {
       const next = nextTaskStatus(task.status);
-      const updated = await updateWorkTaskStatus(task.lead_id, task.id, next);
+      const updated = await updateWorkTaskStatus(
+        task.lead_id,
+        task.id,
+        next,
+        task.source === 'assignment' ? 'assignment' : 'crm_task',
+      );
       setTasks((prev) =>
         prev.map((t) =>
-          t.id === task.id && t.lead_id === task.lead_id
-            ? { ...t, status: updated.status, title: updated.title }
+          t.id === task.id && t.source === task.source
+            ? { ...t, status: updated.status, title: updated.title || t.title }
             : t,
         ),
       );
@@ -485,7 +490,7 @@ export default function WorkScreen() {
         <Text style={styles.empty}>
           {userId
             ? filter === 'all'
-              ? 'Chưa có nhiệm vụ sản xuất nào được giao cho bạn.'
+              ? 'Chưa có công việc nào được giao cho bạn (pipeline SX hoặc Giao việc).'
               : 'Không có nhiệm vụ nào trong bộ lọc này.'
             : 'Đăng nhập để xem công việc được giao.'}
         </Text>

@@ -1,3 +1,4 @@
+import { useIsFocused } from '@react-navigation/native';
 import { useEffect, useRef } from 'react';
 import { useNotifications } from '../context/NotificationContext';
 import type { SyncEvent } from '../lib/realtimeSync';
@@ -8,9 +9,14 @@ type Options = {
   dealId?: string | null;
   onRefresh: () => void | Promise<void>;
   enabled?: boolean;
+  /**
+   * false = vẫn refetch dù tab/màn không focus (mặc định true: chỉ tab đang xem
+   * để tránh 3–4 tab cùng tải lại full board).
+   */
+  onlyWhenFocused?: boolean;
   debounceMs?: number;
-  /** Chỉ lắng nghe sự kiện bảng Kanban / dự án (mặc định: tất cả). */
-  modes?: Array<'board' | 'task' | 'comment'>;
+  /** Chỉ lắng nghe sự kiện bảng Kanban / dự án (mặc định: tất cả). Dùng hằng từ realtimeModes. */
+  modes?: ReadonlyArray<'board' | 'task' | 'comment'>;
 };
 
 function eventMatchesMode(evt: SyncEvent, modes?: Options['modes']): boolean {
@@ -49,22 +55,25 @@ export function useProductionRealtime({
   dealId,
   onRefresh,
   enabled = true,
+  onlyWhenFocused = true,
   debounceMs = 650,
   modes,
 }: Options) {
   const { subscribeSync } = useNotifications();
+  const isFocused = useIsFocused();
   const onRefreshRef = useRef(onRefresh);
   onRefreshRef.current = onRefresh;
+  const active = enabled && (!onlyWhenFocused || isFocused);
 
   useEffect(() => {
-    if (!enabled) return undefined;
+    if (!active) return undefined;
 
     let timer: ReturnType<typeof setTimeout> | null = null;
     const scheduleRefresh = () => {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = null;
-        void onRefreshRef.current();
+        void Promise.resolve(onRefreshRef.current()).catch(() => {});
       }, debounceMs);
     };
 
@@ -77,7 +86,7 @@ export function useProductionRealtime({
       if (timer) clearTimeout(timer);
       unsub();
     };
-  }, [enabled, projectId, dealId, debounceMs, modes, subscribeSync]);
+  }, [active, projectId, dealId, debounceMs, modes, subscribeSync]);
 }
 
 export type { CrmTaskChangedPayload, ProjectStageChangedPayload } from '../lib/realtimeSync';

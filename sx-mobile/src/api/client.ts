@@ -39,7 +39,7 @@ api.interceptors.response.use(
     // Bỏ qua auto-logout cho login / me (401 ở đây không phải token hỏng).
     const skip = ['/auth/login', '/auth/me'].some((p) => url.includes(p));
     if (status === 401 && !skip) {
-      await setStoredToken(null);
+      // Không xóa token ở đây — AuthContext cần token để unregister FCM trước khi clear.
       onUnauthorized?.();
     }
     return Promise.reject(error);
@@ -119,7 +119,6 @@ export async function postMultipart<T = unknown>(
       parsed = { error: text || res.statusText };
     }
     if (res.status === 401 && !p.includes('/auth/login')) {
-      await setStoredToken(null);
       onUnauthorized?.();
     }
     if (!res.ok) {

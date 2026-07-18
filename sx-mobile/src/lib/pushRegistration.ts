@@ -95,13 +95,16 @@ export async function registerPushToken(): Promise<void> {
   if (!granted) {
     console.warn('[sx pushRegistration] quyền thông báo chưa được cấp — tray hệ thống sẽ không hiện');
   }
+  // FCM là kênh chính cho tray hệ thống (không cần EAS projectId).
   await registerFcmTokenOnly();
   if (!granted) return;
+  const projectId = getProjectId();
+  if (!projectId) {
+    // app.json còn placeholder REPLACE_WITH_EAS_PROJECT_ID → bỏ Expo push (tránh spam lỗi 400).
+    return;
+  }
   try {
-    const projectId = getProjectId();
-    const tokenRes = projectId
-      ? await Notifications.getExpoPushTokenAsync({ projectId })
-      : await Notifications.getExpoPushTokenAsync();
+    const tokenRes = await Notifications.getExpoPushTokenAsync({ projectId });
     const expoToken = tokenRes?.data;
     if (!expoToken) return;
     const prev = await AsyncStorage.getItem(EXPO_TOKEN_KEY);

@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -18,6 +18,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { fetchPersonalPlanner, fetchProductionBoard } from '../lib/productionApi';
 import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
+import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
 import { formatMoneyAmount, Radii, Spacing, stageColor } from '../theme';
 import type { PersonalPlanner, ProductionBoard, ProductionProject } from '../types';
 
@@ -68,28 +69,46 @@ export default function PlannerScreen() {
     }));
   }, []);
 
+  const loadSeqRef = useRef(0);
+
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
+    const boardFilters = { companyId: scopedCompanyId };
+    if (mode === 'silent' && isCachedBoardFresh(boardFilters) && getCachedBoard(boardFilters)) {
+      setBoard(getCachedBoard(boardFilters)!);
+      return;
+    }
+    const seq = ++loadSeqRef.current;
     if (mode === 'init') setLoading(true);
     else if (mode === 'refresh') setRefreshing(true);
     setError(null);
     try {
+      const seeded = getCachedBoard(boardFilters);
+      if (seeded && mode !== 'refresh') {
+        setBoard(seeded);
+        if (mode === 'init') setLoading(false);
+      }
       const [boardData, personalData] = await Promise.all([
-        fetchProductionBoard(mode === 'silent', { companyId: scopedCompanyId }, {
+        fetchProductionBoard(mode === 'silent', boardFilters, {
           onPartial: (partial) => {
+            if (seq !== loadSeqRef.current) return;
             setBoard(partial);
             if (mode === 'init') setLoading(false);
           },
         }),
         fetchPersonalPlanner().catch(() => ({ columns: [], items: [] }) as PersonalPlanner),
       ]);
+      if (seq !== loadSeqRef.current) return;
       setBoard(boardData);
       setPersonal(personalData);
       if (mode !== 'silent') setOwnerVisible({});
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       if (mode !== 'silent') setError(formatApiError(e));
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [scopedCompanyId]);
 
@@ -98,8 +117,9 @@ export default function PlannerScreen() {
   }, [load, scopedCompanyId]);
 
   useProductionRealtime({
-    onRefresh: () => load('silent'),
-    debounceMs: 400,
+    onRefresh: () => void load('silent'),
+    modes: REALTIME_BOARD_TASK,
+    debounceMs: 1500,
   });
 
   const stageById = useMemo(() => {

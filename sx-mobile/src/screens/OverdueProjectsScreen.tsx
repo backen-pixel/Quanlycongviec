@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -18,7 +18,8 @@ import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { loadKanbanFilters } from '../lib/kanbanFilterStorage';
 import { fetchProductionBoard } from '../lib/productionApi';
-import { getCachedBoard } from '../lib/productionBoardCache';
+import { getAnyCachedBoard, getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
+import { REALTIME_BOARD } from '../lib/realtimeModes';
 import { initialsFrom, shortDateLabel } from '../lib/sxBoardKpis';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import type { ProductionProject } from '../types';
@@ -36,14 +37,16 @@ export default function OverdueProjectsScreen() {
   const { openProjectDetail } = useRootNavigation();
 
   const [projects, setProjects] = useState<ProductionProject[]>(
-    () => getCachedBoard()?.projects.filter((p) => p.is_overdue) ?? [],
+    () => getAnyCachedBoard()?.projects.filter((p) => p.is_overdue) ?? [],
   );
-  const [loading, setLoading] = useState(() => !getCachedBoard());
+  const [loading, setLoading] = useState(() => !getAnyCachedBoard());
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const loadSeqRef = useRef(0);
 
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
+    const seq = ++loadSeqRef.current;
     if (mode === 'init') setLoading(true);
     if (mode === 'refresh') setRefreshing(true);
     setError(null);
@@ -51,32 +54,56 @@ export default function OverdueProjectsScreen() {
       const snap = await loadKanbanFilters().catch(() => null);
       const companyId = snap?.filterCompany || undefined;
       const workshopTypeId = snap?.filterWorkTypeId;
-      const board = await fetchProductionBoard(mode === 'silent', {
+      const filters = {
         companyId,
         workshopTypeId: workshopTypeId && workshopTypeId !== 'none' ? workshopTypeId : undefined,
-      }, {
+      };
+      if (mode === 'silent' && isCachedBoardFresh(filters) && getCachedBoard(filters)) {
+        setProjects(getCachedBoard(filters)!.projects.filter((p) => p.is_overdue));
+        return;
+      }
+      const seeded = getCachedBoard(filters);
+      if (seeded && mode !== 'refresh') {
+        setProjects(seeded.projects.filter((p) => p.is_overdue));
+        if (mode === 'init') setLoading(false);
+      }
+      const board = await fetchProductionBoard(mode === 'silent', filters, {
         onPartial: (partial) => {
+          if (seq !== loadSeqRef.current) return;
           setProjects(partial.projects.filter((p) => p.is_overdue));
           if (mode === 'init') setLoading(false);
         },
       });
+      if (seq !== loadSeqRef.current) return;
       setProjects(board.projects.filter((p) => p.is_overdue));
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       if (mode !== 'silent') setError(formatApiError(e));
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    void load(getCachedBoard() ? 'silent' : 'init');
+    void loadKanbanFilters().then((snap) => {
+      const filters = {
+        companyId: snap?.filterCompany || undefined,
+        workshopTypeId:
+          snap?.filterWorkTypeId && snap.filterWorkTypeId !== 'none'
+            ? snap.filterWorkTypeId
+            : undefined,
+      };
+      void load(getCachedBoard(filters) ? 'silent' : 'init');
+    });
   }, [load]);
 
   useProductionRealtime({
     onRefresh: () => void load('silent'),
-    modes: ['board'],
-    debounceMs: 600,
+    modes: REALTIME_BOARD,
+    debounceMs: 1500,
   });
 
   const filtered = useMemo(() => {

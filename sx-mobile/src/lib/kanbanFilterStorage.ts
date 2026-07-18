@@ -26,3 +26,12 @@ export async function saveKanbanFilters(snap: KanbanFilterSnapshot): Promise<voi
     /* ignore */
   }
 }
+
+/** Xóa bộ lọc khi đăng xuất — tránh user mới kế thừa scope công ty cũ. */
+export async function clearKanbanFilters(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(KEY);
+  } catch {
+    /* ignore */
+  }
+}

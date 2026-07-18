@@ -95,24 +95,70 @@ function mapStageRow(raw: Record<string, unknown>, index: number): KanbanStage {
 
 const VC_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
 
-/** Chọn cột bàn giao VC theo phân loại — khớp web `resolveSxHandoverColumnId`. */
-function resolveSxHandoverColumnId(
-  stages: KanbanStage[],
+/** Index cột — tránh filter/find O(n) trên mỗi dự án khi board lớn. */
+type StageIndex = {
+  byId: Map<string, KanbanStage>;
+  byWorkflow: Map<string, KanbanStage[]>;
+  handoverByWorkshop: Map<string, KanbanStage>;
+  handoverGlobal: KanbanStage | null;
+  handoverFirst: KanbanStage | null;
+  intake: KanbanStage | null;
+  first: KanbanStage | null;
+};
+
+function buildStageIndex(stages: KanbanStage[]): StageIndex {
+  const byId = new Map<string, KanbanStage>();
+  const byWorkflow = new Map<string, KanbanStage[]>();
+  const handoverByWorkshop = new Map<string, KanbanStage>();
+  let handoverGlobal: KanbanStage | null = null;
+  let handoverFirst: KanbanStage | null = null;
+  let intake: KanbanStage | null = null;
+
+  for (const s of stages) {
+    byId.set(String(s.id), s);
+    if (s.bucket_slug === 'won_pending' && !intake) intake = s;
+    if (s.workflow_stage_id) {
+      const key = String(s.workflow_stage_id);
+      const list = byWorkflow.get(key);
+      if (list) list.push(s);
+      else byWorkflow.set(key, [s]);
+    }
+    if (s.is_handover_to_logistics) {
+      if (!handoverFirst) handoverFirst = s;
+      const wkt = s.workshop_type_id ? String(s.workshop_type_id) : '';
+      if (wkt) {
+        if (!handoverByWorkshop.has(wkt)) handoverByWorkshop.set(wkt, s);
+      } else if (!handoverGlobal) {
+        handoverGlobal = s;
+      }
+    }
+  }
+
+  return {
+    byId,
+    byWorkflow,
+    handoverByWorkshop,
+    handoverGlobal,
+    handoverFirst,
+    intake,
+    first: stages[0] || null,
+  };
+}
+
+function resolveSxHandoverColumnIdIndexed(
+  index: StageIndex,
   project: ProductionProject,
   preferredColId: string | null = null,
 ): string | null {
-  const stageIds = new Set(stages.map((s) => String(s.id)));
-  if (preferredColId && stageIds.has(String(preferredColId))) return preferredColId;
-  const handoverCols = stages.filter((s) => s.is_handover_to_logistics === true);
-  if (!handoverCols.length) return null;
+  if (preferredColId && index.byId.has(String(preferredColId))) return preferredColId;
+  if (!index.handoverFirst) return null;
   const wktId = project.workshop_type_id || null;
   if (wktId) {
-    const typed = handoverCols.find((s) => String(s.workshop_type_id || '') === String(wktId));
+    const typed = index.handoverByWorkshop.get(String(wktId));
     if (typed) return typed.id;
   }
-  const globalHo = handoverCols.find((s) => !s.workshop_type_id);
-  if (globalHo) return globalHo.id;
-  return handoverCols[0].id;
+  if (index.handoverGlobal) return index.handoverGlobal.id;
+  return index.handoverFirst.id;
 }
 
 /**
@@ -122,34 +168,28 @@ function resolveSxHandoverColumnId(
 export function resolveColumnId(
   project: ProductionProject,
   sortedStages: KanbanStage[],
+  stageIndex?: StageIndex,
 ): string | null {
-  const intake = sortedStages.find((s) => s.bucket_slug === 'won_pending');
+  const index = stageIndex || buildStageIndex(sortedStages);
+  const intake = index.intake;
 
   if (project.status && VC_STATUSES.has(project.status)) {
     let preferred: string | null = null;
-    if (
-      project.sx_kanban_column_id
-      && sortedStages.some((s) => String(s.id) === String(project.sx_kanban_column_id))
-    ) {
-      const pinned = sortedStages.find((s) => String(s.id) === String(project.sx_kanban_column_id));
+    if (project.sx_kanban_column_id && index.byId.has(String(project.sx_kanban_column_id))) {
+      const pinned = index.byId.get(String(project.sx_kanban_column_id));
       if (pinned?.is_handover_to_logistics) preferred = project.sx_kanban_column_id;
     }
-    const handoverId = resolveSxHandoverColumnId(sortedStages, project, preferred);
+    const handoverId = resolveSxHandoverColumnIdIndexed(index, project, preferred);
     if (handoverId) return handoverId;
   }
 
-  if (
-    project.sx_kanban_column_id
-    && sortedStages.some((s) => String(s.id) === String(project.sx_kanban_column_id))
-  ) {
+  if (project.sx_kanban_column_id && index.byId.has(String(project.sx_kanban_column_id))) {
     return project.sx_kanban_column_id;
   }
 
   const cid = project.current_stage_id;
   if (cid) {
-    const wfMatches = sortedStages.filter(
-      (col) => col.workflow_stage_id && String(col.workflow_stage_id) === String(cid),
-    );
+    const wfMatches = index.byWorkflow.get(String(cid)) || [];
     if (wfMatches.length === 1) return wfMatches[0].id;
     if (wfMatches.length > 1) {
       const deals = Array.isArray(project.crm_deals) ? project.crm_deals : [];
@@ -165,11 +205,11 @@ export function resolveColumnId(
   }
 
   if (project.sx_won_deal || project.sx_intake) {
-    return intake?.id || sortedStages[0]?.id || null;
+    return intake?.id || index.first?.id || null;
   }
 
   // Fallback giống web: không để card mất khỏi board
-  return intake?.id || sortedStages[0]?.id || null;
+  return intake?.id || index.first?.id || null;
 }
 
 /** Cột «Đã công» hoặc sla_days=0 — khớp web `shouldIgnoreSxOrderDeliveryOverdue`. */
@@ -188,11 +228,11 @@ function shouldIgnoreSxOrderDeliveryOverdue(stage: KanbanStage | null | undefine
 export function isSxProjectDeliveryDateOverdue(
   project: ProductionProject,
   stages: KanbanStage[],
+  stageIndex?: StageIndex,
 ): boolean {
   const colId = project.resolved_column_id ?? project.sx_kanban_column_id ?? null;
-  const stage = colId
-    ? stages.find((s) => String(s.id) === String(colId))
-    : undefined;
+  const index = stageIndex || buildStageIndex(stages);
+  const stage = colId ? index.byId.get(String(colId)) : undefined;
   if (shouldIgnoreSxOrderDeliveryOverdue(stage)) return false;
   const raw = project.delivery_date || project.production_deadline || project.deadline;
   if (!raw || project.status === 'completed') return false;
@@ -223,6 +263,7 @@ export type BoardFilters = {
  * các trang còn lại tải nền (onPartial cập nhật dần).
  * Không gọi /dashboard (KPI app tính client-side).
  * BE tối đa limit=500/trang — khớp mặc định web.
+ * `view=mobile` → payload/enrich nhẹ phía BE.
  */
 const PROJECTS_PAGE_LIMIT = 500;
 const PROJECTS_MAX_PAGES = 16;
@@ -234,6 +275,33 @@ export type FetchBoardOptions = {
   /** false = chỉ ~500 dự án đầu. Mặc định true. */
   loadRemaining?: boolean;
 };
+
+function attachColumnsIndexed(
+  list: ProductionProject[],
+  stages: KanbanStage[],
+  index: StageIndex,
+): ProductionProject[] {
+  return list.map((p) => {
+    const colId = resolveColumnId(p, stages, index);
+    const col = colId ? index.byId.get(String(colId)) : undefined;
+    const pipelinePct =
+      p.sx_pipeline_percent != null && Number.isFinite(Number(p.sx_pipeline_percent))
+        ? Number(p.sx_pipeline_percent)
+        : col?.progress_percent != null && Number.isFinite(Number(col.progress_percent))
+          ? Number(col.progress_percent)
+          : null;
+    const withCol = {
+      ...p,
+      resolved_column_id: colId,
+      sx_pipeline_percent: pipelinePct,
+    };
+    return {
+      ...withCol,
+      // Ghi đè flag BE bằng công thức web (kể cả khi BE cũ chưa deploy).
+      is_overdue: isSxProjectDeliveryDateOverdue(withCol, stages, index),
+    };
+  });
+}
 
 export async function fetchProductionBoard(
   noCache = false,
@@ -248,7 +316,11 @@ export async function fetchProductionBoard(
   if (filters.workshopTypeId) stageParams.workshop_type_id = filters.workshopTypeId;
 
   const buildProjectParams = (page: number): Record<string, unknown> => {
-    const params: Record<string, unknown> = { page, limit: PROJECTS_PAGE_LIMIT };
+    const params: Record<string, unknown> = {
+      page,
+      limit: PROJECTS_PAGE_LIMIT,
+      view: 'mobile',
+    };
     if (noCache) params._t = Date.now();
     if (filters.companyId) params.company_id = filters.companyId;
     if (filters.dealCompanyId) params.deal_company_id = filters.dealCompanyId;
@@ -267,44 +339,39 @@ export async function fetchProductionBoard(
     };
   };
 
-  const [stageRes, first] = await Promise.all([
+  const [stageOutcome, first] = await Promise.all([
     api
       .get<Array<Record<string, unknown>>>('/production/pipeline-stages', {
         params: Object.keys(stageParams).length ? stageParams : undefined,
       })
-      .then((r) => (Array.isArray(r.data) ? r.data : []))
-      .catch(() => [] as Array<Record<string, unknown>>),
+      .then((r) => ({
+        rows: Array.isArray(r.data) ? r.data : ([] as Array<Record<string, unknown>>),
+        ok: true as const,
+      }))
+      .catch((e) => {
+        console.warn('[sx board] pipeline-stages failed', e);
+        return { rows: [] as Array<Record<string, unknown>>, ok: false as const };
+      }),
     getPage(1),
   ]);
 
-  const stages = stageRes
+  const stages = stageOutcome.rows
     .map((s, i) => mapStageRow(s, i))
     .sort((a, b) => a.order_index - b.order_index);
+  const stageIndex = buildStageIndex(stages);
 
-  const attachColumns = (list: ProductionProject[]) =>
-    list.map((p) => {
-      const colId = resolveColumnId(p, stages);
-      const col = stages.find((s) => String(s.id) === String(colId));
-      const pipelinePct =
-        p.sx_pipeline_percent != null && Number.isFinite(Number(p.sx_pipeline_percent))
-          ? Number(p.sx_pipeline_percent)
-          : col?.progress_percent != null && Number.isFinite(Number(col.progress_percent))
-            ? Number(col.progress_percent)
-            : null;
-      return {
-        ...p,
-        resolved_column_id: colId,
-        sx_pipeline_percent: pipelinePct,
-        // Ghi đè flag BE bằng công thức web (kể cả khi BE cũ chưa deploy).
-        is_overdue: isSxProjectDeliveryDateOverdue(p, stages),
-      };
-    });
+  // Stages lỗi + không có cột → không coi là board hợp lệ (tránh Kanban trống im lặng).
+  if (!stageOutcome.ok && stages.length === 0 && first.rows.length > 0) {
+    throw new Error('Không tải được cột pipeline. Kiểm tra mạng và thử lại.');
+  }
 
-  const projects: ProductionProject[] = first.rows.map(mapProjectRow);
-  const emit = (list: ProductionProject[]) => {
+  // Giữ danh sách đã gắn cột — chỉ transform trang mới (tránh O(n²) khi 1000+ deal).
+  let attached: ProductionProject[] = [];
+
+  const emitAttached = () => {
     const board: ProductionBoard = {
       stages,
-      projects: attachColumns(list),
+      projects: attached,
       kpis: null,
     };
     setCachedBoard(filters, board);
@@ -312,12 +379,13 @@ export async function fetchProductionBoard(
     return board;
   };
 
-  emit(projects);
+  attached = attachColumnsIndexed(first.rows.map(mapProjectRow), stages, stageIndex);
+  emitAttached();
 
   const totalPages = Math.min(Math.max(1, first.totalPages), PROJECTS_MAX_PAGES);
   const hasMore = loadRemaining && totalPages > 1 && first.rows.length >= PROJECTS_PAGE_LIMIT;
   if (!hasMore) {
-    return emit(projects);
+    return emitAttached();
   }
 
   const remaining: number[] = [];
@@ -326,13 +394,17 @@ export async function fetchProductionBoard(
   for (let i = 0; i < remaining.length; i += PROJECTS_FETCH_CONCURRENCY) {
     const batch = remaining.slice(i, i + PROJECTS_FETCH_CONCURRENCY);
     const results = await Promise.all(batch.map((p) => getPage(p)));
-    results.forEach((r) => {
-      for (const row of r.rows) projects.push(mapProjectRow(row));
-    });
-    emit(projects);
+    const newRows: ProductionProject[] = [];
+    for (const r of results) {
+      for (const row of r.rows) newRows.push(mapProjectRow(row));
+    }
+    if (newRows.length) {
+      attached = attached.concat(attachColumnsIndexed(newRows, stages, stageIndex));
+      emitAttached();
+    }
   }
 
-  return emit(projects);
+  return emitAttached();
 }
 
 export async function fetchProductionProject(projectId: string): Promise<ProductionProject> {
@@ -539,10 +611,21 @@ export async function fetchProjectCommentIndex(
 ): Promise<Record<string, CommentIndexEntry>> {
   const ids = [...new Set(projectIds.map(String).filter(Boolean))];
   if (!ids.length) return {};
-  const { data } = await api.get<Record<string, CommentIndexEntry>>('/projects/comments/index', {
-    params: { project_ids: ids.join(',') },
-  });
-  return data && typeof data === 'object' ? data : {};
+  // Chia nhỏ khi nhiều id (tránh URL quá dài).
+  const CHUNK = 80;
+  const out: Record<string, CommentIndexEntry> = {};
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    try {
+      const { data } = await api.get<Record<string, CommentIndexEntry>>('/projects/comments/index', {
+        params: { project_ids: chunk.join(',') },
+      });
+      if (data && typeof data === 'object') Object.assign(out, data);
+    } catch {
+      // ignore chunk errors
+    }
+  }
+  return out;
 }
 
 export async function postProjectComment(
@@ -621,7 +704,7 @@ export async function fetchClientCompanies(workshopCompanyId: string): Promise<C
   }).filter((c) => c.id);
 }
 
-/** Xưởng thực hiện khi đã chọn công ty đặt hàng — GET /production/workshop-options */
+/** Xưởng thích hợp khi đã chọn công ty đặt hàng — GET /production/workshop-options */
 export async function fetchWorkshopOptionsForDeal(dealCompanyId: string): Promise<CompanyOption[]> {
   const { data } = await api.get<{ workshops?: unknown[] }>('/production/workshop-options', {
     params: { deal_company_id: dealCompanyId },
@@ -700,7 +783,7 @@ export type WorkshopIntakeResult = {
   deal_code?: string;
 };
 
-/** Tạo đơn xưởng trực tiếp trên Kanban SX — không qua pipeline CRM. */
+/** Tạo đến xưởng trực tiếp trên Kanban SX — không qua pipeline CRM. */
 export async function createWorkshopIntake(input: WorkshopIntakeInput): Promise<WorkshopIntakeResult> {
   const { data } = await api.post<WorkshopIntakeResult>('/production/workshop-intake', {
     title: input.title.trim(),

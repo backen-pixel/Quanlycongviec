@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   RefreshControl,
@@ -33,8 +33,9 @@ import {
   fetchProductionBoard,
   type CompanyOption,
 } from '../lib/productionApi';
-import { getCachedBoard } from '../lib/productionBoardCache';
+import { getAnyCachedBoard, getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
 import { loadKanbanFilters, saveKanbanFilters } from '../lib/kanbanFilterStorage';
+import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
 import {
   isSystemAdmin,
   workshopCompaniesForCrossViewer,
@@ -107,7 +108,8 @@ export default function OverviewScreen() {
   const greetName = firstName(userName);
   const userId = user?.id || user?.userId || '';
 
-  const cachedBoardInit = getCachedBoard();
+  // Seed nhẹ từ cache bất kỳ (đúng filter sẽ được load() xác nhận ngay sau).
+  const cachedBoardInit = getAnyCachedBoard();
   const [loading, setLoading] = useState(!cachedBoardInit);
   const [refreshing, setRefreshing] = useState(false);
   const [kpis, setKpis] = useState<SxBoardKpis>(() =>
@@ -166,7 +168,10 @@ export default function OverviewScreen() {
     });
   }, []);
 
+  const loadSeqRef = useRef(0);
+
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
+    const seq = ++loadSeqRef.current;
     if (mode === 'init') setLoading(true);
     if (mode === 'refresh') setRefreshing(true);
     setError(null);
@@ -176,6 +181,7 @@ export default function OverviewScreen() {
       const workshopTypeId = snap?.filterWorkTypeId || undefined;
 
       const companyList = await fetchCompanies().catch(() => [] as CompanyOption[]);
+      if (seq !== loadSeqRef.current) return;
       setCompanies(companyList);
 
       if (!canPickCompany) {
@@ -192,39 +198,69 @@ export default function OverviewScreen() {
         if (!exists) companyId = '';
       }
 
+      if (seq !== loadSeqRef.current) return;
       setFilterCompany(companyId);
 
+      const boardFilters = {
+        companyId: companyId || undefined,
+        workshopTypeId: workshopTypeId && workshopTypeId !== 'none' ? workshopTypeId : undefined,
+      };
+
+      // Silent + cache tươi: chỉ refresh tasks/notif, không tải lại full board.
+      const skipBoard = mode === 'silent' && isCachedBoardFresh(boardFilters) && !!getCachedBoard(boardFilters);
+      const cachedBoard = getCachedBoard(boardFilters) || getAnyCachedBoard();
+      if (cachedBoard && mode !== 'refresh') {
+        setKpis(computeSxBoardKpis(cachedBoard.projects, cachedBoard.stages));
+        setPriority(pickPriorityProjects(cachedBoard.projects, 5));
+        if (mode === 'init') setLoading(false);
+      }
+
       const [board, myTasks, notifList] = await Promise.all([
-        fetchProductionBoard(mode === 'silent', {
-          companyId: companyId || undefined,
-          workshopTypeId: workshopTypeId && workshopTypeId !== 'none' ? workshopTypeId : undefined,
-        }, {
-          onPartial: (partial) => {
-            const kpi = computeSxBoardKpis(partial.projects, partial.stages);
-            setKpis(kpi);
-            setPriority(pickPriorityProjects(partial.projects, 5));
-            if (mode === 'init') setLoading(false);
-          },
-        }),
+        skipBoard
+          ? Promise.resolve(cachedBoard!)
+          : fetchProductionBoard(mode === 'silent', boardFilters, {
+              onPartial: (partial) => {
+                if (seq !== loadSeqRef.current) return;
+                const kpi = computeSxBoardKpis(partial.projects, partial.stages);
+                setKpis(kpi);
+                setPriority(pickPriorityProjects(partial.projects, 5));
+                if (mode === 'init') setLoading(false);
+              },
+            }),
         userId ? fetchMyProductionTasks(userId).catch(() => [] as WorkTask[]) : Promise.resolve([] as WorkTask[]),
         fetchCommentNotifications(false).catch(() => ({ notifications: [] as SxCommentNotification[], unread_count: 0 })),
       ]);
 
-      setKpis(computeSxBoardKpis(board.projects, board.stages));
-      setPriority(pickPriorityProjects(board.projects, 5));
+      if (seq !== loadSeqRef.current) return;
+      if (board) {
+        setKpis(computeSxBoardKpis(board.projects, board.stages));
+        setPriority(pickPriorityProjects(board.projects, 5));
+      }
       setTasks(myTasks);
       setNotifs((notifList.notifications || []).slice(0, 5));
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       if (mode !== 'silent') setError(formatApiError(e));
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [userId, user?.company_id, canPickCompany, persistCompanyFilter]);
 
   useEffect(() => {
-    // Có KPI từ cache → làm mới nền, tránh spinner toàn màn.
-    void load(getCachedBoard() ? 'silent' : 'init');
+    // Seed KPI theo cùng key filter nếu có; không dùng cache rỗng (key khác).
+    void loadKanbanFilters().then((snap) => {
+      const filters = {
+        companyId: snap?.filterCompany || undefined,
+        workshopTypeId:
+          snap?.filterWorkTypeId && snap.filterWorkTypeId !== 'none'
+            ? snap.filterWorkTypeId
+            : undefined,
+      };
+      void load(getCachedBoard(filters) ? 'silent' : 'init');
+    });
   }, [load]);
 
   const onSelectCompany = useCallback(async (id: string) => {
@@ -237,8 +273,8 @@ export default function OverviewScreen() {
 
   useProductionRealtime({
     onRefresh: () => void load('silent'),
-    modes: ['board', 'task'],
-    debounceMs: 800,
+    modes: REALTIME_BOARD_TASK,
+    debounceMs: 1500,
   });
 
   const taskStats = useMemo(() => {

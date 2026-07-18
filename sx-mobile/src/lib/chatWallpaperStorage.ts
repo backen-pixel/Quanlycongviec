@@ -125,3 +125,15 @@ export async function clearChatWallpaper(threadId: string): Promise<void> {
   }
   await cacheLocal(threadId, null);
 }
+
+/** Màu nền preset (null = dùng theme app). */
+export function wallpaperBackgroundColor(w: ChatWallpaper | null | undefined): string | null {
+  if (!w || w.type !== 'preset') return null;
+  return w.color || null;
+}
+
+/** URI ảnh nền chat (null nếu không có). */
+export function wallpaperImageUri(w: ChatWallpaper | null | undefined): string | null {
+  if (!w || w.type !== 'image') return null;
+  return w.uri || null;
+}

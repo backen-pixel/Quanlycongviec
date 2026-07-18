@@ -266,8 +266,10 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     const appState = AppState.currentState;
     if (appState === 'active') {
       setCommentToast({ notification: enriched });
+    } else {
+      // Chỉ hiện tray hệ thống khi app nền — tránh trùng toast trong app.
+      void showLocalCommentNotification(enriched);
     }
-    void showLocalCommentNotification(enriched);
   }, [upsertLive]);
 
   useEffect(() => {
@@ -301,31 +303,51 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionDelay: 2000,
-      reconnectionAttempts: 12,
+      reconnectionDelayMax: 15000,
+      // Không giới hạn — mạng chập chờn không được "chết" realtime đến khi mở lại app.
+      reconnectionAttempts: Infinity,
     });
     socketRef.current = s;
     setAppSocket(s);
 
-    const onProjectComment = async (raw: unknown) => {
-      const evt = raw as ProjectCommentSocketEvent;
-      const pid = evt.project_id ? String(evt.project_id) : '';
-      if (pid) {
-        emitSync({
-          type: 'project:comment_changed',
-          payload: { project_id: pid, action: evt.action || 'created' },
-        });
+    const onAppState = (state: AppStateStatus) => {
+      if (state !== 'active') return;
+      if (!s.connected) {
+        try {
+          s.connect();
+        } catch {
+          /* ignore */
+        }
       }
+    };
+    const appSub = AppState.addEventListener('change', onAppState);
 
-      const commentUserId = evt.comment?.user_id;
-      const myId = uid || (await getCurrentUserIdForNotifications());
-      if (commentUserId && myId && String(commentUserId) === String(myId)) return;
+    const onProjectComment = (raw: unknown) => {
+      void (async () => {
+        try {
+          const evt = raw as ProjectCommentSocketEvent;
+          const pid = evt.project_id ? String(evt.project_id) : '';
+          if (pid) {
+            emitSync({
+              type: 'project:comment_changed',
+              payload: { project_id: pid, action: evt.action || 'created' },
+            });
+          }
 
-      const meta = pid ? projectMetaRef.current.get(pid) : undefined;
-      const built = buildNotificationFromCommentEvent(evt, meta);
-      if (!built) return;
+          const commentUserId = evt.comment?.user_id;
+          const myId = uid || (await getCurrentUserIdForNotifications());
+          if (commentUserId && myId && String(commentUserId) === String(myId)) return;
 
-      setUnreadCount((c) => c + 1);
-      emitComment(built);
+          const meta = pid ? projectMetaRef.current.get(pid) : undefined;
+          const built = buildNotificationFromCommentEvent(evt, meta);
+          if (!built) return;
+
+          setUnreadCount((c) => c + 1);
+          emitComment(built);
+        } catch {
+          /* tránh unhandled rejection từ socket async */
+        }
+      })();
     };
 
     const onProjectCommentUpdated = (raw: unknown) => {
@@ -612,6 +634,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     });
 
     return () => {
+      appSub.remove();
       s.off('project:comment', onProjectComment);
       s.off('project:comment:updated', onProjectCommentUpdated);
       s.off('project:comment:deleted', onProjectCommentDeleted);

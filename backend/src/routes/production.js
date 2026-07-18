@@ -1335,6 +1335,8 @@ r.get('/dashboard', requirePermission('projects', 'view'), responseCache({ ttl: 
 /** Embed CRM deals trên danh sách Kanban SX — gồm NV phụ trách CRM (assignee / lead_owner). */
 const CRM_DEALS_PROJECT_EMBED = 'crm_deals:crm_leads(id, type, region_id, created_at, assigned_to, lead_owner_id, external_company_name, external_company_id, sx_pipeline_stage_id, crm_region:company_regions(id, name, code), assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar))';
 const CRM_DEALS_PROJECT_EMBED_LEGACY = 'crm_deals:crm_leads(id, type, region_id, created_at, assigned_to, lead_owner_id, sx_pipeline_stage_id, crm_region:company_regions(id, name, code), assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar))';
+/** Mobile board: không embed assignee/avatar — payload nhỏ hơn nhiều khi 500–1000+ deal. */
+const CRM_DEALS_PROJECT_EMBED_MOBILE = 'crm_deals:crm_leads(id, type, region_id, external_company_name, external_company_id, sx_pipeline_stage_id, crm_region:company_regions(id, name))';
 
 // ─── GET /production/projects ──
 r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 20, scope: 'user', tags: ['production'] }), async (req, res) => {
@@ -1343,7 +1345,13 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       search, priority, page = 1, limit = 100, division_id, company_id: companyIdQuery, stage_slug, sx_intake, workshop_type_id,
       sx_workshop_company_id: sxWorkshopCoQ,
       deal_company_id: dealCompanyIdQuery,
+      view: viewQuery,
+      lite: liteQuery,
     } = req.query;
+    /** App SX mobile: select nhẹ + bỏ enrich tài chính/staff/CRM task stats. */
+    const mobileLite = String(viewQuery || '').toLowerCase() === 'mobile'
+      || String(liteQuery || '') === '1'
+      || String(liteQuery || '').toLowerCase() === 'true';
     const company_id = effectiveWorkshopCompanyId(req, companyIdQuery);
     const deal_company_id = effectiveDealCompanyId(req, dealCompanyIdQuery, company_id);
     const sx_workshop_company_id = sxWorkshopCoQ && String(sxWorkshopCoQ).trim() ? String(sxWorkshopCoQ).trim() : null;
@@ -1359,9 +1367,20 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     });
     const sortedKanban = [...kanbanStages].sort((a, b) => a.order_index - b.order_index);
 
-    let query = supabase
-      .from('projects')
-      .select(`
+    const projectListSelect = mobileLite
+      ? `
+        id, code, name, estimated_value, priority, deadline, ${MIGRATION_300_COLS} created_at, status, company_id,
+        production_deadline, sx_kanban_column_id, logistics_company_id,
+        current_stage_id, workshop_type_id,
+        current_stage:workflow_stages(id, slug, name, color, icon),
+        customer:customers(id, full_name, phone),
+        company:companies!projects_company_id_fkey(id, name, short_name),
+        logistics_company:companies!projects_logistics_company_id_fkey(id, name, short_name),
+        production_person:users!projects_production_person_id_fkey(id, full_name),
+        ${CRM_DEALS_PROJECT_EMBED_MOBILE},
+        workshop_type:workshop_project_types(id, name)
+      `
+      : `
         id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, ${MIGRATION_300_COLS} created_at, status, notes, company_id,
         production_deadline, production_note, vc_kanban_column_id, sx_kanban_column_id,
         current_stage_id, workshop_type_id,
@@ -1376,7 +1395,11 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
         ${CRM_DEALS_PROJECT_EMBED},
         workshop_type:workshop_project_types(id, name, applies_to),
         tasks(id, status)
-      `, { count: 'exact' });
+      `;
+
+    let query = supabase
+      .from('projects')
+      .select(projectListSelect, { count: 'exact' });
 
     query = applyProjectTenantScope(query, req);
 
@@ -1473,35 +1496,59 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     if (error) throw error;
 
     const enrichedSx = await enrichProjectsForSx(projects, wonIds, company_id, workshop_type_id || null);
-    const { attachProductionStaffToProjects, backfillMissingProductionStaff } = require('../helpers/productionWorkshopTypeStaff');
-    try {
-      await backfillMissingProductionStaff(enrichedSx);
-    } catch (bfErr) {
-      console.warn('[production/kanban] backfill staff:', bfErr.message);
-    }
-    const enrichedWithStaff = await attachProductionStaffToProjects(enrichedSx);
-    const workflowProjects = enrichedWithStaff.map((project) => ({
-      ...project,
-      progress: calcTaskProgress(project.tasks),
-      task_total: project.tasks?.length || 0,
-      done_tasks: project.tasks?.filter((task) => task.status === 'done').length || 0,
-      is_overdue: isSxProjectDeliveryDateOverdue(project, project.sx_pipeline_stage),
-      is_production_overdue: isSxProjectDateOverdue(project, 'production_deadline'),
-      is_delivery_overdue: isSxProjectDateOverdue(project, 'delivery_date'),
-    }));
-    const enhanced = await attachCrmProductionTaskStatsToProjects(workflowProjects);
-    const withUserFlags = await attachLeadUserFlagsToProjects(enhanced, req.user?.userId);
-    const listProjectIds = withUserFlags.map((p) => p.id).filter(Boolean);
-    const dealDepositMap = await loadDealDepositByProjectIds(listProjectIds);
-    const projectsOut = attachSxFinanceToProjects(withUserFlags, dealDepositMap);
 
-    res.json({
+    let projectsOut;
+    if (mobileLite) {
+      // App mobile chỉ cần cột Kanban + meta thẻ — bỏ staff backfill / CRM task stats / finance.
+      projectsOut = enrichedSx.map((project) => {
+        const pipelinePct = project.sx_pipeline_percent != null
+          ? Number(project.sx_pipeline_percent)
+          : (project.sx_pipeline_stage?.progress_percent != null
+            ? Number(project.sx_pipeline_stage.progress_percent)
+            : 0);
+        return {
+          ...project,
+          progress: Number.isFinite(pipelinePct) ? pipelinePct : 0,
+          task_total: 0,
+          done_tasks: 0,
+          is_overdue: isSxProjectDeliveryDateOverdue(project, project.sx_pipeline_stage),
+          is_production_overdue: isSxProjectDateOverdue(project, 'production_deadline'),
+          is_delivery_overdue: isSxProjectDateOverdue(project, 'delivery_date'),
+        };
+      });
+    } else {
+      const { attachProductionStaffToProjects, backfillMissingProductionStaff } = require('../helpers/productionWorkshopTypeStaff');
+      try {
+        await backfillMissingProductionStaff(enrichedSx);
+      } catch (bfErr) {
+        console.warn('[production/kanban] backfill staff:', bfErr.message);
+      }
+      const enrichedWithStaff = await attachProductionStaffToProjects(enrichedSx);
+      const workflowProjects = enrichedWithStaff.map((project) => ({
+        ...project,
+        progress: calcTaskProgress(project.tasks),
+        task_total: project.tasks?.length || 0,
+        done_tasks: project.tasks?.filter((task) => task.status === 'done').length || 0,
+        is_overdue: isSxProjectDeliveryDateOverdue(project, project.sx_pipeline_stage),
+        is_production_overdue: isSxProjectDateOverdue(project, 'production_deadline'),
+        is_delivery_overdue: isSxProjectDateOverdue(project, 'delivery_date'),
+      }));
+      const enhanced = await attachCrmProductionTaskStatsToProjects(workflowProjects);
+      const withUserFlags = await attachLeadUserFlagsToProjects(enhanced, req.user?.userId);
+      const listProjectIds = withUserFlags.map((p) => p.id).filter(Boolean);
+      const dealDepositMap = await loadDealDepositByProjectIds(listProjectIds);
+      projectsOut = attachSxFinanceToProjects(withUserFlags, dealDepositMap);
+    }
+
+    const payload = {
       projects: projectsOut,
       total: count || projectsOut.length,
       page: parsedPage,
       totalPages: Math.ceil((count || projectsOut.length) / parsedLimit),
-      won_deal_project_ids: wonIds,
-    });
+    };
+    // Mobile không dùng mảng wonIds (có thể rất lớn) — giảm JSON response.
+    if (!mobileLite) payload.won_deal_project_ids = wonIds;
+    res.json(payload);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });

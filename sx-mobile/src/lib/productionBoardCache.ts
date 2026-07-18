@@ -11,7 +11,7 @@ type CacheEntry = { board: ProductionBoard; at: number };
 const cache = new Map<string, CacheEntry>();
 
 /** Board coi là còn "tươi" trong khoảng này → không cần refetch nền. */
-export const BOARD_CACHE_FRESH_MS = 30_000;
+export const BOARD_CACHE_FRESH_MS = 60_000;
 
 export function boardCacheKey(filters: BoardFilters = {}): string {
   return [
@@ -23,6 +23,15 @@ export function boardCacheKey(filters: BoardFilters = {}): string {
 
 export function getCachedBoard(filters: BoardFilters = {}): ProductionBoard | null {
   return cache.get(boardCacheKey(filters))?.board ?? null;
+}
+
+/** Seed UI khi chưa biết filter — lấy board mới nhất trong cache (bất kỳ key). */
+export function getAnyCachedBoard(): ProductionBoard | null {
+  let newest: CacheEntry | null = null;
+  for (const entry of cache.values()) {
+    if (!newest || entry.at > newest.at) newest = entry;
+  }
+  return newest?.board ?? null;
 }
 
 /** Tuổi cache (ms) hoặc null nếu chưa có. */

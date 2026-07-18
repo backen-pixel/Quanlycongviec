@@ -62,7 +62,16 @@ async function getWorkshopStageMap() {
   return { stages, bySlug, ids: stages.map((stage) => stage.id).filter(Boolean) };
 }
 
+/** Cache ngắn — mỗi trang Kanban gọi lại hàm này; 1000+ deal quét crm_leads rất đắt. */
+let _wonDealProjectIdsCache = { at: 0, ids: null };
+const WON_DEAL_IDS_TTL_MS = 30_000;
+
 async function getWonDealProjectIds() {
+  const now = Date.now();
+  if (_wonDealProjectIdsCache.ids && now - _wonDealProjectIdsCache.at < WON_DEAL_IDS_TTL_MS) {
+    return _wonDealProjectIdsCache.ids;
+  }
+
   // Lấy deals đang ở stage "Thắng" (is_won=true)
   const { data: wonStages } = await supabase
     .from('crm_pipeline_stages')
@@ -113,7 +122,9 @@ async function getWonDealProjectIds() {
       if (l.project_id) out.add(l.project_id);
     }
   }
-  return [...out];
+  const ids = [...out];
+  _wonDealProjectIdsCache = { at: now, ids };
+  return ids;
 }
 
 function buildScopeOrFilter(stageIds, wonIds) {

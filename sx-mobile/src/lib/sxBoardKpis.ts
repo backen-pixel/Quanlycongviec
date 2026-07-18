@@ -2,54 +2,73 @@
  * Helpers KPI board SX — dùng chung Overview / Kanban.
  */
 import type { KanbanStage, ProductionProject } from '../types';
-import { isSxProjectDeliveryDateOverdue } from './productionApi';
 
 const INTAKE_BUCKET = 'won_pending';
 const VC_SHIPPED = new Set(['shipping', 'installing', 'warranty', 'completed']);
 
-function stageById(stages: KanbanStage[], colId?: string | null): KanbanStage | undefined {
-  if (!colId) return undefined;
-  return stages.find((s) => String(s.id) === String(colId));
+type KpiStageIndex = {
+  byId: Map<string, KanbanStage>;
+  completedIds: Set<string>;
+  collectedIds: Set<string>;
+};
+
+function buildKpiStageIndex(stages: KanbanStage[]): KpiStageIndex {
+  const byId = new Map<string, KanbanStage>();
+  const completedIds = new Set<string>();
+  const collectedIds = new Set<string>();
+  for (const s of stages) {
+    byId.set(String(s.id), s);
+    if (s.bucket_slug === INTAKE_BUCKET) continue;
+    if (s.counts_as_completed_revenue) completedIds.add(String(s.id));
+    if (s.counts_as_collected_revenue) collectedIds.add(String(s.id));
+  }
+  return { byId, completedIds, collectedIds };
 }
 
 function kpiCol(p: ProductionProject): string | null {
-  return p.sx_kanban_column_id ?? null;
+  return p.resolved_column_id ?? p.sx_kanban_column_id ?? null;
 }
 
 export function projectIsShipped(p: ProductionProject): boolean {
   return VC_SHIPPED.has(String(p.status || '')) || Boolean(p.logistics_company_id);
 }
 
-export function projectIsAwaitingDelivery(p: ProductionProject, stages: KanbanStage[]): boolean {
+export function projectIsAwaitingDelivery(
+  p: ProductionProject,
+  stages: KanbanStage[],
+  index?: KpiStageIndex,
+): boolean {
   if (projectIsShipped(p)) return false;
-  const col = stageById(stages, kpiCol(p));
+  const idx = index || buildKpiStageIndex(stages);
+  const col = idx.byId.get(String(kpiCol(p) || ''));
   return Boolean(col?.is_handover_to_logistics);
 }
 
-function countsCompleted(p: ProductionProject, stages: KanbanStage[]): boolean {
-  const cols = stages.filter((s) => s.bucket_slug !== INTAKE_BUCKET && s.counts_as_completed_revenue);
-  if (cols.length) {
-    const id = String(kpiCol(p) || '');
-    return cols.some((s) => String(s.id) === id);
+function countsCompleted(p: ProductionProject, index: KpiStageIndex): boolean {
+  if (index.completedIds.size) {
+    return index.completedIds.has(String(kpiCol(p) || ''));
   }
   return String(p.status || '') === 'completed';
 }
 
-function countsCollected(p: ProductionProject, stages: KanbanStage[]): boolean {
+function countsCollected(p: ProductionProject, index: KpiStageIndex): boolean {
   const id = String(kpiCol(p) || '');
   if (!id) return false;
-  return stages.some(
-    (s) => s.bucket_slug !== INTAKE_BUCKET && s.counts_as_collected_revenue && String(s.id) === id,
-  );
+  return index.collectedIds.has(id);
 }
 
-export function projectIsProducing(p: ProductionProject, stages: KanbanStage[]): boolean {
+export function projectIsProducing(
+  p: ProductionProject,
+  stages: KanbanStage[],
+  index?: KpiStageIndex,
+): boolean {
+  const idx = index || buildKpiStageIndex(stages);
   if (p.sx_intake) return false;
   if (projectIsShipped(p)) return false;
-  if (projectIsAwaitingDelivery(p, stages)) return false;
-  if (countsCompleted(p, stages)) return false;
-  if (countsCollected(p, stages)) return false;
-  const col = stageById(stages, kpiCol(p));
+  if (projectIsAwaitingDelivery(p, stages, idx)) return false;
+  if (countsCompleted(p, idx)) return false;
+  if (countsCollected(p, idx)) return false;
+  const col = idx.byId.get(String(kpiCol(p) || ''));
   if (col?.bucket_slug === INTAKE_BUCKET) return false;
   return true;
 }
@@ -67,17 +86,19 @@ export function computeSxBoardKpis(
   projects: ProductionProject[],
   stages: KanbanStage[],
 ): SxBoardKpis {
+  const index = buildKpiStageIndex(stages);
   let producing = 0;
   let awaitingDelivery = 0;
   let shipped = 0;
   let completed = 0;
   let overdue = 0;
   for (const p of projects) {
-    if (projectIsProducing(p, stages)) producing += 1;
-    if (projectIsAwaitingDelivery(p, stages)) awaitingDelivery += 1;
+    if (projectIsProducing(p, stages, index)) producing += 1;
+    if (projectIsAwaitingDelivery(p, stages, index)) awaitingDelivery += 1;
     if (projectIsShipped(p)) shipped += 1;
     if (String(p.status || '') === 'completed') completed += 1;
-    if (p.is_overdue || isSxProjectDeliveryDateOverdue(p, stages)) overdue += 1;
+    // is_overdue đã tính lúc attachColumns — tránh quét stages lại mỗi dự án.
+    if (p.is_overdue) overdue += 1;
   }
   return {
     total: projects.length,

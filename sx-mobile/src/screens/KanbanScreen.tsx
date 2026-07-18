@@ -42,8 +42,9 @@ import {
   type CompanyOption,
   type WorkshopTypeOption,
 } from '../lib/productionApi';
-import { getCachedBoard } from '../lib/productionBoardCache';
+import { getAnyCachedBoard, getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
 import { loadKanbanFilters, saveKanbanFilters } from '../lib/kanbanFilterStorage';
+import { computeSxBoardKpis } from '../lib/sxBoardKpis';
 import {
   isMetallaOrHucabiCompanyId,
   isSystemAdmin,
@@ -57,6 +58,7 @@ import {
 } from '../lib/productionFilters';
 import { ensureNotificationPermission } from '../lib/pushRegistration';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
+import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
 import { useTheme } from '../context/ThemeContext';
 import { type AppColors, colorWithAlpha, HIT_TARGET, Radii, Spacing, stageColor } from '../theme';
 import type { KanbanStage, ProductionBoard, ProductionProject } from '../types';
@@ -234,9 +236,9 @@ export default function KanbanScreen() {
   const myId = user?.id || user?.userId || null;
 
   const [board, setBoard] = useState<ProductionBoard>(
-    () => getCachedBoard() ?? { stages: [], projects: [], kpis: null },
+    () => getAnyCachedBoard() ?? { stages: [], projects: [], kpis: null },
   );
-  const [loading, setLoading] = useState(() => !getCachedBoard());
+  const [loading, setLoading] = useState(() => !getAnyCachedBoard());
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -381,20 +383,32 @@ export default function KanbanScreen() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
   }, []);
 
+  const currentBoardFilters = useCallback((): BoardFilters => ({
+    // Chỉ lọc xưởng khi user chọn trên pill — «Tất cả xưởng» = không gửi company_id.
+    companyId: filterCompanyRef.current || undefined,
+    dealCompanyId: filterDealCompanyRef.current || undefined,
+    workshopTypeId: filterWorkTypeIdRef.current || undefined,
+  }), []);
+
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
+    const filters = currentBoardFilters();
+    // Realtime/AppState: bỏ qua nếu cache còn tươi — tránh tải lại full board liên tục.
+    if (mode === 'silent' && isCachedBoardFresh(filters) && getCachedBoard(filters)) {
+      return;
+    }
     const seq = ++loadSeqRef.current;
     if (mode === 'init') setLoading(true);
     if (mode === 'refresh') setRefreshing(true);
     setError(null);
     setLoadingMore(false);
     try {
-      const filters: BoardFilters = {
-        // Chỉ lọc xưởng khi user chọn trên pill — «Tất cả xưởng» = không gửi company_id.
-        companyId: filterCompanyRef.current || undefined,
-        dealCompanyId: filterDealCompanyRef.current || undefined,
-        workshopTypeId: filterWorkTypeIdRef.current || undefined,
-      };
-      let firstPaint = false;
+      const cached = getCachedBoard(filters);
+      if (cached && mode !== 'refresh') {
+        setBoard(cached);
+        setActiveIndex((prev) => Math.min(prev, Math.max(0, cached.stages.length - 1)));
+        if (mode === 'init') setLoading(false);
+      }
+      let firstPaint = Boolean(cached && mode !== 'refresh');
       const data = await fetchProductionBoard(mode === 'silent', filters, {
         onPartial: (partial) => {
           if (seq !== loadSeqRef.current) return;
@@ -406,6 +420,8 @@ export default function KanbanScreen() {
             setLoading(false);
             setRefreshing(false);
             setLoadingMore(partial.projects.length >= 500);
+          } else {
+            setLoadingMore(partial.projects.length >= 500 && mode !== 'silent');
           }
         },
       });
@@ -413,6 +429,7 @@ export default function KanbanScreen() {
       setBoard(data);
       setActiveIndex((prev) => Math.min(prev, Math.max(0, data.stages.length - 1)));
       setLoadingMore(false);
+      lastSilentAtRef.current = Date.now();
     } catch (e) {
       if (seq !== loadSeqRef.current) return;
       if (mode !== 'silent') setError(formatApiError(e));
@@ -423,7 +440,7 @@ export default function KanbanScreen() {
         setRefreshing(false);
       }
     }
-  }, []);
+  }, [currentBoardFilters]);
 
   // Khôi phục bộ lọc lần trước — load board không phải chờ fetch workshop types.
   useEffect(() => {
@@ -471,9 +488,10 @@ export default function KanbanScreen() {
 
   useEffect(() => {
     if (!boardFiltersReady) return;
-    // Đã có board cache → làm mới nền, không hiện spinner toàn màn.
-    void load(getCachedBoard() ? 'silent' : 'init');
-  }, [load, boardFiltersReady]);
+    const filters = currentBoardFilters();
+    // Đã có board cache đúng filter → làm mới nền, không hiện spinner toàn màn.
+    void load(getCachedBoard(filters) ? 'silent' : 'init');
+  }, [load, boardFiltersReady, currentBoardFilters]);
 
   // Re-fetch board khi company hoặc phân loại đổi (bỏ qua lần mount đầu tiên).
   useEffect(() => {
@@ -491,8 +509,8 @@ export default function KanbanScreen() {
       if (movingIdRef.current) return;
       void load('silent');
     },
-    modes: ['board', 'task'],
-    debounceMs: 400,
+    modes: REALTIME_BOARD_TASK,
+    debounceMs: 1500,
   });
 
   useEffect(() => {
@@ -500,7 +518,7 @@ export default function KanbanScreen() {
       if (state !== 'active' || movingIdRef.current) return;
       const now = Date.now();
       // Tránh reload full board mỗi lần chạm app (rất chậm).
-      if (now - lastSilentAtRef.current < 45_000) return;
+      if (now - lastSilentAtRef.current < 60_000) return;
       lastSilentAtRef.current = now;
       void load('silent');
     });
@@ -803,16 +821,17 @@ export default function KanbanScreen() {
         onMoveShouldSetPanResponder: (_e, g) => {
           const ax = Math.abs(g.dx);
           const ay = Math.abs(g.dy);
-          return ax > 28 && ax > ay * 1.35;
+          // Ngưỡng cao hơn để ưu tiên cuộn dọc FlatList.
+          return ax > 36 && ax > ay * 1.75;
         },
         onMoveShouldSetPanResponderCapture: (_e, g) => {
           const ax = Math.abs(g.dx);
           const ay = Math.abs(g.dy);
-          return ax > 40 && ax > ay * 1.6;
+          return ax > 56 && ax > ay * 2;
         },
-        onPanResponderTerminationRequest: () => false,
+        onPanResponderTerminationRequest: () => true,
         onPanResponderRelease: (_e, g) => {
-          if (Math.abs(g.dx) < 56) return;
+          if (Math.abs(g.dx) < 64 || Math.abs(g.dx) < Math.abs(g.dy) * 1.2) return;
           if (g.dx < 0 && canNextRef.current) {
             setActiveIndex((i) => Math.min(stageCountRef.current - 1, i + 1));
           } else if (g.dx > 0 && canPrevRef.current) {
@@ -1005,18 +1024,14 @@ export default function KanbanScreen() {
   );
 
   const statPills = useMemo(() => {
-    const list = filteredProjects;
-    const producing = list.filter((p) => isProducing(p, stages)).length;
-    const awaitingDelivery = list.filter((p) => isAwaitingDelivery(p, stages)).length;
-    const shipped = list.filter((p) => isShipped(p)).length;
-    const overdue = list.filter((p) => p.is_overdue).length;
+    const kpi = computeSxBoardKpis(filteredProjects, stages);
     return [
-      { label: 'Tổng', value: list.length, color: colors.text },
-      { label: 'Đang SX', value: producing, color: colors.primary },
-      { label: 'Chờ vận chuyển', value: awaitingDelivery, color: '#94A3B8' },
-      { label: 'Đã vận chuyển', value: shipped, color: '#38BDF8' },
-      { label: 'Hoàn tất', value: list.filter((p) => p.status === 'completed').length, color: colors.success },
-      ...(overdue > 0 ? [{ label: 'Quá hạn', value: overdue, color: colors.danger }] : []),
+      { label: 'Tổng', value: kpi.total, color: colors.text },
+      { label: 'Đang SX', value: kpi.producing, color: colors.primary },
+      { label: 'Chờ vận chuyển', value: kpi.awaitingDelivery, color: '#94A3B8' },
+      { label: 'Đã vận chuyển', value: kpi.shipped, color: '#38BDF8' },
+      { label: 'Hoàn tất', value: kpi.completed, color: colors.success },
+      ...(kpi.overdue > 0 ? [{ label: 'Quá hạn', value: kpi.overdue, color: colors.danger }] : []),
     ];
   }, [filteredProjects, stages, colors]);
 

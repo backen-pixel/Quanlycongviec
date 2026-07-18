@@ -60,17 +60,23 @@ export default function PushNotificationBridge() {
   const handledRef = useRef<string | null>(null);
 
   useEffect(() => {
-    void Notifications.getLastNotificationResponseAsync().then((response) => {
-      const data = response?.notification?.request?.content?.data as Record<string, unknown> | undefined;
-      const key = JSON.stringify(data || {});
-      if (handledRef.current === key) return;
-      handledRef.current = key;
-      handleNotificationData(data);
-    });
+    void Notifications.getLastNotificationResponseAsync()
+      .then((response) => {
+        const data = response?.notification?.request?.content?.data as Record<string, unknown> | undefined;
+        const key = JSON.stringify(data || {});
+        if (handledRef.current === key) return;
+        handledRef.current = key;
+        handleNotificationData(data);
+      })
+      .catch(() => {});
 
     const sub = Notifications.addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data as Record<string, unknown> | undefined;
-      handleNotificationData(data);
+      try {
+        const data = response.notification.request.content.data as Record<string, unknown> | undefined;
+        handleNotificationData(data);
+      } catch {
+        /* ignore */
+      }
     });
 
     return () => sub.remove();

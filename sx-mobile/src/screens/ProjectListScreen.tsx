@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -13,12 +13,26 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import TapHighlight from '../components/TapHighlight';
 import { useTheme } from '../context/ThemeContext';
-import { fetchProductionBoard } from '../lib/productionApi';
-import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
+import { fetchProductionBoard, type BoardFilters } from '../lib/productionApi';
+import { getAnyCachedBoard, getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
+import { loadKanbanFilters } from '../lib/kanbanFilterStorage';
+import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import { Radii, Spacing, stageColor } from '../theme';
 import type { KanbanStage, ProductionBoard, ProductionProject } from '../types';
+
+async function resolveListFilters(): Promise<BoardFilters> {
+  const snap = await loadKanbanFilters().catch(() => null);
+  return {
+    companyId: snap?.filterCompany || undefined,
+    dealCompanyId: snap?.filterDealCompany || undefined,
+    workshopTypeId:
+      snap?.filterWorkTypeId && snap.filterWorkTypeId !== 'none'
+        ? snap.filterWorkTypeId
+        : undefined,
+  };
+}
 
 function formatDate(value?: string | null): string {
   if (!value) return '';
@@ -33,14 +47,15 @@ export default function ProjectListScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { openProjectDetail } = useRootNavigation();
-  const cachedBoard = getCachedBoard();
+  const cachedBoard = getAnyCachedBoard();
   const [board, setBoard] = useState<ProductionBoard>(
-    () => getCachedBoard() ?? { stages: [], projects: [], kpis: null },
+    () => cachedBoard ?? { stages: [], projects: [], kpis: null },
   );
   const [loading, setLoading] = useState(!cachedBoard);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const loadSeqRef = useRef(0);
 
   const styles = useMemo(
     () =>
@@ -104,31 +119,53 @@ export default function ProjectListScreen() {
   );
 
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
+    const seq = ++loadSeqRef.current;
     if (mode === 'init') setLoading(true);
     else if (mode === 'refresh') setRefreshing(true);
     setError(null);
     try {
-      setBoard(await fetchProductionBoard(mode === 'silent', {}, {
+      const filters = await resolveListFilters();
+      if (seq !== loadSeqRef.current) return;
+      if (mode === 'silent' && isCachedBoardFresh(filters) && getCachedBoard(filters)) {
+        setBoard(getCachedBoard(filters)!);
+        return;
+      }
+      const seeded = getCachedBoard(filters);
+      if (seeded && mode !== 'refresh') {
+        setBoard(seeded);
+        if (mode === 'init') setLoading(false);
+      }
+      const data = await fetchProductionBoard(mode === 'silent', filters, {
         onPartial: (partial) => {
+          if (seq !== loadSeqRef.current) return;
           setBoard(partial);
           if (mode === 'init') setLoading(false);
         },
-      }));
+      });
+      if (seq !== loadSeqRef.current) return;
+      setBoard(data);
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       if (mode !== 'silent') setError(formatApiError(e));
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    // Có cache còn tươi → làm mới nền (không hiện spinner); ngược lại tải bình thường.
-    void load(isCachedBoardFresh() ? 'silent' : 'init');
+    // Đồng bộ scope với Kanban/Overview (cùng bộ lọc lưu local).
+    void resolveListFilters().then((filters) => {
+      void load(isCachedBoardFresh(filters) ? 'silent' : 'init');
+    });
   }, [load]);
 
   useProductionRealtime({
-    onRefresh: () => load('silent'),
+    onRefresh: () => void load('silent'),
+    modes: REALTIME_BOARD_TASK,
+    debounceMs: 1500,
   });
 
   const filtered = useMemo(() => {
