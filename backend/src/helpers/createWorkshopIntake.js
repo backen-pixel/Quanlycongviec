@@ -407,6 +407,8 @@ async function createWorkshopIntakeOrder(opts) {
     }
   }
 
+  // Deal nội bộ liên kết SX — không gán phụ trách CRM (= người tạo đơn xưởng).
+  // Nếu gán assigned_to = userId thì deal xuất hiện oan trong «Deal của tôi» trên CRM mobile/web.
   const dealRow = {
     code: dealCode,
     title: titleTrim,
@@ -416,8 +418,8 @@ async function createWorkshopIntakeOrder(opts) {
     pipeline_id: pipelineId,
     stage_id: wonStageId,
     region_id: regionId || null,
-    assigned_to: userId,
-    lead_owner_id: userId,
+    assigned_to: null,
+    lead_owner_id: null,
     created_by: userId,
     estimated_value: estimatedValue != null ? Number(estimatedValue) || 0 : 0,
     probability: 100,
