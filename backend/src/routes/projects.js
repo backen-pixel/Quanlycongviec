@@ -1899,20 +1899,20 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
     if (update.deposit_amount != null) {
       const total = Number(update.production_value ?? old?.production_value ?? old?.estimated_value ?? 0);
       if (Number.isFinite(total) && total > 0 && update.deposit_amount > total) {
-        return res.status(400).json({ error: 'Tiền cọc không được lớn hơn giá trị đơn hàng' });
+        return res.status(400).json({ error: 'Tiền cọc không được lớn hơn giá trị sản xuất' });
       }
     }
     if (update.production_value != null && (old?.deposit_amount ?? update.deposit_amount) != null) {
       const dep = Number(update.deposit_amount ?? old?.deposit_amount ?? 0);
       const total = Number(update.production_value);
       if (Number.isFinite(dep) && dep > 0 && Number.isFinite(total) && total > 0 && dep > total) {
-        return res.status(400).json({ error: 'Giá trị đơn hàng phải lớn hơn hoặc bằng tiền cọc' });
+        return res.status(400).json({ error: 'Giá trị sản xuất phải lớn hơn hoặc bằng tiền cọc' });
       }
     }
     if (update.collected_amount != null) {
       const total = Number(update.production_value ?? old?.production_value ?? old?.estimated_value ?? 0);
       if (Number.isFinite(total) && total > 0 && update.collected_amount > total) {
-        return res.status(400).json({ error: 'Tiền đã thu không được lớn hơn giá trị đơn hàng' });
+        return res.status(400).json({ error: 'Tiền đã thu không được lớn hơn giá trị sản xuất' });
       }
     }
 

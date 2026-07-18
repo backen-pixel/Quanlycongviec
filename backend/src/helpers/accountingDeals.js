@@ -170,12 +170,23 @@ function deriveFinancialStatus(row) {
   return FINANCIAL_STATUS.NO_QUOTE;
 }
 
+/** Tiền cọc đã nhận — ưu tiên projects.deposit_amount, fallback deal. */
+function resolveAccountingDeposit(row) {
+  const pd = Number(row?.deposit_amount);
+  if (Number.isFinite(pd) && pd > 0) return pd;
+  const dd = Number(row?.deal_deposit_amount);
+  if (Number.isFinite(dd) && dd > 0) return dd;
+  return 0;
+}
+
+/** Còn thu = (Đơn / Giá SX) − Tiền cọc − Đã HĐ. Đồng bộ công nợ SX (production − deposit). */
 function computeOutstandingAmount(row) {
   const invoiced = row.invoice_total != null ? Number(row.invoice_total) || 0 : 0;
   const basis = row.order_total != null
     ? Number(row.order_total) || 0
     : (row.production_value || row.estimated_value || 0);
-  return Math.max(0, basis - invoiced);
+  const deposit = resolveAccountingDeposit(row);
+  return Math.max(0, basis - deposit - invoiced);
 }
 
 function applyFinancialFilters(rows, { financialStatus, sxDoneNotInvoiced }) {
@@ -250,7 +261,7 @@ async function fetchAccountingDeals({
   }
 
   const dealSelectWithSx = `
-      id, code, title, estimated_value, company_id, external_company_id, external_company_name,
+      id, code, title, estimated_value, deposit_amount, company_id, external_company_id, external_company_name,
       project_id, customer_id, created_at, updated_at, actual_close_date, stage_id, lead_type_id, assigned_to,
       sx_pipeline_stage_id, sx_handover_at,
       customer:customers(id, full_name, phone),
@@ -260,7 +271,7 @@ async function fetchAccountingDeals({
       sx_pipeline_stage:production_pipeline_stages(id, name, color, bucket_slug, is_handover_to_logistics)
     `;
   const dealSelectFallback = `
-      id, code, title, estimated_value, company_id, external_company_id, external_company_name,
+      id, code, title, estimated_value, deposit_amount, company_id, external_company_id, external_company_name,
       project_id, customer_id, created_at, updated_at, actual_close_date, stage_id, lead_type_id, assigned_to,
       sx_pipeline_stage_id, sx_handover_at,
       customer:customers(id, full_name, phone),
@@ -294,7 +305,7 @@ async function fetchAccountingDeals({
   const uniqueProjectIds = [...new Set(dealsFiltered.map((d) => d.project_id).filter(Boolean))];
   const { data: projects, error: projErr } = await supabase
     .from('projects')
-    .select('id, code, name, company_id, status, production_value, current_stage_id, workshop_type_id')
+    .select('id, code, name, company_id, status, production_value, deposit_amount, current_stage_id, workshop_type_id')
     .in('id', uniqueProjectIds);
   if (projErr) throw projErr;
 
@@ -337,6 +348,10 @@ async function fetchAccountingDeals({
       project_name: proj?.name || null,
       project_status: proj?.status || null,
       production_value: Number(proj?.production_value) || 0,
+      deposit_amount: Number(proj?.deposit_amount) > 0
+        ? Number(proj.deposit_amount)
+        : (Number(d.deposit_amount) > 0 ? Number(d.deposit_amount) : 0),
+      deal_deposit_amount: Number(d.deposit_amount) > 0 ? Number(d.deposit_amount) : 0,
       workshop_company_id: proj?.company_id || null,
       workshop_name: ws?.short_name || ws?.name || null,
       ...sxInfo,

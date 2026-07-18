@@ -59,6 +59,7 @@ import {
   computeSxRevenueKpis,
   countSxDeadlineViewOverdue,
   resolveSxProjectValue,
+  resolveSxProjectRemaining,
   getSxPipelineStageSlaTone,
   resolveSxHandoverColumnId,
   shouldHideSxKanbanDeadlineOnCard,
@@ -3238,7 +3239,12 @@ const KanbanStageCard = memo(function KanbanStageCard({
   const headerRef = useRef(null);
   const { columnScrollMaxH } = useWorkshopKanbanScrollLayout();
   const columnTheme = useKanbanColumnTheme(columnIndex);
-  const totalValue = items.reduce((sum, p) => sum + resolveSxProjectValue(p), 0);
+  /** Cột «Đã công» (chưa thu) = công nợ → tổng theo phần còn lại (giá SX − cọc). */
+  const isDebtColumn = !!(stage?.counts_as_completed_revenue && !stage?.counts_as_collected_revenue);
+  const totalValue = items.reduce(
+    (sum, p) => sum + (isDebtColumn ? resolveSxProjectRemaining(p) : resolveSxProjectValue(p)),
+    0,
+  );
   const perColumnScroll = columnScrollMode === 'per-column';
   const pinEmptyPlaceholder = !perColumnScroll && items.length === 0;
   const emptyPlaceholderTop = useKanbanEmptyPlaceholderStickyTop(headerRef, pinEmptyPlaceholder);
@@ -3444,7 +3450,11 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   const cardRef = useRef(null);
   const [handingOver, setHandingOver] = useState(false);
   const sxLeadId = resolveSxProjectLeadId(item);
-  const projectValue = resolveSxProjectValue(item);
+  const isDebtCard = !!(
+    (stage?.counts_as_completed_revenue || item.sx_pipeline_stage?.counts_as_completed_revenue)
+    && !(stage?.counts_as_collected_revenue || item.sx_pipeline_stage?.counts_as_collected_revenue)
+  );
+  const projectValue = isDebtCard ? resolveSxProjectRemaining(item) : resolveSxProjectValue(item);
 
   const handleDragStart = (e) => {
     if (e.target.closest?.('[data-workshop-bulk-checkbox]')) {

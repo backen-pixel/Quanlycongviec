@@ -222,9 +222,17 @@ export default function AccountingDealDetail() {
     const totalPlanned = stages.reduce((s, st) => s + (Number(st.planned_amount) || 0), 0);
     const invoicedTotal = invoices.reduce((s, i) => s + (Number(i.total) || 0), 0);
     const base = dealValue > 0 ? dealValue : totalPlanned;
-    const outstanding = Math.max(base - totalReceived, 0);
-    const progress = base > 0 ? Math.min(100, Math.round((totalReceived / base) * 100)) : 0;
-    return { dealValue: base, totalReceived, outstanding, invoicedTotal, progress };
+    /** Tiền cọc snapshot (SX/deal) — tránh trừ trùng nếu đã có ở đợt thanh toán «Cọc». */
+    const depositSnapshot = Number(project?.deposit_amount || lead?.deposit_amount) || 0;
+    const depositFromStages = stages
+      .filter((st) => /cọc/i.test(String(st.label || '')))
+      .reduce((s, st) => s + (Number(st.received_amount) || 0), 0);
+    const depositCredit = Math.max(depositSnapshot, depositFromStages);
+    const nonDepositReceived = Math.max(0, totalReceived - depositFromStages);
+    const effectiveReceived = depositCredit + nonDepositReceived;
+    const outstanding = Math.max(base - effectiveReceived, 0);
+    const progress = base > 0 ? Math.min(100, Math.round((effectiveReceived / base) * 100)) : 0;
+    return { dealValue: base, totalReceived: effectiveReceived, outstanding, invoicedTotal, progress };
   }, [project, lead, stages, invoices]);
 
   const saveDeposit = async () => {

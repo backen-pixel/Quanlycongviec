@@ -47,7 +47,7 @@ import {
 import { isProjectAlreadyInLogistics } from '../lib/projectLogistics';
 import { buildCrmLeadDocTaskSections, normalizeCrmChecklist } from '../lib/crmTaskDocumentTree';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
-import { buildSxPipelineStageMeta, resolveSxProjectDeposit, resolveSxProjectPaymentProgress, getSxOrderDeliveryDateUrgency } from '../lib/sxPipelineRevenue';
+import { buildSxPipelineStageMeta, resolveSxProjectPaymentProgress, getSxOrderDeliveryDateUrgency } from '../lib/sxPipelineRevenue';
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
 import SharedCRMNotes from '../components/SharedCRMNotes';
 import DriveAttachments from '../components/drive/DriveAttachments';
@@ -156,6 +156,7 @@ function pickPaymentInvoice(invoices) {
 function WorkshopInfoPanel({
   project,
   onUpdate,
+  onFinancePatch,
   moduleKey = 'sx',
   crmDeal = null,
   companyRegions = [],
@@ -187,7 +188,7 @@ function WorkshopInfoPanel({
         }
       }
       await api.put(`/projects/${project.id}`, { [field]: payloadValue });
-      // Giá trị đơn hàng: đồng bộ sang deal CRM (nguồn hiển thị ưu tiên)
+      // Giá trị đơn hàng (VC): đồng bộ sang deal CRM. Cọc / giá SX chỉ lưu trên projects — không đụng «Còn lại» CRM.
       if (field === 'estimated_value' && crmDeal?.id) {
         try {
           const { data } = await api.put(`/crm/leads/${crmDeal.id}`, {
@@ -200,6 +201,9 @@ function WorkshopInfoPanel({
         } catch {
           /* dự án đã lưu; deal sync lỗi không chặn */
         }
+      }
+      if (field === 'deposit_amount' || field === 'production_value' || field === 'estimated_value') {
+        onFinancePatch?.({ [field]: payloadValue });
       }
       onUpdate?.();
       setEditing(null);
@@ -233,17 +237,32 @@ function WorkshopInfoPanel({
     || companyRegions.find((r) => String(r.id) === String(crmDeal?.region_id))?.name
     || null;
 
-  const financeProject = {
-    ...project,
-    deal_deposit_amount: crmDeal?.deposit_amount ?? project.deal_deposit_amount ?? null,
-  };
-  /** Giá trị đơn hàng: ưu tiên deal CRM, fallback estimated_value trên dự án. */
+  /** Giá trị đơn hàng CRM (chỉ dùng tiến độ thu / VC) — tách biệt với cọc & còn lại SX. */
   const orderTotalValue = Number(crmDeal?.estimated_value) > 0
     ? Number(crmDeal.estimated_value)
     : (Number(project.estimated_value) || 0);
   const productionTotalValue = Number(project.production_value) || 0;
-  const depositValue = resolveSxProjectDeposit(financeProject);
-  const remainingValue = Math.max(0, orderTotalValue - depositValue);
+  /** Tiền cọc SX: chỉ projects.deposit_amount — không lấy cọc CRM (CRM «Còn lại» là số khác). */
+  const parseMoneyDraft = (raw) => {
+    if (raw === '' || raw == null) return 0;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  };
+  const depositValue = editing === 'deposit_amount'
+    ? parseMoneyDraft(draft)
+    : (Number(project.deposit_amount) > 0 ? Number(project.deposit_amount) : 0);
+  const sxValueForRemaining = editing === 'production_value'
+    ? parseMoneyDraft(draft)
+    : (productionTotalValue > 0
+      ? productionTotalValue
+      : (Number(project.estimated_value) > 0 ? Number(project.estimated_value) : 0));
+  /** Còn lại SX = Giá trị sản xuất − Tiền cọc SX (cập nhật ngay khi sửa cọc / giá SX). */
+  const remainingValue = Math.max(0, sxValueForRemaining - depositValue);
+  const financeProject = {
+    ...project,
+    // Tiến độ thu CRM vẫn có thể tham chiếu cọc deal; khối SX không dùng field này.
+    deal_deposit_amount: crmDeal?.deposit_amount ?? project.deal_deposit_amount ?? null,
+  };
 
   const reloadCrmFinance = useCallback(async () => {
     if (!project?.id) {
@@ -380,10 +399,12 @@ function WorkshopInfoPanel({
         </div>
       )}
 
-      <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'estimated_value' && startEdit('estimated_value', project.estimated_value || crmDeal?.estimated_value || '')}>
+      {/* SX: ẩn «Giá trị đơn hàng» — chỉ giữ Giá trị SX / Tiền cọc / Còn lại. VC vẫn hiện «Giá trị dự án». */}
+      {isVC && (
+        <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'estimated_value' && startEdit('estimated_value', project.estimated_value || crmDeal?.estimated_value || '')}>
           <span className="text-sm mt-0.5 shrink-0">💰</span>
           <div className="flex-1 min-w-0">
-            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">{isVC ? 'Giá trị dự án' : 'Giá trị đơn hàng'}</p>
+            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Giá trị dự án</p>
             {editing === 'estimated_value' ? (
               <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                 <input type="number" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
@@ -396,6 +417,7 @@ function WorkshopInfoPanel({
             )}
           </div>
         </div>
+      )}
 
       {!isVC && (
         <>
@@ -442,9 +464,11 @@ function WorkshopInfoPanel({
           <div className="flex items-start gap-2 py-2 px-1 rounded-lg -mx-1">
             <span className="text-sm mt-0.5 shrink-0">📊</span>
             <div className="flex-1 min-w-0">
-              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Còn lại</p>
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Còn lại (SX)</p>
               <p className="text-sm font-semibold text-emerald-700">
-                {Number(orderTotalValue) > 0 || depositValue > 0 ? formatVND(remainingValue) : '—'}
+                {sxValueForRemaining > 0 || depositValue > 0
+                  ? formatVND(remainingValue)
+                  : '—'}
               </p>
             </div>
           </div>
@@ -2952,6 +2976,10 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           <WorkshopInfoPanel
             project={project}
             onUpdate={refreshProjectSilently}
+            onFinancePatch={(patch) => {
+              if (!patch || typeof patch !== 'object') return;
+              setProject((prev) => (prev ? { ...prev, ...patch } : prev));
+            }}
             moduleKey={moduleKey}
             crmDeal={primaryCrmDeal}
             companyRegions={companyRegions}
