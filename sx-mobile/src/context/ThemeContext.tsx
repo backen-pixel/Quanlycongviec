@@ -22,7 +22,7 @@ type ThemeCtx = {
 const Ctx = createContext<ThemeCtx | null>(null);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [mode, setModeState] = useState<ThemeMode>('dark');
+  const [mode, setModeState] = useState<ThemeMode>('light');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -31,7 +31,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         const saved = await AsyncStorage.getItem(STORAGE_KEY);
         if (saved === 'light' || saved === 'dark') setModeState(saved);
       } catch {
-        /* giữ dark mặc định */
+        /* giữ light mặc định */
       } finally {
         setLoading(false);
       }
@@ -46,7 +46,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo(
     () => ({
       mode,
-      colors: themes[mode],
+      // Clone shallow để mọi màn phụ thuộc `colors` luôn nhận reference mới khi đổi theme
+      // (tránh StyleSheet/Pressable giữ màu cũ trên Android).
+      colors: { ...themes[mode] },
       isDark: mode === 'dark',
       setMode,
       loading,

@@ -135,7 +135,7 @@ export default function ProjectListScreen() {
         setBoard(seeded);
         if (mode === 'init') setLoading(false);
       }
-      const data = await fetchProductionBoard(mode === 'silent', filters, {
+      const data = await fetchProductionBoard(mode === 'refresh', filters, {
         onPartial: (partial) => {
           if (seq !== loadSeqRef.current) return;
           setBoard(partial);
@@ -163,7 +163,14 @@ export default function ProjectListScreen() {
   }, [load]);
 
   useProductionRealtime({
-    onRefresh: () => void load('silent'),
+    onRefresh: (info) => {
+      if (info?.patched) {
+        const cached = getAnyCachedBoard();
+        if (cached) setBoard(cached);
+        return;
+      }
+      void load('silent');
+    },
     modes: REALTIME_BOARD_TASK,
     debounceMs: 1500,
   });

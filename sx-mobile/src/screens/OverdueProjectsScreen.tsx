@@ -67,7 +67,7 @@ export default function OverdueProjectsScreen() {
         setProjects(seeded.projects.filter((p) => p.is_overdue));
         if (mode === 'init') setLoading(false);
       }
-      const board = await fetchProductionBoard(mode === 'silent', filters, {
+      const board = await fetchProductionBoard(mode === 'refresh', filters, {
         onPartial: (partial) => {
           if (seq !== loadSeqRef.current) return;
           setProjects(partial.projects.filter((p) => p.is_overdue));
@@ -101,7 +101,14 @@ export default function OverdueProjectsScreen() {
   }, [load]);
 
   useProductionRealtime({
-    onRefresh: () => void load('silent'),
+    onRefresh: (info) => {
+      if (info?.patched) {
+        const cached = getAnyCachedBoard();
+        if (cached) setProjects(cached.projects.filter((p) => p.is_overdue));
+        return;
+      }
+      void load('silent');
+    },
     modes: REALTIME_BOARD,
     debounceMs: 1500,
   });

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Platform, Pressable, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
+import { Pressable, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
 
 type Props = PressableProps & {
   style?: StyleProp<ViewStyle>;
@@ -17,15 +17,12 @@ export default function TapHighlight({
   android_ripple,
   ...rest
 }: Props) {
+  // Tránh android_ripple mặc định: trên một số máy (emulator) ripple + backgroundColor
+  // của Pressable giữ màu nền theme cũ khi đổi dark/light.
   return (
     <Pressable
       disabled={disabled}
-      android_ripple={
-        android_ripple ??
-        (Platform.OS === 'android' && !disabled
-          ? { color: 'rgba(0,0,0,0.08)', borderless: false }
-          : undefined)
-      }
+      android_ripple={android_ripple}
       style={({ pressed }) => [
         style,
         disabled ? { opacity: 0.42 } : null,

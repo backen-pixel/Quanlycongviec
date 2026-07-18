@@ -1,13 +1,20 @@
 import { useIsFocused } from '@react-navigation/native';
 import { useEffect, useRef } from 'react';
 import { useNotifications } from '../context/NotificationContext';
+import { patchCachedProjectById } from '../lib/productionBoardCache';
 import type { SyncEvent } from '../lib/realtimeSync';
 import { dealIdFromSyncEvent, projectIdFromSyncEvent } from '../lib/realtimeSync';
+
+export type BoardRealtimeInfo = {
+  evt: SyncEvent;
+  /** true = đã patch cache tại chỗ, không cần tải lại full board. */
+  patched: boolean;
+};
 
 type Options = {
   projectId?: string | null;
   dealId?: string | null;
-  onRefresh: () => void | Promise<void>;
+  onRefresh: (info?: BoardRealtimeInfo) => void | Promise<void>;
   enabled?: boolean;
   /**
    * false = vẫn refetch dù tab/màn không focus (mặc định true: chỉ tab đang xem
@@ -41,14 +48,26 @@ function shouldRefreshForEvent(
   const lid = dealIdFromSyncEvent(evt);
   if (dealId && lid && String(lid) === String(dealId)) return true;
 
-  // Sự kiện toàn cục (không gắn project/deal) — vẫn refresh màn không lọc theo id.
   if (!projectId && !dealId) return true;
 
   return false;
 }
 
+function tryPatchFromStageEvent(evt: SyncEvent): boolean {
+  if (evt.type !== 'project:stage_changed') return false;
+  const pid = projectIdFromSyncEvent(evt);
+  if (!pid) return false;
+  const col = evt.payload.sx_kanban_column_id;
+  if (col == null || col === '') return false;
+  return !!patchCachedProjectById(pid, {
+    sx_kanban_column_id: String(col),
+    resolved_column_id: String(col),
+  });
+}
+
 /**
  * Debounced refetch khi web/mobile thay đổi Kanban, nhiệm vụ, bình luận… (socket).
+ * Stage change có cột đích → patch cache tại chỗ (không tải lại 1000+ deal).
  */
 export function useProductionRealtime({
   projectId,
@@ -69,17 +88,23 @@ export function useProductionRealtime({
     if (!active) return undefined;
 
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const scheduleRefresh = () => {
+    const scheduleFullRefresh = (evt: SyncEvent) => {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = null;
-        void Promise.resolve(onRefreshRef.current()).catch(() => {});
+        void Promise.resolve(onRefreshRef.current({ evt, patched: false })).catch(() => {});
       }, debounceMs);
     };
 
     const unsub = subscribeSync((evt) => {
       if (!eventMatchesMode(evt, modes)) return;
-      if (shouldRefreshForEvent(evt, projectId, dealId)) scheduleRefresh();
+      if (!shouldRefreshForEvent(evt, projectId, dealId)) return;
+
+      if (tryPatchFromStageEvent(evt)) {
+        void Promise.resolve(onRefreshRef.current({ evt, patched: true })).catch(() => {});
+        return;
+      }
+      scheduleFullRefresh(evt);
     });
 
     return () => {

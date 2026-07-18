@@ -3,7 +3,6 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useMemo } from 'react';
 import {
-  Alert,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,7 +11,6 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import TapHighlight from '../components/TapHighlight';
-import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { clearFloatingBubbleHidden } from '../lib/floatingChatBubbleStorage';
 import {
@@ -27,26 +25,23 @@ import { HIT_TARGET, Radii, Spacing } from '../theme';
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { logout } = useAuth();
-  const { colors, mode, setMode } = useTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const { colors, mode, isDark, setMode } = useTheme();
+  const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
 
   const themeOptions: { mode: 'dark' | 'light'; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
     { mode: 'dark', label: 'Tối', icon: 'moon-outline' },
     { mode: 'light', label: 'Sáng', icon: 'sunny-outline' },
   ];
 
-  const confirmLogout = () => {
-    Alert.alert('Đăng xuất', 'Bạn chắc chắn muốn đăng xuất?', [
-      { text: 'Huỷ', style: 'cancel' },
-      { text: 'Đăng xuất', style: 'destructive', onPress: () => void logout() },
-    ]);
-  };
-
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <TapHighlight style={styles.backBtn} onPress={() => navigation.goBack()} hitSlop={8}>
+        <TapHighlight
+          key={`back-${mode}`}
+          style={styles.backBtn}
+          onPress={() => navigation.goBack()}
+          hitSlop={8}
+        >
           <Ionicons name="chevron-back" size={22} color={colors.text} />
         </TapHighlight>
         <Text style={styles.headerTitle}>Cài đặt</Text>
@@ -83,7 +78,6 @@ export default function SettingsScreen() {
             colors={colors}
             onPress={() => {
               void clearFloatingBubbleHidden();
-              Alert.alert('Bong bóng chat', 'Đã bật lại bong bóng chat trên màn hình.');
             }}
           />
           {isBubbleOverlaySupported() ? (
@@ -96,7 +90,6 @@ export default function SettingsScreen() {
                   const ok = await canDrawOverlays();
                   if (ok) {
                     await startSystemBubbleOverlay();
-                    Alert.alert('Bong bóng ngoài app', 'Đã bật bong bóng chat trên màn hình hệ thống.');
                     return;
                   }
                   await ensureOverlayPermissionInteractive({
@@ -112,15 +105,8 @@ export default function SettingsScreen() {
             icon="cloud-download-outline"
             label="Cập nhật ứng dụng"
             colors={colors}
-            onPress={() => navigation.navigate('UpdateFromServer')}
-          />
-          <SettingsRow
-            icon="log-out-outline"
-            label="Đăng xuất"
-            colors={colors}
-            danger
             last
-            onPress={confirmLogout}
+            onPress={() => navigation.navigate('UpdateFromServer')}
           />
         </View>
       </ScrollView>
@@ -180,7 +166,11 @@ const stylesRow = StyleSheet.create({
   },
 });
 
-function createStyles(colors: ReturnType<typeof useTheme>['colors']) {
+function createStyles(colors: ReturnType<typeof useTheme>['colors'], isDark: boolean) {
+  // Nút back: dùng bgElevated (luôn tương phản rõ) thay vì card — tránh Pressable Android
+  // giữ nền theme cũ khi đổi sáng/tối.
+  const backBg = isDark ? colors.bgElevated : '#FFFFFF';
+  const backBorder = isDark ? colors.borderStrong : colors.border;
   return StyleSheet.create({
     root: { flex: 1, backgroundColor: colors.bg },
     header: {
@@ -194,11 +184,11 @@ function createStyles(colors: ReturnType<typeof useTheme>['colors']) {
       width: 42,
       height: 42,
       borderRadius: 12,
-      backgroundColor: colors.card,
+      backgroundColor: backBg,
       alignItems: 'center',
       justifyContent: 'center',
       borderWidth: 1,
-      borderColor: colors.border,
+      borderColor: backBorder,
     },
     headerTitle: { color: colors.text, fontSize: 18, fontWeight: '800' },
     scroll: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.md },
@@ -220,7 +210,7 @@ function createStyles(colors: ReturnType<typeof useTheme>['colors']) {
       borderRadius: Radii.md,
       borderWidth: 1,
       borderColor: colors.border,
-      backgroundColor: colors.card,
+      backgroundColor: isDark ? colors.card : '#FFFFFF',
     },
     themeBtnActive: {
       borderColor: colors.primary,
@@ -229,7 +219,7 @@ function createStyles(colors: ReturnType<typeof useTheme>['colors']) {
     themeBtnText: { color: colors.textMuted, fontSize: 14, fontWeight: '700' },
     themeBtnTextActive: { color: colors.primary },
     settingsCard: {
-      backgroundColor: colors.card,
+      backgroundColor: isDark ? colors.card : '#FFFFFF',
       borderRadius: Radii.lg,
       borderWidth: 1,
       borderColor: colors.border,

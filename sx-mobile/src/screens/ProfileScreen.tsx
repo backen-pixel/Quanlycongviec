@@ -61,8 +61,8 @@ export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const rootNav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const tabNav = useNavigation<BottomTabNavigationProp<MainTabParamList>>();
-  const { user } = useAuth();
-  const { colors, isDark } = useTheme();
+  const { user, logout } = useAuth();
+  const { colors, isDark, mode } = useTheme();
   const { unreadCount, refreshUnread } = useNotifications();
   const { unreadTotal: messageUnread } = useMessenger();
   const { openOverdueProjects, openProjectDetail } = useRootNavigation();
@@ -93,6 +93,13 @@ export default function ProfileScreen() {
   const openSettings = useCallback(() => {
     rootNav.navigate('Settings');
   }, [rootNav]);
+
+  const confirmLogout = useCallback(() => {
+    Alert.alert('Đăng xuất', 'Bạn chắc chắn muốn đăng xuất?', [
+      { text: 'Huỷ', style: 'cancel' },
+      { text: 'Đăng xuất', style: 'destructive', onPress: () => void logout() },
+    ]);
+  }, [logout]);
 
   const mgmtItems: MgmtItem[] = [
     {
@@ -191,7 +198,12 @@ export default function ProfileScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.header}>
-          <TapHighlight style={styles.iconBtn} onPress={() => tabNav.navigate('Overview')} hitSlop={8}>
+          <TapHighlight
+            key={`menu-back-${mode}`}
+            style={styles.iconBtn}
+            onPress={() => tabNav.navigate('Overview')}
+            hitSlop={8}
+          >
             <Ionicons name="chevron-back" size={22} color={colors.text} />
           </TapHighlight>
           <View style={{ flex: 1 }}>
@@ -283,6 +295,15 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           ))}
         </View>
+
+        <TouchableOpacity
+          style={styles.logoutBtn}
+          activeOpacity={0.88}
+          onPress={confirmLogout}
+        >
+          <Ionicons name="log-out-outline" size={20} color={colors.danger} />
+          <Text style={styles.logoutText}>Đăng xuất</Text>
+        </TouchableOpacity>
       </ScrollView>
 
       <CommentNotificationsModal
@@ -297,7 +318,9 @@ export default function ProfileScreen() {
   );
 }
 
-function createStyles(colors: ReturnType<typeof useTheme>['colors'], _isDark: boolean) {
+function createStyles(colors: ReturnType<typeof useTheme>['colors'], isDark: boolean) {
+  const iconBtnBg = isDark ? colors.bgElevated : '#FFFFFF';
+  const iconBtnBorder = isDark ? colors.borderStrong : colors.border;
   return StyleSheet.create({
     root: { flex: 1, backgroundColor: colors.bg },
     scroll: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.md },
@@ -313,11 +336,11 @@ function createStyles(colors: ReturnType<typeof useTheme>['colors'], _isDark: bo
       width: 42,
       height: 42,
       borderRadius: 12,
-      backgroundColor: colors.card,
+      backgroundColor: iconBtnBg,
       alignItems: 'center',
       justifyContent: 'center',
       borderWidth: 1,
-      borderColor: colors.border,
+      borderColor: iconBtnBorder,
     },
     badge: {
       position: 'absolute',
@@ -443,5 +466,21 @@ function createStyles(colors: ReturnType<typeof useTheme>['colors'], _isDark: bo
       justifyContent: 'center',
     },
     quickLabel: { color: colors.text, fontSize: 13, fontWeight: '700', flex: 1 },
+    logoutBtn: {
+      marginTop: Spacing.sm,
+      marginBottom: Spacing.md,
+      minHeight: 48,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 10,
+      borderRadius: Radii.lg,
+      borderWidth: 1,
+      borderColor: colorWithAlpha(colors.danger, 0.35),
+      backgroundColor: colorWithAlpha(colors.danger, isDark ? 0.14 : 0.08),
+      paddingVertical: 14,
+      paddingHorizontal: Spacing.md,
+    },
+    logoutText: { color: colors.danger, fontSize: 15, fontWeight: '800' },
   });
 }
