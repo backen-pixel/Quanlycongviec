@@ -51,9 +51,9 @@ export function workshopCreatedInRange(iso, from, to) {
  * Lấy nhiều trang projects từ /production/projects hoặc /logistics/projects.
  * @param {import('axios').AxiosInstance} api
  * @param {string} path
- * @param {{ companyId?: string, workshopTypeId?: string, sxWorkshopCompanyId?: string, maxRecords: number, pageSize?: number, bustCache?: boolean }} opt
+ * @param {{ companyId?: string, workshopTypeId?: string, sxWorkshopCompanyId?: string, maxRecords: number, pageSize?: number, bustCache?: boolean, view?: string }} opt
  */
-export async function fetchWorkshopProjectPages(api, path, { companyId, workshopTypeId, sxWorkshopCompanyId, dealCompanyId, maxRecords, pageSize = 500, bustCache = false }) {
+export async function fetchWorkshopProjectPages(api, path, { companyId, workshopTypeId, sxWorkshopCompanyId, dealCompanyId, maxRecords, pageSize = 500, bustCache = false, view } = {}) {
   const cap = Math.min(Math.max(maxRecords, 1), WS_KANBAN_LOAD_ALL_MAX);
   const all = [];
   let page = 1;
@@ -67,6 +67,7 @@ export async function fetchWorkshopProjectPages(api, path, { companyId, workshop
       ...(workshopTypeId ? { workshop_type_id: workshopTypeId } : {}),
       ...(sxWorkshopCompanyId ? { sx_workshop_company_id: sxWorkshopCompanyId } : {}),
       ...(dealCompanyId ? { deal_company_id: dealCompanyId } : {}),
+      ...(view ? { view } : {}),
     };
     const { data } = await api.get(path, {
       params,

@@ -21,7 +21,7 @@ export default function ProductionPipeline() {
   const load = async () => {
     setLoading(true);
     try {
-      const { data } = await api.get('/production/dashboard');
+      const { data } = await api.get('/production/dashboard', { params: { include_projects: 1 } });
       setProjects(data.projects || []);
     } catch (e) {
       console.error(e);

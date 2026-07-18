@@ -289,7 +289,6 @@ export default function ProductionDashboard() {
   const isAdmin = isAdminLike(user);
   const crossWorkshopViewer = isCrossWorkshopProductionViewer(user);
 
-  const [kpis, setKpis] = useState(null);
   const [projects, setProjects] = useState([]);
   const [pipeline, setPipeline] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -628,33 +627,24 @@ export default function ProductionDashboard() {
       });
     };
     try {
-      const dashQ = {
-        ...(fetchCompanyId ? { company_id: fetchCompanyId } : {}),
-        ...(fetchDealCompanyId ? { deal_company_id: fetchDealCompanyId } : {}),
-        ...(fetchSxWorkshopId ? { sx_workshop_company_id: fetchSxWorkshopId } : {}),
-      };
-      const cacheHeaders = bustCache ? { headers: { 'x-no-cache': '1' } } : {};
       const maxRecords = kanbanLoadKey === 'all' ? WS_KANBAN_LOAD_ALL_MAX
         : Math.min(parseInt(kanbanLoadKey, 10) || 500, WS_KANBAN_LOAD_ALL_MAX);
       const workshopTypeFilter = opts.workshopTypeId !== undefined
         ? (opts.workshopTypeId ? String(opts.workshopTypeId) : undefined)
         : (filterWorkTypeIdRef.current ? String(filterWorkTypeIdRef.current) : undefined);
 
-      const [dashRes, projectList] = await Promise.all([
-        api.get('/production/dashboard', { params: dashQ, ...cacheHeaders }).catch(() => ({ data: { kpis: {}, pipeline: [] } })),
-        fetchWorkshopProjectPages(api, '/production/projects', {
-          companyId: fetchCompanyId,
-          dealCompanyId: fetchDealCompanyId,
-          sxWorkshopCompanyId: fetchSxWorkshopId,
-          workshopTypeId: workshopTypeFilter,
-          maxRecords,
-          pageSize: 500,
-          bustCache,
-        }).catch(() => null),
-      ]);
-      setKpis(dashRes.data?.kpis || {});
-      // KHÔNG set pipeline ở đây — cột Kanban do effect `/production/pipeline-stages`
-      // (theo filterWorkTypeId: uuid / «Tất cả» / «Chưa phân loại»).
+      // KPI tính từ scopeProjects (scopeKpis) — không gọi /dashboard (trùng /projects).
+      // Cột Kanban do effect `/production/pipeline-stages`.
+      const projectList = await fetchWorkshopProjectPages(api, '/production/projects', {
+        companyId: fetchCompanyId,
+        dealCompanyId: fetchDealCompanyId,
+        sxWorkshopCompanyId: fetchSxWorkshopId,
+        workshopTypeId: workshopTypeFilter,
+        maxRecords,
+        pageSize: 500,
+        bustCache,
+        view: 'kanban',
+      }).catch(() => null);
       if (projectList !== null) setProjects(projectList);
       if (!isStale()) markLoadComplete();
     } catch (e) {
@@ -1458,8 +1448,9 @@ export default function ProductionDashboard() {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-        // bustCache: tránh GET /production/projects trả snapshot cũ (ttl 20s) → thẻ kéo xong bị nhảy về cột trước
-        loadRef.current?.({ silent: true, bustCache: true });
+        // Không bustCache: dùng TTL 20s — tránh burst load khi nhiều người kéo thẻ.
+        // Thao tác local (kéo thẻ / đổi loại / tạo deal) vẫn bustCache riêng.
+        loadRef.current?.({ silent: true });
       }, 2000);
     };
     const onStage = () => scheduleBoardRefresh();
@@ -1607,15 +1598,15 @@ export default function ProductionDashboard() {
     if (!list.length) {
       return {
         total: 0, producing: 0, awaiting_delivery: 0, shipped: 0, completed: 0, overdue: 0,
-        avg_progress: kpis?.avg_progress || 0,
+        avg_progress: 0,
         intake_pending: 0, delivering: 0, customer_care: 0,
-        won_revenue_value: kpis?.won_revenue_value || 0,
-        completed_revenue_value: kpis?.completed_revenue_value || 0,
-        collected_revenue_value: kpis?.collected_revenue_value || 0,
-        debt_revenue_value: kpis?.debt_revenue_value || 0,
-        debt_count: kpis?.debt_count || 0,
-        collected_count: kpis?.collected_count || 0,
-        weighted_pipeline_value: kpis?.weighted_pipeline_value || 0,
+        won_revenue_value: 0,
+        completed_revenue_value: 0,
+        collected_revenue_value: 0,
+        debt_revenue_value: 0,
+        debt_count: 0,
+        collected_count: 0,
+        weighted_pipeline_value: 0,
         column_sla_overdue: 0,
       };
     }
@@ -1639,7 +1630,7 @@ export default function ProductionDashboard() {
       weighted_pipeline_value: revenue.weightedPipeline,
       column_sla_overdue: deadlineOverdueCount,
     };
-  }, [scopeProjects, kpis, pipeline, filteredKanbanPipeline]);
+  }, [scopeProjects, pipeline, filteredKanbanPipeline]);
 
   const togglePinFlag = useCallback(async (item, next) => {
     const leadId = resolveSxProjectLeadId(item);
@@ -1738,11 +1729,11 @@ export default function ProductionDashboard() {
           project: current,
           mode: 'stage_move',
         });
-        load();
+        load({ silent: true, bustCache: true });
         return;
       }
       window.alert(e.response?.data?.error || e.message || 'Không chuyển được cột pipeline');
-      load();
+      load({ silent: true, bustCache: true });
     }
   }, [load, projects, companyParam]);
 
@@ -1778,7 +1769,7 @@ export default function ProductionDashboard() {
         scheduleCrmBadgeRefresh(projectId);
       } catch (e) {
         console.error(e);
-        load();
+        load({ silent: true, bustCache: true });
       }
       return;
     }
@@ -1866,7 +1857,7 @@ export default function ProductionDashboard() {
       setSwitchWorkshopModal(null);
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Lỗi chuyển phân loại');
-      load();
+      load({ silent: true, bustCache: true });
     } finally {
       setSwitchWorkshopSaving(false);
     }
@@ -1942,7 +1933,7 @@ export default function ProductionDashboard() {
     } catch (e) {
       console.error(e);
       alert(e.response?.data?.error || 'Lỗi bàn giao VC');
-      load();
+      load({ silent: true, bustCache: true });
     }
   }, [load, pipeline]);
 
