@@ -938,7 +938,7 @@ async function notifyPipelineStageAutoMembers(req, {
         `${actorName} đã thêm bạn vào ${projectLabel} (cột «${stageLabel}»)`,
         leadId ? 'lead' : 'project',
         leadId || projectId,
-        { nav_tab: 'team', project_id: projectId },
+        { nav_tab: 'team', project_id: projectId, ecosystem_module_key: 'production' },
       );
     }
 
@@ -951,7 +951,7 @@ async function notifyPipelineStageAutoMembers(req, {
         `Đã gộp ${names} vào ${projectLabel} — cột «${stageLabel}»`,
         'project',
         projectId,
-        { stage_name: stageLabel, added_count: addedUserIds.length },
+        { stage_name: stageLabel, added_count: addedUserIds.length, ecosystem_module_key: 'production' },
       );
     }
   } catch (e) {

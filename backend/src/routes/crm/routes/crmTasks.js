@@ -869,23 +869,15 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
             crmTaskId: data.id,
           });
         } else {
-          const { data: leadPut } = await supabase.from('crm_leads')
-            .select('company_id, region_id')
-            .eq('id', req.params.leadId)
-            .maybeSingle();
           const ecoPut = ecosystemModuleKeyForCrmDeadline(crmTaskDeadlineModuleKey(data.stage_slug));
-          const okNew = await filterUserIdsForCrmLeadScopedNotification(
-            supabase,
-            leadPut || {},
-            addedAssigneeIds,
-            ecoPut,
-          );
-          for (const uid of okNew) {
+          // Người được giao tường minh — không lọc company/region.
+          for (const uid of addedAssigneeIds) {
+            if (String(uid) === String(req.user.userId)) continue;
             await createNotification(req, uid, 'crm_task_assigned',
               '📌 Được giao nhiệm vụ CRM',
               `Bạn được giao: "${data.title}"`,
               'crm_task', data.id,
-              { lead_id: req.params.leadId, nav_tab: 'tasks' });
+              { lead_id: req.params.leadId, nav_tab: 'tasks', ecosystem_module_key: ecoPut || 'crm' });
           }
         }
       } else if (b.assignee_id && String(b.assignee_id) !== String(result.priorAssigneeId || '') && !data.crm_assignment_id) {
@@ -909,22 +901,13 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
             crmTaskId: data.id,
           });
         } else {
-          const { data: leadPut } = await supabase.from('crm_leads')
-            .select('company_id, region_id')
-            .eq('id', req.params.leadId)
-            .maybeSingle();
           const ecoPut = ecosystemModuleKeyForCrmDeadline(crmTaskDeadlineModuleKey(data.stage_slug));
-          const okNew = await filterUserIdsForCrmLeadScopedNotification(
-            supabase,
-            leadPut || {},
-            [b.assignee_id],
-            ecoPut,
-          );
-          if (okNew.some((x) => String(x) === String(b.assignee_id))) {
+          if (String(b.assignee_id) !== String(req.user.userId)) {
             await createNotification(req, b.assignee_id, 'crm_task_assigned',
               '📌 Được giao nhiệm vụ CRM',
               `Bạn được giao: "${data.title}"`,
-              'crm_task', data.id);
+              'crm_task', data.id,
+              { lead_id: req.params.leadId, nav_tab: 'tasks', ecosystem_module_key: ecoPut || 'crm' });
           }
         }
       }

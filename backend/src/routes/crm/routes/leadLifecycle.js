@@ -669,14 +669,12 @@ r.put('/leads/:id', async (req, res) => {
         const prevOwner = oldLead?.assigned_to || oldLead?.lead_owner_id;
         if (newOwner && String(newOwner) !== String(prevOwner || '') && String(newOwner) !== String(req.user.userId)) {
           const label = oldLead?.type === 'deal' ? 'Deal' : 'Lead';
-          const scopeLead = { company_id: data.company_id, region_id: data.region_id };
-          const okOwners = await filterUserIdsForCrmLeadScopedNotification(supabase, scopeLead, [newOwner]);
-          if (okOwners.some((x) => String(x) === String(newOwner))) {
-            await createNotification(req, newOwner, 'lead_assigned',
-              `👤 ${label} được giao cho bạn`,
-              `${label} "${oldLead?.title || data.title}" được giao cho bạn phụ trách`,
-              oldLead?.type === 'deal' ? 'crm_deal' : 'crm_lead', id);
-          }
+          // Người được giao tường minh — luôn nhận TB (không lọc company/region).
+          await createNotification(req, newOwner, 'lead_assigned',
+            `👤 ${label} được giao cho bạn`,
+            `${label} "${oldLead?.title || data.title}" được giao cho bạn phụ trách`,
+            oldLead?.type === 'deal' ? 'crm_deal' : 'crm_lead', id,
+            { ecosystem_module_key: 'crm' });
         }
       }
     } catch (_) {}
@@ -1411,14 +1409,11 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 
     try {
       if (ownerId && String(ownerId) !== String(req.user.userId)) {
-        const scopeLead = { company_id: updatedLead.company_id, region_id: updatedLead.region_id };
-        const okOwners = await filterUserIdsForCrmLeadScopedNotification(supabase, scopeLead, [ownerId]);
-        if (okOwners.some((x) => String(x) === String(ownerId))) {
-          await createNotification(req, ownerId, 'deal_assigned',
-            '🚀 Deal mới được giao',
-            `Lead "${lead.title}" đã chuyển thành Deal và giao cho bạn phụ trách`,
-            'crm_deal', req.params.id);
-        }
+        await createNotification(req, ownerId, 'deal_assigned',
+          '🚀 Deal mới được giao',
+          `Lead "${lead.title}" đã chuyển thành Deal và giao cho bạn phụ trách`,
+          'crm_deal', req.params.id,
+          { ecosystem_module_key: 'crm' });
       }
     } catch (notifErr) { console.error('Convert notification error:', notifErr.message); }
 

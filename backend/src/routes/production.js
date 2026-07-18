@@ -4220,6 +4220,7 @@ r.post('/projects/:id/incidents', requirePermission('projects', 'edit'), async (
           `⚠️ Sự cố: ${title}`,
           `Dự án ${id} báo sự cố mức ${severity || 'medium'}`,
           'project', id,
+          { ecosystem_module_key: 'production', project_id: String(id) },
         );
       }
     } catch (ne) {

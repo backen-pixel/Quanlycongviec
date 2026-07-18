@@ -107,7 +107,10 @@ async function runOnce(io) {
     }
 
     const { data: inserted } = await supabase.from('notifications').insert(notifs).select('*');
-    (inserted || []).forEach((n) => io && io.to(`user:${n.user_id}`).emit('notification', n));
+    const { dispatchNotificationToUser } = require('../helpers/notifications');
+    for (const n of inserted || []) {
+      await dispatchNotificationToUser(io, n.user_id, n);
+    }
     console.log(`[crm-assignment-reminder] Đã gửi ${inserted?.length || 0}/${notifs.length} thông báo`);
   } catch (e) {
     console.error('[crm-assignment-reminder]', e.message);

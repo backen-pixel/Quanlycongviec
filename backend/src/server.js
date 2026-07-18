@@ -1022,16 +1022,18 @@ const { isExpiryDeadlineNotificationType: isExpiryNotifType } = require('./helpe
 const { preferenceKeyForNotificationType } = require('./helpers/notificationPrefTypes');
 const { isNotificationAllowedForUser } = require('./helpers/notificationPrefsUser');
 
-/** True nếu thông báo thuộc module Quản lý công việc (Dự án CRM) — đã tắt cứng. */
+/** True nếu thông báo thuộc module Quản lý công việc (QLCV / projects) — đã tắt cứng.
+ *  SX (production), VC (logistics), CRM không bị chặn dù entity_type = project.
+ */
 function isProjectModuleNotification(notification) {
   if (!notification) return false;
   const meta = notification.metadata && typeof notification.metadata === 'object' ? notification.metadata : {};
-  if (String(meta.ecosystem_module_key || '') === 'production') return false;
+  const eco = String(meta.ecosystem_module_key || '').trim();
+  if (eco === 'production' || eco === 'logistics' || eco === 'crm') return false;
+  if (eco === 'projects') return true;
   const key = preferenceKeyForNotificationType(notification.type, notification.entity_type, notification.metadata);
   if (key === 'project_notifications') return true;
   if (notification.entity_type === 'project') return true;
-  if (notification.metadata && typeof notification.metadata === 'object'
-      && String(notification.metadata.ecosystem_module_key || '') === 'projects') return true;
   return false;
 }
 
@@ -1459,7 +1461,10 @@ server.listen(config.port, () => {
       const toInsert = filteredNotifs;
       if (toInsert.length) {
         const { data: inserted } = await supabase.from('notifications').insert(toInsert).select('*');
-        (inserted || []).forEach((n) => io.to(`user:${n.user_id}`).emit('notification', n));
+        const { dispatchNotificationToUser } = require('./helpers/notifications');
+        for (const n of inserted || []) {
+          await dispatchNotificationToUser(io, n.user_id, n);
+        }
       }
 
       console.log(

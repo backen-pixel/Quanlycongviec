@@ -70,16 +70,18 @@ function isDealActivityNotification(n) {
 }
 
 const { preferenceKeyForNotificationType } = require('../helpers/notificationPrefTypes');
-/** True nếu thông báo thuộc module Quản lý công việc (Dự án CRM) — đã tắt cứng. */
+/** True nếu thông báo thuộc module Quản lý công việc (QLCV / projects) — đã tắt cứng.
+ *  SX / VC / CRM không bị lọc khỏi danh sách chuông.
+ */
 function isProjectModuleNotification(n) {
   if (!n) return false;
   const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
-  if (String(meta.ecosystem_module_key || '') === 'production') return false;
+  const eco = String(meta.ecosystem_module_key || '').trim();
+  if (eco === 'production' || eco === 'logistics' || eco === 'crm') return false;
+  if (eco === 'projects') return true;
   const key = preferenceKeyForNotificationType(n.type, n.entity_type, n.metadata);
   if (key === 'project_notifications') return true;
   if (n.entity_type === 'project') return true;
-  if (n.metadata && typeof n.metadata === 'object'
-      && String(n.metadata.ecosystem_module_key || '') === 'projects') return true;
   return false;
 }
 

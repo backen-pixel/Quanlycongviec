@@ -40,14 +40,27 @@ async function createNotification(req, userId, type, title, message, entityType,
     .select()
     .single();
 
+  const pushFn = req.app?.get('pushNotification');
   if (error) {
     console.error('Notification insert error:', error.message);
+    // Vẫn đẩy socket + FCM với payload dựng sẵn — tránh mất thông báo khi DB lỗi tạm.
+    if (typeof pushFn === 'function') {
+      try {
+        pushFn(userId, {
+          ...insert,
+          id: null,
+          is_read: false,
+          created_at: new Date().toISOString(),
+        });
+      } catch (e) {
+        console.warn('[createNotification] push fallback:', e.message || e);
+      }
+    }
     return null;
   }
 
   // Socket.IO + mobile push (helper server.js cũng đã gọi sendMobilePush)
-  const pushFn = req.app?.get('pushNotification');
-  if (pushFn && data) {
+  if (typeof pushFn === 'function' && data) {
     pushFn(userId, data);
   }
 
@@ -104,6 +117,22 @@ async function notificationExists(userId, type, entityId) {
 async function dispatchNotificationToUser(io, userId, notification) {
   if (!userId || !notification) return;
   if (isExpiryDeadlineNotificationType(notification.type)) return;
+
+  // Khớp server.js isProjectModuleNotification — chỉ chặn QLCV thuần.
+  const meta = notification.metadata && typeof notification.metadata === 'object'
+    ? notification.metadata
+    : {};
+  const eco = String(meta.ecosystem_module_key || '').trim();
+  if (eco !== 'production' && eco !== 'logistics' && eco !== 'crm') {
+    if (eco === 'projects') return;
+    const { preferenceKeyForNotificationType } = require('./notificationPrefTypes');
+    const key = preferenceKeyForNotificationType(
+      notification.type,
+      notification.entity_type,
+      notification.metadata,
+    );
+    if (key === 'project_notifications' || notification.entity_type === 'project') return;
+  }
 
   const allowed = await isNotificationAllowedForUser(
     userId,

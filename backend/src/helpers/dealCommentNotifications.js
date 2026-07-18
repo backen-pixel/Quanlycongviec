@@ -458,22 +458,17 @@ async function postCrmStageDefaultAssigneeComment(req, notifyMultiple, {
       const entityType = leadRow.type === 'deal' ? 'crm_deal' : 'crm_lead';
       const titleLabel = leadRow.title || leadRow.code || label;
       const stageSuffix = stageName ? ` khi vào cột «${stageName}»` : '';
-      const okOwners = await filterUserIdsForCrmLeadScopedNotification(
-        supabase,
-        { company_id: leadRow.company_id, region_id: leadRow.region_id },
+      // Người được gán phụ trách mặc định — luôn nhận TB.
+      await notifyMultiple(
+        req,
         [newAssigneeId],
+        'lead_assigned',
+        `👤 ${label} được giao cho bạn`,
+        `${label} "${titleLabel}" được chuyển phụ trách cho bạn${stageSuffix}.`,
+        entityType,
+        leadId,
+        { ecosystem_module_key: 'crm' },
       );
-      if (okOwners.some((x) => String(x) === String(newAssigneeId))) {
-        await notifyMultiple(
-          req,
-          [newAssigneeId],
-          'lead_assigned',
-          `👤 ${label} được giao cho bạn`,
-          `${label} "${titleLabel}" được chuyển phụ trách cho bạn${stageSuffix}.`,
-          entityType,
-          leadId,
-        );
-      }
     }
 
     const leadMembers = await fetchLeadMentionMembers(supabase, leadId);

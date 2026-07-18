@@ -258,7 +258,10 @@ async function runOnce(io) {
           .insert(chunk)
           .select('id, user_id, type, title, message, entity_type, entity_id, metadata, created_at, is_read');
         if (inserted?.length && io) {
-          inserted.forEach((n) => io.to(`user:${n.user_id}`).emit('notification', n));
+          const { dispatchNotificationToUser } = require('../helpers/notifications');
+          for (const n of inserted) {
+            await dispatchNotificationToUser(io, n.user_id, n);
+          }
         }
         insertedTotal += inserted?.length || 0;
       }

@@ -207,15 +207,13 @@ async function createCrmLeadTask(req, leadId, body) {
         crmTaskId: data.id,
       });
     } else if (rawAssigneeIds.length) {
+      // Người được giao tường minh — không lọc company/region lead.
       const notifyIds = rawAssigneeIds.filter((uid) => String(uid) !== String(req.user.userId));
       const eco = ecosystemModuleKeyForCrmDeadline(crmTaskDeadlineModuleKey(data.stage_slug));
-      const okAssignees = await filterUserIdsForCrmLeadScopedNotification(
-        supabase, leadSnap || {}, notifyIds, eco,
-      );
-      for (const uid of okAssignees) {
+      for (const uid of notifyIds) {
         await createNotification(req, uid, 'crm_task_assigned',
           '📌 Nhiệm vụ CRM mới', `Bạn được giao: "${data.title}"`, 'crm_task', data.id,
-          { lead_id: targetLeadId, nav_tab: 'tasks' });
+          { lead_id: targetLeadId, nav_tab: 'tasks', ecosystem_module_key: eco || 'crm' });
       }
     }
   } catch (ne) { console.warn('[NOTIFY] crm_task_created:', ne.message); }

@@ -64,8 +64,8 @@ function preferenceKeyForNotificationType(type, entityType, metadata = null) {
   const eco =
     metadata && typeof metadata === 'object' ? String(metadata.ecosystem_module_key || '').trim() : '';
 
-  /** Xưởng SX / CRM deal — không gom vào project_notifications (CRM module Dự án). */
-  if (eco === 'production' || eco === 'crm') {
+  /** Xưởng SX / VC / CRM — không gom vào project_notifications (QLCV). */
+  if (eco === 'production' || eco === 'crm' || eco === 'logistics') {
     const mapped = NOTIFICATION_TYPE_PREF_MAP[type];
     if (mapped) return mapped;
     if (type === 'comment_added') return 'comment_added';

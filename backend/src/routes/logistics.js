@@ -1236,7 +1236,11 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
             await notifyMultipleShared(req, crmRecipients, 'crm_stage_changed',
               `📋 CRM: Deal chuyển sang ${syncLabel}`,
               `Dự án ${updated.code || updated.name} đã đạt mốc "${vcPipeStage.name}" — deal CRM tự động cập nhật`,
-              'project', id);
+              'project', id, {
+                ecosystem_module_key: 'crm',
+                project_id: String(id),
+                nav_tab: 'kanban',
+              });
           }
         } catch (crmNotifErr) {
           console.warn('[logistics/stage] notify CRM sync:', crmNotifErr.message);

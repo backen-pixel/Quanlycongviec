@@ -139,6 +139,9 @@ r.post('/:id/members', requirePermission('projects', 'edit'), async (req, res) =
       `👥 Bạn đã tham gia đội ${typeLabel}`,
       `Bạn được thêm vào đội "${team?.name || ''}"`,
       'project', null,
+      {
+        ecosystem_module_key: team?.type === 'delivery' || team?.type === 'installation' ? 'logistics' : 'production',
+      },
     );
 
     const { data: updated } = await supabase
@@ -200,7 +203,8 @@ r.patch('/projects/:projectId/assign', requirePermission('projects', 'edit'), as
       await createNotification(req, logistics_person_id, 'task_assigned',
         `🚚 Bạn được giao vận chuyển`,
         `Dự án "${projectLabel}" vừa giao cho bạn vận chuyển`,
-        'project', projectId);
+        'project', projectId,
+        { ecosystem_module_key: 'logistics', project_id: String(projectId) });
     }
 
     // Thông báo người lắp đặt mới
@@ -208,7 +212,8 @@ r.patch('/projects/:projectId/assign', requirePermission('projects', 'edit'), as
       await createNotification(req, installer_person_id, 'task_assigned',
         `🔧 Bạn được giao lắp đặt`,
         `Dự án "${projectLabel}" vừa giao cho bạn lắp đặt`,
-        'project', projectId);
+        'project', projectId,
+        { ecosystem_module_key: 'logistics', project_id: String(projectId) });
     }
 
     // Thông báo tất cả thành viên đội vận chuyển mới
@@ -220,7 +225,8 @@ r.patch('/projects/:projectId/assign', requirePermission('projects', 'edit'), as
         await notifyMultiple(req, recipients, 'task_assigned',
           `🚚 Đội ${team?.name}: Dự án mới`,
           `Dự án "${projectLabel}" vừa được giao cho đội bạn vận chuyển`,
-          'project', projectId);
+          'project', projectId,
+          { ecosystem_module_key: 'logistics', project_id: String(projectId) });
       }
     }
 
@@ -233,7 +239,8 @@ r.patch('/projects/:projectId/assign', requirePermission('projects', 'edit'), as
         await notifyMultiple(req, recipients, 'task_assigned',
           `🔧 Đội ${team?.name}: Dự án mới`,
           `Dự án "${projectLabel}" vừa được giao cho đội bạn lắp đặt`,
-          'project', projectId);
+          'project', projectId,
+          { ecosystem_module_key: 'logistics', project_id: String(projectId) });
       }
     }
 

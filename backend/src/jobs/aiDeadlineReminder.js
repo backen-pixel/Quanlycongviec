@@ -321,8 +321,9 @@ async function runOnce(io) {
           break;
         }
         if (inserted?.length && io) {
+          const { dispatchNotificationToUser } = require('../helpers/notifications');
           for (const n of inserted) {
-            io.to(`user:${n.user_id}`).emit('notification', n);
+            await dispatchNotificationToUser(io, n.user_id, n);
           }
         }
         insertedTotal += inserted?.length || 0;

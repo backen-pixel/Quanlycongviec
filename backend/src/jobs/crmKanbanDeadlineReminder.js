@@ -101,13 +101,17 @@ async function runOnce(io) {
           message,
           entity_type: l.type === 'deal' ? 'crm_deal' : 'crm_lead',
           entity_id: l.id,
+          metadata: { module_key: 'crm', ecosystem_module_key: 'crm' },
         });
       }
     }
 
     if (!notifs.length) return;
     const { data: inserted } = await supabase.from('notifications').insert(notifs).select('*');
-    (inserted || []).forEach((n) => io && io.to(`user:${n.user_id}`).emit('notification', n));
+    const { dispatchNotificationToUser } = require('../helpers/notifications');
+    for (const n of inserted || []) {
+      await dispatchNotificationToUser(io, n.user_id, n);
+    }
     console.log(`[crm-kanban-deadline] Đã gửi ${inserted?.length || 0}/${notifs.length} thông báo`);
   } catch (e) {
     console.error('[crm-kanban-deadline]', e.message);
