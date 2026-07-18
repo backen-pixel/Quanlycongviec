@@ -1,17 +1,37 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
-import type { SxCommentNotification } from './notificationApi';
-import { SX_NOTIF_CHANNEL } from './notificationChannels';
+import {
+  isWorkshopDealNotification,
+  type SxCommentNotification,
+} from './notificationApi';
+import { SX_NOTIF_CHANNEL, SX_SYSTEM_CHANNEL } from './notificationChannels';
 
+function channelFor(n: SxCommentNotification): string {
+  if (isWorkshopDealNotification(n)) return SX_SYSTEM_CHANNEL;
+  const t = String(n.type || '');
+  if (
+    t.startsWith('crm_assignment')
+    || t.startsWith('crm_task')
+    || t === 'crm_task_assigned'
+    || t === 'crm_task_completed'
+  ) {
+    return SX_SYSTEM_CHANNEL;
+  }
+  return SX_NOTIF_CHANNEL;
+}
+
+/** Hiện trên thanh thông báo hệ thống (kể cả khi app đang mở). */
 export async function showLocalCommentNotification(n: SxCommentNotification): Promise<void> {
   try {
     const body =
       n.metadata?.comment_preview?.trim() ||
       n.message?.trim() ||
-      'Có bình luận mới';
+      'Có thông báo mới';
+    const identifier = String(n.id || '').trim() || undefined;
     await Notifications.scheduleNotificationAsync({
+      identifier,
       content: {
-        title: n.title || 'Bình luận mới',
+        title: n.title || 'Thông báo',
         body,
         sound: 'default',
         data: {
@@ -19,8 +39,9 @@ export async function showLocalCommentNotification(n: SxCommentNotification): Pr
           entity_type: n.entity_type,
           entity_id: n.entity_id,
           metadata: n.metadata,
+          notifId: n.id,
         },
-        ...(Platform.OS === 'android' ? { channelId: SX_NOTIF_CHANNEL } : {}),
+        ...(Platform.OS === 'android' ? { channelId: channelFor(n) } : {}),
       },
       trigger: null,
     });

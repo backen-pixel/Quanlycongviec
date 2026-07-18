@@ -137,8 +137,8 @@ r.use((req, res, next) => {
   next();
 });
 
-/** Tắt toàn bộ thông báo (DB + socket) phát ra từ module Sản xuất (/api/production). */
-const DISABLE_PRODUCTION_PUSH_NOTIFICATIONS = true;
+/** Bật thông báo (DB + socket + FCM) từ module Sản xuất (/api/production). */
+const DISABLE_PRODUCTION_PUSH_NOTIFICATIONS = false;
 
 function friendlyPipelineStageDbError(e) {
   const msg = String(e?.message || e || '');
@@ -2816,6 +2816,13 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
               `Dự án ${updatedSnapshot.code || updatedSnapshot.name} vừa chuyển sang giai đoạn "${stageName}"`,
               'project',
               projectId,
+              {
+                ecosystem_module_key: 'production',
+                project_id: String(projectId),
+                project_code: updatedSnapshot.code || null,
+                project_name: updatedSnapshot.name || null,
+                nav_tab: 'kanban',
+              },
             );
           }
         } catch (notifErr) {

@@ -205,6 +205,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   }, []);
 
   const notifyMessengerIncoming = useCallback((payload: MessengerNotifPayload) => {
+    // Đang mở đúng nhóm chat → không spam thanh thông báo.
     if (getMessengerActiveGroupId() === payload.groupId) return;
     const dedupeKey = payload.messageId || `${payload.groupId}:${payload.message}`;
     const now = Date.now();
@@ -217,11 +218,9 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       }
     }
     void clearFloatingBubbleHidden();
-    const isActive = AppState.currentState === 'active';
-    if (!isActive) {
-      setMessengerToast(payload);
-      void showLocalMessengerNotification(payload);
-    }
+    // Luôn hiện thanh thông báo hệ thống (kể cả app đang mở).
+    void showLocalMessengerNotification(payload);
+    setMessengerToast(payload);
     messengerNotifListenersRef.current.forEach((fn) => {
       try {
         fn(payload);
@@ -263,12 +262,10 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         /* ignore */
       }
     });
-    const appState = AppState.currentState;
-    if (appState === 'active') {
+    // Luôn đẩy ra thanh thông báo hệ thống (kể cả app đang mở).
+    void showLocalCommentNotification(enriched);
+    if (AppState.currentState === 'active') {
       setCommentToast({ notification: enriched });
-    } else {
-      // Chỉ hiện tray hệ thống khi app nền — tránh trùng toast trong app.
-      void showLocalCommentNotification(enriched);
     }
   }, [upsertLive]);
 
@@ -384,12 +381,12 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         metadata?: { ecosystem_module_key?: string; sender_name?: string; group_name?: string };
       };
       const notifType = String(n?.type || '');
-      if (
+      const isAssignmentOrTask =
         notifType.startsWith('crm_assignment')
         || notifType.startsWith('crm_task')
         || notifType === 'crm_task_assigned'
-        || notifType === 'crm_task_completed'
-      ) {
+        || notifType === 'crm_task_completed';
+      if (isAssignmentOrTask) {
         emitSync({
           type: 'crm:task_changed',
           payload: {
@@ -435,29 +432,54 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         });
         return;
       }
-      if (n?.type !== 'comment_added') {
-        const dealTypes = new Set([
-          'workshop_new_deal',
-          'deal_created',
-          'deal_assigned',
-          'deal_won',
-          'project_assigned',
-          'project_created',
-        ]);
-        if (dealTypes.has(String(n?.type || ''))) {
-          const enriched = enrichNotificationPreview({
-            id: String(n.id || `srv:${Date.now()}`),
-            type: String(n.type || 'workshop_new_deal'),
-            title: String(n.title || 'Deal xưởng'),
-            message: String(n.message || ''),
-            entity_type: n.entity_type,
-            entity_id: n.entity_id,
-            is_read: false,
-            created_at: String(n.created_at || new Date().toISOString()),
-            metadata: { ...(n.metadata || {}), ecosystem_module_key: 'production' },
-          });
-          setUnreadCount((c) => c + 1);
-          emitComment(enriched);
+
+      const dealTypes = new Set([
+        'workshop_new_deal',
+        'deal_created',
+        'deal_assigned',
+        'deal_won',
+        'project_assigned',
+        'project_created',
+      ]);
+
+      // Comment SX, deal xưởng, giao việc / task — đẩy tray hệ thống.
+      if (notifType === 'comment_added') {
+        const eco = n.metadata?.ecosystem_module_key;
+        if (eco && eco !== 'production') return;
+        const enriched = enrichNotificationPreview({
+          id: String(n.id || `srv:${Date.now()}`),
+          type: 'comment_added',
+          title: String(n.title || 'Bình luận'),
+          message: String(n.message || ''),
+          entity_type: n.entity_type,
+          entity_id: n.entity_id,
+          is_read: false,
+          created_at: String(n.created_at || new Date().toISOString()),
+          metadata: n.metadata || null,
+        });
+        setUnreadCount((c) => c + 1);
+        emitComment(enriched);
+        return;
+      }
+
+      if (dealTypes.has(notifType) || isAssignmentOrTask) {
+        const enriched = enrichNotificationPreview({
+          id: String(n.id || `srv:${Date.now()}`),
+          type: notifType || 'workshop_new_deal',
+          title: String(n.title || (isAssignmentOrTask ? 'Giao việc' : 'Deal xưởng')),
+          message: String(n.message || ''),
+          entity_type: n.entity_type,
+          entity_id: n.entity_id,
+          is_read: false,
+          created_at: String(n.created_at || new Date().toISOString()),
+          metadata: {
+            ...(n.metadata || {}),
+            ...(dealTypes.has(notifType) ? { ecosystem_module_key: 'production' } : {}),
+          },
+        });
+        setUnreadCount((c) => c + 1);
+        emitComment(enriched);
+        if (dealTypes.has(notifType)) {
           emitSync({
             type: 'project:board_changed',
             payload: {
@@ -471,23 +493,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
             },
           });
         }
-        return;
       }
-      const eco = n.metadata?.ecosystem_module_key;
-      if (eco && eco !== 'production') return;
-      const enriched = enrichNotificationPreview({
-        id: String(n.id || `srv:${Date.now()}`),
-        type: 'comment_added',
-        title: String(n.title || 'Bình luận'),
-        message: String(n.message || ''),
-        entity_type: n.entity_type,
-        entity_id: n.entity_id,
-        is_read: false,
-        created_at: String(n.created_at || new Date().toISOString()),
-        metadata: n.metadata || null,
-      });
-      setUnreadCount((c) => c + 1);
-      emitComment(enriched);
     };
 
     s.on('project:comment', onProjectComment);

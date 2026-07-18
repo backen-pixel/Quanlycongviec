@@ -16,7 +16,11 @@ export async function showLocalMessengerNotification(p: MessengerNotifPayload): 
   try {
     const body = p.message?.trim() || 'Có tin nhắn mới';
     const title = p.senderName ? `${p.title} · ${p.senderName}` : p.title || 'Tin nhắn mới';
+    const identifier = p.messageId
+      ? `msg:${p.messageId}`
+      : `msg:${p.groupId}:${String(body).slice(0, 40)}`;
     await Notifications.scheduleNotificationAsync({
+      identifier,
       content: {
         title,
         body,

@@ -6,11 +6,14 @@ export const SX_NOTIF_CHANNEL = 'sx_comments';
 export const SX_CHAT_CHANNEL = 'crm_chat';
 /** Khớp backend pushSender CHANNEL_CALL — cuộc gọi đến */
 export const SX_CALL_CHANNEL = 'crm_call';
+/** Khớp backend pushSender CHANNEL_SYSTEM — deal / giao việc / thông báo chung */
+export const SX_SYSTEM_CHANNEL = 'crm_system_tray_v3';
 
 export const SX_NOTIF_CHANNELS = {
   comments: SX_NOTIF_CHANNEL,
   chat: SX_CHAT_CHANNEL,
   call: SX_CALL_CHANNEL,
+  system: SX_SYSTEM_CHANNEL,
 } as const;
 
 export async function setupNotificationChannels(): Promise<void> {
@@ -42,5 +45,14 @@ export async function setupNotificationChannels(): Promise<void> {
     lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
     sound: 'default',
     bypassDnd: true,
+  });
+  await Notifications.setNotificationChannelAsync(SX_SYSTEM_CHANNEL, {
+    name: 'Thông báo hệ thống SX',
+    description: 'Deal xưởng, giao việc và thông báo chung',
+    importance: Notifications.AndroidImportance.HIGH,
+    vibrationPattern: [0, 250, 250, 250],
+    lightColor: '#0EA5E9',
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    sound: 'default',
   });
 }

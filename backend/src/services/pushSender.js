@@ -585,6 +585,8 @@ async function sendFcmTrayNotification(tokens, notification) {
             notification: {
               channel_id: payload.channelId,
               sound: 'default',
+              // Gộp trùng local tray cùng id khi app còn sống + FCM cùng lúc.
+              tag: String(notification.id || notification.type || 'sx'),
             },
           },
         },
@@ -669,21 +671,22 @@ async function sendMobilePush(userId, notification) {
       await sendExpoChunk(messages.slice(i, i + CHUNK_SIZE));
     }
 
-    // FCM cuộc gọi: data-only → CrmFirebaseMessagingService hiện full-screen kể cả app kill.
-    // Gộp token legacy + v2; không dùng notification payload (Android bỏ qua onMessageReceived).
+    // FCM cuộc gọi: data-only → full-screen kể cả app kill.
+    // Các loại còn lại: luôn gửi FCM tray (sx-mobile + crmv2) để hiện thanh thông báo hệ thống khi app nền/kill.
     if (isCall) {
       const callFcmRows = pickActiveFcmTokens({ fcm: allFcm, expo: [] }, 3);
       if (callFcmRows.length) await sendFcmIncomingCall(callFcmRows, notification);
-    } else if (fcmRows.length && isChatType(notification.type)) {
-      await sendFcmDataOnly(fcmRows, notification);
-      await sendFcmTrayNotification(fcmRows, notification);
-    } else if (fcmRows.length && isProductionCommentNotification(notification)) {
-      await sendFcmTrayNotification(fcmRows, notification);
-    }
-
-    // CRM Mobile v2: tray cho chat/thông báo thường (cuộc gọi xử lý ở nhánh isCall phía trên).
-    if (v2FcmRows.length && !isCall) {
-      await sendFcmTrayNotification(v2FcmRows, notification);
+    } else {
+      if (fcmRows.length && isChatType(notification.type)) {
+        // Bubble wake (data-only) + tray hệ thống.
+        await sendFcmDataOnly(fcmRows, notification);
+      }
+      if (fcmRows.length) {
+        await sendFcmTrayNotification(fcmRows, notification);
+      }
+      if (v2FcmRows.length) {
+        await sendFcmTrayNotification(v2FcmRows, notification);
+      }
     }
   } catch (e) {
     console.warn('[pushSender]', e.message || e);
