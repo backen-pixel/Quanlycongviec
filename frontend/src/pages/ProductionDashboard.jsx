@@ -295,6 +295,9 @@ export default function ProductionDashboard() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [firstLoaded, setFirstLoaded] = useState(false);
+  /** Flash ngắn «Đã lọc xong» sau khi sync/load filter hoàn tất. */
+  const [filterAppliedHint, setFilterAppliedHint] = useState(false);
+  const wasFilterBusyRef = useRef(false);
   const loadSeqRef = useRef(0);
   const sxLoaderGateRef = useRef(null);
   const [searchQuery, setSearchQuery] = useState(() => (typeof P0?.searchQuery === 'string' ? P0.searchQuery : ''));
@@ -650,9 +653,8 @@ export default function ProductionDashboard() {
         }).catch(() => null),
       ]);
       setKpis(dashRes.data?.kpis || {});
-      // KHÔNG set pipeline ở đây: `/production/dashboard` (không có workshop_type_id) trả cột
-      // của TẤT CẢ phân loại → gây hiển thị pipeline của cả 2 loại. Cột Kanban do effect
-      // riêng bên dưới sở hữu, luôn lọc theo `filterWorkTypeId` của công ty hiện hành.
+      // KHÔNG set pipeline ở đây — cột Kanban do effect `/production/pipeline-stages`
+      // (theo filterWorkTypeId: uuid / «Tất cả» / «Chưa phân loại»).
       if (projectList !== null) setProjects(projectList);
       if (!isStale()) markLoadComplete();
     } catch (e) {
@@ -668,9 +670,8 @@ export default function ProductionDashboard() {
     }
   }, [companyParam, dealCompanyParam, kanbanLoadKey, showVptSxWorkshopFilter, filterSxWorkshopCompany]);
 
-  const dataLoadReady = !workTypesFetching
-    && workTypesCompanyId === companyForTypes
-    && (workTypes.length === 0 || !!filterWorkTypeId);
+  /** Chờ phân loại theo đúng công ty xưởng — cho phép filterWorkTypeId rỗng (= Tất cả). */
+  const dataLoadReady = !workTypesFetching && workTypesCompanyId === companyForTypes;
 
   useEffect(() => {
     if (!dataLoadReady) return;
@@ -705,9 +706,7 @@ export default function ProductionDashboard() {
     const prev = prevWorkTypeForReloadRef.current;
     prevWorkTypeForReloadRef.current = filterWorkTypeId;
     if (prev === filterWorkTypeId) return;
-    // Lần gán phân loại mặc định đầu tiên — load() chính đã xử lý qua dataLoadReady.
-    if (!prev && filterWorkTypeId) return;
-    if (!filterWorkTypeId) return;
+    // Đổi loại (kể cả → «Tất cả» / «Chưa phân loại») → tải lại project theo filter API.
     load({ silent: true, bustCache: true });
   }, [filterWorkTypeId, load, workTypesCompanyId, companyForTypes]);
 
@@ -802,31 +801,30 @@ export default function ProductionDashboard() {
   }, [load, pipeline, workTypes, companyParam, dealCompanyParam, filterCompany, filterWorkTypeId, companies, user, showVptSxWorkshopFilter, filterSxWorkshopCompany, canPickProductionCreateCompany]);
 
   /**
-   * Nguồn DUY NHẤT của cột Kanban (`pipeline`). Luôn lọc theo phân loại đang chọn —
-   * KHÔNG bao giờ tải "tất cả loại" (đó là nguyên nhân Kanban nhảy/hiển thị pipeline
-   * của cả 2 phân loại khi đổi công ty). Chạy silent (không bật spinner toàn trang).
+   * Nguồn DUY NHẤT của cột Kanban (`pipeline`).
+   * - Có filterWorkTypeId (uuid): chỉ cột của phân loại đó (+ global/intake theo BE).
+   * - Rỗng («Tất cả»): bỏ workshop_type_id → toàn bộ cột của công ty xưởng.
+   * - «none»: cột global / intake (chưa phân loại).
+   * Chờ workTypesCompanyId khớp để tránh nhảy cột khi đổi công ty.
    */
   useEffect(() => {
     // workTypes chưa khớp công ty hiện hành (đang refetch) → chờ, tránh tải nhầm cột.
     if (workTypesCompanyId !== companyForTypes) return undefined;
-    const typesExist = Array.isArray(workTypes) && workTypes.length > 0;
-    // Công ty CÓ phân loại nhưng chưa chọn loại cụ thể → chờ effect default chọn loại,
-    // tuyệt đối không tải all-types trong lúc chuyển tiếp. «Chưa phân loại» vẫn tải cột global.
-    if (typesExist && !filterWorkTypeId) return undefined;
     let cancelled = false;
     (async () => {
       try {
         const params = { all: 'false' };
         if (companyParam) params.company_id = companyParam;
-        // Công ty không cấu hình loại → bỏ workshop_type_id để lấy cột Global hợp lệ.
-        if (filterWorkTypeId && filterWorkTypeId !== 'none') params.workshop_type_id = filterWorkTypeId;
+        // «Tất cả» → không gửi workshop_type_id. «Chưa phân loại» → global.
+        if (filterWorkTypeId === 'none') params.workshop_type_id = 'global';
+        else if (filterWorkTypeId) params.workshop_type_id = filterWorkTypeId;
         const { data } = await api.get('/production/pipeline-stages', { params });
         if (cancelled) return;
         setPipeline(Array.isArray(data) ? data : []);
       } catch { /* silent */ }
     })();
     return () => { cancelled = true; };
-  }, [companyParam, companyForTypes, filterWorkTypeId, workTypes, workTypesCompanyId]);
+  }, [companyParam, companyForTypes, filterWorkTypeId, workTypesCompanyId]);
 
   useEffect(() => {
     if (!dealCompanyParam) {
@@ -971,24 +969,18 @@ export default function ProductionDashboard() {
     return () => { cancelled = true; };
   }, [companyForTypes, dealCompanyParam]);
 
-  // Mặc định luôn chọn 1 phân loại hợp lệ (không để "trống/tất cả/chưa phân loại").
+  // Giữ «Tất cả» (rỗng) / «Chưa phân loại»; chỉ reset khi UUID loại không còn thuộc công ty hiện hành.
   useEffect(() => {
     // Chỉ resolve khi workTypes đã đúng công ty hiện hành — tránh "nhảy" sang loại của công ty cũ.
     if (workTypesCompanyId !== companyForTypes) return;
     if (!Array.isArray(workTypes) || workTypes.length === 0) {
-      if (filterWorkTypeId) setFilterWorkTypeId('');
+      if (filterWorkTypeId && filterWorkTypeId !== 'none') setFilterWorkTypeId('');
       return;
     }
-
-    // Chưa chọn phân loại → tự chọn loại đầu tiên (không dùng «Chưa phân loại»).
-    if (!filterWorkTypeId) {
-      setFilterWorkTypeId(String(workTypes[0].id));
-      return;
-    }
-    if (filterWorkTypeId === 'none') return;
+    if (!filterWorkTypeId || filterWorkTypeId === 'none') return;
 
     const stillExists = workTypes.some((w) => String(w.id) === String(filterWorkTypeId));
-    if (!stillExists) setFilterWorkTypeId(String(workTypes[0].id));
+    if (!stillExists) setFilterWorkTypeId('');
   }, [workTypes, workTypesCompanyId, companyForTypes, filterWorkTypeId]);
 
 
@@ -2254,6 +2246,35 @@ export default function ProductionDashboard() {
 
   const sxMainContentLoading = loading && !firstLoaded;
 
+  const filterBusy = !!(
+    workTypesFetching
+    || (companyForTypes && workTypesCompanyId !== companyForTypes)
+    || (loading && !firstLoaded)
+    || syncing
+  );
+
+  useEffect(() => {
+    if (filterBusy) {
+      wasFilterBusyRef.current = true;
+      setFilterAppliedHint(false);
+      return undefined;
+    }
+    if (!wasFilterBusyRef.current || !firstLoaded) return undefined;
+    wasFilterBusyRef.current = false;
+    setFilterAppliedHint(true);
+    const t = window.setTimeout(() => setFilterAppliedHint(false), 2800);
+    return () => window.clearTimeout(t);
+  }, [filterBusy, firstLoaded]);
+
+  const workTypeFilterLabel = useMemo(() => {
+    if (!companyForTypes || !workTypes.length) return '';
+    if (filterWorkTypeId === 'none') return 'Chưa phân loại';
+    if (filterWorkTypeId) {
+      return workTypes.find((wt) => String(wt.id) === String(filterWorkTypeId))?.name || 'Phân loại';
+    }
+    return 'Tất cả phân loại';
+  }, [companyForTypes, workTypes, filterWorkTypeId]);
+
   return (
     <div className="space-y-3">
       {/* Panel điều khiển xưởng SX — hành động, KPI, tìm kiếm */}
@@ -2271,10 +2292,19 @@ export default function ProductionDashboard() {
                   Đang tải…
                 </span>
               )}
-              {syncing && firstLoaded && (
-                <span className="inline-flex items-center gap-1.5 shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600">
-                  <Loader2 className="h-3 w-3 animate-spin text-emerald-600" />
-                  Đang cập nhật…
+              {filterBusy && firstLoaded && (
+                <span className="inline-flex items-center gap-1.5 shrink-0 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                  <Loader2 className="h-3 w-3 animate-spin text-amber-600" />
+                  Đang lọc…
+                </span>
+              )}
+              {filterAppliedHint && !filterBusy && (
+                <span
+                  className="inline-flex items-center gap-1.5 shrink-0 rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800 animate-in fade-in duration-200"
+                  title="Dữ liệu đã khớp bộ lọc hiện tại"
+                >
+                  <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                  Đã lọc xong · {filteredCardCount} thẻ
                 </span>
               )}
           <button
@@ -2426,10 +2456,23 @@ export default function ProductionDashboard() {
           </button>
                 </div>
               </div>
-              <span className="hidden md:inline text-[10px] text-slate-500 shrink-0 tabular-nums whitespace-nowrap">
-                <strong className="text-slate-700">{projects.length}</strong>
-                {' / '}
-                <strong className="text-indigo-700">{filteredCardCount}</strong>
+              <span
+                className="hidden md:inline text-[10px] text-slate-500 shrink-0 tabular-nums whitespace-nowrap"
+                title={workTypeFilterLabel ? `Đang xem: ${workTypeFilterLabel}` : undefined}
+              >
+                {filterBusy && firstLoaded ? (
+                  <span className="text-amber-700 font-medium">Đang lọc…</span>
+                ) : (
+                  <>
+                    {workTypeFilterLabel && (
+                      <span className="text-violet-600 font-medium mr-1">{workTypeFilterLabel} ·</span>
+                    )}
+                    <strong className="text-slate-700">{projects.length}</strong>
+                    {' / '}
+                    <strong className="text-indigo-700">{filteredCardCount}</strong>
+                    <span className="text-slate-400 font-normal"> thẻ</span>
+                  </>
+                )}
               </span>
             </div>
 
@@ -2437,24 +2480,31 @@ export default function ProductionDashboard() {
               {companyForTypes && workTypes.length > 0 && (
                 <div
                   className={`inline-flex items-center gap-1 h-7 px-2 rounded-lg border shrink-0 ${
-                    filterWorkTypeId === 'none'
-                      ? 'border-amber-300 bg-amber-50'
-                      : filterWorkTypeId
-                        ? 'border-teal-300 bg-teal-50'
-                        : 'border-violet-200 bg-white'
+                    filterBusy
+                      ? 'border-amber-300 bg-amber-50/80'
+                      : filterWorkTypeId === 'none'
+                        ? 'border-amber-300 bg-amber-50'
+                        : filterWorkTypeId
+                          ? 'border-teal-300 bg-teal-50'
+                          : 'border-violet-300 bg-violet-50'
                   }`}
-                  title="Phân loại dự án xưởng"
+                  title={filterBusy ? 'Đang áp dụng bộ lọc phân loại…' : `Đang xem: ${workTypeFilterLabel}`}
                 >
-                  <Layers className={`h-3 w-3 shrink-0 ${
-                    filterWorkTypeId === 'none' ? 'text-amber-600'
-                    : filterWorkTypeId ? 'text-teal-700' : 'text-violet-500'
-                  }`} />
+                  {filterBusy ? (
+                    <Loader2 className="h-3 w-3 shrink-0 animate-spin text-amber-600" />
+                  ) : (
+                    <Layers className={`h-3 w-3 shrink-0 ${
+                      filterWorkTypeId === 'none' ? 'text-amber-600'
+                      : filterWorkTypeId ? 'text-teal-700' : 'text-violet-600'
+                    }`} />
+                  )}
                   <select
                     value={filterWorkTypeId}
                     onChange={(e) => setFilterWorkTypeId(e.target.value)}
+                    disabled={filterBusy && !firstLoaded}
                     className={`h-6 text-[11px] bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[11rem] font-semibold ${
                       filterWorkTypeId === 'none' ? 'text-amber-700'
-                      : filterWorkTypeId ? 'text-teal-800' : 'text-slate-700'
+                      : filterWorkTypeId ? 'text-teal-800' : 'text-violet-800'
                     }`}
                   >
                     <option value="">Phân loại: Tất cả</option>
@@ -2463,12 +2513,17 @@ export default function ProductionDashboard() {
                       <option key={wt.id} value={wt.id}>{wt.name}</option>
                     ))}
                   </select>
-                  {filterWorkTypeId && (
+                  {!filterBusy && !filterWorkTypeId && (
+                    <span title="Đang xem tất cả phân loại" className="inline-flex">
+                      <CheckCircle2 className="h-3 w-3 shrink-0 text-violet-500" />
+                    </span>
+                  )}
+                  {filterWorkTypeId && !filterBusy && (
             <button
               type="button"
                       onClick={() => setFilterWorkTypeId('')}
                       className="p-0.5 rounded hover:bg-white/70 cursor-pointer"
-                      title="Bỏ phân loại"
+                      title="Về Tất cả phân loại"
             >
                       <X className="h-3 w-3" />
             </button>
@@ -2622,13 +2677,17 @@ export default function ProductionDashboard() {
                 })}
                 </div>
               <span className="text-[10px] text-slate-500 ml-auto shrink-0 tabular-nums md:hidden">
-                {projects.length} / {filteredCardCount} thẻ
+                {filterBusy && firstLoaded
+                  ? 'Đang lọc…'
+                  : `${workTypeFilterLabel ? `${workTypeFilterLabel} · ` : ''}${projects.length} / ${filteredCardCount} thẻ`}
               </span>
               </div>
           ) : (
             <div className="flex md:hidden justify-end px-3 pb-2 sm:px-4">
               <span className="text-[10px] text-slate-500 tabular-nums">
-                {projects.length} / {filteredCardCount} thẻ
+                {filterBusy && firstLoaded
+                  ? 'Đang lọc…'
+                  : `${workTypeFilterLabel ? `${workTypeFilterLabel} · ` : ''}${projects.length} / ${filteredCardCount} thẻ`}
               </span>
                 </div>
               )}
