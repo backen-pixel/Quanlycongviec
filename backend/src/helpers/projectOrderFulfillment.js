@@ -1,4 +1,5 @@
 ﻿const { supabase } = require('../config/supabase');
+const { PHUC_DAT_COMPANY_ID } = require('./hideQuoteContractFromProduction');
 const {
   fetchProductionWorkshopTemplatesForApply,
   fetchProductionTemplatesForPipelineStage,
@@ -314,10 +315,15 @@ async function applyProductionTemplateToFulfillmentLead({
 }) {
   if (!leadId || !createdBy) return { created: 0, reason: 'missing_params' };
 
-  const buildEmergencySxInserts = (handoverMaps = null) => {
+  const buildEmergencySxInserts = (handoverMaps = null, templateCompanyId = null) => {
     // Bộ tối thiểu 9 cột sx_* với 3 việc/cột (có thể chỉnh sau).
+    const tiepNhanItems = ['Xác nhận thông tin đơn hàng', 'Tiếp nhận file/tài liệu', 'Chốt yêu cầu kỹ thuật ban đầu'];
+    // Phúc Đạt: luôn có công việc SX «Báo giá» (thấy ở sản xuất; khác BG thương mại CRM).
+    if (templateCompanyId && String(templateCompanyId) === String(PHUC_DAT_COMPANY_ID)) {
+      tiepNhanItems.push('Báo giá');
+    }
     const seed = [
-      { stage_slug: 'sx_tiep_nhan', items: ['Xác nhận thông tin đơn hàng', 'Tiếp nhận file/tài liệu', 'Chốt yêu cầu kỹ thuật ban đầu'] },
+      { stage_slug: 'sx_tiep_nhan', items: tiepNhanItems },
       { stage_slug: 'sx_thiet_ke_ke_hoach', items: ['Dựng/duyệt bản vẽ', 'Lập BOM & định mức', 'Lập kế hoạch tiến độ'] },
       { stage_slug: 'sx_kiem_tra_cheo', items: ['Rà soát kỹ thuật chéo', 'Xác nhận điểm rủi ro', 'Phê duyệt trước sản xuất'] },
       { stage_slug: 'sx_vat_tu', items: ['Kiểm kê tồn kho', 'Mua bù vật tư thiếu', 'Cấp phát vật tư'] },
@@ -454,10 +460,11 @@ async function applyProductionTemplateToFulfillmentLead({
     }
     templates = await scopeSxTemplatesForWorkshopType(templates, mustCompanyId, workshopTypeId);
     if (!templates?.length) {
-      if (workshopTypeId) {
+      // Phúc Đạt: vẫn emergency seed (kèm «Báo giá») dù đã có phân loại — không có bộ mẫu typed.
+      if (workshopTypeId && String(mustCompanyId || '') !== String(PHUC_DAT_COMPANY_ID)) {
         return sxNoBundleResult(workshopTypeId, mustCompanyId);
       }
-      const emergency = buildEmergencySxInserts(handoverStrict);
+      const emergency = buildEmergencySxInserts(handoverStrict, mustCompanyId);
       const toAdd = await filterMissingSxInserts(emergency);
       if (!toAdd.length) {
         return { created: 0, reason: 'no_missing_sx_tasks', template_count: 0, template_names: [], company_id: mustCompanyId };
@@ -498,13 +505,13 @@ async function applyProductionTemplateToFulfillmentLead({
     }
     if (itemErr) throw itemErr;
     if (!items?.length) {
-      if (workshopTypeId) {
+      if (workshopTypeId && String(mustCompanyId || '') !== String(PHUC_DAT_COMPANY_ID)) {
         return sxNoBundleResult(workshopTypeId, mustCompanyId, {
           template_count: templates.length,
           template_names: templates.map((t) => t.name).filter(Boolean),
         });
       }
-      const emergency = buildEmergencySxInserts(handoverStrict);
+      const emergency = buildEmergencySxInserts(handoverStrict, mustCompanyId);
       const toAdd = await filterMissingSxInserts(emergency);
       if (!toAdd.length) {
         return {
@@ -712,10 +719,11 @@ async function applyProductionTemplateToFulfillmentLead({
   if (tplErr) throw tplErr;
   templates = await scopeSxTemplatesForWorkshopType(templates, targetCompanyId, workshopTypeId);
   if (!templates?.length) {
-    if (workshopTypeId) {
+    // Phúc Đạt: vẫn emergency seed (kèm «Báo giá») dù đã có phân loại — không có bộ mẫu typed.
+    if (workshopTypeId && String(targetCompanyId || '') !== String(PHUC_DAT_COMPANY_ID)) {
       return sxNoBundleResult(workshopTypeId, targetCompanyId);
     }
-    const emergency = buildEmergencySxInserts(handoverLoose);
+    const emergency = buildEmergencySxInserts(handoverLoose, targetCompanyId);
     const toAdd = await filterMissingSxInserts(emergency);
     if (!toAdd.length) {
       return { created: 0, reason: 'no_missing_sx_tasks', template_count: 0, template_names: [], company_id: targetCompanyId || null };
@@ -755,13 +763,13 @@ async function applyProductionTemplateToFulfillmentLead({
   }
   if (itemErr) throw itemErr;
   if (!items?.length) {
-    if (workshopTypeId) {
+    if (workshopTypeId && String(targetCompanyId || '') !== String(PHUC_DAT_COMPANY_ID)) {
       return sxNoBundleResult(workshopTypeId, targetCompanyId, {
         template_count: templates.length,
         template_names: templates.map((t) => t.name).filter(Boolean),
       });
     }
-    const emergency = buildEmergencySxInserts(handoverLoose);
+    const emergency = buildEmergencySxInserts(handoverLoose, targetCompanyId);
     const toAdd = await filterMissingSxInserts(emergency);
     if (!toAdd.length) {
       return {
