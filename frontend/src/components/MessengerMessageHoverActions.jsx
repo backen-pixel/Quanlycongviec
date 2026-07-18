@@ -16,9 +16,11 @@ import {
   buildMessengerCopyText,
   copyImageToClipboard,
   copyTextToClipboard,
+  downloadAllMessengerImages,
   downloadMessengerFile,
   getFirstDownloadableAttachment,
   getFirstImageAttachment,
+  getImageAttachments,
 } from '../lib/messengerMessageActions';
 import { showCopyToast } from '../lib/copyToast';
 
@@ -54,6 +56,7 @@ export default function MessengerMessageHoverActions({
   const menuRef = useRef(null);
 
   const img = getFirstImageAttachment(message);
+  const images = getImageAttachments(message);
   const file = getFirstDownloadableAttachment(message);
   const hasText = !!(message?.content || '').trim();
   const hasReactions = reactionGroups.length > 0;
@@ -326,10 +329,23 @@ function MoreMenuPanel({
         <MenuRow
           icon={Download}
           label="Tải xuống"
-          onClick={() => {
-            downloadMessengerFile(file.url, file.name);
-            onMoreMenuOpen?.(false);
-          }}
+          onClick={() =>
+            void runMenuAction(async () => {
+              await downloadMessengerFile(file.url, file.name);
+            })
+          }
+        />
+      ) : null}
+      {images.length > 1 ? (
+        <MenuRow
+          icon={Download}
+          label={`Tải hết ${images.length} ảnh`}
+          onClick={() =>
+            void runMenuAction(async () => {
+              await downloadAllMessengerImages(message);
+              showCopyToast(`Đã tải ${images.length} ảnh`);
+            })
+          }
         />
       ) : null}
       <MenuRow

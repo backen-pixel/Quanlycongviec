@@ -21,16 +21,21 @@ function isLocalUploadPath(url) {
   return LOCAL_UPLOAD_PREFIXES.some((prefix) => p.startsWith(prefix));
 }
 
-function saveBlobDownload(blob, fileName) {
-  const blobUrl = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = blobUrl;
-  a.download = fileName;
-  a.rel = 'noopener';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+async function saveBlobDownload(blob, fileName) {
+  try {
+    const { saveAs } = await import('file-saver');
+    saveAs(blob, fileName);
+  } catch {
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = fileName;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+  }
 }
 
 /** SPA static host (tubep-frontend) trả index.html 200 cho /uploads/... — không phải file thật. */
@@ -246,13 +251,25 @@ export function collectMessengerAttachments(message) {
 export function getFirstImageAttachment(msg) {
   const items = collectMessengerAttachments(msg);
   for (const a of items) {
-    if ((a.type || '').startsWith('image/')) return a;
+    if ((a.type || '').startsWith('image/') || isImageAttachmentName(a.name || a.url)) return a;
   }
   const mime = msg?.attachment_mime || '';
-  if (mime.startsWith('image/') && msg?.attachment_url) {
-    return { url: msg.attachment_url, name: msg.attachment_name, type: mime };
+  if ((mime.startsWith('image/') || isImageAttachmentName(msg?.attachment_name || msg?.attachment_url)) && msg?.attachment_url) {
+    return { url: msg.attachment_url, name: msg.attachment_name, type: mime || 'image/jpeg' };
   }
   return null;
+}
+
+export function getImageAttachments(msg) {
+  const items = collectMessengerAttachments(msg);
+  const images = items.filter((a) => (a.type || '').startsWith('image/') || isImageAttachmentName(a.name || a.url));
+  if (images.length) return images;
+  const one = getFirstImageAttachment(msg);
+  return one ? [one] : [];
+}
+
+function isImageAttachmentName(nameOrUrl) {
+  return /\.(jpe?g|png|gif|webp|bmp|svg|heic|heif|avif)(?:$|\?)/i.test(String(nameOrUrl || ''));
 }
 
 export function getFirstDownloadableAttachment(msg) {
@@ -353,7 +370,7 @@ export async function downloadMessengerFile(url, name) {
 
   if (localPath && isLocalUploadPath(localPath)) {
     const blob = await fetchLocalUploadBlob(localPath, fileName);
-    saveBlobDownload(blob, fileName);
+    await saveBlobDownload(blob, fileName);
     return;
   }
 
@@ -368,7 +385,7 @@ export async function downloadMessengerFile(url, name) {
     });
     if (!res.ok) throw new Error('Không tải được tệp');
     const blob = await assertValidDownloadBlob(await res.blob(), fileName);
-    saveBlobDownload(blob, fileName);
+    await saveBlobDownload(blob, fileName);
   } catch (e) {
     throw new Error(
       e?.message === 'Failed to fetch'
@@ -376,6 +393,24 @@ export async function downloadMessengerFile(url, name) {
         : (e?.message || 'Không tải được tệp'),
     );
   }
+}
+
+/** Tải hết ảnh trong 1 tin nhắn — 1 ảnh thì tải lẻ, nhiều ảnh gói ZIP. */
+export async function downloadAllMessengerImages(message) {
+  const images = getImageAttachments(message);
+  if (!images.length) throw new Error('Tin nhắn không có ảnh');
+  if (images.length === 1) {
+    await downloadMessengerFile(images[0].url, images[0].name || 'anh.jpg');
+    return { ok: 1, total: 1 };
+  }
+  const { downloadUploadFilesAsZip } = await import('./publicFileUrl');
+  return downloadUploadFilesAsZip(
+    images.map((img, i) => ({
+      url: resolveMediaUrl(img.url) || img.url,
+      name: fixMessengerFilename(img.name) || `anh-${i + 1}.jpg`,
+    })),
+    `anh-tin-nhan-${images.length}.zip`,
+  );
 }
 
 /** Mở tệp trong tab mới (blob URL — tránh cross-origin chặn mở trực tiếp). */
@@ -402,7 +437,7 @@ export async function openMessengerFile(url, name) {
     const blobUrl = URL.createObjectURL(blob);
     const opened = window.open(blobUrl, '_blank', 'noopener,noreferrer');
     if (!opened) {
-      saveBlobDownload(blob, fileName);
+      await saveBlobDownload(blob, fileName);
       URL.revokeObjectURL(blobUrl);
       return;
     }

@@ -13,6 +13,7 @@ import {
   FileSpreadsheet,
   FileText,
   FileVideo,
+  Loader2,
   Paperclip,
 } from 'lucide-react';
 import api from '../lib/api';
@@ -22,7 +23,7 @@ import { CrmCommentMentionComposer, renderCrmCommentBody } from './crmCommentMen
 import { FilePreview, FileUploadButton, uploadFilesBatch } from './FileUpload';
 import UploadProgressBubble from './UploadProgressBubble';
 import UploadFileLightbox from './UploadFileLightbox';
-import { downloadUploadFile, publicFileUrl as pubUrl } from '../lib/publicFileUrl';
+import { downloadUploadFile, downloadUploadFilesAsZip, publicFileUrl as pubUrl } from '../lib/publicFileUrl';
 import { handleCommentFilePaste } from '../lib/chatClipboard';
 import { CommentNewNotice, useCommentThreadLive } from './commentThreadLiveUx';
 import { isQuoteContractActivityComment } from '../lib/hideQuoteContractFromProduction';
@@ -161,10 +162,9 @@ function fileVisual(name, mime) {
 }
 
 export function CommentAttachmentsBlock({ attachments, onOpenImage }) {
-  const items = commentAttachmentList(attachments);
-  if (!items.length) return null;
-  const images = items.filter(isCommentImage);
-  const otherFiles = items.filter((f) => !isCommentImage(f));
+  const items = useMemo(() => commentAttachmentList(attachments), [attachments]);
+  const images = useMemo(() => items.filter(isCommentImage), [items]);
+  const otherFiles = useMemo(() => items.filter((f) => !isCommentImage(f)), [items]);
 
   const localLightboxItems = useMemo(
     () => images.map((img) => ({ url: pubUrl(img.url), title: img.name || 'image', rawPath: img.url })),
@@ -172,6 +172,40 @@ export function CommentAttachmentsBlock({ attachments, onOpenImage }) {
   );
   const [localOpen, setLocalOpen] = useState(false);
   const [localIndex, setLocalIndex] = useState(0);
+  const [dlBusy, setDlBusy] = useState(false);
+  const [dlAllBusy, setDlAllBusy] = useState(false);
+
+  if (!items.length) return null;
+
+  const handleDownloadOne = async (url, name) => {
+    setDlBusy(true);
+    try {
+      await downloadUploadFile(url, name || 'tai-lieu');
+    } catch (err) {
+      alert(err?.message || 'Không tải được file');
+    } finally {
+      setDlBusy(false);
+    }
+  };
+
+  const handleDownloadAllImages = async () => {
+    if (!images.length) return;
+    setDlAllBusy(true);
+    try {
+      if (images.length === 1) {
+        await downloadUploadFile(images[0].url, images[0].name || 'anh.jpg');
+      } else {
+        await downloadUploadFilesAsZip(
+          images.map((img) => ({ url: img.url, name: img.name || 'anh' })),
+          `anh-binh-luan-${images.length}.zip`,
+        );
+      }
+    } catch (err) {
+      alert(err?.message || 'Không tải được ảnh');
+    } finally {
+      setDlAllBusy(false);
+    }
+  };
 
   return (
     <div className="mt-2 space-y-2">
@@ -184,42 +218,57 @@ export function CommentAttachmentsBlock({ attachments, onOpenImage }) {
         />
       )}
       {images.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {images.map((img, ii) => {
-            const href = pubUrl(img.url);
-            return (
-              <button
-                key={ii}
-                type="button"
-                className="block"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  if (onOpenImage) return onOpenImage(href, { title: img.name || 'image', rawPath: img.url });
-                  setLocalIndex(ii);
-                  setLocalOpen(true);
-                }}
-              >
-                <img
-                  src={href}
-                  alt={img.name || 'image'}
-                  className="max-h-48 max-w-xs rounded-lg border border-[#e4e6eb] object-cover hover:opacity-90 transition-opacity"
-                />
-              </button>
-            );
-          })}
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap gap-2">
+            {images.map((img, ii) => {
+              const href = pubUrl(img.url);
+              return (
+                <button
+                  key={ii}
+                  type="button"
+                  className="block"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (onOpenImage) return onOpenImage(href, { title: img.name || 'image', rawPath: img.url });
+                    setLocalIndex(ii);
+                    setLocalOpen(true);
+                  }}
+                >
+                  <img
+                    src={href}
+                    alt={img.name || 'image'}
+                    className="max-h-48 max-w-xs rounded-lg border border-[#e4e6eb] object-cover hover:opacity-90 transition-opacity"
+                  />
+                </button>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            disabled={dlAllBusy}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              void handleDownloadAllImages();
+            }}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#e4e6eb] bg-white px-2.5 py-1.5 text-[12px] font-semibold text-[#1877f2] hover:bg-[#f0f2f5] disabled:opacity-60"
+          >
+            {dlAllBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+            {images.length > 1 ? `Tải hết ${images.length} ảnh` : 'Tải ảnh'}
+          </button>
         </div>
       )}
       {otherFiles.length > 0 && (
         <div className="space-y-2">
           {otherFiles.map((f, fi) => {
-            const href = pubUrl(f.url);
             const v = fileVisual(f.name, f.mime);
             const sizeText = humanFileSize(f.size);
             return (
               <button
                 key={fi}
                 type="button"
+                disabled={dlBusy}
                 className={[
                   'w-full text-left flex items-center gap-3 rounded-2xl',
                   'bg-white px-3 py-2.5',
@@ -229,13 +278,12 @@ export function CommentAttachmentsBlock({ attachments, onOpenImage }) {
                   'hover:border-[#cbd5e1]',
                   'transition-[transform,box-shadow,border-color] duration-150',
                   'focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1877f2]/30',
+                  'disabled:opacity-60 disabled:pointer-events-none',
                 ].join(' ')}
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  downloadUploadFile(f.url, f.name || 'tai-lieu').catch((err) => {
-                    alert(err?.message || 'Không tải được file');
-                  });
+                  void handleDownloadOne(f.url, f.name || 'tai-lieu');
                 }}
               >
                 <span className={`shrink-0 h-11 w-11 rounded-xl ring-1 ${v.bg} ${v.ring} flex items-center justify-center`}>
@@ -253,7 +301,7 @@ export function CommentAttachmentsBlock({ attachments, onOpenImage }) {
                   </span>
                 </span>
                 <span className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-[#1877f2] px-3 py-2 text-[12px] font-semibold text-white shadow-sm hover:bg-[#166fe5] transition-colors">
-                  <Download className="h-4 w-4 text-white" />
+                  {dlBusy ? <Loader2 className="h-4 w-4 animate-spin text-white" /> : <Download className="h-4 w-4 text-white" />}
                   Tải xuống
                 </span>
               </button>

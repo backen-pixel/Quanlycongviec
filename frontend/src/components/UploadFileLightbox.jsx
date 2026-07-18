@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Download, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, ExternalLink, Printer } from 'lucide-react';
-import { getFileDownloadAnchorProps, publicFileUrl, downloadUploadFile, printUploadImage } from '../lib/publicFileUrl';
+import { X, Download, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, ExternalLink, Printer, Loader2 } from 'lucide-react';
+import { getFileDownloadAnchorProps, publicFileUrl, downloadUploadFile, downloadUploadFilesAsZip, printUploadImage } from '../lib/publicFileUrl';
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
@@ -28,6 +28,8 @@ export default function UploadFileLightbox({
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
+  const [dlBusy, setDlBusy] = useState(false);
+  const [dlAllBusy, setDlAllBusy] = useState(false);
   const dragStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
   const draggingRef = useRef(false);
 
@@ -112,12 +114,32 @@ export default function UploadFileLightbox({
   const handleDownload = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!downloadHref) return;
-    downloadUploadFile(downloadHref, downloadName).catch((err) => {
-      // Fallback: mở tab gốc nếu blob download thất bại
-      if (downloadProps?.href) window.open(downloadProps.href, '_blank', 'noopener,noreferrer');
-      else alert(err?.message || 'Không tải được file');
-    });
+    if (!downloadHref || dlBusy) return;
+    setDlBusy(true);
+    downloadUploadFile(downloadHref, downloadName)
+      .catch((err) => {
+        // Fallback: mở tab gốc nếu blob download thất bại
+        if (downloadProps?.href) window.open(downloadProps.href, '_blank', 'noopener,noreferrer');
+        else alert(err?.message || 'Không tải được file');
+      })
+      .finally(() => setDlBusy(false));
+  };
+
+  const handleDownloadAll = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!multi || dlAllBusy) return;
+    setDlAllBusy(true);
+    downloadUploadFilesAsZip(
+      items.map((it) => ({
+        url: it.url,
+        rawPath: it.rawPath || it.url,
+        name: it.title || 'anh',
+      })),
+      `anh-${items.length}.zip`,
+    )
+      .catch((err) => alert(err?.message || 'Không tải được ảnh'))
+      .finally(() => setDlAllBusy(false));
   };
 
   const handlePrint = (e) => {
@@ -183,9 +205,20 @@ export default function UploadFileLightbox({
             <button
               type="button"
               onClick={handleDownload}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm"
+              disabled={dlBusy}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm disabled:opacity-50"
             >
-              <Download size={16} /> Tải xuống
+              {dlBusy ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} Tải xuống
+            </button>
+          )}
+          {multi && (
+            <button
+              type="button"
+              onClick={handleDownloadAll}
+              disabled={dlAllBusy}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm disabled:opacity-50"
+            >
+              {dlAllBusy ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} Tải hết ({items.length})
             </button>
           )}
           {!downloadHref && cur.url && (

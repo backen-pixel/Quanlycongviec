@@ -65,21 +65,63 @@ export function sameOriginUploadPath(pathOrUrl) {
   return '';
 }
 
-/** Tải file upload về ArrayBuffer — ưu tiên same-origin /uploads (tránh CORS). */
-export async function fetchUploadArrayBuffer(pathOrUrl) {
-  const candidates = [];
-  const local = typeof window !== 'undefined' ? sameOriginUploadPath(pathOrUrl) : '';
-  if (local) candidates.push(local);
+function looksLikeHtmlOrSpaFallback(buf) {
+  if (!buf || buf.byteLength < 15) return false;
+  const head = new TextDecoder('utf-8', { fatal: false })
+    .decode(new Uint8Array(buf.slice(0, 64)))
+    .trimStart()
+    .toLowerCase();
+  return head.startsWith('<!doctype') || head.startsWith('<html') || head.startsWith('<head');
+}
+
+/**
+ * Tải file upload về Blob.
+ * - /uploads/...: ưu tiên API serve-local (tránh SPA frontend trả index.html 200)
+ * - URL tuyệt đối (Supabase…): fetch CORS, bỏ qua HTML giả
+ */
+export async function fetchUploadBlob(pathOrUrl) {
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null;
+  const localPath = sameOriginUploadPath(pathOrUrl);
   const absolute = publicFileUrl(pathOrUrl);
-  if (absolute) candidates.push(absolute);
-  const urls = [...new Set(candidates.filter(Boolean))];
+  const candidates = [];
+
+  if (localPath?.startsWith('/uploads/')) {
+    const qs = new URLSearchParams({ path: localPath });
+    candidates.push({ href: `/api/upload/serve-local?${qs}`, auth: true });
+    if (typeof window !== 'undefined' && import.meta.env.DEV) {
+      candidates.push({ href: localPath, auth: false });
+    }
+  }
+  if (absolute && !absolute.startsWith('blob:') && !absolute.startsWith('data:')) {
+    candidates.push({ href: absolute, auth: false });
+  } else if (absolute) {
+    candidates.push({ href: absolute, auth: false });
+  }
 
   let lastErr = null;
-  for (const href of urls) {
+  for (const { href, auth } of candidates) {
+    if (!href) continue;
     try {
-      const res = await fetch(href, { credentials: 'omit', cache: 'no-store' });
-      if (res.ok) return res.arrayBuffer();
-      lastErr = new Error(`Không tải được file (HTTP ${res.status})`);
+      const res = await fetch(href, {
+        credentials: auth ? 'include' : 'omit',
+        cache: 'no-store',
+        headers: auth && token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        lastErr = new Error(`Không tải được file (HTTP ${res.status})`);
+        continue;
+      }
+      const buf = await res.arrayBuffer();
+      if (!buf || buf.byteLength < 1) {
+        lastErr = new Error('File tải về rỗng hoặc hỏng');
+        continue;
+      }
+      if (looksLikeHtmlOrSpaFallback(buf)) {
+        lastErr = new Error('File không còn trên máy chủ hoặc URL sai');
+        continue;
+      }
+      const type = res.headers.get('content-type') || '';
+      return new Blob([buf], type && !type.includes('text/html') ? { type } : undefined);
     } catch (e) {
       lastErr = e;
     }
@@ -88,6 +130,12 @@ export async function fetchUploadArrayBuffer(pathOrUrl) {
     throw new Error('Không tải được file — kiểm tra kết nối hoặc thử «Tab mới» / «Tải».');
   }
   throw lastErr || new Error('Không tải được file');
+}
+
+/** Tải file upload về ArrayBuffer — ưu tiên same-origin /uploads (tránh CORS). */
+export async function fetchUploadArrayBuffer(pathOrUrl) {
+  const blob = await fetchUploadBlob(pathOrUrl);
+  return blob.arrayBuffer();
 }
 
 /**
@@ -211,29 +259,17 @@ export async function printUploadImage(pathOrUrl, title = 'Ảnh') {
   };
 }
 
-/** Tải file về máy — blob same-origin; cross-origin fallback mở tab mới. */
+/** Tải file về máy — blob + file-saver (ổn định hơn anchor thủ công trên Chrome). */
 export async function downloadUploadFile(pathOrUrl, fileName = 'tai-lieu') {
-  const safeName = String(fileName || 'tai-lieu').trim() || 'tai-lieu';
+  const safeName = String(fileName || 'tai-lieu').trim().replace(/[\\/:*?"<>|]/g, '_') || 'tai-lieu';
   try {
-    const buf = await fetchUploadArrayBuffer(pathOrUrl);
-    if (!buf || buf.byteLength < 1) {
-      throw new Error('File tải về rỗng hoặc hỏng');
-    }
-    const blob = new Blob([buf]);
-    const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = safeName;
-    a.rel = 'noopener';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    // Không revoke ngay — Chrome thường hủy download nếu revoke trước khi bắt đầu ghi file.
-    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    const blob = await fetchUploadBlob(pathOrUrl);
+    const { saveAs } = await import('file-saver');
+    saveAs(blob, safeName);
   } catch (err) {
     const props = getFileDownloadAnchorProps(pathOrUrl, { fileName: safeName });
-    if (props?.href) {
-      // Anchor + click giữ user-gesture tốt hơn window.open sau await (tránh popup blocker).
+    if (props?.href && /^https?:\/\//i.test(props.href)) {
+      // Fallback: mở URL gốc (Supabase thường vẫn cho tải qua tab).
       const a = document.createElement('a');
       a.href = props.href;
       a.target = '_blank';
@@ -246,5 +282,55 @@ export async function downloadUploadFile(pathOrUrl, fileName = 'tai-lieu') {
     }
     throw new Error(err?.message || 'Không tải được file');
   }
+}
+
+/**
+ * Tải nhiều ảnh/file thành 1 ZIP.
+ * @param {Array<{ url?: string, rawPath?: string, name?: string, title?: string }>} items
+ * @param {string} [zipName]
+ */
+export async function downloadUploadFilesAsZip(items, zipName = 'anh-binh-luan.zip') {
+  const list = (items || []).filter((it) => it?.url || it?.rawPath);
+  if (!list.length) throw new Error('Không có ảnh để tải');
+
+  const JSZip = (await import('jszip')).default;
+  const { saveAs } = await import('file-saver');
+  const zip = new JSZip();
+  const used = new Set();
+  let ok = 0;
+  let lastErr = null;
+
+  for (let i = 0; i < list.length; i += 1) {
+    const it = list[i];
+    const src = it.rawPath || it.url;
+    const rawName = String(it.name || it.title || `anh-${i + 1}`).trim() || `anh-${i + 1}`;
+    let base = rawName.replace(/[\\/:*?"<>|]/g, '_').slice(0, 120);
+    if (!/\.[a-z0-9]{2,5}$/i.test(base)) {
+      const fromUrl = String(src || '').split('?')[0].split('/').pop() || '';
+      const ext = fromUrl.includes('.') ? fromUrl.slice(fromUrl.lastIndexOf('.')) : '.jpg';
+      base = `${base}${ext}`;
+    }
+    let entry = base;
+    let n = 2;
+    while (used.has(entry.toLowerCase())) {
+      const dot = base.lastIndexOf('.');
+      entry = dot > 0 ? `${base.slice(0, dot)} (${n})${base.slice(dot)}` : `${base} (${n})`;
+      n += 1;
+    }
+    used.add(entry.toLowerCase());
+    try {
+      const blob = await fetchUploadBlob(src);
+      zip.file(entry, blob);
+      ok += 1;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+
+  if (!ok) throw new Error(lastErr?.message || 'Không tải được ảnh');
+  const out = await zip.generateAsync({ type: 'blob' });
+  const safeZip = String(zipName || 'anh.zip').replace(/[\\/:*?"<>|]/g, '_') || 'anh.zip';
+  saveAs(out, safeZip.endsWith('.zip') ? safeZip : `${safeZip}.zip`);
+  return { ok, total: list.length };
 }
 
