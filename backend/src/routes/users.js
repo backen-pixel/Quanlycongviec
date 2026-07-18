@@ -187,7 +187,7 @@ r.post('/ping', async (req, res) => {
   try {
     const uid = req.user.userId || req.user.id;
     if (!uid) return res.status(401).json({ error: 'Token không có user id' });
-    const result = await recordUserPing(uid);
+    const result = await recordUserPing(uid, { companyId: req.user?.company_id || null });
     if (!result.persisted) {
       return res.status(503).json({
         ok: false,

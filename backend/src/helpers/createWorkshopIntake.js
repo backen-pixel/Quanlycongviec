@@ -136,9 +136,11 @@ async function ensureCustomerId(companyId, incomingCustomerId, customerName, cus
   return { ok: true, customerId: customer.id };
 }
 
-async function insertWorkshopProject({ deal, companyId, workshopTypeId, userId, flowId }) {
+async function insertWorkshopProject({ deal, companyId, workshopTypeId, userId, flowId, productionValue = null }) {
   const yr = new Date().getFullYear();
   const nowIso = new Date().toISOString();
+  const costRaw = productionValue != null ? Number(productionValue) : null;
+  const cost = Number.isFinite(costRaw) && costRaw > 0 ? costRaw : null;
   const baseRow = (code) => ({
     code,
     name: deal.title || 'Dự án mới',
@@ -149,9 +151,12 @@ async function insertWorkshopProject({ deal, companyId, workshopTypeId, userId, 
     status: 'consulting',
     current_stage_id: null,
     install_address: deal.install_address || null,
+    /** Doanh thu — chỉ hiện ở SX khi created_from_sx */
     estimated_value: deal.estimated_value ?? null,
-    production_value: deal.estimated_value ?? null,
+    /** Chi phí sản xuất — công nợ SX = production_value − deposit */
+    production_value: cost,
     deposit_amount: Number(deal.deposit_amount) > 0 ? Number(deal.deposit_amount) : null,
+    created_from_sx: true,
     priority: 'medium',
     sales_person_id: deal.assigned_to || deal.lead_owner_id || userId,
     consult_date: nowIso,
@@ -160,11 +165,14 @@ async function insertWorkshopProject({ deal, companyId, workshopTypeId, userId, 
 
   let project;
   let lastInsertErr;
+  let omitCreatedFromSx = false;
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const code = await nextTbProjectCode(supabase, yr);
+    const row = baseRow(code);
+    if (omitCreatedFromSx) delete row.created_from_sx;
     const { data, error: projErr } = await supabase
       .from('projects')
-      .insert(baseRow(code))
+      .insert(row)
       .select('id, code, name')
       .single();
     if (!projErr) {
@@ -172,6 +180,10 @@ async function insertWorkshopProject({ deal, companyId, workshopTypeId, userId, 
       break;
     }
     lastInsertErr = projErr;
+    if (String(projErr.message || '').includes('created_from_sx') && !omitCreatedFromSx) {
+      omitCreatedFromSx = true;
+      continue;
+    }
     if (isPostgresUniqueViolation(projErr)) continue;
     throw projErr;
   }
@@ -249,7 +261,8 @@ function scheduleWorkshopIntakeBackground({ req, dealId, projectId, userId, comp
  * @param {string} [opts.customerEmail]
  * @param {string} [opts.installAddress]
  * @param {string} [opts.regionId]
- * @param {number} [opts.estimatedValue]
+ * @param {number} [opts.estimatedValue] — doanh thu
+ * @param {number} [opts.productionValue] — chi phí sản xuất
  * @param {string} [opts.description]
  * @param {string} [opts.externalCompanyName]
  * @param {string} [opts.externalCompanyId]
@@ -269,6 +282,7 @@ async function createWorkshopIntakeOrder(opts) {
     installAddress,
     regionId,
     estimatedValue,
+    productionValue,
     description,
     externalCompanyName,
     externalCompanyId,
@@ -435,6 +449,7 @@ async function createWorkshopIntakeOrder(opts) {
       workshopTypeId: wtCheck.type.id,
       userId,
       flowId,
+      productionValue: productionValue != null ? productionValue : null,
     });
   } catch (e) {
     return { ok: false, error: e.message || 'Không tạo được dự án', statusCode: 500, deal_id: deal.id };

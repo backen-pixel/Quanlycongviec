@@ -170,6 +170,8 @@ export default function LeadChatPanel({ leadId }: Props) {
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionDelay: 1500,
+      reconnectionDelayMax: 12_000,
+      randomizationFactor: 0.5,
     });
     socketRef.current = s;
     const onConnect = () => {

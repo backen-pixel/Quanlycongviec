@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue, memo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
@@ -404,6 +404,19 @@ export default function ProductionDashboard() {
     return KANBAN_DEFAULT_COLUMN_SCROLL_MODE;
   });
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  /** Từ thông báo workshop_new_deal (?open=projectId) → highlight thẻ trên Kanban SX. */
+  useEffect(() => {
+    const openId = searchParams.get('open') || searchParams.get('project');
+    if (!openId) return;
+    markWorkshopPipelineCardFocus(openId, 'sx');
+    if (viewMode !== 'kanban') setViewMode('kanban');
+    const next = new URLSearchParams(searchParams);
+    next.delete('open');
+    next.delete('project');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams, viewMode]);
 
   const staffFilter = useWorkshopStaffFilter({
     user,

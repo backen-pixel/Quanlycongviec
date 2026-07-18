@@ -113,7 +113,7 @@ async function notifyNewCrmAssignmentAssignees(req, {
     } else if (io) {
       io.to(`user:${uid}`).emit('notification', payload);
     }
-    emitNotifyBadge(req?.app, 'assignments');
+    emitNotifyBadge(req?.app, 'assignments', { company_id: req?.user?.company_id || null });
   }
 }
 

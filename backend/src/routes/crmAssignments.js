@@ -273,6 +273,68 @@ const ASSIGNMENT_SELECT = `
   lead:crm_leads(id, code, title, type, project_id)
 `;
 
+/** Sanitize + resolve lead_ids khớp mã TB / deal / tên / SĐT để tìm nhiệm vụ. */
+async function resolveAssignmentSearchFilter(rawQ) {
+  const s = String(rawQ || '').replace(/[%,]/g, ' ').trim();
+  if (!s) return null;
+
+  const leadIdSet = new Set();
+  const phoneDigits = s.replace(/\D/g, '');
+
+  const leadOr = [`code.ilike.%${s}%`, `title.ilike.%${s}%`];
+  if (phoneDigits.length >= 6) {
+    leadOr.push(`phone.ilike.%${phoneDigits}%`);
+    // Title thường ghi SĐT có khoảng: 0977 123 715
+    let spacedPattern = phoneDigits;
+    if (phoneDigits.length === 10) {
+      spacedPattern = `${phoneDigits.slice(0, 4)}%${phoneDigits.slice(4, 7)}%${phoneDigits.slice(7)}`;
+    } else if (phoneDigits.length === 11) {
+      spacedPattern = `${phoneDigits.slice(0, 4)}%${phoneDigits.slice(4, 7)}%${phoneDigits.slice(7)}`;
+    } else if (phoneDigits.length > 6) {
+      spacedPattern = `${phoneDigits.slice(0, 4)}%${phoneDigits.slice(4)}`;
+    }
+    leadOr.push(`title.ilike.%${spacedPattern}%`);
+    leadOr.push(`phone.ilike.%${spacedPattern}%`);
+  }
+
+  const { data: leads } = await supabase
+    .from('crm_leads')
+    .select('id')
+    .or(leadOr.join(','))
+    .limit(300);
+  (leads || []).forEach((row) => { if (row?.id) leadIdSet.add(row.id); });
+
+  // Mã dự án SX (TB-…) → lead.project_id
+  const { data: projects } = await supabase
+    .from('projects')
+    .select('id')
+    .or(`code.ilike.%${s}%,name.ilike.%${s}%`)
+    .limit(100);
+  const projectIds = (projects || []).map((p) => p.id).filter(Boolean);
+  if (projectIds.length) {
+    const { data: byProject } = await supabase
+      .from('crm_leads')
+      .select('id')
+      .in('project_id', projectIds)
+      .limit(300);
+    (byProject || []).forEach((row) => { if (row?.id) leadIdSet.add(row.id); });
+  }
+
+  const parts = [`title.ilike.%${s}%`, `description.ilike.%${s}%`];
+  const leadIds = [...leadIdSet];
+  if (leadIds.length) {
+    parts.push(`lead_id.in.(${leadIds.join(',')})`);
+  }
+  return parts.join(',');
+}
+
+async function applyAssignmentSearchQuery(q, rawQ) {
+  const orFilter = await resolveAssignmentSearchFilter(rawQ);
+  if (orFilter) q = q.or(orFilter);
+  // Không return builder từ async — PostgREST builder là thenable, await sẽ chạy query luôn.
+  return { q };
+}
+
 async function attachAssigneesToAssignments(list) {
   if (!Array.isArray(list) || !list.length) return list;
   const ids = list.map((x) => x.id);
@@ -360,7 +422,7 @@ function pushNotif(req, userId, payload) {
       const io = req.app.get('io');
       if (io) io.to(`user:${userId}`).emit('notification', payload);
     }
-    emitNotifyBadge(req.app, 'assignments');
+    emitNotifyBadge(req.app, 'assignments', { company_id: req.user?.company_id || null });
   } catch { /* ignore */ }
 }
 
@@ -560,8 +622,7 @@ r.get('/', async (req, res) => {
       q = q.eq('assignment_module', moduleFilter);
     }
     if (req.query.q) {
-      const s = String(req.query.q).replace(/[%,]/g, ' ').trim();
-      if (s) q = q.ilike('title', `%${s}%`);
+      ({ q } = await applyAssignmentSearchQuery(q, req.query.q));
     }
 
     q = q.order('position', { ascending: true }).order('created_at', { ascending: false });
@@ -572,6 +633,9 @@ r.get('/', async (req, res) => {
       if (req.query.status) qExec = qExec.eq('status', req.query.status);
       if (req.query.priority) qExec = qExec.eq('priority', req.query.priority);
       if (moduleFilter === 'production' || moduleFilter === 'crm') qExec = qExec.eq('assignment_module', moduleFilter);
+      if (req.query.q) {
+        ({ q: qExec } = await applyAssignmentSearchQuery(qExec, req.query.q));
+      }
       qExec = qExec.order('position', { ascending: true }).order('created_at', { ascending: false });
       ({ data, error } = await qExec);
     }
@@ -588,8 +652,7 @@ r.get('/', async (req, res) => {
       if (req.query.column_id) q2 = q2.eq('column_id', req.query.column_id);
       if (req.query.lead_id) q2 = q2.eq('lead_id', String(req.query.lead_id).trim());
       if (req.query.q) {
-        const s = String(req.query.q).replace(/[%,]/g, ' ').trim();
-        if (s) q2 = q2.ilike('title', `%${s}%`);
+        ({ q: q2 } = await applyAssignmentSearchQuery(q2, req.query.q));
       }
       q2 = q2.order('position', { ascending: true }).order('created_at', { ascending: false });
       ({ data, error } = await q2);

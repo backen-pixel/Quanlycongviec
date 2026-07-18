@@ -237,12 +237,24 @@ function WorkshopInfoPanel({
     || companyRegions.find((r) => String(r.id) === String(crmDeal?.region_id))?.name
     || null;
 
-  /** Giá trị đơn hàng CRM (chỉ dùng tiến độ thu / VC) — tách biệt với cọc & còn lại SX. */
+  /** Doanh thu — chỉ hiện khi deal tạo thủ công từ SX (created_from_sx). */
+  const createdFromSx = project.created_from_sx === true
+    || String(project.description || '').startsWith('[Xưởng]')
+    || String(project.description || '').includes('Tạo trực tiếp từ module Sản xuất');
+  const revenueValue = editing === 'estimated_value'
+    ? (() => {
+      const n = Number(draft);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    })()
+    : (Number(crmDeal?.estimated_value) > 0
+      ? Number(crmDeal.estimated_value)
+      : (Number(project.estimated_value) || 0));
+  /** Giá trị đơn hàng CRM (tiến độ thu / VC) — tách biệt chi phí SX. */
   const orderTotalValue = Number(crmDeal?.estimated_value) > 0
     ? Number(crmDeal.estimated_value)
     : (Number(project.estimated_value) || 0);
   const productionTotalValue = Number(project.production_value) || 0;
-  /** Tiền cọc SX: chỉ projects.deposit_amount — không lấy cọc CRM (CRM «Còn lại» là số khác). */
+  /** Tiền cọc SX: chỉ projects.deposit_amount — trừ vào chi phí sản xuất. */
   const parseMoneyDraft = (raw) => {
     if (raw === '' || raw == null) return 0;
     const n = Number(raw);
@@ -251,13 +263,12 @@ function WorkshopInfoPanel({
   const depositValue = editing === 'deposit_amount'
     ? parseMoneyDraft(draft)
     : (Number(project.deposit_amount) > 0 ? Number(project.deposit_amount) : 0);
-  const sxValueForRemaining = editing === 'production_value'
+  /** Chi phí SX — không fallback doanh thu CRM. */
+  const sxCostForRemaining = editing === 'production_value'
     ? parseMoneyDraft(draft)
-    : (productionTotalValue > 0
-      ? productionTotalValue
-      : (Number(project.estimated_value) > 0 ? Number(project.estimated_value) : 0));
-  /** Còn lại SX = Giá trị sản xuất − Tiền cọc SX (cập nhật ngay khi sửa cọc / giá SX). */
-  const remainingValue = Math.max(0, sxValueForRemaining - depositValue);
+    : productionTotalValue;
+  /** Công nợ SX = Chi phí sản xuất − Tiền cọc. */
+  const remainingValue = Math.max(0, sxCostForRemaining - depositValue);
   const financeProject = {
     ...project,
     // Tiến độ thu CRM vẫn có thể tham chiếu cọc deal; khối SX không dùng field này.
@@ -399,7 +410,7 @@ function WorkshopInfoPanel({
         </div>
       )}
 
-      {/* SX: ẩn «Giá trị đơn hàng» — chỉ giữ Giá trị SX / Tiền cọc / Còn lại. VC vẫn hiện «Giá trị dự án». */}
+      {/* VC: giá trị dự án. SX: Doanh thu chỉ khi tạo từ SX; Chi phí SX / Cọc / Công nợ luôn có. */}
       {isVC && (
         <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'estimated_value' && startEdit('estimated_value', project.estimated_value || crmDeal?.estimated_value || '')}>
           <span className="text-sm mt-0.5 shrink-0">💰</span>
@@ -421,10 +432,32 @@ function WorkshopInfoPanel({
 
       {!isVC && (
         <>
+          {createdFromSx && (
+            <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'estimated_value' && startEdit('estimated_value', project.estimated_value || crmDeal?.estimated_value || '')}>
+              <span className="text-sm mt-0.5 shrink-0">💰</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Doanh thu</p>
+                {editing === 'estimated_value' ? (
+                  <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                    <input type="number" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
+                      className="w-full px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" placeholder="0" />
+                    <button onClick={() => save('estimated_value', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+                    <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+                  </div>
+                ) : (
+                  <p className="text-sm font-medium text-gray-900 flex items-center gap-1">
+                    {revenueValue > 0 ? formatVND(revenueValue) : '—'}
+                    <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" />
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'production_value' && startEdit('production_value', project.production_value || '')}>
             <span className="text-sm mt-0.5 shrink-0">🏭</span>
             <div className="flex-1 min-w-0">
-              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Giá trị sản xuất</p>
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Chi phí sản xuất</p>
               {editing === 'production_value' ? (
                 <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                   <input type="number" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
@@ -464,12 +497,13 @@ function WorkshopInfoPanel({
           <div className="flex items-start gap-2 py-2 px-1 rounded-lg -mx-1">
             <span className="text-sm mt-0.5 shrink-0">📊</span>
             <div className="flex-1 min-w-0">
-              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Còn lại (SX)</p>
-              <p className="text-sm font-semibold text-emerald-700">
-                {sxValueForRemaining > 0 || depositValue > 0
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Công nợ (SX)</p>
+              <p className="text-sm font-semibold text-amber-700">
+                {sxCostForRemaining > 0 || depositValue > 0
                   ? formatVND(remainingValue)
                   : '—'}
               </p>
+              <p className="text-[10px] text-gray-400 mt-0.5">= Chi phí SX − Tiền cọc</p>
             </div>
           </div>
 

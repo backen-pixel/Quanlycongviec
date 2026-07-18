@@ -22,6 +22,11 @@ const {
   getSessionPublicInfo, targetLabel, deviceFromReq,
 } = require('../helpers/qrLoginSessions');
 const { createNotification } = require('../helpers/notifications');
+const {
+  assertLoginAllowed,
+  recordLoginFailure,
+  clearLoginFailures,
+} = require('../helpers/loginLockout');
 
 const r = Router();
 
@@ -72,15 +77,44 @@ r.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Thiếu email/mật khẩu' });
     }
 
+    const lock = assertLoginAllowed(req, emailTrim);
+    if (!lock.ok) {
+      res.set('Retry-After', String(lock.retryAfterSec));
+      void logAuthEvent({ event: 'login_failed', email: emailTrim, reason: 'locked_out', req });
+      return res.status(429).json({
+        error: lock.error,
+        code: 'login_locked',
+        retry_after_sec: lock.retryAfterSec,
+      });
+    }
+
     const { data } = await supabase.from('users').select('*').eq('email', emailTrim).neq('is_active', false).limit(1);
     if (!data?.length) {
+      const fail = recordLoginFailure(req, emailTrim);
       void logAuthEvent({ event: 'login_failed', email: emailTrim, reason: 'user_not_found_or_disabled', req });
+      if (fail.banned) {
+        res.set('Retry-After', String(fail.retryAfterSec));
+        return res.status(429).json({
+          error: `Quá nhiều lần đăng nhập sai. Thử lại sau ${fail.retryAfterSec}s.`,
+          code: 'login_locked',
+          retry_after_sec: fail.retryAfterSec,
+        });
+      }
       return res.status(401).json({ error: 'Sai email hoặc mật khẩu' });
     }
 
     const user = data[0];
     if (!(await bcrypt.compare(password, user.password))) {
+      const fail = recordLoginFailure(req, emailTrim);
       void logAuthEvent({ event: 'login_failed', email: emailTrim, user_id: user.id, reason: 'wrong_password', req });
+      if (fail.banned) {
+        res.set('Retry-After', String(fail.retryAfterSec));
+        return res.status(429).json({
+          error: `Quá nhiều lần đăng nhập sai. Thử lại sau ${fail.retryAfterSec}s.`,
+          code: 'login_locked',
+          retry_after_sec: fail.retryAfterSec,
+        });
+      }
       return res.status(401).json({ error: 'Sai email hoặc mật khẩu' });
     }
 
@@ -98,6 +132,7 @@ r.post('/login', async (req, res) => {
       }
     }
 
+    clearLoginFailures(req, emailTrim);
     await supabase.from('users').update({ last_login_at: new Date().toISOString() }).eq('id', user.id);
     const sessionId = clientSessionId || `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
     void logAuthEvent({
@@ -150,10 +185,31 @@ r.post('/google', async (req, res) => {
       return res.status(400).json({ error: 'Thiếu token Google' });
     }
 
+    // Khóa theo IP trước khi verify token (tránh flood verify Google)
+    const preLock = assertLoginAllowed(req, '_google');
+    if (!preLock.ok) {
+      res.set('Retry-After', String(preLock.retryAfterSec));
+      return res.status(429).json({
+        error: preLock.error,
+        code: 'login_locked',
+        retry_after_sec: preLock.retryAfterSec,
+      });
+    }
+
     const payload = await verifyGoogleIdToken(idToken);
     const email = String(payload.email || '').trim().toLowerCase();
     const googleId = payload.sub;
     const fullName = payload.name || payload.given_name || email.split('@')[0];
+
+    const emailLock = assertLoginAllowed(req, email);
+    if (!emailLock.ok) {
+      res.set('Retry-After', String(emailLock.retryAfterSec));
+      return res.status(429).json({
+        error: emailLock.error,
+        code: 'login_locked',
+        retry_after_sec: emailLock.retryAfterSec,
+      });
+    }
 
     let user = null;
     const { data: byGoogle } = await supabase
@@ -280,6 +336,8 @@ r.post('/google', async (req, res) => {
     }
 
     await supabase.from('users').update({ last_login_at: new Date().toISOString() }).eq('id', user.id);
+    clearLoginFailures(req, email);
+    clearLoginFailures(req, '_google');
     const sessionId = req.body?.session_id
       ? String(req.body.session_id).slice(0, 80)
       : `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
@@ -295,6 +353,7 @@ r.post('/google', async (req, res) => {
     res.json(auth);
   } catch (e) {
     console.error('[auth/google]', e.message);
+    recordLoginFailure(req, '_google');
     void logAuthEvent({ event: 'login_failed', reason: e.code || 'google_error', req });
     const status = e.code === 'google_not_configured' ? 503 : 401;
     res.status(status).json({ error: e.message || 'Google login thất bại' });

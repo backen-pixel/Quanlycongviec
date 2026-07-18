@@ -253,8 +253,10 @@ export default function CRMAssignmentsPage({
   const [companies, setCompanies] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   const [search, setSearch] = useState('');
+  const [searchDebounced, setSearchDebounced] = useState('');
   const [filterAssignee, setFilterAssignee] = useState('');
   const [filterPriority, setFilterPriority] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
@@ -280,6 +282,11 @@ export default function CRMAssignmentsPage({
   const [personalDeadlineMap, setPersonalDeadlineMap] = useState({});
   const [schedules, setSchedules] = useState([]);
   const [showSchedulesPanel, setShowSchedulesPanel] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setSearchDebounced(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
 
   // NV thường: chỉ xem việc giao cho mình
   useEffect(() => {
@@ -393,8 +400,9 @@ export default function CRMAssignmentsPage({
   }, [isAdmin, companiesModule]);
 
   // ─── Load all data ──
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async ({ soft = false } = {}) => {
+    if (soft) setRefreshing(true);
+    else setLoading(true);
     try {
       const params = {};
       if (isAdmin && filterCompanyId) params.company_id = filterCompanyId;
@@ -403,7 +411,7 @@ export default function CRMAssignmentsPage({
       else if (!isAdmin && uid) params.assignee_id = uid;
       if (filterStatus) params.status = filterStatus;
       if (filterPriority) params.priority = filterPriority;
-      if (search) params.q = search;
+      if (searchDebounced) params.q = searchDebounced;
       if (assignmentModule) params.assignment_module = assignmentModule;
 
       const [colRes, itRes, schedRes] = await Promise.all([
@@ -412,13 +420,20 @@ export default function CRMAssignmentsPage({
         api.get(`${apiBase}/schedules`, { params: { assignment_module: assignmentModule, ...(isAdmin && filterCompanyId ? { company_id: filterCompanyId } : {}) } }).catch(() => ({ data: { schedules: [] } })),
       ]);
       setColumns(colRes.data?.columns || []);
-      setItems(itRes.data?.assignments || []);
+      const nextItems = itRes.data?.assignments || [];
+      setItems(nextItems);
       setSchedules(schedRes.data?.schedules || []);
+      setViewingItem((prev) => {
+        if (!prev) return prev;
+        const fresh = nextItems.find((t) => String(t.id) === String(prev.id));
+        return fresh ? { ...prev, ...fresh } : prev;
+      });
     } catch (e) { console.error(e); }
     setLoading(false);
-  }, [isAdmin, filterCompanyId, filterDepartmentId, filterAssignee, filterStatus, filterPriority, search, apiBase, assignmentModule, uid]);
+    setRefreshing(false);
+  }, [isAdmin, filterCompanyId, filterDepartmentId, filterAssignee, filterStatus, filterPriority, searchDebounced, apiBase, assignmentModule, uid]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load({ soft: true }); }, [load]);
 
   // Mở chi tiết từ thông báo / liên kết (?open=id)
   const openHandledRef = useRef(null);
@@ -582,11 +597,14 @@ export default function CRMAssignmentsPage({
   const upsertItem = async (payload, stagedFiles = []) => {
     try {
       let assignmentId = payload.id;
+      let saved = null;
       if (payload.id) {
-        await api.put(`${apiBase}/${payload.id}`, payload);
+        const r = await api.put(`${apiBase}/${payload.id}`, payload);
+        saved = r.data?.assignment || null;
       } else {
         const r = await api.post(apiBase, { ...payload, assignment_module: assignmentModule });
         assignmentId = r.data?.assignment?.id || r.data?.id;
+        saved = r.data?.assignment || null;
         const scheduleId = r.data?.schedule?.id;
         if (scheduleId && stagedFiles.length && !assignmentId) {
           await uploadStagedFiles(`${apiBase}/schedules`, scheduleId, stagedFiles);
@@ -598,8 +616,21 @@ export default function CRMAssignmentsPage({
       if (assignmentId && stagedFiles.length) {
         await uploadStagedFiles(apiBase, assignmentId, stagedFiles);
       }
+      if (saved) {
+        setItems((prev) => {
+          const id = String(saved.id);
+          const idx = prev.findIndex((t) => String(t.id) === id);
+          if (idx >= 0) {
+            const next = [...prev];
+            next[idx] = { ...prev[idx], ...saved };
+            return next;
+          }
+          return [saved, ...prev];
+        });
+        setViewingItem((prev) => (prev && String(prev.id) === String(saved.id) ? { ...prev, ...saved } : prev));
+      }
       setShowItemModal(false); setEditingItem(null);
-      void load();
+      void load({ soft: true });
     } catch (e) { alert(e.response?.data?.error || 'Lỗi lưu nhiệm vụ'); }
   };
 
@@ -607,7 +638,7 @@ export default function CRMAssignmentsPage({
     if (!confirm('Huỷ lịch giao việc này?')) return;
     try {
       await api.delete(`${apiBase}/schedules/${scheduleId}`);
-      void load();
+      void load({ soft: true });
     } catch (e) {
       alert(e.response?.data?.error || 'Không huỷ được lịch');
     }
@@ -616,7 +647,8 @@ export default function CRMAssignmentsPage({
     if (!confirm('Xoá nhiệm vụ này?')) return;
     try {
       await api.delete(`${apiBase}/${id}`);
-      void load();
+      setViewingItem((prev) => (prev && String(prev.id) === String(id) ? null : prev));
+      void load({ soft: true });
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Không xóa được nhiệm vụ');
     }
@@ -636,7 +668,7 @@ export default function CRMAssignmentsPage({
         setItems((prev) => prev.map((t) => (String(t.id) === String(id) ? { ...t, ...updated } : t)));
         setViewingItem((prev) => (prev && String(prev.id) === String(id) ? { ...prev, ...updated } : prev));
       } else {
-        void load();
+        void load({ soft: true });
       }
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Không cập nhật được nhiệm vụ');
@@ -655,7 +687,7 @@ export default function CRMAssignmentsPage({
         setItems((prev) => prev.map((t) => (String(t.id) === String(id) ? { ...t, ...updated } : t)));
         setViewingItem((prev) => (prev && String(prev.id) === String(id) ? { ...prev, ...updated } : prev));
       } else {
-        void load();
+        void load({ soft: true });
       }
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Không di chuyển được nhiệm vụ');
@@ -668,12 +700,12 @@ export default function CRMAssignmentsPage({
       if (payload.id) await api.put(`${apiBase}/columns/${payload.id}`, body);
       else await api.post(`${apiBase}/columns`, body);
       setShowColumnModal(null);
-      void load();
+      void load({ soft: true });
     } catch (e) { alert(e.response?.data?.error || 'Lỗi lưu cột'); }
   };
   const removeColumn = async (id) => {
     if (!confirm('Xoá cột này? Các nhiệm vụ sẽ về cột "Chưa phân loại".')) return;
-    try { await api.delete(`${apiBase}/columns/${id}`); void load(); } catch {}
+    try { await api.delete(`${apiBase}/columns/${id}`); void load({ soft: true }); } catch {}
   };
 
   const upsertPersonalColumn = (payload) => {
@@ -915,9 +947,14 @@ export default function CRMAssignmentsPage({
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Tìm nhiệm vụ..."
+            placeholder={assignmentModule === 'production'
+              ? 'Tìm mã TB, deal, tên khách, SĐT, nhiệm vụ…'
+              : 'Tìm nhiệm vụ, mã deal, tên khách, SĐT…'}
             className="w-full h-9 pl-9 pr-3 rounded-lg border text-sm outline-none focus:border-blue-500"
           />
+          {refreshing && (
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          )}
         </div>
         {isAdmin && (
           <>

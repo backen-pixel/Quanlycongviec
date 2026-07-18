@@ -204,7 +204,7 @@ r.post('/leads/:id/assignments', async (req, res) => {
         } catch { /* ignore */ }
       }
     }
-    if (assigneeIds.length) emitNotifyBadge(req.app, 'assignments');
+    if (assigneeIds.length) emitNotifyBadge(req.app, 'assignments', { company_id: req.user?.company_id || null });
 
     if (assigneeIds.length) {
       const { data: asnRows } = await supabase

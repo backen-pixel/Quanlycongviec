@@ -1253,6 +1253,17 @@ async function syncVcPipelineStageToLead(projectId, vcPipelineStageId) {
 async function emitCrmBadgeUpdateForProject(projectId, io) {
   if (!io) return;
   try {
+    const { emitScoped } = require('./socketEmit');
+    let companyId = null;
+    try {
+      const { data: proj } = await supabase
+        .from('projects')
+        .select('company_id, logistics_company_id')
+        .eq('id', projectId)
+        .maybeSingle();
+      companyId = proj?.company_id || proj?.logistics_company_id || null;
+    } catch { /* ignore */ }
+
     // Thử với cả hai join trước
     const { data: leadsWithBoth, error: bothErr } = await supabase
       .from('crm_leads')
@@ -1280,7 +1291,7 @@ async function emitCrmBadgeUpdateForProject(projectId, io) {
           stage_id: lead.stage_id ? String(lead.stage_id) : null,
         };
         if (sx) payloadSx.sx_pipeline_stage = sx;
-        io.emit('crm:badge_updated', payloadSx);
+        emitScoped(io, { companyId }, 'crm:badge_updated', payloadSx);
       }
       return;
     }
@@ -1295,7 +1306,7 @@ async function emitCrmBadgeUpdateForProject(projectId, io) {
       };
       if (sx) payload.sx_pipeline_stage = sx;
       if (vc) payload.vc_pipeline_stage = vc;
-      io.emit('crm:badge_updated', payload);
+      emitScoped(io, { companyId }, 'crm:badge_updated', payload);
     }
   } catch (e) {
     console.warn('[workshopKanban] emitCrmBadgeUpdateForProject:', e.message);

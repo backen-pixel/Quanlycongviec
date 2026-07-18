@@ -117,10 +117,12 @@ export default function VoiceRecordingsPage() {
   const [attachPreviewLoading, setAttachPreviewLoading] = useState(false);
   const attachSeqRef = useRef(0);
 
-  /** all | unassigned | linked — linked = đã gắn lead/deal */
+  /** all | unassigned | linked | prospect — prospect = Lead tiềm năng */
   const [listTab, setListTab] = useState('all');
   const [relinking, setRelinking] = useState(false);
   const [relinkingRowId, setRelinkingRowId] = useState(null);
+  const [transcribingRowId, setTranscribingRowId] = useState(null);
+  const [classifyBusy, setClassifyBusy] = useState(false);
   const [scanMetaBusy, setScanMetaBusy] = useState(false);
   const [scanDupBusy, setScanDupBusy] = useState(false);
   const [scanMessage, setScanMessage] = useState('');
@@ -153,10 +155,11 @@ export default function VoiceRecordingsPage() {
     setLoading(true);
     setErr('');
     try {
-      const params = {};
+      const params = { include_transcript: '1' };
       if (listPhoneFilter.trim()) params.phone = listPhoneFilter.trim();
       if (listTab === 'unassigned') params.unassigned = '1';
       if (listTab === 'linked') params.linked_only = '1';
+      if (listTab === 'prospect') params.prospect_class = 'prospect_lead';
       if (companyViewer && filterUserId) params.user_id = filterUserId;
       if (voiceScopeCompanyId) params.company_id = voiceScopeCompanyId;
       const { data } = await api.get('/voice-recordings', { params });
@@ -441,6 +444,46 @@ export default function VoiceRecordingsPage() {
     setScanMetaBusy(false);
   };
 
+  /** Phân loại Lead tiềm năng + xếp hàng STT */
+  const runClassifyProspects = async () => {
+    setClassifyBusy(true);
+    setErr('');
+    setScanMessage('');
+    try {
+      const { data } = await api.post(
+        '/voice-recordings/classify-prospects',
+        { force: true, limit: 200 },
+        { params: voiceListScopeParams() },
+      );
+      await load();
+      if (data?.classified != null) {
+        setScanMessage(
+          `Phân loại: quét ${data.scanned} — cập nhật ${data.classified} (xếp hàng STT: ${data.pending}, bỏ qua: ${data.skipped}).`,
+        );
+      }
+    } catch (e) {
+      setErr(e.response?.data?.error || e.message || 'Phân loại thất bại');
+    }
+    setClassifyBusy(false);
+  };
+
+  const requestTranscribe = async (id, force = false) => {
+    setTranscribingRowId(id);
+    setErr('');
+    try {
+      const { data } = await api.post(`/voice-recordings/${id}/transcribe`, { force: force ? 1 : 0 });
+      if (data?.recording) {
+        setList((prev) => prev.map((r) => (r.id === id ? { ...r, ...data.recording } : r)));
+        setScanMessage('Đã xếp hàng chuyển văn bản. Làm mới sau vài chục giây để xem kết quả.');
+      } else {
+        await load();
+      }
+    } catch (e) {
+      setErr(e.response?.data?.error || e.message || 'Không xếp hàng STT');
+    }
+    setTranscribingRowId(null);
+  };
+
   /** Quét bản ghi trùng trên server (tên + dung lượng + SĐT + thời gian + thời lượng). */
   const runScanDuplicates = async () => {
     setScanDupBusy(true);
@@ -596,8 +639,12 @@ export default function VoiceRecordingsPage() {
     if (active && tone === 'emerald') {
       return 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-md shadow-emerald-500/20';
     }
+    if (active && tone === 'sky') {
+      return 'bg-gradient-to-r from-sky-500 to-cyan-500 text-white shadow-md shadow-sky-500/20';
+    }
     if (tone === 'amber') return 'bg-amber-50 text-amber-800 border border-amber-200/80 hover:bg-amber-100';
     if (tone === 'emerald') return 'bg-emerald-50 text-emerald-800 border border-emerald-200/80 hover:bg-emerald-100';
+    if (tone === 'sky') return 'bg-sky-50 text-sky-800 border border-sky-200/80 hover:bg-sky-100';
     return 'bg-white text-slate-600 border border-slate-200/80 hover:bg-slate-50';
   };
 
@@ -731,12 +778,22 @@ export default function VoiceRecordingsPage() {
                 <button
                   type="button"
                   onClick={() => void runScanPhonesFromMetadata()}
-                  disabled={loading || relinking || scanMetaBusy || scanDupBusy || relinkingRowId != null}
+                  disabled={loading || relinking || scanMetaBusy || scanDupBusy || classifyBusy || relinkingRowId != null}
                   title="Quét SĐT từ tên file"
                   className="h-9 px-2.5 rounded-lg border border-amber-200/80 bg-amber-50/90 text-amber-900 text-xs font-medium hover:bg-amber-100 disabled:opacity-50 inline-flex items-center gap-1"
                 >
                   <ScanLine className={`h-3.5 w-3.5 ${scanMetaBusy ? 'animate-pulse' : ''}`} />
                   <span className="hidden sm:inline">{scanMetaBusy ? 'Quét…' : 'Quét SĐT'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void runClassifyProspects()}
+                  disabled={loading || relinking || scanMetaBusy || scanDupBusy || classifyBusy || relinkingRowId != null}
+                  title="Phân loại Lead tiềm năng và xếp hàng chuyển văn bản (STT)"
+                  className="h-9 px-2.5 rounded-lg border border-sky-200/80 bg-sky-50/90 text-sky-900 text-xs font-medium hover:bg-sky-100 disabled:opacity-50 inline-flex items-center gap-1"
+                >
+                  <AudioLines className={`h-3.5 w-3.5 ${classifyBusy ? 'animate-pulse' : ''}`} />
+                  <span className="hidden sm:inline">{classifyBusy ? 'Phân loại…' : 'Phân loại & STT'}</span>
                 </button>
                 <button
                   type="button"
@@ -869,6 +926,9 @@ export default function VoiceRecordingsPage() {
                 <button type="button" onClick={() => setListTab('linked')} className={`h-8 px-3.5 rounded-full text-xs font-semibold transition-all ${pillClass(listTab === 'linked', 'emerald')}`}>
                   Đã gắn
                 </button>
+                <button type="button" onClick={() => setListTab('prospect')} className={`h-8 px-3.5 rounded-full text-xs font-semibold transition-all ${pillClass(listTab === 'prospect', 'sky')}`}>
+                  Lead tiềm năng
+                </button>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <div className="relative flex-1 min-w-[180px] sm:max-w-xs">
@@ -971,7 +1031,9 @@ export default function VoiceRecordingsPage() {
                     ? 'Không có bản nào cần gắn Lead/Deal.'
                     : listTab === 'linked'
                       ? 'Chưa có bản ghi nào đã ghép lead/deal.'
-                      : 'Chưa có bản ghi. Tải lên hoặc đồng bộ từ app mobile.'}
+                      : listTab === 'prospect'
+                        ? 'Chưa có ghi âm nào gắn Lead tiềm năng.'
+                        : 'Chưa có bản ghi. Tải lên hoặc đồng bộ từ app mobile.'}
               </p>
             </div>
           ) : (
@@ -984,10 +1046,12 @@ export default function VoiceRecordingsPage() {
                     audioUrl={recordingAudioUrl(r)}
                     companyViewer={companyViewer}
                     relinkingRowId={relinkingRowId}
+                    transcribingRowId={transcribingRowId}
                     onAttach={openAttach}
                     onRelink={relinkFromPhone}
                     onBootstrap={openBootstrap}
                     onRemove={remove}
+                    onTranscribe={requestTranscribe}
                   />
                 ))}
               </div>

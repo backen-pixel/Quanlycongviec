@@ -388,6 +388,8 @@ export default function SystemBubbleSync() {
             transports: ['websocket', 'polling'],
             reconnection: true,
             reconnectionDelay: 2000,
+            reconnectionDelayMax: 15_000,
+            randomizationFactor: 0.5,
           });
           socket.on('connect', () => {
             for (const id of joinedLeadsRef.current) socket?.emit('join:lead', id);

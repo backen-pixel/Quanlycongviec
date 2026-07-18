@@ -196,9 +196,10 @@ function setPresenceBroadcast(fn) {
 /**
  * Ghi nhận user còn hoạt động (HTTP POST /users/ping hoặc socket presence:ping).
  * @param {string} userId
+ * @param {{ companyId?: string|null }} [opts]
  * @returns {Promise<{ ok: boolean, persisted?: boolean, last_ping_at?: string, error?: string }>}
  */
-async function recordUserPing(userId) {
+async function recordUserPing(userId, opts = {}) {
   const uid = userId != null ? String(userId) : '';
   if (!uid) return { ok: false, error: 'missing_user_id' };
 
@@ -216,7 +217,8 @@ async function recordUserPing(userId) {
 
   if (presenceBroadcastFn) {
     try {
-      presenceBroadcastFn(uid, last_ping_at);
+      const companyId = opts?.companyId != null ? String(opts.companyId) : null;
+      presenceBroadcastFn(uid, last_ping_at, companyId);
     } catch (e) {
       console.warn('[userPresence] presenceBroadcastFn:', e?.message || e);
     }

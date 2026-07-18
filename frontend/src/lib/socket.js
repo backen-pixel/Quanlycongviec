@@ -27,6 +27,8 @@ function socketClientOptions(token) {
     reconnection: true,
     reconnectionDelay: 2000,
     reconnectionDelayMax: 10_000,
+    // Jitter tránh bão reconnect khi server restart (thêm ±50% delay)
+    randomizationFactor: 0.5,
     reconnectionAttempts: Infinity,
   };
 }

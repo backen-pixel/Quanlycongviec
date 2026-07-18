@@ -99,9 +99,12 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
     // null → Kanban xưởng gán deal thắng vào cột «Chờ vào xưởng» (won_pending), không nhảy workflow Tư vấn
     current_stage_id: null,
     install_address: deal.install_address || deal.customer?.address || null,
+    /** Doanh thu CRM — không hiện cột doanh thu trên SX (created_from_sx = false). */
     estimated_value: deal.estimated_value || null,
-    production_value: deal.estimated_value || null,
+    /** Chi phí SX nhập riêng ở module sản xuất — không copy từ doanh thu CRM. */
+    production_value: null,
     deposit_amount: Number(deal.deposit_amount) > 0 ? Number(deal.deposit_amount) : null,
+    created_from_sx: false,
     priority: config?.default_priority || 'medium',
     sales_person_id: deal.assigned_to || deal.lead_owner_id || userId,
     consult_date: new Date().toISOString(),
@@ -110,11 +113,14 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
 
   let project;
   let lastInsertErr;
+  let omitCreatedFromSx = false;
   for (let attempt = 0; attempt < 25; attempt += 1) {
     const code = await nextTbProjectCode(supabase, yr);
+    const row = baseRow(code);
+    if (omitCreatedFromSx) delete row.created_from_sx;
     const { data, error: projErr } = await supabase
       .from('projects')
-      .insert(baseRow(code))
+      .insert(row)
       .select('*')
       .single();
     if (!projErr) {
@@ -122,6 +128,10 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
       break;
     }
     lastInsertErr = projErr;
+    if (String(projErr.message || '').includes('created_from_sx') && !omitCreatedFromSx) {
+      omitCreatedFromSx = true;
+      continue;
+    }
     if (isPostgresUniqueViolation(projErr)) continue;
     throw projErr;
   }

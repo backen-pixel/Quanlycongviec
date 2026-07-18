@@ -216,7 +216,7 @@ async function runAppHeartbeat(req, { socialCompanyId, fresh = false, badges = t
     throw err;
   }
 
-  const pingResult = await recordUserPing(uid);
+  const pingResult = await recordUserPing(uid, { companyId: req.user?.company_id || null });
   const out = {
     ok: pingResult.persisted !== false,
     ping: {

@@ -264,7 +264,13 @@ async function scheduleRegionGeocoding(rows) {
 function emitCrmDashboardChanged(req, payload = {}) {
   try {
     const io = req.app.get('io');
-    if (io) io.emit('crm:dashboard_changed', payload || {});
+    if (!io) return;
+    const { emitScoped } = require('../../../helpers/socketEmit');
+    const companyId = payload?.company_id
+      || payload?.companyId
+      || req.user?.company_id
+      || null;
+    emitScoped(io, { companyId }, 'crm:dashboard_changed', payload || {});
   } catch (e) {
     /* ignore */
   }

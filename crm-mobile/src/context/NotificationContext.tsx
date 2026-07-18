@@ -160,7 +160,9 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionDelay: 2000,
-      reconnectionAttempts: 12,
+      reconnectionDelayMax: 15_000,
+      randomizationFactor: 0.5,
+      reconnectionAttempts: Infinity,
     });
 
     socketRef.current = s;

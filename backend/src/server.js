@@ -14,9 +14,29 @@ const jwt = require('jsonwebtoken');
 const { Server } = require('socket.io');
 const { recordUserPing, setPresenceBroadcast } = require('./helpers/userPresence');
 const { isAdminLike } = require('./helpers/adminRole');
+const { emitScoped, companyRoom } = require('./helpers/socketEmit');
+const { startSocketMetrics, getSocketMetricsSnapshot } = require('./helpers/socketMetrics');
+const {
+  createSocketAllowRequest,
+  attachMaxConnectionsPerUser,
+} = require('./helpers/socketAbuseGuard');
+const {
+  apiBurstLimiter,
+  apiWindowLimiter,
+  uploadLimiter,
+} = require('./helpers/apiRateLimit');
 
 const app = express();
+// Render / reverse proxy: 1 hop — cần để rate-limit lấy đúng IP client
+app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS) || 1);
+
 const server = http.createServer(app);
+// Chống slowloris / giữ connection chết quá lâu
+server.headersTimeout = Number(process.env.HTTP_HEADERS_TIMEOUT_MS) || 65_000;
+server.requestTimeout = Number(process.env.HTTP_REQUEST_TIMEOUT_MS) || 120_000;
+server.keepAliveTimeout = Number(process.env.HTTP_KEEPALIVE_TIMEOUT_MS) || 72_000;
+server.timeout = Number(process.env.HTTP_SOCKET_TIMEOUT_MS) || 120_000;
+
 // RN / Postman thường không gửi Origin — whitelist cứng localhost sẽ chặn handshake → mất realtime chat.
 // Vẫn bắt buộc JWT trong `io.use`; CORS ở đây chỉ cho phép upgrade WebSocket.
 const io = new Server(server, {
@@ -26,6 +46,8 @@ const io = new Server(server, {
   pingInterval: 25_000,
   connectTimeout: 45_000,
   allowUpgrades: true,
+  maxHttpBufferSize: Number(process.env.SOCKET_MAX_HTTP_BUFFER) || 1e6, // 1MB
+  allowRequest: createSocketAllowRequest(),
 });
 io.engine.on('connection_error', (err) => {
   console.warn('[socket] engine:', err.code, err.message);
@@ -61,15 +83,22 @@ if (config.redisUrl) {
   console.warn('[redis] REDIS_URL set nhưng không parse được — Socket.IO in-memory');
 }
 
-setPresenceBroadcast((userId, last_ping_at) => {
-  io.emit('presence:update', {
+setPresenceBroadcast((userId, last_ping_at, companyId) => {
+  emitScoped(io, { companyId }, 'presence:update', {
     user_id: userId,
     online: true,
     last_ping_at: last_ping_at || new Date().toISOString(),
   });
 });
 
+startSocketMetrics();
+
 app.use(helmet());
+
+// Rate-limit toàn /api (burst + cửa sổ 1 phút) — bỏ qua /health, tắt ở dev trừ khi FORCE=1
+app.use('/api', apiBurstLimiter, apiWindowLimiter);
+app.use('/api/upload', uploadLimiter);
+app.use('/api/voice-recordings', uploadLimiter);
 
 // CORS: phần lớn app dùng whitelist; /api/external xác thực bằng X-Api-Key nên cần cho phép
 // gọi từ domain website khác (form landing, widget). Không dùng cookie ở route này.
@@ -263,6 +292,7 @@ app.get('/api/health', async (_, res) => {
     replication,
     failback,
     switch_sync,
+    socket: getSocketMetricsSnapshot(io),
   };
   if (!ok) return res.status(503).json(body);
   return res.json(body);
@@ -276,7 +306,7 @@ app.get('/api/metrics', (req, res) => {
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
     const decoded = jwt_verify.verify(token, config.jwtSecret);
     if (!['admin', 'manager'].includes(decoded?.role)) return res.status(403).json({ error: 'Forbidden' });
-    res.json(getSnapshot());
+    res.json({ ...getSnapshot(), socket: getSocketMetricsSnapshot(io) });
   } catch { res.status(401).json({ error: 'Invalid token' }); }
 });
 app.post('/api/metrics/reset', (req, res) => {
@@ -521,6 +551,8 @@ io.use((socket, next) => {
     next(e);
   }
 });
+// Sau JWT: tối đa N socket / user (ngắt socket cũ nhất nếu vượt)
+attachMaxConnectionsPerUser(io);
 
 io.on('connection', (socket) => {
   const userId = socket.user?.userId || socket.user?.id;
@@ -533,6 +565,15 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Room theo công ty — fan-out presence / kanban / CRM chỉ trong company
+  const companyId = socket.user?.company_id || null;
+  if (companyId) {
+    socket.join(companyRoom(companyId));
+  } else if (isAdminLike(socket.user)) {
+    // Admin hệ thống: nhận emitScoped qua room `admins`
+    socket.join('admins');
+  }
+
   // Join personal room for targeted notifications
   if (userId) {
     socket.join(`user:${userId}`);
@@ -544,12 +585,13 @@ io.on('connection', (socket) => {
 
   // Presence: ping ngay khi kết nối socket (bổ sung HTTP POST /users/ping)
   if (userId) {
-    void recordUserPing(userId).catch(() => {});
+    void recordUserPing(userId, { companyId }).catch(() => {});
   }
   socket.on('presence:ping', () => {
     const uid = socket.user?.userId || socket.user?.id;
     if (!uid) return;
-    void recordUserPing(uid).catch(() => {});
+    const cid = socket.user?.company_id || companyId || null;
+    void recordUserPing(uid, { companyId: cid }).catch(() => {});
   });
 
   socket.on('join:project', (id) => guardedJoin(socket, `project:${id}`, 'project', id));
@@ -577,7 +619,13 @@ io.on('connection', (socket) => {
   });
 
   socket.on('task:moved', (data) => {
-    io.emit('task:updated', data);
+    const pid = data?.project_id || data?.projectId || null;
+    const cid = socket.user?.company_id || null;
+    if (pid) {
+      emitScoped(io, { projectId: pid }, 'task:updated', data);
+    } else {
+      emitScoped(io, { companyId: cid }, 'task:updated', data);
+    }
   });
 
   /* ─── WebRTC voice call signaling (1-1) ───
@@ -1187,6 +1235,13 @@ server.listen(config.port, () => {
     require('./jobs/driveSync').start();
   } catch (e) {
     console.warn('[drive-sync] Failed to start:', e.message);
+  }
+
+  // Worker STT ghi âm Lead tiềm năng (OpenAI Whisper) — disable: VOICE_STT_CRON_DISABLED=1
+  try {
+    require('./jobs/voiceSttWorker').start();
+  } catch (e) {
+    console.warn('[voice-stt] Failed to start:', e.message);
   }
 
   // ─── DEADLINE CHECKER — every hour (defer 60s to not impact startup) ──

@@ -301,6 +301,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       reconnection: true,
       reconnectionDelay: 2000,
       reconnectionDelayMax: 15000,
+      randomizationFactor: 0.5,
       // Không giới hạn — mạng chập chờn không được "chết" realtime đến khi mở lại app.
       reconnectionAttempts: Infinity,
     });

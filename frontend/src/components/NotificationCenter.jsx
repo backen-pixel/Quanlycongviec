@@ -13,6 +13,7 @@ import NotificationSettings from './NotificationSettings';
 import { AI_DEADLINE_DIGEST_EVENT } from '../lib/aiDeadlineDigestEvent';
 import { dispatchBadgeRefresh } from '../shared/lib/badgeEvents';
 import { useMessengerDock } from '../context/MessengerDockContext';
+import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
 
 const ICON_MAP = {
   task_assigned: CheckSquare,
@@ -221,6 +222,50 @@ function navigateLeadCommentMention(navigate, n, setOpen) {
     navigate(`/crm/leads/${n.entity_id}?tab=${navTab}`);
   }
   setOpen?.(false);
+}
+
+/**
+ * Thông báo gắn project — ưu tiên module xưởng/VC khi metadata có ecosystem_module_key.
+ * Tránh mở /projects/:id (ProjectDetail quản lý chung) khi đây là deal chờ tiếp nhận SX.
+ */
+function navigateProjectNotification(navigate, n) {
+  const meta = n?.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  const pid = meta.project_id || (n?.entity_type === 'project' ? n.entity_id : null);
+  if (!pid) return false;
+  const emk = String(meta.ecosystem_module_key || meta.module_key || '').trim();
+  const navTab = meta.nav_tab ? String(meta.nav_tab).trim() : '';
+  const isIntake =
+    n?.type === 'workshop_new_deal'
+    || meta.intake === true
+    || navTab === 'kanban';
+
+  if (emk === 'production' || n?.type === 'workshop_new_deal') {
+    // Deal chờ tiếp nhận → Kanban SX + highlight đúng thẻ (không vào /projects quản lý).
+    if (isIntake) {
+      markWorkshopPipelineCardFocus(pid, 'sx');
+      navigate(`/sx/dashboard?open=${encodeURIComponent(String(pid))}`);
+      return true;
+    }
+    if (navTab) {
+      navigate(`/sx/projects/${pid}?tab=${navTab}`);
+    } else {
+      navigate(`/sx/projects/${pid}`);
+    }
+    return true;
+  }
+  if (emk === 'logistics') {
+    if (navTab && navTab !== 'kanban') {
+      navigate(`/vc/projects/${pid}?tab=${navTab}`);
+    } else if (navTab === 'kanban' || meta.intake === true) {
+      markWorkshopPipelineCardFocus(pid, 'vc');
+      navigate(`/vc/dashboard?open=${encodeURIComponent(String(pid))}`);
+    } else {
+      navigate(`/vc/projects/${pid}`);
+    }
+    return true;
+  }
+  navigate(navTab ? `/projects/${pid}?tab=${navTab}` : `/projects/${pid}`);
+  return true;
 }
 
 function moduleChipLabel(key) {
@@ -688,16 +733,30 @@ export default function NotificationCenter({ socket }) {
               navigateLeadCommentMention(navigate, notif, setOpen);
               return;
             }
+            // workshop_new_deal: luôn ưu tiên Kanban SX (bỏ qua nav_url cũ trỏ /projects hoặc /sx/projects).
+            if (
+              notif.type === 'workshop_new_deal'
+              || notif.metadata?.intake === true
+              || (
+                (notif.metadata?.ecosystem_module_key === 'production' || notif.metadata?.module_key === 'production')
+                && notif.metadata?.nav_tab === 'kanban'
+              )
+            ) {
+              if (navigateProjectNotification(navigate, notif)) {
+                setOpen(false);
+                return;
+              }
+            }
             if (notif.metadata?.nav_url) {
               navigate(notif.metadata.nav_url);
               setOpen(false);
               return;
             }
-            const pid = notif.metadata?.project_id || (notif.entity_type === 'project' ? notif.entity_id : null);
-            const navTab = notif.metadata?.nav_tab;
-            if (pid) {
-              navigate(navTab ? `/projects/${pid}?tab=${navTab}` : `/projects/${pid}`);
-            } else if (notif.entity_type === 'crm_lead' || notif.entity_type === 'crm_deal' || notif.entity_type === 'lead') {
+            if (navigateProjectNotification(navigate, notif)) {
+              setOpen(false);
+              return;
+            }
+            if (notif.entity_type === 'crm_lead' || notif.entity_type === 'crm_deal' || notif.entity_type === 'lead') {
               const chatTab = notif.metadata?.nav_tab;
               navigate(chatTab ? `/crm/leads/${notif.entity_id}?tab=${chatTab}` : `/crm/leads/${notif.entity_id}`);
             } else if (notif.entity_type === 'quotation') {
@@ -1083,17 +1142,30 @@ export default function NotificationCenter({ socket }) {
                         setOpen(false);
                         return;
                       }
+                    if (
+                      n.type === 'workshop_new_deal'
+                      || n.metadata?.intake === true
+                      || (
+                        (n.metadata?.ecosystem_module_key === 'production' || n.metadata?.module_key === 'production')
+                        && n.metadata?.nav_tab === 'kanban'
+                      )
+                    ) {
+                      if (navigateProjectNotification(navigate, n)) {
+                        setOpen(false);
+                        return;
+                      }
+                    }
                     if (n.metadata?.nav_url) {
                       navigate(n.metadata.nav_url);
                       setOpen(false);
                       return;
                     }
                     // Smart navigation based on entity type
-                    const pid = n.metadata?.project_id || (n.entity_type === 'project' ? n.entity_id : null);
-                      const navTab = n.metadata?.nav_tab;
-                      if (pid) {
-                        navigate(navTab ? `/projects/${pid}?tab=${navTab}` : `/projects/${pid}`);
-                      } else if (isAssignmentNotification(n)) {
+                    if (navigateProjectNotification(navigate, n)) {
+                      setOpen(false);
+                      return;
+                    }
+                      if (isAssignmentNotification(n)) {
                         navigateCrmAssignment(navigate, n);
                       } else if (n.entity_type === 'task' && n.entity_id) {
                         navigate(`/tasks?task=${n.entity_id}`);

@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import {
-  Link2, ScanLine, Trash2, UserPlus, UserRound, MoreVertical, Play, Shield, Inbox,
+  Link2, ScanLine, Trash2, UserPlus, UserRound, MoreVertical, Play, Shield, Inbox, FileText, Loader2,
 } from 'lucide-react';
 import { formatDateTime } from '../../lib/utils';
 import VoiceSpotifyPlayer from './VoiceSpotifyPlayer';
@@ -46,19 +46,47 @@ function isLinked(r) {
   return recordingHasLead(r);
 }
 
+function sttBadge(status) {
+  const s = String(status || 'idle');
+  const map = {
+    done: { label: 'Có văn bản', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+    pending: { label: 'Chờ STT', className: 'bg-amber-50 text-amber-800 border-amber-200' },
+    processing: { label: 'Đang STT', className: 'bg-sky-50 text-sky-800 border-sky-200' },
+    failed: { label: 'STT lỗi', className: 'bg-red-50 text-red-700 border-red-200' },
+    skipped: { label: 'Không STT', className: 'bg-slate-50 text-slate-600 border-slate-200' },
+    idle: { label: 'STT idle', className: 'bg-slate-50 text-slate-600 border-slate-200' },
+  };
+  return map[s] || map.idle;
+}
+
+function canTranscribe(r) {
+  if (r?.prospect_class === 'prospect_lead') return true;
+  if (r?.lead?.type === 'lead') return true;
+  return false;
+}
+
 export default function VoiceRecordingCard({
   recording: r,
   audioUrl,
   companyViewer,
   relinkingRowId,
+  transcribingRowId,
   onAttach,
   onRelink,
   onBootstrap,
   onRemove,
+  onTranscribe,
 }) {
   const linked = isLinked(r);
   const gradient = pickGradient(r.id);
   const staffName = r.uploader?.full_name || r.uploader?.email;
+  const badge = sttBadge(r.stt_status);
+  const transcript = r.transcript != null ? String(r.transcript).trim() : '';
+  const showTranscribeBtn =
+    canTranscribe(r) &&
+    (!transcript || r.stt_status === 'failed') &&
+    r.stt_status !== 'processing' &&
+    r.stt_status !== 'pending';
 
   return (
     <article className="group rounded-[20px] border border-slate-200/80 bg-white p-4 shadow-[0_8px_30px_rgba(15,23,42,0.06)] hover:shadow-[0_16px_40px_rgba(124,58,237,0.12)] hover:-translate-y-0.5 transition-all duration-300">
@@ -110,6 +138,15 @@ export default function VoiceRecordingCard({
                 ) : null}
                 {r.source ? <span>Nguồn: {r.source}</span> : null}
                 {r.direction ? <span>{dirLabel(r.direction)}</span> : null}
+                <span
+                  className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${badge.className}`}
+                  title={r.stt_error || undefined}
+                >
+                  {badge.label}
+                </span>
+                {r.prospect_class === 'prospect_lead' ? (
+                  <span className="text-violet-600 font-medium">Lead tiềm năng</span>
+                ) : null}
               </div>
               {r.phone_number ? (
                 <p className="mt-1 text-[11px] text-slate-600">
@@ -150,6 +187,16 @@ export default function VoiceRecordingCard({
         <VoiceSpotifyPlayer src={audioUrl} />
       </div>
 
+      {transcript ? (
+        <details className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50/40 px-3 py-2">
+          <summary className="cursor-pointer text-xs font-medium text-emerald-800 inline-flex items-center gap-1.5">
+            <FileText size={12} />
+            Văn bản cuộc gọi
+          </summary>
+          <p className="mt-2 text-sm text-slate-800 whitespace-pre-wrap">{transcript}</p>
+        </details>
+      ) : null}
+
       {/* Actions — 2 rows */}
       <div className="mt-3 grid grid-cols-2 gap-2">
         <button
@@ -189,6 +236,26 @@ export default function VoiceRecordingCard({
           <Trash2 size={14} className="shrink-0" />
           Xóa
         </button>
+        {showTranscribeBtn ? (
+          <button
+            type="button"
+            onClick={() => onTranscribe?.(r.id, r.stt_status === 'failed')}
+            disabled={transcribingRowId != null || !onTranscribe}
+            title="Chỉ Lead tiềm năng"
+            className="col-span-2 h-9 px-2.5 rounded-xl border border-sky-200/80 bg-sky-50/50 text-sky-900 text-xs font-medium hover:bg-sky-100 disabled:opacity-50 inline-flex items-center justify-center gap-1.5 transition-colors"
+          >
+            {transcribingRowId === r.id ? (
+              <Loader2 size={14} className="shrink-0 animate-spin" />
+            ) : (
+              <FileText size={14} className="shrink-0" />
+            )}
+            {r.stt_status === 'failed' ? 'Thử lại chuyển văn bản' : 'Chuyển thành văn bản'}
+          </button>
+        ) : !canTranscribe(r) && linked && !transcript ? (
+          <p className="col-span-2 text-[11px] text-slate-500 text-center">
+            Chỉ STT cho Lead tiềm năng (không áp dụng Deal / chưa gắn)
+          </p>
+        ) : null}
       </div>
     </article>
   );

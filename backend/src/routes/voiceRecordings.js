@@ -36,6 +36,13 @@ const {
   isCrmRegionAdminUser,
   isCrmSalesAdminUser,
 } = require('../helpers/crmAccessRoles');
+const {
+  PROSPECT_CLASSES,
+  STT_STATUSES,
+  classifyVoiceRecordingById,
+  classifyVoiceRecordingsBatch,
+  enqueueVoiceRecordingStt,
+} = require('../helpers/voiceRecordingClassify');
 
 const r = Router();
 r.use(auth);
@@ -131,8 +138,30 @@ function parseOptionalDurationSec(v) {
 /** Các trường + join CRM (PostgREST cần FK 63_voice_recordings_crm_link.sql) */
 const UPLOADER_SELECT =
   'id, full_name, email, company_id, department:departments!users_department_id_fkey(company_id)';
-const RECORDING_SELECT =
-  `id, user_id, company_id, file_name, storage_path, mime_type, file_size, duration_sec, source, device_label, notes, created_at, phone_number, direction, call_started_at, call_ended_at, external_call_id, customer_id, lead_id, customer:customers(id, full_name, phone), lead:crm_leads(id, code, title, type, company_id), uploader:users!voice_recordings_user_id_fkey(${UPLOADER_SELECT})`;
+const RECORDING_SELECT_CORE =
+  `id, user_id, company_id, file_name, storage_path, mime_type, file_size, duration_sec, source, device_label, notes, created_at, phone_number, direction, call_started_at, call_ended_at, external_call_id, customer_id, lead_id, prospect_class, prospect_classified_at, stt_status, stt_error, stt_attempts, stt_model, transcript_language, transcribed_at, customer:customers(id, full_name, phone), lead:crm_leads(id, code, title, type, company_id), uploader:users!voice_recordings_user_id_fkey(${UPLOADER_SELECT})`;
+const RECORDING_SELECT = `${RECORDING_SELECT_CORE}, transcript`;
+
+function recordingSelectForRequest(req, { forceTranscript = false } = {}) {
+  const leadQ = req?.query?.lead_id != null ? String(req.query.lead_id).trim() : '';
+  const want =
+    forceTranscript ||
+    req.query.include_transcript === '1' ||
+    req.query.include_transcript === 'true' ||
+    (!!leadQ &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(leadQ));
+  return want ? RECORDING_SELECT : RECORDING_SELECT_CORE;
+}
+
+async function classifyRecordingSafe(recordId, selectFields = RECORDING_SELECT) {
+  if (!recordId) return null;
+  try {
+    return await classifyVoiceRecordingById(supabase, recordId, { select: selectFields });
+  } catch (e) {
+    console.warn('[voice-recordings] classify (bỏ qua):', e.message);
+    return null;
+  }
+}
 
 /** Công ty NV upload — ưu tiên users.company_id, fallback phòng ban, rồi company_id trên bản ghi. */
 function resolveVoiceUploaderCompanyId(rec) {
@@ -654,6 +683,7 @@ r.get('/', async (req, res) => {
     if (leadIdFilter === false) {
       return res.status(400).json({ error: 'lead_id không hợp lệ' });
     }
+    const selectFields = recordingSelectForRequest(req);
     if (leadIdFilter) {
       try {
         await assertUserCanViewCrmLeadForVoiceList(req, leadIdFilter);
@@ -663,7 +693,7 @@ r.get('/', async (req, res) => {
       }
       const { data, error } = await supabase
         .from('voice_recordings')
-        .select(RECORDING_SELECT)
+        .select(selectFields)
         .eq('lead_id', leadIdFilter)
         .order('created_at', { ascending: false })
         .limit(100);
@@ -686,6 +716,16 @@ r.get('/', async (req, res) => {
       req.query.unassigned === '1' || req.query.unassigned === 'true' || req.query.unassigned === 'yes';
     const linkedOnly =
       req.query.linked_only === '1' || req.query.linked_only === 'true' || req.query.linked_only === 'yes';
+    const prospectClassQ = req.query.prospect_class
+      ? String(req.query.prospect_class).trim().toLowerCase()
+      : '';
+    if (prospectClassQ && !PROSPECT_CLASSES.has(prospectClassQ)) {
+      return res.status(400).json({ error: 'prospect_class không hợp lệ' });
+    }
+    const sttStatusQ = req.query.stt_status ? String(req.query.stt_status).trim().toLowerCase() : '';
+    if (sttStatusQ && !STT_STATUSES.has(sttStatusQ)) {
+      return res.status(400).json({ error: 'stt_status không hợp lệ' });
+    }
     const companyViewer = canViewAllVoiceInCompany(req);
     const filterUserId = companyViewer && req.query.user_id ? uuidOrNull(req.query.user_id) : null;
     if (companyViewer && req.query.user_id && filterUserId === false) {
@@ -701,7 +741,7 @@ r.get('/', async (req, res) => {
       }
     }
 
-    let q = supabase.from('voice_recordings').select(RECORDING_SELECT).order('created_at', { ascending: false });
+    let q = supabase.from('voice_recordings').select(selectFields).order('created_at', { ascending: false });
     if (companyViewer) {
       if (filterUserId) {
         if (companyUserIds && !companyUserIds.includes(String(filterUserId))) {
@@ -722,6 +762,8 @@ r.get('/', async (req, res) => {
     if (linkedOnly) {
       q = q.not('lead_id', 'is', null);
     }
+    if (prospectClassQ) q = q.eq('prospect_class', prospectClassQ);
+    if (sttStatusQ) q = q.eq('stt_status', sttStatusQ);
     if (phoneQ) q = q.ilike('phone_number', `%${phoneQ.slice(0, 20)}%`);
 
     const { data, error } = await q;
@@ -799,6 +841,7 @@ r.post('/relink-unassigned', async (req, res) => {
       if (!result?.recording) continue;
       if (result.createdNew || result.linkedExisting) updated += 1;
       if (result.createdNew) autoCreated += 1;
+      await classifyRecordingSafe(result.recording.id || row.id, 'id, prospect_class, stt_status');
     }
     res.json({ ok: true, scanned: pending.length, updated, auto_created: autoCreated });
   } catch (e) {
@@ -897,6 +940,10 @@ r.post('/scan-metadata-phones', async (req, res) => {
       if (result?.recording && (result.createdNew || result.linkedExisting)) crmLinked += 1;
     }
 
+    for (const row of slice) {
+      await classifyRecordingSafe(row.id, 'id, prospect_class, stt_status');
+    }
+
     res.json({
       ok: true,
       processed: slice.length,
@@ -907,6 +954,54 @@ r.post('/scan-metadata-phones', async (req, res) => {
   } catch (e) {
     console.error('voice-recordings scan-metadata-phones:', e.message);
     res.status(500).json({ error: e.message || 'Lỗi quét tên/ghi chú' });
+  }
+});
+
+/**
+ * POST /voice-recordings/classify-prospects
+ * Phân loại lại theo liên kết CRM; chỉ enqueue STT cho Lead tiềm năng (type=lead).
+ * Body/query: force=1 để reclassify cả bản đã có prospect_class; limit (mặc định 100).
+ */
+r.post('/classify-prospects', async (req, res) => {
+  try {
+    const companyViewer = canViewAllVoiceInCompany(req);
+    const filterUserId = companyViewer && req.query.user_id ? uuidOrNull(req.query.user_id) : null;
+    if (companyViewer && req.query.user_id && filterUserId === false) {
+      return res.status(400).json({ error: 'user_id không hợp lệ' });
+    }
+    const listFilters = resolveVoiceListFilters(req);
+    if (listFilters.error) {
+      return res.status(listFilters.status || 400).json({ error: listFilters.error });
+    }
+    const force =
+      req.body?.force === true ||
+      req.body?.force === 1 ||
+      req.body?.force === '1' ||
+      req.query.force === '1' ||
+      req.query.force === 'true';
+    const limitRaw = req.body?.limit ?? req.query.limit;
+    const limit = Math.min(Math.max(parseInt(String(limitRaw || '100'), 10) || 100, 1), 300);
+
+    let userIds = null;
+    if (!companyViewer) {
+      userIds = [req.user.userId];
+    } else if (filterUserId) {
+      userIds = [filterUserId];
+    } else {
+      const effectiveStaffCo = resolveEffectiveVoiceStaffCompanyId(listFilters);
+      if (effectiveStaffCo) {
+        userIds = await resolveVoiceCompanyUserIds(supabase, effectiveStaffCo);
+        if (!userIds.length) {
+          return res.json({ ok: true, scanned: 0, classified: 0, pending: 0, skipped: 0 });
+        }
+      }
+    }
+
+    const result = await classifyVoiceRecordingsBatch(supabase, { limit, force, userIds });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error('voice-recordings classify-prospects:', e.message);
+    res.status(500).json({ error: e.message || 'Lỗi phân loại' });
   }
 });
 
@@ -1133,6 +1228,9 @@ r.post('/', upload.single('audio'), async (req, res) => {
       console.warn('[voice-recordings] enrich sau insert (bỏ qua):', enrErr.message);
     }
 
+    const classified = await classifyRecordingSafe(responseRecording?.id || data.id, RECORDING_SELECT);
+    if (classified) responseRecording = classified;
+
     res.status(201).json({ recording: attachPlayableUrl(responseRecording) });
   } catch (e) {
     if (storage_path && !storage_path.startsWith('uploads/')) {
@@ -1258,14 +1356,41 @@ r.post('/:id/bootstrap-crm', async (req, res) => {
       .single();
     if (ue) throw ue;
 
+    let responseRecording = updated;
+    const classified = await classifyRecordingSafe(updated.id, RECORDING_SELECT);
+    if (classified) responseRecording = classified;
+
     res.status(201).json({
-      recording: attachPlayableUrl(updated),
+      recording: attachPlayableUrl(responseRecording),
       customer: customerRow,
       lead: leadRow,
     });
   } catch (e) {
     console.error('voice-recordings bootstrap-crm:', e.message);
     res.status(500).json({ error: e.message || 'Tạo CRM thất bại' });
+  }
+});
+
+/**
+ * POST /voice-recordings/:id/transcribe
+ * Xếp hàng STT (retry) — chỉ khi gắn Lead tiềm năng (type=lead).
+ */
+r.post('/:id/transcribe', async (req, res) => {
+  try {
+    const loaded = await loadVoiceRecordingForManage(req, req.params.id, RECORDING_SELECT);
+    if (loaded.error) return res.status(loaded.status || 403).json({ error: loaded.error });
+
+    const force =
+      req.body?.force === true || req.body?.force === 1 || req.body?.force === '1';
+    const updated = await enqueueVoiceRecordingStt(supabase, loaded.rec.id, {
+      force,
+      select: RECORDING_SELECT,
+    });
+    res.json({ recording: attachPlayableUrl(updated), queued: true });
+  } catch (e) {
+    const st = e.status || 500;
+    if (st >= 500) console.error('voice-recordings transcribe:', e.message);
+    res.status(st).json({ error: e.message || 'Không xếp hàng STT' });
   }
 });
 
@@ -1434,6 +1559,9 @@ r.patch('/:id', async (req, res) => {
       });
       if (auto?.recording) responseRecording = auto.recording;
     }
+
+    const classified = await classifyRecordingSafe(responseRecording.id, RECORDING_SELECT);
+    if (classified) responseRecording = classified;
 
     res.json({ recording: attachPlayableUrl(responseRecording) });
   } catch (e) {

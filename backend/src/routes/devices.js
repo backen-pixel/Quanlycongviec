@@ -143,7 +143,7 @@ r.post('/ping', async (req, res) => {
     // để đếm "Đang hoạt động". Mobile chỉ ping /devices/ping nên cũng ghi sang đây để
     // user dùng Android hiển thị online đúng (không cần ping riêng /users/ping).
     try {
-      await recordUserPing(uid);
+      await recordUserPing(uid, { companyId: req.user?.company_id || null });
     } catch (e) {
       // Không vỡ luồng nếu bảng user_last_activity chưa có migration.
       if (process.env.NODE_ENV !== 'production') {

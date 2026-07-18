@@ -45,6 +45,7 @@ export default function NewDealModal({
     lead_type_id: '',
     workshop_type_id: defaultWorkshopTypeId || '',
     estimated_value: 0,
+    production_value: '',
     probability: 50,
     install_address: '',
     description: '',
@@ -341,6 +342,9 @@ export default function NewDealModal({
           customer_email: formData.customer_email || null,
           install_address: formData.install_address || null,
           estimated_value: parseFloat(formData.estimated_value) || 0,
+          production_value: formData.production_value === '' || formData.production_value == null
+            ? null
+            : (parseFloat(formData.production_value) || null),
           description: formData.description || null,
           external_company_name: clientCompanyPick === '__new__'
             ? String(formData.external_company_name || '').trim()
@@ -748,18 +752,42 @@ export default function NewDealModal({
                 </>
               )}
 
-              <div className={isProduction ? '' : 'grid grid-cols-2 gap-3'}>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">Giá trị (VND)</label>
-                  <input
-                    type="number"
-                    value={formData.estimated_value}
-                    onChange={(e) => set('estimated_value', e.target.value)}
-                    className={`w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 ${ringClass} text-sm`}
-                    placeholder="0"
-                  />
+              {isProduction ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Doanh thu (VND)</label>
+                    <input
+                      type="number"
+                      value={formData.estimated_value}
+                      onChange={(e) => set('estimated_value', e.target.value)}
+                      className={`w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 ${ringClass} text-sm`}
+                      placeholder="0"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Chi phí sản xuất (VND)</label>
+                    <input
+                      type="number"
+                      value={formData.production_value}
+                      onChange={(e) => set('production_value', e.target.value)}
+                      className={`w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 ${ringClass} text-sm`}
+                      placeholder="0"
+                    />
+                    <p className="mt-1 text-[10px] text-gray-400">Công nợ SX = chi phí − tiền cọc</p>
+                  </div>
                 </div>
-                {!isProduction && (
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Giá trị (VND)</label>
+                    <input
+                      type="number"
+                      value={formData.estimated_value}
+                      onChange={(e) => set('estimated_value', e.target.value)}
+                      className={`w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 ${ringClass} text-sm`}
+                      placeholder="0"
+                    />
+                  </div>
                   <div>
                     <label className="block text-xs font-semibold text-gray-700 mb-1">Xác suất (%)</label>
                     <input
@@ -771,8 +799,8 @@ export default function NewDealModal({
                       className={`w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 ${ringClass} text-sm`}
                     />
                   </div>
-                )}
-              </div>
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-semibold text-gray-700 mb-1">Ghi chú</label>

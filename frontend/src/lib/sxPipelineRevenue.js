@@ -7,23 +7,21 @@ import { effectivePipelineStageSlaDays, isPipelineStageSlaDisabled } from './crm
 const INTAKE_BUCKET = 'won_pending';
 const VC_SHIPPED_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
 
-/** Giá trị dự án dùng cho KPI / tổng cột — ưu tiên production_value, fallback estimated_value. */
+/** Chi phí sản xuất — KPI / tổng cột / công nợ (không fallback doanh thu CRM). */
 export function resolveSxProjectValue(project) {
   const pv = Number(project?.production_value);
   if (Number.isFinite(pv) && pv > 0) return pv;
-  const ev = Number(project?.estimated_value);
-  if (Number.isFinite(ev) && ev > 0) return ev;
   return 0;
 }
 
+/** Tiền cọc SX — chỉ projects.deposit_amount. */
 export function resolveSxProjectDeposit(project) {
   const pd = Number(project?.deposit_amount);
   if (Number.isFinite(pd) && pd > 0) return pd;
-  const dd = Number(project?.deal_deposit_amount);
-  if (Number.isFinite(dd) && dd > 0) return dd;
   return 0;
 }
 
+/** Công nợ SX = Chi phí sản xuất − Tiền cọc. */
 export function resolveSxProjectRemaining(project) {
   return Math.max(0, resolveSxProjectValue(project) - resolveSxProjectDeposit(project));
 }

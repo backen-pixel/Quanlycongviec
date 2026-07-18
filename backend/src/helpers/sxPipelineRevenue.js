@@ -132,24 +132,21 @@ function resolveSxProjectProbability(project, stage, dealProbability) {
   return null;
 }
 
+/** Chi phí sản xuất — không fallback doanh thu CRM (estimated_value). */
 function resolveSxProjectValue(project) {
   const pv = Number(project?.production_value);
   if (Number.isFinite(pv) && pv > 0) return pv;
-  const ev = Number(project?.estimated_value);
-  if (Number.isFinite(ev) && ev > 0) return ev;
   return 0;
 }
 
-/** Tiền cọc — ưu tiên projects.deposit_amount, fallback deal_deposit_amount từ CRM. */
+/** Tiền cọc SX — chỉ projects.deposit_amount (không lấy cọc CRM). */
 function resolveSxProjectDeposit(project) {
   const pd = Number(project?.deposit_amount);
   if (Number.isFinite(pd) && pd > 0) return pd;
-  const dd = Number(project?.deal_deposit_amount);
-  if (Number.isFinite(dd) && dd > 0) return dd;
   return 0;
 }
 
-/** Còn lại = Tổng giá trị đơn − Tiền cọc (dùng cho KPI công nợ SX). */
+/** Công nợ SX = Chi phí sản xuất − Tiền cọc. */
 function resolveSxProjectRemaining(project) {
   return Math.max(0, resolveSxProjectValue(project) - resolveSxProjectDeposit(project));
 }
