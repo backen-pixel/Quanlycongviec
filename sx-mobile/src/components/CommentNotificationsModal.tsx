@@ -29,7 +29,6 @@ import {
   isWorkshopDealNotification,
   type SxCommentNotification,
 } from '../lib/notificationApi';
-import { ensureNotificationPermission } from '../lib/pushRegistration';
 import { Radii, Spacing } from '../theme';
 import TapHighlight from './TapHighlight';
 
@@ -87,6 +86,7 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
     liveNotifications,
     markLiveNotificationsRead,
     adjustUnreadCount,
+    clearUnreadCount,
   } = useNotifications();
   const liveRef = useRef(liveNotifications);
   liveRef.current = liveNotifications;
@@ -333,18 +333,17 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
   }, [load, refreshUnread]);
 
   const markAllRead = useCallback(async () => {
-    const unreadBefore = items.filter((x) => !x.is_read).length;
-    if (!unreadBefore) return;
     try {
       await markAllCommentNotificationsRead();
       markLiveNotificationsRead();
       setItems((prev) => prev.map((x) => ({ ...x, is_read: true })));
-      adjustUnreadCount(-unreadBefore);
+      clearUnreadCount();
+      refreshUnread();
       if (tab === 'unread') setTab('all');
     } catch {
       /* ignore */
     }
-  }, [items, markLiveNotificationsRead, adjustUnreadCount, tab]);
+  }, [markLiveNotificationsRead, clearUnreadCount, refreshUnread, tab]);
 
   const deleteAllRead = useCallback(async () => {
     const readItems = items.filter((x) => x.is_read);
@@ -376,12 +375,6 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
     [onClose, onOpenProject, adjustUnreadCount],
   );
 
-  const requestPerm = useCallback(async () => {
-    const ok = await ensureNotificationPermission();
-    if (!ok) setErr('Chưa cấp quyền thông báo — vào Cài đặt hệ thống để bật.');
-    else setErr('');
-  }, []);
-
   const groups = useMemo(() => groupNotifications(items), [items]);
   const hasReadItems = items.some((x) => x.is_read);
 
@@ -398,9 +391,6 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
               accessibilityLabel="Đánh dấu tất cả đã đọc"
             >
               <Ionicons name="checkmark-done-outline" size={18} color={colors.primary} />
-            </TapHighlight>
-            <TapHighlight style={styles.iconBtn} onPress={() => void requestPerm()} hitSlop={8}>
-              <Ionicons name="settings-outline" size={18} color={colors.text} />
             </TapHighlight>
             <TapHighlight style={styles.iconBtn} onPress={onClose} hitSlop={8}>
               <Ionicons name="close" size={20} color={colors.text} />

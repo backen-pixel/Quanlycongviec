@@ -66,6 +66,7 @@ type NotificationCtx = {
   liveNotifications: SxCommentNotification[];
   markLiveNotificationsRead: () => void;
   adjustUnreadCount: (delta: number) => void;
+  clearUnreadCount: () => void;
   subscribeComment: (fn: CommentListener) => () => void;
   subscribeSync: (fn: SyncListener) => () => void;
   subscribeMessengerChat: (fn: MessengerChatListener) => () => void;
@@ -106,7 +107,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     if (!token || busyRef.current) return;
     busyRef.current = true;
     void fetchCommentUnreadCount()
-      .then((count) => setUnreadCount((c) => Math.max(c, count)))
+      // Luôn tin số server — Math.max(c, count) khiến badge không mất sau "đánh dấu đã đọc".
+      .then((count) => setUnreadCount(Math.max(0, Number(count) || 0)))
       .catch(() => {})
       .finally(() => {
         busyRef.current = false;
@@ -250,6 +252,10 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const adjustUnreadCount = useCallback((delta: number) => {
     if (!delta) return;
     setUnreadCount((c) => Math.max(0, c + delta));
+  }, []);
+
+  const clearUnreadCount = useCallback(() => {
+    setUnreadCount(0);
   }, []);
 
   const emitComment = useCallback((n: SxCommentNotification) => {
@@ -686,6 +692,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       liveNotifications,
       markLiveNotificationsRead,
       adjustUnreadCount,
+      clearUnreadCount,
       subscribeComment,
       subscribeSync,
       subscribeMessengerChat,
@@ -713,6 +720,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       liveNotifications,
       markLiveNotificationsRead,
       adjustUnreadCount,
+      clearUnreadCount,
       subscribeComment,
       subscribeSync,
       subscribeMessengerChat,
