@@ -139,7 +139,7 @@ function parseOptionalDurationSec(v) {
 const UPLOADER_SELECT =
   'id, full_name, email, company_id, department:departments!users_department_id_fkey(company_id)';
 const RECORDING_SELECT_CORE =
-  `id, user_id, company_id, file_name, storage_path, mime_type, file_size, duration_sec, source, device_label, notes, created_at, phone_number, direction, call_started_at, call_ended_at, external_call_id, customer_id, lead_id, prospect_class, prospect_classified_at, stt_status, stt_error, stt_attempts, stt_model, transcript_language, transcribed_at, customer:customers(id, full_name, phone), lead:crm_leads(id, code, title, type, company_id), uploader:users!voice_recordings_user_id_fkey(${UPLOADER_SELECT})`;
+  `id, user_id, company_id, file_name, storage_path, mime_type, file_size, duration_sec, source, device_label, notes, created_at, phone_number, direction, call_started_at, call_ended_at, external_call_id, customer_id, lead_id, crm_auto_skip_create, prospect_class, prospect_classified_at, stt_status, stt_error, stt_attempts, stt_model, transcript_language, transcribed_at, customer:customers(id, full_name, phone), lead:crm_leads(id, code, title, type, company_id), uploader:users!voice_recordings_user_id_fkey(${UPLOADER_SELECT})`;
 const RECORDING_SELECT = `${RECORDING_SELECT_CORE}, transcript`;
 
 function recordingSelectForRequest(req, { forceTranscript = false } = {}) {
@@ -367,11 +367,12 @@ function ensureUserDir(userId) {
 async function enrichVoiceRecordingFromMetadataById(supabaseClient, recordId, actingUserId, actingRole) {
   let { data: row, error } = await supabaseClient
     .from('voice_recordings')
-    .select('id, phone_number, notes, file_name, device_label, customer_id, lead_id, user_id, company_id')
+    .select('id, phone_number, notes, file_name, device_label, customer_id, lead_id, user_id, company_id, crm_auto_skip_create')
     .eq('id', recordId)
     .single();
   if (error || !row) return null;
   if (row.lead_id) return null;
+  if (row.crm_auto_skip_create === true) return null;
 
   const origPhone = row.phone_number != null ? String(row.phone_number).replace(/\s+/g, '').trim() : '';
   if (!origPhone) {
@@ -384,7 +385,7 @@ async function enrichVoiceRecordingFromMetadataById(supabaseClient, recordId, ac
           .from('voice_recordings')
           .update({ phone_number: phoneNum })
           .eq('id', recordId)
-          .select('id, phone_number, notes, file_name, device_label, customer_id, lead_id, user_id, company_id')
+          .select('id, phone_number, notes, file_name, device_label, customer_id, lead_id, user_id, company_id, crm_auto_skip_create')
           .single();
         if (!pe && withPhone) row = withPhone;
       }
@@ -812,10 +813,11 @@ r.post('/relink-unassigned', async (req, res) => {
     let rq = supabase
       .from('voice_recordings')
       .select(
-        `id, phone_number, customer_id, lead_id, user_id, company_id, lead:crm_leads(company_id), uploader:users!voice_recordings_user_id_fkey(${UPLOADER_SELECT})`,
+        `id, phone_number, customer_id, lead_id, user_id, company_id, crm_auto_skip_create, lead:crm_leads(company_id), uploader:users!voice_recordings_user_id_fkey(${UPLOADER_SELECT})`,
       )
       .not('phone_number', 'is', null)
       .neq('phone_number', '')
+      .eq('crm_auto_skip_create', false)
       .order('created_at', { ascending: false })
       .limit(allUsers ? 200 : 80);
     if (!allUsers) {
@@ -879,8 +881,9 @@ r.post('/scan-metadata-phones', async (req, res) => {
     let q = supabase
       .from('voice_recordings')
       .select(
-        `id, phone_number, notes, file_name, device_label, customer_id, lead_id, user_id, company_id, lead:crm_leads(company_id), uploader:users!voice_recordings_user_id_fkey(${UPLOADER_SELECT})`,
+        `id, phone_number, notes, file_name, device_label, customer_id, lead_id, user_id, company_id, crm_auto_skip_create, lead:crm_leads(company_id), uploader:users!voice_recordings_user_id_fkey(${UPLOADER_SELECT})`,
       )
+      .eq('crm_auto_skip_create', false)
       .order('created_at', { ascending: false })
       .limit(200);
 
@@ -1346,6 +1349,7 @@ r.post('/:id/bootstrap-crm', async (req, res) => {
       customer_id: customerRow.id,
       lead_id: leadRow.id,
       company_id: bootCompanyId || effectiveCompanyId,
+      crm_auto_skip_create: true,
     };
     if (phone && !rec.phone_number) recPatch.phone_number = phone.slice(0, 32);
     const { data: updated, error: ue } = await supabase

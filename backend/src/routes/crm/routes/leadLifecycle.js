@@ -4,6 +4,7 @@
  */
 const { Router } = require('express');
 const helpers = require('../shared/helpersBundle');
+const { markVoiceRecordingsSkipAutoCreateForLeadIds } = require('../../../helpers/voiceRecordingCrmAuto');
 
 const r = Router();
 
@@ -765,6 +766,13 @@ r.delete('/leads/:id', async (req, res) => {
 
       const allLeadIds = [lead.id, ...childIds];
 
+      // Khóa ghi âm trước khi xóa lead (FK SET NULL) — không auto tạo lại.
+      try {
+        await markVoiceRecordingsSkipAutoCreateForLeadIds(supabase, allLeadIds);
+      } catch (e) {
+        console.warn('[delete lead] mark voice skip auto-create:', e.message);
+      }
+
       // Delete CRM orders linked to this lead or to child fulfillment leads
       const { data: ords } = await supabase
         .from('orders')
@@ -815,6 +823,13 @@ r.delete('/leads/:id', async (req, res) => {
     // (lead_documents/crm_activities/crm_tasks đã dọn theo allLeadIds ở trên nếu là lead gốc)
     try { await supabase.from('lead_documents').delete().eq('lead_id', lead.id); } catch (_) {}
     try { await supabase.from('crm_activities').delete().eq('lead_id', lead.id); } catch (_) {}
+
+    // Lead không có con: vẫn khóa ghi âm gắn lead này.
+    try {
+      await markVoiceRecordingsSkipAutoCreateForLeadIds(supabase, [lead.id]);
+    } catch (e) {
+      console.warn('[delete lead] mark voice skip auto-create:', e.message);
+    }
 
     const { error } = await supabase.from('crm_leads').delete().eq('id', lead.id);
     if (error) throw error;

@@ -3618,12 +3618,22 @@ export default function CRMDashboard() {
     }
 
     // Khu vực CRM (company_regions)
+    // Khớp RPC 446: lead đã giao cho mình (hoặc NV đang lọc) vẫn hiện dù region_id lệch chip khu vực.
     if (filterRegion) {
       if (filterRegion === '__none__') {
         result = result.filter((l) => l.region_id == null || String(l.region_id).trim() === '');
       } else {
         const rid = String(filterRegion);
-        result = result.filter((l) => String(l.region_id || '') === rid);
+        const selfId = user?.id ? String(user.id) : '';
+        const assigneeId = filterAssignee ? String(filterAssignee) : '';
+        result = result.filter((l) => {
+          if (String(l.region_id || '') === rid) return true;
+          const a = l.assigned_to != null ? String(l.assigned_to) : '';
+          const o = l.lead_owner_id != null ? String(l.lead_owner_id) : '';
+          if (selfId && (a === selfId || o === selfId)) return true;
+          if (assigneeId && (a === assigneeId || o === assigneeId)) return true;
+          return false;
+        });
       }
     }
 
@@ -3702,6 +3712,7 @@ export default function CRMDashboard() {
     filterReferrer,
     filterCustomerCompany,
     filterPhone,
+    user?.id,
     fbPageLeadIds,
     extraSourceMatchedRows,
     hasPhoneNumber,

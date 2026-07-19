@@ -124,19 +124,19 @@ function assertLeadReadableByRegionScope(req, leadRow) {
   }
   const c = getCrmLeadRegionConstraint(req);
   if (c.mode !== 'in' || !c.ids?.length) return { ok: true };
+  const uid = req.user?.userId;
+  // Đã giao / chủ sở hữu: luôn được xem dù region lệch hoặc NULL (khớp RPC 446).
+  if (
+    uid
+    && (
+      String(leadRow.assigned_to || '') === String(uid)
+      || String(leadRow.lead_owner_id || '') === String(uid)
+    )
+  ) {
+    return { ok: true };
+  }
   const rid = leadRow?.region_id;
-  // Chưa gắn khu vực: cho phụ trách / chủ sở hữu / admin khu vực xem (khớp list RPC 444).
   if (!rid) {
-    const uid = req.user?.userId;
-    if (
-      uid
-      && (
-        String(leadRow.assigned_to || '') === String(uid)
-        || String(leadRow.lead_owner_id || '') === String(uid)
-      )
-    ) {
-      return { ok: true };
-    }
     if (isCrmRegionAdminUser(req.user)) return { ok: true };
     return { ok: false, error: 'Không có quyền xem lead/deal khu vực này' };
   }

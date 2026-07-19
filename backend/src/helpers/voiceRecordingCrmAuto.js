@@ -220,6 +220,30 @@ function resolvedLeadFromRow(updated) {
 }
 
 /**
+ * Khóa không auto tạo lead từ các ghi âm đang gắn leadIds (gọi trước khi xóa lead).
+ * ON DELETE SET NULL sẽ gỡ lead_id — nếu không khóa sẽ tạo lead mới.
+ */
+async function markVoiceRecordingsSkipAutoCreateForLeadIds(supabase, leadIds) {
+  const ids = [...new Set((leadIds || []).map((x) => String(x || '').trim()).filter(Boolean))];
+  if (!ids.length) return { ok: true, updated: 0 };
+  const { data, error } = await supabase
+    .from('voice_recordings')
+    .update({ crm_auto_skip_create: true })
+    .in('lead_id', ids)
+    .select('id');
+  if (error) {
+    // Cột chưa migrate — bỏ qua, không chặn xóa lead
+    if (/crm_auto_skip_create/i.test(String(error.message || ''))) {
+      console.warn('[voice-crm-auto] mark skip: cột chưa có, bỏ qua');
+      return { ok: true, updated: 0, skipped: true };
+    }
+    console.warn('[voice-crm-auto] mark skip:', error.message);
+    return { ok: false, error: error.message, updated: 0 };
+  }
+  return { ok: true, updated: (data || []).length };
+}
+
+/**
  * @param {import('@supabase/supabase-js').SupabaseClient} supabase
  * @param {object} row — voice_recordings row (id, phone_number, customer_id, lead_id, user_id, company_id, …)
  * @param {{ actingUserId: string, actingRole?: string, recordSelect?: string }} opts
@@ -227,6 +251,10 @@ function resolvedLeadFromRow(updated) {
 async function ensureVoiceRecordingCrmLink(supabase, row, opts = {}) {
   if (!row?.id) return null;
   if (row.lead_id) return null;
+  if (row.crm_auto_skip_create === true) {
+    console.log(`[voice-crm-auto] recording ${row.id}: crm_auto_skip_create — bỏ qua tạo lead`);
+    return null;
+  }
 
   const { actingUserId, actingRole, recordSelect = '*' } = opts;
   const uid = row.user_id || actingUserId;
@@ -269,7 +297,7 @@ async function ensureVoiceRecordingCrmLink(supabase, row, opts = {}) {
       customer_id,
       staffCompanyId: staff.companyId,
     });
-    const patch = { customer_id, lead_id, company_id };
+    const patch = { customer_id, lead_id, company_id, crm_auto_skip_create: true };
     const { data: updated, error: upErr } = await supabase
       .from('voice_recordings')
       .update(patch)
@@ -340,6 +368,7 @@ async function ensureVoiceRecordingCrmLink(supabase, row, opts = {}) {
     customer_id: customerRow.id,
     lead_id: leadRow.id,
     company_id,
+    crm_auto_skip_create: true,
   };
   if (phone && !row.phone_number) recPatch.phone_number = phone.slice(0, 32);
 
@@ -366,4 +395,5 @@ module.exports = {
   resolveVoiceRecordingCompanyId,
   createCrmOpportunityForCustomer,
   ensureVoiceRecordingCrmLink,
+  markVoiceRecordingsSkipAutoCreateForLeadIds,
 };
