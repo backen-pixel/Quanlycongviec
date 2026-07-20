@@ -4,6 +4,152 @@
  */
 export const BUILTIN_UPDATES = [
   {
+    id: '2026-07-crm-revert-deal-to-lead',
+    version: '2.4.3',
+    category: 'guide',
+    publishedAt: '2026-07-20T06:40:00.000Z',
+    title: '↩️ Hướng dẫn — Chuyển Deal về Lead',
+    content: `## Khi nào dùng?
+
+Khi Deal **chưa đủ điều kiện bán** (sai loại, cần nuôi lại, hoặc muốn trả về pipeline Lead), dùng **Trả về Lead**.
+
+**Lưu ý:**
+- Deal **đã có dự án SX** cần tích xác nhận **gỡ liên kết dự án** (chỉ admin công ty/khu vực).
+- Phải chọn **người phụ trách Lead mới**.
+
+
+## Bước 1 — Mở chi tiết Deal
+
+1. Vào **CRM → Pipeline** (tab Deal).
+2. Bấm thẻ Deal cần trả về.
+3. Trên header chi tiết, tìm nút vàng **Trả về Lead**.
+
+![Header Deal — nút Trả về Lead](/release-notes/hd-deal-header.png)
+
+
+## Bước 2 — Điền form và xác nhận
+
+1. Bấm **Trả về Lead**.
+2. Chọn **Người phụ trách Lead mới** (bắt buộc).
+3. Nếu Deal có dự án SX: tích **gỡ liên kết dự án**.
+4. (Tuỳ chọn) nhập lý do.
+5. Bấm **↩️ Trả về Lead**.
+
+![Popup Trả về Lead](/release-notes/hd-revert-lead-modal.png)
+
+
+## Kiểm tra sau khi chuyển
+
+- Badge đổi thành **LEAD**.
+- Bản ghi xuất hiện lại trên Kanban **Lead**.
+- Lịch sử / tài liệu vẫn giữ nguyên.
+
+
+## Lỗi hay gặp
+
+| Hiện tượng | Cách xử lý |
+|---|---|
+| Không thấy nút Trả về Lead | Đang mở Lead (không phải Deal) |
+| Báo có dự án SX | Tích gỡ liên kết hoặc nhờ admin |
+| Không chọn được NV | Chọn công ty/khu vực trước |
+`,
+  },
+  {
+    id: '2026-07-drive-upload-file-image',
+    version: '2.4.5',
+    category: 'guide',
+    publishedAt: '2026-07-20T07:05:00.000Z',
+    title: '☁️ Hướng dẫn — Up file / hình bằng Drive trong chi tiết Deal',
+    content: `## Mục tiêu
+
+Up **file PDF, Excel, DWG…** và **hình ảnh** lên **Google Drive gắn với Deal** ngay trên **chi tiết Deal** (tab **☁️ Drive**). File lưu trong thư mục Deal trên Drive — đồng nghiệp mở Deal là thấy.
+
+
+## Bước 1 — Mở Deal và vào tab Drive
+
+1. CRM → Pipeline (tab Deal) → mở thẻ Deal.
+2. Ở vùng giữa, bấm tab **☁️ Drive**.
+3. Thấy thanh nút: **Thư mục** · **Tải lên từ máy** · **Doc** · **Sheet** · **Liên kết file Drive**.
+
+
+## Bước 2 — Tải file / hình từ máy lên Drive
+
+1. Bấm **Tải lên từ máy** (nút xanh).
+2. Chọn một hoặc nhiều file từ máy (PDF, JPG, PNG, Excel, DWG…).
+3. Chờ tải lên xong.
+4. File hiện trong danh sách **File từ Drive** của Deal (cùng thư mục Deal trên Google Drive).
+
+![Tab Drive — Tải lên từ máy trên Deal](/release-notes/hd-deal-drive-upload.png)
+
+
+## Cách khác (tuỳ chọn)
+
+- **Liên kết file Drive** — gắn file đã có trên Google Drive vào Deal (không up lại từ máy).
+- **Doc / Sheet** — tạo Google Doc hoặc Sheet mới trong thư mục Deal.
+- **Thư mục** — tạo thư mục con để sắp xếp bản vẽ / hợp đồng.
+
+
+## Kiểm tra sau khi up
+
+- Tab **☁️ Drive** tăng số file (badge trên tab).
+- Breadcrumb thư mục dạng: *Drive của tôi → … → Deal → DEAL-…*
+- Mở lại Deal / refresh vẫn thấy file.
+
+
+## Lỗi hay gặp
+
+| Hiện tượng | Cách xử lý |
+|---|---|
+| Không thấy tab Drive | Đang ở tab Tài liệu / Công việc — bấm **☁️ Drive** |
+| Không bấm được Tải lên từ máy | Chưa kết nối Drive / hết quyền — nhờ admin |
+| Upload mãi không xong | File quá lớn / mất mạng — thử lại hoặc nén ảnh |
+| Đồng nghiệp không thấy file | Họ mở đúng Deal → tab Drive; kiểm tra quyền Drive |
+`,
+  },
+  {
+    id: '2026-07-crm-transfer-assignee-region',
+    version: '2.4.3',
+    category: 'guide',
+    publishedAt: '2026-07-20T06:42:00.000Z',
+    title: '👤 Hướng dẫn — Chuyển nhân viên khác khu vực',
+    content: `## Vì sao phải chọn khu vực trước?
+
+Lead/Deal có **khu vực** (\`region_id\`). NV chỉ thuộc khu vực được phân.  
+Nếu giao NV khu vực khác mà **không đổi khu vực Lead**, Kanban / quyền sẽ lệch (vd. VPT HCM ↔ Q2 ↔ Cần Thơ).
+
+
+## Bước 1 — Mở popup chuyển
+
+Trên chi tiết Lead/Deal:
+- Header: nút **Chuyển người phụ trách**, hoặc
+- Panel **Thông tin** → nút **Chuyển người phụ trách**.
+
+![Nút Chuyển người phụ trách trên header](/release-notes/hd-deal-header.png)
+
+
+## Bước 2 — Chọn khu vực rồi chọn NV
+
+1. Chọn **Khu vực** (cùng công ty).
+2. Chọn **Chuyển cho nhân viên** — chỉ hiện NV thuộc khu vực đó.
+3. Bấm **Xác nhận**.
+
+![Popup: khu vực + nhân viên](/release-notes/hd-transfer-assignee-modal.png)
+
+
+## Hệ thống làm gì?
+
+- **Cùng khu vực:** chỉ đổi người phụ trách.
+- **Khác khu vực:** cập nhật \`region_id\` + remap **pipeline/stage** (công ty tách pipeline theo khu vực).
+
+
+## Checklist
+
+- [ ] Đã chọn đúng khu vực đích
+- [ ] NV thuộc khu vực đó (picker không trống)
+- [ ] Sau khi lưu: panel Thông tin hiện đúng khu vực + phụ trách mới
+`,
+  },
+  {
     id: '2026-07-leave-schedule-guide',
     version: '2.4.1',
     category: 'guide',

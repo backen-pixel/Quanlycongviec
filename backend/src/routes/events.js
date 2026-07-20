@@ -88,18 +88,20 @@ function escapeEventsOrFilterValue(s) {
 }
 
 /**
- * Gộp company (legacy OR) + search thành một filter `or` để không ghi đè lẫn nhau.
+ * Gộp company (legacy OR) + search + người (tạo/phụ trách) thành một filter `or`
+ * để không ghi đè lẫn nhau.
  *
  * PostgREST chỉ giữ 1 param `or` — gọi `.or()` lần hai sẽ mất lọc công ty.
  * Công ty nhiều lead: chỉ `.eq('company_id')` — tránh OR URL quá dài gây 5xx.
  * Phải đồng bộ (không async) — builder Supabase là thenable.
  *
- * Lọc người tạo / khu vực người tạo: dùng `resolveEventCreatorFilter` + `.eq`/`.in('created_by')`.
+ * personIds: khớp `created_by` HOẶC `assignee_id` (người tạo hoặc người phụ trách).
  */
 function applyEventsCombinedOrFilters(queryBuilder, {
   companyId = null,
   leadIdsForCompany = null,
   search = null,
+  personIds = null,
 } = {}) {
   const orGroups = [];
 
@@ -117,6 +119,16 @@ function applyEventsCombinedOrFilters(queryBuilder, {
     orGroups.push(
       `title.ilike.%${qSearch}%,location.ilike.%${qSearch}%,description.ilike.%${qSearch}%`,
     );
+  }
+
+  if (personIds && personIds.length) {
+    if (personIds.length === 1) {
+      const id = personIds[0];
+      orGroups.push(`created_by.eq.${id},assignee_id.eq.${id}`);
+    } else {
+      const list = personIds.join(',');
+      orGroups.push(`created_by.in.(${list}),assignee_id.in.(${list})`);
+    }
   }
 
   if (orGroups.length === 0) return queryBuilder;
@@ -142,18 +154,17 @@ function eventsDateToBound(dateTo) {
 }
 
 /**
- * Lọc theo người tạo sự kiện + khu vực của người tạo (user_company_regions).
- * - user_id → created_by = user đó
- * - region_id → created_by ∈ nhân viên được gán khu vực (không phụ thuộc users.company_id —
- *   nhiều NV/admin có company_id null nhưng vẫn thuộc khu vực qua user_company_regions)
- * - cả hai → giao: người tạo phải thuộc khu vực đã chọn
- * @returns {{ empty: true } | { creatorIds: string[] | null }}
+ * Lọc theo người liên quan sự kiện (tạo HOẶC phụ trách) + khu vực của họ (user_company_regions).
+ * - user_id → created_by = user HOẶC assignee_id = user
+ * - region_id → created_by/assignee ∈ NV được gán khu vực (không phụ thuộc users.company_id)
+ * - cả hai → giao: user đã chọn phải thuộc khu vực đã chọn
+ * @returns {{ empty: true } | { personIds: string[] | null }}
  */
-async function resolveEventCreatorFilter({ companyId = null, regionId = null, userId = null } = {}) {
+async function resolveEventPersonFilter({ companyId = null, regionId = null, userId = null } = {}) {
   const uid = userId && String(userId).trim() ? String(userId).trim() : null;
   const rid = regionId && String(regionId).trim() ? String(regionId).trim() : null;
 
-  let regionCreatorIds = null;
+  let regionPersonIds = null;
   if (rid) {
     // Đảm bảo khu vực thuộc đúng công ty đang xem (nếu có scope công ty)
     if (companyId) {
@@ -175,24 +186,18 @@ async function resolveEventCreatorFilter({ companyId = null, regionId = null, us
     const ids = [...new Set((links || []).map((r) => r.user_id).filter(Boolean).map(String))]
       .slice(0, EVENTS_CREATOR_IN_MAX);
     if (ids.length === 0) return { empty: true };
-    regionCreatorIds = ids;
+    regionPersonIds = ids;
   }
 
   if (uid) {
-    if (regionCreatorIds && !regionCreatorIds.includes(uid)) {
+    if (regionPersonIds && !regionPersonIds.includes(uid)) {
       return { empty: true };
     }
-    return { creatorIds: [uid] };
+    return { personIds: [uid] };
   }
 
-  if (regionCreatorIds) return { creatorIds: regionCreatorIds };
-  return { creatorIds: null };
-}
-
-function applyEventCreatorFilter(queryBuilder, creatorIds) {
-  if (!creatorIds || !creatorIds.length) return queryBuilder;
-  if (creatorIds.length === 1) return queryBuilder.eq('created_by', creatorIds[0]);
-  return queryBuilder.in('created_by', creatorIds);
+  if (regionPersonIds) return { personIds: regionPersonIds };
+  return { personIds: null };
 }
 
 async function assertEventCompanyAccess(req, res, eventId) {
@@ -358,12 +363,12 @@ r.get('/', async (req, res) => {
     if (sc.companyId) {
       companyLeadIds = await resolveCompanyLeadIdsForEvents(sc.companyId);
     }
-    const creatorScope = await resolveEventCreatorFilter({
+    const personScope = await resolveEventPersonFilter({
       companyId: sc.companyId,
       regionId: region_id,
       userId: user_id,
     });
-    if (creatorScope.empty) {
+    if (personScope.empty) {
       return res.json({ events: [], total: 0 });
     }
 
@@ -372,8 +377,8 @@ r.get('/', async (req, res) => {
       companyId: sc.companyId,
       leadIdsForCompany: companyLeadIds,
       search,
+      personIds: personScope.personIds,
     });
-    q = applyEventCreatorFilter(q, creatorScope.creatorIds);
 
     if (type) q = q.eq('event_type', type);
     if (status) q = q.eq('status', status);
@@ -397,8 +402,8 @@ r.get('/', async (req, res) => {
         companyId: sc.companyId,
         leadIdsForCompany: companyLeadIds,
         search,
+        personIds: personScope.personIds,
       });
-      q2 = applyEventCreatorFilter(q2, creatorScope.creatorIds);
       if (type) q2 = q2.eq('event_type', type);
       if (status) q2 = q2.eq('status', status);
       if (lead_id) q2 = q2.eq('lead_id', lead_id);
@@ -485,12 +490,12 @@ r.get('/overview', async (req, res) => {
       companyLeadIds = await resolveCompanyLeadIdsForEvents(sc.companyId);
     }
 
-    const creatorScope = await resolveEventCreatorFilter({
+    const personScope = await resolveEventPersonFilter({
       companyId: sc.companyId,
       regionId,
       userId,
     });
-    if (creatorScope.empty) {
+    if (personScope.empty) {
       return res.json(emptyOverviewPayload(dateFrom, dateTo, granularityQ));
     }
 
@@ -503,8 +508,8 @@ r.get('/overview', async (req, res) => {
       q = applyEventsCombinedOrFilters(q, {
         companyId: sc.companyId,
         leadIdsForCompany: companyLeadIds,
+        personIds: personScope.personIds,
       });
-      q = applyEventCreatorFilter(q, creatorScope.creatorIds);
       q = q.gte('start_time', `${dateFrom}T00:00:00+07:00`);
       q = q.lte('start_time', `${dateTo}T23:59:59.999+07:00`);
       if (eventType) q = q.eq('event_type', eventType);
@@ -689,12 +694,12 @@ r.get('/calendar', async (req, res) => {
     if (sc.companyId) {
       companyLeadIds = await resolveCompanyLeadIdsForEvents(sc.companyId);
     }
-    const creatorScope = await resolveEventCreatorFilter({
+    const personScope = await resolveEventPersonFilter({
       companyId: sc.companyId,
       regionId: region_id,
       userId: user_id,
     });
-    if (creatorScope.empty) {
+    if (personScope.empty) {
       return res.json([]);
     }
 
@@ -706,8 +711,8 @@ r.get('/calendar', async (req, res) => {
       companyId: sc.companyId,
       leadIdsForCompany: companyLeadIds,
       search,
+      personIds: personScope.personIds,
     });
-    cq = applyEventCreatorFilter(cq, creatorScope.creatorIds);
 
     if (type) cq = cq.eq('event_type', type);
     if (status) cq = cq.eq('status', status);
@@ -722,8 +727,8 @@ r.get('/calendar', async (req, res) => {
         companyId: sc.companyId,
         leadIdsForCompany: companyLeadIds,
         search,
+        personIds: personScope.personIds,
       });
-      cq2 = applyEventCreatorFilter(cq2, creatorScope.creatorIds);
       if (type) cq2 = cq2.eq('event_type', type);
       if (status) cq2 = cq2.eq('status', status);
       cq2 = cq2.order('start_time');

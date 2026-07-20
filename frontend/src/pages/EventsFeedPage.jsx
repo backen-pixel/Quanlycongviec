@@ -887,22 +887,22 @@ export default function EventsFeedPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Người tạo</label>
-                  <select value={filterUser} onChange={e => setFilterUser(e.target.value)} className="h-9 px-3 border rounded-lg text-sm min-w-[140px]">
+                  <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Người tạo / phụ trách</label>
+                  <select value={filterUser} onChange={e => setFilterUser(e.target.value)} className="h-9 px-3 border rounded-lg text-sm min-w-[140px]" title="Hiện sự kiện người này tạo hoặc được giao phụ trách">
                     <option value="">Tất cả</option>
                     {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-[10px] font-medium text-gray-500 mb-0.5 flex items-center gap-1">
-                    <MapPin className="h-3 w-3" /> Khu vực người tạo
+                    <MapPin className="h-3 w-3" /> Khu vực (tạo / phụ trách)
                   </label>
                   <select
                     value={filterRegionId}
                     onChange={e => setFilterRegionId(e.target.value)}
                     disabled={!effectiveCompanyIdForUsers}
                     className="h-9 px-3 border rounded-lg text-sm min-w-[150px] disabled:bg-gray-100"
-                    title={!effectiveCompanyIdForUsers ? 'Chọn công ty (admin) để lọc khu vực người tạo' : 'Lọc sự kiện theo khu vực của người tạo'}
+                    title={!effectiveCompanyIdForUsers ? 'Chọn công ty (admin) để lọc khu vực' : 'Lọc sự kiện theo khu vực của người tạo hoặc người phụ trách'}
                   >
                     <option value="">Tất cả khu vực</option>
                     {regions.map((rg) => (
@@ -1154,9 +1154,13 @@ function EventCard({ event: ev, eventTypes, currentUser, onRespond, onDelete, on
               (ev.creator?.full_name || '?').charAt(0)}
           </div>
           <div className="min-w-0">
-            <div className="flex items-center gap-1 text-[12px] min-w-0">
+            <div className="flex items-center gap-1 text-[12px] min-w-0 flex-wrap">
               <span className="font-semibold text-gray-900 truncate">{ev.creator?.full_name || 'Người dùng'}</span>
+              <span className="text-gray-400 font-normal shrink-0">· tạo</span>
             </div>
+            <p className="text-[10px] text-gray-500 leading-tight truncate">
+              Phụ trách: <span className="font-medium text-gray-700">{ev.assignee?.full_name || '—'}</span>
+            </p>
             <p className="text-[10px] text-gray-400 leading-tight">{formatDateVN(ev.created_at)}, {formatTime(ev.created_at)}</p>
           </div>
         </div>
@@ -1474,12 +1478,14 @@ function SelectedDayEventDetail({ ev, eventTypes, onEdit }) {
             <span className="text-xs text-gray-500 shrink-0">Thời gian:</span>
             <span className="text-gray-800 font-medium">{timeRange}</span>
           </div>
-          {ev.assignee && (
-            <div className="flex flex-wrap gap-x-2 gap-y-1">
-              <span className="text-xs text-gray-500 shrink-0">Người phụ trách:</span>
-              <span className="text-gray-800">{ev.assignee.full_name}</span>
-            </div>
-          )}
+          <div className="flex flex-wrap gap-x-2 gap-y-1">
+            <span className="text-xs text-gray-500 shrink-0">Người tạo:</span>
+            <span className="text-gray-800">{ev.creator?.full_name || '—'}</span>
+          </div>
+          <div className="flex flex-wrap gap-x-2 gap-y-1">
+            <span className="text-xs text-gray-500 shrink-0">Người phụ trách:</span>
+            <span className="text-gray-800">{ev.assignee?.full_name || '—'}</span>
+          </div>
           {ev.location && (
             <div className="flex flex-wrap gap-x-2 gap-y-1 items-start">
               <span className="text-xs text-gray-500 shrink-0">Địa điểm:</span>
@@ -1520,11 +1526,9 @@ function SelectedDayEventDetail({ ev, eventTypes, onEdit }) {
             <p className="text-sm text-emerald-800 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-100">📝 Kết quả: {ev.result}</p>
           )}
           <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500 pt-1 border-t border-gray-100">
-            <span className="flex items-center gap-1">
-              <Users className="h-3.5 w-3.5" /> Tạo: {ev.creator?.full_name || '—'}
-            </span>
             {(confirmed.length > 0 || declined.length > 0 || pending.length > 0) && (
-              <span>
+              <span className="flex items-center gap-1">
+                <Users className="h-3.5 w-3.5" />
                 Tham dự:{' '}
                 {confirmed.length > 0 && <span className="text-emerald-600 font-medium">{confirmed.length} xác nhận</span>}
                 {pending.length > 0 && <span className="text-amber-600 font-medium ml-1">{pending.length} chờ</span>}
