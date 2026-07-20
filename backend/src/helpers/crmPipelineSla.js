@@ -24,6 +24,23 @@ function effectivePipelineStageSlaDays(slaDaysRaw) {
   return DEFAULT_PIPELINE_STAGE_SLA_DAYS;
 }
 
+/** Có SĐT trên lead hoặc customer — khớp Kanban «có số». */
+function crmLeadHasPhone(lead) {
+  const cust = lead?.customer?.phone;
+  const own = lead?.phone;
+  const display = lead?.display_phone;
+  return !!(
+    (cust && String(cust).trim())
+    || (own && String(own).trim())
+    || (display && String(display).trim())
+  );
+}
+
+/** Lead chưa có số → không áp dụng SLA cột. */
+function crmLeadMissingPhone(lead) {
+  return !crmLeadHasPhone(lead);
+}
+
 function isSxPipelineStageNoDeadline(stage) {
   return !!stage?.counts_as_completed_revenue;
 }
@@ -95,6 +112,8 @@ module.exports = {
   isPipelineStageSlaDisabled,
   normalizePipelineStageSlaDaysForDb,
   effectivePipelineStageSlaDays,
+  crmLeadHasPhone,
+  crmLeadMissingPhone,
   isSxPipelineStageNoDeadline,
   shouldIgnoreSxOrderDeliveryOverdue,
   isSxProjectDateOverdue,

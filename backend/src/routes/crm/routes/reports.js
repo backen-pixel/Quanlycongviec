@@ -78,6 +78,7 @@ r.get('/admin/sla-at-risk', async (req, res) => {
     for (const lead of leads) {
       const st = lead.stage_id ? stageMap[lead.stage_id] : null;
       if (st?.is_won || st?.is_lost) continue;
+      if (!lead.phone || !String(lead.phone).trim()) continue;
 
       const slaDays = effectivePipelineStageSlaDays(st?.sla_days);
       if (slaDays == null) continue;
@@ -209,6 +210,7 @@ r.post('/admin/sla-remind', async (req, res) => {
     for (const lead of scoped) {
       const scopeOk = assertLeadReadableByRegionScope(req, lead);
       if (!scopeOk.ok) continue;
+      if (!lead.phone || !String(lead.phone).trim()) continue;
 
       const { data: st } = await supabase
         .from('crm_pipeline_stages')

@@ -15,7 +15,7 @@
  */
 
 const { supabase } = require('../config/supabase');
-const { effectivePipelineStageSlaDays } = require('../helpers/crmPipelineSla');
+const { effectivePipelineStageSlaDays, crmLeadMissingPhone } = require('../helpers/crmPipelineSla');
 const { resolveCalcParams, positiveNumberParam } = require('../helpers/kpiCalcParams');
 const { computeScore, SCORE_CAP_RATIO } = require('./kpiScoreFormula');
 const { responseMinutes, isUserOff } = require('./businessHours');
@@ -302,13 +302,14 @@ async function calcA5_dealStageSlaRate({ userId, periodStart, periodEnd }) {
 async function calcA6_overSlaCount({ userId }) {
   const { data: leads, error } = await supabase
     .from('crm_leads')
-    .select('id, stage_id, stage_entered_at, lead_owner_id, assigned_to, stage:crm_pipeline_stages!stage_id(canonical_slug, sla_days, is_won, is_lost)')
+    .select('id, stage_id, stage_entered_at, phone, lead_owner_id, assigned_to, stage:crm_pipeline_stages!stage_id(canonical_slug, sla_days, is_won, is_lost)')
     .or(`lead_owner_id.eq.${userId},assigned_to.eq.${userId}`);
   if (error) throw error;
   const now = Date.now();
   const breaches = (leads || []).filter((l) => {
     const s = l.stage;
     if (!s || s.is_won || s.is_lost || !l.stage_entered_at) return false;
+    if (crmLeadMissingPhone(l)) return false;
     const slaDays = effectivePipelineStageSlaDays(s.sla_days);
     if (slaDays == null) return false;
     return now - new Date(l.stage_entered_at).getTime() > slaDays * 86400000;

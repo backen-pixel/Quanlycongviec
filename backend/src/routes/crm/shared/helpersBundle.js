@@ -920,7 +920,7 @@ async function fetchCrmLeadsForOrgReportBatched(type, {
   for (;;) {
     let q = supabase
       .from('crm_leads')
-      .select('id, stage_id, estimated_value, probability, type, assigned_to, lead_owner_id, company_id, region_id, created_at, source_id, stage_entered_at, first_touch_time, lead_type_id, kanban_deadline_at')
+      .select('id, stage_id, estimated_value, probability, type, phone, assigned_to, lead_owner_id, company_id, region_id, created_at, source_id, stage_entered_at, first_touch_time, lead_type_id, kanban_deadline_at')
       .eq('type', type)
       .is('parent_lead_id', null);
     if (company_id) {
@@ -1373,7 +1373,7 @@ async function fetchCrmLeadsForUserDetailBatched(userId, type, { company_id, reg
   for (;;) {
     let q = supabase
       .from('crm_leads')
-      .select('id, pipeline_id, stage_id, estimated_value, probability, type, created_at, stage_entered_at, lead_type_id, first_touch_time, assigned_to, lead_owner_id, company_id, region_id, source_id')
+      .select('id, pipeline_id, stage_id, estimated_value, probability, type, phone, created_at, stage_entered_at, lead_type_id, first_touch_time, assigned_to, lead_owner_id, company_id, region_id, source_id')
       .eq('type', type);
     if (company_id) q = q.eq('company_id', company_id);
     if (region_id) q = q.eq('region_id', region_id);
@@ -1448,6 +1448,7 @@ const {
   DEFAULT_PIPELINE_STAGE_SLA_DAYS,
   normalizePipelineStageSlaDaysForDb,
   effectivePipelineStageSlaDays,
+  crmLeadMissingPhone,
 } = require('../../../helpers/crmPipelineSla');
 
 const CRM_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -1459,7 +1460,7 @@ async function fetchAllLeadsForSlaWatchlist(req, effectiveCompanyId, typeFilter,
   for (;;) {
     let q = supabase
       .from('crm_leads')
-      .select('id, code, title, type, company_id, stage_id, assigned_to, lead_owner_id, stage_entered_at, created_at, region_id')
+      .select('id, code, title, type, phone, company_id, stage_id, assigned_to, lead_owner_id, stage_entered_at, created_at, region_id')
       .order('updated_at', { ascending: false });
     if (typeFilter === 'lead' || typeFilter === 'deal') q = q.eq('type', typeFilter);
     if (effectiveCompanyId) q = q.eq('company_id', effectiveCompanyId);
@@ -1934,6 +1935,7 @@ function orgReportStageIsClosed(st) {
 
 function orgReportIsSlaOverdue(row, st, asOfMs = Date.now()) {
   if (!st || orgReportStageIsClosed(st)) return false;
+  if (crmLeadMissingPhone(row)) return false;
   const slaDays = effectivePipelineStageSlaDays(st.sla_days);
   if (slaDays == null) return false;
   const entered = row.stage_entered_at || row.created_at;
@@ -6640,6 +6642,7 @@ module.exports = {
   duplicateLeadIdsFromLiteRows,
   ecosystemModuleKeyForCrmDeadline,
   effectivePipelineStageSlaDays,
+  crmLeadMissingPhone,
   emitCrmBadgeUpdateForProject,
   emitCrmDashboardChanged,
   emitCrmTaskChanged,

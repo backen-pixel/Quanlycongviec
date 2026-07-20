@@ -2062,7 +2062,7 @@ async function listEmployeesInScope({
 
 /* ─────────────────── RISK REPORT (SLA + overdue tasks + stagnant) ─────────────────── */
 
-const { effectivePipelineStageSlaDays } = require('./crmPipelineSla');
+const { effectivePipelineStageSlaDays, crmLeadMissingPhone } = require('./crmPipelineSla');
 
 /**
  * Tổng hợp rủi ro của Lead/Deal trong scope:
@@ -2100,7 +2100,7 @@ async function getLeadDealRiskReport({
   let leadQ = supabase
     .from('crm_leads')
     .select(
-      'id, code, title, type, company_id, stage_id, stage_entered_at, created_at, '
+      'id, code, title, type, phone, company_id, stage_id, stage_entered_at, created_at, '
       + 'estimated_value, assigned_to, '
       + 'assignee:users!crm_leads_assigned_to_fkey(id, full_name), '
       + 'stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, sla_days, pipeline_type, is_won, is_lost)'
@@ -2133,8 +2133,8 @@ async function getLeadDealRiskReport({
     const entered = l.stage_entered_at || l.created_at;
     const enteredMs = entered ? new Date(entered).getTime() : null;
 
-    // SLA breach / due soon
-    if (slaDays != null && enteredMs) {
+    // SLA breach / due soon — bỏ lead chưa có SĐT
+    if (slaDays != null && enteredMs && !crmLeadMissingPhone(l)) {
       const dueMs = enteredMs + slaDays * 24 * 3600 * 1000;
       const baseItem = {
         id: l.id,

@@ -111,6 +111,7 @@ import {
   getCrmDeadlineUrgencyFromIso,
   getCrmDeadlineUrgencyFromTs,
   getPipelineStageSlaDeadlineTs,
+  crmLeadMissingPhone,
   shouldHideCrmKanbanDeadlineOnCard,
 } from '../lib/crmLeadDeadlineDisplay';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
@@ -229,8 +230,11 @@ function KpiKanbanLedgerBadge({ net, periodStart, reserveMergeCheckbox = false }
   );
 }
 
-/** SLA cột pipeline: null DB → 7 ngày; sla_days=0 → không áp dụng SLA */
-function getPipelineStageSlaTone(stageEnteredAt, stage) {
+/** SLA cột pipeline: null DB → 7 ngày; sla_days=0 → không áp dụng SLA; lead chưa có SĐT → bỏ SLA */
+function getPipelineStageSlaTone(stageEnteredAt, stage, leadItem) {
+  if (leadItem != null && crmLeadMissingPhone(leadItem)) {
+    return { level: 'ok', remainingMs: null, deadlineTs: null };
+  }
   if (!stageEnteredAt || !stage) return { level: 'ok', remainingMs: null, deadlineTs: null };
   if (stage.is_won || stage.is_lost || stage.counts_as_completed_revenue) return { level: 'ok', remainingMs: null, deadlineTs: null };
   const slaDays = effectivePipelineStageSlaDays(stage.sla_days);
@@ -4114,7 +4118,7 @@ export default function CRMDashboard() {
       if (!stage || stage.is_won || stage.is_lost || stage.counts_as_completed_revenue) continue;
       const manualTone = getCrmOpenTaskDeadlineTone(it.kanban_deadline_at);
       const taskTone = getCrmOpenTaskDeadlineTone(it.crm_next_open_task_deadline);
-      const slaTone = getPipelineStageSlaTone(it.stage_entered_at, stage);
+      const slaTone = getPipelineStageSlaTone(it.stage_entered_at, stage, it);
       const tone = manualTone || taskTone || slaTone;
       if (!tone || tone.level !== 'overdue') continue;
       out.push({
@@ -8511,7 +8515,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
     if (task) return task;
     const expected = readIso(item.expected_close_date, 'expected_close');
     if (expected) return expected;
-    const slaTs = getPipelineStageSlaDeadlineTs(item.stage_entered_at, stage);
+    const slaTs = getPipelineStageSlaDeadlineTs(item.stage_entered_at, stage, item);
     if (slaTs != null) return { source: 'sla', deadlineTs: slaTs, iso: null };
     return null;
   })();

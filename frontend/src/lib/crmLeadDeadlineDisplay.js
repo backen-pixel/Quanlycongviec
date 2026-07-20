@@ -21,11 +21,38 @@ export function isCrmPipelineStageNoDeadline(stage) {
     || isCrmPipelineStageCompletedRevenue(stage);
 }
 
+/** Có SĐT trên lead hoặc customer (khớp lọc Kanban «có số»). */
+export function crmLeadHasPhone(item) {
+  const cust = item?.customer?.phone;
+  const own = item?.phone;
+  const display = item?.display_phone;
+  return !!(
+    (cust && String(cust).trim())
+    || (own && String(own).trim())
+    || (display && String(display).trim())
+  );
+}
+
 /**
- * Ẩn badge deadline trên thẻ Kanban khi user tick «đã tương tác»
- * hoặc thẻ đang ở cột Thắng/Thua/Hoàn thành doanh thu.
+ * Lead «chưa có số» để bỏ deadline/quá hạn trên thẻ.
+ * Ưu tiên display_phone (cùng logic lọc Kanban); nếu không có thì xem lead.phone + customer.phone.
+ * Lưu ý: chỉ cần lead.phone trống mà customer có số → vẫn coi là CÓ số (hiện SĐT trên thẻ).
+ */
+export function crmLeadMissingPhone(item) {
+  if (item && Object.prototype.hasOwnProperty.call(item, 'display_phone')) {
+    return !item.display_phone || !String(item.display_phone).trim();
+  }
+  return !crmLeadHasPhone(item);
+}
+
+/**
+ * Ẩn badge deadline / quá hạn trên thẻ Kanban khi:
+ * - lead/deal chưa có SĐT
+ * - user tick «đã tương tác»
+ * - cột Thắng/Thua/Hoàn thành doanh thu
  */
 export function shouldHideCrmKanbanDeadlineOnCard(item, stage) {
+  if (crmLeadMissingPhone(item)) return true;
   if (item?.is_interacted) return true;
   const st = stage || item?.stage;
   if (isCrmPipelineStageNoDeadline(st)) return true;
@@ -61,7 +88,14 @@ export const CRM_DEADLINE_SOURCE_META = {
   },
 };
 
-export function getPipelineStageSlaDeadlineTs(stageEnteredAt, stage) {
+/**
+ * Hạn SLA cột.
+ * @param {string} stageEnteredAt
+ * @param {object} stage
+ * @param {object} [leadItem] — nếu truyền và chưa có SĐT → null (tắt SLA)
+ */
+export function getPipelineStageSlaDeadlineTs(stageEnteredAt, stage, leadItem) {
+  if (leadItem != null && crmLeadMissingPhone(leadItem)) return null;
   if (!stageEnteredAt || !stage) return null;
   if (isCrmPipelineStageNoDeadline(stage)) return null;
   const slaDays = effectivePipelineStageSlaDays(stage.sla_days);
@@ -69,10 +103,10 @@ export function getPipelineStageSlaDeadlineTs(stageEnteredAt, stage) {
   return new Date(stageEnteredAt).getTime() + slaDays * 86400000;
 }
 
-/** Kanban: ưu tiên hạn NV mở mới nhất, không có thì SLA cột. Bỏ qua cột không deadline. */
+/** Kanban: ưu tiên hạn NV mở mới nhất, không có thì SLA cột. Bỏ qua cột không deadline / chưa có SĐT. */
 export function resolveCrmLeadKanbanScheduleSource(item, stage) {
   const st = stage || item?.stage;
-  if (isCrmPipelineStageNoDeadline(st)) {
+  if (shouldHideCrmKanbanDeadlineOnCard(item, st)) {
     return { source: null, deadlineTs: null };
   }
   const taskIso = item?.crm_next_open_task_deadline;
@@ -80,7 +114,7 @@ export function resolveCrmLeadKanbanScheduleSource(item, stage) {
     const ts = new Date(taskIso).getTime();
     if (!Number.isNaN(ts)) return { source: 'task', deadlineTs: ts };
   }
-  const slaTs = getPipelineStageSlaDeadlineTs(item?.stage_entered_at, stage);
+  const slaTs = getPipelineStageSlaDeadlineTs(item?.stage_entered_at, stage, item);
   if (slaTs != null) return { source: 'sla', deadlineTs: slaTs };
   return { source: null, deadlineTs: null };
 }
@@ -178,7 +212,7 @@ export function resolveCrmLeadDeadlineViewSource(item, stage, config) {
   );
   if (picked.deadlineTs != null) return picked;
 
-  const slaTs = getPipelineStageSlaDeadlineTs(item?.stage_entered_at, st);
+  const slaTs = getPipelineStageSlaDeadlineTs(item?.stage_entered_at, st, item);
   if (slaTs != null) return { source: 'sla', deadlineTs: slaTs };
 
   return { deadlineTs: null, source: null };

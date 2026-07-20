@@ -6,6 +6,8 @@ import {
   Check,
   CheckCheck,
   Download,
+  Eye,
+  EyeOff,
   File,
   FileArchive,
   FileAudio,
@@ -43,11 +45,46 @@ function isImageFileName(name) {
   return /\.(jpg|jpeg|png|gif|webp|bmp|svg|heic|heif)$/i.test(name || '');
 }
 
+const SYSTEM_FILE_HIDDEN_PREFIX = 'hidden:';
+
+/** File đang hiện (có URL tải) trong tin hệ thống. */
 function extractSystemFileLink(text) {
   if (!text) return null;
   const m = text.match(/«([^»|]+)\|([^»]+)»/);
   if (!m) return null;
+  const url = m[2];
+  if (String(url).startsWith(SYSTEM_FILE_HIDDEN_PREFIX)) return null;
+  return { label: m[1], url };
+}
+
+/** File đã ẩn nhưng còn URL để hiện lại. */
+function extractHiddenSystemFileLink(text) {
+  if (!text) return null;
+  const m = text.match(/«([^»|]+)\|hidden:([^»]+)»/);
+  if (!m) return null;
   return { label: m[1], url: m[2] };
+}
+
+/** Ẩn link tải — giữ URL dạng «tên|hidden:url» để hiện lại được. */
+function hideSystemFileLinksInBody(text) {
+  if (!text) return text;
+  return String(text)
+    .replace(/«([^»|]+)\|(?!hidden:)([^»]+)»/g, `«$1|${SYSTEM_FILE_HIDDEN_PREFIX}$2»`)
+    .trim();
+}
+
+/** Hiện lại link tải từ «tên|hidden:url». */
+function unhideSystemFileLinksInBody(text) {
+  if (!text) return text;
+  return String(text)
+    .replace(/«([^»|]+)\|hidden:([^»]+)»/g, '«$1|$2»')
+    .trim();
+}
+
+function isCommentOwner(comment, user) {
+  const uid = user?.userId || user?.id;
+  if (!uid || !comment) return false;
+  return String(comment.user_id || '') === String(uid);
 }
 
 function renderSystemCommentBody(text) {
@@ -63,31 +100,40 @@ function renderSystemCommentBody(text) {
     if (pipeIdx > 0 && pipeIdx < inner.length - 1) {
       const label = inner.slice(0, pipeIdx);
       const url = inner.slice(pipeIdx + 1);
-      const href = pubUrl(url);
-      if (isImageFileName(label)) {
+      if (String(url).startsWith(SYSTEM_FILE_HIDDEN_PREFIX)) {
         parts.push(
-          <a key={m.index} href={href} target="_blank" rel="noopener noreferrer"
-            className="font-semibold text-blue-600 hover:underline">
+          <strong key={m.index} className="font-semibold text-[#65676b]">
             {`«${label}»`}
-          </a>,
+            <span className="font-normal text-[11px]"> (đã ẩn)</span>
+          </strong>,
         );
       } else {
-        parts.push(
-          <button
-            key={m.index}
-            type="button"
-            className="font-semibold text-blue-600 hover:underline inline p-0 m-0 bg-transparent border-0 cursor-pointer"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              downloadUploadFile(url, label || 'tai-lieu').catch((err) => {
-                alert(err?.message || 'Không tải được file');
-              });
-            }}
-          >
-            {`«${label}»`}
-          </button>,
-        );
+        const href = pubUrl(url);
+        if (isImageFileName(label)) {
+          parts.push(
+            <a key={m.index} href={href} target="_blank" rel="noopener noreferrer"
+              className="font-semibold text-blue-600 hover:underline">
+              {`«${label}»`}
+            </a>,
+          );
+        } else {
+          parts.push(
+            <button
+              key={m.index}
+              type="button"
+              className="font-semibold text-blue-600 hover:underline inline p-0 m-0 bg-transparent border-0 cursor-pointer"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                downloadUploadFile(url, label || 'tai-lieu').catch((err) => {
+                  alert(err?.message || 'Không tải được file');
+                });
+              }}
+            >
+              {`«${label}»`}
+            </button>,
+          );
+        }
       }
     } else {
       parts.push(<strong key={m.index} className="font-semibold text-[#050505]">{`«${inner}»`}</strong>);
@@ -661,6 +707,8 @@ function CommentThread({
   onSubmit,
   onSaveEdit,
   onRemove,
+  onHideSystemDocument,
+  onUnhideSystemDocument,
   onReply,
   onReaction,
   renderBody,
@@ -755,9 +803,13 @@ function CommentThread({
 
       if (isSys && depth === 0) {
         const fileLink = extractSystemFileLink(bodyText);
+        const hiddenFile = extractHiddenSystemFileLink(bodyText);
         const hasImagePreview = fileLink && isImageFileName(fileLink.label);
+        const isOwner = isCommentOwner(c, user);
+        const canHideDoc = isOwner && !!fileLink && typeof onHideSystemDocument === 'function';
+        const canUnhideDoc = isOwner && !!hiddenFile && typeof onUnhideSystemDocument === 'function';
         return (
-          <div key={c.id} className="flex flex-col items-center py-1.5 gap-1">
+          <div key={c.id} className="group/sys flex flex-col items-center py-1.5 gap-1">
             <div className="inline-flex items-center gap-1.5 rounded-full bg-[#e4e6eb]/70 px-3 py-1 max-w-[90%]">
               <span className="text-[12px] leading-relaxed text-[#65676b] text-center break-words whitespace-pre-wrap">
                 {renderSystemCommentBody(bodyText)}
@@ -765,6 +817,46 @@ function CommentThread({
               <span className="shrink-0 text-[10px] text-[#65676b]/60 ml-1" title={formatCrmCommentFullDateTime(c.created_at)}>
                 {formatCrmFbRelativeTime(c.created_at)}
               </span>
+              {/* Chỉ ẩn/hiện tài liệu — không xóa tin hệ thống. Đã ẩn: luôn hiện nút Hiện. */}
+              {(canHideDoc || canUnhideDoc) && (
+                <span
+                  className={`shrink-0 inline-flex items-center gap-0.5 ml-0.5 transition-opacity ${
+                    canUnhideDoc
+                      ? 'opacity-100'
+                      : 'opacity-0 pointer-events-none group-hover/sys:opacity-100 group-hover/sys:pointer-events-auto group-focus-within/sys:opacity-100 group-focus-within/sys:pointer-events-auto'
+                  }`}
+                >
+                  {canHideDoc && (
+                    <button
+                      type="button"
+                      title="Ẩn tài liệu — người khác không tải/xem được file trong tin này"
+                      className="inline-flex items-center justify-center h-5 w-5 rounded-full text-[#65676b] hover:bg-white hover:text-amber-700"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onHideSystemDocument(c);
+                      }}
+                    >
+                      <EyeOff size={12} strokeWidth={2.4} />
+                    </button>
+                  )}
+                  {canUnhideDoc && (
+                    <button
+                      type="button"
+                      title="Hiện lại tài liệu"
+                      className="inline-flex items-center gap-0.5 h-5 px-1.5 rounded-full bg-emerald-100 text-emerald-800 hover:bg-emerald-200 text-[10px] font-bold"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onUnhideSystemDocument(c);
+                      }}
+                    >
+                      <Eye size={12} strokeWidth={2.4} />
+                      Hiện
+                    </button>
+                  )}
+                </span>
+              )}
             </div>
             {hasImagePreview && (
               <button
@@ -784,20 +876,52 @@ function CommentThread({
               </button>
             )}
             {fileLink && !hasImagePreview && (
+              <div className="inline-flex items-center gap-1.5 mt-0.5">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    downloadUploadFile(fileLink.url, fileLink.label || 'tai-lieu').catch((err) => {
+                      alert(err?.message || 'Không tải được file');
+                    });
+                  }}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-[#e4e6eb] bg-white hover:bg-gray-50 transition-colors text-[12px] text-blue-600"
+                >
+                  <Paperclip size={13} className="text-[#65676b]" />
+                  <span className="truncate max-w-[200px]">{fileLink.label}</span>
+                  <Download size={14} className="ml-1 text-[#65676b]" />
+                </button>
+                {canHideDoc && (
+                  <button
+                    type="button"
+                    title="Ẩn tài liệu"
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-amber-200 bg-amber-50 text-[11px] font-semibold text-amber-800 hover:bg-amber-100"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onHideSystemDocument(c);
+                    }}
+                  >
+                    <EyeOff size={12} />
+                    Ẩn tài liệu
+                  </button>
+                )}
+              </div>
+            )}
+            {canUnhideDoc && !fileLink && (
               <button
                 type="button"
+                title="Hiện lại tài liệu"
+                className="inline-flex items-center gap-1 mt-0.5 px-2.5 py-1 rounded-lg border border-emerald-200 bg-emerald-50 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-100"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  downloadUploadFile(fileLink.url, fileLink.label || 'tai-lieu').catch((err) => {
-                    alert(err?.message || 'Không tải được file');
-                  });
+                  onUnhideSystemDocument(c);
                 }}
-                className="inline-flex items-center gap-1.5 mt-0.5 px-2.5 py-1 rounded-lg border border-[#e4e6eb] bg-white hover:bg-gray-50 transition-colors text-[12px] text-blue-600"
               >
-                <Paperclip size={13} className="text-[#65676b]" />
-                <span className="truncate max-w-[200px]">{fileLink.label}</span>
-                <Download size={14} className="ml-1 text-[#65676b]" />
+                <Eye size={12} />
+                Hiện lại tài liệu
               </button>
             )}
           </div>
@@ -1187,6 +1311,35 @@ export function CrmLeadCommentsPanel({
     }
   };
 
+  const hideSystemDocument = async (c) => {
+    const raw = c?.body || '';
+    if (!extractSystemFileLink(raw)) return;
+    if (!window.confirm('Ẩn tài liệu trong tin này? Người khác sẽ không xem/tải được file từ bình luận.')) return;
+    const nextBody = hideSystemFileLinksInBody(raw);
+    if (!nextBody || nextBody === raw) return;
+    try {
+      const r = await api.patch(`/crm/lead-comments/${c.id}`, { body: nextBody });
+      const row = r.data || {};
+      setComments((prev) => replaceComment(prev, { ...row, id: c.id }));
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không ẩn được tài liệu');
+    }
+  };
+
+  const unhideSystemDocument = async (c) => {
+    const raw = c?.body || '';
+    if (!extractHiddenSystemFileLink(raw)) return;
+    const nextBody = unhideSystemFileLinksInBody(raw);
+    if (!nextBody || nextBody === raw) return;
+    try {
+      const r = await api.patch(`/crm/lead-comments/${c.id}`, { body: nextBody });
+      const row = r.data || {};
+      setComments((prev) => replaceComment(prev, { ...row, id: c.id }));
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không hiện lại được tài liệu');
+    }
+  };
+
   const pickReaction = async (c, emoji) => {
     if (reactionBusy != null) return;
     setReactionBusy(c.id);
@@ -1223,6 +1376,8 @@ export function CrmLeadCommentsPanel({
       onSubmit={submit}
       onSaveEdit={saveEdit}
       onRemove={removeComment}
+      onHideSystemDocument={hideSystemDocument}
+      onUnhideSystemDocument={unhideSystemDocument}
       onReply={(c) => { setReplyTo({ id: c.id, name: c.user?.full_name || 'Thành viên' }); setEditingId(null); }}
       onReaction={pickReaction}
       members={members}
@@ -1427,6 +1582,37 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
     }
   };
 
+  const hideSystemDocument = async (c) => {
+    if (!activeProjectId) return;
+    const raw = c?.content || '';
+    if (!extractSystemFileLink(raw)) return;
+    if (!window.confirm('Ẩn tài liệu trong tin này? Người khác sẽ không xem/tải được file từ bình luận.')) return;
+    const nextBody = hideSystemFileLinksInBody(raw);
+    if (!nextBody || nextBody === raw) return;
+    try {
+      const r = await api.patch(`/projects/${activeProjectId}/comments/${c.id}`, { content: nextBody });
+      const row = r.data || {};
+      setComments((prev) => replaceComment(prev, { ...row, id: c.id }));
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không ẩn được tài liệu');
+    }
+  };
+
+  const unhideSystemDocument = async (c) => {
+    if (!activeProjectId) return;
+    const raw = c?.content || '';
+    if (!extractHiddenSystemFileLink(raw)) return;
+    const nextBody = unhideSystemFileLinksInBody(raw);
+    if (!nextBody || nextBody === raw) return;
+    try {
+      const r = await api.patch(`/projects/${activeProjectId}/comments/${c.id}`, { content: nextBody });
+      const row = r.data || {};
+      setComments((prev) => replaceComment(prev, { ...row, id: c.id }));
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không hiện lại được tài liệu');
+    }
+  };
+
   const pickReaction = async (c, emoji) => {
     if (!activeProjectId || reactionBusy != null) return;
     setReactionBusy(c.id);
@@ -1462,6 +1648,8 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
       onSubmit={submit}
       onSaveEdit={saveEdit}
       onRemove={removeComment}
+      onHideSystemDocument={hideSystemDocument}
+      onUnhideSystemDocument={unhideSystemDocument}
       onReply={(c) => { setReplyTo({ id: c.id, name: c.user?.full_name || 'Thành viên' }); setEditingId(null); }}
       onReaction={pickReaction}
       enableAttachments

@@ -41,6 +41,7 @@ import CrmDeadlineModal from '../components/CrmDeadlineModal';
 import CrmStageAssigneeModal from '../components/CrmStageAssigneeModal';
 import { stageNeedsAssigneeConfirm } from '../lib/crmStageAssigneeConfirm';
 import CrmLeadDeadlineOverview from '../components/CrmLeadDeadlineOverview';
+import { crmLeadMissingPhone } from '../lib/crmLeadDeadlineDisplay';
 import Modal from '../components/Modal';
 import DealCrossScoresPanel from '../components/DealCrossScoresPanel';
 import LeadKpiLedgerPanel from '../components/LeadKpiLedgerPanel';
@@ -4598,8 +4599,8 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
           type="date" />
       )}
 
-      {/* Deadline thẻ (kanban_deadline_at) — ẩn khi deal đã ở cột Thắng */}
-      {!lead?.stage?.is_won && !lead?.stage?.counts_as_completed_revenue && (
+      {/* Deadline thẻ (kanban_deadline_at) — ẩn khi deal đã Thắng / chưa có SĐT */}
+      {!lead?.stage?.is_won && !lead?.stage?.counts_as_completed_revenue && !crmLeadMissingPhone(lead) && (
       <div className="rounded-lg border border-rose-200 bg-rose-50/50 p-2.5 my-1.5">
         <div className="flex items-start gap-2">
           <span className="text-sm mt-0.5">⏰</span>
