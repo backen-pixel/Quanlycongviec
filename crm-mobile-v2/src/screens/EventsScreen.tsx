@@ -312,11 +312,7 @@ export default function EventsScreen() {
   }, [filters, showCompanyPicker]);
 
   const openCreate = () => {
-    if (showCompanyPicker && !filters.companyId) {
-      Alert.alert('Chọn công ty', 'Chọn công ty trong bộ lọc trước khi tạo sự kiện (giống web).');
-      setFilterOpen(true);
-      return;
-    }
+    // Admin hệ thống chọn công ty ngay trong form tạo — không bắt buộc lọc trước.
     if (!showCompanyPicker && !user?.company_id && !filters.companyId) {
       Alert.alert('Thiếu công ty', 'Tài khoản chưa gán công ty — không tạo được sự kiện.');
       return;
@@ -604,6 +600,8 @@ export default function EventsScreen() {
         defaultModule={filters.module || 'crm'}
         defaultAssigneeId={user?.id || user?.userId || ''}
         employees={employees}
+        companies={companies}
+        showCompanyPicker={showCompanyPicker}
         onClose={() => {
           setFormOpen(false);
           setEditEvent(null);

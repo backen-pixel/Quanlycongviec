@@ -30,7 +30,11 @@ import {
   type EventStatus,
   type EventType,
 } from '../../api/events';
-import type { CrmEmployee } from '../../api/crmMeta';
+import {
+  fetchCrmEmployeesByCompany,
+  type CrmCompany,
+  type CrmEmployee,
+} from '../../api/crmMeta';
 import { Radii, useColors, type ThemeColors } from '../../theme';
 
 type Props = {
@@ -42,6 +46,9 @@ type Props = {
   defaultModule?: string;
   defaultAssigneeId?: string;
   employees?: CrmEmployee[];
+  /** Danh sách công ty — hiện picker trong form cho admin hệ thống. */
+  companies?: CrmCompany[];
+  showCompanyPicker?: boolean;
   onClose: () => void;
   onSaved: () => void;
 };
@@ -67,6 +74,8 @@ export default function EventFormModal({
   defaultModule = 'crm',
   defaultAssigneeId = '',
   employees = [],
+  companies = [],
+  showCompanyPicker = false,
   onClose,
   onSaved,
 }: Props) {
@@ -74,6 +83,7 @@ export default function EventFormModal({
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
   const isEdit = !!event?.id;
+  const needCompanyInForm = showCompanyPicker && !isEdit;
 
   const [types, setTypes] = useState<EventType[]>([]);
   const [title, setTitle] = useState('');
@@ -88,7 +98,10 @@ export default function EventFormModal({
   const [location, setLocation] = useState('');
   const [description, setDescription] = useState('');
   const [assigneeId, setAssigneeId] = useState('');
+  const [companyId, setCompanyId] = useState('');
   const [assigneePickerOpen, setAssigneePickerOpen] = useState(false);
+  const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
+  const [formEmployees, setFormEmployees] = useState<CrmEmployee[]>([]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -115,6 +128,7 @@ export default function EventFormModal({
       setLocation(event.location || '');
       setDescription(event.description || '');
       setAssigneeId(event.assigneeId || '');
+      setCompanyId(event.companyId || defaultCompanyId || '');
       return;
     }
     const startLocal = defaultEventStartLocal(presetDay || undefined);
@@ -133,12 +147,32 @@ export default function EventFormModal({
     setLocation('');
     setDescription('');
     setAssigneeId(defaultAssigneeId || '');
-  }, [visible, event?.id, presetDay, defaultModule, defaultAssigneeId]);
+    setCompanyId(defaultCompanyId || '');
+  }, [visible, event?.id, presetDay, defaultModule, defaultAssigneeId, defaultCompanyId]);
 
   useEffect(() => {
     if (!visible || event || !types.length) return;
     setEventType((prev) => (types.some((t) => t.slug === prev) ? prev : types[0].slug));
   }, [visible, event, types]);
+
+  /** Admin chọn công ty trong form → tải DS nhân viên theo công ty đó. */
+  useEffect(() => {
+    if (!visible || !needCompanyInForm) {
+      setFormEmployees([]);
+      return;
+    }
+    const cid = String(companyId || '').trim();
+    if (!cid) {
+      setFormEmployees([]);
+      return;
+    }
+    const ac = new AbortController();
+    void fetchCrmEmployeesByCompany(cid, ac.signal).then((org) => {
+      if (ac.signal.aborted) return;
+      setFormEmployees(org.users || []);
+    });
+    return () => ac.abort();
+  }, [visible, needCompanyInForm, companyId]);
 
   const applyType = (slug: string) => {
     const t = types.find((x) => x.slug === slug);
@@ -173,11 +207,15 @@ export default function EventFormModal({
         return;
       }
     }
-    const companyId = String(event?.companyId || defaultCompanyId || '').trim();
-    if (!isEdit && !event?.leadId && !companyId) {
+    const resolvedCompanyId = String(
+      event?.companyId || companyId || defaultCompanyId || '',
+    ).trim();
+    if (!isEdit && !event?.leadId && !resolvedCompanyId) {
       Alert.alert(
         'Thiếu công ty',
-        'Chọn công ty trong bộ lọc trước khi tạo sự kiện (giống web), hoặc dùng tài khoản đã gán công ty.',
+        needCompanyInForm
+          ? 'Chọn công ty trước khi lưu sự kiện.'
+          : 'Tài khoản chưa gán công ty — không tạo được sự kiện.',
       );
       return;
     }
@@ -196,7 +234,7 @@ export default function EventFormModal({
         module: module || 'crm',
         assignee_id: assigneeId || null,
         participant_ids: assigneeId ? [assigneeId] : [],
-        ...(companyId ? { company_id: companyId } : {}),
+        ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}),
         ...(event?.leadId ? { lead_id: event.leadId } : {}),
       };
       if (isEdit && event) {
@@ -213,9 +251,13 @@ export default function EventFormModal({
     }
   };
 
+  const assigneeList = needCompanyInForm ? formEmployees : employees;
   const assigneeName =
-    employees.find((u) => u.id === assigneeId)?.full_name ||
+    assigneeList.find((u) => u.id === assigneeId)?.full_name ||
     (assigneeId ? 'Đã chọn' : 'Chọn người phụ trách…');
+  const companyLabel = companies.find((c) => c.id === companyId);
+  const companyName =
+    companyLabel?.name || companyLabel?.short_name || (companyId ? 'Đã chọn' : 'Chọn công ty…');
 
   const moduleChoices = EVENT_MODULE_OPTIONS.filter((m) => m.value);
 
@@ -236,6 +278,19 @@ export default function EventFormModal({
         </View>
 
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 40 }} keyboardShouldPersistTaps="handled">
+          {needCompanyInForm ? (
+            <>
+              <Text style={styles.label}>Công ty *</Text>
+              <Pressable style={styles.pickerBtn} onPress={() => setCompanyPickerOpen(true)}>
+                <Ionicons name="business-outline" size={16} color={Colors.textMuted} />
+                <Text style={[styles.pickerTxt, !companyId && { color: Colors.textFaint }]} numberOfLines={1}>
+                  {companyName}
+                </Text>
+                <Ionicons name="chevron-down" size={16} color={Colors.textFaint} />
+              </Pressable>
+            </>
+          ) : null}
+
           <Text style={styles.label}>Loại sự kiện</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
             {types.map((t) => {
@@ -396,7 +451,7 @@ export default function EventFormModal({
                 >
                   <Text style={[styles.pickerRowTxt, { color: Colors.textFaint }]}>Không chọn</Text>
                 </Pressable>
-                {employees.map((u) => (
+                {assigneeList.map((u) => (
                   <Pressable
                     key={u.id}
                     style={styles.pickerRow}
@@ -411,6 +466,42 @@ export default function EventFormModal({
                     {assigneeId === u.id ? <Ionicons name="checkmark" size={18} color={Colors.blue} /> : null}
                   </Pressable>
                 ))}
+                {needCompanyInForm && !companyId ? (
+                  <Text style={[styles.pickerRowTxt, { color: Colors.textFaint, paddingVertical: 12 }]}>
+                    Chọn công ty trước để tải danh sách nhân viên
+                  </Text>
+                ) : null}
+              </ScrollView>
+            </Pressable>
+          </Pressable>
+        </Modal>
+
+        <Modal visible={companyPickerOpen} transparent animationType="fade" onRequestClose={() => setCompanyPickerOpen(false)}>
+          <Pressable style={styles.pickerBackdrop} onPress={() => setCompanyPickerOpen(false)}>
+            <Pressable style={[styles.pickerSheet, { paddingBottom: insets.bottom + 12 }]} onPress={() => {}}>
+              <Text style={styles.pickerTitle}>Chọn công ty</Text>
+              <ScrollView style={{ maxHeight: 360 }}>
+                {companies.map((c) => (
+                  <Pressable
+                    key={c.id}
+                    style={styles.pickerRow}
+                    onPress={() => {
+                      setCompanyId(c.id);
+                      setAssigneeId('');
+                      setCompanyPickerOpen(false);
+                    }}
+                  >
+                    <Text style={[styles.pickerRowTxt, companyId === c.id && { color: Colors.blue, fontWeight: '800' }]}>
+                      {c.name || c.short_name || c.id}
+                    </Text>
+                    {companyId === c.id ? <Ionicons name="checkmark" size={18} color={Colors.blue} /> : null}
+                  </Pressable>
+                ))}
+                {!companies.length ? (
+                  <Text style={[styles.pickerRowTxt, { color: Colors.textFaint, paddingVertical: 12 }]}>
+                    Không có danh sách công ty
+                  </Text>
+                ) : null}
               </ScrollView>
             </Pressable>
           </Pressable>
