@@ -245,7 +245,7 @@ export default function EmployeeReportScreen() {
       <View style={[styles.root, { paddingTop: insets.top + 12 }]}>
         <Header
           title={TAB_TITLES[activeTab]}
-          onMenu={() => navigation.goBack()}
+          onBack={() => (navigation.canGoBack() ? navigation.goBack() : undefined)}
           filtersExpanded={filtersExpanded}
           onToggleFilters={() => setFiltersExpanded((v) => !v)}
           Colors={Colors}
@@ -264,7 +264,7 @@ export default function EmployeeReportScreen() {
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <Header
         title={TAB_TITLES[activeTab]}
-        onMenu={() => navigation.goBack()}
+        onBack={() => (navigation.canGoBack() ? navigation.goBack() : undefined)}
         filtersExpanded={filtersExpanded}
         onToggleFilters={() => setFiltersExpanded((v) => !v)}
         Colors={Colors}
@@ -395,14 +395,14 @@ export default function EmployeeReportScreen() {
 
 function Header({
   title,
-  onMenu,
+  onBack,
   filtersExpanded,
   onToggleFilters,
   Colors,
   styles,
 }: {
   title: string;
-  onMenu: () => void;
+  onBack: () => void;
   filtersExpanded: boolean;
   onToggleFilters: () => void;
   Colors: ThemeColors;
@@ -410,8 +410,8 @@ function Header({
 }) {
   return (
     <View style={styles.header}>
-      <Pressable style={styles.iconBtn} onPress={onMenu}>
-        <Ionicons name="menu" size={22} color={Colors.text} />
+      <Pressable style={styles.iconBtn} onPress={onBack} accessibilityLabel="Quay lại">
+        <Ionicons name="arrow-back" size={22} color={Colors.text} />
       </Pressable>
       <Text style={styles.headerTitle}>{title}</Text>
       <Pressable

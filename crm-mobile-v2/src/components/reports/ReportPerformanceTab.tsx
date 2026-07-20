@@ -117,9 +117,23 @@ export default function ReportPerformanceTab({
 
   const kpiScore = summary.kpi_ledger_net ?? 0;
 
-  const overdue = summary.overdue_count ?? summary.reception_overdue_count ?? 0;
-
-  const overduePct = summary.overdue_rate_pct ?? summary.reception_overdue_rate_pct ?? 0;
+  // Khớp web BC tổ chức — tách QH SLA Lead / Deal (không trộn tiếp nhận).
+  const overdueLead = summary.lead_overdue_count ?? 0;
+  const overdueDeal = summary.deal_overdue_count ?? 0;
+  const openLead = summary.lead_open_count ?? 0;
+  const openDealSla = summary.deal_open_count ?? 0;
+  const overdueLeadPct = summary.lead_overdue_rate_pct;
+  const overdueDealPct = summary.deal_overdue_rate_pct;
+  const overdueLeadSub = overdueLeadPct != null
+    ? `${overdueLeadPct}% trên ${openLead} lead đang mở`
+    : openLead > 0
+      ? `${openLead} lead đang mở`
+      : '—';
+  const overdueDealSub = overdueDealPct != null
+    ? `${overdueDealPct}% trên ${openDealSla} deal đang mở`
+    : openDealSla > 0
+      ? `${openDealSla} deal đang mở`
+      : '—';
 
   const achieved = reportClosedWonValue(summary);
 
@@ -155,11 +169,21 @@ export default function ReportPerformanceTab({
 
         <View style={[styles.kpiHero, styles.kpiHeroRed]}>
 
-          <Text style={styles.kpiHeroLabel}>QUÁ HẠN</Text>
+          <Text style={styles.kpiHeroLabel}>QH SLA LEAD</Text>
 
-          <Text style={[styles.kpiHeroValue, { color: Colors.red }]}>{overdue}</Text>
+          <Text style={[styles.kpiHeroValue, { color: Colors.red }]}>{overdueLead}</Text>
 
-          <Text style={[styles.kpiHeroSub, { color: Colors.red }]}>{overduePct}% · Cần xử lý ngay</Text>
+          <Text style={[styles.kpiHeroSub, { color: Colors.red }]}>{overdueLeadSub}</Text>
+
+        </View>
+
+        <View style={[styles.kpiHero, styles.kpiHeroRed]}>
+
+          <Text style={styles.kpiHeroLabel}>QH SLA DEAL</Text>
+
+          <Text style={[styles.kpiHeroValue, { color: Colors.red }]}>{overdueDeal}</Text>
+
+          <Text style={[styles.kpiHeroSub, { color: Colors.red }]}>{overdueDealSub}</Text>
 
         </View>
 

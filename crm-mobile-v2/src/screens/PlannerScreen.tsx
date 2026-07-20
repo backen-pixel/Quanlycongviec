@@ -18,6 +18,7 @@ import {
   fetchPlannerSectionPage,
   fetchPlannerSectionTotal,
   invalidatePlannerCache,
+  PLANNER_MAX_BUFFER,
   setPlannerCache,
   type PlannerFetchOpts,
 } from '../api/crm';
@@ -143,8 +144,12 @@ function PlannerSection({
 
   const loadMoreFromServer = useCallback(() => {
     if (!state.hasMore || loadingMore) return;
+    if (state.items.length >= PLANNER_MAX_BUFFER) return;
     onLoadMore();
-  }, [state.hasMore, loadingMore, onLoadMore]);
+  }, [state.hasMore, state.items.length, loadingMore, onLoadMore]);
+
+  const canLoadMoreServer = state.hasMore && state.items.length < PLANNER_MAX_BUFFER;
+  const bufferCapped = state.hasMore && state.items.length >= PLANNER_MAX_BUFFER;
 
   return (
     <View style={styles.section}>
@@ -246,7 +251,7 @@ function PlannerSection({
             </View>
           ) : null}
 
-          {state.hasMore ? (
+          {canLoadMoreServer ? (
             <Pressable
               style={[styles.loadMoreBtn, { borderColor: meta.color }]}
               onPress={() => void loadMoreFromServer()}
@@ -260,6 +265,11 @@ function PlannerSection({
                 </Text>
               )}
             </Pressable>
+          ) : null}
+          {bufferCapped ? (
+            <Text style={styles.filterHint}>
+              Đã tải tối đa {PLANNER_MAX_BUFFER} bản ghi gần nhất — dùng tìm kiếm/lọc để thu hẹp.
+            </Text>
           ) : null}
         </>
       )}

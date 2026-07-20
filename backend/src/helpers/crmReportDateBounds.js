@@ -36,11 +36,35 @@ function crmReportAsOfMs(dateToYmd) {
   return new Date(crmReportCreatedAtToIso(to)).getTime();
 }
 
+/**
+ * Hạn SLA cột = cuối ngày lịch VN (Asia/Ho_Chi_Minh) sau `slaDays` ngày kể từ ngày vào cột.
+ * Không dùng setHours theo TZ máy chủ — tránh lệch Render (UTC) vs máy local (UTC+7)
+ * khiến QH SLA Lead/Deal lệch 1 hồ sơ giữa web prod và app local.
+ */
+function endOfCalendarDayAfterEntered(startIso, slaDays) {
+  const days = Math.max(1, Number(slaDays) || 1);
+  const entered = startIso ? new Date(startIso) : new Date();
+  const enteredMs = entered.getTime();
+  const ymd = Number.isFinite(enteredMs)
+    ? entered.toLocaleDateString('en-CA', { timeZone: VN_TZ })
+    : crmReportTodayYmdVn();
+  const [y, m, d] = ymd.split('-').map((x) => Number(x));
+  // Cộng ngày trên lịch (UTC date parts = calendar arithmetic, không phụ thuộc TZ process).
+  const due = new Date(Date.UTC(y, m - 1, d));
+  due.setUTCDate(due.getUTCDate() + days);
+  const yy = due.getUTCFullYear();
+  const mm = String(due.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(due.getUTCDate()).padStart(2, '0');
+  return new Date(`${yy}-${mm}-${dd}T23:59:59.999+07:00`);
+}
+
 module.exports = {
+  VN_TZ,
   sanitizeCrmReportYmd,
   crmReportCreatedAtFromIso,
   crmReportCreatedAtToIso,
   crmReportDayKeyVn,
   crmReportTodayYmdVn,
   crmReportAsOfMs,
+  endOfCalendarDayAfterEntered,
 };

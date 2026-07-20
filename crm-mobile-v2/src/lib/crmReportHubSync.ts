@@ -1,6 +1,5 @@
 import {
   fetchCrmCompanies,
-  fetchCrmListRowsAll,
   fetchCrmStageCountsBatch,
   fetchPipelineStages,
   type CrmStageFetchOpts,
@@ -185,46 +184,15 @@ function mergeStageCountMaps(
   }
 }
 
-type DealStageRow = { stage_id?: string | null; stage?: { id?: string }; company_id?: string | null };
-
-function buildDealCountsFromLeadRows(rows: DealStageRow[]): Record<string, number> {
-  const counts: Record<string, number> = {};
-  for (const row of rows) {
-    const sid = String(row.stage?.id || row.stage_id || '');
-    const key = sid || '__none__';
-    counts[key] = (Number(counts[key]) || 0) + 1;
-  }
-  return counts;
-}
-
 /**
- * Tổng Deal KPI tab Deal — khớp web `dealStatsDeals` / `filterDealsForDealTabStats`.
- * Dùng GET /crm/leads (không lọc stage pipeline) để gồm deal cross-pipeline (vd. Metalla +4).
+ * Tổng Deal KPI tab Deal — dùng stage-counts (O(1) server), không tải từng deal.
+ * stage-counts vẫn gồm stage_id lạ / cross-pipeline nên khớp sumCrmDealHubKpiCount.
  */
-async function fetchDealHubKpiTotal(
-  query: EmployeeReportQuery,
-  companies: { id: string }[],
-  signal?: AbortSignal,
-): Promise<number> {
-  const periodOpts = { ...buildReportStageFetchOpts(query), signal, lite: true as const };
-  const crmIdSet = new Set(companies.map((c) => c.id));
-  const allRows = await fetchCrmListRowsAll('deal', periodOpts);
-  const crmRows = query.company_id
-    ? allRows.filter((r) => String(r.company_id || '') === String(query.company_id))
-    : allRows.filter((r) => crmIdSet.has(String(r.company_id || '')));
-
-  if (query.company_id) {
-    const stages = await fetchPipelineStages('deal', { ...periodOpts, companyId: query.company_id });
-    return sumCrmDealHubKpiCount(stages, buildDealCountsFromLeadRows(crmRows));
-  }
-
-  let total = 0;
-  for (const company of companies) {
-    const coRows = crmRows.filter((r) => String(r.company_id || '') === company.id);
-    const stages = await fetchPipelineStages('deal', { ...periodOpts, companyId: company.id });
-    total += sumCrmDealHubKpiCount(stages, buildDealCountsFromLeadRows(coRows));
-  }
-  return total;
+function dealHubKpiFromStageCounts(
+  stages: CrmPipelineStage[],
+  counts: Record<string, number>,
+): number {
+  return sumCrmDealHubKpiCount(stages, counts);
 }
 
 async function fetchLeadPeriodTotal(
@@ -256,34 +224,29 @@ async function fetchDealPeriodSnapshot(
   dealPeriodTotal: number;
 }> {
   const periodOpts = { ...buildReportStageFetchOpts(query), signal };
-  const companies = query.company_id ? [] : await fetchCrmCompanies(signal);
-  const dealTotalPromise = fetchDealHubKpiTotal(
-    query,
-    query.company_id ? [{ id: query.company_id }] : companies,
-    signal,
-  );
 
   if (query.company_id) {
-    const [dealBatch, dealStages, dealTotal] = await Promise.all([
+    const [dealBatch, dealStages] = await Promise.all([
       fetchCrmStageCountsBatch('deal', periodOpts),
       fetchPipelineStages('deal', periodOpts),
-      dealTotalPromise,
     ]);
     return {
       dealBatch,
       dealStages,
-      dealTotal,
+      dealTotal: dealHubKpiFromStageCounts(dealStages, dealBatch.counts),
       customerTabDealCount: sumCrmCustomerTabDealCount(dealStages, dealBatch.counts),
       dealPeriodTotal: Number(dealBatch.total) || 0,
     };
   }
 
+  const companies = await fetchCrmCompanies(signal);
   const mergedCounts: Record<string, number> = {};
   const mergedValues: Record<string, number> = {};
   const mergedWeighted: Record<string, number> = {};
   const dealStages: CrmPipelineStage[] = [];
   let customerTabDealCount = 0;
-  /** Global stage-counts — khớp CRM Hub `pipelinePhoneTotals.deal.hasPhone` (296). */
+  let dealTotal = 0;
+  /** Global stage-counts — khớp CRM Hub `pipelinePhoneTotals.deal.hasPhone`. */
   const globalBatchPromise = fetchCrmStageCountsBatch('deal', periodOpts);
 
   for (const company of companies) {
@@ -292,6 +255,7 @@ async function fetchDealPeriodSnapshot(
       fetchCrmStageCountsBatch('deal', opts),
       fetchPipelineStages('deal', opts),
     ]);
+    dealTotal += dealHubKpiFromStageCounts(stages, dealBatch.counts);
     customerTabDealCount += sumCrmCustomerTabDealCount(stages, dealBatch.counts);
     mergeStageCountMaps(mergedCounts, dealBatch.counts);
     mergeStageCountMaps(mergedValues, dealBatch.values);
@@ -299,7 +263,7 @@ async function fetchDealPeriodSnapshot(
     dealStages.push(...stages);
   }
 
-  const [dealTotal, globalBatch] = await Promise.all([dealTotalPromise, globalBatchPromise]);
+  const globalBatch = await globalBatchPromise;
   const dealPeriodTotal = Number(globalBatch.total) || 0;
 
   return {

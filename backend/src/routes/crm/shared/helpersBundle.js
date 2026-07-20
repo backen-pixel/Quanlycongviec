@@ -865,6 +865,7 @@ const {
   crmReportCreatedAtToIso,
   crmReportDayKeyVn,
   crmReportAsOfMs,
+  endOfCalendarDayAfterEntered,
 } = require('../../../helpers/crmReportDateBounds');
 
 /** PostgREST mặc định ~1000 dòng/truy vấn — gom đủ bản ghi theo filter để KPI / pipeline không bị trần 1000. */
@@ -1448,14 +1449,6 @@ const {
   normalizePipelineStageSlaDaysForDb,
   effectivePipelineStageSlaDays,
 } = require('../../../helpers/crmPipelineSla');
-
-function endOfCalendarDayAfterEntered(startIso, slaDays) {
-  const base = startIso ? new Date(startIso) : new Date();
-  const d = new Date(base);
-  d.setDate(d.getDate() + Math.max(1, slaDays));
-  d.setHours(23, 59, 59, 999);
-  return d;
-}
 
 const CRM_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

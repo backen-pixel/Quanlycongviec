@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   FlatList,
   Keyboard,
+  PanResponder,
   Platform,
   Pressable,
   RefreshControl,
@@ -191,12 +192,7 @@ const KanbanCard = React.memo(function KanbanCard({
       >
         <View style={styles.cardRow1}>
         <Text style={styles.cardCode}>{item.code}</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.cardTagsScroll}
-          contentContainerStyle={styles.cardTags}
-        >
+        <View style={styles.cardTags}>
           {item.sourceLabel ? (
             <View style={[styles.tag, styles.tagGap, { backgroundColor: Colors.blueSoft, borderColor: Colors.blue }]}>
               <Text style={[styles.tagText, { color: Colors.cyan }]} numberOfLines={1}>{item.sourceLabel}</Text>
@@ -217,7 +213,7 @@ const KanbanCard = React.memo(function KanbanCard({
               <Text style={styles.tagOverdueText}>Quá hạn</Text>
             </View>
           ) : null}
-        </ScrollView>
+        </View>
       </View>
 
       <Text style={styles.cardName} numberOfLines={2}>{item.title}</Text>
@@ -407,6 +403,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadingModeRef = useRef<{ leads: boolean; deals: boolean }>({ leads: false, deals: false });
   const countsInflightRef = useRef<{ leads: string; deals: string }>({ leads: '', deals: '' });
+  const tabTotalsKeyRef = useRef<{ leads: string; deals: string }>({ leads: '', deals: '' });
   const abortByModeRef = useRef<{ leads: AbortController | null; deals: AbortController | null }>({
     leads: null,
     deals: null,
@@ -638,17 +635,55 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     }
   }, [search]);
 
+  const fetchOptsForMode = useCallback((which: Mode): ReturnType<typeof buildStageFetchOpts> => {
+    const modeFilters = which === 'leads' ? leadFiltersRef.current : dealFiltersRef.current;
+    return buildStageFetchOpts(modeFilters, search, myId);
+  }, [search, myId]);
+
   const applyTotalsCache = useCallback((which: Mode) => {
     const type = which === 'leads' ? 'lead' : 'deal';
-    const cached = peekCrmTotalsCache(type, fetchOptsRef.current());
+    const cached = peekCrmTotalsCache(type, fetchOptsForMode(which));
     if (!cached) return;
     const setter = which === 'leads' ? setLeadData : setDealData;
     setter((prev) => ({
       ...prev,
       stageCounts: { ...cached.counts, ...prev.stageCounts },
-      listTotal: cached.total || prev.listTotal,
+      listTotal: cached.total ?? prev.listTotal,
     }));
-  }, []);
+  }, [fetchOptsForMode]);
+
+  /** Badge Leads/Deals trên segment — prefetch tab chưa mở (chỉ loadBootstrap tab active). */
+  const prefetchTabTotals = useCallback(async (which: Mode) => {
+    const type = which === 'leads' ? 'lead' : 'deal';
+    const modeFilters = which === 'leads' ? leadFiltersRef.current : dealFiltersRef.current;
+    const fk = serverFilterKey(modeFilters, search);
+    const opts = buildStageFetchOpts(modeFilters, search, myId);
+    const setter = which === 'leads' ? setLeadData : setDealData;
+
+    applyTotalsCache(which);
+
+    if (tabTotalsKeyRef.current[which] === fk) {
+      const hubNow = which === 'leads' ? leadDataRef.current : dealDataRef.current;
+      if (hubNow.listTotal != null) return;
+    }
+    if (loadingModeRef.current[which] && !loadedRef.current[which]) return;
+
+    if (countsInflightRef.current[which] === fk) return;
+    countsInflightRef.current[which] = fk;
+    try {
+      const batch = await fetchCrmStageCountsBatch(type, opts);
+      setter((prev) => ({
+        ...prev,
+        stageCounts: { ...prev.stageCounts, ...batch.counts },
+        listTotal: batch.total ?? prev.listTotal,
+      }));
+      tabTotalsKeyRef.current[which] = fk;
+    } catch {
+      /* badge cột vẫn dùng total từng trang đã tải */
+    } finally {
+      if (countsInflightRef.current[which] === fk) countsInflightRef.current[which] = '';
+    }
+  }, [applyTotalsCache, search, myId]);
 
   const loadBootstrap = useCallback(async (
     which: Mode,
@@ -784,7 +819,12 @@ export default function CrmHubScreen({ navigation, route }: Props) {
       );
       setter((prev) => {
         const prevCur = prev.cache[stageId] ?? EMPTY_STAGE;
-        const items = append ? [...prevCur.items, ...page.items] : page.items;
+        // Giới hạn cache mỗi cột — FlatList ảo hóa nhưng mảng JS lớn vẫn tốn RAM/filter.
+        const MAX_STAGE_ITEMS = 120;
+        let items = append ? [...prevCur.items, ...page.items] : page.items;
+        if (items.length > MAX_STAGE_ITEMS) {
+          items = items.slice(items.length - MAX_STAGE_ITEMS);
+        }
         return {
           ...prev,
           stageCounts: { ...prev.stageCounts, [stageId]: page.total },
@@ -813,6 +853,14 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const canLoadCrm = Boolean(user?.company_id) || companiesReady;
   const canLoadCrmRef = useRef(canLoadCrm);
   canLoadCrmRef.current = canLoadCrm;
+
+  useEffect(() => {
+    if (!canLoadCrm) return;
+    applyTotalsCache('leads');
+    applyTotalsCache('deals');
+    void prefetchTabTotals('leads');
+    void prefetchTabTotals('deals');
+  }, [canLoadCrm, leadFilters.companyId, dealFilters.companyId, applyTotalsCache, prefetchTabTotals]);
   const loadBootstrapRef = useRef(loadBootstrap);
   loadBootstrapRef.current = loadBootstrap;
   const loadStageRef = useRef(loadStage);
@@ -879,6 +927,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     setDealFilters(resetCrmFilters(user, companies));
     setActiveIndex(0);
     filterKeyRef.current = '';
+    tabTotalsKeyRef.current = { leads: '', deals: '' };
     if (!loaded[next]) void loadBootstrap(next, false);
   };
 
@@ -910,6 +959,41 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const canPrev = activeIndex > 0;
   const canNext = activeIndex < displayStages.length - 1;
   const accent = stageColor(activeStage?.color, activeIndex);
+  const canPrevRef = useRef(canPrev);
+  const canNextRef = useRef(canNext);
+  canPrevRef.current = canPrev;
+  canNextRef.current = canNext;
+
+  const goPrevColumn = useCallback(() => {
+    setActiveIndex((i) => Math.max(0, i - 1));
+  }, []);
+  const goNextColumn = useCallback(() => {
+    setActiveIndex((i) => Math.min(displayStages.length - 1, i + 1));
+  }, [displayStages.length]);
+
+  /** Vuốt ngang trên danh sách → đổi cột (không tranh cuộn dọc FlatList). */
+  const columnSwipe = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, g) =>
+          Math.abs(g.dx) > 14 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+        onMoveShouldSetPanResponderCapture: (_, g) =>
+          Math.abs(g.dx) > 22 && Math.abs(g.dx) > Math.abs(g.dy) * 1.8,
+        onPanResponderTerminationRequest: () => true,
+        onPanResponderRelease: (_, g) => {
+          const distance = 48;
+          const fling = 0.45;
+          if ((g.dx <= -distance || g.vx <= -fling) && canNextRef.current) {
+            goNextColumn();
+            return;
+          }
+          if ((g.dx >= distance || g.vx >= fling) && canPrevRef.current) {
+            goPrevColumn();
+          }
+        },
+      }),
+    [goNextColumn, goPrevColumn],
+  );
 
   const rawColumnItems = activeStageId
     ? (hub.cache[activeStageId]?.items ?? [])
@@ -919,19 +1003,25 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     [rawColumnItems, filters, search],
   );
   const columnHasMore = activeStageId ? (hub.cache[activeStageId]?.hasMore ?? false) : false;
-  const serverFilterActive =
+  /**
+   * Chỉ chặn infinite-scroll khi lọc CLIENT-SIDE (server chưa áp được).
+   * companyId / SĐT / kỳ / assignee / search thường đã gửi API → vẫn phải phân trang
+   * (tránh treo ở ~20 bản ghi khi cột có 3000+).
+   */
+  const clientOnlyFilterActive =
+    filters.due !== 'all'
+    || filters.regionId === REGION_NONE
+    || (!!search.trim() && filters.searchField === 'assignee');
+  const filterActive =
     search.length > 0
     || filters.phone !== DEFAULT_CRM_FILTERS.phone
     || filters.assignee !== 'all'
     || !!filters.assigneeUserId
     || !!filters.timePreset
-    || !!filters.companyId;
-  const clientDueActive = filters.due !== 'all';
-  const clientRegionActive = !!filters.regionId;
-  const clientSearchActive =
-    !!search.trim()
-    && (filters.searchField === 'assignee' || filters.searchField === 'title' || filters.searchField === 'code' || filters.searchField === 'phone');
-  const filterActive = serverFilterActive || clientDueActive || clientRegionActive || clientSearchActive;
+    || !!filters.companyId
+    || !!filters.regionId
+    || clientOnlyFilterActive;
+  const allowLoadMore = !clientOnlyFilterActive;
   const filterBadge = countActiveFilters(filters, search);
 
   const totalRecords = hub.listTotal ?? sumCounts(hub.stageCounts);
@@ -1326,7 +1416,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
 
         <View style={styles.colHeaderRow}>
           <Pressable
-            onPress={() => setActiveIndex((i) => Math.max(0, i - 1))}
+            onPress={goPrevColumn}
             disabled={!canPrev}
             hitSlop={10}
             style={[styles.colNavArrow, !canPrev && styles.colNavArrowHidden]}
@@ -1353,7 +1443,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
           </Pressable>
 
           <Pressable
-            onPress={() => setActiveIndex((i) => Math.min(displayStages.length - 1, i + 1))}
+            onPress={goNextColumn}
             disabled={!canNext}
             hitSlop={10}
             style={[styles.colNavArrow, !canNext && styles.colNavArrowHidden]}
@@ -1383,14 +1473,16 @@ export default function CrmHubScreen({ navigation, route }: Props) {
             );
           })}
         </ScrollView>
+        <Text style={styles.swipeHint}>Vuốt ngang để chuyển cột</Text>
       </View>
 
       {showInlineLoadNotice ? (
         <LoadingNotice variant="banner" title={inlineLoadTitle} hint={inlineLoadHint} />
       ) : null}
 
+      <View style={styles.listFlex} {...columnSwipe.panHandlers}>
       <FlatList
-        style={styles.listFlex}
+        style={styles.listFill}
         data={columnItems}
         keyExtractor={(item) => item.id}
         contentContainerStyle={[styles.listContent, { paddingBottom: 100 + insets.bottom }]}
@@ -1417,7 +1509,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
               <ActivityIndicator color={Colors.blue} size="small" />
               <Text style={styles.loadMoreLoadingTxt}>Đang tải thêm bản ghi…</Text>
             </View>
-          ) : columnHasMore && !filterActive ? (
+          ) : columnHasMore && allowLoadMore ? (
             <Pressable
               style={styles.loadMoreBtn}
               onPress={() => activeStageId && void loadStage(mode, activeStageId, true)}
@@ -1427,15 +1519,16 @@ export default function CrmHubScreen({ navigation, route }: Props) {
           ) : null
         }
         onEndReached={() => {
-          if (activeStageId && columnHasMore && !moreLoading && !filterActive) {
+          if (activeStageId && columnHasMore && !moreLoading && allowLoadMore) {
             void loadStage(mode, activeStageId, true);
           }
         }}
         onEndReachedThreshold={0.35}
         removeClippedSubviews
-        maxToRenderPerBatch={8}
-        windowSize={7}
-        initialNumToRender={10}
+        maxToRenderPerBatch={6}
+        updateCellsBatchingPeriod={50}
+        windowSize={5}
+        initialNumToRender={8}
         renderItem={({ item }) => {
           const cardCompanyId = item.companyId || filters.companyId || user?.company_id || '';
           const canAssign = canAssignCrmCard(user, item, myId, cardCompanyId);
@@ -1461,6 +1554,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
         }}
         ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
       />
+      </View>
 
       {!keyboardVisible ? (
         <View style={[styles.fabRow, { paddingBottom: Math.max(insets.bottom, 12) }]}>
@@ -1740,11 +1834,19 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     justifyContent: 'center',
   },
   colBadgeText: { color: Colors.white, fontSize: 12, fontWeight: '800' },
-  dotsScroll: { maxHeight: 16, marginBottom: 8 },
+  dotsScroll: { maxHeight: 16, marginBottom: 4 },
   dotsRow: { alignItems: 'center', paddingHorizontal: 4 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.border },
   dotGap: { marginLeft: 6 },
+  swipeHint: {
+    color: Colors.textFaint,
+    fontSize: 10,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 6,
+  },
   listFlex: { flex: 1 },
+  listFill: { flex: 1 },
   listContent: { paddingHorizontal: 14, paddingTop: 4 },
   emptyBox: { alignItems: 'center', paddingTop: 40, gap: 10 },
   emptyText: { color: Colors.textFaint, fontSize: 14, textAlign: 'center' },
@@ -1778,8 +1880,7 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   },
   cardRow1: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   cardCode: { color: Colors.textMuted, fontSize: 12, fontWeight: '800', letterSpacing: 0.4 },
-  cardTagsScroll: { flex: 1 },
-  cardTags: { flexDirection: 'row', alignItems: 'center' },
+  cardTags: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' },
   tag: {
     paddingHorizontal: 8,
     paddingVertical: 3,

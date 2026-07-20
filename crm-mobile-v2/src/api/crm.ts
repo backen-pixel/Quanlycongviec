@@ -480,19 +480,25 @@ export async function fetchCrmListTotal(
 }
 
 const LIST_ALL_PAGE_SIZE = 500;
+/** Soft cap — tránh tải hàng nghìn bản ghi vào RAM nếu còn chỗ gọi hàm này. */
+const LIST_ALL_MAX_ROWS = 1500;
 
-/** Tải toàn bộ lead/deal theo bộ lọc (phân trang) — dùng KPI Deal khớp CRM Hub. */
+/**
+ * @deprecated Ưu tiên stage-counts / phân trang. Chỉ dùng khi thật sự cần dump có giới hạn.
+ * Tải lead/deal theo bộ lọc (phân trang) — dừng khi hết hoặc đạt LIST_ALL_MAX_ROWS.
+ */
 export async function fetchCrmListRowsAll(
   type: 'lead' | 'deal',
   opts?: CrmStageFetchOpts,
 ): Promise<Array<{ stage_id?: string | null; stage?: { id?: string }; company_id?: string | null }>> {
   const rows: Array<{ stage_id?: string | null; stage?: { id?: string }; company_id?: string | null }> = [];
   let offset = 0;
-  while (true) {
-    const params: Record<string, unknown> = { type, limit: LIST_ALL_PAGE_SIZE, offset, lite: '1' };
+  while (rows.length < LIST_ALL_MAX_ROWS) {
+    const limit = Math.min(LIST_ALL_PAGE_SIZE, LIST_ALL_MAX_ROWS - rows.length);
+    const params: Record<string, unknown> = { type, limit, offset, lite: '1' };
     applyListParams(params, opts);
     const { data } = await api.get('/crm/leads', { params, signal: opts?.signal });
-    const page = parsePayload(data, LIST_ALL_PAGE_SIZE);
+    const page = parsePayload(data, limit);
     rows.push(...page.rows);
     if (!page.hasMore || page.rows.length === 0) break;
     offset = page.nextOffset;
@@ -1042,6 +1048,8 @@ export function setPlannerCache(userId: string, data: PlannerData) {
 
 /** Số bản ghi mỗi lần tải từ server cho Planner. */
 export const PLANNER_FETCH_LIMIT = 40;
+/** Giới hạn buffer client — tránh RAM/lag khi NV có hàng nghìn lead/deal. */
+export const PLANNER_MAX_BUFFER = 100;
 
 export type PlannerSectionPage = {
   items: PlannerItem[];

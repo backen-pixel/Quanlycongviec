@@ -1,4 +1,13 @@
 # Build APK release (CRM Mobile v2)
+#
+# Mặc định dùng Gradle Daemon (nhanh hơn nhiều khi build lặp).
+# Thêm -Fast để bỏ lintVital (chỉ nên dùng khi test nội bộ, không publish).
+# Thêm -NoDaemon nếu CI cần tắt daemon.
+param(
+  [switch]$Fast,
+  [switch]$NoDaemon
+)
+
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
@@ -53,10 +62,42 @@ function Set-Arm64OnlyApk {
 
 Set-Arm64OnlyApk
 
-Write-Host '>> gradlew assembleRelease...'
+# Nạp .env (EXPO_PUBLIC_*) — APK release nhúng URL lúc bundle JS.
+$envFile = Join-Path $root '.env'
+if (Test-Path $envFile) {
+  Get-Content $envFile | ForEach-Object {
+    $line = $_.Trim()
+    if (-not $line -or $line.StartsWith('#')) { return }
+    $i = $line.IndexOf('=')
+    if ($i -lt 1) { return }
+    $k = $line.Substring(0, $i).Trim()
+    $v = $line.Substring($i + 1).Trim().Trim('"').Trim("'")
+    Set-Item -Path "Env:$k" -Value $v
+    if ($k -eq 'EXPO_PUBLIC_API_URL') { Write-Host ">> API: $v" }
+  }
+}
+
+$gradleArgs = @('assembleRelease', '--parallel')
+if ($NoDaemon) {
+  $gradleArgs += '--no-daemon'
+  Write-Host '>> Gradle: --no-daemon (chậm hơn — mỗi lần cold-start JVM)'
+} else {
+  Write-Host '>> Gradle: dùng Daemon (giữ JVM giữa các lần build)'
+}
+if ($Fast) {
+  # Bỏ Android lint release — thường tốn 20–40s, không cần khi chỉ test UI/JS.
+  $gradleArgs += @('-x', 'lintVitalAnalyzeRelease', '-x', 'lintVitalReportRelease', '-x', 'lintVitalRelease')
+  Write-Host '>> Fast: bỏ lintVitalRelease'
+}
+
+Write-Host ('>> gradlew ' + ($gradleArgs -join ' '))
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
 Set-Location android
-.\gradlew.bat assembleRelease --no-daemon
+& .\gradlew.bat @gradleArgs
+if ($LASTEXITCODE -ne 0) { throw "gradlew failed with exit code $LASTEXITCODE" }
 Set-Location $root
+$sw.Stop()
+Write-Host (">> Gradle xong trong {0:n1}s" -f $sw.Elapsed.TotalSeconds)
 
 $apk = Get-ChildItem 'android\app\build\outputs\apk\release\*.apk' | Select-Object -First 1
 if (-not $apk) { throw 'Không tìm thấy APK sau build' }

@@ -10,6 +10,8 @@ export type EmployeeReportRow = {
   deal_count?: number;
   won_deal_count?: number;
   lost_deal_count?: number;
+  /** GT deal thua trong kỳ — trừ khỏi Pipeline KPI. */
+  lost_value?: number;
   lost_lead_count?: number;
   won_value?: number;
   won_or_later_deal_count?: number;
@@ -20,9 +22,20 @@ export type EmployeeReportRow = {
   completed_value?: number;
   overdue_count?: number;
   overdue_rate_pct?: number | null;
+  /** Lead đang mở / quá hạn SLA cột — khớp web «QH SLA Lead». */
+  lead_open_count?: number;
+  lead_overdue_count?: number;
+  lead_overdue_rate_pct?: number | null;
+  /** Deal đang mở / quá hạn SLA cột — khớp web «QH SLA Deal». */
+  deal_open_count?: number;
+  deal_overdue_count?: number;
+  deal_overdue_rate_pct?: number | null;
   kpi_ledger_net?: number;
   conversion_rate?: number;
   pipeline_value?: number;
+  /** Số đơn hàng (deal ở nhóm KH / sau chốt) trong kỳ — khớp BC web. */
+  customer_order_count?: number;
+  customer_order_value?: number;
   /** GT hồ sơ tạo trong kỳ (BC org-overview gốc). */
   cohort_pipeline_value?: number;
   /** GT pipeline mở — deal ở cột dự kiến, snapshot CRM Hub. */
@@ -143,6 +156,8 @@ export type OrgReportRow = EmployeeReportRow & {
   region_code?: string | null;
   open_count?: number;
   completed_deal_count?: number;
+  customer_order_count?: number;
+  customer_order_value?: number;
   pipeline_value?: number;
   /** Tab Deal CRM Hub (có SĐT) — chỉ tham chiếu KPI Kanban, không dùng cho tỷ lệ chốt. */
   hub_deal_kpi?: number;
@@ -154,6 +169,8 @@ export type ReportTimelineRow = {
   date: string;
   lead_count?: number;
   deal_count?: number;
+  /** Chỉ có khi API nhận deal_kh_split=1 — khớp KPI Đơn hàng web. */
+  customer_order_count?: number;
   won_value?: number;
   pipeline_value?: number;
 };
@@ -212,6 +229,8 @@ export async function fetchOrgOverviewReport(params: EmployeeReportQuery): Promi
     params: {
       date_from: params.date_from,
       date_to: params.date_to,
+      // Khớp web BC tổ chức khi bật "Tách đơn hàng" — không có flag này thì customer_order_* = 0.
+      deal_kh_split: '1',
       ...(params.type && params.type !== 'all' ? { type: params.type } : {}),
       ...(params.company_id ? { company_id: params.company_id } : {}),
       ...(params.region_id ? { region_id: params.region_id } : {}),
@@ -268,6 +287,7 @@ export async function fetchEmployeeReportRows(params: EmployeeReportQuery): Prom
     params: {
       date_from: params.date_from,
       date_to: params.date_to,
+      deal_kh_split: '1',
       ...(params.type && params.type !== 'all' ? { type: params.type } : {}),
       ...(params.company_id ? { company_id: params.company_id } : {}),
       ...(params.region_id ? { region_id: params.region_id } : {}),

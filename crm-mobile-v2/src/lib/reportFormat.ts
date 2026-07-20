@@ -1,5 +1,11 @@
-import { formatVnd } from './format';
+/** Số tiền đầy đủ — dùng khi cần chính xác tuyệt đối. */
+export function formatVndExact(value?: number | null): string {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num === 0) return '0đ';
+  return `${Math.round(num).toLocaleString('vi-VN')}đ`;
+}
 
+/** Tiền báo cáo rút gọn — dễ nhìn trên card KPI (vd: 3,9 tỷ · 850 tr). */
 export function formatVndShort(value?: number | null): string {
   const num = Number(value);
   if (!Number.isFinite(num) || num === 0) return '0đ';
@@ -9,7 +15,7 @@ export function formatVndShort(value?: number | null): string {
   if (Math.abs(num) >= 1e6) {
     return `${(num / 1e6).toFixed(1).replace('.', ',')} tr`;
   }
-  return formatVnd(num);
+  return formatVndExact(num);
 }
 
 export function formatKpiLedgerNet(value?: number | null): string {

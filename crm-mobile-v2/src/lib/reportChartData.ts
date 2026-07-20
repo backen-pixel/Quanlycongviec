@@ -62,7 +62,7 @@ export function sliceTimelineLastDays(timeline: ReportTimelineRow[], days = 14):
 
 export function extractSparklineSeries(
   timeline: ReportTimelineRow[],
-  key: 'lead_count' | 'deal_count' | 'won_value' | 'pipeline_value',
+  key: 'lead_count' | 'deal_count' | 'customer_order_count' | 'won_value' | 'pipeline_value',
   days = 14,
 ): number[] {
   return sliceTimelineLastDays(timeline, days).map((d) => Number(d[key]) || 0);
@@ -82,11 +82,18 @@ export function buildFunnelChart(funnel: ReportPipelineFunnelRow[], max = 12) {
 
 export function buildRegionBarChart(byRegion: OrgReportRow[], max = 10) {
   return (byRegion || [])
+    .slice()
+    .sort((a, b) => (b.pipeline_value || 0) - (a.pipeline_value || 0))
+    .filter((r) => (r.pipeline_value || 0) > 0)
     .slice(0, max)
-    .map((r) => ({
-      name: truncLabel(r.region_name, 12),
-      value: r.pipeline_value ?? 0,
-    }));
+    .map((r) => {
+      const fullName = (r.region_name || '').trim() || 'Chưa gán khu vực';
+      return {
+        name: fullName,
+        fullName,
+        value: r.pipeline_value ?? 0,
+      };
+    });
 }
 
 export type DealStackedRow = {

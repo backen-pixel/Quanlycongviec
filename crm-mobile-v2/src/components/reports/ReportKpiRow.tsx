@@ -70,7 +70,7 @@ export default function ReportKpiRow({ summary, compare, timeline = [] }: Props)
       bg: 'rgba(249,115,22,0.12)',
       border: 'rgba(251,146,60,0.38)',
       sparkKey: 'pipeline_value',
-      sub: 'GT hồ sơ kỳ',
+      sub: 'Không gồm deal thua',
     },
   ], [summary]);
 

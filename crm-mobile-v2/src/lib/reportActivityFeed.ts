@@ -67,7 +67,7 @@ export function buildOrgActivityFeed(report: OrgOverviewReport): ActivityFeedIte
     });
   }
 
-  const overdue = s.overdue_count ?? s.reception_overdue_count ?? 0;
+  const overdue = s.overdue_count ?? 0;
   if (overdue > 0) {
     items.push({
       id: 'urgent',
