@@ -1510,6 +1510,155 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
   }
 });
 
+/**
+ * Chuyển khu vực CRM trong cùng công ty.
+ * Nếu công ty tách pipeline theo khu vực → remap pipeline_id + stage_id tương đương.
+ */
+r.post('/leads/:id/transfer-region', async (req, res) => {
+  try {
+    const leadId = req.params.id;
+    const regionIdRaw = req.body?.region_id != null ? String(req.body.region_id).trim() : '';
+    if (!regionIdRaw) {
+      return res.status(400).json({ error: 'Vui lòng chọn khu vực.' });
+    }
+
+    const { data: lead, error: leadFetchErr } = await supabase
+      .from('crm_leads')
+      .select('id, title, type, company_id, region_id, pipeline_id, stage_id, assigned_to, lead_owner_id')
+      .eq('id', leadId)
+      .single();
+    if (leadFetchErr) throw leadFetchErr;
+    if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead/deal' });
+    if (!lead.company_id) {
+      return res.status(400).json({ error: 'Lead/Deal chưa có công ty — chọn công ty trước khi chuyển khu vực.' });
+    }
+    if (String(lead.region_id || '') === regionIdRaw) {
+      return res.status(400).json({ error: 'Khu vực mới trùng với khu vực hiện tại.' });
+    }
+
+    const v = await assertRegionBelongsToCompany(supabase, lead.company_id, regionIdRaw);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    const ar = assertUserCanAssignCrmRegion(req, regionIdRaw);
+    if (!ar.ok) return res.status(403).json({ error: ar.error });
+
+    const assigneeRaw = req.body?.assigned_to != null ? String(req.body.assigned_to).trim() : '';
+    if (!assigneeRaw) {
+      return res.status(400).json({ error: 'Vui lòng chọn nhân viên phụ trách.' });
+    }
+    {
+      const av = await assertCrmAssigneeUserMatchesLeadCompany(supabase, assigneeRaw, lead.company_id);
+      if (!av.ok) return res.status(400).json({ error: av.error });
+      const { data: ur } = await supabase
+        .from('user_company_regions')
+        .select('region_id')
+        .eq('user_id', assigneeRaw)
+        .eq('region_id', regionIdRaw)
+        .maybeSingle();
+      if (!ur) {
+        return res.status(400).json({ error: 'Nhân viên được chọn không thuộc khu vực mới.' });
+      }
+    }
+
+    const patch = {
+      region_id: regionIdRaw,
+      assigned_to: assigneeRaw,
+      lead_owner_id: assigneeRaw,
+      updated_at: new Date().toISOString(),
+    };
+
+    const newPipelineId = await getPipelineIdForCompanyRegion(lead.company_id, regionIdRaw);
+    if (newPipelineId && String(newPipelineId) !== String(lead.pipeline_id || '')) {
+      patch.pipeline_id = newPipelineId;
+      const pipelineType = lead.type === 'deal' ? 'deal' : 'lead';
+      const newStages = await getStagesByPipelineId(newPipelineId, { type: pipelineType, activeOnly: true });
+      if (newStages.length) {
+        let currentStage = null;
+        if (lead.stage_id) {
+          const { data: st } = await supabase
+            .from('crm_pipeline_stages')
+            .select('id, canonical_slug, order_index, pipeline_type, is_won, is_lost')
+            .eq('id', lead.stage_id)
+            .maybeSingle();
+          currentStage = st || null;
+        }
+
+        let mapped = null;
+        const curSlug = currentStage?.canonical_slug ? String(currentStage.canonical_slug) : '';
+        if (curSlug) {
+          mapped = newStages.find((s) => String(s.canonical_slug || '') === curSlug) || null;
+        }
+        if (!mapped && currentStage && currentStage.order_index != null) {
+          const curOrder = Number(currentStage.order_index);
+          let best = null;
+          let bestDiff = Infinity;
+          for (const s of newStages) {
+            const diff = Math.abs(Number(s.order_index) - curOrder);
+            if (diff < bestDiff) {
+              bestDiff = diff;
+              best = s;
+            }
+          }
+          mapped = best;
+        }
+        if (!mapped) mapped = newStages[0];
+
+        if (mapped && String(mapped.id) !== String(lead.stage_id || '')) {
+          patch.stage_id = mapped.id;
+          patch.stage_entered_at = new Date().toISOString();
+        }
+      }
+    }
+
+    const { data: updated, error: updErr } = await supabase
+      .from('crm_leads')
+      .update(patch)
+      .eq('id', leadId)
+      .select(await getCrmLeadListSelect())
+      .single();
+    if (updErr) throw updErr;
+
+    try {
+      const { data: actor } = await supabase.from('users').select('full_name').eq('id', req.user.userId).maybeSingle();
+      const actorName = actor?.full_name || 'Người dùng';
+      let fromName = '';
+      let toName = '';
+      if (lead.region_id) {
+        const { data: fr } = await supabase.from('company_regions').select('name').eq('id', lead.region_id).maybeSingle();
+        fromName = fr?.name || '';
+      }
+      {
+        const { data: tr } = await supabase.from('company_regions').select('name').eq('id', regionIdRaw).maybeSingle();
+        toName = tr?.name || '—';
+      }
+      const fromPart = fromName ? ` (trước: ${fromName})` : '';
+      let assigneePart = '';
+      if (assigneeRaw) {
+        const { data: nu } = await supabase.from('users').select('full_name').eq('id', assigneeRaw).maybeSingle();
+        assigneePart = ` · Người phụ trách: «${nu?.full_name || 'Nhân viên'}»`;
+      }
+      await logDealActivityComment(req, {
+        leadId,
+        body: `📍 ${actorName} đã chuyển khu vực CRM thành «${toName}»${fromPart}.${assigneePart}`,
+      });
+    } catch (_) { /* ignore activity log error */ }
+
+    emitCrmDashboardChanged(req, {
+      type: updated?.type || lead.type,
+      company_id: updated?.company_id || lead.company_id,
+      lead_id: leadId,
+      action: 'transfer_region',
+    });
+
+    res.json({
+      lead: updated,
+      message: 'Đã chuyển khu vực thành công.',
+    });
+  } catch (e) {
+    console.error('[transfer-region]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.post('/leads/:id/convert-to-lead', async (req, res) => {
   try {
     const { data: lead, error: leadFetchErr } = await supabase

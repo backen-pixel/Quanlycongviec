@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { useState, useEffect, useRef, useLayoutEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Search, X, ChevronDown, User, Building2, Users, AlertCircle } from 'lucide-react';
 import api from '../lib/api';
@@ -8,18 +8,22 @@ import { formatStaffDisplayName, getStaffInitials, staffNameMatchesQuery } from 
 const _cache = { users: {}, departments: {} };
 
 /**
- * EmployeePicker - Component chọn nhân viên với filter Công ty + Phòng ban
+ * EmployeePicker - Component chọn nhân viên với filter Công ty + Phòng ban (+ Khu vực)
  * Uses React Portal to render dropdown outside parent overflow:hidden containers
- * 
+ *
  * Props:
  *  - companyId: ID từ bảng companies (ưu tiên dùng cái này)
  *  - companyUnitId: ID từ bảng ecosystem_units (backward compat)
- *  - Nếu truyền companyId → load bằng /users?company_id=...
- *  - Nếu chỉ truyền companyUnitId → load bằng /users?company_unit_id=... (cũ)
+ *  - regionId: lọc NV thuộc khu vực (user_company_regions / crm_region_ids)
+ *  - requireRegion: true → bắt buộc chọn khu vực trước mới mở picker
+ *  - forModule: 'crm' | 'production' | 'logistics' | 'all' — khi load qua employees-by-company
  */
 export default function EmployeePicker({
   companyId,
   companyUnitId,
+  regionId = null,
+  requireRegion = false,
+  forModule = 'crm',
   value,
   onChange,
   placeholder = '👤 Chưa gán',
@@ -42,29 +46,37 @@ export default function EmployeePicker({
   const [loading, setLoading] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [dropdownStyle, setDropdownStyle] = useState({});
-  
+
   const buttonRef = useRef(null);
   const dropdownRef = useRef(null);
 
   // companyId takes priority over companyUnitId
   const effectiveKey = companyId || companyUnitId;
-  const isDisabled = disabled || !effectiveKey;
+  const regionKey = regionId ? String(regionId) : '';
+  const missingRegion = requireRegion && !regionKey;
+  const isDisabled = disabled || !effectiveKey || missingRegion;
 
   // Load users + departments when companyId or companyUnitId changes
   useEffect(() => {
     if (effectiveKey) {
-      loadData(effectiveKey, !!companyId);
+      loadData(effectiveKey, !!companyId, forModule);
     } else {
       setAllUsers([]);
       setDepartments([]);
       setSelectedUser(null);
     }
-  }, [effectiveKey]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveKey, companyId, forModule]);
 
-  // Resolve selected user
+  const regionScopedUsers = useMemo(() => {
+    if (!regionKey) return allUsers;
+    return allUsers.filter((u) => (u.crm_region_ids || []).map(String).includes(regionKey));
+  }, [allUsers, regionKey]);
+
+  // Resolve selected user (có thể ngoài list lọc khu vực — vẫn hiện tên đã chọn)
   useEffect(() => {
     if (value && allUsers.length) {
-      const u = allUsers.find(u => u.id === value);
+      const u = allUsers.find((x) => x.id === value);
       setSelectedUser(u || null);
     } else if (!value) {
       setSelectedUser(null);
@@ -78,7 +90,7 @@ export default function EmployeePicker({
       const viewportHeight = window.innerHeight;
       const spaceBelow = viewportHeight - rect.bottom;
       const dropdownHeight = 340;
-      
+
       const s = {
         position: 'fixed',
         left: Math.max(8, Math.min(rect.left, window.innerWidth - 296)),
@@ -113,26 +125,38 @@ export default function EmployeePicker({
     };
   }, [open]);
 
-  const loadData = async (keyId, useCompanyId = false) => {
-    // Use global cache to prevent redundant API calls on remount
-    const cacheKey = (useCompanyId ? 'c_' : 'u_') + keyId;
+  const loadData = async (keyId, useCompanyId = false, moduleKey = 'crm') => {
+    const cacheKey = useCompanyId
+      ? `crm_${moduleKey}_${keyId}`
+      : `u_${keyId}`;
     if (_cache.users[cacheKey]) {
       setAllUsers(_cache.users[cacheKey]);
       setDepartments(_cache.departments[cacheKey] || []);
       return;
     }
-    
+
     setLoading(true);
     try {
-      // If companyId → query directly by company_id, else use old company_unit_id
-      const param = useCompanyId ? `company_id=${keyId}` : `company_unit_id=${keyId}`;
+      if (useCompanyId) {
+        const { data } = await api.get('/crm/employees-by-company', {
+          params: { company_id: keyId, for_module: moduleKey || 'crm' },
+        });
+        const users = data.users || [];
+        const depts = data.departments || [];
+        setAllUsers(users);
+        setDepartments(depts);
+        _cache.users[cacheKey] = users;
+        _cache.departments[cacheKey] = depts;
+        return;
+      }
+
+      const param = `company_unit_id=${keyId}`;
       const { data } = await api.get(`/users?${param}`);
       const users = data.users || [];
       setAllUsers(users);
       _cache.users[cacheKey] = users;
 
-      // For departments: if we have companyId use it directly, else use data.company_id from response
-      const resolvedCompanyId = useCompanyId ? keyId : data.company_id;
+      const resolvedCompanyId = data.company_id;
       if (resolvedCompanyId) {
         try {
           const { data: deptData } = await api.get(`/departments?company_id=${resolvedCompanyId}`);
@@ -141,8 +165,8 @@ export default function EmployeePicker({
           _cache.departments[cacheKey] = depts;
         } catch {
           const deptMap = {};
-          users.forEach(u => { if (u.department_id) deptMap[u.department_id] = u.department_id; });
-          const depts = Object.keys(deptMap).map(id => ({ id, name: id }));
+          users.forEach((u) => { if (u.department_id) deptMap[u.department_id] = u.department_id; });
+          const depts = Object.keys(deptMap).map((id) => ({ id, name: id }));
           setDepartments(depts);
           _cache.departments[cacheKey] = depts;
         }
@@ -154,7 +178,7 @@ export default function EmployeePicker({
     }
   };
 
-  const filtered = allUsers.filter(u => {
+  const filtered = regionScopedUsers.filter((u) => {
     const matchDept = !selectedDept || u.department_id === selectedDept;
     const matchSearch = !search
       || staffNameMatchesQuery(u.full_name, search)
@@ -185,6 +209,12 @@ export default function EmployeePicker({
     ? 'text-xs px-2 py-1 min-h-[28px]'
     : 'text-sm px-3 py-2 min-h-[36px]';
 
+  const disabledHint = !effectiveKey
+    ? 'Chọn công ty trước'
+    : missingRegion
+      ? 'Chọn khu vực trước'
+      : placeholder;
+
   const dropdown = open && !isDisabled ? createPortal(
     <>
       {/* Backdrop */}
@@ -209,7 +239,7 @@ export default function EmployeePicker({
               autoFocus
               placeholder="Tìm tên, email..."
               value={search}
-              onChange={e => setSearch(e.target.value)}
+              onChange={(e) => setSearch(e.target.value)}
               className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400"
             />
           </div>
@@ -229,7 +259,7 @@ export default function EmployeePicker({
             >
               Tất cả
             </button>
-            {departments.map(dept => (
+            {departments.map((dept) => (
               <button
                 key={dept.id}
                 onClick={() => setSelectedDept(selectedDept === dept.id ? '' : dept.id)}
@@ -251,8 +281,12 @@ export default function EmployeePicker({
           {loading ? (
             <div className="py-6 text-center text-sm text-gray-400">Đang tải...</div>
           ) : filtered.length === 0 ? (
-            <div className="py-6 text-center text-sm text-gray-400">
-              {allUsers.length === 0 ? 'Công ty chưa có nhân viên' : 'Không tìm thấy'}
+            <div className="py-6 text-center text-sm text-gray-400 px-3">
+              {allUsers.length === 0
+                ? 'Công ty chưa có nhân viên'
+                : regionKey
+                  ? 'Không có nhân viên thuộc khu vực này'
+                  : 'Không tìm thấy'}
             </div>
           ) : (
             <>
@@ -264,9 +298,9 @@ export default function EmployeePicker({
                 <X className="w-3.5 h-3.5" /> Không gán
               </button>
 
-              {filtered.map(user => {
+              {filtered.map((user) => {
                 const isSelected = value === user.id;
-                const deptName = departments.find(d => d.id === user.department_id)?.name || '';
+                const deptName = departments.find((d) => d.id === user.department_id)?.name || '';
                 return (
                   <button
                     key={user.id}
@@ -277,7 +311,8 @@ export default function EmployeePicker({
                   >
                     <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
                       isSelected ? 'bg-purple-600 text-white' : 'bg-gray-200 text-gray-600'
-                    }`}>
+                    }`}
+                    >
                       {getStaffInitials(user.full_name)}
                     </div>
                     <div className="flex-1 min-w-0">
@@ -295,18 +330,19 @@ export default function EmployeePicker({
         </div>
 
         {/* Footer */}
-        {allUsers.length > 0 && (
+        {regionScopedUsers.length > 0 && (
           <div className="px-3 py-1.5 border-t border-gray-100 text-xs text-gray-400 flex items-center gap-1">
             <Building2 className="w-3 h-3" />
-            {filtered.length}/{allUsers.length} nhân viên
-            {selectedDept && departments.find(d => d.id === selectedDept) && (
-              <span> · {departments.find(d => d.id === selectedDept).name}</span>
+            {filtered.length}/{regionScopedUsers.length} nhân viên
+            {regionKey ? ' · theo khu vực' : ''}
+            {selectedDept && departments.find((d) => d.id === selectedDept) && (
+              <span> · {departments.find((d) => d.id === selectedDept).name}</span>
             )}
           </div>
         )}
       </div>
     </>,
-    document.body
+    document.body,
   ) : null;
 
   return (
@@ -321,11 +357,11 @@ export default function EmployeePicker({
           isDisabled
             ? 'border-gray-200 bg-gray-50 cursor-not-allowed opacity-60'
             : open
-            ? 'border-purple-400 ring-2 ring-purple-200'
-            : 'border-gray-300 hover:border-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-400'
+              ? 'border-purple-400 ring-2 ring-purple-200'
+              : 'border-gray-300 hover:border-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-400'
         }`}
       >
-        {selectedUser ? (
+        {selectedUser && !missingRegion ? (
           <>
             <div className="w-5 h-5 rounded-full bg-purple-100 flex items-center justify-center shrink-0">
               <User className="w-3 h-3 text-purple-600" />
@@ -347,10 +383,12 @@ export default function EmployeePicker({
           <>
             <User className="w-4 h-4 text-gray-400 shrink-0" />
             <span className="flex-1 text-left text-gray-400">
-              {isDisabled && !effectiveKey ? 'Chọn công ty trước' : placeholder}
+              {isDisabled ? disabledHint : placeholder}
             </span>
             {!isDisabled && <ChevronDown className="w-3.5 h-3.5 text-gray-400 shrink-0" />}
-            {isDisabled && !effectiveKey && <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
+            {isDisabled && (!effectiveKey || missingRegion) && (
+              <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+            )}
           </>
         )}
       </button>
