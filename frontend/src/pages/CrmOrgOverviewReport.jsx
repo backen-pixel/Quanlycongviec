@@ -121,9 +121,21 @@ function buildDealStackedRows(items, nameKey, max = 12) {
 function formatVNDShort(n) {
   const num = Number(n);
   if (!Number.isFinite(num) || num === 0) return '0';
-  if (Math.abs(num) >= 1e9) return `${(num / 1e9).toFixed(1)} tỷ`;
-  if (Math.abs(num) >= 1e6) return `${Math.round(num / 1e6)} tr`;
-  if (Math.abs(num) >= 1e3) return `${Math.round(num / 1e3)} k`;
+  const abs = Math.abs(num);
+  const sign = num < 0 ? '-' : '';
+  // Khớp mobile: 1.584 tỷ → «1 tỷ 584 tr», không làm tròn «1,6 tỷ».
+  if (abs >= 1e9) {
+    let ty = Math.floor(abs / 1e9);
+    let tr = Math.round((abs % 1e9) / 1e6);
+    if (tr >= 1000) {
+      ty += 1;
+      tr = 0;
+    }
+    if (tr <= 0) return `${sign}${ty} tỷ`;
+    return `${sign}${ty} tỷ ${tr.toLocaleString('vi-VN')} tr`;
+  }
+  if (abs >= 1e6) return `${sign}${Math.round(abs / 1e6).toLocaleString('vi-VN')} tr`;
+  if (abs >= 1e3) return `${sign}${Math.round(abs / 1e3).toLocaleString('vi-VN')} k`;
   return String(Math.round(num));
 }
 

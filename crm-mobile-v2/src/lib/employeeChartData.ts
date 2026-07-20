@@ -2,7 +2,7 @@ import type { EmployeePipelineRow, EmployeeReportRow, EmployeeTimelineRow } from
 import type { DealStackedRow, PieSegment } from './reportChartData';
 import { STACK_COLORS, truncLabel } from './reportChartData';
 import { formatViDateIso } from './reportFormat';
-import { reportClosedWonCount } from './reportMetrics';
+import { reportClosedWonCount, reportOpenDealCount } from './reportMetrics';
 
 export function buildEmployeeTimelineChart(timeline: EmployeeTimelineRow[]) {
   return (timeline || []).map((d) => ({
@@ -34,10 +34,13 @@ export function buildEmployeeDealOutcomePie(
   summary: Record<string, number | null | undefined> | undefined,
   row?: Partial<EmployeeReportRow>,
 ): PieSegment[] {
-  const won = reportClosedWonCount(summary) || reportClosedWonCount(row);
-  const lost = summary?.lost_deal_count ?? row?.lost_deal_count ?? 0;
-  // deal_kh_split: deal_count = đang mở (không trừ chốt/thua).
-  const open = Math.max(0, Number(summary?.deal_count ?? row?.deal_count ?? 0) || 0);
+  const src = { ...row, ...summary } as Parameters<typeof reportClosedWonCount>[0] & {
+    open_deal_count?: number | null;
+    lost_deal_count?: number | null;
+  };
+  const won = reportClosedWonCount(src);
+  const lost = Number(src?.lost_deal_count ?? 0) || 0;
+  const open = reportOpenDealCount(src);
   return [
     { name: 'Chốt', value: Number(won), color: STACK_COLORS.won },
     { name: 'Thua', value: Number(lost), color: STACK_COLORS.lost },

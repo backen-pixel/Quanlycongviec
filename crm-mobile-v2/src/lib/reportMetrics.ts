@@ -1,5 +1,10 @@
 import type { EmployeeReportRow, OrgReportRow } from '../api/employeeReport';
 
+type DealOutcomeSource = Partial<OrgReportRow> & {
+  open_deal_count?: number | null;
+  win_rate_all_deals_pct?: number | null;
+};
+
 /** Chốt = thắng + sau thắng + hoàn thành (cùng chỉ số BC web). */
 export function reportClosedWonCount(r?: Partial<OrgReportRow> | null): number {
   return Number(r?.won_or_later_deal_count ?? r?.won_deal_count ?? 0) || 0;
@@ -9,10 +14,44 @@ export function reportClosedWonValue(r?: Partial<OrgReportRow> | null): number {
   return Number(r?.won_or_later_value ?? r?.won_value ?? r?.completed_value ?? 0) || 0;
 }
 
-export function reportOpenDealCount(r?: Partial<OrgReportRow> | null): number {
-  // Khớp web BC tổ chức (deal_kh_split): deal_count = Deal (pipeline) đang mở —
-  // backend đã tách thua / đơn hàng / chốt. Không trừ won lần nữa.
+/**
+ * Deal đang mở.
+ * - BC tổ chức (deal_kh_split): deal_count đã là pipeline mở.
+ * - Chi tiết NV (staff-pipelines): ưu tiên open_deal_count (đã tách chốt/thua).
+ */
+export function reportOpenDealCount(r?: DealOutcomeSource | null): number {
+  if (r?.open_deal_count != null && Number.isFinite(Number(r.open_deal_count))) {
+    return Math.max(0, Number(r.open_deal_count) || 0);
+  }
   return Math.max(0, Number(r?.deal_count ?? 0) || 0);
+}
+
+/** Mẫu số tỷ lệ chốt/tổng deal — khớp web/backend. */
+export function reportDealConversionDenom(r?: DealOutcomeSource | null): number {
+  const closed = reportClosedWonCount(r);
+  const lost = Number(r?.lost_deal_count ?? 0) || 0;
+  if (r?.open_deal_count != null && Number.isFinite(Number(r.open_deal_count))) {
+    return Math.max(0, closed + (Number(r.open_deal_count) || 0) + lost);
+  }
+  return Math.max(0,
+    (Number(r?.deal_count ?? 0) || 0)
+    + (Number(r?.customer_order_count ?? 0) || 0)
+    + lost,
+  );
+}
+
+/** Tỷ lệ chốt % — ưu tiên conversion_rate backend. */
+export function reportDealConversionRate(r?: DealOutcomeSource | null): number {
+  const fromApi = r?.conversion_rate;
+  if (fromApi != null && Number.isFinite(Number(fromApi))) {
+    return Math.round(Number(fromApi));
+  }
+  if (r?.win_rate_all_deals_pct != null && Number.isFinite(Number(r.win_rate_all_deals_pct))) {
+    return Math.round(Number(r.win_rate_all_deals_pct));
+  }
+  const denom = reportDealConversionDenom(r);
+  const closed = reportClosedWonCount(r);
+  return denom > 0 ? Math.round((closed / denom) * 100) : 0;
 }
 
 export function reportCancelLostTotal(r?: Partial<OrgReportRow> | null): number {
@@ -20,7 +59,6 @@ export function reportCancelLostTotal(r?: Partial<OrgReportRow> | null): number 
 }
 
 export function reportCancelTotalCount(r?: Partial<OrgReportRow> | null): number {
-  // Khớp web/backend: lead + deal pipeline + đơn hàng + deal thua
   return (Number(r?.lead_count ?? 0) || 0)
     + (Number(r?.deal_count ?? 0) || 0)
     + (Number(r?.customer_order_count ?? 0) || 0)

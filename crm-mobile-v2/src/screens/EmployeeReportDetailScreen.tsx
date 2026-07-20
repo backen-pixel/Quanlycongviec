@@ -25,7 +25,7 @@ import Avatar from '../components/Avatar';
 import EmployeeReportCharts from '../components/reports/EmployeeReportCharts';
 import ReportMetricBlock from '../components/reports/ReportMetricBlock';
 import { colorFromName } from '../lib/media';
-import { reportClosedWonCount } from '../lib/reportMetrics';
+import { reportDealConversionRate } from '../lib/reportMetrics';
 import { formatViDateIso } from '../lib/reportFormat';
 import type { RootStackParamList } from '../navigation/types';
 import { Radii, Shadow, useColors, type ThemeColors } from '../theme';
@@ -94,11 +94,10 @@ export default function EmployeeReportDetailScreen() {
     }, [load]),
   );
 
-  const conversionRate = useMemo(() => {
-    const deals = Number(summary.deal_count ?? 0);
-    const closed = reportClosedWonCount(summary);
-    return deals > 0 ? Math.round((closed / deals) * 100) : 0;
-  }, [summary]);
+  const conversionRate = useMemo(
+    () => reportDealConversionRate(summary as Parameters<typeof reportDealConversionRate>[0]),
+    [summary],
+  );
 
   const rowSnapshot = useMemo(() => ({
     user_id: userId,

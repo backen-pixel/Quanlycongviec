@@ -10,6 +10,9 @@ export type EmployeeReportRow = {
   deal_count?: number;
   won_deal_count?: number;
   lost_deal_count?: number;
+  /** Deal chưa chốt (staff-pipelines) — tách riêng chốt/thua. */
+  open_deal_count?: number;
+  open_value?: number;
   /** GT deal thua trong kỳ — trừ khỏi Pipeline KPI. */
   lost_value?: number;
   lost_lead_count?: number;

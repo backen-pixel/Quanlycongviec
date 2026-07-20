@@ -7,16 +7,36 @@ export function formatVndExact(value?: number | null): string {
   return `${Math.round(num).toLocaleString('vi-VN')}đ`;
 }
 
-/** Tiền báo cáo rút gọn — dễ nhìn trên card KPI (vd: 3,9 tỷ · 850 tr). */
+/** Tiền báo cáo rút gọn — khớp web tooltip chi tiết hơn toFixed(1).
+ *  vd: 1.584.000.000 → «1 tỷ 584 tr» (không làm tròn thành «1,6 tỷ»).
+ */
 export function formatVndShort(value?: number | null): string {
   const num = Number(value);
   if (!Number.isFinite(num) || num === 0) return '0đ';
-  if (Math.abs(num) >= 1e9) {
-    return `${(num / 1e9).toFixed(1).replace('.', ',')} tỷ`;
+  const abs = Math.abs(num);
+  const sign = num < 0 ? '-' : '';
+
+  if (abs >= 1e9) {
+    let ty = Math.floor(abs / 1e9);
+    let tr = Math.round((abs % 1e9) / 1e6);
+    if (tr >= 1000) {
+      ty += 1;
+      tr = 0;
+    }
+    if (tr <= 0) return `${sign}${ty} tỷ`;
+    return `${sign}${ty} tỷ ${tr.toLocaleString('vi-VN')} tr`;
   }
-  if (Math.abs(num) >= 1e6) {
-    return `${(num / 1e6).toFixed(1).replace('.', ',')} tr`;
+
+  if (abs >= 1e6) {
+    const tr = Math.round(abs / 1e6);
+    return `${sign}${tr.toLocaleString('vi-VN')} tr`;
   }
+
+  if (abs >= 1e3) {
+    const k = Math.round(abs / 1e3);
+    return `${sign}${k.toLocaleString('vi-VN')} k`;
+  }
+
   return formatVndExact(num);
 }
 

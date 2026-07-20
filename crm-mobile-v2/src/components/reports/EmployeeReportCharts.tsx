@@ -10,7 +10,7 @@ import {
   computeConversionRates,
 } from '../../lib/employeeChartData';
 import { formatKpiLedgerNet, formatVndShort } from '../../lib/reportFormat';
-import { reportClosedWonCount } from '../../lib/reportMetrics';
+import { reportClosedWonCount, reportDealConversionDenom } from '../../lib/reportMetrics';
 import { Radii, useColors, type ThemeColors } from '../../theme';
 import ReportChartCard from './charts/ReportChartCard';
 import ReportDonutChart from './charts/ReportDonutChart';
@@ -157,7 +157,7 @@ export default function EmployeeReportCharts({
           <ReportChartCard title="Hiệu suất chốt" subtitle="Tỷ lệ chốt deal trong kỳ">
             <ReportKpiRing
               pct={conversionRate}
-              subtitle={`${reportClosedWonCount(summary) || reportClosedWonCount(row) || 0} / ${summary.deal_count ?? row?.deal_count ?? 0} deal`}
+              subtitle={`${reportClosedWonCount(summary) || reportClosedWonCount(row) || 0} / ${reportDealConversionDenom({ ...row, ...summary })} deal`}
             />
           </ReportChartCard>
         </View>
