@@ -6,14 +6,16 @@ const TOKEN_KEY = 'crmv2_token';
 
 export const api = axios.create({ baseURL: API_PREFIX, timeout: 30000 });
 
+/** Token trong RAM — tránh AsyncStorage trên mọi request. */
+let memoryToken: string | null = null;
+
 let onUnauthorized: (() => void) | null = null;
 export function setUnauthorizedHandler(fn: (() => void) | null) {
   onUnauthorized = fn;
 }
 
-api.interceptors.request.use(async (config) => {
-  const t = await AsyncStorage.getItem(TOKEN_KEY);
-  if (t) config.headers.Authorization = `Bearer ${t}`;
+api.interceptors.request.use((config) => {
+  if (memoryToken) config.headers.Authorization = `Bearer ${memoryToken}`;
   return config;
 });
 
@@ -32,12 +34,25 @@ api.interceptors.response.use(
 );
 
 export async function setStoredToken(token: string | null) {
+  memoryToken = token;
   if (token) await AsyncStorage.setItem(TOKEN_KEY, token);
   else await AsyncStorage.removeItem(TOKEN_KEY);
 }
 
 export async function getStoredToken() {
-  return AsyncStorage.getItem(TOKEN_KEY);
+  if (memoryToken) return memoryToken;
+  const t = await AsyncStorage.getItem(TOKEN_KEY);
+  memoryToken = t;
+  return t;
+}
+
+/** Đồng bộ RAM từ storage lúc boot (AuthProvider). */
+export function hydrateMemoryToken(token: string | null) {
+  memoryToken = token;
+}
+
+export function peekMemoryToken(): string | null {
+  return memoryToken;
 }
 
 export function formatApiError(e: unknown): string {
@@ -67,7 +82,7 @@ export async function postMultipart<T = unknown>(
 ): Promise<{ data: T }> {
   const p = path.startsWith('/') ? path : `/${path}`;
   const url = `${API_PREFIX}${p}`;
-  const token = await AsyncStorage.getItem(TOKEN_KEY);
+  const token = memoryToken || (await getStoredToken());
   const timeoutMs = options?.timeoutMs ?? 120000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

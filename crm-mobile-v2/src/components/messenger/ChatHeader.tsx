@@ -9,13 +9,10 @@ import TapHighlight from '../TapHighlight';
 import MessengerAvatar from './MessengerAvatar';
 
 import { useCall } from '../../context/CallContext';
-
+import { CALLING_ENABLED } from '../../config';
 import { useTheme } from '../../theme';
-
 import { fetchMessengerGroupDetail } from '../../lib/messengerApi';
-
 import { getMessengerColors } from '../../lib/messengerTheme';
-
 import { Radii, Spacing } from '../../theme';
 
 
@@ -344,37 +341,27 @@ export default function ChatHeader({
 
 
       <View style={styles.actions}>
-
-        <TapHighlight style={styles.callBtn} onPress={onCall} disabled={calling}>
-
-          {calling ? (
-
-            <ActivityIndicator size="small" color={mc.accent} />
-
-          ) : (
-
-            <Ionicons name="call" size={18} color={mc.accent} />
-
-          )}
-
-        </TapHighlight>
-
-        <TapHighlight style={styles.callBtn} onPress={onVideoCall} disabled={calling}>
-
-          <Ionicons name="videocam" size={18} color={mc.accent} />
-
-        </TapHighlight>
-
+        {CALLING_ENABLED ? (
+          <>
+            <TapHighlight style={styles.callBtn} onPress={onCall} disabled={calling}>
+              {calling ? (
+                <ActivityIndicator size="small" color={mc.accent} />
+              ) : (
+                <Ionicons name="call" size={18} color={mc.accent} />
+              )}
+            </TapHighlight>
+            <TapHighlight style={styles.callBtn} onPress={onVideoCall} disabled={calling}>
+              <Ionicons name="videocam" size={18} color={mc.accent} />
+            </TapHighlight>
+          </>
+        ) : null}
         {onSearch ? (
           <TapHighlight style={styles.callBtn} onPress={onSearch}>
             <Ionicons name="search" size={18} color={mc.accent} />
           </TapHighlight>
         ) : null}
-
         <TapHighlight style={styles.callBtn} onPress={onOpenDetails}>
-
           <Ionicons name="ellipsis-vertical" size={18} color={colors.text} />
-
         </TapHighlight>
 
       </View>

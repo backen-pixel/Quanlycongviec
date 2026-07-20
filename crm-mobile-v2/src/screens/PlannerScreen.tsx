@@ -16,8 +16,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   fetchPlannerSectionPage,
-  fetchPlannerSectionTotal,
   invalidatePlannerCache,
+  isPlannerCacheFresh,
+  peekPlannerCache,
   PLANNER_MAX_BUFFER,
   setPlannerCache,
   type PlannerFetchOpts,
@@ -218,7 +219,10 @@ function PlannerSection({
       ) : null}
 
       {loading ? (
-        <ActivityIndicator color={meta.color} style={{ marginVertical: 16 }} />
+        <View style={styles.loadingBox}>
+          <ActivityIndicator color={meta.color} />
+          <Text style={[styles.empty, { marginTop: 10 }]}>Đang tải…</Text>
+        </View>
       ) : filtered.length === 0 ? (
         <Text style={styles.empty}>
           {filterActive
@@ -297,6 +301,10 @@ export default function PlannerScreen() {
   const abortRef = useRef<AbortController | null>(null);
   const loadingRef = useRef(false);
   const companyIdRef = useRef<string | undefined>(undefined);
+  const leadStateRef = useRef(leadState);
+  const dealStateRef = useRef(dealState);
+  leadStateRef.current = leadState;
+  dealStateRef.current = dealState;
 
   const resolvePlannerCompanyId = useCallback(async (): Promise<string | undefined> => {
     const fromUser = user?.company_id;
@@ -320,8 +328,13 @@ export default function PlannerScreen() {
     loadingRef.current = true;
 
     if (!silent) {
-      setLeadsLoading(true);
-      setDealsLoading(true);
+      // Chỉ hiện spinner section khi chưa có dữ liệu — tránh nhấp nháy khi refresh.
+      if (leadStateRef.current.items.length === 0 && leadStateRef.current.total === 0) {
+        setLeadsLoading(true);
+      }
+      if (dealStateRef.current.items.length === 0 && dealStateRef.current.total === 0) {
+        setDealsLoading(true);
+      }
     }
     if (isRefresh) {
       invalidatePlannerCache(userId);
@@ -332,6 +345,11 @@ export default function PlannerScreen() {
     const companyId = await resolvePlannerCompanyId();
     if (ac.signal.aborted) {
       loadingRef.current = false;
+      if (!silent) {
+        setLeadsLoading(false);
+        setDealsLoading(false);
+        setRefreshing(false);
+      }
       return;
     }
     companyIdRef.current = companyId;
@@ -342,14 +360,11 @@ export default function PlannerScreen() {
     let leadResult = EMPTY_SECTION;
     let dealResult = EMPTY_SECTION;
 
-    const leadPromise = Promise.all([
-      fetchPlannerSectionPage('lead', userId, 0, undefined, plannerOpts),
-      fetchPlannerSectionTotal('lead', userId, plannerOpts),
-    ])
-      .then(([page, listTotal]) => {
+    const leadPromise = fetchPlannerSectionPage('lead', userId, 0, undefined, plannerOpts)
+      .then((page) => {
         leadResult = {
           items: page.items,
-          total: listTotal,
+          total: page.total,
           hasMore: page.hasMore,
           nextOffset: page.nextOffset,
         };
@@ -367,14 +382,11 @@ export default function PlannerScreen() {
         if (!silent && !ac.signal.aborted) setLeadsLoading(false);
       });
 
-    const dealPromise = Promise.all([
-      fetchPlannerSectionPage('deal', userId, 0, undefined, plannerOpts),
-      fetchPlannerSectionTotal('deal', userId, plannerOpts),
-    ])
-      .then(([page, listTotal]) => {
+    const dealPromise = fetchPlannerSectionPage('deal', userId, 0, undefined, plannerOpts)
+      .then((page) => {
         dealResult = {
           items: page.items,
-          total: listTotal,
+          total: page.total,
           hasMore: page.hasMore,
           nextOffset: page.nextOffset,
         };
@@ -411,16 +423,36 @@ export default function PlannerScreen() {
       setDealsLoading(false);
       return;
     }
-    invalidatePlannerCache(userId);
-    setLeadState(EMPTY_SECTION);
-    setDealState(EMPTY_SECTION);
+    const cached = peekPlannerCache(userId);
+    if (cached) {
+      setLeadState({
+        items: cached.leads,
+        total: cached.leads.length,
+        hasMore: false,
+        nextOffset: cached.leads.length,
+      });
+      setDealState({
+        items: cached.deals,
+        total: cached.deals.length,
+        hasMore: false,
+        nextOffset: cached.deals.length,
+      });
+      setLeadsLoading(false);
+      setDealsLoading(false);
+    }
   }, [userId]);
 
   useFocusEffect(
     useCallback(() => {
-      void load();
+      if (!userId) return undefined;
+      // Cache còn hạn → hiện ngay, chỉ refresh nền khi sắp hết hạn hoặc chưa có data.
+      if (isPlannerCacheFresh(userId) && (leadStateRef.current.items.length > 0 || leadStateRef.current.total > 0 || dealStateRef.current.total > 0)) {
+        void load({ refresh: true, silent: true });
+      } else {
+        void load();
+      }
       return () => abortRef.current?.abort();
-    }, [load]),
+    }, [load, userId]),
   );
 
   useCrmRealtimeRefresh(
@@ -441,6 +473,13 @@ export default function PlannerScreen() {
   });
 
   const displayName = user?.full_name || user?.fullName || '';
+
+  const statsPending =
+    (leadsLoading || dealsLoading)
+    && leadState.total === 0
+    && dealState.total === 0
+    && leadState.items.length === 0
+    && dealState.items.length === 0;
 
   const summary = useMemo(() => ({
     leads: leadState.total,
@@ -514,17 +553,17 @@ export default function PlannerScreen() {
 
         <View style={styles.summary}>
           <View style={styles.sumItem}>
-            <Text style={[styles.sumValue, { color: Colors.blue }]}>{summary.leads}</Text>
+            <Text style={[styles.sumValue, { color: Colors.blue }]}>{statsPending ? '…' : summary.leads}</Text>
             <Text style={styles.sumLabel}>Leads</Text>
           </View>
           <View style={styles.sumDivider} />
           <View style={styles.sumItem}>
-            <Text style={[styles.sumValue, { color: Colors.orange }]}>{summary.deals}</Text>
+            <Text style={[styles.sumValue, { color: Colors.orange }]}>{statsPending ? '…' : summary.deals}</Text>
             <Text style={styles.sumLabel}>Deals</Text>
           </View>
           <View style={styles.sumDivider} />
           <View style={styles.sumItem}>
-            <Text style={[styles.sumValue, { color: Colors.red }]}>{summary.overdue}</Text>
+            <Text style={[styles.sumValue, { color: Colors.red }]}>{statsPending ? '…' : summary.overdue}</Text>
             <Text style={styles.sumLabel}>Quá hạn</Text>
           </View>
         </View>
@@ -687,6 +726,7 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   chipTxt: { color: Colors.textMuted, fontSize: 12, fontWeight: '800' },
   filterHint: { color: Colors.textFaint, fontSize: 11, fontWeight: '600', marginBottom: 8 },
   empty: { color: Colors.textFaint, fontSize: 14, textAlign: 'center', marginVertical: 14 },
+  loadingBox: { alignItems: 'center', justifyContent: 'center', paddingVertical: 18 },
   card: {
     backgroundColor: Colors.card,
     borderRadius: Radii.md,

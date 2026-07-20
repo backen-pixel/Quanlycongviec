@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { subscribeCrmRealtime } from '../lib/crmRealtimeBus';
 
-const DEBOUNCE_MS = 400;
+const DEBOUNCE_MS = 2500;
 
 /** Gọi `refresh` khi CRM thay đổi (socket hoặc poll live-version). */
 export function useCrmRealtimeRefresh(refresh: () => void, enabled = true): void {

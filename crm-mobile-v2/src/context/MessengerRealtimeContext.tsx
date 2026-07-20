@@ -10,7 +10,7 @@ import { AppState, type AppStateStatus } from 'react-native';
 import { io, type Socket } from 'socket.io-client';
 import { API_ORIGIN } from '../config';
 import { setAppSocket } from '../lib/appSocket';
-import { fetchMessengerGroups, mapMessageRow, resolveMediaUrl } from '../lib/messengerApi';
+import { mapMessageRow, resolveMediaUrl } from '../lib/messengerApi';
 import { getMessengerActiveGroupId } from '../lib/messengerActiveGroup';
 import { buildMessengerNotifFromSocket } from '../lib/messengerNotifFromSocket';
 import {
@@ -57,6 +57,7 @@ export function MessengerRealtimeProvider({ children }: { children: React.ReactN
   const metaListenersRef = useRef<Set<MessengerMetaListener>>(new Set());
   const presenceListenersRef = useRef<Set<PresenceListener>>(new Set());
   const recentNotifRef = useRef<Map<string, number>>(new Map());
+  const joinedGroupsRef = useRef<Set<string>>(new Set());
 
   const subscribeMessengerChat = useCallback((fn: MessengerChatListener) => {
     chatListenersRef.current.add(fn);
@@ -96,16 +97,22 @@ export function MessengerRealtimeProvider({ children }: { children: React.ReactN
   }, []);
 
   const joinMessengerGroup = useCallback((groupId: string) => {
-    if (groupId) socketRef.current?.emit('join:messenger_group', groupId);
+    if (!groupId) return;
+    joinedGroupsRef.current.add(groupId);
+    socketRef.current?.emit('join:messenger_group', groupId);
   }, []);
 
   const leaveMessengerGroup = useCallback((groupId: string) => {
-    if (groupId) socketRef.current?.emit('leave:messenger_group', groupId);
+    if (!groupId) return;
+    joinedGroupsRef.current.delete(groupId);
+    socketRef.current?.emit('leave:messenger_group', groupId);
   }, []);
 
   const joinMessengerGroups = useCallback((groupIds: string[]) => {
     for (const id of groupIds) {
-      if (id) socketRef.current?.emit('join:messenger_group', id);
+      if (!id) continue;
+      joinedGroupsRef.current.add(id);
+      socketRef.current?.emit('join:messenger_group', id);
     }
   }, []);
 
@@ -118,6 +125,7 @@ export function MessengerRealtimeProvider({ children }: { children: React.ReactN
       socketRef.current?.disconnect();
       socketRef.current = null;
       setAppSocket(null);
+      joinedGroupsRef.current.clear();
       return undefined;
     }
 
@@ -256,13 +264,10 @@ export function MessengerRealtimeProvider({ children }: { children: React.ReactN
     s.on('notification', onServerNotif);
 
     s.on('connect', () => {
-      void fetchMessengerGroups(uid)
-        .then((list) => {
-          for (const t of list) {
-            if (t.id) s.emit('join:messenger_group', t.id);
-          }
-        })
-        .catch(() => {});
+      // Re-join rooms đã biết — không refetch full groups (MessengerProvider lo list).
+      for (const id of joinedGroupsRef.current) {
+        s.emit('join:messenger_group', id);
+      }
     });
 
     const onState = (state: AppStateStatus) => {

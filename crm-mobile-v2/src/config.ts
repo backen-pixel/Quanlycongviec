@@ -17,3 +17,9 @@ export const API_ORIGIN = (
 ).replace(/\/$/, '');
 
 export const API_PREFIX = `${API_ORIGIN}/api`;
+
+/**
+ * Gọi thoại / video trong Messenger (WebRTC).
+ * Tắt = ẩn nút gọi, không mount CallScreen / incoming call, không xin quyền cuộc gọi toàn màn hình.
+ */
+export const CALLING_ENABLED = false;

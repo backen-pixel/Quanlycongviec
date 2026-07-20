@@ -590,27 +590,7 @@ class OverlayChatPanel(
     }
     body.addView(titleView)
     body.addView(subtitleView)
-    fun headerBtn(icon: String, onClick: () -> Unit): TextView {
-      return TextView(context).apply {
-        text = icon
-        gravity = Gravity.CENTER
-        setTextColor(c.textMuted)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-        background = OverlayChatTheme.iconButtonBg(c, ::dp)
-        layoutParams = LinearLayout.LayoutParams(dp(38), dp(38)).also { it.marginStart = dp(4) }
-        setOnClickListener { onClick() }
-      }
-    }
-    val callAudio = headerBtn("📞") {
-      val gid = groupId
-      val t = title
-      if (gid.isNotBlank()) onStartCall(gid, t, "audio")
-    }
-    val callVideo = headerBtn("📹") {
-      val gid = groupId
-      val t = title
-      if (gid.isNotBlank()) onStartCall(gid, t, "video")
-    }
+    // Call/video tạm tắt — không thêm nút 📞 / 📹
     val expand = TextView(context).apply {
       text = "⛶"
       gravity = Gravity.CENTER
@@ -628,8 +608,6 @@ class OverlayChatPanel(
     bar.addView(back)
     bar.addView(avatarView)
     bar.addView(body)
-    bar.addView(callAudio)
-    bar.addView(callVideo)
     bar.addView(expand)
     return LinearLayout(context).apply {
       orientation = LinearLayout.VERTICAL

@@ -1396,6 +1396,156 @@ r.get('/groups', responseCache({ ttl: 30, scope: 'user', tags: ['messenger'] }),
   }
 });
 
+/**
+ * Lịch sử cuộc gọi trên mọi hội thoại user là thành viên — 1 query, không N+1 theo nhóm.
+ * GET /messenger/call-history?limit=50
+ */
+r.get('/call-history', async (req, res) => {
+  try {
+    const uid = req.authUserId;
+    const limitRaw = parseInt(String(req.query.limit || '50'), 10);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 50;
+
+    const { data: memRows, error: memErr } = await supabase
+      .from('messenger_group_members')
+      .select('group_id')
+      .eq('user_id', uid);
+    if (memErr) throw memErr;
+    const groupIds = [...new Set((memRows || []).map((m) => m.group_id).filter(Boolean))];
+    if (!groupIds.length) return res.json({ items: [] });
+
+    let rows = [];
+    let pg = null;
+    try {
+      pg = await pgQuerySafe(
+        `SELECT
+          m.id, m.group_id, m.user_id, m.content, m.message_type, m.created_at,
+          m.is_system, m.attachments, m.attachment_url, m.attachment_name, m.attachment_mime,
+          m.recalled_at, m.recalled_by, m.reply_to, m.mention_user_ids
+        FROM messenger_group_messages m
+        WHERE m.group_id = ANY($1::uuid[])
+          AND (
+            m.message_type = 'call'
+            OR BTRIM(COALESCE(m.content, '')) LIKE ':call_log:%'
+          )
+          AND m.recalled_at IS NULL
+        ORDER BY m.created_at DESC
+        LIMIT $2`,
+        [groupIds, limit],
+      );
+    } catch (err) {
+      console.warn('[messenger/call-history] pg fallback:', err.message);
+      pg = null;
+    }
+    if (pg?.rows) {
+      rows = pg.rows;
+    } else {
+      // pg pool unavailable — fallback PostgREST (vẫn 1 request, không N+1)
+      const { data, error } = await supabase
+        .from('messenger_group_messages')
+        .select(MSG_USER_SELECT)
+        .in('group_id', groupIds)
+        .or('message_type.eq.call,content.like.:call_log:%')
+        .is('recalled_at', null)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      rows = data || [];
+    }
+
+    if (!rows.length) return res.json({ items: [] });
+
+    const hitGroupIds = [...new Set(rows.map((m) => m.group_id).filter(Boolean))];
+    const { data: groups, error: gErr } = await supabase
+      .from('messenger_groups')
+      .select('id, name, avatar, is_direct')
+      .in('id', hitGroupIds);
+    if (gErr) throw gErr;
+    const groupById = new Map((groups || []).map((g) => [String(g.id), g]));
+
+    const { data: hitMems } = await supabase
+      .from('messenger_group_members')
+      .select('group_id, user_id')
+      .in('group_id', hitGroupIds);
+    const membersByG = new Map();
+    for (const m of hitMems || []) {
+      const gid = String(m.group_id);
+      if (!membersByG.has(gid)) membersByG.set(gid, []);
+      membersByG.get(gid).push(m.user_id);
+    }
+
+    const peerIds = [];
+    for (const g of groups || []) {
+      if (!g.is_direct) continue;
+      const mems = membersByG.get(String(g.id)) || [];
+      const other = mems.find((id) => String(id) !== String(uid));
+      if (other) peerIds.push(other);
+    }
+    const msgUserIds = rows.map((m) => m.user_id).filter(Boolean);
+    const users = await fetchUsersByIdsForMessenger([...peerIds, ...msgUserIds]);
+    const userById = new Map(users.map((u) => [String(u.id), u]));
+    const contactNickMap = await fetchMessengerNicknameMap(uid, [...new Set(peerIds.map(String))]);
+
+    const items = [];
+    for (const raw of rows) {
+      const payload = extractCallLogPayloadFromRow(raw);
+      if (!payload && raw.message_type !== 'call') continue;
+      const gid = String(raw.group_id || '');
+      const g = groupById.get(gid);
+      if (!g) continue;
+
+      let groupName = g.name || 'Chat';
+      let groupAvatar = g.avatar || null;
+      if (g.is_direct) {
+        const mems = membersByG.get(gid) || [];
+        const other = mems.find((id) => String(id) !== String(uid));
+        if (other) {
+          const pu = userById.get(String(other));
+          if (pu) groupName = resolveMessengerDisplayName(pu, contactNickMap) || groupName;
+          if (pu?.avatar) groupAvatar = pu.avatar;
+        }
+      }
+
+      let message = { ...raw };
+      if (!message.user && message.user_id) {
+        const u = userById.get(String(message.user_id));
+        if (u) {
+          message = {
+            ...message,
+            user: {
+              id: u.id,
+              full_name: u.full_name,
+              avatar: u.avatar,
+              is_bot: u.is_bot,
+            },
+          };
+        }
+      }
+      message = hydrateMessengerCallLogRow(message, uid);
+
+      const callerId = String(payload?.callerId || payload?.hostId || '');
+      items.push({
+        id: String(message.id),
+        group_id: gid,
+        group_name: groupName,
+        group_avatar: groupAvatar,
+        is_direct: !!g.is_direct,
+        created_at: message.created_at,
+        label: message.content || formatCallLogLine(payload, uid) || '📞 Cuộc gọi',
+        status: payload?.status || 'completed',
+        kind: payload?.kind === 'video' ? 'video' : 'audio',
+        duration_sec: Number(payload?.durationSec) || 0,
+        is_outgoing: !!(uid && callerId && String(uid) === callerId),
+        message,
+      });
+    }
+
+    res.json({ items });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 /** Biệt danh liên hệ Messenger (chat 1-1 / chat nhanh — chỉ mình bạn thấy). */
 r.get('/nicknames', async (req, res) => {
   try {

@@ -1036,6 +1036,19 @@ export function peekPlannerCache(userId: string): PlannerData | null {
   return hit.data;
 }
 
+/** Cache còn hạn (không cần refetch mạng ngay). */
+export function isPlannerCacheFresh(userId: string): boolean {
+  const hit = plannerCache.get(userId);
+  return !!(hit && Date.now() - hit.at < PLANNER_CACHE_TTL_MS);
+}
+
+/** Tuổi cache (ms) — null nếu không có. */
+export function plannerCacheAgeMs(userId: string): number | null {
+  const hit = plannerCache.get(userId);
+  if (!hit) return null;
+  return Date.now() - hit.at;
+}
+
 export function invalidatePlannerCache(userId?: string) {
   if (userId) plannerCache.delete(userId);
   else plannerCache.clear();

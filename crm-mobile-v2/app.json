@@ -3,7 +3,7 @@
     "name": "CRM Mobile",
     "slug": "crm-mobile-v2",
     "scheme": "crmv2",
-    "version": "2.2.19",
+    "version": "2.2.26",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -23,9 +23,10 @@
     },
     "android": {
       "package": "vn.tubeppro.crmobilev2",
-      "versionCode": 130,
+      "versionCode": 137,
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": false,
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0B0F17"
@@ -95,6 +96,7 @@
         }
       ],
       "./plugins/withIncomingCallAndroid.js",
+      "./plugins/withGoogleServices.js",
       "./plugins/withArm64Apk.js",
       [
         "../mobile-shared/share-intent/plugins/withAndroidShareIntentFilters",

@@ -1,7 +1,13 @@
 import { api } from '../api/client';
 import { API_ORIGIN } from '../config';
 import { buildMessengerMessagePreview } from './messengerPreview';
-import { buildCallHistoryFromThreads, isMessengerCallLogMessage, type CallHistoryItem } from './messengerCallLog';
+import {
+  buildCallHistoryFromThreads,
+  callLogDisplayText,
+  extractCallLogPayloadFromMessage,
+  isMessengerCallLogMessage,
+  type CallHistoryItem,
+} from './messengerCallLog';
 import { normalizeReactions } from './messengerReactions';
 import type { MessengerGroupRow, MessengerMessage, MessengerReadReceipt, MessengerThread } from '../types/messenger';
 
@@ -109,9 +115,7 @@ export function mapMessageRow(row: Record<string, unknown>): MessengerMessage {
 }
 
 export async function fetchMessengerGroups(myUserId?: string | null): Promise<MessengerThread[]> {
-  const { data } = await api.get<unknown[]>('/messenger/groups', {
-    params: { _ts: Date.now() },
-  });
+  const { data } = await api.get<unknown[]>('/messenger/groups');
   const list = Array.isArray(data) ? data : [];
   return list
     .map((row) => mapGroupRow(row as Record<string, unknown>, myUserId))
@@ -177,8 +181,12 @@ export async function markMessengerGroupRead(groupId: string): Promise<void> {
 export type MessengerGroupMember = {
   id: string;
   name: string;
+  legalName?: string | null;
   avatar?: string | null;
   role?: string;
+  nickname?: string | null;
+  groupNickname?: string | null;
+  contactNickname?: string | null;
 };
 
 export async function fetchMessengerGroupDetail(groupId: string): Promise<{
@@ -187,6 +195,8 @@ export async function fetchMessengerGroupDetail(groupId: string): Promise<{
   avatar?: string | null;
   isDirect?: boolean;
   peerId?: string | null;
+  peerFullName?: string | null;
+  peerNickname?: string | null;
   members: MessengerGroupMember[];
 }> {
   const { data } = await api.get<Record<string, unknown>>(`/messenger/groups/${groupId}`, {
@@ -196,11 +206,17 @@ export async function fetchMessengerGroupDetail(groupId: string): Promise<{
   const members = membersRaw.map((row) => {
     const m = row as Record<string, unknown>;
     const user = (m.user || {}) as Record<string, unknown>;
+    const legal = String(user.full_name || user.email || 'Thành viên');
+    const display = String(user.display_name || user.group_nickname || user.nickname || legal);
     return {
       id: String(m.user_id || user.id || ''),
-      name: String(user.full_name || user.email || 'Thành viên'),
+      name: display,
+      legalName: legal,
       avatar: user.avatar != null ? String(user.avatar) : null,
       role: m.role != null ? String(m.role) : undefined,
+      nickname: user.nickname != null ? String(user.nickname) : null,
+      groupNickname: user.group_nickname != null ? String(user.group_nickname) : null,
+      contactNickname: user.contact_nickname != null ? String(user.contact_nickname) : null,
     };
   }).filter((m) => m.id);
   return {
@@ -211,8 +227,60 @@ export async function fetchMessengerGroupDetail(groupId: string): Promise<{
     ),
     isDirect: Boolean(data.is_direct),
     peerId: data.peer_id != null ? String(data.peer_id) : null,
+    peerFullName: data.peer_full_name != null ? String(data.peer_full_name) : null,
+    peerNickname: (() => {
+      const rawNick = data.peer_nickname != null
+        ? String(data.peer_nickname).trim()
+        : (data.nickname != null ? String(data.nickname).trim() : '');
+      if (rawNick) return rawNick;
+      const display = data.display_name != null ? String(data.display_name).trim() : '';
+      const legal = data.peer_full_name != null ? String(data.peer_full_name).trim() : '';
+      if (display && legal && display !== legal) return display;
+      return null;
+    })(),
     members,
   };
+}
+
+/** Biệt danh cá nhân (chat 1-1 / toàn app). */
+export async function setContactNickname(
+  targetUserId: string,
+  nickname: string,
+  groupId?: string | null,
+): Promise<string> {
+  const trimmed = nickname.trim();
+  const body = groupId ? { group_id: groupId } : {};
+  if (!trimmed) {
+    const { data } = await api.delete<{ display_name?: string }>(`/messenger/nicknames/${targetUserId}`, {
+      data: body,
+    });
+    return String(data?.display_name || '');
+  }
+  const { data } = await api.put<{ display_name?: string }>(`/messenger/nicknames/${targetUserId}`, {
+    nickname: trimmed,
+    ...body,
+  });
+  return String(data?.display_name || trimmed);
+}
+
+/** Biệt danh thành viên trong nhóm. */
+export async function setGroupMemberNickname(
+  groupId: string,
+  targetUserId: string,
+  nickname: string,
+): Promise<string> {
+  const trimmed = nickname.trim();
+  if (!trimmed) {
+    const { data } = await api.delete<{ display_name?: string }>(
+      `/messenger/groups/${groupId}/nicknames/${targetUserId}`,
+    );
+    return String(data?.display_name || '');
+  }
+  const { data } = await api.put<{ display_name?: string }>(
+    `/messenger/groups/${groupId}/nicknames/${targetUserId}`,
+    { nickname: trimmed },
+  );
+  return String(data?.display_name || trimmed);
 }
 
 export async function updateMessengerGroupName(groupId: string, name: string): Promise<void> {
@@ -237,11 +305,93 @@ export async function updateMessengerGroupAvatar(
   return data?.avatar ? String(data.avatar) : '';
 }
 
+/** Hình nền chat per-user — đồng bộ web / app. */
+export async function fetchMessengerChatWallpaper(groupId: string): Promise<string | null> {
+  const { data } = await api.get<{ wallpaper_url?: string | null }>(`/messenger/groups/${groupId}/wallpaper`);
+  const url = data?.wallpaper_url ? String(data.wallpaper_url).trim() : '';
+  return url ? resolveMediaUrl(url) : null;
+}
+
+export async function uploadMessengerChatWallpaper(
+  groupId: string,
+  asset: { uri: string; name?: string; type?: string },
+): Promise<string | null> {
+  const form = new FormData();
+  form.append('file', {
+    uri: asset.uri,
+    name: asset.name || 'wallpaper.jpg',
+    type: asset.type || 'image/jpeg',
+  } as unknown as Blob);
+  const { data } = await api.put<{ wallpaper_url?: string | null }>(
+    `/messenger/groups/${groupId}/wallpaper`,
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  );
+  const url = data?.wallpaper_url ? String(data.wallpaper_url).trim() : '';
+  return url ? resolveMediaUrl(url) : null;
+}
+
+export async function clearMessengerChatWallpaper(groupId: string): Promise<void> {
+  try {
+    await api.delete(`/messenger/groups/${groupId}/wallpaper`);
+  } catch {
+    await api.put(`/messenger/groups/${groupId}/wallpaper`, { clear: true });
+  }
+}
+
+function mapCallHistoryApiItem(row: Record<string, unknown>, myUserId: string): CallHistoryItem | null {
+  const messageRaw = (row.message as Record<string, unknown>) || row;
+  const message = mapMessageRow(messageRaw);
+  if (!message.id) return null;
+  const payload = extractCallLogPayloadFromMessage(message);
+  const status = (row.status as CallHistoryItem['status']) || payload?.status || 'completed';
+  const kind = String(row.kind || payload?.kind || 'audio') === 'video' ? 'video' : 'audio';
+  const callerId = String(payload?.callerId || payload?.hostId || '');
+  const isOutgoing =
+    row.is_outgoing != null
+      ? Boolean(row.is_outgoing)
+      : !!(myUserId && callerId && myUserId === callerId);
+  return {
+    id: String(row.id || message.id),
+    groupId: String(row.group_id || message.group_id || ''),
+    groupName: String(row.group_name || 'Chat'),
+    groupAvatarUrl: resolveMediaUrl((row.group_avatar as string) || null),
+    isDirect: Boolean(row.is_direct),
+    message,
+    label: String(row.label || callLogDisplayText(message, myUserId) || 'Cuộc gọi'),
+    status,
+    kind,
+    durationSec: Number(row.duration_sec ?? payload?.durationSec ?? 0) || 0,
+    createdAt: String(row.created_at || message.created_at || ''),
+    isOutgoing,
+  };
+}
+
+/** Ưu tiên GET /messenger/call-history (1 request); fallback cũ chỉ khi API lỗi. */
 export async function fetchCallHistoryItems(
   threads: MessengerThread[],
   myUserId: string,
   maxThreads = 20,
 ): Promise<CallHistoryItem[]> {
+  try {
+    const { data } = await api.get<{ items?: unknown[] } | unknown[]>('/messenger/call-history', {
+      params: { limit: 50 },
+    });
+    const list = Array.isArray(data)
+      ? data
+      : Array.isArray((data as { items?: unknown[] })?.items)
+        ? (data as { items: unknown[] }).items
+        : null;
+    if (list) {
+      return list
+        .map((row) => mapCallHistoryApiItem(row as Record<string, unknown>, myUserId))
+        .filter((x): x is CallHistoryItem => !!x && !!x.groupId)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }
+  } catch {
+    /* fallback N+1 bên dưới — backend cũ chưa có endpoint */
+  }
+
   const candidates = threads
     .filter((t) => /cuộc gọi|📞|call/i.test(t.preview))
     .slice(0, maxThreads);

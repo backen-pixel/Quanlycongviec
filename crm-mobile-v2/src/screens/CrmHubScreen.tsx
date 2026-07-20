@@ -543,14 +543,15 @@ export default function CrmHubScreen({ navigation, route }: Props) {
         nextOffset: boot.initialPage.nextOffset,
         loaded: true,
       };
+      const nextCounts = { ...boot.stageCounts };
+      const hasBootCounts = Object.keys(nextCounts).length > 0;
       return {
         stages: boot.stages,
-        stageCounts: preserveView
-          ? { ...prev.stageCounts, ...boot.stageCounts }
-          : boot.stageCounts,
-        listTotal: preserveView
-          ? prev.listTotal
-          : (boot.listTotal ?? null),
+        // Lite bootstrap thường chưa có counts — giữ cache/totals cũ để tránh flash «0 bản ghi · 0 cột».
+        stageCounts: hasBootCounts
+          ? (preserveView ? { ...prev.stageCounts, ...nextCounts } : nextCounts)
+          : prev.stageCounts,
+        listTotal: boot.listTotal ?? prev.listTotal,
         cache,
       };
     });
@@ -872,12 +873,14 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     useCallback(() => {
       const which = modeRef.current;
       if (canLoadCrmRef.current && loadedRef.current[which]) {
-        // Đã có dữ liệu trong phiên trước → làm mới ngầm, giữ nguyên cột đang xem.
-        void loadBootstrapRef.current(which, false, undefined, true);
-        // Phục hồi nếu cột đang xem bị rỗng (cache đã bị dọn lúc rời màn hình).
         const hubNow = which === 'leads' ? leadDataRef.current : dealDataRef.current;
         const sid = stageIdAtIndex(which, activeIndexRef.current);
-        if (sid && !hubNow.cache[sid]?.loaded) void loadStageRef.current(which, sid, false);
+        // Chỉ silent refresh nếu cột đang xem trống / chưa loaded — tránh bootstrap nặng mỗi lần focus.
+        if (sid && !hubNow.cache[sid]?.loaded) {
+          void loadStageRef.current(which, sid, false);
+        } else if (!hubNow.stages.length) {
+          void loadBootstrapRef.current(which, false, undefined, true);
+        }
       }
       return () => {
         abortByModeRef.current[which]?.abort();
@@ -889,8 +892,8 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   useCrmRealtimeRefresh(
     useCallback(() => {
       if (!canLoadCrmRef.current) return;
-      void loadBootstrapRef.current('leads', true, undefined, true);
-      void loadBootstrapRef.current('deals', true, undefined, true);
+      // Silent + lite (không invalidate) — chỉ mode đang xem.
+      void loadBootstrapRef.current(modeRef.current, false, undefined, true);
     }, []),
     canLoadCrm,
   );
@@ -1030,6 +1033,12 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const isColumnLoading = stageLoading && !columnItems.length;
   const waitingForCrm = !canLoadCrm && !loaded[mode];
   const showFullScreenLoad = waitingForCrm || (isInitialLoad && !hub.stages.length);
+  const totalsPending =
+    (isInitialLoad || loading || Boolean(countsInflightRef.current[mode]))
+    && hub.listTotal == null
+    && Object.keys(hub.stageCounts).length === 0;
+  const totalRecordsLabel = totalsPending ? '…' : String(totalRecords);
+  const stagesCountLabel = hub.stages.length ? String(displayStages.length) : (showFullScreenLoad || isInitialLoad ? '…' : '0');
 
   // Chỉ coi là "tải lâu" khi đã chờ quá ngưỡng — load nhanh không hiện banner để tránh nhấp nháy.
   const inlineLoadingActive = isColumnLoading || (isInitialLoad && hub.stages.length > 0);
@@ -1064,8 +1073,23 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const compactStats = useMemo(() => {
     const colTotal = activeStageId ? (hub.stageCounts[activeStageId] ?? 0) : 0;
     const shown = filterActive ? columnItems.length : colTotal;
-    return { total: totalRecords, column: shown, stages: displayStages.length };
-  }, [hub.stageCounts, activeStageId, totalRecords, filterActive, columnItems.length, displayStages.length]);
+    return {
+      total: totalsPending ? '…' : String(totalRecords),
+      column: (isColumnLoading && !filterActive) ? '…' : String(shown),
+      stages: hub.stages.length ? String(displayStages.length) : (isInitialLoad ? '…' : '0'),
+    };
+  }, [
+    hub.stageCounts,
+    hub.stages.length,
+    activeStageId,
+    totalRecords,
+    totalsPending,
+    filterActive,
+    columnItems.length,
+    displayStages.length,
+    isColumnLoading,
+    isInitialLoad,
+  ]);
 
   const goToStage = useCallback((stageId: string) => {
     const idx = displayStages.findIndex((s) => String(s.id) === String(stageId));
@@ -1295,7 +1319,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
             <Text style={styles.h1}>{isLeads ? 'Quản lý Leads' : 'Quản lý Deals'}</Text>
             <View style={styles.syncRow}>
               <View style={styles.syncDot} />
-              <Text style={styles.syncTxt}>{totalRecords} bản ghi · {displayStages.length} cột</Text>
+              <Text style={styles.syncTxt}>{totalRecordsLabel} bản ghi · {stagesCountLabel} cột</Text>
             </View>
           </View>
           <Pressable style={styles.iconBtn} onPress={() => void loadBootstrap(mode, true, activeStageId)} hitSlop={8}>

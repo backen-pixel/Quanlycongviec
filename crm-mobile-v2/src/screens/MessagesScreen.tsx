@@ -32,6 +32,7 @@ import { avatarColorFromName } from '../lib/messengerTheme';
 import type { RootStackParamList } from '../navigation/types';
 import { Radii, useColors, type ThemeColors } from '../theme';
 import type { MessengerThread } from '../types/messenger';
+import { CALLING_ENABLED } from '../config';
 
 type HubTab = 'chats' | 'calls';
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -179,9 +180,10 @@ export default function MessagesScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      void refreshThreads(true);
+      // Provider đã refresh khi mount/foreground — chỉ pull khi list trống.
+      if (!threads.length) void refreshThreads(true);
       void loadOnline();
-    }, [refreshThreads, loadOnline]),
+    }, [refreshThreads, loadOnline, threads.length]),
   );
 
   useEffect(() => {
@@ -325,10 +327,14 @@ export default function MessagesScreen() {
       ) : null}
 
       <View style={styles.hubBar}>
-        {([
-          ['chats', 'chatbubbles', 'Chats'],
-          ['calls', 'call', 'Cuộc gọi'],
-        ] as const).map(([key, icon, label]) => {
+        {(
+          CALLING_ENABLED
+            ? ([
+                ['chats', 'chatbubbles', 'Chats'],
+                ['calls', 'call', 'Cuộc gọi'],
+              ] as const)
+            : ([['chats', 'chatbubbles', 'Chats']] as const)
+        ).map(([key, icon, label]) => {
           const active = hub === key;
           return (
             <Pressable
@@ -354,6 +360,11 @@ export default function MessagesScreen() {
           data={filtered}
           keyExtractor={(i) => i.id}
           contentContainerStyle={{ paddingBottom: 120 }}
+          initialNumToRender={12}
+          maxToRenderPerBatch={10}
+          windowSize={7}
+          removeClippedSubviews
+          updateCellsBatchingPeriod={50}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={Colors.blue} />
           }

@@ -5,13 +5,14 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  DeviceEventEmitter,
   FlatList,
   Image,
-  Modal,
   Pressable,
   ScrollView,
   Share,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -33,6 +34,8 @@ import {
   fetchMessengerGroupDetail,
   leaveMessengerGroup,
   resolveMediaUrl,
+  setContactNickname,
+  setGroupMemberNickname,
   updateMessengerGroupAvatar,
   updateMessengerGroupName,
   type MessengerGroupMember,
@@ -44,6 +47,14 @@ import {
   resolvePrimaryAttachment,
 } from '../lib/messengerMedia';
 import { openMessengerAttachment } from '../lib/messengerFileOpen';
+import {
+  clearChatWallpaper,
+  getChatWallpaperValue,
+  setChatWallpaper,
+  setChatWallpaperPreset,
+  type ChatWallpaper,
+} from '../lib/chatWallpaperStorage';
+import { CRM_CHAT_WALLPAPER_CHANGED, CRM_OPEN_CHAT_SEARCH } from '../lib/messengerEvents';
 import { avatarColorFromName, getMessengerColors } from '../lib/messengerTheme';
 import type { RootStackParamList } from '../navigation/types';
 import { Radii, Spacing } from '../theme';
@@ -52,55 +63,79 @@ import type { MessengerMessage } from '../types/messenger';
 type Props = NativeStackScreenProps<RootStackParamList, 'ChatDetailInfo'>;
 type Panel = 'main' | 'gallery' | 'members';
 
-type QuickAction = {
+type OptionItem = {
   key: string;
   icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  active?: boolean;
-  onPress: () => void;
+  title: string;
+  sub: string;
+  onPress?: () => void;
+  toggle?: boolean;
+  toggleValue?: boolean;
+  onToggle?: (v: boolean) => void;
+  last?: boolean;
 };
 
-function QuickActionBtn({
-  icon,
-  label,
-  active,
-  onPress,
+function OptionRow({
+  item,
   accent,
   colors,
   isDark,
 }: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  active?: boolean;
-  onPress: () => void;
+  item: OptionItem;
   accent: string;
   colors: ReturnType<typeof useTheme>['colors'];
   isDark: boolean;
 }) {
-  const bg = active ? accent : isDark ? colors.card : '#F1F5F9';
-  const tint = active ? '#FFF' : colors.textMuted;
   return (
-    <Pressable style={qaStyles.wrap} onPress={onPress}>
-      <View style={[qaStyles.circle, { backgroundColor: bg }]}>
-        <Ionicons name={icon} size={22} color={tint} />
+    <Pressable
+      style={[
+        optionStyles.row,
+        !item.last && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+      ]}
+      onPress={item.toggle ? undefined : item.onPress}
+      disabled={item.toggle}
+    >
+      <View style={[optionStyles.iconWrap, { backgroundColor: isDark ? 'rgba(108,92,231,0.22)' : `${accent}22` }]}>
+        <Ionicons name={item.icon} size={18} color={accent} />
       </View>
-      <Text style={[qaStyles.label, { color: colors.textMuted }]} numberOfLines={2}>
-        {label}
-      </Text>
+      <View style={optionStyles.body}>
+        <Text style={[optionStyles.title, { color: colors.text }]}>{item.title}</Text>
+        <Text style={[optionStyles.sub, { color: colors.textMuted }]} numberOfLines={2}>
+          {item.sub}
+        </Text>
+      </View>
+      {item.toggle ? (
+        <Switch
+          value={item.toggleValue}
+          onValueChange={item.onToggle}
+          trackColor={{ false: isDark ? '#3F3F46' : '#CBD5E1', true: accent }}
+          thumbColor="#FFF"
+        />
+      ) : (
+        <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+      )}
     </Pressable>
   );
 }
 
-const qaStyles = StyleSheet.create({
-  wrap: { width: 76, alignItems: 'center', gap: 6 },
-  circle: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+const optionStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  iconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  label: { fontSize: 11, fontWeight: '600', textAlign: 'center', lineHeight: 14 },
+  body: { flex: 1, minWidth: 0 },
+  title: { fontSize: 15, fontWeight: '700' },
+  sub: { fontSize: 12, marginTop: 3, lineHeight: 16 },
 });
 
 export default function ChatDetailInfoScreen({ navigation, route }: Props) {
@@ -117,7 +152,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
   const [galleryTab, setGalleryTab] = useState<GalleryTab>('photos');
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [members, setMembers] = useState<MessengerGroupMember[]>([]);
-  const [membersLoading, setMembersLoading] = useState(!isDirect);
+  const [membersLoading, setMembersLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
   const [pickerUsers, setPickerUsers] = useState<ActivityUserItem[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
@@ -132,6 +167,14 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
   const [renameDraft, setRenameDraft] = useState(title);
   const [renaming, setRenaming] = useState(false);
   const [avatarUploading, setAvatarUploading] = useState(false);
+  const [wallpaperOpen, setWallpaperOpen] = useState(false);
+  const [wallpaperBusy, setWallpaperBusy] = useState(false);
+  const [wallpaperPreview, setWallpaperPreview] = useState<ChatWallpaper>({ type: 'none' });
+  const [peerFullName, setPeerFullName] = useState<string | null>(null);
+  const [peerNickname, setPeerNickname] = useState<string | null>(null);
+  const [nickEditUserId, setNickEditUserId] = useState<string | null>(null);
+  const [nickDraft, setNickDraft] = useState('');
+  const [nickSaving, setNickSaving] = useState(false);
 
   const messages = useMemo(() => {
     try {
@@ -143,21 +186,32 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
   }, [messagesJson]);
 
   const refreshMembers = useCallback(() => {
-    if (isDirect) return;
     setMembersLoading(true);
     void fetchMessengerGroupDetail(threadId)
       .then((g) => {
         setMembers(g.members);
-        setGroupName(g.name);
-        setRenameDraft(g.name);
         setGroupAvatarUrl((prev) => {
           const next = g.avatar ? resolveMediaUrl(g.avatar) : null;
           return next || prev;
         });
+        if (isDirect) {
+          const nick = g.peerNickname?.trim() || null;
+          const legal = g.peerFullName?.trim() || null;
+          const display = String(g.name || '').trim() || null;
+          setPeerNickname(nick);
+          setPeerFullName(legal);
+          // Ưu tiên biệt danh / display_name từ API, không lấy tên pháp lý trước
+          setGroupName(nick || display || legal || title);
+        } else {
+          setGroupName(g.name);
+          setRenameDraft(g.name);
+        }
       })
-      .catch(() => setMembers([]))
+      .catch(() => {
+        if (!isDirect) setMembers([]);
+      })
       .finally(() => setMembersLoading(false));
-  }, [isDirect, threadId]);
+  }, [isDirect, threadId, title]);
 
   useFocusEffect(
     useCallback(() => {
@@ -175,6 +229,64 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
 
   const myMember = members.find((m) => String(m.id) === myUserId);
   const canManageGroup = !isDirect && ['leader', 'deputy', 'admin'].includes(String(myMember?.role || '').toLowerCase());
+
+  const nickEditMember = useMemo(
+    () => (nickEditUserId ? members.find((m) => String(m.id) === String(nickEditUserId)) : undefined),
+    [members, nickEditUserId],
+  );
+  const nickEditHasExisting = isDirect
+    ? !!peerNickname?.trim()
+    : !!(nickEditMember?.groupNickname?.trim() || nickEditMember?.nickname?.trim());
+
+  const startNicknameEdit = useCallback(
+    (userId: string, currentNick?: string | null, fallbackName?: string) => {
+      const seed = String(currentNick || '').trim();
+      setNickEditUserId(String(userId));
+      setNickDraft(seed || String(fallbackName || '').trim());
+    },
+    [],
+  );
+
+  const closeNicknameEdit = useCallback(() => {
+    setNickEditUserId(null);
+    setNickDraft('');
+  }, []);
+
+  const submitNickname = async (clear = false) => {
+    const targetId = String(nickEditUserId || (isDirect ? peerId : '') || '');
+    if (!targetId) return;
+    const next = clear ? '' : nickDraft.trim();
+    setNickSaving(true);
+    try {
+      if (isDirect) {
+        const display = await setContactNickname(targetId, next, threadId);
+        const resolved = String(display || peerFullName || title).trim() || title;
+        setPeerNickname(next || null);
+        setGroupName(resolved);
+        navigation.setParams({ title: resolved });
+        patchThreadMeta(threadId, { name: resolved });
+        void refreshThreads(true);
+        closeNicknameEdit();
+      } else {
+        await setGroupMemberNickname(threadId, targetId, next);
+        closeNicknameEdit();
+        refreshMembers();
+        void refreshThreads(true);
+      }
+    } catch (e) {
+      Alert.alert('Lỗi', formatApiError(e));
+    } finally {
+      setNickSaving(false);
+    }
+  };
+
+  const memberRoleLabel = (role?: string | null) => {
+    const r = String(role || '').toLowerCase();
+    if (r === 'leader' || r === 'admin') return 'Trưởng nhóm';
+    if (r === 'deputy') return 'Phó nhóm';
+    if (r === 'member') return 'Thành viên';
+    return role || null;
+  };
 
   const submitRename = async () => {
     const next = renameDraft.trim();
@@ -255,8 +367,13 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
   const linkItems = useMemo(() => extractLinksFromMessages(messages), [messages]);
 
   const openSearch = useCallback(() => {
-    navigation.navigate('ChatDetail', { threadId, title, peerId: peerId || null, openSearch: true });
-  }, [navigation, threadId, title, peerId]);
+    // Thoát Tùy chọn trước, rồi báo ChatDetail mở tìm kiếm —
+    // stack: ... → ChatDetail (không còn Info phía dưới).
+    navigation.goBack();
+    requestAnimationFrame(() => {
+      DeviceEventEmitter.emit(CRM_OPEN_CHAT_SEARCH, { threadId });
+    });
+  }, [navigation, threadId]);
 
   const openGallery = useCallback((tab: GalleryTab = 'photos') => {
     setGalleryTab(tab);
@@ -314,160 +431,240 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
     });
   };
 
-  const quickActions: QuickAction[] = useMemo(() => {
-    const base: QuickAction[] = [
-      { key: 'search', icon: 'search-outline', label: 'Tìm tin nhắn', onPress: openSearch },
+  const toolItems: OptionItem[] = useMemo(() => {
+    const items: OptionItem[] = [
+      {
+        key: 'search',
+        icon: 'search-outline',
+        title: 'Tìm tin nhắn',
+        sub: 'Tìm kiếm nhanh tin nhắn, nội dung',
+        onPress: openSearch,
+      },
     ];
-    if (!isDirect) {
-      base.push({
-        key: 'invite',
-        icon: 'person-add-outline',
-        label: 'Thêm thành viên',
-        onPress: () => void openAddMembers(),
-      });
-      base.push({
-        key: 'share',
-        icon: 'link-outline',
-        label: 'Mời qua link',
-        onPress: shareInvite,
-      });
-    } else if (peerId) {
-      base.push({
+    if (isDirect && peerId) {
+      items.push({
         key: 'group',
         icon: 'people-outline',
-        label: 'Tạo nhóm chat',
+        title: 'Tạo nhóm chat',
+        sub: 'Tạo nhóm để trò chuyện cùng mọi người',
         onPress: () =>
           navigation.navigate('CreateGroupChat', {
             preselectedUserIds: [String(peerId)],
             suggestedName: `${title} + bạn bè`,
           }),
       });
-      base.push({
-        key: 'media',
-        icon: 'images-outline',
-        label: 'Ảnh & file',
-        onPress: () => openGallery('photos'),
+    } else if (!isDirect) {
+      items.push({
+        key: 'members',
+        icon: 'people-outline',
+        title: 'Thành viên nhóm',
+        sub: members.length ? `${members.length} thành viên · xem & thêm` : 'Xem và thêm thành viên',
+        onPress: () => setPanel('members'),
+      });
+      items.push({
+        key: 'invite',
+        icon: 'link-outline',
+        title: 'Mời qua link',
+        sub: 'Chia sẻ lời mời tham gia nhóm',
+        onPress: shareInvite,
       });
     }
-    base.push({
+    items.push({
+      key: 'media',
+      icon: 'images-outline',
+      title: 'Ảnh & file',
+      sub: 'Xem và quản lý ảnh, file đã chia sẻ',
+      onPress: () => openGallery('photos'),
+    });
+    items.push({
       key: 'notify',
       icon: notifyOn ? 'notifications' : 'notifications-off-outline',
-      label: notifyOn ? 'Đang bật TB' : 'Tắt thông báo',
-      active: notifyOn,
-      onPress: () => setNotifyOn((v) => !v),
+      title: notifyOn ? 'Đang bật thông báo' : 'Đã tắt thông báo',
+      sub: notifyOn ? 'Bạn sẽ nhận thông báo tin nhắn' : 'Không nhận thông báo từ hội thoại này',
+      toggle: true,
+      toggleValue: notifyOn,
+      onToggle: setNotifyOn,
+      last: true,
     });
-    return base.slice(0, 4);
-  }, [isDirect, notifyOn, peerId, title, navigation, openSearch, openGallery]);
+    return items;
+  }, [isDirect, peerId, title, navigation, openSearch, openGallery, notifyOn, members.length]);
+
+  const pickChatWallpaper = useCallback(() => {
+    setWallpaperOpen(true);
+    void getChatWallpaperValue(threadId).then(setWallpaperPreview);
+  }, [threadId]);
+
+  const notifyWallpaperChanged = useCallback((uri: string | null) => {
+    DeviceEventEmitter.emit(CRM_CHAT_WALLPAPER_CHANGED, { threadId, uri });
+  }, [threadId]);
+
+  const applyWallpaperPreset = useCallback(
+    (presetId: string) => {
+      if (wallpaperBusy) return;
+      setWallpaperBusy(true);
+      void setChatWallpaperPreset(threadId, presetId)
+        .then(() => {
+          setWallpaperPreview({ type: 'none' });
+          notifyWallpaperChanged(null);
+          setWallpaperOpen(false);
+        })
+        .catch((e) => Alert.alert('Lỗi', formatApiError(e)))
+        .finally(() => setWallpaperBusy(false));
+    },
+    [threadId, wallpaperBusy, notifyWallpaperChanged],
+  );
+
+  const pickCustomWallpaper = useCallback(() => {
+    if (wallpaperBusy) return;
+    void (async () => {
+      try {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) {
+          Alert.alert('Cần quyền', 'Cho phép truy cập thư viện ảnh để đặt ảnh nền.');
+          return;
+        }
+        const res = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ['images'],
+          quality: 0.82,
+        });
+        if (res.canceled || !res.assets?.[0]?.uri) return;
+        const asset = res.assets[0];
+        setWallpaperBusy(true);
+        await setChatWallpaper(threadId, {
+          uri: asset.uri,
+          name: asset.fileName || 'wallpaper.jpg',
+          type: asset.mimeType || 'image/jpeg',
+        });
+        const next = await getChatWallpaperValue(threadId);
+        setWallpaperPreview(next);
+        notifyWallpaperChanged(next.type === 'image' ? next.uri : null);
+        setWallpaperOpen(false);
+      } catch (e) {
+        Alert.alert('Lỗi', formatApiError(e));
+      } finally {
+        setWallpaperBusy(false);
+      }
+    })();
+  }, [threadId, wallpaperBusy, notifyWallpaperChanged]);
+
+  const otherItems: OptionItem[] = useMemo(
+    () => [
+      {
+        key: 'theme',
+        icon: 'color-palette-outline',
+        title: 'Giao diện',
+        sub: 'Đổi ảnh nền đoạn tin nhắn',
+        onPress: pickChatWallpaper,
+      },
+      {
+        key: 'privacy',
+        icon: 'shield-checkmark-outline',
+        title: 'Quyền riêng tư',
+        sub: 'Quản lý quyền riêng tư và hỗ trợ',
+        onPress: () =>
+          Alert.alert(
+            'Quyền riêng tư & hỗ trợ',
+            'Tin nhắn được bảo vệ theo chính sách công ty. Cần hỗ trợ? Liên hệ quản trị viên hệ thống.',
+          ),
+        last: true,
+      },
+    ],
+    [pickChatWallpaper],
+  );
 
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        root: { flex: 1, backgroundColor: isDark ? colors.bg : '#F4F6FB' },
+        root: { flex: 1, backgroundColor: colors.bg },
         header: {
           flexDirection: 'row',
           alignItems: 'center',
           paddingTop: insets.top + 4,
-          paddingBottom: 14,
+          paddingBottom: 12,
           paddingHorizontal: Spacing.md,
-          backgroundColor: mc.accent,
-          gap: 8,
+          gap: 4,
         },
         headerBack: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-        headerTitle: { flex: 1, color: '#FFF', fontSize: 18, fontWeight: '800' },
+        headerTitle: { flex: 1, color: colors.text, fontSize: 18, fontWeight: '800' },
         scroll: { flex: 1 },
-        card: {
-          backgroundColor: colors.bgElevated,
-          marginBottom: 8,
-        },
-        profile: {
+        scrollContent: { paddingHorizontal: Spacing.lg, paddingBottom: Math.max(insets.bottom, 24) },
+        profileCard: {
+          backgroundColor: colors.card,
+          borderRadius: Radii.xl,
+          borderWidth: 1,
+          borderColor: colors.border,
           alignItems: 'center',
-          paddingTop: 24,
-          paddingBottom: 20,
-          backgroundColor: colors.bgElevated,
+          paddingTop: 28,
+          paddingBottom: 22,
+          paddingHorizontal: 20,
+          marginBottom: 20,
         },
         profileName: {
           color: colors.text,
-          fontSize: 20,
+          fontSize: 18,
           fontWeight: '800',
           marginTop: 14,
-          paddingHorizontal: 24,
+          textAlign: 'center',
+        },
+        profileLegal: {
+          color: colors.textMuted,
+          fontSize: 12,
+          marginTop: 4,
           textAlign: 'center',
         },
         badge: {
-          marginTop: 8,
+          marginTop: 10,
           paddingHorizontal: 12,
-          paddingVertical: 4,
+          paddingVertical: 5,
           borderRadius: 999,
           backgroundColor: mc.accentSoft,
         },
         badgeTxt: { color: mc.accent, fontSize: 12, fontWeight: '700' },
-        quickRow: {
-          flexDirection: 'row',
-          justifyContent: 'space-around',
-          paddingHorizontal: Spacing.sm,
-          paddingVertical: 18,
-          backgroundColor: colors.bgElevated,
-          borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: colors.border,
+        sectionLabel: {
+          color: colors.textMuted,
+          fontSize: 12,
+          fontWeight: '800',
+          letterSpacing: 0.6,
+          marginBottom: 10,
+          marginLeft: 4,
         },
-        section: {
-          backgroundColor: colors.bgElevated,
-          paddingVertical: 14,
-          paddingHorizontal: Spacing.lg,
-          marginBottom: 8,
+        sectionCard: {
+          backgroundColor: colors.card,
+          borderRadius: Radii.xl,
+          borderWidth: 1,
+          borderColor: colors.border,
+          marginBottom: 20,
+          overflow: 'hidden',
         },
-        sectionHead: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: 12,
+        mediaPreview: {
+          paddingHorizontal: 14,
+          paddingBottom: 14,
+          gap: 8,
         },
-        sectionTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
-        sectionCount: { color: colors.textMuted, fontSize: 13 },
         mediaRow: { flexDirection: 'row', gap: 6 },
         mediaThumb: {
-          width: 72,
-          height: 72,
-          borderRadius: 8,
+          width: 64,
+          height: 64,
+          borderRadius: 10,
           overflow: 'hidden',
           backgroundColor: isDark ? '#1A1F28' : '#E2E8F0',
         },
         mediaMore: {
-          width: 72,
-          height: 72,
-          borderRadius: 8,
+          width: 64,
+          height: 64,
+          borderRadius: 10,
           backgroundColor: mc.accentSoft,
           alignItems: 'center',
           justifyContent: 'center',
         },
-        menuRow: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 14,
-          paddingHorizontal: Spacing.lg,
-          paddingVertical: 15,
-          backgroundColor: colors.bgElevated,
-          borderBottomWidth: StyleSheet.hairlineWidth,
-          borderBottomColor: colors.border,
-        },
-        menuIcon: {
-          width: 36,
-          height: 36,
-          borderRadius: 10,
-          backgroundColor: isDark ? colors.card : '#F1F5F9',
-          alignItems: 'center',
-          justifyContent: 'center',
-        },
-        menuBody: { flex: 1 },
-        menuTitle: { color: colors.text, fontSize: 15, fontWeight: '600' },
-        menuSub: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
         leaveBtn: {
-          margin: Spacing.lg,
           marginTop: 4,
           paddingVertical: 14,
           borderRadius: Radii.lg,
           alignItems: 'center',
           backgroundColor: isDark ? '#450A0A' : '#FEF2F2',
+          borderWidth: 1,
+          borderColor: isDark ? '#7F1D1D' : '#FECACA',
         },
         leaveTxt: { color: colors.red, fontWeight: '800', fontSize: 15 },
         subHeader: {
@@ -476,12 +673,31 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
           paddingTop: insets.top + 4,
           paddingBottom: 12,
           paddingHorizontal: Spacing.md,
-          backgroundColor: colors.bgElevated,
+          backgroundColor: colors.bg,
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: colors.border,
           gap: 8,
         },
         subTitle: { flex: 1, color: colors.text, fontSize: 17, fontWeight: '800' },
+        menuRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 14,
+          paddingHorizontal: Spacing.lg,
+          paddingVertical: 15,
+          backgroundColor: colors.card,
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: colors.border,
+        },
+        menuIcon: {
+          width: 36,
+          height: 36,
+          borderRadius: 10,
+          backgroundColor: mc.accentSoft,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        menuTitle: { color: colors.text, fontSize: 15, fontWeight: '600' },
         row: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -490,12 +706,18 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
           paddingVertical: 12,
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: colors.border,
-          backgroundColor: colors.bgElevated,
+          backgroundColor: colors.card,
         },
         rowBody: { flex: 1, minWidth: 0 },
         rowTitle: { color: colors.text, fontSize: 14, fontWeight: '600' },
         rowSub: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
-        linkUrl: { color: mc.accent, fontSize: 13 },
+        nickAction: {
+          width: 36,
+          height: 36,
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderRadius: 10,
+        },
         empty: { textAlign: 'center', color: colors.textFaint, marginTop: 40, paddingHorizontal: 24 },
         pickerBackdrop: {
           ...StyleSheet.absoluteFillObject,
@@ -529,7 +751,7 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
           alignItems: 'center',
           justifyContent: 'center',
           borderWidth: 2,
-          borderColor: colors.bgElevated,
+          borderColor: colors.card,
         },
         renameBackdrop: {
           ...StyleSheet.absoluteFillObject,
@@ -560,11 +782,42 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
         renameSave: { backgroundColor: mc.accent },
         renameCancelTxt: { color: colors.text, fontWeight: '700' },
         renameSaveTxt: { color: '#FFF', fontWeight: '800' },
+        wallpaperGrid: {
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          gap: 10,
+          paddingHorizontal: Spacing.lg,
+          paddingVertical: 12,
+        },
+        wallpaperSwatch: {
+          width: '30%',
+          flexGrow: 1,
+          minWidth: '28%',
+          maxWidth: '32%',
+          aspectRatio: 0.85,
+          borderRadius: 14,
+          borderWidth: 1,
+          borderColor: colors.border,
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          paddingBottom: 8,
+          overflow: 'hidden',
+        },
+        wallpaperSwatchLabel: { color: '#FFF', fontSize: 11, fontWeight: '700', textShadowColor: '#000', textShadowRadius: 4 },
+        wallpaperCustomBtn: {
+          marginHorizontal: Spacing.lg,
+          marginBottom: 8,
+          paddingVertical: 12,
+          borderRadius: Radii.md,
+          backgroundColor: mc.accentSoft,
+          alignItems: 'center',
+        },
+        wallpaperCustomTxt: { color: mc.accent, fontWeight: '800', fontSize: 14 },
       }),
     [colors, isDark, mc, insets.top, insets.bottom],
   );
 
-  const renderMediaThumb = (m: MessengerMessage, size = 72) => {
+  const renderMediaThumb = (m: MessengerMessage, size = 64) => {
     const att = resolvePrimaryAttachment(m);
     const url = resolveMediaUrl(att.url);
     const video = isVideoMessage(m);
@@ -582,23 +835,12 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
           <Image source={{ uri: url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
         ) : (
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <Ionicons name="videocam" size={24} color={colors.textMuted} />
+            <Ionicons name="videocam" size={22} color={colors.textMuted} />
           </View>
         )}
       </Pressable>
     );
   };
-
-  const menuItems = useMemo(() => {
-    if (isDirect) return [];
-    return [{
-      key: 'members',
-      icon: 'people-outline' as const,
-      title: 'Xem thành viên',
-      sub: `${members.length} thành viên`,
-      onPress: () => setPanel('members'),
-    }];
-  }, [isDirect, members.length]);
 
   if (panel === 'gallery') {
     return (
@@ -626,36 +868,70 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
           <Text style={styles.subTitle}>Thành viên</Text>
         </View>
 
-        <Pressable
-              style={[styles.menuRow, { borderBottomWidth: 0 }]}
-              onPress={() => void openAddMembers()}
-            >
-              <View style={[styles.menuIcon, { backgroundColor: mc.accentSoft }]}>
-                <Ionicons name="person-add" size={20} color={mc.accent} />
-              </View>
-              <Text style={[styles.menuTitle, { color: mc.accent }]}>Thêm thành viên</Text>
-            </Pressable>
-            {membersLoading ? (
-              <ActivityIndicator style={{ marginTop: 24 }} color={mc.accent} />
-            ) : (
-              <FlatList
-                data={members}
-                keyExtractor={(m) => m.id}
-                renderItem={({ item }) => (
-                  <View style={styles.row}>
-                    <Avatar name={item.name} size={44} color={avatarColorFromName(item.name)} avatarUrl={item.avatar} />
-                    <View style={styles.rowBody}>
-                      <Text style={styles.rowTitle}>{item.name}</Text>
-                      {item.role ? <Text style={styles.rowSub}>{item.role}</Text> : null}
-                    </View>
+        <Pressable style={[styles.menuRow, { borderBottomWidth: 0 }]} onPress={() => void openAddMembers()}>
+          <View style={styles.menuIcon}>
+            <Ionicons name="person-add" size={20} color={mc.accent} />
+          </View>
+          <Text style={[styles.menuTitle, { color: mc.accent }]}>Thêm thành viên</Text>
+        </Pressable>
+        {membersLoading ? (
+          <ActivityIndicator style={{ marginTop: 24 }} color={mc.accent} />
+        ) : (
+          <FlatList
+            data={members}
+            keyExtractor={(m) => m.id}
+            renderItem={({ item }) => {
+              const isMe = String(item.id) === myUserId;
+              const roleLabel = memberRoleLabel(item.role);
+              const hasGroupNick = !!(item.groupNickname?.trim() || item.nickname?.trim());
+              const showLegal =
+                hasGroupNick && item.legalName && item.legalName !== item.name
+                  ? item.legalName
+                  : null;
+              return (
+                <View style={styles.row}>
+                  <Avatar name={item.name} size={44} color={avatarColorFromName(item.name)} avatarUrl={item.avatar} />
+                  <View style={styles.rowBody}>
+                    <Text style={styles.rowTitle} numberOfLines={1}>
+                      {item.name}
+                      {isMe ? ' (bạn)' : ''}
+                    </Text>
+                    {showLegal ? (
+                      <Text style={styles.rowSub} numberOfLines={1}>
+                        {showLegal}
+                      </Text>
+                    ) : null}
+                    {item.contactNickname && item.contactNickname !== item.name ? (
+                      <Text style={styles.rowSub} numberOfLines={1}>
+                        Biệt danh cá nhân: {item.contactNickname}
+                      </Text>
+                    ) : null}
+                    {roleLabel ? <Text style={styles.rowSub}>{roleLabel}</Text> : null}
                   </View>
-                )}
-                ListEmptyComponent={<Text style={styles.empty}>Chưa có thành viên.</Text>}
-              />
-            )}
-            <Pressable style={styles.leaveBtn} onPress={confirmLeave} disabled={leaving}>
-              {leaving ? <ActivityIndicator color={colors.red} /> : <Text style={styles.leaveTxt}>Rời nhóm</Text>}
-            </Pressable>
+                  {!isMe ? (
+                    <Pressable
+                      style={styles.nickAction}
+                      hitSlop={8}
+                      onPress={() =>
+                        startNicknameEdit(
+                          item.id,
+                          item.groupNickname || item.nickname,
+                          item.name,
+                        )
+                      }
+                    >
+                      <Ionicons name="pencil" size={16} color={mc.accent} />
+                    </Pressable>
+                  ) : null}
+                </View>
+              );
+            }}
+            ListEmptyComponent={<Text style={styles.empty}>Chưa có thành viên.</Text>}
+          />
+        )}
+        <Pressable style={[styles.leaveBtn, { margin: Spacing.lg }]} onPress={confirmLeave} disabled={leaving}>
+          {leaving ? <ActivityIndicator color={colors.red} /> : <Text style={styles.leaveTxt}>Rời nhóm</Text>}
+        </Pressable>
 
         {addOpen ? (
           <Pressable style={styles.pickerBackdrop} onPress={() => setAddOpen(false)}>
@@ -685,25 +961,74 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
         ) : null}
 
         <ImageLightbox uri={lightboxUrl} onClose={() => setLightboxUrl(null)} />
+
+        {nickEditUserId ? (
+          <Pressable style={styles.renameBackdrop} onPress={closeNicknameEdit}>
+            <Pressable style={styles.renameCard} onPress={(e) => e.stopPropagation()}>
+              <Text style={styles.renameTitle}>Biệt danh trong nhóm</Text>
+              <TextInput
+                style={styles.renameInput}
+                value={nickDraft}
+                onChangeText={setNickDraft}
+                placeholder="Nhập biệt danh trong nhóm"
+                placeholderTextColor={colors.textFaint}
+                autoFocus
+                maxLength={80}
+              />
+              <View style={styles.renameActions}>
+                <Pressable style={[styles.renameBtn, styles.renameCancel]} onPress={closeNicknameEdit}>
+                  <Text style={styles.renameCancelTxt}>Huỷ</Text>
+                </Pressable>
+                {nickEditHasExisting ? (
+                  <Pressable
+                    style={[styles.renameBtn, styles.renameCancel]}
+                    onPress={() => void submitNickname(true)}
+                    disabled={nickSaving}
+                  >
+                    <Text style={[styles.renameCancelTxt, { color: colors.red }]}>Xóa</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable
+                  style={[styles.renameBtn, styles.renameSave]}
+                  onPress={() => void submitNickname(false)}
+                  disabled={nickSaving}
+                >
+                  {nickSaving ? (
+                    <ActivityIndicator color="#FFF" />
+                  ) : (
+                    <Text style={styles.renameSaveTxt}>Lưu</Text>
+                  )}
+                </Pressable>
+              </View>
+            </Pressable>
+          </Pressable>
+        ) : null}
       </View>
     );
   }
 
   const previewMedia = mediaItems.slice(-4).reverse();
+  const hasMediaPreview = mediaItems.length > 0 || fileItems.length > 0 || linkItems.length > 0;
 
   return (
     <View style={styles.root}>
       <View style={styles.header}>
         <TapHighlight style={styles.headerBack} onPress={() => navigation.goBack()}>
-          <Ionicons name="chevron-back" size={26} color="#FFF" />
+          <Ionicons name="chevron-back" size={26} color={colors.text} />
         </TapHighlight>
         <Text style={styles.headerTitle}>Tùy chọn</Text>
       </View>
 
-      <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
-        <View style={styles.profile}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.profileCard}>
           <Pressable
-            onPress={() => { if (canManageGroup) void changeGroupAvatar(); }}
+            onPress={() => {
+              if (canManageGroup) void changeGroupAvatar();
+            }}
             disabled={!canManageGroup || avatarUploading}
             style={{ alignItems: 'center' }}
           >
@@ -725,76 +1050,91 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
           </Pressable>
           <Pressable
             onPress={() => {
+              if (isDirect && peerId) {
+                startNicknameEdit(peerId, peerNickname, groupName);
+                return;
+              }
               if (!canManageGroup) return;
               setRenameDraft(groupName);
               setRenameOpen(true);
             }}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 14, paddingHorizontal: 24 }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, paddingHorizontal: 8 }}
           >
             <Text style={styles.profileName}>{groupName}</Text>
-            {canManageGroup ? <Ionicons name="pencil" size={16} color={mc.accent} /> : null}
+            {isDirect && peerId ? (
+              <Ionicons name="pencil" size={15} color={mc.accent} />
+            ) : canManageGroup ? (
+              <Ionicons name="pencil" size={15} color={mc.accent} />
+            ) : null}
           </Pressable>
+          {isDirect && peerNickname && peerFullName ? (
+            <Text style={styles.profileLegal} numberOfLines={1}>
+              {peerFullName}
+            </Text>
+          ) : null}
           <View style={styles.badge}>
-            <Text style={styles.badgeTxt}>{isDirect ? 'Trò chuyện' : 'Nhóm chat'}</Text>
+            <Text style={styles.badgeTxt}>{isDirect ? '• Trò chuyện' : '• Nhóm chat'}</Text>
           </View>
         </View>
 
-        <View style={styles.quickRow}>
-          {quickActions.map((act) => (
-            <QuickActionBtn
-              key={act.key}
-              icon={act.icon}
-              label={act.label}
-              active={act.active}
-              onPress={act.onPress}
-              accent={mc.accent}
-              colors={colors}
-              isDark={isDark}
-            />
+        <Text style={styles.sectionLabel}>CÔNG CỤ</Text>
+        <View style={styles.sectionCard}>
+          {toolItems.map((item) => {
+            if (item.key === 'media') {
+              return (
+                <View key={item.key}>
+                  <OptionRow
+                    item={{ ...item, last: false }}
+                    accent={mc.accent}
+                    colors={colors}
+                    isDark={isDark}
+                  />
+                  {hasMediaPreview ? (
+                    <View style={[styles.mediaPreview, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }]}>
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.mediaRow}
+                      >
+                        {previewMedia.map((m) => renderMediaThumb(m))}
+                        {(mediaItems.length > 4 || fileItems.length > 0 || linkItems.length > 0) ? (
+                          <Pressable style={styles.mediaMore} onPress={() => openGallery('photos')}>
+                            <Ionicons name="chevron-forward" size={20} color={mc.accent} />
+                          </Pressable>
+                        ) : null}
+                      </ScrollView>
+                    </View>
+                  ) : null}
+                </View>
+              );
+            }
+            return (
+              <OptionRow
+                key={item.key}
+                item={{
+                  ...item,
+                  last: item.key === toolItems[toolItems.length - 1]?.key,
+                }}
+                accent={mc.accent}
+                colors={colors}
+                isDark={isDark}
+              />
+            );
+          })}
+        </View>
+
+        <Text style={styles.sectionLabel}>KHÁC</Text>
+        <View style={styles.sectionCard}>
+          {otherItems.map((item) => (
+            <OptionRow key={item.key} item={item} accent={mc.accent} colors={colors} isDark={isDark} />
           ))}
         </View>
-
-        {(mediaItems.length > 0 || fileItems.length > 0 || linkItems.length > 0) ? (
-          <View style={styles.section}>
-            <Pressable style={styles.sectionHead} onPress={() => openGallery('photos')}>
-              <Text style={styles.sectionTitle}>Ảnh, file, link</Text>
-              <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
-            </Pressable>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mediaRow}>
-              {previewMedia.map((m) => renderMediaThumb(m))}
-              {(mediaItems.length > 4 || fileItems.length > 0 || linkItems.length > 0) ? (
-                <Pressable style={styles.mediaMore} onPress={() => openGallery('photos')}>
-                  <Ionicons name="chevron-forward" size={22} color={mc.accent} />
-                </Pressable>
-              ) : null}
-            </ScrollView>
-          </View>
-        ) : null}
-
-        {menuItems.length > 0 ? (
-          <View style={{ marginTop: 4 }}>
-            {menuItems.map((item) => (
-              <Pressable key={item.key} style={styles.menuRow} onPress={item.onPress}>
-                <View style={styles.menuIcon}>
-                  <Ionicons name={item.icon} size={20} color={colors.textMuted} />
-                </View>
-                <View style={styles.menuBody}>
-                  <Text style={styles.menuTitle}>{item.title}</Text>
-                  {item.sub ? <Text style={styles.menuSub}>{item.sub}</Text> : null}
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
 
         {!isDirect ? (
           <Pressable style={styles.leaveBtn} onPress={confirmLeave} disabled={leaving}>
             {leaving ? <ActivityIndicator color={colors.red} /> : <Text style={styles.leaveTxt}>Rời nhóm</Text>}
           </Pressable>
         ) : null}
-
-        <View style={{ height: Math.max(insets.bottom, 16) }} />
       </ScrollView>
 
       {addOpen ? (
@@ -855,6 +1195,109 @@ export default function ChatDetailInfoScreen({ navigation, route }: Props) {
                 )}
               </Pressable>
             </View>
+          </Pressable>
+        </Pressable>
+      ) : null}
+
+      {nickEditUserId ? (
+        <Pressable style={styles.renameBackdrop} onPress={closeNicknameEdit}>
+          <Pressable style={styles.renameCard} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.renameTitle}>
+              {isDirect ? 'Biệt danh cá nhân' : 'Biệt danh trong nhóm'}
+            </Text>
+            <TextInput
+              style={styles.renameInput}
+              value={nickDraft}
+              onChangeText={setNickDraft}
+              placeholder={isDirect ? 'Nhập biệt danh cá nhân' : 'Nhập biệt danh trong nhóm'}
+              placeholderTextColor={colors.textFaint}
+              autoFocus
+              maxLength={80}
+            />
+            <View style={styles.renameActions}>
+              <Pressable style={[styles.renameBtn, styles.renameCancel]} onPress={closeNicknameEdit}>
+                <Text style={styles.renameCancelTxt}>Huỷ</Text>
+              </Pressable>
+              {nickEditHasExisting ? (
+                <Pressable
+                  style={[styles.renameBtn, styles.renameCancel]}
+                  onPress={() => void submitNickname(true)}
+                  disabled={nickSaving}
+                >
+                  <Text style={[styles.renameCancelTxt, { color: colors.red }]}>Xóa</Text>
+                </Pressable>
+              ) : null}
+              <Pressable
+                style={[styles.renameBtn, styles.renameSave]}
+                onPress={() => void submitNickname(false)}
+                disabled={nickSaving}
+              >
+                {nickSaving ? (
+                  <ActivityIndicator color="#FFF" />
+                ) : (
+                  <Text style={styles.renameSaveTxt}>Lưu</Text>
+                )}
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      ) : null}
+
+      {wallpaperOpen ? (
+        <Pressable style={styles.pickerBackdrop} onPress={() => !wallpaperBusy && setWallpaperOpen(false)}>
+          <Pressable style={styles.pickerSheet} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.pickerHead}>
+              <Text style={styles.pickerTitle}>Hình nền chat</Text>
+              <Pressable onPress={() => !wallpaperBusy && setWallpaperOpen(false)} disabled={wallpaperBusy}>
+                <Ionicons name="close" size={22} color={colors.textMuted} />
+              </Pressable>
+            </View>
+            {wallpaperPreview.type === 'image' ? (
+              <Image
+                source={{ uri: wallpaperPreview.uri }}
+                style={{
+                  height: 96,
+                  marginHorizontal: Spacing.lg,
+                  marginBottom: 10,
+                  borderRadius: 12,
+                  backgroundColor: colors.border,
+                }}
+                resizeMode="cover"
+              />
+            ) : null}
+            <Pressable
+              style={[styles.wallpaperCustomBtn, wallpaperBusy && { opacity: 0.5 }]}
+              onPress={pickCustomWallpaper}
+              disabled={wallpaperBusy}
+            >
+              {wallpaperBusy ? (
+                <ActivityIndicator color={mc.accent} />
+              ) : (
+                <Text style={styles.wallpaperCustomTxt}>Chọn ảnh</Text>
+              )}
+            </Pressable>
+            <Pressable
+              style={[
+                styles.wallpaperCustomBtn,
+                { backgroundColor: isDark ? colors.card : '#F1F5F9', marginBottom: 16 },
+                (wallpaperBusy || wallpaperPreview.type !== 'image') && { opacity: 0.4 },
+              ]}
+              disabled={wallpaperBusy || wallpaperPreview.type !== 'image'}
+              onPress={() => applyWallpaperPreset('default')}
+            >
+              <Text style={[styles.wallpaperCustomTxt, { color: colors.text }]}>Nền mặc định</Text>
+            </Pressable>
+            <Text
+              style={{
+                color: colors.textFaint,
+                fontSize: 11,
+                paddingHorizontal: Spacing.lg,
+                paddingBottom: 16,
+                lineHeight: 16,
+              }}
+            >
+              Đồng bộ với web và app trên cùng tài khoản.
+            </Text>
           </Pressable>
         </Pressable>
       ) : null}

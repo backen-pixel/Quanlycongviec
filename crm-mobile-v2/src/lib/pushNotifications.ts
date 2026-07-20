@@ -2,32 +2,34 @@
  * Push notification (FCM native) cho CRM Mobile v2.
  *
  * Luồng:
- *  - `configurePushNotifications()` (gọi sớm ở index): cài handler hiển thị khi app
- *    đang mở + tạo các kênh Android khớp `channelId` mà backend gửi.
- *  - `registerPushTokenV2()` (sau login): xin quyền, lấy FCM device token và đăng ký
- *    lên `POST /push/device-token` với platform 'fcm' + device_id tiền tố "crmv2"
- *    (để backend biết đây là app v2 và gửi notification hiển thị trên thanh hệ thống).
- *  - `unregisterPushTokenV2()` (logout): gỡ token khỏi server.
+ *  - `configurePushNotifications()` (gọi sớm ở index): handler + kênh Android
+ *    khớp `channelId` backend (`pushSender.js`).
+ *  - `registerPushTokenV2()` (sau login): xin quyền, lấy FCM token, POST `/push/device-token`
+ *    với platform `fcm` + `device_id` tiền tố `crmv2`.
  *
- * Yêu cầu: google-services.json (Firebase project tubep-crm, package
- * vn.tubeppro.crmobilev2) đặt tại crm-mobile-v2/android/app/. Thiếu file thì
- * lấy token sẽ thất bại và hàm im lặng bỏ qua (không làm app crash).
+ * Yêu cầu build:
+ *  - `google-services.json` cho package `vn.tubeppro.crmobilev2` (Firebase project tubep-crm)
+ *    đặt tại `crm-mobile-v2/google-services.json` rồi prebuild/build.
+ *  - Thiếu file → `getDevicePushTokenAsync` thất bại; tin nhắn local (app còn sống) vẫn hiện.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
-import { Platform } from 'react-native';
+import { PermissionsAndroid, Platform } from 'react-native';
 import { api } from '../api/client';
 import { invalidateCrmHubCache, invalidatePlannerCache } from '../api/crm';
 import { navigate } from '../navigation/navigationRef';
 import { emitCrmRealtime } from './crmRealtimeBus';
+import { getOrCreateDeviceId } from './deviceHeartbeat';
 
 const FCM_TOKEN_KEY = 'crmv2_fcm_push_token_v1';
+const LOG = '[crmv2 push]';
 
 /** Phải khớp hằng số channelId trong backend/src/services/pushSender.js */
 const CHANNEL_SYSTEM = 'crm_system_tray_v3';
 const CHANNEL_CHAT = 'crm_chat';
 const CHANNEL_CALL = 'crm_call';
+const CHANNEL_SX_COMMENTS = 'sx_comments';
 
 let configured = false;
 
@@ -40,6 +42,16 @@ Notifications.setNotificationHandler({
     shouldSetBadge: true,
   }),
 });
+
+/**
+ * Emulator iOS không có push; Android emulator/LDPlayer thường có GMS
+ * và vẫn đăng ký FCM được — không chặn bằng Device.isDevice trên Android.
+ */
+function canRegisterPush(): boolean {
+  if (Platform.OS === 'web') return false;
+  if (Platform.OS === 'android') return true;
+  return Device.isDevice;
+}
 
 async function ensureAndroidChannels(): Promise<void> {
   if (Platform.OS !== 'android') return;
@@ -65,8 +77,29 @@ async function ensureAndroidChannels(): Promise<void> {
       lightColor: '#22C55E',
       sound: 'default',
     });
+    await Notifications.setNotificationChannelAsync(CHANNEL_SX_COMMENTS, {
+      name: 'Bình luận sản xuất',
+      importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#2F6BFF',
+      sound: 'default',
+    });
+  } catch (e) {
+    console.warn(LOG, 'ensureAndroidChannels', e);
+  }
+}
+
+async function requestAndroidPostNotifications(): Promise<boolean> {
+  if (Platform.OS !== 'android') return true;
+  const apiLevel = typeof Platform.Version === 'number' ? Platform.Version : 0;
+  if (apiLevel < 33) return true;
+  try {
+    const result = await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+    );
+    return result === PermissionsAndroid.RESULTS.GRANTED;
   } catch {
-    /* bỏ qua */
+    return false;
   }
 }
 
@@ -134,37 +167,49 @@ export function configurePushNotifications(): void {
 
 async function ensurePermission(): Promise<boolean> {
   try {
+    await requestAndroidPostNotifications();
     const cur = await Notifications.getPermissionsAsync();
     if (cur.status === 'granted') return true;
     const req = await Notifications.requestPermissionsAsync();
     return req.status === 'granted';
-  } catch {
+  } catch (e) {
+    console.warn(LOG, 'ensurePermission', e);
     return false;
   }
 }
-
-import { getOrCreateDeviceId } from './deviceHeartbeat';
 
 /**
  * Đăng ký FCM token lên server. Idempotent — luôn ping để cập nhật last_seen_at.
  * Trả về true nếu đăng ký thành công.
  */
 export async function registerPushTokenV2(): Promise<boolean> {
-  if (Platform.OS === 'web' || !Device.isDevice) return false;
+  if (!canRegisterPush()) {
+    console.log(LOG, 'skip: thiết bị không hỗ trợ push');
+    return false;
+  }
   try {
     await ensureAndroidChannels();
     const granted = await ensurePermission();
-    if (!granted) return false;
+    if (!granted) {
+      console.warn(LOG, 'quyền thông báo chưa cấp — tray hệ thống có thể không hiện (Android 13+)');
+    }
 
     let fcmToken: string | null = null;
     try {
       const device = await Notifications.getDevicePushTokenAsync();
       fcmToken = typeof device?.data === 'string' ? device.data : null;
-    } catch {
-      // Thường do thiếu google-services.json / Firebase chưa init.
+    } catch (e) {
+      console.warn(
+        LOG,
+        'getDevicePushTokenAsync thất bại — thiếu google-services.json cho package vn.tubeppro.crmobilev2?',
+        e,
+      );
       return false;
     }
-    if (!fcmToken) return false;
+    if (!fcmToken) {
+      console.warn(LOG, 'không có FCM token (thiếu GMS / google-services?)');
+      return false;
+    }
 
     await AsyncStorage.setItem(FCM_TOKEN_KEY, fcmToken);
     try {
@@ -173,11 +218,14 @@ export async function registerPushTokenV2(): Promise<boolean> {
         platform: 'fcm',
         device_id: await getOrCreateDeviceId(),
       });
+      console.log(LOG, 'FCM registered', fcmToken.slice(0, 12) + '…');
       return true;
-    } catch {
+    } catch (e) {
+      console.warn(LOG, 'POST /push/device-token', e);
       return false;
     }
-  } catch {
+  } catch (e) {
+    console.warn(LOG, 'registerPushTokenV2', e);
     return false;
   }
 }
@@ -193,4 +241,19 @@ export async function unregisterPushTokenV2(): Promise<void> {
   } catch {
     /* bỏ qua */
   }
+}
+
+/** Trạng thái nhanh để debug / màn Tài khoản. */
+export async function getPushDebugStatus(): Promise<{
+  canRegister: boolean;
+  permission: string;
+  hasStoredToken: boolean;
+}> {
+  const permission = await Notifications.getPermissionsAsync().catch(() => ({ status: 'undetermined' as const }));
+  const hasStoredToken = !!(await AsyncStorage.getItem(FCM_TOKEN_KEY).catch(() => null));
+  return {
+    canRegister: canRegisterPush(),
+    permission: permission.status,
+    hasStoredToken,
+  };
 }

@@ -6,7 +6,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
+  DeviceEventEmitter,
   FlatList,
+  ImageBackground,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -16,6 +18,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import ImageLightbox from '../components/messenger/ImageLightbox';
@@ -32,6 +35,7 @@ import TapHighlight from '../components/TapHighlight';
 import Toast, { type ToastState } from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
 import { useCall } from '../context/CallContext';
+import { CALLING_ENABLED } from '../config';
 import { useMessenger } from '../context/MessengerContext';
 import { getAppSocket, subscribeAppSocket } from '../lib/appSocket';
 import { useTheme } from '../theme';
@@ -43,6 +47,15 @@ import {
   toggleMessageReaction,
   type MessengerGroupMember,
 } from '../lib/messengerApi';
+import {
+  applyChatWallpaperUrl,
+  getChatWallpaperValue,
+  syncChatWallpaperFromServer,
+  wallpaperBackgroundColor,
+  wallpaperImageUri,
+  type ChatWallpaper,
+} from '../lib/chatWallpaperStorage';
+import { CRM_CHAT_WALLPAPER_CHANGED, CRM_OPEN_CHAT_SEARCH } from '../lib/messengerEvents';
 import { getMessageClusterMeta } from '../lib/messengerMessageCluster';
 import { isMessengerCallLogMessage } from '../lib/messengerCallLog';
 import {
@@ -125,8 +138,70 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [seenRevealedId, setSeenRevealedId] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
+  const [wallpaper, setWallpaper] = useState<ChatWallpaper>({ type: 'none' });
   const listRef = useRef<FlatList<MessengerMessage>>(null);
   const initialScrollDone = useRef(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      let alive = true;
+      void getChatWallpaperValue(threadId).then((w) => {
+        if (alive) setWallpaper(w);
+      });
+      void syncChatWallpaperFromServer(threadId).then((w) => {
+        if (alive) setWallpaper(w);
+      });
+      return () => {
+        alive = false;
+      };
+    }, [threadId]),
+  );
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(
+      CRM_OPEN_CHAT_SEARCH,
+      (payload?: { threadId?: string }) => {
+        if (payload?.threadId && String(payload.threadId) !== String(threadId)) return;
+        setSearchOpen(true);
+      },
+    );
+    return () => sub.remove();
+  }, [threadId]);
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(
+      CRM_CHAT_WALLPAPER_CHANGED,
+      (payload?: { threadId?: string; uri?: string | null }) => {
+        if (payload?.threadId && String(payload.threadId) !== String(threadId)) return;
+        if (payload?.uri) setWallpaper({ type: 'image', uri: String(payload.uri) });
+        else if (payload && 'uri' in payload && !payload.uri) setWallpaper({ type: 'none' });
+        else void syncChatWallpaperFromServer(threadId).then(setWallpaper);
+      },
+    );
+    return () => sub.remove();
+  }, [threadId]);
+
+  useEffect(() => {
+    const onWallpaper = (p: { group_id?: string; wallpaper_url?: string | null }) => {
+      if (String(p?.group_id || '') !== String(threadId)) return;
+      const url = p?.wallpaper_url ? String(p.wallpaper_url).trim() : null;
+      void applyChatWallpaperUrl(threadId, url).then(setWallpaper);
+    };
+    const bind = (socket: { on: (e: string, fn: typeof onWallpaper) => void; off: (e: string, fn: typeof onWallpaper) => void }) => {
+      socket.on('messenger_chat:wallpaper', onWallpaper);
+      return () => socket.off('messenger_chat:wallpaper', onWallpaper);
+    };
+    const socket = getAppSocket();
+    let unbind = socket ? bind(socket as never) : undefined;
+    const unsub = subscribeAppSocket((s) => {
+      unbind?.();
+      unbind = bind(s as never);
+    });
+    return () => {
+      unbind?.();
+      unsub();
+    };
+  }, [threadId]);
 
   const peerPresence: UserPresence | null = thread?.peerId
     ? getPeerPresence(thread.peerId)
@@ -703,9 +778,10 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
           navigation.goBack();
         }}
         onOpenDetails={openDetails}
+        onSearch={() => setSearchOpen(true)}
       />
 
-      {!isDirect && activeGroupCall && callStatus === 'idle' && (
+      {CALLING_ENABLED && !isDirect && activeGroupCall && callStatus === 'idle' ? (
         <View style={styles.groupCallBanner}>
           <View style={{ flex: 1 }}>
             <Text style={styles.groupCallTitle}>
@@ -719,7 +795,7 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
             <Text style={styles.groupCallBtnTxt}>Tham gia</Text>
           </Pressable>
         </View>
-      )}
+      ) : null}
 
       <KeyboardAvoidingView
         style={styles.body}
@@ -731,7 +807,28 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
             <ActivityIndicator size="large" color={mc.accent} />
           </View>
         ) : (
-          <View style={styles.listWrap}>
+          <View style={[styles.listWrap, wallpaperBackgroundColor(wallpaper) ? { backgroundColor: wallpaperBackgroundColor(wallpaper)! } : null]}>
+            {wallpaperImageUri(wallpaper) ? (
+              <>
+                <ImageBackground
+                  source={{ uri: wallpaperImageUri(wallpaper)! }}
+                  style={StyleSheet.absoluteFillObject}
+                  resizeMode="cover"
+                />
+                {/* Khớp web: ảnh full + lớp phủ sáng để đọc bubble dễ hơn */}
+                <View
+                  pointerEvents="none"
+                  style={[
+                    StyleSheet.absoluteFillObject,
+                    {
+                      backgroundColor: isDark
+                        ? 'rgba(11,15,23,0.52)'
+                        : 'rgba(248,250,252,0.48)',
+                    },
+                  ]}
+                />
+              </>
+            ) : null}
             <Text style={styles.swipeHint}>Vuốt tin sang để trả lời · Nhấn giữ để tùy chọn</Text>
             <FlatList
               ref={listRef}

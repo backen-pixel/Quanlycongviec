@@ -3,10 +3,11 @@ import { AppState } from 'react-native';
 import { api } from '../api/client';
 import { invalidateCrmHubCache, invalidatePlannerCache } from '../api/crm';
 import { subscribeAppSocket } from '../lib/appSocket';
-import { emitCrmRealtime } from '../lib/crmRealtimeBus';
+import { emitCrmRealtime, type CrmRealtimeReason } from '../lib/crmRealtimeBus';
 
-const LIVE_VERSION_POLL_MS = 15000;
+const LIVE_VERSION_POLL_MS = 20000;
 const SOCKET_RECENT_MS = 45000;
+const BUMP_DEBOUNCE_MS = 2000;
 
 /** Loại notification CRM — làm mới badge / danh sách khi nhận qua socket. */
 const CRM_NOTIFICATION_TYPES = new Set([
@@ -22,11 +23,6 @@ const CRM_NOTIFICATION_TYPES = new Set([
   'task_updated',
 ]);
 
-function bumpCaches(): void {
-  invalidateCrmHubCache();
-  invalidatePlannerCache();
-}
-
 /**
  * Lắng nghe Socket.IO CRM + poll GET /crm/live-version (fallback như web CRMDashboard).
  * Phát sự kiện qua crmRealtimeBus — màn hình đăng ký bằng useCrmRealtimeRefresh.
@@ -34,13 +30,36 @@ function bumpCaches(): void {
 export function CrmRealtimeProvider({ children }: { children: React.ReactNode }) {
   const lastVersionRef = useRef<number | null>(null);
   const lastSocketAtRef = useRef(0);
+  const bumpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingPlannerRef = useRef(false);
+  const pendingReasonRef = useRef<CrmRealtimeReason>('dashboard_changed');
+  const pendingDetailRef = useRef<Record<string, unknown> | undefined>(undefined);
+
+  const flushBump = () => {
+    bumpTimerRef.current = null;
+    invalidateCrmHubCache();
+    if (pendingPlannerRef.current) invalidatePlannerCache();
+    pendingPlannerRef.current = false;
+    emitCrmRealtime({ reason: pendingReasonRef.current, detail: pendingDetailRef.current });
+  };
+
+  const scheduleBumpAndEmit = (
+    reason: CrmRealtimeReason,
+    detail?: Record<string, unknown>,
+    alsoPlanner = false,
+  ) => {
+    pendingReasonRef.current = reason;
+    pendingDetailRef.current = detail;
+    if (alsoPlanner) pendingPlannerRef.current = true;
+    if (bumpTimerRef.current) clearTimeout(bumpTimerRef.current);
+    bumpTimerRef.current = setTimeout(flushBump, BUMP_DEBOUNCE_MS);
+  };
 
   useEffect(() => {
     return subscribeAppSocket((socket) => {
       const onDashboard = (payload?: Record<string, unknown>) => {
         lastSocketAtRef.current = Date.now();
-        bumpCaches();
-        emitCrmRealtime({ reason: 'dashboard_changed', detail: payload });
+        scheduleBumpAndEmit('dashboard_changed', payload, false);
       };
 
       const onBadge = (payload?: Record<string, unknown>) => {
@@ -56,7 +75,16 @@ export function CrmRealtimeProvider({ children }: { children: React.ReactNode })
       const onNotification = (payload?: Record<string, unknown>) => {
         const type = String(payload?.type || '');
         if (!CRM_NOTIFICATION_TYPES.has(type)) return;
-        emitCrmRealtime({ reason: 'notification', detail: payload });
+        const plannerRelated =
+          type.includes('deadline')
+          || type === 'lead_assigned'
+          || type === 'task_assigned'
+          || type === 'task_updated';
+        if (plannerRelated) {
+          scheduleBumpAndEmit('notification', payload, true);
+        } else {
+          emitCrmRealtime({ reason: 'notification', detail: payload });
+        }
       };
 
       const onLeadComment = (payload?: Record<string, unknown>) => {
@@ -78,6 +106,8 @@ export function CrmRealtimeProvider({ children }: { children: React.ReactNode })
         socket.off('lead:comment', onLeadComment);
       };
     });
+    // scheduleBumpAndEmit ổn định qua refs
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -90,9 +120,7 @@ export function CrmRealtimeProvider({ children }: { children: React.ReactNode })
         const v = Number(data?.v) || 0;
         if (lastVersionRef.current != null && v > lastVersionRef.current) {
           const recentSocket = Date.now() - lastSocketAtRef.current < SOCKET_RECENT_MS;
-          bumpCaches();
-          if (!recentSocket) invalidatePlannerCache();
-          emitCrmRealtime({ reason: 'live_version' });
+          scheduleBumpAndEmit('live_version', undefined, !recentSocket);
         }
         lastVersionRef.current = v;
       } catch {
@@ -110,7 +138,9 @@ export function CrmRealtimeProvider({ children }: { children: React.ReactNode })
       cancelled = true;
       clearInterval(interval);
       sub.remove();
+      if (bumpTimerRef.current) clearTimeout(bumpTimerRef.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return <>{children}</>;

@@ -1,28 +1,24 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   AppState,
   Modal,
-  Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
-import { useAuth } from '../context/AuthContext';
-import { currentUserId } from '../context/AuthContext';
+import { useAuth, currentUserId } from '../context/AuthContext';
 import {
   APP_PERMISSION_CATALOG,
   getAppPermissionStatus,
-  grantAllPermissionsQuick,
+  grantEssentialPermissionsQuick,
   openAppSettings,
   OPTIONAL_PERMISSION_KINDS,
   type AppPermissionItem,
 } from '../lib/appPermissions';
-import { syncVoiceBackgroundTaskWithPrefs } from '../lib/voiceBackgroundSync';
 import { Radii, useColors, type ThemeColors } from '../theme';
 
 function introKeyForUser(userId: string) {
@@ -37,7 +33,6 @@ export default function PermissionBootstrap() {
   const [visible, setVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [items, setItems] = useState<AppPermissionItem[]>([]);
-  const sessionSkipped = useRef(false);
 
   const refresh = useCallback(async () => {
     const status = await getAppPermissionStatus();
@@ -47,23 +42,19 @@ export default function PermissionBootstrap() {
 
   useEffect(() => {
     if (loading || !token || !userId) return;
-    sessionSkipped.current = false;
     void (async () => {
-      const status = await refresh();
       const introDone = await AsyncStorage.getItem(introKeyForUser(userId));
-      const missing = status.filter(
-        (s) => !s.granted && !OPTIONAL_PERMISSION_KINDS.has(s.kind),
-      );
-      if (!introDone || missing.length > 0) {
-        setVisible(true);
-      }
+      // Chỉ hiện 1 lần / user — không ép lại mỗi lần mở app vì thiếu micro/overlay.
+      if (introDone) return;
+      await refresh();
+      setVisible(true);
     })();
   }, [loading, token, userId, refresh]);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || !visible) return;
     const sub = AppState.addEventListener('change', (s) => {
-      if (s === 'active' && visible) void refresh();
+      if (s === 'active') void refresh();
     });
     return () => sub.remove();
   }, [token, visible, refresh]);
@@ -71,71 +62,59 @@ export default function PermissionBootstrap() {
   const finishIntro = useCallback(async () => {
     if (userId) await AsyncStorage.setItem(introKeyForUser(userId), '1');
     setVisible(false);
-    void syncVoiceBackgroundTaskWithPrefs();
   }, [userId]);
 
   const handleGrant = useCallback(async () => {
     setBusy(true);
     try {
-      await grantAllPermissionsQuick();
-      void syncVoiceBackgroundTaskWithPrefs();
+      await grantEssentialPermissionsQuick();
       setTimeout(async () => {
-        const status = await refresh();
-        const missing = status.filter((s) => !s.granted);
-        if (missing.length === 0) await finishIntro();
+        await refresh();
+        await finishIntro();
         setBusy(false);
-      }, 1200);
+      }, 600);
     } catch {
       setBusy(false);
     }
   }, [refresh, finishIntro]);
 
-  const handleSkip = useCallback(() => {
-    sessionSkipped.current = true;
-    void finishIntro();
-  }, [finishIntro]);
-
   if (!visible) return null;
 
-  const missing = items.filter((i) => !i.granted);
   const catalog = items.length ? items : APP_PERMISSION_CATALOG.map((c) => ({ ...c, granted: false }));
+  const missingRequired = catalog.filter((i) => !i.granted && !OPTIONAL_PERMISSION_KINDS.has(i.kind));
 
   return (
-    <Modal visible animationType="fade" transparent statusBarTranslucent onRequestClose={handleSkip}>
+    <Modal visible animationType="fade" transparent statusBarTranslucent onRequestClose={() => void finishIntro()}>
       <View style={styles.backdrop}>
         <View style={styles.card}>
           <View style={styles.headerRow}>
-            <Ionicons name="shield-checkmark" size={22} color={Colors.purple} />
-            <Text style={styles.title}>Cấp quyền cho ứng dụng</Text>
+            <Ionicons name="shield-checkmark" size={22} color={Colors.blue} />
+            <Text style={styles.title}>Quyền cần thiết</Text>
           </View>
           <Text style={styles.sub}>
-            CRM cần các quyền sau để ghi âm, nhận cuộc gọi (kể cả khi app tắt), bong bóng chat và đồng bộ file lên server.
+            Chỉ xin tối thiểu để nhận thông báo CRM. Micro và bong bóng chat có thể cấp sau khi bạn dùng tính năng đó.
           </Text>
 
-          <ScrollView style={styles.listScroll} showsVerticalScrollIndicator={false}>
-            <View style={styles.list}>
-              {catalog.map((item) => (
-                <View key={item.kind} style={styles.row}>
-                  <Ionicons
-                    name={item.granted ? 'checkmark-circle' : 'ellipse-outline'}
-                    size={18}
-                    color={item.granted ? Colors.green : Colors.amber}
-                  />
-                  <View style={styles.rowBody}>
-                    <Text style={styles.label}>{item.label}</Text>
-                    <Text style={styles.desc}>{item.description}</Text>
-                  </View>
+          <View style={styles.list}>
+            {catalog.map((item) => (
+              <View key={item.kind} style={styles.row}>
+                <Ionicons
+                  name={item.granted ? 'checkmark-circle' : 'ellipse-outline'}
+                  size={18}
+                  color={item.granted ? Colors.green : Colors.amber}
+                />
+                <View style={styles.rowBody}>
+                  <Text style={styles.label}>
+                    {item.label}
+                    {OPTIONAL_PERMISSION_KINDS.has(item.kind) ? (
+                      <Text style={styles.optional}> · tùy chọn</Text>
+                    ) : null}
+                  </Text>
+                  <Text style={styles.desc}>{item.description}</Text>
                 </View>
-              ))}
-            </View>
-          </ScrollView>
-
-          {Platform.OS === 'android' && missing.length > 0 ? (
-            <Text style={styles.note}>
-              Bật «Thông báo» và «Cuộc gọi toàn màn hình» để nhận cuộc gọi khi app đóng hoặc màn hình khóa.
-              Nếu vẫn thiếu, mở Cài đặt ứng dụng và bật thủ công.
-            </Text>
-          ) : null}
+              </View>
+            ))}
+          </View>
 
           <Pressable
             style={[styles.btn, busy && styles.btnDisabled]}
@@ -145,18 +124,18 @@ export default function PermissionBootstrap() {
             {busy ? (
               <ActivityIndicator color="#fff" size="small" />
             ) : (
-              <Text style={styles.btnTxt}>Cấp quyền</Text>
+              <Text style={styles.btnTxt}>
+                {missingRequired.length ? 'Cho phép thông báo' : 'Tiếp tục'}
+              </Text>
             )}
           </Pressable>
 
-          {missing.length > 0 ? (
-            <Pressable style={styles.settingsBtn} disabled={busy} onPress={openAppSettings}>
-              <Text style={styles.settingsTxt}>Mở cài đặt ứng dụng</Text>
-            </Pressable>
-          ) : null}
+          <Pressable style={styles.settingsBtn} disabled={busy} onPress={openAppSettings}>
+            <Text style={styles.settingsTxt}>Mở cài đặt ứng dụng</Text>
+          </Pressable>
 
-          <Pressable style={styles.skip} disabled={busy} onPress={handleSkip}>
-            <Text style={styles.skipTxt}>Bỏ qua — cấp sau trong tab Ghi âm</Text>
+          <Pressable style={styles.skip} disabled={busy} onPress={() => void finishIntro()}>
+            <Text style={styles.skipTxt}>Bỏ qua lần này</Text>
           </Pressable>
         </View>
       </View>
@@ -178,34 +157,23 @@ const makeStyles = (Colors: ThemeColors) =>
       borderWidth: 1,
       borderColor: Colors.border,
       padding: 20,
-      maxHeight: '88%',
     },
     headerRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
     title: { color: Colors.text, fontSize: 17, fontWeight: '900', flex: 1 },
-    sub: { color: Colors.textMuted, fontSize: 13, lineHeight: 19, marginBottom: 12 },
-    listScroll: { maxHeight: 280 },
-    list: { gap: 12, paddingBottom: 4 },
+    sub: { color: Colors.textMuted, fontSize: 13, lineHeight: 19, marginBottom: 14 },
+    list: { gap: 12, marginBottom: 4 },
     row: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
     rowBody: { flex: 1 },
     label: { color: Colors.text, fontSize: 14, fontWeight: '800' },
+    optional: { color: Colors.textFaint, fontWeight: '600', fontSize: 12 },
     desc: { color: Colors.textFaint, fontSize: 12, marginTop: 2, lineHeight: 17 },
-    note: {
-      color: Colors.amber,
-      fontSize: 12,
-      lineHeight: 17,
-      backgroundColor: Colors.amberSoft,
-      padding: 10,
-      borderRadius: Radii.sm,
-      marginTop: 12,
-      marginBottom: 4,
-    },
     btn: {
-      backgroundColor: Colors.purple,
+      backgroundColor: Colors.blue,
       height: 46,
       borderRadius: Radii.pill,
       alignItems: 'center',
       justifyContent: 'center',
-      marginTop: 12,
+      marginTop: 14,
     },
     btnDisabled: { opacity: 0.6 },
     btnTxt: { color: '#fff', fontWeight: '800', fontSize: 15 },

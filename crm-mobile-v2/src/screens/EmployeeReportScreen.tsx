@@ -4,6 +4,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  FlatList,
   Modal,
   Pressable,
   RefreshControl,
@@ -16,6 +17,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   fetchOrgOverviewReport,
+  peekOrgOverviewReport,
   type EmployeeReportQuery,
   type EmployeeReportRow,
   type OrgOverviewReport,
@@ -136,15 +138,26 @@ export default function EmployeeReportScreen() {
 
   const load = useCallback(async (opts?: { refresh?: boolean; silent?: boolean }) => {
     if (!allowed) return;
+    const cached = !opts?.refresh ? peekOrgOverviewReport(query) : null;
+    if (cached) {
+      setReport(cached);
+      setError(null);
+      setLoading(false);
+      // Soft refresh nền nếu cache sắp cũ — không chặn UI.
+      void fetchOrgOverviewReport(query, { force: true })
+        .then((orgReport) => setReport(orgReport))
+        .catch(() => {});
+      return;
+    }
     if (opts?.refresh && !opts?.silent) setRefreshing(true);
     else if (!opts?.silent) setLoading(true);
     setError(null);
     try {
-      const orgReport = await fetchOrgOverviewReport(query);
+      const orgReport = await fetchOrgOverviewReport(query, { force: opts?.refresh });
       setReport(orgReport);
     } catch (e) {
       setError(formatApiError(e));
-      setReport(null);
+      if (!opts?.silent) setReport(null);
     } finally {
       if (!opts?.silent) {
         setLoading(false);
@@ -363,18 +376,22 @@ export default function EmployeeReportScreen() {
                 autoCorrect={false}
               />
             </View>
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {filteredEmployees.map((row) => (
-                <EmployeeReportCard
-                  key={row.user_id}
-                  row={row}
-                  onPress={() => openDetail(row)}
-                />
-              ))}
-              {!filteredEmployees.length ? (
+            <FlatList
+              data={filteredEmployees}
+              keyExtractor={(row) => String(row.user_id)}
+              renderItem={({ item }) => (
+                <EmployeeReportCard row={item} onPress={() => openDetail(item)} />
+              )}
+              ListEmptyComponent={
                 <Text style={styles.empty}>Chưa có dữ liệu nhân viên trong kỳ này</Text>
-              ) : null}
-            </ScrollView>
+              }
+              initialNumToRender={10}
+              maxToRenderPerBatch={8}
+              windowSize={7}
+              removeClippedSubviews
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            />
           </View>
         </View>
       </Modal>

@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { api, getStoredToken, setStoredToken, setUnauthorizedHandler } from '../api/client';
+import { api, getStoredToken, setStoredToken, setUnauthorizedHandler, hydrateMemoryToken } from '../api/client';
 import { invalidatePlannerCache, invalidateCrmHubCache } from '../api/crm';
 import {
   stopVoiceBackgroundSyncLoop,
@@ -56,6 +56,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void (async () => {
       try {
         const [t, u] = await Promise.all([getStoredToken(), AsyncStorage.getItem(USER_KEY)]);
+        hydrateMemoryToken(t);
         if (t && u) {
           setToken(t);
           setUser(JSON.parse(u));

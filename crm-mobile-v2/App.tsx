@@ -7,8 +7,10 @@ import {
 import { ShareIntentProvider } from 'expo-share-intent';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import AndroidBackGuard from './src/components/AndroidBackGuard';
+import BootSplash from './src/components/BootSplash';
 import CreateMenuSheet from './src/components/CreateMenuSheet';
 import BubbleChatOverlayLauncher from './src/components/BubbleChatOverlayLauncher';
 import BubbleOutboundCallHandler from './src/components/BubbleOutboundCallHandler';
@@ -29,6 +31,7 @@ import RootNavigator from './src/navigation/RootNavigator';
 import { navigationRef, resetToBubbleChat } from './src/navigation/navigationRef';
 import LoginScreen from './src/screens/LoginScreen';
 import { ThemeProvider, useColors, useTheme, type ThemeColors } from './src/theme';
+import { CALLING_ENABLED } from './src/config';
 import {
   getBubbleChatInitialNavState,
   isBubbleChatNavState,
@@ -60,7 +63,9 @@ function Gate() {
   const [bubbleOverlayUi, setBubbleOverlayUi] = useState(
     () => isBubbleChatNavState(bubbleInitialState) || hasPendingBubbleChat(),
   );
+  const [navReady, setNavReady] = useState(false);
   const bubbleBoot = bubbleOverlayUi || hasPendingBubbleChat();
+  const showBootSplash = loading || (!!token && !navReady);
 
   useEffect(() => {
     if (!token || loading) return undefined;
@@ -100,19 +105,27 @@ function Gate() {
     return navigationRef.addListener('state', sync);
   }, [token, loading]);
 
-  if (loading) {
-    return (
-      <View style={[styles.root, bubbleBoot && styles.rootTransparent, !bubbleBoot && styles.center]}>
-        {!bubbleBoot ? <ActivityIndicator color={Colors.blue} size="large" /> : null}
-      </View>
-    );
-  }
+  useEffect(() => {
+    if (!token) setNavReady(false);
+  }, [token]);
 
-  if (!token) {
+  if (!loading && !token) {
     return (
       <View style={styles.root}>
         <LoginScreen />
         <VoiceShareLoginHint />
+      </View>
+    );
+  }
+
+  if (loading || !token) {
+    return (
+      <View style={[styles.root, bubbleBoot && styles.rootTransparent]}>
+        <BootSplash
+          visible
+          transparent={bubbleBoot}
+          hint={loading ? 'Đang khôi phục phiên…' : 'Đang mở ứng dụng…'}
+        />
       </View>
     );
   }
@@ -129,17 +142,28 @@ function Gate() {
                 ref={navigationRef}
                 theme={navTheme}
                 initialState={bubbleInitialState}
+                onReady={() => setNavReady(true)}
               >
                 <RootNavigator />
-                <CallScreen />
-                <IncomingCallBridge />
+                {CALLING_ENABLED ? (
+                  <>
+                    <CallScreen />
+                    <IncomingCallBridge />
+                  </>
+                ) : null}
+                <AndroidBackGuard />
               </NavigationContainer>
               <CreateMenuSheet />
               <PermissionBootstrap />
               <SystemBubbleSync />
               <BubbleChatOverlayLauncher />
-              <BubbleOutboundCallHandler />
+              {CALLING_ENABLED ? <BubbleOutboundCallHandler /> : null}
               <VoiceSyncRunner />
+              <BootSplash
+                visible={showBootSplash}
+                transparent={bubbleBoot}
+                hint="Đang tải giao diện…"
+              />
             </View>
             </FileActionsProvider>
           </CallProvider>
@@ -190,5 +214,4 @@ const makeStyles = (Colors: ThemeColors) =>
   StyleSheet.create({
     root: { flex: 1, backgroundColor: Colors.bg },
     rootTransparent: { backgroundColor: 'transparent' },
-    center: { alignItems: 'center', justifyContent: 'center' },
   });

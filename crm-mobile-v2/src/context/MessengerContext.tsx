@@ -7,6 +7,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState, type AppStateStatus } from 'react-native';
 import {
   fetchMessengerGroups,
@@ -22,6 +23,10 @@ import { setMessengerActiveGroupId } from '../lib/messengerActiveGroup';
 import type { MessengerMessage, MessengerThread } from '../types/messenger';
 import { useAuth } from './AuthContext';
 import { useNotifications } from './MessengerRealtimeContext';
+
+const THREADS_CACHE_KEY = 'crmv2_messenger_threads_v1';
+const THREADS_TTL_MS = 45_000;
+const FOREGROUND_MIN_GAP_MS = 20_000;
 
 type GroupMessageListener = (groupId: string, message: MessengerMessage) => void;
 
@@ -75,6 +80,10 @@ function applyPresenceToThreads(
   });
 }
 
+function threadsCacheKey(userId: string) {
+  return `${THREADS_CACHE_KEY}:${userId}`;
+}
+
 export function MessengerProvider({ children }: { children: React.ReactNode }) {
   const { token, user } = useAuth();
   const myUserId = user?.id || user?.userId || null;
@@ -98,10 +107,20 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
   const groupListenersRef = useRef<Set<GroupMessageListener>>(new Set());
   const metaListenersRef = useRef<Set<MessengerMetaListener>>(new Set());
   const joinedRef = useRef<Set<string>>(new Set());
+  const lastFetchAtRef = useRef(0);
+  const inflightRef = useRef<Promise<void> | null>(null);
+  const hydratedUserRef = useRef<string | null>(null);
 
   activeGroupRef.current = activeGroupId;
   threadsRef.current = threads;
   setMessengerActiveGroupId(activeGroupId);
+
+  const persistThreads = useCallback((list: MessengerThread[], userId: string) => {
+    void AsyncStorage.setItem(
+      threadsCacheKey(userId),
+      JSON.stringify({ at: Date.now(), threads: list }),
+    ).catch(() => {});
+  }, []);
 
   const syncPresence = useCallback(async (list: MessengerThread[]) => {
     const peerIds = list.map((t) => t.peerId).filter(Boolean) as string[];
@@ -128,24 +147,43 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
 
   const refreshThreads = useCallback(async (silent = false) => {
     if (!token) return;
+    const now = Date.now();
+    if (
+      silent
+      && threadsRef.current.length > 0
+      && now - lastFetchAtRef.current < THREADS_TTL_MS
+    ) {
+      return;
+    }
+    if (inflightRef.current) {
+      await inflightRef.current;
+      return;
+    }
     if (!silent) setLoading(true);
     setError('');
-    try {
-      const list = await fetchMessengerGroups(myUserId);
-      setThreads(list);
-      void syncPresence(list);
-      const ids = list.map((t) => t.id).filter(Boolean);
-      const newIds = ids.filter((id) => !joinedRef.current.has(id));
-      if (newIds.length) {
-        joinMessengerGroups(newIds);
-        newIds.forEach((id) => joinedRef.current.add(id));
+    const run = (async () => {
+      try {
+        const list = await fetchMessengerGroups(myUserId);
+        lastFetchAtRef.current = Date.now();
+        setThreads(list);
+        if (myUserId) persistThreads(list, String(myUserId));
+        void syncPresence(list);
+        const ids = list.map((t) => t.id).filter(Boolean);
+        const newIds = ids.filter((id) => !joinedRef.current.has(id));
+        if (newIds.length) {
+          joinMessengerGroups(newIds);
+          newIds.forEach((id) => joinedRef.current.add(id));
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Không tải được tin nhắn');
+      } finally {
+        if (!silent) setLoading(false);
+        inflightRef.current = null;
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Không tải được tin nhắn');
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, [token, myUserId, joinMessengerGroups, syncPresence]);
+    })();
+    inflightRef.current = run;
+    await run;
+  }, [token, myUserId, joinMessengerGroups, syncPresence, persistThreads]);
 
   const patchThreadMeta = useCallback((
     groupId: string,
@@ -195,23 +233,49 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
   }, [myUserId, emitGroupMessage, refreshThreads]);
 
   useEffect(() => {
-    if (!token) {
+    if (!token || !myUserId) {
       setThreads([]);
       setPresenceMap({});
       joinedRef.current.clear();
+      lastFetchAtRef.current = 0;
+      hydratedUserRef.current = null;
       return undefined;
     }
-    void refreshThreads(false);
+
+    const uid = String(myUserId);
+    if (hydratedUserRef.current !== uid) {
+      hydratedUserRef.current = uid;
+      void AsyncStorage.getItem(threadsCacheKey(uid)).then((raw) => {
+        if (!raw || hydratedUserRef.current !== uid) return;
+        try {
+          const parsed = JSON.parse(raw) as { at?: number; threads?: MessengerThread[] };
+          if (Array.isArray(parsed.threads) && parsed.threads.length) {
+            setThreads(parsed.threads);
+            if (typeof parsed.at === 'number') lastFetchAtRef.current = parsed.at;
+            const ids = parsed.threads.map((t) => t.id).filter(Boolean);
+            if (ids.length) {
+              joinMessengerGroups(ids);
+              ids.forEach((id) => joinedRef.current.add(id));
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+      });
+    }
+
+    void refreshThreads(threadsRef.current.length > 0);
     const onState = (state: AppStateStatus) => {
       if (state === 'active') {
-        void refreshThreads(true);
+        const gap = Date.now() - lastFetchAtRef.current;
+        if (gap >= FOREGROUND_MIN_GAP_MS) void refreshThreads(true);
         emitPresencePing();
       }
     };
     const sub = AppState.addEventListener('change', onState);
     emitPresencePing();
     return () => sub.remove();
-  }, [token, refreshThreads, emitPresencePing]);
+  }, [token, myUserId, refreshThreads, emitPresencePing, joinMessengerGroups]);
 
   useEffect(() => {
     if (!token) return undefined;

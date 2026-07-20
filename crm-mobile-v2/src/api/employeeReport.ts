@@ -215,7 +215,38 @@ export type OrgOverviewReport = {
   by_lead_type: LeadTypeReportRow[];
 };
 
-export async function fetchOrgOverviewReport(params: EmployeeReportQuery): Promise<OrgOverviewReport> {
+const ORG_REPORT_TTL_MS = 60_000;
+const orgReportCache = new Map<string, { at: number; report: OrgOverviewReport }>();
+
+function orgReportCacheKey(params: EmployeeReportQuery): string {
+  return [
+    params.date_from,
+    params.date_to,
+    params.type || 'all',
+    params.company_id || '',
+    params.region_id || '',
+  ].join('|');
+}
+
+export function peekOrgOverviewReport(params: EmployeeReportQuery): OrgOverviewReport | null {
+  const hit = orgReportCache.get(orgReportCacheKey(params));
+  if (!hit || Date.now() - hit.at >= ORG_REPORT_TTL_MS) return null;
+  return hit.report;
+}
+
+export function invalidateOrgOverviewReportCache(): void {
+  orgReportCache.clear();
+}
+
+export async function fetchOrgOverviewReport(
+  params: EmployeeReportQuery,
+  opts?: { force?: boolean },
+): Promise<OrgOverviewReport> {
+  const key = orgReportCacheKey(params);
+  if (!opts?.force) {
+    const hit = orgReportCache.get(key);
+    if (hit && Date.now() - hit.at < ORG_REPORT_TTL_MS) return hit.report;
+  }
   const { data } = await api.get<{
     date_from: string;
     date_to: string;
@@ -239,7 +270,7 @@ export async function fetchOrgOverviewReport(params: EmployeeReportQuery): Promi
       ...(params.region_id ? { region_id: params.region_id } : {}),
     },
   });
-  return {
+  const report: OrgOverviewReport = {
     date_from: data.date_from,
     date_to: data.date_to,
     summary: data.summary ?? { user_id: null, full_name: 'Tổng' },
@@ -252,6 +283,8 @@ export async function fetchOrgOverviewReport(params: EmployeeReportQuery): Promi
     by_employee: (data.by_employee || []).filter((r) => r.user_id),
     by_lead_type: data.by_lead_type || [],
   };
+  orgReportCache.set(key, { at: Date.now(), report });
+  return report;
 }
 
 export async function fetchOrgActivityFeed(

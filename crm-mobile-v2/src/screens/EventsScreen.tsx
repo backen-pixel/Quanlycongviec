@@ -1,10 +1,11 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
+  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -15,11 +16,31 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
+  cancelEvent,
+  deleteEvent,
   EVENT_STATUS_META,
+  eventsApiError,
+  fetchEventTypes,
   fetchEventsRange,
   type AppEvent,
   type EventStatus,
+  type EventType,
 } from '../api/events';
+import {
+  fetchCrmCompanies,
+  fetchCrmEmployeesByCompany,
+  fetchCrmRegions,
+  type CrmCompany,
+  type CrmEmployee,
+  type CrmRegion,
+} from '../api/crmMeta';
+import EventFilterModal, {
+  EMPTY_EVENT_FILTERS,
+  type EventFilters,
+} from '../components/events/EventFilterModal';
+import EventFormModal from '../components/events/EventFormModal';
+import { useAuth } from '../context/AuthContext';
+import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import type { RootStackParamList } from '../navigation/types';
 import { Radii, useColors, type ThemeColors } from '../theme';
 
@@ -31,6 +52,11 @@ const DAY_LABEL = ['CN', 'TH2', 'TH3', 'TH4', 'TH5', 'TH6', 'TH7'];
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+function isAdminLike(role?: string | null): boolean {
+  const r = String(role || '').toLowerCase();
+  return r === 'admin' || r === 'sales_admin';
+}
 
 function dayKeyOf(iso: string | null): string | null {
   if (!iso) return null;
@@ -77,11 +103,19 @@ function statusColor(status: EventStatus, Colors: ThemeColors): string {
   return Colors[tone] as string;
 }
 
+function canManageEvent(userId: string | undefined, role: string | undefined, ev: AppEvent): boolean {
+  if (isAdminLike(role)) return true;
+  return !!userId && String(ev.createdBy || '') === String(userId);
+}
+
 export default function EventsScreen() {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
+  const { user } = useAuth();
+  const admin = isAdminLike(user?.role);
+  const showCompanyPicker = admin && !user?.company_id;
 
   const [mode, setMode] = useState<Mode>('week');
   const [cursor, setCursor] = useState<Date>(() => new Date());
@@ -92,12 +126,57 @@ export default function EventsScreen() {
   const [error, setError] = useState('');
   const [searchDraft, setSearchDraft] = useState('');
   const [search, setSearch] = useState('');
+  const [filters, setFilters] = useState<EventFilters>(() => ({
+    ...EMPTY_EVENT_FILTERS,
+    companyId: user?.company_id ? String(user.company_id) : '',
+  }));
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editEvent, setEditEvent] = useState<AppEvent | null>(null);
+  const [eventTypes, setEventTypes] = useState<EventType[]>([]);
+  const [companies, setCompanies] = useState<CrmCompany[]>([]);
+  const [employees, setEmployees] = useState<CrmEmployee[]>([]);
+  const [regions, setRegions] = useState<CrmRegion[]>([]);
+  const [cancelTarget, setCancelTarget] = useState<AppEvent | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [busyId, setBusyId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setSearch(searchDraft.trim()), 350);
     return () => clearTimeout(t);
   }, [searchDraft]);
+
+  useEffect(() => {
+    void fetchEventTypes().then(setEventTypes);
+    if (showCompanyPicker) {
+      void fetchCrmCompanies().then(setCompanies);
+    }
+  }, [showCompanyPicker]);
+
+  const effectiveCompanyId = useMemo(() => {
+    if (filters.companyId) return filters.companyId;
+    if (user?.company_id) return String(user.company_id);
+    return '';
+  }, [filters.companyId, user?.company_id]);
+
+  useEffect(() => {
+    if (!effectiveCompanyId) {
+      setEmployees([]);
+      setRegions([]);
+      return;
+    }
+    const ac = new AbortController();
+    void Promise.all([
+      fetchCrmEmployeesByCompany(effectiveCompanyId, ac.signal),
+      fetchCrmRegions(effectiveCompanyId, ac.signal),
+    ]).then(([org, regs]) => {
+      if (ac.signal.aborted) return;
+      setEmployees(org.users || []);
+      setRegions(regs);
+    });
+    return () => ac.abort();
+  }, [effectiveCompanyId]);
 
   const range = useMemo(() => {
     if (mode === 'week') {
@@ -121,17 +200,22 @@ export default function EventsScreen() {
       else if (!silent) setLoading(true);
       if (!silent) setError('');
       try {
-        // Không truyền company_id — để backend tự xác định theo tài khoản (giống web).
         const list = await fetchEventsRange({
           dateFrom: ymd(range.from),
           dateTo: ymd(range.to),
           search,
+          companyId: filters.companyId || undefined,
+          status: filters.status || undefined,
+          type: filters.type || undefined,
+          module: filters.module || undefined,
+          userId: filters.userId || undefined,
+          regionId: filters.regionId || undefined,
           signal: ac.signal,
         });
         if (!ac.signal.aborted) setEvents(list);
       } catch (e: unknown) {
         if (!ac.signal.aborted) {
-          setError((e as { message?: string })?.message || 'Không tải được sự kiện');
+          setError(eventsApiError(e, 'Không tải được sự kiện'));
           setEvents([]);
         }
       } finally {
@@ -143,7 +227,7 @@ export default function EventsScreen() {
         }
       }
     },
-    [range.from, range.to, search],
+    [range.from, range.to, search, filters],
   );
 
   useFocusEffect(
@@ -216,6 +300,78 @@ export default function EventsScreen() {
 
   const today = new Date();
 
+  const activeFilterCount = useMemo(() => {
+    let n = 0;
+    if (filters.status) n += 1;
+    if (filters.type) n += 1;
+    if (filters.module) n += 1;
+    if (filters.userId) n += 1;
+    if (filters.regionId) n += 1;
+    if (showCompanyPicker && filters.companyId) n += 1;
+    return n;
+  }, [filters, showCompanyPicker]);
+
+  const openCreate = () => {
+    if (showCompanyPicker && !filters.companyId) {
+      Alert.alert('Chọn công ty', 'Chọn công ty trong bộ lọc trước khi tạo sự kiện (giống web).');
+      setFilterOpen(true);
+      return;
+    }
+    if (!showCompanyPicker && !user?.company_id && !filters.companyId) {
+      Alert.alert('Thiếu công ty', 'Tài khoản chưa gán công ty — không tạo được sự kiện.');
+      return;
+    }
+    setEditEvent(null);
+    setFormOpen(true);
+  };
+
+  const openEdit = (ev: AppEvent) => {
+    setEditEvent(ev);
+    setFormOpen(true);
+  };
+
+  const confirmDelete = (ev: AppEvent) => {
+    Alert.alert('Xóa sự kiện', `Xóa vĩnh viễn "${ev.title}"?`, [
+      { text: 'Huỷ', style: 'cancel' },
+      {
+        text: 'Xóa',
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            setBusyId(ev.id);
+            try {
+              await deleteEvent(ev.id);
+              await load({ refresh: true, silent: true });
+            } catch (e) {
+              Alert.alert('Lỗi', eventsApiError(e, 'Không xóa được sự kiện'));
+            } finally {
+              setBusyId(null);
+            }
+          })();
+        },
+      },
+    ]);
+  };
+
+  const submitCancel = async () => {
+    if (!cancelTarget) return;
+    if (!cancelReason.trim()) {
+      Alert.alert('Thiếu lý do', 'Nhập lý do hủy sự kiện');
+      return;
+    }
+    setBusyId(cancelTarget.id);
+    try {
+      await cancelEvent(cancelTarget.id, cancelReason);
+      setCancelTarget(null);
+      setCancelReason('');
+      await load({ refresh: true, silent: true });
+    } catch (e) {
+      Alert.alert('Lỗi', eventsApiError(e, 'Không hủy được sự kiện'));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
     <View style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
@@ -226,9 +382,17 @@ export default function EventsScreen() {
           <Ionicons name="calendar" size={20} color={Colors.blue} />
           <Text style={styles.h1}>Lịch sự kiện</Text>
           <View style={{ flex: 1 }} />
-          <View style={styles.countPill}>
-            <Text style={styles.countPillTxt}>{events.length} sự kiện</Text>
-          </View>
+          <Pressable style={styles.iconBtn} onPress={() => setFilterOpen(true)} hitSlop={6}>
+            <Ionicons name="options-outline" size={18} color={Colors.text} />
+            {activeFilterCount > 0 ? (
+              <View style={styles.filterBadge}>
+                <Text style={styles.filterBadgeTxt}>{activeFilterCount}</Text>
+              </View>
+            ) : null}
+          </Pressable>
+          <Pressable style={styles.createBtn} onPress={openCreate} hitSlop={6}>
+            <Ionicons name="add" size={20} color="#fff" />
+          </Pressable>
         </View>
 
         <View style={styles.searchBox}>
@@ -371,6 +535,10 @@ export default function EventsScreen() {
             <Text style={styles.detailCountTxt}>{selectedEvents.length} sự kiện</Text>
           </View>
           {isSameDay(selectedDay, today) ? <Text style={styles.todayTag}>Hôm nay</Text> : null}
+          <Pressable style={styles.addDayBtn} onPress={openCreate}>
+            <Ionicons name="add-circle-outline" size={16} color={Colors.blue} />
+            <Text style={styles.addDayTxt}>Tạo</Text>
+          </Pressable>
         </View>
 
         {loading ? (
@@ -389,15 +557,93 @@ export default function EventsScreen() {
               <Ionicons name="calendar-outline" size={26} color={Colors.textFaint} />
             </View>
             <Text style={styles.emptyTxt}>Không có sự kiện trong ngày này</Text>
+            <Pressable style={styles.retryBtn} onPress={openCreate}>
+              <Text style={styles.retryTxt}>Tạo sự kiện</Text>
+            </Pressable>
           </View>
         ) : (
           <View style={{ paddingHorizontal: 14, paddingTop: 4 }}>
             {selectedEvents.map((e) => (
-              <EventCard key={e.id} event={e} Colors={Colors} styles={styles} />
+              <EventCard
+                key={e.id}
+                event={e}
+                Colors={Colors}
+                styles={styles}
+                canManage={canManageEvent(user?.id || user?.userId, user?.role, e)}
+                busy={busyId === e.id}
+                onEdit={() => openEdit(e)}
+                onCancel={() => {
+                  setCancelTarget(e);
+                  setCancelReason(e.cancelReason || '');
+                }}
+                onDelete={() => confirmDelete(e)}
+              />
             ))}
           </View>
         )}
       </ScrollView>
+
+      <EventFilterModal
+        visible={filterOpen}
+        value={filters}
+        eventTypes={eventTypes}
+        companies={companies}
+        employees={employees}
+        regions={regions}
+        showCompany={showCompanyPicker}
+        bottomInset={insets.bottom}
+        onClose={() => setFilterOpen(false)}
+        onApply={setFilters}
+      />
+
+      <EventFormModal
+        visible={formOpen}
+        event={editEvent}
+        presetDay={editEvent ? null : selectedDay}
+        defaultCompanyId={effectiveCompanyId}
+        defaultModule={filters.module || 'crm'}
+        defaultAssigneeId={user?.id || user?.userId || ''}
+        employees={employees}
+        onClose={() => {
+          setFormOpen(false);
+          setEditEvent(null);
+        }}
+        onSaved={() => void load({ refresh: true, silent: true })}
+      />
+
+      <Modal visible={!!cancelTarget} transparent animationType="fade" onRequestClose={() => setCancelTarget(null)}>
+        <Pressable style={styles.cancelBackdrop} onPress={() => setCancelTarget(null)}>
+          <Pressable style={[styles.cancelSheet, { paddingBottom: insets.bottom + 16 }]} onPress={() => {}}>
+            <Text style={styles.cancelTitle}>Hủy sự kiện</Text>
+            <Text style={styles.cancelSub} numberOfLines={2}>{cancelTarget?.title}</Text>
+            <Text style={styles.cancelLabel}>Lý do hủy *</Text>
+            <TextInput
+              value={cancelReason}
+              onChangeText={setCancelReason}
+              placeholder="Nhập lý do…"
+              placeholderTextColor={Colors.textFaint}
+              style={styles.cancelInput}
+              multiline
+            />
+            <View style={styles.cancelActions}>
+              <Pressable style={styles.cancelGhost} onPress={() => setCancelTarget(null)}>
+                <Text style={styles.cancelGhostTxt}>Đóng</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.cancelDanger, (!cancelReason.trim() || busyId === cancelTarget?.id) && { opacity: 0.5 }]}
+                disabled={!cancelReason.trim() || busyId === cancelTarget?.id}
+                onPress={() => void submitCancel()}
+              >
+                {busyId === cancelTarget?.id ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.cancelDangerTxt}>Xác nhận hủy</Text>
+                )}
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -412,10 +658,20 @@ function EventCard({
   event: e,
   Colors,
   styles,
+  canManage,
+  busy,
+  onEdit,
+  onCancel,
+  onDelete,
 }: {
   event: AppEvent;
   Colors: ThemeColors;
   styles: ReturnType<typeof makeStyles>;
+  canManage: boolean;
+  busy: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onDelete: () => void;
 }) {
   const sColor = statusColor(e.status, Colors);
   const timeStr = e.allDay
@@ -423,8 +679,10 @@ function EventCard({
     : e.endTime
       ? `${timeOf(e.startTime)} — ${timeOf(e.endTime)}`
       : timeOf(e.startTime);
+  const canCancel = canManage && e.status !== 'cancelled' && e.status !== 'completed';
+
   return (
-    <View style={[styles.card, { borderLeftColor: e.typeColor }]}>
+    <View style={[styles.card, { borderLeftColor: e.typeColor, opacity: busy ? 0.6 : 1 }]}>
       <View style={styles.cardTopRow}>
         <View style={[styles.typeBadge, { backgroundColor: e.typeColor + '22' }]}>
           <Text style={styles.typeBadgeTxt}>{e.typeIcon} {e.typeName.toUpperCase()}</Text>
@@ -463,6 +721,28 @@ function EventCard({
       {e.creatorName ? (
         <Text style={styles.creatorTxt}>Tạo: {e.creatorName}</Text>
       ) : null}
+      {e.status === 'cancelled' && e.cancelReason ? (
+        <Text style={styles.cancelReasonTxt}>Lý do hủy: {e.cancelReason}</Text>
+      ) : null}
+
+      {canManage ? (
+        <View style={styles.actionRow}>
+          <Pressable style={styles.actionBtn} onPress={onEdit} disabled={busy}>
+            <Ionicons name="create-outline" size={15} color={Colors.blue} />
+            <Text style={[styles.actionTxt, { color: Colors.blue }]}>Sửa</Text>
+          </Pressable>
+          {canCancel ? (
+            <Pressable style={styles.actionBtn} onPress={onCancel} disabled={busy}>
+              <Ionicons name="ban-outline" size={15} color={Colors.amber} />
+              <Text style={[styles.actionTxt, { color: Colors.amber }]}>Hủy</Text>
+            </Pressable>
+          ) : null}
+          <Pressable style={styles.actionBtn} onPress={onDelete} disabled={busy}>
+            <Ionicons name="trash-outline" size={15} color={Colors.red} />
+            <Text style={[styles.actionTxt, { color: Colors.red }]}>Xóa</Text>
+          </Pressable>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -480,14 +760,36 @@ const makeStyles = (Colors: ThemeColors) =>
       justifyContent: 'center',
       backgroundColor: Colors.surfaceSoft,
     },
-    h1: { color: Colors.text, fontSize: 19, fontWeight: '900' },
-    countPill: {
-      paddingHorizontal: 10,
-      paddingVertical: 4,
-      borderRadius: Radii.pill,
+    iconBtn: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
       backgroundColor: Colors.surfaceSoft,
     },
-    countPillTxt: { color: Colors.textMuted, fontSize: 11, fontWeight: '800' },
+    createBtn: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: Colors.blue,
+    },
+    filterBadge: {
+      position: 'absolute',
+      top: -2,
+      right: -2,
+      minWidth: 16,
+      height: 16,
+      borderRadius: 8,
+      backgroundColor: Colors.red,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 3,
+    },
+    filterBadgeTxt: { color: '#fff', fontSize: 9, fontWeight: '900' },
+    h1: { color: Colors.text, fontSize: 19, fontWeight: '900' },
     searchBox: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -556,7 +858,7 @@ const makeStyles = (Colors: ThemeColors) =>
     weekHeaderTxt: { flex: 1, textAlign: 'center', color: Colors.textMuted, fontSize: 11, fontWeight: '800' },
     monthGrid: { flexDirection: 'row', flexWrap: 'wrap' },
     monthCell: {
-      width: `${100 / 7}%`,
+      width: `${100 / 7}%` as unknown as number,
       aspectRatio: 1,
       alignItems: 'center',
       justifyContent: 'center',
@@ -581,6 +883,8 @@ const makeStyles = (Colors: ThemeColors) =>
     detailCountPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: Radii.pill, backgroundColor: Colors.blueSoft },
     detailCountTxt: { color: Colors.blue, fontSize: 11, fontWeight: '800' },
     todayTag: { color: Colors.green, fontSize: 12, fontWeight: '800' },
+    addDayBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 'auto' },
+    addDayTxt: { color: Colors.blue, fontSize: 12, fontWeight: '800' },
     center: { alignItems: 'center', justifyContent: 'center', paddingTop: 36, gap: 12, paddingHorizontal: 24 },
     emptyIcon: {
       width: 60,
@@ -612,4 +916,60 @@ const makeStyles = (Colors: ThemeColors) =>
     metaRow: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 4 },
     metaTxt: { flex: 1, color: Colors.textMuted, fontSize: 12.5, fontWeight: '600' },
     creatorTxt: { color: Colors.textFaint, fontSize: 11.5, fontWeight: '600', marginTop: 8 },
+    cancelReasonTxt: { color: Colors.red, fontSize: 12, fontWeight: '600', marginTop: 6 },
+    actionRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 12,
+      paddingTop: 10,
+      borderTopWidth: 1,
+      borderTopColor: Colors.borderSoft,
+    },
+    actionBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      borderRadius: Radii.sm,
+      backgroundColor: Colors.surfaceSoft,
+    },
+    actionTxt: { fontSize: 12, fontWeight: '800' },
+    cancelBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', padding: 20 },
+    cancelSheet: {
+      backgroundColor: Colors.card,
+      borderRadius: 16,
+      padding: 16,
+    },
+    cancelTitle: { color: Colors.text, fontSize: 17, fontWeight: '900' },
+    cancelSub: { color: Colors.textMuted, fontSize: 13, marginTop: 4, marginBottom: 12 },
+    cancelLabel: { color: Colors.textMuted, fontSize: 12, fontWeight: '800', marginBottom: 6 },
+    cancelInput: {
+      borderWidth: 1,
+      borderColor: Colors.border,
+      borderRadius: Radii.md,
+      padding: 12,
+      minHeight: 80,
+      color: Colors.text,
+      textAlignVertical: 'top',
+    },
+    cancelActions: { flexDirection: 'row', gap: 10, marginTop: 14 },
+    cancelGhost: {
+      flex: 1,
+      alignItems: 'center',
+      paddingVertical: 12,
+      borderRadius: Radii.md,
+      borderWidth: 1,
+      borderColor: Colors.border,
+    },
+    cancelGhostTxt: { color: Colors.textMuted, fontWeight: '800' },
+    cancelDanger: {
+      flex: 1,
+      alignItems: 'center',
+      paddingVertical: 12,
+      borderRadius: Radii.md,
+      backgroundColor: Colors.red,
+    },
+    cancelDangerTxt: { color: '#fff', fontWeight: '800' },
   });

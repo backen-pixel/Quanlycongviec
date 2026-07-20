@@ -69,7 +69,7 @@ export default function MenuScreen() {
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
-  const { user, logout, refreshProfile } = useAuth();
+  const { user, logout } = useAuth();
   const SECTIONS = useMemo(() => buildSections(Colors), [Colors]);
   const displayName = user?.full_name || user?.fullName || user?.email || 'Người dùng';
   const unreadNotifCount = useUnreadNotificationCount();
@@ -77,8 +77,7 @@ export default function MenuScreen() {
   useFocusEffect(
     useCallback(() => {
       void warmCrmHubPipelines(user?.company_id || undefined);
-      void refreshProfile();
-    }, [user?.company_id, refreshProfile]),
+    }, [user?.company_id]),
   );
 
   const onItem = (it: Item) => {
