@@ -3,6 +3,10 @@ const {
   applyCrmLeadRegionFilterToQuery,
   getCrmLeadRegionConstraint,
 } = require('./crmRegionScope');
+const {
+  crmReportCreatedAtFromIso,
+  crmReportCreatedAtToIso,
+} = require('./crmReportDateBounds');
 
 function truncText(s, max = 72) {
   if (!s) return '';
@@ -179,10 +183,10 @@ async function fetchOrgActivityFeed(req, {
   limit = 30,
   since = null,
 }) {
-  const endIso = `${dt}T23:59:59.999Z`;
+  const endIso = crmReportCreatedAtToIso(dt) || `${dt}T23:59:59.999+07:00`;
   const fetchLimit = Math.min(Math.max(limit * 3, 60), 150);
   const sinceIso = since ? new Date(since).toISOString() : null;
-  const fromIso = sinceIso || `${df}T00:00:00.000Z`;
+  const fromIso = sinceIso || crmReportCreatedAtFromIso(df) || `${df}T00:00:00+07:00`;
 
   const skipLeads = typeView === 'deal';
   const skipDeals = typeView === 'lead';

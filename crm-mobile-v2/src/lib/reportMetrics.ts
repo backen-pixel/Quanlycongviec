@@ -10,10 +10,9 @@ export function reportClosedWonValue(r?: Partial<OrgReportRow> | null): number {
 }
 
 export function reportOpenDealCount(r?: Partial<OrgReportRow> | null): number {
-  const closed = reportClosedWonCount(r);
-  const lost = Number(r?.lost_deal_count ?? 0) || 0;
-  const deals = Number(r?.deal_count ?? 0) || 0;
-  return Math.max(0, deals - closed - lost);
+  // Khớp web BC tổ chức (deal_kh_split): deal_count = Deal (pipeline) đang mở —
+  // backend đã tách thua / đơn hàng / chốt. Không trừ won lần nữa.
+  return Math.max(0, Number(r?.deal_count ?? 0) || 0);
 }
 
 export function reportCancelLostTotal(r?: Partial<OrgReportRow> | null): number {
@@ -21,7 +20,11 @@ export function reportCancelLostTotal(r?: Partial<OrgReportRow> | null): number 
 }
 
 export function reportCancelTotalCount(r?: Partial<OrgReportRow> | null): number {
-  return (Number(r?.lead_count ?? 0) || 0) + (Number(r?.deal_count ?? 0) || 0);
+  // Khớp web/backend: lead + deal pipeline + đơn hàng + deal thua
+  return (Number(r?.lead_count ?? 0) || 0)
+    + (Number(r?.deal_count ?? 0) || 0)
+    + (Number(r?.customer_order_count ?? 0) || 0)
+    + (Number(r?.lost_deal_count ?? 0) || 0);
 }
 
 /** KPI tiến độ GT: ưu tiên tỷ lệ backend, fallback tính từ số liệu. */

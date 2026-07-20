@@ -61,7 +61,6 @@ import {
   sortCrmCompaniesForAdminFilter,
 } from '../lib/crmCompanyFilter';
 import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
-import { effectivePipelineStageSlaDays } from '../lib/crmPipelineSla';
 import { getSxOrderDeliveryDateUrgency } from '../lib/sxPipelineRevenue';
 import {
   coalesceCrmDashboardChangedEvents,
@@ -111,7 +110,6 @@ import {
   getCrmDeadlineUrgencyFromIso,
   getCrmDeadlineUrgencyFromTs,
   getPipelineStageSlaDeadlineTs,
-  crmLeadMissingPhone,
   shouldHideCrmKanbanDeadlineOnCard,
 } from '../lib/crmLeadDeadlineDisplay';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
@@ -232,14 +230,8 @@ function KpiKanbanLedgerBadge({ net, periodStart, reserveMergeCheckbox = false }
 
 /** SLA cột pipeline: null DB → 7 ngày; sla_days=0 → không áp dụng SLA; lead chưa có SĐT → bỏ SLA */
 function getPipelineStageSlaTone(stageEnteredAt, stage, leadItem) {
-  if (leadItem != null && crmLeadMissingPhone(leadItem)) {
-    return { level: 'ok', remainingMs: null, deadlineTs: null };
-  }
-  if (!stageEnteredAt || !stage) return { level: 'ok', remainingMs: null, deadlineTs: null };
-  if (stage.is_won || stage.is_lost || stage.counts_as_completed_revenue) return { level: 'ok', remainingMs: null, deadlineTs: null };
-  const slaDays = effectivePipelineStageSlaDays(stage.sla_days);
-  if (slaDays == null) return { level: 'ok', remainingMs: null, deadlineTs: null };
-  const deadlineTs = new Date(stageEnteredAt).getTime() + slaDays * 86400000;
+  const deadlineTs = getPipelineStageSlaDeadlineTs(stageEnteredAt, stage, leadItem);
+  if (deadlineTs == null) return { level: 'ok', remainingMs: null, deadlineTs: null };
   const remainingMs = deadlineTs - Date.now();
   if (remainingMs < 0) return { level: 'overdue', remainingMs, deadlineTs };
   if (remainingMs <= 24 * 3600000) return { level: 'soon', remainingMs, deadlineTs };

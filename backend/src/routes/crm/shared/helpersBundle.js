@@ -866,6 +866,8 @@ const {
   crmReportDayKeyVn,
   crmReportAsOfMs,
   endOfCalendarDayAfterEntered,
+  crmReportDefaultMonthRangeVn,
+  crmReportPreviousPeriod,
 } = require('../../../helpers/crmReportDateBounds');
 
 /** PostgREST mặc định ~1000 dòng/truy vấn — gom đủ bản ghi theo filter để KPI / pipeline không bị trần 1000. */
@@ -964,19 +966,15 @@ async function fetchCrmLeadsForOrgReportBatched(type, {
 }
 
 function parseCrmReportDateRange(req) {
-  const pad = (n) => String(n).padStart(2, '0');
-  const now = new Date();
-  const defaultFrom = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`;
-  const endCal = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-  const defaultTo = `${endCal.getFullYear()}-${pad(endCal.getMonth() + 1)}-${pad(endCal.getDate())}`;
+  const month = crmReportDefaultMonthRangeVn();
   const isoFrom = (v) => {
     if (!v || typeof v !== 'string') return null;
     const m = v.trim().match(/^(\d{4}-\d{2}-\d{2})/);
     return m ? m[1] : null;
   };
   return {
-    df: isoFrom(req.query?.date_from) || defaultFrom,
-    dt: isoFrom(req.query?.date_to) || defaultTo,
+    df: isoFrom(req.query?.date_from) || month.df,
+    dt: isoFrom(req.query?.date_to) || month.dt,
   };
 }
 
@@ -1406,8 +1404,8 @@ async function computeCrmLiveVersionMs(req, effectiveCompanyId, date_from, date_
     let x = q;
     if (effectiveCompanyId) x = x.eq('company_id', effectiveCompanyId);
     x = applyCrmLeadRegionFilterToQuery(x, req);
-    if (date_from) x = x.gte('created_at', date_from);
-    if (date_to) x = x.lte('created_at', date_to + 'T23:59:59.999Z');
+    if (date_from) x = x.gte('created_at', crmReportCreatedAtFromIso(date_from) || date_from);
+    if (date_to) x = x.lte('created_at', crmReportCreatedAtToIso(date_to) || `${date_to}T23:59:59.999+07:00`);
     return x;
   };
 
@@ -1743,19 +1741,7 @@ function orgReportConversionRate(wonCount, dealCount) {
 }
 
 function orgReportPreviousPeriod(df, dt) {
-  const parse = (s) => {
-    const [y, m, d] = String(s).split('-').map(Number);
-    return new Date(y, m - 1, d);
-  };
-  const from = parse(df);
-  const to = parse(dt);
-  const dayMs = 86400000;
-  const days = Math.max(1, Math.round((to - from) / dayMs) + 1);
-  const prevTo = new Date(from.getTime() - dayMs);
-  const prevFrom = new Date(prevTo.getTime() - (days - 1) * dayMs);
-  const pad = (n) => String(n).padStart(2, '0');
-  const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  return { prevFrom: fmt(prevFrom), prevTo: fmt(prevTo), days };
+  return crmReportPreviousPeriod(df, dt);
 }
 
 function orgReportPctDelta(cur, prev) {
@@ -2939,19 +2925,14 @@ async function computeStaffPipelineDetailPayload(req, res) {
     if (!scope) return null;
     const { effectiveCompanyId, explicitRegionId } = scope;
 
-    const pad = (n) => String(n).padStart(2, '0');
-    const now = new Date();
-    const defaultFrom = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`;
-    const endCal = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    const defaultTo = `${endCal.getFullYear()}-${pad(endCal.getMonth() + 1)}-${pad(endCal.getDate())}`;
-
+    const month = crmReportDefaultMonthRangeVn();
     const isoFrom = (v) => {
       if (!v || typeof v !== 'string') return null;
       const m = v.trim().match(/^(\d{4}-\d{2}-\d{2})/);
       return m ? m[1] : null;
     };
-    const df = isoFrom(date_from) || defaultFrom;
-    const dt = isoFrom(date_to) || defaultTo;
+    const df = isoFrom(date_from) || month.df;
+    const dt = isoFrom(date_to) || month.dt;
 
     const numEst = (x) => {
       const n = Number(x);
@@ -4497,8 +4478,8 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     q = applyPipelineFollowUpFilters(q);
     const df = sanitizeIsoDateQueryParam(date_from);
     const dt = sanitizeIsoDateQueryParam(date_to);
-    if (df) q = q.gte('created_at', df);
-    if (dt) q = q.lte('created_at', `${dt}T23:59:59.999Z`);
+    if (df) q = q.gte('created_at', crmReportCreatedAtFromIso(df) || df);
+    if (dt) q = q.lte('created_at', crmReportCreatedAtToIso(dt) || `${dt}T23:59:59.999+07:00`);
     const searchOr = buildSearchOr();
     if (searchOr) q = q.or(searchOr);
     if (scopeReq) q = applyCrmLeadRegionFilterToQuery(q, scopeReq);
@@ -4531,8 +4512,8 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     q = applyPipelineFollowUpFilters(q);
     const df = sanitizeIsoDateQueryParam(date_from);
     const dt = sanitizeIsoDateQueryParam(date_to);
-    if (df) q = q.gte('created_at', df);
-    if (dt) q = q.lte('created_at', `${dt}T23:59:59.999Z`);
+    if (df) q = q.gte('created_at', crmReportCreatedAtFromIso(df) || df);
+    if (dt) q = q.lte('created_at', crmReportCreatedAtToIso(dt) || `${dt}T23:59:59.999+07:00`);
     const searchOrPage = buildSearchOr();
     if (searchOrPage) q = q.or(searchOrPage);
     if (scopeReq) q = applyCrmLeadRegionFilterToQuery(q, scopeReq);

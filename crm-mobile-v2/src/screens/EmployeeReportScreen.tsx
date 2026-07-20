@@ -30,7 +30,6 @@ import ReportPerformanceTab from '../components/reports/ReportPerformanceTab';
 import ReportPipelineTab from '../components/reports/ReportPipelineTab';
 import ReportTabBar, { type ReportTabId } from '../components/reports/ReportTabBar';
 import { useAuth } from '../context/AuthContext';
-import { defaultCompanyIdForUser, isSystemWideAdmin } from '../lib/crmDefaultCompany';
 import { canViewEmployeeReport } from '../lib/employeeReportAccess';
 import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import {
@@ -54,10 +53,6 @@ const TAB_TITLES: Record<ReportTabId, string> = {
 function isAdminLike(role?: string | null): boolean {
   const r = String(role || '').trim().toLowerCase();
   return r === 'admin' || r === 'sales_admin';
-}
-
-function isSystemAdmin(user: { role?: string | null; company_id?: string | null } | null): boolean {
-  return isSystemWideAdmin(user);
 }
 
 export default function EmployeeReportScreen() {
@@ -98,12 +93,11 @@ export default function EmployeeReportScreen() {
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
   const [regionPickerOpen, setRegionPickerOpen] = useState(false);
 
+  /** Admin (picker): '' = Tất cả công ty — khớp web org-overview. */
   const effectiveCompanyId = useMemo(() => {
     if (lockedCompanyId) return lockedCompanyId;
-    if (companyId) return companyId;
-    if (user?.company_id && !isSystemAdmin(user)) return String(user.company_id);
-    return '';
-  }, [lockedCompanyId, companyId, user]);
+    return companyId || '';
+  }, [lockedCompanyId, companyId]);
 
   const query: EmployeeReportQuery = useMemo(() => ({
     date_from: range.from,
@@ -117,15 +111,10 @@ export default function EmployeeReportScreen() {
     if (!showCompanyPicker) return;
     void fetchCrmCompanies()
       .then((list) => {
-        const mapped = list.map((c) => ({ id: c.id, name: c.shortName || c.name }));
-        setCompanies(mapped);
-        setCompanyId((prev) => {
-          if (prev) return prev;
-          return defaultCompanyIdForUser(user, mapped);
-        });
+        setCompanies(list.map((c) => ({ id: c.id, name: c.shortName || c.name })));
       })
       .catch(() => setCompanies([]));
-  }, [showCompanyPicker, user]);
+  }, [showCompanyPicker]);
 
   useEffect(() => {
     if (!effectiveCompanyId) {
@@ -178,7 +167,7 @@ export default function EmployeeReportScreen() {
   );
 
   const companyLabel = useMemo(() => {
-    if (!effectiveCompanyId) return 'Chọn công ty';
+    if (!effectiveCompanyId) return 'Tất cả công ty';
     const found = companies.find((c) => c.id === effectiveCompanyId);
     if (found) return found.name;
     if (lockedCompanyId) return 'Công ty của bạn';
@@ -325,7 +314,7 @@ export default function EmployeeReportScreen() {
       <PickerModal
         visible={companyPickerOpen}
         title="Chọn công ty"
-        items={(isSystemAdmin(user) ? [{ id: '', name: 'Tất cả công ty' }] : []).concat(companies)}
+        items={[{ id: '', name: 'Tất cả công ty' }, ...companies]}
         selectedId={companyId}
         onSelect={(id) => {
           setCompanyId(id);

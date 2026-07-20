@@ -28,6 +28,10 @@ const {
   normalizePipelineStageSlaDaysForDb,
   crmLeadMissingPhone,
 } = require('../helpers/crmPipelineSla');
+const {
+  crmReportCreatedAtFromIso,
+  crmReportCreatedAtToIso,
+} = require('../helpers/crmReportDateBounds');
 const { KPI_RECOMPUTE_USER_ROLES_DEFAULT } = require('../services/kpiRoleApplies');
 const { responseCache, invalidateTags } = require('../middleware/responseCache');
 
@@ -297,8 +301,8 @@ r.get('/dashboard/sales-admin', async (req, res) => {
     // Funnel Lead: đếm history transition tới các canonical_slug
     const start = result.period.period_start;
     const end = result.period.period_end;
-    const startISO = new Date(`${start}T00:00:00Z`).toISOString();
-    const endISO = new Date(`${end}T23:59:59.999Z`).toISOString();
+    const startISO = crmReportCreatedAtFromIso(start) || `${start}T00:00:00+07:00`;
+    const endISO = crmReportCreatedAtToIso(end) || `${end}T23:59:59.999+07:00`;
 
     const { data: leads } = await supabase
       .from('crm_leads').select('id').or(`lead_owner_id.eq.${userId},assigned_to.eq.${userId}`);
@@ -364,8 +368,8 @@ r.get('/dashboard/deal', async (req, res) => {
 
     const start = result.period.period_start;
     const end = result.period.period_end;
-    const startISO = new Date(`${start}T00:00:00Z`).toISOString();
-    const endISO = new Date(`${end}T23:59:59.999Z`).toISOString();
+    const startISO = crmReportCreatedAtFromIso(start) || `${start}T00:00:00+07:00`;
+    const endISO = crmReportCreatedAtToIso(end) || `${end}T23:59:59.999+07:00`;
 
     const { data: leads } = await supabase
       .from('crm_leads').select('id').or(`lead_owner_id.eq.${userId},assigned_to.eq.${userId}`);
@@ -861,7 +865,10 @@ r.get('/lead-trace', async (req, res) => {
     if (!userId) return res.status(400).json({ error: 'user_id bắt buộc' });
     const { periodStart } = parsePeriod(req.query);
     const start = periodStart;
-    const end = new Date(new Date(`${start}T00:00:00Z`).setUTCMonth(new Date(`${start}T00:00:00Z`).getUTCMonth() + 1) - 1).toISOString().slice(0, 10);
+    // Cuối tháng lịch của period_start (YYYY-MM-DD) — arithmetic UTC date parts
+    const [sy, sm] = String(start).split('-').map(Number);
+    const lastDay = new Date(Date.UTC(sy, sm, 0));
+    const end = `${lastDay.getUTCFullYear()}-${String(lastDay.getUTCMonth() + 1).padStart(2, '0')}-${String(lastDay.getUTCDate()).padStart(2, '0')}`;
 
     const { CANONICAL_RANK, getLeadProgress } = require('../services/kpiPipelineRank');
 
@@ -875,8 +882,8 @@ r.get('/lead-trace', async (req, res) => {
     if (ids.length === 0) return res.json({ leads: [] });
 
     // Lấy toàn bộ history trong kỳ
-    const startISO = new Date(`${start}T00:00:00Z`).toISOString();
-    const endISO   = new Date(`${end}T23:59:59.999Z`).toISOString();
+    const startISO = crmReportCreatedAtFromIso(start) || `${start}T00:00:00+07:00`;
+    const endISO = crmReportCreatedAtToIso(end) || `${end}T23:59:59.999+07:00`;
     const chunks = [];
     for (let i = 0; i < ids.length; i += 200) chunks.push(ids.slice(i, i + 200));
     const allHistory = [];
@@ -1227,7 +1234,7 @@ r.get('/company-overview', async (req, res) => {
     }
 
     // ── Trend N tháng (avg total) ──
-    const trendStartDate = new Date(`${periodStart}T00:00:00Z`);
+    const trendStartDate = new Date(crmReportCreatedAtFromIso(periodStart) || `${periodStart}T00:00:00+07:00`);
     trendStartDate.setUTCMonth(trendStartDate.getUTCMonth() - (trendMonths - 1));
     const trendStartStr = trendStartDate.toISOString().slice(0, 10);
     const { data: trendPeriods } = await supabase

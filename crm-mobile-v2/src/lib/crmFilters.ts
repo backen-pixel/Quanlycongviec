@@ -1,5 +1,6 @@
 import type { CrmStageFetchOpts } from '../api/crm';
 import type { CrmKanbanItem } from '../types';
+import { vnTodayYmd, vnDefaultMonthRange, ymdFromLocalDate } from './vnDate';
 
 export type PhoneFilter = '' | 'has_phone' | 'no_phone';
 export type AssigneeFilter = 'all' | 'mine' | 'user';
@@ -44,8 +45,9 @@ export function looksLikePhoneSearch(q: string): boolean {
 }
 
 export function getDateRange(preset: TimePreset): { from: string; to: string } {
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayYmd = vnTodayYmd();
+  const [y, m, d] = todayYmd.split('-').map(Number);
+  const today = new Date(y, m - 1, d);
   switch (preset) {
     case 'this_week': {
       const dayOfWeek = today.getDay();
@@ -54,18 +56,12 @@ export function getDateRange(preset: TimePreset): { from: string; to: string } {
       const sunday = new Date(monday);
       sunday.setDate(monday.getDate() + 6);
       return {
-        from: monday.toISOString().split('T')[0],
-        to: sunday.toISOString().split('T')[0],
+        from: ymdFromLocalDate(monday),
+        to: ymdFromLocalDate(sunday),
       };
     }
-    case 'this_month': {
-      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      return {
-        from: firstDay.toISOString().split('T')[0],
-        to: lastDay.toISOString().split('T')[0],
-      };
-    }
+    case 'this_month':
+      return vnDefaultMonthRange();
     default:
       return { from: '', to: '' };
   }

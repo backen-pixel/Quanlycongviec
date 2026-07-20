@@ -1,8 +1,11 @@
+import { ymdFromLocalDate, vnTodayYmd, vnAddDaysYmd, vnDefaultMonthRange } from './vnDate';
+
 /** Bộ thời gian & tải trang dùng chung cho Production / Logistics dashboard (cùng CRM). */
 
 export function getWorkshopDateRange(preset) {
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayYmd = vnTodayYmd();
+  const [y, m, d] = todayYmd.split('-').map(Number);
+  const today = new Date(y, m - 1, d);
   switch (preset) {
     case 'this_week': {
       const dayOfWeek = today.getDay();
@@ -10,12 +13,10 @@ export function getWorkshopDateRange(preset) {
       monday.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
       const sunday = new Date(monday);
       sunday.setDate(monday.getDate() + 6);
-      return { from: monday.toISOString().split('T')[0], to: sunday.toISOString().split('T')[0] };
+      return { from: ymdFromLocalDate(monday), to: ymdFromLocalDate(sunday) };
     }
     case 'this_month': {
-      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      return { from: firstDay.toISOString().split('T')[0], to: lastDay.toISOString().split('T')[0] };
+      return vnDefaultMonthRange();
     }
     default:
       return { from: '', to: '' };

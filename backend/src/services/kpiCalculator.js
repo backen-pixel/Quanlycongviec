@@ -22,6 +22,11 @@ const { responseMinutes, isUserOff } = require('./businessHours');
 const { buildProgressMap, CANONICAL_RANK } = require('./kpiPipelineRank');
 const { crmTaskMeetsCompletionRequirements } = require('../helpers/crmTaskCompletionEvidence');
 const { filterDefinitionsForUserRole, allowedAppliesTagsForUserRole } = require('./kpiRoleApplies');
+const {
+  crmReportCreatedAtFromIso,
+  crmReportCreatedAtToIso,
+  crmReportDayKeyVn,
+} = require('../helpers/crmReportDateBounds');
 
 async function fetchUserRoleForKpi(userId) {
   if (!userId) return 'sales';
@@ -36,12 +41,12 @@ function num(v) {
 }
 
 function isoDateOnly(d) {
-  return new Date(d).toISOString().slice(0, 10);
+  return crmReportDayKeyVn(d) || new Date(d).toISOString().slice(0, 10);
 }
 
 function rangeFor(periodStart, periodEnd) {
-  const startISO = new Date(`${periodStart}T00:00:00Z`).toISOString();
-  const endISO = new Date(`${periodEnd}T23:59:59.999Z`).toISOString();
+  const startISO = crmReportCreatedAtFromIso(periodStart) || `${periodStart}T00:00:00+07:00`;
+  const endISO = crmReportCreatedAtToIso(periodEnd) || `${periodEnd}T23:59:59.999+07:00`;
   return { startISO, endISO };
 }
 
@@ -595,16 +600,17 @@ const CALC_REGISTRY = {
 
 async function ensurePeriod({ periodType = 'monthly', periodStart }) {
   const start = isoDateOnly(periodStart);
-  const startDate = new Date(`${start}T00:00:00Z`);
-  let endDate;
+  const [y, m] = String(start).split('-').map(Number);
+  let end;
   if (periodType === 'monthly') {
-    endDate = new Date(startDate.getUTCFullYear(), startDate.getUTCMonth() + 1, 0);
+    const last = new Date(Date.UTC(y, m, 0));
+    end = `${last.getUTCFullYear()}-${String(last.getUTCMonth() + 1).padStart(2, '0')}-${String(last.getUTCDate()).padStart(2, '0')}`;
   } else if (periodType === 'quarterly') {
-    endDate = new Date(startDate.getUTCFullYear(), startDate.getUTCMonth() + 3, 0);
+    const last = new Date(Date.UTC(y, m + 2, 0));
+    end = `${last.getUTCFullYear()}-${String(last.getUTCMonth() + 1).padStart(2, '0')}-${String(last.getUTCDate()).padStart(2, '0')}`;
   } else {
-    endDate = new Date(startDate.getUTCFullYear() + 1, 0, 0);
+    end = `${y}-12-31`;
   }
-  const end = isoDateOnly(endDate);
 
   const { data: existing } = await supabase
     .from('kpi_periods')
@@ -660,12 +666,17 @@ async function computeAndStoreForUser({ userId, companyId = null, periodType = '
   }
 
   const start = isoDateOnly(periodStart);
-  const startDate = new Date(`${start}T00:00:00Z`);
-  let endDate;
-  if (periodType === 'monthly') endDate = new Date(startDate.getUTCFullYear(), startDate.getUTCMonth() + 1, 0);
-  else if (periodType === 'quarterly') endDate = new Date(startDate.getUTCFullYear(), startDate.getUTCMonth() + 3, 0);
-  else endDate = new Date(startDate.getUTCFullYear() + 1, 0, 0);
-  const end = isoDateOnly(endDate);
+  const [y, m] = String(start).split('-').map(Number);
+  let end;
+  if (periodType === 'monthly') {
+    const last = new Date(Date.UTC(y, m, 0));
+    end = `${last.getUTCFullYear()}-${String(last.getUTCMonth() + 1).padStart(2, '0')}-${String(last.getUTCDate()).padStart(2, '0')}`;
+  } else if (periodType === 'quarterly') {
+    const last = new Date(Date.UTC(y, m + 2, 0));
+    end = `${last.getUTCFullYear()}-${String(last.getUTCMonth() + 1).padStart(2, '0')}-${String(last.getUTCDate()).padStart(2, '0')}`;
+  } else {
+    end = `${y}-12-31`;
+  }
 
   const roleResolved = userRole != null ? String(userRole).trim().toLowerCase() : await fetchUserRoleForKpi(userId);
   const defsAll = await getDefinitions();

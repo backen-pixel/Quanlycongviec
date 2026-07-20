@@ -1,19 +1,20 @@
-/** Preset khoảng ngày — đồng bộ CRM Dashboard / Events / Lịch nghỉ. YYYY-MM-DD theo local. */
+/** Preset khoảng ngày — đồng bộ CRM Dashboard / Events / Lịch nghỉ. YYYY-MM-DD theo lịch VN. */
+import { vnTodayYmd, vnDefaultMonthRange, ymdFromLocalDate, vnAddDaysYmd } from './vnDate';
+
 export function getCrmDateRangeFromPreset(preset) {
-  const pad = (n) => String(n).padStart(2, '0');
-  const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayYmd = vnTodayYmd();
+  const [y, m] = todayYmd.split('-').map(Number);
+  const today = new Date(y, m - 1, Number(todayYmd.slice(8, 10)));
   switch (preset) {
     case 'today':
-      return { from: iso(today), to: iso(today) };
+      return { from: todayYmd, to: todayYmd };
     case 'this_week': {
       const dow = today.getDay();
       const monday = new Date(today);
       monday.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
       const sunday = new Date(monday);
       sunday.setDate(monday.getDate() + 6);
-      return { from: iso(monday), to: iso(sunday) };
+      return { from: ymdFromLocalDate(monday), to: ymdFromLocalDate(sunday) };
     }
     case 'last_week': {
       const dow = today.getDay();
@@ -23,26 +24,26 @@ export function getCrmDateRangeFromPreset(preset) {
       lastMon.setDate(thisMon.getDate() - 7);
       const lastSun = new Date(lastMon);
       lastSun.setDate(lastMon.getDate() + 6);
-      return { from: iso(lastMon), to: iso(lastSun) };
+      return { from: ymdFromLocalDate(lastMon), to: ymdFromLocalDate(lastSun) };
     }
-    case 'this_month': {
-      const first = new Date(now.getFullYear(), now.getMonth(), 1);
-      const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      return { from: iso(first), to: iso(last) };
-    }
+    case 'this_month':
+      return vnDefaultMonthRange();
     case 'last_month': {
-      const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const last = new Date(now.getFullYear(), now.getMonth(), 0);
-      return { from: iso(first), to: iso(last) };
+      const firstThis = `${y}-${String(m).padStart(2, '0')}-01`;
+      const lastPrev = vnAddDaysYmd(firstThis, -1);
+      const [py, pm] = lastPrev.split('-').map(Number);
+      return { from: `${py}-${String(pm).padStart(2, '0')}-01`, to: lastPrev };
     }
     case 'this_quarter': {
-      const qm = Math.floor(now.getMonth() / 3) * 3;
-      const first = new Date(now.getFullYear(), qm, 1);
-      const last = new Date(now.getFullYear(), qm + 3, 0);
-      return { from: iso(first), to: iso(last) };
+      const qm = Math.floor((m - 1) / 3) * 3 + 1;
+      const first = `${y}-${String(qm).padStart(2, '0')}-01`;
+      const lastM = qm + 2;
+      const last = new Date(Date.UTC(y, lastM, 0));
+      const to = `${last.getUTCFullYear()}-${String(last.getUTCMonth() + 1).padStart(2, '0')}-${String(last.getUTCDate()).padStart(2, '0')}`;
+      return { from: first, to };
     }
     case 'this_year':
-      return { from: `${now.getFullYear()}-01-01`, to: `${now.getFullYear()}-12-31` };
+      return { from: `${y}-01-01`, to: `${y}-12-31` };
     default:
       return { from: '', to: '' };
   }

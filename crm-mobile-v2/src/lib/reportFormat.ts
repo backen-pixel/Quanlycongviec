@@ -1,3 +1,5 @@
+import { vnTodayYmd, vnDefaultMonthRange, ymdFromLocalDate } from './vnDate';
+
 /** Số tiền đầy đủ — dùng khi cần chính xác tuyệt đối. */
 export function formatVndExact(value?: number | null): string {
   const num = Number(value);
@@ -55,12 +57,8 @@ export function defaultMonthRange(): { from: string; to: string } {
 
 export type ReportPeriodPreset = 'day' | 'week' | 'month' | 'year';
 
-function pad2(n: number): string {
-  return String(n).padStart(2, '0');
-}
-
 export function isoLocalDate(d: Date): string {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  return ymdFromLocalDate(d);
 }
 
 export function parseIsoLocalDate(s: string): Date {
@@ -68,35 +66,30 @@ export function parseIsoLocalDate(s: string): Date {
   return new Date(y, m - 1, d);
 }
 
-/** Khoảng ngày theo preset — tham chiếu local (không UTC). */
+/** Khoảng ngày theo preset — lịch VN (khớp backend +07). */
 export function getReportRangeForPreset(
   preset: ReportPeriodPreset,
   ref: Date = new Date(),
 ): { from: string; to: string } {
-  const today = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate());
+  const todayYmd = vnTodayYmd(ref);
+  const [y, m, d] = todayYmd.split('-').map(Number);
+  const today = new Date(y, m - 1, d);
   switch (preset) {
-    case 'day': {
-      const iso = isoLocalDate(today);
-      return { from: iso, to: iso };
-    }
+    case 'day':
+      return { from: todayYmd, to: todayYmd };
     case 'week': {
       const dow = today.getDay();
       const monday = new Date(today);
       monday.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
       const sunday = new Date(monday);
       sunday.setDate(monday.getDate() + 6);
-      return { from: isoLocalDate(monday), to: isoLocalDate(sunday) };
+      return { from: ymdFromLocalDate(monday), to: ymdFromLocalDate(sunday) };
     }
-    case 'month': {
-      const first = new Date(today.getFullYear(), today.getMonth(), 1);
-      const last = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-      return { from: isoLocalDate(first), to: isoLocalDate(last) };
-    }
+    case 'month':
+      return vnDefaultMonthRange(ref);
     case 'year':
-    default: {
-      const y = today.getFullYear();
+    default:
       return { from: `${y}-01-01`, to: `${y}-12-31` };
-    }
   }
 }
 

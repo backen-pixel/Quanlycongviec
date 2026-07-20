@@ -1,4 +1,5 @@
 import { effectivePipelineStageSlaDays } from './crmPipelineSla';
+import { endOfVnCalendarDayAfterEntered } from './vnDate';
 
 /** Cột pipeline Thắng — deal đã chốt, không tính/hiển thị deadline. */
 export function isCrmPipelineStageWon(stage) {
@@ -100,7 +101,8 @@ export function getPipelineStageSlaDeadlineTs(stageEnteredAt, stage, leadItem) {
   if (isCrmPipelineStageNoDeadline(stage)) return null;
   const slaDays = effectivePipelineStageSlaDays(stage.sla_days);
   if (slaDays == null) return null;
-  return new Date(stageEnteredAt).getTime() + slaDays * 86400000;
+  // Khớp backend: cuối ngày lịch VN sau slaDays (không dùng entered + N*24h).
+  return endOfVnCalendarDayAfterEntered(stageEnteredAt, slaDays).getTime();
 }
 
 /** Kanban: ưu tiên hạn NV mở mới nhất, không có thì SLA cột. Bỏ qua cột không deadline / chưa có SĐT. */

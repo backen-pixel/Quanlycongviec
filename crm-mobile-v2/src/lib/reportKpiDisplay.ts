@@ -2,24 +2,28 @@ import type { OrgReportRow } from '../api/employeeReport';
 import { formatVndShort } from './reportFormat';
 
 /**
- * GT pipeline trên card tổng quan — không gồm deal thua.
- * Dùng cohort (GT hồ sơ kỳ) nếu có; trừ lost_value.
+ * GT pipeline trên card tổng quan — khớp web org-overview.
+ * Backend đã loại lost_value khỏi pipeline_value (Lead + Deal pipeline + Đơn hàng).
+ * Dùng cohort nếu hub sync đã ghi đè pipeline_value bằng open-weighted.
  */
 export function reportPipelineKpiValue(summary: OrgReportRow): number {
-  const base = Number(summary.cohort_pipeline_value ?? summary.pipeline_value ?? 0) || 0;
-  const lost = Number(summary.lost_value ?? 0) || 0;
-  return Math.max(0, base - lost);
+  return Number(summary.cohort_pipeline_value ?? summary.pipeline_value ?? 0) || 0;
 }
 
-/** Deal tạo trong kỳ — không gồm deal thua. */
+/**
+ * Deal (pipeline) trong kỳ — khớp web khi deal_kh_split=1.
+ * Backend đã không cộng deal thua vào deal_count.
+ */
 export function reportDealKpiCount(summary: OrgReportRow): number {
-  const deals = Number(summary.deal_count ?? 0) || 0;
-  const lost = Number(summary.lost_deal_count ?? 0) || 0;
-  return Math.max(0, deals - lost);
+  return Number(summary.deal_count ?? 0) || 0;
 }
 
 export function reportDealKpiSub(): string {
-  return 'Không gồm thua';
+  return 'Không gồm thua / ĐH';
+}
+
+export function reportPipelineKpiSub(): string {
+  return 'Không gồm deal thua';
 }
 
 /** DT dự kiến — khớp BC web (summary.expected_value). */

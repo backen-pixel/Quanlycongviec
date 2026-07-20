@@ -91,7 +91,7 @@ export function filterEmployeesByMode(
     return rows.filter((r) => reportClosedWonCount(r) > 0);
   }
   if (mode === 'open') {
-    return rows.filter((r) => (r.deal_count ?? 0) - reportClosedWonCount(r) - (r.lost_deal_count ?? 0) > 0);
+    return rows.filter((r) => (r.deal_count ?? 0) > 0);
   }
   return rows;
 }

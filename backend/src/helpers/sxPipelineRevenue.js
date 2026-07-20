@@ -6,26 +6,20 @@ const {
   shouldIgnoreSxOrderDeliveryOverdue,
   isSxPipelineStageNoDeadline,
 } = require('./crmPipelineSla');
+const { crmReportDayKeyVn, crmReportTodayYmdVn } = require('./crmReportDateBounds');
 
 const INTAKE_BUCKET = 'won_pending';
 const VC_SHIPPED_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
 
-function startOfLocalDay(d) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
-/** Bucket «Quá hạn» Deadline view — khớp frontend resolveSxDeadlineBucket. */
+/** Bucket «Quá hạn» Deadline view — so sánh ngày lịch VN. */
 function isSxDeadlineViewOverdue(project, stage, todayMs = Date.now()) {
   if (isSxPipelineStageNoDeadline(stage)) return false;
   const raw = project?.delivery_date || project?.production_deadline || project?.deadline;
   if (!raw) return false;
-  const t = new Date(raw).getTime();
-  if (!Number.isFinite(t)) return false;
-  const today = startOfLocalDay(new Date(todayMs));
-  const diffDays = Math.floor((startOfLocalDay(t).getTime() - today.getTime()) / 86400000);
-  if (diffDays >= 0) return false;
+  const dueKey = crmReportDayKeyVn(raw);
+  if (!dueKey) return false;
+  const todayKey = crmReportDayKeyVn(todayMs) || crmReportTodayYmdVn();
+  if (dueKey >= todayKey) return false;
   if (shouldIgnoreSxOrderDeliveryOverdue(stage || project?.sx_pipeline_stage)) return false;
   return true;
 }

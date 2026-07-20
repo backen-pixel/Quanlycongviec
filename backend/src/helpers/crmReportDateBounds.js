@@ -1,10 +1,14 @@
-/** Khoảng ngày báo cáo CRM theo lịch Việt Nam (Asia/Ho_Chi_Minh). */
+/** Khoảng ngày / lịch CRM theo Việt Nam (Asia/Ho_Chi_Minh) — không phụ thuộc TZ process (Render UTC). */
 const VN_TZ = 'Asia/Ho_Chi_Minh';
 
 function sanitizeCrmReportYmd(v) {
   if (v == null) return null;
   const s = String(v).trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+}
+
+function pad2(n) {
+  return String(n).padStart(2, '0');
 }
 
 function crmReportCreatedAtFromIso(ymd) {
@@ -28,6 +32,41 @@ function crmReportTodayYmdVn() {
   return new Date().toLocaleDateString('en-CA', { timeZone: VN_TZ });
 }
 
+/** Cộng/trừ ngày trên lịch (YMD) — arithmetic UTC date parts, không phụ thuộc TZ process. */
+function crmReportAddDaysYmd(ymd, deltaDays) {
+  const d = sanitizeCrmReportYmd(ymd);
+  if (!d) return null;
+  const [y, m, day] = d.split('-').map((x) => Number(x));
+  const dt = new Date(Date.UTC(y, m - 1, day));
+  dt.setUTCDate(dt.getUTCDate() + Number(deltaDays || 0));
+  return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
+}
+
+/** Tháng hiện tại theo lịch VN: from = ngày 1, to = ngày cuối tháng. */
+function crmReportDefaultMonthRangeVn(refYmd = null) {
+  const today = sanitizeCrmReportYmd(refYmd) || crmReportTodayYmdVn();
+  const [y, m] = today.split('-').map((x) => Number(x));
+  const from = `${y}-${pad2(m)}-01`;
+  const last = new Date(Date.UTC(y, m, 0)); // day 0 of next month = last of m
+  const to = `${last.getUTCFullYear()}-${pad2(last.getUTCMonth() + 1)}-${pad2(last.getUTCDate())}`;
+  return { from, to, df: from, dt: to };
+}
+
+/** Kỳ trước cùng độ dài (ngày lịch) — so sánh BC. */
+function crmReportPreviousPeriod(df, dt) {
+  const from = sanitizeCrmReportYmd(df);
+  const to = sanitizeCrmReportYmd(dt);
+  if (!from || !to) return { prevFrom: from, prevTo: to, days: 1 };
+  const [y1, m1, d1] = from.split('-').map(Number);
+  const [y2, m2, d2] = to.split('-').map(Number);
+  const a = Date.UTC(y1, m1 - 1, d1);
+  const b = Date.UTC(y2, m2 - 1, d2);
+  const days = Math.max(1, Math.round((b - a) / 86400000) + 1);
+  const prevTo = crmReportAddDaysYmd(from, -1);
+  const prevFrom = crmReportAddDaysYmd(prevTo, -(days - 1));
+  return { prevFrom, prevTo, days };
+}
+
 /** Mốc tính SLA / tiếp nhận: cuối kỳ báo cáo nếu kỳ đã qua, không thì hiện tại. */
 function crmReportAsOfMs(dateToYmd) {
   const to = sanitizeCrmReportYmd(dateToYmd);
@@ -37,9 +76,8 @@ function crmReportAsOfMs(dateToYmd) {
 }
 
 /**
- * Hạn SLA cột = cuối ngày lịch VN (Asia/Ho_Chi_Minh) sau `slaDays` ngày kể từ ngày vào cột.
- * Không dùng setHours theo TZ máy chủ — tránh lệch Render (UTC) vs máy local (UTC+7)
- * khiến QH SLA Lead/Deal lệch 1 hồ sơ giữa web prod và app local.
+ * Hạn SLA cột = cuối ngày lịch VN sau `slaDays` ngày kể từ ngày vào cột.
+ * Không dùng setHours theo TZ máy chủ.
  */
 function endOfCalendarDayAfterEntered(startIso, slaDays) {
   const days = Math.max(1, Number(slaDays) || 1);
@@ -48,14 +86,15 @@ function endOfCalendarDayAfterEntered(startIso, slaDays) {
   const ymd = Number.isFinite(enteredMs)
     ? entered.toLocaleDateString('en-CA', { timeZone: VN_TZ })
     : crmReportTodayYmdVn();
-  const [y, m, d] = ymd.split('-').map((x) => Number(x));
-  // Cộng ngày trên lịch (UTC date parts = calendar arithmetic, không phụ thuộc TZ process).
-  const due = new Date(Date.UTC(y, m - 1, d));
-  due.setUTCDate(due.getUTCDate() + days);
-  const yy = due.getUTCFullYear();
-  const mm = String(due.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(due.getUTCDate()).padStart(2, '0');
-  return new Date(`${yy}-${mm}-${dd}T23:59:59.999+07:00`);
+  const dueYmd = crmReportAddDaysYmd(ymd, days);
+  return new Date(crmReportCreatedAtToIso(dueYmd));
+}
+
+/** Quá hạn theo ngày lịch VN (so sánh YMD, không setHours). */
+function crmReportIsYmdBeforeToday(ymdOrIso) {
+  const key = sanitizeCrmReportYmd(ymdOrIso) || crmReportDayKeyVn(ymdOrIso);
+  if (!key) return false;
+  return key < crmReportTodayYmdVn();
 }
 
 module.exports = {
@@ -65,6 +104,10 @@ module.exports = {
   crmReportCreatedAtToIso,
   crmReportDayKeyVn,
   crmReportTodayYmdVn,
+  crmReportAddDaysYmd,
+  crmReportDefaultMonthRangeVn,
+  crmReportPreviousPeriod,
   crmReportAsOfMs,
   endOfCalendarDayAfterEntered,
+  crmReportIsYmdBeforeToday,
 };

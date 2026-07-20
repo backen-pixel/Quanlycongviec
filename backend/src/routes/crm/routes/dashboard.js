@@ -371,8 +371,8 @@ r.get('/contract-signed-revenue', async (req, res) => {
     const effectiveAssignee = dealSelfOnly || assignedToFromQuery || null;
 
     let windowCapped = false;
-    let enteredFromIso = dateFrom ? `${dateFrom}T00:00:00.000Z` : null;
-    let enteredToIso = dateTo ? `${dateTo}T23:59:59.999Z` : null;
+    let enteredFromIso = dateFrom ? crmReportCreatedAtFromIso(dateFrom) : null;
+    let enteredToIso = dateTo ? crmReportCreatedAtToIso(dateTo) : null;
     if (!enteredFromIso && !enteredToIso) {
       const roll = new Date();
       roll.setUTCMonth(roll.getUTCMonth() - 24);

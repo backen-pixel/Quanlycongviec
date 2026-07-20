@@ -30,6 +30,7 @@ import {
   MoreHorizontal,
   Settings,
 } from 'lucide-react';
+import { ymdFromLocalDate, vnTodayYmd, vnDayKey } from '../lib/vnDate';
 
 function parseStageIdsFromSearchParams(sp) {
   const multi = sp.get('stage_ids');
@@ -57,15 +58,21 @@ function addDays(d, n) {
   return x;
 }
 
+/** YYYY-MM-DD — không dùng toISOString (lệch UTC+7). */
 function toIso(d) {
-  return startOfDay(d).toISOString().split('T')[0];
+  return ymdFromLocalDate(startOfDay(d));
 }
 
 function getLeadAgeDays(createdAt) {
   if (!createdAt) return null;
-  const created = startOfDay(new Date(createdAt));
-  const today = startOfDay(new Date());
-  return Math.max(0, Math.floor((today - created) / 86400000));
+  const created = vnDayKey(createdAt);
+  const today = vnTodayYmd();
+  if (!created) return null;
+  const [y1, m1, d1] = created.split('-').map(Number);
+  const [y2, m2, d2] = today.split('-').map(Number);
+  const a = Date.UTC(y1, m1 - 1, d1);
+  const b = Date.UTC(y2, m2 - 1, d2);
+  return Math.max(0, Math.round((b - a) / 86400000));
 }
 
 function getPersonInitials(name) {

@@ -1,5 +1,9 @@
 /** SLA cột pipeline CRM — dùng chung crm.js, kpi.js, kpiCalculator */
 
+const {
+  crmReportIsYmdBeforeToday,
+} = require('./crmReportDateBounds');
+
 const DEFAULT_PIPELINE_STAGE_SLA_DAYS = 7;
 
 function isPipelineStageSlaDisabled(slaDaysRaw) {
@@ -97,14 +101,7 @@ function isSxProjectDeliveryDateOverdue(project, stage) {
   if (shouldIgnoreSxOrderDeliveryOverdue(st)) return false;
   const raw = project?.delivery_date || project?.production_deadline || project?.deadline;
   if (!raw || project?.status === 'completed') return false;
-  const t = new Date(raw);
-  if (Number.isNaN(t.getTime())) return false;
-  const startOfDay = (d) => {
-    const x = new Date(d);
-    x.setHours(0, 0, 0, 0);
-    return x;
-  };
-  return startOfDay(t).getTime() < startOfDay(new Date()).getTime();
+  return crmReportIsYmdBeforeToday(raw);
 }
 
 module.exports = {

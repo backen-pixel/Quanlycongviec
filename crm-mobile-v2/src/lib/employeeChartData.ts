@@ -36,8 +36,8 @@ export function buildEmployeeDealOutcomePie(
 ): PieSegment[] {
   const won = reportClosedWonCount(summary) || reportClosedWonCount(row);
   const lost = summary?.lost_deal_count ?? row?.lost_deal_count ?? 0;
-  const deals = summary?.deal_count ?? row?.deal_count ?? 0;
-  const open = Math.max(0, Number(deals) - Number(won) - Number(lost));
+  // deal_kh_split: deal_count = đang mở (không trừ chốt/thua).
+  const open = Math.max(0, Number(summary?.deal_count ?? row?.deal_count ?? 0) || 0);
   return [
     { name: 'Chốt', value: Number(won), color: STACK_COLORS.won },
     { name: 'Thua', value: Number(lost), color: STACK_COLORS.lost },
