@@ -309,7 +309,10 @@ export default function EventsFeedPage() {
   // Debounce search 300ms — tự tìm khi gõ, không cần Enter
   useEffect(() => {
     if (view !== 'feed' && view !== 'calendar' && view !== 'list') return undefined;
-    const t = setTimeout(() => { loadFeed(); }, 300);
+    const t = setTimeout(() => {
+      loadFeed();
+      if (view === 'calendar') loadCalendar();
+    }, 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
@@ -344,7 +347,11 @@ export default function EventsFeedPage() {
     setCalLoading(true);
     try {
       const params = { month: calMonth, year: calYear, ...listParams };
+      if (filterType) params.type = filterType;
+      if (filterStatus) params.status = filterStatus;
+      if (filterUser) params.user_id = filterUser;
       if (filterRegionId) params.region_id = filterRegionId;
+      if (search) params.search = search;
       const { data } = await api.get('/events/calendar', { params });
       setCalEvents(data || []);
     } catch (e) {
@@ -465,10 +472,10 @@ export default function EventsFeedPage() {
     } else if (rangeFrom || rangeTo) {
       hints.push(`thời gian ${rangeFrom || '...'} → ${rangeTo || '...'}`);
     }
-    if (filterRegionId) hints.push('khu vực đã chọn');
+    if (filterRegionId) hints.push('khu vực người tạo');
     if (filterType) hints.push('loại sự kiện');
     if (filterStatus) hints.push('trạng thái');
-    if (filterUser) hints.push('nhân viên');
+    if (filterUser) hints.push('người tạo');
     if (search.trim()) hints.push(`tìm "${search.trim()}"`);
     return hints;
   }, [
@@ -880,7 +887,7 @@ export default function EventsFeedPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Nhân viên</label>
+                  <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Người tạo</label>
                   <select value={filterUser} onChange={e => setFilterUser(e.target.value)} className="h-9 px-3 border rounded-lg text-sm min-w-[140px]">
                     <option value="">Tất cả</option>
                     {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
@@ -888,14 +895,14 @@ export default function EventsFeedPage() {
                 </div>
                 <div>
                   <label className="block text-[10px] font-medium text-gray-500 mb-0.5 flex items-center gap-1">
-                    <MapPin className="h-3 w-3" /> Khu vực
+                    <MapPin className="h-3 w-3" /> Khu vực người tạo
                   </label>
                   <select
                     value={filterRegionId}
                     onChange={e => setFilterRegionId(e.target.value)}
                     disabled={!effectiveCompanyIdForUsers}
                     className="h-9 px-3 border rounded-lg text-sm min-w-[150px] disabled:bg-gray-100"
-                    title={!effectiveCompanyIdForUsers ? 'Chọn công ty (admin) để lọc khu vực' : ''}
+                    title={!effectiveCompanyIdForUsers ? 'Chọn công ty (admin) để lọc khu vực người tạo' : 'Lọc sự kiện theo khu vực của người tạo'}
                   >
                     <option value="">Tất cả khu vực</option>
                     {regions.map((rg) => (

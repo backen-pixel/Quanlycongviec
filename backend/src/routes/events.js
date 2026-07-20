@@ -63,8 +63,8 @@ function resolveEventsCompanyScope(req, res) {
 }
 
 const EVENTS_LEGACY_LEAD_OR_MAX = 320;
-/** Giới hạn lead_id khi lọc theo khu vực (một mệnh đề `.in`). */
-const EVENTS_REGION_LEAD_MAX_IN = 2000;
+/** Giới hạn số người tạo khi lọc theo khu vực (một mệnh đề `.in`). */
+const EVENTS_CREATOR_IN_MAX = 2000;
 
 /** Lead IDs cho OR legacy — chỉ khi công ty nhỏ; công ty lớn chỉ lọc `company_id`. */
 async function resolveCompanyLeadIdsForEvents(companyId) {
@@ -78,19 +78,121 @@ async function resolveCompanyLeadIdsForEvents(companyId) {
 }
 
 /**
- * Lọc sự kiện thuộc công ty: company_id khớp HOẶC (legacy) lead/deal thuộc công ty đó.
- * Phải là hàm đồng bộ — không được `async` + `return queryBuilder`: builder Supabase là thenable,
- * async function sẽ await nhầm và trả về { data, error } → lỗi «q.order is not a function».
- *
- * Công ty nhiều lead: chỉ `.eq('company_id')` — tránh OR URL quá dài gây 5xx PostgREST.
+ * Escape giá trị cho PostgREST `or` / `ilike` (tránh phá cú pháp filter).
  */
-function applyEventsCompanyFilter(queryBuilder, companyId, leadIdsForCompany) {
-  if (!companyId) return queryBuilder;
-  const leadIds = (leadIdsForCompany || []).filter(Boolean);
-  if (!leadIds.length || leadIds.length > EVENTS_LEGACY_LEAD_OR_MAX) {
-    return queryBuilder.eq('company_id', companyId);
+function escapeEventsOrFilterValue(s) {
+  return String(s || '')
+    .replace(/[%_,.()"\\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Gộp company (legacy OR) + search thành một filter `or` để không ghi đè lẫn nhau.
+ *
+ * PostgREST chỉ giữ 1 param `or` — gọi `.or()` lần hai sẽ mất lọc công ty.
+ * Công ty nhiều lead: chỉ `.eq('company_id')` — tránh OR URL quá dài gây 5xx.
+ * Phải đồng bộ (không async) — builder Supabase là thenable.
+ *
+ * Lọc người tạo / khu vực người tạo: dùng `resolveEventCreatorFilter` + `.eq`/`.in('created_by')`.
+ */
+function applyEventsCombinedOrFilters(queryBuilder, {
+  companyId = null,
+  leadIdsForCompany = null,
+  search = null,
+} = {}) {
+  const orGroups = [];
+
+  if (companyId) {
+    const leadIds = (leadIdsForCompany || []).filter(Boolean);
+    if (!leadIds.length || leadIds.length > EVENTS_LEGACY_LEAD_OR_MAX) {
+      queryBuilder = queryBuilder.eq('company_id', companyId);
+    } else {
+      orGroups.push(`company_id.eq.${companyId},lead_id.in.(${leadIds.join(',')})`);
+    }
   }
-  return queryBuilder.or(`company_id.eq.${companyId},lead_id.in.(${leadIds.join(',')})`);
+
+  const qSearch = escapeEventsOrFilterValue(search);
+  if (qSearch) {
+    orGroups.push(
+      `title.ilike.%${qSearch}%,location.ilike.%${qSearch}%,description.ilike.%${qSearch}%`,
+    );
+  }
+
+  if (orGroups.length === 0) return queryBuilder;
+  if (orGroups.length === 1) return queryBuilder.or(orGroups[0]);
+  // `or=and(or(...),or(...))` → PostgREST đánh giá như AND của các nhóm OR
+  return queryBuilder.or(`and(${orGroups.map((g) => `or(${g})`).join(',')})`);
+}
+
+/** Khoảng ngày theo VN (+07:00) cho start_time — khớp calendar/overview. */
+function eventsDateFromBound(dateFrom) {
+  if (!dateFrom) return null;
+  const d = String(dateFrom).trim();
+  if (!d) return null;
+  if (/[T\s]/.test(d) || /[Zz]|[+-]\d{2}:?\d{2}$/.test(d)) return d;
+  return `${d}T00:00:00+07:00`;
+}
+function eventsDateToBound(dateTo) {
+  if (!dateTo) return null;
+  const d = String(dateTo).trim();
+  if (!d) return null;
+  if (/[T\s]/.test(d) || /[Zz]|[+-]\d{2}:?\d{2}$/.test(d)) return d;
+  return `${d}T23:59:59.999+07:00`;
+}
+
+/**
+ * Lọc theo người tạo sự kiện + khu vực của người tạo (user_company_regions).
+ * - user_id → created_by = user đó
+ * - region_id → created_by ∈ nhân viên được gán khu vực (không phụ thuộc users.company_id —
+ *   nhiều NV/admin có company_id null nhưng vẫn thuộc khu vực qua user_company_regions)
+ * - cả hai → giao: người tạo phải thuộc khu vực đã chọn
+ * @returns {{ empty: true } | { creatorIds: string[] | null }}
+ */
+async function resolveEventCreatorFilter({ companyId = null, regionId = null, userId = null } = {}) {
+  const uid = userId && String(userId).trim() ? String(userId).trim() : null;
+  const rid = regionId && String(regionId).trim() ? String(regionId).trim() : null;
+
+  let regionCreatorIds = null;
+  if (rid) {
+    // Đảm bảo khu vực thuộc đúng công ty đang xem (nếu có scope công ty)
+    if (companyId) {
+      const { data: regionRow, error: rErr } = await supabase
+        .from('company_regions')
+        .select('id')
+        .eq('id', rid)
+        .eq('company_id', companyId)
+        .maybeSingle();
+      if (rErr) throw rErr;
+      if (!regionRow) return { empty: true };
+    }
+
+    const { data: links, error } = await supabase
+      .from('user_company_regions')
+      .select('user_id')
+      .eq('region_id', rid);
+    if (error) throw error;
+    const ids = [...new Set((links || []).map((r) => r.user_id).filter(Boolean).map(String))]
+      .slice(0, EVENTS_CREATOR_IN_MAX);
+    if (ids.length === 0) return { empty: true };
+    regionCreatorIds = ids;
+  }
+
+  if (uid) {
+    if (regionCreatorIds && !regionCreatorIds.includes(uid)) {
+      return { empty: true };
+    }
+    return { creatorIds: [uid] };
+  }
+
+  if (regionCreatorIds) return { creatorIds: regionCreatorIds };
+  return { creatorIds: null };
+}
+
+function applyEventCreatorFilter(queryBuilder, creatorIds) {
+  if (!creatorIds || !creatorIds.length) return queryBuilder;
+  if (creatorIds.length === 1) return queryBuilder.eq('created_by', creatorIds[0]);
+  return queryBuilder.in('created_by', creatorIds);
 }
 
 async function assertEventCompanyAccess(req, res, eventId) {
@@ -256,33 +358,33 @@ r.get('/', async (req, res) => {
     if (sc.companyId) {
       companyLeadIds = await resolveCompanyLeadIdsForEvents(sc.companyId);
     }
-    let q = supabase.from('crm_events').select(EVENT_SELECT, { count: 'exact' });
-    q = applyEventsCompanyFilter(q, sc.companyId, companyLeadIds);
-
-    /** Lọc theo khu vực CRM (lead.region_id): chỉ sự kiện gắn lead thuộc khu vực đó */
-    if (region_id && String(region_id).trim()) {
-      let lq = supabase.from('crm_leads').select('id').eq('region_id', String(region_id).trim());
-      if (sc.companyId) lq = lq.eq('company_id', sc.companyId);
-      const { data: lr, error: lRegErr } = await lq;
-      if (lRegErr) throw lRegErr;
-      const lids = (lr || []).map((x) => x.id).filter(Boolean);
-      if (lids.length === 0) {
-        return res.json({ events: [], total: 0 });
-      }
-      const slice = lids.slice(0, EVENTS_REGION_LEAD_MAX_IN);
-      q = q.in('lead_id', slice);
+    const creatorScope = await resolveEventCreatorFilter({
+      companyId: sc.companyId,
+      regionId: region_id,
+      userId: user_id,
+    });
+    if (creatorScope.empty) {
+      return res.json({ events: [], total: 0 });
     }
+
+    let q = supabase.from('crm_events').select(EVENT_SELECT, { count: 'exact' });
+    q = applyEventsCombinedOrFilters(q, {
+      companyId: sc.companyId,
+      leadIdsForCompany: companyLeadIds,
+      search,
+    });
+    q = applyEventCreatorFilter(q, creatorScope.creatorIds);
 
     if (type) q = q.eq('event_type', type);
     if (status) q = q.eq('status', status);
     if (moduleFilter) q = q.eq('module', moduleFilter);
     else if (modulesFilter && modulesFilter.length) q = q.in('module', modulesFilter);
-    if (user_id) q = q.or(`created_by.eq.${user_id},assignee_id.eq.${user_id}`);
     if (lead_id) q = q.eq('lead_id', lead_id);
     if (customer_id) q = q.eq('customer_id', customer_id);
-    if (date_from) q = q.gte('start_time', date_from);
-    if (date_to) q = q.lte('start_time', date_to + 'T23:59:59');
-    if (search) q = q.or(`title.ilike.%${search}%,location.ilike.%${search}%,description.ilike.%${search}%`);
+    const fromBound = eventsDateFromBound(date_from);
+    const toBound = eventsDateToBound(date_to);
+    if (fromBound) q = q.gte('start_time', fromBound);
+    if (toBound) q = q.lte('start_time', toBound);
 
     q = q.order('start_time', { ascending: false })
       .range(parseInt(offset) || 0, (parseInt(offset) || 0) + (parseInt(limit) || 50) - 1);
@@ -291,15 +393,18 @@ r.get('/', async (req, res) => {
     // Migration 245 chưa chạy — bỏ filter module và thử lại.
     if (result.error && /column.*module.*does not exist|42703/i.test(String(result.error.message || ''))) {
       let q2 = supabase.from('crm_events').select(EVENT_SELECT, { count: 'exact' });
-      q2 = applyEventsCompanyFilter(q2, sc.companyId, companyLeadIds);
+      q2 = applyEventsCombinedOrFilters(q2, {
+        companyId: sc.companyId,
+        leadIdsForCompany: companyLeadIds,
+        search,
+      });
+      q2 = applyEventCreatorFilter(q2, creatorScope.creatorIds);
       if (type) q2 = q2.eq('event_type', type);
       if (status) q2 = q2.eq('status', status);
-      if (user_id) q2 = q2.or(`created_by.eq.${user_id},assignee_id.eq.${user_id}`);
       if (lead_id) q2 = q2.eq('lead_id', lead_id);
       if (customer_id) q2 = q2.eq('customer_id', customer_id);
-      if (date_from) q2 = q2.gte('start_time', date_from);
-      if (date_to) q2 = q2.lte('start_time', date_to + 'T23:59:59');
-      if (search) q2 = q2.or(`title.ilike.%${search}%,location.ilike.%${search}%,description.ilike.%${search}%`);
+      if (fromBound) q2 = q2.gte('start_time', fromBound);
+      if (toBound) q2 = q2.lte('start_time', toBound);
       q2 = q2.order('start_time', { ascending: false })
         .range(parseInt(offset) || 0, (parseInt(offset) || 0) + (parseInt(limit) || 50) - 1);
       result = await q2;
@@ -380,13 +485,13 @@ r.get('/overview', async (req, res) => {
       companyLeadIds = await resolveCompanyLeadIdsForEvents(sc.companyId);
     }
 
-    let regionLeadIds = null;
-    if (regionId && String(regionId).trim()) {
-      let lq = supabase.from('crm_leads').select('id').eq('region_id', String(regionId).trim());
-      if (sc.companyId) lq = lq.eq('company_id', sc.companyId);
-      const { data: lr, error: lRegErr } = await lq;
-      if (lRegErr) throw lRegErr;
-      regionLeadIds = new Set((lr || []).map((x) => x.id).filter(Boolean));
+    const creatorScope = await resolveEventCreatorFilter({
+      companyId: sc.companyId,
+      regionId,
+      userId,
+    });
+    if (creatorScope.empty) {
+      return res.json(emptyOverviewPayload(dateFrom, dateTo, granularityQ));
     }
 
     const pageSize = 1000;
@@ -395,18 +500,14 @@ r.get('/overview', async (req, res) => {
     const rawEvents = [];
     for (;;) {
       let q = supabase.from('crm_events').select(selectCols);
-      q = applyEventsCompanyFilter(q, sc.companyId, companyLeadIds);
+      q = applyEventsCombinedOrFilters(q, {
+        companyId: sc.companyId,
+        leadIdsForCompany: companyLeadIds,
+      });
+      q = applyEventCreatorFilter(q, creatorScope.creatorIds);
       q = q.gte('start_time', `${dateFrom}T00:00:00+07:00`);
       q = q.lte('start_time', `${dateTo}T23:59:59.999+07:00`);
-      if (userId) q = q.or(`created_by.eq.${userId},assignee_id.eq.${userId}`);
       if (eventType) q = q.eq('event_type', eventType);
-      if (regionLeadIds) {
-        const lids = [...regionLeadIds].slice(0, EVENTS_REGION_LEAD_MAX_IN);
-        if (lids.length === 0) {
-          return res.json(emptyOverviewPayload(dateFrom, dateTo, granularityQ));
-        }
-        q = q.in('lead_id', lids);
-      }
       q = q.order('start_time', { ascending: true }).range(from, from + pageSize - 1);
       const { data, error } = await q;
       if (error) throw error;
@@ -568,7 +669,7 @@ r.get('/calendar', async (req, res) => {
   try {
     const sc = resolveEventsCompanyScope(req, res);
     if (!sc.ok) return;
-    const { month, year, region_id } = req.query; // month: 1-12, year: 2026
+    const { month, year, region_id, type, status, user_id, search } = req.query; // month: 1-12, year: 2026
     let moduleFilter = normalizeModuleParam(req.query.module);
     let modulesFilter = moduleFilter ? null : normalizeModulesParam(req.query.modules);
     const modScope = await resolveEventModulesQueryFilter(req.user, moduleFilter, modulesFilter);
@@ -588,23 +689,28 @@ r.get('/calendar', async (req, res) => {
     if (sc.companyId) {
       companyLeadIds = await resolveCompanyLeadIdsForEvents(sc.companyId);
     }
+    const creatorScope = await resolveEventCreatorFilter({
+      companyId: sc.companyId,
+      regionId: region_id,
+      userId: user_id,
+    });
+    if (creatorScope.empty) {
+      return res.json([]);
+    }
+
     let cq = supabase.from('crm_events')
       .select(EVENT_SELECT)
       .gte('start_time', startDate)
       .lte('start_time', endDate);
-    cq = applyEventsCompanyFilter(cq, sc.companyId, companyLeadIds);
+    cq = applyEventsCombinedOrFilters(cq, {
+      companyId: sc.companyId,
+      leadIdsForCompany: companyLeadIds,
+      search,
+    });
+    cq = applyEventCreatorFilter(cq, creatorScope.creatorIds);
 
-    if (region_id && String(region_id).trim()) {
-      let lq = supabase.from('crm_leads').select('id').eq('region_id', String(region_id).trim());
-      if (sc.companyId) lq = lq.eq('company_id', sc.companyId);
-      const { data: lr, error: lRegErr } = await lq;
-      if (lRegErr) throw lRegErr;
-      const lids = (lr || []).map((x) => x.id).filter(Boolean);
-      if (lids.length === 0) {
-        return res.json([]);
-      }
-      cq = cq.in('lead_id', lids.slice(0, EVENTS_REGION_LEAD_MAX_IN));
-    }
+    if (type) cq = cq.eq('event_type', type);
+    if (status) cq = cq.eq('status', status);
     if (moduleFilter) cq = cq.eq('module', moduleFilter);
     else if (modulesFilter && modulesFilter.length) cq = cq.in('module', modulesFilter);
     cq = cq.order('start_time');
@@ -612,15 +718,14 @@ r.get('/calendar', async (req, res) => {
     if (cqRes.error && /column.*module.*does not exist|42703/i.test(String(cqRes.error.message || ''))) {
       let cq2 = supabase.from('crm_events').select(EVENT_SELECT)
         .gte('start_time', startDate).lte('start_time', endDate);
-      cq2 = applyEventsCompanyFilter(cq2, sc.companyId, companyLeadIds);
-      if (region_id && String(region_id).trim()) {
-        let lq = supabase.from('crm_leads').select('id').eq('region_id', String(region_id).trim());
-        if (sc.companyId) lq = lq.eq('company_id', sc.companyId);
-        const { data: lr } = await lq;
-        const lids = (lr || []).map((x) => x.id).filter(Boolean);
-        if (lids.length === 0) return res.json([]);
-        cq2 = cq2.in('lead_id', lids.slice(0, EVENTS_REGION_LEAD_MAX_IN));
-      }
+      cq2 = applyEventsCombinedOrFilters(cq2, {
+        companyId: sc.companyId,
+        leadIdsForCompany: companyLeadIds,
+        search,
+      });
+      cq2 = applyEventCreatorFilter(cq2, creatorScope.creatorIds);
+      if (type) cq2 = cq2.eq('event_type', type);
+      if (status) cq2 = cq2.eq('status', status);
       cq2 = cq2.order('start_time');
       cqRes = await cq2;
     }

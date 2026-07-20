@@ -335,7 +335,7 @@ export default function EventsOverviewPage() {
 
           <div className="flex flex-wrap items-end gap-2">
             <div>
-              <label className="block text-[10px] text-gray-500 mb-0.5">Nhân viên</label>
+              <label className="block text-[10px] text-gray-500 mb-0.5">Người tạo</label>
               <select
                 value={filterUser}
                 onChange={(e) => setFilterUser(e.target.value)}
@@ -363,13 +363,14 @@ export default function EventsOverviewPage() {
             </div>
             <div>
               <label className="block text-[10px] text-gray-500 mb-0.5 flex items-center gap-1">
-                <MapPin className="h-3 w-3" /> Khu vực
+                <MapPin className="h-3 w-3" /> Khu vực người tạo
               </label>
               <select
                 value={filterRegionId}
                 onChange={(e) => setFilterRegionId(e.target.value)}
                 disabled={!effectiveCompanyIdForUsers}
                 className="h-9 px-3 border rounded-lg text-sm min-w-[140px] disabled:bg-gray-100"
+                title={!effectiveCompanyIdForUsers ? 'Chọn công ty để lọc khu vực người tạo' : 'Lọc theo khu vực của người tạo sự kiện'}
               >
                 <option value="">Tất cả</option>
                 {regions.map((rg) => (
