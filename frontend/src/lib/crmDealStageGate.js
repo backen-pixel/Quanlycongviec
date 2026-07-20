@@ -109,22 +109,106 @@ export function isDealCrmKanbanDragLocked(_item, _pipelineType) {
 }
 
 /**
+ * Phân loại cột CRM do xưởng/VC quản (sau Thắng).
+ * @returns {'sx_production'|'vc_delivery'|'vc_installation'|'vc_customer_care'|null}
+ */
+export function classifyCrmPostWonManagedKind(stage) {
+  if (!stage || stage.is_won || stage.is_lost) return null;
+  const role = String(stage.sync_role || '').trim();
+  if (role && POST_WON_SYNC_ROLES.has(role)) return role;
+  const n = normalizeStageNameFold(stage.name);
+  if (isSanXuatProductionColumnName(n)) return 'sx_production';
+  // «Vận chuyển/lắp đặt» (Phúc Đạt) → delivery trước khi tách lắp đặt
+  if (n.includes('van chuyen') && n.includes('lap dat')) return 'vc_delivery';
+  if (n.includes('lap dat')) return 'vc_installation';
+  if (n.includes('van chuyen')) return 'vc_delivery';
+  if (n.includes('cham soc') && n.includes('khach')) return 'vc_customer_care';
+  if (n.includes('bao hanh') || n.includes('hoa don')) return 'vc_customer_care';
+  return null;
+}
+
+function badgeNameFold(badge) {
+  return normalizeStageNameFold(badge?.name);
+}
+
+function badgeSyncType(badge) {
+  return String(badge?.crm_sync_type || '').trim().toLowerCase();
+}
+
+/** Xưởng/VC đã ở giai đoạn tương ứng cột CRM đích chưa? */
+export function workshopReadyForCrmPostWonStage(item, targetStage) {
+  const kind = classifyCrmPostWonManagedKind(targetStage);
+  if (!kind) return true;
+  const sx = item?.sx_pipeline_stage;
+  const vc = item?.vc_pipeline_stage;
+  const sxN = badgeNameFold(sx);
+  const vcN = badgeNameFold(vc);
+  const sxType = badgeSyncType(sx);
+  const vcType = badgeSyncType(vc);
+
+  if (kind === 'sx_production') {
+    if (sxType === 'production') return true;
+    if (sx?.id && isSanXuatProductionColumnName(sxN)) return true;
+    return false;
+  }
+  if (kind === 'vc_installation') {
+    if (vcType === 'installation') return true;
+    if (vc?.id && vcN.includes('lap dat')) return true;
+    return false;
+  }
+  if (kind === 'vc_delivery') {
+    if (vcType === 'delivery' || vcType === 'installation') return true;
+    if (vc?.id && (vcN.includes('van chuyen') || vcN.includes('lap dat') || vcN.includes('giao hang'))) return true;
+    return false;
+  }
+  if (kind === 'vc_customer_care') {
+    if (vcType === 'customer_care') return true;
+    if (vc?.id && (vcN.includes('cham soc') || vcN.includes('bao hanh') || vcN.includes('cskh'))) return true;
+    return false;
+  }
+  return true;
+}
+
+function postWonManualBlockMessage(kind, item) {
+  const code = item?.code || item?.title || 'Deal';
+  if (kind === 'vc_installation') {
+    return `Deal ${code}: cột Lắp đặt chỉ kéo được sau khi bên Vận chuyển/xưởng đã chuyển dự án sang «Đang lắp đặt». Hiện VC chưa ở giai đoạn lắp đặt — hãy kéo trên module VC trước.`;
+  }
+  if (kind === 'vc_delivery') {
+    return `Deal ${code}: cột Vận chuyển chỉ kéo được sau khi bên VC đã chuyển dự án sang «Đang vận chuyển» (hoặc lắp đặt). Hiện VC chưa sẵn sàng — hãy kéo trên module VC trước.`;
+  }
+  if (kind === 'sx_production') {
+    return `Deal ${code}: cột Sản xuất chỉ kéo được sau khi xưởng đã đưa dự án vào cột Sản xuất (đồng bộ CRM). Hiện xưởng chưa ở giai đoạn đó — hãy kéo trên module SX trước.`;
+  }
+  if (kind === 'vc_customer_care') {
+    return `Deal ${code}: cột Chăm sóc KH chỉ kéo được sau khi bên VC đã chuyển sang Bảo hành / CSKH. Hiện VC chưa sẵn sàng — hãy kéo trên module VC trước.`;
+  }
+  return `Deal ${code}: không thể chuyển tay sang giai đoạn này trên CRM — tiến độ do xưởng/VC đồng bộ.`;
+}
+
+/**
  * @param {CrmLeadLike} item
  * @param {CrmStageLike} targetStage
  * @param {'lead'|'deal'} pipelineType
  */
-export function canDropDealOnCrmKanbanStage(_item, _targetStage, pipelineType) {
+export function canDropDealOnCrmKanbanStage(item, targetStage, pipelineType) {
   if (pipelineType !== 'deal') return true;
-  // Mở khóa toàn bộ: CRM Kanban có thể thả deal vào bất kỳ cột nào (kể cả Sản xuất / Vận chuyển).
-  return true;
+  return !crmDealStageMoveBlockedMessage(item, targetStage, pipelineType);
 }
 
 /**
- * @returns {string|null} Thông báo nếu không được thả / đổi cột
- *   Hiện tại: không chặn bất kỳ chiều di chuyển nào trên CRM Kanban.
- *   Đồng bộ tiến độ SX/VC vẫn do module xưởng/VC quản — chuyển tay từ CRM chỉ đổi `stage_id` và badge.
+ * Chặn kéo tay sang cột SX/VC/Lắp đặt khi xưởng/VC chưa chuyển tương ứng.
+ * @returns {string|null}
  */
-export function crmDealStageMoveBlockedMessage(_item, _targetStage, pipelineType) {
+export function crmDealStageMoveBlockedMessage(item, targetStage, pipelineType) {
   if (pipelineType !== 'deal') return null;
-  return null;
+  if (!item || item.type === 'lead') return null;
+  if (!targetStage) return null;
+  if (String(item.stage_id || '') === String(targetStage.id || '')) return null;
+  // Không chặn Thắng / Thua / cột doanh thu hoàn thành.
+  if (targetStage.is_won || targetStage.is_lost || isCrmCompletedRevenueStage(targetStage)) return null;
+  const kind = classifyCrmPostWonManagedKind(targetStage);
+  if (!kind) return null;
+  if (workshopReadyForCrmPostWonStage(item, targetStage)) return null;
+  return postWonManualBlockMessage(kind, item);
 }

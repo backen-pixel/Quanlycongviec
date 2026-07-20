@@ -542,7 +542,19 @@ r.put('/leads/:id', async (req, res) => {
         : { data: null };
 
       if (oldLead?.type === 'deal') {
-        const stageGatePut = assertDealCrmManualStageChange(oldLead, targetStage, prevStage);
+        let gateLead = oldLead;
+        try {
+          const vcJoin = _vcPipelineStageAvailable
+            ? ', vc_pipeline_stage:logistics_pipeline_stages(id, name, crm_sync_type)'
+            : '';
+          const { data: badgeLead } = await supabase
+            .from('crm_leads')
+            .select(`id, type, project_id, stage_id, sx_pipeline_stage:production_pipeline_stages(id, name, crm_sync_type)${vcJoin}`)
+            .eq('id', id)
+            .maybeSingle();
+          if (badgeLead) gateLead = { ...oldLead, ...badgeLead };
+        } catch (_) { /* giữ oldLead — gate sẽ chặn post-won nếu thiếu badge */ }
+        const stageGatePut = assertDealCrmManualStageChange(gateLead, targetStage, prevStage);
         if (!stageGatePut.ok) {
           return res.status(400).json({ error: stageGatePut.error, code: stageGatePut.code });
         }
@@ -1883,13 +1895,19 @@ r.get('/leads/:id/stage-advance-check', async (req, res) => {
 r.patch('/leads/:id/stage', async (req, res) => {
   try {
     const { stage_id, lost_reason, production_company_id, workshop_type_id: bodyWorkshopTypeId } = req.body;
+    const leadStageSelectWithBadges =
+      'type, project_id, company_id, assigned_to, lead_owner_id, lead_type_id, use_order_tasks, parent_lead_id, stage_id, sx_handover_at, kanban_deadline_at'
+      + ', sx_pipeline_stage:production_pipeline_stages(id, name, crm_sync_type)'
+      + (_vcPipelineStageAvailable
+        ? ', vc_pipeline_stage:logistics_pipeline_stages(id, name, crm_sync_type)'
+        : '');
     let { data: lead } = await supabase
       .from('crm_leads')
-      .select('type, project_id, company_id, assigned_to, lead_owner_id, lead_type_id, use_order_tasks, parent_lead_id, stage_id, sx_handover_at, kanban_deadline_at')
+      .select(leadStageSelectWithBadges)
       .eq('id', req.params.id)
       .single();
     if (!lead) {
-      // Fallback nếu chưa migrate cột kanban_deadline_at.
+      // Fallback nếu chưa migrate cột kanban_deadline_at / crm_sync_type trên badge.
       ({ data: lead } = await supabase
         .from('crm_leads')
         .select('type, project_id, company_id, assigned_to, lead_owner_id, lead_type_id, use_order_tasks, parent_lead_id, stage_id, sx_handover_at')

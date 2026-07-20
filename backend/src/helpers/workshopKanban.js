@@ -1109,6 +1109,25 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
         ) {
           patch.stage_id = currentRow.crm_target_stage_id;
         }
+        if (
+          st?.is_won
+          && (!patch.stage_id || String(patch.stage_id) === String(lead.stage_id))
+        ) {
+          console.warn(
+            '[syncCrmLeadSxPipelineFromProject] TARGET_SET_BUT_CRM_STILL_WON',
+            JSON.stringify({
+              projectId,
+              leadId: lead.id,
+              sxColId: preferredSxCol || currentRow?.id || null,
+              sxColName: currentRow?.name || null,
+              crmTargetStageId: currentRow.crm_target_stage_id,
+              skipReasons,
+              hasHandover: !!lead.sx_handover_at,
+              canOverwrite,
+              crmStageName: st?.name || null,
+            }),
+          );
+        }
         agentDebugLog(
           'workshopKanban.js:syncCrm:targetBranch',
           'lead patch decision',
@@ -1194,6 +1213,29 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
           if (String(lead.stage_id || '') !== String(thangStageId)) update.stage_id = thangStageId;
           else skipReasons.push('already_at_thang');
         }
+      }
+
+      // Log rõ khi cột SX đã bật trigger production nhưng CRM không nhảy (thường thiếu handover).
+      if (
+        isInCrmProductionTriggerStage
+        && (!update.stage_id || String(update.stage_id) === String(lead.stage_id))
+        && st?.is_won
+      ) {
+        console.warn(
+          '[syncCrmLeadSxPipelineFromProject] TRIGGER_ON_BUT_CRM_STILL_WON',
+          JSON.stringify({
+            projectId,
+            leadId: lead.id,
+            sxColId: preferredSxCol || currentRow?.id || null,
+            sxColName: currentRow?.name || null,
+            crmSyncType: currentRow?.crm_sync_type || null,
+            skipReasons,
+            hasHandover: !!lead.sx_handover_at,
+            canOverwrite,
+            sanXuatStageId,
+            crmStageName: st?.name || null,
+          }),
+        );
       }
 
       agentDebugLog(
