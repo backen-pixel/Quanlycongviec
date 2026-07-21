@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { Settings, Plus, Trash2, Save, ChevronRight, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer, ArrowRightLeft, Search, Wrench } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, ChevronRight, ChevronDown, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer, ArrowRightLeft, Search, Wrench } from 'lucide-react';
 import WorkshopTypeSettingsSection from '../components/WorkshopTypeSettingsSection';
 import { isPipelineStageSlaDisabled } from '../lib/crmPipelineSla';
 
@@ -50,6 +50,7 @@ export default function ProductionPipelineSettingsPage() {
   const [typeStaffUsers, setTypeStaffUsers] = useState([]);
   const [typeStaffLoading, setTypeStaffLoading] = useState(false);
   const [typeStaffSaving, setTypeStaffSaving] = useState(false);
+  const [staffConfigOpen, setStaffConfigOpen] = useState(false);
   const [stageStaffFilterCompanyId, setStageStaffFilterCompanyId] = useState('');
   const [stageStaffFilterDivisionId, setStageStaffFilterDivisionId] = useState('');
   const [stageStaffDivisions, setStageStaffDivisions] = useState([]);
@@ -1123,7 +1124,7 @@ export default function ProductionPipelineSettingsPage() {
   const editingIntake = editId && sorted.find((s) => s.id === editId)?.bucket_slug === INTAKE;
 
   return (
-    <div className="space-y-4 max-w-4xl">
+    <div className="space-y-4 w-full max-w-[1400px]">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Factory className="h-7 w-7 text-teal-600" />
@@ -1132,14 +1133,14 @@ export default function ProductionPipelineSettingsPage() {
         <div className="flex flex-wrap items-center gap-2">
           <Link
             to="/sx/task-templates"
-            className="text-sm font-medium text-teal-700 hover:text-teal-900 border border-teal-200 rounded-lg px-3 py-2 bg-white inline-flex items-center gap-1.5"
+            className="text-sm font-medium text-teal-700 hover:text-teal-900 border border-teal-200 rounded-lg px-3 py-2 bg-white inline-flex items-center gap-1.5 shadow-sm"
             title="Bộ mẫu nhiệm vụ"
           >
             <ListChecks className="h-4 w-4" /> Bộ mẫu nhiệm vụ
           </Link>
           <Link
             to="/sx/dashboard"
-            className="text-sm font-medium text-teal-700 hover:text-teal-900 border border-teal-200 rounded-lg px-3 py-2 bg-white"
+            className="text-sm font-medium text-teal-700 hover:text-teal-900 border border-teal-200 rounded-lg px-3 py-2 bg-white shadow-sm"
           >
             ← Dashboard
           </Link>
@@ -1201,7 +1202,7 @@ export default function ProductionPipelineSettingsPage() {
                 </p>
               </div>
             </div>
-            <div className="flex flex-wrap gap-2 shrink-0">
+            <div className="flex flex-wrap gap-2 shrink-0 items-center">
               <Link
                 to="/sx/regions"
                 className="text-[11px] font-medium text-indigo-700 hover:text-indigo-900 border border-indigo-200 rounded-lg px-2.5 py-1.5 bg-white"
@@ -1214,9 +1215,19 @@ export default function ProductionPipelineSettingsPage() {
               >
                 Đội SX & phân công mẫu →
               </Link>
+              <button
+                type="button"
+                onClick={() => setStaffConfigOpen((v) => !v)}
+                className="text-[11px] font-semibold text-indigo-800 border border-indigo-300 rounded-lg px-2.5 py-1.5 bg-white hover:bg-indigo-50 inline-flex items-center gap-1 cursor-pointer"
+              >
+                {staffConfigOpen ? 'Thu gọn' : 'Cấu hình NV'}
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform ${staffConfigOpen ? 'rotate-180' : ''}`} />
+              </button>
             </div>
           </div>
 
+          {staffConfigOpen && (
+          <>
           {(typeStaffLoading || intakeAssigneeLoading) ? (
             <div className="flex items-center gap-2 text-xs text-gray-500 py-1">
               <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang tải nhân sự…
@@ -1225,7 +1236,7 @@ export default function ProductionPipelineSettingsPage() {
             <>
               {(workshopTypes.length === 0) ? (
                 <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                  Chưa có phân loại xưởng — thêm phân loại ở bước 2 bên dưới hoặc bấm «Tủ bếp + Cánh kính».
+                  Chưa có phân loại xưởng — thêm phân loại ở cột phải hoặc bấm «Tủ bếp + Cánh kính».
                 </p>
               ) : (
                 <div className="space-y-3">
@@ -1351,8 +1362,13 @@ export default function ProductionPipelineSettingsPage() {
               </div>
             </>
           )}
+          </>
+          )}
         </div>
       )}
+
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)] gap-4 items-start">
+      <div className="space-y-4 min-w-0">
 
       {/* Bước 2: Chọn Phân loại */}
       {settingsCompanyId && (
@@ -1364,7 +1380,9 @@ export default function ProductionPipelineSettingsPage() {
               type="button"
               onClick={() => {
                 const el = document.getElementById('sx-workshop-type-section');
-                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                el?.classList.add('ring-2', 'ring-teal-400', 'rounded-xl');
+                setTimeout(() => el?.classList.remove('ring-2', 'ring-teal-400'), 1200);
               }}
               className="ml-auto h-7 px-2.5 border border-gray-200 bg-white text-gray-700 rounded-md text-[11px] font-medium hover:bg-gray-50 inline-flex items-center gap-1.5 cursor-pointer"
               title="Thêm / sửa / xóa phân loại"
@@ -1375,7 +1393,7 @@ export default function ProductionPipelineSettingsPage() {
               type="button"
               onClick={seedDefaultKitchenGlass}
               disabled={seedingDefault}
-              className="h-7 px-2.5 border border-teal-200 bg-white text-teal-700 rounded-md text-[11px] font-medium hover:bg-teal-50 inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              className="h-7 px-2.5 border border-teal-200 bg-teal-600 text-white rounded-md text-[11px] font-medium hover:bg-teal-700 inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
               title="Tạo 2 phân loại Tủ bếp / Cánh kính + bộ pipeline mặc định"
             >
               {seedingDefault ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
@@ -1402,7 +1420,7 @@ export default function ProductionPipelineSettingsPage() {
                   <Globe className="h-3.5 w-3.5" /> Bộ chung
                 </button>
                 {workshopTypes.length === 0 && (
-                  <span className="text-xs text-gray-400 self-center">Chưa có loại — tạo bên dưới.</span>
+                  <span className="text-xs text-gray-400 self-center">Chưa có loại — tạo ở cột phải.</span>
                 )}
                 {workshopTypes.map((t) => (
                   <button
@@ -1433,7 +1451,7 @@ export default function ProductionPipelineSettingsPage() {
       ) : !workshopTypes.length ? (
         <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50/40 px-4 py-10 text-center text-sm text-amber-800 space-y-2">
           <p>Công ty này <strong>chưa có phân loại dự án</strong> (Tủ bếp, B2B, …).</p>
-          <p className="text-xs text-amber-700">Tạo phân loại ở khối phía trên, rồi chọn phân loại để thêm/sửa/xóa cột pipeline.</p>
+          <p className="text-xs text-amber-700">Tạo phân loại ở cột phải, rồi chọn phân loại để thêm/sửa/xóa cột pipeline.</p>
         </div>
       ) : !selectedTypeKey ? (
         <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50/40 px-4 py-10 text-center text-sm text-amber-800">
@@ -2400,16 +2418,20 @@ export default function ProductionPipelineSettingsPage() {
         </div>
       )}
 
-      {!loading && (
-        <div id="sx-workshop-type-section" className="scroll-mt-20">
+      </div>{/* /left column */}
+
+      <aside className="xl:sticky xl:top-3 space-y-3 min-w-0">
+        <div id="sx-workshop-type-section" className="scroll-mt-4 transition shadow-sm rounded-xl">
           <WorkshopTypeSettingsSection
             moduleContext="production"
             accent="teal"
+            layout="sidebar"
             onTypesChanged={loadWorkshopTypes}
             {...(isAdmin ? { companyId: settingsCompanyId, onCompanyIdChange: setSettingsCompanyId } : {})}
           />
         </div>
-      )}
+      </aside>
+      </div>{/* /grid */}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef, createContext, useContext } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -31,6 +32,13 @@ import {
   isProductionAssignmentsPage,
 } from '../lib/assignmentSourceLink';
 import CommentDisplayHiddenBanner, { useCommentShowOnScreenEnabled } from '../components/CommentDisplayHiddenBanner';
+
+/** Modal phải portal ra body — tránh bị sidebar (z-30) đè vì main nằm trong stacking context z-10. */
+const ASSIGNMENTS_MODAL_Z = 'z-[100]';
+function portalAssignmentsModal(node) {
+  if (typeof document === 'undefined') return null;
+  return createPortal(node, document.body);
+}
 
 /**
  * Trang "Giao việc CRM" — độc lập với module Công việc và CRM tasks gắn lead.
@@ -1659,8 +1667,8 @@ function PersonalColumnModal({ column, viewLabel, onClose, onSave }) {
     if (!form.name.trim()) return;
     onSave(form);
   };
-  return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+  return portalAssignmentsModal(
+    <div className={`fixed inset-0 bg-black/40 ${ASSIGNMENTS_MODAL_Z} flex items-center justify-center p-4`} onClick={onClose}>
       <form onClick={(e) => e.stopPropagation()} onSubmit={submit} className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5 space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-bold">{form.id ? 'Sửa cột cá nhân' : `Thêm cột ${viewLabel}`}</h3>
@@ -1833,8 +1841,8 @@ function ItemModal({ item, users: _initialUsers, columns, companies, isAdmin, de
     return [...selUsers].map((id) => byId.get(id)).filter(Boolean);
   }, [selUsers, lookups.users]);
 
-  return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+  return portalAssignmentsModal(
+    <div className={`fixed inset-0 bg-black/40 ${ASSIGNMENTS_MODAL_Z} flex items-center justify-center p-4`} onClick={onClose}>
       <form
         onClick={(e) => e.stopPropagation()}
         onSubmit={submit}
@@ -2174,8 +2182,8 @@ function ColumnModal({ column, onClose, onSave }) {
     if (!form.name.trim()) return;
     onSave(form);
   };
-  return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+  return portalAssignmentsModal(
+    <div className={`fixed inset-0 bg-black/40 ${ASSIGNMENTS_MODAL_Z} flex items-center justify-center p-4`} onClick={onClose}>
       <form onClick={(e) => e.stopPropagation()} onSubmit={submit} className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5 space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-bold">{form.id ? 'Sửa cột' : 'Thêm cột'}</h3>
@@ -2274,21 +2282,23 @@ function DetailModal({ item, columns, onClose, onEdit, onUpdate, onDelete }) {
     }));
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl shadow-xl w-full max-w-5xl max-h-[92vh] flex flex-col">
+  const StatusIcon = status.icon;
+
+  return portalAssignmentsModal(
+    <div className={`fixed inset-0 bg-black/50 ${ASSIGNMENTS_MODAL_Z} flex items-center justify-center p-4`} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl shadow-xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden">
         {/* HEADER */}
-        <div className="px-5 py-3 border-b flex items-start justify-between gap-3">
+        <div className="px-5 py-3 border-b flex items-start justify-between gap-3 shrink-0">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1 flex-wrap">
               {col && <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: (col.color || '#999') + '20', color: col.color }}>{col.name}</span>}
               <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${pri.color}`}>⚑ {pri.label}</span>
               <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium flex items-center gap-1 bg-gray-100 ${status.color}`}>
-                <status.icon className="h-3 w-3" />{status.label}
+                <StatusIcon className="h-3 w-3" />{status.label}
               </span>
               {overdue && <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-700">🚨 Quá hạn</span>}
             </div>
-            <h2 className={`text-xl font-bold ${localItem.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>{localItem.title}</h2>
+            <h2 className={`text-xl font-bold break-words ${localItem.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>{localItem.title}</h2>
             {canMove && (
               <AssignmentStatusStages status={localItem.status} canEdit onChange={setStatus} />
             )}
@@ -2311,7 +2321,7 @@ function DetailModal({ item, columns, onClose, onEdit, onUpdate, onDelete }) {
         </div>
 
         {/* BODY */}
-        <div className="px-5 py-4 overflow-y-auto space-y-4">
+        <div className="px-5 py-4 overflow-y-auto space-y-4 min-h-0 flex-1">
           {/* Info grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
             <div>
@@ -2372,7 +2382,7 @@ function DetailModal({ item, columns, onClose, onEdit, onUpdate, onDelete }) {
           <SubmitFilesCompact assignmentId={localItem.id} canUpload={isAssignee || isCreator} />
         </div>
 
-        <div className="px-5 py-3 border-t bg-gray-50 rounded-b-2xl flex justify-end gap-2">
+        <div className="px-5 py-3 border-t bg-gray-50 rounded-b-2xl flex justify-end gap-2 shrink-0">
           <button onClick={onClose} className="h-9 px-4 rounded-lg border text-sm cursor-pointer">Đóng</button>
         </div>
       </div>
