@@ -130,6 +130,10 @@ export default function KanbanColumnVirtualList({
         virtualItems.map((v) => {
           const item = items[v.index];
           if (!item) return null;
+          // v.start đã gồm scrollMargin (offset list so với board scroll).
+          // List root nằm ngay dưới header → phải trừ đi, nếu không card bị đẩy xuống
+          // đúng bằng chiều cao header (lệch từng cột vì header cao/thấp khác nhau).
+          const top = useBoardScroll ? v.start - scrollMargin : v.start;
           return (
             <div
               key={item.id}
@@ -138,7 +142,7 @@ export default function KanbanColumnVirtualList({
               className={CRM_KANBAN_CARD_SLOT_CLASS}
               style={{
                 position: 'absolute',
-                top: v.start,
+                top,
                 left: 0,
                 width: '100%',
                 paddingBottom: gap,

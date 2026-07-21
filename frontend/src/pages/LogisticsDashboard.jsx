@@ -27,7 +27,7 @@ import NewLogisticsProjectModal from '../components/NewLogisticsProjectModal';
 import WorkshopPipelineKanbanScroll from '../components/WorkshopPipelineKanbanScroll';
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import KanbanCardQuickMove from '../components/KanbanCardQuickMove';
-import { useKanbanColumnTheme, KANBAN_CARDS_BODY_CLASS } from '../lib/kanbanColumnTheme';
+import { useKanbanColumnTheme, KANBAN_CARDS_BODY_CLASS, UI_KANBAN_FIXED_CLASS, KANBAN_BOARD_COLUMN_RAILS_CLASS, KANBAN_COLUMN_RAIL_CLASS, KANBAN_COLUMN_VALUE_METRIC_CLASS } from '../lib/kanbanColumnTheme';
 import WorkshopStaffFilterPanel from '../components/WorkshopStaffFilterPanel';
 import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
@@ -1313,20 +1313,20 @@ const KanbanStageCard = memo(function KanbanStageCard({
       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setIsOverColumn(true); }}
       onDragLeave={(e) => { if (e.target === e.currentTarget) setIsOverColumn(false); }}
       onDrop={(e) => { e.preventDefault(); setIsOverColumn(false); const pid = e.dataTransfer.getData('projectId'); if (pid) onMoveStage(pid, stage); }}
-      className={`flex-shrink-0 w-80 rounded-lg overflow-hidden transition-all duration-200 ${isOverColumn ? 'ring-2 ring-orange-500 ring-dashed' : ''}`}
+      className={`flex flex-col flex-shrink-0 w-[17rem] max-[420px]:w-[15rem] rounded-lg overflow-hidden transition-all duration-200 kanban-column-surface ${KANBAN_COLUMN_RAIL_CLASS} ${isOverColumn ? 'ring-2 ring-orange-500 ring-dashed' : ''}`}
     >
       <div
-        className="p-4 border-b transition-all kanban-column-surface"
+        className="px-3 py-2.5 border-b rounded-t-md transition-all kanban-column-surface"
         style={{
           backgroundColor: isOverColumn ? columnTheme.dropBg : columnTheme.headerBg,
           borderColor: columnTheme.border,
           boxShadow: columnTheme.headerShadow,
         }}
       >
-        <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center justify-between gap-1.5 mb-1.5 min-w-0">
           <div className="flex items-center gap-1.5 min-w-0">
-            <span className="text-lg shrink-0">{stage.icon || '📦'}</span>
-            <h3 className="font-semibold truncate kanban-stage-title" style={{ color: '#000000' }}>{stage.name}</h3>
+            <span className="text-base shrink-0 leading-none">{stage.icon || '📦'}</span>
+            <h3 className="text-sm font-semibold truncate leading-snug kanban-stage-title" style={{ color: '#000000' }} title={stage.name}>{stage.name}</h3>
             {stage.is_handover_to_install && !isInstallVcStage(stage) && (
               <span
                 className="shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-teal-100 text-teal-800 border border-teal-200"
@@ -1337,7 +1337,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
             )}
           </div>
           <span
-            className="px-2 py-1 text-xs font-bold rounded tabular-nums"
+            className="inline-flex items-center justify-center min-w-[24px] h-[22px] px-1.5 rounded-md text-[13px] font-bold tabular-nums leading-none shrink-0"
             style={{
               backgroundColor: columnTheme.badgeBg,
               color: columnTheme.accent,
@@ -1347,13 +1347,13 @@ const KanbanStageCard = memo(function KanbanStageCard({
             {items.length}
           </span>
         </div>
-        <p className="text-xs text-force-black" style={{ color: '#374151' }}>
+        <p className={`text-xs ${KANBAN_COLUMN_VALUE_METRIC_CLASS}`}>
           Giá trị: {formatVND(items.reduce((sum, p) => sum + (Number(p.estimated_value) || 0), 0))}
         </p>
       </div>
       <div
         ref={containerRef}
-        className={`border border-white/30 border-t-0 p-2 transition-all overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable] ${KANBAN_CARDS_BODY_CLASS} ${
+        className={`border border-white/30 border-t-0 p-1.5 space-y-0 transition-all overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable] ${KANBAN_CARDS_BODY_CLASS} ${
           isOverColumn ? 'kanban-cards-body--drop' : ''
         }`}
         style={{ maxHeight: columnMaxH, minHeight: '200px' }}
@@ -1451,10 +1451,10 @@ const KanbanCard = memo(function KanbanCard({
         markWorkshopPipelineCardFocus(item.id, 'vc');
         navigate(`/vc/projects/${item.id}`);
       }}
-      className={`relative !bg-white rounded-lg border p-3 pt-9 transition-all duration-200 cursor-pointer group hover:-translate-y-0.5 hover:shadow-lg ${
+      className={`relative !bg-white rounded-lg border p-2.5 pt-8 transition-all duration-200 cursor-pointer group hover:-translate-y-0.5 hover:shadow-lg ${
         isSelected ? 'ring-2 ring-orange-400 ring-offset-1 border-orange-300' : 'border-gray-200'
       }`}
-      style={{ backgroundColor: '#ffffff', borderLeft: `3px solid ${stageColor}` }}
+      style={{ backgroundColor: '#ffffff', borderLeft: `4px solid ${stageColor}` }}
     >
       {onToggleSelect && (
         <label
@@ -1638,7 +1638,7 @@ function KanbanView({ pipeline, onMoveStage, onDelete, calculateDays, selectedId
   );
   return (
     <WorkshopPipelineKanbanScroll cardSelector="[data-vc-kanban-card]">
-      <div className={`flex gap-0 min-w-max ui-kanban-fixed`}>
+      <div className={`flex min-w-max items-stretch gap-2.5 ${KANBAN_BOARD_COLUMN_RAILS_CLASS} ${UI_KANBAN_FIXED_CLASS}`}>
         {pipeline.map((stage, columnIndex) => (
           <KanbanStageCard
             key={stage.id || stage.slug}
