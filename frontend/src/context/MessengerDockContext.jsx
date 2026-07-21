@@ -228,12 +228,16 @@ export function MessengerDockProvider({ children }) {
         /* ignore */
       }
     };
-    void hydrateFromServer();
+    // Trì hoãn hydrate nhóm chat để không chiếm slot HTTP lúc mở trang (BG/ĐH/HĐ).
+    const bootDelay = setTimeout(() => {
+      if (!cancelled) void hydrateFromServer();
+    }, 2500);
     const tick = () => { if (!document.hidden) void hydrateFromServer(); };
     const interval = setInterval(tick, 120_000);
     document.addEventListener('visibilitychange', tick);
     return () => {
       cancelled = true;
+      clearTimeout(bootDelay);
       clearInterval(interval);
       document.removeEventListener('visibilitychange', tick);
     };

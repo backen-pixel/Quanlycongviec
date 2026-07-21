@@ -39,11 +39,18 @@ export default function OrderDetail() {
 
   const createInvoice = async () => {
     if (_invoiceSaving.current) return;
-    if (!confirm('Tạo hóa đơn từ đơn hàng này?')) return;
+    if (!confirm('Chuyển đơn hàng sang hóa đơn?')) return;
     _invoiceSaving.current = true;
     setInvoiceLoading(true);
-    try { const { data } = await api.post(`/crm/orders/${id}/create-invoice`); alert(`Đã tạo hóa đơn ${data.code}`); navigate('/crm/invoices'); }
-    catch (e) { alert(e.response?.data?.error || 'Lỗi'); _invoiceSaving.current = false; setInvoiceLoading(false); }
+    try {
+      const { data } = await api.post(`/crm/orders/${id}/create-invoice`);
+      alert(`Đã tạo hóa đơn ${data.code}`);
+      navigate(`/crm/invoices/${data.id}`);
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi chuyển sang hóa đơn');
+      _invoiceSaving.current = false;
+      setInvoiceLoading(false);
+    }
   };
 
   const updateStatus = async (newStatus) => {
@@ -187,9 +194,9 @@ export default function OrderDetail() {
             {pdfLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
             {pdfLoading ? 'Đang tải...' : 'Xuất PDF'}
           </button>
-          <button onClick={createInvoice} disabled={invoiceLoading} className="h-9 px-4 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer disabled:opacity-60">
+          <button onClick={createInvoice} disabled={invoiceLoading || order.status === 'cancelled'} className="h-9 px-4 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer disabled:opacity-60" title="Chuyển đơn hàng sang hóa đơn">
             {invoiceLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Receipt className="h-4 w-4" />}
-            {invoiceLoading ? 'Đang tạo HĐ...' : 'Tạo hóa đơn'}
+            {invoiceLoading ? 'Đang tạo...' : '→ Hóa đơn'}
           </button>
         </div>
       </div>

@@ -281,7 +281,9 @@ export default function MessengerDock() {
 
   useEffect(() => {
     if (!user) return;
-    void loadDockData();
+    // Trì hoãn load danh sách nhóm — tránh tranh slot HTTP với trang BG/ĐH/HĐ lúc mở app.
+    const t = setTimeout(() => { void loadDockData(); }, 2500);
+    return () => clearTimeout(t);
   }, [user, loadDockData]);
 
   useEffect(() => {

@@ -134,6 +134,7 @@ export default function QuotationForm() {
   const [saveMsg, setSaveMsg] = useState('');
   const [statusLoading, setStatusLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [convertLoading, setConvertLoading] = useState(false);
   const [excelDraftHint, setExcelDraftHint] = useState('');
   /** Xác nhận đã kiểm tra số liệu — chuyển từ modal Excel sang đây */
   const [excelReviewConfirmed, setExcelReviewConfirmed] = useState(false);
@@ -673,6 +674,21 @@ export default function QuotationForm() {
     setPdfLoading(false);
   };
 
+  const convertToOrder = async () => {
+    if (convertLoading || !id || form.status === 'converted') return;
+    if (!confirm(`Chuyển báo giá ${form.code || ''} sang đơn hàng?`)) return;
+    setConvertLoading(true);
+    try {
+      const { data } = await api.post(`/crm/quotations/${id}/convert-to-order`);
+      setForm(f => ({ ...f, status: 'converted' }));
+      alert(`Đã tạo đơn hàng ${data.code}`);
+      navigate(`/crm/orders/${data.id}`);
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi chuyển sang đơn hàng');
+    }
+    setConvertLoading(false);
+  };
+
   /** Field khi sửa sẽ tự GỠ lock_amount (vì user chủ động đổi → muốn recompute theo công thức). */
   const FIELDS_BREAK_LOCK = new Set(['quantity', 'unit_price', 'discount_percent', 'spec_factor', 'standard_area', 'length', 'width', 'height']);
   const updateItem = (idx, field, val) => setItems(prev => prev.map((item, i) => {
@@ -768,6 +784,18 @@ export default function QuotationForm() {
             <button onClick={downloadPdf} disabled={pdfLoading} className="h-9 px-4 border rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer hover:bg-gray-50 disabled:opacity-50">
               {pdfLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
               {pdfLoading ? 'Đang tải...' : 'Xuất PDF'}
+            </button>
+          )}
+          {isEdit && form.status !== 'converted' && (
+            <button
+              onClick={convertToOrder}
+              disabled={convertLoading}
+              className="h-9 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              title="Chuyển báo giá sang đơn hàng"
+            >
+              {convertLoading
+                ? <><Loader2 className="h-4 w-4 animate-spin" /> Đang tạo...</>
+                : <><ShoppingCart className="h-4 w-4" /> → Đơn hàng</>}
             </button>
           )}
           <button onClick={save} disabled={saveStatus === 'loading' || excelSaveBlocked} className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer disabled:opacity-50">

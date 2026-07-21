@@ -515,7 +515,7 @@ export default function NotificationCenter({ socket }) {
     setLoading(false);
   };
 
-  const loadCount = async () => {
+  const loadCount = async ({ includeCskh = true } = {}) => {
     try {
       const { data } = await api.get('/dashboard');
       const a = data.stats?.unread_activity ?? 0;
@@ -529,6 +529,7 @@ export default function NotificationCenter({ socket }) {
       setUnreadEvents(ev);
       setUnreadAssignments(asn);
     } catch { }
+    if (!includeCskh) return;
     try {
       const { data: cskhData } = await api.get('/crm/followup-care/notifications');
       const cnt = cskhData?.total ?? 0;
@@ -537,13 +538,16 @@ export default function NotificationCenter({ socket }) {
   };
 
   useEffect(() => {
-    loadCount();
-    const tick = () => { if (!document.hidden) loadCount(); };
+    // Dashboard badge trước; CSKH (query nặng) trì hoãn để ưu tiên load trang hiện tại.
+    loadCount({ includeCskh: false });
+    const cskhDelay = setTimeout(() => { loadCount({ includeCskh: true }); }, 3000);
+    const tick = () => { if (!document.hidden) loadCount({ includeCskh: true }); };
     const interval = setInterval(tick, 120_000);
     document.addEventListener('visibilitychange', tick);
-    const onAssignBadge = () => loadCount();
+    const onAssignBadge = () => loadCount({ includeCskh: false });
     window.addEventListener('badge:refresh:assignments', onAssignBadge);
     return () => {
+      clearTimeout(cskhDelay);
       clearInterval(interval);
       document.removeEventListener('visibilitychange', tick);
       window.removeEventListener('badge:refresh:assignments', onAssignBadge);

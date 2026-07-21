@@ -40,10 +40,15 @@ export default function OrdersPage() {
   const createInvoice = async (id, e) => {
     e.stopPropagation();
     if (invoiceLoadingId) return;
-    if (!confirm('Tạo hóa đơn từ đơn hàng này?')) return;
+    if (!confirm('Chuyển đơn hàng sang hóa đơn?')) return;
     setInvoiceLoadingId(id);
-    try { const { data } = await api.post(`/crm/orders/${id}/create-invoice`); alert(`Đã tạo hóa đơn ${data.code}`); navigate('/crm/invoices'); }
-    catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
+    try {
+      const { data } = await api.post(`/crm/orders/${id}/create-invoice`);
+      alert(`Đã tạo hóa đơn ${data.code}`);
+      navigate(`/crm/invoices/${data.id}`);
+    } catch (err) {
+      alert(err.response?.data?.error || 'Lỗi chuyển sang hóa đơn');
+    }
     setInvoiceLoadingId(null);
   };
 
@@ -128,7 +133,12 @@ export default function OrdersPage() {
                 </button>
               </td>
               <td className="py-3 px-3">
-                <button onClick={e => createInvoice(o.id, e)} disabled={invoiceLoadingId === o.id} className="text-xs text-purple-600 hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50">
+                <button
+                  onClick={e => createInvoice(o.id, e)}
+                  disabled={invoiceLoadingId === o.id || o.status === 'cancelled'}
+                  className="text-xs text-purple-600 hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  title="Chuyển sang hóa đơn"
+                >
                   {invoiceLoadingId === o.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Receipt className="h-3.5 w-3.5" />}
                   {invoiceLoadingId === o.id ? 'Đang tạo...' : '→HĐ'}
                 </button>
