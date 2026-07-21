@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback, useMemo } from 'react';
+﻿import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import api from '../lib/api';
 import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar, CheckCircle2, Clock, Factory, Search, X, TrendingUp, RotateCcw, UserCircle, AlertTriangle } from 'lucide-react';
 import {
@@ -35,6 +35,7 @@ import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { resolveDefaultCrmAdminCompanyId, setStoredCrmFilterCompanyId } from '../lib/crmCompanyFilter';
 import { isPipelineStageSlaDisabled } from '../lib/crmPipelineSla';
+import { formatCrmToSxMappingLine } from '../lib/sxCompanySuggestFromLeadType';
 import Modal from '../components/Modal';
 import EmployeePicker from '../components/EmployeePicker';
 
@@ -362,9 +363,18 @@ export default function PipelineSettingsPage() {
     applies_to: 'both',
     is_active: true,
     workshop_production_templates: false,
-    default_production_company_id: '',
+    production_links: [],
   });
   const [productionCompaniesForSx, setProductionCompaniesForSx] = useState([]);
+  /** Allowlist công ty SX hiện cho CRM company — null = chưa load; [] = hiện tất cả */
+  const [visibleSxIds, setVisibleSxIds] = useState(null);
+  const [visibleSxSaving, setVisibleSxSaving] = useState(false);
+  /** Map productionCompanyId → workshop types */
+  const [sxWorkshopTypesByCompany, setSxWorkshopTypesByCompany] = useState({});
+  const sxWorkshopTypesByCompanyRef = useRef({});
+  useEffect(() => {
+    sxWorkshopTypesByCompanyRef.current = sxWorkshopTypesByCompany;
+  }, [sxWorkshopTypesByCompany]);
 
   const load = useCallback(async (opts = {}) => {
     const silent = !!opts.silent;
@@ -453,7 +463,22 @@ export default function PipelineSettingsPage() {
       setLeadTypesLoading(true);
       try {
         const { data } = await api.get('/crm/lead-types', { params: { company_id: cid, all: 'true' } });
-        if (!cancelled) setLeadTypes(Array.isArray(data) ? data : []);
+        if (!cancelled) {
+          const rows = Array.isArray(data) ? data : [];
+          setLeadTypes(rows.map((t) => ({
+            ...t,
+            production_links: Array.isArray(t.production_links) ? t.production_links : (
+              t.default_production_company_id && t.default_workshop_type_id
+                ? [{
+                    production_company_id: t.default_production_company_id,
+                    workshop_type_id: t.default_workshop_type_id,
+                    is_primary: true,
+                    order_index: 0,
+                  }]
+                : []
+            ),
+          })));
+        }
       } catch (e) {
         if (!cancelled) setLeadTypes([]);
       } finally {
@@ -472,6 +497,112 @@ export default function PipelineSettingsPage() {
       })
       .catch(() => setProductionCompaniesForSx([]));
   }, []);
+
+  // Allowlist công ty SX theo công ty CRM đang chọn
+  useEffect(() => {
+    const cid = selectedCompanyId || user?.company_id;
+    if (!cid) {
+      setVisibleSxIds(null);
+      return undefined;
+    }
+    let cancelled = false;
+    api.get(`/crm/companies/${cid}/visible-production-companies`)
+      .then((r) => {
+        if (cancelled) return;
+        setVisibleSxIds(Array.isArray(r.data?.production_company_ids) ? r.data.production_company_ids.map(String) : []);
+      })
+      .catch(() => { if (!cancelled) setVisibleSxIds([]); });
+    return () => { cancelled = true; };
+  }, [selectedCompanyId, user?.company_id]);
+
+  const loadWorkshopTypesForCompany = useCallback(async (companyId) => {
+    const cid = String(companyId || '').trim();
+    if (!cid) return [];
+    if (sxWorkshopTypesByCompanyRef.current[cid]) return sxWorkshopTypesByCompanyRef.current[cid];
+    try {
+      const { data } = await api.get('/workshop/project-types', {
+        params: { company_id: cid, module: 'production' },
+      });
+      const rows = Array.isArray(data) ? data : (data?.data || []);
+      setSxWorkshopTypesByCompany((prev) => ({ ...prev, [cid]: rows }));
+      return rows;
+    } catch {
+      setSxWorkshopTypesByCompany((prev) => ({ ...prev, [cid]: [] }));
+      return [];
+    }
+  }, []);
+
+  // Prefetch phân loại SX cho các công ty đang được gán trên loại CRM
+  useEffect(() => {
+    const ids = new Set();
+    (leadTypeNew.production_links || []).forEach((l) => {
+      if (l.production_company_id) ids.add(String(l.production_company_id));
+    });
+    (leadTypes || []).forEach((t) => {
+      (t.production_links || []).forEach((l) => {
+        if (l.production_company_id) ids.add(String(l.production_company_id));
+      });
+      if (t.default_production_company_id) ids.add(String(t.default_production_company_id));
+    });
+    ids.forEach((id) => { void loadWorkshopTypesForCompany(id); });
+  }, [leadTypes, leadTypeNew.production_links, loadWorkshopTypesForCompany]);
+
+  const updateLeadTypeLinks = (leadTypeId, nextLinks) => {
+    setLeadTypes((prev) => (prev || []).map((x) => (
+      String(x.id) === String(leadTypeId) ? { ...x, production_links: nextLinks } : x
+    )));
+  };
+
+  const resolveLinkLabels = (link) => {
+    const co = productionCompaniesForSx.find((c) => String(c.id) === String(link.production_company_id || ''));
+    const coName = co ? (co.short_name || co.name) : '';
+    const wtList = link.production_company_id
+      ? (sxWorkshopTypesByCompany[String(link.production_company_id)] || [])
+      : [];
+    const wt = wtList.find((w) => String(w.id) === String(link.workshop_type_id || ''));
+    return { coName, wtName: wt?.name || '' };
+  };
+
+  const saveVisibleSxAllowlist = async (nextIds) => {
+    const cid = selectedCompanyId || user?.company_id;
+    if (!cid) return;
+    setVisibleSxSaving(true);
+    try {
+      const { data } = await api.put(`/crm/companies/${cid}/visible-production-companies`, {
+        production_company_ids: nextIds,
+      });
+      setVisibleSxIds(Array.isArray(data?.production_company_ids) ? data.production_company_ids.map(String) : []);
+      showToast('Đã lưu danh sách công ty SX hiển thị', 'ok');
+    } catch (e) {
+      showToast(e?.response?.data?.error || e?.message || 'Lỗi lưu', 'err');
+    }
+    setVisibleSxSaving(false);
+  };
+
+  const toggleVisibleSxCompany = (companyId, show) => {
+    const id = String(companyId);
+    const current = Array.isArray(visibleSxIds) ? visibleSxIds : [];
+    // Chưa cấu hình (rỗng = hiện tất cả): lần bật/tắt đầu → khởi tạo từ full list trừ công ty ẩn
+    let next;
+    if (current.length === 0) {
+      if (show) {
+        // Đang hiện tất cả; bật lại 1 công ty không đổi — cần ẩn thì mới siết
+        return;
+      }
+      next = productionCompaniesForSx.map((c) => String(c.id)).filter((x) => x !== id);
+    } else if (show) {
+      next = current.includes(id) ? current : [...current, id];
+    } else {
+      next = current.filter((x) => x !== id);
+    }
+    setVisibleSxIds(next);
+    void saveVisibleSxAllowlist(next);
+  };
+
+  const isSxCompanyVisibleInUi = (companyId) => {
+    if (!Array.isArray(visibleSxIds) || visibleSxIds.length === 0) return true;
+    return visibleSxIds.includes(String(companyId));
+  };
 
   useEffect(() => { load(); }, [load]);
 
@@ -1539,7 +1670,124 @@ export default function PipelineSettingsPage() {
 
             <p className="px-4 pt-3 pb-2 text-[11px] text-gray-500 leading-relaxed">
               Mỗi công ty có danh mục riêng. Tích «Deal Sản xuất» để hệ thống tự tạo nhiệm vụ SX theo bộ mẫu đã cấu hình.
+              Gắn công ty SX + phân loại SX mặc định theo loại CRM. Phần dưới: chọn công ty SX nào được hiện khi chọn xưởng trên deal.
             </p>
+
+            {/* Allowlist công ty SX hiển thị */}
+            <div className="mx-4 mb-3 rounded-xl border border-amber-200 bg-amber-50/60 p-3 space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-[11px] font-semibold text-amber-950">Công ty SX hiển thị</p>
+                  <p className="text-[10px] text-amber-900/80 leading-snug mt-0.5">
+                    Chưa ẩn công ty nào = hiện tất cả. Khi đã ẩn ≥1 công ty, chỉ hiện các công ty đang bật «Hiện».
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={!selectedCompanyId || visibleSxSaving || !Array.isArray(visibleSxIds) || visibleSxIds.length === 0}
+                  onClick={() => {
+                    setVisibleSxIds([]);
+                    void saveVisibleSxAllowlist([]);
+                  }}
+                  className="shrink-0 h-7 px-2 rounded-lg text-[10px] font-semibold border border-amber-300 bg-white text-amber-900 hover:bg-amber-100 disabled:opacity-40 cursor-pointer"
+                  title="Xóa cấu hình — hiện lại tất cả"
+                >
+                  Hiện tất cả
+                </button>
+              </div>
+              {!selectedCompanyId ? (
+                <p className="text-[10px] text-amber-800">Chọn công ty CRM ở trên để cấu hình.</p>
+              ) : visibleSxIds === null ? (
+                <p className="text-[10px] text-amber-800">Đang tải…</p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  {productionCompaniesForSx.map((c) => {
+                    const shown = isSxCompanyVisibleInUi(c.id);
+                    return (
+                      <div
+                        key={c.id}
+                        className="flex items-center justify-between gap-2 rounded-lg border border-amber-100 bg-white px-2.5 py-1.5"
+                      >
+                        <span className="text-xs text-gray-800 truncate">{c.short_name || c.name}</span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-[9px] text-gray-500">{shown ? 'Hiện' : 'Ẩn'}</span>
+                          <ToggleSwitch
+                            checked={shown}
+                            disabled={visibleSxSaving}
+                            onChange={(v) => toggleVisibleSxCompany(c.id, v)}
+                            title={shown ? 'Đang hiện — tắt để ẩn' : 'Đang ẩn — bật để hiện'}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {productionCompaniesForSx.length === 0 && (
+                    <p className="text-[10px] text-gray-500 col-span-full">Chưa có công ty module Sản xuất.</p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Tóm tắt liên kết loại CRM → nhiều công ty SX · phân loại */}
+            {leadTypes.length > 0 && (
+              <div className="mx-4 mb-3 rounded-xl border border-violet-200 bg-violet-50/50 p-3 space-y-2">
+                <p className="text-[11px] font-semibold text-violet-950">Liên kết loại CRM ↔ SX</p>
+                <p className="text-[10px] text-violet-900/75 leading-snug">
+                  1 loại CRM có thể gắn nhiều công ty SX và nhiều phân loại xưởng. Dòng <span className="text-red-600 font-bold">★</span> = ưu tiên gợi ý khi chọn xưởng trên deal.
+                </p>
+                <div className="overflow-x-auto rounded-lg border border-violet-100 bg-white">
+                  <table className="w-full text-left text-[11px]">
+                    <thead>
+                      <tr className="border-b border-violet-100 bg-violet-50/80 text-[9px] uppercase tracking-wider text-violet-800/80">
+                        <th className="px-2.5 py-1.5 font-bold">Loại CRM</th>
+                        <th className="px-2.5 py-1.5 font-bold">Công ty SX</th>
+                        <th className="px-2.5 py-1.5 font-bold">Phân loại SX</th>
+                        <th className="px-2.5 py-1.5 font-bold w-10 text-red-600">★</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {leadTypes
+                        .slice()
+                        .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+                        .flatMap((t) => {
+                          const links = Array.isArray(t.production_links) && t.production_links.length
+                            ? t.production_links
+                            : [{ production_company_id: '', workshop_type_id: '', is_primary: false }];
+                          return links.map((link, idx) => {
+                            const { coName, wtName } = resolveLinkLabels(link);
+                            const missing = !coName || !wtName;
+                            return (
+                              <tr key={`${t.id}-${idx}`} className={missing ? 'bg-amber-50/40' : ''}>
+                                <td className="px-2.5 py-1.5 font-medium text-gray-900">
+                                  {idx === 0 ? (
+                                    <>
+                                      {t.name || '—'}
+                                      {t.is_active === false && (
+                                        <span className="ml-1 text-[9px] text-gray-400">(ẩn)</span>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <span className="text-gray-300">↳</span>
+                                  )}
+                                </td>
+                                <td className="px-2.5 py-1.5 text-gray-700">
+                                  {coName || <span className="text-amber-700">Chưa gán</span>}
+                                </td>
+                                <td className="px-2.5 py-1.5 text-gray-700">
+                                  {wtName || <span className="text-amber-700">Chưa gán</span>}
+                                </td>
+                                <td className="px-2.5 py-1.5 text-center text-red-600 font-bold">
+                                  {link.is_primary ? '★' : ''}
+                                </td>
+                              </tr>
+                            );
+                          });
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             <div className="px-4 pb-3 grid grid-cols-12 gap-2 items-end border-b border-gray-50">
               <label className="col-span-12 sm:col-span-5 flex flex-col gap-1 text-[10px] text-gray-500">
@@ -1577,13 +1825,16 @@ export default function PipelineSettingsPage() {
                   disabled={!selectedCompanyId || !leadTypeNew.name.trim()}
                   onClick={async () => {
                     try {
+                      const links = (leadTypeNew.production_links || []).filter(
+                        (l) => l.production_company_id && l.workshop_type_id,
+                      );
                       const { data } = await api.post('/crm/lead-types', {
                         company_id: selectedCompanyId || null,
                         name: leadTypeNew.name.trim(),
                         applies_to: leadTypeNew.applies_to,
                         is_active: leadTypeNew.is_active !== false,
                         workshop_production_templates: !!leadTypeNew.workshop_production_templates,
-                        default_production_company_id: leadTypeNew.default_production_company_id || null,
+                        production_links: links,
                       });
                       setLeadTypes((prev) => [data, ...(prev || [])]);
                       setLeadTypeNew({
@@ -1591,7 +1842,7 @@ export default function PipelineSettingsPage() {
                         applies_to: 'both',
                         is_active: true,
                         workshop_production_templates: false,
-                        default_production_company_id: '',
+                        production_links: [],
                       });
                     } catch (e) {
                       alert(e.response?.data?.error || 'Lỗi tạo loại');
@@ -1606,29 +1857,117 @@ export default function PipelineSettingsPage() {
               </div>
             </div>
 
-            <div className="px-4 py-2.5 border-b border-gray-50 bg-gray-50/40">
-              <label className="flex flex-col gap-1 text-[10px] text-gray-500 max-w-md">
-                <span className="font-semibold uppercase tracking-wide">Công ty SX mặc định</span>
-                <select
-                  value={leadTypeNew.default_production_company_id || ''}
-                  onChange={(e) => setLeadTypeNew((v) => ({ ...v, default_production_company_id: e.target.value }))}
-                  className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white"
+            <div className="px-4 py-2.5 border-b border-gray-50 bg-gray-50/40 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                  Liên kết SX cho loại mới (có thể thêm nhiều)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setLeadTypeNew((prev) => ({
+                    ...prev,
+                    production_links: [
+                      ...(prev.production_links || []),
+                      {
+                        production_company_id: '',
+                        workshop_type_id: '',
+                        is_primary: !(prev.production_links || []).some((l) => l.is_primary),
+                      },
+                    ],
+                  }))}
+                  className="h-7 px-2 rounded-lg text-[10px] font-semibold border border-gray-200 bg-white hover:bg-gray-50 cursor-pointer"
                 >
-                  <option value="">— Chưa gán —</option>
-                  {productionCompaniesForSx.map((c) => (
-                    <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                  ))}
-                </select>
-              </label>
+                  + Thêm cặp SX
+                </button>
+              </div>
+              {(leadTypeNew.production_links || []).length === 0 && (
+                <p className="text-[10px] text-gray-400">Chưa gắn — có thể thêm sau khi tạo loại.</p>
+              )}
+              {(leadTypeNew.production_links || []).map((link, idx) => {
+                const wtOpts = link.production_company_id
+                  ? (sxWorkshopTypesByCompany[String(link.production_company_id)] || [])
+                  : [];
+                return (
+                  <div key={idx} className="grid grid-cols-12 gap-2 items-end">
+                    <label className="col-span-5 flex flex-col gap-1 text-[10px] text-gray-500">
+                      <span>Công ty SX</span>
+                      <select
+                        value={link.production_company_id || ''}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setLeadTypeNew((prev) => {
+                            const next = [...(prev.production_links || [])];
+                            next[idx] = { ...next[idx], production_company_id: v, workshop_type_id: '' };
+                            return { ...prev, production_links: next };
+                          });
+                          if (v) void loadWorkshopTypesForCompany(v);
+                        }}
+                        className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-white"
+                      >
+                        <option value="">— Chọn —</option>
+                        {productionCompaniesForSx.map((c) => (
+                          <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="col-span-4 flex flex-col gap-1 text-[10px] text-gray-500">
+                      <span>Phân loại SX</span>
+                      <select
+                        value={link.workshop_type_id || ''}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setLeadTypeNew((prev) => {
+                            const next = [...(prev.production_links || [])];
+                            next[idx] = { ...next[idx], workshop_type_id: v };
+                            return { ...prev, production_links: next };
+                          });
+                        }}
+                        disabled={!link.production_company_id}
+                        className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-white disabled:bg-gray-50"
+                      >
+                        <option value="">{!link.production_company_id ? '— Chọn công ty —' : '— Chọn —'}</option>
+                        {wtOpts.map((wt) => (
+                          <option key={wt.id} value={wt.id}>{wt.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="col-span-2 flex items-center gap-1.5 text-[10px] text-gray-600 h-8">
+                      <input
+                        type="radio"
+                        name="leadTypeNewPrimary"
+                        checked={!!link.is_primary}
+                        onChange={() => setLeadTypeNew((prev) => ({
+                          ...prev,
+                          production_links: (prev.production_links || []).map((l, i) => ({
+                            ...l,
+                            is_primary: i === idx,
+                          })),
+                        }))}
+                      />
+                      <span className="text-red-600 font-bold">★</span> ưu tiên
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setLeadTypeNew((prev) => ({
+                        ...prev,
+                        production_links: (prev.production_links || []).filter((_, i) => i !== idx),
+                      }))}
+                      className="col-span-1 h-8 rounded-lg border border-red-200 text-red-600 text-[10px] hover:bg-red-50 cursor-pointer"
+                    >
+                      Xóa
+                    </button>
+                  </div>
+                );
+              })}
             </div>
 
             <div className="hidden md:grid grid-cols-12 gap-2 px-4 py-2 bg-violet-50/70 text-[9px] font-bold text-violet-800/80 uppercase tracking-wider border-b border-violet-100">
-              <div className="col-span-3">Tên loại</div>
-              <div className="col-span-2">Áp dụng</div>
+              <div className="col-span-2">Tên loại</div>
+              <div className="col-span-1">Áp dụng</div>
               <div className="col-span-1">TT</div>
               <div className="col-span-1 text-center">Hiện</div>
               <div className="col-span-1 text-center">SX mẫu</div>
-              <div className="col-span-2">SX mặc định</div>
+              <div className="col-span-4">Liên kết SX (công ty + phân loại)</div>
               <div className="col-span-2 text-right">Thao tác</div>
             </div>
 
@@ -1641,12 +1980,14 @@ export default function PipelineSettingsPage() {
                 {leadTypes
                   .slice()
                   .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
-                  .map((t) => (
+                  .map((t) => {
+                    const links = Array.isArray(t.production_links) ? t.production_links : [];
+                    return (
+                    <div key={t.id} className="hover:bg-gray-50/50">
                     <div
-                      key={t.id}
-                      className="grid grid-cols-12 gap-2 px-4 py-2.5 items-center hover:bg-gray-50/50"
+                      className="grid grid-cols-12 gap-2 px-4 py-2.5 items-start"
                     >
-                      <div className="col-span-12 md:col-span-3 flex items-center gap-1.5 min-w-0">
+                      <div className="col-span-12 md:col-span-2 flex items-center gap-1.5 min-w-0">
                         <IconGripVertical className="w-4 h-4 text-gray-300 shrink-0 hidden md:block" stroke={1.5} />
                         <input
                           value={t.name || ''}
@@ -1654,7 +1995,7 @@ export default function PipelineSettingsPage() {
                           className={`w-full rounded-lg px-2 py-1.5 text-xs ${FIELD_NAME}`}
                         />
                       </div>
-                      <div className="col-span-6 md:col-span-2">
+                      <div className="col-span-6 md:col-span-1">
                         <select
                           value={t.applies_to || 'both'}
                           onChange={(e) => setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? { ...x, applies_to: e.target.value } : x))}
@@ -1673,37 +2014,97 @@ export default function PipelineSettingsPage() {
                           className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-center"
                         />
                       </div>
-                      <div className="col-span-3 md:col-span-1 flex justify-center">
+                      <div className="col-span-3 md:col-span-1 flex justify-center pt-1">
                         <ToggleSwitch
                           checked={t.is_active !== false}
                           onChange={(v) => setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? { ...x, is_active: v } : x))}
                           title={t.is_active !== false ? 'Đang hiện' : 'Đang ẩn'}
                         />
                       </div>
-                      <div className="col-span-3 md:col-span-1 flex justify-center">
+                      <div className="col-span-3 md:col-span-1 flex justify-center pt-1">
                         <ToggleSwitch
                           checked={!!t.workshop_production_templates}
                           onChange={(v) => setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? { ...x, workshop_production_templates: v } : x))}
                           title="Deal Sản xuất — tự tạo nhiệm vụ SX"
                         />
                       </div>
-                      <div className="col-span-12 md:col-span-2">
-                        <select
-                          value={t.default_production_company_id || ''}
-                          onChange={(e) =>
-                            setLeadTypes((prev) =>
-                              (prev || []).map((x) =>
-                                x.id === t.id ? { ...x, default_production_company_id: e.target.value || null } : x,
-                              ),
-                            )
-                          }
-                          className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-[10px] bg-white"
+                      <div className="col-span-12 md:col-span-4 space-y-1.5">
+                        {links.map((link, idx) => {
+                          const wtOpts = link.production_company_id
+                            ? (sxWorkshopTypesByCompany[String(link.production_company_id)] || [])
+                            : [];
+                          return (
+                            <div key={idx} className="grid grid-cols-12 gap-1 items-center">
+                              <select
+                                value={link.production_company_id || ''}
+                                onChange={(e) => {
+                                  const v = e.target.value || null;
+                                  const next = links.map((l, i) => (
+                                    i === idx ? { ...l, production_company_id: v, workshop_type_id: null } : l
+                                  ));
+                                  updateLeadTypeLinks(t.id, next);
+                                  if (v) void loadWorkshopTypesForCompany(v);
+                                }}
+                                className="col-span-5 border border-gray-200 rounded-lg px-1.5 py-1 text-[10px] bg-white"
+                              >
+                                <option value="">— Công ty SX —</option>
+                                {productionCompaniesForSx.map((c) => (
+                                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                                ))}
+                              </select>
+                              <select
+                                value={link.workshop_type_id || ''}
+                                onChange={(e) => {
+                                  const v = e.target.value || null;
+                                  const next = links.map((l, i) => (
+                                    i === idx ? { ...l, workshop_type_id: v } : l
+                                  ));
+                                  updateLeadTypeLinks(t.id, next);
+                                }}
+                                disabled={!link.production_company_id}
+                                className="col-span-4 border border-gray-200 rounded-lg px-1.5 py-1 text-[10px] bg-white disabled:bg-gray-50"
+                              >
+                                <option value="">— Phân loại —</option>
+                                {wtOpts.map((wt) => (
+                                  <option key={wt.id} value={wt.id}>{wt.name}</option>
+                                ))}
+                              </select>
+                              <label className="col-span-2 flex items-center gap-0.5 text-[9px] text-gray-600">
+                                <input
+                                  type="radio"
+                                  name={`primary-${t.id}`}
+                                  checked={!!link.is_primary}
+                                  onChange={() => {
+                                    const next = links.map((l, i) => ({ ...l, is_primary: i === idx }));
+                                    updateLeadTypeLinks(t.id, next);
+                                  }}
+                                />
+                                <span className="text-red-600 font-bold">★</span>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => updateLeadTypeLinks(t.id, links.filter((_, i) => i !== idx))}
+                                className="col-span-1 text-[10px] text-red-600 hover:underline cursor-pointer"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          );
+                        })}
+                        <button
+                          type="button"
+                          onClick={() => updateLeadTypeLinks(t.id, [
+                            ...links,
+                            {
+                              production_company_id: '',
+                              workshop_type_id: '',
+                              is_primary: links.length === 0,
+                            },
+                          ])}
+                          className="text-[10px] font-medium text-violet-700 hover:underline cursor-pointer"
                         >
-                          <option value="">— Chưa gán —</option>
-                          {productionCompaniesForSx.map((c) => (
-                            <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                          ))}
-                        </select>
+                          + Thêm công ty / phân loại SX
+                        </button>
                       </div>
                       <div className="col-span-12 md:col-span-2 flex justify-end gap-1">
                         <button
@@ -1716,10 +2117,15 @@ export default function PipelineSettingsPage() {
                                 order_index: t.order_index ?? 0,
                                 is_active: t.is_active !== false,
                                 workshop_production_templates: !!t.workshop_production_templates,
-                                default_production_company_id: t.default_production_company_id || null,
+                                production_links: (t.production_links || []).filter(
+                                  (l) => l.production_company_id && l.workshop_type_id,
+                                ),
                               };
                               const { data } = await api.put(`/crm/lead-types/${t.id}`, payload);
-                              setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? data : x));
+                              setLeadTypes((prev) => (prev || []).map((x) => x.id === t.id ? {
+                                ...data,
+                                production_links: Array.isArray(data.production_links) ? data.production_links : [],
+                              } : x));
                             } catch (e) {
                               alert(e.response?.data?.error || 'Lỗi lưu');
                             }
@@ -1747,7 +2153,17 @@ export default function PipelineSettingsPage() {
                         </button>
                       </div>
                     </div>
-                  ))}
+                    <p className="px-4 pb-2 text-[10px] leading-snug text-violet-800">
+                      {(links || []).filter((l) => l.production_company_id && l.workshop_type_id).length
+                        ? (links || []).filter((l) => l.production_company_id && l.workshop_type_id).map((l) => {
+                            const { coName, wtName } = resolveLinkLabels(l);
+                            return `${l.is_primary ? '★ ' : ''}${coName || '?'} · ${wtName || '?'}`;
+                          }).join('  |  ')
+                        : formatCrmToSxMappingLine({ leadTypeName: t.name, companyName: '', workshopTypeName: '' })}
+                    </p>
+                    </div>
+                    );
+                  })}
               </div>
             )}
           </div>

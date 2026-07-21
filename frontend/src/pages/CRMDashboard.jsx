@@ -71,6 +71,19 @@ import {
   upsertCrmKanbanRow,
 } from '../lib/crmDashboardRealtime';
 import { sortAndDedupePipelineStages } from '../lib/crmPipelineStages';
+import SxCompanyPickList from '../components/SxCompanyPickList';
+import { useConfirmCountdown } from '../hooks/useConfirmCountdown';
+import {
+  classifyCrmLeadTypeForSx,
+  orderSxCompaniesPreferredFirst,
+  orderWorkshopTypesPreferredFirst,
+  pickWorkshopTypeIdForCompany,
+  preferredWorkshopTypeIdForCompany,
+  preferredSxFromLeadTypeRow,
+  sxLeadTypeHintText,
+  workshopTypeMatchesSxKind,
+  workshopTypePreferredForLeadType,
+} from '../lib/sxCompanySuggestFromLeadType';
 import {
   crmPipelineTabEntityLabel,
   crmPipelineTabTitle,
@@ -1209,9 +1222,101 @@ export default function CRMDashboard() {
   const [dealWonProductionWorkshopTypes, setDealWonProductionWorkshopTypes] = useState([]);
   const [dealWonProductionWorkshopLoading, setDealWonProductionWorkshopLoading] = useState(false);
   const [dealWonProductionError, setDealWonProductionError] = useState('');
+  const {
+    wait: dealWonConfirmWait,
+    start: startDealWonConfirmCountdown,
+    clear: clearDealWonConfirmTimer,
+  } = useConfirmCountdown(5);
+  const [dealWonAckChecked, setDealWonAckChecked] = useState(false);
+  const dealWonPendingRef = useRef(false);
   /** Deal đã có dự án SX, kéo lại sang Thắng — chỉ thông báo, không mở hộp chuyển */
   const [dealWonSxExistsCtx, setDealWonSxExistsCtx] = useState(null);
   const [productionCompaniesForSx, setProductionCompaniesForSx] = useState([]);
+
+  const resolveSxLeadTypeRow = useCallback((deal) => {
+    if (!deal) return null;
+    const id = deal.lead_type_id || deal.lead_type?.id;
+    if (id && Array.isArray(leadTypes) && leadTypes.length) {
+      const hit = leadTypes.find((t) => String(t.id) === String(id));
+      if (hit) return hit;
+    }
+    return deal.lead_type || null;
+  }, [leadTypes]);
+
+  const dashWonLeadTypeRow = useMemo(
+    () => resolveSxLeadTypeRow(dealWonProductionCtx?.deal),
+    [dealWonProductionCtx?.deal, resolveSxLeadTypeRow],
+  );
+  const dashWonLeadKind = useMemo(
+    () => classifyCrmLeadTypeForSx(dashWonLeadTypeRow?.name || dealWonProductionCtx?.deal?.lead_type?.name),
+    [dashWonLeadTypeRow, dealWonProductionCtx?.deal],
+  );
+  const dashWonDbPref = useMemo(
+    () => preferredSxFromLeadTypeRow(dashWonLeadTypeRow),
+    [dashWonLeadTypeRow],
+  );
+  const dashWonCompaniesForSelect = useMemo(
+    () => orderSxCompaniesPreferredFirst(
+      productionCompaniesForSx,
+      dashWonLeadKind,
+      dashWonDbPref.companyId,
+      dashWonDbPref.companyIds,
+    ),
+    [productionCompaniesForSx, dashWonLeadKind, dashWonDbPref.companyId, dashWonDbPref.companyIds],
+  );
+  const dashWonTypesForSelect = useMemo(() => {
+    const prefType = preferredWorkshopTypeIdForCompany(dashWonLeadTypeRow, dealWonProductionCompanyId)
+      || dashWonDbPref.workshopTypeId;
+    return orderWorkshopTypesPreferredFirst(dealWonProductionWorkshopTypes, dashWonLeadKind, prefType);
+  }, [
+    dealWonProductionWorkshopTypes,
+    dashWonLeadKind,
+    dashWonDbPref.workshopTypeId,
+    dashWonLeadTypeRow,
+    dealWonProductionCompanyId,
+  ]);
+  const dashWonHint = useMemo(() => {
+    const co = productionCompaniesForSx.find((c) => String(c.id) === dashWonDbPref.companyId);
+    const wt = dealWonProductionWorkshopTypes.find((t) => String(t.id) === dashWonDbPref.workshopTypeId);
+    const linkLines = (dashWonDbPref.links || []).map((l) => {
+      const c = productionCompaniesForSx.find((x) => String(x.id) === l.companyId);
+      const coName = c ? (c.short_name || c.name) : '';
+      const w = dealWonProductionWorkshopTypes.find((t) => String(t.id) === l.workshopTypeId);
+      const parts = [coName, w?.name].filter(Boolean).join(' · ');
+      return parts ? `${l.isPrimary ? '★ ' : ''}${parts}` : '';
+    }).filter(Boolean);
+    if (linkLines.length > 1) {
+      const label = String(dashWonLeadTypeRow?.name || '').trim() || '—';
+      return `Loại CRM «${label}» gắn: ${linkLines.join(' | ')}. Các xưởng khác vẫn chọn được.`;
+    }
+    return sxLeadTypeHintText(dashWonLeadTypeRow?.name, dashWonLeadKind, {
+      companyName: co ? (co.short_name || co.name) : '',
+      workshopTypeName: wt?.name || '',
+    });
+  }, [
+    dashWonDbPref,
+    dashWonLeadKind,
+    dashWonLeadTypeRow,
+    productionCompaniesForSx,
+    dealWonProductionWorkshopTypes,
+  ]);
+
+  const closeDealWonProductionModal = useCallback(() => {
+    dealWonPendingRef.current = false;
+    clearDealWonConfirmTimer();
+    setDealWonAckChecked(false);
+    setDealWonProductionCtx(null);
+    setDealWonProductionError('');
+    setDealWonProductionWorkshopTypeId('');
+    setDealWonProductionWorkshopTypes([]);
+    setDealWonProductionCompanyId('');
+  }, [clearDealWonConfirmTimer]);
+
+  const cancelDealWonPending = useCallback(() => {
+    dealWonPendingRef.current = false;
+    clearDealWonConfirmTimer();
+    setDealWonProductionError('Đã hủy — chưa chuyển.');
+  }, [clearDealWonConfirmTimer]);
 
   /** Tải phân loại SX khi mở hộp «Chuyển Deal sang Sản xuất» (kéo Kanban → Thắng). */
   useEffect(() => {
@@ -1228,20 +1333,22 @@ export default function CRMDashboard() {
         if (cancelled) return;
         const list = Array.isArray(r.data) ? r.data : [];
         setDealWonProductionWorkshopTypes(list);
-        if (list.length === 1) {
-          setDealWonProductionWorkshopTypeId(String(list[0].id));
-        } else if (
-          dealWonProductionWorkshopTypeId
-          && !list.some((t) => String(t.id) === String(dealWonProductionWorkshopTypeId))
-        ) {
-          setDealWonProductionWorkshopTypeId('');
-        }
+        const sug = pickWorkshopTypeIdForCompany(
+          dashWonLeadTypeRow,
+          dealWonProductionCompanyId,
+          list,
+          dashWonLeadKind,
+        );
+        const stillValid = dealWonProductionWorkshopTypeId
+          && list.some((t) => String(t.id) === String(dealWonProductionWorkshopTypeId));
+        if (!stillValid) setDealWonProductionWorkshopTypeId(sug || '');
       })
       .catch(() => { if (!cancelled) setDealWonProductionWorkshopTypes([]); })
       .finally(() => { if (!cancelled) setDealWonProductionWorkshopLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dealWonProductionCtx, dealWonProductionCompanyId]);
+  }, [dealWonProductionCtx, dealWonProductionCompanyId, dashWonLeadTypeRow, dashWonLeadKind]);
+
   /** Server trả deal_won (tạo dự án lỗi) hoặc cần tạo dự án sau khi đã Thắng */
   const [dealAutoCreatePick, setDealAutoCreatePick] = useState(null);
   const [dealAutoCreateCompanyId, setDealAutoCreateCompanyId] = useState('');
@@ -1249,6 +1356,112 @@ export default function CRMDashboard() {
   const [dealAutoCreateWorkshopTypes, setDealAutoCreateWorkshopTypes] = useState([]);
   const [dealAutoCreateWorkshopLoading, setDealAutoCreateWorkshopLoading] = useState(false);
   const [dealAutoCreatePickError, setDealAutoCreatePickError] = useState('');
+  const {
+    wait: dealAutoConfirmWait,
+    start: startDealAutoConfirmCountdown,
+    clear: clearDealAutoConfirmTimer,
+  } = useConfirmCountdown(5);
+  const [dealAutoAckChecked, setDealAutoAckChecked] = useState(false);
+  const dealAutoPendingRef = useRef(false);
+
+  const dashAutoDeal = useMemo(() => {
+    if (!dealAutoCreatePick) return null;
+    return (allDeals || []).find((d) => String(d.id) === String(dealAutoCreatePick)) || null;
+  }, [dealAutoCreatePick, allDeals]);
+  const dashAutoLeadTypeRow = useMemo(
+    () => resolveSxLeadTypeRow(dashAutoDeal),
+    [dashAutoDeal, resolveSxLeadTypeRow],
+  );
+  const dashAutoLeadKind = useMemo(
+    () => classifyCrmLeadTypeForSx(dashAutoLeadTypeRow?.name || dashAutoDeal?.lead_type?.name),
+    [dashAutoLeadTypeRow, dashAutoDeal],
+  );
+  const dashAutoDbPref = useMemo(
+    () => preferredSxFromLeadTypeRow(dashAutoLeadTypeRow),
+    [dashAutoLeadTypeRow],
+  );
+  const dashAutoCompaniesForSelect = useMemo(
+    () => orderSxCompaniesPreferredFirst(
+      productionCompaniesForSx,
+      dashAutoLeadKind,
+      dashAutoDbPref.companyId,
+      dashAutoDbPref.companyIds,
+    ),
+    [productionCompaniesForSx, dashAutoLeadKind, dashAutoDbPref.companyId, dashAutoDbPref.companyIds],
+  );
+  const dashAutoTypesForSelect = useMemo(() => {
+    const prefType = preferredWorkshopTypeIdForCompany(dashAutoLeadTypeRow, dealAutoCreateCompanyId)
+      || dashAutoDbPref.workshopTypeId;
+    return orderWorkshopTypesPreferredFirst(dealAutoCreateWorkshopTypes, dashAutoLeadKind, prefType);
+  }, [
+    dealAutoCreateWorkshopTypes,
+    dashAutoLeadKind,
+    dashAutoDbPref.workshopTypeId,
+    dashAutoLeadTypeRow,
+    dealAutoCreateCompanyId,
+  ]);
+  const dashAutoHint = useMemo(() => {
+    const co = productionCompaniesForSx.find((c) => String(c.id) === dashAutoDbPref.companyId);
+    const wt = dealAutoCreateWorkshopTypes.find((t) => String(t.id) === dashAutoDbPref.workshopTypeId);
+    return sxLeadTypeHintText(dashAutoLeadTypeRow?.name, dashAutoLeadKind, {
+      companyName: co ? (co.short_name || co.name) : '',
+      workshopTypeName: wt?.name || '',
+    });
+  }, [
+    dashAutoDbPref,
+    dashAutoLeadKind,
+    dashAutoLeadTypeRow,
+    productionCompaniesForSx,
+    dealAutoCreateWorkshopTypes,
+  ]);
+
+  const closeDealAutoCreateModal = useCallback(() => {
+    dealAutoPendingRef.current = false;
+    clearDealAutoConfirmTimer();
+    setDealAutoAckChecked(false);
+    setDealAutoCreatePick(null);
+    setDealAutoCreatePickError('');
+    setDealAutoCreateWorkshopTypeId('');
+    setDealAutoCreateWorkshopTypes([]);
+    setDealAutoCreateCompanyId('');
+  }, [clearDealAutoConfirmTimer]);
+
+  const cancelDealAutoPending = useCallback(() => {
+    dealAutoPendingRef.current = false;
+    clearDealAutoConfirmTimer();
+    setDealAutoCreatePickError('Đã hủy — chưa tạo dự án.');
+  }, [clearDealAutoConfirmTimer]);
+
+  useEffect(() => {
+    if (!dealAutoCreatePick || !dealAutoCreateCompanyId) {
+      if (!dealAutoCreatePick) setDealAutoCreateWorkshopTypes([]);
+      return undefined;
+    }
+    let cancelled = false;
+    setDealAutoCreateWorkshopLoading(true);
+    api.get('/workshop/project-types', {
+      params: { company_id: dealAutoCreateCompanyId, module: 'production' },
+    })
+      .then((r) => {
+        if (cancelled) return;
+        const list = Array.isArray(r.data) ? r.data : [];
+        setDealAutoCreateWorkshopTypes(list);
+        const sug = pickWorkshopTypeIdForCompany(
+          dashAutoLeadTypeRow,
+          dealAutoCreateCompanyId,
+          list,
+          dashAutoLeadKind,
+        );
+        const stillValid = dealAutoCreateWorkshopTypeId
+          && list.some((t) => String(t.id) === String(dealAutoCreateWorkshopTypeId));
+        if (!stillValid) setDealAutoCreateWorkshopTypeId(sug || '');
+      })
+      .catch(() => { if (!cancelled) setDealAutoCreateWorkshopTypes([]); })
+      .finally(() => { if (!cancelled) setDealAutoCreateWorkshopLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dealAutoCreatePick, dealAutoCreateCompanyId, dashAutoLeadTypeRow, dashAutoLeadKind]);
+
   const loadRef = useRef(null);
   /** Tăng mỗi lần gọi load — bỏ qua kết quả cũ nếu đã có load mới hơn */
   const loadSeqRef = useRef(0);
@@ -1507,10 +1720,24 @@ export default function CRMDashboard() {
   const autoCreateProject = async (dealId, productionCompanyId, workshopTypeId = null) => {
     if (!productionCompanyId) {
       const d = allDealsRef.current.find((x) => String(x.id) === String(dealId));
-      const pref = isAdmin ? findDefaultAdminCrmCompanyPhucDat(productionCompaniesForSx) : '';
+      const ltRow = (() => {
+        const id = d?.lead_type_id || d?.lead_type?.id;
+        if (id && Array.isArray(leadTypes) && leadTypes.length) {
+          const hit = leadTypes.find((t) => String(t.id) === String(id));
+          if (hit) return hit;
+        }
+        return d?.lead_type || null;
+      })();
+      const pref = preferredSxFromLeadTypeRow(ltRow);
+      const fallback = isAdmin ? findDefaultAdminCrmCompanyPhucDat(productionCompaniesForSx) : '';
       setDealAutoCreatePick(dealId);
-      setDealAutoCreateCompanyId(filterCompany || (d?.company_id ? String(d.company_id) : '') || pref);
+      setDealAutoCreateCompanyId(pref.companyId || fallback || '');
+      setDealAutoCreateWorkshopTypeId('');
+      setDealAutoCreateWorkshopTypes([]);
       setDealAutoCreatePickError('');
+      setDealAutoAckChecked(false);
+      dealAutoPendingRef.current = false;
+      clearDealAutoConfirmTimer();
       return;
     }
     if (autoCreateCalledRef.current) return;
@@ -1555,10 +1782,14 @@ export default function CRMDashboard() {
   }, []);
 
   useEffect(() => {
-    api.get('/companies', { params: { for_module: 'production' } })
+    const cid = filterCompany || user?.company_id;
+    const req = cid
+      ? api.get('/crm/production-companies', { params: { company_id: cid } })
+      : api.get('/companies', { params: { for_module: 'production' } });
+    req
       .then((r) => setProductionCompaniesForSx(r.data?.companies || []))
       .catch(() => setProductionCompaniesForSx([]));
-  }, []);
+  }, [filterCompany, user?.company_id]);
 
   /**
    * Ưu tiên: nạp danh sách CÔNG TY (cho bộ lọc CRM) ngay lập tức — chạy trước
@@ -4605,9 +4836,20 @@ export default function CRMDashboard() {
           }
 
           setDealWonProductionError('');
-          const prefCompany = deal.company_id
-            ? String(deal.company_id)
-            : (isAdmin ? findDefaultAdminCrmCompanyPhucDat(productionCompaniesForSx) : '');
+          clearDealWonConfirmTimer();
+          dealWonPendingRef.current = false;
+          setDealWonAckChecked(false);
+          const ltRow = (() => {
+            const id = deal.lead_type_id || deal.lead_type?.id;
+            if (id && Array.isArray(leadTypes) && leadTypes.length) {
+              const hit = leadTypes.find((t) => String(t.id) === String(id));
+              if (hit) return hit;
+            }
+            return deal.lead_type || null;
+          })();
+          const pref = preferredSxFromLeadTypeRow(ltRow);
+          const prefCompany = pref.companyId
+            || (isAdmin ? findDefaultAdminCrmCompanyPhucDat(productionCompaniesForSx) : '');
           setDealWonProductionCompanyId(prefCompany);
           setDealWonProductionWorkshopTypeId('');
           setDealWonProductionWorkshopTypes([]);
@@ -4664,6 +4906,8 @@ export default function CRMDashboard() {
       allDeals,
       isAdmin,
       productionCompaniesForSx,
+      leadTypes,
+      clearDealWonConfirmTimer,
       proceedKanbanStageMove,
     ],
   );
@@ -4754,6 +4998,7 @@ export default function CRMDashboard() {
   };
 
   const confirmDealWonProduction = async () => {
+    if (!dealWonPendingRef.current) return;
     if (!dealWonProductionCompanyId) {
       setDealWonProductionError('Vui lòng chọn công ty thuộc module Sản xuất.');
       return;
@@ -4764,12 +5009,15 @@ export default function CRMDashboard() {
     }
     const ctx = dealWonProductionCtx;
     if (!ctx) return;
+    dealWonPendingRef.current = false;
     setDealWonProductionError('');
     const nextExtra = {
       ...ctx.extraData,
       production_company_id: dealWonProductionCompanyId,
       workshop_type_id: dealWonProductionWorkshopTypeId,
     };
+    clearDealWonConfirmTimer();
+    setDealWonAckChecked(false);
     setDealWonProductionCtx(null);
     setDealWonProductionCompanyId('');
     setDealWonProductionWorkshopTypeId('');
@@ -4787,7 +5035,30 @@ export default function CRMDashboard() {
     }
   };
 
+  const requestDealWonProduction = () => {
+    if (!dealWonProductionCompanyId) {
+      setDealWonProductionError('Vui lòng chọn công ty thuộc module Sản xuất.');
+      return;
+    }
+    if (!dealWonProductionWorkshopTypeId) {
+      setDealWonProductionError('Vui lòng chọn phân loại sản xuất.');
+      return;
+    }
+    if (!dealWonAckChecked) {
+      setDealWonProductionError('Vui lòng tích xác nhận đã kiểm tra và chọn đúng công ty SX.');
+      return;
+    }
+    if (dealWonConfirmWait > 0) return;
+    dealWonPendingRef.current = true;
+    setDealWonProductionError('');
+    startDealWonConfirmCountdown(() => {
+      if (!dealWonPendingRef.current) return;
+      void confirmDealWonProduction();
+    });
+  };
+
   const submitDealAutoCreateCompanyPick = async () => {
+    if (!dealAutoPendingRef.current) return;
     if (!dealAutoCreateCompanyId) {
       setDealAutoCreatePickError('Vui lòng chọn công ty Sản xuất.');
       return;
@@ -4800,13 +5071,38 @@ export default function CRMDashboard() {
     const cid = dealAutoCreateCompanyId;
     const wkt = dealAutoCreateWorkshopTypeId;
     if (!dealId) return;
+    dealAutoPendingRef.current = false;
     setDealAutoCreatePickError('');
+    clearDealAutoConfirmTimer();
+    setDealAutoAckChecked(false);
     setDealAutoCreatePick(null);
     setDealAutoCreateCompanyId('');
     setDealAutoCreateWorkshopTypeId('');
     setDealAutoCreateWorkshopTypes([]);
     autoCreateCalledRef.current = false;
     await autoCreateProject(dealId, cid, wkt);
+  };
+
+  const requestDealAutoCreate = () => {
+    if (!dealAutoCreateCompanyId) {
+      setDealAutoCreatePickError('Vui lòng chọn công ty Sản xuất.');
+      return;
+    }
+    if (!dealAutoCreateWorkshopTypeId) {
+      setDealAutoCreatePickError('Vui lòng chọn phân loại sản xuất.');
+      return;
+    }
+    if (!dealAutoAckChecked) {
+      setDealAutoCreatePickError('Vui lòng tích xác nhận đã kiểm tra và chọn đúng công ty SX.');
+      return;
+    }
+    if (dealAutoConfirmWait > 0) return;
+    dealAutoPendingRef.current = true;
+    setDealAutoCreatePickError('');
+    startDealAutoConfirmCountdown(() => {
+      if (!dealAutoPendingRef.current) return;
+      void submitDealAutoCreateCompanyPick();
+    });
   };
 
   const handleWonAssignConvert = async () => {
@@ -6847,9 +7143,16 @@ export default function CRMDashboard() {
               onOpenDeadline={openDeadlineFromCard}
               onSaveEstimatedValue={saveEstimatedValueFromCard}
               onOpenSxTransfer={(deal) => {
-                const pref = isAdmin ? findDefaultAdminCrmCompanyPhucDat(productionCompaniesForSx) : '';
+                const ltRow = resolveSxLeadTypeRow(deal);
+                const pref = preferredSxFromLeadTypeRow(ltRow);
+                const fallback = isAdmin ? findDefaultAdminCrmCompanyPhucDat(productionCompaniesForSx) : '';
+                clearDealAutoConfirmTimer();
+                dealAutoPendingRef.current = false;
+                setDealAutoAckChecked(false);
                 setDealAutoCreatePick(deal.id);
-                setDealAutoCreateCompanyId(filterCompany || (deal.company_id ? String(deal.company_id) : '') || pref);
+                setDealAutoCreateCompanyId(pref.companyId || fallback || '');
+                setDealAutoCreateWorkshopTypeId('');
+                setDealAutoCreateWorkshopTypes([]);
                 setDealAutoCreatePickError('');
               }}
               remeasureToken={`${showAdvSearch ? 1 : 0}:${timePreset}:${customDateFrom}:${customDateTo}`}
@@ -7189,104 +7492,175 @@ export default function CRMDashboard() {
       {dealWonProductionCtx && (
         <div
           className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
-          onClick={() => {
-            setDealWonProductionCtx(null);
-            setDealWonProductionError('');
-            setDealWonProductionWorkshopTypeId('');
-            setDealWonProductionWorkshopTypes([]);
-          }}
+          onClick={closeDealWonProductionModal}
         >
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-2 mb-2">
-              <Building2 className="h-6 w-6 text-teal-600" />
-              <h3 className="text-lg font-bold text-gray-900">Chuyển Deal sang Sản xuất</h3>
-            </div>
-            <p className="text-sm text-gray-600 mb-4">
-              Deal <span className="font-mono text-teal-700">{dealWonProductionCtx.deal?.code}</span> chuyển sang <strong>Thắng</strong>.
-              Chọn công ty và phân loại Sản xuất (bắt buộc) để tạo dự án xưởng đúng pipeline.
-            </p>
-            <label className="block text-xs font-semibold text-gray-700 mb-1">Công ty Sản xuất <span className="text-red-500">*</span></label>
-            <select
-              value={dealWonProductionCompanyId}
-              onChange={(e) => {
-                setDealWonProductionCompanyId(e.target.value);
-                setDealWonProductionWorkshopTypeId('');
-                setDealWonProductionError('');
-              }}
-              className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white mb-3"
-            >
-              <option value="">— Chọn công ty —</option>
-              {productionCompaniesForSx.map((c) => (
-                <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-              ))}
-            </select>
-
-            <label className="block text-xs font-semibold text-gray-700 mb-1">
-              Phân loại sản xuất <span className="text-red-500">*</span>
-            </label>
-            <select
-              value={dealWonProductionWorkshopTypeId}
-              onChange={(e) => { setDealWonProductionWorkshopTypeId(e.target.value); setDealWonProductionError(''); }}
-              disabled={!dealWonProductionCompanyId || dealWonProductionWorkshopLoading}
-              className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white mb-2 disabled:bg-gray-100 disabled:text-gray-500"
-            >
-              <option value="">
-                {!dealWonProductionCompanyId
-                  ? '— Chọn công ty trước —'
-                  : dealWonProductionWorkshopLoading
-                    ? 'Đang tải...'
-                    : dealWonProductionWorkshopTypes.length === 0
-                      ? '— Công ty chưa có phân loại —'
-                      : '— Chọn phân loại —'}
-              </option>
-              {dealWonProductionWorkshopTypes.map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </select>
-            {dealWonProductionCompanyId
-              && !dealWonProductionWorkshopLoading
-              && dealWonProductionWorkshopTypes.length === 0 && (
-              <p className="text-[11px] text-amber-600 mb-2">
-                ⚠️ Công ty này chưa có phân loại — vào Cài đặt → Pipeline Sản xuất để tạo phân loại trước.
-              </p>
-            )}
-            {dealWonProductionWorkshopTypes.some((t) => t.description?.trim()) && (
-              <div className="mb-2 space-y-1">
-                {dealWonProductionWorkshopTypes.filter((t) => t.description?.trim()).map((t) => (
-                  <p
-                    key={t.id}
-                    className={`text-[11px] rounded-lg px-2 py-1.5 border ${String(t.id) === String(dealWonProductionWorkshopTypeId)
-                      ? 'bg-teal-50 border-teal-200 text-teal-800'
-                      : 'bg-gray-50 border-gray-100 text-gray-500'}`}
-                  >
-                    💡 <strong>{t.name}</strong>: {t.description}
-                  </p>
-                ))}
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Chuyển công ty SX</h3>
+                <p className="text-xs text-gray-500 mt-1">
+                  Deal <span className="font-mono text-teal-700">{dealWonProductionCtx.deal?.code}</span> sang <strong>Thắng</strong>.
+                  Tích xác nhận đã kiểm tra, bấm «Xác nhận chuyển» — đếm 5 giây rồi mới chuyển (có thể hủy).
+                </p>
               </div>
-            )}
-            {dealWonProductionError && (
-              <p className="text-xs text-red-600 mb-3">{dealWonProductionError}</p>
-            )}
-            <div className="flex gap-2 mt-4">
-              <button
-                type="button"
-                className="flex-1 h-10 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50"
-                onClick={() => {
-                  setDealWonProductionCtx(null);
-                  setDealWonProductionError('');
+              <button type="button" onClick={closeDealWonProductionModal} className="p-1 cursor-pointer">
+                <X className="h-5 w-5 text-gray-400" />
+              </button>
+            </div>
+
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12px] leading-snug text-amber-950">
+              <p className="font-semibold text-amber-900 mb-1">Hướng dẫn chọn xưởng</p>
+              {dashWonHint ? (
+                <p className="mb-1.5">{dashWonHint}</p>
+              ) : (
+                <p className="mb-1.5 text-amber-800/90">Chưa có phân loại CRM — ★ sẽ hiện khi deal có loại (Tủ bếp / Cửa…).</p>
+              )}
+              <ul className="space-y-1 list-disc pl-4">
+                <li><strong>Phúc Đạt</strong> chỉ làm cửa</li>
+                <li>Làm tủ bếp (Sang thiết kế) → chọn <strong>HCB</strong></li>
+                <li>Làm tủ bếp inox → chọn <strong>Tủ bếp</strong> của <strong>Metalla</strong></li>
+              </ul>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-gray-600">
+                Công ty sản xuất *
+                {(dashWonLeadKind || dashWonDbPref.companyIds?.length) ? (
+                  <span className="ml-1 font-normal text-gray-500">
+                    (<span className="text-red-600 font-bold">★</span> = gợi ý theo loại CRM)
+                  </span>
+                ) : null}
+              </label>
+              <SxCompanyPickList
+                companies={dashWonCompaniesForSelect}
+                value={dealWonProductionCompanyId}
+                leadTypeRow={dashWonLeadTypeRow}
+                kind={dashWonLeadKind}
+                accent="teal"
+                disabled={dealWonConfirmWait > 0}
+                onChange={(id) => {
+                  if (dealWonConfirmWait > 0) return;
+                  clearDealWonConfirmTimer();
+                  dealWonPendingRef.current = false;
+                  setDealWonAckChecked(false);
+                  setDealWonProductionCompanyId(id);
                   setDealWonProductionWorkshopTypeId('');
                   setDealWonProductionWorkshopTypes([]);
+                  setDealWonProductionWorkshopLoading(!!id);
+                  setDealWonProductionError('');
                 }}
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-gray-600">
+                Phân loại *
+                {(dashWonLeadKind || dashWonDbPref.workshopTypeId) ? (
+                  <span className="ml-1 font-normal text-gray-500">
+                    (<span className="text-red-600 font-bold">★</span> = gợi ý)
+                  </span>
+                ) : null}
+              </label>
+              <select
+                value={dealWonProductionWorkshopTypeId}
+                onChange={(e) => {
+                  if (dealWonConfirmWait > 0) return;
+                  setDealWonProductionWorkshopTypeId(e.target.value);
+                  setDealWonProductionError('');
+                  setDealWonAckChecked(false);
+                  clearDealWonConfirmTimer();
+                  dealWonPendingRef.current = false;
+                }}
+                disabled={!dealWonProductionCompanyId || dealWonProductionWorkshopLoading || dealWonConfirmWait > 0}
+                className="mt-1 w-full h-10 px-3 border rounded-xl text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400"
               >
-                Hủy
+                <option value="">
+                  {!dealWonProductionCompanyId
+                    ? '— Chọn công ty trước —'
+                    : dealWonProductionWorkshopLoading
+                      ? 'Đang tải…'
+                      : dashWonTypesForSelect.length === 0
+                        ? '— Công ty chưa có phân loại —'
+                        : '— Chọn phân loại —'}
+                </option>
+                {dashWonTypesForSelect.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {workshopTypePreferredForLeadType(t.id, dashWonLeadTypeRow, dealWonProductionCompanyId)
+                      || workshopTypeMatchesSxKind(t.name, dashWonLeadKind)
+                      ? `★ ${t.name}`
+                      : t.name}
+                  </option>
+                ))}
+              </select>
+              {dealWonProductionCompanyId
+                && !dealWonProductionWorkshopLoading
+                && dashWonTypesForSelect.length === 0 && (
+                <p className="mt-1 text-[11px] text-amber-600">
+                  Công ty này chưa có phân loại — vào Cài đặt → Pipeline Sản xuất để tạo.
+                </p>
+              )}
+            </div>
+
+            {dealWonProductionError && (
+              <p className="text-xs text-red-600">{dealWonProductionError}</p>
+            )}
+
+            <label className={`flex items-start gap-2.5 rounded-xl border px-3 py-2.5 cursor-pointer ${
+              dealWonAckChecked ? 'border-teal-300 bg-teal-50/80' : 'border-gray-200 bg-gray-50/80'
+            } ${dealWonConfirmWait > 0 ? 'opacity-60 pointer-events-none' : ''}`}>
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500"
+                checked={dealWonAckChecked}
+                disabled={dealWonConfirmWait > 0}
+                onChange={(e) => setDealWonAckChecked(e.target.checked)}
+              />
+              <span className="text-[12px] leading-snug text-gray-800">
+                Đã kiểm tra và chọn đúng công ty sản xuất (và phân loại) trước khi chuyển.
+              </span>
+            </label>
+
+            {dealWonConfirmWait > 0 && (
+              <div className="rounded-xl border-2 border-sky-400 bg-sky-50 px-3 py-3 text-sm text-sky-950 flex items-center justify-between gap-2 shadow-sm">
+                <span>
+                  Đang chuyển sau <strong className="text-lg tabular-nums text-sky-700">{dealWonConfirmWait}s</strong>…
+                </span>
+                <button
+                  type="button"
+                  onClick={cancelDealWonPending}
+                  className="shrink-0 h-9 px-3 rounded-lg text-sm font-bold border border-sky-400 bg-white text-sky-900 hover:bg-sky-100 cursor-pointer"
+                >
+                  Hủy
+                </button>
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                className="flex-1 h-10 border rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 cursor-pointer"
+                onClick={dealWonConfirmWait > 0 ? cancelDealWonPending : closeDealWonProductionModal}
+              >
+                {dealWonConfirmWait > 0 ? 'Hủy chuyển' : 'Đóng'}
               </button>
               <button
                 type="button"
-                disabled={!dealWonProductionCompanyId || !dealWonProductionWorkshopTypeId}
-                className="flex-1 h-10 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-                onClick={() => confirmDealWonProduction()}
+                disabled={
+                  !dealWonProductionCompanyId
+                  || !dealWonProductionWorkshopTypeId
+                  || !dealWonAckChecked
+                  || dealWonConfirmWait > 0
+                }
+                className="flex-1 h-10 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                onClick={requestDealWonProduction}
               >
-                Tiếp tục
+                {dealWonConfirmWait > 0
+                  ? `Chuyển sau ${dealWonConfirmWait}s`
+                  : !dealWonProductionCompanyId || !dealWonProductionWorkshopTypeId
+                    ? 'Chọn công ty + phân loại'
+                    : !dealWonAckChecked
+                      ? 'Tích xác nhận đã kiểm tra'
+                      : 'Xác nhận chuyển'}
               </button>
             </div>
           </div>
@@ -7296,121 +7670,167 @@ export default function CRMDashboard() {
       {dealAutoCreatePick && (
         <div
           className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
-          onClick={() => {
-            setDealAutoCreatePick(null);
-            setDealAutoCreatePickError('');
-            setDealAutoCreateWorkshopTypeId('');
-            setDealAutoCreateWorkshopTypes([]);
-          }}
+          onClick={closeDealAutoCreateModal}
         >
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-2 mb-2">
-              <Building2 className="h-6 w-6 text-amber-600" />
-              <h3 className="text-lg font-bold text-gray-900">Tạo dự án — chọn công ty + phân loại SX</h3>
-            </div>
-            <p className="text-sm text-gray-600 mb-4">
-              Deal đã ở trạng thái Thắng nhưng chưa có dự án. Chọn công ty và phân loại Sản xuất (bắt buộc).
-            </p>
-            <label className="block text-xs font-semibold text-gray-700 mb-1">Công ty Sản xuất <span className="text-red-500">*</span></label>
-            <select
-              value={dealAutoCreateCompanyId}
-              onChange={async (e) => {
-                const newCid = e.target.value;
-                setDealAutoCreateCompanyId(newCid);
-                setDealAutoCreateWorkshopTypeId('');
-                setDealAutoCreatePickError('');
-                if (!newCid) {
-                  setDealAutoCreateWorkshopTypes([]);
-                  return;
-                }
-                setDealAutoCreateWorkshopLoading(true);
-                try {
-                  const { data } = await api.get('/workshop/project-types', {
-                    params: { company_id: newCid, module: 'production' },
-                  });
-                  const list = Array.isArray(data) ? data : [];
-                  setDealAutoCreateWorkshopTypes(list);
-                  if (list.length === 1) setDealAutoCreateWorkshopTypeId(String(list[0].id));
-                } catch {
-                  setDealAutoCreateWorkshopTypes([]);
-                } finally {
-                  setDealAutoCreateWorkshopLoading(false);
-                }
-              }}
-              className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white mb-3"
-            >
-              <option value="">— Chọn công ty —</option>
-              {productionCompaniesForSx.map((c) => (
-                <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-              ))}
-            </select>
-
-            <label className="block text-xs font-semibold text-gray-700 mb-1">
-              Phân loại sản xuất <span className="text-red-500">*</span>
-            </label>
-            <select
-              value={dealAutoCreateWorkshopTypeId}
-              onChange={(e) => { setDealAutoCreateWorkshopTypeId(e.target.value); setDealAutoCreatePickError(''); }}
-              disabled={!dealAutoCreateCompanyId || dealAutoCreateWorkshopLoading}
-              className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white mb-2 disabled:bg-gray-100 disabled:text-gray-500"
-            >
-              <option value="">
-                {!dealAutoCreateCompanyId
-                  ? '— Chọn công ty trước —'
-                  : dealAutoCreateWorkshopLoading
-                    ? 'Đang tải...'
-                    : dealAutoCreateWorkshopTypes.length === 0
-                      ? '— Công ty chưa có phân loại —'
-                      : '— Chọn phân loại —'}
-              </option>
-              {dealAutoCreateWorkshopTypes.map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </select>
-            {dealAutoCreateCompanyId
-              && !dealAutoCreateWorkshopLoading
-              && dealAutoCreateWorkshopTypes.length === 0 && (
-              <p className="text-[11px] text-amber-600 mb-2">
-                ⚠️ Công ty này chưa có phân loại — tạo phân loại tại Cài đặt → Pipeline Sản xuất trước.
-              </p>
-            )}
-            {dealAutoCreateWorkshopTypes.some((t) => t.description?.trim()) && (
-              <div className="mb-2 space-y-1">
-                {dealAutoCreateWorkshopTypes.filter((t) => t.description?.trim()).map((t) => (
-                  <p
-                    key={t.id}
-                    className={`text-[11px] rounded-lg px-2 py-1.5 border ${String(t.id) === String(dealAutoCreateWorkshopTypeId)
-                      ? 'bg-amber-50 border-amber-200 text-amber-800'
-                      : 'bg-gray-50 border-gray-100 text-gray-500'}`}
-                  >
-                    💡 <strong>{t.name}</strong>: {t.description}
-                  </p>
-                ))}
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Chuyển công ty SX</h3>
+                <p className="text-xs text-gray-500 mt-1">
+                  Deal đã <strong>Thắng</strong> nhưng chưa có dự án. Tích xác nhận đã kiểm tra, bấm xác nhận — đếm 5 giây rồi mới tạo (có thể hủy).
+                </p>
               </div>
-            )}
-            {dealAutoCreatePickError && (
-              <p className="text-xs text-red-600 mb-3">{dealAutoCreatePickError}</p>
-            )}
-            <div className="flex gap-2 mt-4">
-              <button
-                type="button"
-                className="flex-1 h-10 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50"
-                onClick={() => {
-                  setDealAutoCreatePick(null);
-                  setDealAutoCreatePickError('');
+              <button type="button" onClick={closeDealAutoCreateModal} className="p-1 cursor-pointer">
+                <X className="h-5 w-5 text-gray-400" />
+              </button>
+            </div>
+
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12px] leading-snug text-amber-950">
+              <p className="font-semibold text-amber-900 mb-1">Hướng dẫn chọn xưởng</p>
+              {dashAutoHint ? (
+                <p className="mb-1.5">{dashAutoHint}</p>
+              ) : (
+                <p className="mb-1.5 text-amber-800/90">Chưa có phân loại CRM — ★ sẽ hiện khi deal có loại (Tủ bếp / Cửa…).</p>
+              )}
+              <ul className="space-y-1 list-disc pl-4">
+                <li><strong>Phúc Đạt</strong> chỉ làm cửa</li>
+                <li>Làm tủ bếp (Sang thiết kế) → chọn <strong>HCB</strong></li>
+                <li>Làm tủ bếp inox → chọn <strong>Tủ bếp</strong> của <strong>Metalla</strong></li>
+              </ul>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-gray-600">
+                Công ty sản xuất *
+                {(dashAutoLeadKind || dashAutoDbPref.companyIds?.length) ? (
+                  <span className="ml-1 font-normal text-gray-500">
+                    (<span className="text-red-600 font-bold">★</span> = gợi ý theo loại CRM)
+                  </span>
+                ) : null}
+              </label>
+              <SxCompanyPickList
+                companies={dashAutoCompaniesForSelect}
+                value={dealAutoCreateCompanyId}
+                leadTypeRow={dashAutoLeadTypeRow}
+                kind={dashAutoLeadKind}
+                accent="amber"
+                disabled={dealAutoConfirmWait > 0}
+                onChange={(id) => {
+                  if (dealAutoConfirmWait > 0) return;
+                  clearDealAutoConfirmTimer();
+                  dealAutoPendingRef.current = false;
+                  setDealAutoAckChecked(false);
+                  setDealAutoCreateCompanyId(id);
                   setDealAutoCreateWorkshopTypeId('');
                   setDealAutoCreateWorkshopTypes([]);
+                  setDealAutoCreateWorkshopLoading(!!id);
+                  setDealAutoCreatePickError('');
                 }}
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-gray-600">
+                Phân loại *
+                {(dashAutoLeadKind || dashAutoDbPref.workshopTypeId) ? (
+                  <span className="ml-1 font-normal text-gray-500">
+                    (<span className="text-red-600 font-bold">★</span> = gợi ý)
+                  </span>
+                ) : null}
+              </label>
+              <select
+                value={dealAutoCreateWorkshopTypeId}
+                onChange={(e) => {
+                  if (dealAutoConfirmWait > 0) return;
+                  setDealAutoCreateWorkshopTypeId(e.target.value);
+                  setDealAutoCreatePickError('');
+                  setDealAutoAckChecked(false);
+                  clearDealAutoConfirmTimer();
+                  dealAutoPendingRef.current = false;
+                }}
+                disabled={!dealAutoCreateCompanyId || dealAutoCreateWorkshopLoading || dealAutoConfirmWait > 0}
+                className="mt-1 w-full h-10 px-3 border rounded-xl text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400"
               >
-                Đóng
+                <option value="">
+                  {!dealAutoCreateCompanyId
+                    ? '— Chọn công ty trước —'
+                    : dealAutoCreateWorkshopLoading
+                      ? 'Đang tải…'
+                      : dashAutoTypesForSelect.length === 0
+                        ? '— Công ty chưa có phân loại —'
+                        : '— Chọn phân loại —'}
+                </option>
+                {dashAutoTypesForSelect.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {workshopTypePreferredForLeadType(t.id, dashAutoLeadTypeRow, dealAutoCreateCompanyId)
+                      || workshopTypeMatchesSxKind(t.name, dashAutoLeadKind)
+                      ? `★ ${t.name}`
+                      : t.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {dealAutoCreatePickError && (
+              <p className="text-xs text-red-600">{dealAutoCreatePickError}</p>
+            )}
+
+            <label className={`flex items-start gap-2.5 rounded-xl border px-3 py-2.5 cursor-pointer ${
+              dealAutoAckChecked ? 'border-amber-300 bg-amber-50/80' : 'border-gray-200 bg-gray-50/80'
+            } ${dealAutoConfirmWait > 0 ? 'opacity-60 pointer-events-none' : ''}`}>
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                checked={dealAutoAckChecked}
+                disabled={dealAutoConfirmWait > 0}
+                onChange={(e) => setDealAutoAckChecked(e.target.checked)}
+              />
+              <span className="text-[12px] leading-snug text-gray-800">
+                Đã kiểm tra và chọn đúng công ty sản xuất (và phân loại) trước khi chuyển.
+              </span>
+            </label>
+
+            {dealAutoConfirmWait > 0 && (
+              <div className="rounded-xl border-2 border-sky-400 bg-sky-50 px-3 py-3 text-sm text-sky-950 flex items-center justify-between gap-2 shadow-sm">
+                <span>
+                  Đang tạo sau <strong className="text-lg tabular-nums text-sky-700">{dealAutoConfirmWait}s</strong>…
+                </span>
+                <button
+                  type="button"
+                  onClick={cancelDealAutoPending}
+                  className="shrink-0 h-9 px-3 rounded-lg text-sm font-bold border border-sky-400 bg-white text-sky-900 hover:bg-sky-100 cursor-pointer"
+                >
+                  Hủy
+                </button>
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                className="flex-1 h-10 border rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 cursor-pointer"
+                onClick={dealAutoConfirmWait > 0 ? cancelDealAutoPending : closeDealAutoCreateModal}
+              >
+                {dealAutoConfirmWait > 0 ? 'Hủy tạo' : 'Đóng'}
               </button>
               <button
                 type="button"
-                disabled={!dealAutoCreateCompanyId || !dealAutoCreateWorkshopTypeId}
-                className="flex-1 h-10 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-                onClick={() => submitDealAutoCreateCompanyPick()}
+                disabled={
+                  !dealAutoCreateCompanyId
+                  || !dealAutoCreateWorkshopTypeId
+                  || !dealAutoAckChecked
+                  || dealAutoConfirmWait > 0
+                }
+                className="flex-1 h-10 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                onClick={requestDealAutoCreate}
               >
-                Tạo dự án
+                {dealAutoConfirmWait > 0
+                  ? `Tạo sau ${dealAutoConfirmWait}s`
+                  : !dealAutoCreateCompanyId || !dealAutoCreateWorkshopTypeId
+                    ? 'Chọn công ty + phân loại'
+                    : !dealAutoAckChecked
+                      ? 'Tích xác nhận đã kiểm tra'
+                      : 'Xác nhận tạo dự án'}
               </button>
             </div>
           </div>

@@ -42,6 +42,21 @@ import CrmStageAssigneeModal from '../components/CrmStageAssigneeModal';
 import { stageNeedsAssigneeConfirm } from '../lib/crmStageAssigneeConfirm';
 import CrmLeadDeadlineOverview from '../components/CrmLeadDeadlineOverview';
 import { crmLeadMissingPhone } from '../lib/crmLeadDeadlineDisplay';
+import SxCompanyPickList from '../components/SxCompanyPickList';
+import { useConfirmCountdown } from '../hooks/useConfirmCountdown';
+import {
+  classifyCrmLeadTypeForSx,
+  companyPreferredForSxKind,
+  orderSxCompaniesPreferredFirst,
+  orderWorkshopTypesPreferredFirst,
+  pickWorkshopTypeIdForCompany,
+  preferredWorkshopTypeIdForCompany,
+  preferredSxFromLeadTypeRow,
+  sxLeadTypeHintText,
+  formatCrmToSxMappingLine,
+  workshopTypeMatchesSxKind,
+  workshopTypePreferredForLeadType,
+} from '../lib/sxCompanySuggestFromLeadType';
 import Modal from '../components/Modal';
 import DealCrossScoresPanel from '../components/DealCrossScoresPanel';
 import LeadKpiLedgerPanel from '../components/LeadKpiLedgerPanel';
@@ -260,6 +275,91 @@ export default function LeadDetail() {
   const [wonModalWorkTypes, setWonModalWorkTypes] = useState([]);
   const [wonModalWorkTypesLoading, setWonModalWorkTypesLoading] = useState(false);
   const [showDeleteLeadModal, setShowDeleteLeadModal] = useState(false);
+
+  const parentCrmLeadTypeName = useMemo(() => {
+    const nested = lead?.lead_type?.name || lead?.lead_type_name;
+    if (nested) return String(nested);
+    if (lead?.lead_type_id && headerLeadTypes.length) {
+      return headerLeadTypes.find((t) => String(t.id) === String(lead.lead_type_id))?.name || '';
+    }
+    return '';
+  }, [lead?.lead_type, lead?.lead_type_name, lead?.lead_type_id, headerLeadTypes]);
+
+  const parentSxLeadKind = useMemo(
+    () => classifyCrmLeadTypeForSx(parentCrmLeadTypeName),
+    [parentCrmLeadTypeName],
+  );
+
+  const parentSxLeadTypeRow = useMemo(() => {
+    if (!lead?.lead_type_id) return null;
+    return headerLeadTypes.find((t) => String(t.id) === String(lead.lead_type_id)) || null;
+  }, [lead?.lead_type_id, headerLeadTypes]);
+
+  const parentSxDbPref = useMemo(
+    () => preferredSxFromLeadTypeRow(parentSxLeadTypeRow),
+    [parentSxLeadTypeRow],
+  );
+
+  const parentSxCompaniesForSelect = useMemo(
+    () => orderSxCompaniesPreferredFirst(
+      productionCompaniesSx,
+      parentSxLeadKind,
+      parentSxDbPref.companyId,
+      parentSxDbPref.companyIds,
+    ),
+    [productionCompaniesSx, parentSxLeadKind, parentSxDbPref.companyId, parentSxDbPref.companyIds],
+  );
+
+  const parentWonTypesForSelect = useMemo(() => {
+    const activeCo = dealStageWonPick
+      ? dealStageWonCompanyId
+      : pickProjectCompanyOpen
+        ? pickProjectCompanyId
+        : reassignSxOpen
+          ? reassignSxCompanyId
+          : '';
+    const prefType = preferredWorkshopTypeIdForCompany(parentSxLeadTypeRow, activeCo)
+      || parentSxDbPref.workshopTypeId;
+    return orderWorkshopTypesPreferredFirst(wonModalWorkTypes, parentSxLeadKind, prefType);
+  }, [
+    wonModalWorkTypes,
+    parentSxLeadKind,
+    parentSxDbPref.workshopTypeId,
+    parentSxLeadTypeRow,
+    dealStageWonPick,
+    dealStageWonCompanyId,
+    pickProjectCompanyOpen,
+    pickProjectCompanyId,
+    reassignSxOpen,
+    reassignSxCompanyId,
+  ]);
+
+  const parentSxHint = useMemo(() => {
+    const linkLines = (parentSxDbPref.links || []).map((l) => {
+      const co = productionCompaniesSx.find((c) => String(c.id) === l.companyId);
+      const coName = co ? (co.short_name || co.name) : '';
+      const wt = wonModalWorkTypes.find((t) => String(t.id) === l.workshopTypeId);
+      const parts = [coName, wt?.name].filter(Boolean).join(' · ');
+      return parts ? `${l.isPrimary ? '★ ' : ''}${parts}` : '';
+    }).filter(Boolean);
+    if (linkLines.length > 1) {
+      const label = String(parentCrmLeadTypeName || '').trim() || '—';
+      return `Loại CRM «${label}» gắn: ${linkLines.join(' | ')}. Các xưởng khác vẫn chọn được.`;
+    }
+    const co = productionCompaniesSx.find((c) => String(c.id) === parentSxDbPref.companyId);
+    const coName = co ? (co.short_name || co.name) : '';
+    const wt = wonModalWorkTypes.find((t) => String(t.id) === parentSxDbPref.workshopTypeId);
+    return sxLeadTypeHintText(parentCrmLeadTypeName, parentSxLeadKind, {
+      companyName: coName,
+      workshopTypeName: wt?.name || '',
+    });
+  }, [
+    parentCrmLeadTypeName,
+    parentSxLeadKind,
+    parentSxDbPref,
+    productionCompaniesSx,
+    wonModalWorkTypes,
+  ]);
   const [blockPhoneOnDeleteLead, setBlockPhoneOnDeleteLead] = useState(true);
   const [deleteReason, setDeleteReason] = useState('');
   const [deletingLead, setDeletingLead] = useState(false);
@@ -291,21 +391,30 @@ export default function LeadDetail() {
         const rows = Array.isArray(r.data) ? r.data : (r.data?.data || []);
         setWonModalWorkTypes(rows);
         const inList = (id) => rows.some((t) => String(t.id) === String(id));
-        if (dealStageWonPick && dealStageWonWorkTypeId && !inList(dealStageWonWorkTypeId)) {
-          setDealStageWonWorkTypeId('');
+        const suggested = pickWorkshopTypeIdForCompany(
+          parentSxLeadTypeRow,
+          activeCompanyId,
+          rows,
+          parentSxLeadKind,
+        );
+        if (dealStageWonPick) {
+          if (dealStageWonWorkTypeId && !inList(dealStageWonWorkTypeId)) setDealStageWonWorkTypeId(suggested || '');
+          else if (!dealStageWonWorkTypeId && suggested) setDealStageWonWorkTypeId(suggested);
         }
-        if (pickProjectCompanyOpen && pickProjectCompanyWorkTypeId && !inList(pickProjectCompanyWorkTypeId)) {
-          setPickProjectCompanyWorkTypeId('');
+        if (pickProjectCompanyOpen) {
+          if (pickProjectCompanyWorkTypeId && !inList(pickProjectCompanyWorkTypeId)) setPickProjectCompanyWorkTypeId(suggested || '');
+          else if (!pickProjectCompanyWorkTypeId && suggested) setPickProjectCompanyWorkTypeId(suggested);
         }
-        if (reassignSxOpen && reassignSxWorkTypeId && !inList(reassignSxWorkTypeId)) {
-          setReassignSxWorkTypeId('');
+        if (reassignSxOpen) {
+          if (reassignSxWorkTypeId && !inList(reassignSxWorkTypeId)) setReassignSxWorkTypeId(suggested || '');
+          else if (!reassignSxWorkTypeId && suggested) setReassignSxWorkTypeId(suggested);
         }
       })
       .catch(() => { if (!cancelled) setWonModalWorkTypes([]); })
       .finally(() => { if (!cancelled) setWonModalWorkTypesLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dealStageWonPick, dealStageWonCompanyId, pickProjectCompanyOpen, pickProjectCompanyId, reassignSxOpen, reassignSxCompanyId]);
+  }, [dealStageWonPick, dealStageWonCompanyId, pickProjectCompanyOpen, pickProjectCompanyId, reassignSxOpen, reassignSxCompanyId, parentSxLeadKind, parentSxLeadTypeRow]);
 
   // Auto-create project (chạy ngầm)
   const [autoCreateStatus, setAutoCreateStatus] = useState(null); // null | 'loading' | 'success' | 'error'
@@ -346,10 +455,14 @@ export default function LeadDetail() {
   };
 
   useEffect(() => {
-    api.get('/companies', { params: { for_module: 'production' } })
+    const cid = lead?.company_id;
+    const req = cid
+      ? api.get('/crm/production-companies', { params: { company_id: cid } })
+      : api.get('/companies', { params: { for_module: 'production' } });
+    req
       .then((r) => {
-        const list = r.data?.companies || [];
-        setProductionCompaniesSx(list);
+        const list = r.data?.companies || r.data || [];
+        setProductionCompaniesSx(Array.isArray(list) ? list : []);
         if (isAdminUser) {
           const pref = findDefaultAdminCompanyPhucDat(list);
           if (pref) {
@@ -359,7 +472,21 @@ export default function LeadDetail() {
         }
       })
       .catch(() => setProductionCompaniesSx([]));
-  }, [isAdminUser]);
+  }, [isAdminUser, lead?.company_id]);
+
+  // Gợi ý mặc định công ty SX theo loại CRM / cấu hình DB (chỉ khi chưa chọn)
+  useEffect(() => {
+    if (!(productionCompaniesSx || []).length) return;
+    let nextId = parentSxDbPref.companyId;
+    if (nextId && !productionCompaniesSx.some((c) => String(c.id) === nextId)) nextId = '';
+    if (!nextId && parentSxLeadKind) {
+      const preferred = productionCompaniesSx.find((c) => companyPreferredForSxKind(c, parentSxLeadKind));
+      nextId = preferred?.id ? String(preferred.id) : '';
+    }
+    if (!nextId) return;
+    setDealStageWonCompanyId((prev) => prev || nextId);
+    setPickProjectCompanyId((prev) => prev || nextId);
+  }, [parentSxLeadKind, parentSxDbPref.companyId, productionCompaniesSx]);
 
   useEffect(() => { load(); }, [id]);
   useEffect(() => {
@@ -1303,7 +1430,7 @@ export default function LeadDetail() {
       setDealStageWonErr('Vui lòng chọn công ty thuộc module Sản xuất.');
       return;
     }
-    if (wonModalWorkTypes.length > 0 && !dealStageWonWorkTypeId) {
+    if (parentWonTypesForSelect.length > 0 && !dealStageWonWorkTypeId) {
       setDealStageWonErr('Công ty này có phân loại — vui lòng chọn phân loại sản xuất.');
       return;
     }
@@ -1330,7 +1457,7 @@ export default function LeadDetail() {
       setPickProjectCompanyErr('Vui lòng chọn công ty Sản xuất.');
       return;
     }
-    if (wonModalWorkTypes.length > 0 && !pickProjectCompanyWorkTypeId) {
+    if (parentWonTypesForSelect.length > 0 && !pickProjectCompanyWorkTypeId) {
       setPickProjectCompanyErr('Công ty này có phân loại — vui lòng chọn phân loại sản xuất.');
       return;
     }
@@ -1351,7 +1478,7 @@ export default function LeadDetail() {
       setReassignSxErr('Vui lòng chọn công ty Sản xuất.');
       return;
     }
-    if (wonModalWorkTypes.length > 0 && !reassignSxWorkTypeId) {
+    if (parentWonTypesForSelect.length > 0 && !reassignSxWorkTypeId) {
       setReassignSxErr('Vui lòng chọn phân loại sản xuất.');
       return;
     }
@@ -3410,41 +3537,55 @@ export default function LeadDetail() {
             <p className="text-sm text-gray-600 mb-4">
               Chuyển deal sang <strong>Thắng</strong> cần gắn công ty thuộc <strong>module Sản xuất</strong> cho dự án xưởng.
             </p>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Công ty <span className="text-red-600">*</span></label>
-            <select
+            {parentSxHint && (
+              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 mb-3">
+                {parentSxHint}
+              </p>
+            )}
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Công ty <span className="text-red-600">*</span>
+              <span className="ml-1 font-normal text-gray-500">(<span className="text-red-600 font-bold">★</span> = gợi ý)</span>
+            </label>
+            <SxCompanyPickList
+              companies={parentSxCompaniesForSelect}
               value={dealStageWonCompanyId}
-              onChange={(e) => { setDealStageWonCompanyId(e.target.value); setDealStageWonWorkTypeId(''); setDealStageWonErr(''); }}
-              className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white"
-            >
-              <option value="">— Chọn công ty —</option>
-              {productionCompaniesSx.map((c) => (
-                <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-              ))}
-            </select>
+              leadTypeRow={parentSxLeadTypeRow}
+              kind={parentSxLeadKind}
+              accent="teal"
+              onChange={(id) => { setDealStageWonCompanyId(id); setDealStageWonWorkTypeId(''); setDealStageWonErr(''); }}
+            />
             {/* Phân loại theo công ty SX vừa chọn */}
             {dealStageWonCompanyId && (
               <div className="mt-3">
                 <label className="block text-xs font-medium text-gray-700 mb-1">
-                  Phân loại sản xuất {wonModalWorkTypes.length > 0 && <span className="text-red-600">*</span>}
+                  Phân loại sản xuất {parentWonTypesForSelect.length > 0 && <span className="text-red-600">*</span>}
                 </label>
                 <select
                   value={dealStageWonWorkTypeId}
                   onChange={(e) => { setDealStageWonWorkTypeId(e.target.value); setDealStageWonErr(''); }}
-                  disabled={wonModalWorkTypesLoading || wonModalWorkTypes.length === 0}
+                  disabled={wonModalWorkTypesLoading || parentWonTypesForSelect.length === 0}
                   className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400"
                 >
                   <option value="">
                     {wonModalWorkTypesLoading
                       ? 'Đang tải phân loại…'
-                      : (wonModalWorkTypes.length === 0
+                      : (parentWonTypesForSelect.length === 0
                           ? '— Công ty chưa có phân loại nào —'
                           : '— Chọn phân loại —')}
                   </option>
-                  {wonModalWorkTypes.map((t) => (
-                    <option key={t.id} value={t.id}>📦 {t.name}</option>
+                  {parentWonTypesForSelect.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {workshopTypePreferredForLeadType(t.id, parentSxLeadTypeRow, dealStageWonCompanyId)
+                        || workshopTypePreferredForLeadType(t.id, parentSxLeadTypeRow, pickProjectCompanyId)
+                        || workshopTypePreferredForLeadType(t.id, parentSxLeadTypeRow, reassignSxCompanyId)
+                        || (parentSxDbPref.workshopTypeId && String(t.id) === parentSxDbPref.workshopTypeId)
+                        || workshopTypeMatchesSxKind(t.name, parentSxLeadKind)
+                        ? '★'
+                        : '📦'} {t.name}
+                    </option>
                   ))}
                 </select>
-                {wonModalWorkTypes.length === 0 && !wonModalWorkTypesLoading && (
+                {parentWonTypesForSelect.length === 0 && !wonModalWorkTypesLoading && (
                   <p className="mt-1 text-[11px] text-gray-500">
                     Công ty này chưa cấu hình phân loại — admin có thể vào /sx/pipeline-settings để thêm.
                   </p>
@@ -3485,41 +3626,55 @@ export default function LeadDetail() {
             <p className="text-sm text-gray-600 mb-4">
               Deal đã <strong>Thắng</strong> nhưng chưa có dự án. Chọn công ty <strong>module Sản xuất</strong> để hệ thống tạo dự án.
             </p>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Công ty <span className="text-red-600">*</span></label>
-            <select
+            {parentSxHint && (
+              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 mb-3">
+                {parentSxHint}
+              </p>
+            )}
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Công ty <span className="text-red-600">*</span>
+              <span className="ml-1 font-normal text-gray-500">(<span className="text-red-600 font-bold">★</span> = gợi ý)</span>
+            </label>
+            <SxCompanyPickList
+              companies={parentSxCompaniesForSelect}
               value={pickProjectCompanyId}
-              onChange={(e) => { setPickProjectCompanyId(e.target.value); setPickProjectCompanyWorkTypeId(''); setPickProjectCompanyErr(''); }}
-              className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white"
-            >
-              <option value="">— Chọn công ty —</option>
-              {productionCompaniesSx.map((c) => (
-                <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-              ))}
-            </select>
+              leadTypeRow={parentSxLeadTypeRow}
+              kind={parentSxLeadKind}
+              accent="amber"
+              onChange={(id) => { setPickProjectCompanyId(id); setPickProjectCompanyWorkTypeId(''); setPickProjectCompanyErr(''); }}
+            />
             {/* Phân loại theo công ty SX vừa chọn */}
             {pickProjectCompanyId && (
               <div className="mt-3">
                 <label className="block text-xs font-medium text-gray-700 mb-1">
-                  Phân loại sản xuất {wonModalWorkTypes.length > 0 && <span className="text-red-600">*</span>}
+                  Phân loại sản xuất {parentWonTypesForSelect.length > 0 && <span className="text-red-600">*</span>}
                 </label>
                 <select
                   value={pickProjectCompanyWorkTypeId}
                   onChange={(e) => { setPickProjectCompanyWorkTypeId(e.target.value); setPickProjectCompanyErr(''); }}
-                  disabled={wonModalWorkTypesLoading || wonModalWorkTypes.length === 0}
+                  disabled={wonModalWorkTypesLoading || parentWonTypesForSelect.length === 0}
                   className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400"
                 >
                   <option value="">
                     {wonModalWorkTypesLoading
                       ? 'Đang tải phân loại…'
-                      : (wonModalWorkTypes.length === 0
+                      : (parentWonTypesForSelect.length === 0
                           ? '— Công ty chưa có phân loại nào —'
                           : '— Chọn phân loại —')}
                   </option>
-                  {wonModalWorkTypes.map((t) => (
-                    <option key={t.id} value={t.id}>📦 {t.name}</option>
+                  {parentWonTypesForSelect.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {workshopTypePreferredForLeadType(t.id, parentSxLeadTypeRow, dealStageWonCompanyId)
+                        || workshopTypePreferredForLeadType(t.id, parentSxLeadTypeRow, pickProjectCompanyId)
+                        || workshopTypePreferredForLeadType(t.id, parentSxLeadTypeRow, reassignSxCompanyId)
+                        || (parentSxDbPref.workshopTypeId && String(t.id) === parentSxDbPref.workshopTypeId)
+                        || workshopTypeMatchesSxKind(t.name, parentSxLeadKind)
+                        ? '★'
+                        : '📦'} {t.name}
+                    </option>
                   ))}
                 </select>
-                {wonModalWorkTypes.length === 0 && !wonModalWorkTypesLoading && (
+                {parentWonTypesForSelect.length === 0 && !wonModalWorkTypesLoading && (
                   <p className="mt-1 text-[11px] text-gray-500">
                     Công ty này chưa cấu hình phân loại — admin có thể vào /sx/pipeline-settings để thêm.
                   </p>
@@ -3562,18 +3717,24 @@ export default function LeadDetail() {
               <strong> thay thành viên</strong> theo mặc định phân loại mới và <strong>tạo lại nhiệm vụ mẫu</strong>
               (tiến độ NV mẫu cũ sẽ mất).
             </p>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Công ty SX <span className="text-red-600">*</span></label>
-            <select
+            {parentSxHint && (
+              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 mb-3">
+                {parentSxHint}
+              </p>
+            )}
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Công ty SX <span className="text-red-600">*</span>
+              <span className="ml-1 font-normal text-gray-500">(<span className="text-red-600 font-bold">★</span> = gợi ý)</span>
+            </label>
+            <SxCompanyPickList
+              companies={parentSxCompaniesForSelect}
               value={reassignSxCompanyId}
-              onChange={(e) => { setReassignSxCompanyId(e.target.value); setReassignSxWorkTypeId(''); setReassignSxErr(''); }}
+              leadTypeRow={parentSxLeadTypeRow}
+              kind={parentSxLeadKind}
+              accent="orange"
               disabled={reassignSxBusy}
-              className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white disabled:bg-gray-50"
-            >
-              <option value="">— Chọn công ty —</option>
-              {productionCompaniesSx.map((c) => (
-                <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-              ))}
-            </select>
+              onChange={(id) => { setReassignSxCompanyId(id); setReassignSxWorkTypeId(''); setReassignSxErr(''); }}
+            />
             {reassignSxCompanyId && (
               <div className="mt-3">
                 <label className="block text-xs font-medium text-gray-700 mb-1">
@@ -3582,18 +3743,26 @@ export default function LeadDetail() {
                 <select
                   value={reassignSxWorkTypeId}
                   onChange={(e) => { setReassignSxWorkTypeId(e.target.value); setReassignSxErr(''); }}
-                  disabled={reassignSxBusy || wonModalWorkTypesLoading || wonModalWorkTypes.length === 0}
+                  disabled={reassignSxBusy || wonModalWorkTypesLoading || parentWonTypesForSelect.length === 0}
                   className="w-full h-11 px-3 border border-gray-200 rounded-xl text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400"
                 >
                   <option value="">
                     {wonModalWorkTypesLoading
                       ? 'Đang tải phân loại…'
-                      : (wonModalWorkTypes.length === 0
+                      : (parentWonTypesForSelect.length === 0
                           ? '— Công ty chưa có phân loại nào —'
                           : '— Chọn phân loại —')}
                   </option>
-                  {wonModalWorkTypes.map((t) => (
-                    <option key={t.id} value={t.id}>📦 {t.name}</option>
+                  {parentWonTypesForSelect.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {workshopTypePreferredForLeadType(t.id, parentSxLeadTypeRow, dealStageWonCompanyId)
+                        || workshopTypePreferredForLeadType(t.id, parentSxLeadTypeRow, pickProjectCompanyId)
+                        || workshopTypePreferredForLeadType(t.id, parentSxLeadTypeRow, reassignSxCompanyId)
+                        || (parentSxDbPref.workshopTypeId && String(t.id) === parentSxDbPref.workshopTypeId)
+                        || workshopTypeMatchesSxKind(t.name, parentSxLeadKind)
+                        ? '★'
+                        : '📦'} {t.name}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -4351,8 +4520,68 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
   const [sxAssignBusy, setSxAssignBusy] = useState(false);
   const [sxAssignNotice, setSxAssignNotice] = useState('');
   const [sxAssignBaseline, setSxAssignBaseline] = useState({ companyId: '', typeId: '', typeName: '', companyName: '' });
-  const [sxConfirmWait, setSxConfirmWait] = useState(0);
-  const sxConfirmTimerRef = useRef(null);
+  const [sxAckChecked, setSxAckChecked] = useState(false);
+  const { wait: sxConfirmWait, start: startSxConfirmCountdown, clear: clearSxConfirmTimer } = useConfirmCountdown(5);
+  const sxPendingRef = useRef(false);
+
+  const crmLeadTypeNameForSx = useMemo(() => {
+    const nested = lead?.lead_type?.name || lead?.lead_type_name;
+    if (nested) return String(nested);
+    if (lead?.lead_type_id && (leadTypes || []).length) {
+      return leadTypes.find((t) => String(t.id) === String(lead.lead_type_id))?.name || '';
+    }
+    return '';
+  }, [lead?.lead_type, lead?.lead_type_name, lead?.lead_type_id, leadTypes]);
+
+  const sxLeadTypeRow = useMemo(() => {
+    if (!lead?.lead_type_id) return null;
+    return (leadTypes || []).find((t) => String(t.id) === String(lead.lead_type_id)) || null;
+  }, [lead?.lead_type_id, leadTypes]);
+
+  const sxDbPref = useMemo(
+    () => preferredSxFromLeadTypeRow(sxLeadTypeRow),
+    [sxLeadTypeRow],
+  );
+
+  const sxLeadKind = useMemo(
+    () => classifyCrmLeadTypeForSx(crmLeadTypeNameForSx),
+    [crmLeadTypeNameForSx],
+  );
+
+  const sxCompaniesForSelect = useMemo(
+    () => orderSxCompaniesPreferredFirst(
+      productionCompaniesSx,
+      sxLeadKind,
+      sxDbPref.companyId,
+      sxDbPref.companyIds,
+    ),
+    [productionCompaniesSx, sxLeadKind, sxDbPref.companyId, sxDbPref.companyIds],
+  );
+
+  const sxTypesForSelect = useMemo(() => {
+    const prefType = preferredWorkshopTypeIdForCompany(sxLeadTypeRow, sxAssignCompanyId)
+      || sxDbPref.workshopTypeId;
+    return orderWorkshopTypesPreferredFirst(sxAssignTypes, sxLeadKind, prefType);
+  }, [sxAssignTypes, sxLeadKind, sxDbPref.workshopTypeId, sxLeadTypeRow, sxAssignCompanyId]);
+
+  const sxHintFromCrmType = useMemo(() => {
+    const co = (productionCompaniesSx || []).find((c) => String(c.id) === sxDbPref.companyId);
+    const coName = co ? (co.short_name || co.name) : '';
+    const wt = (sxAssignTypes || []).find((t) => String(t.id) === sxDbPref.workshopTypeId)
+      || (sxTypesForSelect || []).find((t) => String(t.id) === sxDbPref.workshopTypeId);
+    return sxLeadTypeHintText(crmLeadTypeNameForSx, sxLeadKind, {
+      companyName: coName,
+      workshopTypeName: wt?.name || '',
+    });
+  }, [
+    crmLeadTypeNameForSx,
+    sxLeadKind,
+    sxDbPref.companyId,
+    sxDbPref.workshopTypeId,
+    productionCompaniesSx,
+    sxAssignTypes,
+    sxTypesForSelect,
+  ]);
 
   useEffect(() => {
     if (lead?.type !== 'deal' || lead?.sx_handover_at) return;
@@ -4395,6 +4624,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
     return () => { cancelled = true; };
   }, [lead?.id, lead?.type, lead?.project_id, lead?.sx_template_company_id, lead?.updated_at]);
 
+  // Load phân loại theo công ty SX đang chọn trong popup
   useEffect(() => {
     if (!sxAssignOpen || !sxAssignCompanyId) {
       if (!sxAssignOpen) setSxAssignTypes([]);
@@ -4407,19 +4637,47 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
         if (cancelled) return;
         const rows = Array.isArray(r.data) ? r.data : (r.data?.data || []);
         setSxAssignTypes(rows);
-        if (sxAssignTypeId && !rows.some((t) => String(t.id) === String(sxAssignTypeId))) {
+        const stillValid = sxAssignTypeId && rows.some((t) => String(t.id) === String(sxAssignTypeId));
+        if (stillValid) return;
+        if (sxAssignTypeId) {
           setSxAssignTypeId('');
+          return;
         }
+        const sug = pickWorkshopTypeIdForCompany(
+          sxLeadTypeRow,
+          sxAssignCompanyId,
+          rows,
+          sxLeadKind,
+        );
+        setSxAssignTypeId(sug || '');
+        if (sug) setSxAssignNotice('');
       })
       .catch(() => { if (!cancelled) setSxAssignTypes([]); })
       .finally(() => { if (!cancelled) setSxAssignTypesLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sxAssignOpen, sxAssignCompanyId]);
+  }, [sxAssignOpen, sxAssignCompanyId, sxLeadTypeRow, sxLeadKind]);
 
-  useEffect(() => () => {
-    if (sxConfirmTimerRef.current) clearInterval(sxConfirmTimerRef.current);
-  }, []);
+  // Tự chọn phân loại ★ theo công ty đang chọn khi đang trống
+  useEffect(() => {
+    if (!sxAssignOpen || sxAssignTypesLoading || !sxAssignCompanyId) return;
+    if (sxAssignTypeId) return;
+    const sug = pickWorkshopTypeIdForCompany(
+      sxLeadTypeRow,
+      sxAssignCompanyId,
+      sxAssignTypes,
+      sxLeadKind,
+    );
+    if (sug) setSxAssignTypeId(sug);
+  }, [
+    sxAssignOpen,
+    sxLeadKind,
+    sxLeadTypeRow,
+    sxAssignTypesLoading,
+    sxAssignCompanyId,
+    sxAssignTypes,
+    sxAssignTypeId,
+  ]);
 
   useEffect(() => {
     api.get('/companies', { params: { for_module: 'crm' } }).then(r => setCompanies(r.data?.companies || r.data || [])).catch(() => {});
@@ -4639,73 +4897,71 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
     if (next && deadlineHistory.length === 0) loadDeadlineHistory();
   };
 
-  const clearSxConfirmTimer = () => {
-    if (sxConfirmTimerRef.current) {
-      clearInterval(sxConfirmTimerRef.current);
-      sxConfirmTimerRef.current = null;
-    }
-    setSxConfirmWait(0);
-  };
-
-  const startSxConfirmCountdown = () => {
-    clearSxConfirmTimer();
-    setSxConfirmWait(5);
-    sxConfirmTimerRef.current = setInterval(() => {
-      setSxConfirmWait((n) => {
-        if (n <= 1) {
-          if (sxConfirmTimerRef.current) {
-            clearInterval(sxConfirmTimerRef.current);
-            sxConfirmTimerRef.current = null;
-          }
-          return 0;
-        }
-        return n - 1;
-      });
-    }, 1000);
-  };
-
   const closeSxAssignModal = () => {
     if (sxAssignBusy) return;
+    sxPendingRef.current = false;
     clearSxConfirmTimer();
+    setSxAckChecked(false);
     setSxAssignOpen(false);
     setSxAssignNotice('');
   };
 
-  const openSxAssignModal = () => {
+  const cancelSxPendingTransfer = () => {
+    if (sxAssignBusy) return;
+    sxPendingRef.current = false;
     clearSxConfirmTimer();
+    setSxAssignNotice('Đã hủy — chưa chuyển công ty SX.');
+  };
+
+  const openSxAssignModal = () => {
+    sxPendingRef.current = false;
+    clearSxConfirmTimer();
+    setSxAckChecked(false);
     setSxAssignCompanyId(sxAssignBaseline.companyId || '');
     setSxAssignTypeId(sxAssignBaseline.typeId || '');
     setSxAssignNotice('');
     setSxAssignOpen(true);
-    startSxConfirmCountdown();
   };
 
   const onSxCompanyChange = (nextId) => {
+    if (sxConfirmWait > 0) return;
     const next = String(nextId || '');
     const prev = String(sxAssignCompanyId || '');
     if (next === prev) return;
+    clearSxConfirmTimer();
+    setSxAckChecked(false);
     setSxAssignCompanyId(next);
     if (next && next !== String(sxAssignBaseline.companyId || '')) {
+      setSxAssignTypes([]);
+      setSxAssignTypesLoading(!!next);
       setSxAssignTypeId('');
-      setSxAssignNotice('Đã đổi công ty — hãy chọn lại phân loại.');
+      setSxAssignNotice('Đã đổi công ty — đang chọn phân loại gợi ý ★.');
     } else if (next === String(sxAssignBaseline.companyId || '')) {
       setSxAssignTypeId(sxAssignBaseline.typeId || '');
       setSxAssignNotice('');
     } else {
+      setSxAssignTypes([]);
       setSxAssignTypeId('');
       setSxAssignNotice('');
     }
-    startSxConfirmCountdown();
   };
 
   const sxAssignDirty = String(sxAssignCompanyId || '') !== String(sxAssignBaseline.companyId || '')
     || String(sxAssignTypeId || '') !== String(sxAssignBaseline.typeId || '');
   const sxCompanyChanged = String(sxAssignCompanyId || '') !== String(sxAssignBaseline.companyId || '');
   const sxNeedRepickType = sxCompanyChanged && !sxAssignTypeId;
-  const sxCanConfirm = sxAssignDirty && !!sxAssignCompanyId && !!sxAssignTypeId && !sxNeedRepickType && sxConfirmWait === 0 && !sxAssignBusy;
+  const sxCanStartTransfer = sxAssignDirty
+    && !!sxAssignCompanyId
+    && !!sxAssignTypeId
+    && !sxNeedRepickType
+    && sxAckChecked
+    && sxConfirmWait === 0
+    && !sxAssignBusy;
 
   const saveSxAssign = async () => {
-    if (!lead?.project_id || !sxCanConfirm) return;
+    if (!lead?.project_id || !sxPendingRef.current) return;
+    if (!sxAssignCompanyId || !sxAssignTypeId) return;
+    sxPendingRef.current = false;
     setSxAssignBusy(true);
     setSxAssignNotice('');
     try {
@@ -4727,14 +4983,25 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
         companyName,
       });
       clearSxConfirmTimer();
+      setSxAckChecked(false);
       setSxAssignOpen(false);
       setSxAssignNotice(`Đã chuyển: ${companyName || 'SX'}${typeName ? ` · ${typeName}` : ''}`);
       onUpdate();
     } catch (e) {
       setSxAssignNotice(e.response?.data?.error || e.message || 'Lỗi chuyển SX');
-      startSxConfirmCountdown();
+      setSxAckChecked(false);
     }
     setSxAssignBusy(false);
+  };
+
+  const requestSxTransfer = () => {
+    if (!sxCanStartTransfer) return;
+    sxPendingRef.current = true;
+    setSxAssignNotice('');
+    startSxConfirmCountdown(() => {
+      if (!sxPendingRef.current) return;
+      void saveSxAssign();
+    });
   };
 
   const editableRowProps = { editing, setEditing, saving, onSave: saveField };
@@ -5220,13 +5487,42 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
               <p className="text-[11px] text-emerald-700">{sxAssignNotice}</p>
             )}
             {isAdminLike(currentUser) && (
-              <button
-                type="button"
-                onClick={openSxAssignModal}
-                className="w-full h-9 rounded-lg text-xs font-semibold bg-orange-600 text-white hover:bg-orange-700 cursor-pointer"
-              >
-                Chuyển công ty SX
-              </button>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
+                <button
+                  type="button"
+                  onClick={openSxAssignModal}
+                  className="w-full sm:w-auto sm:shrink-0 h-9 px-3 rounded-lg text-xs font-semibold bg-orange-600 text-white hover:bg-orange-700 cursor-pointer"
+                >
+                  Chuyển công ty SX
+                </button>
+                <div className="flex-1 rounded-lg border border-amber-200 bg-amber-50/90 px-2.5 py-2 text-[11px] leading-snug text-amber-950">
+                  <p className="font-semibold text-amber-900 mb-1">Hướng dẫn chọn xưởng</p>
+                  {sxHintFromCrmType ? (
+                    <p className="mb-1.5 text-amber-950">{sxHintFromCrmType}</p>
+                  ) : null}
+                  {sxLeadTypeRow && (
+                    <p className="mb-1.5 text-[10px] text-violet-900 bg-violet-50 border border-violet-100 rounded-md px-2 py-1">
+                      {(sxDbPref.links || []).length
+                        ? (sxDbPref.links || []).map((l) => {
+                            const co = (productionCompaniesSx || []).find((c) => String(c.id) === l.companyId);
+                            const coName = co ? (co.short_name || co.name) : '';
+                            const wt = (sxAssignTypes || []).find((t) => String(t.id) === l.workshopTypeId);
+                            return `${l.isPrimary ? '★ ' : ''}${coName || '?'} · ${wt?.name || (l.workshopTypeId ? '…' : '?')}`;
+                          }).join('  |  ')
+                        : formatCrmToSxMappingLine({
+                            leadTypeName: crmLeadTypeNameForSx || sxLeadTypeRow.name,
+                            companyName: '',
+                            workshopTypeName: '',
+                          })}
+                    </p>
+                  )}
+                  <ul className="space-y-0.5 list-disc pl-3.5">
+                    <li><strong>Phúc Đạt</strong> chỉ làm cửa</li>
+                    <li>Làm tủ bếp (Sang thiết kế) → chọn <strong>HCB</strong></li>
+                    <li>Làm tủ bếp inox → chọn <strong>Tủ bếp</strong> của <strong>Metalla</strong></li>
+                  </ul>
+                </div>
+              </div>
             )}
           </div>
 
@@ -5243,7 +5539,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
                   <div>
                     <h3 className="text-lg font-bold text-gray-900">Chuyển công ty SX</h3>
                     <p className="text-xs text-gray-500 mt-1">
-                      Chọn công ty + phân loại. Đổi công ty thì phải chọn lại phân loại. Xác nhận sau 5 giây (có thể hủy).
+                      Chọn công ty + phân loại, tích xác nhận đã kiểm tra, rồi bấm «Xác nhận chuyển» — hệ thống đếm 5 giây trước khi chuyển (có thể hủy).
                     </p>
                   </div>
                   <button type="button" onClick={closeSxAssignModal} disabled={sxAssignBusy} className="p-1 cursor-pointer disabled:opacity-40">
@@ -5251,33 +5547,59 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
                   </button>
                 </div>
 
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12px] leading-snug text-amber-950">
+                  <p className="font-semibold text-amber-900 mb-1">Hướng dẫn chọn xưởng</p>
+                  {sxHintFromCrmType ? (
+                    <p className="mb-1.5">{sxHintFromCrmType}</p>
+                  ) : (
+                    <p className="mb-1.5 text-amber-800/90">Chưa có phân loại CRM — ★ sẽ hiện khi gán loại (Tủ bếp / Cửa…) ở thông tin deal.</p>
+                  )}
+                  <ul className="space-y-1 list-disc pl-4">
+                    <li><strong>Phúc Đạt</strong> chỉ làm cửa</li>
+                    <li>Làm tủ bếp (Sang thiết kế) → chọn <strong>HCB</strong></li>
+                    <li>Làm tủ bếp inox → chọn <strong>Tủ bếp</strong> của <strong>Metalla</strong></li>
+                  </ul>
+                </div>
+
                 <div>
-                  <label className="text-xs font-medium text-gray-600">Công ty sản xuất *</label>
-                  <select
+                  <label className="text-xs font-medium text-gray-600">
+                    Công ty sản xuất *
+                    {(sxLeadKind || sxDbPref.companyIds?.length) ? (
+                      <span className="ml-1 font-normal text-gray-500">
+                        (<span className="text-red-600 font-bold">★</span> = gợi ý theo loại CRM)
+                      </span>
+                    ) : null}
+                  </label>
+                  <SxCompanyPickList
+                    companies={sxCompaniesForSelect}
                     value={sxAssignCompanyId}
-                    onChange={(e) => onSxCompanyChange(e.target.value)}
-                    disabled={sxAssignBusy}
-                    className="mt-1 w-full h-10 px-3 border rounded-xl text-sm bg-white disabled:bg-gray-50"
-                  >
-                    <option value="">— Chọn công ty —</option>
-                    {(productionCompaniesSx || []).map((c) => (
-                      <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                    ))}
-                  </select>
+                    leadTypeRow={sxLeadTypeRow}
+                    kind={sxLeadKind}
+                    accent="orange"
+                    disabled={sxAssignBusy || sxConfirmWait > 0}
+                    onChange={(id) => onSxCompanyChange(id)}
+                  />
                 </div>
 
                 <div className={sxNeedRepickType ? 'rounded-xl ring-2 ring-amber-400/80 p-2 bg-amber-50/70' : ''}>
                   <label className={`text-xs font-medium ${sxNeedRepickType ? 'text-amber-800' : 'text-gray-600'}`}>
                     Phân loại * {sxNeedRepickType ? '(chọn lại)' : ''}
+                    {sxLeadKind || sxDbPref.workshopTypeId ? (
+                      <span className="ml-1 font-normal text-gray-500">
+                        (<span className="text-red-600 font-bold">★</span> = gợi ý)
+                      </span>
+                    ) : null}
                   </label>
                   <select
                     value={sxAssignTypeId}
                     onChange={(e) => {
+                      if (sxConfirmWait > 0) return;
                       setSxAssignTypeId(e.target.value);
                       setSxAssignNotice('');
-                      startSxConfirmCountdown();
+                      setSxAckChecked(false);
+                      clearSxConfirmTimer();
                     }}
-                    disabled={sxAssignBusy || !sxAssignCompanyId || sxAssignTypesLoading}
+                    disabled={sxAssignBusy || sxConfirmWait > 0 || !sxAssignCompanyId || sxAssignTypesLoading}
                     className="mt-1 w-full h-10 px-3 border rounded-xl text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400"
                   >
                     <option value="">
@@ -5285,52 +5607,94 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
                         ? '— Chọn công ty trước —'
                         : sxAssignTypesLoading
                           ? 'Đang tải…'
-                          : sxAssignTypes.length === 0
+                          : sxTypesForSelect.length === 0
                             ? '— Chưa có phân loại —'
                             : sxNeedRepickType
                               ? '— Chọn lại phân loại —'
                               : '— Chọn phân loại —'}
                     </option>
-                    {sxAssignTypes.map((t) => (
-                      <option key={t.id} value={t.id}>{t.name}</option>
+                    {sxTypesForSelect.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {workshopTypePreferredForLeadType(t.id, sxLeadTypeRow, sxAssignCompanyId)
+                          || workshopTypeMatchesSxKind(t.name, sxLeadKind)
+                          ? `★ ${t.name}`
+                          : t.name}
+                      </option>
                     ))}
                   </select>
                 </div>
 
                 {sxAssignNotice && (
-                  <p className={`text-xs ${sxAssignNotice.includes('Đã đổi') ? 'text-amber-800' : 'text-red-600'}`}>
+                  <p className={`text-xs ${
+                    sxAssignNotice.includes('Đã đổi') || sxAssignNotice.includes('Gợi ý')
+                      ? 'text-amber-800'
+                      : 'text-red-600'
+                  }`}>
                     {sxAssignNotice}
                   </p>
                 )}
 
+                <label className={`flex items-start gap-2.5 rounded-xl border px-3 py-2.5 cursor-pointer ${
+                  sxAckChecked ? 'border-orange-300 bg-orange-50/80' : 'border-gray-200 bg-gray-50/80'
+                } ${sxConfirmWait > 0 || sxAssignBusy ? 'opacity-60 pointer-events-none' : ''}`}>
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 rounded border-gray-300 text-orange-600 focus:ring-orange-500"
+                    checked={sxAckChecked}
+                    disabled={sxAssignBusy || sxConfirmWait > 0}
+                    onChange={(e) => setSxAckChecked(e.target.checked)}
+                  />
+                  <span className="text-[12px] leading-snug text-gray-800">
+                    Đã kiểm tra và chọn đúng công ty sản xuất (và phân loại) trước khi chuyển.
+                  </span>
+                </label>
+
                 <p className="text-[11px] text-gray-500 leading-snug">
-                  Sau khi xác nhận: thay thành viên SX mặc định và tạo lại nhiệm vụ mẫu (tiến độ NV mẫu cũ sẽ mất).
+                  Sau khi chuyển: thay thành viên SX mặc định và tạo lại nhiệm vụ mẫu (tiến độ NV mẫu cũ sẽ mất).
                 </p>
+
+                {sxConfirmWait > 0 && (
+                  <div className="rounded-xl border-2 border-sky-400 bg-sky-50 px-3 py-3 text-sm text-sky-950 flex items-center justify-between gap-2 shadow-sm">
+                    <span>
+                      Đang chuyển sau <strong className="text-lg tabular-nums text-sky-700">{sxConfirmWait}s</strong>…
+                    </span>
+                    <button
+                      type="button"
+                      disabled={sxAssignBusy}
+                      onClick={cancelSxPendingTransfer}
+                      className="shrink-0 h-9 px-3 rounded-lg text-sm font-bold border border-sky-400 bg-white text-sky-900 hover:bg-sky-100 cursor-pointer disabled:opacity-50"
+                    >
+                      Hủy
+                    </button>
+                  </div>
+                )}
 
                 <div className="flex gap-2 pt-1">
                   <button
                     type="button"
                     disabled={sxAssignBusy}
-                    onClick={closeSxAssignModal}
+                    onClick={sxConfirmWait > 0 ? cancelSxPendingTransfer : closeSxAssignModal}
                     className="flex-1 h-10 border rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 cursor-pointer disabled:opacity-50"
                   >
-                    Hủy
+                    {sxConfirmWait > 0 ? 'Hủy chuyển' : 'Đóng'}
                   </button>
                   <button
                     type="button"
-                    disabled={!sxCanConfirm}
-                    onClick={() => void saveSxAssign()}
+                    disabled={!sxCanStartTransfer}
+                    onClick={requestSxTransfer}
                     className="flex-1 h-10 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-sm font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     {sxAssignBusy
                       ? 'Đang chuyển…'
                       : sxConfirmWait > 0
-                        ? `Xác nhận (${sxConfirmWait}s)`
+                        ? `Chuyển sau ${sxConfirmWait}s`
                         : !sxAssignDirty
                           ? 'Chưa thay đổi'
                           : sxNeedRepickType || !sxAssignTypeId
                             ? 'Chọn phân loại'
-                            : 'Xác nhận chuyển'}
+                            : !sxAckChecked
+                              ? 'Tích xác nhận đã kiểm tra'
+                              : 'Xác nhận chuyển'}
                   </button>
                 </div>
               </div>

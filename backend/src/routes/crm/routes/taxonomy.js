@@ -27,7 +27,13 @@ r.get('/lead-types', async (req, res) => {
       companyId: cidFinal,
       activeOnly: req.query.all !== 'true',
     });
-    res.json(data);
+    const { listLeadTypeProductionLinksForMany } = require('../../../helpers/crmLeadTypeProductionLinks');
+    const linksMap = await listLeadTypeProductionLinksForMany((data || []).map((t) => t.id));
+    const withLinks = (data || []).map((t) => ({
+      ...t,
+      production_links: linksMap[String(t.id)] || [],
+    }));
+    res.json(withLinks);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -60,6 +66,14 @@ r.post('/lead-types', async (req, res) => {
       defaultProductionCompanyId = pv.company.id;
     }
 
+    let defaultWorkshopTypeId = null;
+    if (b.default_workshop_type_id != null && String(b.default_workshop_type_id).trim() !== '') {
+      const { validateWorkshopTypeForProductionCompany } = require('../../../helpers/crmVisibleProductionCompanies');
+      const wv = await validateWorkshopTypeForProductionCompany(b.default_workshop_type_id, defaultProductionCompanyId);
+      if (!wv.ok) return res.status(400).json({ error: wv.error });
+      defaultWorkshopTypeId = wv.workshopType.id;
+    }
+
     const { data, error } = await supabase.from('crm_lead_types').insert({
       company_id,
       name: b.name.trim(),
@@ -68,11 +82,18 @@ r.post('/lead-types', async (req, res) => {
       is_active: b.is_active !== false,
       workshop_production_templates: !!b.workshop_production_templates,
       default_production_company_id: defaultProductionCompanyId,
+      default_workshop_type_id: defaultWorkshopTypeId,
       updated_at: new Date().toISOString(),
     }).select('*').single();
     if (error) throw error;
+    if (Array.isArray(b.production_links)) {
+      const { replaceLeadTypeProductionLinks } = require('../../../helpers/crmLeadTypeProductionLinks');
+      const links = await replaceLeadTypeProductionLinks(data.id, b.production_links);
+      invalidateSources();
+      return res.status(201).json({ ...data, production_links: links });
+    }
     invalidateSources();
-    res.status(201).json(data);
+    res.status(201).json({ ...data, production_links: [] });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -100,17 +121,57 @@ r.put('/lead-types/:id', async (req, res) => {
       const raw = b.default_production_company_id;
       if (raw === null || raw === '') {
         update.default_production_company_id = null;
+        update.default_workshop_type_id = null;
       } else {
         const pv = await validateProductionCompanyId(raw);
         if (!pv.ok) return res.status(400).json({ error: pv.error });
         update.default_production_company_id = pv.company.id;
       }
     }
+    if (b.default_workshop_type_id !== undefined || update.default_production_company_id) {
+      const { validateWorkshopTypeForProductionCompany } = require('../../../helpers/crmVisibleProductionCompanies');
+      const { data: exRow } = await supabase
+        .from('crm_lead_types')
+        .select('default_production_company_id, default_workshop_type_id')
+        .eq('id', req.params.id)
+        .maybeSingle();
+      const resolvedProd = update.default_production_company_id !== undefined
+        ? update.default_production_company_id
+        : (exRow?.default_production_company_id || null);
+
+      if (b.default_workshop_type_id !== undefined) {
+        const rawWt = b.default_workshop_type_id;
+        if (rawWt === null || rawWt === '') {
+          update.default_workshop_type_id = null;
+        } else {
+          const wv = await validateWorkshopTypeForProductionCompany(rawWt, resolvedProd);
+          if (!wv.ok) return res.status(400).json({ error: wv.error });
+          update.default_workshop_type_id = wv.workshopType.id;
+        }
+      } else if (update.default_production_company_id && exRow?.default_workshop_type_id) {
+        const wv = await validateWorkshopTypeForProductionCompany(
+          exRow.default_workshop_type_id,
+          update.default_production_company_id,
+        );
+        if (!wv.ok) update.default_workshop_type_id = null;
+      }
+    }
     update.updated_at = new Date().toISOString();
     const { data, error } = await supabase.from('crm_lead_types').update(update).eq('id', req.params.id).select('*').single();
     if (error) throw error;
+    let production_links;
+    if (Array.isArray(b.production_links)) {
+      const { replaceLeadTypeProductionLinks } = require('../../../helpers/crmLeadTypeProductionLinks');
+      production_links = await replaceLeadTypeProductionLinks(req.params.id, b.production_links);
+      // Reload lead type after sync of default_* columns
+      const { data: refreshed } = await supabase.from('crm_lead_types').select('*').eq('id', req.params.id).single();
+      invalidateSources();
+      return res.json({ ...(refreshed || data), production_links });
+    }
+    const { listLeadTypeProductionLinks } = require('../../../helpers/crmLeadTypeProductionLinks');
+    production_links = await listLeadTypeProductionLinks(req.params.id);
     invalidateSources();
-    res.json(data);
+    res.json({ ...data, production_links });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
