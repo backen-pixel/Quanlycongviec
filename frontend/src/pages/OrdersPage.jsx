@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { Search, ShoppingCart, Receipt, Calendar, Download, Trash2, Loader2 } from 'lucide-react';
+import { Search, ShoppingCart, Calendar, Download, Trash2, Loader2 } from 'lucide-react';
 
 const ORDER_STATUS = { draft: 'Nháp', confirmed: 'Xác nhận', processing: 'Đang SX', shipped: 'Đang giao', delivered: 'Đã giao', cancelled: 'Đã hủy' };
 const ORDER_COLORS = { draft: 'bg-gray-100 text-gray-600', confirmed: 'bg-blue-100 text-blue-700', processing: 'bg-amber-100 text-amber-700', shipped: 'bg-indigo-100 text-indigo-700', delivered: 'bg-emerald-100 text-emerald-700', cancelled: 'bg-red-100 text-red-700' };
@@ -17,7 +17,6 @@ export default function OrdersPage() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [loading, setLoading] = useState(true);
-  const [invoiceLoadingId, setInvoiceLoadingId] = useState(null);
   const [pdfLoadingId, setPdfLoadingId] = useState(null);
   const navigate = useNavigate();
 
@@ -36,21 +35,6 @@ export default function OrdersPage() {
   const summary = {};
   orders.forEach(o => { summary[o.status] = (summary[o.status] || 0) + 1; });
   const totalValue = orders.reduce((s, o) => s + (o.total || 0), 0);
-
-  const createInvoice = async (id, e) => {
-    e.stopPropagation();
-    if (invoiceLoadingId) return;
-    if (!confirm('Chuyển đơn hàng sang hóa đơn?')) return;
-    setInvoiceLoadingId(id);
-    try {
-      const { data } = await api.post(`/crm/orders/${id}/create-invoice`);
-      alert(`Đã tạo hóa đơn ${data.code}`);
-      navigate(`/crm/invoices/${data.id}`);
-    } catch (err) {
-      alert(err.response?.data?.error || 'Lỗi chuyển sang hóa đơn');
-    }
-    setInvoiceLoadingId(null);
-  };
 
   const downloadPdf = async (id, code, e) => {
     e.stopPropagation();
@@ -113,7 +97,6 @@ export default function OrdersPage() {
               <th className="py-3 px-3 whitespace-nowrap">Ngày</th>
               <th className="py-3 px-3 text-center whitespace-nowrap">PDF</th>
               <th className="py-3 px-3"></th>
-              <th className="py-3 px-3"></th>
             </tr>
           </thead>
           <tbody>
@@ -130,17 +113,6 @@ export default function OrdersPage() {
               <td className="py-3 px-3 text-center">
                 <button onClick={e => downloadPdf(o.id, o.code, e)} disabled={pdfLoadingId === o.id} className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg cursor-pointer disabled:opacity-50" title="Tải PDF">
                   {pdfLoadingId === o.id ? <Loader2 className="h-4 w-4 animate-spin text-emerald-500" /> : <Download className="h-4 w-4" />}
-                </button>
-              </td>
-              <td className="py-3 px-3">
-                <button
-                  onClick={e => createInvoice(o.id, e)}
-                  disabled={invoiceLoadingId === o.id || o.status === 'cancelled'}
-                  className="text-xs text-purple-600 hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                  title="Chuyển sang hóa đơn"
-                >
-                  {invoiceLoadingId === o.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Receipt className="h-3.5 w-3.5" />}
-                  {invoiceLoadingId === o.id ? 'Đang tạo...' : '→HĐ'}
                 </button>
               </td>
               <td className="py-3 px-3 text-center"><button onClick={e => { e.stopPropagation(); if(confirm('Xóa đơn hàng ' + o.code + '?')) api.delete('/crm/orders/' + o.id).then(load).catch(() => alert('Lỗi xóa')); }} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer" title="Xóa"><Trash2 className="h-4 w-4" /></button></td>

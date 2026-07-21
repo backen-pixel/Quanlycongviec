@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { ArrowLeft, Receipt, User, Phone, MapPin, Truck, Download, Loader2, Pencil, Mail, FileText, Link2, Calendar } from 'lucide-react';
+import { ArrowLeft, User, Phone, MapPin, Truck, Download, Loader2, Pencil, Mail, FileText, Link2, Calendar } from 'lucide-react';
 import CrmLineItemsReadonly from '../components/CrmLineItemsReadonly';
 import { mergeOrderWithSourceQuotation, getDepositRemainingDisplay } from '../lib/quotationTermsDisplay';
 
@@ -14,10 +14,8 @@ export default function OrderDetail() {
   const navigate = useNavigate();
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [invoiceLoading, setInvoiceLoading] = useState(false);
   const [statusLoadingStep, setStatusLoadingStep] = useState(null);
   const [pdfLoading, setPdfLoading] = useState(false);
-  const _invoiceSaving = useRef(false);
 
   useEffect(() => { load(); }, [id]);
   const load = async () => {
@@ -34,22 +32,6 @@ export default function OrderDetail() {
       setOrder(next);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const createInvoice = async () => {
-    if (_invoiceSaving.current) return;
-    if (!confirm('Chuyển đơn hàng sang hóa đơn?')) return;
-    _invoiceSaving.current = true;
-    setInvoiceLoading(true);
-    try {
-      const { data } = await api.post(`/crm/orders/${id}/create-invoice`);
-      alert(`Đã tạo hóa đơn ${data.code}`);
-      navigate(`/crm/invoices/${data.id}`);
-    } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi chuyển sang hóa đơn');
-      _invoiceSaving.current = false;
-      setInvoiceLoading(false);
     }
   };
 
@@ -193,10 +175,6 @@ export default function OrderDetail() {
           <button onClick={downloadPdf} disabled={pdfLoading} className="h-9 px-4 border rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer hover:bg-gray-50 disabled:opacity-50">
             {pdfLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
             {pdfLoading ? 'Đang tải...' : 'Xuất PDF'}
-          </button>
-          <button onClick={createInvoice} disabled={invoiceLoading || order.status === 'cancelled'} className="h-9 px-4 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer disabled:opacity-60" title="Chuyển đơn hàng sang hóa đơn">
-            {invoiceLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Receipt className="h-4 w-4" />}
-            {invoiceLoading ? 'Đang tạo...' : '→ Hóa đơn'}
           </button>
         </div>
       </div>

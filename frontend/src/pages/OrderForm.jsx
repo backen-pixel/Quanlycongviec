@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import api from '../lib/api';
-import { Plus, Trash2, Save, ArrowLeft, Search, ShoppingCart, AlignLeft, Loader2, Download, Receipt } from 'lucide-react';
+import { Plus, Trash2, Save, ArrowLeft, Search, ShoppingCart, AlignLeft, Loader2, Download } from 'lucide-react';
 import ProductSearchPicker from '../components/ProductSearchPicker';
 import ProductAutocompleteCell from '../components/ProductAutocompleteCell';
 import CustomerSearchPicker from '../components/CustomerSearchPicker';
@@ -95,7 +95,6 @@ export default function OrderForm() {
   const [saveMsg, setSaveMsg] = useState('');
   const [statusLoading, setStatusLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
-  const [invoiceLoading, setInvoiceLoading] = useState(false);
   const [showProductPicker, setShowProductPicker] = useState(false);
   const excelHydratedRef = useRef(false);
 
@@ -346,20 +345,6 @@ export default function OrderForm() {
     setPdfLoading(false);
   };
 
-  const convertToInvoice = async () => {
-    if (invoiceLoading || !id || form.status === 'cancelled') return;
-    if (!confirm(`Chuyển đơn hàng ${form.code || ''} sang hóa đơn?`)) return;
-    setInvoiceLoading(true);
-    try {
-      const { data } = await api.post(`/crm/orders/${id}/create-invoice`);
-      alert(`Đã tạo hóa đơn ${data.code}`);
-      navigate(`/crm/invoices/${data.id}`);
-    } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi chuyển sang hóa đơn');
-    }
-    setInvoiceLoading(false);
-  };
-
   const _isSaving = useRef(false);
   const save = async () => {
     if (_isSaving.current) return;
@@ -452,18 +437,6 @@ export default function OrderForm() {
             <button onClick={downloadPdf} disabled={pdfLoading} className="h-9 px-4 border rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer hover:bg-gray-50 disabled:opacity-50">
               {pdfLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
               {pdfLoading ? 'Đang tải...' : 'Xuất PDF'}
-            </button>
-          )}
-          {isEdit && form.status !== 'cancelled' && (
-            <button
-              onClick={convertToInvoice}
-              disabled={invoiceLoading}
-              className="h-9 px-4 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer disabled:opacity-50"
-              title="Chuyển đơn hàng sang hóa đơn"
-            >
-              {invoiceLoading
-                ? <><Loader2 className="h-4 w-4 animate-spin" /> Đang tạo...</>
-                : <><Receipt className="h-4 w-4" /> → Hóa đơn</>}
             </button>
           )}
           <button onClick={save} disabled={saveStatus === 'loading'} className="h-9 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer disabled:opacity-50">
