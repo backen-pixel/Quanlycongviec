@@ -12,76 +12,99 @@ export function LogisticsListView({ pipeline, calculateDays }) {
   };
   const allProjects = pipeline?.flatMap((s) => s.items.map((p) => ({ ...p, _stageName: s.name, _stageColor: s.color }))) || [];
 
+  const headerCellCls = 'px-3 py-2.5 text-left text-[10px] font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap bg-slate-100 border-b-2 border-slate-300 border-r border-slate-200 last:border-r-0 sticky top-0 z-20';
+  const bodyCellCls = 'px-3 py-2.5 align-middle border-b border-slate-200 border-r border-slate-100 last:border-r-0';
+
   return (
-    <div className="bg-white rounded-xl border overflow-hidden">
-      <table className="w-full text-sm">
-        <thead className="bg-gray-50 border-b">
-          <tr>
-            {['Mã', 'Tên dự án', 'Khách hàng', 'Giai đoạn VC', 'Giá trị', 'CRM', 'SX', 'VC', 'LĐ', 'Deadline', 'Thời gian'].map((h) => (
-              <th key={h} className="text-left text-xs font-semibold text-gray-500 px-4 py-3 whitespace-nowrap">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {allProjects.length === 0 ? (
-            <tr><td colSpan={11} className="text-center text-gray-400 py-12 text-sm">Không có dự án nào</td></tr>
-          ) : (
-            allProjects.map((p) => {
-              const deals = Array.isArray(p.crm_deals) ? p.crm_deals : [];
-              const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
-              const crmName = primaryDeal?.assignee?.full_name || primaryDeal?.lead_owner?.full_name || p.sales_person?.full_name || '—';
-              const sxName = p.production_person?.full_name || '—';
-              const vcName = p.logistics_person?.full_name || '—';
-              const ldName = p.installer_person?.full_name || '—';
-              return (
-              <tr key={p.id} onClick={() => goProject(p.id)}
-                className="border-b last:border-b-0 hover:bg-orange-50 cursor-pointer transition-colors">
-                <td className="px-4 py-3">
-                  <span className="text-xs font-mono font-semibold text-orange-600">{p.code}</span>
-                </td>
-                <td className="px-4 py-3">
-                  <p className="font-medium text-gray-900 truncate max-w-[200px]">{p.name}</p>
-                </td>
-                <td className="px-4 py-3">
-                  <p className="text-gray-600 truncate max-w-[150px]">{p.customer?.full_name || '—'}</p>
-                </td>
-                <td className="px-4 py-3">
-                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold"
-                    style={{ backgroundColor: `${p._stageColor || '#f97316'}20`, color: p._stageColor || '#f97316' }}>
-                    {p._stageName}
-                  </span>
-                </td>
-                <td className="px-4 py-3">
-                  <span className="font-semibold text-emerald-600">{formatVND(p.estimated_value)}</span>
-                </td>
-                <td className="px-4 py-3">
-                  <span className="text-gray-600">{crmName}</span>
-                </td>
-                <td className="px-4 py-3">
-                  <span className="text-gray-600">{sxName}</span>
-                </td>
-                <td className="px-4 py-3">
-                  <span className="text-gray-600">{vcName}</span>
-                </td>
-                <td className="px-4 py-3">
-                  <span className="text-gray-600">{ldName}</span>
-                </td>
-                <td className="px-4 py-3">
-                  {p.deadline ? (
-                    <span className={`text-xs px-2 py-1 rounded font-medium ${new Date(p.deadline) < new Date() ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-600'}`}>
-                      {formatDate(p.deadline)}
-                    </span>
-                  ) : <span className="text-gray-400">—</span>}
-                </td>
-                <td className="px-4 py-3">
-                  <span className="text-xs text-gray-500">{calculateDays?.(p.created_at) || '—'}</span>
-                </td>
+    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <div className="overflow-auto h-[calc(100vh-12.5rem)] min-h-[28rem]">
+        <table className="w-full text-sm min-w-[1100px] border-separate border-spacing-0">
+          <thead>
+            <tr>
+              <th className={`${headerCellCls} w-[7.5rem]`}>Mã</th>
+              <th className={`${headerCellCls} min-w-[14rem]`}>Tên dự án</th>
+              <th className={`${headerCellCls} min-w-[9rem]`}>Khách hàng</th>
+              <th className={`${headerCellCls} min-w-[9rem]`}>Giai đoạn VC</th>
+              <th className={`${headerCellCls} text-right w-[7rem]`}>Giá trị</th>
+              <th className={`${headerCellCls} min-w-[7.5rem]`}>CRM</th>
+              <th className={`${headerCellCls} min-w-[7.5rem]`}>SX</th>
+              <th className={`${headerCellCls} min-w-[7.5rem]`}>VC</th>
+              <th className={`${headerCellCls} min-w-[7.5rem]`}>LĐ</th>
+              <th className={`${headerCellCls} w-[7rem]`}>Deadline</th>
+              <th className={`${headerCellCls} w-[5.5rem]`}>Thời gian</th>
+            </tr>
+          </thead>
+          <tbody>
+            {allProjects.length === 0 ? (
+              <tr>
+                <td colSpan={11} className="text-center text-gray-400 py-12 text-sm border-b border-slate-200">Không có dự án nào</td>
               </tr>
-              );
-            })
-          )}
-        </tbody>
-      </table>
+            ) : (
+              allProjects.map((p) => {
+                const deals = Array.isArray(p.crm_deals) ? p.crm_deals : [];
+                const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
+                const crmName = primaryDeal?.assignee?.full_name || primaryDeal?.lead_owner?.full_name || p.sales_person?.full_name || '—';
+                const sxName = p.production_person?.full_name || '—';
+                const vcName = p.logistics_person?.full_name || '—';
+                const ldName = p.installer_person?.full_name || '—';
+                return (
+                  <tr
+                    key={p.id}
+                    onClick={() => goProject(p.id)}
+                    className="group/row hover:bg-orange-50 cursor-pointer transition-colors"
+                  >
+                    <td className={`${bodyCellCls} whitespace-nowrap`}>
+                      <span className="text-xs font-mono font-semibold text-orange-600" title={p.code || ''}>
+                        {p.code || '—'}
+                      </span>
+                    </td>
+                    <td className={`${bodyCellCls} max-w-[18rem]`}>
+                      <p className="font-medium text-force-black truncate" title={p.name || ''}>{p.name || '—'}</p>
+                    </td>
+                    <td className={`${bodyCellCls} max-w-[11rem]`}>
+                      <p className="text-gray-600 truncate" title={p.customer?.full_name || ''}>{p.customer?.full_name || '—'}</p>
+                    </td>
+                    <td className={`${bodyCellCls} whitespace-nowrap`}>
+                      <span
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold max-w-[12rem] truncate"
+                        style={{ backgroundColor: `${p._stageColor || '#f97316'}20`, color: p._stageColor || '#f97316' }}
+                        title={p._stageName}
+                      >
+                        {p._stageName}
+                      </span>
+                    </td>
+                    <td className={`${bodyCellCls} whitespace-nowrap text-right tabular-nums`}>
+                      <span className="font-semibold text-emerald-600">{formatVND(p.estimated_value)}</span>
+                    </td>
+                    <td className={`${bodyCellCls} max-w-[9rem]`}>
+                      <span className="text-gray-600 truncate block" title={crmName}>{crmName}</span>
+                    </td>
+                    <td className={`${bodyCellCls} max-w-[9rem]`}>
+                      <span className="text-gray-600 truncate block" title={sxName}>{sxName}</span>
+                    </td>
+                    <td className={`${bodyCellCls} max-w-[9rem]`}>
+                      <span className="text-gray-600 truncate block" title={vcName}>{vcName}</span>
+                    </td>
+                    <td className={`${bodyCellCls} max-w-[9rem]`}>
+                      <span className="text-gray-600 truncate block" title={ldName}>{ldName}</span>
+                    </td>
+                    <td className={`${bodyCellCls} whitespace-nowrap`}>
+                      {p.deadline ? (
+                        <span className={`text-xs px-2 py-1 rounded font-medium ${new Date(p.deadline) < new Date() ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-600'}`}>
+                          {formatDate(p.deadline)}
+                        </span>
+                      ) : <span className="text-gray-400">—</span>}
+                    </td>
+                    <td className={`${bodyCellCls} whitespace-nowrap`}>
+                      <span className="text-xs text-gray-500">{calculateDays?.(p.created_at) || '—'}</span>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
