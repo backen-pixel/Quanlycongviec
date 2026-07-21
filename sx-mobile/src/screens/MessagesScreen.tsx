@@ -269,9 +269,6 @@ export default function MessagesScreen() {
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <Text style={styles.title}>Tin nhắn</Text>
         <View style={styles.headerActions}>
-          <Pressable style={styles.iconBtn}>
-            <Ionicons name="search-outline" size={20} color={Colors.text} />
-          </Pressable>
           <Pressable
             style={styles.composeBtn}
             onPress={() => navigation.navigate('CreateGroupChat', { preselectedUserIds: [] })}
@@ -327,7 +324,7 @@ export default function MessagesScreen() {
 
       <View style={styles.hubBar}>
         {([
-          ['chats', 'chatbubbles', 'Chats'],
+          ['chats', 'chatbubbles', 'Hội thoại'],
           ['calls', 'call', 'Cuộc gọi'],
         ] as const).map(([key, icon, label]) => {
           const active = hub === key;

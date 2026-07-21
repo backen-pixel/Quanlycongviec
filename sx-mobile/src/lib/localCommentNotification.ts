@@ -27,7 +27,15 @@ export async function showLocalCommentNotification(n: SxCommentNotification): Pr
       n.metadata?.comment_preview?.trim() ||
       n.message?.trim() ||
       'Có thông báo mới';
-    const identifier = String(n.id || '').trim() || undefined;
+    const meta = (n.metadata || {}) as Record<string, unknown>;
+    const pid = meta.project_id != null ? String(meta.project_id) : n.entity_id ? String(n.entity_id) : '';
+    const commentId = meta.comment_id != null ? String(meta.comment_id) : '';
+    // Identifier ổn định theo dự án/comment — tránh 2 tiếng khi socket + notification cùng lúc.
+    const identifier = commentId && pid
+      ? `sx-cmt:${pid}:${commentId}`
+      : pid && n.type === 'comment_added'
+        ? `sx-cmt:${pid}:${String(n.created_at || '').slice(0, 19)}`
+        : (String(n.id || '').trim() || undefined);
     await Notifications.scheduleNotificationAsync({
       identifier,
       content: {

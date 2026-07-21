@@ -25,6 +25,7 @@ export type SxCommentNotification = {
     project_name?: string | null;
     comment_preview?: string | null;
     author_name?: string | null;
+    comment_id?: string | null;
     deal_title?: string | null;
     nav_tab?: string;
     ecosystem_module_key?: string;
@@ -33,9 +34,6 @@ export type SxCommentNotification = {
 
 const WORKSHOP_DEAL_TYPES = new Set([
   'workshop_new_deal',
-  'deal_created',
-  'deal_assigned',
-  'deal_won',
   'project_assigned',
   'project_created',
 ]);

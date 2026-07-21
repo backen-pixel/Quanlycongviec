@@ -55,13 +55,27 @@ function dayLabel(iso: string): string {
 function timeAgo(iso: string): string {
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) return '';
-  const ms = Date.now() - t;
-  if (ms < 60_000) return 'Vừa xong';
-  const min = Math.floor(ms / 60000);
-  if (min < 60) return `${min} phút trước`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr} giờ trước`;
+  const now = Date.now();
+  const startToday = new Date();
+  startToday.setHours(0, 0, 0, 0);
+  const startThat = new Date(iso);
+  startThat.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((startToday.getTime() - startThat.getTime()) / 86400000);
+  const hm = new Date(iso).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  if (diffDays === 0) {
+    const ms = now - t;
+    if (ms < 60_000) return 'Vừa xong';
+    const min = Math.floor(ms / 60000);
+    if (min < 60) return `${min} phút trước`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr} giờ trước`;
+    return hm;
+  }
+  if (diffDays === 1) return `Hôm qua ${hm}`;
   const d = new Date(iso);
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  if (d.getFullYear() === new Date().getFullYear()) return `${dd}/${mm} ${hm}`;
   return d.toLocaleString('vi-VN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 

@@ -8,6 +8,14 @@ const { emitCrmBadgeUpdateForProject } = require('./workshopKanban');
 const { invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
 const { emitScoped } = require('./socketEmit');
 
+const INTAKE_NOTIFY_ROLES = [
+  'production',
+  'production_staff',
+  'production_admin',
+  'manager',
+  'admin',
+];
+
 async function resolveProjectCompanyId(projectId) {
   if (!projectId) return null;
   try {
@@ -23,7 +31,7 @@ async function resolveProjectCompanyId(projectId) {
 }
 
 /**
- * Gửi thông báo workshop_new_deal cho NV sản xuất / quản lý (không phụ thuộc DISABLE_PRODUCTION_PUSH).
+ * Deal mới chờ tiếp nhận — chỉ NV cùng công ty xưởng (không broadcast toàn hệ thống).
  */
 async function notifyWorkshopIntakeNewDeal({
   req,
@@ -36,11 +44,16 @@ async function notifyWorkshopIntakeNewDeal({
   if (!req || !projectId) return;
 
   try {
+    const companyId = await resolveProjectCompanyId(projectId);
+    // Không biết công ty xưởng → không broadcast toàn hệ thống (tránh spam).
+    if (!companyId) return;
+
     const { data: users } = await supabase
       .from('users')
-      .select('id')
-      .in('role', ['production', 'manager', 'admin'])
-      .eq('is_active', true);
+      .select('id, company_id, role')
+      .in('role', INTAKE_NOTIFY_ROLES)
+      .eq('is_active', true)
+      .eq('company_id', companyId);
     const recipientIds = (users || [])
       .map((u) => u.id)
       .filter((uid) => uid && String(uid) !== String(actorUserId));
@@ -65,7 +78,6 @@ async function notifyWorkshopIntakeNewDeal({
         project_name: projectName || null,
         nav_tab: 'kanban',
         intake: true,
-        // Kanban SX + ?open=projectId — NotificationCenter/dashboard highlight thẻ Chờ vào xưởng.
         nav_url: `/sx/dashboard?open=${encodeURIComponent(String(projectId))}`,
       },
     );

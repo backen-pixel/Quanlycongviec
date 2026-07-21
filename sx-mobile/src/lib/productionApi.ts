@@ -230,7 +230,8 @@ export function isSxProjectDeliveryDateOverdue(
   stages: KanbanStage[],
   stageIndex?: StageIndex,
 ): boolean {
-  const colId = project.resolved_column_id ?? project.sx_kanban_column_id ?? null;
+  // Khớp web: ưu tiên sx_kanban_column_id (sau attach = cột resolve).
+  const colId = project.sx_kanban_column_id ?? project.resolved_column_id ?? null;
   const index = stageIndex || buildStageIndex(stages);
   const stage = colId ? index.byId.get(String(colId)) : undefined;
   if (shouldIgnoreSxOrderDeliveryOverdue(stage)) return false;
@@ -283,7 +284,10 @@ function attachColumnsIndexed(
   stages: KanbanStage[],
   index: StageIndex,
 ): ProductionProject[] {
+  const intakeId = index.intake?.id || null;
   return list.map((p) => {
+    // Khớp BE `enrichOneSxProject`: cột hiển thị = cột KPI = resolve client
+    // (mobile lite bỏ enrich nên phải gắn lại sx_kanban_column_id / sx_intake).
     const colId = resolveColumnId(p, stages, index);
     const col = colId ? index.byId.get(String(colId)) : undefined;
     const pipelinePct =
@@ -295,11 +299,12 @@ function attachColumnsIndexed(
     const withCol = {
       ...p,
       resolved_column_id: colId,
+      sx_kanban_column_id: colId,
+      sx_intake: Boolean(intakeId && colId && String(colId) === String(intakeId)),
       sx_pipeline_percent: pipelinePct,
     };
     return {
       ...withCol,
-      // Ghi đè flag BE bằng công thức web (kể cả khi BE cũ chưa deploy).
       is_overdue: isSxProjectDeliveryDateOverdue(withCol, stages, index),
     };
   });

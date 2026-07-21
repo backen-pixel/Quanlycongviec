@@ -1,5 +1,6 @@
 /**
- * Helpers KPI board SX — dùng chung Overview / Kanban.
+ * Helpers KPI board SX — khớp web `frontend/src/lib/sxPipelineRevenue.js`
+ * + `ProductionDashboard` scopeKpis.
  */
 import type { KanbanStage, ProductionProject } from '../types';
 
@@ -25,8 +26,19 @@ function buildKpiStageIndex(stages: KanbanStage[]): KpiStageIndex {
   return { byId, completedIds, collectedIds };
 }
 
+/** Cột KPI — khớp web: `sx_kanban_column_id` (sau attach = cột resolve như enrich BE). */
 function kpiCol(p: ProductionProject): string | null {
-  return p.resolved_column_id ?? p.sx_kanban_column_id ?? null;
+  return p.sx_kanban_column_id ?? p.resolved_column_id ?? null;
+}
+
+function stageOf(
+  p: ProductionProject,
+  stages: KanbanStage[],
+  index?: KpiStageIndex,
+): KanbanStage | undefined {
+  const idx = index || buildKpiStageIndex(stages);
+  const id = kpiCol(p);
+  return id ? idx.byId.get(String(id)) : undefined;
 }
 
 export function projectIsShipped(p: ProductionProject): boolean {
@@ -39,22 +51,32 @@ export function projectIsAwaitingDelivery(
   index?: KpiStageIndex,
 ): boolean {
   if (projectIsShipped(p)) return false;
-  const idx = index || buildKpiStageIndex(stages);
-  const col = idx.byId.get(String(kpiCol(p) || ''));
+  const col = stageOf(p, stages, index);
   return Boolean(col?.is_handover_to_logistics);
 }
 
-function countsCompleted(p: ProductionProject, index: KpiStageIndex): boolean {
-  if (index.completedIds.size) {
-    return index.completedIds.has(String(kpiCol(p) || ''));
+/** Doanh thu hoàn thành theo cột — dùng loại trừ «Đang SX», không dùng cho thẻ «Hoàn tất». */
+export function countsAsCompletedRevenue(
+  p: ProductionProject,
+  stages: KanbanStage[],
+  index?: KpiStageIndex,
+): boolean {
+  const idx = index || buildKpiStageIndex(stages);
+  if (idx.completedIds.size) {
+    return idx.completedIds.has(String(kpiCol(p) || ''));
   }
   return String(p.status || '') === 'completed';
 }
 
-function countsCollected(p: ProductionProject, index: KpiStageIndex): boolean {
+export function countsAsCollectedRevenue(
+  p: ProductionProject,
+  stages: KanbanStage[],
+  index?: KpiStageIndex,
+): boolean {
+  const idx = index || buildKpiStageIndex(stages);
   const id = String(kpiCol(p) || '');
   if (!id) return false;
-  return index.collectedIds.has(id);
+  return idx.collectedIds.has(id);
 }
 
 export function projectIsProducing(
@@ -66,15 +88,61 @@ export function projectIsProducing(
   if (p.sx_intake) return false;
   if (projectIsShipped(p)) return false;
   if (projectIsAwaitingDelivery(p, stages, idx)) return false;
-  if (countsCompleted(p, idx)) return false;
-  if (countsCollected(p, idx)) return false;
-  const col = idx.byId.get(String(kpiCol(p) || ''));
+  if (countsAsCompletedRevenue(p, stages, idx)) return false;
+  if (countsAsCollectedRevenue(p, stages, idx)) return false;
+  const col = stageOf(p, stages, idx);
   if (col?.bucket_slug === INTAKE_BUCKET) return false;
   return true;
 }
 
+/** Chờ vào xưởng — khớp web `intake_pending`: `sx_intake`. */
+export function projectIsIntake(p: ProductionProject): boolean {
+  return Boolean(p.sx_intake);
+}
+
+export function startOfLocalDay(d: Date): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+/** Ẩn deadline trên thẻ / KPI — khớp `shouldHideSxKanbanDeadlineOnCard`. */
+function shouldHideDeadline(stage?: KanbanStage | null): boolean {
+  return Boolean(stage?.counts_as_completed_revenue);
+}
+
+/** Cột bỏ quá hạn — khớp `shouldIgnoreSxOrderDeliveryOverdue`. */
+function shouldIgnoreOverdue(stage?: KanbanStage | null): boolean {
+  if (!stage) return false;
+  if (stage.counts_as_completed_revenue) return true;
+  if (stage.sla_days === 0) return true;
+  return false;
+}
+
+/**
+ * Quá hạn KPI — khớp web `resolveSxDeadlineBucket(...).bucket === 'overdue'`
+ * (+ ẩn cột «Đã công»).
+ */
+export function projectIsDeadlineOverdue(
+  p: ProductionProject,
+  stages: KanbanStage[],
+  index?: KpiStageIndex,
+  todayMs = Date.now(),
+): boolean {
+  const col = stageOf(p, stages, index);
+  if (shouldHideDeadline(col)) return false;
+  const raw = p.delivery_date || p.production_deadline || p.deadline;
+  if (!raw) return false;
+  const t = new Date(raw);
+  if (Number.isNaN(t.getTime())) return false;
+  if (shouldIgnoreOverdue(col)) return false;
+  const today = startOfLocalDay(new Date(todayMs));
+  return startOfLocalDay(t).getTime() < today.getTime();
+}
+
 export type SxBoardKpis = {
   total: number;
+  intake: number;
   producing: number;
   awaitingDelivery: number;
   shipped: number;
@@ -87,33 +155,31 @@ export function computeSxBoardKpis(
   stages: KanbanStage[],
 ): SxBoardKpis {
   const index = buildKpiStageIndex(stages);
+  const nowMs = Date.now();
+  let intake = 0;
   let producing = 0;
   let awaitingDelivery = 0;
   let shipped = 0;
   let completed = 0;
   let overdue = 0;
   for (const p of projects) {
+    if (projectIsIntake(p)) intake += 1;
     if (projectIsProducing(p, stages, index)) producing += 1;
     if (projectIsAwaitingDelivery(p, stages, index)) awaitingDelivery += 1;
     if (projectIsShipped(p)) shipped += 1;
+    // Web scopeKpis.completed = status === 'completed'
     if (String(p.status || '') === 'completed') completed += 1;
-    // is_overdue đã tính lúc attachColumns — tránh quét stages lại mỗi dự án.
-    if (p.is_overdue) overdue += 1;
+    if (projectIsDeadlineOverdue(p, stages, index, nowMs)) overdue += 1;
   }
   return {
     total: projects.length,
+    intake,
     producing,
     awaitingDelivery,
     shipped,
     completed,
     overdue,
   };
-}
-
-export function startOfLocalDay(d: Date): Date {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
 }
 
 /** Dự án ưu tiên: quá hạn trước, rồi sắp đến hạn (≤2 ngày). */

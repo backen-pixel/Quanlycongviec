@@ -102,6 +102,35 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const presenceListenersRef = useRef<Set<PresenceListener>>(new Set());
   const projectMetaRef = useRef(new Map<string, { code?: string | null; name?: string | null }>());
   const recentMessengerNotifRef = useRef<Map<string, number>>(new Map());
+  /** Dedup comment: socket project:comment + socket notification cùng lúc. */
+  const recentCommentNotifRef = useRef<Map<string, number>>(new Map());
+
+  const markRecentCommentKey = useCallback((key: string): boolean => {
+    if (!key) return false;
+    const now = Date.now();
+    const last = recentCommentNotifRef.current.get(key);
+    if (last != null && now - last < 15000) return true; // đã thấy gần đây
+    recentCommentNotifRef.current.set(key, now);
+    if (recentCommentNotifRef.current.size > 60) {
+      for (const [k, t] of recentCommentNotifRef.current) {
+        if (now - t > 60000) recentCommentNotifRef.current.delete(k);
+      }
+    }
+    return false;
+  }, []);
+
+  const commentDedupeKey = useCallback((n: SxCommentNotification): string => {
+    const meta = (n.metadata || {}) as Record<string, unknown>;
+    const pid = meta.project_id != null
+      ? String(meta.project_id)
+      : n.entity_type === 'project' && n.entity_id
+        ? String(n.entity_id)
+        : '';
+    const cid = meta.comment_id != null ? String(meta.comment_id) : '';
+    if (pid && cid) return `cmt:${pid}:${cid}`;
+    if (pid) return `cmt:${pid}:${String(n.created_at || '').slice(0, 19)}`;
+    return `id:${n.id}`;
+  }, []);
 
   const refreshUnread = useCallback(() => {
     if (!token || busyRef.current) return;
@@ -346,6 +375,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           const built = buildNotificationFromCommentEvent(evt, meta);
           if (!built) return;
 
+          if (markRecentCommentKey(commentDedupeKey(built))) return;
+
           setUnreadCount((c) => c + 1);
           emitComment(built);
         } catch {
@@ -410,6 +441,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         });
       }
       if (n?.type === 'messenger_chat' && n.entity_type === 'messenger_group' && n.entity_id) {
+        // App đang mở: messenger_group:chat đã hiện tray — bỏ qua bản notification trùng.
+        if (AppState.currentState === 'active') return;
         const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
         const senderName = typeof meta.sender_name === 'string' ? meta.sender_name : '';
         const groupName =
@@ -442,14 +475,11 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
       const dealTypes = new Set([
         'workshop_new_deal',
-        'deal_created',
-        'deal_assigned',
-        'deal_won',
         'project_assigned',
         'project_created',
       ]);
 
-      // Comment SX, deal xưởng, giao việc / task — đẩy tray hệ thống.
+      // Comment SX — dedup với project:comment.
       if (notifType === 'comment_added') {
         const eco = n.metadata?.ecosystem_module_key;
         if (eco && eco !== 'production') return;
@@ -464,16 +494,21 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           created_at: String(n.created_at || new Date().toISOString()),
           metadata: n.metadata || null,
         });
+        if (markRecentCommentKey(commentDedupeKey(enriched))) {
+          // Đã hiện từ project:comment — chỉ gộp vào live list, không +badge / không tray lần 2.
+          upsertLive(enriched);
+          return;
+        }
         setUnreadCount((c) => c + 1);
         emitComment(enriched);
         return;
       }
 
-      if (dealTypes.has(notifType) || isAssignmentOrTask) {
+      if (dealTypes.has(notifType)) {
         const enriched = enrichNotificationPreview({
           id: String(n.id || `srv:${Date.now()}`),
           type: notifType || 'workshop_new_deal',
-          title: String(n.title || (isAssignmentOrTask ? 'Giao việc' : 'Deal xưởng')),
+          title: String(n.title || 'Deal xưởng'),
           message: String(n.message || ''),
           entity_type: n.entity_type,
           entity_id: n.entity_id,
@@ -481,25 +516,48 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           created_at: String(n.created_at || new Date().toISOString()),
           metadata: {
             ...(n.metadata || {}),
-            ...(dealTypes.has(notifType) ? { ecosystem_module_key: 'production' } : {}),
+            ecosystem_module_key: 'production',
           },
         });
         setUnreadCount((c) => c + 1);
         emitComment(enriched);
-        if (dealTypes.has(notifType)) {
-          emitSync({
-            type: 'project:board_changed',
-            payload: {
-              project_id:
-                (n.metadata as Record<string, unknown> | undefined)?.project_id != null
-                  ? String((n.metadata as Record<string, unknown>).project_id)
-                  : n.entity_type === 'project' && n.entity_id
-                    ? String(n.entity_id)
-                    : null,
-              reason: 'notification',
-            },
-          });
-        }
+        emitSync({
+          type: 'project:board_changed',
+          payload: {
+            project_id:
+              (n.metadata as Record<string, unknown> | undefined)?.project_id != null
+                ? String((n.metadata as Record<string, unknown>).project_id)
+                : n.entity_type === 'project' && n.entity_id
+                  ? String(n.entity_id)
+                  : null,
+            reason: 'notification',
+          },
+        });
+        return;
+      }
+
+      // Giao việc / task: chỉ tray + badge khi thuộc module production.
+      // CRM thuần vẫn emitSync để tab Công việc refresh, không spam chuông.
+      if (isAssignmentOrTask) {
+        const meta = (n.metadata || {}) as Record<string, unknown>;
+        const eco = String(meta.ecosystem_module_key || '');
+        const isProduction =
+          eco === 'production'
+          || String(meta.assignment_module || meta.module || '') === 'production';
+        if (!isProduction) return;
+        const enriched = enrichNotificationPreview({
+          id: String(n.id || `srv:${Date.now()}`),
+          type: notifType || 'crm_assignment_assigned',
+          title: String(n.title || 'Giao việc'),
+          message: String(n.message || ''),
+          entity_type: n.entity_type,
+          entity_id: n.entity_id,
+          is_read: false,
+          created_at: String(n.created_at || new Date().toISOString()),
+          metadata: n.metadata || null,
+        });
+        setUnreadCount((c) => c + 1);
+        emitComment(enriched);
       }
     };
 
@@ -677,7 +735,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       if (socketRef.current === s) socketRef.current = null;
       setAppSocket(null);
     };
-  }, [token, uid, emitComment, emitSync, emitMessengerChat, emitMessengerMeta, notifyMessengerIncoming]);
+  }, [token, uid, emitComment, emitSync, emitMessengerChat, emitMessengerMeta, notifyMessengerIncoming, markRecentCommentKey, commentDedupeKey, upsertLive]);
 
   const value = useMemo(
     () => ({

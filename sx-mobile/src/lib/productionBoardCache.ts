@@ -85,6 +85,10 @@ export function patchCachedProjectById(
       if (col?.progress_percent != null && Number.isFinite(Number(col.progress_percent))) {
         merged.sx_pipeline_percent = Number(col.progress_percent);
       }
+      // Khớp enrich BE / attachColumns: intake = đúng cột won_pending
+      if (patch.sx_intake == null) {
+        merged.sx_intake = col?.bucket_slug === 'won_pending';
+      }
     }
     nextProjects[idx] = merged;
     const nextEntry: CacheEntry = {

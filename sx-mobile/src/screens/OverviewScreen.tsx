@@ -25,6 +25,7 @@ import type { MainTabParamList } from '../navigation/MainTabs';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import {
   fetchCommentNotifications,
+  isWorkshopDealNotification,
   type SxCommentNotification,
 } from '../lib/notificationApi';
 import { ensureNotificationPermission } from '../lib/pushRegistration';
@@ -61,6 +62,7 @@ import { Radii, Spacing, colorWithAlpha, getTaskProgressColor } from '../theme';
 
 const EMPTY_KPI: SxBoardKpis = {
   total: 0,
+  intake: 0,
   producing: 0,
   awaitingDelivery: 0,
   shipped: 0,
@@ -73,10 +75,52 @@ function firstName(full: string): string {
   return parts[parts.length - 1] || full || 'bạn';
 }
 
+/** Thời gian thông báo: hôm nay = giờ; hôm qua / ngày khác = có ngày để không bị hiểu nhầm. */
 function notifTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startThat = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diffDays = Math.round((startToday - startThat) / 86400000);
+  const hm = d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  if (diffDays === 0) return hm;
+  if (diffDays === 1) return `Hôm qua ${hm}`;
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  if (d.getFullYear() === now.getFullYear()) return `${dd}/${mm} ${hm}`;
+  return `${dd}/${mm}/${d.getFullYear()}`;
+}
+
+function notifListTitle(n: SxCommentNotification): string {
+  if (isWorkshopDealNotification(n)) {
+    const name = n.metadata?.project_name || n.metadata?.deal_title || n.metadata?.project_code;
+    if (name) return String(name);
+    return String(n.title || '')
+      .replace(/^🏭\s*/, '')
+      .replace(/^Deal mới\s*·?\s*/i, '')
+      .trim() || 'Deal xưởng';
+  }
+  const author = n.metadata?.author_name;
+  const code = n.metadata?.project_code;
+  if (author && code) return `${author} · ${code}`;
+  if (author) return author;
+  return String(n.title || n.message || 'Thông báo')
+    .replace(/^💬\s*/, '')
+    .trim();
+}
+
+function notifListSubtitle(n: SxCommentNotification): string | null {
+  if (isWorkshopDealNotification(n)) {
+    if (n.type === 'workshop_new_deal') return 'Deal mới chờ tiếp nhận';
+    if (n.type === 'project_assigned') return 'Được gán dự án';
+    if (n.type === 'project_created') return 'Dự án mới tạo';
+    return 'Deal xưởng';
+  }
+  const preview = n.metadata?.comment_preview;
+  if (preview) return preview;
+  const msg = String(n.message || '').trim();
+  return msg && msg !== n.title ? msg : null;
 }
 
 function priorityBadge(p: ProductionProject): { label: string; bg: string; fg: string } {
@@ -237,7 +281,12 @@ export default function OverviewScreen() {
         setPriority(pickPriorityProjects(board.projects, 5));
       }
       setTasks(myTasks);
-      setNotifs((notifList.notifications || []).slice(0, 5));
+      setNotifs(
+        (notifList.notifications || [])
+          .slice()
+          .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+          .slice(0, 5),
+      );
     } catch (e) {
       if (seq !== loadSeqRef.current) return;
       if (mode !== 'silent') setError(formatApiError(e));
@@ -319,6 +368,7 @@ export default function OverviewScreen() {
 
   const kpiCards = [
     { key: 'total', label: 'Tổng', value: kpis.total, color: colors.primary, icon: 'layers-outline' as const },
+    { key: 'intake', label: 'Tiếp nhận', value: kpis.intake, color: '#F59E0B', icon: 'hourglass-outline' as const },
     { key: 'producing', label: 'Đang SX', value: kpis.producing, color: '#38BDF8', icon: 'construct-outline' as const },
     { key: 'await', label: 'Chờ vận chuyển', value: kpis.awaitingDelivery, color: colors.textMuted, icon: 'cube-outline' as const },
     { key: 'shipped', label: 'Đã vận chuyển', value: kpis.shipped, color: colors.success, icon: 'car-outline' as const },
@@ -576,7 +626,9 @@ export default function OverviewScreen() {
           {notifs.length === 0 ? (
             <Text style={styles.emptyText}>Chưa có thông báo mới</Text>
           ) : (
-            notifs.map((n, idx) => (
+            notifs.map((n, idx) => {
+              const subtitle = notifListSubtitle(n);
+              return (
               <TouchableOpacity
                 key={n.id}
                 style={[styles.notifRow, idx > 0 && styles.prioRowBorder]}
@@ -589,24 +641,31 @@ export default function OverviewScreen() {
               >
                 <View style={[styles.notifIcon, { backgroundColor: colorWithAlpha(colors.primary, 0.2) }]}>
                   <Ionicons
-                    name={n.type?.includes('logistics') || n.message?.includes('vận chuyển') ? 'car' : 'calendar'}
+                    name={
+                      isWorkshopDealNotification(n)
+                        ? 'briefcase-outline'
+                        : n.type?.includes('logistics') || n.message?.includes('vận chuyển')
+                          ? 'car'
+                          : 'chatbubble-ellipses-outline'
+                    }
                     size={18}
                     color={colors.primary}
                   />
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={styles.notifText} numberOfLines={2}>
-                    {n.title || n.message}
+                    {notifListTitle(n)}
                   </Text>
-                  {n.metadata?.project_name || n.metadata?.project_code || n.metadata?.deal_title ? (
+                  {subtitle ? (
                     <Text style={styles.notifProject} numberOfLines={1}>
-                      {n.metadata?.project_name || n.metadata?.project_code || n.metadata?.deal_title}
+                      {subtitle}
                     </Text>
                   ) : null}
                 </View>
                 <Text style={styles.notifTime}>{notifTime(n.created_at)}</Text>
               </TouchableOpacity>
-            ))
+              );
+            })
           )}
         </View>
       </ScrollView>

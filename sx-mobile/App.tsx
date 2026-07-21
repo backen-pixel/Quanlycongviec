@@ -3,7 +3,7 @@ import { ShareIntentProvider } from 'expo-share-intent';
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, AppState, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import BubbleOutboundCallHandler from './src/components/BubbleOutboundCallHandler';
 import BubbleChatOverlayLauncher from './src/components/BubbleChatOverlayLauncher';
@@ -30,13 +30,32 @@ import { checkAndApplyOtaUpdate } from './src/lib/otaUpdate';
 import { navigationRef, resetToBubbleChat } from './src/navigation/navigationRef';
 import RootNavigator from './src/navigation/RootNavigator';
 
+/** Khi app đang mở, socket đã hiện tray local — tắt banner FCM trùng để tránh 2 tiếng. */
+const MUTE_FCM_FOREGROUND_TYPES = new Set([
+  'comment_added',
+  'messenger_chat',
+  'workshop_new_deal',
+  'project_assigned',
+  'project_created',
+  'crm_assignment_assigned',
+  'crm_assignment_comment',
+  'crm_task_assigned',
+  'crm_task_completed',
+]);
+
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
+  handleNotification: async (notification) => {
+    const data = (notification.request.content.data || {}) as Record<string, unknown>;
+    const type = String(data.type || '');
+    const muteFg =
+      AppState.currentState === 'active' && MUTE_FCM_FOREGROUND_TYPES.has(type);
+    return {
+      shouldShowBanner: !muteFg,
+      shouldShowList: !muteFg,
+      shouldPlaySound: !muteFg,
+      shouldSetBadge: true,
+    };
+  },
 });
 
 if (Text.defaultProps == null) Text.defaultProps = {};

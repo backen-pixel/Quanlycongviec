@@ -40,6 +40,7 @@ export function buildNotificationFromCommentEvent(
       project_name: projectMeta?.name || null,
       comment_preview: preview,
       author_name: authorName,
+      comment_id: c.id != null ? String(c.id) : null,
       ecosystem_module_key: 'production',
     },
   };

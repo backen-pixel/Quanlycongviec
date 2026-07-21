@@ -44,7 +44,12 @@ import {
 } from '../lib/productionApi';
 import { getAnyCachedBoard, getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
 import { loadKanbanFilters, saveKanbanFilters } from '../lib/kanbanFilterStorage';
-import { computeSxBoardKpis } from '../lib/sxBoardKpis';
+import {
+  computeSxBoardKpis,
+  countsAsCompletedRevenue,
+  projectIsAwaitingDelivery,
+  projectIsShipped,
+} from '../lib/sxBoardKpis';
 import {
   isMetallaOrHucabiCompanyId,
   isSystemAdmin,
@@ -108,7 +113,7 @@ function formatDateTime(value?: string | null): string {
 type VcTag = { label: 'Chờ VC' | 'Đang VC'; bg: string; border: string; color: string };
 
 function getVcTag(p: ProductionProject, stages: KanbanStage[]): VcTag | null {
-  if (isAwaitingDelivery(p, stages)) {
+  if (projectIsAwaitingDelivery(p, stages)) {
     return { label: 'Chờ VC', bg: '#33415533', border: '#94A3B8', color: '#CBD5E1' };
   }
   const status = String(p.status || '');
@@ -147,70 +152,9 @@ function avatarColor(name?: string | null): string {
   return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
 }
 
-const VC_SHIPPED_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
-
-function stageById(stages: KanbanStage[], colId?: string | null): KanbanStage | undefined {
-  if (!colId) return undefined;
-  return stages.find((s) => String(s.id) === String(colId));
-}
-
-/** Cột hiển thị Kanban (resolve client) — không dùng cho KPI. */
+/** Cột hiển thị Kanban (resolve client). */
 function displayColumnId(p: ProductionProject): string | null {
   return p.resolved_column_id ?? p.sx_kanban_column_id ?? null;
-}
-
-/**
- * Cột KPI — khớp web `projectIsProducing` / `computeSxRevenueKpis`:
- * chỉ dùng `sx_kanban_column_id` từ BE, không dùng cột resolve client.
- */
-function kpiColumnId(p: ProductionProject): string | null {
-  return p.sx_kanban_column_id ?? null;
-}
-
-/** Đã bàn giao / đang vận chuyển — khớp web `projectIsShipped`. */
-function isShipped(p: ProductionProject): boolean {
-  return VC_SHIPPED_STATUSES.has(String(p.status || ''))
-    || Boolean(p.logistics_company_id);
-}
-
-/** Ở cột bàn giao VC, chưa vận chuyển — khớp web `projectIsAwaitingDelivery`. */
-function isAwaitingDelivery(p: ProductionProject, stages: KanbanStage[]): boolean {
-  if (isShipped(p)) return false;
-  const col = stageById(stages, kpiColumnId(p));
-  return Boolean(col?.is_handover_to_logistics);
-}
-
-function countsAsCompletedRevenue(p: ProductionProject, stages: KanbanStage[]): boolean {
-  const completedCols = stages.filter(
-    (s) => s.bucket_slug !== INTAKE_BUCKET && s.counts_as_completed_revenue,
-  );
-  if (completedCols.length) {
-    const colId = String(kpiColumnId(p) || '');
-    return completedCols.some((s) => String(s.id) === colId);
-  }
-  return String(p.status || '') === 'completed';
-}
-
-function countsAsCollectedRevenue(p: ProductionProject, stages: KanbanStage[]): boolean {
-  const colId = String(kpiColumnId(p) || '');
-  if (!colId) return false;
-  return stages.some(
-    (s) => s.bucket_slug !== INTAKE_BUCKET
-      && s.counts_as_collected_revenue
-      && String(s.id) === colId,
-  );
-}
-
-/** Đang sản xuất — khớp web `projectIsProducing`. */
-function isProducing(p: ProductionProject, stages: KanbanStage[]): boolean {
-  if (p.sx_intake) return false;
-  if (isShipped(p)) return false;
-  if (isAwaitingDelivery(p, stages)) return false;
-  if (countsAsCompletedRevenue(p, stages)) return false;
-  if (countsAsCollectedRevenue(p, stages)) return false;
-  const col = stageById(stages, kpiColumnId(p));
-  if (col?.bucket_slug === INTAKE_BUCKET) return false;
-  return true;
 }
 
 function isToday(value?: string | null): boolean {
@@ -991,7 +935,12 @@ export default function KanbanScreen() {
           ...prev,
           projects: prev.projects.map((p) =>
             p.id === project.id
-              ? { ...p, sx_kanban_column_id: fromColId, resolved_column_id: fromColId }
+              ? {
+                  ...p,
+                  sx_kanban_column_id: fromColId,
+                  resolved_column_id: fromColId,
+                  sx_intake: project.sx_intake,
+                }
               : p,
           ),
         }));
@@ -1032,6 +981,7 @@ export default function KanbanScreen() {
     const kpi = computeSxBoardKpis(filteredProjects, stages);
     return [
       { label: 'Tổng', value: kpi.total, color: colors.text },
+      { label: 'Tiếp nhận', value: kpi.intake, color: '#F59E0B' },
       { label: 'Đang SX', value: kpi.producing, color: colors.primary },
       { label: 'Chờ vận chuyển', value: kpi.awaitingDelivery, color: '#94A3B8' },
       { label: 'Đã vận chuyển', value: kpi.shipped, color: '#38BDF8' },
@@ -1540,7 +1490,7 @@ const KanbanCard = memo(function KanbanCard({
   const avatarLetters = initials(item.customer_name);
   const vcTag = getVcTag(item, stages);
   const personName = item.production_person_name?.trim() || null;
-  const delivered = isShipped(item) || countsAsCompletedRevenue(item, stages);
+  const delivered = projectIsShipped(item) || countsAsCompletedRevenue(item, stages);
   const updatedStr = formatDateTime(item.updated_at || item.created_at);
 
   return (

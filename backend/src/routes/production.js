@@ -2870,37 +2870,8 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
           console.warn('[production/stage] handover to logistics:', handoverErr.message);
         }
 
-        try {
-          const { data: workshopUsers } = await supabase
-            .from('users')
-            .select('id')
-            .in('role', ['production', 'manager'])
-            .eq('is_active', true);
-          const recipientIds = (workshopUsers || [])
-            .map((u) => u.id)
-            .filter((uid) => uid !== userId);
-          if (!DISABLE_PRODUCTION_PUSH_NOTIFICATIONS && recipientIds.length) {
-            const stageName = updatedSnapshot.current_stage?.name || '';
-            await notifyMultipleShared(
-              reqRef,
-              recipientIds,
-              'workshop_new_deal',
-              `🏭 Xưởng: ${stageName}`,
-              `Dự án ${updatedSnapshot.code || updatedSnapshot.name} vừa chuyển sang giai đoạn "${stageName}"`,
-              'project',
-              projectId,
-              {
-                ecosystem_module_key: 'production',
-                project_id: String(projectId),
-                project_code: updatedSnapshot.code || null,
-                project_name: updatedSnapshot.name || null,
-                nav_tab: 'kanban',
-              },
-            );
-          }
-        } catch (notifErr) {
-          console.warn('[production/stage] notify workshop staff:', notifErr.message);
-        }
+        // Không gửi workshop_new_deal khi đổi cột — Kanban đã sync realtime (production:board_changed).
+        // Ping tray cho mọi NV production/manager gây spam không cần thiết.
 
         // Emit sau sync + handover CRM để thẻ Kanban CRM luôn nhận đúng SX/VC (một lần, đủ dữ liệu)
         try {
@@ -4871,9 +4842,6 @@ function isSxProductionCommentNotification(n) {
 
 const SX_WORKSHOP_DEAL_TYPES = [
   'workshop_new_deal',
-  'deal_created',
-  'deal_assigned',
-  'deal_won',
   'project_assigned',
   'project_created',
 ];
@@ -4883,10 +4851,9 @@ function isSxWorkshopDealNotification(n) {
   const type = String(n.type || '');
   if (!SX_WORKSHOP_DEAL_TYPES.includes(type)) return false;
   const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
-  if (type === 'workshop_new_deal' || type === 'project_assigned' || type === 'project_created') {
-    return n.entity_type === 'project' || !!meta.project_id;
-  }
-  return n.entity_type === 'crm_deal' || n.entity_type === 'crm_lead';
+  // Chỉ deal/dự án gắn xưởng — bỏ deal_created/assigned/won CRM thuần.
+  return n.entity_type === 'project' || !!meta.project_id
+    || String(meta.ecosystem_module_key || '') === 'production';
 }
 
 async function filterSxProductionCommentNotifications(rows) {
