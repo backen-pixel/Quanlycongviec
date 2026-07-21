@@ -46,6 +46,8 @@ export type ProductionProject = {
   is_production_overdue?: boolean;
   sx_intake?: boolean;
   sx_won_deal?: boolean;
+  /** BE đã chạy enrichProjectsForSx — giữ nguyên cột KPI, không resolve đè. */
+  sx_enriched?: boolean;
   current_stage_id?: string | null;
   workshop_type_id?: string | null;
   sx_kanban_column_id?: string | null;

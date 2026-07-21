@@ -1544,10 +1544,14 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     }
     if (error) throw error;
 
-    // Mobile tự resolve cột phía client — bỏ enrich CRM meta (tiết kiệm 1 round-trip / trang).
-    const enrichedSx = mobileLite
-      ? (projects || [])
-      : await enrichProjectsForSx(projects, wonIds, company_id, workshop_type_id || null);
+    // Mobile lite: vẫn enrich cột SX (sx_kanban_column_id / sx_intake) giống web —
+    // bỏ staff/finance phía dưới. Trước đây bỏ enrich khiến app tự resolve cột → lệch KPI «Đang SX».
+    const enrichedSx = await enrichProjectsForSx(
+      projects,
+      wonIds,
+      company_id,
+      workshop_type_id || null,
+    );
 
     const mapPipelineProgress = (project) => {
       const pipelinePct = project.sx_pipeline_percent != null
@@ -1563,6 +1567,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       // App mobile chỉ cần cột Kanban + meta thẻ — bỏ staff backfill / CRM task stats / finance.
       projectsOut = enrichedSx.map((project) => ({
         ...project,
+        sx_enriched: true,
         progress: mapPipelineProgress(project),
         task_total: 0,
         done_tasks: 0,

@@ -44,6 +44,7 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
     is_production_overdue: Boolean(raw.is_production_overdue),
     sx_intake: Boolean(raw.sx_intake),
     sx_won_deal: Boolean(raw.sx_won_deal),
+    sx_enriched: Boolean(raw.sx_enriched),
     current_stage_id: (raw.current_stage_id as string) ?? stage.id ?? null,
     workshop_type_id: (raw.workshop_type_id as string) ?? workshopType.id ?? null,
     sx_kanban_column_id: (raw.sx_kanban_column_id as string) ?? null,
@@ -162,8 +163,7 @@ function resolveSxHandoverColumnIdIndexed(
 }
 
 /**
- * Resolve cột Kanban — khớp web ProductionDashboard `colIdFor` + fallback intake.
- * Không để null (card biến mất) khi đã có stages.
+ * Resolve cột Kanban — khớp BE `resolveSxDisplayColumnId` + fallback intake (web colIdFor).
  */
 export function resolveColumnId(
   project: ProductionProject,
@@ -175,7 +175,14 @@ export function resolveColumnId(
 
   if (project.status && VC_STATUSES.has(project.status)) {
     let preferred: string | null = null;
-    if (project.sx_kanban_column_id && index.byId.has(String(project.sx_kanban_column_id))) {
+    const deals = Array.isArray(project.crm_deals) ? project.crm_deals : [];
+    const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
+    const leadColId = primaryDeal?.sx_pipeline_stage_id || null;
+    if (leadColId && index.byId.has(String(leadColId))) {
+      const leadCol = index.byId.get(String(leadColId));
+      if (leadCol?.is_handover_to_logistics) preferred = leadColId;
+    }
+    if (!preferred && project.sx_kanban_column_id && index.byId.has(String(project.sx_kanban_column_id))) {
       const pinned = index.byId.get(String(project.sx_kanban_column_id));
       if (pinned?.is_handover_to_logistics) preferred = project.sx_kanban_column_id;
     }
@@ -185,6 +192,19 @@ export function resolveColumnId(
 
   if (project.sx_kanban_column_id && index.byId.has(String(project.sx_kanban_column_id))) {
     return project.sx_kanban_column_id;
+  }
+
+  // BE: lead sx_pipeline_stage_id trước workflow (quan trọng khi DB chưa ghi cột).
+  {
+    const deals = Array.isArray(project.crm_deals) ? project.crm_deals : [];
+    const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
+    const leadColId = primaryDeal?.sx_pipeline_stage_id || null;
+    if (leadColId && index.byId.has(String(leadColId))) return leadColId;
+  }
+
+  if (project.sx_won_deal) {
+    const inWorkshop = Boolean(project.current_stage_id);
+    if (!inWorkshop) return intake?.id || index.first?.id || null;
   }
 
   const cid = project.current_stage_id;
@@ -208,7 +228,7 @@ export function resolveColumnId(
     return intake?.id || index.first?.id || null;
   }
 
-  // Fallback giống web: không để card mất khỏi board
+  // Fallback hiển thị (web colIdFor) — không dùng để ghi đè KPI khi BE để null.
   return intake?.id || index.first?.id || null;
 }
 
@@ -286,21 +306,47 @@ function attachColumnsIndexed(
 ): ProductionProject[] {
   const intakeId = index.intake?.id || null;
   return list.map((p) => {
-    // Khớp BE `enrichOneSxProject`: cột hiển thị = cột KPI = resolve client
-    // (mobile lite bỏ enrich nên phải gắn lại sx_kanban_column_id / sx_intake).
-    const colId = resolveColumnId(p, stages, index);
-    const col = colId ? index.byId.get(String(colId)) : undefined;
+    const displayColId = resolveColumnId(p, stages, index);
+    const beColRaw = p.sx_kanban_column_id;
+    const beColInStages = beColRaw != null && beColRaw !== '' && index.byId.has(String(beColRaw));
+
+    let finalKpiCol: string | null;
+    let sxIntake: boolean;
+
+    if (p.sx_enriched) {
+      // Giữ nguyên kết quả enrich BE (kể cả null) — khớp web KPI «Đang SX».
+      if (beColInStages) {
+        finalKpiCol = String(beColRaw);
+        sxIntake = Boolean(p.sx_intake);
+      } else if (beColRaw == null || beColRaw === '') {
+        finalKpiCol = null;
+        sxIntake = Boolean(p.sx_intake);
+      } else {
+        // Cột không thuộc pipeline đang lọc (đổi phân loại) → resolve lại
+        finalKpiCol = displayColId || null;
+        sxIntake = Boolean(intakeId && finalKpiCol && String(finalKpiCol) === String(intakeId));
+      }
+    } else if (beColInStages) {
+      finalKpiCol = String(beColRaw);
+      sxIntake = Boolean(p.sx_intake) || Boolean(intakeId && finalKpiCol === String(intakeId));
+    } else {
+      finalKpiCol = displayColId || null;
+      sxIntake = Boolean(intakeId && finalKpiCol && String(finalKpiCol) === String(intakeId));
+    }
+
+    const col = finalKpiCol ? index.byId.get(String(finalKpiCol)) : undefined;
     const pipelinePct =
       p.sx_pipeline_percent != null && Number.isFinite(Number(p.sx_pipeline_percent))
         ? Number(p.sx_pipeline_percent)
         : col?.progress_percent != null && Number.isFinite(Number(col.progress_percent))
           ? Number(col.progress_percent)
           : null;
+
     const withCol = {
       ...p,
-      resolved_column_id: colId,
-      sx_kanban_column_id: colId,
-      sx_intake: Boolean(intakeId && colId && String(colId) === String(intakeId)),
+      resolved_column_id: displayColId || finalKpiCol,
+      sx_kanban_column_id: finalKpiCol,
+      sx_intake: sxIntake,
       sx_pipeline_percent: pipelinePct,
     };
     return {
