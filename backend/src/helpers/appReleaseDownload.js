@@ -100,11 +100,29 @@ function isReleaseApkAvailable(release, appKey) {
   if (ext && /^https?:\/\//i.test(ext)) return true;
 
   const fileUrl = String(release.file_url || '').trim();
-  if (fileUrl && /^https?:\/\//i.test(fileUrl) && !/\/uploads\/app-releases\//i.test(fileUrl)) {
-    return true;
+  if (fileUrl && /^https?:\/\//i.test(fileUrl)) {
+    // URL Render /uploads/... chỉ tin khi file đã có trên disk (đã check ở trên).
+    // Cho phép host ngoài (vd. GitHub raw) kể cả khi path chứa uploads/app-releases.
+    if (!/\/uploads\/app-releases\//i.test(fileUrl) || isExternalApkHost(fileUrl)) {
+      return true;
+    }
   }
 
   return false;
+}
+
+function isExternalApkHost(url) {
+  try {
+    const host = new URL(String(url)).hostname.toLowerCase();
+    return (
+      host === 'github.com'
+      || host.endsWith('.github.com')
+      || host === 'raw.githubusercontent.com'
+      || host.endsWith('.githubusercontent.com')
+    );
+  } catch {
+    return false;
+  }
 }
 
 module.exports = {
@@ -115,4 +133,5 @@ module.exports = {
   buildPublicDownloadUrl,
   downloadUrlForRelease,
   isReleaseApkAvailable,
+  isExternalApkHost,
 };
