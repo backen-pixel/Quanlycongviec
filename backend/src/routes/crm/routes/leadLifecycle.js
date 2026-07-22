@@ -736,6 +736,9 @@ r.put('/leads/:id', async (req, res) => {
           .update({ name: nextTitle, updated_at: new Date().toISOString() })
           .eq('id', projectId);
         if (projNameErr) console.warn('[crm PUT /leads/:id] sync project.name:', projNameErr.message);
+        else {
+          try { await rcInvalidateTags(['production']); } catch (_) {}
+        }
       }
     } catch (syncNameErr) {
       console.warn('[crm PUT /leads/:id] sync project.name:', syncNameErr.message);

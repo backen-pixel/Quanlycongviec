@@ -46,6 +46,7 @@ import KanbanCardOptionsMenu from '../components/KanbanCardOptionsMenu';
 import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
+  applyWorkshopProjectRenamePatches,
 } from '../lib/workshopPipelineStorage';
 import {
   SX_KANBAN_SEARCH_HIT_CLASS,
@@ -614,7 +615,8 @@ export default function ProductionDashboard() {
 
   const load = useCallback(async (opts = {}) => {
     const silent = !!opts.silent;
-    const bustCache = !!opts.bustCache;
+    // Quay từ chi tiết (có focus card) → bỏ responseCache 20s để lấy name mới.
+    const bustCache = !!opts.bustCache || !!peekWorkshopPipelineCardFocus('sx');
     const seq = ++loadSeqRef.current;
     const isStale = () => seq !== loadSeqRef.current;
     const fetchCompanyId = opts.companyId || companyParam;
@@ -658,7 +660,7 @@ export default function ProductionDashboard() {
         bustCache,
         view: 'kanban',
       }).catch(() => null);
-      if (projectList !== null) setProjects(projectList);
+      if (projectList !== null) setProjects(applyWorkshopProjectRenamePatches(projectList));
       if (!isStale()) markLoadComplete();
     } catch (e) {
       console.error(e);

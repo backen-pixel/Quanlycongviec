@@ -3,7 +3,7 @@ import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { taskBelongsToWorkshopModule, taskBelongsToVcSubTab } from '../lib/workshopTaskScope';
-import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
+import { markWorkshopPipelineCardFocus, markWorkshopProjectRename } from '../lib/workshopPipelineStorage';
 import { patchCrmDashboardCacheLeadFields } from '../lib/crmDashboardCache';
 import {
   isLeadDocVisibleInModule,
@@ -2573,9 +2573,11 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           crmDeals: prev.crmDeals?.map((d) => (d.id === dealId ? { ...d, ...data, title: savedTitle } : d)),
         } : prev));
         patchCrmDashboardCacheLeadFields(dealId, { title: savedTitle });
+        if (project?.id) markWorkshopProjectRename(project.id, { name: savedTitle, dealTitle: savedTitle });
       } else if (project?.id) {
         await api.put(`/projects/${project.id}`, { name: nextTitle });
         setProject((prev) => (prev ? { ...prev, name: nextTitle } : prev));
+        markWorkshopProjectRename(project.id, { name: nextTitle });
       }
       setEditingTitle(false);
     } catch (e) {

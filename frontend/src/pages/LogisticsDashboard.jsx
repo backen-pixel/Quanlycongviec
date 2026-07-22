@@ -32,6 +32,7 @@ import WorkshopStaffFilterPanel from '../components/WorkshopStaffFilterPanel';
 import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
+  applyWorkshopProjectRenamePatches,
 } from '../lib/workshopPipelineStorage';
 
 const INTAKE_BUCKET = 'delivery_pending';
@@ -191,11 +192,12 @@ export default function LogisticsDashboard() {
           workshopTypeId: filterWorkTypeId || undefined,
           maxRecords,
           pageSize: 500,
+          bustCache: !!peekWorkshopPipelineCardFocus('vc'),
         }).catch(() => []),
       ]);
       setKpis(dashRes.data?.kpis || {});
       setPipeline(dashRes.data?.pipeline || []);
-      setProjects(projectList);
+      setProjects(applyWorkshopProjectRenamePatches(projectList));
     } catch (e) {
       console.error(e);
     }
