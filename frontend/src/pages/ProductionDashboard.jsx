@@ -3542,6 +3542,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   const assignee = item.production_person || primaryStaff || item.assignee;
   const deals = Array.isArray(item.crm_deals) ? item.crm_deals : [];
   const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
+  const cardTitle = (primaryDeal?.title || '').trim() || item.name || '';
   const crmAssignee = primaryDeal?.assignee || primaryDeal?.lead_owner || item.sales_person || null;
   const leadCreatedAt = primaryDeal?.created_at || item.created_at || null;
   const columnEnteredAt = item.sx_pipeline_stage_entered_at || item.stage_entered_at || item.updated_at || item.created_at || null;
@@ -3667,9 +3668,9 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
       <h4
         className="text-[13px] font-semibold leading-snug line-clamp-2 mb-1"
         style={{ color: '#000000' }}
-        title={item.name}
+        title={cardTitle}
       >
-        {item.name}
+        {cardTitle}
       </h4>
 
       {/* Row phân loại — click đổi nhanh, không kích hoạt navigate (data-sx-quick-btn) */}

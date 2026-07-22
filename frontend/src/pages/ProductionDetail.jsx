@@ -4,6 +4,7 @@ import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom'
 import api from '../lib/api';
 import { taskBelongsToWorkshopModule, taskBelongsToVcSubTab } from '../lib/workshopTaskScope';
 import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
+import { patchCrmDashboardCacheLeadFields } from '../lib/crmDashboardCache';
 import {
   isLeadDocVisibleInModule,
   isCrmSharedArtifactVisibleInModule,
@@ -2561,9 +2562,20 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     if (!titleDraft.trim() || savingTitle) return;
     setSavingTitle(true);
     try {
+      const nextTitle = titleDraft.trim();
       if (dealId) {
-        const { data } = await api.put(`/crm/leads/${dealId}`, { title: titleDraft.trim() });
-        setProject((prev) => prev ? { ...prev, crmDeals: prev.crmDeals?.map((d) => d.id === dealId ? { ...d, ...data } : d) } : prev);
+        // Backend PUT /crm/leads/:id đồng bộ luôn projects.name (card Kanban SX/VC).
+        const { data } = await api.put(`/crm/leads/${dealId}`, { title: nextTitle });
+        const savedTitle = data?.title || nextTitle;
+        setProject((prev) => (prev ? {
+          ...prev,
+          name: savedTitle,
+          crmDeals: prev.crmDeals?.map((d) => (d.id === dealId ? { ...d, ...data, title: savedTitle } : d)),
+        } : prev));
+        patchCrmDashboardCacheLeadFields(dealId, { title: savedTitle });
+      } else if (project?.id) {
+        await api.put(`/projects/${project.id}`, { name: nextTitle });
+        setProject((prev) => (prev ? { ...prev, name: nextTitle } : prev));
       }
       setEditingTitle(false);
     } catch (e) {

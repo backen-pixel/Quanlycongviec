@@ -2741,6 +2741,9 @@ export default function CRMDashboard() {
       if (ev.action === 'reopened' && ev.stage_id) {
         patchId(id, { stage_id: ev.stage_id, stage_entered_at: new Date().toISOString() });
       }
+      if (typeof ev.title === 'string' && ev.title.trim()) {
+        patchId(id, { title: ev.title.trim() });
+      }
       idsToFetch.add(id);
       if (ev.type) typesToRefreshKpi.add(ev.type);
       else if (ev.action === 'converted_to_deal') {

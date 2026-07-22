@@ -151,6 +151,51 @@ export function invalidateCrmDashboardCache(key) {
   }
 }
 
+/**
+ * Cập nhật field trên 1 lead/deal trong mọi entry cache Kanban (vd. sau đổi tên từ chi tiết).
+ * Tránh hydrate «very fresh» hiện title cũ khi quay lại dashboard trong <30s.
+ */
+export function patchCrmDashboardCacheLeadFields(leadId, fields) {
+  if (!leadId || !fields || typeof fields !== 'object') return;
+  const sid = String(leadId);
+  try {
+    const store = readStore();
+    let storeChanged = false;
+    for (const key of Object.keys(store)) {
+      const entry = store[key];
+      const data = entry?.data;
+      if (!data || typeof data !== 'object') continue;
+      let entryChanged = false;
+      const patchArr = (arr) => {
+        if (!Array.isArray(arr)) return arr;
+        let any = false;
+        const next = arr.map((row) => {
+          if (String(row?.id) !== sid) return row;
+          any = true;
+          return { ...row, ...fields };
+        });
+        if (any) entryChanged = true;
+        return any ? next : arr;
+      };
+      const nextAllLeads = patchArr(data.allLeads);
+      const nextAllDeals = patchArr(data.allDeals);
+      if (!entryChanged) continue;
+      store[key] = {
+        ...entry,
+        data: {
+          ...data,
+          allLeads: nextAllLeads,
+          allDeals: nextAllDeals,
+        },
+      };
+      storeChanged = true;
+    }
+    if (storeChanged) writeStore(store);
+  } catch {
+    /* ignore */
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // METADATA CACHE — companies/users/pipelines/stages/sources/leadTypes
 // localStorage để sống qua đóng tab (data này hiếm khi đổi).

@@ -721,7 +721,35 @@ r.put('/leads/:id', async (req, res) => {
       }
     } catch (_) {}
 
-    emitCrmDashboardChanged(req, { type: data?.type || oldLead?.type, company_id: data?.company_id || oldLead?.company_id, lead_id: id, action: 'updated' });
+    // Đồng bộ tên dự án SX/VC — card Kanban dùng projects.name, chi tiết deal dùng crm_leads.title
+    try {
+      const nextTitle = typeof safeBody.title === 'string' ? safeBody.title.trim() : '';
+      const projectId = data?.project_id || oldLead?.project_id;
+      if (
+        nextTitle
+        && projectId
+        && Object.prototype.hasOwnProperty.call(safeBody, 'title')
+        && String(oldLead?.title || '') !== nextTitle
+      ) {
+        const { error: projNameErr } = await supabase
+          .from('projects')
+          .update({ name: nextTitle, updated_at: new Date().toISOString() })
+          .eq('id', projectId);
+        if (projNameErr) console.warn('[crm PUT /leads/:id] sync project.name:', projNameErr.message);
+      }
+    } catch (syncNameErr) {
+      console.warn('[crm PUT /leads/:id] sync project.name:', syncNameErr.message);
+    }
+
+    emitCrmDashboardChanged(req, {
+      type: data?.type || oldLead?.type,
+      company_id: data?.company_id || oldLead?.company_id,
+      lead_id: id,
+      action: 'updated',
+      ...(Object.prototype.hasOwnProperty.call(safeBody, 'title') && typeof data?.title === 'string'
+        ? { title: data.title }
+        : {}),
+    });
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });

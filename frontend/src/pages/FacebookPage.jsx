@@ -18,6 +18,7 @@ import FacebookPageTokenReminderBanner, { FacebookPageTokenReminderRow } from '.
 import { computeFacebookPageTokenReminder, FB_PAGE_TOKEN_REMINDER_DAYS } from '../lib/facebookPageTokenReminder';
 import FacebookImageSetsSettings from '../components/facebook/FacebookImageSetsSettings';
 import FacebookImageSetPicker from '../components/facebook/FacebookImageSetPicker';
+import { patchCrmDashboardCacheLeadFields } from '../lib/crmDashboardCache';
 
 const API = import.meta.env.VITE_API_URL || '';
 const hdr = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' });
@@ -1066,14 +1067,17 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null }) {
                           if (!leadTitleDraft.trim() || leadTitleSaving) return;
                           setLeadTitleSaving(true);
                           try {
+                            const nextTitle = leadTitleDraft.trim();
                             const res = await fetch(`${API}/api/crm/leads/${selected.lead.id}`, {
                               method: 'PUT',
                               headers: hdr(),
-                              body: JSON.stringify({ title: leadTitleDraft.trim() }),
+                              body: JSON.stringify({ title: nextTitle }),
                             });
                             const data = await res.json();
                             if (!res.ok) throw new Error(data?.error || 'Lỗi cập nhật lead');
-                            setSelected(prev => ({ ...prev, lead: { ...prev.lead, title: data.title } }));
+                            const savedTitle = data?.title || nextTitle;
+                            setSelected(prev => ({ ...prev, lead: { ...prev.lead, title: savedTitle } }));
+                            patchCrmDashboardCacheLeadFields(selected.lead.id, { title: savedTitle });
                             loadContacts(false);
                           } catch (e) {
                             alert(e.message || 'Lỗi cập nhật lead');

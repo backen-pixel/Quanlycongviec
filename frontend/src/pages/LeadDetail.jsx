@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { markCrmPipelineCardFocus, notifyCrmLeadSeenByCurrentUser, saveCrmPipelineSnapshot, loadCrmPipelineSnapshot, persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
+import { patchCrmDashboardCacheLeadFields } from '../lib/crmDashboardCache';
 import {
   parseShareModules,
   cleanShareModulesForApi,
@@ -1949,10 +1950,14 @@ export default function LeadDetail() {
                     if (!leadTitleDraft.trim() || savingLeadTitle) return;
                     setSavingLeadTitle(true);
                     try {
-                      const { data } = await api.put(`/crm/leads/${id}`, { title: leadTitleDraft.trim() });
-                      setLead(prev => ({ ...prev, ...data }));
-                      setLeadTitleDraft(data.title || leadTitleDraft.trim());
+                      const nextTitle = leadTitleDraft.trim();
+                      const { data } = await api.put(`/crm/leads/${id}`, { title: nextTitle });
+                      const savedTitle = data?.title || nextTitle;
+                      setLead(prev => ({ ...prev, ...data, title: savedTitle }));
+                      setLeadTitleDraft(savedTitle);
                       setEditingLeadTitle(false);
+                      // Đồng bộ cache Kanban CRM — tránh card ngoài vẫn tên cũ khi quay lại <30s
+                      patchCrmDashboardCacheLeadFields(id, { title: savedTitle });
                     } catch (e) {
                       alert(e.response?.data?.error || 'Lỗi cập nhật tên lead');
                     }

@@ -1398,6 +1398,7 @@ const KanbanCard = memo(function KanbanCard({
   const taskBadgeTitle = isInstallTab ? 'Nhiệm vụ Lắp đặt' : 'Nhiệm vụ Vận chuyển';
   const deals = Array.isArray(item.crm_deals) ? item.crm_deals : [];
   const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
+  const cardTitle = (primaryDeal?.title || '').trim() || item.name || '';
   const crmAssignee = primaryDeal?.assignee || primaryDeal?.lead_owner || item.sales_person || null;
   const sxAssignee = item.production_person || null;
   const vcAssignee = item.logistics_person || null;
@@ -1497,7 +1498,7 @@ const KanbanCard = memo(function KanbanCard({
       </div>
 
       <div className="flex items-start gap-1.5 min-w-0 mb-2">
-        <p className="text-sm font-medium truncate flex-1 min-w-0" style={{ color: '#000000' }}>{item.name}</p>
+        <p className="text-sm font-medium truncate flex-1 min-w-0" style={{ color: '#000000' }} title={cardTitle}>{cardTitle}</p>
         {isNew && <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-white bg-rose-500 px-1.5 py-0.5 rounded leading-tight">Mới</span>}
       </div>
       {item.workshop_type?.name && (
