@@ -73,7 +73,9 @@ async function companyWithDivisionFields(data) {
 
 // ═══ LIST COMPANIES ═══
 // Query: for_module = crm | production | logistics | … — chỉ trả công ty thuộc khối được phép trong /ecosystem/modules (nếu có cấu hình scope)
-r.get('/', responseCache({ ttl: 120, scope: 'company', tags: ['orgtree'] }), async (req, res) => {
+// scope 'user' — response lọc theo quyền (CRM company-admin chỉ 1 CT); không dùng
+// scope 'company'/tenant kẻo cache 1-CT của admin công ty bị phục vụ cho system admin.
+r.get('/', responseCache({ ttl: 120, scope: 'user', tags: ['orgtree'] }), async (req, res) => {
   try {
     const { search, for_module } = req.query;
     const mod = String(for_module || '').trim().toLowerCase();

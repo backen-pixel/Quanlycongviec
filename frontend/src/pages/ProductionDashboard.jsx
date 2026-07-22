@@ -303,6 +303,8 @@ export default function ProductionDashboard() {
   const sxLoaderGateRef = useRef(null);
   /** Remount từ chi tiết đã hydrate snapshot → lần load đầu silent (không che board). */
   const hydrateSilentOnceRef = useRef(!!(boardSnap0?.projects?.length));
+  /** Thẻ vừa tạo — merge vào list sau load nếu API chưa kịp trả. */
+  const pendingNewDealProjectRef = useRef(null);
   const [searchQuery, setSearchQuery] = useState(() => (typeof P0?.searchQuery === 'string' ? P0.searchQuery : ''));
   const [priorityFilter, setPriorityFilter] = useState(() => (typeof P0?.priorityFilter === 'string' ? P0.priorityFilter : ''));
   const [stageFilter, setStageFilter] = useState(() => (typeof P0?.stageFilter === 'string' ? P0.stageFilter : ''));
@@ -641,24 +643,23 @@ export default function ProductionDashboard() {
         setSyncing(false);
         return;
       }
-      // Luôn tắt loading kể cả khi LoaderGate chưa mount / finish không chạy animation.
-      const done = () => {
-        if (isStale()) return;
-        setLoading(false);
-        setFirstLoaded(true);
-      };
-      if (sxLoaderGateRef.current?.finish) {
-        sxLoaderGateRef.current.finish(done);
-      } else {
-        done();
-      }
+      // Luôn clear loading — không phụ thuộc finish/dispose của gate (tránh kẹt spinner).
+      setLoading(false);
+      setFirstLoaded(true);
+      sxLoaderGateRef.current?.finish?.(() => {});
     };
+
     try {
       const maxRecords = kanbanLoadKey === 'all' ? WS_KANBAN_LOAD_ALL_MAX
         : Math.min(parseInt(kanbanLoadKey, 10) || 500, WS_KANBAN_LOAD_ALL_MAX);
-      const workshopTypeFilter = opts.workshopTypeId !== undefined
-        ? (opts.workshopTypeId ? String(opts.workshopTypeId) : undefined)
-        : (filterWorkTypeIdRef.current ? String(filterWorkTypeIdRef.current) : undefined);
+      // '' → Tất cả (không gửi); 'none' → chưa phân loại; UUID → loại cụ thể (BE hỗ trợ).
+      const rawWorkshopType = opts.workshopTypeId !== undefined
+        ? opts.workshopTypeId
+        : filterWorkTypeIdRef.current;
+      const workshopTypeFilter = (() => {
+        const s = rawWorkshopType == null ? '' : String(rawWorkshopType).trim();
+        return s || undefined;
+      })();
 
       // KPI tính từ scopeProjects (scopeKpis) — không gọi /dashboard (trùng /projects).
       // Cột Kanban do effect `/production/pipeline-stages`.
@@ -672,21 +673,30 @@ export default function ProductionDashboard() {
         bustCache,
         view: 'kanban',
       }).catch(() => null);
-      // Chỉ ghi state nếu request còn mới nhất — tránh race ghi đè list đúng bằng [].
-      // Quay từ chi tiết: không ghi đè list đang có bằng [] (API lỗi tạm / race).
-      if (!isStale() && projectList !== null) {
+      // Bỏ qua response cũ khi đã có load mới hơn — tránh ghi đè board bằng data stale.
+      if (isStale()) return;
+      if (projectList !== null) {
+        // Quay từ chi tiết: không ghi đè list đang có bằng [] (API lỗi tạm / race).
         if (projectList.length === 0 && returningFromDetail) {
           setProjects((prev) => {
             if (Array.isArray(prev) && prev.length > 0) return prev;
             return applyWorkshopProjectRenamePatches(projectList);
           });
         } else {
-          const next = applyWorkshopProjectRenamePatches(projectList);
+          let next = applyWorkshopProjectRenamePatches(projectList);
+          const pending = pendingNewDealProjectRef.current;
+          const pid = pending?.id != null ? String(pending.id) : '';
+          if (pid && !next.some((p) => String(p.id) === pid)) {
+            pendingNewDealProjectRef.current = null;
+            next = [pending, ...next];
+          } else if (pid) {
+            pendingNewDealProjectRef.current = null;
+          }
           setProjects(next);
           if (next.length) saveWorkshopBoardSnapshot('sx', { projects: next });
         }
       }
-      if (!isStale()) markLoadComplete();
+      markLoadComplete();
     } catch (e) {
       console.error(e);
       if (!isStale()) {
@@ -700,118 +710,98 @@ export default function ProductionDashboard() {
     }
   }, [companyParam, dealCompanyParam, kanbanLoadKey, showVptSxWorkshopFilter, filterSxWorkshopCompany]);
 
-  /** Chờ phân loại theo đúng công ty xưởng — cho phép filterWorkTypeId rỗng (= Tất cả).
-   *  Không load khi companyForTypes còn rỗng (trừ admin hệ thống xem «Tất cả công ty») —
-   *  tránh race request không company_id trả [] rồi ghi đè list đúng. */
+  const loadRef = useRef(load);
+  loadRef.current = load;
+
+  /**
+   * Chờ companies + phân loại đúng công ty xưởng trước khi fetch projects.
+   * Không load khi companyForTypes còn rỗng (trừ admin hệ thống) — tránh race [] ghi đè.
+   */
+  const companyBootstrapReady = useMemo(() => {
+    if (!companiesBootstrapped) return false;
+    if (isSystemAdmin(user)) return true;
+    if (companyParam || dealCompanyParam) return true;
+    if (isAdmin) return true;
+    // Non-admin: chờ effect auto-pick filterCompany nếu còn lựa chọn xưởng.
+    if (workshopCompanyPickerList.length > 0 && !filterCompany) return false;
+    return true;
+  }, [
+    companiesBootstrapped, user, companyParam, dealCompanyParam, isAdmin,
+    workshopCompanyPickerList.length, filterCompany,
+  ]);
+
   const allowEmptyWorkshopScope = isSystemAdmin(user);
-  const dataLoadReady = companiesBootstrapped
+  const dataLoadReady = companyBootstrapReady
     && !workTypesFetching
     && workTypesCompanyId === companyForTypes
     && (companyForTypes !== '' || allowEmptyWorkshopScope);
 
-  useEffect(() => {
-    if (!dataLoadReady) return;
-    const silent = hydrateSilentOnceRef.current;
-    hydrateSilentOnceRef.current = false;
-    load(silent ? { silent: true } : {});
-  }, [
-    dataLoadReady,
-    load,
-    companyParam,
-    dealCompanyParam,
-    kanbanLoadKey,
-    showVptSxWorkshopFilter,
-    filterSxWorkshopCompany,
+  /** Một key duy nhất cho mọi filter server — đổi loại/công ty/trần tải chỉ 1 đường load. */
+  const projectsLoadKey = useMemo(() => [
+    companyParam || '',
+    dealCompanyParam || '',
+    kanbanLoadKey || '500',
+    showVptSxWorkshopFilter ? (filterSxWorkshopCompany || '') : '',
+    filterWorkTypeId || '',
+  ].join('|'), [
+    companyParam, dealCompanyParam, kanbanLoadKey,
+    showVptSxWorkshopFilter, filterSxWorkshopCompany, filterWorkTypeId,
   ]);
 
-  /** Tránh spinner vô hạn nếu phân loại xưởng / API treo */
+  const firstLoadedRef = useRef(false);
+  firstLoadedRef.current = firstLoaded;
+
+  useEffect(() => {
+    if (!dataLoadReady) return;
+    const hydrateSilent = hydrateSilentOnceRef.current;
+    if (hydrateSilent) hydrateSilentOnceRef.current = false;
+    const silent = hydrateSilent || firstLoadedRef.current;
+    // Sau lần đầu / hydrate snapshot: silent; đổi filter: bustCache.
+    // Dùng loadRef — không phụ thuộc identity `load` (tránh fire trùng khi chỉ đổi closure).
+    loadRef.current({ silent, bustCache: silent && !hydrateSilent });
+  }, [dataLoadReady, projectsLoadKey]);
+
+  /** Tránh spinner vô hạn — chỉ unstick UI, không gọi load chồng request đang chạy. */
   useEffect(() => {
     if (firstLoaded) return undefined;
     const t = window.setTimeout(() => {
-      if (firstLoaded) return;
       console.warn('[sx-dashboard] load timeout — hiển thị dashboard');
       sxLoaderGateRef.current?.reset();
       setLoading(false);
       setFirstLoaded(true);
-      void load({ bustCache: true });
     }, 12_000);
     return () => window.clearTimeout(t);
-  }, [firstLoaded, load]);
-
-  const prevWorkTypeForReloadRef = useRef(filterWorkTypeId);
-  useEffect(() => {
-    if (workTypesCompanyId !== companyForTypes) return;
-    const prev = prevWorkTypeForReloadRef.current;
-    prevWorkTypeForReloadRef.current = filterWorkTypeId;
-    if (prev === filterWorkTypeId) return;
-    // Đổi loại (kể cả → «Tất cả» / «Chưa phân loại») → tải lại project theo filter API.
-    load({ silent: true, bustCache: true });
-  }, [filterWorkTypeId, load, workTypesCompanyId, companyForTypes]);
+  }, [firstLoaded]);
 
   const handleNewDealCreated = useCallback(async (created) => {
     const projectId = created?.project_id;
     const wktId = created?.workshop_type_id ? String(created.workshop_type_id) : '';
     const createdCompanyId = created?.company_id ? String(created.company_id) : '';
+    const onVptChip = isVptCompanyChip(filterCompany || user?.company_id || '', companies, user);
+    const canRetargetWorkshop = (isAdmin || canPickProductionCreateCompany)
+      && !!createdCompanyId
+      && isMetallaOrHucabiCompanyId(createdCompanyId, companies);
 
-    if (isAdmin && createdCompanyId && isMetallaOrHucabiCompanyId(createdCompanyId, companies)
-      && createdCompanyId !== String(filterCompany || '')) {
-      const onVptChip = isVptCompanyChip(filterCompany || user?.company_id || '', companies, user);
+    let filtersWillChange = false;
+    if (canRetargetWorkshop) {
       if (onVptChip) {
-        setFilterSxWorkshopCompany(createdCompanyId);
-      } else {
+        if (createdCompanyId !== String(filterSxWorkshopCompany || '')) {
+          setFilterSxWorkshopCompany(createdCompanyId);
+          filtersWillChange = true;
+        }
+      } else if (createdCompanyId !== String(filterCompany || '')) {
         setFilterCompany(createdCompanyId);
-      }
-    }
-    if (canPickProductionCreateCompany && createdCompanyId && isMetallaOrHucabiCompanyId(createdCompanyId, companies)) {
-      const onVptChip = isVptCompanyChip(filterCompany || user?.company_id || '', companies, user);
-      if (onVptChip) {
-        setFilterSxWorkshopCompany(createdCompanyId);
-      } else {
-        setFilterCompany(createdCompanyId);
+        filtersWillChange = true;
       }
     }
     if (wktId && wktId !== String(filterWorkTypeId || '')) {
       setFilterWorkTypeId(wktId);
+      filtersWillChange = true;
     }
 
-    const reloadCompanyId = (() => {
-      if (isMetallaOrHucabiCompanyId(createdCompanyId, companies)) {
-        if (isVptCompanyChip(filterCompany || user?.company_id || '', companies, user)) {
-          return filterCompany || user?.company_id || companyParam;
-        }
-        return createdCompanyId;
-      }
-      return companyParam;
-    })();
-    const reloadDealCompanyId = dealCompanyParam;
-    const reloadSxWorkshopId = (() => {
-      if (canPickProductionCreateCompany && isMetallaOrHucabiCompanyId(createdCompanyId, companies)
-        && isVptCompanyChip(filterCompany || user?.company_id || '', companies, user)) {
-        return createdCompanyId;
-      }
-      return showVptSxWorkshopFilter && filterSxWorkshopCompany ? filterSxWorkshopCompany : undefined;
-    })();
-
-    try {
-      await load({
-        silent: true,
-        bustCache: true,
-        companyId: reloadCompanyId,
-        dealCompanyId: reloadDealCompanyId,
-        sxWorkshopCompanyId: reloadSxWorkshopId,
-      });
-    } catch (e) {
-      console.error(e);
-      alert('Đã tạo đơn xưởng nhưng tải lại danh sách thất bại — thử F5 trang.');
-      return;
-    }
-
-    if (!projectId) return;
-
-    setProjects((prev) => {
-      if (prev.some((p) => String(p.id) === String(projectId))) return prev;
+    if (projectId) {
       const intakeCol = pipeline.find((s) => s.bucket_slug === 'won_pending') || pipeline[0] || null;
-      const optimistic = {
+      pendingNewDealProjectRef.current = {
         id: projectId,
         code: created.project_code,
         name: created.project_name,
@@ -834,9 +824,30 @@ export default function ProductionDashboard() {
           : [],
         tasks: [],
       };
-      return [optimistic, ...prev];
+    }
+
+    // Đổi filter → orchestrator load 1 lần (merge pending trong load). Không gọi load tay.
+    if (filtersWillChange) return;
+
+    try {
+      await load({ silent: true, bustCache: true });
+    } catch (e) {
+      console.error(e);
+      alert('Đã tạo đơn xưởng nhưng tải lại danh sách thất bại — thử F5 trang.');
+      return;
+    }
+
+    if (!projectId) return;
+    setProjects((prev) => {
+      if (prev.some((p) => String(p.id) === String(projectId))) return prev;
+      const optimistic = pendingNewDealProjectRef.current;
+      pendingNewDealProjectRef.current = null;
+      return optimistic ? [optimistic, ...prev] : prev;
     });
-  }, [load, pipeline, workTypes, companyParam, dealCompanyParam, filterCompany, filterWorkTypeId, companies, user, showVptSxWorkshopFilter, filterSxWorkshopCompany, canPickProductionCreateCompany]);
+  }, [
+    load, pipeline, workTypes, companyParam, filterCompany, filterWorkTypeId,
+    filterSxWorkshopCompany, companies, user, canPickProductionCreateCompany, isAdmin,
+  ]);
 
   /**
    * Nguồn DUY NHẤT của cột Kanban (`pipeline`).
@@ -1108,7 +1119,7 @@ export default function ProductionDashboard() {
       if (filterPhone === 'no' && p.customer?.phone) return false;
       const wt = p.workshop_type_id || p.workshop_type?.id;
       const isOrphanRow = !wt;
-      // Filter phân loại client-side (không reload trang khi đổi loại)
+      // Phân loại chính lọc qua API (projectsLoadKey). Client chỉ giữ khớp UI orphan / cột ảo.
       if (filterWorkTypeId === 'none') {
         if (!isOrphanRow) return false;
       } else if (filterWorkTypeId) {
@@ -1519,8 +1530,6 @@ export default function ProductionDashboard() {
   }, []);
 
   /** Realtime Kanban SX: kéo thẻ / sửa nhiệm vụ / badge CRM / board changed */
-  const loadRef = useRef(load);
-  loadRef.current = load;
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return undefined;
