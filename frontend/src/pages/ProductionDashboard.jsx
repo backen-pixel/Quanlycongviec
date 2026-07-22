@@ -314,6 +314,8 @@ export default function ProductionDashboard() {
   const [sortOpen, setSortOpen] = useState(false);
   const sortMenuRef = useRef(null);
   const [companies, setCompanies] = useState([]);
+  /** true sau lần fetch /companies (kể cả rỗng/lỗi) — chặn load() trước khi biết phạm vi công ty. */
+  const [companiesBootstrapped, setCompaniesBootstrapped] = useState(false);
   const [workshopOptionsForDeal, setWorkshopOptionsForDeal] = useState([]);
   /** Công ty đặt hàng theo xưởng — CRM + danh mục ngoài (giống modal Tạo deal). */
   const [clientCompaniesForDeal, setClientCompaniesForDeal] = useState([]);
@@ -660,7 +662,10 @@ export default function ProductionDashboard() {
         bustCache,
         view: 'kanban',
       }).catch(() => null);
-      if (projectList !== null) setProjects(applyWorkshopProjectRenamePatches(projectList));
+      // Chỉ ghi state nếu request còn mới nhất — tránh race ghi đè list đúng bằng [].
+      if (!isStale() && projectList !== null) {
+        setProjects(applyWorkshopProjectRenamePatches(projectList));
+      }
       if (!isStale()) markLoadComplete();
     } catch (e) {
       console.error(e);
@@ -675,8 +680,14 @@ export default function ProductionDashboard() {
     }
   }, [companyParam, dealCompanyParam, kanbanLoadKey, showVptSxWorkshopFilter, filterSxWorkshopCompany]);
 
-  /** Chờ phân loại theo đúng công ty xưởng — cho phép filterWorkTypeId rỗng (= Tất cả). */
-  const dataLoadReady = !workTypesFetching && workTypesCompanyId === companyForTypes;
+  /** Chờ phân loại theo đúng công ty xưởng — cho phép filterWorkTypeId rỗng (= Tất cả).
+   *  Không load khi companyForTypes còn rỗng (trừ admin hệ thống xem «Tất cả công ty») —
+   *  tránh race request không company_id trả [] rồi ghi đè list đúng. */
+  const allowEmptyWorkshopScope = isSystemAdmin(user);
+  const dataLoadReady = companiesBootstrapped
+    && !workTypesFetching
+    && workTypesCompanyId === companyForTypes
+    && (companyForTypes !== '' || allowEmptyWorkshopScope);
 
   useEffect(() => {
     if (!dataLoadReady) return;
@@ -815,8 +826,12 @@ export default function ProductionDashboard() {
   useEffect(() => {
     // workTypes chưa khớp công ty hiện hành (đang refetch) → chờ, tránh tải nhầm cột.
     if (workTypesCompanyId !== companyForTypes) return undefined;
+    // Chưa có công ty xưởng (bootstrap) → giữ pipeline cũ, không xóa cột.
+    if (!companyForTypes && !isSystemAdmin(user)) return undefined;
     let cancelled = false;
-    (async () => {
+    let attempt = 0;
+    const loadStages = async () => {
+      attempt += 1;
       try {
         const params = { all: 'false' };
         if (companyParam) params.company_id = companyParam;
@@ -825,11 +840,22 @@ export default function ProductionDashboard() {
         else if (filterWorkTypeId) params.workshop_type_id = filterWorkTypeId;
         const { data } = await api.get('/production/pipeline-stages', { params });
         if (cancelled) return;
-        setPipeline(Array.isArray(data) ? data : []);
-      } catch { /* silent */ }
-    })();
+        const next = Array.isArray(data) ? data : [];
+        // Tránh ghi [] khi lỗi tạm — card sẽ «biến mất» hết cột.
+        if (next.length === 0 && attempt < 3) {
+          window.setTimeout(() => { if (!cancelled) void loadStages(); }, 800 * attempt);
+          return;
+        }
+        setPipeline(next);
+      } catch {
+        if (!cancelled && attempt < 3) {
+          window.setTimeout(() => { if (!cancelled) void loadStages(); }, 800 * attempt);
+        }
+      }
+    };
+    void loadStages();
     return () => { cancelled = true; };
-  }, [companyParam, companyForTypes, filterWorkTypeId, workTypesCompanyId]);
+  }, [companyParam, companyForTypes, filterWorkTypeId, workTypesCompanyId, user]);
 
   useEffect(() => {
     if (!dealCompanyParam) {
@@ -886,9 +912,18 @@ export default function ProductionDashboard() {
   }, [workshopCompanyPickerList, filterCompany, handleStaffFilterCompanyChange, isAdmin, user, companies]);
 
   useEffect(() => {
+    let cancelled = false;
     api.get('/companies', { params: { for_module: 'production' } })
-      .then((r) => setCompanies(r.data?.companies || r.data || []))
-      .catch(() => setCompanies([]));
+      .then((r) => {
+        if (!cancelled) setCompanies(r.data?.companies || r.data || []);
+      })
+      .catch(() => {
+        if (!cancelled) setCompanies([]);
+      })
+      .finally(() => {
+        if (!cancelled) setCompaniesBootstrapped(true);
+      });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {

@@ -1,4 +1,5 @@
 import { clearCrmPipelineUiPersistence } from './crmPipelineStorage';
+import { clearWorkshopDashFilterStorage } from './sessionReset';
 
 /**
  * Công ty dùng để lọc dữ liệu CRM (admin) — đồng bộ với trang Pipeline, Nguồn, Dashboard…
@@ -59,7 +60,10 @@ export function syncCrmSessionUserOnLogin(userId) {
     /* ignore */
   }
   const userChanged = !!(prevId && newId && prevId !== newId);
-  if (userChanged) clearCrmSessionFilterStorage();
+  if (userChanged) {
+    clearCrmSessionFilterStorage();
+    clearWorkshopDashFilterStorage();
+  }
   try {
     if (newId) localStorage.setItem(LS_CRM_SESSION_USER_ID, newId);
     else localStorage.removeItem(LS_CRM_SESSION_USER_ID);

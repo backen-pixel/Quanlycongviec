@@ -99,10 +99,10 @@ import {
   readStoredDealKhSplitPreference,
   storeDealKhSplitPreference,
   splitDealStagesForCrmTabs,
+  sumCrmDealTabCountsFromStageCounts,
 } from '../lib/crmPipelineTabs';
 import {
   countDealsExcludingLostStages,
-  countLostDealsInStages,
   isLostOrCancelledPipelineStage,
 } from '../lib/crmLostPipelineStage';
 import { fetchAggregatedOpenPipelineKpi } from '../lib/crmOpenPipelineKpi';
@@ -1511,6 +1511,8 @@ export default function CRMDashboard() {
 
   /** Tổng số lead/deal theo SĐT từ API (limit=1, chỉ đọc `total`) — không phụ thuộc mức tải Kanban; theo NV + ngày trên server */
   const [pipelinePhoneTotals, setPipelinePhoneTotals] = useState({ lead: null, deal: null });
+  /** Tổng Deal/Đơn hàng từ GET /crm/stage-counts (server) — không dùng số thẻ đã tải. */
+  const [pipelineDealTabTotals, setPipelineDealTabTotals] = useState(null);
 
   // Modal cảnh báo khi không thể chuyển giai đoạn (còn nhiệm vụ chưa hoàn thành)
   const [blockingModal, setBlockingModal] = useState(null); // { currentStageName, targetStageName, remainingTasks, leadId }
@@ -2803,6 +2805,7 @@ export default function CRMDashboard() {
           })
         : Promise.resolve(),
       ...[...typesToRefreshKpi].map((t) => ctx.refreshCrmDashboardSlice?.(t)),
+      ...(typesToRefreshKpi.has('deal') ? [Promise.resolve(ctx.refreshPipelineDealTabTotals?.())] : []),
     ]);
 
     setLastSyncAt(new Date());
@@ -2867,15 +2870,68 @@ export default function CRMDashboard() {
     void refreshPipelinePhoneTotalsForType('deal');
   }, [refreshPipelinePhoneTotalsForType]);
 
+  const stagesDealRef = useRef(stagesDeal);
+  stagesDealRef.current = stagesDeal;
+
+  /** Tổng tab Deal/Đơn hàng theo stage-counts + won-anchor (cùng filter SĐT/công ty/NV/ngày). */
+  const refreshPipelineDealTabTotals = useCallback(async () => {
+    const stages = stagesDealRef.current;
+    if (!Array.isArray(stages) || !stages.length) return;
+    if (crmDashboardUsesLegacyListFilters({ filterLeadType, filterReferrer, filterCustomerCompany })) {
+      setPipelineDealTabTotals(null);
+      return;
+    }
+    const dateParams = {};
+    if (customDateFrom) dateParams.date_from = customDateFrom;
+    if (customDateTo) dateParams.date_to = customDateTo;
+    const co = dashboardScopeCompanyId || filterCompany;
+    const params = {
+      type: 'deal',
+      ...dateParams,
+      ...resolveCrmRegionFilterParams(filterRegion),
+    };
+    if (filterAssignee) params.assigned_to = filterAssignee;
+    if (co) params.company_id = co;
+    const phoneApi = resolveCrmPhoneFilterForApi(filterPhone);
+    if (phoneApi) params.phone_filter = phoneApi;
+    try {
+      const { data } = await api.get('/crm/stage-counts', { params });
+      const counts = data?.counts && typeof data.counts === 'object' ? data.counts : {};
+      setPipelineDealTabTotals(sumCrmDealTabCountsFromStageCounts(stages, counts));
+    } catch (e) {
+      console.warn('[refreshPipelineDealTabTotals]', e?.response?.data?.error || e?.message || e);
+      setPipelineDealTabTotals(null);
+    }
+  }, [
+    customDateFrom,
+    customDateTo,
+    filterAssignee,
+    filterCompany,
+    filterRegion,
+    filterLeadType,
+    filterReferrer,
+    filterCustomerCompany,
+    filterPhone,
+    dashboardScopeCompanyId,
+  ]);
+
+  useEffect(() => {
+    void refreshPipelineDealTabTotals();
+  }, [refreshPipelineDealTabTotals, stagesDeal]);
+
+  crmRealtimeCtxRef.current.refreshPipelineDealTabTotals = refreshPipelineDealTabTotals;
+  crmRealtimeCtxRef.current.refreshPipelinePhoneTotalsForType = refreshPipelinePhoneTotalsForType;
+
   const refreshAfterNewLeadOrDeal = useCallback(
     (type) => {
       void Promise.all([
         refreshKanbanListAfterCreate(type),
         refreshCrmDashboardSlice(type),
         refreshPipelinePhoneTotalsForType(type),
+        type === 'deal' ? refreshPipelineDealTabTotals() : Promise.resolve(),
       ]);
     },
-    [refreshKanbanListAfterCreate, refreshCrmDashboardSlice, refreshPipelinePhoneTotalsForType],
+    [refreshKanbanListAfterCreate, refreshCrmDashboardSlice, refreshPipelinePhoneTotalsForType, refreshPipelineDealTabTotals],
   );
 
   const scopedCompanyName = useMemo(() => {
@@ -4096,10 +4152,16 @@ export default function CRMDashboard() {
     if (kpiUsesClientOnlyFilters) {
       return countDealsExcludingLostStages(pool, stagesDeal, (d) => resolveDealStageForKpi(d, stagesDeal));
     }
+    if (typeof pipelineDealTabTotals?.merged === 'number') {
+      return pipelineDealTabTotals.merged;
+    }
+    const pt = pipelinePhoneTotals.deal;
+    if (filterPhone === 'no_phone' && typeof pt?.noPhone === 'number') return pt.noPhone;
+    if (filterPhone === 'has_phone' && typeof pt?.hasPhone === 'number') return pt.hasPhone;
+    if (typeof pt?.all === 'number') return pt.all;
     const raw = typeof loadMoreState.dealTotal === 'number' ? loadMoreState.dealTotal : pool.length;
-    const lostLoaded = countLostDealsInStages(pool, stagesDeal, (d) => resolveDealStageForKpi(d, stagesDeal));
-    return Math.max(0, raw - lostLoaded);
-  }, [kpiUsesClientOnlyFilters, deals, stagesDeal, loadMoreState.dealTotal]);
+    return Math.max(0, raw);
+  }, [kpiUsesClientOnlyFilters, deals, stagesDeal, loadMoreState.dealTotal, pipelineDealTabTotals, pipelinePhoneTotals.deal, filterPhone]);
 
   const dealKpiTotalCount = useMemo(() => {
     const pool = dealKhSplitEnabled ? dealStatsDeals : deals;
@@ -4107,11 +4169,16 @@ export default function CRMDashboard() {
       return countDealsExcludingLostStages(pool, stagesDeal, (d) => resolveDealStageForKpi(d, stagesDeal));
     }
     if (dealKhSplitEnabled && hasCustomerTab) {
+      if (typeof pipelineDealTabTotals?.deal === 'number') return pipelineDealTabTotals.deal;
       return countDealsExcludingLostStages(pool, stagesDeal, (d) => resolveDealStageForKpi(d, stagesDeal));
     }
+    if (typeof pipelineDealTabTotals?.merged === 'number') return pipelineDealTabTotals.merged;
+    const pt = pipelinePhoneTotals.deal;
+    if (filterPhone === 'no_phone' && typeof pt?.noPhone === 'number') return pt.noPhone;
+    if (filterPhone === 'has_phone' && typeof pt?.hasPhone === 'number') return pt.hasPhone;
+    if (typeof pt?.all === 'number') return pt.all;
     const raw = typeof loadMoreState.dealTotal === 'number' ? loadMoreState.dealTotal : pool.length;
-    const lostLoaded = countLostDealsInStages(pool, stagesDeal, (d) => resolveDealStageForKpi(d, stagesDeal));
-    return Math.max(0, raw - lostLoaded);
+    return Math.max(0, raw);
   }, [
     kpiUsesClientOnlyFilters,
     dealKhSplitEnabled,
@@ -4120,9 +4187,16 @@ export default function CRMDashboard() {
     deals,
     stagesDeal,
     loadMoreState.dealTotal,
+    pipelineDealTabTotals,
+    pipelinePhoneTotals.deal,
+    filterPhone,
   ]);
 
-  const customerKpiTotalCount = useMemo(() => customerTabDeals.length, [customerTabDeals.length]);
+  const customerKpiTotalCount = useMemo(() => {
+    if (kpiUsesClientOnlyFilters) return customerTabDeals.length;
+    if (typeof pipelineDealTabTotals?.customer === 'number') return pipelineDealTabTotals.customer;
+    return customerTabDeals.length;
+  }, [kpiUsesClientOnlyFilters, customerTabDeals.length, pipelineDealTabTotals]);
 
   /** Tab Lead/Deal/Khách hàng — cùng logic «Tổng» KPI (API total hoặc sau lọc client trên bản ghi đã tải). */
   const leadTabCountLabel = formatCrmPipelineTabCount(leadKpiTotalCount, leads.length);

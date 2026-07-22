@@ -204,6 +204,56 @@ export function partitionDealsForCrmTabs(deals, { wonAnchorOrder, stagesDeal }) 
   return { dealTabDeals, customerTabDeals };
 }
 
+/**
+ * Tổng tab Deal / Đơn hàng từ `GET /crm/stage-counts` `.counts`.
+ * - deal (tách): Σ cột trước Thắng, không gồm Thua/Hủy và không gồm cột Thắng
+ * - customer: Σ cột Thắng + sau Thắng
+ * - merged: Σ mọi cột trừ Thua/Hủy
+ */
+export function sumCrmDealTabCountsFromStageCounts(stagesDeal, countsMap = {}) {
+  const stages = Array.isArray(stagesDeal) ? stagesDeal : [];
+  const counts = countsMap && typeof countsMap === 'object' ? countsMap : {};
+  const stagesByPipeline = groupStagesByPipeline(stages);
+  const multiPipeline = stagesByPipeline.size > 1;
+
+  let deal = 0;
+  let customer = 0;
+  let merged = 0;
+  let lost = 0;
+
+  for (const s of stages) {
+    if (!s?.id) continue;
+    const n = Number(counts[s.id] ?? counts[String(s.id)] ?? 0) || 0;
+    if (n <= 0) continue;
+    if (isLostOrCancelledPipelineStage(s)) {
+      lost += n;
+      continue;
+    }
+    merged += n;
+
+    const pipeStages = multiPipeline
+      ? (stagesByPipeline.get(String(s.pipeline_id || '__none__')) || stages)
+      : stages;
+    const { wonAnchorOrder } = wonAnchorForPipelineStages(pipeStages);
+    if (wonAnchorOrder == null) {
+      if (!s.is_won) deal += n;
+      else customer += n;
+      continue;
+    }
+    const order = stageOrderIndex(s);
+    if (order < wonAnchorOrder) deal += n;
+    if (order >= wonAnchorOrder) customer += n;
+  }
+
+  const orphan = Number(counts.__none__ ?? counts[''] ?? 0) || 0;
+  if (orphan > 0) {
+    deal += orphan;
+    merged += orphan;
+  }
+
+  return { deal, customer, merged, lost, total: merged + lost };
+}
+
 export function resolveCrmPipelineStagesForTab(pipelineType, {
   stagesLead,
   dealTabStages,

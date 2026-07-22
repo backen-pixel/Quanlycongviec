@@ -87,6 +87,7 @@ export default function LogisticsDashboard() {
   const [projects, setProjects] = useState([]);
   const [pipeline, setPipeline] = useState([]);
   const projectsRef = useRef([]);
+  const loadSeqRef = useRef(0);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState(() => (typeof P0?.searchQuery === 'string' ? P0.searchQuery : ''));
   const [priorityFilter, setPriorityFilter] = useState(() => (typeof P0?.priorityFilter === 'string' ? P0.priorityFilter : ''));
@@ -177,6 +178,8 @@ export default function LogisticsDashboard() {
   }, [companies, crossWorkshopViewer, isAdmin, user]);
 
   const load = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
+    const isStale = () => seq !== loadSeqRef.current;
     setLoading(true);
     try {
       const dashQ = {
@@ -195,13 +198,14 @@ export default function LogisticsDashboard() {
           bustCache: !!peekWorkshopPipelineCardFocus('vc'),
         }).catch(() => []),
       ]);
+      if (isStale()) return;
       setKpis(dashRes.data?.kpis || {});
       setPipeline(dashRes.data?.pipeline || []);
       setProjects(applyWorkshopProjectRenamePatches(projectList));
     } catch (e) {
       console.error(e);
     }
-    setLoading(false);
+    if (!isStale()) setLoading(false);
   }, [companyParam, kanbanLoadKey, filterWorkTypeId]);
 
   useEffect(() => { load(); }, [load]);
