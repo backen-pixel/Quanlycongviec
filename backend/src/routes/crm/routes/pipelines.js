@@ -294,8 +294,12 @@ r.get('/pipeline-stages', responseCache({ ttl: 120, scope: 'company', tags: ['cr
   const activeOnly = req.query.all !== 'true';
 
   let effectivePipelineId = pipeline_id || null;
+  // true khi request đã chỉ định 1 công ty/pipeline cụ thể (kể cả khi company đó chưa có pipeline)
+  // — tránh fallback "xem toàn bộ" (dữ liệu công ty khác) khi công ty được chọn chỉ là chưa setup pipeline.
+  let scopedToSpecificTarget = false;
 
   if (pipeline_id) {
+    scopedToSpecificTarget = true;
     // Permission check theo pipeline đang truy vấn (single-row lookup, không cache)
     if (sacSt) {
       const { data: pl } = await supabase.from('crm_pipelines').select('id, company_id').eq('id', pipeline_id).maybeSingle();
@@ -309,6 +313,7 @@ r.get('/pipeline-stages', responseCache({ ttl: 120, scope: 'company', tags: ['cr
       if (String(pl.company_id || '') !== String(cid)) return res.status(403).json({ error: 'Không có quyền xem stage của pipeline công ty khác' });
     }
   } else if (companyIdQuery) {
+    scopedToSpecificTarget = true;
     const companyId = String(companyIdQuery || '').trim();
     if (!companyId) return res.json([]);
     if (sacSt) {
@@ -323,8 +328,10 @@ r.get('/pipeline-stages', responseCache({ ttl: 120, scope: 'company', tags: ['cr
       ? await getPipelineIdForCompanyRegion(companyId, regionId)
       : await getDefaultPipelineIdForCompany(companyId);
   } else if (sacSt) {
+    scopedToSpecificTarget = true;
     effectivePipelineId = await getDefaultPipelineIdForCompany(sacSt);
   } else if (!userIsAdmin(req.user?.role)) {
+    scopedToSpecificTarget = true;
     const cid = await requireUserCompanyIdResolved(req, res);
     if (!cid) return;
     effectivePipelineId = await getDefaultPipelineIdForCompany(cid);
@@ -333,6 +340,9 @@ r.get('/pipeline-stages', responseCache({ ttl: 120, scope: 'company', tags: ['cr
   let data;
   if (effectivePipelineId) {
     data = await getStagesByPipelineId(effectivePipelineId, { type: type || null, activeOnly });
+  } else if (scopedToSpecificTarget) {
+    // Công ty/pipeline được chỉ định rõ nhưng chưa setup pipeline — trả rỗng, KHÔNG lộ dữ liệu công ty khác.
+    data = [];
   } else {
     // Admin xem toàn bộ (không filter pipeline_id) — không cache nhánh hiếm này.
     let q = supabase.from('crm_pipeline_stages').select('*').order('order_index', { ascending: true });

@@ -19,6 +19,7 @@ type ApiStage = {
   color?: string | null;
   icon?: string | null;
   order_index?: number;
+  pipeline_id?: string | null;
   pipeline_type?: string | null;
   is_won?: boolean | null;
   is_lost?: boolean | null;
@@ -102,7 +103,7 @@ export const KANBAN_PAGE_SIZE = 20;
 const STAGES_CACHE_TTL_MS = 5 * 60 * 1000;
 const stagesCache = new Map<string, { stages: CrmPipelineStage[]; at: number }>();
 
-function peekPipelineStagesCached(
+export function peekPipelineStagesCached(
   type: 'lead' | 'deal',
   opts?: CrmStageFetchOpts,
 ): CrmPipelineStage[] | null {
@@ -118,6 +119,22 @@ function stagesCacheKey(type: 'lead' | 'deal', opts?: CrmStageFetchOpts): string
     opts?.pipelineId || '',
     opts?.companyId || '',
     opts?.regionId || '',
+  ].join('|');
+}
+
+/** Cache tổng/badge phải gồm bộ lọc list — tránh warm (không SĐT) đè Hub (Có SĐT). */
+function totalsCacheKey(type: 'lead' | 'deal', opts?: CrmStageFetchOpts): string {
+  return [
+    'totals',
+    type,
+    opts?.pipelineId || '',
+    opts?.companyId || '',
+    opts?.regionId || '',
+    opts?.phoneFilter || '',
+    opts?.assignedTo || '',
+    opts?.dateFrom || '',
+    opts?.dateTo || '',
+    opts?.search || '',
   ].join('|');
 }
 
@@ -332,6 +349,7 @@ function mapApiStageFields(s: ApiStage, type: 'lead' | 'deal', i: number): CrmPi
     icon: s.icon || (type === 'lead' ? '📋' : '💼'),
     color: s.color || '',
     orderIndex: s.order_index ?? i,
+    pipelineId: s.pipeline_id || null,
     isWon: !!s.is_won,
     isLost: !!s.is_lost,
     countsAsExpectedRevenue: !!s.counts_as_expected_revenue,
@@ -567,10 +585,18 @@ async function fetchCrmKanbanBootstrapRemote(
 
   const key = stagesCacheKey(type, opts);
   stagesCache.set(key, { stages, at: Date.now() });
+  // skip_counts: server trả listTotal = tổng 1 cột — không cache/hiển thị như tổng pipeline.
+  const listTotal = opts?.skipCounts
+    ? undefined
+    : (typeof data?.listTotal === 'number' ? data.listTotal : undefined);
+  const stageCounts = data?.stageCounts && typeof data.stageCounts === 'object'
+    ? data.stageCounts
+    : { [sid]: total };
+
   setCrmBootstrapCache(type, initialStageId, opts, {
     stages,
-    stageCounts: data?.stageCounts && typeof data.stageCounts === 'object' ? data.stageCounts : { [sid]: total },
-    listTotal: typeof data?.listTotal === 'number' ? data.listTotal : undefined,
+    stageCounts,
+    listTotal,
     initialStageId: sid,
     initialPage: {
       items,
@@ -582,8 +608,8 @@ async function fetchCrmKanbanBootstrapRemote(
 
   return {
     stages,
-    stageCounts: data?.stageCounts && typeof data.stageCounts === 'object' ? data.stageCounts : { [sid]: total },
-    listTotal: typeof data?.listTotal === 'number' ? data.listTotal : undefined,
+    stageCounts,
+    listTotal,
     initialStageId: sid,
     initialPage: {
       items,
@@ -666,9 +692,14 @@ export async function warmCrmHubPipelines(companyId?: string, signal?: AbortSign
   ]);
 }
 
-/** Prefetch tổng + badge cột — mở tab Leads/Deals hiện số ngay. */
+/** Prefetch tổng + badge cột — cùng mặc định Có SĐT như Hub. */
 export function warmCrmHubStageCounts(companyId?: string, signal?: AbortSignal): void {
-  const opts: CrmStageFetchOpts = { companyId, signal, lite: true };
+  const opts: CrmStageFetchOpts = {
+    companyId,
+    signal,
+    lite: true,
+    phoneFilter: 'has_phone',
+  };
   void Promise.all([
     fetchCrmStageCountsBatch('lead', opts).catch(() => null),
     fetchCrmStageCountsBatch('deal', opts).catch(() => null),
@@ -724,10 +755,6 @@ const hubCache = new Map<string, { snapshot: CrmHubCacheSnapshot; at: number }>(
 const bootstrapCache = new Map<string, { boot: CrmBoardBootstrap; at: number }>();
 const totalsCache = new Map<string, { counts: Record<string, number>; total: number; at: number }>();
 
-function totalsCacheKey(type: 'lead' | 'deal', opts?: CrmStageFetchOpts): string {
-  return `totals|${type}|${stagesCacheKey(type, opts)}`;
-}
-
 function setCrmTotalsCache(
   type: 'lead' | 'deal',
   opts: CrmStageFetchOpts | undefined,
@@ -760,6 +787,11 @@ function bootstrapCacheKey(
     initialStageId || '',
     opts?.skipCounts ? '1' : '0',
     opts?.lite ? '1' : '0',
+    opts?.phoneFilter || '',
+    opts?.assignedTo || '',
+    opts?.dateFrom || '',
+    opts?.dateTo || '',
+    opts?.search || '',
     stagesCacheKey(type, opts),
   ].join('|');
 }

@@ -83,6 +83,8 @@ export type CrmPipelineStage = {
   icon: string;
   color: string;
   orderIndex: number;
+  /** ID pipeline chứa cột này — cần để tách KPI theo từng công ty khi xem "Tất cả công ty". */
+  pipelineId?: string | null;
   isWon?: boolean;
   isLost?: boolean;
   countsAsExpectedRevenue?: boolean;

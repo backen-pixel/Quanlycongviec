@@ -46,6 +46,7 @@ import {
   updateCrmAssignee,
   peekCrmHubCache,
   peekCrmTotalsCache,
+  peekPipelineStagesCached,
   setCrmHubCache,
   warmCrmHubPipelines,
 } from '../api/crm';
@@ -53,6 +54,7 @@ import { formatApiError } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useCreateMenu } from '../context/CreateMenuContext';
 import { colorFromName, initialsFromName } from '../lib/media';
+import { sumCrmDealHubKpiCount } from '../lib/crmPipelineTabs';
 import {
   activeFilterChips,
   buildStageFetchOpts,
@@ -315,18 +317,12 @@ const KanbanCard = React.memo(function KanbanCard({
   );
 });
 
-function defaultCompanyIdForUser(
-  user: { company_id?: string | null } | null,
-  companies: { id: string }[],
-): string {
-  return user?.company_id || (companies.length === 1 ? companies[0]?.id : '') || '';
-}
-
 function resetCrmFilters(
   user: { company_id?: string | null; role?: string } | null,
-  companies: { id: string }[],
+  _companies: { id: string }[],
 ): CrmHubFilters {
-  const base: CrmHubFilters = { ...DEFAULT_CRM_FILTERS, companyId: defaultCompanyIdForUser(user, companies) };
+  // Admin hệ thống (không company_id): mặc định "Tất cả công ty" — không auto chọn 1 CT.
+  const base: CrmHubFilters = { ...DEFAULT_CRM_FILTERS, companyId: user?.company_id || '' };
   // Nhân viên thường: khóa "Của tôi" + công ty, không cho đổi.
   if (!canViewAllCrm(user)) {
     base.assignee = 'mine';
@@ -404,6 +400,8 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const loadingModeRef = useRef<{ leads: boolean; deals: boolean }>({ leads: false, deals: false });
   const countsInflightRef = useRef<{ leads: string; deals: string }>({ leads: '', deals: '' });
   const tabTotalsKeyRef = useRef<{ leads: string; deals: string }>({ leads: '', deals: '' });
+  /** Đếm request tổng theo tab — bỏ response cũ trả về sau (đổi công ty nhanh) để tránh đè số mới bằng số cũ. */
+  const totalsReqSeqRef = useRef<{ leads: number; deals: number }>({ leads: 0, deals: 0 });
   const abortByModeRef = useRef<{ leads: AbortController | null; deals: AbortController | null }>({
     leads: null,
     deals: null,
@@ -433,7 +431,19 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const setHub = isLeads ? setLeadData : setDealData;
   const loading = loadingByMode[mode];
   const filters = isLeads ? leadFilters : dealFilters;
-  const setFilters = isLeads ? setLeadFilters : setDealFilters;
+  /**
+   * Bộ lọc dùng chung cho cả 2 tab Lead/Deal — chọn 1 lần (công ty, khu vực, SĐT, NV…)
+   * áp dụng luôn cho tab còn lại, không phải chọn lại khi đổi tab.
+   */
+  const setFilters = useCallback((
+    update: CrmHubFilters | ((prev: CrmHubFilters) => CrmHubFilters),
+  ) => {
+    const apply = typeof update === 'function'
+      ? (update as (prev: CrmHubFilters) => CrmHubFilters)
+      : () => update;
+    setLeadFilters((prev) => apply(prev));
+    setDealFilters((prev) => apply(prev));
+  }, []);
   // Nhân viên thường bị khóa lọc theo Công ty + Người phụ trách.
   const lockScope = !canViewAllCrm(user);
 
@@ -490,7 +500,9 @@ export default function CrmHubScreen({ navigation, route }: Props) {
       try {
         const list = await fetchCrmCompanies();
         setCompanies(list);
-        const cid = user?.company_id || (list.length === 1 ? list[0]?.id : '');
+        // Admin hệ thống (không company_id): mặc định xem "Tất cả công ty" —
+        // không auto chọn 1 CT. Chỉ gán sẵn companyId cho user đã gắn công ty.
+        const cid = user?.company_id || '';
         if (cid) {
           setLeadFilters((p) => (p.companyId ? p : { ...p, companyId: cid }));
           setDealFilters((p) => (p.companyId ? p : { ...p, companyId: cid }));
@@ -551,7 +563,10 @@ export default function CrmHubScreen({ navigation, route }: Props) {
         stageCounts: hasBootCounts
           ? (preserveView ? { ...prev.stageCounts, ...nextCounts } : nextCounts)
           : prev.stageCounts,
-        listTotal: boot.listTotal ?? prev.listTotal,
+        // skip_counts: stageCounts chỉ 1 cột → listTotal là tổng cột, không phải pipeline.
+        listTotal: Object.keys(boot.stageCounts || {}).length > 1
+          ? (boot.listTotal ?? prev.listTotal)
+          : prev.listTotal,
         cache,
       };
     });
@@ -623,7 +638,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
         setter((prev) => ({
           ...prev,
           stageCounts: { ...prev.stageCounts, ...batch.counts },
-          listTotal: batch.total || prev.listTotal,
+          listTotal: batch.total ?? prev.listTotal,
         }));
         return;
       }
@@ -671,10 +686,16 @@ export default function CrmHubScreen({ navigation, route }: Props) {
 
     if (countsInflightRef.current[which] === fk) return;
     countsInflightRef.current[which] = fk;
+    const mySeq = ++totalsReqSeqRef.current[which];
     try {
       const batch = await fetchCrmStageCountsBatch(type, opts);
+      // Đổi công ty/lọc khác trong lúc đang chờ → có request mới hơn, bỏ response cũ này (tránh đè số mới bằng số cũ).
+      if (totalsReqSeqRef.current[which] !== mySeq) return;
+      // Badge cần danh sách cột (để tính KPI Deal theo từng pipeline) — lấy từ cache đã warm sẵn.
+      const cachedStages = peekPipelineStagesCached(type, opts);
       setter((prev) => ({
         ...prev,
+        stages: prev.stages.length ? prev.stages : cachedStages || prev.stages,
         stageCounts: { ...prev.stageCounts, ...batch.counts },
         listTotal: batch.total ?? prev.listTotal,
       }));
@@ -743,7 +764,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
         typeSetter((prev) => ({
           ...prev,
           stageCounts: { ...prev.stageCounts, ...batch.counts },
-          listTotal: batch.total || prev.listTotal,
+          listTotal: batch.total ?? prev.listTotal,
         }));
       });
       const { activeIdx, activeStageId: activeSid } = applyBootstrap(which, boot, {
@@ -771,7 +792,9 @@ export default function CrmHubScreen({ navigation, route }: Props) {
             stageCounts: preserveView
               ? { ...prevHub.stageCounts, ...boot.stageCounts }
               : boot.stageCounts,
-            listTotal: boot.listTotal ?? prevHub.listTotal,
+            listTotal: Object.keys(boot.stageCounts || {}).length > 1
+              ? (boot.listTotal ?? prevHub.listTotal)
+              : prevHub.listTotal,
             cache: {
               ...(preserveView ? prevHub.cache : {}),
               [boot.initialStageId]: {
@@ -926,11 +949,9 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     setMode(next);
     setSearchDraft('');
     setSearch('');
-    setLeadFilters(resetCrmFilters(user, companies));
-    setDealFilters(resetCrmFilters(user, companies));
+    // Không reset bộ lọc (công ty, khu vực, NV…) khi đổi tab — Lead/Deal dùng chung 1 bộ lọc.
     setActiveIndex(0);
     filterKeyRef.current = '';
-    tabTotalsKeyRef.current = { leads: '', deals: '' };
     if (!loaded[next]) void loadBootstrap(next, false);
   };
 
@@ -1015,19 +1036,17 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     filters.due !== 'all'
     || filters.regionId === REGION_NONE
     || (!!search.trim() && filters.searchField === 'assignee');
-  const filterActive =
-    search.length > 0
-    || filters.phone !== DEFAULT_CRM_FILTERS.phone
-    || filters.assignee !== 'all'
-    || !!filters.assigneeUserId
-    || !!filters.timePreset
-    || !!filters.companyId
-    || !!filters.regionId
-    || clientOnlyFilterActive;
+  /** Chỉ lọc CLIENT — companyId/SĐT/assignee đã gửi API → badge cột dùng stageCounts. */
+  const filterActive = clientOnlyFilterActive;
   const allowLoadMore = !clientOnlyFilterActive;
   const filterBadge = countActiveFilters(filters, search);
 
-  const totalRecords = hub.listTotal ?? sumCounts(hub.stageCounts);
+  const leadTabTotal = leadData.listTotal ?? sumCounts(leadData.stageCounts);
+  /** Khớp web: tab Deal = pre-Thắng (+ thua / stage lạ), không gồm cột Thắng / sau Thắng. */
+  const dealTabTotal = dealData.stages.length
+    ? sumCrmDealHubKpiCount(dealData.stages, dealData.stageCounts)
+    : (dealData.listTotal ?? sumCounts(dealData.stageCounts));
+  const totalRecords = isLeads ? leadTabTotal : dealTabTotal;
 
   const isInitialLoad = loading && !loaded[mode];
   const isColumnLoading = stageLoading && !columnItems.length;
@@ -1334,9 +1353,9 @@ export default function CrmHubScreen({ navigation, route }: Props) {
           >
             <Ionicons name="people" size={15} color={isLeads ? '#fff' : Colors.textMuted} />
             <Text style={[styles.segTxt, isLeads && { color: '#fff' }]}>Leads</Text>
-            {(leadData.listTotal ?? sumCounts(leadData.stageCounts)) > 0 && (
+            {leadTabTotal > 0 && (
               <View style={styles.segCount}>
-                <Text style={styles.segCountTxt}>{leadData.listTotal ?? sumCounts(leadData.stageCounts)}</Text>
+                <Text style={styles.segCountTxt}>{leadTabTotal}</Text>
               </View>
             )}
           </Pressable>
@@ -1346,9 +1365,9 @@ export default function CrmHubScreen({ navigation, route }: Props) {
           >
             <Ionicons name="pricetags" size={15} color={!isLeads ? '#fff' : Colors.textMuted} />
             <Text style={[styles.segTxt, !isLeads && { color: '#fff' }]}>Deals</Text>
-            {(dealData.listTotal ?? sumCounts(dealData.stageCounts)) > 0 && (
+            {dealTabTotal > 0 && (
               <View style={styles.segCount}>
-                <Text style={styles.segCountTxt}>{dealData.listTotal ?? sumCounts(dealData.stageCounts)}</Text>
+                <Text style={styles.segCountTxt}>{dealTabTotal}</Text>
               </View>
             )}
           </Pressable>

@@ -3,7 +3,7 @@
     "name": "CRM Mobile",
     "slug": "crm-mobile-v2",
     "scheme": "crmv2",
-    "version": "2.2.27",
+    "version": "2.2.35",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -23,7 +23,7 @@
     },
     "android": {
       "package": "vn.tubeppro.crmobilev2",
-      "versionCode": 138,
+      "versionCode": 146,
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": false,
       "googleServicesFile": "./google-services.json",
@@ -88,16 +88,10 @@
           "disableAndroid": true
         }
       ],
-      [
-        "@config-plugins/react-native-webrtc",
-        {
-          "cameraPermission": "Cho phép camera cho cuộc gọi video.",
-          "microphonePermission": "Cho phép micro cho cuộc gọi thoại."
-        }
-      ],
       "./plugins/withIncomingCallAndroid.js",
       "./plugins/withGoogleServices.js",
       "./plugins/withArm64Apk.js",
+      "./plugins/withApkSizeOptimizations.js",
       [
         "../mobile-shared/share-intent/plugins/withAndroidShareIntentFilters",
         {

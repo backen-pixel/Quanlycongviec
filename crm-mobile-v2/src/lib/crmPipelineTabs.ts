@@ -37,6 +37,20 @@ export function isOpenPipelineValueStage(stage: CrmPipelineStage | null | undefi
   return true;
 }
 
+/**
+ * Gom stage theo pipeline — khớp web `groupStagesByPipeline`.
+ * KPI «Tất cả công ty» phải tính riêng từng pipeline (mỗi công ty có order_index/cột Thắng độc lập).
+ */
+export function groupStagesByPipeline(stages: CrmPipelineStage[]): Map<string, CrmPipelineStage[]> {
+  const map = new Map<string, CrmPipelineStage[]>();
+  for (const s of stages || []) {
+    const pid = String(s?.pipelineId || '__none__');
+    if (!map.has(pid)) map.set(pid, []);
+    map.get(pid)!.push(s);
+  }
+  return map;
+}
+
 /** Cột Thắng duy nhất — khớp web `resolveDealWonAnchorStage`. */
 export function resolveDealWonAnchorStage(stagesDeal: CrmPipelineStage[]): CrmPipelineStage | null {
   const won = [...stagesDeal]
@@ -179,32 +193,46 @@ export function sumCrmDealStatsCount(
 }
 
 /**
- * Tổng Deal KPI tab Deal trên CRM Hub — khớp web `filterDealsForDealTabStats` + stage-counts.
+ * Tổng Deal KPI tab Deal trên CRM Hub — khớp web `sumCrmDealTabCountsFromStageCounts`.
  * Gồm deal pre-Thắng + thua + stage lạ (stage_id không thuộc pipeline công ty, vd. import FB).
- * Loại cột Thắng và sau Thắng của pipeline đang xem.
+ * Loại cột Thắng và sau Thắng — tính riêng theo TỪNG pipeline (khi "Tất cả công ty" gộp nhiều
+ * công ty, mỗi pipeline có order_index/cột Thắng độc lập, không được so theo 1 mốc chung).
  */
 export function sumCrmDealHubKpiCount(
   dealStages: CrmPipelineStage[],
   dealCounts: Record<string, number>,
 ): number {
-  const { dealTabStages, wonStage, wonAnchorOrder, postWonStages } = splitDealStagesForCrmTabs(dealStages);
-  const statsStages = preWonStagesForDealStats(dealTabStages, wonStage, wonAnchorOrder);
-  const statsIds = new Set(statsStages.map((s) => String(s.id)));
-  const knownPipelineIds = new Set((dealStages || []).map((s) => String(s.id)));
-  const excludeIds = new Set<string>([
-    ...postWonStages.map((s) => String(s.id)),
-    ...(wonStage ? [String(wonStage.id)] : []),
-  ]);
+  const stages = dealStages || [];
+  const counts = dealCounts || {};
+  const stageById = new Map(stages.map((s) => [String(s.id), s]));
+  const anchorOrderByPipeline = new Map<string, number | null>();
+  for (const [pid, pipeStages] of groupStagesByPipeline(stages)) {
+    const anchor = resolveDealWonAnchorStage(pipeStages);
+    anchorOrderByPipeline.set(pid, anchor ? stageOrderIndex(anchor) : null);
+  }
 
-  let total = Number(dealCounts[ORPHAN_STAGE_KEY] ?? 0) || 0;
-  for (const [sid, raw] of Object.entries(dealCounts || {})) {
+  let total = Number(counts[ORPHAN_STAGE_KEY] ?? 0) || 0;
+  for (const [sid, raw] of Object.entries(counts)) {
     if (sid === ORPHAN_STAGE_KEY) continue;
     const cnt = Number(raw) || 0;
     if (cnt <= 0) continue;
-    if (excludeIds.has(sid)) continue;
-    if (statsIds.has(sid) || !knownPipelineIds.has(sid)) {
+    const stage = stageById.get(sid);
+    if (!stage) {
+      // Stage lạ — không thuộc pipeline đang xem (vd. import FB) — luôn tính vào tab Deal.
       total += cnt;
+      continue;
     }
+    if (isLostOrCancelledPipelineStage(stage)) {
+      total += cnt;
+      continue;
+    }
+    const pid = String(stage.pipelineId || '__none__');
+    const anchorOrder = anchorOrderByPipeline.get(pid) ?? null;
+    if (anchorOrder == null) {
+      if (!stage.isWon) total += cnt;
+      continue;
+    }
+    if (stageOrderIndex(stage) < anchorOrder) total += cnt;
   }
   return total;
 }
