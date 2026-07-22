@@ -188,20 +188,45 @@ export default function LogisticsDashboard() {
       };
       const maxRecords = kanbanLoadKey === 'all' ? WS_KANBAN_LOAD_ALL_MAX
         : Math.min(parseInt(kanbanLoadKey, 10) || 500, WS_KANBAN_LOAD_ALL_MAX);
+      // Thử lại /logistics/dashboard nếu lỗi tạm hoặc trả pipeline rỗng — tránh
+      // toàn bộ cột Kanban «biến mất» khi API treo trong lúc quay lại dashboard.
+      const fetchDashboard = async () => {
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          try {
+            const res = await api.get('/logistics/dashboard', { params: dashQ });
+            const pipe = res?.data?.pipeline;
+            if (Array.isArray(pipe) && pipe.length > 0) return res;
+            if (attempt < 3) {
+              await new Promise((r) => { window.setTimeout(r, 800 * attempt); });
+              continue;
+            }
+            return res;
+          } catch (err) {
+            if (attempt >= 3) throw err;
+            await new Promise((r) => { window.setTimeout(r, 800 * attempt); });
+          }
+        }
+        return null;
+      };
       const [dashRes, projectList] = await Promise.all([
-        api.get('/logistics/dashboard', { params: dashQ }).catch(() => ({ data: { kpis: {}, pipeline: [] } })),
+        fetchDashboard().catch(() => null),
         fetchWorkshopProjectPages(api, '/logistics/projects', {
           companyId: companyParam,
           workshopTypeId: filterWorkTypeId || undefined,
           maxRecords,
           pageSize: 500,
           bustCache: !!peekWorkshopPipelineCardFocus('vc'),
-        }).catch(() => []),
+        }).catch(() => null),
       ]);
       if (isStale()) return;
-      setKpis(dashRes.data?.kpis || {});
-      setPipeline(dashRes.data?.pipeline || []);
-      setProjects(applyWorkshopProjectRenamePatches(projectList));
+      // Chỉ ghi state khi request thành công — tránh lỗi tạm ghi đè list/pipeline đúng bằng rỗng.
+      if (dashRes) {
+        setKpis(dashRes.data?.kpis || {});
+        setPipeline(dashRes.data?.pipeline || []);
+      }
+      if (projectList !== null) {
+        setProjects(applyWorkshopProjectRenamePatches(projectList));
+      }
     } catch (e) {
       console.error(e);
     }
