@@ -99,11 +99,85 @@ export function isLikelyEmptyCrmLeadCompany(company) {
 }
 
 /**
- * Sắp xếp dropdown công ty CRM: Phúc Đạt → Vạn Phú Thành → còn lại (Metalla/NextGo cuối).
+ * Chuẩn hoá danh sách công ty cho dropdown CRM.
+ * Bỏ null / string thô / object thiếu id — tránh option trống hoặc hiện UUID.
+ */
+export function normalizeCrmFilterCompanies(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const out = [];
+  const seen = new Set();
+  for (const row of list) {
+    if (!row || typeof row !== 'object') continue;
+    const id = row.id != null ? String(row.id).trim() : '';
+    if (!id || seen.has(id)) continue;
+    const name = typeof row.name === 'string' ? row.name.trim() : '';
+    const shortName = typeof row.short_name === 'string' ? row.short_name.trim() : '';
+    if (!name && !shortName) continue;
+    seen.add(id);
+    out.push({
+      ...row,
+      id,
+      name: name || shortName,
+      short_name: shortName || name,
+    });
+  }
+  return out;
+}
+
+/**
+ * Gộp danh sách công ty: ưu tiên bản nhiều hơn / có tên rõ hơn.
+ * Không để hydrate cache ngắn hơn ghi đè API đầy đủ.
+ */
+export function mergeCrmFilterCompanies(current, incoming) {
+  const a = normalizeCrmFilterCompanies(current);
+  const b = normalizeCrmFilterCompanies(incoming);
+  if (!b.length) return a;
+  if (!a.length) return b;
+  if (b.length >= a.length) {
+    // Giữ field từ a nếu b thiếu tên
+    const mapA = new Map(a.map((c) => [String(c.id), c]));
+    return b.map((c) => {
+      const prev = mapA.get(String(c.id));
+      if (!prev) return c;
+      return {
+        ...prev,
+        ...c,
+        name: c.name || prev.name,
+        short_name: c.short_name || prev.short_name,
+      };
+    });
+  }
+  // incoming ngắn hơn — chỉ bổ sung id mới, không thu hẹp list hiện có
+  const mapB = new Map(b.map((c) => [String(c.id), c]));
+  const merged = a.map((c) => {
+    const next = mapB.get(String(c.id));
+    if (!next) return c;
+    return {
+      ...c,
+      ...next,
+      name: next.name || c.name,
+      short_name: next.short_name || c.short_name,
+    };
+  });
+  for (const c of b) {
+    if (!merged.some((x) => String(x.id) === String(c.id))) merged.push(c);
+  }
+  return merged;
+}
+
+/** Nhãn hiển thị công ty — không bao giờ trả UUID thô. */
+export function crmCompanyDisplayName(companies, companyId, fallback = 'Công ty') {
+  if (!companyId) return fallback;
+  const hit = (companies || []).find((c) => String(c?.id) === String(companyId));
+  const label = (hit?.short_name || hit?.name || '').trim();
+  return label || fallback;
+}
+
+/** Sắp xếp dropdown công ty CRM: Phúc Đạt → Vạn Phú Thành → còn lại (Metalla/NextGo cuối).
  * Tránh Metalla (0 lead) đứng đầu danh sách.
  */
 export function sortCrmCompaniesForAdminFilter(companies) {
-  const list = Array.isArray(companies) ? [...companies] : [];
+  const list = normalizeCrmFilterCompanies(companies);
   const rank = (c) => {
     const t = `${c?.name || ''} ${c?.short_name || ''}`.toLowerCase();
     if (t.includes('phúc đạt') || t.includes('phuc dat') || (t.includes('phúc') && t.includes('đạt'))) return 0;

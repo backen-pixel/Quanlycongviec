@@ -52,10 +52,13 @@ import {
 import { userSeesAllCrmDealsScoped, filterCrmRegionsForUser, resolveCrmRegionApiParam } from '../lib/crmDealAccess';
 import {
   companyHasRegionPipelines,
+  crmCompanyDisplayName,
   findDefaultAdminCrmCompanyPhucDat,
   getStoredCrmFilterCompanyId,
   isLikelyEmptyCrmLeadCompany,
+  mergeCrmFilterCompanies,
   narrowPipelinesToDefaultForCompany,
+  normalizeCrmFilterCompanies,
   resolvePipelineForCompanyRegion,
   setStoredCrmFilterCompanyId,
   sortCrmCompaniesForAdminFilter,
@@ -1796,17 +1799,18 @@ export default function CRMDashboard() {
   /**
    * Ưu tiên: nạp danh sách CÔNG TY (cho bộ lọc CRM) ngay lập tức — chạy trước
    * `load()` chính, để dropdown «Công ty» có dữ liệu đầu tiên (admin có thể đổi
-   * công ty ngay khi mở trang, không phải chờ KPI/Kanban tải xong). Chỉ chạy 1 lần;
-   * `load()` sau đó vẫn refresh lại danh sách để cập nhật.
+   * công ty ngay khi mở trang, không phải chờ KPI/Kanban tải xong).
+   * Luôn refetch khi mount; merge với state hiện có — không để cache ngắn ghi đè.
    */
   useEffect(() => {
     let cancelled = false;
     api
-      .get('/companies', { params: { for_module: 'crm' } })
+      .get('/companies', { params: { for_module: 'crm' }, headers: { 'x-no-cache': '1' } })
       .then((r) => {
         if (cancelled) return;
-        const list = r.data?.companies || r.data || [];
-        setCompanies(Array.isArray(list) ? list : []);
+        const list = normalizeCrmFilterCompanies(r.data?.companies || r.data || []);
+        if (!list.length) return;
+        setCompanies((prev) => mergeCrmFilterCompanies(prev, list));
       })
       .catch(() => { /* fallback do load() chính xử lý */ });
     return () => { cancelled = true; };
@@ -1882,8 +1886,8 @@ export default function CRMDashboard() {
         const meta = getCrmDashboardMetaCache(user.id);
         if (meta?.data) {
           const m = meta.data;
-          if (Array.isArray(m.companies) && m.companies.length && companies.length === 0) {
-            setCompanies(m.companies);
+          if (Array.isArray(m.companies) && m.companies.length) {
+            setCompanies((prev) => mergeCrmFilterCompanies(prev, m.companies));
           }
           if (Array.isArray(m.users) && m.users.length && users.length === 0) {
             setUsers(m.users);
@@ -1950,7 +1954,8 @@ export default function CRMDashboard() {
           if (Array.isArray(c.sources)) setSources(c.sources);
           if (Array.isArray(c.leadTypes)) setLeadTypes(c.leadTypes);
           if (c.fbPages) setFbPages(c.fbPages);
-          if (Array.isArray(c.companies) && c.companies.length) setCompanies(c.companies);
+          // Không hydrate companies từ board cache — dễ ghi đè list đủ từ /companies
+          // bằng bản thiếu → dropdown thiếu công ty / chip hiện UUID đến khi logout.
           if (Array.isArray(c.users) && c.users.length) setUsers(c.users);
           // Stale-while-revalidate: hiện Kanban từ cache ngay; cold start (không cache) mới hiện loader 0→100%
           setFirstLoading(false);
@@ -1972,6 +1977,14 @@ export default function CRMDashboard() {
     if (veryFreshCacheHit) {
       setFirstLoading(false);
       setLastSyncAt(new Date());
+      // Board cache rất tươi → bỏ silent load Kanban, nhưng vẫn refresh dropdown công ty.
+      void api
+        .get('/companies', { params: { for_module: 'crm' }, headers: { 'x-no-cache': '1' } })
+        .then((r) => {
+          const list = normalizeCrmFilterCompanies(r.data?.companies || r.data || []);
+          if (list.length) setCompanies((prev) => mergeCrmFilterCompanies(prev, list));
+        })
+        .catch(() => {});
       return undefined;
     }
     if (loadDebounceTimerRef.current) clearTimeout(loadDebounceTimerRef.current);
@@ -3357,9 +3370,8 @@ export default function CRMDashboard() {
                   : api.get('/crm/pipelines').catch(() => ({ data: [] })),
                 api.get('/crm/sources', { params: { ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: [] })),
                 api.get('/crm/lead-types', { params: { ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: [] })),
-                companies.length
-                  ? Promise.resolve({ data: { companies } })
-                  : api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: { companies: [] } })),
+                // Luôn refetch — không tái dùng state companies (có thể thiếu do hydrate cache).
+                api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: { companies: [] } })),
                 users.length
                   ? Promise.resolve({ data: users })
                   : api.get('/users').catch(() => ({ data: [] })),
@@ -3377,9 +3389,11 @@ export default function CRMDashboard() {
               setSources(sourcesValue);
               setLeadTypes(leadTypesValue);
               if (sourcesRes.data?.fb_pages) setFbPages(sourcesRes.data.fb_pages);
-              const companiesValue = companiesRes.data?.companies || companiesRes.data || [];
+              const companiesValue = normalizeCrmFilterCompanies(companiesRes.data?.companies || companiesRes.data || []);
               const usersValue = Array.isArray(usersRes.data) ? usersRes.data : usersRes.data?.users || [];
-              if (companiesValue.length) setCompanies(companiesValue);
+              if (companiesValue.length) {
+                setCompanies((prev) => mergeCrmFilterCompanies(prev, companiesValue));
+              }
               if (usersValue.length) setUsers(usersValue);
             } catch (metaErr) {
               console.error('[load crm meta bootstrap]', metaErr);
@@ -3489,9 +3503,7 @@ export default function CRMDashboard() {
           ] = await Promise.all([
             api.get('/crm/sources', { params: { ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: [] })),
             api.get('/crm/lead-types', { params: { ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}) } }).catch(() => ({ data: [] })),
-            companies.length
-              ? Promise.resolve({ data: { companies } })
-              : api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: { companies: [] } })),
+            api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: { companies: [] } })),
             users.length
               ? Promise.resolve({ data: users })
               : api.get('/users').catch(() => ({ data: [] })),
@@ -3506,9 +3518,11 @@ export default function CRMDashboard() {
             fbPagesValue = sourcesRes.data.fb_pages;
             setFbPages(fbPagesValue);
           }
-          const companiesValue = companiesRes.data?.companies || companiesRes.data || [];
+          const companiesValue = normalizeCrmFilterCompanies(companiesRes.data?.companies || companiesRes.data || []);
           const usersValue = Array.isArray(usersRes.data) ? usersRes.data : usersRes.data?.users || [];
-          if (companiesValue.length) setCompanies(companiesValue);
+          if (companiesValue.length) {
+            setCompanies((prev) => mergeCrmFilterCompanies(prev, companiesValue));
+          }
           if (usersValue.length) setUsers(usersValue);
           try {
             const cacheKey = buildCrmDashboardCacheKey({
@@ -3535,7 +3549,7 @@ export default function CRMDashboard() {
               sources: sourcesValue,
               leadTypes: leadTypesValue,
               fbPages: fbPagesValue,
-              companies: companiesValue.length ? companiesValue : companies,
+              // Không nhét companies vào board cache — nguồn sự thật là /companies + meta cache.
               users: usersValue.length ? usersValue : users,
             });
           } catch {
@@ -3544,7 +3558,7 @@ export default function CRMDashboard() {
           try {
             if (user?.id) {
               saveCrmDashboardMetaCache(user.id, {
-                companies: companiesValue.length ? companiesValue : companies,
+                companies: companiesValue.length ? companiesValue : normalizeCrmFilterCompanies(companies),
                 users: usersValue.length ? usersValue : users,
                 pipelines: pipelinesValue,
                 pipelinesAll: pipelinesAllRef.current,
@@ -5604,10 +5618,8 @@ export default function CRMDashboard() {
       push('search', `Tìm: “${searchText.trim()}”`, () => setSearchText(''));
     }
     if (filterCompany) {
-      const name = companies.find((c) => String(c.id) === String(filterCompany))?.short_name
-        || companies.find((c) => String(c.id) === String(filterCompany))?.name
-        || filterCompany;
-      push('company', `Công ty: ${name}`, () => {
+      const name = crmCompanyDisplayName(companies, filterCompany, '');
+      push('company', name ? `Công ty: ${name}` : 'Công ty đã chọn', () => {
         setFilterCompany('');
         setFilterRegion('');
         setFilterAssignee('');
@@ -6501,9 +6513,7 @@ export default function CRMDashboard() {
                         className={`${filterFieldCls} flex items-center bg-indigo-50/80 border-indigo-200 text-indigo-900 cursor-default truncate`}
                         title="Admin phạm vi một công ty"
                       >
-                        {companies.find((c) => String(c.id) === String(userCompanyId))?.short_name
-                          || companies.find((c) => String(c.id) === String(userCompanyId))?.name
-                          || 'Công ty của bạn'}
+                        {crmCompanyDisplayName(companies, userCompanyId, 'Công ty của bạn')}
                       </div>
                     </div>
                   )}
