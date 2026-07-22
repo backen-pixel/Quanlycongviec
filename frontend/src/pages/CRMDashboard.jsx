@@ -1512,7 +1512,7 @@ export default function CRMDashboard() {
   const [showViewModeMenu, setShowViewModeMenu] = useState(false);
   const viewModeTriggerRef = useRef(null);
 
-  /** Tổng số lead/deal theo SĐT từ API (limit=1, chỉ đọc `total`) — không phụ thuộc mức tải Kanban; theo NV + ngày trên server */
+  /** Tổng số lead/deal theo SĐT từ stage-counts (khớp badge Hub app); fallback /crm/leads. */
   const [pipelinePhoneTotals, setPipelinePhoneTotals] = useState({ lead: null, deal: null });
   /** Tổng Deal/Đơn hàng từ GET /crm/stage-counts (server) — không dùng số thẻ đã tải. */
   const [pipelineDealTabTotals, setPipelineDealTabTotals] = useState(null);
@@ -2827,13 +2827,30 @@ export default function CRMDashboard() {
 
   applyCrmRealtimeChangesRef.current = applyCrmRealtimeChanges;
 
+  /**
+   * Tổng tab/KPI Lead (và bucket SĐT Deal khi chưa có deal-tab totals):
+   * ưu tiên GET /crm/stage-counts `.total` — cùng nguồn badge Leads trên app CRM Hub.
+   * Fallback `/crm/leads?limit=1` khi bộ lọc legacy hoặc RPC batch lỗi.
+   */
   const refreshPipelinePhoneTotalsForType = useCallback(
     async (type) => {
       const dateParams = {};
       if (customDateFrom) dateParams.date_from = customDateFrom;
       if (customDateTo) dateParams.date_to = customDateTo;
       const co = dashboardScopeCompanyId || filterCompany;
-      const buildCountParams = (phone_filter) => {
+      const useStageCounts = !crmDashboardUsesLegacyListFilters({
+        filterLeadType,
+        filterReferrer,
+        filterCustomerCompany,
+      });
+      const buildStageCountParams = (phone_filter) => {
+        const p = { type, ...dateParams, ...resolveCrmRegionFilterParams(filterRegion) };
+        if (filterAssignee) p.assigned_to = filterAssignee;
+        if (co) p.company_id = co;
+        if (phone_filter) p.phone_filter = phone_filter;
+        return p;
+      };
+      const buildListCountParams = (phone_filter) => {
         const p = { type, ...dateParams, limit: 1, offset: 0, ...resolveCrmRegionFilterParams(filterRegion) };
         if (filterAssignee) p.assigned_to = filterAssignee;
         if (co) p.company_id = co;
@@ -2847,19 +2864,31 @@ export default function CRMDashboard() {
         const t = payload?.total;
         return typeof t === 'number' ? t : null;
       };
+      const fetchPhoneBucketTotal = async (phone_filter) => {
+        if (useStageCounts) {
+          try {
+            const { data } = await api.get('/crm/stage-counts', { params: buildStageCountParams(phone_filter) });
+            if (typeof data?.total === 'number') return data.total;
+          } catch {
+            /* fallback /crm/leads */
+          }
+        }
+        try {
+          const { data } = await api.get('/crm/leads', { params: buildListCountParams(phone_filter) });
+          return countListTotal(data);
+        } catch {
+          return null;
+        }
+      };
       try {
-        const [hasRes, noRes, allRes] = await Promise.all([
-          api.get('/crm/leads', { params: buildCountParams('has_phone') }).catch(() => ({ data: {} })),
-          api.get('/crm/leads', { params: buildCountParams('no_phone') }).catch(() => ({ data: {} })),
-          api.get('/crm/leads', { params: buildCountParams() }).catch(() => ({ data: {} })),
+        const [hasPhone, noPhone, all] = await Promise.all([
+          fetchPhoneBucketTotal('has_phone'),
+          fetchPhoneBucketTotal('no_phone'),
+          fetchPhoneBucketTotal(undefined),
         ]);
         setPipelinePhoneTotals((prev) => ({
           ...prev,
-          [type]: {
-            hasPhone: countListTotal(hasRes.data),
-            noPhone: countListTotal(noRes.data),
-            all: countListTotal(allRes.data),
-          },
+          [type]: { hasPhone, noPhone, all },
         }));
       } catch (e) {
         console.error('[refreshPipelinePhoneTotalsForType]', e);
