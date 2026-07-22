@@ -46,7 +46,7 @@ import KanbanCardOptionsMenu from '../components/KanbanCardOptionsMenu';
 import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
-  applyWorkshopProjectRenamePatches,
+  applyWorkshopProjectRenamePatches, saveWorkshopBoardSnapshot, readWorkshopBoardSnapshot,
 } from '../lib/workshopPipelineStorage';
 import {
   SX_KANBAN_SEARCH_HIT_CLASS,
@@ -286,20 +286,23 @@ function sortProjectsBy(items, sortBy) {
 
 export default function ProductionDashboard() {
   const P0 = useMemo(() => readSxDashPersisted(), []);
+  const boardSnap0 = useMemo(() => readWorkshopBoardSnapshot('sx'), []);
   const { user } = useAuth();
   const isAdmin = isAdminLike(user);
   const crossWorkshopViewer = isCrossWorkshopProductionViewer(user);
 
-  const [projects, setProjects] = useState([]);
-  const [pipeline, setPipeline] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [projects, setProjects] = useState(() => boardSnap0?.projects || []);
+  const [pipeline, setPipeline] = useState(() => boardSnap0?.pipeline || []);
+  const [loading, setLoading] = useState(() => !(boardSnap0?.projects?.length));
   const [syncing, setSyncing] = useState(false);
-  const [firstLoaded, setFirstLoaded] = useState(false);
+  const [firstLoaded, setFirstLoaded] = useState(() => !!(boardSnap0?.projects?.length));
   /** Flash ngắn «Đã lọc xong» sau khi sync/load filter hoàn tất. */
   const [filterAppliedHint, setFilterAppliedHint] = useState(false);
   const wasFilterBusyRef = useRef(false);
   const loadSeqRef = useRef(0);
   const sxLoaderGateRef = useRef(null);
+  /** Remount từ chi tiết đã hydrate snapshot → lần load đầu silent (không che board). */
+  const hydrateSilentOnceRef = useRef(!!(boardSnap0?.projects?.length));
   const [searchQuery, setSearchQuery] = useState(() => (typeof P0?.searchQuery === 'string' ? P0.searchQuery : ''));
   const [priorityFilter, setPriorityFilter] = useState(() => (typeof P0?.priorityFilter === 'string' ? P0.priorityFilter : ''));
   const [stageFilter, setStageFilter] = useState(() => (typeof P0?.stageFilter === 'string' ? P0.stageFilter : ''));
@@ -618,7 +621,8 @@ export default function ProductionDashboard() {
   const load = useCallback(async (opts = {}) => {
     const silent = !!opts.silent;
     // Quay từ chi tiết (có focus card) → bỏ responseCache 20s để lấy name mới.
-    const bustCache = !!opts.bustCache || !!peekWorkshopPipelineCardFocus('sx');
+    const returningFromDetail = !!peekWorkshopPipelineCardFocus('sx');
+    const bustCache = !!opts.bustCache || returningFromDetail;
     const seq = ++loadSeqRef.current;
     const isStale = () => seq !== loadSeqRef.current;
     const fetchCompanyId = opts.companyId || companyParam;
@@ -637,11 +641,17 @@ export default function ProductionDashboard() {
         setSyncing(false);
         return;
       }
-      sxLoaderGateRef.current?.finish(() => {
+      // Luôn tắt loading kể cả khi LoaderGate chưa mount / finish không chạy animation.
+      const done = () => {
         if (isStale()) return;
         setLoading(false);
         setFirstLoaded(true);
-      });
+      };
+      if (sxLoaderGateRef.current?.finish) {
+        sxLoaderGateRef.current.finish(done);
+      } else {
+        done();
+      }
     };
     try {
       const maxRecords = kanbanLoadKey === 'all' ? WS_KANBAN_LOAD_ALL_MAX
@@ -663,8 +673,18 @@ export default function ProductionDashboard() {
         view: 'kanban',
       }).catch(() => null);
       // Chỉ ghi state nếu request còn mới nhất — tránh race ghi đè list đúng bằng [].
+      // Quay từ chi tiết: không ghi đè list đang có bằng [] (API lỗi tạm / race).
       if (!isStale() && projectList !== null) {
-        setProjects(applyWorkshopProjectRenamePatches(projectList));
+        if (projectList.length === 0 && returningFromDetail) {
+          setProjects((prev) => {
+            if (Array.isArray(prev) && prev.length > 0) return prev;
+            return applyWorkshopProjectRenamePatches(projectList);
+          });
+        } else {
+          const next = applyWorkshopProjectRenamePatches(projectList);
+          setProjects(next);
+          if (next.length) saveWorkshopBoardSnapshot('sx', { projects: next });
+        }
       }
       if (!isStale()) markLoadComplete();
     } catch (e) {
@@ -691,7 +711,9 @@ export default function ProductionDashboard() {
 
   useEffect(() => {
     if (!dataLoadReady) return;
-    load();
+    const silent = hydrateSilentOnceRef.current;
+    hydrateSilentOnceRef.current = false;
+    load(silent ? { silent: true } : {});
   }, [
     dataLoadReady,
     load,
@@ -846,7 +868,18 @@ export default function ProductionDashboard() {
           window.setTimeout(() => { if (!cancelled) void loadStages(); }, 800 * attempt);
           return;
         }
+        // Không ghi [] sau khi đã có cột — tránh board «biến mất» khi API trả rỗng tạm.
+        if (next.length === 0) {
+          setPipeline((prev) => (Array.isArray(prev) && prev.length ? prev : next));
+          return;
+        }
         setPipeline(next);
+        try {
+          const snap = readWorkshopBoardSnapshot('sx');
+          if (snap?.projects?.length) {
+            saveWorkshopBoardSnapshot('sx', { projects: snap.projects, pipeline: next });
+          }
+        } catch (_) { /* ignore */ }
       } catch {
         if (!cancelled && attempt < 3) {
           window.setTimeout(() => { if (!cancelled) void loadStages(); }, 800 * attempt);

@@ -136,6 +136,12 @@ export function createCrmLoadProgressController(setProgress) {
     },
 
     dispose() {
+      // Gọi onDone trước khi hủy — tránh dashboard kẹt loading khi unmount giữa finish().
+      if (pendingOnDone) {
+        const done = pendingOnDone;
+        pendingOnDone = null;
+        try { done(); } catch (_) { /* ignore */ }
+      }
       seq += 1;
       cancelFrame();
       pendingOnDone = null;

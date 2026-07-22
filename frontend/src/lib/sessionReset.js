@@ -19,6 +19,8 @@ export function clearWorkshopDashFilterStorage() {
     sessionStorage.removeItem(LS_WORKSHOP_RENAMES);
     sessionStorage.removeItem('sx_focus_pipeline_card_id');
     sessionStorage.removeItem('vc_focus_pipeline_card_id');
+    sessionStorage.removeItem('sx_kanban_board_snap_v1');
+    sessionStorage.removeItem('vc_kanban_board_snap_v1');
   } catch {
     /* ignore */
   }

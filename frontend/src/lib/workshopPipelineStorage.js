@@ -7,6 +7,10 @@ const FOCUS_VC = 'vc_focus_pipeline_card_id';
 /** Map projectId → { name, dealTitle, at } — cập nhật card ngay khi quay lại (tránh cache API 20s). */
 const RENAME_PATCHES_KEY = 'workshop_project_rename_patches_v1';
 const RENAME_PATCH_TTL_MS = 10 * 60 * 1000;
+/** Snapshot board SX/VC — hydrate ngay khi remount (detail → dashboard) tránh flash trống / kẹt loader. */
+const BOARD_SNAP_SX = 'sx_kanban_board_snap_v1';
+const BOARD_SNAP_VC = 'vc_kanban_board_snap_v1';
+const BOARD_SNAP_TTL_MS = 30 * 60 * 1000;
 
 function keyFor(area) {
   return area === 'vc' ? FOCUS_VC : FOCUS_SX;
@@ -126,4 +130,66 @@ export function applyWorkshopProjectRenamePatches(projects) {
     };
   });
   return any ? next : projects;
+}
+
+function boardSnapKey(area) {
+  return area === 'vc' ? BOARD_SNAP_VC : BOARD_SNAP_SX;
+}
+
+/**
+ * Lưu snapshot projects (+ pipeline nếu có) sau load thành công.
+ * Remount từ chi tiết sẽ hydrate ngay — không chờ API / không hiện board trống.
+ */
+export function saveWorkshopBoardSnapshot(area, { projects, pipeline } = {}) {
+  if (area !== 'sx' && area !== 'vc') return;
+  if (!Array.isArray(projects) || projects.length === 0) return;
+  try {
+    let prevPipeline = [];
+    try {
+      const raw = sessionStorage.getItem(boardSnapKey(area));
+      if (raw) {
+        const prev = JSON.parse(raw);
+        if (Array.isArray(prev?.pipeline)) prevPipeline = prev.pipeline;
+      }
+    } catch (_) { /* ignore */ }
+    const pipe = Array.isArray(pipeline) && pipeline.length ? pipeline : prevPipeline;
+    const payload = {
+      at: Date.now(),
+      projects,
+      ...(pipe.length ? { pipeline: pipe } : {}),
+    };
+    sessionStorage.setItem(boardSnapKey(area), JSON.stringify(payload));
+  } catch (_) {
+    /* quota / private mode */
+  }
+}
+
+/** Đọc snapshot còn hạn; trả null nếu hết TTL / rỗng. */
+export function readWorkshopBoardSnapshot(area) {
+  if (area !== 'sx' && area !== 'vc') return null;
+  try {
+    const raw = sessionStorage.getItem(boardSnapKey(area));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (typeof parsed.at !== 'number' || Date.now() - parsed.at > BOARD_SNAP_TTL_MS) {
+      sessionStorage.removeItem(boardSnapKey(area));
+      return null;
+    }
+    if (!Array.isArray(parsed.projects) || !parsed.projects.length) return null;
+    return {
+      projects: applyWorkshopProjectRenamePatches(parsed.projects),
+      pipeline: Array.isArray(parsed.pipeline) ? parsed.pipeline : [],
+      at: parsed.at,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function clearWorkshopBoardSnapshot(area) {
+  if (area !== 'sx' && area !== 'vc') return;
+  try {
+    sessionStorage.removeItem(boardSnapKey(area));
+  } catch (_) {}
 }
