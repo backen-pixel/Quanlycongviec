@@ -117,6 +117,16 @@ export function createCrmLoadProgressController(setProgress) {
 
     finish(onDone) {
       pendingOnDone = onDone;
+      // Chưa start() (gate remount / ref null lúc start) → không có RAF, gọi onDone ngay
+      // để tránh dashboard kẹt firstLoading với thanh % = 0.
+      if (rafId == null && startedAt === 0) {
+        const done = pendingOnDone;
+        pendingOnDone = null;
+        apiReadyAt = null;
+        finishPhaseAt = null;
+        try { done?.(); } catch (_) { /* ignore */ }
+        return;
+      }
       if (apiReadyAt == null) apiReadyAt = performance.now();
     },
 
@@ -129,6 +139,7 @@ export function createCrmLoadProgressController(setProgress) {
       seq += 1;
       cancelFrame();
       displayed = 0;
+      startedAt = 0;
       apiReadyAt = null;
       finishPhaseAt = null;
       pendingOnDone = null;
@@ -144,6 +155,7 @@ export function createCrmLoadProgressController(setProgress) {
       }
       seq += 1;
       cancelFrame();
+      startedAt = 0;
       pendingOnDone = null;
     },
   };

@@ -1058,6 +1058,8 @@ export default function CRMDashboard() {
   const [sources, setSources] = useState([]);
   const [leadTypes, setLeadTypes] = useState([]);
   const [companies, setCompanies] = useState([]);
+  /** Admin: cho phép load Kanban sau khi /companies settle (kể cả lỗi/rỗng) — tránh kẹt loader mãi. */
+  const [crmCompaniesFetchSettled, setCrmCompaniesFetchSettled] = useState(false);
   const [pipelines, setPipelines] = useState([]);
   const [pipelinesAll, setPipelinesAll] = useState([]);
   const [allLeads, setAllLeads] = useState([]);
@@ -1809,10 +1811,14 @@ export default function CRMDashboard() {
       .then((r) => {
         if (cancelled) return;
         const list = normalizeCrmFilterCompanies(r.data?.companies || r.data || []);
-        if (!list.length) return;
-        setCompanies((prev) => mergeCrmFilterCompanies(prev, list));
+        if (list.length) {
+          setCompanies((prev) => mergeCrmFilterCompanies(prev, list));
+        }
       })
-      .catch(() => { /* fallback do load() chính xử lý */ });
+      .catch(() => { /* fallback do load() chính xử lý */ })
+      .finally(() => {
+        if (!cancelled) setCrmCompaniesFetchSettled(true);
+      });
     return () => { cancelled = true; };
   }, []);
 
@@ -1865,12 +1871,12 @@ export default function CRMDashboard() {
     }
   }, [user, P]);
 
-  /** Admin: chờ danh sách công ty trước khi load (tránh burst API không company_id). */
+  /** Admin: chờ /companies settle (hoặc đã có list) trước khi load — không kẹt nếu API rỗng/lỗi. */
   const crmDashboardDataReady = useMemo(() => {
     if (user == null) return false;
     if (!isAdmin || isCompanyScopedAdmin) return true;
-    return companies.length > 0;
-  }, [user, isAdmin, isCompanyScopedAdmin, companies.length]);
+    return companies.length > 0 || crmCompaniesFetchSettled;
+  }, [user, isAdmin, isCompanyScopedAdmin, companies.length, crmCompaniesFetchSettled]);
 
   // useLayoutEffect: hydrate cache trước paint → tránh nháy loader khi đã có session cache
   useLayoutEffect(() => {
@@ -3086,12 +3092,30 @@ export default function CRMDashboard() {
   }, []);
 
   const finishCrmLoadProgress = useCallback((onDone) => {
-    crmLoaderGateRef.current?.finish(onDone);
+    const gate = crmLoaderGateRef.current;
+    if (gate?.finish) {
+      gate.finish(onDone);
+      return;
+    }
+    // Gate chưa mount / đã unmount — không được nuốt onDone (kẹt «Đang dựng Dashboard»).
+    try { onDone?.(); } catch (_) { /* ignore */ }
   }, []);
 
   const resetCrmLoadProgress = useCallback(() => {
     crmLoaderGateRef.current?.reset();
   }, []);
+
+  // An toàn: không để «Đang dựng Dashboard» treo vô hạn nếu load/finish bị nuốt (deploy host).
+  useEffect(() => {
+    if (!firstLoading) return;
+    const t = window.setTimeout(() => {
+      console.warn('[CRM] firstLoading safety timeout — force clear loader');
+      setFirstLoading(false);
+      setSyncing(false);
+      resetCrmLoadProgress();
+    }, 45000);
+    return () => window.clearTimeout(t);
+  }, [firstLoading, resetCrmLoadProgress]);
 
   const companyHasNoPipeline = useMemo(() => {
     if (!dashboardScopeCompanyId) return false;
@@ -3182,13 +3206,10 @@ export default function CRMDashboard() {
       if (loadTimeoutId) window.clearTimeout(loadTimeoutId);
       setSyncing(false);
       setLastSyncAt(new Date());
+      // Luôn tắt firstLoading — không phụ thuộc animation gate (remount/finish-without-start → kẹt 0%).
+      setFirstLoading(false);
       if (shouldTrackProgress) {
-        finishCrmLoadProgress(() => {
-          if (isStale()) return;
-          setFirstLoading(false);
-        });
-      } else {
-        setFirstLoading(false);
+        finishCrmLoadProgress(() => {});
       }
     };
     try {
