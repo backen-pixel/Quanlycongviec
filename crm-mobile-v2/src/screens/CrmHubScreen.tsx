@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   FlatList,
+  InteractionManager,
   Keyboard,
   PanResponder,
   Platform,
@@ -48,6 +49,7 @@ import {
   peekCrmHubCache,
   peekCrmTotalsCache,
   peekPipelineStagesCached,
+  prefetchCrmNeighborStages,
   setCrmHubCache,
   warmCrmHubPipelines,
 } from '../api/crm';
@@ -109,6 +111,29 @@ function initialModeFromRoute(params?: Props['route']['params']): Mode {
 
 const EMPTY_HUB: CrmHubData = { stages: [], stageCounts: {}, listTotal: null, cache: {} };
 const EMPTY_STAGE: CrmStageCache = { items: [], hasMore: false, nextOffset: 0, loaded: false };
+
+/** Giữ cache cột quanh cột đang xem — session dài không tích hàng chục cột × 120 item. */
+function pruneStageCacheAround(
+  cache: Record<string, CrmStageCache>,
+  stageIdsOrdered: string[],
+  centerId: string,
+  radius = 2,
+): Record<string, CrmStageCache> {
+  const idx = stageIdsOrdered.findIndex((id) => String(id) === String(centerId));
+  const keep = new Set<string>();
+  if (idx >= 0) {
+    const from = Math.max(0, idx - radius);
+    const to = Math.min(stageIdsOrdered.length - 1, idx + radius);
+    for (let i = from; i <= to; i++) keep.add(stageIdsOrdered[i]);
+  } else if (centerId) {
+    keep.add(centerId);
+  }
+  const next: Record<string, CrmStageCache> = {};
+  for (const id of Object.keys(cache)) {
+    if (keep.has(id)) next[id] = cache[id];
+  }
+  return Object.keys(next).length ? next : cache;
+}
 
 function sumCounts(counts: Record<string, number>): number {
   return Object.values(counts).reduce((a, b) => a + b, 0);
@@ -455,17 +480,30 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   dealFiltersRef.current = dealFilters;
   searchRef.current = search;
 
-  function stageIdAtIndex(which: Mode, index: number): string | undefined {
+  function stagesForMode(which: Mode): CrmPipelineStage[] {
     const dm = asDataMode(which);
     const f = dm === 'leads' ? leadFiltersRef.current : dealFiltersRef.current;
+    const hubData = dm === 'leads' ? leadDataRef.current : dealDataRef.current;
     const base = resolveCrmHubDisplayStages(
       which,
       leadDataRef.current.stages,
       dealDataRef.current.stages,
       dealKhSplitRef.current,
     );
-    const stages = f.showOrphan ? [...base, orphanVirtualStage()] : base;
-    return stages[index]?.id;
+    let stages: CrmPipelineStage[] = f.showOrphan ? [...base, orphanVirtualStage()] : base;
+    if (f.hideEmptyStages && Object.keys(hubData.stageCounts).length > 0) {
+      const filtered = stages.filter((s) => {
+        const c = hubData.stageCounts[s.id];
+        if (c == null) return true;
+        return c > 0;
+      });
+      if (filtered.length > 0) stages = filtered;
+    }
+    return stages;
+  }
+
+  function stageIdAtIndex(which: Mode, index: number): string | undefined {
+    return stagesForMode(which)[index]?.id;
   }
 
   const hub = isLeads ? leadData : dealData;
@@ -894,14 +932,30 @@ export default function CrmHubScreen({ navigation, route }: Props) {
         ...(isRefresh ? { skipCounts: false, lite: false } : { skipCounts: true, lite: true }),
       };
       const typeSetter = dm === 'leads' ? setLeadData : setDealData;
-      const countsPromise = fetchCrmStageCountsBatch(type, fetchOpts).catch(() => null);
+      // Gộp với prefetchTabTotals — tránh 2 request stage-counts cùng bộ lọc.
+      const totalsFk = serverFilterKey(
+        dm === 'leads' ? leadFiltersRef.current : dealFiltersRef.current,
+        searchRef.current,
+      );
+      const hubNowForCounts = dm === 'leads' ? leadDataRef.current : dealDataRef.current;
+      const countsAlreadyFresh =
+        tabTotalsKeyRef.current[dm] === totalsFk
+        && hubNowForCounts.listTotal != null;
+      const countsAlreadyInflight = countsInflightRef.current[dm] === totalsFk;
+      let countsPromise: Promise<{ counts: Record<string, number>; total: number } | null>;
+      if (countsAlreadyFresh || countsAlreadyInflight) {
+        countsPromise = Promise.resolve(null);
+      } else {
+        countsInflightRef.current[dm] = totalsFk;
+        countsPromise = fetchCrmStageCountsBatch(type, fetchOpts)
+          .catch(() => null)
+          .finally(() => {
+            if (countsInflightRef.current[dm] === totalsFk) countsInflightRef.current[dm] = '';
+          });
+      }
       const boot = await fetchCrmBoardInitial(type, effectiveStageId, fetchOpts);
       if (ac.signal.aborted) return;
 
-      const totalsFk = serverFilterKey(
-        dm === 'leads' ? leadFiltersRef.current : dealFiltersRef.current,
-        search,
-      );
       void countsPromise.then((batch) => {
         // Vẫn áp dụng totals nếu bộ lọc chưa đổi — kể cả khi unmount/abort bootstrap (thoát tab).
         if (!batch) return;
@@ -1007,18 +1061,20 @@ export default function CrmHubScreen({ navigation, route }: Props) {
         if (items.length > MAX_STAGE_ITEMS) {
           items = items.slice(items.length - MAX_STAGE_ITEMS);
         }
+        const stageIds = prev.stages.map((s) => s.id);
+        const mergedCache = {
+          ...prev.cache,
+          [stageId]: {
+            items,
+            hasMore: page.hasMore,
+            nextOffset: page.nextOffset,
+            loaded: true,
+          },
+        };
         return {
           ...prev,
           stageCounts: { ...prev.stageCounts, [stageId]: page.total },
-          cache: {
-            ...prev.cache,
-            [stageId]: {
-              items,
-              hasMore: page.hasMore,
-              nextOffset: page.nextOffset,
-              loaded: true,
-            },
-          },
+          cache: pruneStageCacheAround(mergedCache, stageIds, stageId, 2),
         };
       });
     } catch {
@@ -1136,15 +1192,34 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     [mode, leadData.stages, dealData.stages, dealKhSplitEnabled],
   );
   const displayStages = useMemo(() => {
-    if (!filters.showOrphan) return hubStages;
-    return [...hubStages, orphanVirtualStage()];
-  }, [hubStages, filters.showOrphan]);
+    let stages = filters.showOrphan ? [...hubStages, orphanVirtualStage()] : hubStages;
+    if (filters.hideEmptyStages && Object.keys(hub.stageCounts).length > 0) {
+      const filtered = stages.filter((s) => {
+        const c = hub.stageCounts[s.id];
+        if (c == null) return true;
+        return c > 0;
+      });
+      if (filtered.length > 0) stages = filtered;
+    }
+    return stages;
+  }, [hubStages, filters.showOrphan, filters.hideEmptyStages, hub.stageCounts]);
+
+  const lastActiveStageIdRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    if (activeIndex >= displayStages.length && displayStages.length > 0) {
+    if (!displayStages.length) return;
+    const want = lastActiveStageIdRef.current;
+    const byId = want != null
+      ? displayStages.findIndex((s) => String(s.id) === String(want))
+      : -1;
+    if (byId >= 0) {
+      if (byId !== activeIndexRef.current) setActiveIndex(byId);
+      return;
+    }
+    if (activeIndexRef.current >= displayStages.length) {
       setActiveIndex(0);
     }
-  }, [displayStages.length, activeIndex]);
+  }, [displayStages]);
 
   const filterKey = serverFilterKey(filters, search);
   useEffect(() => {
@@ -1187,6 +1262,10 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const activeStageId = activeStage?.id;
 
   useEffect(() => {
+    if (activeStageId) lastActiveStageIdRef.current = activeStageId;
+  }, [activeStageId]);
+
+  useEffect(() => {
     if (!filters.showOrphan && activeStageId === ORPHAN_STAGE_ID) {
       setActiveIndex(0);
     }
@@ -1201,6 +1280,64 @@ export default function CrmHubScreen({ navigation, route }: Props) {
       void loadStage(mode, activeStageId, false);
     }
   }, [loaded, mode, activeStageId, hub.cache, stageLoading, loadStage]);
+
+  /** Prefetch cột trái/phải — vuốt sang không phải chờ mạng. */
+  const neighborPrefetchKeyRef = useRef('');
+  const activeColumnLoaded = Boolean(activeStageId && hub.cache[activeStageId]?.loaded);
+  useEffect(() => {
+    if (!loaded[dataMode] || !activeStageId || activeStageId === ORPHAN_STAGE_ID) return;
+    if (!activeColumnLoaded) return;
+    const key = `${dataMode}|${filterKey}|${activeStageId}`;
+    if (neighborPrefetchKeyRef.current === key) return;
+    neighborPrefetchKeyRef.current = key;
+    const type = dataMode === 'leads' ? 'lead' as const : 'deal' as const;
+    const stages = displayStages.filter((s) => s.id !== ORPHAN_STAGE_ID);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const task = InteractionManager.runAfterInteractions(() => {
+      timer = setTimeout(() => {
+        void (async () => {
+          try {
+            const neighbors = await prefetchCrmNeighborStages(
+              type,
+              stages,
+              activeStageId,
+              fetchOptsRef.current(),
+            );
+            if (cancelled || !Object.keys(neighbors).length) return;
+            setHub((prev) => {
+              const cache = { ...prev.cache };
+              for (const [id, snap] of Object.entries(neighbors)) {
+                if (cache[id]?.loaded) continue;
+                cache[id] = snap;
+              }
+              const stageIds = prev.stages.map((s) => s.id);
+              return {
+                ...prev,
+                cache: pruneStageCacheAround(cache, stageIds, activeStageId, 2),
+              };
+            });
+          } catch {
+            /* bỏ qua prefetch lỗi */
+          }
+        })();
+      }, 280);
+    });
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      const cancel = (task as { cancel?: () => void } | undefined)?.cancel;
+      if (typeof cancel === 'function') cancel();
+    };
+  }, [
+    loaded,
+    dataMode,
+    activeStageId,
+    activeColumnLoaded,
+    filterKey,
+    displayStages,
+    setHub,
+  ]);
 
   useEffect(() => {
     if (!columnPickerOpen || !loaded[dataMode]) return;

@@ -9,6 +9,7 @@ import * as IntentLauncher from 'expo-intent-launcher';
 import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_ORIGIN } from '../config';
+import { base64ToBytes, createSha256, normalizeSha256Hex } from './sha256';
 
 /** Định danh app trong registry server (bảng mobile_apps.app_key). */
 export const APP_KEY = 'crm-mobile-v2';
@@ -255,7 +256,28 @@ async function assertDownloadReady(url: string): Promise<void> {
   }
 }
 
-async function assertDownloadedApk(uri: string, expectedSize?: number | null): Promise<void> {
+async function hashFileSha256(uri: string, size: number): Promise<string> {
+  const hasher = createSha256();
+  const chunkBytes = 512 * 1024;
+  let pos = 0;
+  while (pos < size) {
+    const length = Math.min(chunkBytes, size - pos);
+    const b64 = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+      length,
+      position: pos,
+    });
+    hasher.update(base64ToBytes(b64));
+    pos += length;
+  }
+  return hasher.digestHex();
+}
+
+async function assertDownloadedApk(
+  uri: string,
+  expectedSize?: number | null,
+  expectedSha256?: string | null,
+): Promise<void> {
   const info = await FileSystem.getInfoAsync(uri);
   if (!info.exists || !info.size) {
     throw new Error('Tải APK thất bại — không lấy được file.');
@@ -308,12 +330,31 @@ async function assertDownloadedApk(uri: string, expectedSize?: number | null): P
       );
     }
   }
+
+  const wantSha = normalizeSha256Hex(expectedSha256);
+  if (wantSha && /^[0-9a-f]{64}$/.test(wantSha)) {
+    const gotSha = await hashFileSha256(uri, info.size);
+    if (gotSha !== wantSha) {
+      try {
+        await FileSystem.deleteAsync(uri, { idempotent: true });
+      } catch {
+        /* ignore */
+      }
+      throw new Error(
+        'APK tải về không khớp checksum (sha256) — file có thể bị hỏng hoặc giả mạo. Vui lòng tải lại.',
+      );
+    }
+  }
 }
 
 export async function downloadAndInstall(
   url: string,
   version: string,
-  opts: { expectedSize?: number | null; onProgress?: (ratio: number) => void } = {},
+  opts: {
+    expectedSize?: number | null;
+    expectedSha256?: string | null;
+    onProgress?: (ratio: number) => void;
+  } = {},
 ): Promise<boolean> {
   if (Platform.OS !== 'android') throw new Error('Chỉ hỗ trợ Android');
 
@@ -328,7 +369,11 @@ export async function downloadAndInstall(
 export async function downloadApkToCache(
   url: string,
   version: string,
-  opts: { expectedSize?: number | null; onProgress?: (ratio: number) => void } = {},
+  opts: {
+    expectedSize?: number | null;
+    expectedSha256?: string | null;
+    onProgress?: (ratio: number) => void;
+  } = {},
 ): Promise<{ uri: string }> {
   if (Platform.OS !== 'android') throw new Error('Chỉ hỗ trợ Android');
 
@@ -352,7 +397,7 @@ export async function downloadApkToCache(
 
   const result = await resumable.downloadAsync();
   if (!result?.uri) throw new Error('Tải APK thất bại');
-  await assertDownloadedApk(result.uri, opts.expectedSize);
+  await assertDownloadedApk(result.uri, opts.expectedSize, opts.expectedSha256);
   return { uri: result.uri };
 }
 

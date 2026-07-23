@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import { api } from '../api/client';
-import { invalidateCrmHubCache, invalidatePlannerCache } from '../api/crm';
+import { invalidateCrmHubCache, invalidatePlannerCache, evictStaleCrmCaches } from '../api/crm';
 import { subscribeAppSocket } from '../lib/appSocket';
 import { emitCrmRealtime, type CrmRealtimeReason } from '../lib/crmRealtimeBus';
 
@@ -131,6 +131,10 @@ export function CrmRealtimeProvider({ children }: { children: React.ReactNode })
     void poll();
     const interval = setInterval(poll, LIVE_VERSION_POLL_MS);
     const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'background' || state === 'inactive') {
+        evictStaleCrmCaches();
+        return;
+      }
       if (state === 'active') void poll();
     });
 

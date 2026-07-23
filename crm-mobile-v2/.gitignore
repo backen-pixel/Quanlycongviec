@@ -8,3 +8,5 @@ web-build/
 android/
 ios/
 google-services.json
+google-services*.json
+tmp-ui-test/

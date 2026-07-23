@@ -332,6 +332,21 @@ export default function CrmFilterSheet({
                   color={draft.showOrphan ? accent : Colors.textFaint}
                 />
               </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.toggleRow, draft.hideEmptyStages && { borderColor: accent, backgroundColor: accent + '15' }]}
+                onPress={() => patch({ hideEmptyStages: !draft.hideEmptyStages })}
+              >
+                <Ionicons name="eye-off-outline" size={18} color={draft.hideEmptyStages ? accent : Colors.textMuted} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.toggleTitle}>Ẩn cột trống</Text>
+                  <Text style={styles.toggleSub}>Chỉ hiện giai đoạn có dữ liệu (giảm cột trên mobile)</Text>
+                </View>
+                <Ionicons
+                  name={draft.hideEmptyStages ? 'checkbox' : 'square-outline'}
+                  size={22}
+                  color={draft.hideEmptyStages ? accent : Colors.textFaint}
+                />
+              </TouchableOpacity>
             </FilterSection>
 
             <FilterSection title="Số điện thoại">

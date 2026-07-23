@@ -160,6 +160,7 @@ export default function UpdateGate() {
     try {
       const apk = await downloadApkToCache(info.downloadUrl, info.latestVersion || 'latest', {
         expectedSize: info.size,
+        expectedSha256: info.sha256,
         onProgress: (r) => setProgress(r),
       });
       if (installAfterDownload) {

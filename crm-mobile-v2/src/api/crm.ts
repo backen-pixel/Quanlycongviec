@@ -101,7 +101,24 @@ const PAGE_SIZE = 25;
 export const KANBAN_PAGE_SIZE = 20;
 
 const STAGES_CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_STAGES_CACHE = 24;
 const stagesCache = new Map<string, { stages: CrmPipelineStage[]; at: number }>();
+
+/** Xóa entry hết hạn + giữ tối đa `maxEntries` (cũ nhất bị đá). */
+function pruneTimedMap<T extends { at: number }>(
+  map: Map<string, T>,
+  ttlMs: number,
+  maxEntries: number,
+): void {
+  const now = Date.now();
+  for (const [k, v] of map) {
+    if (now - v.at >= ttlMs) map.delete(k);
+  }
+  if (map.size <= maxEntries) return;
+  const ranked = [...map.entries()].sort((a, b) => a[1].at - b[1].at);
+  const drop = ranked.length - maxEntries;
+  for (let i = 0; i < drop; i++) map.delete(ranked[i][0]);
+}
 
 export function peekPipelineStagesCached(
   type: 'lead' | 'deal',
@@ -147,6 +164,7 @@ async function fetchPipelineStagesCached(
   if (hit && Date.now() - hit.at < STAGES_CACHE_TTL_MS) return hit.stages;
   const stages = await fetchPipelineStagesUncached(type, opts);
   stagesCache.set(key, { stages, at: Date.now() });
+  pruneTimedMap(stagesCache, STAGES_CACHE_TTL_MS, MAX_STAGES_CACHE);
   return stages;
 }
 
@@ -715,9 +733,15 @@ export function warmCrmHubStageCounts(companyId?: string, signal?: AbortSignal):
   ]);
 }
 
-/** Prefetch kanban bootstrap lite — mở CrmHub hiển thị ngay không chờ mạng. */
+/** Prefetch kanban bootstrap lite — cùng mặc định Có SĐT như Hub để mở tab không miss cache. */
 export async function warmCrmHubBootstrap(companyId?: string, signal?: AbortSignal): Promise<void> {
-  const opts: CrmStageFetchOpts = { companyId, signal, skipCounts: true, lite: true };
+  const opts: CrmStageFetchOpts = {
+    companyId,
+    signal,
+    skipCounts: true,
+    lite: true,
+    phoneFilter: 'has_phone',
+  };
   await Promise.all([
     fetchCrmBoardInitial('lead', undefined, opts).catch(() => null),
     fetchCrmBoardInitial('deal', undefined, opts).catch(() => null),
@@ -760,6 +784,9 @@ export async function prefetchCrmNeighborStages(
 const HUB_CACHE_TTL_MS = 3 * 60 * 1000;
 const BOOTSTRAP_CACHE_TTL_MS = 2 * 60 * 1000;
 const TOTALS_CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_HUB_CACHE = 16;
+const MAX_BOOTSTRAP_CACHE = 24;
+const MAX_TOTALS_CACHE = 32;
 const hubCache = new Map<string, { snapshot: CrmHubCacheSnapshot; at: number }>();
 const bootstrapCache = new Map<string, { boot: CrmBoardBootstrap; at: number }>();
 const totalsCache = new Map<string, { counts: Record<string, number>; total: number; at: number }>();
@@ -770,6 +797,7 @@ function setCrmTotalsCache(
   batch: { counts: Record<string, number>; total: number },
 ): void {
   totalsCache.set(totalsCacheKey(type, opts), { ...batch, at: Date.now() });
+  pruneTimedMap(totalsCache, TOTALS_CACHE_TTL_MS, MAX_TOTALS_CACHE);
 }
 
 /** Tổng + badge cột đã cache — hiển thị ngay khi mở lại CrmHub. */
@@ -823,6 +851,7 @@ function setCrmBootstrapCache(
   boot: CrmBoardBootstrap,
 ): void {
   bootstrapCache.set(bootstrapCacheKey(type, initialStageId, opts), { boot, at: Date.now() });
+  pruneTimedMap(bootstrapCache, BOOTSTRAP_CACHE_TTL_MS, MAX_BOOTSTRAP_CACHE);
 }
 
 export function invalidateCrmBootstrapCache(): void {
@@ -856,6 +885,7 @@ export function setCrmHubCache(
   snapshot: CrmHubCacheSnapshot,
 ): void {
   hubCache.set(hubCacheKey(userId, type, filterKey), { snapshot, at: Date.now() });
+  pruneTimedMap(hubCache, HUB_CACHE_TTL_MS, MAX_HUB_CACHE);
 }
 
 export function invalidateCrmHubCache(userId?: string): void {
@@ -863,11 +893,23 @@ export function invalidateCrmHubCache(userId?: string): void {
     hubCache.clear();
     bootstrapCache.clear();
     totalsCache.clear();
+    stagesCache.clear();
     return;
   }
   for (const key of hubCache.keys()) {
     if (key.startsWith(`${userId}|`)) hubCache.delete(key);
   }
+}
+
+/**
+ * Dọn cache in-memory hết hạn / vượt hạn mức — gọi khi app vào nền (session dài).
+ */
+export function evictStaleCrmCaches(): void {
+  pruneTimedMap(stagesCache, STAGES_CACHE_TTL_MS, MAX_STAGES_CACHE);
+  pruneTimedMap(hubCache, HUB_CACHE_TTL_MS, MAX_HUB_CACHE);
+  pruneTimedMap(bootstrapCache, BOOTSTRAP_CACHE_TTL_MS, MAX_BOOTSTRAP_CACHE);
+  pruneTimedMap(totalsCache, TOTALS_CACHE_TTL_MS, MAX_TOTALS_CACHE);
+  evictStalePlannerCache();
 }
 
 /**
@@ -1068,16 +1110,21 @@ const plannerByDue = (a: PlannerItem, b: PlannerItem) => {
 };
 
 const PLANNER_CACHE_TTL_MS = 90 * 1000;
+/** Focus lại Planner: chỉ silent refresh khi cache đã cũ hơn ngưỡng này. */
+export const PLANNER_SILENT_REFRESH_AFTER_MS = 30 * 1000;
+const MAX_PLANNER_CACHE = 4;
 const plannerCache = new Map<string, { data: PlannerData; at: number }>();
 
-/** Đọc cache planner đồng bộ — dùng hiển thị ngay trước khi refresh nền. */
-export function peekPlannerCache(userId: string): PlannerData | null {
-  const hit = plannerCache.get(userId);
-  if (!hit || Date.now() - hit.at >= PLANNER_CACHE_TTL_MS) return null;
-  return hit.data;
+function evictStalePlannerCache(): void {
+  pruneTimedMap(plannerCache, PLANNER_CACHE_TTL_MS * 2, MAX_PLANNER_CACHE);
 }
 
-/** Cache còn hạn (không cần refetch mạng ngay). */
+/** Đọc cache planner đồng bộ — kể cả khi stale, để hiện ngay trước khi refresh nền. */
+export function peekPlannerCache(userId: string): PlannerData | null {
+  return plannerCache.get(userId)?.data ?? null;
+}
+
+/** Cache còn hạn TTL đầy đủ (90s). */
 export function isPlannerCacheFresh(userId: string): boolean {
   const hit = plannerCache.get(userId);
   return !!(hit && Date.now() - hit.at < PLANNER_CACHE_TTL_MS);
@@ -1098,6 +1145,7 @@ export function invalidatePlannerCache(userId?: string) {
 /** Ghi cache sau khi tải từng section (Planner refresh nền). */
 export function setPlannerCache(userId: string, data: PlannerData) {
   plannerCache.set(userId, { data, at: Date.now() });
+  evictStalePlannerCache();
 }
 
 /** Số bản ghi mỗi lần tải từ server cho Planner. */
@@ -1153,7 +1201,7 @@ export async function fetchPlanner(
   signal?: AbortSignal,
   opts?: { force?: boolean },
 ): Promise<PlannerData> {
-  if (!opts?.force) {
+  if (!opts?.force && isPlannerCacheFresh(userId)) {
     const cached = peekPlannerCache(userId);
     if (cached) return cached;
   }
@@ -1162,7 +1210,7 @@ export async function fetchPlanner(
     fetchPlannerSection('deal', userId, signal),
   ]);
   const data = { leads, deals };
-  plannerCache.set(userId, { data, at: Date.now() });
+  setPlannerCache(userId, data);
   return data;
 }
 

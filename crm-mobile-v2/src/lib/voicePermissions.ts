@@ -8,8 +8,7 @@ export const VOICE_PERM_MESSAGE_SYNC =
   'Ứng dụng cần:\n' +
   '• Micro — ghi thử hoặc ghi khi có cuộc gọi (nền).\n' +
   '• Trạng thái điện thoại — biết khi nào đang gọi.\n' +
-  '• Nhật ký cuộc gọi — gắn số & hướng gọi khi upload (cùng API với web).\n' +
-  '• Đọc file âm thanh — chọn file ghi sẵn trên máy.\n' +
+  '• Đọc file âm thanh — chọn file ghi sẵn trên máy (SĐT lấy từ tên file).\n' +
   '• Thông báo — hiện dịch vụ nền (Android 13+).\n\n' +
   'Ghi âm “đầu dây” phụ thuộc máy; app dùng micro + đồng bộ lên server.';
 
@@ -20,7 +19,8 @@ function androidApi(): number {
 export function buildAndroidVoicePermissions(): Permission[] {
   const P = PermissionsAndroid.PERMISSIONS;
   const api = androidApi();
-  const list: Permission[] = [P.RECORD_AUDIO, P.READ_PHONE_STATE, P.READ_CALL_LOG];
+  // Không xin READ_CALL_LOG — sync chỉ lấy SĐT từ tên file ghi âm (OEM Dialer).
+  const list: Permission[] = [P.RECORD_AUDIO, P.READ_PHONE_STATE];
   if (api >= 33) {
     list.push(P.READ_MEDIA_AUDIO, P.POST_NOTIFICATIONS);
   } else {

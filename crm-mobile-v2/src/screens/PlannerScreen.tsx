@@ -17,9 +17,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   fetchPlannerSectionPage,
   invalidatePlannerCache,
-  isPlannerCacheFresh,
   peekPlannerCache,
+  plannerCacheAgeMs,
   PLANNER_MAX_BUFFER,
+  PLANNER_SILENT_REFRESH_AFTER_MS,
   setPlannerCache,
   type PlannerFetchOpts,
 } from '../api/crm';
@@ -466,9 +467,17 @@ export default function PlannerScreen() {
   useFocusEffect(
     useCallback(() => {
       if (!userId) return undefined;
-      // Cache còn hạn → hiện ngay, chỉ refresh nền khi sắp hết hạn hoặc chưa có data.
-      if (isPlannerCacheFresh(userId) && (leadStateRef.current.items.length > 0 || leadStateRef.current.total > 0 || dealStateRef.current.total > 0)) {
-        void load({ refresh: true, silent: true });
+      const age = plannerCacheAgeMs(userId);
+      const hasData =
+        leadStateRef.current.items.length > 0
+        || leadStateRef.current.total > 0
+        || dealStateRef.current.items.length > 0
+        || dealStateRef.current.total > 0;
+      if (hasData) {
+        // Đã hiện cache — chỉ silent refresh khi cache > 30s (hoặc chưa có timestamp).
+        if (age == null || age >= PLANNER_SILENT_REFRESH_AFTER_MS) {
+          void load({ refresh: true, silent: true });
+        }
       } else {
         void load();
       }

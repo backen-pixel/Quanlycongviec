@@ -22,6 +22,8 @@ export type CrmHubFilters = {
   companyId: string;
   regionId: string;
   showOrphan: boolean;
+  /** Ẩn cột pipeline có count = 0 (giảm 67–92 cột trên mobile). */
+  hideEmptyStages: boolean;
   searchField: SearchField;
 };
 
@@ -36,6 +38,7 @@ export const DEFAULT_CRM_FILTERS: CrmHubFilters = {
   companyId: '',
   regionId: '',
   showOrphan: false,
+  hideEmptyStages: true,
   searchField: 'all',
 };
 
@@ -120,6 +123,8 @@ export function countActiveFilters(filters: CrmHubFilters, search: string): numb
   if (filters.companyId) n += 1;
   if (filters.regionId) n += 1;
   if (filters.showOrphan) n += 1;
+  // hideEmptyStages mặc định bật — chỉ đếm khi user tắt (hiện cột trống).
+  if (!filters.hideEmptyStages) n += 1;
   if (filters.searchField !== 'all') n += 1;
   if (filters.departmentId) n += 1;
   return n;
@@ -199,6 +204,13 @@ export function activeFilterChips(
   }
   if (filters.showOrphan) {
     chips.push({ key: 'orphan', label: 'Chưa có GD', onClear: () => onPatch({ showOrphan: false }) });
+  }
+  if (!filters.hideEmptyStages) {
+    chips.push({
+      key: 'hideEmpty',
+      label: 'Hiện cột trống',
+      onClear: () => onPatch({ hideEmptyStages: true }),
+    });
   }
   return chips;
 }

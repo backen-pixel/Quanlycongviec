@@ -25,6 +25,7 @@ function sanitizeFilters(raw: Partial<CrmHubFilters> | null | undefined): CrmHub
     companyId: String(f.companyId || ''),
     regionId: String(f.regionId || ''),
     showOrphan: !!f.showOrphan,
+    hideEmptyStages: f.hideEmptyStages !== false,
     searchField: searchOk ? f.searchField : DEFAULT_CRM_FILTERS.searchField,
   };
 }

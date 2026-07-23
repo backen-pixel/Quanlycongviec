@@ -7,7 +7,7 @@ export const CRMV2_PERMISSION_ONBOARDING_DONE_KEY = '@crmv2_perm_onboarding_done
 
 /**
  * Quyền hiện trên modal lần đầu đăng nhập.
- * Micro / nhật ký gọi / file âm thanh xin khi vào tab Ghi âm (không ép lúc mở app).
+ * Micro / file âm thanh xin khi vào tab Ghi âm (không ép lúc mở app).
  * Overlay xin khi bật bong bóng chat.
  */
 export type AppPermissionKind = 'notifications' | 'microphone' | 'overlay';
