@@ -1,4 +1,4 @@
-﻿// Labels & Colors — tất cả lấy từ DB, đây chỉ là fallback mapping
+// Labels & Colors — tất cả lấy từ DB, đây chỉ là fallback mapping
 export const STATUS_LABELS = {
   new: 'Mới',
   consulting: 'Tư vấn',
