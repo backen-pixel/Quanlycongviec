@@ -110,8 +110,10 @@ async function uploadBufferToStorage(buffer, { originalName, mimetype, size, ent
   const ext = path.extname(originalName).toLowerCase() || '';
   const safeName = sanitizeStorageFilename(path.basename(originalName, path.extname(originalName)));
   const timestamp = Date.now();
+  // Suffix ngẫu nhiên: tránh 2 file (vd. a.png vs a_.png) trùng key khi sanitize + Date.now() cùng ms
+  const uniq = Math.random().toString(36).slice(2, 8);
   const folder = entityId ? `${entityType || 'general'}/${entityId}` : (entityType || 'general');
-  let storagePath = `${folder}/${timestamp}_${safeName}${ext}`;
+  let storagePath = `${folder}/${timestamp}_${uniq}_${safeName}${ext}`;
 
   let uploadError;
   ({ error: uploadError } = await supabase.storage
@@ -119,7 +121,7 @@ async function uploadBufferToStorage(buffer, { originalName, mimetype, size, ent
     .upload(storagePath, buffer, { contentType: mimetype, upsert: false }));
 
   if (uploadError && isInvalidStorageKeyError(uploadError)) {
-    storagePath = `${folder}/${timestamp}_file${ext || '.bin'}`;
+    storagePath = `${folder}/${timestamp}_${uniq}_file${ext || '.bin'}`;
     ({ error: uploadError } = await supabase.storage
       .from(BUCKET)
       .upload(storagePath, buffer, { contentType: mimetype, upsert: false }));
@@ -189,8 +191,9 @@ async function uploadOneFileFromDisk(filePath, originalName, mimetype, fileSize,
   const ext = path.extname(fixedName).toLowerCase() || '';
   const safeName = sanitizeStorageFilename(path.basename(fixedName, path.extname(fixedName)));
   const timestamp = Date.now();
+  const uniq = Math.random().toString(36).slice(2, 8);
   const folder = entityId ? `${entityType || 'general'}/${entityId}` : (entityType || 'general');
-  let storagePath = `${folder}/${timestamp}_${safeName}${ext}`;
+  let storagePath = `${folder}/${timestamp}_${uniq}_${safeName}${ext}`;
 
   const fileStream = fs.createReadStream(filePath);
   const tryUpload = async (objectPath, body) => {
@@ -202,7 +205,7 @@ async function uploadOneFileFromDisk(filePath, originalName, mimetype, fileSize,
 
   let uploadError = await tryUpload(storagePath, fileStream);
   if (uploadError && isInvalidStorageKeyError(uploadError)) {
-    storagePath = `${folder}/${timestamp}_file${ext || '.bin'}`;
+    storagePath = `${folder}/${timestamp}_${uniq}_file${ext || '.bin'}`;
     uploadError = await tryUpload(storagePath, fs.createReadStream(filePath));
   }
 

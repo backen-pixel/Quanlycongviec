@@ -15,7 +15,7 @@ import {
   Plus, CheckCircle2, Circle, Clock, User, Eye, Trash2, ChevronDown, ChevronRight,
   Calendar, List, Users, Target, AlertTriangle, X, Save, ListChecks, ClipboardList,
   Paperclip, FileUp, MessageSquare, FileText, Share2, Lock,
-  FileSpreadsheet, Edit3, UserPlus, GripVertical, Globe,
+  FileSpreadsheet, Edit3, UserPlus, GripVertical, Globe, HardDrive,
 } from 'lucide-react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
@@ -1797,6 +1797,7 @@ export default function CRMTasksTab({
       supervisor_id: task.supervisor_id || '',
       stage_slug: task.stage_slug || '',
       show_excel_quotation_upload: !!task.show_excel_quotation_upload,
+      auto_upload_attachments_to_drive: !!task.auto_upload_attachments_to_drive,
       requires_quick_verdict: !!task.requires_quick_verdict,
       executor_company_id: task.executor_company_id || '',
     });
@@ -1856,6 +1857,7 @@ export default function CRMTasksTab({
         supervisor_id: editForm.supervisor_id || null,
         stage_slug: editForm.stage_slug,
         show_excel_quotation_upload: !!editForm.show_excel_quotation_upload,
+        auto_upload_attachments_to_drive: !!editForm.auto_upload_attachments_to_drive,
         requires_quick_verdict: !!editForm.requires_quick_verdict,
       };
       if (showSxTasksInUi || isProductionScope) {
@@ -2331,8 +2333,10 @@ export default function CRMTasksTab({
           const compressed = await Promise.all(imageFiles.map(f => compressImage(f)));
           const formData = new FormData();
           compressed.forEach(f => formData.append('files', f));
-          const { data: uploadRes } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-          allUploaded.push(...(uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes])));
+          // Không set Content-Type tay — browser cần boundary cho multipart
+          const { data: uploadRes } = await api.post('/upload', formData);
+          const ok = uploadRes.uploaded || uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes]);
+          allUploaded.push(...(Array.isArray(ok) ? ok : [ok]));
         }
 
         // Upload video/file: từng file riêng với progress + stream endpoint
@@ -2361,17 +2365,25 @@ export default function CRMTasksTab({
 
         setUploadProgress(p => { const n = { ...p }; delete n[taskId]; return n; });
 
-        if (!allUploaded.length) throw new Error('Upload không trả về file');
+        const successUploads = allUploaded.filter((up) => up?.file_url && !String(up.file_url).startsWith('data:'));
+        if (!successUploads.length) throw new Error('Upload không trả về file');
 
-        // Tạo attachments
-        const items = allUploaded.map(up => ({
-          name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
-          doc_type: inferAttachmentDocType(up),
-          file_url: up.file_url,
-          file_name: up.file_name,
-          file_size: up.file_size,
-          mime_type: up.mime_type,
-        }));
+        // Tạo attachments — dedupe theo file_url để tránh insert trùng
+        const seenUrls = new Set();
+        const items = [];
+        for (const up of successUploads) {
+          const url = String(up.file_url);
+          if (seenUrls.has(url)) continue;
+          seenUrls.add(url);
+          items.push({
+            name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
+            doc_type: inferAttachmentDocType(up),
+            file_url: up.file_url,
+            file_name: up.file_name,
+            file_size: up.file_size,
+            mime_type: up.mime_type,
+          });
+        }
         await api.post(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/bulk`, { items });
         setExpandedTask(taskId);
         loadAttachments({ id: taskId });
@@ -2435,15 +2447,15 @@ export default function CRMTasksTab({
       const compressed = await compressImage(file);
       const formData = new FormData();
       formData.append('files', compressed);
-      const { data: uploadRes } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-      const rows = uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes]);
-      return rows[0];
+      const { data: uploadRes } = await api.post('/upload', formData);
+      const rows = uploadRes.uploaded || uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes]);
+      return (Array.isArray(rows) ? rows : [rows])[0];
     }
     const isLarge = file.size > 10 * 1024 * 1024;
     const endpoint = isLarge ? '/upload/stream' : '/upload/single';
     const formData = new FormData();
     formData.append('file', file);
-    const { data } = await api.post(endpoint, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+    const { data } = await api.post(endpoint, formData);
     return data;
   };
 
@@ -2568,8 +2580,9 @@ export default function CRMTasksTab({
           const compressed = await Promise.all(imageFiles.map((f) => compressImage(f)));
           const formData = new FormData();
           compressed.forEach((f) => formData.append('files', f));
-          const { data: uploadRes } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-          allUploaded.push(...(uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes])));
+          const { data: uploadRes } = await api.post('/upload', formData);
+          const ok = uploadRes.uploaded || uploadRes.files || (Array.isArray(uploadRes) ? uploadRes : [uploadRes]);
+          allUploaded.push(...(Array.isArray(ok) ? ok : [ok]));
         }
         for (const file of otherFiles) {
           const isLarge = file.size > 10 * 1024 * 1024;
@@ -2589,15 +2602,23 @@ export default function CRMTasksTab({
           });
           allUploaded.push(result);
         }
-        if (!allUploaded.length) throw new Error('Upload không trả về file');
-        const items = allUploaded.map((up) => ({
-          name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
-          doc_type: inferAttachmentDocType(up),
-          file_url: up.file_url,
-          file_name: up.file_name,
-          file_size: up.file_size,
-          mime_type: up.mime_type,
-        }));
+        const successUploads = allUploaded.filter((up) => up?.file_url && !String(up.file_url).startsWith('data:'));
+        if (!successUploads.length) throw new Error('Upload không trả về file');
+        const seenUrls = new Set();
+        const items = [];
+        for (const up of successUploads) {
+          const url = String(up.file_url);
+          if (seenUrls.has(url)) continue;
+          seenUrls.add(url);
+          items.push({
+            name: (up.original_name || up.file_name || 'File').replace(/\.[^.]+$/, ''),
+            doc_type: inferAttachmentDocType(up),
+            file_url: up.file_url,
+            file_name: up.file_name,
+            file_size: up.file_size,
+            mime_type: up.mime_type,
+          });
+        }
         await api.post(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/attachments/bulk`, {
           items,
           checklist_id: ckId,
@@ -2949,10 +2970,6 @@ export default function CRMTasksTab({
 
           {isCkExpanded && !isCkEditing && (
             <div className="px-3 pb-3 border-t border-teal-100 pt-2 space-y-2" onClick={(e) => e.stopPropagation()}>
-              {renderImageThumbnailGrid(
-                filterChecklistFileAtts(ckAtts),
-                { size: 'lg', className: 'mb-1' },
-              )}
               {ck.description?.trim() && (
                 <div className="rounded bg-slate-50 border border-slate-100 px-2 py-1.5">
                   <p className="text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Mô tả</p>
@@ -3557,10 +3574,6 @@ export default function CRMTasksTab({
 
                           {isCkExpanded && !isCkEditing && (
                             <div className="px-2 pb-2 border-t border-emerald-100 pt-2 space-y-2" onClick={(e) => e.stopPropagation()}>
-                              {renderImageThumbnailGrid(
-                                filterChecklistFileAtts(ckAtts),
-                                { size: 'lg', className: 'mb-1' },
-                              )}
                               {ck.description?.trim() && (
                                 <div className="rounded bg-slate-50 border border-slate-100 px-2 py-1.5">
                                   <p className="text-[10px] font-semibold text-slate-500 uppercase mb-0.5">Mô tả</p>
@@ -3665,6 +3678,14 @@ export default function CRMTasksTab({
                       className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-0.5 cursor-pointer px-1.5 py-0.5 rounded hover:bg-blue-50">
                       <FileUp className="h-3 w-3" /> Upload file
                     </button>
+                  )}
+                  {!!task.auto_upload_attachments_to_drive && (
+                    <span
+                      className="text-[9px] text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded flex items-center gap-0.5"
+                      title="File upload vào ghi chú sẽ tự đẩy lên Drive"
+                    >
+                      <HardDrive className="h-3 w-3" /> Drive
+                    </span>
                   )}
                 </div>
               </div>
@@ -4524,6 +4545,22 @@ export default function CRMTasksTab({
                         </span>
                         <span className="block text-[10px] text-emerald-700 mt-0.5">
                           Khi bật, nhiệm vụ sẽ có nút <b>📊 Upload Excel BG</b> ở tab Nhiệm vụ để tải file Excel báo giá và tạo báo giá tự động.
+                        </span>
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-2 p-2.5 border border-indigo-200 bg-indigo-50 rounded-lg cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={!!editForm.auto_upload_attachments_to_drive}
+                        onChange={(e) => setEditForm((f) => ({ ...f, auto_upload_attachments_to_drive: e.target.checked }))}
+                        className="mt-0.5 accent-indigo-600"
+                      />
+                      <span className="flex-1">
+                        <span className="text-xs font-semibold text-indigo-800 flex items-center gap-1">
+                          <HardDrive className="h-3 w-3" /> Tự đẩy file ghi chú lên Drive
+                        </span>
+                        <span className="block text-[10px] text-indigo-700 mt-0.5">
+                          Khi bật, file nhân viên upload vào ghi chú/đính kèm nhiệm vụ sẽ <b>tự động tải lên Drive</b> của lead/deal.
                         </span>
                       </span>
                     </label>

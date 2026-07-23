@@ -4,6 +4,7 @@
  */
 const { Router } = require('express');
 const helpers = require('../shared/helpersBundle');
+const { maybeMirrorTaskAttachmentsToDrive } = require('../../../helpers/crmTaskAttachmentDriveUpload');
 
 const r = Router();
 
@@ -554,19 +555,22 @@ r.post('/leads/:id/tasks', async (req, res) => {
   try {
     const result = await createCrmLeadTask(req, req.params.id, req.body);
     if (result.error) return res.status(result.status || 500).json({ error: result.error });
-    await emitCrmTaskChanged(req, {
-      leadId: req.params.id,
-      taskId: result.data?.id,
-      action: 'created',
-      task: result.data,
-    });
-    try {
-      const { data: _actor } = await supabase.from('users').select('full_name').eq('id', req.user.userId).maybeSingle();
-      await logDealActivityComment(req, {
+    // Idempotent replay: không emit realtime / không ghi activity trùng
+    if (!result.idempotent) {
+      await emitCrmTaskChanged(req, {
         leadId: req.params.id,
-        body: `📋 ${_actor?.full_name || 'Người dùng'} đã tạo nhiệm vụ «${result.data?.title || req.body.title || 'Không tên'}».`,
+        taskId: result.data?.id,
+        action: 'created',
+        task: result.data,
       });
-    } catch (_) {}
+      try {
+        const { data: _actor } = await supabase.from('users').select('full_name').eq('id', req.user.userId).maybeSingle();
+        await logDealActivityComment(req, {
+          leadId: req.params.id,
+          body: `📋 ${_actor?.full_name || 'Người dùng'} đã tạo nhiệm vụ «${result.data?.title || req.body.title || 'Không tên'}».`,
+        });
+      } catch (_) {}
+    }
     return res.status(result.status).json(result.data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -662,6 +666,7 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
       requires_quick_verdict: !!item.requires_quick_verdict,
       blocks_stage_advance: !!item.blocks_stage_advance,
       show_excel_quotation_upload: !!item.show_excel_quotation_upload,
+      auto_upload_attachments_to_drive: !!item.auto_upload_attachments_to_drive,
       assignee_id: primaryTemplateItemAssigneeId(item),
       ...crmExecutorFieldsFromTemplateItem(item, ownerCompanyId),
     }));
@@ -1373,7 +1378,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
 
     // Query task visibility 1 lần duy nhất
     const { data: task } = await supabase.from('crm_tasks')
-      .select('id, title, stage_slug, checklist, default_allowed_companies, default_allowed_departments, pipeline_stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(name)')
+      .select('id, title, stage_slug, checklist, default_allowed_companies, default_allowed_departments, auto_upload_attachments_to_drive, pipeline_stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(name)')
       .eq('id', req.params.taskId).single();
     const finalCompanies = task?.default_allowed_companies || null;
     const finalDepts = task?.default_allowed_departments || null;
@@ -1389,8 +1394,29 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
     };
     const defaultShare = getDefaultCrmAttachmentShare(task, bulkShareOpts, ckItem);
 
-    // Insert tất cả attachments 1 lần
-    const rows = items.map(item => ({
+    // Insert tất cả attachments 1 lần — bỏ trùng file_url trong payload
+    const seenUrls = new Set();
+    const dedupedItems = [];
+    for (const item of items) {
+      const url = item.file_url ? String(item.file_url) : '';
+      if (url) {
+        if (seenUrls.has(url)) continue;
+        seenUrls.add(url);
+      }
+      dedupedItems.push(item);
+    }
+    if (seenUrls.size) {
+      const { data: existing } = await supabase.from('crm_task_attachments')
+        .select('file_url')
+        .eq('task_id', req.params.taskId)
+        .in('file_url', [...seenUrls]);
+      for (const row of existing || []) {
+        if (row.file_url) seenUrls.delete(String(row.file_url));
+      }
+    }
+    const rows = dedupedItems
+      .filter((item) => !item.file_url || seenUrls.has(String(item.file_url)))
+      .map(item => ({
       task_id: req.params.taskId,
       lead_id: req.params.leadId,
       checklist_id: item.checklist_id ? String(item.checklist_id) : checklistId,
@@ -1403,6 +1429,9 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
       shared_to_project: item.shared_to_project ?? defaultShare.shared_to_project,
       allowed_share_modules: item.allowed_share_modules ?? defaultShare.allowed_share_modules,
     }));
+    if (!rows.length) {
+      return res.status(200).json([]);
+    }
     let { data, error } = await supabase.from('crm_task_attachments')
       .insert(rows)
       .select('*, creator:users!crm_task_attachments_created_by_fkey(id, full_name)');
@@ -1473,6 +1502,14 @@ r.post('/leads/:leadId/tasks/:taskId/attachments/bulk', async (req, res) => {
       }
     }
 
+    await maybeMirrorTaskAttachmentsToDrive({
+      taskId: req.params.taskId,
+      leadId: req.params.leadId,
+      attachments: data || [],
+      userId: req.user?.userId || req.user?.id,
+      taskFlag: !!task?.auto_upload_attachments_to_drive,
+    });
+
     res.status(201).json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1495,7 +1532,7 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
     }
     
     const { data: taskForShare } = await supabase.from('crm_tasks')
-      .select('id, title, stage_slug, checklist, default_allowed_companies, default_allowed_departments')
+      .select('id, title, stage_slug, checklist, default_allowed_companies, default_allowed_departments, auto_upload_attachments_to_drive')
       .eq('id', req.params.taskId).single();
     const ckId = checklist_id ? String(checklist_id) : null;
     const ckItem = ckId ? findChecklistItem(taskForShare, ckId) : null;
@@ -1580,6 +1617,14 @@ r.post('/leads/:leadId/tasks/:taskId/attachments', async (req, res) => {
         dealTitle: leadForShare.title,
       });
     }
+
+    await maybeMirrorTaskAttachmentsToDrive({
+      taskId: req.params.taskId,
+      leadId: req.params.leadId,
+      attachments: data ? [data] : [],
+      userId: req.user?.userId || req.user?.id,
+      taskFlag: !!taskForShare?.auto_upload_attachments_to_drive,
+    });
 
     res.status(201).json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
