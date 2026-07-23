@@ -3,7 +3,7 @@
     "name": "CRM Mobile",
     "slug": "crm-mobile-v2",
     "scheme": "crmv2",
-    "version": "2.2.45",
+    "version": "2.2.46",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -23,7 +23,7 @@
     },
     "android": {
       "package": "vn.tubeppro.crmobilev2",
-      "versionCode": 156,
+      "versionCode": 157,
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": false,
       "googleServicesFile": "./google-services.json",

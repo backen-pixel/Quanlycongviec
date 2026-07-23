@@ -112,6 +112,32 @@ function initialModeFromRoute(params?: Props['route']['params']): Mode {
 const EMPTY_HUB: CrmHubData = { stages: [], stageCounts: {}, listTotal: null, cache: {} };
 const EMPTY_STAGE: CrmStageCache = { items: [], hasMore: false, nextOffset: 0, loaded: false };
 
+/** Gắn count=0 cho mọi stage đã biết — RPC thường bỏ cột trống. */
+function fillStageCountZeros(
+  stages: { id: string }[],
+  counts: Record<string, number>,
+): Record<string, number> {
+  const next: Record<string, number> = {};
+  for (const s of stages) next[s.id] = 0;
+  for (const [id, n] of Object.entries(counts || {})) {
+    next[id] = Number(n) || 0;
+  }
+  return next;
+}
+
+/** Ẩn cột trống: thiếu key sau khi đã có counts = coi như 0 (không hiện lại cột trống). */
+function filterStagesHideEmpty(
+  stages: CrmPipelineStage[],
+  stageCounts: Record<string, number>,
+  hideEmpty: boolean,
+): CrmPipelineStage[] {
+  if (!hideEmpty) return stages;
+  const keys = Object.keys(stageCounts);
+  if (!keys.length) return stages;
+  const filtered = stages.filter((s) => (stageCounts[s.id] ?? 0) > 0);
+  return filtered.length > 0 ? filtered : stages.slice(0, 1);
+}
+
 /** Giữ cache cột quanh cột đang xem — session dài không tích hàng chục cột × 120 item. */
 function pruneStageCacheAround(
   cache: Record<string, CrmStageCache>,
@@ -491,13 +517,8 @@ export default function CrmHubScreen({ navigation, route }: Props) {
       dealKhSplitRef.current,
     );
     let stages: CrmPipelineStage[] = f.showOrphan ? [...base, orphanVirtualStage()] : base;
-    if (f.hideEmptyStages && Object.keys(hubData.stageCounts).length > 0) {
-      const filtered = stages.filter((s) => {
-        const c = hubData.stageCounts[s.id];
-        if (c == null) return true;
-        return c > 0;
-      });
-      if (filtered.length > 0) stages = filtered;
+    if (f.hideEmptyStages) {
+      stages = filterStagesHideEmpty(stages, hubData.stageCounts, true);
     }
     return stages;
   }
@@ -713,12 +734,16 @@ export default function CrmHubScreen({ navigation, route }: Props) {
       const nextCounts = { ...boot.stageCounts };
       const hasBootCounts = Object.keys(nextCounts).length > 0;
       const samePipeline = prev.stages.some((s) => boot.stages.some((b) => b.id === s.id));
+      // Lite/skip_counts chỉ có 1 cột — không fill 0 toàn pipeline (sẽ ẩn nhầm cột).
+      const fullishCounts = Object.keys(nextCounts).length > 1;
+      const mergedCounts = hasBootCounts
+        ? (preserveView ? { ...prev.stageCounts, ...nextCounts } : nextCounts)
+        : (samePipeline ? prev.stageCounts : {});
       return {
         stages: boot.stages,
-        // Lite bootstrap thường chưa có counts — chỉ giữ counts cũ khi cùng pipeline.
-        stageCounts: hasBootCounts
-          ? (preserveView ? { ...prev.stageCounts, ...nextCounts } : nextCounts)
-          : (samePipeline ? prev.stageCounts : {}),
+        stageCounts: fullishCounts
+          ? fillStageCountZeros(boot.stages, mergedCounts)
+          : mergedCounts,
         // skip_counts: stageCounts chỉ 1 cột → listTotal là tổng cột, không phải pipeline.
         listTotal: Object.keys(boot.stageCounts || {}).length > 1
           ? (boot.listTotal ?? (samePipeline ? prev.listTotal : null))
@@ -795,13 +820,16 @@ export default function CrmHubScreen({ navigation, route }: Props) {
         const batch = await fetchCrmStageCountsBatch(type, fetchOptsRef.current());
         setter((prev) => ({
           ...prev,
-          stageCounts: { ...batch.counts },
+          stageCounts: fillStageCountZeros(prev.stages, batch.counts),
           listTotal: batch.total,
         }));
         return;
       }
       const counts = await fetchStageCounts(type, missing, fetchOptsRef.current());
-      setter((prev) => ({ ...prev, stageCounts: { ...prev.stageCounts, ...counts } }));
+      setter((prev) => ({
+        ...prev,
+        stageCounts: fillStageCountZeros(prev.stages, { ...prev.stageCounts, ...counts }),
+      }));
     } catch {
       /* badge cột vẫn dùng total từng trang đã tải */
     } finally {
@@ -826,7 +854,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
       ...prev,
       // Cache theo đúng bộ lọc — không để stageCounts cũ đè lên số mới.
       stages: cachedStages?.length ? cachedStages : prev.stages,
-      stageCounts: { ...cached.counts },
+      stageCounts: fillStageCountZeros(cachedStages?.length ? cachedStages : prev.stages, cached.counts),
       listTotal: cached.total,
     }));
   }, [fetchOptsForMode]);
@@ -871,7 +899,10 @@ export default function CrmHubScreen({ navigation, route }: Props) {
         ...prev,
         stages: cachedStages?.length ? cachedStages : prev.stages,
         // Thay toàn bộ counts theo bộ lọc mới — không merge với counts công ty/lọc cũ.
-        stageCounts: { ...batch.counts },
+        stageCounts: fillStageCountZeros(
+          cachedStages?.length ? cachedStages : prev.stages,
+          batch.counts,
+        ),
         listTotal: batch.total,
       }));
       tabTotalsKeyRef.current[dm] = fk;
@@ -967,7 +998,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
         typeSetter((prev) => ({
           ...prev,
           // Batch theo bộ lọc hiện tại — thay toàn bộ, không giữ counts của công ty/lọc cũ.
-          stageCounts: { ...batch.counts },
+          stageCounts: fillStageCountZeros(prev.stages.length ? prev.stages : boot.stages, batch.counts),
           listTotal: batch.total,
         }));
         tabTotalsKeyRef.current[dm] = totalsFk;
@@ -1192,16 +1223,8 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     [mode, leadData.stages, dealData.stages, dealKhSplitEnabled],
   );
   const displayStages = useMemo(() => {
-    let stages = filters.showOrphan ? [...hubStages, orphanVirtualStage()] : hubStages;
-    if (filters.hideEmptyStages && Object.keys(hub.stageCounts).length > 0) {
-      const filtered = stages.filter((s) => {
-        const c = hub.stageCounts[s.id];
-        if (c == null) return true;
-        return c > 0;
-      });
-      if (filtered.length > 0) stages = filtered;
-    }
-    return stages;
+    const stages = filters.showOrphan ? [...hubStages, orphanVirtualStage()] : hubStages;
+    return filterStagesHideEmpty(stages, hub.stageCounts, filters.hideEmptyStages);
   }, [hubStages, filters.showOrphan, filters.hideEmptyStages, hub.stageCounts]);
 
   const lastActiveStageIdRef = useRef<string | undefined>(undefined);
@@ -1216,9 +1239,8 @@ export default function CrmHubScreen({ navigation, route }: Props) {
       if (byId !== activeIndexRef.current) setActiveIndex(byId);
       return;
     }
-    if (activeIndexRef.current >= displayStages.length) {
-      setActiveIndex(0);
-    }
+    // Cột đang xem bị ẩn (count → 0) hoặc danh sách rút — kẹp index hợp lệ.
+    setActiveIndex((i) => Math.max(0, Math.min(i, displayStages.length - 1)));
   }, [displayStages]);
 
   const filterKey = serverFilterKey(filters, search);
@@ -1341,9 +1363,10 @@ export default function CrmHubScreen({ navigation, route }: Props) {
 
   useEffect(() => {
     if (!columnPickerOpen || !loaded[dataMode]) return;
-    const ids = displayStages.map((s) => s.id).filter((id) => id !== ORPHAN_STAGE_ID);
-    void refreshStageCounts(mode, ids, true);
-  }, [columnPickerOpen, loaded, mode, displayStages, refreshStageCounts]);
+    // Đếm đủ mọi cột pipeline (kể cả 0) để dropdown + ẩn cột trống ổn định.
+    const ids = hubStages.map((s) => s.id).filter((id) => id !== ORPHAN_STAGE_ID);
+    if (ids.length) void refreshStageCounts(mode, ids, true);
+  }, [columnPickerOpen, loaded, mode, hubStages, refreshStageCounts]);
 
   const canPrev = activeIndex > 0;
   const canNext = activeIndex < displayStages.length - 1;
@@ -1497,8 +1520,13 @@ export default function CrmHubScreen({ navigation, route }: Props) {
 
   const moveCardTo = useCallback(
     async (item: CrmKanbanItem, targetStageId: string) => {
-      const target = displayStages.find((s) => String(s.id) === String(targetStageId));
-      if (!target) return;
+      // Dùng đủ pipeline (hubStages), không dùng displayStages — khi ẩn cột trống
+      // vẫn chuyển được sang cột đang bị ẩn (count = 0).
+      const target = hubStages.find((s) => String(s.id) === String(targetStageId));
+      if (!target) {
+        showToast('Không tìm thấy cột đích', false);
+        return;
+      }
       const fromStageId = item.stageId;
       const moved: CrmKanbanItem = {
         ...item,
@@ -1523,8 +1551,8 @@ export default function CrmHubScreen({ navigation, route }: Props) {
         } else {
           delete nextCache[target.id];
         }
-        const nextCounts = { ...prev.stageCounts };
-        if (fromStageId in nextCounts) {
+        const nextCounts = fillStageCountZeros(prev.stages, prev.stageCounts);
+        if (fromStageId) {
           nextCounts[fromStageId] = Math.max(0, (nextCounts[fromStageId] ?? 1) - 1);
         }
         nextCounts[target.id] = (nextCounts[target.id] ?? 0) + 1;
@@ -1540,7 +1568,7 @@ export default function CrmHubScreen({ navigation, route }: Props) {
         setMovingId(null);
       }
     },
-    [displayStages, setHub, showToast, loadBootstrap, mode, activeStageId],
+    [hubStages, setHub, showToast, loadBootstrap, mode, activeStageId],
   );
 
   const patchItemInHub = useCallback(
@@ -1871,7 +1899,8 @@ export default function CrmHubScreen({ navigation, route }: Props) {
           <Pressable
             style={styles.colHeaderCenter}
             onPress={() => {
-              void refreshStageCounts(mode, hubStages.map((s) => s.id));
+              // Refresh đủ pipeline (kể cả cột 0) — không làm mất ẩn cột trống.
+              void refreshStageCounts(mode, hubStages.map((s) => s.id), true);
               setColumnPickerOpen(true);
             }}
             hitSlop={6}
