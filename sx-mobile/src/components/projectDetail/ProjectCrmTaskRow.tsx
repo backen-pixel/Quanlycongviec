@@ -1,6 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -41,6 +42,8 @@ type Props = {
   dealId: string;
   onUpdated: (task: CrmTask) => void;
   onDeleted: (taskId: string) => void;
+  /** Highlight khi mở từ tab Công việc. */
+  highlighted?: boolean;
 };
 
 function formatDate(value?: string | null): string {
@@ -87,7 +90,7 @@ function parseDeadline(value?: string | null): Date {
 
 type ModalKind = 'attach' | 'assign' | 'edit' | 'deadline' | null;
 
-export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }: Props) {
+export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, highlighted }: Props) {
   const { colors } = useTheme();
   const done = isTaskDone(task.status);
   const assignees = taskAssignees(task);
@@ -308,6 +311,65 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
     }
   };
 
+  const uploadMediaAsset = async (
+    asset: ImagePicker.ImagePickerAsset,
+    fallbackName: string,
+    fallbackMime: string,
+  ) => {
+    setBusy(true);
+    try {
+      const name = asset.fileName || fallbackName;
+      const mime = asset.mimeType || fallbackMime;
+      await uploadCrmTaskFiles(dealId, task.id, [{ uri: asset.uri, name, mime }]);
+      await loadAttachments();
+      onUpdated({
+        ...task,
+        file_count: (task.file_count ?? 0) + 1,
+        attachment_count: (task.attachment_count ?? 0) + 1,
+      });
+      Alert.alert('Đã tải lên', 'Đã đính kèm vào công việc.');
+    } catch (e) {
+      Alert.alert('Lỗi upload', formatApiError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const capturePhoto = async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Quyền camera', 'Cần quyền camera để chụp ảnh.');
+      return;
+    }
+    const shot = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      quality: 0.85,
+      exif: false,
+    });
+    if (shot.canceled || !shot.assets?.[0]) return;
+    await uploadMediaAsset(shot.assets[0], `photo_${Date.now()}.jpg`, 'image/jpeg');
+  };
+
+  const captureVideo = async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Quyền camera', 'Cần quyền camera để quay video.');
+      return;
+    }
+    const shot = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['videos'],
+      videoMaxDuration: 120,
+      quality: 0.7,
+    });
+    if (shot.canceled || !shot.assets?.[0]) return;
+    const a = shot.assets[0];
+    await uploadMediaAsset(
+      a,
+      a.fileName || `video_${Date.now()}.mp4`,
+      a.mimeType || 'video/mp4',
+    );
+  };
+
   const saveEdit = async () => {
     if (!editTitle.trim()) {
       Alert.alert('Thiếu tên', 'Nhập tên nhiệm vụ.');
@@ -399,6 +461,20 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
           padding: 12,
           marginBottom: 8,
         },
+        rowHighlight: {
+          borderColor: colors.primary,
+          borderWidth: 2,
+          backgroundColor: colors.primary + '14',
+        },
+        focusBanner: {
+          alignSelf: 'flex-start',
+          marginBottom: 8,
+          paddingHorizontal: 8,
+          paddingVertical: 3,
+          borderRadius: Radii.full,
+          backgroundColor: colors.primary + '22',
+        },
+        focusBannerTxt: { color: colors.primary, fontSize: 10, fontWeight: '800' },
         top: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
         check: {
           width: 22,
@@ -483,7 +559,38 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
           alignItems: 'center',
           justifyContent: 'center',
         },
+        actionBtnPrimary: {
+          backgroundColor: colors.primary + '18',
+        },
         actionBtnActive: { backgroundColor: colors.primarySoft },
+        mediaActions: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          marginTop: 10,
+        },
+        mediaBtn: {
+          flex: 1,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 6,
+          minHeight: 40,
+          borderRadius: Radii.md,
+          borderWidth: 1,
+          borderColor: colors.border,
+          backgroundColor: colors.bgElevated || colors.cardAlt,
+          paddingHorizontal: 10,
+        },
+        mediaBtnPhoto: {
+          borderColor: colors.primary + '55',
+          backgroundColor: colors.primary + '14',
+        },
+        mediaBtnVideo: {
+          borderColor: '#A855F755',
+          backgroundColor: '#A855F714',
+        },
+        mediaBtnTxt: { fontSize: 12, fontWeight: '800' },
         modalOverlay: {
           flex: 1,
           backgroundColor: 'rgba(0,0,0,0.45)',
@@ -734,6 +841,24 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
                     <Text style={styles.btnTextDark}>Chọn file</Text>
                   </TapHighlight>
                 </View>
+                <View style={[styles.mediaActions, { marginTop: 8 }]}>
+                  <TapHighlight
+                    style={[styles.mediaBtn, styles.mediaBtnPhoto]}
+                    onPress={() => void capturePhoto()}
+                    disabled={busy}
+                  >
+                    <Ionicons name="camera" size={16} color={colors.primary} />
+                    <Text style={[styles.mediaBtnTxt, { color: colors.primary }]}>Chụp</Text>
+                  </TapHighlight>
+                  <TapHighlight
+                    style={[styles.mediaBtn, styles.mediaBtnVideo]}
+                    onPress={() => void captureVideo()}
+                    disabled={busy}
+                  >
+                    <Ionicons name="videocam" size={16} color="#A855F7" />
+                    <Text style={[styles.mediaBtnTxt, { color: '#A855F7' }]}>Video</Text>
+                  </TapHighlight>
+                </View>
                 <Text style={[styles.sheetTitle, { fontSize: 14, marginTop: 12 }]}>
                   File đính kèm ({attachments.length})
                 </Text>
@@ -792,7 +917,12 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
 
   return (
     <>
-      <View style={styles.row}>
+      <View style={[styles.row, highlighted && styles.rowHighlight]}>
+        {highlighted ? (
+          <View style={styles.focusBanner}>
+            <Text style={styles.focusBannerTxt}>Công việc đang mở</Text>
+          </View>
+        ) : null}
         <View style={styles.top}>
           <TapHighlight style={[styles.check, done && styles.checkDone]} onPress={() => void toggleStatus()} disabled={busy}>
             {done ? <Ionicons name="checkmark" size={14} color={colors.success} /> : null}
@@ -844,6 +974,39 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted }
               <Ionicons name="person-outline" size={14} color={colors.textFaint} />
             </View>
           )}
+        </View>
+
+        <View style={styles.mediaActions}>
+          <TapHighlight
+            style={[styles.mediaBtn, styles.mediaBtnPhoto]}
+            pressStyle={{ opacity: 0.85 }}
+            onPress={() => void capturePhoto()}
+            disabled={busy}
+          >
+            {busy ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <>
+                <Ionicons name="camera" size={18} color={colors.primary} />
+                <Text style={[styles.mediaBtnTxt, { color: colors.primary }]}>Chụp ảnh</Text>
+              </>
+            )}
+          </TapHighlight>
+          <TapHighlight
+            style={[styles.mediaBtn, styles.mediaBtnVideo]}
+            pressStyle={{ opacity: 0.85 }}
+            onPress={() => void captureVideo()}
+            disabled={busy}
+          >
+            {busy ? (
+              <ActivityIndicator size="small" color="#A855F7" />
+            ) : (
+              <>
+                <Ionicons name="videocam" size={18} color="#A855F7" />
+                <Text style={[styles.mediaBtnTxt, { color: '#A855F7' }]}>Quay video</Text>
+              </>
+            )}
+          </TapHighlight>
         </View>
 
         <View style={styles.actions}>

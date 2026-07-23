@@ -223,6 +223,22 @@ async function userCanAccessAssignment(req, row) {
   return false;
 }
 
+const ASSIGNMENT_ACCESS_SELECT = 'id, created_by_id, assignee_id, company_id, executor_company_id';
+
+/** Load assignment + enforce access (dùng cho GET/POST files). */
+async function loadAccessibleAssignment(req, assignmentId) {
+  const { data } = await supabase
+    .from('crm_assignments')
+    .select(ASSIGNMENT_ACCESS_SELECT)
+    .eq('id', assignmentId)
+    .maybeSingle();
+  if (!data) return { status: 404, error: 'Nhiệm vụ không tồn tại' };
+  if (!(await userCanAccessAssignment(req, data))) {
+    return { status: 403, error: 'Không có quyền với nhiệm vụ này' };
+  }
+  return { assignment: data };
+}
+
 /** Id nhiệm vụ NV được xem: chỉ việc được giao / tạo (không xem toàn bộ công ty). */
 async function getVisibleAssignmentIdsForNonAdmin(req) {
   return getUserInvolvedAssignmentIds(req.user?.userId);
@@ -941,6 +957,9 @@ r.get('/unread-count', responseCache({ ttl: 30, scope: 'user', tags: ['crm:assig
 // GET /api/crm/assignments/:id/files?kind=req|sub
 r.get('/:id/files', async (req, res) => {
   try {
+    const access = await loadAccessibleAssignment(req, req.params.id);
+    if (access.error) return res.status(access.status).json({ error: access.error });
+
     const kind = req.query.kind === 'sub' ? 'sub' : 'req';
     let q = supabase
       .from('crm_assignment_files')
@@ -975,12 +994,8 @@ r.post('/:id/files', (req, res, next) => {
     const kind = req.body.kind === 'sub' ? 'sub' : 'req';
     const assignmentId = req.params.id;
 
-    const { data: assignment } = await supabase
-      .from('crm_assignments')
-      .select('id')
-      .eq('id', assignmentId)
-      .maybeSingle();
-    if (!assignment) return res.status(404).json({ error: 'Nhiệm vụ không tồn tại' });
+    const access = await loadAccessibleAssignment(req, assignmentId);
+    if (access.error) return res.status(access.status).json({ error: access.error });
 
     const uploaded = await uploadAssignmentFileToStorage(req.file, assignmentId, kind);
     const uid = req.user.userId || req.user.id;
@@ -1033,12 +1048,8 @@ r.post('/:id/files/link', async (req, res) => {
     const kind = req.body.kind === 'sub' ? 'sub' : 'req';
     const assignmentId = req.params.id;
 
-    const { data: assignment } = await supabase
-      .from('crm_assignments')
-      .select('id')
-      .eq('id', assignmentId)
-      .maybeSingle();
-    if (!assignment) return res.status(404).json({ error: 'Nhiệm vụ không tồn tại' });
+    const access = await loadAccessibleAssignment(req, assignmentId);
+    if (access.error) return res.status(access.status).json({ error: access.error });
 
     let fileName = String(req.body?.file_name || '').trim();
     if (!fileName) {
@@ -1089,6 +1100,9 @@ r.post('/:id/files/link', async (req, res) => {
 // DELETE /api/crm/assignments/:id/files/:fileId
 r.delete('/:id/files/:fileId', async (req, res) => {
   try {
+    const access = await loadAccessibleAssignment(req, req.params.id);
+    if (access.error) return res.status(access.status).json({ error: access.error });
+
     const uid = req.user.userId || req.user.id;
     const { data: row } = await supabase
       .from('crm_assignment_files')

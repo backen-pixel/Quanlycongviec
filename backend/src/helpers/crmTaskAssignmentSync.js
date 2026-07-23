@@ -258,8 +258,32 @@ async function attachCrmTaskMetaToAssignments(list) {
     .in('id', taskIds);
   if (error) return list;
   const byId = new Map((data || []).map((t) => [String(t.id), t]));
+  let countMap = {};
+  try {
+    const { loadCrmTaskAttachmentCountMap } = require('./crmTaskAttachmentCounts');
+    countMap = await loadCrmTaskAttachmentCountMap(supabase, taskIds) || {};
+  } catch {
+    countMap = {};
+  }
   list.forEach((a) => {
-    if (a.crm_task_id) a.crm_task = byId.get(String(a.crm_task_id)) || null;
+    if (!a.crm_task_id) return;
+    const task = byId.get(String(a.crm_task_id)) || null;
+    if (!task) {
+      a.crm_task = null;
+      return;
+    }
+    const counts = countMap[String(a.crm_task_id)] || countMap[a.crm_task_id] || {};
+    const files = Number(counts.files || 0);
+    const notes = Number(counts.notes || 0);
+    a.crm_task = {
+      ...task,
+      file_count: files,
+      note_count: notes,
+      attachment_count: files + notes,
+    };
+    // Linked CRM task: luôn ưu tiên count từ attachments (tránh file_count=0 trên assignment che mất).
+    a.file_count = files;
+    a.attachment_count = files + notes;
   });
   return list;
 }

@@ -45,6 +45,7 @@ function mapCrmDeal(raw: Record<string, unknown>): CrmDealSummary {
     id: String(raw.id || ''),
     code: raw.code != null ? String(raw.code) : null,
     title: raw.title != null ? String(raw.title) : null,
+    type: raw.type != null ? String(raw.type) : null,
     assignee: mapPerson(raw.assignee),
     lead_owner: mapPerson(raw.lead_owner),
     sx_pipeline_stage: raw.sx_pipeline_stage && typeof raw.sx_pipeline_stage === 'object'
@@ -58,6 +59,19 @@ function mapCrmDeal(raw: Record<string, unknown>): CrmDealSummary {
         }
       : null,
   };
+}
+
+/** Ưu tiên deal type=deal; fallback lead/deal đầu tiên. */
+export function pickPrimaryCrmDealId(deals?: CrmDealSummary[] | null): string | null {
+  if (!deals?.length) return null;
+  const asDeal = deals.find((d) => String(d.type || '').toLowerCase() === 'deal');
+  if (asDeal?.id) return String(asDeal.id);
+  const notLead = deals.find((d) => {
+    const t = String(d.type || '').toLowerCase();
+    return t && t !== 'lead';
+  });
+  if (notLead?.id) return String(notLead.id);
+  return String(deals[0].id || '') || null;
 }
 
 function mapCrmTask(raw: Record<string, unknown>): CrmTask {
@@ -388,7 +402,11 @@ export async function uploadCrmTaskFiles(
     .filter((u) => u.file_url)
     .map((upf) => ({
       name: (upf.file_name || 'Tệp').replace(/\.[^.]+$/, ''),
-      doc_type: (upf.mime_type || '').startsWith('image/') ? 'image' : 'other',
+    doc_type: (upf.mime_type || '').startsWith('image/')
+      ? 'image'
+      : (upf.mime_type || '').startsWith('video/')
+        ? 'video'
+        : 'other',
       file_url: upf.file_url,
       file_name: upf.file_name,
       file_size: upf.file_size,

@@ -21,7 +21,7 @@ import MainTabs, { type MainTabParamList } from './MainTabs';
 export type RootStackParamList = {
   Login: undefined;
   Main: NavigatorScreenParams<MainTabParamList> | undefined;
-  ProjectDetail: { projectId: string };
+  ProjectDetail: { projectId: string; focusTaskId?: string | null };
   OverdueProjects: undefined;
   Settings: undefined;
   Messages: { tab?: 'chats' | 'calls' } | undefined;

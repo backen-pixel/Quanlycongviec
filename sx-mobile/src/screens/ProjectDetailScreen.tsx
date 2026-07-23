@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -33,6 +33,7 @@ import {
   fetchProjectActivities,
   groupCrmTasksByStage,
   isCrmProductionTaskDone,
+  pickPrimaryCrmDealId,
   updateProjectDates,
 } from '../lib/projectDetailApi';
 import { fetchThreadComments, resolveCommentSource } from '../lib/commentApi';
@@ -67,7 +68,8 @@ function parseDateValue(value?: string | null): Date {
 }
 
 export default function ProjectDetailScreen({ route, navigation }: Props) {
-  const { projectId } = route.params;
+  const { projectId, focusTaskId: focusTaskIdParam } = route.params;
+  const focusTaskId = focusTaskIdParam ? String(focusTaskIdParam) : '';
   const { colors } = useTheme();
   const { joinProjectRoom, leaveProjectRoom, joinLeadRoom, leaveLeadRoom } = useNotifications();
   const insets = useSafeAreaInsets();
@@ -83,37 +85,78 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   const [editingDateField, setEditingDateField] = useState<EditableDateField | null>(null);
   const [dateDraft, setDateDraft] = useState<Date>(new Date());
   const [dateSaving, setDateSaving] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
+  const didFocusScroll = useRef(false);
+  const focusAnchorY = useRef(0);
+  const loadSeqRef = useRef(0);
 
   const load = useCallback(async (silent = false) => {
+    const seq = ++loadSeqRef.current;
+    const forProjectId = projectId;
     if (!silent) setLoading(true);
     setErr('');
     try {
-      const detail = await fetchProductionProjectDetail(projectId);
+      const detail = await fetchProductionProjectDetail(forProjectId);
+      if (seq !== loadSeqRef.current) return;
       setProject(detail);
+
       let resolvedDealId =
-        detail.crmDeals?.find((d) => String((d as { type?: string }).type || '') === 'deal')?.id
-        || detail.crmDeals?.[0]?.id
+        pickPrimaryCrmDealId(detail.crmDeals)
         || null;
-      if (!resolvedDealId) resolvedDealId = await fetchDealIdForProject(projectId);
+      if (!resolvedDealId) resolvedDealId = await fetchDealIdForProject(forProjectId);
+      if (seq !== loadSeqRef.current) return;
+
+      let taskRows = resolvedDealId
+        ? await fetchCrmDealTasks(resolvedDealId)
+        : [];
+
+      // Nếu focusTaskId không nằm trên deal chính — thử các deal còn lại của dự án.
+      if (
+        focusTaskId
+        && resolvedDealId
+        && !taskRows.some((t) => String(t.id) === String(focusTaskId))
+        && (detail.crmDeals?.length || 0) > 1
+      ) {
+        for (const d of detail.crmDeals || []) {
+          if (String(d.id) === String(resolvedDealId)) continue;
+          const altRows = await fetchCrmDealTasks(String(d.id));
+          if (seq !== loadSeqRef.current) return;
+          if (altRows.some((t) => String(t.id) === String(focusTaskId))) {
+            resolvedDealId = String(d.id);
+            taskRows = altRows;
+            break;
+          }
+        }
+      }
+
+      if (seq !== loadSeqRef.current) return;
       setDealId(resolvedDealId);
-      const [taskRows, actRows, commentRows] = await Promise.all([
-        resolvedDealId ? fetchCrmDealTasks(resolvedDealId) : Promise.resolve([]),
-        fetchProjectActivities(projectId),
-        fetchThreadComments(resolveCommentSource(projectId, resolvedDealId)).catch(() => []),
+
+      const [actRows, commentRows] = await Promise.all([
+        fetchProjectActivities(forProjectId),
+        fetchThreadComments(resolveCommentSource(forProjectId, resolvedDealId)).catch(() => []),
       ]);
+      if (seq !== loadSeqRef.current) return;
       setTasks(taskRows);
       setActivities(actRows);
       setCommentCount(commentRows.length);
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       setErr(formatApiError(e));
     } finally {
-      if (!silent) setLoading(false);
+      if (seq === loadSeqRef.current && !silent) setLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, focusTaskId]);
 
   useEffect(() => {
     void load(false);
   }, [load]);
+
+  useEffect(() => {
+    didFocusScroll.current = false;
+    focusAnchorY.current = 0;
+    if (focusTaskId) setTab('tasks');
+  }, [focusTaskId, projectId]);
 
   useEffect(() => {
     joinProjectRoom(projectId);
@@ -235,6 +278,40 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
 
   /** Nhóm theo quy trình SX — cùng thứ tự web (stage + order_index). */
   const taskGroups = useMemo(() => groupCrmTasksByStage(tasks), [tasks]);
+
+  /** Đưa nhóm/công việc được focus lên đầu để dễ thấy khi mở từ tab Công việc. */
+  const orderedTaskGroups = useMemo(() => {
+    if (!focusTaskId) return taskGroups;
+    const fid = String(focusTaskId);
+    const withFocus = taskGroups
+      .map((g) => {
+        const hit = g.tasks.find((t) => String(t.id) === fid);
+        if (!hit) return g;
+        return { ...g, tasks: [hit, ...g.tasks.filter((t) => String(t.id) !== fid)] };
+      })
+      .sort((a, b) => {
+        const aHit = a.tasks.some((t) => String(t.id) === fid) ? 0 : 1;
+        const bHit = b.tasks.some((t) => String(t.id) === fid) ? 0 : 1;
+        return aHit - bHit;
+      });
+    return withFocus;
+  }, [taskGroups, focusTaskId]);
+
+  const focusedTask = useMemo(
+    () => (focusTaskId ? tasks.find((t) => String(t.id) === String(focusTaskId)) || null : null),
+    [tasks, focusTaskId],
+  );
+
+  useEffect(() => {
+    if (!focusTaskId || loading || !focusedTask || didFocusScroll.current) return;
+    const timer = setTimeout(() => {
+      didFocusScroll.current = true;
+      const y = Math.max(0, focusAnchorY.current - 16);
+      scrollRef.current?.scrollTo({ y, animated: true });
+    }, 320);
+    return () => clearTimeout(timer);
+  }, [focusTaskId, loading, focusedTask]);
+
   const { done: taskDone, total: taskTotal, percent: progress } = useMemo(
     () => calcCrmProductionTaskProgress(
       tasks,
@@ -480,6 +557,23 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           borderColor: colors.danger,
         },
         errText: { color: colors.danger, fontSize: 13, fontWeight: '600' },
+        focusBanner: {
+          flexDirection: 'row',
+          alignItems: 'flex-start',
+          gap: 10,
+          padding: 12,
+          marginBottom: 14,
+          borderRadius: Radii.lg,
+          borderWidth: 1.5,
+          borderColor: colors.primary,
+          backgroundColor: colors.primary + '14',
+        },
+        focusBannerWarn: {
+          borderColor: colors.warning,
+          backgroundColor: colors.warning + '14',
+        },
+        focusBannerTitle: { color: colors.primary, fontSize: 11, fontWeight: '800', textTransform: 'uppercase' },
+        focusBannerSub: { color: colors.text, fontSize: 14, fontWeight: '700', marginTop: 2, lineHeight: 19 },
         empty: { color: colors.textMuted, textAlign: 'center', paddingVertical: 32, fontSize: 14 },
       }),
     [colors, insets.top],
@@ -546,6 +640,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         {isFullHeightTab ? tabsBar : null}
         {isFullHeightTab ? null : (
         <ScrollView
+          ref={scrollRef}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={colors.primary} />}
           contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
           nestedScrollEnabled
@@ -588,7 +683,29 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
 
         <View style={{ padding: Spacing.lg }}>
           {tab === 'tasks' && (
-            taskGroups.length ? taskGroups.map((group) => {
+            <>
+              {focusTaskId && focusedTask ? (
+                <View
+                  style={styles.focusBanner}
+                  onLayout={(e) => {
+                    focusAnchorY.current = e.nativeEvent.layout.y;
+                  }}
+                >
+                  <Ionicons name="locate" size={16} color={colors.primary} />
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.focusBannerTitle}>Công việc đang mở</Text>
+                    <Text style={styles.focusBannerSub} numberOfLines={2}>{focusedTask.title}</Text>
+                  </View>
+                </View>
+              ) : focusTaskId && !loading && tasks.length > 0 ? (
+                <View style={[styles.focusBanner, styles.focusBannerWarn]}>
+                  <Ionicons name="information-circle-outline" size={16} color={colors.warning} />
+                  <Text style={[styles.focusBannerSub, { color: colors.warning, flex: 1 }]}>
+                    Không tìm thấy nhiệm vụ gắn deal — đang mở tab Công việc của dự án.
+                  </Text>
+                </View>
+              ) : null}
+              {orderedTaskGroups.length ? orderedTaskGroups.map((group) => {
               const doneInGroup = group.tasks.filter((t) => isCrmProductionTaskDone(t.status)).length;
               return (
                 <View key={group.key} style={{ marginBottom: 16 }}>
@@ -604,6 +721,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
                         dealId={dealId}
                         onUpdated={onTaskUpdated}
                         onDeleted={onTaskDeleted}
+                        highlighted={Boolean(focusTaskId) && String(task.id) === String(focusTaskId)}
                       />
                     ) : null,
                   )}
@@ -611,7 +729,8 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
               );
             }) : (
               <Text style={styles.empty}>Chưa có nhiệm vụ SX — đồng bộ từ web khi deal có template.</Text>
-            )
+            )}
+            </>
           )}
 
           {tab === 'info' && project && (

@@ -182,30 +182,63 @@ export function computeSxBoardKpis(
   };
 }
 
-/** Dự án ưu tiên: quá hạn trước, rồi sắp đến hạn (≤2 ngày). */
-export function pickPriorityProjects(
+/** Deal/dự án quá hạn (chưa hoàn tất), sắp theo hạn gần nhất — cùng logic KPI `projectIsDeadlineOverdue`. */
+export function pickOverdueProjects(
+  projects: ProductionProject[],
+  limit = 8,
+  stages: KanbanStage[] = [],
+): ProductionProject[] {
+  const index = stages.length ? buildKpiStageIndex(stages) : undefined;
+  const nowMs = Date.now();
+  return projects
+    .filter((p) => {
+      if (String(p.status || '') === 'completed') return false;
+      if (stages.length) return projectIsDeadlineOverdue(p, stages, index, nowMs);
+      return Boolean(p.is_overdue);
+    })
+    .map((p) => {
+      const raw = p.delivery_date || p.production_deadline || p.deadline;
+      const ts = raw ? startOfLocalDay(new Date(raw)).getTime() : Infinity;
+      return { p, ts: Number.isFinite(ts) ? ts : Infinity };
+    })
+    .sort((a, b) => a.ts - b.ts)
+    .slice(0, limit)
+    .map((x) => x.p);
+}
+
+/** Deal sắp đến hạn (≤2 ngày), chưa quá hạn. */
+export function pickSoonProjects(
   projects: ProductionProject[],
   limit = 5,
 ): ProductionProject[] {
   const now = startOfLocalDay(new Date()).getTime();
   const dayMs = 86400000;
-  const scored = projects
-    .filter((p) => String(p.status || '') !== 'completed')
-    .map((p) => {
-      const raw = p.delivery_date || p.production_deadline || p.deadline;
-      const ts = raw ? startOfLocalDay(new Date(raw)).getTime() : NaN;
-      let score = 1000;
-      if (p.is_overdue) score = 0;
-      else if (Number.isFinite(ts)) {
-        const diff = Math.floor((ts - now) / dayMs);
-        if (diff >= 0 && diff <= 2) score = 1 + diff;
-        else if (diff > 2) score = 10 + diff;
-      }
-      return { p, score, ts: Number.isFinite(ts) ? ts : Infinity };
-    })
-    .filter((x) => x.score < 100)
-    .sort((a, b) => a.score - b.score || a.ts - b.ts);
-  return scored.slice(0, limit).map((x) => x.p);
+  const scored: { p: ProductionProject; diff: number; ts: number }[] = [];
+  for (const p of projects) {
+    if (p.is_overdue || String(p.status || '') === 'completed') continue;
+    const raw = p.delivery_date || p.production_deadline || p.deadline;
+    const ts = raw ? startOfLocalDay(new Date(raw)).getTime() : NaN;
+    if (!Number.isFinite(ts)) continue;
+    const diff = Math.floor((ts - now) / dayMs);
+    if (diff < 0 || diff > 2) continue;
+    scored.push({ p, diff, ts });
+  }
+  return scored
+    .sort((a, b) => a.diff - b.diff || a.ts - b.ts)
+    .slice(0, limit)
+    .map((x) => x.p);
+}
+
+/** Dự án ưu tiên: quá hạn trước, rồi sắp đến hạn (≤2 ngày). */
+export function pickPriorityProjects(
+  projects: ProductionProject[],
+  limit = 5,
+  stages: KanbanStage[] = [],
+): ProductionProject[] {
+  const overdue = pickOverdueProjects(projects, limit, stages);
+  if (overdue.length >= limit) return overdue.slice(0, limit);
+  const soon = pickSoonProjects(projects, limit - overdue.length);
+  return [...overdue, ...soon].slice(0, limit);
 }
 
 export function greetingByHour(now = new Date()): string {

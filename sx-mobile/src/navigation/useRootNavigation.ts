@@ -7,12 +7,16 @@ export function useRootNavigation() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
   const openProjectDetail = useCallback(
-    (projectId: string) => {
+    (projectId: string, opts?: { focusTaskId?: string | null }) => {
+      const params = {
+        projectId,
+        ...(opts?.focusTaskId ? { focusTaskId: String(opts.focusTaskId) } : {}),
+      };
       let nav: typeof navigation | undefined = navigation;
       while (nav) {
         const names = nav.getState?.()?.routeNames || [];
         if (names.includes('ProjectDetail')) {
-          nav.navigate('ProjectDetail', { projectId });
+          nav.navigate('ProjectDetail', params);
           return;
         }
         nav = nav.getParent() as typeof navigation | undefined;
