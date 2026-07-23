@@ -10,7 +10,7 @@ export type TabParamList = {
 
 export type RootStackParamList = {
   Tabs: NavigatorScreenParams<TabParamList> | undefined;
-  CrmHub: { initialMode?: 'leads' | 'deals'; initialAssignee?: 'mine' } | undefined;
+  CrmHub: { initialMode?: 'leads' | 'deals' | 'orders'; initialAssignee?: 'mine' } | undefined;
   LeadDealDetail: {
     leadId: string;
     kind?: 'lead' | 'deal';

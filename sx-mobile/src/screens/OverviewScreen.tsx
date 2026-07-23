@@ -368,7 +368,6 @@ export default function OverviewScreen() {
 
   const kpiCards = [
     { key: 'total', label: 'Tổng', value: kpis.total, color: colors.primary, icon: 'layers-outline' as const },
-    { key: 'intake', label: 'Tiếp nhận', value: kpis.intake, color: '#F59E0B', icon: 'hourglass-outline' as const },
     { key: 'producing', label: 'Đang SX', value: kpis.producing, color: '#38BDF8', icon: 'construct-outline' as const },
     { key: 'await', label: 'Chờ vận chuyển', value: kpis.awaitingDelivery, color: colors.textMuted, icon: 'cube-outline' as const },
     { key: 'shipped', label: 'Đã vận chuyển', value: kpis.shipped, color: colors.success, icon: 'car-outline' as const },

@@ -13,8 +13,8 @@ const { buildStandardApkFilename } = require('../src/helpers/appReleaseFilename'
 const { replaceReleaseApkFile } = require('../src/helpers/appReleaseImport');
 
 const APP_KEY = 'crm-mobile-v2';
-const VERSION = process.env.PUB_VERSION || '2.2.27';
-const VERSION_CODE = parseInt(process.env.PUB_CODE || '138', 10);
+const VERSION = process.env.PUB_VERSION || '2.0.44';
+const VERSION_CODE = parseInt(process.env.PUB_CODE || '45', 10);
 const FILE_NAME = buildStandardApkFilename(APP_KEY, VERSION, VERSION_CODE, { release: true });
 const APK = path.resolve(__dirname, `../uploads/app-releases/${APP_KEY}/${FILE_NAME}`);
 

@@ -468,6 +468,35 @@ r.get('/phone-preview', async (req, res) => {
 });
 
 /**
+ * POST /voice-recordings/match-phones
+ * Body: { phones: string[] }
+ * Trả về SĐT đã có khách hàng trong CRM (để mobile chỉ upload cuộc gọi CRM).
+ */
+r.post('/match-phones', async (req, res) => {
+  try {
+    const raw = Array.isArray(req.body?.phones) ? req.body.phones : [];
+    const unique = [];
+    const seen = new Set();
+    for (const p of raw.slice(0, 80)) {
+      const d = digitsOnly(p);
+      if (d.length < 9) continue;
+      const key = d.slice(-9);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(d);
+    }
+    const matched = [];
+    for (const phone of unique) {
+      const row = await findCustomerByPhoneDigits(supabase, phone);
+      if (row) matched.push(phone);
+    }
+    res.json({ matched });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Lỗi kiểm tra SĐT' });
+  }
+});
+
+/**
  * POST /voice-recordings/bulk-check
  * Body: { items: [{ file_name, file_size?, phone_number?, call_started_at?, duration_sec?, created_at? }, ...] }
  * Trả về: {

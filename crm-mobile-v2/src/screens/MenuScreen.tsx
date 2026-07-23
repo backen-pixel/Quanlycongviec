@@ -15,13 +15,13 @@ import type { RootStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
-type ItemTarget = { kind: 'leads' | 'deals' };
+type ItemTarget = { kind: 'leads' | 'deals' | 'orders' };
 type Item = {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   color: string;
   target?: ItemTarget;
-  action?: 'logout' | 'drive' | 'settings' | 'notifications' | 'events' | 'quotations' | 'orders' | 'products' | 'customers' | 'tasks' | 'account' | 'devices' | 'qr-scan' | 'employee-report';
+  action?: 'logout' | 'drive' | 'settings' | 'notifications' | 'events' | 'quotations' | 'products' | 'customers' | 'tasks' | 'account' | 'devices' | 'qr-scan' | 'employee-report';
 };
 
 function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] {
@@ -31,10 +31,10 @@ function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] 
       items: [
         { icon: 'people', label: 'Leads', color: Colors.blue, target: { kind: 'leads' } },
         { icon: 'pricetags', label: 'Deals', color: Colors.orange, target: { kind: 'deals' } },
+        { icon: 'cart', label: 'Đơn hàng', color: Colors.purple, target: { kind: 'orders' } },
         { icon: 'person-circle', label: 'Khách hàng', color: Colors.cyan, action: 'customers' },
         { icon: 'cube', label: 'Sản phẩm', color: Colors.green, action: 'products' },
         { icon: 'document-text', label: 'Báo giá', color: Colors.amber, action: 'quotations' },
-        { icon: 'cart', label: 'Đơn hàng', color: Colors.purple, action: 'orders' },
       ],
     },
     {
@@ -103,10 +103,6 @@ export default function MenuScreen() {
     }
     if (it.action === 'quotations') {
       navigation.navigate('Quotations');
-      return;
-    }
-    if (it.action === 'orders') {
-      navigation.navigate('Orders');
       return;
     }
     if (it.action === 'products') {

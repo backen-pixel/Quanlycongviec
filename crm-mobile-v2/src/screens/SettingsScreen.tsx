@@ -96,13 +96,27 @@ export default function SettingsScreen() {
             <View style={{ flex: 1, paddingRight: 10 }}>
               <Text style={styles.toggleLbl}>Tự động quét & đẩy lên (Android)</Text>
               <Text style={styles.toggleHint}>
-                Tự đọc ghi âm cuộc gọi, quét và tải lên hệ thống — chạy cả khi app đang đóng.
+                Tự đọc ghi âm cuộc gọi trên máy và tải lên hệ thống — chạy cả khi app đang đóng.
               </Text>
             </View>
             <Switch
               value={prefs.voiceBackgroundSyncEnabled}
               onValueChange={(v) => void updatePrefs({ ...prefs, voiceBackgroundSyncEnabled: v })}
               disabled={!prefs.voiceCaptureEnabled}
+              trackColor={{ false: Colors.border, true: Colors.purple }}
+            />
+          </View>
+          <View style={styles.toggleRow}>
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={styles.toggleLbl}>Chỉ cuộc gọi CRM</Text>
+              <Text style={styles.toggleHint}>
+                Chỉ tự upload khi SĐT đã có trong CRM. Cuộc gọi cá nhân / số lạ không đẩy lên.
+              </Text>
+            </View>
+            <Switch
+              value={prefs.uploadCrmPhonesOnly}
+              onValueChange={(v) => void updatePrefs({ ...prefs, uploadCrmPhonesOnly: v })}
+              disabled={!prefs.voiceCaptureEnabled || !prefs.voiceBackgroundSyncEnabled}
               trackColor={{ false: Colors.border, true: Colors.purple }}
             />
           </View>

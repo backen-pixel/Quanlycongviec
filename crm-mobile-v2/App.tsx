@@ -22,7 +22,6 @@ import UpdateGate from './src/components/UpdateGate';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { FileActionsProvider } from './src/context/FileActionsContext';
 import { CallProvider } from './src/context/CallContext';
-import { CallScreen, IncomingCallBridge } from './src/calling';
 import { CreateMenuProvider } from './src/context/CreateMenuContext';
 import { CrmRealtimeProvider } from './src/context/CrmRealtimeProvider';
 import { MessengerProvider } from './src/context/MessengerContext';
@@ -145,12 +144,6 @@ function Gate() {
                 onReady={() => setNavReady(true)}
               >
                 <RootNavigator />
-                {CALLING_ENABLED ? (
-                  <>
-                    <CallScreen />
-                    <IncomingCallBridge />
-                  </>
-                ) : null}
                 <AndroidBackGuard />
               </NavigationContainer>
               <CreateMenuSheet />

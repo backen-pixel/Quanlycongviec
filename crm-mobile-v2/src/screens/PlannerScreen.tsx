@@ -24,6 +24,7 @@ import {
   type PlannerFetchOpts,
 } from '../api/crm';
 import { fetchCrmCompanies } from '../api/crmMeta';
+import Avatar from '../components/Avatar';
 import NotificationBadge from '../components/NotificationBadge';
 import { useUnreadNotificationCount } from '../hooks/useUnreadNotificationCount';
 import { currentUserId, useAuth } from '../context/AuthContext';
@@ -38,6 +39,26 @@ import type { RootStackParamList } from '../navigation/types';
 import type { PlannerItem, PlannerKind } from '../types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
+
+/** Tên gọi ngắn (từ cuối) — giống app xưởng. */
+function firstName(full: string): string {
+  const parts = full.trim().split(/\s+/).filter(Boolean);
+  return parts[parts.length - 1] || full || 'bạn';
+}
+
+function greetingByHour(now = new Date()): string {
+  const h = now.getHours();
+  if (h < 12) return 'Chào buổi sáng';
+  if (h < 18) return 'Chào buổi chiều';
+  return 'Chào buổi tối';
+}
+
+function formatVnWeekdayDate(now = new Date()): string {
+  const days = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
+  const d = String(now.getDate()).padStart(2, '0');
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  return `${days[now.getDay()]}, ${d}/${m}/${now.getFullYear()}`;
+}
 
 type KindMeta = { label: string; icon: keyof typeof Ionicons.glyphMap; color: string; soft: string };
 
@@ -465,14 +486,9 @@ export default function PlannerScreen() {
   const overdueCount =
     leadState.items.filter((l) => l.overdue).length + dealState.items.filter((d) => d.overdue).length;
 
-  const today = new Date().toLocaleDateString('vi-VN', {
-    weekday: 'long',
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  });
-
-  const displayName = user?.full_name || user?.fullName || '';
+  const userName = user?.full_name || user?.fullName || user?.email || 'Bạn';
+  const greetName = firstName(userName);
+  const todayLabel = formatVnWeekdayDate();
 
   const statsPending =
     (leadsLoading || dealsLoading)
@@ -539,11 +555,19 @@ export default function PlannerScreen() {
         }
       >
         <View style={styles.header}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.greeting}>Kế hoạch của tôi</Text>
-            <Text style={styles.date}>
-              {today}{displayName ? ` · ${displayName}` : ''}
-            </Text>
+          <View style={styles.headerLeft}>
+            <Avatar name={userName} avatarUrl={user?.avatar} size={48} />
+            <View style={styles.headerTextWrap}>
+              <Text style={styles.greetTitle} numberOfLines={1}>
+                {greetingByHour()}, {greetName}!
+              </Text>
+              <Text style={styles.greetDate} numberOfLines={1}>
+                {todayLabel}
+              </Text>
+              <Text style={styles.greetSub} numberOfLines={1}>
+                Chúc bạn một ngày làm việc hiệu quả! 👋
+              </Text>
+            </View>
           </View>
           <Pressable style={styles.bellBtn} onPress={() => navigation.navigate('Notifications')}>
             <Ionicons name="notifications-outline" size={20} color={Colors.text} />
@@ -571,7 +595,7 @@ export default function PlannerScreen() {
         <View style={styles.quickRow}>
           <Pressable
             style={[styles.quickBtn, { borderColor: Colors.blue }]}
-            onPress={() => navigation.navigate('CrmHub', { initialMode: 'leads', initialAssignee: 'mine' })}
+            onPress={() => navigation.navigate('CrmHub', { initialMode: 'leads' })}
           >
             <View style={[styles.quickIcon, { backgroundColor: Colors.blueSoft }]}>
               <Ionicons name="people" size={22} color={Colors.blue} />
@@ -584,7 +608,7 @@ export default function PlannerScreen() {
           </Pressable>
           <Pressable
             style={[styles.quickBtn, { borderColor: Colors.orange }]}
-            onPress={() => navigation.navigate('CrmHub', { initialMode: 'deals', initialAssignee: 'mine' })}
+            onPress={() => navigation.navigate('CrmHub', { initialMode: 'deals' })}
           >
             <View style={[styles.quickIcon, { backgroundColor: Colors.orangeSoft }]}>
               <Ionicons name="pricetags" size={22} color={Colors.orange} />
@@ -629,9 +653,19 @@ export default function PlannerScreen() {
 
 const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 16 },
-  greeting: { color: Colors.text, fontSize: 24, fontWeight: '900' },
-  date: { color: Colors.textMuted, fontSize: 13, marginTop: 3 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    marginBottom: 16,
+    gap: 12,
+  },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 12, minWidth: 0 },
+  headerTextWrap: { flex: 1, minWidth: 0 },
+  greetTitle: { color: Colors.text, fontSize: 17, fontWeight: '800' },
+  greetDate: { color: Colors.textMuted, fontSize: 12, marginTop: 2, fontWeight: '600' },
+  greetSub: { color: Colors.textFaint, fontSize: 12, marginTop: 2 },
   bellBtn: {
     width: 40,
     height: 40,

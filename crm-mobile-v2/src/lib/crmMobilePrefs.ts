@@ -9,6 +9,8 @@ export type CrmMobilePrefs = {
   voiceCaptureEnabled: boolean;
   voiceBackgroundSyncEnabled: boolean;
   autoLinkVoiceByPhone: boolean;
+  /** Chỉ tự upload khi SĐT đã có trong CRM — tránh lưu cuộc gọi cá nhân. */
+  uploadCrmPhonesOnly: boolean;
   floatingChatBubbleEnabled: boolean;
   floatingChatBubbleOnlyWhenUnread: boolean;
   floatingChatBubbleSystemOverlay: boolean;
@@ -18,6 +20,7 @@ export const DEFAULT_CRM_MOBILE_PREFS: CrmMobilePrefs = {
   voiceCaptureEnabled: true,
   voiceBackgroundSyncEnabled: true,
   autoLinkVoiceByPhone: true,
+  uploadCrmPhonesOnly: true,
   floatingChatBubbleEnabled: true,
   floatingChatBubbleOnlyWhenUnread: false,
   floatingChatBubbleSystemOverlay: true,

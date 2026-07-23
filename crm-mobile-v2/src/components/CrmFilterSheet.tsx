@@ -25,7 +25,7 @@ import { Radii, useColors, type ThemeColors } from '../theme';
 
 type Props = {
   visible: boolean;
-  mode: 'leads' | 'deals';
+  mode: 'leads' | 'deals' | 'orders';
   filters: CrmHubFilters;
   search: string;
   companies: CrmCompany[];
@@ -35,6 +35,10 @@ type Props = {
   metaLoading: boolean;
   /** Nhân viên thường: khóa lọc Công ty + Người phụ trách (không cho đổi). */
   lockScope?: boolean;
+  /** Hiện Gộp/Tách khi pipeline có cột sau Thắng. */
+  showDealOrderSplit?: boolean;
+  dealKhSplitEnabled?: boolean;
+  onDealKhSplitChange?: (enabled: boolean) => void;
   onApply: (filters: CrmHubFilters) => void;
   onCompanyChange: (companyId: string) => void;
   onClose: () => void;
@@ -136,6 +140,9 @@ export default function CrmFilterSheet({
   employees,
   metaLoading,
   lockScope = false,
+  showDealOrderSplit = false,
+  dealKhSplitEnabled = true,
+  onDealKhSplitChange,
   onApply,
   onCompanyChange,
   onClose,
@@ -143,7 +150,7 @@ export default function CrmFilterSheet({
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
-  const accent = mode === 'leads' ? Colors.blue : Colors.orange;
+  const accent = mode === 'leads' ? Colors.blue : (mode === 'orders' ? Colors.purple : Colors.orange);
   const [draft, setDraft] = useState(filters);
 
   useEffect(() => {
@@ -200,7 +207,9 @@ export default function CrmFilterSheet({
           <View style={styles.handle} />
           <View style={styles.header}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.title}>Bộ lọc {mode === 'leads' ? 'Leads' : 'Deals'}</Text>
+              <Text style={styles.title}>
+                Bộ lọc {mode === 'leads' ? 'Leads' : mode === 'orders' ? 'Đơn hàng' : 'Deals'}
+              </Text>
               <Text style={styles.subtitle}>Công ty · Khu vực · NV · giai đoạn · SĐT</Text>
             </View>
             <TouchableOpacity onPress={onClose} hitSlop={8}>
@@ -360,6 +369,34 @@ export default function CrmFilterSheet({
                 accent={accent}
               />
             </FilterSection>
+
+            {showDealOrderSplit && onDealKhSplitChange ? (
+              <FilterSection title="Tab Deal / Đơn hàng">
+                <Text style={styles.splitHint}>
+                  Gộp: một tab Deal toàn pipeline. Tách: Deal riêng + tab ĐH (Thắng & sau Thắng).
+                </Text>
+                <View style={styles.splitRow}>
+                  <Pressable
+                    style={[
+                      styles.splitBtn,
+                      !dealKhSplitEnabled && { backgroundColor: Colors.green + '22', borderColor: Colors.green },
+                    ]}
+                    onPress={() => onDealKhSplitChange(false)}
+                  >
+                    <Text style={[styles.splitBtnTxt, !dealKhSplitEnabled && { color: Colors.green }]}>Gộp</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[
+                      styles.splitBtn,
+                      dealKhSplitEnabled && { backgroundColor: Colors.cyan + '22', borderColor: Colors.cyan },
+                    ]}
+                    onPress={() => onDealKhSplitChange(true)}
+                  >
+                    <Text style={[styles.splitBtnTxt, dealKhSplitEnabled && { color: Colors.cyan }]}>Tách ĐH</Text>
+                  </Pressable>
+                </View>
+              </FilterSection>
+            ) : null}
           </ScrollView>
 
           <View style={styles.footer}>
@@ -435,6 +472,26 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   section: { marginBottom: 16 },
   sectionTitle: { color: Colors.text, fontSize: 14, fontWeight: '800', marginBottom: 4 },
   sectionSub: { color: Colors.textFaint, fontSize: 11, fontWeight: '600', marginBottom: 8 },
+  splitHint: { color: Colors.textFaint, fontSize: 11, fontWeight: '600', marginBottom: 10, lineHeight: 16 },
+  splitRow: {
+    flexDirection: 'row',
+    gap: 8,
+    backgroundColor: Colors.surfaceSoft,
+    borderRadius: Radii.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 4,
+  },
+  splitBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: Radii.sm,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  splitBtnTxt: { color: Colors.textMuted, fontSize: 13, fontWeight: '800' },
   subLbl: { color: Colors.textMuted, fontSize: 12, fontWeight: '700', marginTop: 8, marginBottom: 6 },
   hScroll: { marginBottom: 4 },
   miniChip: {

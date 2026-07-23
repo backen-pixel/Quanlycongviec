@@ -109,11 +109,42 @@ function Set-Arm64OnlyApk {
   $content = Get-Content $gp -Raw
   if ($content -match 'reactNativeArchitectures=arm64-v8a(\r?\n|$)') {
     Write-Host '>> ABI: arm64-v8a only (already set)'
-    return
+  } else {
+    $content = $content -replace 'reactNativeArchitectures=.*', 'reactNativeArchitectures=arm64-v8a'
+    Write-Host '>> ABI: arm64-v8a only (giảm kích thước APK cho upload server)'
   }
-  $content = $content -replace 'reactNativeArchitectures=.*', 'reactNativeArchitectures=arm64-v8a'
-  Set-Content -Path $gp -Value $content -NoNewline
-  Write-Host '>> ABI: arm64-v8a only (giảm kích thước APK cho upload server)'
+
+  # Đồng bộ tối ưu dung lượng (khớp plugins/withApkSizeOptimizations.js)
+  $sizeProps = @{
+    'expo.useLegacyPackaging' = 'true'
+    'android.enableMinifyInReleaseBuilds' = 'true'
+    'android.enableShrinkResourcesInReleaseBuilds' = 'true'
+    'android.enableBundleCompression' = 'true'
+    'expo.gif.enabled' = 'false'
+  }
+  foreach ($key in $sizeProps.Keys) {
+    $val = $sizeProps[$key]
+    if ($content -match "(?m)^$([regex]::Escape($key))=") {
+      $content = $content -replace "(?m)^$([regex]::Escape($key))=.*$", "$key=$val"
+    } else {
+      $content = $content.TrimEnd() + "`r`n$key=$val`r`n"
+    }
+  }
+  $written = $false
+  for ($i = 0; $i -lt 5; $i++) {
+    try {
+      Set-Content -Path $gp -Value $content -NoNewline -ErrorAction Stop
+      $written = $true
+      break
+    } catch {
+      Start-Sleep -Milliseconds 400
+    }
+  }
+  if (-not $written) {
+    Write-Host '>> WARN: could not rewrite gradle.properties (locked) — using existing file'
+  } else {
+    Write-Host '>> APK size opts: minify+shrink+legacyPackaging+bundleCompression, gif off'
+  }
 }
 
 function Set-WebrtcVersionPin {

@@ -145,7 +145,7 @@ async function fetchPipelineStagesCached(
   const key = stagesCacheKey(type, opts);
   const hit = stagesCache.get(key);
   if (hit && Date.now() - hit.at < STAGES_CACHE_TTL_MS) return hit.stages;
-  const stages = await fetchPipelineStages(type, opts);
+  const stages = await fetchPipelineStagesUncached(type, opts);
   stagesCache.set(key, { stages, at: Date.now() });
   return stages;
 }
@@ -296,7 +296,8 @@ function mapDeal(it: ApiLead): Deal {
 }
 
 /** Lấy danh sách cột pipeline CRM (theo công ty / khu vực / pipeline_id nếu có). */
-export async function fetchPipelineStages(
+/** Lấy danh sách cột pipeline CRM (theo công ty / khu vực / pipeline_id nếu có). */
+async function fetchPipelineStagesUncached(
   type: 'lead' | 'deal',
   opts?: CrmStageFetchOpts,
 ): Promise<CrmPipelineStage[]> {
@@ -316,6 +317,14 @@ export async function fetchPipelineStages(
     .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
     .map((s, i) => mapApiStageFields(s, type, i))
     .filter((s) => s.id);
+}
+
+/** Public: có cache TTL — dùng cho Hub badge / warm. */
+export async function fetchPipelineStages(
+  type: 'lead' | 'deal',
+  opts?: CrmStageFetchOpts,
+): Promise<CrmPipelineStage[]> {
+  return fetchPipelineStagesCached(type, opts);
 }
 
 /** Lead/Deal đã phân loại = có stage_id thuộc pipeline đang active. */

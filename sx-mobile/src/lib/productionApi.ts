@@ -14,9 +14,14 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
   const productionPerson = (raw.production_person || {}) as { id?: string; full_name?: string };
   const company = (raw.company || {}) as { id?: string; short_name?: string; name?: string };
   const workshopType = (raw.workshop_type || {}) as { id?: string; name?: string };
+  const sxPipe = (raw.sx_pipeline_stage || {}) as { id?: string; progress_percent?: number | null };
   const crmDeals = Array.isArray(raw.crm_deals) ? (raw.crm_deals as Array<Record<string, unknown>>) : [];
   const dealWithRegion = crmDeals.find((d) => d && (d.region_id || d.crm_region));
   const crmRegion = (dealWithRegion?.crm_region || {}) as { id?: string; name?: string };
+  const sxCol =
+    (raw.sx_kanban_column_id as string)
+    || (sxPipe.id ? String(sxPipe.id) : null)
+    || null;
   return {
     id: String(raw.id || ''),
     code: String(raw.code || ''),
@@ -36,7 +41,9 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
     sx_pipeline_percent:
       raw.sx_pipeline_percent != null && raw.sx_pipeline_percent !== ''
         ? Number(raw.sx_pipeline_percent)
-        : null,
+        : sxPipe.progress_percent != null && Number.isFinite(Number(sxPipe.progress_percent))
+          ? Number(sxPipe.progress_percent)
+          : null,
     task_total: Number(raw.task_total || 0),
     done_tasks: Number(raw.done_tasks || 0),
     is_overdue: Boolean(raw.is_overdue),
@@ -47,7 +54,7 @@ export function mapProjectRow(raw: Record<string, unknown>): ProductionProject {
     sx_enriched: Boolean(raw.sx_enriched),
     current_stage_id: (raw.current_stage_id as string) ?? stage.id ?? null,
     workshop_type_id: (raw.workshop_type_id as string) ?? workshopType.id ?? null,
-    sx_kanban_column_id: (raw.sx_kanban_column_id as string) ?? null,
+    sx_kanban_column_id: sxCol,
     stage_name: stage.name ?? null,
     stage_slug: stage.slug ?? null,
     production_person_id: productionPerson.id ?? null,
@@ -94,7 +101,8 @@ function mapStageRow(raw: Record<string, unknown>, index: number): KanbanStage {
   };
 }
 
-const VC_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
+/** Khớp web `VC_KANBAN_STATUSES` — dùng cho cột hiển thị Kanban (không gồm completed). */
+const VC_KANBAN_STATUSES = new Set(['shipping', 'installing', 'warranty']);
 
 /** Index cột — tránh filter/find O(n) trên mỗi dự án khi board lớn. */
 type StageIndex = {
@@ -163,7 +171,9 @@ function resolveSxHandoverColumnIdIndexed(
 }
 
 /**
- * Resolve cột Kanban — khớp BE `resolveSxDisplayColumnId` + fallback intake (web colIdFor).
+ * Resolve cột hiển thị Kanban — khớp web `colIdFor` + fallback intake.
+ * Khi chưa có sx_kanban_column_id: thêm lead-first giống BE enrich
+ * (web luôn enrich trước nên colIdFor không cần bước này).
  */
 export function resolveColumnId(
   project: ProductionProject,
@@ -173,16 +183,10 @@ export function resolveColumnId(
   const index = stageIndex || buildStageIndex(sortedStages);
   const intake = index.intake;
 
-  if (project.status && VC_STATUSES.has(project.status)) {
+  // Web: chỉ shipping/installing/warranty → cột bàn giao VC
+  if (project.status && VC_KANBAN_STATUSES.has(project.status)) {
     let preferred: string | null = null;
-    const deals = Array.isArray(project.crm_deals) ? project.crm_deals : [];
-    const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
-    const leadColId = primaryDeal?.sx_pipeline_stage_id || null;
-    if (leadColId && index.byId.has(String(leadColId))) {
-      const leadCol = index.byId.get(String(leadColId));
-      if (leadCol?.is_handover_to_logistics) preferred = leadColId;
-    }
-    if (!preferred && project.sx_kanban_column_id && index.byId.has(String(project.sx_kanban_column_id))) {
+    if (project.sx_kanban_column_id && index.byId.has(String(project.sx_kanban_column_id))) {
       const pinned = index.byId.get(String(project.sx_kanban_column_id));
       if (pinned?.is_handover_to_logistics) preferred = project.sx_kanban_column_id;
     }
@@ -191,20 +195,16 @@ export function resolveColumnId(
   }
 
   if (project.sx_kanban_column_id && index.byId.has(String(project.sx_kanban_column_id))) {
-    return project.sx_kanban_column_id;
+    return String(project.sx_kanban_column_id);
   }
 
-  // BE: lead sx_pipeline_stage_id trước workflow (quan trọng khi DB chưa ghi cột).
+  // Khớp BE enrich khi cột DB/enrich trống: lead sx_pipeline_stage_id trước workflow.
+  // Tránh 1 deal «Kiểm tra chép» trên web bị đẩy sang «Tiếp nhận» trên app.
   {
     const deals = Array.isArray(project.crm_deals) ? project.crm_deals : [];
     const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
     const leadColId = primaryDeal?.sx_pipeline_stage_id || null;
-    if (leadColId && index.byId.has(String(leadColId))) return leadColId;
-  }
-
-  if (project.sx_won_deal) {
-    const inWorkshop = Boolean(project.current_stage_id);
-    if (!inWorkshop) return intake?.id || index.first?.id || null;
+    if (leadColId && index.byId.has(String(leadColId))) return String(leadColId);
   }
 
   const cid = project.current_stage_id;
@@ -217,9 +217,9 @@ export function resolveColumnId(
       const leadColId = primaryDeal?.sx_pipeline_stage_id || null;
       const ids = new Set(wfMatches.map((m) => String(m.id)));
       if (project.sx_kanban_column_id && ids.has(String(project.sx_kanban_column_id))) {
-        return project.sx_kanban_column_id;
+        return String(project.sx_kanban_column_id);
       }
-      if (leadColId && ids.has(String(leadColId))) return leadColId;
+      if (leadColId && ids.has(String(leadColId))) return String(leadColId);
       return [...wfMatches].sort((a, b) => a.order_index - b.order_index)[0]?.id || null;
     }
   }
@@ -228,7 +228,6 @@ export function resolveColumnId(
     return intake?.id || index.first?.id || null;
   }
 
-  // Fallback hiển thị (web colIdFor) — không dùng để ghi đè KPI khi BE để null.
   return intake?.id || index.first?.id || null;
 }
 
@@ -304,49 +303,47 @@ function attachColumnsIndexed(
   stages: KanbanStage[],
   index: StageIndex,
 ): ProductionProject[] {
-  const intakeId = index.intake?.id || null;
   return list.map((p) => {
-    const displayColId = resolveColumnId(p, stages, index);
     const beColRaw = p.sx_kanban_column_id;
-    const beColInStages = beColRaw != null && beColRaw !== '' && index.byId.has(String(beColRaw));
-
     let finalKpiCol: string | null;
     let sxIntake: boolean;
 
     if (p.sx_enriched) {
-      // Giữ nguyên kết quả enrich BE (kể cả null) — khớp web KPI «Đang SX».
-      if (beColInStages) {
-        finalKpiCol = String(beColRaw);
-        sxIntake = Boolean(p.sx_intake);
-      } else if (beColRaw == null || beColRaw === '') {
-        finalKpiCol = null;
-        sxIntake = Boolean(p.sx_intake);
-      } else {
-        // Cột không thuộc pipeline đang lọc (đổi phân loại) → resolve lại
-        finalKpiCol = displayColId || null;
-        sxIntake = Boolean(intakeId && finalKpiCol && String(finalKpiCol) === String(intakeId));
-      }
-    } else if (beColInStages) {
+      finalKpiCol = beColRaw != null && beColRaw !== '' ? String(beColRaw) : null;
+      sxIntake = Boolean(p.sx_intake);
+    } else if (beColRaw != null && beColRaw !== '') {
       finalKpiCol = String(beColRaw);
-      sxIntake = Boolean(p.sx_intake) || Boolean(intakeId && finalKpiCol === String(intakeId));
+      sxIntake = Boolean(p.sx_intake);
     } else {
-      finalKpiCol = displayColId || null;
-      sxIntake = Boolean(intakeId && finalKpiCol && String(finalKpiCol) === String(intakeId));
+      finalKpiCol = null;
+      sxIntake = false;
     }
 
-    const col = finalKpiCol ? index.byId.get(String(finalKpiCol)) : undefined;
+    // Gắn KPI trước, rồi resolve hiển thị trên state giống web (sau enrich).
+    const withKpi: ProductionProject = {
+      ...p,
+      sx_kanban_column_id: finalKpiCol,
+      sx_intake: sxIntake,
+    };
+    let displayColId = resolveColumnId(withKpi, stages, index);
+    // Cột BE nằm trong pipeline đang xem → bắt buộc đúng cột đó (không để resolved cũ nuốt).
+    if (finalKpiCol && index.byId.has(String(finalKpiCol))) {
+      displayColId = String(finalKpiCol);
+    }
+
+    const col = displayColId && index.byId.has(String(displayColId))
+      ? index.byId.get(String(displayColId))
+      : undefined;
     const pipelinePct =
-      p.sx_pipeline_percent != null && Number.isFinite(Number(p.sx_pipeline_percent))
-        ? Number(p.sx_pipeline_percent)
+      withKpi.sx_pipeline_percent != null && Number.isFinite(Number(withKpi.sx_pipeline_percent))
+        ? Number(withKpi.sx_pipeline_percent)
         : col?.progress_percent != null && Number.isFinite(Number(col.progress_percent))
           ? Number(col.progress_percent)
           : null;
 
     const withCol = {
-      ...p,
+      ...withKpi,
       resolved_column_id: displayColId || finalKpiCol,
-      sx_kanban_column_id: finalKpiCol,
-      sx_intake: sxIntake,
       sx_pipeline_percent: pipelinePct,
     };
     return {
@@ -363,7 +360,7 @@ export async function fetchProductionBoard(
 ): Promise<ProductionBoard> {
   const loadRemaining = options.loadRemaining !== false;
 
-  const stageParams: Record<string, unknown> = {};
+  const stageParams: Record<string, unknown> = { all: 'false' };
   if (bustCache) stageParams._t = Date.now();
   if (filters.companyId) stageParams.company_id = filters.companyId;
   if (filters.workshopTypeId) stageParams.workshop_type_id = filters.workshopTypeId;

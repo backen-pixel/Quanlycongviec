@@ -106,7 +106,7 @@ export function splitDealStagesForCrmTabs(stagesDeal: CrmPipelineStage[]) {
 }
 
 /**
- * Cột dùng KPI tab Deal trên CRM web — trước Thắng + Thua; không gồm cột Thắng / sau Thắng.
+ * Cột dùng KPI tab Deal trên CRM Hub — trước Thắng; không gồm Thua / Hủy / Thắng / sau Thắng.
  */
 export function preWonStagesForDealStats(
   dealTabStages: CrmPipelineStage[],
@@ -115,7 +115,7 @@ export function preWonStagesForDealStats(
 ): CrmPipelineStage[] {
   const wonId = wonStage?.id ? String(wonStage.id) : null;
   return (dealTabStages || []).filter((s) => {
-    if (s.isLost) return true;
+    if (isLostOrCancelledPipelineStage(s)) return false;
     if (wonAnchorOrder == null) return !s.isWon;
     if (wonId && String(s.id) === wonId) return false;
     return stageOrderIndex(s) < wonAnchorOrder;
@@ -178,7 +178,7 @@ export function sumCrmOpenWeightedPipelineValue(
   return sumStageMapForStages(stages, stageWeightedValues, includeOrphan);
 }
 
-/** Tổng Deal KPI — cột pre-won + thua + chưa có GD (pipeline hiện tại). */
+/** Tổng Deal KPI — cột pre-won + chưa có GD (không gồm Thua / Hủy). */
 export function sumCrmDealStatsCount(
   dealStages: CrmPipelineStage[],
   dealCounts: Record<string, number>,
@@ -193,10 +193,10 @@ export function sumCrmDealStatsCount(
 }
 
 /**
- * Tổng Deal KPI tab Deal trên CRM Hub — khớp web `sumCrmDealTabCountsFromStageCounts`.
- * Gồm deal pre-Thắng + thua + stage lạ (stage_id không thuộc pipeline công ty, vd. import FB).
- * Loại cột Thắng và sau Thắng — tính riêng theo TỪNG pipeline (khi "Tất cả công ty" gộp nhiều
- * công ty, mỗi pipeline có order_index/cột Thắng độc lập, không được so theo 1 mốc chung).
+ * Tổng Deal KPI tab Deal trên CRM Hub.
+ * Gồm deal pre-Thắng + stage lạ (stage_id không thuộc pipeline công ty, vd. import FB).
+ * Không gồm cột Thua / Hủy / Thắng / sau Thắng — tính riêng theo TỪNG pipeline (khi "Tất cả công ty"
+ * gộp nhiều công ty, mỗi pipeline có order_index/cột Thắng độc lập).
  */
 export function sumCrmDealHubKpiCount(
   dealStages: CrmPipelineStage[],
@@ -222,10 +222,8 @@ export function sumCrmDealHubKpiCount(
       total += cnt;
       continue;
     }
-    if (isLostOrCancelledPipelineStage(stage)) {
-      total += cnt;
-      continue;
-    }
+    // Tab Deal không tính cột Thua / Hủy.
+    if (isLostOrCancelledPipelineStage(stage)) continue;
     const pid = String(stage.pipelineId || '__none__');
     const anchorOrder = anchorOrderByPipeline.get(pid) ?? null;
     if (anchorOrder == null) {
@@ -237,7 +235,7 @@ export function sumCrmDealHubKpiCount(
   return total;
 }
 
-/** Tổng tab KH — deal ở cột Thắng + sau Thắng (khớp CRM Hub tab Khách hàng). */
+/** Tổng tab KH — deal ở cột Thắng + sau Thắng (khớp CRM Hub tab Khách hàng / Đơn hàng). */
 export function sumCrmCustomerTabDealCount(
   dealStages: CrmPipelineStage[],
   dealCounts: Record<string, number>,
@@ -248,6 +246,46 @@ export function sumCrmCustomerTabDealCount(
     total += Number(dealCounts[stage.id] ?? 0) || 0;
   }
   return total;
+}
+
+/**
+ * Tổng Deal khi Gộp — mọi cột trừ Thua/Hủy (khớp web `sumCrmDealTabCountsFromStageCounts.merged`).
+ */
+export function sumCrmDealMergedHubCount(
+  dealStages: CrmPipelineStage[],
+  dealCounts: Record<string, number>,
+): number {
+  const stages = dealStages || [];
+  const counts = dealCounts || {};
+  let total = Number(counts[ORPHAN_STAGE_KEY] ?? 0) || 0;
+  for (const s of stages) {
+    if (!s?.id) continue;
+    if (isLostOrCancelledPipelineStage(s)) continue;
+    total += Number(counts[s.id] ?? 0) || 0;
+  }
+  return total;
+}
+
+/** Có cột sau Thắng → đủ điều kiện hiện tab Đơn hàng khi Tách. */
+export function hasCrmCustomerOrderTab(dealStages: CrmPipelineStage[]): boolean {
+  return splitDealStagesForCrmTabs(dealStages).postWonStages.length > 0;
+}
+
+/**
+ * Cột Kanban theo tab Hub — khớp web `resolveCrmPipelineStagesForTab`.
+ * leads | deals (gộp/tách) | orders (ĐH = Thắng + sau Thắng).
+ */
+export function resolveCrmHubDisplayStages(
+  tab: 'leads' | 'deals' | 'orders',
+  stagesLead: CrmPipelineStage[],
+  stagesDeal: CrmPipelineStage[],
+  dealKhSplitEnabled: boolean,
+): CrmPipelineStage[] {
+  if (tab === 'leads') return stagesLead || [];
+  const { dealTabStages, customerTabStages } = splitDealStagesForCrmTabs(stagesDeal || []);
+  if (tab === 'orders') return customerTabStages;
+  if (!dealKhSplitEnabled) return stagesDeal || [];
+  return dealTabStages;
 }
 
 /** Tỷ lệ chốt — chốt tab KH / tổng deal kỳ (%, làm tròn nguyên như BC web). */

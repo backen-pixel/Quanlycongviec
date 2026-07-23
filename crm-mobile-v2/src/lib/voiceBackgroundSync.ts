@@ -182,6 +182,27 @@ async function bulkExistsOnServer(
   }
 }
 
+async function fetchCrmMatchedPhoneTails(phones: string[]): Promise<Set<string> | null> {
+  const unique = [...new Set(phones.map((p) => String(p || '').replace(/\D/g, '')).filter((d) => d.length >= 9))];
+  if (!unique.length) return new Set();
+  try {
+    const { data } = await api.post<{ matched?: string[] }>('/voice-recordings/match-phones', {
+      phones: unique.slice(0, 80),
+    });
+    const matched = Array.isArray(data?.matched) ? data.matched : [];
+    return new Set(matched.map((p) => String(p).replace(/\D/g, '').slice(-9)).filter(Boolean));
+  } catch {
+    // Lỗi mạng/API → trả null để bỏ qua vòng sync (không markUploaded).
+    return null;
+  }
+}
+
+function phoneTail(phone: string | null | undefined): string | null {
+  const d = String(phone || '').replace(/\D/g, '');
+  if (d.length < 9) return null;
+  return d.slice(-9);
+}
+
 export async function runVoiceBackgroundSyncOnce(): Promise<{ uploaded: number; scanned: number }> {
   if (Platform.OS !== 'android' || syncing) return { uploaded: 0, scanned: 0 };
   const token = await getStoredToken();
@@ -202,7 +223,21 @@ export async function runVoiceBackgroundSyncOnce(): Promise<{ uploaded: number; 
     const sinceMs = lastSync > 0 ? lastSync - 60_000 : Date.now() - 7 * 24 * 60 * 60 * 1000;
     const local = await listLocalCallRecordings({ sinceMs, limit: 40, includeAll: false });
     const uploadedNames = await getUploadedNames();
-    const pending = local.filter((it) => !uploadedNames.has(it.name)).slice(0, 20);
+    const pending = local
+      .filter((it) => !uploadedNames.has(it.name))
+      .sort((a, b) => Number(Boolean(b.phoneHint)) - Number(Boolean(a.phoneHint)))
+      .slice(0, 20);
+
+    const crmOnly = prefs.uploadCrmPhonesOnly !== false;
+    let crmTails: Set<string> | null = null;
+    if (crmOnly) {
+      crmTails = await fetchCrmMatchedPhoneTails(pending.map((p) => p.phoneHint || '').filter(Boolean));
+      if (crmTails == null) {
+        // Không xác minh được CRM — dừng vòng này, thử lại sau.
+        return { uploaded: 0, scanned: local.length };
+      }
+    }
+
     const { existing, tombstoned, rowKey } = await bulkExistsOnServer(
       pending.map((p) => ({
         file_name: p.name,
@@ -232,6 +267,16 @@ export async function runVoiceBackgroundSyncOnce(): Promise<{ uploaded: number; 
         await markUploaded(item.name);
         continue;
       }
+
+      if (crmTails) {
+        const tail = phoneTail(item.phoneHint);
+        // Không có SĐT hoặc SĐT không có trong CRM → bỏ qua (không đẩy cuộc gọi cá nhân).
+        if (!tail || !crmTails.has(tail)) {
+          await markUploaded(item.name);
+          continue;
+        }
+      }
+
       try {
         await uploadRecording({
           localUri: item.localUri,

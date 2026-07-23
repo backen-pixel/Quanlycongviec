@@ -1,25 +1,43 @@
-import React, { createContext, useContext, useMemo } from 'react';
-import {
-  CallProvider as BaseCallProvider,
-  useCall as useBaseCall,
-  type CallPeer,
-} from '../calling';
-import { isActiveState } from '../calling/types';
+import React, { createContext, useContext } from 'react';
+import type { CallPeer } from '../calling/types';
 import { CALLING_ENABLED } from '../config';
 
 type CallStatus = 'idle' | 'busy';
 
-type Ctx = ReturnType<typeof useBaseCall> & {
-  status: CallStatus;
+type Ctx = {
+  session: null;
+  localStream: null;
+  remoteStream: null;
+  groupPeers: never[];
+  groupJoinRequests: never[];
   startCall: (peer: CallPeer) => Promise<void>;
   startVideoCall: (peer: CallPeer) => Promise<void>;
+  startGroupCall: (...args: never[]) => Promise<void>;
+  joinGroupCall: (...args: never[]) => void;
+  approveGroupJoin: (...args: never[]) => void;
+  denyGroupJoin: (...args: never[]) => void;
+  acceptCall: () => Promise<void>;
+  rejectCall: () => void;
+  endCall: () => void;
+  toggleMute: () => void;
+  toggleSpeaker: () => void;
+  toggleCamera: () => void;
+  switchCamera: () => void;
+  applyIncomingFromPush: (...args: never[]) => void;
+  handleNativeCallIntent: (...args: never[]) => void;
+  dismissIncomingSilently: () => void;
+  status: CallStatus;
 };
 
 const noopAsync = async () => {};
 const noop = () => {};
 
-/** Stub khi CALLING_ENABLED=false — không khởi tạo WebRTC / signaling. */
-const DISABLED_CALL_CTX = {
+/**
+ * Stub khi CALLING_ENABLED=false.
+ * Không import `../calling` / react-native-webrtc — tránh kéo ~11MB native + JS vào APK.
+ * Bật lại cuộc gọi: khôi phục CallProvider thật + plugin webrtc + xóa exclusion trong react-native.config.js.
+ */
+const DISABLED_CALL_CTX: Ctx = {
   session: null,
   localStream: null,
   remoteStream: null,
@@ -41,34 +59,19 @@ const DISABLED_CALL_CTX = {
   applyIncomingFromPush: noop,
   handleNativeCallIntent: noop,
   dismissIncomingSilently: noop,
-  status: 'idle' as CallStatus,
-} as unknown as Ctx;
+  status: 'idle',
+};
 
 const CallCtx = createContext<Ctx | null>(null);
 
 export function CallProvider({ children }: { children: React.ReactNode }) {
-  if (!CALLING_ENABLED) {
-    return <CallCtx.Provider value={DISABLED_CALL_CTX}>{children}</CallCtx.Provider>;
+  if (CALLING_ENABLED) {
+    throw new Error(
+      'CALLING_ENABLED=true nhưng WebRTC đang bị loại khỏi build. ' +
+        'Xóa exclusion trong react-native.config.js, thêm lại plugin @config-plugins/react-native-webrtc, rồi prebuild.',
+    );
   }
-  return (
-    <BaseCallProvider>
-      <CallBridge>{children}</CallBridge>
-    </BaseCallProvider>
-  );
-}
-
-function CallBridge({ children }: { children: React.ReactNode }) {
-  const base = useBaseCall();
-  const value = useMemo<Ctx>(() => {
-    const busy = base.session != null && isActiveState(base.session.state);
-    return {
-      ...base,
-      status: busy ? 'busy' : 'idle',
-      startCall: (peer) => base.startCall(peer, 'audio'),
-      startVideoCall: (peer) => base.startCall(peer, 'video'),
-    };
-  }, [base]);
-  return <CallCtx.Provider value={value}>{children}</CallCtx.Provider>;
+  return <CallCtx.Provider value={DISABLED_CALL_CTX}>{children}</CallCtx.Provider>;
 }
 
 export function useCall() {

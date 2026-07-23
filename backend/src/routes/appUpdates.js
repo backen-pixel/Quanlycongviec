@@ -37,7 +37,6 @@ const {
   statFileSizeSafe,
   buildPublicDownloadUrl,
   isReleaseApkAvailable,
-  isExternalApkHost,
 } = require('../helpers/appReleaseDownload');
 const config = require('../config');
 
@@ -436,7 +435,7 @@ r.get('/download/:releaseId', async (req, res) => {
       remote = urlData?.publicUrl || null;
     }
     if (remote) {
-      if (/\/uploads\/app-releases\//i.test(remote) && !isExternalApkHost(remote)) {
+      if (/\/uploads\/app-releases\//i.test(remote)) {
         return res.status(404).json({
           error: 'File APK không còn trên server — admin hãy upload lại bản phát hành (Phát hành → chọn .apk)',
         });

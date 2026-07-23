@@ -41,6 +41,7 @@ import {
   type CommentIndexEntry,
   type CompanyOption,
   type WorkshopTypeOption,
+  resolveColumnId,
 } from '../lib/productionApi';
 import { getAnyCachedBoard, getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
 import { loadKanbanFilters, saveKanbanFilters } from '../lib/kanbanFilterStorage';
@@ -152,9 +153,9 @@ function avatarColor(name?: string | null): string {
   return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
 }
 
-/** Cột hiển thị Kanban (resolve client). */
-function displayColumnId(p: ProductionProject): string | null {
-  return p.resolved_column_id ?? p.sx_kanban_column_id ?? null;
+/** Cột hiển thị Kanban — resolve live giống web colIdFor (không dùng resolved stale). */
+function displayColumnId(p: ProductionProject, stages: KanbanStage[]): string | null {
+  return resolveColumnId(p, stages);
 }
 
 function isToday(value?: string | null): boolean {
@@ -837,11 +838,11 @@ export default function KanbanScreen() {
         map.get(ORPHAN_COL_ID)!.push(p);
         return;
       }
-      const key = displayColumnId(p);
+      const key = displayColumnId(p, stages);
       if (key && map.has(key)) map.get(key)!.push(p);
     });
     return map;
-  }, [displayStages, filteredProjects]);
+  }, [displayStages, filteredProjects, stages]);
 
   const columnProjects = activeStage ? (projectsByStage.get(activeStage.id) || []) : [];
 
@@ -981,7 +982,6 @@ export default function KanbanScreen() {
     const kpi = computeSxBoardKpis(filteredProjects, stages);
     return [
       { label: 'Tổng', value: kpi.total, color: colors.text },
-      { label: 'Tiếp nhận', value: kpi.intake, color: '#F59E0B' },
       { label: 'Đang SX', value: kpi.producing, color: colors.primary },
       { label: 'Chờ vận chuyển', value: kpi.awaitingDelivery, color: '#94A3B8' },
       { label: 'Đã vận chuyển', value: kpi.shipped, color: '#38BDF8' },
