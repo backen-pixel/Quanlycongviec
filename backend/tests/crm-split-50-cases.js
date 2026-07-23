@@ -22,6 +22,7 @@ const FEATURE_MODULES = [
   'reports',
   'pipelines',
   'taxonomy',
+  'visibleProduction',
   'leadDuplicates',
   'leadsList',
   'customers',
@@ -31,6 +32,7 @@ const FEATURE_MODULES = [
   'followupPlanner',
   'leadComments',
   'membersChat',
+  'vcBooking',
   'leadLifecycle',
 ];
 
@@ -174,7 +176,7 @@ function createRunner() {
     }
   });
 
-  test(3, 'Đủ 14 file feature router', () => {
+  test(3, 'Đủ 16 file feature router', () => {
     for (const m of FEATURE_MODULES) {
       const p = path.join(CRM_DIR, 'routes', `${m}.js`);
       if (!fs.existsSync(p)) throw new Error(`Missing ${m}.js`);
@@ -193,10 +195,13 @@ function createRunner() {
     }
   });
 
-  test(6, 'route-manifest.json có đúng 224 route', () => {
+  test(6, 'route-manifest.json nội bộ nhất quán (checksum)', () => {
     const m = JSON.parse(fs.readFileSync(path.join(CRM_DIR, 'route-manifest.json'), 'utf8'));
-    if (m.total_routes !== 224) throw new Error(`manifest total_routes=${m.total_routes}`);
-    if (!Array.isArray(m.routes) || m.routes.length !== 224) throw new Error('manifest.routes length mismatch');
+    const sum = Object.values(m.by_file || {}).reduce((a, b) => a + b, 0);
+    if (!Array.isArray(m.routes)) throw new Error('manifest.routes missing');
+    if (m.total_routes !== m.routes.length) throw new Error(`total_routes=${m.total_routes} routes[]=${m.routes.length}`);
+    if (m.total_routes !== sum) throw new Error(`total_routes=${m.total_routes} by_file=${sum}`);
+    if (!m.checksum) throw new Error('missing checksum — chạy npm run crm:route-inventory');
   });
 
   test(7, 'core.js chỉ còn stub trỏ index', () => {
@@ -206,8 +211,11 @@ function createRunner() {
     }
   });
 
-  test(8, 'Backup core.js.bak còn để so sánh (khuyến nghị)', () => {
-    if (!fs.existsSync(BAK)) throw new Error('core.js.bak không có — bỏ qua so sánh bak');
+  test(8, 'Git pre-split baseline manifest có để so sánh', () => {
+    const pre = path.join(CRM_DIR, 'route-manifest.presplit.json');
+    if (!fs.existsSync(pre)) throw new Error('route-manifest.presplit.json thiếu — npm run crm:route-inventory');
+    const m = JSON.parse(fs.readFileSync(pre, 'utf8'));
+    if (m.total_routes !== 224) throw new Error(`presplit total_routes=${m.total_routes}`);
   });
 
   test(9, 'Load CRM router thành công (handle function)', () => {
@@ -230,9 +238,9 @@ function createRunner() {
     if (names.length < 3) throw new Error(`Chỉ ${names.length} middleware cha`);
   });
 
-  test(12, 'Đúng 14 nested feature routers trên parent stack', () => {
+  test(12, 'Đúng 16 nested feature routers trên parent stack', () => {
     const nested = (ctx.crm.stack || []).filter((l) => l.name === 'router').length;
-    if (nested !== 14) throw new Error(`nested routers=${nested}`);
+    if (nested !== 16) throw new Error(`nested routers=${nested} (expect 16: +visibleProduction +vcBooking)`);
   });
 
   test(13, 'Mount order: leadsList / leadDuplicates trước leadLifecycle', () => {
@@ -260,24 +268,35 @@ function createRunner() {
     if (list.includes('POST /leads')) throw new Error('POST /leads không được ở leadsList');
   });
 
-  // ─── 16–25: so khớp registry với bak + helpers ───────────────────────────
-  test(16, 'Live router có đúng 224 endpoint', () => {
+  // ─── 16–25: so khớp registry với Git pre-split + helpers ─────────────────
+  test(16, 'Live router khớp route-manifest.runtime.json', () => {
     ctx.liveRoutes = collectLiveRoutes(ctx.crm);
     ctx.liveSet = new Set(ctx.liveRoutes.map(routeKey));
-    if (ctx.liveSet.size !== 224) throw new Error(`live=${ctx.liveSet.size}`);
+    const runtimePath = path.join(CRM_DIR, 'route-manifest.runtime.json');
+    if (!fs.existsSync(runtimePath)) throw new Error('route-manifest.runtime.json thiếu — npm run crm:route-inventory');
+    const m = JSON.parse(fs.readFileSync(runtimePath, 'utf8'));
+    if (ctx.liveSet.size !== m.total_routes) {
+      throw new Error(`live=${ctx.liveSet.size} manifest=${m.total_routes}`);
+    }
   });
 
-  test(17, 'Tập endpoint live ≡ bak (không thiếu)', () => {
-    if (!fs.existsSync(BAK)) throw new Error('no bak');
-    const bakRoutes = extractRoutesFromSource(fs.readFileSync(BAK, 'utf8'));
-    ctx.bakSet = new Set(bakRoutes.map(routeKey));
+  test(17, 'Tập endpoint live ⊇ Git pre-split (không thiếu)', () => {
+    const prePath = path.join(CRM_DIR, 'route-manifest.presplit.json');
+    if (!fs.existsSync(prePath)) throw new Error('no presplit manifest');
+    const pre = JSON.parse(fs.readFileSync(prePath, 'utf8'));
+    ctx.bakSet = new Set(pre.routes.map(routeKey));
     const missing = [...ctx.bakSet].filter((k) => !ctx.liveSet.has(k));
     if (missing.length) throw new Error(`Missing ${missing.length}: ${missing.slice(0, 8).join(', ')}`);
   });
 
-  test(18, 'Tập endpoint live ≡ bak (không thừa)', () => {
+  test(18, 'Tập endpoint live chỉ thừa intentional post-split', () => {
+    const reportPath = path.join(CRM_DIR, 'route-parity-report.json');
+    if (!fs.existsSync(reportPath)) throw new Error('no parity report');
+    const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+    const allowed = new Set((report.intentional_allowlist || []).map((r) => `${r.method} ${r.path}`));
     const extra = [...ctx.liveSet].filter((k) => !ctx.bakSet.has(k));
-    if (extra.length) throw new Error(`Extra ${extra.length}: ${extra.slice(0, 8).join(', ')}`);
+    const unexpected = extra.filter((k) => !allowed.has(k));
+    if (unexpected.length) throw new Error(`Unexpected extra ${unexpected.length}: ${unexpected.slice(0, 8).join(', ')}`);
   });
 
   test(19, 'Các path tĩnh quan trọng còn trong live set', () => {

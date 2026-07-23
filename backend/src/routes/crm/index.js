@@ -13,6 +13,10 @@ const {
   userCanAccessCrmLeadAsParticipant,
   userCanAccessCrmLeadViaVisibility,
 } = require('../../helpers/crmLeadParticipantAccess');
+const {
+  assertCrmTaskLeadAccess,
+  loadLeadForTaskAccess,
+} = require('../../helpers/crmTaskLeadAccess');
 
 const helpers = require('./shared/helpersBundle');
 
@@ -31,6 +35,7 @@ const followupPlanner = require('./routes/followupPlanner');
 const leadComments = require('./routes/leadComments');
 const membersChat = require('./routes/membersChat');
 const leadLifecycle = require('./routes/leadLifecycle');
+const vcBooking = require('./routes/vcBooking');
 
 const r = Router();
 r.use(auth);
@@ -56,8 +61,16 @@ async function enforceCrmDealAssigneeAccess(req, res, next) {
     const parts = p.split('/').filter(Boolean);
     const head = parts[0];
     if ((head !== 'leads' && head !== 'deals') || !parts[1] || !CRM_LEAD_ID_IN_PATH.test(parts[1])) return next();
-    if (/\/tasks(\/|$)/.test(p)) return next();
     const leadId = parts[1];
+    // /tasks* — gate riêng (assignee/participant/executor), không bypass authz
+    if (/\/tasks(\/|$)/.test(p)) {
+      const taskId = parts[3] && CRM_LEAD_ID_IN_PATH.test(parts[3]) ? parts[3] : null;
+      const lead = await loadLeadForTaskAccess(supabase, leadId);
+      if (!lead) return next();
+      const gate = await assertCrmTaskLeadAccess(supabase, req, lead, { taskId });
+      if (!gate.ok) return res.status(gate.status || 403).json({ error: gate.error });
+      return next();
+    }
     const { data: lead, error } = await supabase
       .from('crm_leads')
       .select('id, type, company_id, assigned_to, lead_owner_id, parent_lead_id, project_id')
@@ -69,32 +82,14 @@ async function enforceCrmDealAssigneeAccess(req, res, next) {
       return res.status(403).json({ error: 'Không có quyền truy cập dữ liệu hệ sinh thái khác' });
     }
     const uid = req.user?.userId;
-
-    async function userOwnsDealViaAncestor(userId, row) {
-      if (!userId || !row) return false;
-      if (String(row.assigned_to || '') === String(userId)) return true;
-      let cur = row;
-      let g = 0;
-      while (cur?.parent_lead_id && g < 8) {
-        const { data: par } = await supabase
-          .from('crm_leads')
-          .select('id, type, assigned_to, lead_owner_id, parent_lead_id')
-          .eq('id', cur.parent_lead_id)
-          .maybeSingle();
-        if (!par) break;
-        if (par.type === 'deal' && String(par.assigned_to || '') === String(userId)) return true;
-        cur = par;
-        g += 1;
-      }
-      return false;
-    }
+    const { userOwnsDealViaAncestor } = require('../../helpers/crmTaskLeadAccess');
 
     if (lead.type === 'deal') {
       if (userSeesAllCrmDeals(req.user?.role)) return next();
       if (!uid) {
         return res.status(403).json({ error: 'Bạn chỉ được xem/sửa deal mà bạn phụ trách.' });
       }
-      const ok = await userOwnsDealViaAncestor(uid, lead)
+      const ok = await userOwnsDealViaAncestor(supabase, uid, lead)
         || await userCanAccessCrmLeadAsParticipant(supabase, uid, lead)
         || await userCanAccessCrmLeadViaVisibility(supabase, uid, lead);
       if (!ok) {
@@ -139,6 +134,7 @@ r.use(crmTasks);
 r.use(followupPlanner);
 r.use(leadComments);
 r.use(membersChat);
+r.use(vcBooking);
 r.use(leadLifecycle);
 
 if (typeof helpers.computeOrgOverviewReportData === 'function') {

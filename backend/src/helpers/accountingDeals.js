@@ -305,7 +305,7 @@ async function fetchAccountingDeals({
   const uniqueProjectIds = [...new Set(dealsFiltered.map((d) => d.project_id).filter(Boolean))];
   const { data: projects, error: projErr } = await supabase
     .from('projects')
-    .select('id, code, name, company_id, status, production_value, deposit_amount, current_stage_id, workshop_type_id')
+    .select('id, code, name, company_id, status, production_value, estimated_value, deposit_amount, current_stage_id, workshop_type_id')
     .in('id', uniqueProjectIds);
   if (projErr) throw projErr;
 
@@ -348,6 +348,7 @@ async function fetchAccountingDeals({
       project_name: proj?.name || null,
       project_status: proj?.status || null,
       production_value: Number(proj?.production_value) || 0,
+      project_estimated_value: Number(proj?.estimated_value) || 0,
       deposit_amount: Number(proj?.deposit_amount) > 0
         ? Number(proj.deposit_amount)
         : (Number(d.deposit_amount) > 0 ? Number(d.deposit_amount) : 0),

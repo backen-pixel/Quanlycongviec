@@ -615,6 +615,7 @@ async function resolveSxPipelineStageUuidForProject(project) {
 /** Fallback name patterns khi chưa cấu hình sync_role trong Pipeline Settings */
 const ROLE_NAME_PATTERNS = {
   sx_production:  ['%sản xuất%', '%san xuat%', '%production%'],
+  sx_completed:   ['%đã sản xuất%', '%da san xuat%', '%sản xuất xong%', '%san xuat xong%', '%đã đóng gói%', '%da dong goi%'],
   vc_delivery:    ['%vận chuyển%', '%van chuyen%', '%delivery%', '%giao hàng%'],
   vc_installation:['%lắp đặt%', '%lap dat%', '%install%'],
   vc_customer_care:['%chăm sóc%', '%bảo hành%', '%cskh%', '%customer%', '%bao hanh%'],
@@ -681,6 +682,7 @@ async function getCrmStageByRole(role, pipelineId = null) {
  */
 const CRM_SYNC_TYPE_TO_ROLE = {
   production: 'sx_production',      // Production stage → CRM "Sản xuất"
+  packaging_done: 'sx_completed',   // Production đóng gói xong → CRM "Đã sản xuất"
   delivery: 'vc_delivery',          // Logistics delivery → CRM "Vận chuyển"
   installation: 'vc_installation',  // Logistics installation → CRM "Lắp đặt"
   customer_care: 'vc_customer_care', // Logistics CSKH → CRM "Chăm sóc"
@@ -1084,6 +1086,55 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
     },
     'D',
   );
+
+  // ── Priority 0: cột SX được đánh dấu «Hàng đã hoàn thiện đóng gói» ──
+  // Auto sync CRM sang stage có sync_role='sx_completed' để sale kéo tiếp qua Vận chuyển.
+  if (currentRow?.is_packaging_done === true) {
+    const { data: leadsPk } = await supabase
+      .from('crm_leads')
+      .select('id, code, title, stage_id, pipeline_id, lead_owner_id, assigned_to, sx_handover_at, company_id, project_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, sync_role, is_won, is_lost)')
+      .eq('project_id', projectId)
+      .eq('type', 'deal');
+    await Promise.all(
+      (leadsPk || []).map(async (lead) => {
+        const patch = {};
+        if (preferredSxCol) patch.sx_pipeline_stage_id = preferredSxCol;
+        const canOverwrite = shouldAutoOverwriteCrmStage(lead.stage);
+        const targetId = await getCrmStageByRole('sx_completed', lead.pipeline_id || null)
+          || currentRow?.crm_target_stage_id
+          || null;
+        if (
+          lead.sx_handover_at
+          && canOverwrite
+          && targetId
+          && String(lead.stage_id || '') !== String(targetId)
+        ) {
+          patch.stage_id = targetId;
+        }
+        if (!Object.keys(patch).length) return;
+        await supabase.from('crm_leads').update(patch).eq('id', lead.id);
+        if (patch.stage_id) {
+          try {
+            const actorUserId = lead.assigned_to || lead.lead_owner_id || null;
+            if (actorUserId) {
+              const stageName = currentRow?.name || 'Đóng gói';
+              const body = `📦 [Tự động] Xưởng đã hoàn thiện đóng gói («${stageName}»). Deal chuyển sang «Đã sản xuất» — sale hãy kéo tiếp qua «Vận chuyển» và chọn đơn vị VC/lắp đặt + thời gian đi lấy.`;
+              await supabase.from('crm_lead_comments').insert({
+                lead_id: lead.id,
+                user_id: actorUserId,
+                body,
+              });
+            }
+          } catch (_) { /* ignore comment errors */ }
+          try {
+            const { notifyDealPackagingDone } = require('./vcHandoverNotify');
+            await notifyDealPackagingDone(null, { deal: lead, projectId, sxStage: currentRow }).catch(() => {});
+          } catch (_) { /* ignore notify errors */ }
+        }
+      }),
+    );
+    return;
+  }
 
   // ── Ưu tiên: dùng crm_target_stage_id trực tiếp nếu đã cấu hình ──
   if (currentRow?.crm_target_stage_id) {

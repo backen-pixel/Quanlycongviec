@@ -19,6 +19,36 @@ function writeBuiltinReadSet(set) {
   } catch { /* ignore */ }
 }
 
+/** Lấy company_id từ user object / chuỗi / localStorage.user. */
+export function resolveBuiltinAudienceCompanyId(userOrCompanyId) {
+  if (userOrCompanyId !== undefined && userOrCompanyId !== null && userOrCompanyId !== '') {
+    if (typeof userOrCompanyId === 'object') {
+      return String(userOrCompanyId.company_id || '');
+    }
+    return String(userOrCompanyId);
+  }
+  try {
+    const u = JSON.parse(localStorage.getItem('user') || '{}');
+    return String(u?.company_id || '');
+  } catch {
+    return '';
+  }
+}
+
+/** Bản có companyIds chỉ hiện khi user thuộc đúng công ty; không scope = hiện mọi người. */
+export function isBuiltinVisibleToCompany(item, companyId) {
+  const scope = item?.companyIds || item?.company_ids;
+  if (!Array.isArray(scope) || scope.length === 0) return true;
+  const cid = String(companyId || '');
+  if (!cid) return false;
+  return scope.map(String).includes(cid);
+}
+
+export function getVisibleBuiltinUpdates(userOrCompanyId) {
+  const companyId = resolveBuiltinAudienceCompanyId(userOrCompanyId);
+  return BUILTIN_UPDATES.filter((item) => isBuiltinVisibleToCompany(item, companyId));
+}
+
 export function isBuiltinUpdateRead(id) {
   return readBuiltinReadSet().has(String(id));
 }
@@ -30,32 +60,32 @@ export function markBuiltinUpdateRead(id) {
   writeBuiltinReadSet(set);
 }
 
-export function markAllBuiltinUpdatesRead() {
+export function markAllBuiltinUpdatesRead(userOrCompanyId) {
   const set = readBuiltinReadSet();
-  for (const item of BUILTIN_UPDATES) set.add(String(item.id));
+  for (const item of getVisibleBuiltinUpdates(userOrCompanyId)) set.add(String(item.id));
   writeBuiltinReadSet(set);
 }
 
-export function getUnreadBuiltinUpdates() {
+export function getUnreadBuiltinUpdates(userOrCompanyId) {
   const read = readBuiltinReadSet();
-  return BUILTIN_UPDATES.filter((item) => !read.has(String(item.id)));
+  return getVisibleBuiltinUpdates(userOrCompanyId).filter((item) => !read.has(String(item.id)));
 }
 
 /** Bản builtin chưa đọc mới nhất (theo publishedAt). */
-export function getLatestUnreadBuiltinUpdate() {
-  const sorted = getSortedUnreadBuiltinUpdates();
+export function getLatestUnreadBuiltinUpdate(userOrCompanyId) {
+  const sorted = getSortedUnreadBuiltinUpdates(userOrCompanyId);
   return sorted[0] || null;
 }
 
 /** Tất cả builtin chưa đọc, mới → cũ. */
-export function getSortedUnreadBuiltinUpdates() {
-  return [...getUnreadBuiltinUpdates()].sort(
+export function getSortedUnreadBuiltinUpdates(userOrCompanyId) {
+  return [...getUnreadBuiltinUpdates(userOrCompanyId)].sort(
     (a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0),
   );
 }
 
-export function builtinUpdateUnreadCount() {
-  return getUnreadBuiltinUpdates().length;
+export function builtinUpdateUnreadCount(userOrCompanyId) {
+  return getUnreadBuiltinUpdates(userOrCompanyId).length;
 }
 
 /** Chuẩn hóa để dùng chung với popup release note từ DB. */
@@ -71,6 +101,7 @@ export function builtinToNoteShape(item) {
     version: item.version || null,
     published_at: item.publishedAt || null,
     created_at: item.publishedAt || null,
+    companyIds: item.companyIds || item.company_ids || null,
   };
 }
 

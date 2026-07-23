@@ -1,5 +1,5 @@
 /**
- * Xuất 3 hướng dẫn CRM ra PDF (Chrome headless).
+ * Xuất hướng dẫn CRM ra PDF (Chrome headless).
  * Chạy: node frontend/scripts/export-guide-pdfs.mjs
  */
 import fs from 'fs';
@@ -10,7 +10,8 @@ import { spawnSync } from 'child_process';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const releaseNotes = path.join(root, 'public', 'release-notes');
-const outDir = path.join(root, 'public', 'guides', 'pdf');
+const guidesDir = path.join(root, 'public', 'guides');
+const outDir = path.join(guidesDir, 'pdf');
 const tmpDir = path.join(outDir, '_html');
 
 const chromeCandidates = [
@@ -29,9 +30,18 @@ function findChrome() {
   throw new Error('Không tìm thấy Chrome/Edge. Đặt CHROME_PATH.');
 }
 
+/** Resolve ảnh từ release-notes/ hoặc đường dẫn tương đối trong public/guides/ */
+function resolveImagePath(filename) {
+  const fromRn = path.join(releaseNotes, filename);
+  if (fs.existsSync(fromRn)) return fromRn;
+  const fromGuides = path.join(guidesDir, filename);
+  if (fs.existsSync(fromGuides)) return fromGuides;
+  return null;
+}
+
 function imgDataUri(filename) {
-  const full = path.join(releaseNotes, filename);
-  if (!fs.existsSync(full)) {
+  const full = resolveImagePath(filename);
+  if (!full) {
     console.warn('Thiếu ảnh:', filename);
     return '';
   }
@@ -284,6 +294,78 @@ const guides = [
         <li>Đã chọn đúng khu vực đích</li>
         <li>NV thuộc khu vực đó (picker không trống)</li>
         <li>Sau khi lưu: panel Thông tin hiện đúng khu vực + phụ trách mới</li>
+      </ul>
+    `),
+  },
+  {
+    file: '04-gop-lead-thu-cong.pdf',
+    title: 'Gộp Lead thủ công trên Kanban',
+    html: wrap('Gộp Lead thủ công trên Kanban', `
+      <h2>Khi nào cần gộp Lead?</h2>
+      <p>Khi cùng một khách bị tạo <strong>nhiều lead</strong> (Facebook, Zalo, nhập tay trùng…), dữ liệu bị tách: nhiệm vụ, tài liệu, báo giá nằm rải. <strong>Gộp thủ công</strong> giúp bạn tự chọn các thẻ trên Kanban, giữ lại một bản ghi chính và gom dữ liệu từ các bản thừa.</p>
+
+      <h2>Bước 1 — Vào Kanban Lead</h2>
+      <ol>
+        <li>Mở <strong>CRM → Pipeline</strong> (hoặc Dashboard CRM).</li>
+        <li>Chọn tab <strong>Leads</strong>.</li>
+        <li>Đảm bảo đang ở chế độ xem <strong>Kanban</strong>.</li>
+      </ol>
+      ${imgTag('gop-lead/01-kanban-tab-leads.png', 'Kanban tab Leads')}
+
+      <h2>Bước 2 — Tìm ô chọn trên thẻ</h2>
+      <p>Rê chuột lên thẻ Lead → góc <strong>phải trên</strong> hiện ô chọn. Bấm ô này để chọn thẻ cần gộp.</p>
+      ${imgTag('gop-lead/02-o-chon-tren-the.png', 'Ô chọn trên thẻ Lead')}
+
+      <h2>Bước 3 — Chọn ít nhất 2 thẻ</h2>
+      <ol>
+        <li>Tích chọn thẻ thứ nhất.</li>
+        <li>Tích chọn thẻ thứ hai (hoặc nhiều hơn).</li>
+        <li>Thẻ được chọn có <strong>viền vàng</strong>.</li>
+        <li>Thanh vàng hiện phía trên: <strong>Đã chọn N lead</strong>.</li>
+      </ol>
+      ${imgTag('gop-lead/03-chon-2-the-thanh-vang.png', 'Đã chọn 2 lead — thanh vàng')}
+
+      <h2>Bước 4 — Bấm Gộp đã chọn</h2>
+      <p>Trên thanh vàng, bấm nút cam <strong>Gộp đã chọn</strong> để mở popup.</p>
+      ${imgTag('gop-lead/04-nut-gop-da-chon.png', 'Nút Gộp đã chọn')}
+
+      <h2>Bước 5 — Chọn bản ghi giữ lại</h2>
+      <p>Trong popup: mỗi thẻ hiện mã lead, tiêu đề, khách hàng, số tài liệu. Bấm <strong>ô tròn (radio)</strong> bên trái thẻ muốn <strong>giữ lại</strong>.</p>
+      ${imgTag('gop-lead/05-modal-chon-ban-giu.png', 'Chọn bản ghi giữ lại')}
+
+      <h2>Bước 6 — Chọn cách gộp dữ liệu</h2>
+      <ul>
+        <li><strong>Gộp từ cả hai bản ghi</strong> (khuyến nghị): gom KH, tài liệu, nhiệm vụ, hoạt động, báo giá, đơn hàng, hóa đơn, Facebook… sang bản giữ.</li>
+        <li><strong>Chỉ giữ bản được chọn:</strong> không chuyển dữ liệu từ bản kia — có thể mất dữ liệu bản bị loại.</li>
+      </ul>
+      ${imgTag('gop-lead/06-modal-du-lieu.png', 'Chọn cách gộp dữ liệu')}
+
+      <h2>Bước 7 — Tiêu đề và xác nhận</h2>
+      <p>Chọn cách lấy tiêu đề (giữ bản chọn / lấy từ bản kia / tùy chỉnh), rồi bấm <strong>Xác nhận gộp</strong>.</p>
+      ${imgTag('gop-lead/07-modal-tieu-de-xac-nhan.png', 'Tiêu đề và nút Xác nhận gộp')}
+      <p>Cùng thao tác cũng dùng được trên tab <strong>Deals</strong>.</p>
+
+      <h2>Sau khi gộp — kiểm tra gì?</h2>
+      <ul>
+        <li>Trên Kanban chỉ còn <strong>một</strong> thẻ (bản giữ lại).</li>
+        <li>Mở chi tiết lead → kiểm tra <strong>tài liệu</strong>, <strong>nhiệm vụ</strong>, <strong>báo giá</strong> đã gom đủ.</li>
+        <li>Lead thừa không còn trong danh sách.</li>
+      </ul>
+
+      <div class="note">
+        <strong>Cảnh báo:</strong><br/>
+        • Gộp <strong>không hoàn tác</strong> dễ dàng — chọn đúng bản giữ lại trước khi xác nhận.<br/>
+        • Không gộp hai lead của <strong>hai khách khác nhau</strong> trừ khi chắc chắn là cùng người.<br/>
+        • Tùy chọn <strong>Chỉ giữ bản được chọn</strong> có thể xóa dữ liệu của thẻ bị loại.
+      </div>
+
+      <h2>Checklist</h2>
+      <ul class="check">
+        <li>Đã vào tab Leads · chế độ Kanban</li>
+        <li>Đã chọn đúng ≥ 2 thẻ (viền vàng)</li>
+        <li>Đã chọn đúng bản ghi giữ lại</li>
+        <li>Đã chọn cách gộp dữ liệu phù hợp</li>
+        <li>Sau gộp: còn 1 thẻ; tài liệu / nhiệm vụ / báo giá đã gom</li>
       </ul>
     `),
   },

@@ -416,7 +416,13 @@ r.put('/deals/:leadId/sync-value', async (req, res) => {
     res.json({
       ok: true,
       project,
-      value_sync: { crm_value: Number(lead.estimated_value) || 0, sx_value: result.value, in_sync: true },
+      value_sync: {
+        crm_value: Number(lead.estimated_value) || 0,
+        project_value: result.value,
+        sx_value: result.value,
+        production_value: Number(project?.production_value) || 0,
+        in_sync: true,
+      },
     });
   } catch (e) {
     console.error('[accounting/deals/:id/sync-value]', e);

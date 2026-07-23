@@ -832,6 +832,13 @@ export type WorkshopIntakeResult = {
   project_name?: string;
   deal_id?: string;
   deal_code?: string;
+  timing?: {
+    total_ms?: number;
+    api_total_ms?: number;
+    phases_ms?: Record<string, number>;
+    route_invalidate_ms?: number;
+    route_emit_ms?: number;
+  };
 };
 
 /** Tạo đến xưởng trực tiếp trên Kanban SX — không qua pipeline CRM. */

@@ -1,8 +1,220 @@
 /**
  * Cập nhật tích hợp sẵn — hiển thị trên /updates (bổ sung release notes từ DB).
  * Cập nhật file này khi ship tính năng lớn.
+ *
+ * companyIds (tuỳ chọn): chỉ hiện cho user thuộc các company_id này.
+ * Không có / mảng rỗng = hiện cho mọi người.
  */
+export const NEXTGO_COMPANY_ID = '87479a83-1145-43b7-b090-3e40812cb5a9';
+
 export const BUILTIN_UPDATES = [
+  {
+    id: '2026-07-huong-dan-gop-lead',
+    version: '2.4.7',
+    category: 'guide',
+    publishedAt: '2026-07-22T04:30:00.000Z',
+    title: 'Hướng dẫn — Gộp Lead thủ công trên Kanban',
+    content: `## Khi nào cần gộp Lead?
+
+Khi cùng một khách bị tạo **nhiều lead** (Facebook, Zalo, nhập tay trùng…), dữ liệu bị tách: nhiệm vụ, tài liệu, báo giá nằm rải. **Gộp thủ công** giúp bạn tự chọn các thẻ trên Kanban, giữ lại một bản ghi chính và gom dữ liệu từ các bản thừa.
+
+
+## Bước 1 — Vào Kanban Lead
+
+1. Mở **CRM → Pipeline** (hoặc Dashboard CRM).
+2. Chọn tab **Leads**.
+3. Đảm bảo đang ở chế độ xem **Kanban**.
+
+![Kanban tab Leads](/guides/gop-lead/01-kanban-tab-leads.png)
+
+
+## Bước 2 — Tìm ô chọn trên thẻ
+
+Rê chuột lên thẻ Lead → góc **phải trên** hiện ô chọn (icon vuông).
+
+Bấm ô này để chọn thẻ cần gộp.
+
+![Ô chọn trên thẻ Lead](/guides/gop-lead/02-o-chon-tren-the.png)
+
+
+## Bước 3 — Chọn ít nhất 2 thẻ
+
+1. Tích chọn **thẻ thứ nhất**.
+2. Tích chọn **thẻ thứ hai** (hoặc nhiều hơn).
+3. Thẻ được chọn có **viền vàng**.
+4. Thanh vàng hiện phía trên cột: **Đã chọn N lead**.
+
+![Đã chọn 2 lead — thanh vàng](/guides/gop-lead/03-chon-2-the-thanh-vang.png)
+
+
+## Bước 4 — Bấm Gộp đã chọn
+
+Trên thanh vàng, bấm nút cam **Gộp đã chọn** để mở popup.
+
+![Nút Gộp đã chọn](/guides/gop-lead/04-nut-gop-da-chon.png)
+
+
+## Bước 5 — Chọn bản ghi giữ lại
+
+Trong popup **Gộp Lead đã chọn**:
+
+- Mỗi thẻ hiện **mã lead**, tiêu đề, khách hàng, số tài liệu.
+- Bấm **ô tròn (radio)** bên trái thẻ bạn muốn **giữ lại**.
+- Thẻ được chọn sẽ có viền vàng nổi bật.
+
+![Chọn bản ghi giữ lại](/guides/gop-lead/05-modal-chon-ban-giu.png)
+
+
+## Bước 6 — Chọn cách gộp dữ liệu
+
+Mục **Dữ liệu & tài liệu**:
+
+- **Gộp từ cả hai bản ghi** (khuyến nghị): gom khách hàng, tài liệu, nhiệm vụ, hoạt động, báo giá, đơn hàng, hóa đơn, Facebook… sang bản giữ.
+- **Chỉ giữ bản được chọn:** không chuyển dữ liệu từ bản kia — dữ liệu bản bị loại có thể mất (dùng thận trọng).
+
+![Chọn cách gộp dữ liệu](/guides/gop-lead/06-modal-du-lieu.png)
+
+
+## Bước 7 — Tiêu đề và xác nhận
+
+Mục **Tiêu đề sau khi gộp**:
+
+- Giữ tiêu đề của bản ghi được chọn giữ, hoặc
+- Dùng tiêu đề từ bản kia, hoặc
+- Nhập tiêu đề tùy chỉnh.
+
+Cuối cùng bấm **Xác nhận gộp**.
+
+![Tiêu đề và nút Xác nhận gộp](/guides/gop-lead/07-modal-tieu-de-xac-nhan.png)
+
+Cùng thao tác cũng dùng được trên tab **Deals**.
+
+
+## Sau khi gộp — kiểm tra gì?
+
+- Trên Kanban chỉ còn **một** thẻ (bản giữ lại).
+- Mở chi tiết lead → kiểm tra **tài liệu**, **nhiệm vụ**, **báo giá** đã gom đủ.
+- Lead thừa không còn trong danh sách.
+
+
+## Cảnh báo
+
+- Gộp **không hoàn tác** dễ dàng — chọn đúng bản giữ lại trước khi xác nhận.
+- Không gộp hai lead của **hai khách khác nhau** trừ khi chắc chắn là cùng người.
+- Tùy chọn **Chỉ giữ bản được chọn** có thể xóa dữ liệu của thẻ bị loại.`,
+  },
+  {
+    id: '2026-07-crm-core-overview',
+    version: '2.4.6',
+    category: 'feature',
+    publishedAt: '2026-07-21T09:30:00.000Z',
+    title: 'CRM Core — Tổng quan cải tiến (modular + bảo mật nhiệm vụ)',
+    content: `## CRM Core đã cải thiện gì?
+
+Bản này củng cố **nền tảng CRM** (API backend) sau khi tách monolith thành các module. Giao diện Kanban / Lead / Deal giữ nguyên; thay đổi chủ yếu ở độ ổn định và quyền truy cập.
+
+### 1. Kiến trúc module rõ ràng
+- CRM tách theo nhóm chức năng: dashboard, pipeline, lead/deal, nhiệm vụ, báo cáo, tài liệu thương mại, taxonomy…
+- Thứ tự mount đúng: route tĩnh (\`/leads/picker\`, quét trùng…) **không bị** \`/leads/:id\` nuốt.
+- Giữ đủ endpoint cũ (224 từ trước khi tách) và các tính năng mới có chủ ý (allowlist SX, đặt lịch VC, chuyển khu vực, gán lại SX…).
+
+### 2. Đồng bộ schema an toàn hơn
+- Cờ tương thích DB (join VC pipeline, màu loại lead…) dùng **một object dùng chung** giữa mọi module.
+- Tránh tình trạng module A biết thiếu cột/FK nhưng module B vẫn query join → lỗi 500 rải rác.
+
+### 3. Bảo mật nhiệm vụ Lead/Deal
+- Trước: chỉ cần đăng nhập + biết UUID là có thể gọi API nhiệm vụ.
+- Sau: chỉ xem/sửa nhiệm vụ khi là người phụ trách, thành viên / được chia sẻ, được gán task, hoặc công ty SX được giao (executor) / chủ dự án.
+- NV sản xuất và đối tác được giao việc **vẫn vào được** tab Nhiệm vụ đúng phạm vi.
+
+### 4. Kiểm chứng route có bằng chứng
+- Baseline so sánh lấy từ Git (trước khi tách CRM).
+- Manifest route tạo lại bằng script (\`crm:route-inventory\`) — không chỉnh tay để “ép” số liệu.
+- Hiện tại: **230** endpoint runtime, **0** thiếu so với baseline, **0** thêm ngoài danh sách cho phép.
+
+### Ai cần lưu ý?
+- **NVKD / Admin CRM:** dùng CRM như cũ; nếu báo 403 ở tab Nhiệm vụ → kiểm tra phụ trách / thành viên deal.
+- **NV SX:** vẫn xem nhiệm vụ trên deal khi được giao hoặc thuộc dự án / công ty thực hiện.
+- **Kỹ thuật:** Quality Gate độc lập trước khi bổ sung bộ test mutation/upload/realtime.`,
+  },
+  {
+    id: '2026-07-crm-deal-chuyen-san-xuat-nextgo',
+    version: '2.4.3',
+    category: 'guide',
+    publishedAt: '2026-07-21T07:00:00.000Z',
+    companyIds: [NEXTGO_COMPANY_ID],
+    title: '🏭 Hướng dẫn — Chuyển Deal CRM sang Sản xuất (NextGo)',
+    content: `## Tổng quan luồng CRM → Xưởng bao bì NextGo
+
+Deal thắng trên CRM → chọn xưởng **NextGo** + phân loại bao bì → dự án vào cột **Chờ vào xưởng** → up file thiết kế (Tài liệu) → trao đổi qua tab Bình luận → CRM xác nhận → xưởng chuyển cột tiếp theo.
+
+Mẫu minh họa: Công Ty TNHH Bao Bì NextGo · Deal **DEAL-2026-853** → dự án **TB-2026-447** · phân loại **Hộp cứng**.
+
+
+## Bước 1 — CRM: Chuyển deal sang cột Thắng
+
+Vào CRM → Dashboard → tab **Deals**, lọc Công ty **NextGo**.
+
+Trên thẻ deal cần chuyển, bấm **Chuyển cột nhanh** (hoặc kéo thả) sang cột **Thắng**.
+
+Ngay sau đó, popup **Chuyển công ty SX** hiện ra (bắt buộc):
+
+- Công ty Sản xuất: chọn **NextGo** (xưởng bao bì)
+- Phân loại: Túi giấy / Hộp cứng / Hộp mềm / Hộp carton bồi in offset / Hộp carton / Thùng carton — ★ = gợi ý theo loại CRM
+- Tích xác nhận → **Xác nhận chuyển** → đếm 5 giây → tạo mã dự án **TB-…**
+
+![Deal trước khi chuyển sang cột Thắng](/guides/nextgo-sx/00-crm-deal-truoc-khi-chuyen.png)
+
+![Popup chọn công ty SX NextGo và phân loại bao bì](/guides/nextgo-sx/01-chon-cong-ty-san-xuat.png)
+
+![Deal đã ở cột Thắng — badge SX Chờ vào xưởng](/guides/nextgo-sx/01b-deal-da-o-cot-thang.png)
+
+**Lưu ý:** Deal chưa có dự án **không kéo thẳng** sang cột sau Thắng (Thiết kế chi tiết, Sản xuất, Giao hàng…).
+
+
+## Bước 2 — Xưởng: Dự án ở cột Chờ vào xưởng
+
+Chuyển sang module **Xưởng SX** → Deal vào xưởng (\`/sx/dashboard\`).
+
+Đặt bộ lọc khớp bước 1:
+
+- Xưởng: **NextGo**
+- Phân loại: **Hộp cứng** (hoặc Tất cả)
+- Có thể tìm mã **TB-2026-447** hoặc tên khách
+
+Pipeline NextGo: Chờ vào xưởng → Tiếp nhận đơn → Thiết kế chi tiết → Chuẩn bị NVL → Sản xuất → QC nội bộ → Đóng gói & xuất kho → Giao hàng → Hoàn thành.
+
+![Kanban xưởng NextGo — cột Chờ vào xưởng](/guides/nextgo-sx/02-deal-o-cot-cho-vao-xuong.png)
+
+
+## Bước 3 — Tài liệu và bình luận
+
+### 3a. Tab Tài liệu
+
+Mở dự án → tab **📋 Tài liệu** → **Upload file xưởng** (PDF, AI, CDR, JPG…). Bật **Chia sẻ CRM** nếu NVKD cần xem trên deal.
+
+![Tab Tài liệu — Upload file xưởng](/guides/nextgo-sx/04-tab-tai-lieu.png)
+
+### 3b. Tab Bình luận (CRM ↔ SX)
+
+Tab **💬 Bình luận** → gõ nội dung, @ nhắc người phụ trách → đính kèm file hoặc Ctrl+V → **Đăng**. Phía CRM mở deal → tab Bình luận để phản hồi.
+
+![Chi tiết dự án SX — tab Bình luận](/guides/nextgo-sx/06-binh-luan-sx.png)
+
+
+## Ai làm gì?
+
+**NVKD / Admin CRM**
+- Chuyển deal sang Thắng, chọn NextGo + phân loại bao bì
+- Kiểm tra file thiết kế và phản hồi trên Bình luận
+
+**Nhân viên Sản xuất**
+- Nhận thẻ ở cột Chờ vào xưởng / Tiếp nhận đơn
+- Up file tab Tài liệu; đính kèm trong Bình luận khi cần trao đổi nhanh
+
+**Admin**
+- Cấu hình phân loại & bộ nhiệm vụ tại Pipeline xưởng (\`/sx/pipeline-settings\`, \`/sx/task-templates\`)`,
+  },
   {
     id: '2026-07-crm-revert-deal-to-lead',
     version: '2.4.3',

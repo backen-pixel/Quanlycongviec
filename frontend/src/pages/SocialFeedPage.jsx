@@ -4,7 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isSystemAdmin as checkSystemAdmin } from '../lib/adminRole';
-import { getInitials } from '../lib/utils';
+import { getInitials, timeAgo } from '../lib/utils';
 import {
   ThumbsUp, MessageCircle,   Trash2, Send, Loader2, Building2,
   Image as ImageIcon, Link2, RefreshCw, Heart, FileText, X,
@@ -93,17 +93,6 @@ function uploadSocialFile(file) {
   const url = useStream ? '/upload/internal-social-stream' : '/upload/internal-social';
   const timeout = useStream || file.size > UPLOAD_STREAM_BYTES ? 600000 : 120000;
   return api.post(url, fd, { timeout });
-}
-
-function timeAgo(iso) {
-  if (!iso) return '';
-  const t = new Date(iso).getTime();
-  const s = Math.floor((Date.now() - t) / 1000);
-  if (s < 60) return 'Vừa xong';
-  if (s < 3600) return `${Math.floor(s / 60)} phút trước`;
-  if (s < 86400) return `${Math.floor(s / 3600)} giờ trước`;
-  if (s < 604800) return `${Math.floor(s / 86400)} ngày trước`;
-  return new Date(iso).toLocaleDateString('vi-VN', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
 function canModerate(role) {

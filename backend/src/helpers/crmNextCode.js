@@ -6,7 +6,7 @@ async function nextCrmCode(prefix) {
   const { data } = await supabase.from('code_sequences').select('current_number, year').eq('prefix', prefix).single();
   let num = 1;
   if (data) {
-    num = data.year === year ? data.current_number + 1 : 1;
+    num = data.year === year ? (data.current_number || 0) + 1 : 1;
   }
   await supabase.from('code_sequences').upsert({ prefix, current_number: num, year });
   return `${prefix}-${year}-${String(num).padStart(3, '0')}`;

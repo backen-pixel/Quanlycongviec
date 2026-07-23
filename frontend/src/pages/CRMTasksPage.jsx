@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { formatDate } from '../lib/utils';
+import { formatDate, PRIORITY_LABELS, TASK_PRIORITY_COLORS as PRIORITY_COLORS } from '../lib/utils';
 import {
   List, Calendar, Users, AlertTriangle, Search, CheckCircle2, Circle, Clock,
   User, Eye, Target, X, Building2,
@@ -17,8 +17,6 @@ const ALL_STAGES = [
   { slug: 'quotation', label: 'Báo giá', icon: '💰', color: '#F59E0B' },
   { slug: 'contract', label: 'Hợp đồng', icon: '📝', color: '#10B981' },
 ];
-const PRIORITY_COLORS = { low: 'bg-gray-100 text-gray-600', medium: 'bg-blue-100 text-blue-700', high: 'bg-orange-100 text-orange-700', urgent: 'bg-red-100 text-red-700' };
-const PRIORITY_LABELS = { low: 'Thấp', medium: 'TB', high: 'Cao', urgent: 'Gấp' };
 const STATUS_ICONS = { pending: Circle, in_progress: Clock, completed: CheckCircle2 };
 
 export default function CRMTasksPage() {

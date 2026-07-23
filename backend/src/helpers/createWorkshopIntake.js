@@ -21,6 +21,23 @@ let cachedDefaultFlowId = null;
 let cachedDefaultFlowAt = 0;
 const FLOW_CACHE_TTL_MS = 10 * 60 * 1000;
 
+/** Đo ms từng phase — trả về client để biết bước nào chậm. */
+function createIntakeTimer() {
+  const t0 = Date.now();
+  const phases = {};
+  let last = t0;
+  return {
+    mark(name) {
+      const now = Date.now();
+      phases[name] = now - last;
+      last = now;
+    },
+    done() {
+      return { phases_ms: phases, total_ms: Date.now() - t0 };
+    },
+  };
+}
+
 async function resolveDefaultFlowId() {
   if (cachedDefaultFlowId && Date.now() - cachedDefaultFlowAt < FLOW_CACHE_TTL_MS) {
     return cachedDefaultFlowId;
@@ -151,9 +168,9 @@ async function insertWorkshopProject({ deal, companyId, workshopTypeId, userId, 
     status: 'consulting',
     current_stage_id: null,
     install_address: deal.install_address || null,
-    /** Doanh thu — chỉ hiện ở SX khi created_from_sx */
-    estimated_value: deal.estimated_value ?? null,
-    /** Chi phí sản xuất — công nợ SX = production_value − deposit */
+    /** Xưởng không lưu/hiện doanh thu — chỉ chi phí xưởng */
+    estimated_value: null,
+    /** Chi phí xưởng — công nợ SX = production_value − deposit */
     production_value: cost,
     deposit_amount: Number(deal.deposit_amount) > 0 ? Number(deal.deposit_amount) : null,
     created_from_sx: true,
@@ -289,6 +306,7 @@ async function createWorkshopIntakeOrder(opts) {
     externalCatalogId,
   } = opts;
 
+  const timer = createIntakeTimer();
   const titleTrim = String(title || '').trim();
   if (!titleTrim) return { ok: false, error: 'Nhập tên đơn', statusCode: 400 };
 
@@ -304,6 +322,7 @@ async function createWorkshopIntakeOrder(opts) {
     resolveDefaultFlowId(),
     nextCrmCode('DEAL'),
   ]);
+  timer.mark('prep');
 
   if (!wtCheck.ok) return { ok: false, error: wtCheck.error, statusCode: 400 };
   if (!customerResult.ok) return { ok: false, error: customerResult.error, statusCode: customerResult.statusCode || 400 };
@@ -406,6 +425,7 @@ async function createWorkshopIntakeOrder(opts) {
       console.warn('[workshop-intake] external company catalog:', e.message);
     }
   }
+  timer.mark('partner');
 
   // Deal nội bộ liên kết SX — không gán phụ trách CRM (= người tạo đơn xưởng).
   // Nếu gán assigned_to = userId thì deal xuất hiện oan trong «Deal của tôi» trên CRM mobile/web.
@@ -432,6 +452,7 @@ async function createWorkshopIntakeOrder(opts) {
   };
 
   const { data: deal, error: dealErr } = await insertCrmLeadResilient(dealRow, 'id, code, title');
+  timer.mark('insert_deal');
   if (dealErr) return { ok: false, error: dealErr.message, statusCode: 500 };
 
   try {
@@ -444,6 +465,7 @@ async function createWorkshopIntakeOrder(opts) {
   } catch (partErr) {
     console.warn('[workshop-intake] auto participants:', partErr.message);
   }
+  timer.mark('participants');
 
   let project;
   try {
@@ -458,6 +480,7 @@ async function createWorkshopIntakeOrder(opts) {
   } catch (e) {
     return { ok: false, error: e.message || 'Không tạo được dự án', statusCode: 500, deal_id: deal.id };
   }
+  timer.mark('insert_project');
 
   const projectId = project.id;
 
@@ -493,12 +516,14 @@ async function createWorkshopIntakeOrder(opts) {
       deal_id: deal.id,
     };
   }
+  timer.mark('link_staff');
 
   try {
     await syncCrmLeadSxPipelineFromProject(projectId);
   } catch (syncErr) {
     console.warn('[workshop-intake] sync kanban:', syncErr.message);
   }
+  timer.mark('sync_kanban');
 
   try {
     const { ensureDealLeadDocumentsForModuleTransition } = require('./ensureDealLeadDocumentsForModuleTransition');
@@ -506,6 +531,7 @@ async function createWorkshopIntakeOrder(opts) {
   } catch (docErr) {
     console.warn('[workshop-intake] lead_documents:', docErr.message);
   }
+  timer.mark('docs');
 
   scheduleWorkshopIntakeBackground({
     req,
@@ -532,6 +558,14 @@ async function createWorkshopIntakeOrder(opts) {
   } catch (intakeNotifyErr) {
     console.warn('[workshop-intake] notify/socket:', intakeNotifyErr.message);
   }
+  timer.mark('notify');
+
+  const timing = timer.done();
+  console.info('[workshop-intake] timing', {
+    deal_code: deal.code,
+    project_code: project.code,
+    ...timing,
+  });
 
   return {
     ok: true,
@@ -542,6 +576,7 @@ async function createWorkshopIntakeOrder(opts) {
     project_name: project.name,
     workshop_type_id: wtCheck.type.id,
     tasks_created: 0,
+    timing,
   };
 }
 

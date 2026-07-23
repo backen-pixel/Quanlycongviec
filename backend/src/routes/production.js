@@ -696,6 +696,7 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
       target_workshop_type_id: targetWorkshopTypeId,
       crm_sync_type: isIntake || wantsHandover || wantsSwitchType ? null : (b.crm_sync_type || null),
       crm_target_stage_id: isIntake || wantsHandover || wantsSwitchType ? null : (b.crm_target_stage_id || null),
+      is_packaging_done: !isIntake && !wantsHandover && !wantsSwitchType ? !!b.is_packaging_done : false,
       company_id: insertCompanyId || null,
       workshop_type_id: workshopTypeId,
       ...parseProductionStageKpiBody(b),
@@ -751,8 +752,8 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
     ['name', 'color', 'icon', 'order_index', 'is_active', 'workflow_stage_id', 'bucket_slug',
       'is_handover_to_logistics', 'converts_workshop_type', 'target_workshop_type_id',
       'crm_sync_type', 'crm_target_stage_id', 'progress_percent',
-      'workshop_type_id'].forEach((f) => {
-      if (b[f] !== undefined) update[f] = b[f];
+      'workshop_type_id', 'is_packaging_done'].forEach((f) => {
+      if (b[f] !== undefined) update[f] = f === 'is_packaging_done' ? !!b[f] : b[f];
     });
     if (b.is_switch_workshop_type !== undefined && b.converts_workshop_type === undefined) {
       update.converts_workshop_type = b.is_switch_workshop_type;
@@ -770,6 +771,7 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
       update.crm_sync_type = null;
       update.crm_target_stage_id = null;
       update.workshop_type_id = null;
+      update.is_packaging_done = false;
       delete update.default_probability;
       delete update.sla_days;
       delete update.counts_as_won_revenue;
@@ -1115,14 +1117,31 @@ r.post('/workshop-intake', requirePermission('projects', 'create'), async (req, 
       });
     }
 
+    const routeT0 = Date.now();
     await rcInvalidateTags(['production', 'crm']);
+    const invalidateMs = Date.now() - routeT0;
+    let emitMs = 0;
     try {
+      const emitT0 = Date.now();
       const { emitProductionBoardRealtime } = require('../helpers/workshopIntakeNotify');
       const io = req.app.get('io');
       await emitProductionBoardRealtime(result.project_id, io, 'workshop_intake_api');
+      emitMs = Date.now() - emitT0;
     } catch (emitErr) {
       console.warn('[production/workshop-intake] emit board:', emitErr.message);
     }
+    const createMs = Number(result.timing?.total_ms) || 0;
+    const timing = {
+      ...(result.timing || {}),
+      route_invalidate_ms: invalidateMs,
+      route_emit_ms: emitMs,
+      api_total_ms: createMs + invalidateMs + emitMs,
+    };
+    console.info('[production/workshop-intake] timing', {
+      deal_code: result.deal_code,
+      project_code: result.project_code,
+      ...timing,
+    });
     res.status(201).json({
       project_id: result.project_id,
       project_code: result.project_code,
@@ -1132,6 +1151,7 @@ r.post('/workshop-intake', requirePermission('projects', 'create'), async (req, 
       deal_code: result.deal_code,
       company_id: companyId,
       workshop_type_id: result.workshop_type_id || null,
+      timing,
     });
   } catch (e) {
     console.error('[production/workshop-intake]', e);

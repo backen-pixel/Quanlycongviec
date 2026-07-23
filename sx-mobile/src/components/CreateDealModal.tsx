@@ -505,6 +505,7 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
 
     setBusy(true);
     try {
+      const t0 = Date.now();
       const res = await createWorkshopIntake({
         title,
         company_id: companyId,
@@ -518,9 +519,19 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
         description: description || null,
         external_company_name: resolvedExternalName || null,
       });
+      const elapsedMs = Date.now() - t0;
+      const apiMs = Number(res?.timing?.api_total_ms ?? res?.timing?.total_ms);
+      const elapsedLabel = elapsedMs < 1000 ? `${elapsedMs}ms` : `${(elapsedMs / 1000).toFixed(1)}s`;
+      const apiLabel = Number.isFinite(apiMs)
+        ? (apiMs < 1000 ? `${Math.round(apiMs)}ms` : `${(apiMs / 1000).toFixed(1)}s`)
+        : elapsedLabel;
       reset();
       const code = res.project_code || res.deal_code || '';
-      onCreated(code ? `Đã tạo đơn xưởng ${code}` : 'Đã tạo đơn xưởng');
+      onCreated(
+        code
+          ? `Đã tạo đơn xưởng ${code} (${elapsedLabel}, API ${apiLabel})`
+          : `Đã tạo đơn xưởng (${elapsedLabel}, API ${apiLabel})`,
+      );
       onClose();
     } catch (e) {
       setErr(formatApiError(e));

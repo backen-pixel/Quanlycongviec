@@ -201,7 +201,7 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId, sour
       discount_type: 'amount',
       discount_value: computedDiscount,
       notes: notesParts.join('\n\n'),
-      payment_terms: 'Thanh toán 50% khi ký HĐ, 50% khi bàn giao',
+      payment_terms: 'Thanh toán 40% khi ký HĐ, Thanh toán 60% khi bàn giao',
       approved_by: user?.id || '',
       deposit_amount: sum?.deposit_amount > 0 ? sum.deposit_amount : null,
       deposit_received: sum?.deposit_received === true || sum?.deposit_received === false ? sum.deposit_received : null,

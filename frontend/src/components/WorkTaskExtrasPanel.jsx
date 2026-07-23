@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ChevronDown, ChevronUp, ExternalLink, Eye, FileUp, MessageSquare, Plus, Save, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
+import { compressImage } from '../lib/compressImage';
 import { getFileDownloadAnchorProps, publicFileUrl } from '../lib/publicFileUrl';
 import { AttachmentFileIcon, inferAttachmentDocType, TASK_ATTACHMENT_FILE_ACCEPT } from '../lib/attachmentFileIcon';
 import { mergeUploadProgressState, uploadSingleFileWithProgress } from '../lib/uploadProgressEta';
@@ -13,25 +14,6 @@ import UploadFileLightbox, {
 } from './UploadFileLightbox';
 import { FilePreviewOpenLink } from '../context/FilePreviewContext';
 import CommentDisplayHiddenBanner, { useCommentShowOnScreenEnabled } from './CommentDisplayHiddenBanner';
-
-function compressImage(file, maxWidth = 1920, quality = 0.8) {
-  return new Promise((resolve) => {
-    if (!file.type.startsWith('image/') || file.size < 500 * 1024) { resolve(file); return; }
-    const img = new Image();
-    img.onload = () => {
-      const scale = Math.min(1, maxWidth / img.width);
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width * scale;
-      canvas.height = img.height * scale;
-      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob((blob) => {
-        resolve(blob ? new File([blob], file.name, { type: 'image/jpeg' }) : file);
-      }, 'image/jpeg', quality);
-    };
-    img.onerror = () => resolve(file);
-    img.src = URL.createObjectURL(file);
-  });
-}
 
 function isImageAtt(att) {
   if (!att?.file_url) return false;

@@ -12,10 +12,10 @@ import { builtinUpdateUnreadCount } from '../lib/releaseNotesRead';
 export function useReleaseNotesUnread() {
   const { user } = useAuth();
   const [dbUnread, setDbUnread] = useState(0);
-  const [builtinUnread, setBuiltinUnread] = useState(() => builtinUpdateUnreadCount());
+  const [builtinUnread, setBuiltinUnread] = useState(() => builtinUpdateUnreadCount(user));
 
   const refresh = useCallback(async () => {
-    setBuiltinUnread(builtinUpdateUnreadCount());
+    setBuiltinUnread(builtinUpdateUnreadCount(user));
     if (!user) {
       setDbUnread(0);
       return;
@@ -32,16 +32,16 @@ export function useReleaseNotesUnread() {
     refresh();
     const onStorage = (e) => {
       if (e.key === 'release_notes_read_builtin_ids') {
-        setBuiltinUnread(builtinUpdateUnreadCount());
+        setBuiltinUnread(builtinUpdateUnreadCount(user));
       }
     };
     window.addEventListener('storage', onStorage);
-    const t = setInterval(() => setBuiltinUnread(builtinUpdateUnreadCount()), 5000);
+    const t = setInterval(() => setBuiltinUnread(builtinUpdateUnreadCount(user)), 5000);
     return () => {
       window.removeEventListener('storage', onStorage);
       clearInterval(t);
     };
-  }, [refresh]);
+  }, [refresh, user]);
 
   const total = dbUnread + builtinUnread;
 

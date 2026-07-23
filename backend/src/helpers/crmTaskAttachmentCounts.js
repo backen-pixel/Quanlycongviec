@@ -1,6 +1,13 @@
+const CRM_NOTE_DOC_TYPES = new Set(['task_note', 'task_inline_note', 'checklist_inline_note']);
+
+function isCrmNoteDocType(docType) {
+  return CRM_NOTE_DOC_TYPES.has(String(docType || ''));
+}
+
 /**
- * Map task_id -> { files, notes } cho CRM tasks (doc_type = task_note → note).
- * Ưu tiên RPC SQL (161) để tránh trả về quá nhiều dòng attachment → statement timeout.
+ * Map task_id -> { files, notes } cho CRM tasks.
+ * Ghi chú: task_note / task_inline_note / checklist_inline_note; còn lại = file.
+ * Ưu tiên RPC SQL (161/460) để tránh trả về quá nhiều dòng attachment → statement timeout.
  */
 async function loadCrmTaskAttachmentCountMap(supabase, taskIds) {
   const countMap = {};
@@ -34,7 +41,7 @@ async function loadCrmTaskAttachmentCountMap(supabase, taskIds) {
     if (error) throw error;
     (attCounts || []).forEach((a) => {
       if (!countMap[a.task_id]) countMap[a.task_id] = { files: 0, notes: 0 };
-      if (a.doc_type === 'task_note') countMap[a.task_id].notes += 1;
+      if (isCrmNoteDocType(a.doc_type)) countMap[a.task_id].notes += 1;
       else countMap[a.task_id].files += 1;
     });
   }

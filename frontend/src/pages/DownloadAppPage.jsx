@@ -4,6 +4,7 @@ import {
   Download, Loader2, RefreshCw, Smartphone, AlertCircle, CheckCircle2, Package,
 } from 'lucide-react';
 import api from '../lib/api';
+import { formatDateTime } from '../lib/utils';
 import { resolveApiOrigin } from '../lib/apiOrigin';
 import { getModuleAppDownloadConfig } from '../lib/moduleAppDownload';
 
@@ -13,12 +14,7 @@ function formatBytes(n) {
   return mb >= 1 ? `${mb.toFixed(1)} MB` : `${(n / 1024).toFixed(0)} KB`;
 }
 
-function formatDateVN(iso) {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleString('vi-VN', {
-    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
-  });
-}
+const formatDateVN = (iso) => formatDateTime(iso) || '—';
 
 function apkFilename(info, appKey) {
   if (!info?.version) return `${appKey || 'app'}-release.apk`;

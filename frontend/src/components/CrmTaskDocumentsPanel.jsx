@@ -1,17 +1,9 @@
 import { useMemo } from 'react';
 import { publicFileUrl, getFileOpenAnchorProps, getFileDownloadAnchorProps } from '../lib/publicFileUrl';
+import { getFileEmoji } from '../lib/utils';
 import { buildCrmTaskDocumentSections } from '../lib/crmTaskDocumentTree';
 
-function getFileIcon(name) {
-  const ext = (name || '').split('.').pop()?.toLowerCase();
-  if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) return '🖼️';
-  if (['mp4', 'mov', 'webm', 'avi'].includes(ext)) return '🎬';
-  if (['pdf'].includes(ext)) return '📕';
-  if (['doc', 'docx'].includes(ext)) return '📘';
-  if (['xls', 'xlsx'].includes(ext)) return '📗';
-  if (['dwg', 'dxf'].includes(ext)) return '📐';
-  return '📎';
-}
+const getFileIcon = (name) => getFileEmoji(name, '📎');
 
 function isNoteArtifact(f) {
   const dt = f?.doc_type;

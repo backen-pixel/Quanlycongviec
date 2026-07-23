@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import api from '../lib/api';
+import { formatDateTime as formatDateVN } from '../lib/utils';
 import { resolveApiOrigin } from '../lib/apiOrigin';
 import {
   Smartphone, Plus, Upload, Trash2, Eye, EyeOff, ShieldAlert, ShieldCheck,
@@ -40,13 +41,6 @@ function apkDownloadFilename(release, appKey) {
   if (!release?.version) return 'app-release.apk';
   const code = release.version_code != null ? `-code${release.version_code}` : '';
   return `${appKey || 'app'}-${release.version}${code}-release.apk`;
-}
-
-function formatDateVN(iso) {
-  if (!iso) return '';
-  return new Date(iso).toLocaleString('vi-VN', {
-    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
-  });
 }
 
 function computeLatestRelease(releases) {

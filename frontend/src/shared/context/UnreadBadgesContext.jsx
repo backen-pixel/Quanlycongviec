@@ -20,10 +20,12 @@ export function UnreadBadgesProvider({ children }) {
     setSocialUnread(0);
     setDbUnread(0);
     setUnifiedTasksOpen(0);
+    setBuiltinUnread(0);
   }, []);
 
   useEffect(() => {
     if (!user) resetBadgeState();
+    else setBuiltinUnread(builtinUpdateUnreadCount(user));
   }, [user, resetBadgeState]);
 
   useEffect(() => {
@@ -48,24 +50,24 @@ export function UnreadBadgesProvider({ children }) {
   });
 
   useEffect(() => {
-    setBuiltinUnread(builtinUpdateUnreadCount());
+    setBuiltinUnread(builtinUpdateUnreadCount(user));
     const onStorage = (e) => {
       if (e.key === 'release_notes_read_builtin_ids') {
-        setBuiltinUnread(builtinUpdateUnreadCount());
+        setBuiltinUnread(builtinUpdateUnreadCount(user));
       }
     };
     window.addEventListener('storage', onStorage);
-    const t = setInterval(() => setBuiltinUnread(builtinUpdateUnreadCount()), 5000);
+    const t = setInterval(() => setBuiltinUnread(builtinUpdateUnreadCount(user)), 5000);
     return () => {
       window.removeEventListener('storage', onStorage);
       clearInterval(t);
     };
-  }, []);
+  }, [user]);
 
   const refreshReleaseNotes = useCallback(async () => {
-    setBuiltinUnread(builtinUpdateUnreadCount());
+    setBuiltinUnread(builtinUpdateUnreadCount(user));
     await refreshHeartbeat({ fresh: true });
-  }, [refreshHeartbeat]);
+  }, [refreshHeartbeat, user]);
 
   useEffect(() => {
     const handlers = {
@@ -122,7 +124,7 @@ export function UnreadBadgesProvider({ children }) {
       socialDetail: { unread: socialUnread, refresh: () => refreshHeartbeat({ fresh: true }) },
       unifiedTasksOpen,
       refreshAll: async () => {
-        setBuiltinUnread(builtinUpdateUnreadCount());
+        setBuiltinUnread(builtinUpdateUnreadCount(user));
         await refreshHeartbeat({ fresh: true });
       },
       refreshSocial: () => refreshHeartbeat({ fresh: true }),
@@ -130,7 +132,7 @@ export function UnreadBadgesProvider({ children }) {
       refreshSxAssignments: () => refreshHeartbeat({ fresh: true }),
       refreshUpdates: refreshReleaseNotes,
     }),
-    [release, assignmentsCrm, assignmentsSx, socialUnread, unifiedTasksOpen, refreshHeartbeat, refreshReleaseNotes],
+    [release, assignmentsCrm, assignmentsSx, socialUnread, unifiedTasksOpen, refreshHeartbeat, refreshReleaseNotes, user],
   );
 
   return (

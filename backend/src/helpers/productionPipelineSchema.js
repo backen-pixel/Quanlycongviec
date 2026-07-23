@@ -308,7 +308,7 @@ function buildPipelineStageSelect() {
       t = 'crm_target_stage_id, ';
     }
   }
-  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, ${h}${sw}${twt}${pp}${kpi}${reqDl}${wt}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
+  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, is_packaging_done, ${h}${sw}${twt}${pp}${kpi}${reqDl}${wt}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
 }
 
 /** Áp dụng retry khi SELECT 1 cột pipeline (embed / cột thiếu). */

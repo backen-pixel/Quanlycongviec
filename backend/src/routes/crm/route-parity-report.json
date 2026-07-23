@@ -1,0 +1,160 @@
+{
+  "presplit_commit": "13840874571d12ea5d7c2eb100f28bb5419bf638",
+  "split_commit": "3290fc613ce81b278991352a2d947ccaae933587",
+  "counts": {
+    "presplit": 224,
+    "runtime": 230,
+    "missing": 0,
+    "extra": 6,
+    "intentional_extra": 6,
+    "unexpected_extra": 0
+  },
+  "missing": [],
+  "extra": [
+    {
+      "method": "POST",
+      "path": "/leads/:id/transfer-region",
+      "file": "routes/leadLifecycle.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: chuyển khu vực lead/deal",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "POST",
+      "path": "/deals/:id/reassign-sx",
+      "file": "routes/leadLifecycle.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "Post-split product: gán lại công ty SX",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "PATCH",
+      "path": "/leads/:id/vc-booking",
+      "file": "routes/vcBooking.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "vcBooking — logistics booking on deal",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "GET",
+      "path": "/production-companies",
+      "file": "routes/visibleProduction.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "visibleProduction — CRM SX allowlist",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "GET",
+      "path": "/companies/:companyId/visible-production-companies",
+      "file": "routes/visibleProduction.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "visibleProduction",
+      "decision": "accept_intentional_post_split"
+    },
+    {
+      "method": "PUT",
+      "path": "/companies/:companyId/visible-production-companies",
+      "file": "routes/visibleProduction.js",
+      "existed_before_split": false,
+      "duplicate_mount": false,
+      "intentional": true,
+      "reason": "visibleProduction",
+      "decision": "accept_intentional_post_split"
+    }
+  ],
+  "intentional_allowlist": [
+    {
+      "method": "GET",
+      "path": "/production-companies",
+      "reason": "visibleProduction — CRM SX allowlist",
+      "file": "routes/visibleProduction.js"
+    },
+    {
+      "method": "GET",
+      "path": "/companies/:companyId/visible-production-companies",
+      "reason": "visibleProduction",
+      "file": "routes/visibleProduction.js"
+    },
+    {
+      "method": "PUT",
+      "path": "/companies/:companyId/visible-production-companies",
+      "reason": "visibleProduction",
+      "file": "routes/visibleProduction.js"
+    },
+    {
+      "method": "PATCH",
+      "path": "/leads/:id/vc-booking",
+      "reason": "vcBooking — logistics booking on deal",
+      "file": "routes/vcBooking.js"
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/transfer-region",
+      "reason": "Post-split product: chuyển khu vực lead/deal",
+      "file": "routes/leadLifecycle.js"
+    },
+    {
+      "method": "POST",
+      "path": "/deals/:id/reassign-sx",
+      "reason": "Post-split product: gán lại công ty SX",
+      "file": "routes/leadLifecycle.js"
+    }
+  ],
+  "stale_manifest_reconciliation": {
+    "note": "Previous route-manifest.json internals (before this regeneration)",
+    "total_routes_field": 230,
+    "routes_array_length": 230,
+    "by_file_sum": 230,
+    "explanation": [
+      "total_routes=230 matched pre-split Git baseline (224) but was not regenerated after post-split routers.",
+      "routes[] length 230 vs by_file sum 230: leadLifecycle under-counted in by_file (off-by-one bookkeeping).",
+      "runtime=230: pre-split 224 + intentional extras 6 (+ any other drift listed in extra)."
+    ]
+  },
+  "visibleProduction": {
+    "conclusion": "Intentional post-split feature router (3 endpoints). Not a duplicate of pre-split routes. Must appear in runtime manifest; parity tests should allowlist these keys.",
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/production-companies",
+        "reason": "visibleProduction — CRM SX allowlist",
+        "file": "routes/visibleProduction.js"
+      },
+      {
+        "method": "GET",
+        "path": "/companies/:companyId/visible-production-companies",
+        "reason": "visibleProduction",
+        "file": "routes/visibleProduction.js"
+      },
+      {
+        "method": "PUT",
+        "path": "/companies/:companyId/visible-production-companies",
+        "reason": "visibleProduction",
+        "file": "routes/visibleProduction.js"
+      }
+    ]
+  },
+  "runtime_meta": {
+    "liveCount": 230,
+    "parentMw": [
+      "auth",
+      "<anonymous>",
+      "enforceCrmDealAssigneeAccess"
+    ],
+    "nestedRouters": 16
+  },
+  "checksums": {
+    "presplit": "d37880ae512a85ed",
+    "runtime": "28698fd51817f17c"
+  }
+}

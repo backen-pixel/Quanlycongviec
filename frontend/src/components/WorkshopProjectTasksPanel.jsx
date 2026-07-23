@@ -2,13 +2,14 @@ import { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } fr
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
+import { compressImage } from '../lib/compressImage';
 import { taskBelongsToWorkshopModule, taskBelongsToVcSubTab, SX_STAGE_SLUGS, VC_STAGE_SLUGS } from '../lib/workshopTaskScope';
 import { isLeadDocVisibleInModule } from '../lib/documentShareScope';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 import { FilePreviewOpenLink } from '../context/FilePreviewContext';
 import { AttachmentFileIcon, inferAttachmentDocType, TASK_ATTACHMENT_FILE_ACCEPT } from '../lib/attachmentFileIcon';
 import { isInstallVcStage } from '../lib/managementDashboardUtils';
-import { formatDateTime } from '../lib/utils';
+import { formatDateTime, PRIORITY_LABELS, TASK_PRIORITY_COLORS as PRIORITY_COLORS } from '../lib/utils';
 import UploadProgressBubble from './UploadProgressBubble';
 import { mergeUploadProgressState, uploadSingleFileWithProgress, formatUploadProgressMeta } from '../lib/uploadProgressEta';
 import {
@@ -17,13 +18,6 @@ import {
   Edit3, Paperclip, FileUp, FileText, Lock,
 } from 'lucide-react';
 
-const PRIORITY_COLORS = {
-  low: 'bg-gray-100 text-gray-600',
-  medium: 'bg-blue-100 text-blue-700',
-  high: 'bg-orange-100 text-orange-700',
-  urgent: 'bg-red-100 text-red-700',
-};
-const PRIORITY_LABELS = { low: 'Thấp', medium: 'TB', high: 'Cao', urgent: 'Gấp' };
 const STATUS_ICONS = {
   todo: Circle,
   pending: Circle,
@@ -481,23 +475,6 @@ export default function WorkshopProjectTasksPanel({
       setTaskAttachments((p) => ({ ...p, [taskId]: [] }));
     }
   };
-
-  const compressImage = (file, maxWidth = 1920, quality = 0.8) => new Promise((resolve) => {
-    if (!file.type.startsWith('image/') || file.size < 500 * 1024) { resolve(file); return; }
-    const img = new Image();
-    img.onload = () => {
-      const scale = Math.min(1, maxWidth / img.width);
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width * scale;
-      canvas.height = img.height * scale;
-      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob((blob) => {
-        resolve(blob ? new File([blob], file.name, { type: 'image/jpeg' }) : file);
-      }, 'image/jpeg', quality);
-    };
-    img.onerror = () => resolve(file);
-    img.src = URL.createObjectURL(file);
-  });
 
   const uploadTaskFile = (taskId) => {
     const input = document.createElement('input');

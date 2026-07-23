@@ -4,6 +4,46 @@ import api from '../lib/api';
 import { isAdminLike } from '../lib/adminRole';
 import { isMetallaOrHucabiCompanyId } from '../lib/crossWorkshopProduction';
 
+const INTAKE_PHASE_LABELS = {
+  prep: 'Chuẩn bị',
+  partner: 'Công ty đối tác',
+  insert_deal: 'Tạo deal',
+  participants: 'Thành viên',
+  insert_project: 'Tạo dự án',
+  link_staff: 'Gán nhân sự',
+  sync_kanban: 'Sync Kanban',
+  docs: 'Tài liệu',
+  notify: 'Thông báo',
+};
+
+function formatIntakeMs(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n < 0) return '—';
+  if (n < 1000) return `${Math.round(n)}ms`;
+  return `${(n / 1000).toFixed(1)}s`;
+}
+
+function buildWorkshopIntakeTimingAlert({ code, timing, reloadMs, clientTotalMs }) {
+  const phases = timing?.phases_ms || {};
+  const phaseLines = Object.entries(phases)
+    .filter(([, ms]) => Number(ms) >= 50)
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
+    .slice(0, 6)
+    .map(([key, ms]) => `• ${INTAKE_PHASE_LABELS[key] || key}: ${formatIntakeMs(ms)}`)
+    .join('\n');
+
+  const apiMs = timing?.api_total_ms ?? timing?.total_ms;
+  const lines = [
+    `Đã tạo đơn xưởng${code ? ` ${code}` : ''} — tổng ${formatIntakeMs(clientTotalMs)}`,
+    `• API tạo đơn: ${formatIntakeMs(apiMs)}`,
+  ];
+  if (reloadMs != null) lines.push(`• Tải lại board: ${formatIntakeMs(reloadMs)}`);
+  if (phaseLines) {
+    lines.push('', 'Chi tiết API (chậm nhất trước):', phaseLines);
+  }
+  return lines.join('\n');
+}
+
 /**
  * Modal tạo deal — dùng chung CRM và Sản xuất.
  * variant="production": sau khi tạo deal gọi auto-create-project → cột «Chờ vào xưởng».
@@ -332,6 +372,8 @@ export default function NewDealModal({
     setSaveMessage(isProduction ? 'Đang tạo đơn xưởng...' : 'Đang tạo deal...');
     try {
       if (isProduction) {
+        const clientT0 = Date.now();
+        setSaveMessage('Đang tạo đơn xưởng (API)...');
         const { data } = await api.post('/production/workshop-intake', {
           title: formData.title,
           company_id: formData.company_id || null,
@@ -341,7 +383,6 @@ export default function NewDealModal({
           customer_phone: formData.customer_phone,
           customer_email: formData.customer_email || null,
           install_address: formData.install_address || null,
-          estimated_value: parseFloat(formData.estimated_value) || 0,
           production_value: formData.production_value === '' || formData.production_value == null
             ? null
             : (parseFloat(formData.production_value) || null),
@@ -356,6 +397,9 @@ export default function NewDealModal({
             ? null
             : (clientCompanySubmit?.external_catalog_id || null),
         });
+        const apiElapsed = Date.now() - clientT0;
+        const apiMs = data?.timing?.api_total_ms ?? data?.timing?.total_ms ?? apiElapsed;
+        setSaveMessage(`API xong ${formatIntakeMs(apiMs)} — đang tải lại board...`);
         const payload = {
           ...data,
           workshop_type_id: formData.workshop_type_id || null,
@@ -363,7 +407,22 @@ export default function NewDealModal({
           customer_phone: formData.customer_phone,
           company_id: formData.company_id || null,
         };
+        const reloadT0 = Date.now();
         if (onSuccess) await onSuccess(payload);
+        const reloadMs = Date.now() - reloadT0;
+        const clientTotalMs = Date.now() - clientT0;
+        console.info('[workshop-intake] client timing', {
+          api_ms: apiMs,
+          reload_ms: reloadMs,
+          client_total_ms: clientTotalMs,
+          server: data?.timing,
+        });
+        alert(buildWorkshopIntakeTimingAlert({
+          code: data?.project_code || data?.deal_code,
+          timing: data?.timing,
+          reloadMs,
+          clientTotalMs,
+        }));
         onClose();
         return;
       }
@@ -753,28 +812,16 @@ export default function NewDealModal({
               )}
 
               {isProduction ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">Doanh thu (VND)</label>
-                    <input
-                      type="number"
-                      value={formData.estimated_value}
-                      onChange={(e) => set('estimated_value', e.target.value)}
-                      className={`w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 ${ringClass} text-sm`}
-                      placeholder="0"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">Chi phí sản xuất (VND)</label>
-                    <input
-                      type="number"
-                      value={formData.production_value}
-                      onChange={(e) => set('production_value', e.target.value)}
-                      className={`w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 ${ringClass} text-sm`}
-                      placeholder="0"
-                    />
-                    <p className="mt-1 text-[10px] text-gray-400">Công nợ SX = chi phí − tiền cọc</p>
-                  </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Chi phí xưởng (VND)</label>
+                  <input
+                    type="number"
+                    value={formData.production_value}
+                    onChange={(e) => set('production_value', e.target.value)}
+                    className={`w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 ${ringClass} text-sm`}
+                    placeholder="0"
+                  />
+                  <p className="mt-1 text-[10px] text-gray-400">Xưởng không nhập doanh thu. Công nợ = chi phí − tiền cọc</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-3">
@@ -900,9 +947,15 @@ export default function NewDealModal({
                 )}
               </div>
 
-              {(Number(formData.estimated_value) > 0 || (!isProduction && formData.probability)) && (
+              {((isProduction && Number(formData.production_value) > 0)
+                || (!isProduction && (Number(formData.estimated_value) > 0 || formData.probability))) && (
                 <div className="flex items-center gap-2 pt-1 border-t border-gray-100">
-                  {Number(formData.estimated_value) > 0 && (
+                  {isProduction && Number(formData.production_value) > 0 && (
+                    <span className="text-xs font-bold text-orange-700 bg-orange-50 px-2 py-0.5 rounded-full">
+                      Chi phí {Number(formData.production_value).toLocaleString('vi-VN')}đ
+                    </span>
+                  )}
+                  {!isProduction && Number(formData.estimated_value) > 0 && (
                     <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
                       {Number(formData.estimated_value).toLocaleString('vi-VN')}đ
                     </span>

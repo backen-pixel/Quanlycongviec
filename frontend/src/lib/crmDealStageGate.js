@@ -1,8 +1,11 @@
-/** @typedef {{ id?: string, name?: string, is_won?: boolean, is_lost?: boolean, sync_role?: string|null, counts_as_completed_revenue?: boolean }} CrmStageLike */
+import { isLostOrCancelledPipelineStage } from './crmLostPipelineStage';
+
+/** @typedef {{ id?: string, name?: string, order_index?: number, is_won?: boolean, is_lost?: boolean, sync_role?: string|null, counts_as_completed_revenue?: boolean }} CrmStageLike */
 /** @typedef {{ type?: string, project_id?: string|null, sx_handover_at?: string|null, stage_id?: string|null, stage?: CrmStageLike|null }} CrmLeadLike */
 
 const POST_WON_SYNC_ROLES = new Set([
   'sx_production',
+  'sx_completed',
   'vc_delivery',
   'vc_installation',
   'vc_customer_care',
@@ -29,14 +32,44 @@ export function isSanXuatProductionColumnName(foldedName) {
 export function isCrmPostWonManagedStage(stage) {
   if (!stage) return false;
   if (stage.is_won || stage.is_lost) return false;
+  if (isLostOrCancelledPipelineStage(stage)) return false;
   const role = String(stage.sync_role || '').trim();
   if (role && POST_WON_SYNC_ROLES.has(role)) return true;
   const n = normalizeStageNameFold(stage.name);
+  if (n.includes('da san xuat') || n.includes('san xuat xong') || n.includes('da dong goi')) return true;
   if (isSanXuatProductionColumnName(n)) return true;
   if (n.includes('van chuyen')) return true;
   if (n.includes('lap dat')) return true;
   if (n.includes('cham soc') && n.includes('khach')) return true;
+  // NextGo / bao bì: cột sau Thắng (Thiết kế chi tiết, Giao hàng…)
+  if (n.includes('thiet ke')) return true;
+  if (n.includes('giao hang')) return true;
   return false;
+}
+
+/** Cột sau neo Thắng theo order_index (không gồm chính cột Thắng / Thua-Hủy). */
+export function isStageAfterWonAnchor(stage, wonAnchorOrder) {
+  if (!stage || wonAnchorOrder == null || wonAnchorOrder === '') return false;
+  if (stage.is_won || stage.is_lost || isLostOrCancelledPipelineStage(stage)) return false;
+  const order = Number(stage.order_index);
+  const anchor = Number(wonAnchorOrder);
+  if (!Number.isFinite(order) || !Number.isFinite(anchor)) return false;
+  return order > anchor;
+}
+
+/**
+ * Deal chưa có dự án SX không được nhảy sang cột sau Thắng — phải chọn công ty SX ở Thắng trước.
+ * @returns {string|null}
+ */
+export function crmDealMustPickSxBeforePostWonMessage(item, targetStage, opts = {}) {
+  if (!item || item.type !== 'deal' || dealHasSxProject(item)) return null;
+  if (!targetStage || targetStage.is_won || targetStage.is_lost) return null;
+  if (isLostOrCancelledPipelineStage(targetStage)) return null;
+  const afterByOrder = isStageAfterWonAnchor(targetStage, opts.wonAnchorOrder);
+  const afterByKind = isCrmPostWonManagedStage(targetStage) || isCrmCompletedRevenueStage(targetStage);
+  if (!afterByOrder && !afterByKind) return null;
+  const code = item.code || item.title || 'Deal';
+  return `Deal ${code}: cần kéo sang cột Thắng và chọn công ty sản xuất trước khi sang giai đoạn sau Thắng.`;
 }
 
 /** Deal CRM đã có dự án xưởng (đã tạo / đang ở Sản xuất). */
@@ -117,6 +150,7 @@ export function classifyCrmPostWonManagedKind(stage) {
   const role = String(stage.sync_role || '').trim();
   if (role && POST_WON_SYNC_ROLES.has(role)) return role;
   const n = normalizeStageNameFold(stage.name);
+  if (n.includes('da san xuat') || n.includes('san xuat xong') || n.includes('da dong goi')) return 'sx_completed';
   if (isSanXuatProductionColumnName(n)) return 'sx_production';
   // «Vận chuyển/lắp đặt» (Phúc Đạt) → delivery trước khi tách lắp đặt
   if (n.includes('van chuyen') && n.includes('lap dat')) return 'vc_delivery';
@@ -135,6 +169,10 @@ function badgeSyncType(badge) {
   return String(badge?.crm_sync_type || '').trim().toLowerCase();
 }
 
+function badgeIsPackagingDone(badge) {
+  return !!badge?.is_packaging_done;
+}
+
 /** Xưởng/VC đã ở giai đoạn tương ứng cột CRM đích chưa? */
 export function workshopReadyForCrmPostWonStage(item, targetStage) {
   const kind = classifyCrmPostWonManagedKind(targetStage);
@@ -145,10 +183,16 @@ export function workshopReadyForCrmPostWonStage(item, targetStage) {
   const vcN = badgeNameFold(vc);
   const sxType = badgeSyncType(sx);
   const vcType = badgeSyncType(vc);
+  const currentRole = String(item?.stage?.sync_role || '').trim();
 
   if (kind === 'sx_production') {
     if (sxType === 'production') return true;
     if (sx?.id && isSanXuatProductionColumnName(sxN)) return true;
+    return false;
+  }
+  if (kind === 'sx_completed') {
+    if (badgeIsPackagingDone(sx)) return true;
+    if (sx?.id && (sxN.includes('dong goi') || sxN.includes('hoan thien dong goi'))) return true;
     return false;
   }
   if (kind === 'vc_installation') {
@@ -159,6 +203,9 @@ export function workshopReadyForCrmPostWonStage(item, targetStage) {
   if (kind === 'vc_delivery') {
     if (vcType === 'delivery' || vcType === 'installation') return true;
     if (vc?.id && (vcN.includes('van chuyen') || vcN.includes('lap dat') || vcN.includes('giao hang'))) return true;
+    // Cho phép sale kéo tay từ «Đã sản xuất» → «Vận chuyển» để mở modal booking.
+    if (currentRole === 'sx_completed') return true;
+    if (badgeIsPackagingDone(sx)) return true;
     return false;
   }
   if (kind === 'vc_customer_care') {
@@ -180,6 +227,9 @@ function postWonManualBlockMessage(kind, item) {
   if (kind === 'sx_production') {
     return `Deal ${code}: cột Sản xuất chỉ kéo được sau khi xưởng đã đưa dự án vào cột Sản xuất (đồng bộ CRM). Hiện xưởng chưa ở giai đoạn đó — hãy kéo trên module SX trước.`;
   }
+  if (kind === 'sx_completed') {
+    return `Deal ${code}: cột «Đã sản xuất» sẽ tự bật khi xưởng đưa dự án vào cột đóng gói. Vui lòng đợi xưởng hoàn tất đóng gói.`;
+  }
   if (kind === 'vc_customer_care') {
     return `Deal ${code}: cột Chăm sóc KH chỉ kéo được sau khi bên VC đã chuyển sang Bảo hành / CSKH. Hiện VC chưa sẵn sàng — hãy kéo trên module VC trước.`;
   }
@@ -191,22 +241,25 @@ function postWonManualBlockMessage(kind, item) {
  * @param {CrmStageLike} targetStage
  * @param {'lead'|'deal'} pipelineType
  */
-export function canDropDealOnCrmKanbanStage(item, targetStage, pipelineType) {
-  if (pipelineType !== 'deal') return true;
-  return !crmDealStageMoveBlockedMessage(item, targetStage, pipelineType);
+export function canDropDealOnCrmKanbanStage(item, targetStage, pipelineType, opts = {}) {
+  if (pipelineType !== 'deal' && pipelineType !== 'customer') return true;
+  return !crmDealStageMoveBlockedMessage(item, targetStage, pipelineType, opts);
 }
 
 /**
- * Chặn kéo tay sang cột SX/VC/Lắp đặt khi xưởng/VC chưa chuyển tương ứng.
+ * Chặn kéo tay sang cột sau Thắng khi chưa chọn SX, hoặc cột SX/VC khi xưởng chưa đồng bộ.
  * @returns {string|null}
  */
-export function crmDealStageMoveBlockedMessage(item, targetStage, pipelineType) {
-  if (pipelineType !== 'deal') return null;
+export function crmDealStageMoveBlockedMessage(item, targetStage, pipelineType, opts = {}) {
+  if (pipelineType !== 'deal' && pipelineType !== 'customer') return null;
   if (!item || item.type === 'lead') return null;
   if (!targetStage) return null;
   if (String(item.stage_id || '') === String(targetStage.id || '')) return null;
-  // Không chặn Thắng / Thua / cột doanh thu hoàn thành.
+  const mustSx = crmDealMustPickSxBeforePostWonMessage(item, targetStage, opts);
+  if (mustSx) return mustSx;
+  // Không chặn Thắng / Thua / cột doanh thu hoàn thành (đã có project).
   if (targetStage.is_won || targetStage.is_lost || isCrmCompletedRevenueStage(targetStage)) return null;
+  if (isLostOrCancelledPipelineStage(targetStage)) return null;
   const kind = classifyCrmPostWonManagedKind(targetStage);
   if (!kind) return null;
   if (workshopReadyForCrmPostWonStage(item, targetStage)) return null;

@@ -122,8 +122,84 @@ async function notifyVcHandoverFromSx(req, {
   }
 }
 
+/**
+ * Notify sale owner + admin CRM khi xưởng đã đóng gói xong → deal auto sang «Đã sản xuất».
+ * Recipients: chỉ sale owner của deal + user admin trong cùng company (theo yêu cầu — tránh spam).
+ * @param {object} req - Express request (có thể null nếu gọi từ sync nền).
+ * @param {object} args
+ * @param {object} args.deal - lead row (id, code, title, owner_id, company_id).
+ * @param {string} args.projectId
+ * @param {object} args.sxStage - production_pipeline_stages row.
+ */
+async function notifyDealPackagingDone(req, { deal, projectId, sxStage } = {}) {
+  if (!deal?.id) return;
+  const recipientIds = new Set();
+
+  const ownerId = deal.assigned_to || deal.lead_owner_id || null;
+  if (ownerId) recipientIds.add(String(ownerId));
+
+  const companyId = deal.company_id || null;
+  if (companyId) {
+    try {
+      const { data: admins } = await supabase
+        .from('users')
+        .select('id')
+        .eq('is_active', true)
+        .eq('company_id', companyId)
+        .in('role', ['admin', 'sales_admin']);
+      for (const u of admins || []) if (u?.id) recipientIds.add(String(u.id));
+    } catch (e) {
+      console.warn('[notifyDealPackagingDone] admin lookup:', e.message);
+    }
+  }
+
+  const ids = [...recipientIds];
+  if (!ids.length) return;
+
+  const code = deal.code || deal.title || 'deal';
+  const stageName = sxStage?.name || 'Đóng gói';
+  const title = '📦 Xưởng đã đóng gói xong';
+  const message = `Deal ${code}: xưởng vừa chuyển sang «${stageName}» — vui lòng kéo deal sang «Vận chuyển» và chọn đơn vị VC/lắp đặt + thời gian đi lấy.`;
+
+  try {
+    if (req) {
+      await notifyMultiple(
+        req, ids, 'crm_stage_changed', title, message, 'deal', String(deal.id),
+        {
+          ecosystem_module_key: 'crm',
+          nav_tab: 'kanban',
+          lead_id: String(deal.id),
+          project_id: projectId ? String(projectId) : null,
+          packaging_done: true,
+        },
+      );
+    } else {
+      // Chèn trực tiếp — không có req.app để đẩy socket, chấp nhận đợi client tự refresh.
+      const rows = ids.map((uid) => ({
+        user_id: uid,
+        type: 'crm_stage_changed',
+        title,
+        message,
+        entity_type: 'deal',
+        entity_id: String(deal.id),
+        metadata: {
+          ecosystem_module_key: 'crm',
+          nav_tab: 'kanban',
+          lead_id: String(deal.id),
+          project_id: projectId ? String(projectId) : null,
+          packaging_done: true,
+        },
+      }));
+      await supabase.from('notifications').insert(rows);
+    }
+  } catch (e) {
+    console.warn('[notifyDealPackagingDone]', e.message);
+  }
+}
+
 module.exports = {
   ENABLE_VC_HANDOVER_NOTIFICATIONS,
   collectVcHandoverRecipientIds,
   notifyVcHandoverFromSx,
+  notifyDealPackagingDone,
 };

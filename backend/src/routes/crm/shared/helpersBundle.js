@@ -819,21 +819,7 @@ async function notifyMultiple(req, userIds, type, title, message, entityType, en
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPER: Auto-generate code (LEAD-2026-001, BG-2026-001...)
 // ═══════════════════════════════════════════════════════════════════════════
-async function nextCode(prefix) {
-  const year = new Date().getFullYear();
-  const { data } = await supabase
-    .from('code_sequences')
-    .select('current_number, year')
-    .eq('prefix', prefix)
-    .single();
-
-  let num = 1;
-  if (data) {
-    num = data.year === year ? data.current_number + 1 : 1;
-  }
-  await supabase.from('code_sequences').upsert({ prefix, current_number: num, year });
-  return `${prefix}-${year}-${String(num).padStart(3, '0')}`;
-}
+const { nextCrmCode: nextCode } = require('../../../helpers/crmNextCode');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CRM DASHBOARD
@@ -3891,7 +3877,7 @@ function buildScanDuplicateGroups(leads, leadFbMap) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /** linked_project embed added in migration 76 — included here, stripped by runtime fallback if migration not applied */
-const CRM_LEAD_LIST_SELECT_EXTRA = ', linked_project:projects!crm_leads_project_id_fkey(id, code, name, order_date, delivery_date, production_deadline, production_note)';
+const CRM_LEAD_LIST_SELECT_EXTRA = ', linked_project:projects!crm_leads_project_id_fkey(id, code, name, order_date, delivery_date, production_deadline, production_note, pickup_at, pickup_notes, logistics_company_id, delivery_team_id, installation_team_id)';
 const CRM_LEAD_REGION_EMBED = ', crm_region:company_regions!crm_leads_region_id_fkey(id, name, code)';
 const CRM_LEAD_LIST_SELECT_BASE =
   `*, customer:customers(id, full_name, phone, email, company), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, is_lost, pipeline_type, sync_role, order_index), source:crm_sources(id, name, icon), lead_type:crm_lead_types(id, name, color), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name), company:companies!crm_leads_company_id_fkey(id, name, short_name)${CRM_LEAD_REGION_EMBED}, sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name)), vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)`;
@@ -3952,9 +3938,12 @@ function parseLeadIdUuidList(parts, maxIds = 500) {
   return out;
 }
 let CRM_LEAD_LIST_SELECT = CRM_LEAD_LIST_SELECT_BASE + CRM_LEAD_LIST_SELECT_EXTRA;
-let _crmLeadSelectMigrationChecked = false;
-let _vcPipelineStageAvailable = true; // migration 81
-let _crmLeadTypeColorAvailable = true; // migration 339
+/** Shared mutable schema/select compatibility flags (object — pass by reference across routers). */
+const crmSchemaCompat = {
+  leadSelectMigrationChecked: false,
+  vcPipelineStageAvailable: true, // migration 81
+  leadTypeColorAvailable: true, // migration 339
+};
 
 function stripCrmLeadTypeColorFromSelect(selectStr) {
   return String(selectStr || '').replace(
@@ -3969,12 +3958,12 @@ function isCrmLeadTypeColorMissingError(err) {
 }
 
 async function getCrmLeadListSelect() {
-  if (_crmLeadSelectMigrationChecked) {
+  if (crmSchemaCompat.leadSelectMigrationChecked) {
     let sel = CRM_LEAD_LIST_SELECT;
-    if (!_vcPipelineStageAvailable) {
+    if (!crmSchemaCompat.vcPipelineStageAvailable) {
       sel = sel.replace(', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)', '');
     }
-    if (!_crmLeadTypeColorAvailable) sel = stripCrmLeadTypeColorFromSelect(sel);
+    if (!crmSchemaCompat.leadTypeColorAvailable) sel = stripCrmLeadTypeColorFromSelect(sel);
     return sel;
   }
   const { error } = await supabase.from('projects').select('production_deadline').limit(0);
@@ -3984,10 +3973,10 @@ async function getCrmLeadListSelect() {
   }
   // Kiểm tra migration 81 (vc_pipeline_stage_id + FK relationship)
   // Reset về true trước khi check — để re-check sau khi migration đã chạy
-  _vcPipelineStageAvailable = true;
+  crmSchemaCompat.vcPipelineStageAvailable = true;
   const { error: vcColErr } = await supabase.from('crm_leads').select('vc_pipeline_stage_id').limit(0);
   if (vcColErr && vcColErr.message?.includes('vc_pipeline_stage_id')) {
-    _vcPipelineStageAvailable = false;
+    crmSchemaCompat.vcPipelineStageAvailable = false;
     console.warn('[crm] Migration 81 not applied — vc_pipeline_stage_id column missing');
   } else if (!vcColErr) {
     // Cột tồn tại, kiểm tra tiếp FK relationship bằng thử join
@@ -3996,7 +3985,7 @@ async function getCrmLeadListSelect() {
       .select('vc_pipeline_stage:logistics_pipeline_stages(id)')
       .limit(0);
     if (vcRelErr && (vcRelErr.message?.includes('relationship') || vcRelErr.message?.includes('logistics_pipeline_stages'))) {
-      _vcPipelineStageAvailable = false;
+      crmSchemaCompat.vcPipelineStageAvailable = false;
       console.warn('[crm] Migration 82 not applied — vc_pipeline_stage FK relationship missing. Chạy migration 88 để thêm FK.');
     } else {
       console.log('[crm] vc_pipeline_stage join available ✓');
@@ -4004,10 +3993,10 @@ async function getCrmLeadListSelect() {
   }
   const { error: ltColorErr } = await supabase.from('crm_lead_types').select('color').limit(0);
   if (ltColorErr && ltColorErr.message?.includes('color')) {
-    _crmLeadTypeColorAvailable = false;
+    crmSchemaCompat.leadTypeColorAvailable = false;
     console.warn('[crm] Migration 339 not applied — crm_lead_types.color unavailable');
   }
-  _crmLeadSelectMigrationChecked = true;
+  crmSchemaCompat.leadSelectMigrationChecked = true;
   return getCrmLeadListSelect(); // re-call with flag set
 }
 
@@ -4342,8 +4331,8 @@ async function fetchCrmLeadsByIdsOrdered(ids, opts = {}) {
       error = r2.error;
     }
     if (error && isCrmLeadTypeColorMissingError(error)) {
-      _crmLeadTypeColorAvailable = false;
-      _crmLeadSelectMigrationChecked = true;
+      crmSchemaCompat.leadTypeColorAvailable = false;
+      crmSchemaCompat.leadSelectMigrationChecked = true;
       const stripped = stripCrmLeadTypeColorFromSelect(selectStr);
       console.warn('[crm] Auto-strip crm_lead_types.color embed (migration 339)');
       const r2 = await supabase.from('crm_leads').select(stripped).in('id', chunk);
@@ -4520,8 +4509,8 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     let { data, error } = await q.range(from, from + need - 1);
     if (error && isVcRelationshipError(error)) {
       // FK chưa có — strip join và retry
-      _vcPipelineStageAvailable = false;
-      _crmLeadSelectMigrationChecked = false;
+      crmSchemaCompat.vcPipelineStageAvailable = false;
+      crmSchemaCompat.leadSelectMigrationChecked = false;
       currentSelectStr = currentSelectStr.replace(', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)', '');
       console.warn('[crm] Auto-strip vc_pipeline_stage join do FK chưa tồn tại trong schema cache');
       ({ data, error } = await q.select(currentSelectStr).range(from, from + need - 1));
@@ -4532,8 +4521,8 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
       ({ data, error } = await q.select(currentSelectStr).range(from, from + need - 1));
     }
     if (error && isCrmLeadTypeColorMissingError(error)) {
-      _crmLeadTypeColorAvailable = false;
-      _crmLeadSelectMigrationChecked = true;
+      crmSchemaCompat.leadTypeColorAvailable = false;
+      crmSchemaCompat.leadSelectMigrationChecked = true;
       currentSelectStr = stripCrmLeadTypeColorFromSelect(currentSelectStr);
       console.warn('[crm] Auto-strip crm_lead_types.color embed (migration 339)');
       ({ data, error } = await q.select(currentSelectStr).range(from, from + need - 1));
@@ -5024,7 +5013,7 @@ async function fetchCrmLeadDetailRow(leadId) {
     { cust: 'customer:customers(id, full_name, phone)', st: 'stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon)', sx: false },
   ];
 
-  let skipVcAttempts = !_vcPipelineStageAvailable;
+  let skipVcAttempts = !crmSchemaCompat.vcPipelineStageAvailable;
   const attempts = [];
   for (const c of combos) {
     if (!skipVcAttempts) attempts.push({ ...c, useVc: true });
@@ -5052,8 +5041,8 @@ async function fetchCrmLeadDetailRow(leadId) {
       continue;
     }
     if (a.useVc && isVcRelationshipError(error)) {
-      _vcPipelineStageAvailable = false;
-      _crmLeadSelectMigrationChecked = false;
+      crmSchemaCompat.vcPipelineStageAvailable = false;
+      crmSchemaCompat.leadSelectMigrationChecked = false;
       skipVcAttempts = true;
       continue;
     }
@@ -5074,7 +5063,7 @@ async function fetchCrmLeadDetailRow(leadId) {
 
 /** Lead kèm embed badge SX/VC (dùng sau chuyển cột Thắng/SX). */
 async function fetchCrmLeadWithPipelineBadges(leadId) {
-  const patchVcJoin = _vcPipelineStageAvailable
+  const patchVcJoin = crmSchemaCompat.vcPipelineStageAvailable
     ? ', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)'
     : '';
   const { data, error } = await supabase
@@ -5292,9 +5281,12 @@ function buildProcessedCommercialItems(items) {
     const vatRate = item.vat_rate || 0;
     const vatAmount = amount * vatRate / 100;
     const total = amount + vatAmount;
+    const name = (item.name != null && String(item.name).trim())
+      ? String(item.name).trim()
+      : (item.notes === '__SECTION__' || item.row_type === 'section' ? 'Phần' : 'Hạng mục');
     return {
       product_id: item.product_id || null, product_code: item.product_code || null,
-      name: item.name, description: item.description || null,
+      name, description: item.description || null,
       unit: item.unit || 'bộ', quantity: item.quantity || 1, unit_price: item.unit_price || 0,
       spec_factor: specFactor || null, standard_area: item.standard_area || null,
       height: item.height || null, width: item.width || null, length: item.length || null, weight: item.weight || null,
@@ -5968,9 +5960,12 @@ const excelUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize
 const CRM_TASK_SELECT =
   '*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar), pipeline_stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(id, pipeline_type, name, order_index)';
 
+const CRM_NOTE_DOC_TYPES = new Set(['task_note', 'task_inline_note', 'checklist_inline_note']);
+
 /**
- * Map task_id -> { files, notes } cho tab NV CRM (khớp logic cũ: doc_type = task_note → note).
- * Ưu tiên RPC SQL (161) để tránh trả về quá nhiều dòng attachment → statement timeout.
+ * Map task_id -> { files, notes } cho tab NV CRM.
+ * Ghi chú: task_note / task_inline_note / checklist_inline_note; còn lại = file.
+ * Ưu tiên RPC SQL (161/460) để tránh trả về quá nhiều dòng attachment → statement timeout.
  */
 async function loadCrmTaskAttachmentCountMap(supabase, taskIds) {
   const countMap = {};
@@ -6004,7 +5999,7 @@ async function loadCrmTaskAttachmentCountMap(supabase, taskIds) {
     if (error) throw error;
     (attCounts || []).forEach((a) => {
       if (!countMap[a.task_id]) countMap[a.task_id] = { files: 0, notes: 0 };
-      if (a.doc_type === 'task_note') countMap[a.task_id].notes += 1;
+      if (CRM_NOTE_DOC_TYPES.has(String(a.doc_type || ''))) countMap[a.task_id].notes += 1;
       else countMap[a.task_id].files += 1;
     });
   }
@@ -6522,9 +6517,7 @@ module.exports = {
   SURVEY_EVENT_TYPES,
   XLSX,
   ZALO_APP_SETTING_KEY,
-  _crmLeadSelectMigrationChecked,
-  _crmLeadTypeColorAvailable,
-  _vcPipelineStageAvailable,
+  crmSchemaCompat,
   addPhoneToAutoLeadBlocklist,
   aggregateCrmCommentReactions,
   aggregateOrgReportRows,

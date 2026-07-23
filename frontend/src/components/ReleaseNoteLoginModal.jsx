@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Megaphone, X, Loader2, ChevronDown, BellOff } from 'lucide-react';
 import api from '../lib/api';
+import { formatDateTime as formatDateVN } from '../lib/utils';
+import { useAuth } from '../lib/auth';
 import {
   builtinToNoteShape,
   getSortedUnreadBuiltinUpdates,
@@ -23,13 +25,6 @@ const CATEGORIES = {
   announcement: { label: 'Thông báo', icon: '📢', color: 'bg-purple-100 text-purple-700' },
   guide: { label: 'Hướng dẫn', icon: '📖', color: 'bg-teal-100 text-teal-700' },
 };
-
-function formatDateVN(iso) {
-  if (!iso) return '';
-  return new Date(iso).toLocaleDateString('vi-VN', {
-    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
-  });
-}
 
 function mergeUnreadNotes(dbNotes, builtinItems) {
   const fromDb = (dbNotes || []).map((n) => ({ ...n, is_builtin: false }));
@@ -68,6 +63,7 @@ function ReleaseNoteBlock({ note }) {
 
 export default function ReleaseNoteLoginModal() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const scrollRef = useRef(null);
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -100,18 +96,18 @@ export default function ReleaseNoteLoginModal() {
       try {
         const { data } = await api.get('/release-notes/login-queue');
         if (cancelled) return;
-        const merged = mergeUnreadNotes(data?.notes, getSortedUnreadBuiltinUpdates());
+        const merged = mergeUnreadNotes(data?.notes, getSortedUnreadBuiltinUpdates(user));
         setNotes(merged);
       } catch {
         if (!cancelled) {
-          setNotes(mergeUnreadNotes([], getSortedUnreadBuiltinUpdates()));
+          setNotes(mergeUnreadNotes([], getSortedUnreadBuiltinUpdates(user)));
         }
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     if (loading || !notes.length) return undefined;

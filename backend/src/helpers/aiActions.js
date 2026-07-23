@@ -5,18 +5,7 @@
 const { supabase } = require('../config/supabase');
 
 // ─── AUTO CODE GENERATOR ────────────────────────────────────────────────
-async function nextCode(prefix) {
-  const year = new Date().getFullYear();
-  const { data } = await supabase.from('code_sequences').select('current_number, year').eq('prefix', prefix).single();
-  let num = 1;
-  if (data) {
-    num = data.year === year ? (data.current_number || 0) + 1 : 1;
-    await supabase.from('code_sequences').update({ current_number: num, year }).eq('prefix', prefix);
-  } else {
-    await supabase.from('code_sequences').insert({ prefix, current_number: 1, year });
-  }
-  return `${prefix}-${year}-${String(num).padStart(3, '0')}`;
-}
+const { nextCrmCode: nextCode } = require('./crmNextCode');
 
 // ─── FIND HELPERS ───────────────────────────────────────────────────────
 function findCustomer(name, customers) {

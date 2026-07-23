@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import api from '../lib/api';
-import { formatDate } from '../lib/utils';
+import { compressImage } from '../lib/compressImage';
+import { formatDate, PRIORITY_LABELS, TASK_PRIORITY_COLORS as PRIORITY_COLORS } from '../lib/utils';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
 import { FilePreviewOpenLink } from '../context/FilePreviewContext';
 import { AttachmentFileIcon, inferAttachmentDocType, TASK_ATTACHMENT_FILE_ACCEPT } from '../lib/attachmentFileIcon';
@@ -15,8 +16,6 @@ import { mergeUploadProgressState, uploadSingleFileWithProgress, formatUploadPro
 import { useAuth } from '../lib/auth';
 import { isDealResponsibleUser } from '../lib/fileOwnership';
 
-const PRIORITY_COLORS = { low: 'bg-gray-100 text-gray-600', medium: 'bg-blue-100 text-blue-700', high: 'bg-orange-100 text-orange-700', urgent: 'bg-red-100 text-red-700' };
-const PRIORITY_LABELS = { low: 'Thấp', medium: 'TB', high: 'Cao', urgent: 'Gấp' };
 const STATUS_ICONS = { completed: CheckCircle2, in_progress: Clock, pending: Circle };
 
 function taskStatus(t) {
@@ -129,25 +128,6 @@ export default function ProductionTasksTab({
       alert(e.response?.data?.error || 'Lỗi lưu ghi chú');
       setSavingNote(null);
     }
-  };
-
-  const compressImage = (file, maxWidth = 1920, quality = 0.8) => {
-    return new Promise((resolve) => {
-      if (!file.type.startsWith('image/') || file.size < 500 * 1024) { resolve(file); return; }
-      const img = new Image();
-      img.onload = () => {
-        const scale = Math.min(1, maxWidth / img.width);
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width * scale;
-        canvas.height = img.height * scale;
-        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob((blob) => {
-          resolve(blob ? new File([blob], file.name, { type: 'image/jpeg' }) : file);
-        }, 'image/jpeg', quality);
-      };
-      img.onerror = () => resolve(file);
-      img.src = URL.createObjectURL(file);
-    });
   };
 
   const uploadTaskFile = (taskId) => {

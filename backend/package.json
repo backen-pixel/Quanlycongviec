@@ -27,7 +27,9 @@
     "test:crm-split": "node tests/crm-split-50-cases.js",
     "test:crm-split:b": "node tests/crm-split-50-cases-b.js",
     "test:crm-split:all": "node tests/crm-split-50-cases.js && node tests/crm-split-50-cases-b.js",
-    "test:crm-split:ui": "node tests/crm-split-100-ui.js"
+    "test:crm-split:ui": "node tests/crm-split-100-ui.js",
+    "test:crm-remediation": "node tests/crm-remediation-gate.js",
+    "crm:route-inventory": "node scripts/crm-route-inventory.js --write"
   },
   "keywords": [],
   "author": "",

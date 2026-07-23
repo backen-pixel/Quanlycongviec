@@ -37,6 +37,14 @@ export const PRIORITY_COLORS = {
   urgent: 'bg-red-100 text-red-700',
 };
 
+// Palette dùng trong các tab/panel task (CRM, SX, xưởng) — khác PRIORITY_COLORS ở low/medium
+export const TASK_PRIORITY_COLORS = {
+  low: 'bg-gray-100 text-gray-600',
+  medium: 'bg-blue-100 text-blue-700',
+  high: 'bg-orange-100 text-orange-700',
+  urgent: 'bg-red-100 text-red-700',
+};
+
 export const TASK_STATUS = {
   pending: 'Đang chờ',
   todo: 'Chờ xử lý',
@@ -85,6 +93,34 @@ export const formatDateTime = (d) => {
     hour: '2-digit', minute: '2-digit',
   });
 };
+
+/** "5 phút trước" / "2 giờ trước" / quá 7 ngày thì hiện ngày cụ thể. */
+export function timeAgo(iso) {
+  if (!iso) return '';
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return '';
+  const s = Math.floor(Math.max(0, Date.now() - t) / 1000);
+  if (s < 60) return 'Vừa xong';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} phút trước`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} giờ trước`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d} ngày trước`;
+  return new Date(iso).toLocaleDateString('vi-VN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+/** Emoji theo đuôi file — dùng cho danh sách tài liệu/đính kèm. */
+export function getFileEmoji(name, fallback = '📄') {
+  if (!name) return fallback;
+  const ext = name.split('.').pop()?.toLowerCase();
+  const map = {
+    pdf: '📕', doc: '📘', docx: '📘', xls: '📗', xlsx: '📗', dwg: '📐', dxf: '📐',
+    jpg: '🖼️', jpeg: '🖼️', png: '🖼️', gif: '🖼️', webp: '🖼️', zip: '📦', rar: '📦',
+    mp4: '🎬', mov: '🎬', webm: '🎬', avi: '🎬', mkv: '🎬', mp3: '🎵', wav: '🎵',
+  };
+  return map[ext] || fallback;
+}
 
 export const getInitials = (name) => {
   if (!name) return '?';

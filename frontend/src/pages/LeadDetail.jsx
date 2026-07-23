@@ -20,9 +20,10 @@ import { isAdminLike } from '../lib/adminRole';
 import { canUserDeleteCrmLeadDeal } from '../lib/crmPipelineDeletePermission';
 import { isDealResponsibleUser } from '../lib/fileOwnership';
 import api from '../lib/api';
+import { compressImage } from '../lib/compressImage';
 import { consumeCrmLeadDetailPrefetch } from '../lib/crmLeadDetailPrefetch';
 import { getSocket } from '../lib/socket';
-import { formatVND, formatDate } from '../lib/utils';
+import { formatVND, formatDate, getFileEmoji } from '../lib/utils';
 import CRMTasksTab from '../components/CRMTasksTab';
 import CrmTaskDocumentsPanel from '../components/CrmTaskDocumentsPanel';
 import UnifiedTaskHistoryWidget from '../components/UnifiedTaskHistoryWidget';
@@ -54,10 +55,12 @@ import {
   preferredWorkshopTypeIdForCompany,
   preferredSxFromLeadTypeRow,
   sxLeadTypeHintText,
+  sxPickGuideFallbackText,
   formatCrmToSxMappingLine,
   workshopTypeMatchesSxKind,
   workshopTypePreferredForLeadType,
 } from '../lib/sxCompanySuggestFromLeadType';
+import SxPickGuideList from '../components/SxPickGuideList';
 import Modal from '../components/Modal';
 import DealCrossScoresPanel from '../components/DealCrossScoresPanel';
 import LeadKpiLedgerPanel from '../components/LeadKpiLedgerPanel';
@@ -74,6 +77,7 @@ import {
   crmDealStageMoveBlockedMessage,
 } from '../lib/crmDealStageGate';
 import { sortAndDedupePipelineStages } from '../lib/crmPipelineStages';
+import { resolveDealWonAnchorOrderIndex } from '../lib/crmPipelineTabs';
 import DealStageEventModal from '../components/DealStageEventModal';
 import EventCreateModal from '../components/EventCreateModal';
 import {
@@ -966,7 +970,11 @@ export default function LeadDetail() {
   );
 
   /** Tài liệu lead: thủ công vs đồng bộ từ NV; tránh lặp với «File nhiệm vụ» khi cùng source_attachment_id. */
-  const { manualLeadDocs, orphanSyncedLeadDocs, workshopSharedDocs, documentsTabTotal } = useMemo(() => {
+  const { manualLeadDocs, orphanSyncedLeadDocs, workshopSharedDocs, documentsTabTotal, taskFileCount, taskNoteCount } = useMemo(() => {
+    const isNoteDoc = (d) => {
+      const dt = String(d?.doc_type || '');
+      return dt === 'task_note' || dt === 'task_inline_note' || dt === 'checklist_inline_note';
+    };
     const fromTask = (d) =>
       !!(d?.source_attachment_id || d?.source_crm_task_id || d?.is_from_task);
     const fromWorkshop = (d) => !!d?.source_file_attachment_id;
@@ -980,12 +988,16 @@ export default function LeadDetail() {
       if (d.source_attachment_id != null && shownAttIds.has(String(d.source_attachment_id))) return false;
       return true;
     });
+    const taskFiles = (taskDocuments || []).filter((d) => !isNoteDoc(d)).length;
+    const taskNotes = (taskDocuments || []).filter(isNoteDoc).length;
     const total = manual.length + workshop.length + (taskDocuments || []).length + orphan.length;
     return {
       manualLeadDocs: manual,
       orphanSyncedLeadDocs: orphan,
       workshopSharedDocs: workshop,
       documentsTabTotal: total,
+      taskFileCount: taskFiles,
+      taskNoteCount: taskNotes,
     };
   }, [documents, taskDocuments]);
 
@@ -1343,7 +1355,9 @@ export default function LeadDetail() {
         !validStageIds.has(sid) ||
         (!!lead?.project_id && !lead?.sx_pipeline_stage?.id && !lead?.vc_pipeline_stage?.id);
       if (!isOrphanSource) {
-        const blocked = crmDealStageMoveBlockedMessage(lead, targetStage, 'deal');
+        const blocked = crmDealStageMoveBlockedMessage(lead, targetStage, 'deal', {
+          wonAnchorOrder: resolveDealWonAnchorOrderIndex(stagesDeal),
+        });
         if (blocked) {
           alert(blocked);
           return;
@@ -1741,25 +1755,6 @@ export default function LeadDetail() {
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi');
     }
-  };
-
-  const compressImage = (file, maxWidth = 1920, quality = 0.8) => {
-    return new Promise((resolve) => {
-      if (!file.type.startsWith('image/') || file.size < 500 * 1024) { resolve(file); return; }
-      const img = new Image();
-      img.onload = () => {
-        const scale = Math.min(1, maxWidth / img.width);
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width * scale;
-        canvas.height = img.height * scale;
-        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob((blob) => {
-          resolve(blob ? new File([blob], file.name, { type: 'image/jpeg' }) : file);
-        }, 'image/jpeg', quality);
-      };
-      img.onerror = () => resolve(file);
-      img.src = URL.createObjectURL(file);
-    });
   };
 
   const uploadDocument = async () => {
@@ -2214,7 +2209,7 @@ export default function LeadDetail() {
           />
 
           {/* Quick Stats Card */}
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <div className="bg-blue-50 rounded-lg border border-blue-100 p-3 text-center cursor-pointer hover:bg-blue-100/80 transition-colors"
               onClick={() => setActiveTab('notes')}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setActiveTab('notes'); }}
@@ -2225,13 +2220,38 @@ export default function LeadDetail() {
               <p className="text-xs text-gray-600 mb-1">Ghi chú / HĐ</p>
               <p className="text-xl font-bold text-blue-600">{activities.length}</p>
             </div>
-            <div className="bg-amber-50 rounded-lg border border-amber-100 p-3 text-center">
+            <div
+              className="bg-amber-50 rounded-lg border border-amber-100 p-3 text-center cursor-pointer hover:bg-amber-100/80 transition-colors"
+              onClick={() => setActiveTab('documents')}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setActiveTab('documents'); }}
+              role="button"
+              tabIndex={0}
+              title="Xem tab Tài liệu"
+            >
               <p className="text-xs text-gray-600 mb-1">Tài liệu</p>
               <p className="text-xl font-bold text-amber-600">{documentsTabTotal}</p>
             </div>
-            <div className="bg-purple-50 rounded-lg border border-purple-100 p-3 text-center">
+            <div
+              className="bg-purple-50 rounded-lg border border-purple-100 p-3 text-center cursor-pointer hover:bg-purple-100/80 transition-colors"
+              onClick={() => setActiveTab('documents')}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setActiveTab('documents'); }}
+              role="button"
+              tabIndex={0}
+              title="Số file đính kèm trên nhiệm vụ"
+            >
               <p className="text-xs text-gray-600 mb-1">File NV</p>
-              <p className="text-xl font-bold text-purple-600">{taskDocuments.length}</p>
+              <p className="text-xl font-bold text-purple-600">{taskFileCount}</p>
+            </div>
+            <div
+              className="bg-emerald-50 rounded-lg border border-emerald-100 p-3 text-center cursor-pointer hover:bg-emerald-100/80 transition-colors"
+              onClick={() => setActiveTab('documents')}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setActiveTab('documents'); }}
+              role="button"
+              tabIndex={0}
+              title="Số ghi chú trên nhiệm vụ"
+            >
+              <p className="text-xs text-gray-600 mb-1">Ghi chú NV</p>
+              <p className="text-xl font-bold text-emerald-600">{taskNoteCount}</p>
             </div>
           </div>
         </div>
@@ -3921,12 +3941,7 @@ const DOC_TYPES = [
   { value: 'other', label: 'Khác', icon: '📎' },
 ];
 
-function getFileIcon(name) {
-  if (!name) return '📄';
-  const ext = name.split('.').pop()?.toLowerCase();
-  const map = { pdf: '📕', doc: '📘', docx: '📘', xls: '📗', xlsx: '📗', dwg: '📐', dxf: '📐', jpg: '🖼️', jpeg: '🖼️', png: '🖼️', gif: '🖼️', webp: '🖼️', zip: '📦', rar: '📦', mp4: '🎬', mov: '🎬', webm: '🎬', avi: '🎬', mkv: '🎬', mp3: '🎵', wav: '🎵' };
-  return map[ext] || '📄';
-}
+const getFileIcon = (name) => getFileEmoji(name);
 
 function DocumentRow({ doc, onDelete, onOpenImage, readOnlyWorkshop = false, canManageDeal = false }) {
   const [expanded, setExpanded] = useState(false);
@@ -5521,11 +5536,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
                           })}
                     </p>
                   )}
-                  <ul className="space-y-0.5 list-disc pl-3.5">
-                    <li><strong>Phúc Đạt</strong> chỉ làm cửa</li>
-                    <li>Làm tủ bếp (Sang thiết kế) → chọn <strong>HCB</strong></li>
-                    <li>Làm tủ bếp inox → chọn <strong>Tủ bếp</strong> của <strong>Metalla</strong></li>
-                  </ul>
+                  <SxPickGuideList company={lead?.company} className="space-y-0.5 list-disc pl-3.5" />
                 </div>
               </div>
             )}
@@ -5557,13 +5568,9 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
                   {sxHintFromCrmType ? (
                     <p className="mb-1.5">{sxHintFromCrmType}</p>
                   ) : (
-                    <p className="mb-1.5 text-amber-800/90">Chưa có phân loại CRM — ★ sẽ hiện khi gán loại (Tủ bếp / Cửa…) ở thông tin deal.</p>
+                    <p className="mb-1.5 text-amber-800/90">{sxPickGuideFallbackText(lead?.company)}</p>
                   )}
-                  <ul className="space-y-1 list-disc pl-4">
-                    <li><strong>Phúc Đạt</strong> chỉ làm cửa</li>
-                    <li>Làm tủ bếp (Sang thiết kế) → chọn <strong>HCB</strong></li>
-                    <li>Làm tủ bếp inox → chọn <strong>Tủ bếp</strong> của <strong>Metalla</strong></li>
-                  </ul>
+                  <SxPickGuideList company={lead?.company} />
                 </div>
 
                 <div>
@@ -5757,8 +5764,37 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
           {!lead.sx_pipeline_stage && !lead.vc_pipeline_stage && (
             <p className="text-xs text-gray-400 italic px-1">Chưa có thông tin pipeline xưởng</p>
           )}
+          <VcBookingInfoBlock lead={lead} />
         </div>
       )}
+    </div>
+  );
+}
+
+function VcBookingInfoBlock({ lead }) {
+  const p = lead?.linked_project;
+  const pickupIso = p?.pickup_at;
+  if (!pickupIso) return null;
+  const d = new Date(pickupIso);
+  const valid = !Number.isNaN(d.getTime());
+  const label = valid
+    ? d.toLocaleString('vi-VN', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric',
+    })
+    : '—';
+  return (
+    <div className="flex items-start gap-2 py-2 px-3 rounded-lg border bg-sky-50 border-sky-200">
+      <span className="text-base mt-0.5 shrink-0">🚚</span>
+      <div className="flex-1 min-w-0">
+        <p className="text-[10px] font-bold uppercase tracking-wider mb-0.5 text-sky-700">
+          Đặt vận chuyển
+        </p>
+        <p className="text-sm font-semibold text-sky-900">Đi lấy: {label}</p>
+        {p?.pickup_notes && (
+          <p className="text-[11px] text-sky-700/90 mt-1 leading-snug break-words">Ghi chú: {p.pickup_notes}</p>
+        )}
+      </div>
     </div>
   );
 }

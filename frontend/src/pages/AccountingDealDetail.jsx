@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, FileText, ShoppingCart, Receipt, Upload, RefreshCw, ExternalLink,
   Factory, DollarSign, Plus, Trash2, Loader2, Save, Banknote, Building2,
   Landmark, Wallet, CheckCircle2, Clock3, AlertCircle, ChevronDown, ChevronUp,
   User, Phone, Tag, TrendingUp, X, FileSpreadsheet, FileImage, File as FileIcon,
-  Download, ClipboardList, RefreshCcw, AlertTriangle,
+  Download, ClipboardList, ArrowRightLeft, Eye,
 } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -46,6 +46,34 @@ const DOC_BLOCKS = [
   { key: 'order', title: 'Đơn hàng', icon: ShoppingCart, ring: 'ring-emerald-100', accent: 'text-emerald-600', btn: 'bg-emerald-600 hover:bg-emerald-700', view: (x) => `/crm/orders/${x.id}` },
   { key: 'invoice', title: 'Hóa đơn', icon: Receipt, ring: 'ring-purple-100', accent: 'text-purple-600', btn: 'bg-purple-600 hover:bg-purple-700', view: (x) => `/crm/invoices/${x.id}` },
 ];
+
+const QUOTE_STATUS_VI = {
+  draft: 'Nháp', sent: 'Đã gửi', accepted: 'Chấp nhận', rejected: 'Từ chối',
+  expired: 'Hết hạn', converted: 'Đã chuyển ĐH',
+};
+const ORDER_STATUS_VI = {
+  draft: 'Nháp', confirmed: 'Đã xác nhận', processing: 'Đang xử lý',
+  shipped: 'Đã giao hàng', delivered: 'Đã bàn giao', cancelled: 'Đã hủy',
+};
+const INVOICE_STATUS_VI = {
+  draft: 'Nháp', issued: 'Đã phát hành', paid: 'Đã thanh toán',
+  cancelled: 'Đã hủy', void: 'Hủy bỏ',
+};
+const INVOICE_PAYMENT_VI = {
+  unpaid: 'Chưa TT', partial: 'TT một phần', paid: 'Đã TT đủ', overdue: 'Quá hạn',
+};
+
+function docStatusLabel(blockKey, doc) {
+  if (!doc) return '';
+  if (blockKey === 'quotation') return QUOTE_STATUS_VI[doc.status] || doc.status || '';
+  if (blockKey === 'order') return ORDER_STATUS_VI[doc.status] || doc.status || '';
+  if (blockKey === 'invoice') {
+    const pay = INVOICE_PAYMENT_VI[doc.payment_status];
+    if (pay) return pay;
+    return INVOICE_STATUS_VI[doc.status] || doc.status || '';
+  }
+  return doc.status || '';
+}
 
 function StatusPill({ status }) {
   const meta = STATUS_META[status] || STATUS_META.pending;
@@ -117,6 +145,7 @@ const IMPORT_TARGET_OPTIONS = [
 
 export default function AccountingDealDetail() {
   const { leadId } = useParams();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get('tab') || 'finance';
   const setTab = (id) => {
@@ -161,9 +190,9 @@ export default function AccountingDealDetail() {
   const [paySaving, setPaySaving] = useState(false);
   const [payFormOpen, setPayFormOpen] = useState(false);
 
-  const [syncingValue, setSyncingValue] = useState(false);
   const [inlineSavingStageId, setInlineSavingStageId] = useState(null);
   const [bankModalOpen, setBankModalOpen] = useState(false);
+  const [convertQuoteId, setConvertQuoteId] = useState(null);
 
   const adminParams = useMemo(() => {
     if (isAccountingUser(user)) return {};
@@ -198,7 +227,6 @@ export default function AccountingDealDetail() {
 
   const lead = bundle?.lead;
   const project = bundle?.project;
-  const valueSync = bundle?.value_sync || null;
   const stages = bundle?.payment_stages || [];
   const payments = bundle?.payments || [];
   const bankAccounts = bundle?.bank_accounts || [];
@@ -209,6 +237,25 @@ export default function AccountingDealDetail() {
 
   const docBlockData = { quotation: quotations, order: orders, invoice: invoices };
 
+  const convertQuoteToOrder = async (quote) => {
+    if (!quote?.id || convertQuoteId) return;
+    if (!confirm(`Chuyển báo giá ${quote.code || ''} sang đơn hàng?`)) return;
+    setConvertQuoteId(quote.id);
+    try {
+      const { data } = await api.post(`/crm/quotations/${quote.id}/convert-to-order`);
+      await load();
+      if (data?.id) {
+        if (confirm(`Đã tạo đơn hàng ${data.code || ''}. Mở chi tiết đơn hàng?`)) {
+          navigate(`/crm/orders/${data.id}`);
+        }
+      }
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi chuyển sang đơn hàng');
+    } finally {
+      setConvertQuoteId(null);
+    }
+  };
+
   const filteredDocs = useMemo(() => {
     if (docFilter === 'all') return documents;
     if (docFilter === 'crm') return documents.filter((d) => d.source === 'crm' || d.source === 'crm_task');
@@ -217,11 +264,13 @@ export default function AccountingDealDetail() {
   }, [documents, docFilter]);
 
   const totals = useMemo(() => {
-    const dealValue = Number(project?.production_value || project?.estimated_value || lead?.estimated_value || 0);
+    // Deal CRM (doanh thu) ≠ Chi phí xưởng (production_value). Hai số độc lập.
+    const dealValueCrm = Number(lead?.estimated_value) || 0;
+    const workshopCost = Number(project?.production_value) || 0;
     const totalReceived = stages.reduce((s, st) => s + (Number(st.received_amount) || 0), 0);
     const totalPlanned = stages.reduce((s, st) => s + (Number(st.planned_amount) || 0), 0);
     const invoicedTotal = invoices.reduce((s, i) => s + (Number(i.total) || 0), 0);
-    const base = dealValue > 0 ? dealValue : totalPlanned;
+    const base = dealValueCrm > 0 ? dealValueCrm : totalPlanned;
     /** Tiền cọc snapshot (SX/deal) — tránh trừ trùng nếu đã có ở đợt thanh toán «Cọc». */
     const depositSnapshot = Number(project?.deposit_amount || lead?.deposit_amount) || 0;
     const depositFromStages = stages
@@ -232,7 +281,16 @@ export default function AccountingDealDetail() {
     const effectiveReceived = depositCredit + nonDepositReceived;
     const outstanding = Math.max(base - effectiveReceived, 0);
     const progress = base > 0 ? Math.min(100, Math.round((effectiveReceived / base) * 100)) : 0;
-    return { dealValue: base, totalReceived: effectiveReceived, outstanding, invoicedTotal, progress };
+    const workshopDebt = Math.max(workshopCost - depositSnapshot, 0);
+    return {
+      dealValueCrm: base,
+      workshopCost,
+      workshopDebt,
+      totalReceived: effectiveReceived,
+      outstanding,
+      invoicedTotal,
+      progress,
+    };
   }, [project, lead, stages, invoices]);
 
   const saveDeposit = async () => {
@@ -358,18 +416,6 @@ export default function AccountingDealDetail() {
     }
   };
 
-  const syncDealValue = async () => {
-    setSyncingValue(true);
-    try {
-      await api.put(`/accounting/deals/${leadId}/sync-value`, {}, { params: adminParams });
-      await load();
-    } catch (e) {
-      alert(e.response?.data?.error || e.message);
-    } finally {
-      setSyncingValue(false);
-    }
-  };
-
   const onStageSelectForPay = (stageId) => {
     const s = stages.find((x) => x.id === stageId);
     setPayForm((f) => ({
@@ -459,13 +505,21 @@ export default function AccountingDealDetail() {
         </div>
       </div>
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {/* Stat cards — deal CRM (doanh thu) · chi phí xưởng — hai số độc lập */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <StatCard
-          label="Giá trị deal"
-          value={formatVND(totals.dealValue)}
+          label="Giá trị deal CRM"
+          value={formatVND(totals.dealValueCrm)}
           icon={TrendingUp}
           tone={{ bg: 'bg-indigo-500', text: 'text-indigo-600' }}
+          sub="Doanh thu / báo giá"
+        />
+        <StatCard
+          label="Chi phí xưởng"
+          value={formatVND(totals.workshopCost)}
+          icon={Factory}
+          tone={{ bg: 'bg-orange-500', text: 'text-orange-600' }}
+          sub={totals.workshopCost > 0 ? `Công nợ xưởng: ${formatVND(totals.workshopDebt)}` : 'Nhập trên dự án SX'}
         />
         <StatCard
           label="Đã thu"
@@ -478,6 +532,7 @@ export default function AccountingDealDetail() {
           value={formatVND(totals.outstanding)}
           icon={Clock3}
           tone={{ bg: 'bg-amber-500', text: 'text-amber-600' }}
+          sub="Theo giá trị deal CRM"
         />
         <StatCard
           label="Đã xuất HĐ"
@@ -487,34 +542,6 @@ export default function AccountingDealDetail() {
           sub={`${invoices.length} hóa đơn`}
         />
       </div>
-
-      {/* Cảnh báo lệch giá trị CRM ↔ SX */}
-      {valueSync && project?.id && !valueSync.in_sync && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5 flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-start gap-2.5">
-            <div className="p-1.5 rounded-lg bg-amber-100 text-amber-600 shrink-0 mt-0.5">
-              <AlertTriangle className="h-4 w-4" />
-            </div>
-            <div>
-              <p className="text-sm font-bold text-amber-900">Giá trị deal chưa khớp giữa CRM và Sản xuất</p>
-              <p className="text-xs text-amber-800 mt-0.5">
-                CRM: <span className="font-bold">{formatVND(valueSync.crm_value)}</span>
-                {' '}·{' '}
-                SX: <span className="font-bold">{formatVND(valueSync.sx_value)}</span>
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={syncDealValue}
-            disabled={syncingValue}
-            className="h-9 px-4 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 transition shrink-0"
-          >
-            {syncingValue ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
-            Đồng bộ theo CRM
-          </button>
-        </div>
-      )}
 
       {/* Tabs */}
       <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
@@ -689,15 +716,49 @@ export default function AccountingDealDetail() {
                   {list.length === 0 ? (
                     <p className="text-xs text-gray-400">Chưa có dữ liệu</p>
                   ) : (
-                    <ul className="space-y-1 border-t border-gray-100 pt-2">
-                      {list.slice(0, 4).map((x) => (
-                        <li key={x.id} className="flex items-center justify-between gap-2 text-sm">
-                          <Link to={block.view(x)} className="text-gray-700 hover:text-teal-700 hover:underline font-medium truncate">
-                            {x.code || x.title || '—'}
-                          </Link>
-                          <span className="tabular-nums text-gray-500 shrink-0 text-xs">{formatVND(x.total || 0)}</span>
-                        </li>
-                      ))}
+                    <ul className="space-y-2 border-t border-gray-100 pt-2">
+                      {list.slice(0, 6).map((x) => {
+                        const canConvert = block.key === 'quotation' && x.status !== 'converted';
+                        const converting = convertQuoteId === x.id;
+                        return (
+                          <li key={x.id} className="rounded-lg border border-gray-100 bg-gray-50/60 px-2.5 py-2 space-y-1.5">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold text-gray-800 truncate">{x.code || x.title || '—'}</p>
+                                <p className="text-[11px] text-gray-500 tabular-nums">{formatVND(x.total || 0)}</p>
+                              </div>
+                              {docStatusLabel(block.key, x) && (
+                                <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-white border border-gray-200 text-gray-500">
+                                  {docStatusLabel(block.key, x)}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <Link
+                                to={block.view(x)}
+                                className="inline-flex items-center gap-1 h-7 px-2 rounded-md border border-teal-200 bg-teal-50 text-teal-700 text-[11px] font-bold hover:bg-teal-100 transition"
+                                title={`Xem chi tiết ${block.title.toLowerCase()}`}
+                              >
+                                <Eye className="h-3 w-3" /> Chi tiết
+                              </Link>
+                              {canConvert && (
+                                <button
+                                  type="button"
+                                  disabled={!!convertQuoteId}
+                                  onClick={() => convertQuoteToOrder(x)}
+                                  className="inline-flex items-center gap-1 h-7 px-2 rounded-md border border-emerald-300 bg-emerald-50 text-emerald-700 text-[11px] font-bold hover:bg-emerald-100 disabled:opacity-50 cursor-pointer transition"
+                                  title="Chuyển báo giá sang đơn hàng"
+                                >
+                                  {converting
+                                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                                    : <ArrowRightLeft className="h-3 w-3" />}
+                                  → ĐH
+                                </button>
+                              )}
+                            </div>
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
                 </div>

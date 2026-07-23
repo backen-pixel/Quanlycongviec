@@ -2,12 +2,13 @@ import { useState, useEffect, useMemo, useRef, useLayoutEffect, useCallback } fr
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
+import { compressImage } from '../lib/compressImage';
 import { connectSocket, getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { canManageWorkshopProjectFiles, isDealResponsibleUser } from '../lib/fileOwnership';
 import { fetchPipelineStagesById, filterSxPipelineStagesForWorkshopType, sortAndDedupePipelineStages } from '../lib/crmPipelineStages';
-import { formatDateTime, formatVND } from '../lib/utils';
+import { formatDateTime, formatVND, PRIORITY_LABELS, TASK_PRIORITY_COLORS as PRIORITY_COLORS } from '../lib/utils';
 import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetimeLocal';
 import { taskBelongsToVcSubTab, isInstallLogisticsPipelineStage } from '../lib/workshopTaskScope';
 import {
@@ -303,8 +304,6 @@ function resolveTaskPipelineStageId(task, pipelineStages, leadCurrentStageId) {
   return stages[0]?.id || null;
 }
 
-const PRIORITY_COLORS = { low: 'bg-gray-100 text-gray-600', medium: 'bg-blue-100 text-blue-700', high: 'bg-orange-100 text-orange-700', urgent: 'bg-red-100 text-red-700' };
-const PRIORITY_LABELS = { low: 'Thấp', medium: 'TB', high: 'Cao', urgent: 'Gấp' };
 const STATUS_ICONS = { pending: Circle, in_progress: Clock, completed: CheckCircle2 };
 
 const LEAD_MEMBER_ROLES = [
@@ -878,11 +877,12 @@ export default function CRMTasksTab({
     } catch (_) { /* ignore */ }
   };
 
-  const bumpTaskAttachmentCount = (taskId, delta) => {
+  const bumpTaskAttachmentCount = (taskId, delta, kind = 'file') => {
     if (!taskId || !delta) return;
+    const key = kind === 'note' ? 'note_count' : 'file_count';
     setTasks((prev) => prev.map((t) => (
       t.id === taskId
-        ? { ...t, file_count: Math.max(0, (Number(t.file_count) || 0) + delta) }
+        ? { ...t, [key]: Math.max(0, (Number(t[key]) || 0) + delta) }
         : t
     )));
   };
@@ -2291,9 +2291,15 @@ export default function CRMTasksTab({
   const saveTaskNotes = async (taskId) => {
     setSavingNote(taskId);
     try {
-      await api.put(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/notes`, { notes: taskNoteText[taskId] || '' });
+      const prevTask = tasks.find((t) => t.id === taskId);
+      const hadNote = !!(prevTask?.notes || '').trim();
+      const nextNotes = taskNoteText[taskId] || '';
+      const hasNote = !!nextNotes.trim();
+      await api.put(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}/notes`, { notes: nextNotes });
       // Update local tasks state
-      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, notes: taskNoteText[taskId] } : t));
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, notes: nextNotes } : t));
+      if (!hadNote && hasNote) bumpTaskAttachmentCount(taskId, 1, 'note');
+      else if (hadNote && !hasNote) bumpTaskAttachmentCount(taskId, -1, 'note');
       notifyArtifactsSynced(taskId);
       setSavingNote('saved-' + taskId);
       setTimeout(() => setSavingNote(null), 1500);
@@ -2301,25 +2307,6 @@ export default function CRMTasksTab({
       alert(e.response?.data?.error || 'Lỗi lưu ghi chú');
       setSavingNote(null);
     }
-  };
-
-  const compressImage = (file, maxWidth = 1920, quality = 0.8) => {
-    return new Promise((resolve) => {
-      if (!file.type.startsWith('image/') || file.size < 500 * 1024) { resolve(file); return; }
-      const img = new Image();
-      img.onload = () => {
-        const scale = Math.min(1, maxWidth / img.width);
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width * scale;
-        canvas.height = img.height * scale;
-        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob((blob) => {
-          resolve(blob ? new File([blob], file.name, { type: 'image/jpeg' }) : file);
-        }, 'image/jpeg', quality);
-      };
-      img.onerror = () => resolve(file);
-      img.src = URL.createObjectURL(file);
-    });
   };
 
   const uploadTaskFile = (taskId) => {
@@ -2411,6 +2398,7 @@ export default function CRMTasksTab({
       setAttNoteText('');
       setAttNoteName('');
       loadAttachments({ id: taskId });
+      bumpTaskAttachmentCount(taskId, 1, 'note');
       notifyArtifactsSynced(taskId);
     } catch (e) { alert(e.response?.data?.error || 'Lỗi thêm ghi chú'); }
   };
@@ -2433,7 +2421,8 @@ export default function CRMTasksTab({
         ...p,
         [tid]: (p[tid] || []).filter((a) => String(a.id) !== aid),
       }));
-      bumpTaskAttachmentCount(tid, -1);
+      const noteTypes = new Set(['task_note', 'task_inline_note', 'checklist_inline_note']);
+      bumpTaskAttachmentCount(tid, -1, noteTypes.has(String(att?.doc_type || '')) ? 'note' : 'file');
       notifyArtifactsSynced(tid);
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Lỗi xóa file');
@@ -2827,8 +2816,8 @@ export default function CRMTasksTab({
     const ckKey = ckStateKey(task.id, ck.id);
     const allAtts = taskAttachments[task.id] || [];
     const ckAtts = filterChecklistAttachments(allAtts, ck.id);
-    const ckFileCount = ckAtts.filter((a) => a.doc_type !== 'checklist_inline_note' && a.doc_type !== 'task_note').length;
-    const ckHasNotes = !!(ck.notes?.trim() || ckAtts.some((a) => a.doc_type === 'checklist_inline_note' && a.notes?.trim()));
+    const ckFileCount = ckAtts.filter((a) => a.doc_type !== 'checklist_inline_note' && a.doc_type !== 'task_note' && a.doc_type !== 'task_inline_note').length;
+    const ckHasNotes = !!(ck.notes?.trim() || ckAtts.some((a) => (a.doc_type === 'checklist_inline_note' || a.doc_type === 'task_inline_note' || a.doc_type === 'task_note') && a.notes?.trim()));
     const isCkExpanded = expandedChecklistKey === ckKey;
     const isCkEditing = editingChecklistKey === ckKey;
     const ckAssignee = (users || []).find((u) => String(u.id) === String(ck.assignee_id));
@@ -3385,8 +3374,8 @@ export default function CRMTasksTab({
                     {ckItems.map((ck) => {
                       const ckKey = ckStateKey(task.id, ck.id);
                       const ckAtts = filterChecklistAttachments(allAtts, ck.id);
-                      const ckFileCount = ckAtts.filter((a) => a.doc_type !== 'checklist_inline_note' && a.doc_type !== 'task_note').length;
-                      const ckHasNotes = !!(ck.notes?.trim() || ckAtts.some((a) => a.doc_type === 'checklist_inline_note' && a.notes?.trim()));
+                      const ckFileCount = ckAtts.filter((a) => a.doc_type !== 'checklist_inline_note' && a.doc_type !== 'task_note' && a.doc_type !== 'task_inline_note').length;
+                      const ckHasNotes = !!(ck.notes?.trim() || ckAtts.some((a) => (a.doc_type === 'checklist_inline_note' || a.doc_type === 'task_inline_note' || a.doc_type === 'task_note') && a.notes?.trim()));
                       const isCkExpanded = expandedChecklistKey === ckKey;
                       const isCkEditing = editingChecklistKey === ckKey;
                       const ckAssignee = (users || []).find((u) => String(u.id) === String(ck.assignee_id));

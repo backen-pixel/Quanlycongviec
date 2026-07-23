@@ -1,9 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import api from '../lib/api';
-import { BUILTIN_UPDATES } from '../content/builtinUpdates';
+import { formatDateTime as formatDateVN } from '../lib/utils';
 import { ReleaseNoteContent } from '../lib/renderReleaseNoteContent';
-import { markBuiltinUpdateRead, isLoginPopupDisabled, setLoginPopupDisabled } from '../lib/releaseNotesRead';
+import {
+  getVisibleBuiltinUpdates,
+  markBuiltinUpdateRead,
+  isLoginPopupDisabled,
+  setLoginPopupDisabled,
+} from '../lib/releaseNotesRead';
 import { useReleaseNotesUnread } from '../hooks/useReleaseNotesUnread';
+import { useAuth } from '../lib/auth';
 import {
   Megaphone, Plus, Edit3, Trash2, Eye, EyeOff, Pin, Check, Sparkles, Bug,
   Zap, Bell, ChevronDown, ChevronUp, X, Send, Clock, Users, Loader2,
@@ -16,11 +22,6 @@ const CATEGORIES = {
   announcement: { label: 'Thông báo', icon: '📢', color: 'bg-purple-100 text-purple-700', badge: 'bg-purple-500' },
   guide: { label: 'Hướng dẫn', icon: '📖', color: 'bg-teal-100 text-teal-700', badge: 'bg-teal-500' },
 };
-
-function formatDateVN(iso) {
-  if (!iso) return '';
-  return new Date(iso).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
 
 function renderMarkdownLines(content) {
   return <ReleaseNoteContent content={content} />;
@@ -70,17 +71,29 @@ function BuiltinUpdateCard({ item, isExpanded, onToggle }) {
 }
 
 export default function ReleaseNotesPage() {
+  const { user } = useAuth();
+  const visibleBuiltins = useMemo(
+    () => getVisibleBuiltinUpdates(user),
+    [user?.company_id],
+  );
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAll, setShowAll] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
   const [editNote, setEditNote] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
-  const [expandedBuiltinId, setExpandedBuiltinId] = useState(BUILTIN_UPDATES[0]?.id ?? null);
+  const [expandedBuiltinId, setExpandedBuiltinId] = useState(null);
   const [loginPopupOff, setLoginPopupOff] = useState(() => isLoginPopupDisabled());
   const { refresh: refreshUnread } = useReleaseNotesUnread();
-  const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+  const currentUser = user || JSON.parse(localStorage.getItem('user') || '{}');
   const isAdmin = ['admin', 'sales_admin', 'manager'].includes(currentUser.role);
+
+  useEffect(() => {
+    setExpandedBuiltinId((cur) => {
+      if (cur && visibleBuiltins.some((b) => b.id === cur)) return cur;
+      return visibleBuiltins[0]?.id ?? null;
+    });
+  }, [visibleBuiltins]);
 
   useEffect(() => {
     refreshUnread();
@@ -183,13 +196,13 @@ export default function ReleaseNotesPage() {
         </div>
       </div>
 
-      {BUILTIN_UPDATES.length > 0 && (
+      {visibleBuiltins.length > 0 && (
         <section className="space-y-3">
           <h2 className="text-xs font-bold text-blue-600 uppercase tracking-wider flex items-center gap-2">
             <Sparkles className="h-3.5 w-3.5" /> Cập nhật gần đây
           </h2>
           <div className="space-y-3">
-            {BUILTIN_UPDATES.map((item) => (
+            {visibleBuiltins.map((item) => (
               <BuiltinUpdateCard
                 key={item.id}
                 item={item}

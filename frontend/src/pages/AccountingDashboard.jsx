@@ -318,7 +318,7 @@ export default function AccountingDashboard() {
           onClick={() => setFilterFinancial('sx_done_not_invoiced')}
         />
         <KpiCard
-          label="Giá trị SX"
+          label="Chi phí xưởng"
           value={loading ? '…' : formatVND(summary?.total_production_value || 0)}
         />
       </div>
@@ -439,7 +439,8 @@ export default function AccountingDashboard() {
                 <th className="py-2.5 px-3">SX tại</th>
                 <th className="py-2.5 px-3">Cột SX</th>
                 <th className="py-2.5 px-3">TT</th>
-                <th className="py-2.5 px-3 text-right">Giá trị</th>
+                <th className="py-2.5 px-3 text-right">Deal CRM</th>
+                <th className="py-2.5 px-3 text-right">Chi phí xưởng</th>
                 <th className="py-2.5 px-3 text-right">BG</th>
                 <th className="py-2.5 px-3 text-right">ĐH</th>
                 <th className="py-2.5 px-3 text-right">HĐ</th>
@@ -451,12 +452,12 @@ export default function AccountingDashboard() {
             <tbody className="divide-y divide-gray-100">
               {loading && (
                 <tr>
-                  <td colSpan={11} className="py-12 text-center text-gray-400">Đang tải dữ liệu...</td>
+                  <td colSpan={12} className="py-12 text-center text-gray-400">Đang tải dữ liệu...</td>
                 </tr>
               )}
               {!loading && deals.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="py-12 text-center text-gray-400">
+                  <td colSpan={12} className="py-12 text-center text-gray-400">
                     Không có deal phù hợp bộ lọc hiện tại.
                   </td>
                 </tr>
@@ -493,8 +494,11 @@ export default function AccountingDashboard() {
                       tone={FINANCIAL_TONE[d.financial_status] || 'gray'}
                     />
                   </td>
-                  <td className="py-3 px-3 text-right tabular-nums font-medium">
-                    {formatVND(d.production_value || d.estimated_value || 0)}
+                  <td className="py-3 px-3 text-right tabular-nums font-medium text-indigo-700">
+                    {formatVND(d.estimated_value || 0)}
+                  </td>
+                  <td className="py-3 px-3 text-right tabular-nums font-medium text-orange-700">
+                    {formatVND(d.production_value || 0)}
                   </td>
                   <td className="py-3 px-3">
                     <DocCell

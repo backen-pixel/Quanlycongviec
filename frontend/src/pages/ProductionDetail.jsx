@@ -16,7 +16,7 @@ import {
 import DocumentShareModulePicker from '../components/DocumentShareModulePicker';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
+import { formatVND, formatDate, getInitials, avatarColor, getFileEmoji } from '../lib/utils';
 import { publicFileUrl as pubUrl, downloadUploadFile, printUploadImage } from '../lib/publicFileUrl';
 import { FilePreviewOpenLink } from '../context/FilePreviewContext';
 import UploadFileLightbox, {
@@ -238,19 +238,7 @@ function WorkshopInfoPanel({
     || companyRegions.find((r) => String(r.id) === String(crmDeal?.region_id))?.name
     || null;
 
-  /** Doanh thu — chỉ hiện khi deal tạo thủ công từ SX (created_from_sx). */
-  const createdFromSx = project.created_from_sx === true
-    || String(project.description || '').startsWith('[Xưởng]')
-    || String(project.description || '').includes('Tạo trực tiếp từ module Sản xuất');
-  const revenueValue = editing === 'estimated_value'
-    ? (() => {
-      const n = Number(draft);
-      return Number.isFinite(n) && n > 0 ? n : 0;
-    })()
-    : (Number(crmDeal?.estimated_value) > 0
-      ? Number(crmDeal.estimated_value)
-      : (Number(project.estimated_value) || 0));
-  /** Giá trị đơn hàng CRM (tiến độ thu / VC) — tách biệt chi phí SX. */
+  /** Giá trị đơn hàng CRM (tiến độ thu / VC) — xưởng không hiện doanh thu. */
   const orderTotalValue = Number(crmDeal?.estimated_value) > 0
     ? Number(crmDeal.estimated_value)
     : (Number(project.estimated_value) || 0);
@@ -268,7 +256,7 @@ function WorkshopInfoPanel({
   const sxCostForRemaining = editing === 'production_value'
     ? parseMoneyDraft(draft)
     : productionTotalValue;
-  /** Công nợ SX = Chi phí sản xuất − Tiền cọc. */
+  /** Công nợ SX = Chi phí xưởng − Tiền cọc. */
   const remainingValue = Math.max(0, sxCostForRemaining - depositValue);
   const financeProject = {
     ...project,
@@ -411,7 +399,7 @@ function WorkshopInfoPanel({
         </div>
       )}
 
-      {/* VC: giá trị dự án. SX: Doanh thu chỉ khi tạo từ SX; Chi phí SX / Cọc / Công nợ luôn có. */}
+      {/* VC: giá trị dự án. SX: chỉ chi phí xưởng / cọc / công nợ — không hiện doanh thu. */}
       {isVC && (
         <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'estimated_value' && startEdit('estimated_value', project.estimated_value || crmDeal?.estimated_value || '')}>
           <span className="text-sm mt-0.5 shrink-0">💰</span>
@@ -433,32 +421,11 @@ function WorkshopInfoPanel({
 
       {!isVC && (
         <>
-          {createdFromSx && (
-            <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'estimated_value' && startEdit('estimated_value', project.estimated_value || crmDeal?.estimated_value || '')}>
-              <span className="text-sm mt-0.5 shrink-0">💰</span>
-              <div className="flex-1 min-w-0">
-                <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Doanh thu</p>
-                {editing === 'estimated_value' ? (
-                  <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                    <input type="number" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
-                      className="w-full px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" placeholder="0" />
-                    <button onClick={() => save('estimated_value', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
-                    <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
-                  </div>
-                ) : (
-                  <p className="text-sm font-medium text-gray-900 flex items-center gap-1">
-                    {revenueValue > 0 ? formatVND(revenueValue) : '—'}
-                    <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" />
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
-
+          {/* Xưởng chỉ hiện chi phí (production_value) — không hiện doanh thu / giá deal CRM. */}
           <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'production_value' && startEdit('production_value', project.production_value || '')}>
             <span className="text-sm mt-0.5 shrink-0">🏭</span>
             <div className="flex-1 min-w-0">
-              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Chi phí sản xuất</p>
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Giá trị sản xuất</p>
               {editing === 'production_value' ? (
                 <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                   <input type="number" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
@@ -504,7 +471,7 @@ function WorkshopInfoPanel({
                   ? formatVND(remainingValue)
                   : '—'}
               </p>
-              <p className="text-[10px] text-gray-400 mt-0.5">= Chi phí SX − Tiền cọc</p>
+              <p className="text-[10px] text-gray-400 mt-0.5">= Giá trị sản xuất − Tiền cọc</p>
             </div>
           </div>
 
@@ -826,12 +793,7 @@ function WorkshopInfoPanel({
   );
 }
 
-function getFileIcon(name) {
-  if (!name) return '📄';
-  const ext = name.split('.').pop()?.toLowerCase();
-  const map = { pdf: '📕', doc: '📘', docx: '📘', xls: '📗', xlsx: '📗', dwg: '📐', dxf: '📐', jpg: '🖼️', jpeg: '🖼️', png: '🖼️', gif: '🖼️', webp: '🖼️', zip: '📦', rar: '📦', mp4: '🎬', mov: '🎬', webm: '🎬', avi: '🎬' };
-  return map[ext] || '📄';
-}
+const getFileIcon = (name) => getFileEmoji(name);
 
 function getUploadFilePayload(uploadResponse) {
   if (!uploadResponse || typeof uploadResponse !== 'object') return null;

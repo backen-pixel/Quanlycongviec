@@ -1,0 +1,1367 @@
+{
+  "generated_at": "2026-07-21T08:54:13.721Z",
+  "total_routes": 224,
+  "by_file": {
+    "crm.js@presplit": 224
+  },
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/_version",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/admin/sla-at-risk",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/admin/sla-remind",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/alerts/follow-ups",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/auto-lead-blocked-phones",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/auto-lead-blocked-phones",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/auto-lead-blocked-phones/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/auto-project-config",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/auto-project-config",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/company-regions",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/company-regions",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/company-regions/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/company-regions/:id/regeocode",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/contract-signed-revenue",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/customers",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/customers",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/customers-overview",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/customers-overview/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/customers/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/dashboard",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/deals",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/deals/:id/auto-create-project",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/documents/:docId/visibility",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/employees-by-company",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/followup-care/dismiss",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/followup-care/dismiss",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/followup-care/dismiss-all",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/followup-care/dismiss/undo",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/followup-care/notifications",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/invoices",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/invoices",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/invoices/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/invoices/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/invoices/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/invoices/:id/items",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/invoices/:id/misa-publish",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/invoices/:id/misa-send-email",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/invoices/:id/misa-status",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/invoices/:id/payments",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/invoices/:id/pdf",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/kanban-bootstrap",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/kanban-rows",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/lead-care-marks",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/lead-comments/:cid",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/lead-comments/:cid",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/lead-comments/:cid/reaction",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/lead-comments/index",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/lead-types",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/lead-types",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/lead-types/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/lead-types/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads-by-fb-page",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads-deadlines",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads-deadlines",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/leads/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/activities",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/activities",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/leads/:id/activities/:activityId",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:id/activities/:activityId/share",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/activities/upload",
+      "file": "crm.js@presplit",
+      "middleware": [
+        "upload"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/assignments",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/assignments",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/badge",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/leads/:id/care-mark",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/care-mark",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/chat",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/chat",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:id/chat/:msgId/pin",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/chat/:msgId/react",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/chat/drive",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/chat/pinned",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/chat/upload",
+      "file": "crm.js@presplit",
+      "middleware": [
+        "upload"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/comments",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/comments",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/leads/:id/comments/read",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/comments/read-receipts",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/convert-to-deal",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/convert-to-lead",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/convert-to-project",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/create-project",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/leads/:id/deadline",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/deadline-history",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/detail",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/documents",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/documents",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/leads/:id/documents/:docId",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/documents/bulk",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/leads/:id/interacted",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/interacted",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/members",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/members",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/leads/:id/members/:userId",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/leads/:id/pin",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/pin",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/preview-project-tasks",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/project-setup",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/project-tasks",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/reopen",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/repair-pipeline-display",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/leads/:id/stage",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/stage-advance-check",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/sx-handover",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/sync-stage",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/task-attachments",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/task-documents",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/tasks",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/tasks",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/tasks/:taskId/import-quotation-excel",
+      "file": "crm.js@presplit",
+      "middleware": [
+        "upload"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/tasks/ensure-missing",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/tasks/ensure-missing-sx",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/tasks/from-template",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/tasks/generate-production-template",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/tasks/resync-pipeline",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/zalo-notify-preview",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/zalo-notify-send",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:id/zalo-template-fill",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/leads/:leadId/tasks/:taskId",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:leadId/tasks/:taskId",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:leadId/tasks/:taskId/attachments",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:leadId/tasks/:taskId/attachments",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/leads/:leadId/tasks/:taskId/attachments/:attId",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:leadId/tasks/:taskId/attachments/:attId/share-scope",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:leadId/tasks/:taskId/attachments/:attId/toggle-share",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:leadId/tasks/:taskId/attachments/bulk",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:leadId/tasks/:taskId/checklist/:checklistId/notes",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:leadId/tasks/:taskId/notes",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/:leadId/tasks/:taskId/restore-checklist",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/leads/:leadId/tasks/:taskId/toggle-share",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/bulk-assign",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/cleanup-duplicates",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/merge-duplicates",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/merge-selected",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/picker",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/scan-duplicates",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/leads/stage-history-summary",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/ledger-net-by-leads",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/ledger-net-by-leads",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/live-version",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/orders",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/orders",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/orders/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/orders/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/orders/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/orders/:id/create-invoice",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/orders/:id/pdf",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/pipeline-stages",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/pipeline-stages",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/pipeline-stages-reorder",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/pipeline-stages/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/pipeline-stages/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/pipeline-stages/:id/assign-production-columns",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/pipeline-stages/:id/production-columns",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/pipelines",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/pipelines",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/pipelines/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/pipelines/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/pipelines/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/pipelines/:id/copy",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/planner/columns",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/planner/columns/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/planner/columns/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/planner/columns/:id/items",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/planner/items/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/planner/me",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/planner/reorder",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/products",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/products-list",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/products/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/project/:projectId/auto-invoice",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/project/:projectId/lead-documents",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/project/:projectId/shared-notes",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/project/:projectId/summary",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/projects/:projectId/documents",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/quotations",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/quotations",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/quotations/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/quotations/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/quotations/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/quotations/:id/convert-to-order",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/quotations/:id/history",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/quotations/:id/pdf",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/quotations/excel-sheets",
+      "file": "crm.js@presplit",
+      "middleware": [
+        "upload"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/quotations/parse-excel",
+      "file": "crm.js@presplit",
+      "middleware": [
+        "upload"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/referrers",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/referrers",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/reports/org-activity-feed",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/reports/org-overview",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/reports/org-overview/export.pdf",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/reports/org-overview/survey-visits",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/reports/staff-lead-deal",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/reports/staff-lead-deal/:userId/pipelines",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/reports/staff-lead-deal/:userId/pipelines/export.pdf",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/reports/staff-lead-deal/export.pdf",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/settings/deadline-config",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/settings/deadline-config",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/settings/deal-stage-report-buckets",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/settings/deal-stage-report-buckets",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/source-categories",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/source-categories",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/source-categories/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/source-categories/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/sources",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/sources",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/sources/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/stage-counts",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/task-templates",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/task-templates",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/task-templates/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/task-templates/:id",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/task-templates/:tplId/items",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/task-templates/:tplId/items/:itemId",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/task-templates/:tplId/items/:itemId",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/task-templates/apply-to-company-regions",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/task-templates/set-default-bundle",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/overview",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/planner",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/web-dashboard-bootstrap",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/zalo-notify-settings",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "PUT",
+      "path": "/zalo-notify-settings",
+      "file": "crm.js@presplit",
+      "middleware": []
+    },
+    {
+      "method": "POST",
+      "path": "/zalo-notify-test",
+      "file": "crm.js@presplit",
+      "middleware": []
+    }
+  ],
+  "source": "git",
+  "git_commit": "13840874571d12ea5d7c2eb100f28bb5419bf638",
+  "label": "presplit",
+  "checksum": "d37880ae512a85ed"
+}

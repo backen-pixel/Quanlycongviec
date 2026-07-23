@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>Hướng dẫn — Chuyển Deal CRM sang Sản xuất (NextGo)</title>
+  <style>
+    @page { size: A4; margin: 18mm 16mm 20mm 16mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      font-size: 10.5pt;
+      line-height: 1.55;
+      color: #1e293b;
+      margin: 0;
+      padding: 0;
+    }
+    h1 {
+      font-size: 20pt;
+      color: #0f766e;
+      margin: 0 0 6px;
+      line-height: 1.25;
+    }
+    .subtitle {
+      font-size: 11pt;
+      color: #475569;
+      margin-bottom: 4px;
+    }
+    .meta {
+      font-size: 9pt;
+      color: #64748b;
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #99f6e4;
+    }
+    h2 {
+      font-size: 13pt;
+      color: #0f766e;
+      margin: 22px 0 10px;
+      page-break-after: avoid;
+      border-left: 4px solid #14b8a6;
+      padding-left: 10px;
+    }
+    h3 {
+      font-size: 11pt;
+      color: #334155;
+      margin: 14px 0 8px;
+      page-break-after: avoid;
+    }
+    p { margin: 6px 0; }
+    ul, ol { margin: 6px 0 10px; padding-left: 22px; }
+    li { margin: 3px 0; }
+    .flow {
+      background: #f0fdfa;
+      border: 1px solid #ccfbf1;
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 9pt;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      margin: 10px 0 16px;
+    }
+    .roles {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+      margin: 12px 0 18px;
+    }
+    .role-card {
+      background: #f0fdfa;
+      border: 1px solid #99f6e4;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 9.5pt;
+    }
+    .role-card strong { display: block; color: #0f766e; margin-bottom: 4px; }
+    figure {
+      margin: 12px 0 18px;
+      page-break-inside: avoid;
+    }
+    figure img {
+      width: 100%;
+      max-height: 420px;
+      object-fit: contain;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      background: #fff;
+    }
+    figcaption {
+      font-size: 9pt;
+      color: #64748b;
+      margin-top: 6px;
+      font-style: italic;
+    }
+    .callout {
+      background: #fffbeb;
+      border-left: 4px solid #f59e0b;
+      padding: 8px 12px;
+      margin: 10px 0;
+      font-size: 9.5pt;
+    }
+    .notes {
+      background: #ecfdf5;
+      border: 1px solid #a7f3d0;
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 9.5pt;
+      margin-top: 8px;
+    }
+    .notes strong { color: #166534; }
+    table.trouble { width: 100%; border-collapse: collapse; font-size: 9.5pt; margin: 10px 0; }
+    table.trouble th, table.trouble td {
+      border: 1px solid #e2e8f0;
+      padding: 7px 9px;
+      vertical-align: top;
+      text-align: left;
+    }
+    table.trouble th { background: #f1f5f9; color: #334155; }
+    .page-break { page-break-before: always; }
+    .footer-note {
+      margin-top: 24px;
+      padding-top: 10px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 8.5pt;
+      color: #94a3b8;
+      text-align: center;
+    }
+    .badge {
+      display: inline-block;
+      background: #0d9488;
+      color: #fff;
+      font-size: 8pt;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      vertical-align: middle;
+      margin-left: 6px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Hướng dẫn — Chuyển Deal CRM sang Sản xuất</h1>
+  <p class="subtitle">Mẫu thực tế: Công Ty TNHH Bao Bì NextGo (xưởng giấy / bao bì)</p>
+  <p class="meta">
+    Deal <strong>DEAL-2026-853</strong> → Dự án xưởng <strong>TB-2026-447</strong> · Phân loại <strong>Hộp cứng</strong>
+    <span class="badge">v2.4.3</span><br />
+    Cập nhật: 21/07/2026 · TuBep Pro
+  </p>
+
+  <h2>Tổng quan luồng</h2>
+  <div class="flow">CRM Kanban (Deal) — lọc NextGo
+  → Chuyển cột nhanh / kéo thả sang cột «Thắng»
+  → Popup «Chuyển công ty SX»: chọn NextGo + phân loại bao bì → tích xác nhận → đếm 5s
+  → Tự tạo dự án xưởng (mã TB-YYYY-NNN)
+  → Xưởng SX: Kanban cột «Chờ vào xưởng»
+  → Up file thiết kế (tab Tài liệu) + trao đổi qua tab Bình luận
+  → CRM xác nhận → xưởng chuyển cột: Tiếp nhận đơn → Thiết kế → NVL → SX → QC → Đóng gói → Giao hàng</div>
+
+  <div class="roles">
+    <div class="role-card">
+      <strong>NVKD / Admin CRM</strong>
+      Chuyển deal sang cột Thắng, chọn xưởng NextGo và phân loại (Túi giấy / Hộp / Thùng carton…). Theo dõi bình luận và tài liệu từ xưởng.
+    </div>
+    <div class="role-card">
+      <strong>Nhân viên Sản xuất</strong>
+      Nhận thẻ ở cột Chờ vào xưởng / Tiếp nhận đơn. Up file thiết kế tab Tài liệu; đính kèm file trong Bình luận khi cần.
+    </div>
+    <div class="role-card">
+      <strong>Admin</strong>
+      Cấu hình pipeline xưởng giấy, phân loại (Túi giấy, Hộp cứng…) tại Pipeline xưởng / Bộ nhiệm vụ.
+    </div>
+  </div>
+
+  <h2>Chuẩn bị</h2>
+  <ol>
+    <li>Đăng nhập TuBep Pro (CRM hoặc Xưởng SX).</li>
+    <li>Lọc Công ty: <strong>NextGo</strong> trên CRM Dashboard.</li>
+    <li>Mở tab <strong>Deals</strong> (Kanban).</li>
+    <li>Deal cần chuyển phải <strong>chưa có dự án xưởng</strong> — thường ở các cột trước Thắng.</li>
+  </ol>
+
+  <h2>Bước 1 — CRM: Chuyển deal sang cột Thắng</h2>
+  <h3>1.1. Xác định deal trên Kanban</h3>
+  <ul>
+    <li>Vào CRM → Dashboard CRM → tab <strong>Deals</strong> (không dùng tab Leads).</li>
+    <li>Bộ lọc: Công ty <strong>NextGo</strong>.</li>
+    <li>Tìm deal (VD: DEAL-2026-853 — HL_Như Ý) ở cột trước Thắng.</li>
+  </ul>
+  <figure>
+    <img src="00-crm-deal-truoc-khi-chuyen.png" alt="Deal trước khi chuyển Thắng" />
+    <figcaption>Hình 1 — Deal trên Kanban CRM NextGo trước khi chuyển sang cột Thắng</figcaption>
+  </figure>
+  <div class="notes">
+    <strong>Ghi chú:</strong> (1) Tab Deals · (2) Chip lọc NextGo · (3) Nút chuyển cột nhanh · (4) Cột «Thắng»
+  </div>
+
+  <h3>1.2. Chuyển sang cột Thắng</h3>
+  <p><strong>Cách A (khuyến nghị):</strong> Bấm nút chuyển cột trên thẻ → chọn 🎉 <em>Thắng</em>.</p>
+  <p><strong>Cách B:</strong> Kéo thả thẻ deal sang cột <em>Thắng</em>.</p>
+
+  <h3>1.3. Popup «Chuyển công ty SX»</h3>
+  <p>Ngay khi deal vào cột Thắng (chưa có dự án), hệ thống hiện popup bắt buộc:</p>
+  <ul>
+    <li><strong>Công ty sản xuất:</strong> chọn <strong>NextGo</strong> (xưởng bao bì).</li>
+    <li><strong>Phân loại:</strong> Túi giấy / Hộp cứng / Hộp mềm / Hộp carton bồi in offset / Hộp carton / Thùng carton — ★ = gợi ý theo loại CRM.</li>
+    <li>Tích «Đã kiểm tra…» → bấm <strong>Xác nhận chuyển</strong> → đếm 5 giây (có thể Hủy).</li>
+  </ul>
+  <figure>
+    <img src="01-chon-cong-ty-san-xuat.png" alt="Chọn công ty và phân loại sản xuất NextGo" />
+    <figcaption>Hình 2 — Popup chọn Công ty SX NextGo và phân loại bao bì</figcaption>
+  </figure>
+  <div class="callout">
+    Deal chưa có dự án <strong>không được kéo thẳng</strong> sang các cột sau Thắng (Thiết kế chi tiết, Sản xuất, Giao hàng…). Phải chọn xưởng trước.
+  </div>
+  <figure>
+    <img src="01b-deal-da-o-cot-thang.png" alt="Deal đã ở cột Thắng" />
+    <figcaption>Hình 3 — Deal đã ở cột Thắng; badge SX «Chờ vào xưởng»</figcaption>
+  </figure>
+
+  <div class="page-break"></div>
+  <h2>Bước 2 — Sản xuất: Deal ở cột Chờ vào xưởng</h2>
+  <h3>2.1. Mở module Xưởng SX</h3>
+  <ul>
+    <li>Bấm nút chuyển module trên sidebar: <strong>CRM → Xưởng SX</strong>.</li>
+    <li>Vào <strong>Deal vào xưởng</strong> (<code>/sx/dashboard</code>).</li>
+  </ul>
+  <h3>2.2. Lọc đúng xưởng và phân loại</h3>
+  <ul>
+    <li>Xưởng / Công ty Sản xuất: <strong>NextGo</strong></li>
+    <li>Phân loại: <strong>Hộp cứng</strong> (khớp bước 1) — hoặc «Tất cả»</li>
+    <li>Tìm kiếm: <strong>TB-2026-447</strong> hoặc tên khách</li>
+  </ul>
+  <div class="callout">
+    Pipeline NextGo: Chờ vào xưởng → Tiếp nhận đơn → Thiết kế chi tiết → Chuẩn bị NVL → Sản xuất → QC nội bộ → Đóng gói &amp; xuất kho → Giao hàng → Hoàn thành.
+  </div>
+  <figure>
+    <img src="02-deal-o-cot-cho-vao-xuong.png" alt="Dự án ở cột Chờ vào xưởng" />
+    <figcaption>Hình 4 — Dự án TB-2026-447 ở cột Chờ vào xưởng (Kanban SX NextGo)</figcaption>
+  </figure>
+  <div class="notes">
+    <strong>Ghi chú:</strong> (1) Chip xưởng NextGo · (2) Cột Chờ vào xưởng · (3) Thẻ TB-2026-447 · (4) Phân loại Hộp cứng · (5) Badge CRM
+  </div>
+
+  <h2>Bước 3 — Tài liệu và bình luận</h2>
+  <h3>3.1. Tab Tài liệu — lưu file thiết kế / bản in</h3>
+  <ol>
+    <li>Từ Kanban, mở dự án TB-2026-447 (bấm tiêu đề thẻ).</li>
+    <li>Chọn tab <strong>📋 Tài liệu</strong>.</li>
+    <li>Bấm <strong>Upload file xưởng</strong> → chọn file (PDF, AI, CDR, JPG…).</li>
+    <li>(Tuỳ chọn) Bấm <strong>Chia sẻ CRM</strong> để NVKD thấy trên deal.</li>
+  </ol>
+  <figure>
+    <img src="04-tab-tai-lieu.png" alt="Tab Tài liệu upload" />
+    <figcaption>Hình 5 — Chi tiết dự án SX NextGo, tab Tài liệu</figcaption>
+  </figure>
+
+  <h3>3.2. Tab Bình luận — trao đổi nhanh CRM ↔ xưởng</h3>
+  <ol>
+    <li>Cùng trang chi tiết dự án → tab <strong>💬 Bình luận</strong>.</li>
+    <li>Gõ nội dung, dùng @ nhắc NVKD / phụ trách SX.</li>
+    <li>Đính kèm file (kẹp giấy) hoặc dán ảnh (Ctrl+V) → <strong>Đăng</strong>.</li>
+    <li>Phía CRM: mở deal DEAL-2026-853 → tab Bình luận để xem/phản hồi.</li>
+  </ol>
+  <figure>
+    <img src="06-binh-luan-sx.png" alt="Tab Bình luận SX" />
+    <figcaption>Hình 6 — Tab Bình luận trên dự án SX (thông báo đã chuyển sang sản xuất)</figcaption>
+  </figure>
+
+  <div class="page-break"></div>
+  <h2>Xử lý sự cố thường gặp</h2>
+  <table class="trouble">
+    <thead><tr><th>Vấn đề</th><th>Nguyên nhân</th><th>Cách xử lý</th></tr></thead>
+    <tbody>
+      <tr><td>Không hiện popup chọn xưởng</td><td>Deal đã có dự án liên kết</td><td>Mở deal kiểm tra badge SX; dùng thẻ trên Kanban SX</td></tr>
+      <tr><td>Không kéo được sang cột sau Thắng</td><td>Chưa chọn công ty SX / chưa có project_id</td><td>Chuyển lại sang Thắng hoặc mở popup chọn xưởng</td></tr>
+      <tr><td>Popup báo thiếu phân loại</td><td>Chưa chọn Túi giấy / Hộp…</td><td>Chọn phân loại khớp loại CRM (★)</td></tr>
+      <tr><td>Kanban SX trống</td><td>Lọc sai xưởng hoặc phân loại</td><td>Bộ lọc → Xưởng = NextGo; phân loại khớp bước 1</td></tr>
+      <tr><td>CRM không thấy file thiết kế</td><td>Chưa Chia sẻ CRM hoặc chỉ up nội bộ</td><td>Bật Chia sẻ CRM, hoặc gửi qua Bình luận</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Đường dẫn nhanh</h2>
+  <ul>
+    <li>CRM Deals: <code>/crm/dashboard</code> + lọc NextGo</li>
+    <li>Kanban xưởng: <code>/sx/dashboard</code></li>
+    <li>Chi tiết dự án + Tài liệu: <code>/sx/projects/{id}?tab=documents</code></li>
+    <li>Chi tiết dự án + Bình luận: <code>/sx/projects/{id}?tab=comments</code></li>
+    <li>Chi tiết deal CRM: <code>/crm/leads/{deal_id}</code></li>
+    <li>Cấu hình pipeline: <code>/sx/pipeline-settings</code></li>
+    <li>Bộ nhiệm vụ: <code>/sx/task-templates</code></li>
+    <li>Hướng dẫn online: <code>/updates</code> — Có gì mới?</li>
+  </ul>
+
+  <p class="footer-note">TuBep Pro · Hướng dẫn nội bộ · Công Ty TNHH Bao Bì NextGo · 21/07/2026</p>
+</body>
+</html>

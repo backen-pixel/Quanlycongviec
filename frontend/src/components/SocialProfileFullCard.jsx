@@ -7,7 +7,7 @@ import {
   Pencil, Share2, EyeOff, Trash2,
 } from 'lucide-react';
 import api from '../lib/api';
-import { getInitials } from '../lib/utils';
+import { getInitials, timeAgo } from '../lib/utils';
 
 const MODERATOR_ROLES = new Set([
   'admin', 'manager', 'director', 'supervisor',
@@ -107,22 +107,6 @@ function ReactionCircle({ reactionKey, size = 'lg' }) {
         </span>
       );
   }
-}
-
-function timeAgo(iso) {
-  if (!iso) return '';
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return '';
-  const diff = Math.max(0, Date.now() - t);
-  const s = Math.floor(diff / 1000);
-  if (s < 60) return 'Vừa xong';
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m} phút trước`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h} giờ trước`;
-  const d = Math.floor(h / 24);
-  if (d < 7) return `${d} ngày trước`;
-  return new Date(iso).toLocaleDateString('vi-VN', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
 function youtubeEmbedId(url) {

@@ -390,21 +390,23 @@ async function collectMergedDocuments(leadId, projectId) {
   return docs;
 }
 
-/** Giá trị SX hiện tại của project (production_value ưu tiên, fallback estimated_value). */
-function projectSxValue(project) {
+/** Mirror giá trị deal trên project (estimated_value) — không dùng production_value (chi phí SX). */
+function projectDealMirrorValue(project) {
   if (!project) return null;
-  const v = Number(project.production_value ?? project.estimated_value);
-  return Number.isFinite(v) ? v : null;
+  const v = Number(project.estimated_value);
+  return Number.isFinite(v) && v > 0 ? v : null;
 }
 
-/** Ghi đè giá trị deal (từ CRM) vào project SX — dùng khi kế toán bấm «Đồng bộ». */
+/**
+ * Đồng bộ giá trị deal CRM → mirror trên project (estimated_value).
+ * Không đụng production_value (chi phí SX) — hai cột độc lập.
+ */
 async function syncDealValueToProject(projectId, value) {
   const v = Number(value);
   if (!projectId || !Number.isFinite(v) || v <= 0) {
     return { synced: false, reason: 'invalid_value' };
   }
   const { error } = await supabase.from('projects').update({
-    production_value: v,
     estimated_value: v,
     updated_at: new Date().toISOString(),
   }).eq('id', projectId);
@@ -478,11 +480,15 @@ async function fetchAccountingDealDetail(leadId, clientCompanyId) {
   const lead = leadFullRes.data || leadBase;
   const project = projectRes.data || null;
   const crmValue = Number(lead.estimated_value) || 0;
-  const sxValue = projectSxValue(project);
+  const projectMirror = projectDealMirrorValue(project);
+  const productionCost = project ? Number(project.production_value) || 0 : 0;
   const valueSync = {
     crm_value: crmValue,
-    sx_value: sxValue,
-    in_sync: !project || sxValue == null || Math.abs(sxValue - crmValue) < 1,
+    /** Mirror deal trên project.estimated_value — khác chi phí SX (production_value) */
+    project_value: projectMirror,
+    sx_value: projectMirror,
+    production_value: productionCost,
+    in_sync: !project || projectMirror == null || Math.abs(projectMirror - crmValue) < 1,
   };
 
   return {
@@ -522,6 +528,8 @@ module.exports = {
   fetchAccountingDealDetail,
   isDepositStageLabel,
   stageStatusFromAmounts,
-  projectSxValue,
+  projectDealMirrorValue,
+  /** @deprecated dùng projectDealMirrorValue — không còn đọc production_value */
+  projectSxValue: projectDealMirrorValue,
   syncDealValueToProject,
 };

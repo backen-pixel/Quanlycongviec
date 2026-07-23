@@ -253,9 +253,13 @@ function createRunner(args) {
     }
   });
 
-  test(15, 'route-manifest 224 endpoint', () => {
+  test(15, 'route-manifest nội bộ nhất quán + có checksum', () => {
     const m = JSON.parse(fs.readFileSync(path.join(CRM_DIR, 'route-manifest.json'), 'utf8'));
-    if (m.total_routes !== 224) throw new Error(String(m.total_routes));
+    const sum = Object.values(m.by_file || {}).reduce((a, b) => a + b, 0);
+    if (m.total_routes !== m.routes.length || m.total_routes !== sum) {
+      throw new Error(`inconsistent total=${m.total_routes} arr=${m.routes.length} by_file=${sum}`);
+    }
+    if (!m.checksum) throw new Error('missing checksum');
   });
 
   test(16, 'Load CRM router + computeOrgOverviewReportData (UI báo cáo org)', () => {

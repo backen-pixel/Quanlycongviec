@@ -46,6 +46,18 @@ export function isMetallaCompany(company) {
   return foldViSx(`${company?.short_name || ''} ${company?.name || ''}`).includes('metalla');
 }
 
+export function isNextGoCompany(company) {
+  return foldViSx(`${company?.short_name || ''} ${company?.name || ''}`).includes('nextgo');
+}
+
+/** Đoạn gợi ý khi chưa có loại CRM — theo công ty CRM của deal. */
+export function sxPickGuideFallbackText(company) {
+  if (isNextGoCompany(company)) {
+    return 'Chưa có phân loại CRM — ★ sẽ hiện khi deal có loại (Túi giấy / Hộp / Thùng carton…).';
+  }
+  return 'Chưa có phân loại CRM — ★ sẽ hiện khi deal có loại (Tủ bếp / Cửa…).';
+}
+
 /** Phân loại xưởng có khớp loại CRM không? */
 export function workshopTypeMatchesSxKind(workshopTypeName, kind) {
   if (!kind) return true;

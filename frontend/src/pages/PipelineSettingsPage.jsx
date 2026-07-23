@@ -1300,6 +1300,7 @@ export default function PipelineSettingsPage() {
           const linkedVc = vcStages.filter((vc) => vc.crm_target_stage_id === s.id);
           const syncRoleLabels = {
             sx_production: 'SX',
+            sx_completed: 'Đã SX',
             vc_delivery: 'VC Giao',
             vc_installation: 'VC Lắp',
             vc_customer_care: 'VC CSKH',
@@ -2935,6 +2936,7 @@ function StageForm({
             <option value="">— Không đồng bộ —</option>
             <optgroup label="Sản xuất (SX)">
               <option value="sx_production">🏭 Nhận deal khi SX project đến cột có trigger CRM</option>
+              <option value="sx_completed">📦 Đã sản xuất — nhận deal khi xưởng đóng gói xong</option>
             </optgroup>
             <optgroup label="Vận chuyển (VC)">
               <option value="vc_delivery">🚚 Nhận deal khi VC chuyển sang «Vận chuyển»</option>
