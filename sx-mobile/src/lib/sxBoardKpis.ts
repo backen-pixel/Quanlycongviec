@@ -129,6 +129,7 @@ export function projectIsDeadlineOverdue(
   index?: KpiStageIndex,
   todayMs = Date.now(),
 ): boolean {
+  if (String(p.status || '') === 'completed') return false;
   const col = stageOf(p, stages, index);
   if (shouldHideDeadline(col)) return false;
   const raw = p.delivery_date || p.production_deadline || p.deadline;
@@ -210,12 +211,20 @@ export function pickOverdueProjects(
 export function pickSoonProjects(
   projects: ProductionProject[],
   limit = 5,
+  stages: KanbanStage[] = [],
 ): ProductionProject[] {
-  const now = startOfLocalDay(new Date()).getTime();
+  const index = stages.length ? buildKpiStageIndex(stages) : undefined;
+  const nowMs = Date.now();
+  const now = startOfLocalDay(new Date(nowMs)).getTime();
   const dayMs = 86400000;
   const scored: { p: ProductionProject; diff: number; ts: number }[] = [];
   for (const p of projects) {
-    if (p.is_overdue || String(p.status || '') === 'completed') continue;
+    if (String(p.status || '') === 'completed') continue;
+    if (stages.length) {
+      if (projectIsDeadlineOverdue(p, stages, index, nowMs)) continue;
+    } else if (p.is_overdue) {
+      continue;
+    }
     const raw = p.delivery_date || p.production_deadline || p.deadline;
     const ts = raw ? startOfLocalDay(new Date(raw)).getTime() : NaN;
     if (!Number.isFinite(ts)) continue;
@@ -237,7 +246,7 @@ export function pickPriorityProjects(
 ): ProductionProject[] {
   const overdue = pickOverdueProjects(projects, limit, stages);
   if (overdue.length >= limit) return overdue.slice(0, limit);
-  const soon = pickSoonProjects(projects, limit - overdue.length);
+  const soon = pickSoonProjects(projects, limit - overdue.length, stages);
   return [...overdue, ...soon].slice(0, limit);
 }
 

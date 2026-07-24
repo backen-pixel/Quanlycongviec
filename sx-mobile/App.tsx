@@ -39,6 +39,8 @@ const MUTE_FCM_FOREGROUND_TYPES = new Set([
   'project_created',
   'crm_assignment_assigned',
   'crm_assignment_comment',
+  'crm_assignment_overdue',
+  'crm_assignment_due_soon',
   'crm_task_assigned',
   'crm_task_completed',
 ]);
@@ -48,7 +50,8 @@ Notifications.setNotificationHandler({
     const data = (notification.request.content.data || {}) as Record<string, unknown>;
     const type = String(data.type || '');
     const muteFg =
-      AppState.currentState === 'active' && MUTE_FCM_FOREGROUND_TYPES.has(type);
+      AppState.currentState === 'active'
+      && (MUTE_FCM_FOREGROUND_TYPES.has(type) || type.startsWith('crm_assignment'));
     return {
       shouldShowBanner: !muteFg,
       shouldShowList: !muteFg,

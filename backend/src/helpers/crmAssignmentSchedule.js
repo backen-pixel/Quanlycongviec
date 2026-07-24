@@ -2,10 +2,6 @@
  * Lịch giao việc CRM/SX — tạo schedule và spawn crm_assignments theo chu kỳ.
  */
 const { supabase } = require('../config/supabase');
-const {
-  persistAssignmentNotification,
-  buildAssignmentNotificationInsert,
-} = require('./crmAssignmentNotifications');
 
 const ADMIN_ROLES = new Set(['admin', 'manager', 'sales_admin', 'crm_production_admin']);
 const isAdmin = (req) => ADMIN_ROLES.has(String(req.user?.role || '').toLowerCase());
@@ -69,17 +65,28 @@ async function copyScheduleFilesToAssignment(scheduleId, assignmentId, uploadedB
 }
 
 async function notifyAssignees(io, assignment, assigneeIds, creatorId) {
-  for (const uid of assigneeIds || []) {
-    if (String(uid) === String(creatorId || '')) continue;
-    const payload = {
-      type: 'crm_assignment_assigned',
-      title: '📋 Bạn vừa được giao nhiệm vụ',
-      message: `"${assignment.title}"${assignment.deadline ? ' — hạn ' + new Date(assignment.deadline).toLocaleString('vi-VN') : ''}`,
-      assignmentId: assignment.id,
-    };
-    const notif = await persistAssignmentNotification(supabase, uid, payload);
-    if (io) io.to(`user:${uid}`).emit('notification', notif || buildAssignmentNotificationInsert(uid, payload));
-  }
+  const { notifyNewCrmAssignmentAssignees } = require('./crmAssignmentNotifications');
+  const { dispatchNotificationToUser } = require('./notifications');
+  const pushFn = async (userId, notification) => {
+    await dispatchNotificationToUser(io, userId, notification);
+  };
+  const fakeReq = {
+    user: { userId: creatorId },
+    app: {
+      get(key) {
+        if (key === 'io') return io;
+        if (key === 'pushNotification') return pushFn;
+        return undefined;
+      },
+    },
+  };
+  await notifyNewCrmAssignmentAssignees(fakeReq, {
+    assignmentId: assignment.id,
+    title: assignment.title,
+    userIds: assigneeIds,
+    deadline: assignment.deadline,
+    assignmentModule: assignment.assignment_module || 'crm',
+  });
 }
 
 async function spawnAssignmentFromSchedule(schedule, io) {

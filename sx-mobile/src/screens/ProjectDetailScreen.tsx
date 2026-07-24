@@ -86,8 +86,9 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   const [dateDraft, setDateDraft] = useState<Date>(new Date());
   const [dateSaving, setDateSaving] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
+  const scrollInnerRef = useRef<View>(null);
+  const focusTargetRef = useRef<View>(null);
   const didFocusScroll = useRef(false);
-  const focusAnchorY = useRef(0);
   const loadSeqRef = useRef(0);
 
   const load = useCallback(async (silent = false) => {
@@ -105,6 +106,9 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         || null;
       if (!resolvedDealId) resolvedDealId = await fetchDealIdForProject(forProjectId);
       if (seq !== loadSeqRef.current) return;
+
+      // Activities không phụ thuộc deal — chạy song song với tasks.
+      const actPromise = fetchProjectActivities(forProjectId);
 
       let taskRows = resolvedDealId
         ? await fetchCrmDealTasks(resolvedDealId)
@@ -133,7 +137,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
       setDealId(resolvedDealId);
 
       const [actRows, commentRows] = await Promise.all([
-        fetchProjectActivities(forProjectId),
+        actPromise,
         fetchThreadComments(resolveCommentSource(forProjectId, resolvedDealId)).catch(() => []),
       ]);
       if (seq !== loadSeqRef.current) return;
@@ -154,7 +158,6 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
 
   useEffect(() => {
     didFocusScroll.current = false;
-    focusAnchorY.current = 0;
     if (focusTaskId) setTab('tasks');
   }, [focusTaskId, projectId]);
 
@@ -305,10 +308,25 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   useEffect(() => {
     if (!focusTaskId || loading || !focusedTask || didFocusScroll.current) return;
     const timer = setTimeout(() => {
-      didFocusScroll.current = true;
-      const y = Math.max(0, focusAnchorY.current - 16);
-      scrollRef.current?.scrollTo({ y, animated: true });
-    }, 320);
+      const inner = scrollInnerRef.current;
+      const target = focusTargetRef.current;
+      if (!inner || !target) {
+        didFocusScroll.current = true;
+        scrollRef.current?.scrollTo({ y: 320, animated: true });
+        return;
+      }
+      target.measureLayout(
+        inner,
+        (_x, y) => {
+          didFocusScroll.current = true;
+          scrollRef.current?.scrollTo({ y: Math.max(0, y - 12), animated: true });
+        },
+        () => {
+          didFocusScroll.current = true;
+          scrollRef.current?.scrollTo({ y: 320, animated: true });
+        },
+      );
+    }, 350);
     return () => clearTimeout(timer);
   }, [focusTaskId, loading, focusedTask]);
 
@@ -322,6 +340,17 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   const progressColor = getTaskProgressColor(progress, colors);
   const docCount = project?.sharedDocuments?.length ?? 0;
   const valueStr = formatMoneyAmount(project?.estimated_value);
+
+  const displayDeal = useMemo(() => {
+    const deals = project?.crmDeals || [];
+    if (!deals.length) return null;
+    if (dealId) {
+      const hit = deals.find((d) => String(d.id) === String(dealId));
+      if (hit) return hit;
+    }
+    const primaryId = pickPrimaryCrmDealId(deals);
+    return (primaryId && deals.find((d) => String(d.id) === String(primaryId))) || deals[0];
+  }, [project?.crmDeals, dealId]);
 
   const styles = useMemo(
     () =>
@@ -587,8 +616,8 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     );
   }
 
-  const displayTitle = project?.crmDeals?.[0]?.title || project?.name || 'Dự án';
-  const displayCode = project?.crmDeals?.[0]?.code || project?.code || '';
+  const displayTitle = displayDeal?.title || project?.name || 'Dự án';
+  const displayCode = displayDeal?.code || project?.code || '';
   const isFullHeightTab = tab === 'comments' || tab === 'documents' || tab === 'drive' || tab === 'team';
 
   const tabsBar = (
@@ -645,7 +674,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
           nestedScrollEnabled
         >
-          <View style={styles.content}>
+          <View ref={scrollInnerRef} collapsable={false} style={styles.content}>
           <ProductionPipelineStepper
             stages={project?.sxKanbanStages || []}
             currentStageId={project?.sx_kanban_column_id}
@@ -685,12 +714,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           {tab === 'tasks' && (
             <>
               {focusTaskId && focusedTask ? (
-                <View
-                  style={styles.focusBanner}
-                  onLayout={(e) => {
-                    focusAnchorY.current = e.nativeEvent.layout.y;
-                  }}
-                >
+                <View ref={focusTargetRef} collapsable={false} style={styles.focusBanner}>
                   <Ionicons name="locate" size={16} color={colors.primary} />
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <Text style={styles.focusBannerTitle}>Công việc đang mở</Text>

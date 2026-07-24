@@ -18,7 +18,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { loadKanbanFilters } from '../lib/kanbanFilterStorage';
 import { fetchProductionBoard } from '../lib/productionApi';
-import { getAnyCachedBoard, getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
+import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
 import { REALTIME_BOARD } from '../lib/realtimeModes';
 import { initialsFrom, shortDateLabel } from '../lib/sxBoardKpis';
 import { useRootNavigation } from '../navigation/useRootNavigation';
@@ -36,14 +36,13 @@ export default function OverdueProjectsScreen() {
   const navigation = useNavigation();
   const { openProjectDetail } = useRootNavigation();
 
-  const [projects, setProjects] = useState<ProductionProject[]>(
-    () => getAnyCachedBoard()?.projects.filter((p) => p.is_overdue) ?? [],
-  );
-  const [loading, setLoading] = useState(() => !getAnyCachedBoard());
+  const [projects, setProjects] = useState<ProductionProject[]>([]);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const loadSeqRef = useRef(0);
+  const filtersRef = useRef<{ companyId?: string; workshopTypeId?: string }>({});
 
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
     const seq = ++loadSeqRef.current;
@@ -56,8 +55,12 @@ export default function OverdueProjectsScreen() {
       const workshopTypeId = snap?.filterWorkTypeId;
       const filters = {
         companyId,
-        workshopTypeId: workshopTypeId && workshopTypeId !== 'none' ? workshopTypeId : undefined,
+        workshopTypeId:
+          companyId && workshopTypeId && workshopTypeId !== 'none'
+            ? workshopTypeId
+            : undefined,
       };
+      filtersRef.current = filters;
       if (mode === 'silent' && isCachedBoardFresh(filters) && getCachedBoard(filters)) {
         setProjects(getCachedBoard(filters)!.projects.filter((p) => p.is_overdue));
         return;
@@ -103,7 +106,7 @@ export default function OverdueProjectsScreen() {
   useProductionRealtime({
     onRefresh: (info) => {
       if (info?.patched) {
-        const cached = getAnyCachedBoard();
+        const cached = getCachedBoard(filtersRef.current);
         if (cached) setProjects(cached.projects.filter((p) => p.is_overdue));
         return;
       }

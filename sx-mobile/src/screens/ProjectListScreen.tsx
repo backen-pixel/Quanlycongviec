@@ -14,7 +14,7 @@ import { formatApiError } from '../api/client';
 import TapHighlight from '../components/TapHighlight';
 import { useTheme } from '../context/ThemeContext';
 import { fetchProductionBoard, type BoardFilters } from '../lib/productionApi';
-import { getAnyCachedBoard, getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
+import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
 import { loadKanbanFilters } from '../lib/kanbanFilterStorage';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
@@ -24,11 +24,12 @@ import type { KanbanStage, ProductionBoard, ProductionProject } from '../types';
 
 async function resolveListFilters(): Promise<BoardFilters> {
   const snap = await loadKanbanFilters().catch(() => null);
+  const companyId = snap?.filterCompany || undefined;
   return {
-    companyId: snap?.filterCompany || undefined,
+    companyId,
     dealCompanyId: snap?.filterDealCompany || undefined,
     workshopTypeId:
-      snap?.filterWorkTypeId && snap.filterWorkTypeId !== 'none'
+      companyId && snap?.filterWorkTypeId && snap.filterWorkTypeId !== 'none'
         ? snap.filterWorkTypeId
         : undefined,
   };
@@ -47,15 +48,15 @@ export default function ProjectListScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { openProjectDetail } = useRootNavigation();
-  const cachedBoard = getAnyCachedBoard();
   const [board, setBoard] = useState<ProductionBoard>(
-    () => cachedBoard ?? { stages: [], projects: [], kpis: null },
+    () => ({ stages: [], projects: [], kpis: null }),
   );
-  const [loading, setLoading] = useState(!cachedBoard);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const loadSeqRef = useRef(0);
+  const filtersRef = useRef<BoardFilters>({});
 
   const styles = useMemo(
     () =>
@@ -126,6 +127,7 @@ export default function ProjectListScreen() {
     try {
       const filters = await resolveListFilters();
       if (seq !== loadSeqRef.current) return;
+      filtersRef.current = filters;
       if (mode === 'silent' && isCachedBoardFresh(filters) && getCachedBoard(filters)) {
         setBoard(getCachedBoard(filters)!);
         return;
@@ -165,7 +167,7 @@ export default function ProjectListScreen() {
   useProductionRealtime({
     onRefresh: (info) => {
       if (info?.patched) {
-        const cached = getAnyCachedBoard();
+        const cached = getCachedBoard(filtersRef.current);
         if (cached) setBoard(cached);
         return;
       }

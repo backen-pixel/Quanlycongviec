@@ -245,6 +245,9 @@ export default function OverviewScreen() {
 
   const loadSeqRef = useRef(0);
 
+  const companiesRef = useRef<CompanyOption[]>([]);
+  companiesRef.current = companies;
+
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
     const seq = ++loadSeqRef.current;
     if (mode === 'init') setLoading(true);
@@ -255,9 +258,13 @@ export default function OverviewScreen() {
       let companyId = snap?.filterCompany || '';
       const workshopTypeId = snap?.filterWorkTypeId || undefined;
 
-      const companyList = await fetchCompanies().catch(() => [] as CompanyOption[]);
-      if (seq !== loadSeqRef.current) return;
-      setCompanies(companyList);
+      // Silent: tái dùng danh sách công ty đã có — bớt 1 RTT mỗi lần realtime.
+      let companyList = companiesRef.current;
+      if (mode !== 'silent' || !companyList.length) {
+        companyList = await fetchCompanies().catch(() => [] as CompanyOption[]);
+        if (seq !== loadSeqRef.current) return;
+        setCompanies(companyList);
+      }
 
       if (!canPickCompany) {
         // NV: khóa về công ty của họ
@@ -278,7 +285,11 @@ export default function OverviewScreen() {
 
       const boardFilters = {
         companyId: companyId || undefined,
-        workshopTypeId: workshopTypeId && workshopTypeId !== 'none' ? workshopTypeId : undefined,
+        // Khớp Kanban: chỉ lọc phân loại khi đã chọn công ty/xưởng.
+        workshopTypeId:
+          companyId && workshopTypeId && workshopTypeId !== 'none'
+            ? workshopTypeId
+            : undefined,
       };
       boardFiltersRef.current = boardFilters;
 
@@ -287,7 +298,7 @@ export default function OverviewScreen() {
       const cachedBoard = getCachedBoard(boardFilters);
       const applyBoardPriority = (projects: ProductionProject[], stages: import('../types').KanbanStage[] = []) => {
         setOverdueDeals(pickOverdueProjects(projects, PRIORITY_FETCH_LIMIT, stages));
-        setSoonDeals(pickSoonProjects(projects, PRIORITY_FETCH_LIMIT));
+        setSoonDeals(pickSoonProjects(projects, PRIORITY_FETCH_LIMIT, stages));
       };
 
       if (cachedBoard && mode !== 'refresh') {
@@ -301,7 +312,7 @@ export default function OverviewScreen() {
         : teamWork
           ? fetchProductionWorkTasks({
               assigneeId: null,
-              companyId: companyId || user?.company_id || null,
+              companyId: companyId || (canPickCompany ? null : (user?.company_id || null)),
             }).catch(() => [] as WorkTask[])
           : fetchMyProductionTasks(userId).catch(() => [] as WorkTask[]);
 
@@ -373,7 +384,7 @@ export default function OverviewScreen() {
         if (cached) {
           setKpis(computeSxBoardKpis(cached.projects, cached.stages));
           setOverdueDeals(pickOverdueProjects(cached.projects, PRIORITY_FETCH_LIMIT, cached.stages));
-          setSoonDeals(pickSoonProjects(cached.projects, PRIORITY_FETCH_LIMIT));
+          setSoonDeals(pickSoonProjects(cached.projects, PRIORITY_FETCH_LIMIT, cached.stages));
         }
         return;
       }

@@ -43,7 +43,7 @@ import {
   type WorkshopTypeOption,
   resolveColumnId,
 } from '../lib/productionApi';
-import { getAnyCachedBoard, getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
+import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
 import { loadKanbanFilters, saveKanbanFilters } from '../lib/kanbanFilterStorage';
 import {
   computeSxBoardKpis,
@@ -181,9 +181,9 @@ export default function KanbanScreen() {
   const myId = user?.id || user?.userId || null;
 
   const [board, setBoard] = useState<ProductionBoard>(
-    () => getAnyCachedBoard() ?? { stages: [], projects: [], kpis: null },
+    () => ({ stages: [], projects: [], kpis: null }),
   );
-  const [loading, setLoading] = useState(() => !getAnyCachedBoard());
+  const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -274,7 +274,8 @@ export default function KanbanScreen() {
   }, [companies, user, workshopOptionsForDeal, dealCompanyParam, isAdmin]);
 
   const showWorkshopPicker = isSysAdmin || workshopCompanyPickerList.length > 1;
-  const companyForTypes = filterCompany || user?.company_id || null;
+  // Phân loại chỉ theo xưởng đang chọn — «Tất cả» không gắn company của admin (tránh lọc sai / kẹt sẵn sàng).
+  const companyForTypes = filterCompany || null;
 
   // Debounce ô tìm kiếm: gõ phím cập nhật `searchInput` ngay, nhưng việc lọc nặng
   // (chạy trên toàn bộ vài nghìn dự án) chỉ chạy sau 250ms ngừng gõ → không lag khi nhập.
@@ -328,17 +329,32 @@ export default function KanbanScreen() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
   }, []);
 
-  const currentBoardFilters = useCallback((): BoardFilters => ({
-    // Chỉ lọc xưởng khi user chọn trên pill — «Tất cả xưởng» = không gửi company_id.
-    companyId: filterCompanyRef.current || undefined,
-    dealCompanyId: filterDealCompanyRef.current || undefined,
-    workshopTypeId: filterWorkTypeIdRef.current || undefined,
-  }), []);
+  const currentBoardFilters = useCallback((): BoardFilters => {
+    const companyId = filterCompanyRef.current || undefined;
+    // Chỉ lọc phân loại khi đã chọn 1 xưởng — «Tất cả xưởng» khớp Overview (không gửi workshop_type_id).
+    const workshopTypeId = companyId
+      ? (filterWorkTypeIdRef.current && filterWorkTypeIdRef.current !== 'none'
+        ? filterWorkTypeIdRef.current
+        : undefined)
+      : undefined;
+    return {
+      companyId,
+      dealCompanyId: filterDealCompanyRef.current || undefined,
+      workshopTypeId,
+    };
+  }, []);
 
   const load = useCallback(async (mode: 'init' | 'refresh' | 'silent' = 'init') => {
     const filters = currentBoardFilters();
-    // Realtime/AppState: bỏ qua nếu cache còn tươi — tránh tải lại full board liên tục.
-    if (mode === 'silent' && isCachedBoardFresh(filters) && getCachedBoard(filters)) {
+    const cachedHit = getCachedBoard(filters);
+    // Cache tươi: áp dụng vào UI rồi thoát — KHÔNG return trước khi hydrate (tránh kẹt spinner).
+    if (mode === 'silent' && isCachedBoardFresh(filters) && cachedHit) {
+      setBoard(cachedHit);
+      setActiveIndex((prev) => Math.min(prev, Math.max(0, cachedHit.stages.length - 1)));
+      setLoading(false);
+      setRefreshing(false);
+      setLoadingMore(false);
+      lastSilentAtRef.current = Date.now();
       return;
     }
     const seq = ++loadSeqRef.current;
@@ -347,11 +363,12 @@ export default function KanbanScreen() {
     setError(null);
     setLoadingMore(false);
     try {
-      const cached = getCachedBoard(filters);
+      const cached = cachedHit;
       if (cached && mode !== 'refresh') {
         setBoard(cached);
         setActiveIndex((prev) => Math.min(prev, Math.max(0, cached.stages.length - 1)));
-        if (mode === 'init') setLoading(false);
+        // Luôn tắt spinner khi đã có cache (kể cả silent) — UI hiện ngay.
+        setLoading(false);
       }
       let firstPaint = Boolean(cached && mode !== 'refresh');
       const data = await fetchProductionBoard(mode === 'refresh', filters, {
@@ -361,7 +378,6 @@ export default function KanbanScreen() {
           setActiveIndex((prev) => Math.min(prev, Math.max(0, partial.stages.length - 1)));
           if (!firstPaint) {
             firstPaint = true;
-            // Hiện UI ngay sau trang đầu (~500), phần còn lại tải nền.
             setLoading(false);
             setRefreshing(false);
             setLoadingMore(partial.projects.length >= 500);
@@ -414,18 +430,17 @@ export default function KanbanScreen() {
   useEffect(() => { filterDealCompanyRef.current = dealCompanyParam || ''; }, [dealCompanyParam]);
   useEffect(() => { filterWorkTypeIdRef.current = filterWorkTypeId; }, [filterWorkTypeId]);
 
-  // Chờ phân loại sẵn sàng (giống web) trước khi load board — tránh enrich sai cột.
-  // Nếu đã có filterWorkTypeId (cache) → load ngay, song song với fetch danh sách loại.
+  // Chờ phân loại sẵn sàng trước khi load board — chỉ khi đã chọn 1 xưởng.
   const boardFiltersReady = useMemo(() => {
     if (!filtersHydrated) return false;
-    if (!companyForTypes) return true;
+    if (!filterCompany) return true;
     if (filterWorkTypeId) return true;
-    if (workTypesCompanyId !== companyForTypes) return false;
+    if (workTypesCompanyId !== filterCompany) return false;
     if (workTypes.length === 0) return true;
     return false;
   }, [
     filtersHydrated,
-    companyForTypes,
+    filterCompany,
     filterWorkTypeId,
     workTypesCompanyId,
     workTypes.length,
@@ -434,8 +449,13 @@ export default function KanbanScreen() {
   useEffect(() => {
     if (!boardFiltersReady) return;
     const filters = currentBoardFilters();
-    // Đã có board cache đúng filter → làm mới nền, không hiện spinner toàn màn.
-    void load(getCachedBoard(filters) ? 'silent' : 'init');
+    const cached = getCachedBoard(filters);
+    // Hydrate UI ngay từ cache đúng key (tránh màn hình trống / spinner vô hạn).
+    if (cached) {
+      setBoard(cached);
+      setLoading(false);
+    }
+    void load(cached && isCachedBoardFresh(filters) ? 'silent' : 'init');
   }, [load, boardFiltersReady, currentBoardFilters]);
 
   // Re-fetch board khi company hoặc phân loại đổi (bỏ qua lần mount đầu tiên).
@@ -453,7 +473,7 @@ export default function KanbanScreen() {
     onRefresh: (info) => {
       if (movingIdRef.current) return;
       if (info?.patched) {
-        const cached = getCachedBoard(currentBoardFilters()) || getAnyCachedBoard();
+        const cached = getCachedBoard(currentBoardFilters());
         if (cached) setBoard(cached);
         return;
       }
@@ -571,14 +591,13 @@ export default function KanbanScreen() {
 
   /**
    * Khi có danh sách phân loại mà chưa chọn → tự chọn loại đầu tiên (khớp web).
-   * Dùng companyForTypes (kể cả khi pill xưởng = «Tất cả») để admin vẫn có pipeline đúng.
-   * Không ghi đè khi user chủ động chọn «Chưa phân loại» (none).
+   * Chỉ áp dụng khi đã chọn 1 xưởng cụ thể.
    */
   useEffect(() => {
     if (workTypesCompanyId !== companyForTypes) return;
 
     if (!companyForTypes) {
-      if (filterWorkTypeId && filterWorkTypeId !== 'none') setFilterWorkTypeId('');
+      if (filterWorkTypeId) setFilterWorkTypeId('');
       return;
     }
 

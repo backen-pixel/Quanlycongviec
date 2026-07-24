@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Quản lý sản xuất",
+    "name": "Quáº£n lÃ½ sáº£n xuáº¥t",
     "slug": "sx-mobile",
-    "version": "1.1.38",
+    "version": "1.1.41",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -22,7 +22,7 @@
     },
     "android": {
       "package": "vn.tubeppro.sxmobile",
-      "versionCode": 141,
+      "versionCode": 144,
       "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": false,
       "softwareKeyboardLayoutMode": "resize",
@@ -62,15 +62,15 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Cho phép truy cập ảnh để gửi trong tin nhắn.",
-          "cameraPermission": "Cho phép camera để chụp ảnh gửi tin nhắn."
+          "photosPermission": "Cho phÃ©p truy cáº­p áº£nh Ä‘á»ƒ gá»­i trong tin nháº¯n.",
+          "cameraPermission": "Cho phÃ©p camera Ä‘á»ƒ chá»¥p áº£nh gá»­i tin nháº¯n."
         }
       ],
       [
         "@config-plugins/react-native-webrtc",
         {
-          "cameraPermission": "Cho phép camera cho cuộc gọi video.",
-          "microphonePermission": "Cho phép micro cho cuộc gọi thoại."
+          "cameraPermission": "Cho phÃ©p camera cho cuá»™c gá»i video.",
+          "microphonePermission": "Cho phÃ©p micro cho cuá»™c gá»i thoáº¡i."
         }
       ],
       "./plugins/withGoogleServices.js",

@@ -56,6 +56,14 @@ export function setCachedBoard(filters: BoardFilters = {}, board: ProductionBoar
   // Chỉ lưu khi có dữ liệu thực (tránh ghi đè bằng partial rỗng lúc đầu).
   if (!board || (board.projects.length === 0 && board.stages.length === 0)) return;
   cache.set(boardCacheKey(filters), { board, at: Date.now() });
+  // Giới hạn RAM: giữ tối đa 6 key mới nhất.
+  if (cache.size > 6) {
+    const ranked = [...cache.entries()].sort((a, b) => a[1].at - b[1].at);
+    while (ranked.length > 6) {
+      const oldest = ranked.shift();
+      if (oldest) cache.delete(oldest[0]);
+    }
+  }
   schedulePersist(boardCacheKey(filters));
 }
 

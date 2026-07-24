@@ -17,7 +17,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { fetchPersonalPlanner, fetchProductionBoard } from '../lib/productionApi';
-import { getCachedBoard, getAnyCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
+import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
 import { formatMoneyAmount, Radii, Spacing, stageColor } from '../theme';
 import type { PersonalPlanner, ProductionBoard, ProductionProject } from '../types';
@@ -119,7 +119,7 @@ export default function PlannerScreen() {
   useProductionRealtime({
     onRefresh: (info) => {
       if (info?.patched) {
-        const cached = getCachedBoard({ companyId: scopedCompanyId }) || getAnyCachedBoard();
+        const cached = getCachedBoard({ companyId: scopedCompanyId });
         if (cached) setBoard(cached);
         return;
       }

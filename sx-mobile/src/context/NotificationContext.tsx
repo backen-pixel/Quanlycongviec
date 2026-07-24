@@ -536,25 +536,30 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         return;
       }
 
-      // Giao việc / task: chỉ tray + badge khi thuộc module production.
-      // CRM thuần vẫn emitSync để tab Công việc refresh, không spam chuông.
+      // Giao việc / quá hạn / sắp hạn: tray hệ thống khi thuộc production (hoặc thiếu meta → vẫn hiện nếu title SX).
       if (isAssignmentOrTask) {
         const meta = (n.metadata || {}) as Record<string, unknown>;
-        const eco = String(meta.ecosystem_module_key || '');
+        const eco = String(meta.ecosystem_module_key || meta.module_key || '');
+        const title = String(n.title || '');
         const isProduction =
           eco === 'production'
-          || String(meta.assignment_module || meta.module || '') === 'production';
+          || String(meta.assignment_module || meta.module || '') === 'production'
+          || /sản xuất/i.test(title);
         if (!isProduction) return;
         const enriched = enrichNotificationPreview({
           id: String(n.id || `srv:${Date.now()}`),
           type: notifType || 'crm_assignment_assigned',
-          title: String(n.title || 'Giao việc'),
+          title: title || 'Giao việc',
           message: String(n.message || ''),
           entity_type: n.entity_type,
           entity_id: n.entity_id,
           is_read: false,
           created_at: String(n.created_at || new Date().toISOString()),
-          metadata: n.metadata || null,
+          metadata: {
+            ...(n.metadata || {}),
+            ecosystem_module_key: 'production',
+            module_key: 'production',
+          },
         });
         setUnreadCount((c) => c + 1);
         emitComment(enriched);

@@ -53,6 +53,8 @@ function isAssignmentNotification(data: Record<string, unknown> | undefined): bo
   if (
     type === 'crm_assignment_assigned'
     || type === 'crm_assignment_comment'
+    || type === 'crm_assignment_overdue'
+    || type === 'crm_assignment_due_soon'
     || type.startsWith('crm_assignment')
     || type === 'crm_task_assigned'
   ) {

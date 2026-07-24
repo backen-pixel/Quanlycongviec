@@ -1134,6 +1134,9 @@ r.delete('/:id/files/:fileId', async (req, res) => {
 // GET /api/crm/assignments/:id/comments
 r.get('/:id/comments', async (req, res) => {
   try {
+    const access = await loadAccessibleAssignment(req, req.params.id);
+    if (access.error) return res.status(access.status).json({ error: access.error });
+
     const { data, error } = await supabase
       .from('crm_assignment_comments')
       .select('id, assignment_id, user_id, parent_id, content, created_at, updated_at, user:users(id, full_name, email, avatar)')
@@ -1147,6 +1150,9 @@ r.get('/:id/comments', async (req, res) => {
 // POST /api/crm/assignments/:id/comments  { content, parent_id? }
 r.post('/:id/comments', async (req, res) => {
   try {
+    const access = await loadAccessibleAssignment(req, req.params.id);
+    if (access.error) return res.status(access.status).json({ error: access.error });
+
     const content = String(req.body?.content || '').trim();
     if (!content) return res.status(400).json({ error: 'Nội dung trống' });
 
@@ -1226,15 +1232,21 @@ r.post('/:id/comments', async (req, res) => {
 // PUT /api/crm/assignments/:id/comments/:cid  { content } — chỉ chủ bình luận hoặc admin
 r.put('/:id/comments/:cid', async (req, res) => {
   try {
+    const access = await loadAccessibleAssignment(req, req.params.id);
+    if (access.error) return res.status(access.status).json({ error: access.error });
+
     const content = String(req.body?.content || '').trim();
     if (!content) return res.status(400).json({ error: 'Nội dung trống' });
 
     const { data: cur } = await supabase
       .from('crm_assignment_comments')
-      .select('user_id')
+      .select('user_id, assignment_id')
       .eq('id', req.params.cid)
       .maybeSingle();
     if (!cur) return res.status(404).json({ error: 'Không tìm thấy' });
+    if (String(cur.assignment_id) !== String(req.params.id)) {
+      return res.status(404).json({ error: 'Không tìm thấy' });
+    }
     if (String(cur.user_id) !== String(req.user.userId) && !isAdmin(req)) {
       return res.status(403).json({ error: 'Không có quyền' });
     }
@@ -1253,12 +1265,18 @@ r.put('/:id/comments/:cid', async (req, res) => {
 // DELETE /api/crm/assignments/:id/comments/:cid — chủ bình luận hoặc admin
 r.delete('/:id/comments/:cid', async (req, res) => {
   try {
+    const access = await loadAccessibleAssignment(req, req.params.id);
+    if (access.error) return res.status(access.status).json({ error: access.error });
+
     const { data: cur } = await supabase
       .from('crm_assignment_comments')
-      .select('user_id')
+      .select('user_id, assignment_id')
       .eq('id', req.params.cid)
       .maybeSingle();
     if (!cur) return res.status(404).json({ error: 'Không tìm thấy' });
+    if (String(cur.assignment_id) !== String(req.params.id)) {
+      return res.status(404).json({ error: 'Không tìm thấy' });
+    }
     if (String(cur.user_id) !== String(req.user.userId) && !isAdmin(req)) {
       return res.status(403).json({ error: 'Không có quyền' });
     }

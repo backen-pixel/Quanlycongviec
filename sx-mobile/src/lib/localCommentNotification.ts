@@ -30,12 +30,23 @@ export async function showLocalCommentNotification(n: SxCommentNotification): Pr
     const meta = (n.metadata || {}) as Record<string, unknown>;
     const pid = meta.project_id != null ? String(meta.project_id) : n.entity_id ? String(n.entity_id) : '';
     const commentId = meta.comment_id != null ? String(meta.comment_id) : '';
-    // Identifier ổn định theo dự án/comment — tránh 2 tiếng khi socket + notification cùng lúc.
-    const identifier = commentId && pid
-      ? `sx-cmt:${pid}:${commentId}`
-      : pid && n.type === 'comment_added'
-        ? `sx-cmt:${pid}:${String(n.created_at || '').slice(0, 19)}`
-        : (String(n.id || '').trim() || undefined);
+    const type = String(n.type || '');
+    const assignmentId =
+      meta.assignment_id != null
+        ? String(meta.assignment_id)
+        : n.entity_type === 'crm_assignment' && n.entity_id
+          ? String(n.entity_id)
+          : '';
+    // Identifier ổn định — tránh 2 tiếng khi socket + FCM cùng lúc.
+    let identifier: string | undefined;
+    if (commentId && pid) identifier = `sx-cmt:${pid}:${commentId}`;
+    else if (pid && type === 'comment_added') {
+      identifier = `sx-cmt:${pid}:${String(n.created_at || '').slice(0, 19)}`;
+    } else if (assignmentId && type.startsWith('crm_assignment')) {
+      identifier = `sx-asg:${type}:${assignmentId}`;
+    } else {
+      identifier = String(n.id || '').trim() || undefined;
+    }
     await Notifications.scheduleNotificationAsync({
       identifier,
       content: {

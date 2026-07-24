@@ -288,8 +288,8 @@ export type BoardFilters = {
  * @param bustCache true chỉ khi user kéo refresh — silent/init dùng HTTP cache 20s.
  */
 const PROJECTS_PAGE_LIMIT = 500;
-const PROJECTS_MAX_PAGES = 20;
-const PROJECTS_FETCH_CONCURRENCY = 5;
+const PROJECTS_MAX_PAGES = 12;
+const PROJECTS_FETCH_CONCURRENCY = 4;
 
 export type FetchBoardOptions = {
   /** Gọi sau trang đầu (và mỗi lô nền) — UI hiện sớm. */

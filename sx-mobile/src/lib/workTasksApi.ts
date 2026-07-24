@@ -88,18 +88,14 @@ function mapAssignmentToWorkTask(raw: Record<string, unknown>): WorkTask {
     assignment_module: module,
     column_id: raw.column_id != null ? String(raw.column_id) : null,
     company_id: raw.company_id != null ? String(raw.company_id) : null,
-    // Ưu tiên count từ crm_task khi đã gắn pipeline (assignment.file_count=0 dễ che mất).
-    file_count: Number(
-      crmTask?.file_count
-      ?? raw.file_count
-      ?? 0,
+    // Lấy max giữa CRM task và assignment — tránh 0 từ một phía che mất file thật.
+    file_count: Math.max(
+      Number(crmTask?.file_count ?? 0),
+      Number(raw.file_count ?? 0),
     ),
-    attachment_count: Number(
-      crmTask?.attachment_count
-      ?? raw.attachment_count
-      ?? crmTask?.file_count
-      ?? raw.file_count
-      ?? 0,
+    attachment_count: Math.max(
+      Number(crmTask?.attachment_count ?? crmTask?.file_count ?? 0),
+      Number(raw.attachment_count ?? raw.file_count ?? 0),
     ),
     assignee_id: raw.assignee_id != null ? String(raw.assignee_id) : assignee?.id || null,
     assignee,

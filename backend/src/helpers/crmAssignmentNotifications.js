@@ -10,8 +10,29 @@ function assignmentIdStr(assignmentId) {
   return String(assignmentId);
 }
 
-function buildAssignmentNotificationInsert(userId, { type, title, message, assignmentId, metadata = {} }) {
+/** Metadata module CRM vs Sản xuất — dùng chung assign / overdue / due-soon. */
+function assignmentModuleMeta(assignmentModule, extra = {}) {
+  const isProduction = String(assignmentModule || '').toLowerCase() === 'production'
+    || String(extra.stageSlug || '').startsWith('sx_');
+  const moduleKey = isProduction ? 'production' : 'crm';
+  return {
+    isProduction,
+    moduleKey,
+    metadata: {
+      module_key: moduleKey,
+      ecosystem_module_key: moduleKey,
+      assignment_module: moduleKey,
+      nav_path: isProduction ? '/sx/assignments' : '/crm/assignments',
+      ...extra.metadata,
+    },
+  };
+}
+
+function buildAssignmentNotificationInsert(userId, { type, title, message, assignmentId, metadata = {}, assignmentModule }) {
   const id = assignmentIdStr(assignmentId);
+  const mod = assignmentModuleMeta(assignmentModule || metadata.assignment_module || metadata.module_key, {
+    metadata: {},
+  });
   return {
     user_id: userId,
     type,
@@ -20,12 +41,15 @@ function buildAssignmentNotificationInsert(userId, { type, title, message, assig
     entity_type: 'crm_assignment',
     entity_id: id,
     metadata: {
-      module_key: 'crm',
-      ecosystem_module_key: 'crm',
+      ...mod.metadata,
       assignment_id: id,
-      nav_path: '/crm/assignments',
       open: id,
+      nav_path: metadata.nav_path || mod.metadata.nav_path,
       ...metadata,
+      // Đảm bảo ecosystem luôn đúng sau khi merge metadata tuỳ biến.
+      module_key: metadata.module_key || mod.metadata.module_key,
+      ecosystem_module_key: metadata.ecosystem_module_key || mod.metadata.ecosystem_module_key,
+      assignment_module: metadata.assignment_module || mod.metadata.assignment_module,
     },
   };
 }
@@ -84,9 +108,11 @@ async function notifyNewCrmAssignmentAssignees(req, {
       title: notifTitle,
       message: msg,
       assignmentId,
+      assignmentModule: moduleKey,
       metadata: {
         module_key: moduleKey,
         ecosystem_module_key: moduleKey,
+        assignment_module: moduleKey,
         lead_id: lead?.id || null,
         crm_task_id: crmTaskId || null,
         nav_path: navPath,
@@ -98,9 +124,11 @@ async function notifyNewCrmAssignmentAssignees(req, {
       title: notifTitle,
       message: msg,
       assignmentId,
+      assignmentModule: moduleKey,
       metadata: {
         module_key: moduleKey,
         ecosystem_module_key: moduleKey,
+        assignment_module: moduleKey,
         lead_id: lead?.id || null,
         crm_task_id: crmTaskId || null,
         nav_path: navPath,
@@ -176,6 +204,7 @@ async function resolveAssignmentIdForTask(taskId, leadId, title) {
 
 module.exports = {
   assignmentIdStr,
+  assignmentModuleMeta,
   buildAssignmentNotificationInsert,
   persistAssignmentNotification,
   notifyNewCrmAssignmentAssignees,
