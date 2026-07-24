@@ -27,7 +27,20 @@ const {
   syncAssignmentFileToTask,
   deleteMirroredTaskAttachmentForAssignmentFile,
 } = require('../helpers/crmTaskAssignmentArtifactSync');
+const { emitCrmTaskChanged } = require('../helpers/crmTaskRealtime');
 const { responseCache, invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
+
+/** Mobile SX Work tab lắng nghe crm:task_changed — emit khi assignment gắn lead/deal. */
+async function emitAssignmentTaskChanged(req, assignment, action = 'updated') {
+  const leadId = assignment?.lead_id;
+  if (!leadId) return;
+  await emitCrmTaskChanged(req, {
+    leadId,
+    taskId: assignment?.crm_task_id || null,
+    action,
+    task: assignment,
+  });
+}
 
 const assignColsCache = createTTLCache({
   ttlMs: 90_000,
@@ -716,6 +729,7 @@ r.post('/', async (req, res) => {
       }));
     }
     await attachAssigneesToAssignments([data]);
+    await emitAssignmentTaskChanged(req, data, 'created');
     res.status(result.status).json(result.data);
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi tạo nhiệm vụ' }); }
 });
@@ -824,6 +838,7 @@ r.put('/:id', async (req, res) => {
     } catch (syncErr) {
       console.warn('[sync] assignment→crm_task PUT:', syncErr.message);
     }
+    await emitAssignmentTaskChanged(req, data, 'updated');
     res.json({ assignment: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi cập nhật nhiệm vụ' }); }
 });
@@ -890,6 +905,7 @@ r.post('/:id/move', async (req, res) => {
     } catch (syncErr) {
       console.warn('[sync] assignment→crm_task move:', syncErr.message);
     }
+    await emitAssignmentTaskChanged(req, data, 'updated');
     res.json({ assignment: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi chuyển cột' }); }
 });
@@ -899,7 +915,7 @@ r.delete('/:id', async (req, res) => {
   try {
     const { data: row } = await supabase
       .from('crm_assignments')
-      .select('id, created_by_id')
+      .select('id, created_by_id, lead_id, crm_task_id')
       .eq('id', req.params.id)
       .maybeSingle();
     if (!row) return res.status(404).json({ error: 'Không tìm thấy nhiệm vụ' });
@@ -908,6 +924,7 @@ r.delete('/:id', async (req, res) => {
     }
     const result = await deleteCrmAssignmentCore(req, req.params.id);
     if (result.error) return res.status(result.status || 500).json({ error: result.error });
+    await emitAssignmentTaskChanged(req, row, 'deleted');
     return res.json(result.data);
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi xóa nhiệm vụ' }); }
 });

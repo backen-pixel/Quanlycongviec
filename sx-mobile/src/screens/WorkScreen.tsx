@@ -1,10 +1,12 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
+import { useFocusEffect } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   FlatList,
   Modal,
   Pressable,
@@ -413,6 +415,8 @@ export default function WorkScreen() {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const updatingRef = useRef(false);
   const loadSeqRef = useRef(0);
+  const lastSilentAtRef = useRef(0);
+  const skipNextFocusRefreshRef = useRef(true);
 
   const companyOptions = useMemo(() => {
     if (canPickCompany) {
@@ -466,6 +470,7 @@ export default function WorkScreen() {
       });
       if (seq !== loadSeqRef.current) return;
       setTasks(rows);
+      lastSilentAtRef.current = Date.now();
     } catch (e) {
       if (seq !== loadSeqRef.current) return;
       if (!silent) {
@@ -513,8 +518,36 @@ export default function WorkScreen() {
   useEffect(() => {
     if (!filtersReady) return;
     setLoading(true);
+    skipNextFocusRefreshRef.current = true;
     void load(false);
   }, [load, filtersReady]);
+
+  // Quay lại tab / thoát ProjectDetail → refetch để KPI quá hạn + trạng thái khớp server.
+  useFocusEffect(
+    useCallback(() => {
+      if (!filtersReady || !userId) return undefined;
+      if (skipNextFocusRefreshRef.current) {
+        skipNextFocusRefreshRef.current = false;
+        return undefined;
+      }
+      const now = Date.now();
+      if (now - lastSilentAtRef.current < 8_000) return undefined;
+      lastSilentAtRef.current = now;
+      void load(true);
+      return undefined;
+    }, [filtersReady, userId, load]),
+  );
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active' || !filtersReady || !userId) return;
+      const now = Date.now();
+      if (now - lastSilentAtRef.current < 60_000) return;
+      lastSilentAtRef.current = now;
+      void load(true);
+    });
+    return () => sub.remove();
+  }, [load, filtersReady, userId]);
 
   useProductionRealtime({
     onRefresh: () => { void load(true); },
