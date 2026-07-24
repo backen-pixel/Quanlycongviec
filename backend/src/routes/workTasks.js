@@ -24,6 +24,10 @@ const {
   deleteCrmAssignment,
   addCrmAssignmentComment,
 } = require('../helpers/crmAssignmentMutations');
+const {
+  assertCrmTaskLeadAccess,
+  loadLeadForTaskAccess,
+} = require('../helpers/crmTaskLeadAccess');
 const { mergeDeadlineHistoryIntoUnified } = require('../helpers/crmKanbanDeadlineHistory');
 const { enrichUnifiedCrmTasks } = require('../helpers/crmTaskAttachmentCounts');
 const {
@@ -65,6 +69,13 @@ function parsePagination(req, defaultSize = 50, maxSize = 500) {
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
   return { page, pageSize, from, to };
+}
+
+/** Gate quyền lead trước mutation crm_task — cùng chuẩn với /api/crm/leads/:id/tasks*. */
+async function gateCrmTaskLeadAccess(req, leadId, taskId = null, operation = 'READ') {
+  const lead = await loadLeadForTaskAccess(supabase, leadId);
+  if (!lead) return { ok: false, error: 'Không tìm thấy lead/deal', status: 404 };
+  return assertCrmTaskLeadAccess(supabase, req, lead, { taskId, operation });
 }
 
 function sendMutationResult(res, result) {
@@ -325,6 +336,8 @@ r.post('/', async (req, res) => {
     if (source === 'crm_task') {
       if (!lead_id) return res.status(400).json({ error: 'crm_task cần lead_id' });
       if (!payload.title) return res.status(400).json({ error: 'Cần title' });
+      const gate = await gateCrmTaskLeadAccess(req, lead_id, null, 'CREATE');
+      if (!gate.ok) return res.status(gate.status || 403).json({ error: gate.error });
       const result = await createCrmLeadTask(req, lead_id, payload);
       if (result.error) return sendMutationResult(res, result);
       return res.status(result.status).json(result.data);
@@ -354,8 +367,11 @@ r.patch('/:source/:id', async (req, res) => {
       return sendMutationResult(res, await updateProjectTask(req, id, body));
     }
     if (source === 'crm_task') {
-      const leadId = body.lead_id || await getCrmTaskLeadId(id);
+      // Lấy lead từ DB trước — tránh spoof body.lead_id để vượt gate quyền
+      const leadId = await getCrmTaskLeadId(id) || body.lead_id;
       if (!leadId) return res.status(404).json({ error: 'Không tìm thấy lead cho nhiệm vụ CRM' });
+      const gate = await gateCrmTaskLeadAccess(req, leadId, id, 'UPDATE');
+      if (!gate.ok) return res.status(gate.status || 403).json({ error: gate.error });
       const result = await updateCrmLeadTask(req, leadId, id, body);
       if (result.error) return sendMutationResult(res, result);
       return res.status(result.status).json(result.data);
@@ -375,7 +391,13 @@ r.delete('/:source/:id', async (req, res) => {
   try {
     const { source, id } = req.params;
     if (source === 'task') return sendMutationResult(res, await deleteProjectTask(req, id));
-    if (source === 'crm_task') return sendMutationResult(res, await deleteCrmLeadTask(req, id));
+    if (source === 'crm_task') {
+      const leadId = await getCrmTaskLeadId(id);
+      if (!leadId) return res.status(404).json({ error: 'Không tìm thấy nhiệm vụ CRM' });
+      const gate = await gateCrmTaskLeadAccess(req, leadId, id, 'DELETE');
+      if (!gate.ok) return res.status(gate.status || 403).json({ error: gate.error });
+      return sendMutationResult(res, await deleteCrmLeadTask(req, id));
+    }
     if (source === 'crm_assignment') return sendMutationResult(res, await deleteCrmAssignment(req, id));
     return res.status(400).json({ error: 'source không hợp lệ' });
   } catch (e) {

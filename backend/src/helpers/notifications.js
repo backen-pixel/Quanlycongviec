@@ -1,6 +1,7 @@
 const { supabase } = require('../config/supabase');
 const { isNotificationAllowedForUser } = require('./notificationPrefsUser');
 const { isExpiryDeadlineNotificationType } = require('./notificationOperationalFilter');
+const { isCommentMutedForUser, isMessengerMutedForUser } = require('./notificationMutes');
 // Lưu ý: KHÔNG gọi sendMobilePush trực tiếp ở đây — đã có server.js pushNotification gọi
 // (qua app.set('pushNotification')). Tránh gửi push trùng.
 
@@ -23,6 +24,14 @@ async function createNotification(req, userId, type, title, message, entityType,
   const allowed = await isNotificationAllowedForUser(userId, type, entityType, metadata);
   if (!allowed) return null;
 
+  // Tắt chuông: vẫn lưu TB trong danh sách, chỉ không đẩy toast/push ra ngoài màn hình
+  let suppressExternal = false;
+  if (type === 'comment_added') {
+    suppressExternal = await isCommentMutedForUser(userId, entityType, entityId, metadata);
+  } else if (type === 'messenger_chat') {
+    suppressExternal = await isMessengerMutedForUser(userId, entityType, entityId, metadata);
+  }
+
   const insert = {
     user_id: userId,
     type,
@@ -44,7 +53,8 @@ async function createNotification(req, userId, type, title, message, entityType,
   if (error) {
     console.error('Notification insert error:', error.message);
     // Vẫn đẩy socket + FCM với payload dựng sẵn — tránh mất thông báo khi DB lỗi tạm.
-    if (typeof pushFn === 'function') {
+    // Không đẩy khi đang tắt chuông (suppressExternal).
+    if (!suppressExternal && typeof pushFn === 'function') {
       try {
         pushFn(userId, {
           ...insert,
@@ -59,8 +69,8 @@ async function createNotification(req, userId, type, title, message, entityType,
     return null;
   }
 
-  // Socket.IO + mobile push (helper server.js cũng đã gọi sendMobilePush)
-  if (typeof pushFn === 'function' && data) {
+  // Socket.IO + mobile push — bỏ qua khi user đã tắt chuông cho entity này
+  if (!suppressExternal && typeof pushFn === 'function' && data) {
     pushFn(userId, data);
   }
 

@@ -178,10 +178,15 @@ function RevertDealToLeadModal({ item, onClose, onDone }) {
 
   if (!item) return null;
   const hasProject = !!item.project_id;
+  const canSubmit = !!newOwner && !!reason.trim() && !submitting;
 
   const handleSubmit = async () => {
     if (!newOwner) {
       setError('Vui lòng chọn người phụ trách Lead mới.');
+      return;
+    }
+    if (!reason.trim()) {
+      setError('Vui lòng nhập lý do trả Deal về Lead.');
       return;
     }
     setSubmitting(true);
@@ -189,7 +194,7 @@ function RevertDealToLeadModal({ item, onClose, onDone }) {
     try {
       const { data } = await api.post(`/crm/leads/${item.id}/convert-to-lead`, {
         assigned_to: newOwner,
-        reason: reason.trim() || undefined,
+        reason: reason.trim(),
       });
       // eslint-disable-next-line no-alert
       alert(`✅ ${data?.message || 'Đã trả Deal về Lead.'}`);
@@ -253,15 +258,17 @@ function RevertDealToLeadModal({ item, onClose, onDone }) {
 
               <div>
                 <label className="text-xs font-bold text-gray-700 mb-1 block">
-                  📝 Lý do (không bắt buộc)
+                  📝 Lý do trả về Lead <span className="text-red-500">*</span>
                 </label>
                 <textarea
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
-                  rows={2}
+                  rows={3}
+                  maxLength={500}
                   placeholder="VD: Khách chưa sẵn sàng, cần nuôi tiếp ở Lead…"
                   className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
+                <p className="text-[10px] text-gray-400 mt-1 text-right">{reason.trim().length}/500</p>
               </div>
 
               {error && (
@@ -283,7 +290,7 @@ function RevertDealToLeadModal({ item, onClose, onDone }) {
               <button
                 type="button"
                 onClick={handleSubmit}
-                disabled={!newOwner || submitting}
+                disabled={!canSubmit}
                 className="flex-1 h-9 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-semibold disabled:opacity-50"
               >
                 {submitting ? 'Đang xử lý...' : '↩️ Trả về Lead'}
@@ -759,6 +766,8 @@ export function ListView({
         return closeResultLabel(item, stage);
       case 'lost_reason':
         return item.lost_reason || '—';
+      case 'revert_to_lead_reason':
+        return item.revert_to_lead_reason || '—';
       case 'estimated_value':
         return item.estimated_value > 0 ? formatVND(item.estimated_value) : '—';
       case 'probability':
@@ -857,6 +866,7 @@ export function ListView({
       'Ngày_ký_hợp_đồng': fmt(contractDate),
       'Kết_quả_cuối': closeResultLabel(item, stage),
       'Lý_do_thất_bại': item.lost_reason || '',
+      'Lý_do_trả_về_Lead': item.revert_to_lead_reason || '',
       'Giá_trị_dự_kiến': est > 0 ? est : '',
       'Xác_suất_chốt': prob !== null && Number.isFinite(prob) ? prob : '',
       'Doanh_thu_kỳ_vọng': expectedRev,

@@ -6,7 +6,7 @@ import { useAuth } from '../lib/auth';
 import { alertIncomingNotification, cancelNotificationSpeech } from '../lib/notificationAlert';
 import { setNotificationPrefsCache, getNotificationPrefsCache, isNotificationTypeEnabled } from '../lib/notificationPrefsCache';
 import { isExpiryDeadlineNotificationType } from '../lib/notificationOperationalFilter';
-import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings, Users, Factory, Calendar, CalendarClock, CheckCircle2, Sparkles, ClipboardList } from 'lucide-react';
+import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings, Users, Factory, Calendar, CalendarClock, CheckCircle2, Sparkles, ClipboardList, BellOff } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
 import NotificationToast from './NotificationToast';
 import NotificationSettings from './NotificationSettings';
@@ -210,6 +210,21 @@ function inferNotificationModuleKey(n) {
   return '';
 }
 
+function eventsPathForNotification(n) {
+  const meta = n?.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  const mod = String(meta.module || meta.event_module || meta.module_key || '').toLowerCase();
+  if (mod === 'production') return '/sx/events';
+  if (mod === 'logistics') return '/vc/events';
+  const inferred = inferNotificationModuleKey(n);
+  if (inferred === 'production') return '/sx/events';
+  if (inferred === 'logistics') return '/vc/events';
+  if (String(n?.type || '').includes('vc_handover') || String(n?.type || '') === 'event_created') {
+    // Bàn giao VC / sự kiện lấy hàng → ưu tiên module VC
+    if (meta.lead_id || n?.entity_type === 'event') return '/vc/events';
+  }
+  return '/crm/events';
+}
+
 /** Bình luận deal — mở tab Bình luận ở SX nếu deal gắn dự án xưởng. */
 function navigateLeadCommentMention(navigate, n, setOpen) {
   const meta = n?.metadata && typeof n.metadata === 'object' ? n.metadata : {};
@@ -304,6 +319,60 @@ function extractChatSenderName(n) {
   return 'Tin nhắn';
 }
 
+function resolveCommentLeadId(n) {
+  if (!n) return null;
+  const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  if (meta.lead_id) return String(meta.lead_id);
+  if (['lead', 'crm_lead', 'crm_deal'].includes(String(n.entity_type || '')) && n.entity_id) {
+    return String(n.entity_id);
+  }
+  return null;
+}
+
+function resolveMessengerGroupId(n) {
+  if (!n || n.type !== 'messenger_chat') return null;
+  const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  if (meta.group_id || meta.bubble_key) return String(meta.group_id || meta.bubble_key);
+  if (n.entity_type === 'messenger_group' && n.entity_id) return String(n.entity_id);
+  return null;
+}
+
+/** Mục tiêu mute từ 1 dòng thông báo: bình luận deal hoặc Messenger. */
+function resolveMuteTarget(n) {
+  if (!n) return null;
+  if (isLeadCommentMentionNotification(n)) {
+    const entityId = resolveCommentLeadId(n);
+    if (!entityId) return null;
+    return {
+      scope: 'comment_added',
+      entityId,
+      key: `comment_added:${entityId}`,
+      title: 'Tắt TB bình luận deal',
+      buttonTitle: 'Tắt thông báo bình luận deal này',
+    };
+  }
+  if (n.type === 'messenger_chat') {
+    const entityId = resolveMessengerGroupId(n);
+    if (!entityId) return null;
+    return {
+      scope: 'messenger_chat',
+      entityId,
+      key: `messenger_chat:${entityId}`,
+      title: 'Tắt TB Messenger',
+      buttonTitle: 'Tắt thông báo Messenger cuộc trò chuyện này',
+    };
+  }
+  return null;
+}
+
+const COMMENT_MUTE_OPTIONS = [
+  { value: '1h', label: '1 giờ' },
+  { value: '2h', label: '2 giờ' },
+  { value: '3h', label: '3 giờ' },
+  { value: '8h', label: '8 giờ' },
+  { value: 'indefinite', label: 'Đến khi mở lại' },
+];
+
 export default function NotificationCenter({ socket }) {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -329,6 +398,16 @@ export default function NotificationCenter({ socket }) {
   const [onlyUnread, setOnlyUnread] = useState(false);
   const [activityDate, setActivityDate] = useState('');
   const [deadlinesModule, setDeadlinesModule] = useState('all');
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  /** key = `${scope}:${entityId}` → mute row */
+  const [commentMutes, setCommentMutes] = useState(() => new Map());
+  const commentMutesRef = useRef(commentMutes);
+  useEffect(() => { commentMutesRef.current = commentMutes; }, [commentMutes]);
+  /** id thông báo đang mở menu mute (tránh hiện menu trùng trên nhiều dòng cùng nhóm) */
+  const [muteMenuNotifId, setMuteMenuNotifId] = useState(null);
+  const [muteBusy, setMuteBusy] = useState(false);
   const [toastStack, setToastStack] = useState([]);
   const toastKeyRef = useRef(0);
   const MAX_TOAST_STACK = 8;
@@ -345,6 +424,12 @@ export default function NotificationCenter({ socket }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const rootRef = useRef(null);
   const panelRef = useRef(null);
+  const listScrollRef = useRef(null);
+  /** Id đã xếp hàng / đang đánh dấu đã xem (tránh gọi API trùng khi lướt) */
+  const seenQueuedRef = useRef(new Set());
+  const pendingSeenRef = useRef(new Set());
+  const flushSeenTimerRef = useRef(null);
+  const loadCountRef = useRef(null);
 
   useEffect(() => {
     if (user) return undefined;
@@ -536,6 +621,32 @@ export default function NotificationCenter({ socket }) {
       setCskhCount(cnt);
     } catch { }
   };
+  loadCountRef.current = loadCount;
+
+  /** Gom các thông báo đã lướt tới → đánh dấu đã xem (bulk) */
+  const flushSeenReads = useCallback(async () => {
+    const ids = [...pendingSeenRef.current];
+    pendingSeenRef.current.clear();
+    if (!ids.length) return;
+    setNotifications((prev) => prev.map((n) => (ids.includes(n.id) ? { ...n, is_read: true } : n)));
+    try {
+      await api.put('/dashboard/notifications/bulk-read', { ids });
+      await loadCountRef.current?.({ includeCskh: false });
+    } catch {
+      ids.forEach((id) => seenQueuedRef.current.delete(id));
+    }
+  }, []);
+
+  const queueSeenRead = useCallback((id) => {
+    if (!id || seenQueuedRef.current.has(id)) return;
+    seenQueuedRef.current.add(id);
+    pendingSeenRef.current.add(id);
+    if (flushSeenTimerRef.current) clearTimeout(flushSeenTimerRef.current);
+    flushSeenTimerRef.current = setTimeout(() => {
+      flushSeenTimerRef.current = null;
+      flushSeenReads();
+    }, 350);
+  }, [flushSeenReads]);
 
   useEffect(() => {
     // Dashboard badge trước; CSKH (query nặng) trì hoãn để ưu tiên load trang hiện tại.
@@ -621,7 +732,16 @@ export default function NotificationCenter({ socket }) {
         setNotifications((prev) => (tab === 'activity' ? [notif, ...prev] : prev));
       }
 
-      pushToast(notif);
+      // Đã tắt chuông cho deal/Messenger này → vẫn cập nhật danh sách, không toast/âm thanh ngoài màn hình
+      const muteTarget = resolveMuteTarget(notif);
+      const isExternallyMuted = muteTarget && commentMutesRef.current.has(muteTarget.key);
+      if (!isExternallyMuted) {
+        pushToast(notif);
+        const p = getNotificationPrefsCache();
+        if (p.sound !== false) {
+          void alertIncomingNotification({ type: notif.type, entityType: notif.entity_type });
+        }
+      }
 
       if (notif?.type === 'ai_crm_deadline_digest') {
         try {
@@ -634,19 +754,24 @@ export default function NotificationCenter({ socket }) {
       if (isAssign) dispatchBadgeRefresh('assignments');
       if (isEvent) dispatchBadgeRefresh('events');
       if (isChat) dispatchBadgeRefresh('social');
-
-      const p = getNotificationPrefsCache();
-      if (p.sound !== false) {
-        void alertIncomingNotification({ type: notif.type, entityType: notif.entity_type });
-      }
     };
     socket.on('notification', handler);
     return () => socket.off('notification', handler);
   }, [socket, tab, user, pushToast]);
 
   useEffect(() => {
-    if (open) load();
+    if (open) {
+      load();
+      loadCommentMutes();
+    }
   }, [open, tab, deadlinesModule, onlyUnread, activityDate]);
+
+  // Đổi tab / đóng panel → thoát chế độ chọn nhiều + đóng menu mute
+  useEffect(() => {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+    setMuteMenuNotifId(null);
+  }, [tab, open]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -694,11 +819,166 @@ export default function NotificationCenter({ socket }) {
   };
 
   const markRead = async (id) => {
+    if (!id) return;
+    seenQueuedRef.current.add(id);
+    pendingSeenRef.current.delete(id);
     try {
       await api.put(`/dashboard/notifications/${id}/read`);
       setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
       await loadCount();
+    } catch {
+      seenQueuedRef.current.delete(id);
+    }
+  };
+
+  // Khi mở panel và lướt danh sách: thông báo hiện trong khung nhìn → tự đánh dấu đã xem
+  useEffect(() => {
+    if (!open || tab === 'cskh' || loading || selectMode) return undefined;
+    const root = listScrollRef.current;
+    if (!root) return undefined;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const el = entry.target;
+          if (el.getAttribute('data-notif-unread') !== '1') continue;
+          if (el.getAttribute('data-notif-approval') === '1') continue;
+          const id = el.getAttribute('data-notif-id');
+          if (id) queueSeenRead(id);
+        }
+      },
+      { root, threshold: 0.45, rootMargin: '0px' },
+    );
+
+    root.querySelectorAll('[data-notif-id][data-notif-unread="1"]').forEach((el) => {
+      observer.observe(el);
+    });
+
+    return () => observer.disconnect();
+  }, [open, tab, loading, selectMode, notifications, queueSeenRead]);
+
+  // Đóng panel: đẩy hết các id đang chờ đánh dấu đã xem
+  useEffect(() => {
+    if (open) return undefined;
+    if (flushSeenTimerRef.current) {
+      clearTimeout(flushSeenTimerRef.current);
+      flushSeenTimerRef.current = null;
+    }
+    if (pendingSeenRef.current.size) {
+      flushSeenReads();
+    }
+    return undefined;
+  }, [open, flushSeenReads]);
+
+  /** Bỏ qua 1 thông báo — ẩn vĩnh viễn khỏi danh sách + badge */
+  const dismissOne = async (id) => {
+    try {
+      await api.put(`/dashboard/notifications/${id}/dismiss`);
+      setNotifications(prev => prev.filter(n => n.id !== id));
+      setSelectedIds(prev => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      await loadCount({ includeCskh: false });
     } catch { }
+  };
+
+  const toggleSelected = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllUnread = () => {
+    setSelectedIds(new Set(notifications.filter(n => !n.is_read).map(n => n.id)));
+  };
+
+  const bulkMarkRead = async () => {
+    const ids = [...selectedIds];
+    if (!ids.length || bulkBusy) return;
+    setBulkBusy(true);
+    try {
+      await api.put('/dashboard/notifications/bulk-read', { ids });
+      setNotifications(prev => prev.map(n => selectedIds.has(n.id) ? { ...n, is_read: true } : n));
+      setSelectedIds(new Set());
+      await loadCount({ includeCskh: false });
+    } catch { }
+    setBulkBusy(false);
+  };
+
+  const bulkDismiss = async () => {
+    const ids = [...selectedIds];
+    if (!ids.length || bulkBusy) return;
+    setBulkBusy(true);
+    try {
+      await api.put('/dashboard/notifications/bulk-dismiss', { ids });
+      setNotifications(prev => prev.filter(n => !selectedIds.has(n.id)));
+      setSelectedIds(new Set());
+      await loadCount({ includeCskh: false });
+    } catch { }
+    setBulkBusy(false);
+  };
+
+  const loadCommentMutes = async () => {
+    try {
+      const { data } = await api.get('/dashboard/notifications/comment-mutes');
+      const map = new Map();
+      (data?.mutes || []).forEach((m) => {
+        if (m?.entity_id && m?.mute_scope) {
+          map.set(`${m.mute_scope}:${m.entity_id}`, m);
+        }
+      });
+      setCommentMutes(map);
+    } catch {
+      setCommentMutes(new Map());
+    }
+  };
+
+  const muteByTarget = async (target, duration) => {
+    if (!target?.entityId || !target?.scope || muteBusy) return;
+    setMuteBusy(true);
+    try {
+      const body = { duration, scope: target.scope };
+      if (target.scope === 'messenger_chat') body.group_id = target.entityId;
+      else body.lead_id = target.entityId;
+      const { data } = await api.put('/dashboard/notifications/comment-mute', body);
+      if (data?.mute) {
+        setCommentMutes((prev) => {
+          const next = new Map(prev);
+          next.set(target.key, data.mute);
+          return next;
+        });
+      }
+      // Giữ tin trong danh sách — chỉ tắt toast/push ngoài màn hình
+      setMuteMenuNotifId(null);
+    } catch (e) {
+      console.error('Mute notification target failed:', e);
+    }
+    setMuteBusy(false);
+  };
+
+  const unmuteByTarget = async (target) => {
+    if (!target?.entityId || !target?.scope || muteBusy) return;
+    setMuteBusy(true);
+    try {
+      await api.delete(`/dashboard/notifications/comment-mute/${target.entityId}`, {
+        params: { scope: target.scope },
+      });
+      setCommentMutes((prev) => {
+        const next = new Map(prev);
+        next.delete(target.key);
+        return next;
+      });
+      setMuteMenuNotifId(null);
+    } catch (e) {
+      console.error('Unmute notification target failed:', e);
+    }
+    setMuteBusy(false);
   };
 
   const [approvalForm, setApprovalForm] = useState(null); // { notifId, action, reason }
@@ -779,7 +1059,7 @@ export default function NotificationCenter({ socket }) {
             } else if (isAssignmentNotification(notif)) {
               navigateCrmAssignment(navigate, notif);
             } else if (notif.entity_type === 'event') {
-              navigate(`/crm/events`);
+              navigate(eventsPathForNotification(notif));
             } else if (notif.entity_type === 'release_note') {
               navigate(`/updates`);
             } else if ((notif.entity_type === 'cskh_followup' || notif.type === 'ai_crm_deadline_digest') && notif.metadata?.nav_url) {
@@ -945,11 +1225,22 @@ export default function NotificationCenter({ socket }) {
                 />
                 Chỉ chưa đọc
               </label>
+              <button
+                type="button"
+                onClick={() => { setSelectMode(v => !v); setSelectedIds(new Set()); }}
+                className={`ml-auto inline-flex items-center gap-1 h-7 px-2 rounded text-[11px] font-medium cursor-pointer transition-colors ${
+                  selectMode ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                }`}
+                title={selectMode ? 'Thoát chế độ chọn' : 'Tích chọn nhiều thông báo'}
+              >
+                <CheckSquare className="h-3 w-3" />
+                {selectMode ? 'Xong' : 'Chọn'}
+              </button>
             </div>
           )}
 
           {tab === 'deadlines' && (
-            <div className="flex flex-wrap gap-1 px-2 py-2 border-b border-gray-50 bg-slate-50/80">
+            <div className="flex flex-wrap items-center gap-1 px-2 py-2 border-b border-gray-50 bg-slate-50/80">
               {MODULE_FILTER_OPTIONS.map((opt) => (
                 <button
                   key={opt.id}
@@ -962,10 +1253,56 @@ export default function NotificationCenter({ socket }) {
                   {opt.label}
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={() => { setSelectMode(v => !v); setSelectedIds(new Set()); }}
+                className={`ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium cursor-pointer transition-colors ${
+                  selectMode ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                }`}
+                title={selectMode ? 'Thoát chế độ chọn' : 'Tích chọn nhiều thông báo'}
+              >
+                <CheckSquare className="h-3 w-3" />
+                {selectMode ? 'Xong' : 'Chọn'}
+              </button>
             </div>
           )}
 
-          <div className="max-h-[440px] overflow-y-auto bg-gradient-to-b from-white to-slate-50/40">
+          {/* Thanh hành động hàng loạt khi đang ở chế độ chọn */}
+          {selectMode && tab !== 'cskh' && (
+            <div className="flex items-center gap-1.5 px-3 py-2 border-b border-blue-100 bg-blue-50/70">
+              <p className="text-[11px] font-semibold text-blue-800 shrink-0">Đã chọn {selectedIds.size}</p>
+              <button
+                type="button"
+                onClick={selectAllUnread}
+                className="text-[11px] px-2 py-1 rounded-md bg-white text-blue-700 border border-blue-200 hover:bg-blue-100 cursor-pointer"
+                title="Tích chọn toàn bộ tin chưa đọc trong danh sách"
+              >
+                Chọn tin chưa đọc
+              </button>
+              <div className="ml-auto flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={bulkMarkRead}
+                  disabled={!selectedIds.size || bulkBusy}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  title="Đánh dấu đã đọc các tin đã chọn"
+                >
+                  <CheckCheck className="h-3.5 w-3.5" /> Đã đọc
+                </button>
+                <button
+                  type="button"
+                  onClick={bulkDismiss}
+                  disabled={!selectedIds.size || bulkBusy}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-md bg-gray-600 text-white hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  title="Bỏ qua (ẩn) các tin đã chọn"
+                >
+                  <X className="h-3.5 w-3.5" /> Bỏ qua
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div ref={listScrollRef} className="max-h-[440px] overflow-y-auto bg-gradient-to-b from-white to-slate-50/40">
             {tab === 'cskh' ? (
               cskhLoading ? (
                 <div className="flex flex-col items-center justify-center py-10 gap-2">
@@ -1114,7 +1451,11 @@ export default function NotificationCenter({ socket }) {
                 return (
                   <div
                     key={n.id}
+                    data-notif-id={n.id}
+                    data-notif-unread={n.is_read ? '0' : '1'}
+                    data-notif-approval={isApproval ? '1' : '0'}
                     onClick={() => {
+                      if (selectMode) { toggleSelected(n.id); return; }
                       if (!n.is_read && !isApproval) markRead(n.id);
                       // Tin nhắn messenger (nhóm/1-1) → mở Dock với tên người gửi
                       if (n.type === 'messenger_chat' && n.entity_type === 'messenger_group' && n.entity_id) {
@@ -1190,7 +1531,7 @@ export default function NotificationCenter({ socket }) {
                           navigate(lid ? `/crm/leads/${lid}?tab=tasks` : '/crm/tasks');
                         }
                       } else if (n.entity_type === 'event') {
-                        navigate(`/crm/events`);
+                        navigate(eventsPathForNotification(n));
                       } else if (n.entity_type === 'release_note') {
                         navigate(`/updates`);
                       } else if ((n.entity_type === 'cskh_followup' || n.type === 'ai_crm_deadline_digest') && n.metadata?.nav_url) {
@@ -1198,12 +1539,23 @@ export default function NotificationCenter({ socket }) {
                       }
                       setOpen(false);
                     }}
-                    className={`relative px-4 py-3 hover:bg-blue-50/50 cursor-pointer border-b border-gray-50 transition-colors ${!n.is_read ? 'bg-gradient-to-r from-blue-50/60 to-transparent' : ''}`}
+                    className={`group relative px-4 py-3 hover:bg-blue-50/50 cursor-pointer border-b border-gray-50 transition-colors ${
+                      selectMode && selectedIds.has(n.id) ? 'bg-blue-100/60' : !n.is_read ? 'bg-gradient-to-r from-blue-50/60 to-transparent' : ''
+                    }`}
                   >
                     {!n.is_read && (
                       <span className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-blue-500 to-indigo-500" />
                     )}
                     <div className="flex gap-3">
+                      {selectMode && (
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(n.id)}
+                          onChange={() => toggleSelected(n.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="mt-3 rounded border-gray-300 shrink-0 cursor-pointer"
+                        />
+                      )}
                       <div className={`w-10 h-10 rounded-xl ${isApproval ? 'bg-orange-100 text-orange-600' : color} flex items-center justify-center shrink-0 shadow-sm ring-1 ring-white/60`}>
                         <Icon className="h-5 w-5" />
                       </div>
@@ -1219,6 +1571,73 @@ export default function NotificationCenter({ socket }) {
                               </span>
                             )}
                             {!n.is_read && !isApproval && <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0 mt-1.5 animate-pulse" />}
+                            {!selectMode && (() => {
+                              const muteTarget = resolveMuteTarget(n);
+                              if (!muteTarget) return null;
+                              const isMuted = commentMutes.has(muteTarget.key);
+                              const menuOpen = muteMenuNotifId === n.id;
+                              return (
+                              <div className="relative" onClick={(e) => e.stopPropagation()}>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setMuteMenuNotifId((cur) => (cur === n.id ? null : n.id));
+                                  }}
+                                  className={`w-6 h-6 rounded-md flex items-center justify-center cursor-pointer ${
+                                    isMuted
+                                      ? 'text-red-600 bg-red-50'
+                                      : 'text-red-500 hover:text-red-600 hover:bg-red-50'
+                                  }`}
+                                  title={muteTarget.buttonTitle}
+                                >
+                                  {isMuted ? (
+                                    <BellOff className="h-3.5 w-3.5" />
+                                  ) : (
+                                    <Bell className="h-3.5 w-3.5" />
+                                  )}
+                                </button>
+                                {menuOpen && (
+                                  <div className="absolute right-0 top-7 z-30 w-48 rounded-xl border border-gray-200 bg-white shadow-xl py-1.5 animate-fade-in">
+                                    <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                                      {muteTarget.title}
+                                    </p>
+                                    {isMuted ? (
+                                      <button
+                                        type="button"
+                                        disabled={muteBusy}
+                                        onClick={() => unmuteByTarget(muteTarget)}
+                                        className="w-full text-left px-3 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-50 cursor-pointer disabled:opacity-50"
+                                      >
+                                        Mở lại thông báo
+                                      </button>
+                                    ) : (
+                                      COMMENT_MUTE_OPTIONS.map((opt) => (
+                                        <button
+                                          key={opt.value}
+                                          type="button"
+                                          disabled={muteBusy}
+                                          onClick={() => muteByTarget(muteTarget, opt.value)}
+                                          className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-red-50 hover:text-red-700 cursor-pointer disabled:opacity-50"
+                                        >
+                                          {opt.label}
+                                        </button>
+                                      ))
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                              );
+                            })()}
+                            {!selectMode && (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); dismissOne(n.id); }}
+                                className="w-6 h-6 rounded-md flex items-center justify-center text-gray-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                                title="Bỏ qua thông báo này"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            )}
                           </div>
                         </div>
                         <p className="text-xs text-gray-600 mt-1 line-clamp-2 whitespace-pre-line leading-relaxed">{n.message}</p>

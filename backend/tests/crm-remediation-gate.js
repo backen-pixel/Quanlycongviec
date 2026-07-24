@@ -124,11 +124,15 @@ test('assertCrmTaskLeadAccess helper exists', () => {
   const mod = require('../src/helpers/crmTaskLeadAccess');
   assert.strictEqual(typeof mod.assertCrmTaskLeadAccess, 'function');
   assert.strictEqual(typeof mod.loadLeadForTaskAccess, 'function');
+  assert.strictEqual(typeof mod.assertCrmTaskBelongsToLead, 'function');
+  assert.strictEqual(typeof mod.resolveCrmTaskHttpOperation, 'function');
 });
 
 test('index.js does not bare-bypass /tasks', () => {
   const src = fs.readFileSync(path.join(CRM, 'index.js'), 'utf8');
   assert.ok(src.includes('assertCrmTaskLeadAccess'), 'must call assertCrmTaskLeadAccess');
+  assert.ok(src.includes('resolveCrmTaskHttpOperation'), 'must pass operation');
+  assert.ok(src.includes('assertCrmTaskBelongsToLead'), 'must verify task↔lead');
   // Old pattern: if (/\/tasks.../) return next(); without assert
   const bypassOnly = /if\s*\(\s*\/\\\/tasks\(\\\/\|\$\)\/\.test\(p\)\s*\)\s*return\s+next\(\s*\)\s*;/;
   assert.ok(!bypassOnly.test(src), 'bare tasks bypass still present');

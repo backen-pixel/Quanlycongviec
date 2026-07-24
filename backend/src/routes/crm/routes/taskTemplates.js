@@ -37,6 +37,12 @@ r.get('/tasks/overview', async (req, res) => {
     if (status) q = q.eq('status', status);
     if (assignee_id) q = q.eq('assignee_id', assignee_id);
     if (stage_slug) q = q.eq('stage_slug', stage_slug);
+
+    const { applyCrmTasksListAccessScope } = require('../../../helpers/crmTaskOverviewScope');
+    const scoped = await applyCrmTasksListAccessScope(q, supabase, req, { companyId: effectiveCompanyId });
+    if (scoped.empty) return res.json([]);
+    q = scoped.q;
+
     const { data, error } = await q;
     if (error) throw error;
     let rows = data || [];
@@ -83,6 +89,12 @@ r.get('/tasks/planner', async (req, res) => {
       .in('status', ['pending', 'in_progress'])
       .order('deadline', { ascending: true, nullsFirst: false });
     if (leadIds?.length) tq = tq.in('lead_id', leadIds);
+
+    const { applyCrmTasksListAccessScope } = require('../../../helpers/crmTaskOverviewScope');
+    const scoped = await applyCrmTasksListAccessScope(tq, supabase, req, { companyId: effectiveCompanyId });
+    if (scoped.empty) return res.json({ assignees: [], unassigned: [] });
+    tq = scoped.q;
+
     const { data, error } = await tq;
     if (error) throw error;
 
@@ -465,6 +477,11 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
       requires_quick_verdict: !!b.requires_quick_verdict,
       blocks_stage_advance: !!b.blocks_stage_advance,
       show_excel_quotation_upload: !!b.show_excel_quotation_upload,
+      auto_upload_attachments_to_drive: !!b.auto_upload_attachments_to_drive,
+      show_fill_form: !!b.show_fill_form,
+      form_config: (b.form_config && typeof b.form_config === 'object' && !Array.isArray(b.form_config))
+        ? b.form_config
+        : {},
       ...templateItemAssigneePatch(b),
     }).select().single();
     if (error && /required_evidence_file_types|requires_quick_verdict/.test(error.message || '')) {
@@ -493,7 +510,7 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
 r.put('/task-templates/:tplId/items/:itemId', async (req, res) => {
   try {
     const update = {};
-    ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments', 'default_shared_to_project', 'default_allowed_share_modules', 'executor_company_id', 'completion_requires_file_or_note', 'required_evidence_file_types', 'completion_requires_customer_note', 'completion_requires_customer_contact', 'requires_quick_verdict', 'blocks_stage_advance', 'show_excel_quotation_upload'].forEach(f => {
+    ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments', 'default_shared_to_project', 'default_allowed_share_modules', 'executor_company_id', 'completion_requires_file_or_note', 'required_evidence_file_types', 'completion_requires_customer_note', 'completion_requires_customer_contact', 'requires_quick_verdict', 'blocks_stage_advance', 'show_excel_quotation_upload', 'auto_upload_attachments_to_drive', 'show_fill_form', 'form_config'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
     Object.assign(update, templateItemAssigneePatch(req.body));

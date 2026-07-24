@@ -16,10 +16,19 @@ r.get('/leads/:id/comments', async (req, res) => {
     const forModule = String(req.query.for_module || '').toLowerCase().trim();
     let { data, error } = await supabase
       .from('crm_lead_comments')
-      .select('id, lead_id, user_id, parent_id, body, attachments, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
+      .select('id, lead_id, user_id, parent_id, body, attachments, comment_type, metadata, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
       .eq('lead_id', leadId)
       .is('deleted_at', null)
       .order('created_at', { ascending: true });
+    // Cột comment_type/metadata chưa migrate (465) → thử lại không kèm.
+    if (error && (String(error.message || '').includes('comment_type') || String(error.message || '').includes('metadata'))) {
+      ({ data, error } = await supabase
+        .from('crm_lead_comments')
+        .select('id, lead_id, user_id, parent_id, body, attachments, created_at, updated_at, user:users!crm_lead_comments_user_id_fkey(id,full_name,avatar)')
+        .eq('lead_id', leadId)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: true }));
+    }
     if (error && crmLeadCommentAttachmentsColumnMissing(error)) {
       ({ data, error } = await supabase
         .from('crm_lead_comments')
@@ -47,6 +56,24 @@ r.get('/leads/:id/comments', async (req, res) => {
         list = list.filter((c) => !isQuoteContractActivityComment(c.body));
       }
     }
+    // Ẩn lịch sử cho thành viên VC/LĐ mới thêm (lead_members.history_cutoff_at).
+    try {
+      const { data: memRow } = await supabase
+        .from('lead_members')
+        .select('history_cutoff_at')
+        .eq('lead_id', leadId)
+        .eq('user_id', userId)
+        .maybeSingle();
+      const cutoffMs = memRow?.history_cutoff_at ? new Date(memRow.history_cutoff_at).getTime() : null;
+      if (cutoffMs && Number.isFinite(cutoffMs)) {
+        list = list.filter((c) => {
+          // Luôn giữ bình luận tương tác bàn giao VC/LĐ (để phụ trách VC vẫn xác nhận được).
+          if (c.comment_type === 'vc_handover') return true;
+          const t = new Date(c.created_at).getTime();
+          return Number.isFinite(t) && t >= cutoffMs;
+        });
+      }
+    } catch (_) { /* cột chưa migrate — bỏ qua */ }
     if (!list.length) return res.json([]);
     const ids = list.map((c) => c.id);
     let rxMap = await fetchCrmCommentReactionsAggregate(supabase, ids, userId);

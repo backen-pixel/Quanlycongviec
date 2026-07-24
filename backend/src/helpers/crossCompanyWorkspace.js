@@ -50,8 +50,17 @@ function hasCrossCompanyDelegation(task, ownerCompanyId) {
  * - shared: chỉ nhiệm vụ / checklist giao chéo (không gian chung)
  * ownerCompanyId: công ty chủ dự án/xưởng (ưu tiên hơn lead.company_id CRM)
  */
-function filterCrmTasksByCompanyScope(tasks, { scope, userCompanyId, leadCompanyId, ownerCompanyId }) {
+function filterCrmTasksByCompanyScope(tasks, {
+  scope, userCompanyId, leadCompanyId, ownerCompanyId, executorScopedOnly = false,
+}) {
   const list = Array.isArray(tasks) ? tasks : [];
+  // Grant executor-scope (không phải chủ dự án / owner / participant / admin):
+  // chỉ được thấy đúng task giao đích danh công ty mình — kể cả task non-SX.
+  // Chống rò task thương mại / task công ty khác qua một grant lead-wide.
+  if (executorScopedOnly) {
+    if (!userCompanyId) return [];
+    return list.filter((t) => String(t.executor_company_id || '') === String(userCompanyId));
+  }
   const mode = String(scope || 'own').toLowerCase();
   const ownerId = ownerCompanyId || leadCompanyId || null;
   if (mode === 'shared') {

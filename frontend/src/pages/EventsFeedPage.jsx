@@ -20,6 +20,7 @@ import {
 import * as XLSX from 'xlsx';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import EventCreateModal, { EVENT_MODULE_OPTIONS } from '../components/EventCreateModal';
+import SearchInlineFilterChips, { SearchClearButton } from '../components/SearchInlineFilterChips';
 
 import ScopeFilterBar from '../shared/components/ScopeFilterBar';
 import { useScopeFilter } from '../shared/hooks/useScopeFilter';
@@ -145,14 +146,16 @@ const EVENTS_TIME_PRESETS = [
 // ═══════════════════════════════════════════════════════════════
 // MAIN PAGE
 // ═══════════════════════════════════════════════════════════════
-export default function EventsFeedPage() {
+/** @param {{ lockedModule?: 'production'|'logistics'|'crm'|'' }} props */
+export default function EventsFeedPage({ lockedModule = '' } = {}) {
+  const forcedModule = EVENT_MODULE_OPTIONS.some((o) => o.value === lockedModule) ? lockedModule : '';
   const { user } = useAuth();
   const isAdmin = isAdminLike(user);
   /** Admin chọn công ty (admin tổng / platform_admin — khớp CRM Dashboard, không chỉ isSystemAdmin). */
   const canPickCompany = isAdmin && !isCompanyScopedAdmin(user);
   const isSystemAdmin = checkSystemAdmin(user);
   const scope = useScopeFilter({
-    storageKey: 'crm_events',
+    storageKey: forcedModule ? `events_${forcedModule}` : 'crm_events',
     showCompany: true,
     showDepartment: false,
     showSearch: false,
@@ -168,8 +171,10 @@ export default function EventsFeedPage() {
    * Khối user được phép xem sự kiện:
    * - Admin / allowAll → null = không lọc (xem tất cả khối).
    * - User thường → chỉ những khối có quyền + luôn thêm 'general' (sự kiện chung công ty).
+   * - Trang SX/VC (lockedModule) → chỉ khối đó (+ general).
    */
   const allowedModules = useMemo(() => {
+    if (forcedModule) return ['general', forcedModule];
     if (!moduleAccess || moduleAccess.allowAll || isAdmin || isSystemAdmin) return null;
     if (isProductionAdmin(user)) return ['general', 'production'];
     if (isLogisticsAdmin(user)) return ['general', 'logistics'];
@@ -178,31 +183,37 @@ export default function EventsFeedPage() {
     if (canAccessModule('production')) list.push('production');
     if (canAccessModule('logistics')) list.push('logistics');
     return list;
-  }, [moduleAccess, isAdmin, isSystemAdmin, canAccessModule, user]);
+  }, [forcedModule, moduleAccess, isAdmin, isSystemAdmin, canAccessModule, user]);
 
   const [searchParams, setSearchParams] = useSearchParams();
   const initialModule = useMemo(() => {
+    if (forcedModule) return forcedModule;
     const v = String(searchParams.get('module') || '').toLowerCase();
     return EVENT_MODULE_OPTIONS.some((o) => o.value === v) ? v : '';
-  }, [searchParams]);
+  }, [forcedModule, searchParams]);
   const [filterModule, setFilterModule] = useState(initialModule);
   const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
+    if (forcedModule) {
+      if (filterModule !== forcedModule) setFilterModule(forcedModule);
+      return;
+    }
     if (!filterModule) return;
     if (allowedModules && !allowedModules.includes(filterModule)) {
       setFilterModule('');
     }
-  }, [filterModule, allowedModules]);
+  }, [forcedModule, filterModule, allowedModules]);
 
   useEffect(() => {
+    if (forcedModule) return; // URL SX/VC không cần ?module=
     const next = new URLSearchParams(searchParams);
     if (filterModule) next.set('module', filterModule);
     else next.delete('module');
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true });
     }
-  }, [filterModule]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filterModule, forcedModule]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!canPickCompany || filterCompanyId) return;
@@ -213,11 +224,18 @@ export default function EventsFeedPage() {
   const listParams = useMemo(
     () => {
       const p = canPickCompany && filterCompanyId ? { company_id: filterCompanyId } : {};
-      if (filterModule) p.module = filterModule;
-      else if (allowedModules && allowedModules.length) p.modules = allowedModules.join(',');
+      if (forcedModule === 'production' || forcedModule === 'logistics') {
+        // SX và VC cùng thấy sự kiện bàn giao / lấy hàng (khối logistics + production).
+        p.modules = 'production,logistics';
+        p.include_as_participant = '1';
+      } else if (filterModule) {
+        p.module = filterModule;
+      } else if (allowedModules && allowedModules.length) {
+        p.modules = allowedModules.join(',');
+      }
       return p;
     },
-    [canPickCompany, filterCompanyId, filterModule, allowedModules],
+    [canPickCompany, filterCompanyId, filterModule, allowedModules, forcedModule],
   );
 
   /** Danh sách nhân viên cho filter / form sự kiện — chỉ trong một công ty (không «tất cả» xuyên hệ thống). */
@@ -243,6 +261,7 @@ export default function EventsFeedPage() {
   const [rangeTo, setRangeTo] = useState('');
   const [timePreset, setTimePreset] = useState('');
   const [showDateRangePicker, setShowDateRangePicker] = useState(false);
+  const [showAdvFilters, setShowAdvFilters] = useState(false);
   const [totalEvents, setTotalEvents] = useState(0);
   const [showCreate, setShowCreate] = useState(false);
   const [editEvent, setEditEvent] = useState(null);
@@ -456,9 +475,70 @@ export default function EventsFeedPage() {
   }, [timePreset, rangeFrom, rangeTo]);
 
   const hasActiveFilters = !!(search || filterType || filterStatus || filterUser || filterRegionId
-    || filterModule
-    || (canPickCompany && filterCompanyId)
-    || rangeFrom || rangeTo);
+    || (view !== 'calendar' && (timePreset || rangeFrom || rangeTo)));
+
+  const inlineFilterChips = useMemo(() => {
+    const chips = [];
+    if (filterType) {
+      const t = eventTypes.find((x) => x.slug === filterType);
+      chips.push({
+        key: 'type',
+        label: t ? `${t.icon || ''} ${t.name}`.trim() : filterType,
+        onClear: () => setFilterType(''),
+      });
+    }
+    if (filterStatus) {
+      chips.push({
+        key: 'status',
+        label: STATUS_MAP[filterStatus]?.label || filterStatus,
+        onClear: () => setFilterStatus(''),
+      });
+    }
+    if (filterUser) {
+      const u = users.find((x) => String(x.id) === String(filterUser));
+      chips.push({
+        key: 'user',
+        label: u?.full_name || 'Người phụ trách',
+        onClear: () => setFilterUser(''),
+      });
+    }
+    if (filterRegionId) {
+      const rg = regions.find((x) => String(x.id) === String(filterRegionId));
+      chips.push({
+        key: 'region',
+        label: rg?.name || 'Khu vực',
+        onClear: () => setFilterRegionId(''),
+      });
+    }
+    if (view !== 'calendar' && (timePreset || rangeFrom || rangeTo)) {
+      chips.push({
+        key: 'time',
+        label: timeFilterLabel || 'Thời gian',
+        onClear: () => {
+          setTimePreset('');
+          setRangeFrom('');
+          setRangeTo('');
+        },
+      });
+    }
+    return chips;
+  }, [
+    filterType, filterStatus, filterUser, filterRegionId, eventTypes, users, regions,
+    view, timePreset, rangeFrom, rangeTo, timeFilterLabel,
+  ]);
+
+  const ctrlH = 'h-8';
+  const ctrlTxt = 'text-xs';
+  const filterFieldCls = 'h-8 w-full min-w-0 px-2.5 bg-white border border-violet-200 rounded-md text-xs font-medium text-slate-800 shadow-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-300/80 focus:border-violet-400';
+  const filterSelectCls = `${filterFieldCls} cursor-pointer appearance-none pr-7`;
+  const filterLabelCls = 'text-[10px] font-semibold text-violet-800/90 uppercase tracking-wide mb-1 block';
+  const advFilterCount = [
+    filterType,
+    filterStatus,
+    filterUser,
+    filterRegionId,
+    (view !== 'calendar' && (timePreset || rangeFrom || rangeTo)),
+  ].filter(Boolean).length;
 
   const activeFilterHints = useMemo(() => {
     const hints = [];
@@ -601,7 +681,12 @@ export default function EventsFeedPage() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <Calendar className="h-6 w-6 text-blue-600" /> Sự kiện
+            <Calendar className="h-6 w-6 text-blue-600" />
+            {forcedModule === 'production'
+              ? 'Sự kiện Sản xuất'
+              : forcedModule === 'logistics'
+                ? 'Sự kiện VC/LĐ'
+                : 'Sự kiện'}
           </h1>
           <p className="text-sm text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
             <span>
@@ -630,10 +715,10 @@ export default function EventsFeedPage() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {/*
-           * Bộ chuyển khối CHỈ hiển thị cho admin (xem được mọi khối).
-           * Nhân viên thường tự lọc theo các khối mình có quyền — không cần UI.
+           * Bộ chuyển khối: ẩn khi mở từ SX/VC (lockedModule).
+           * Chỉ hiện cho admin trên trang CRM /crm/events.
            */}
-          {(isAdmin || isSystemAdmin) && (
+          {!forcedModule && (isAdmin || isSystemAdmin) && (
             <div className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-lg p-1 shadow-sm" title="Lọc theo khối">
               {EVENT_MODULE_OPTIONS
                 .map((m) => {
@@ -655,7 +740,13 @@ export default function EventsFeedPage() {
                 })}
             </div>
           )}
-          {!(isAdmin || isSystemAdmin) && filterModule && (
+          {forcedModule ? (
+            <div className="flex items-center gap-2 px-2.5 h-9 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-xs font-medium">
+              <span>
+                {forcedModule === 'production' ? '🏭 Sản xuất + 🚚 VC/LĐ' : '🚚 VC/LĐ + 🏭 Sản xuất'}
+              </span>
+            </div>
+          ) : !(isAdmin || isSystemAdmin) && filterModule ? (
             <div className="flex items-center gap-2 px-2.5 h-9 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-xs">
               <span>{moduleMeta(filterModule).emoji} Khối: {moduleMeta(filterModule).label}</span>
               <button
@@ -666,7 +757,7 @@ export default function EventsFeedPage() {
                 Xem tất cả khối
               </button>
             </div>
-          )}
+          ) : null}
           {canPickCompany && (
             <div className="flex items-center gap-2 h-9 px-2.5 rounded-lg border border-indigo-200 bg-indigo-50/70 shadow-sm min-w-[220px]">
               <Building2 className="h-4 w-4 text-indigo-600 shrink-0" aria-hidden />
@@ -685,12 +776,14 @@ export default function EventsFeedPage() {
           >
             <CalendarRange className="h-4 w-4 text-purple-600 shrink-0" /> Lịch nghỉ
           </Link>
-          <Link
-            to="/crm/events/overview"
-            className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg text-sm font-semibold border border-blue-200 bg-blue-50 text-blue-800 shadow-sm hover:bg-blue-100 hover:border-blue-300 transition-colors"
-          >
-            <BarChart3 className="h-4 w-4 text-blue-600 shrink-0" /> Tổng quan
-          </Link>
+          {!forcedModule && (
+            <Link
+              to="/crm/events/overview"
+              className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg text-sm font-semibold border border-blue-200 bg-blue-50 text-blue-800 shadow-sm hover:bg-blue-100 hover:border-blue-300 transition-colors"
+            >
+              <BarChart3 className="h-4 w-4 text-blue-600 shrink-0" /> Tổng quan
+            </Link>
+          )}
           {/* View toggle */}
           <div className="flex bg-gray-100 rounded-lg p-0.5">
           <button onClick={() => setView('calendar')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 cursor-pointer transition ${view === 'calendar' ? 'bg-white shadow text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}>
@@ -733,177 +826,143 @@ export default function EventsFeedPage() {
         </div>
       </div>
 
-      {/* Feed: chỉ bộ lọc + danh sách; Lịch: thêm khối lịch tháng phía trên; List: bảng + xuất Excel */}
+      {/* Toolbar lọc gọn kiểu CRM Dashboard */}
       {(view === 'feed' || view === 'calendar' || view === 'list') && (
-        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-          {/* Toolbar bộ lọc — compact 1 hàng, scroll ngang nếu chật */}
-          <details open className="border-b border-gray-100">
-            <summary className="list-none cursor-pointer select-none flex items-center justify-between gap-2 px-4 py-2 bg-gray-50/90 hover:bg-gray-100/90">
-              <div className="flex items-center gap-2 text-xs font-semibold text-gray-700 uppercase tracking-wide">
-                <Filter className="h-3.5 w-3.5" /> Bộ lọc
-                {view === 'calendar' && (
-                  <span className="font-normal normal-case text-gray-500">(theo tháng đang chọn)</span>
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden relative">
+          <div className="flex flex-wrap items-center gap-1 px-2.5 py-1.5 border-b border-slate-200/60 bg-slate-50/40">
+            <div
+              className={`group/search flex items-center shrink-0 flex-1 min-w-[12rem] max-w-md rounded-md border transition-colors ${
+                search.trim()
+                  ? 'border-violet-300 bg-violet-50/80'
+                  : inlineFilterChips.length && !showAdvFilters
+                    ? 'border-violet-200 bg-violet-50/40'
+                    : 'border-slate-200 bg-white hover:border-slate-300'
+              }`}
+            >
+              <div className="relative flex-1 min-w-0 flex items-center gap-1 pl-7 pr-1">
+                <Search className={`absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none ${search.trim() ? 'text-violet-600' : 'text-slate-400'}`} />
+                {!showAdvFilters && inlineFilterChips.length > 0 && (
+                  <SearchInlineFilterChips
+                    chips={inlineFilterChips}
+                    opacityClass={search.trim() ? 'opacity-35' : 'opacity-45 group-hover/search:opacity-100'}
+                    onClearChip={(chip) => chip.onClear()}
+                    onClearAll={clearFilters}
+                    showClearAll={inlineFilterChips.length > 1}
+                  />
                 )}
-                {hasActiveFilters && (
-                  <span className="ml-1 inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded-full normal-case">
-                    Đang lọc
-                  </span>
-                )}
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Tìm sự kiện…"
+                  className={`flex-1 min-w-[3.5rem] ${ctrlH} bg-transparent border-0 ${ctrlTxt} font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-0 ${search ? 'pr-7' : ''}`}
+                />
+                {search && <SearchClearButton onClick={() => setSearch('')} />}
               </div>
-              <div className="flex items-center gap-2">
-                {hasActiveFilters && (
-                  <button
-                    type="button"
-                    onClick={(e) => { e.preventDefault(); clearFilters(); }}
-                    className="h-7 px-2.5 text-[11px] font-medium text-red-600 hover:bg-red-50 rounded-md cursor-pointer"
-                  >
-                    × Xoá lọc
-                  </button>
-                )}
-                <span className="text-[10px] text-gray-400 hidden sm:inline">Click để gập/mở</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowAdvFilters((v) => !v)}
+              title={showAdvFilters ? 'Thu gọn bộ lọc' : 'Bộ lọc'}
+              className={`${ctrlH} px-2 rounded-md ${ctrlTxt} font-medium inline-flex items-center gap-1 cursor-pointer transition-colors shrink-0 border ${
+                showAdvFilters || advFilterCount
+                  ? 'border-violet-300 bg-violet-50 text-violet-800'
+                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              <Filter className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Bộ lọc</span>
+              {advFilterCount > 0 && (
+                <span className="min-w-[16px] h-4 px-1 rounded-full bg-violet-600 text-white text-[10px] font-bold inline-flex items-center justify-center">
+                  {advFilterCount}
+                </span>
+              )}
+            </button>
+
+            {view === 'calendar' && (
+              <span className={`${ctrlH} px-2 inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white text-[11px] text-slate-600 tabular-nums`}>
+                <Calendar className="h-3.5 w-3.5 text-slate-400" />
+                {monthRangeBounds.from} → {monthRangeBounds.to}
+              </span>
+            )}
+
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className={`${ctrlH} px-2 rounded-md text-[11px] font-medium text-red-600 hover:bg-red-50 cursor-pointer`}
+              >
+                × Xoá lọc
+              </button>
+            )}
+          </div>
+
+          {showAdvFilters && (
+            <div className="absolute z-30 left-2 right-2 sm:left-auto sm:right-2 sm:w-[380px] top-11 rounded-xl border-2 border-violet-200 bg-white shadow-xl shadow-violet-500/10 overflow-hidden">
+              <div className="flex items-center gap-2 px-3 py-2 border-b border-violet-100 bg-gradient-to-r from-violet-50 to-white">
+                <Filter className="h-3.5 w-3.5 text-violet-600" />
+                <p className="text-sm font-bold text-violet-950 flex-1">Bộ lọc</p>
+                <button type="button" onClick={() => setShowAdvFilters(false)} className="p-1 rounded-md text-slate-400 hover:bg-violet-100 hover:text-violet-700 cursor-pointer" aria-label="Đóng">
+                  <X className="h-4 w-4" />
+                </button>
               </div>
-            </summary>
-            <div className="px-4 py-3 bg-gray-50/60">
-              <div className="flex flex-wrap items-end gap-2">
-                <div className="relative flex-1 min-w-[200px] max-w-sm">
-                  <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Tìm kiếm</label>
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                    <input
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      placeholder="Gõ để tìm…"
-                      className="w-full h-9 pl-10 pr-8 border rounded-lg text-sm"
-                    />
-                    {search && (
-                      <button
-                        type="button"
-                        onClick={() => setSearch('')}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 inline-flex items-center justify-center text-gray-400 hover:text-gray-700 cursor-pointer"
-                        title="Xoá tìm kiếm"
-                      >×</button>
-                    )}
-                  </div>
+              <div className="p-3 space-y-2.5 max-h-[min(60vh,420px)] overflow-y-auto [scrollbar-width:thin]">
+                <div>
+                  <label className={filterLabelCls}>Loại sự kiện</label>
+                  <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className={`${filterSelectCls} ${filterType ? 'border-violet-300 bg-violet-50/50 text-violet-800' : ''}`}>
+                    <option value="">Tất cả loại</option>
+                    {eventTypes.map((t) => (
+                      <option key={t.slug} value={t.slug}>{t.icon ? `${t.icon} ` : ''}{t.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className={filterLabelCls}>Trạng thái</label>
+                  <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className={`${filterSelectCls} ${filterStatus ? 'border-violet-300 bg-violet-50/50 text-violet-800' : ''}`}>
+                    <option value="">Tất cả</option>
+                    {Object.entries(STATUS_MAP).map(([k, v]) => (
+                      <option key={k} value={k}>{v.label}</option>
+                    ))}
+                  </select>
                 </div>
                 {view !== 'calendar' && (
                   <>
                     <div>
-                      <label className="block text-[10px] font-medium text-gray-500 mb-0.5 flex items-center gap-1">
-                        <Clock className="h-3 w-3" /> Thời gian
-                      </label>
+                      <label className={filterLabelCls}>Thời gian</label>
                       <div className="relative">
-                        <select
-                          value={timePreset}
-                          onChange={(e) => handleTimePresetChange(e.target.value)}
-                          className={`h-9 pl-9 pr-8 rounded-lg text-sm font-medium border appearance-none cursor-pointer transition min-w-[150px] ${
-                            timePreset || rangeFrom || rangeTo
-                              ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
-                              : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
-                          }`}
-                        >
+                        <select value={timePreset} onChange={(e) => handleTimePresetChange(e.target.value)} className={`${filterSelectCls} pl-8 ${timePreset || rangeFrom || rangeTo ? 'border-violet-300 bg-violet-50/50 text-violet-800' : ''}`}>
                           {EVENTS_TIME_PRESETS.map((p) => (
                             <option key={p.key} value={p.key}>{p.label}</option>
                           ))}
                         </select>
-                        <Clock className={`absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 pointer-events-none ${timePreset || rangeFrom || rangeTo ? 'text-purple-500' : 'text-gray-400'}`} />
-                        <ChevronRight className="absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400 rotate-90 pointer-events-none" />
+                        <Clock className={`absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none ${timePreset || rangeFrom || rangeTo ? 'text-violet-500' : 'text-slate-400'}`} />
                       </div>
                     </div>
                     <div>
-                      <label className="block text-[10px] font-medium text-gray-500 mb-0.5 flex items-center gap-1">
-                        <CalendarRange className="h-3 w-3" /> Khoảng ngày
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => setShowDateRangePicker(true)}
-                        className={`h-9 px-3 inline-flex items-center gap-1.5 rounded-lg text-sm font-medium border transition cursor-pointer ${
-                          rangeFrom || rangeTo
-                            ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
-                            : 'bg-white text-gray-700 border-gray-200 hover:border-purple-300 hover:bg-gray-50'
-                        }`}
-                        title="Mở lịch chọn khoảng ngày"
-                      >
-                        <CalendarRange className="h-3.5 w-3.5" />
+                      <label className={filterLabelCls}>Khoảng ngày</label>
+                      <button type="button" onClick={() => setShowDateRangePicker(true)} className={`${filterFieldCls} inline-flex items-center gap-1.5 text-left ${rangeFrom || rangeTo ? 'border-violet-300 bg-violet-50/50 text-violet-800' : ''}`}>
+                        <CalendarRange className="h-3.5 w-3.5 shrink-0" />
                         {rangeFrom || rangeTo ? (
-                          <span className="tabular-nums">{rangeFrom || '...'} → {rangeTo || '...'}</span>
+                          <span className="tabular-nums truncate">{rangeFrom || '...'} → {rangeTo || '...'}</span>
                         ) : (
-                          <span className="text-gray-500">Chọn ngày…</span>
-                        )}
-                        {(rangeFrom || rangeTo) && (
-                          <span
-                            role="button"
-                            tabIndex={0}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setTimePreset('');
-                              setRangeFrom('');
-                              setRangeTo('');
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                setTimePreset('');
-                                setRangeFrom('');
-                                setRangeTo('');
-                              }
-                            }}
-                            className="ml-1 -mr-1 p-0.5 rounded hover:bg-purple-200 text-purple-600 cursor-pointer"
-                            title="Xóa khoảng ngày"
-                          >
-                            <X className="h-3 w-3" />
-                          </span>
+                          <span className="text-slate-400">Chọn ngày…</span>
                         )}
                       </button>
                     </div>
                   </>
                 )}
-                {view === 'calendar' && (
-                  <div>
-                    <label className="block text-[10px] font-medium text-gray-500 mb-0.5 flex items-center gap-1">
-                      <Calendar className="h-3 w-3" /> Tháng đang xem
-                    </label>
-                    <div
-                      className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg text-sm border bg-gray-100 text-gray-700 border-gray-200 tabular-nums"
-                      title="Đổi tháng trên lịch để đổi khoảng ngày"
-                    >
-                      <Calendar className="h-3.5 w-3.5 text-gray-500" />
-                      {monthRangeBounds.from} → {monthRangeBounds.to}
-                    </div>
-                  </div>
-                )}
                 <div>
-                  <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Loại</label>
-                  <select value={filterType} onChange={e => setFilterType(e.target.value)} className="h-9 px-3 border rounded-lg text-sm min-w-[120px]">
-                    <option value="">Tất cả loại</option>
-                    {eventTypes.map(t => <option key={t.slug} value={t.slug}>{t.icon} {t.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Trạng thái</label>
-                  <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="h-9 px-3 border rounded-lg text-sm min-w-[130px]">
+                  <label className={filterLabelCls}>Người tạo / phụ trách</label>
+                  <select value={filterUser} onChange={(e) => setFilterUser(e.target.value)} className={`${filterSelectCls} ${filterUser ? 'border-violet-300 bg-violet-50/50 text-violet-800' : ''}`}>
                     <option value="">Tất cả</option>
-                    {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                    {users.map((u) => (
+                      <option key={u.id} value={u.id}>{u.full_name}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Người tạo / phụ trách</label>
-                  <select value={filterUser} onChange={e => setFilterUser(e.target.value)} className="h-9 px-3 border rounded-lg text-sm min-w-[140px]" title="Hiện sự kiện người này tạo hoặc được giao phụ trách">
-                    <option value="">Tất cả</option>
-                    {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-medium text-gray-500 mb-0.5 flex items-center gap-1">
-                    <MapPin className="h-3 w-3" /> Khu vực (tạo / phụ trách)
-                  </label>
-                  <select
-                    value={filterRegionId}
-                    onChange={e => setFilterRegionId(e.target.value)}
-                    disabled={!effectiveCompanyIdForUsers}
-                    className="h-9 px-3 border rounded-lg text-sm min-w-[150px] disabled:bg-gray-100"
-                    title={!effectiveCompanyIdForUsers ? 'Chọn công ty (admin) để lọc khu vực' : 'Lọc sự kiện theo khu vực của người tạo hoặc người phụ trách'}
-                  >
+                  <label className={filterLabelCls}>Khu vực</label>
+                  <select value={filterRegionId} onChange={(e) => setFilterRegionId(e.target.value)} disabled={!effectiveCompanyIdForUsers} className={`${filterSelectCls} disabled:bg-slate-100 ${filterRegionId ? 'border-violet-300 bg-violet-50/50 text-violet-800' : ''}`}>
                     <option value="">Tất cả khu vực</option>
                     {regions.map((rg) => (
                       <option key={rg.id} value={rg.id}>{rg.name}{rg.code ? ` (${rg.code})` : ''}</option>
@@ -911,8 +970,12 @@ export default function EventsFeedPage() {
                   </select>
                 </div>
               </div>
+              <div className="px-3 py-2 border-t border-violet-100 bg-violet-50/40 flex items-center justify-between gap-2">
+                <button type="button" onClick={clearFilters} className="h-8 px-2.5 text-xs font-medium text-red-600 hover:bg-red-50 rounded-md cursor-pointer">Xoá lọc</button>
+                <button type="button" onClick={() => setShowAdvFilters(false)} className="h-8 px-3 text-xs font-semibold rounded-md bg-violet-600 text-white hover:bg-violet-700 cursor-pointer">Xong</button>
+              </div>
             </div>
-          </details>
+          )}
 
           <div className={`p-4 ${view === 'calendar' ? 'space-y-4' : ''}`}>
             {view === 'calendar' && calendarMode !== 'hidden' && (
@@ -1038,9 +1101,9 @@ export default function EventsFeedPage() {
           eventTypes={eventTypes}
           users={users}
           defaultCompanyId={filterCompanyId || user?.company_id || ''}
-          defaultModule={filterModule || (allowedModules && allowedModules.find((m) => m !== 'general')) || 'crm'}
-          allowedModules={isAdmin || isSystemAdmin ? null : allowedModules}
-          allowGeneralModule={isAdmin || isSystemAdmin}
+          defaultModule={forcedModule || filterModule || (allowedModules && allowedModules.find((m) => m !== 'general')) || 'crm'}
+          allowedModules={forcedModule ? [forcedModule] : (isAdmin || isSystemAdmin ? null : allowedModules)}
+          allowGeneralModule={!forcedModule && (isAdmin || isSystemAdmin)}
           onClose={() => { setShowCreate(false); setEditEvent(null); setCreatePresetDay(null); }}
           onSaved={() => { setShowCreate(false); setEditEvent(null); setCreatePresetDay(null); refreshEventsData(); }}
         />

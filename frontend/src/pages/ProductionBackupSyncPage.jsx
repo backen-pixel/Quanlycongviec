@@ -317,9 +317,7 @@ function timeValueToSlot(value) {
 }
 
 const DEFAULT_SYNC_SLOTS = [
-  { h: 5, m: 0 },
-  { h: 12, m: 30 },
-  { h: 18, m: 0 },
+  { h: 4, m: 0 },
 ];
 
 const DEFAULT_USAGE_FILTERS = {
@@ -1694,7 +1692,7 @@ function ProductionBackupSyncContent() {
                       </div>
                     ))}
                   </div>
-                  <p className="text-xs text-slate-400 mt-2">Mặc định: 05:00 sáng · 12:30 trưa · 18:00 chiều</p>
+                  <p className="text-xs text-slate-400 mt-2">Mặc định: 04:00 sáng (1 lần/ngày)</p>
                 </div>
 
                 <div className="flex flex-wrap gap-4">

@@ -126,6 +126,7 @@ import {
   getCrmDeadlineUrgencyFromIso,
   getCrmDeadlineUrgencyFromTs,
   getPipelineStageSlaDeadlineTs,
+  resolveCrmLeadEffectiveDeadlineSource,
   shouldHideCrmKanbanDeadlineOnCard,
 } from '../lib/crmLeadDeadlineDisplay';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
@@ -1058,8 +1059,8 @@ export default function CRMDashboard() {
   const [sources, setSources] = useState([]);
   const [leadTypes, setLeadTypes] = useState([]);
   const [companies, setCompanies] = useState([]);
-  /** Admin: cho phép load Kanban sau khi /companies settle (kể cả lỗi/rỗng) — tránh kẹt loader mãi. */
-  const [crmCompaniesFetchSettled, setCrmCompaniesFetchSettled] = useState(false);
+  /** Admin: /companies đã xong (ok/lỗi/timeout) — tránh kẹt loader 0% khi API treo. */
+  const [companiesFetchSettled, setCompaniesFetchSettled] = useState(false);
   const [pipelines, setPipelines] = useState([]);
   const [pipelinesAll, setPipelinesAll] = useState([]);
   const [allLeads, setAllLeads] = useState([]);
@@ -1799,13 +1800,36 @@ export default function CRMDashboard() {
   }, [filterCompany, user?.company_id]);
 
   /**
+   * Admin system: hydrate companies từ meta cache TRƯỚC gate `crmDashboardDataReady`.
+   * Trước đây hydrate nằm trong effect chỉ chạy khi ready → vòng chết:
+   * ready cần companies, mà companies từ cache chỉ được set sau khi ready.
+   * Hậu quả: loader kẹt 0% («Khởi tạo…») trong khi khu vực/filter đã hiện.
+   */
+  useLayoutEffect(() => {
+    if (!user?.id) return;
+    try {
+      const meta = getCrmDashboardMetaCache(user.id);
+      const list = normalizeCrmFilterCompanies(meta?.data?.companies || []);
+      if (!list.length) return;
+      setCompanies((prev) => mergeCrmFilterCompanies(prev, list));
+    } catch {
+      /* meta hydrate lỗi — bỏ qua */
+    }
+  }, [user?.id]);
+
+  /**
    * Ưu tiên: nạp danh sách CÔNG TY (cho bộ lọc CRM) ngay lập tức — chạy trước
    * `load()` chính, để dropdown «Công ty» có dữ liệu đầu tiên (admin có thể đổi
    * công ty ngay khi mở trang, không phải chờ KPI/Kanban tải xong).
    * Luôn refetch khi mount; merge với state hiện có — không để cache ngắn ghi đè.
+   * finally + timeout: không để gate admin chặn load() vô hạn khi /companies treo.
    */
   useEffect(() => {
     let cancelled = false;
+    const settle = () => {
+      if (!cancelled) setCompaniesFetchSettled(true);
+    };
+    const hangTimeoutId = window.setTimeout(settle, 8000);
     api
       .get('/companies', { params: { for_module: 'crm' }, headers: { 'x-no-cache': '1' } })
       .then((r) => {
@@ -1815,11 +1839,15 @@ export default function CRMDashboard() {
           setCompanies((prev) => mergeCrmFilterCompanies(prev, list));
         }
       })
-      .catch(() => { /* fallback do load() chính xử lý */ })
+      .catch(() => { /* load() chính vẫn chạy sau settle */ })
       .finally(() => {
-        if (!cancelled) setCrmCompaniesFetchSettled(true);
+        window.clearTimeout(hangTimeoutId);
+        settle();
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      window.clearTimeout(hangTimeoutId);
+    };
   }, []);
 
   // Phục hồi bộ lọc công ty (admin) + phân loại từ localStorage chỉ khi KHÔNG có snapshot session (vừa quay từ chi tiết)
@@ -1871,12 +1899,23 @@ export default function CRMDashboard() {
     }
   }, [user, P]);
 
-  /** Admin: chờ /companies settle (hoặc đã có list) trước khi load — không kẹt nếu API rỗng/lỗi. */
+  /**
+   * Admin: ưu tiên chờ danh sách công ty trước khi load (tránh burst API không company_id).
+   * Nhưng không chặn vô hạn: đã có filterCompany / fetch settled / timeout → vẫn load.
+   */
   const crmDashboardDataReady = useMemo(() => {
     if (user == null) return false;
     if (!isAdmin || isCompanyScopedAdmin) return true;
-    return companies.length > 0 || crmCompaniesFetchSettled;
-  }, [user, isAdmin, isCompanyScopedAdmin, companies.length, crmCompaniesFetchSettled]);
+    if (companies.length > 0) return true;
+    if (filterCompany) return true;
+    return companiesFetchSettled;
+  }, [user, isAdmin, isCompanyScopedAdmin, companies.length, filterCompany, companiesFetchSettled]);
+
+  // Loader đã hiện nhưng load() chưa start (đang chờ companies) → chạy % ngay, tránh kẹt 0%.
+  useEffect(() => {
+    if (!firstLoading || crmDashboardDataReady) return;
+    crmLoaderGateRef.current?.start();
+  }, [firstLoading, crmDashboardDataReady]);
 
   // useLayoutEffect: hydrate cache trước paint → tránh nháy loader khi đã có session cache
   useLayoutEffect(() => {
@@ -1892,6 +1931,7 @@ export default function CRMDashboard() {
         const meta = getCrmDashboardMetaCache(user.id);
         if (meta?.data) {
           const m = meta.data;
+          // companies đã hydrate sớm ở effect riêng (trước gate); chỉ merge bổ sung nếu có.
           if (Array.isArray(m.companies) && m.companies.length) {
             setCompanies((prev) => mergeCrmFilterCompanies(prev, m.companies));
           }
@@ -4466,7 +4506,7 @@ export default function CRMDashboard() {
 
   /**
    * Danh sách lead/deal QUÁ HẠN theo pipeline đang xem.
-   * Ưu tiên: deadline thẻ → hạn NV CRM mở → SLA cột.
+   * Ưu tiên: Deadline nhiệm vụ → Deadline tự setup → SLA cột.
    * Bỏ qua stage Thắng/Lost. Sắp xếp giảm dần theo thời gian quá hạn.
    */
   const overdueItems = useMemo(() => {
@@ -4480,10 +4520,9 @@ export default function CRMDashboard() {
       const stage = stageMap.get(String(it.stage_id || ''));
       if (shouldHideCrmKanbanDeadlineOnCard(it, stage)) continue;
       if (!stage || stage.is_won || stage.is_lost || stage.counts_as_completed_revenue) continue;
-      const manualTone = getCrmOpenTaskDeadlineTone(it.kanban_deadline_at);
-      const taskTone = getCrmOpenTaskDeadlineTone(it.crm_next_open_task_deadline);
-      const slaTone = getPipelineStageSlaTone(it.stage_entered_at, stage, it);
-      const tone = manualTone || taskTone || slaTone;
+      const resolved = resolveCrmLeadEffectiveDeadlineSource(it, stage);
+      if (resolved.deadlineTs == null) continue;
+      const tone = getCrmDeadlineUrgencyFromTs(resolved.deadlineTs);
       if (!tone || tone.level !== 'overdue') continue;
       out.push({
         id: it.id,
@@ -4493,7 +4532,7 @@ export default function CRMDashboard() {
         assigneeName: it.assignee?.full_name || '',
         stageName: stage.name,
         overdueMs: Math.abs(tone.remainingMs || 0),
-        source: manualTone ? 'kanban' : (taskTone ? 'task' : 'sla'),
+        source: resolved.source,
       });
     }
     out.sort((a, b) => b.overdueMs - a.overdueMs);
@@ -9049,24 +9088,20 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   const hideColumnDeadline = shouldHideCrmKanbanDeadlineOnCard(item, stage);
   const scheduleBlocked = hideColumnDeadline || stage?.is_won || stage?.is_lost || stage?.counts_as_completed_revenue;
 
-  /** Một nguồn hạn duy nhất: deadline thẻ → NV CRM → chốt dự kiến → SLA cột. */
+  /** Một nguồn hạn duy nhất: Deadline nhiệm vụ → Deadline tự setup → SLA cột. */
   const unifiedSchedule = (() => {
     if (scheduleBlocked) return null;
-    const readIso = (iso, source) => {
-      if (iso == null || iso === '') return null;
-      const ts = new Date(iso).getTime();
-      if (Number.isNaN(ts)) return null;
-      return { source, deadlineTs: ts, iso };
+    const resolved = resolveCrmLeadEffectiveDeadlineSource(item, stage);
+    if (resolved.deadlineTs == null) return null;
+    return {
+      source: resolved.source === 'kanban' ? 'deadline' : resolved.source,
+      deadlineTs: resolved.deadlineTs,
+      iso: resolved.source === 'sla' ? null : (
+        resolved.source === 'task' ? item.crm_next_open_task_deadline
+          : resolved.source === 'kanban' ? item.kanban_deadline_at
+            : null
+      ),
     };
-    const manual = readIso(item.kanban_deadline_at, 'deadline');
-    if (manual) return manual;
-    const task = readIso(item.crm_next_open_task_deadline, 'task');
-    if (task) return task;
-    const expected = readIso(item.expected_close_date, 'expected_close');
-    if (expected) return expected;
-    const slaTs = getPipelineStageSlaDeadlineTs(item.stage_entered_at, stage, item);
-    if (slaTs != null) return { source: 'sla', deadlineTs: slaTs, iso: null };
-    return null;
   })();
 
   const scheduleUrgency = unifiedSchedule
@@ -9080,8 +9115,8 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
     const isOverdue = cardToneLevel === 'overdue';
     const tonePalette = getCrmDeadlineUrgencyBadgeClass(cardToneLevel);
     const sourceLabel =
-      unifiedSchedule.source === 'deadline' ? 'Deadline thẻ'
-      : unifiedSchedule.source === 'task' ? 'NV CRM mở'
+      unifiedSchedule.source === 'deadline' ? 'Deadline tự setup'
+      : unifiedSchedule.source === 'task' ? 'Deadline nhiệm vụ'
       : unifiedSchedule.source === 'expected_close' ? 'Chốt dự kiến'
       : 'SLA cột';
     const isUrgent = cardToneLevel === 'overdue' || cardToneLevel === 'soon';

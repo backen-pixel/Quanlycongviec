@@ -3,8 +3,8 @@ import api from '../lib/api';
 import { Clock, Save, RefreshCw, Building2 } from 'lucide-react';
 
 const FIELD_OPTIONS = [
-  { v: 'kanban_deadline_at', l: 'Deadline thẻ (kanban_deadline_at)' },
-  { v: 'crm_next_open_task_deadline', l: 'Ngày hẹn NV CRM mở mới nhất (theo cập nhật gần nhất)' },
+  { v: 'crm_next_open_task_deadline', l: 'Deadline nhiệm vụ (NV CRM đang mở có Ngày hẹn)' },
+  { v: 'kanban_deadline_at', l: 'Deadline tự setup / Deadline thẻ' },
   { v: 'expected_close_date', l: 'Ngày dự kiến đóng (expected_close_date)' },
 ];
 
@@ -104,7 +104,10 @@ export default function CrmDeadlineSettingsPage() {
         </div>
         <div>
           <h1 className="text-lg font-bold text-gray-900">Cấu hình Deadline CRM</h1>
-          <p className="text-xs text-gray-500">Chọn trường nguồn deadline và bật/tắt các nhóm thời gian hiển thị ở view Deadline.</p>
+          <p className="text-xs text-gray-500">
+            Hạn hiệu lực trên thẻ/Kanban: <b>Deadline nhiệm vụ</b> → <b>Deadline tự setup</b> → <b>SLA cột</b>.
+            Phần dưới cấu hình bucket view Deadline và trường dự phòng khi không có 3 nguồn trên.
+          </p>
         </div>
       </div>
 

@@ -246,11 +246,27 @@ r.delete('/leads/:id/members/:userId', async (req, res) => {
 
 r.get('/leads/:id/chat', async (req, res) => {
   try {
-    const { data } = await supabase.from('lead_messages')
+    let { data } = await supabase.from('lead_messages')
       .select('*, user:users(id, full_name, avatar)')
       .eq('lead_id', req.params.id)
       .order('created_at', { ascending: true })
       .limit(500);
+    // Ẩn lịch sử chat cho thành viên VC/LĐ mới thêm (lead_members.history_cutoff_at).
+    try {
+      const { data: memRow } = await supabase
+        .from('lead_members')
+        .select('history_cutoff_at')
+        .eq('lead_id', req.params.id)
+        .eq('user_id', req.user?.userId)
+        .maybeSingle();
+      const cutoffMs = memRow?.history_cutoff_at ? new Date(memRow.history_cutoff_at).getTime() : null;
+      if (cutoffMs && Number.isFinite(cutoffMs)) {
+        data = (data || []).filter((m) => {
+          const t = new Date(m.created_at).getTime();
+          return Number.isFinite(t) && t >= cutoffMs;
+        });
+      }
+    } catch (_) { /* cột chưa migrate — bỏ qua */ }
     const msgIds = (data || []).map(m => m.id);
     let reactionsMap = {};
     if (msgIds.length) {

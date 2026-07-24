@@ -6,17 +6,13 @@ const { auth } = require('../../middleware/auth');
 const { invalidateTags: rcInvalidateTags } = require('../../middleware/responseCache');
 const { supabase } = require('../../config/supabase');
 const {
-  userSeesAllCrmDeals,
-  userSeesAllCrmLeads,
-} = require('../../helpers/crmAccessRoles');
-const {
-  userCanAccessCrmLeadAsParticipant,
-  userCanAccessCrmLeadViaVisibility,
-} = require('../../helpers/crmLeadParticipantAccess');
-const {
+  assertCrmLeadAccess,
   assertCrmTaskLeadAccess,
   loadLeadForTaskAccess,
+  assertCrmTaskBelongsToLead,
+  resolveCrmTaskHttpOperation,
 } = require('../../helpers/crmTaskLeadAccess');
+const { recordCrmAccessDenial } = require('../../helpers/crmAccessAudit');
 
 const helpers = require('./shared/helpersBundle');
 
@@ -62,55 +58,36 @@ async function enforceCrmDealAssigneeAccess(req, res, next) {
     const head = parts[0];
     if ((head !== 'leads' && head !== 'deals') || !parts[1] || !CRM_LEAD_ID_IN_PATH.test(parts[1])) return next();
     const leadId = parts[1];
-    // /tasks* — gate riêng (assignee/participant/executor), không bypass authz
-    if (/\/tasks(\/|$)/.test(p)) {
-      const taskId = parts[3] && CRM_LEAD_ID_IN_PATH.test(parts[3]) ? parts[3] : null;
-      const lead = await loadLeadForTaskAccess(supabase, leadId);
-      if (!lead) return next();
-      const gate = await assertCrmTaskLeadAccess(supabase, req, lead, { taskId });
-      if (!gate.ok) return res.status(gate.status || 403).json({ error: gate.error });
-      return next();
-    }
-    const { data: lead, error } = await supabase
-      .from('crm_leads')
-      .select('id, type, company_id, assigned_to, lead_owner_id, parent_lead_id, project_id')
-      .eq('id', leadId)
-      .maybeSingle();
-    if (error || !lead) return next();
-    const { companyInTenantContext } = require('../../helpers/tenantScope');
-    if (!companyInTenantContext(req, lead.company_id)) {
-      return res.status(403).json({ error: 'Không có quyền truy cập dữ liệu hệ sinh thái khác' });
-    }
-    const uid = req.user?.userId;
-    const { userOwnsDealViaAncestor } = require('../../helpers/crmTaskLeadAccess');
+    const isTasksPath = /\/tasks(\/|$)/.test(p);
+    const lead = await loadLeadForTaskAccess(supabase, leadId);
+    // Fail-closed: lead không tồn tại → 404 (không rơi xuống handler thiếu authz)
+    if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead/deal' });
 
-    if (lead.type === 'deal') {
-      if (userSeesAllCrmDeals(req.user?.role)) return next();
-      if (!uid) {
-        return res.status(403).json({ error: 'Bạn chỉ được xem/sửa deal mà bạn phụ trách.' });
+    const taskId = isTasksPath && parts[3] && CRM_LEAD_ID_IN_PATH.test(parts[3]) ? parts[3] : null;
+    if (taskId) {
+      const rel = await assertCrmTaskBelongsToLead(supabase, leadId, taskId);
+      if (!rel.ok) {
+        recordCrmAccessDenial(req, {
+          reason: 'task_lead_mismatch', leadId, taskId, status: rel.status || 404,
+        });
+        return res.status(rel.status || 404).json({ error: rel.error, reason: 'task_lead_mismatch' });
       }
-      const ok = await userOwnsDealViaAncestor(supabase, uid, lead)
-        || await userCanAccessCrmLeadAsParticipant(supabase, uid, lead)
-        || await userCanAccessCrmLeadViaVisibility(supabase, uid, lead);
-      if (!ok) {
-        return res.status(403).json({ error: 'Bạn chỉ được xem/sửa deal mà bạn phụ trách hoặc tham gia.' });
-      }
-      return next();
     }
-    if (lead.type === 'lead') {
-      if (userSeesAllCrmLeads(req.user?.role)) return next();
-      const owns =
-        uid &&
-        (String(lead.assigned_to || '') === String(uid) || String(lead.lead_owner_id || '') === String(uid));
-      const participant = uid && (
-        await userCanAccessCrmLeadAsParticipant(supabase, uid, lead)
-        || await userCanAccessCrmLeadViaVisibility(supabase, uid, lead)
-      );
-      if (!owns && !participant) {
-        return res.status(403).json({ error: 'Bạn chỉ được xem/sửa lead mà bạn phụ trách hoặc tham gia.' });
-      }
-      return next();
+
+    const operation = isTasksPath
+      ? resolveCrmTaskHttpOperation(req.method, p)
+      : (String(req.method || '').toUpperCase() === 'GET' ? 'READ' : 'UPDATE');
+
+    const gate = isTasksPath
+      ? await assertCrmTaskLeadAccess(supabase, req, lead, { taskId, operation })
+      : await assertCrmLeadAccess(supabase, req, lead, { operation });
+    if (!gate.ok) {
+      recordCrmAccessDenial(req, {
+        reason: gate.reason || 'access_denied', leadId, taskId, operation, status: gate.status || 403,
+      });
+      return res.status(gate.status || 403).json({ error: gate.error, reason: gate.reason || 'access_denied' });
     }
+    req.crmLeadAccess = { lead, grant: gate.grant || null, operation, taskId };
     return next();
   } catch (e) {
     return next(e);

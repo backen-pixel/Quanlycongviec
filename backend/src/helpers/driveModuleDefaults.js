@@ -17,9 +17,12 @@ function inferDriveModuleFromRole(role) {
   if (!r) return null;
   if (r === 'sales_admin' || r === 'crm_production_admin') return 'crm';
   if (r === 'crm_production_staff') return 'crm';
-  if (r === 'production_admin' || r === 'production_staff') return 'sx';
-  if (r === 'logistics_admin') return 'vc';
-  if (r === 'staff' || r === 'manager') return 'crm';
+  if (r === 'production_admin' || r === 'production_staff' || r === 'production') return 'sx';
+  if (r === 'logistics_admin' || r === 'logistics' || r === 'shipping') return 'vc';
+  if (
+    r === 'staff' || r === 'manager' || r === 'sales' || r === 'customer_care'
+    || r === 'admin' || r === 'accounting' || r === 'ketoan'
+  ) return 'crm';
   return null;
 }
 

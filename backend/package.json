@@ -29,7 +29,13 @@
     "test:crm-split:all": "node tests/crm-split-50-cases.js && node tests/crm-split-50-cases-b.js",
     "test:crm-split:ui": "node tests/crm-split-100-ui.js",
     "test:crm-remediation": "node tests/crm-remediation-gate.js",
-    "crm:route-inventory": "node scripts/crm-route-inventory.js --write"
+    "test:crm-access": "node tests/crm-task-access-rollback.js",
+    "test:crm-http": "node tests/crm-task-http-integration.js",
+    "test:crm-outbox": "node tests/crm-task-outbox-faults.js",
+    "test:crm-audit": "node tests/crm-access-audit.js",
+    "test:crm-upload": "node tests/crm-upload-integration.js",
+    "crm:route-inventory": "node scripts/crm-route-inventory.js --write",
+    "cron:crm-missing-tasks": "node scripts/run-crm-missing-tasks-cron.js"
   },
   "keywords": [],
   "author": "",

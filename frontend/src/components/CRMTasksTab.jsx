@@ -15,12 +15,20 @@ import {
   Plus, CheckCircle2, Circle, Clock, User, Eye, Trash2, ChevronDown, ChevronRight,
   Calendar, List, Users, Target, AlertTriangle, X, Save, ListChecks, ClipboardList,
   Paperclip, FileUp, MessageSquare, FileText, Share2, Lock,
-  FileSpreadsheet, Edit3, UserPlus, GripVertical, Globe, HardDrive,
+  FileSpreadsheet, Edit3, UserPlus, GripVertical, Globe, HardDrive, ClipboardPen,
 } from 'lucide-react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import ExcelQuotationImport from './ExcelQuotationImport';
+import TaskFillFormModal from './TaskFillFormModal';
+import {
+  normalizeFormConfig,
+  normalizeFormData,
+  hasFilledFormData,
+  summarizeFormAnswers,
+  collectFormFileItems,
+} from '../lib/taskFillForm';
 import CrmArtifactShareModal from './CrmArtifactShareModal';
 import { shareModuleLabels } from '../lib/documentShareScope';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
@@ -278,7 +286,9 @@ function inferTaskTemplate(task, stageTemplates) {
   return best;
 }
 
-/** Gom task vào giai đoạn pipeline thật — không dùng bucket "Khác". */
+/** Gom task vào giai đoạn pipeline thật — không dùng bucket "Khác".
+ *  Task gắn pipeline_stage_id thuộc pipeline khác: trả null (không dồn vào cột hiện tại).
+ */
 function resolveTaskPipelineStageId(task, pipelineStages, leadCurrentStageId) {
   const stages = pipelineStages || [];
   const validIds = new Set(stages.map((s) => String(s.id)));
@@ -298,11 +308,25 @@ function resolveTaskPipelineStageId(task, pipelineStages, leadCurrentStageId) {
     if (byBare) return byBare.id;
   }
 
+  // Có UUID stage nhưng không thuộc pipeline đang xem → orphan, không remap sai cột.
+  if (pid && !validIds.has(pid)) return null;
+
+  // Task chưa gắn stage: đặt vào cột hiện tại / cột đầu.
   if (leadCurrentStageId && validIds.has(String(leadCurrentStageId))) {
     return leadCurrentStageId;
   }
   return stages[0]?.id || null;
 }
+
+const CRM_TASK_ORPHAN_STAGE_KEY = '__crm_orphan_pipeline__';
+const CRM_TASK_ORPHAN_STAGE = {
+  slug: CRM_TASK_ORPHAN_STAGE_KEY,
+  label: 'Nhiệm vụ pipeline cũ',
+  icon: '⚠️',
+  color: '#B45309',
+  isPipelineStage: true,
+  isOrphanPipelineTasks: true,
+};
 
 const STATUS_ICONS = { pending: Circle, in_progress: Clock, completed: CheckCircle2 };
 
@@ -1212,7 +1236,12 @@ export default function CRMTasksTab({
     setEnsuringMissing(true);
     try {
       const { data } = await api.post(`/crm/leads/${leadId}/tasks/ensure-missing`, { all_stages: true });
-      if ((data.created || 0) > 0) {
+      if (data.resynced) {
+        alert(
+          `Phát hiện nhiệm vụ gắn pipeline cũ — đã đồng bộ lại theo pipeline hiện tại`
+          + ` (xóa ${data.deleted || 0}, tạo ${data.created || 0}).`,
+        );
+      } else if ((data.created || 0) > 0) {
         alert(`Đã bổ sung ${data.created} nhiệm vụ CRM thiếu theo bộ mẫu ${data.entity_type === 'deal' ? 'Deal' : 'Lead'}.`);
       } else if (data.error) {
         alert(data.error);
@@ -1798,6 +1827,7 @@ export default function CRMTasksTab({
       stage_slug: task.stage_slug || '',
       show_excel_quotation_upload: !!task.show_excel_quotation_upload,
       auto_upload_attachments_to_drive: !!task.auto_upload_attachments_to_drive,
+      show_fill_form: !!task.show_fill_form,
       requires_quick_verdict: !!task.requires_quick_verdict,
       executor_company_id: task.executor_company_id || '',
     });
@@ -1858,6 +1888,7 @@ export default function CRMTasksTab({
         stage_slug: editForm.stage_slug,
         show_excel_quotation_upload: !!editForm.show_excel_quotation_upload,
         auto_upload_attachments_to_drive: !!editForm.auto_upload_attachments_to_drive,
+        show_fill_form: !!editForm.show_fill_form,
         requires_quick_verdict: !!editForm.requires_quick_verdict,
       };
       if (showSxTasksInUi || isProductionScope) {
@@ -1997,7 +2028,12 @@ export default function CRMTasksTab({
     } else if (usePipelineKeys) {
       uiTasks.forEach((t) => {
         const key = resolveTaskPipelineStageId(t, pipelineStages, leadCurrentStageId);
-        if (key && map[key] !== undefined) map[key].push(t);
+        if (key && map[key] !== undefined) {
+          map[key].push(t);
+        } else if (t.pipeline_stage_id || !key) {
+          if (!map[CRM_TASK_ORPHAN_STAGE_KEY]) map[CRM_TASK_ORPHAN_STAGE_KEY] = [];
+          map[CRM_TASK_ORPHAN_STAGE_KEY].push(t);
+        }
       });
     } else {
       uiTasks.forEach((t) => {
@@ -2088,6 +2124,9 @@ export default function CRMTasksTab({
       || (isLegacyCrmTaskSet && pipelineStages.length)
     ) {
       stages = STAGES;
+      if ((tasksByStage[CRM_TASK_ORPHAN_STAGE_KEY] || []).length) {
+        stages = [...stages, CRM_TASK_ORPHAN_STAGE];
+      }
     } else {
       const withTasks = STAGES.filter((s) => (tasksByStage[s.slug]?.length || 0) > 0);
       const known = new Set(STAGES.map((s) => s.slug));
@@ -2263,6 +2302,7 @@ export default function CRMTasksTab({
   const [attNoteName, setAttNoteName] = useState('');
   const [uploadProgress, setUploadProgress] = useState({}); // { taskId: { percent, name } }
   const [excelImportTaskId, setExcelImportTaskId] = useState(null); // taskId đang mở Excel import modal
+  const [fillFormTaskId, setFillFormTaskId] = useState(null); // taskId đang mở popup điền form
   const [importingExcel, setImportingExcel] = useState(null); // taskId đang import
   const [importToast, setImportToast] = useState(null); // { message, type }
   const [attLightboxIndex, setAttLightboxIndex] = useState(null);
@@ -2731,6 +2771,164 @@ export default function CRMTasksTab({
     );
   };
 
+  const clearFillFormData = async (task) => {
+    if (!window.confirm('Xóa toàn bộ nội dung phiếu đã điền trên nhiệm vụ này?')) return;
+    try {
+      const lid = apiLeadIdForTaskId(task.id);
+      const { data } = await api.put(`/crm/leads/${lid}/tasks/${task.id}`, {
+        form_data: {
+          values: {},
+          submitted_at: null,
+          submitted_by: null,
+          linked_event_id: null,
+          linked_assignee_id: null,
+        },
+      });
+      const updated = data?.task || data;
+      if (updated) setTasks((p) => p.map((t) => (t.id === task.id ? { ...t, ...updated } : t)));
+      else setTasks((p) => p.map((t) => (t.id === task.id ? { ...t, form_data: { values: {}, submitted_at: null } } : t)));
+      setImportToast({ message: 'Đã xóa phiếu khảo sát trên nhiệm vụ', type: 'success' });
+      setTimeout(() => setImportToast(null), 3000);
+    } catch (err) {
+      alert(err.response?.data?.error || err.message || 'Không xóa được phiếu');
+    }
+  };
+
+  /** Hiện sẵn phiếu đã điền trên dòng NV — không cần bấm mở modal mới thấy. */
+  const renderFillFormSummary = (task) => {
+    const formData = normalizeFormData(task.form_data);
+    if (!hasFilledFormData(task.form_data)) return null;
+    const cfg = normalizeFormConfig(task.form_config);
+    const answers = summarizeFormAnswers(cfg, formData.values, { max: 8 });
+    const files = collectFormFileItems(cfg, formData.values);
+    const imageFiles = files.filter((f) => isUploadImageFile(f.mime_type, f.file_name || f.file_url));
+    const otherFiles = files.filter((f) => !isUploadImageFile(f.mime_type, f.file_name || f.file_url));
+    const title = cfg.title || cfg.button_label || 'Phiếu đã điền';
+    const canManage = canManageDeal;
+
+    const openFormLightbox = (startUrl) => {
+      const items = imageFiles
+        .filter((f) => f.file_url)
+        .map((f) => ({
+          file_url: f.file_url,
+          file_name: f.file_name,
+          mime_type: f.mime_type,
+          name: f.field_label || f.file_name,
+        }));
+      if (!items.length) return;
+      openAttLightbox(items, startUrl || items[0].file_url);
+    };
+
+    return (
+      <div
+        className="mt-1.5 rounded-lg border border-orange-200 bg-orange-50/50 p-2 space-y-1.5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[11px] font-semibold text-orange-900 flex items-center gap-1 min-w-0">
+            <ClipboardPen className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{title}</span>
+            {formData.submitted_at && (
+              <span className="text-[9px] font-normal text-orange-700/80 shrink-0">
+                · {formatDateTime(formData.submitted_at)}
+              </span>
+            )}
+          </p>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => setFillFormTaskId(task.id)}
+              className="text-[10px] font-medium text-orange-800 hover:text-orange-950 px-1.5 py-0.5 rounded hover:bg-orange-100 cursor-pointer"
+              title="Sửa phiếu"
+            >
+              Sửa
+            </button>
+            {canManage && (
+              <button
+                type="button"
+                onClick={() => clearFillFormData(task)}
+                className="text-[10px] font-medium text-red-600 hover:text-red-800 px-1.5 py-0.5 rounded hover:bg-red-50 cursor-pointer"
+                title="Xóa phiếu"
+              >
+                Xóa
+              </button>
+            )}
+          </div>
+        </div>
+        {answers.length > 0 && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-0.5">
+            {answers.map((row) => (
+              <p key={row.id} className="text-[10px] text-gray-700 truncate" title={`${row.label}: ${row.text}`}>
+                <span className="font-medium text-gray-500">{row.label}:</span>{' '}
+                {row.text}
+              </p>
+            ))}
+          </div>
+        )}
+        {imageFiles.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {imageFiles.map((file) => (
+              <div key={file._key} className="flex flex-col items-start gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => openFormLightbox(file.file_url)}
+                  className="h-20 w-20 rounded-md border border-orange-200 overflow-hidden bg-white cursor-zoom-in hover:ring-2 hover:ring-orange-400"
+                  title={file.file_name || 'Xem ảnh'}
+                >
+                  <img
+                    src={publicFileUrl(file.file_url)}
+                    alt={file.file_name || ''}
+                    loading="lazy"
+                    className="h-full w-full object-cover"
+                  />
+                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => openFormLightbox(file.file_url)}
+                    className="text-[10px] font-medium text-emerald-700 hover:text-emerald-900 px-1 py-0.5 rounded hover:bg-emerald-50 cursor-pointer"
+                  >
+                    Xem
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFillFormTaskId(task.id)}
+                    className="text-[10px] font-medium text-blue-600 hover:text-blue-800 px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer"
+                  >
+                    Sửa
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {otherFiles.length > 0 && (
+          <div className="space-y-0.5">
+            {otherFiles.map((file) => (
+              <div key={file._key} className="flex items-center gap-1.5 text-[10px] text-gray-800 bg-white border border-orange-100 rounded px-1.5 py-0.5">
+                <AttachmentFileIcon att={file} className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate flex-1 min-w-0">{file.file_name || 'File'}</span>
+                {file.file_url && (
+                  <FilePreviewOpenLink
+                    fileUrl={file.file_url}
+                    fileName={file.file_name}
+                    mimeType={file.mime_type}
+                    className="text-[10px] font-medium text-emerald-700 hover:text-emerald-900 px-1 py-0.5 rounded hover:bg-emerald-50 cursor-pointer shrink-0"
+                  >
+                    Xem
+                  </FilePreviewOpenLink>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {!answers.length && !files.length && (
+          <p className="text-[10px] text-orange-800/70 italic">Đã lưu phiếu — bấm Sửa để xem chi tiết.</p>
+        )}
+      </div>
+    );
+  };
+
   const renderAttachmentActionButtons = (taskId, att, checklistId = null, { lightboxAtts = null } = {}) => {
     const canManage = canManageDeal;
     return (
@@ -3141,6 +3339,7 @@ export default function CRMTasksTab({
                 💬 {task.notes.slice(0, 80)}{task.notes.length > 80 ? '...' : ''}
               </p>
             )}
+            {!!task.show_fill_form && hasFilledFormData(task.form_data) && renderFillFormSummary(task)}
             {!isExpanded && atts.length > 0 && renderChecklistCollapsedFiles(atts, task.id, null)}
             {!isExpanded && !hasNotes && hasDesc && (
               <p className="text-sm text-slate-600 mt-0.5 line-clamp-2" title={descText}>
@@ -3275,6 +3474,24 @@ export default function CRMTasksTab({
                   title="Upload file Excel để tạo báo giá tự động"
                 >
                   <FileSpreadsheet className="h-2.5 w-2.5" />📊 Upload Excel BG
+                </button>
+              )}
+              {!!task.show_fill_form && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setFillFormTaskId(task.id); }}
+                  className={`text-[10px] px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium cursor-pointer border transition-colors ${
+                    hasFilledFormData(task.form_data)
+                      ? 'text-orange-800 bg-orange-100 hover:bg-orange-200 border-orange-300'
+                      : 'text-orange-600 bg-orange-50 hover:bg-orange-100 border-orange-200'
+                  }`}
+                  title={normalizeFormConfig(task.form_config).title || 'Điền form'}
+                >
+                  <ClipboardPen className="h-2.5 w-2.5" />
+                  {hasFilledFormData(task.form_data)
+                    ? `Sửa ${normalizeFormConfig(task.form_config).button_label || 'form'}`
+                    : (normalizeFormConfig(task.form_config).button_label || 'Điền form')}
+                  {hasFilledFormData(task.form_data) ? ' ✓' : ''}
                 </button>
               )}
             </div>
@@ -4409,6 +4626,29 @@ export default function CRMTasksTab({
         />
       )}
 
+      {/* Popup điền form (từ bộ mẫu show_fill_form) */}
+      {fillFormTaskId && (() => {
+        const fillTask = tasks.find((t) => t.id === fillFormTaskId);
+        if (!fillTask) return null;
+        const lid = apiLeadIdForTaskId(fillTask.id);
+        return (
+          <TaskFillFormModal
+            leadId={lid}
+            task={fillTask}
+            onClose={() => setFillFormTaskId(null)}
+            onSaved={(updated) => {
+              if (updated) {
+                setTasks((p) => p.map((t) => (t.id === fillTask.id ? { ...t, ...updated } : t)));
+              }
+              loadAttachments({ id: fillTask.id });
+              notifyArtifactsSynced(fillTask.id);
+              setImportToast({ message: 'Đã lưu form — đồng bộ địa chỉ lead & sự kiện khảo sát', type: 'success' });
+              setTimeout(() => setImportToast(null), 4000);
+            }}
+          />
+        );
+      })()}
+
 
       {editingTask && typeof document !== 'undefined' && createPortal(
         <>
@@ -4545,6 +4785,22 @@ export default function CRMTasksTab({
                         </span>
                         <span className="block text-[10px] text-emerald-700 mt-0.5">
                           Khi bật, nhiệm vụ sẽ có nút <b>📊 Upload Excel BG</b> ở tab Nhiệm vụ để tải file Excel báo giá và tạo báo giá tự động.
+                        </span>
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-2 p-2.5 border border-orange-200 bg-orange-50 rounded-lg cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={!!editForm.show_fill_form}
+                        onChange={(e) => setEditForm((f) => ({ ...f, show_fill_form: e.target.checked }))}
+                        className="mt-0.5 accent-orange-600"
+                      />
+                      <span className="flex-1">
+                        <span className="text-xs font-semibold text-orange-800 flex items-center gap-1">
+                          <ClipboardPen className="h-3 w-3" /> Hiện nút "Điền form"
+                        </span>
+                        <span className="block text-[10px] text-orange-700 mt-0.5">
+                          Khi bật, nhiệm vụ có nút mở popup form (schema lấy từ bộ mẫu / form_config sẵn có trên nhiệm vụ).
                         </span>
                       </span>
                     </label>

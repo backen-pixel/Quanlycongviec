@@ -509,6 +509,7 @@ export default function App() {
               <Route path="handover-settings" element={<ProductionHandoverSettingsPage />} />
               <Route path="assignments" element={<ProductionAssignmentsPage />} />
               <Route path="regions" element={<ProductionRegionsPage />} />
+              <Route path="events" element={<EventsFeedPage lockedModule="production" />} />
               <Route path="trash" element={<Navigate to="/admin/trash?tab=sx" replace />} />
               <Route path="projects/:id" element={<ProductionDetail />} />
             </Route>
@@ -519,6 +520,7 @@ export default function App() {
               <Route path="pipeline-settings" element={<LogisticsPipelineSettingsPage />} />
               <Route path="task-templates" element={<LogisticsTaskTemplatesPage />} />
               <Route path="teams" element={<WorkshopTeamsPage />} />
+              <Route path="events" element={<EventsFeedPage lockedModule="logistics" />} />
               <Route path="trash" element={<Navigate to="/admin/trash?tab=vc" replace />} />
               <Route path="projects/:id" element={<LogisticsDetail />} />
             </Route>

@@ -125,7 +125,8 @@ export default function CrmLeadDeadlineOverview({ lead }) {
               </p>
               {showDashboardNote && (
                 <p className="text-[11px] text-amber-800/90 bg-amber-100/80 border border-amber-200/80 rounded-md px-2 py-1">
-                  Deadline thẻ chưa đặt, nhưng lead vẫn hiện trên view Deadline vì có hạn từ{' '}
+                  Ưu tiên hạn: <strong>Deadline nhiệm vụ</strong> → <strong>Deadline tự setup</strong> → <strong>SLA cột</strong>.
+                  Hiện đang dùng{' '}
                   <strong>{CRM_DEADLINE_SOURCE_META[resolved.source]?.label || 'nguồn khác'}</strong>.
                 </p>
               )}
@@ -135,13 +136,13 @@ export default function CrmLeadDeadlineOverview({ lead }) {
           {!hidden && (
             <div className="mt-2.5 pt-2 border-t border-amber-200/70 space-y-1">
               <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Chi tiết nguồn</p>
-              <SourceRow label="Deadline thẻ">
-                {kanbanLabel ? kanbanLabel : <span className="text-slate-400 italic">Chưa đặt</span>}
-              </SourceRow>
-              <SourceRow label="NV CRM mở">
+              <SourceRow label="Deadline nhiệm vụ (NV mở)">
                 {taskLabel ? taskLabel : (
-                  <span className="text-slate-400 italic">Không có NV đang mở hoặc chưa có hạn</span>
+                  <span className="text-slate-400 italic">Không có NV đang mở hoặc chưa tới lượt đếm hạn</span>
                 )}
+              </SourceRow>
+              <SourceRow label="Deadline tự setup (thẻ)">
+                {kanbanLabel ? kanbanLabel : <span className="text-slate-400 italic">Chưa đặt</span>}
               </SourceRow>
               {lead?.type === 'deal' && (
                 <SourceRow label="Ngày dự kiến chốt">

@@ -1626,8 +1626,10 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, isSystemA
   const [tree, setTree] = useState(null);
   const [myModule, setMyModule] = useState(scopeModuleKey || myModuleKey || 'other');
   const [moduleFilter, setModuleFilter] = useState(() => {
+    // Drive theo module (?module=crm|sx|vc) khóa filter cho mọi role, kể cả system admin
+    if (lockModule) return lockModule;
     if (isSystemAdmin) return '';
-    return lockModule || (isAdmin ? '' : (scopeModuleKey || myModuleKey || 'other'));
+    return isAdmin ? '' : (scopeModuleKey || myModuleKey || 'other');
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -1643,9 +1645,11 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, isSystemA
     setLoading(true);
     setError(null);
     try {
-      const effectiveMod = isSystemAdmin
-        ? undefined
-        : (lockModule || modKey || scopeModuleKey || myModuleKey || undefined);
+      // ?module= (lockModule) → API lọc theo khối cho mọi role
+      // System admin ở Drive lưu trữ: tải full cây, lọc client qua dropdown
+      const effectiveMod = lockModule
+        || (isSystemAdmin ? undefined : (modKey || scopeModuleKey || myModuleKey || undefined))
+        || undefined;
       const r = await driveOrgTree(effectiveMod || undefined);
       const modules = r.modules || [];
       setMyModule(r.my_module || scopeModuleKey || myModuleKey || 'other');
@@ -1711,8 +1715,8 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, isSystemA
   }, [isAdmin, isSystemAdmin, myModuleKey, scopeModuleKey, lockModule, companyFirst, refreshRoots]);
 
   useEffect(() => {
-    if (lockModule && !isSystemAdmin) setModuleFilter(lockModule);
-  }, [lockModule, isSystemAdmin]);
+    if (lockModule) setModuleFilter(lockModule);
+  }, [lockModule]);
 
   useEffect(() => { loadTree(moduleFilter); }, [loadTree, moduleFilter]);
 
@@ -2148,13 +2152,12 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, isSystemA
   })();
   const mergedCompanies = companyFirst ? mergeCompaniesFromModules(moduleFilteredTree) : [];
   const showModuleLevel = !companyFirst && (isSystemAdmin || !(moduleLayout && lockModule));
-  const displayTree = (isSystemAdmin && moduleFilter)
-    ? moduleFilteredTree
-    : (tree || []);
+  // Khi đã khóa/lọc module (Drive CRM/SX/VC hoặc dropdown), chỉ hiện nhánh đó
+  const displayTree = moduleFilter ? moduleFilteredTree : (tree || []);
 
   return (
     <div className="space-y-1 text-sm">
-      {(isSystemAdmin || (companyFirst && isAdmin)) && (
+      {(isSystemAdmin || (companyFirst && isAdmin)) && !lockModule && (
         <>
           {isSystemAdmin && (
             <p className="px-1 text-[10px] text-indigo-600 mb-1 font-medium">Admin hệ thống — tất cả công ty</p>
@@ -2169,7 +2172,7 @@ function OrgTreeNav({ activeRootId, onOpenRoot, refreshRoots, isAdmin, isSystemA
           </select>
         </>
       )}
-      {(lockModule || !isAdmin) && !isSystemAdmin && !moduleLayout && !companyFirst && (
+      {(lockModule || !isAdmin) && !moduleLayout && !companyFirst && (
         <p className="px-1 text-[10px] text-slate-400 mb-1">Module: {moduleScopeLabel(lockModule || tree[0]?.key || myModule)}</p>
       )}
 

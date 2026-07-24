@@ -3,13 +3,15 @@ import api from '../lib/api';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Lock, Building2, Workflow, Globe, MapPin, RefreshCw, FileSpreadsheet, Paperclip, MessageSquare, User, Star } from 'lucide-react';
+import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Lock, Building2, Workflow, Globe, MapPin, RefreshCw, FileSpreadsheet, Paperclip, MessageSquare, User, Star, HardDrive, ClipboardPen, Clock } from 'lucide-react';
 import EvidenceFileTypesPicker from '../components/EvidenceFileTypesPicker';
 import TemplateItemAssigneePicker from '../components/TemplateItemAssigneePicker';
 import DocumentShareModulePicker from '../components/DocumentShareModulePicker';
+import TaskFillFormBuilder from '../components/TaskFillFormBuilder';
 import { parseShareModules, cleanShareModulesForApi, shareModuleLabels } from '../lib/documentShareScope';
 import { templateItemAssigneeIds, templateItemAssigneeCount } from '../lib/templateItemAssignees';
 import { formatEvidenceTypesShort, normalizeEvidenceFileTypes, checklistItemRequiresEvidence } from '../lib/evidenceFileTypes';
+import { normalizeFormConfig, defaultFormConfig, sanitizeFormConfigForSave } from '../lib/taskFillForm';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -55,8 +57,11 @@ function departmentsForCompanies(departments, companyIds) {
 }
 
 // ═══ Sortable Item component ═══
-function SortableItem({ id, children }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+function SortableItem({ id, children, disabled = false }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    disabled,
+  });
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -66,7 +71,10 @@ function SortableItem({ id, children }) {
   };
   return (
     <div ref={setNodeRef} style={style}>
-      {children({ dragHandleProps: { ...attributes, ...listeners }, isDragging })}
+      {children({
+        dragHandleProps: disabled ? {} : { ...attributes, ...listeners },
+        isDragging,
+      })}
     </div>
   );
 }
@@ -212,7 +220,7 @@ export default function CRMTemplatesPage() {
   }, [isPipelineMode, selectedCompanyId, fallbackCompanyPipeline]);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
@@ -1517,6 +1525,9 @@ function TemplateCard({
     required_evidence_file_types: [],
     requires_quick_verdict: false,
     show_excel_quotation_upload: false,
+    auto_upload_attachments_to_drive: false,
+    show_fill_form: false,
+    form_config: defaultFormConfig(),
     executor_company_id: '',
     default_assignee_id: '',
     default_assignee_ids: [],
@@ -1568,6 +1579,9 @@ function TemplateCard({
       required_evidence_file_types: normalizeEvidenceFileTypes(item.required_evidence_file_types),
       requires_quick_verdict: !!item.requires_quick_verdict,
       show_excel_quotation_upload: !!item.show_excel_quotation_upload,
+      auto_upload_attachments_to_drive: !!item.auto_upload_attachments_to_drive,
+      show_fill_form: !!item.show_fill_form,
+      form_config: normalizeFormConfig(item.form_config),
       executor_company_id: item.executor_company_id || '',
       default_assignee_id: templateItemAssigneeIds(item)[0] || '',
       default_assignee_ids: templateItemAssigneeIds(item),
@@ -1584,13 +1598,16 @@ function TemplateCard({
         title: itemEditForm.title.trim(),
         description: itemEditForm.description?.trim() || null,
         priority: itemEditForm.priority,
-        deadline_days: 0,
+        deadline_days: Math.max(0, parseInt(itemEditForm.deadline_days, 10) || 0),
         blocks_stage_advance: !!itemEditForm.blocks_stage_advance,
         completion_requires_file_or_note: !!itemEditForm.completion_requires_file_or_note
           || (itemEditForm.required_evidence_file_types?.length > 0),
         required_evidence_file_types: itemEditForm.required_evidence_file_types || [],
         requires_quick_verdict: !!itemEditForm.requires_quick_verdict,
         show_excel_quotation_upload: !!itemEditForm.show_excel_quotation_upload,
+        auto_upload_attachments_to_drive: !!itemEditForm.auto_upload_attachments_to_drive,
+        show_fill_form: !!itemEditForm.show_fill_form,
+        form_config: sanitizeFormConfigForSave(itemEditForm.form_config || defaultFormConfig()),
         executor_company_id: itemEditForm.executor_company_id || null,
         default_assignee_ids: templateItemAssigneeIds(itemEditForm),
         default_assignee_id: templateItemAssigneeIds(itemEditForm)[0] || null,
@@ -1619,6 +1636,27 @@ function TemplateCard({
     try {
       await updateTemplateItemFields(tpl.id, item.id, {
         show_excel_quotation_upload: !item.show_excel_quotation_upload,
+      });
+    } catch { /* alert trong updateTemplateItemFields */ }
+  };
+
+  const toggleItemFillForm = async (item) => {
+    try {
+      const next = !item.show_fill_form;
+      await updateTemplateItemFields(tpl.id, item.id, {
+        show_fill_form: next,
+        ...(next && !item.form_config?.fields?.length
+          ? { form_config: defaultFormConfig() }
+          : {}),
+      });
+      if (next) openItemEdit({ ...item, show_fill_form: true, form_config: item.form_config || defaultFormConfig() });
+    } catch { /* alert trong updateTemplateItemFields */ }
+  };
+
+  const toggleItemAutoDriveUpload = async (item) => {
+    try {
+      await updateTemplateItemFields(tpl.id, item.id, {
+        auto_upload_attachments_to_drive: !item.auto_upload_attachments_to_drive,
       });
     } catch { /* alert trong updateTemplateItemFields */ }
   };
@@ -1761,7 +1799,16 @@ function TemplateCard({
             onDragEnd={(e) => handleItemDragEnd(e, tpl.id)}>
             <SortableContext items={sortedItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
               {sortedItems.map((item, i) => (
-                <SortableItem key={item.id} id={item.id}>
+                <SortableItem
+                  key={item.id}
+                  id={item.id}
+                  disabled={
+                    editingItemId === item.id
+                    || !!editingChecklist[item.id]
+                    || !!editingVisibility[item.id]
+                    || !!editingAssignee[item.id]
+                  }
+                >
                   {({ dragHandleProps: itemDrag }) => (
                     <div>
                       <div className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-gray-50 group">
@@ -1780,6 +1827,15 @@ function TemplateCard({
                           item.priority === 'urgent' ? 'bg-red-100 text-red-700' :
                           item.priority === 'medium' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
                         }`}>{item.priority === 'urgent' ? 'Gấp' : item.priority === 'high' ? 'Cao' : item.priority === 'medium' ? 'TB' : 'Thấp'}</span>
+                        {Number(item.deadline_days) > 0 && (
+                          <span
+                            className="text-[9px] text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
+                            title={`Hạn: ${item.deadline_days} ngày (chạy khi tới lượt / sau NV trước hoàn thành)`}
+                          >
+                            <Clock className="h-2.5 w-2.5" />
+                            {item.deadline_days}d
+                          </span>
+                        )}
                         {(item.default_allowed_companies?.length > 0 || item.default_allowed_departments?.length > 0) && (
                           <span className="text-[9px] bg-red-50 text-red-600 px-1 py-0.5 rounded-full">🔒</span>
                         )}
@@ -1819,6 +1875,22 @@ function TemplateCard({
                             <FileSpreadsheet className="h-2.5 w-2.5" /> Excel BG
                           </span>
                         )}
+                        {item.show_fill_form && (
+                          <span
+                            className="text-[9px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
+                            title="Hiển thị nút Điền form ở tab Nhiệm vụ"
+                          >
+                            <ClipboardPen className="h-2.5 w-2.5" /> Form
+                          </span>
+                        )}
+                        {item.auto_upload_attachments_to_drive && (
+                          <span
+                            className="text-[9px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
+                            title="File upload vào ghi chú nhiệm vụ tự đẩy lên Drive"
+                          >
+                            <HardDrive className="h-2.5 w-2.5" /> Drive
+                          </span>
+                        )}
                         {item.requires_quick_verdict && (
                           <span
                             className="text-[9px] bg-sky-100 text-sky-800 px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
@@ -1843,6 +1915,14 @@ function TemplateCard({
                           className={`p-1 rounded cursor-pointer shrink-0 ${item.show_excel_quotation_upload ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100' : 'text-gray-400 hover:bg-emerald-50 hover:text-emerald-600'}`}
                           title={item.show_excel_quotation_upload ? 'Đang hiển thị nút Upload Excel BG — bấm để tắt' : 'Bật: hiển thị nút Upload Excel Báo giá trên tab Nhiệm vụ'}>
                           <FileSpreadsheet className="h-3.5 w-3.5" /></button>
+                        <button type="button" onClick={() => toggleItemFillForm(item)}
+                          className={`p-1 rounded cursor-pointer shrink-0 ${item.show_fill_form ? 'text-orange-600 bg-orange-50 hover:bg-orange-100' : 'text-gray-400 hover:bg-orange-50 hover:text-orange-600'}`}
+                          title={item.show_fill_form ? 'Đang hiển thị nút Điền form — bấm để tắt' : 'Bật: hiển thị nút Điền form (popup) trên tab Nhiệm vụ'}>
+                          <ClipboardPen className="h-3.5 w-3.5" /></button>
+                        <button type="button" onClick={() => toggleItemAutoDriveUpload(item)}
+                          className={`p-1 rounded cursor-pointer shrink-0 ${item.auto_upload_attachments_to_drive ? 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100' : 'text-gray-400 hover:bg-indigo-50 hover:text-indigo-600'}`}
+                          title={item.auto_upload_attachments_to_drive ? 'Đang tự đẩy file ghi chú lên Drive — bấm để tắt' : 'Bật: file NV upload vào ghi chú nhiệm vụ tự động tải lên Drive'}>
+                          <HardDrive className="h-3.5 w-3.5" /></button>
                         <button type="button" onClick={() => setEditingAssignee((p) => ({ ...p, [item.id]: !p[item.id] }))}
                           className={`p-1 rounded cursor-pointer shrink-0 ${templateItemAssigneeCount(item) || editingAssignee[item.id] ? 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100' : 'text-gray-400 hover:bg-indigo-50 hover:text-indigo-600'}`}
                           title={templateItemAssigneeCount(item)
@@ -1880,8 +1960,12 @@ function TemplateCard({
                         />
                       )}
                       {editingItemId === item.id && (
-                        <div className="mx-2 mb-2 p-3 bg-sky-50 rounded-lg border border-sky-200 space-y-2" onClick={e => e.stopPropagation()}>
-                          <p className="text-[10px] text-sky-700 font-bold uppercase tracking-wide">✏️ Sửa nhiệm vụ mẫu</p>
+                        <div
+                          className="mx-2 mb-2 p-3 bg-sky-50 rounded-lg border border-sky-200 space-y-2 relative z-20"
+                          onClick={(e) => e.stopPropagation()}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => e.stopPropagation()}
+                        >                          <p className="text-[10px] text-sky-700 font-bold uppercase tracking-wide">✏️ Sửa nhiệm vụ mẫu</p>
                           <input
                             value={itemEditForm.title}
                             onChange={e => setItemEditForm(f => ({ ...f, title: e.target.value }))}
@@ -1939,6 +2023,22 @@ function TemplateCard({
                               <option value="high">Cao</option>
                               <option value="urgent">Gấp</option>
                             </select>
+                            <label className="flex items-center gap-1.5 h-8 px-2 rounded border bg-white text-xs select-none" title="Số ngày sau khi tạo nhiệm vụ → gán Ngày hẹn">
+                              <Clock className="h-3 w-3 text-orange-600 shrink-0" />
+                              <span className="text-gray-600 whitespace-nowrap">Hạn</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={itemEditForm.deadline_days ?? 0}
+                                onChange={e => setItemEditForm(f => ({
+                                  ...f,
+                                  deadline_days: e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value, 10) || 0),
+                                }))}
+                                className="w-14 h-6 px-1.5 rounded border text-xs text-center outline-none focus:ring-1 focus:ring-orange-400"
+                              />
+                              <span className="text-gray-500">ngày</span>
+                            </label>
                             <label className="flex items-center gap-1.5 h-8 px-2 rounded border bg-white text-xs cursor-pointer select-none">
                               <input
                                 type="checkbox"
@@ -1976,6 +2076,32 @@ function TemplateCard({
                             <label className="flex items-center gap-1.5 h-8 px-2 rounded border bg-white text-xs cursor-pointer select-none">
                               <input
                                 type="checkbox"
+                                checked={!!itemEditForm.show_fill_form}
+                                onChange={e => setItemEditForm(f => ({
+                                  ...f,
+                                  show_fill_form: e.target.checked,
+                                  form_config: e.target.checked
+                                    ? (f.form_config?.fields?.length ? f.form_config : defaultFormConfig())
+                                    : f.form_config,
+                                }))}
+                                className="accent-orange-600"
+                              />
+                              <ClipboardPen className="h-3 w-3 text-orange-600" />
+                              Hiện nút Điền form
+                            </label>
+                            <label className="flex items-center gap-1.5 h-8 px-2 rounded border bg-white text-xs cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={!!itemEditForm.auto_upload_attachments_to_drive}
+                                onChange={e => setItemEditForm(f => ({ ...f, auto_upload_attachments_to_drive: e.target.checked }))}
+                                className="accent-indigo-600"
+                              />
+                              <HardDrive className="h-3 w-3 text-indigo-600" />
+                              Tự đẩy file ghi chú lên Drive
+                            </label>
+                            <label className="flex items-center gap-1.5 h-8 px-2 rounded border bg-white text-xs cursor-pointer select-none">
+                              <input
+                                type="checkbox"
                                 checked={!!itemEditForm.requires_quick_verdict}
                                 onChange={e => setItemEditForm(f => ({ ...f, requires_quick_verdict: e.target.checked }))}
                                 className="accent-sky-600"
@@ -1991,6 +2117,9 @@ function TemplateCard({
                               <Save className="h-3 w-3" /> Lưu
                             </button>
                           </div>
+                          <p className="text-[10px] text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-2 py-1">
+                            <Clock className="h-2.5 w-2.5 inline mr-1" /> <b>Hạn (ngày)</b>: số ngày đếm sau khi nhiệm vụ này tới lượt. NV đầu (cùng cột) bắt đầu ngay khi tạo; NV sau chỉ bắt đầu khi NV trước hoàn thành. = 0 → không tự gán hạn.
+                          </p>
                           <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
                             <Lock className="h-2.5 w-2.5 inline mr-1" /> Khi bật: lead/deal không thể chuyển sang giai đoạn khác (trừ Thắng/Thua) đến khi nhiệm vụ này hoàn thành.
                           </p>
@@ -2012,6 +2141,16 @@ function TemplateCard({
                           </p>
                           <p className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1">
                             <FileSpreadsheet className="h-2.5 w-2.5 inline mr-1" /> Khi bật: nhiệm vụ sinh ra ở tab Nhiệm vụ sẽ có nút <b>Upload Excel BG</b> để tải file báo giá Excel và tạo báo giá tự động.
+                          </p>
+                          {!!itemEditForm.show_fill_form && (
+                            <TaskFillFormBuilder
+                              compact
+                              value={itemEditForm.form_config}
+                              onChange={(form_config) => setItemEditForm((f) => ({ ...f, form_config }))}
+                            />
+                          )}
+                          <p className="text-[10px] text-orange-700 bg-orange-50 border border-orange-200 rounded-md px-2 py-1">
+                            <ClipboardPen className="h-2.5 w-2.5 inline mr-1" /> Khi bật: nhiệm vụ có nút <b>Điền form</b> — bấm mở popup với các trường đã cấu hình (số, văn bản, file, chọn 1/nhiều…).
                           </p>
                         </div>
                       )}
@@ -2183,14 +2322,32 @@ function TemplateCard({
           </DndContext>
 
           {/* Add item form */}
-          <div className="flex items-center gap-2 mt-2 pt-2 border-t">
+          <div className="flex items-center gap-2 mt-2 pt-2 border-t flex-wrap">
             <input value={newItem[tpl.id]?.title || ''} onChange={e => setNewItem(p => ({ ...p, [tpl.id]: { ...(p[tpl.id] || {}), title: e.target.value } }))}
-              placeholder="Thêm công việc mẫu..." className="flex-1 h-8 px-2 rounded border text-xs outline-none focus:ring-1 focus:ring-blue-400"
+              placeholder="Thêm công việc mẫu..." className="flex-1 min-w-[140px] h-8 px-2 rounded border text-xs outline-none focus:ring-1 focus:ring-blue-400"
               onKeyDown={e => e.key === 'Enter' && addItem(tpl.id)} />
             <select value={newItem[tpl.id]?.priority || 'medium'} onChange={e => setNewItem(p => ({ ...p, [tpl.id]: { ...(p[tpl.id] || {}), priority: e.target.value } }))}
               className="h-8 px-2 rounded border text-xs bg-white">
               <option value="low">Thấp</option><option value="medium">TB</option><option value="high">Cao</option><option value="urgent">Gấp</option>
             </select>
+            <label className="flex items-center gap-1 h-8 px-2 rounded border bg-white text-xs text-gray-600 select-none" title="Số ngày hạn sau khi tạo">
+              <Clock className="h-3 w-3 text-orange-500 shrink-0" />
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={newItem[tpl.id]?.deadline_days ?? 0}
+                onChange={e => setNewItem(p => ({
+                  ...p,
+                  [tpl.id]: {
+                    ...(p[tpl.id] || {}),
+                    deadline_days: e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value, 10) || 0),
+                  },
+                }))}
+                className="w-12 h-6 px-1 rounded border text-xs text-center outline-none focus:ring-1 focus:ring-orange-400"
+              />
+              <span>ngày</span>
+            </label>
             <button onClick={() => addItem(tpl.id)} className="h-8 px-3 bg-blue-600 text-white rounded text-xs cursor-pointer hover:bg-blue-700">
               <Plus className="h-3 w-3" /></button>
           </div>

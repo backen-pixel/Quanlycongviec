@@ -1829,6 +1829,28 @@ export default function ProductionDashboard() {
     }
   }, [load, projects, companyParam]);
 
+  // Gửi yêu cầu bàn giao VC/LĐ qua bình luận (thay modal chọn công ty).
+  const sendVcHandoverRequest = useCallback(async (projectId, targetCol) => {
+    const sxColId = targetCol?.id ? String(targetCol.id) : '';
+    const sxStageMeta = buildSxPipelineStageMeta(targetCol);
+    setProjects((prev) => prev.map((p) => (String(p.id) === String(projectId)
+      ? {
+          ...p,
+          sx_kanban_column_id: sxColId || p.sx_kanban_column_id,
+          sx_pipeline_stage: sxStageMeta || p.sx_pipeline_stage,
+          sx_intake: false,
+          vc_handover_status: 'pending',
+        }
+      : p)));
+    try {
+      await api.post(`/vc-handover/projects/${projectId}/request`, { sx_stage_id: sxColId || undefined });
+      alert('Đã gửi yêu cầu chọn công ty Vận chuyển/Lắp đặt cho Sale CRM (hiển thị trong bình luận của deal).');
+    } catch (e) {
+      alert(e.response?.data?.error || 'Không gửi được yêu cầu bàn giao VC/LĐ');
+      load({ silent: true, bustCache: true });
+    }
+  }, [load]);
+
   const handleMoveStage = useCallback(async (projectId, targetCol) => {
     const current = projects.find((p) => String(p.id) === String(projectId));
     const alreadyInLogistics = isProjectAlreadyInLogistics(current);
@@ -1872,15 +1894,8 @@ export default function ProductionDashboard() {
         await executeStageMove(projectId, targetCol);
         return;
       }
-      setHandoverModal({ projectId, projectName: current?.name || current?.code || projectId });
-      setHandoverTargetSxColId(targetCol?.id ? String(targetCol.id) : '');
-      setHandoverErr('');
-      setHandoverLogisticsCompanyId('');
-      setHandoverLogisticsCompanies([]);
-      setHandoverDeliveryTeamId('');
-      setHandoverInstallationTeamId('');
-      setHandoverDeliveryTeams([]);
-      setHandoverInstallationTeams([]);
+      // Không mở modal — gửi yêu cầu để Sale CRM chọn công ty VC/LĐ trong bình luận của deal.
+      await sendVcHandoverRequest(projectId, targetCol);
       return;
     }
 
@@ -1918,7 +1933,7 @@ export default function ProductionDashboard() {
     }
 
     await executeStageMove(projectId, targetCol);
-  }, [executeStageMove, projects, workTypes]);
+  }, [executeStageMove, projects, workTypes, sendVcHandoverRequest]);
 
   const confirmSwitchWorkshopType = useCallback(async () => {
     if (!switchWorkshopModal || switchWorkshopSaving) return;
@@ -2029,17 +2044,11 @@ export default function ProductionDashboard() {
     }
   }, [load, pipeline]);
 
+  // Nút "Bàn giao VC" trên thẻ → cũng gửi yêu cầu bình luận (không mở modal chọn công ty).
   const openHandoverModal = useCallback((projectId, projectName, sxTargetColId = '') => {
-    setHandoverModal({ projectId, projectName });
-    setHandoverTargetSxColId(sxTargetColId ? String(sxTargetColId) : '');
-    setHandoverErr('');
-    setHandoverLogisticsCompanyId('');
-    setHandoverLogisticsCompanies([]);
-    setHandoverDeliveryTeamId('');
-    setHandoverInstallationTeamId('');
-    setHandoverDeliveryTeams([]);
-    setHandoverInstallationTeams([]);
-  }, []);
+    const col = sxTargetColId ? pipeline.find((s) => String(s.id) === String(sxTargetColId)) : null;
+    return sendVcHandoverRequest(projectId, col || (sxTargetColId ? { id: sxTargetColId } : null));
+  }, [pipeline, sendVcHandoverRequest]);
 
   // Load logistics companies for VC handover modal
   useEffect(() => {

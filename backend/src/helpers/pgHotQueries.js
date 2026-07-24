@@ -104,6 +104,7 @@ async function pgDashboardNotificationStats(userId) {
      FROM notifications
      WHERE user_id = $1
        AND is_read = false
+       AND dismissed_at IS NULL
        AND entity_type IS DISTINCT FROM 'project'
        AND (metadata->>'ecosystem_module_key' IS NULL
             OR metadata->>'ecosystem_module_key' <> 'projects')
@@ -134,6 +135,7 @@ async function pgDashboardNotificationsList(userId, {
 
   const conditions = [
     'user_id = $1',
+    'dismissed_at IS NULL',
     "entity_type IS DISTINCT FROM 'project'",
     "(metadata->>'ecosystem_module_key' IS NULL OR metadata->>'ecosystem_module_key' <> 'projects')",
   ];

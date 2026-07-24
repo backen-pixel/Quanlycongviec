@@ -12,6 +12,11 @@ const {
 } = require('./templateItemAssignees');
 const { resolveExecutorCompanyId, isExecutorColumnError } = require('./crossCompanyWorkspace');
 const { normalizeTemplateChecklistForCrmTask } = require('./templateChecklistNormalize');
+const {
+  normalizeDeadlineDays,
+  applySequentialDeadlinesToInserts,
+  loadStageHasActiveDeadline,
+} = require('./crmTaskSequentialDeadline');
 
 function isSxCrmTaskRow(t) {
   return String(t?.stage_slug || '').startsWith('sx_');
@@ -75,6 +80,14 @@ function stageTypesMatchEntity(stagePipelineType, entityType) {
   return st === et || st === 'both';
 }
 
+/** Task CRM gắn stage thuộc đúng pipeline hiện tại của lead/deal. */
+function crmTaskBelongsToPipeline(task, pipelineId) {
+  if (!pipelineId || !task?.pipeline_stage_id) return false;
+  const stagePipelineId = task.stage?.pipeline_id ?? task.pipeline_stage?.pipeline_id;
+  if (!stagePipelineId) return false;
+  return String(stagePipelineId) === String(pipelineId);
+}
+
 /** Khớp crm_task_templates.pipeline_type với loại lead/deal (giống resolveCrmBundleTemplateScope). */
 function crmTemplateMatchesEntityType(templatePipelineType, entityType) {
   const et = entityType === 'deal' ? 'deal' : 'lead';
@@ -111,15 +124,8 @@ function buildTaskInsertsFromTemplates(templates, allItems, userId, leadId) {
     `lead=${leadId}`,
   );
 
-  return dedupedItems.map((item) => {
+  const inserts = dedupedItems.map((item) => {
     const tpl = tplMap[item.template_id] || {};
-    const deadlineDays = item.deadline_days;
-    let deadline = null;
-    if (deadlineDays != null && Number(deadlineDays) > 0) {
-      const d = new Date();
-      d.setDate(d.getDate() + Number(deadlineDays));
-      deadline = d.toISOString();
-    }
     return {
       lead_id: leadId,
       title: item.title,
@@ -128,7 +134,8 @@ function buildTaskInsertsFromTemplates(templates, allItems, userId, leadId) {
       stage_slug: tpl.stage_slug || null,
       pipeline_stage_id: tpl.pipeline_stage_id || null,
       order_index: item.order_index,
-      deadline,
+      deadline_days: normalizeDeadlineDays(item.deadline_days),
+      deadline: null,
       created_by: userId,
       completion_requires_file_or_note: !!item.completion_requires_file_or_note
         || (Array.isArray(item.required_evidence_file_types) && item.required_evidence_file_types.length > 0),
@@ -138,6 +145,12 @@ function buildTaskInsertsFromTemplates(templates, allItems, userId, leadId) {
       requires_quick_verdict: !!item.requires_quick_verdict,
       blocks_stage_advance: !!item.blocks_stage_advance,
       show_excel_quotation_upload: !!item.show_excel_quotation_upload,
+      auto_upload_attachments_to_drive: !!item.auto_upload_attachments_to_drive,
+      show_fill_form: !!item.show_fill_form,
+      form_config: (item.form_config && typeof item.form_config === 'object' && !Array.isArray(item.form_config))
+        ? item.form_config
+        : {},
+      form_data: {},
       assignee_id: primaryTemplateItemAssigneeId(item),
       default_allowed_companies: item.default_allowed_companies || null,
       default_allowed_departments: item.default_allowed_departments || null,
@@ -149,6 +162,8 @@ function buildTaskInsertsFromTemplates(templates, allItems, userId, leadId) {
         : null,
     };
   });
+  // Tuần tự theo stage: chỉ NV đầu (có deadline_days > 0) bắt đầu đếm hạn ngay.
+  return applySequentialDeadlinesToInserts(inserts);
 }
 
 /**
@@ -194,7 +209,7 @@ async function autoGenCrmTasksForNewLead(leadId, userId, req = null) {
 
   const { data: existing, error: exErr } = await supabase
     .from('crm_tasks')
-    .select('id, stage_slug, pipeline_stage_id, stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(pipeline_type)')
+    .select('id, stage_slug, pipeline_stage_id, stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(pipeline_type, pipeline_id)')
     .eq('lead_id', leadId);
   if (exErr) {
     console.warn('[AUTO-TASK] load existing tasks:', exErr.message);
@@ -202,9 +217,11 @@ async function autoGenCrmTasksForNewLead(leadId, userId, req = null) {
   }
 
   const crmExisting = (existing || []).filter((t) => !isSxCrmTaskRow(t));
+  // Chỉ coi là "đã có bộ" khi task gắn đúng pipeline hiện tại — task orphan từ pipeline cũ không chặn gen.
   const hasTypeTasks = crmExisting.some((t) => {
     if (!t.pipeline_stage_id) return false;
-    return stageTypesMatchEntity(t.stage?.pipeline_type, entityType);
+    if (!stageTypesMatchEntity(t.stage?.pipeline_type, entityType)) return false;
+    return crmTaskBelongsToPipeline(t, pipelineId);
   });
   if (hasTypeTasks) {
     console.log(`[AUTO-TASK] Skip: ${entityType} ${leadId} đã có nhiệm vụ pipeline type=${entityType}`);
@@ -275,10 +292,20 @@ async function autoGenCrmTasksForNewLead(leadId, userId, req = null) {
   templates.forEach((t) => { tplMap[t.id] = t; });
   const dedupedItems = dedupeTemplateItemsForInsert(allItems, tplMap, null, `lead=${leadId}`);
   const assigneeIdsList = dedupedItems.map((item) => normalizeTemplateItemAssigneeIds(item));
-  const { data: inserted, error: insErr } = await supabase
+  let { data: inserted, error: insErr } = await supabase
     .from('crm_tasks')
     .insert(inserts)
     .select('id, title, stage_slug, lead_id, assignee_id, description, status, priority, deadline, executor_company_id');
+  if (insErr && /deadline_days/i.test(insErr.message || '')) {
+    const stripped = inserts.map(({ deadline_days: _d, ...rest }) => rest);
+    ({ data: inserted, error: insErr } = await supabase.from('crm_tasks').insert(stripped)
+      .select('id, title, stage_slug, lead_id, assignee_id, description, status, priority, deadline, executor_company_id'));
+  }
+  if (insErr && isExecutorColumnError(insErr)) {
+    const stripped = inserts.map(({ executor_company_id: _e, deadline_days: _d, ...rest }) => rest);
+    ({ data: inserted, error: insErr } = await supabase.from('crm_tasks').insert(stripped)
+      .select('id, title, stage_slug, lead_id, assignee_id, description, status, priority, deadline, executor_company_id'));
+  }
   if (insErr) {
     console.error('[AUTO-TASK] Insert error:', insErr.message);
     return 0;
@@ -318,7 +345,8 @@ function filterCrmTasksForLeadType(tasks, leadType) {
 }
 
 /**
- * Đồng bộ lại: xóa task CRM (non-sx) gắn stage khớp pipeline_type của lead/deal, rồi gen lại.
+ * Đồng bộ lại: xóa task CRM (non-sx) gắn stage khớp pipeline_type của lead/deal, rồi gen lại
+ * theo pipeline_id hiện tại. Dùng khi đổi pipeline (chuyển khu vực / sửa pipeline_id).
  */
 async function resyncCrmPipelineTasksForLead(leadId, userId, req = null) {
   const { data: lead, error: leadErr } = await supabase
@@ -334,13 +362,16 @@ async function resyncCrmPipelineTasksForLead(leadId, userId, req = null) {
   }
 
   const entityType = lead.type === 'deal' ? 'deal' : 'lead';
+  const pipelineId = lead.pipeline_id || null;
 
   const { data: tasks, error: taskErr } = await supabase
     .from('crm_tasks')
-    .select('id, stage_slug, pipeline_stage_id, stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(pipeline_type)')
+    .select('id, stage_slug, pipeline_stage_id, stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(pipeline_type, pipeline_id)')
     .eq('lead_id', leadId);
   if (taskErr) throw taskErr;
 
+  // Xóa mọi task CRM cùng loại (lead/deal), kể cả orphan gắn pipeline cũ —
+  // rồi gen lại đúng bộ mẫu của pipeline hiện tại.
   const toDelete = (tasks || [])
     .filter((t) => !isSxCrmTaskRow(t))
     .filter((t) => {
@@ -356,12 +387,44 @@ async function resyncCrmPipelineTasksForLead(leadId, userId, req = null) {
 
   const created = await autoGenCrmTasksForNewLead(leadId, userId || lead.created_by, req);
 
+  console.log(
+    `[AUTO-TASK] resync pipeline: lead=${leadId} pipeline=${pipelineId || '—'} `
+    + `deleted=${toDelete.length} created=${created}`,
+  );
+
   return {
     ok: true,
     deleted: toDelete.length,
     tasks_created: created,
     entity_type: entityType,
+    pipeline_id: pipelineId,
   };
+}
+
+/**
+ * Sau khi lead/deal đổi pipeline_id: đồng bộ lại bộ nhiệm vụ CRM theo pipeline mới.
+ */
+async function syncCrmTasksAfterPipelineChange(leadId, userId, req = null) {
+  if (!leadId) return { ok: false, error: 'Thiếu lead_id' };
+  return resyncCrmPipelineTasksForLead(leadId, userId, req);
+}
+
+/** Có task CRM (non-sx) gắn stage của pipeline khác với pipeline hiện tại của lead? */
+async function leadHasForeignPipelineCrmTasks(leadId, pipelineId, entityType) {
+  if (!leadId || !pipelineId) return false;
+  const { data: tasks, error } = await supabase
+    .from('crm_tasks')
+    .select('id, stage_slug, pipeline_stage_id, stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(pipeline_type, pipeline_id)')
+    .eq('lead_id', leadId);
+  if (error) throw error;
+  return (tasks || [])
+    .filter((t) => !isSxCrmTaskRow(t))
+    .some((t) => {
+      if (!t.pipeline_stage_id) return false;
+      if (!stageTypesMatchEntity(t.stage?.pipeline_type, entityType)) return false;
+      const sid = t.stage?.pipeline_id;
+      return sid && String(sid) !== String(pipelineId);
+    });
 }
 
 /**
@@ -448,13 +511,18 @@ async function applyCrmTaskTemplatesToCompanyRegions({
 
       const before = await supabase
         .from('crm_tasks')
-        .select('id, stage_slug, pipeline_stage_id, stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(pipeline_type)')
+        .select('id, stage_slug, pipeline_stage_id, stage:crm_pipeline_stages!crm_tasks_pipeline_stage_id_fkey(pipeline_type, pipeline_id)')
         .eq('lead_id', row.id);
       if (before.error) throw before.error;
       const entityType = row.type === 'deal' ? 'deal' : 'lead';
+      const leadPipelineId = row.pipeline_id || pipelineIdResolved;
       const hadType = (before.data || [])
         .filter((t) => !isSxCrmTaskRow(t))
-        .some((t) => t.pipeline_stage_id && stageTypesMatchEntity(t.stage?.pipeline_type, entityType));
+        .some((t) => (
+          t.pipeline_stage_id
+          && stageTypesMatchEntity(t.stage?.pipeline_type, entityType)
+          && crmTaskBelongsToPipeline(t, leadPipelineId)
+        ));
       if (hadType) {
         stats.skipped_has_tasks += 1;
         continue;
@@ -492,13 +560,6 @@ function toCrmTaskChecklist(raw, ownerCompanyId, templateItem) {
 }
 
 function buildCrmTaskInsertFromTemplateItem(item, tpl, leadId, pipelineStageId, userId, ownerCompanyId) {
-  const deadlineDays = item.deadline_days;
-  let deadline = null;
-  if (deadlineDays != null && Number(deadlineDays) > 0) {
-    const d = new Date();
-    d.setDate(d.getDate() + Number(deadlineDays));
-    deadline = d.toISOString();
-  }
   return {
     lead_id: leadId,
     title: item.title,
@@ -508,7 +569,8 @@ function buildCrmTaskInsertFromTemplateItem(item, tpl, leadId, pipelineStageId, 
     stage_slug: tpl?.stage_slug || null,
     pipeline_stage_id: pipelineStageId,
     order_index: item.order_index,
-    deadline,
+    deadline_days: normalizeDeadlineDays(item.deadline_days),
+    deadline: null,
     created_by: userId,
     completion_requires_file_or_note: !!item.completion_requires_file_or_note
       || (Array.isArray(item.required_evidence_file_types) && item.required_evidence_file_types.length > 0),
@@ -518,6 +580,12 @@ function buildCrmTaskInsertFromTemplateItem(item, tpl, leadId, pipelineStageId, 
     requires_quick_verdict: !!item.requires_quick_verdict,
     blocks_stage_advance: !!item.blocks_stage_advance,
     show_excel_quotation_upload: !!item.show_excel_quotation_upload,
+    auto_upload_attachments_to_drive: !!item.auto_upload_attachments_to_drive,
+    show_fill_form: !!item.show_fill_form,
+    form_config: (item.form_config && typeof item.form_config === 'object' && !Array.isArray(item.form_config))
+      ? item.form_config
+      : {},
+    form_data: {},
     assignee_id: primaryTemplateItemAssigneeId(item),
     default_allowed_companies: item.default_allowed_companies || null,
     default_allowed_departments: item.default_allowed_departments || null,
@@ -554,6 +622,28 @@ async function ensureMissingCrmTasksForPipelineStage({ leadId, pipelineStageId, 
 
   const pipelineId = await resolvePipelineIdForLead(lead);
 
+  // Task còn gắn pipeline cũ sau khi đổi khu vực/pipeline → resync thay vì chồng bộ mới.
+  if (pipelineId) {
+    const hasForeign = await leadHasForeignPipelineCrmTasks(leadId, pipelineId, entityType);
+    if (hasForeign) {
+      console.log(
+        `[AUTO-TASK] ensure-stage: lead=${leadId} có task pipeline khác → resync pipeline=${pipelineId}`,
+      );
+      const synced = await resyncCrmPipelineTasksForLead(leadId, actorId, req);
+      return {
+        created: synced.tasks_created || 0,
+        skipped: 0,
+        reason: synced.ok ? 'resynced_foreign_pipeline' : (synced.error || 'resync_failed'),
+        resynced: !!synced.ok,
+        deleted: synced.deleted || 0,
+        pipeline_stage_id: pipelineStageId,
+        entity_type: entityType,
+        company_id: ownerCompanyId,
+        pipeline_id: pipelineId,
+      };
+    }
+  }
+
   const { data: stage, error: stageErr } = await supabase
     .from('crm_pipeline_stages')
     .select('id, pipeline_id, pipeline_type, is_active')
@@ -563,6 +653,17 @@ async function ensureMissingCrmTasksForPipelineStage({ leadId, pipelineStageId, 
   if (!stage?.id) return { created: 0, skipped: 0, reason: 'no_stage' };
   if (!stageTypesMatchEntity(stage.pipeline_type, entityType)) {
     return { created: 0, skipped: 0, reason: 'stage_type_mismatch', pipeline_stage_id: pipelineStageId };
+  }
+  // Stage đích phải thuộc pipeline hiện tại của lead — tránh gen nhầm bộ pipeline khác.
+  if (pipelineId && stage.pipeline_id && String(stage.pipeline_id) !== String(pipelineId)) {
+    return {
+      created: 0,
+      skipped: 0,
+      reason: 'stage_pipeline_mismatch',
+      pipeline_stage_id: pipelineStageId,
+      lead_pipeline_id: pipelineId,
+      stage_pipeline_id: stage.pipeline_id,
+    };
   }
 
   // Lấy mọi bộ mẫu active gắn cột này. Ưu tiên bộ mặc định (is_default);
@@ -677,12 +778,18 @@ async function ensureMissingCrmTasksForPipelineStage({ leadId, pipelineStageId, 
       ownerCompanyId,
     );
   });
+  const stageHasActiveDeadline = await loadStageHasActiveDeadline(supabase, leadId, inserts);
+  applySequentialDeadlinesToInserts(inserts, { stageHasActiveDeadline });
   const assigneeIdsList = toInsertItems.map((item) => normalizeTemplateItemAssigneeIds(item));
 
   const selCols = 'id, title, stage_slug, pipeline_stage_id, lead_id, assignee_id, description, status, priority, deadline, executor_company_id';
   let { data: inserted, error: insErr } = await supabase.from('crm_tasks').insert(inserts).select(selCols);
   if (insErr && String(insErr.message || '').toLowerCase().includes('checklist')) {
     const stripped = inserts.map(({ checklist: _c, ...rest }) => rest);
+    ({ data: inserted, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selCols));
+  }
+  if (insErr && /deadline_days/i.test(insErr.message || '')) {
+    const stripped = inserts.map(({ deadline_days: _d, ...rest }) => rest);
     ({ data: inserted, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selCols));
   }
   if (insErr && isExecutorColumnError(insErr)) {
@@ -734,12 +841,35 @@ async function ensureMissingCrmTasksForLead({
 
   const actorId = userId || lead.created_by || null;
   const entityType = lead.type === 'deal' ? 'deal' : 'lead';
+  const pipelineId = await resolvePipelineIdForLead(lead);
+
+  // Lead/deal đã nhảy pipeline nhưng còn task gắn stage pipeline cũ → resync thay vì bổ sung chồng.
+  if (pipelineId) {
+    const hasForeign = await leadHasForeignPipelineCrmTasks(leadId, pipelineId, entityType);
+    if (hasForeign) {
+      console.log(
+        `[AUTO-TASK] ensure: lead=${leadId} có task pipeline khác → resync theo pipeline=${pipelineId}`,
+      );
+      const synced = await resyncCrmPipelineTasksForLead(leadId, actorId, req);
+      return {
+        ok: !!synced.ok,
+        created: synced.tasks_created || 0,
+        skipped: 0,
+        resynced: true,
+        deleted: synced.deleted || 0,
+        stages: [],
+        entity_type: entityType,
+        company_id: lead.company_id || null,
+        pipeline_id: pipelineId,
+        error: synced.error,
+      };
+    }
+  }
 
   let stageIds = [];
   if (pipelineStageId) {
     stageIds = [pipelineStageId];
   } else if (allStages) {
-    const pipelineId = await resolvePipelineIdForLead(lead);
     if (!pipelineId) {
       return { ok: false, error: 'Lead/deal chưa có pipeline CRM (công ty/khu vực chưa cấu hình)' };
     }
@@ -792,6 +922,7 @@ module.exports = {
   autoGenCrmTasksForNewLead,
   applyCrmTaskTemplatesToCompanyRegions,
   resyncCrmPipelineTasksForLead,
+  syncCrmTasksAfterPipelineChange,
   ensureMissingCrmTasksForPipelineStage,
   ensureMissingCrmTasksForLead,
   filterCrmTasksForLeadType,
@@ -799,4 +930,5 @@ module.exports = {
   isSxCrmTaskRow,
   isLeadOnlyStageSlug,
   isDealOnlyStageSlug,
+  crmTaskBelongsToPipeline,
 };

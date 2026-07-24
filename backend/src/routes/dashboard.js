@@ -20,6 +20,15 @@ const {
   isLeadCommentMentionNotification,
   MESSAGES_CHANNEL_OR_FILTER,
 } = require('../helpers/notificationCenterChannels');
+const {
+  upsertMute,
+  clearMute,
+  clearCommentMute,
+  getCommentMute,
+  listActiveMutes,
+  resolveCommentLeadId,
+  resolveMessengerGroupId,
+} = require('../helpers/notificationMutes');
 
 function postgrestInTypesList(types) {
   return `(${types.map((t) => String(t)).join(',')})`;
@@ -97,6 +106,7 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['notifications'] }), a
       .select('type, entity_type, metadata')
       .eq('user_id', req.user.userId)
       .eq('is_read', false)
+      .is('dismissed_at', null)
       .neq('entity_type', 'project')
       .or("metadata->>ecosystem_module_key.is.null,metadata->>ecosystem_module_key.neq.projects")
       .limit(1000);
@@ -161,6 +171,7 @@ r.get('/notifications', responseCache({ ttl: 20, scope: 'user', tags: ['notifica
       .from('notifications')
       .select('*')
       .eq('user_id', req.user.userId)
+      .is('dismissed_at', null)
       .neq('entity_type', 'project')
       .or("metadata->>ecosystem_module_key.is.null,metadata->>ecosystem_module_key.neq.projects")
       .order('created_at', { ascending: false })
@@ -217,6 +228,7 @@ r.get('/notifications/deadlines', async (req, res) => {
       .from('notifications')
       .select('*')
       .eq('user_id', req.user.userId)
+      .is('dismissed_at', null)
       .in('type', EXPIRY_DEADLINE_NOTIFICATION_TYPES_LIST)
       .neq('entity_type', 'project')
       .or("metadata->>ecosystem_module_key.is.null,metadata->>ecosystem_module_key.neq.projects")
@@ -286,6 +298,169 @@ r.put('/notifications/read-all', async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     console.error('Dashboard mark all read error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Mute — tắt TB bình luận deal / Messenger theo entity (1h/2h/3h/8h / đến khi mở lại)
+// ═══════════════════════════════════════════════════════════════════════════
+r.get('/notifications/comment-mutes', async (req, res) => {
+  try {
+    const result = await listActiveMutes(req.user.userId, ['comment_added', 'messenger_chat']);
+    if (result.error) return res.status(500).json({ error: result.error });
+    res.json({ mutes: result.mutes || [] });
+  } catch (e) {
+    console.error('List comment mutes error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.get('/notifications/mutes', async (req, res) => {
+  try {
+    const result = await listActiveMutes(req.user.userId, ['comment_added', 'messenger_chat']);
+    if (result.error) return res.status(500).json({ error: result.error });
+    res.json({ mutes: result.mutes || [] });
+  } catch (e) {
+    console.error('List mutes error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.get('/notifications/comment-mute/:leadId', async (req, res) => {
+  try {
+    const leadId = String(req.params.leadId || '').trim();
+    if (!leadId) return res.status(400).json({ error: 'Thiếu leadId' });
+    const result = await getCommentMute(req.user.userId, leadId);
+    if (result.error) return res.status(500).json({ error: result.error });
+    res.json({ mute: result.mute || null });
+  } catch (e) {
+    console.error('Get comment mute error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * body: {
+ *   duration: '1h'|'2h'|'3h'|'8h'|'indefinite',
+ *   scope?: 'comment_added'|'messenger_chat' (mặc định comment_added),
+ *   lead_id? | group_id? | entity_id?
+ * }
+ */
+r.put('/notifications/comment-mute', async (req, res) => {
+  try {
+    const duration = req.body?.duration;
+    const scope = String(req.body?.scope || 'comment_added').toLowerCase().trim();
+    if (!duration) return res.status(400).json({ error: 'Thiếu duration' });
+
+    let entityId = '';
+    if (scope === 'messenger_chat') {
+      entityId = String(
+        req.body?.group_id
+        || req.body?.entity_id
+        || resolveMessengerGroupId(req.body?.entity_type, req.body?.entity_id, req.body?.metadata)
+        || '',
+      ).trim();
+    } else {
+      entityId = String(
+        req.body?.lead_id
+        || req.body?.entity_id
+        || resolveCommentLeadId(req.body?.entity_type, req.body?.entity_id, req.body?.metadata)
+        || '',
+      ).trim();
+    }
+    if (!entityId) {
+      return res.status(400).json({
+        error: scope === 'messenger_chat' ? 'Thiếu group_id' : 'Thiếu lead_id',
+      });
+    }
+
+    const result = await upsertMute(req.user.userId, { scope, entityId, duration });
+    if (result.error) return res.status(400).json({ error: result.error });
+
+    // Không ẩn tin trong danh sách — chỉ tắt toast/push ngoài màn hình cho TB mới
+    await invalidateTags(['notifications', `user:${req.user.userId}`]);
+    res.json({ ok: true, mute: result.mute, duration: result.duration, scope });
+  } catch (e) {
+    console.error('Upsert mute error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.delete('/notifications/comment-mute/:leadId', async (req, res) => {
+  try {
+    const leadId = String(req.params.leadId || '').trim();
+    if (!leadId) return res.status(400).json({ error: 'Thiếu leadId' });
+    const scope = String(req.query.scope || 'comment_added').toLowerCase().trim();
+    const result = scope === 'messenger_chat'
+      ? await clearMute(req.user.userId, { scope: 'messenger_chat', entityId: leadId })
+      : await clearCommentMute(req.user.userId, leadId);
+    if (result.error) return res.status(500).json({ error: result.error });
+    await invalidateTags(['notifications', `user:${req.user.userId}`]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Clear mute error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PUT /dashboard/notifications/bulk-read — Mark selected as read (body: { ids: [] })
+// ═══════════════════════════════════════════════════════════════════════════
+r.put('/notifications/bulk-read', async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String).filter(Boolean).slice(0, 500) : [];
+    if (!ids.length) return res.status(400).json({ error: 'Thiếu danh sách ids' });
+    const { error } = await supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('user_id', req.user.userId)
+      .in('id', ids);
+    if (error) return res.status(500).json({ error: error.message });
+    await invalidateTags(['notifications', `user:${req.user.userId}`]);
+    res.json({ ok: true, count: ids.length });
+  } catch (e) {
+    console.error('Dashboard bulk read error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PUT /dashboard/notifications/bulk-dismiss — Bỏ qua nhiều thông báo (body: { ids: [] })
+// ═══════════════════════════════════════════════════════════════════════════
+r.put('/notifications/bulk-dismiss', async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String).filter(Boolean).slice(0, 500) : [];
+    if (!ids.length) return res.status(400).json({ error: 'Thiếu danh sách ids' });
+    const { error } = await supabase
+      .from('notifications')
+      .update({ dismissed_at: new Date().toISOString(), is_read: true })
+      .eq('user_id', req.user.userId)
+      .in('id', ids);
+    if (error) return res.status(500).json({ error: error.message });
+    await invalidateTags(['notifications', `user:${req.user.userId}`]);
+    res.json({ ok: true, count: ids.length });
+  } catch (e) {
+    console.error('Dashboard bulk dismiss error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PUT /dashboard/notifications/:id/dismiss — Bỏ qua 1 thông báo (ẩn khỏi danh sách)
+// ═══════════════════════════════════════════════════════════════════════════
+r.put('/notifications/:id/dismiss', async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ dismissed_at: new Date().toISOString(), is_read: true })
+      .eq('id', req.params.id)
+      .eq('user_id', req.user.userId);
+    if (error) return res.status(500).json({ error: error.message });
+    await invalidateTags(['notifications', `user:${req.user.userId}`]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Dashboard dismiss error:', e);
     res.status(500).json({ error: e.message });
   }
 });

@@ -13,11 +13,9 @@ const VN_TZ = 'Asia/Ho_Chi_Minh';
 
 const VERIFY_TABLES = ['users', 'crm_leads', 'projects', 'companies', 'notifications'];
 
-/** Đồng bộ lớn + kiểm tra drift: 05:00, 12:30, 18:00 giờ VN */
+/** Đồng bộ lớn + kiểm tra drift: 04:00 giờ VN (1 lần/ngày) */
 const DEFAULT_SYNC_SLOTS_VN = [
-  { h: 5, m: 0 },
-  { h: 12, m: 30 },
-  { h: 18, m: 0 },
+  { h: 4, m: 0 },
 ];
 
 const DEFAULT_SETTINGS = {

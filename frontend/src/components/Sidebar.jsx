@@ -265,9 +265,11 @@ const CRM_MENU_BOTTOM_GROUPS = [
 // đồng bộ trải nghiệm với CRM_MENU_TOP_GROUP.
 // `moduleScope` giúp các trang dùng chung tự lọc theo khối (ví dụ Sự kiện).
 function buildSharedTopLinks(moduleScope) {
-  const eventsTo = moduleScope
-    ? { pathname: '/crm/events', search: `?module=${moduleScope}` }
-    : '/crm/events';
+  const eventsTo = moduleScope === 'production'
+    ? '/sx/events'
+    : moduleScope === 'logistics'
+      ? '/vc/events'
+      : '/crm/events';
   return [
     { to: '/social', icon: Share2, label: 'Bảng tin nội bộ' },
     { to: eventsTo, icon: Calendar, label: 'Sự kiện' },

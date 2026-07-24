@@ -200,6 +200,41 @@ async function resolveEventPersonFilter({ companyId = null, regionId = null, use
   return { personIds: null };
 }
 
+async function fetchMyParticipantEventIds(userId) {
+  if (!userId) return [];
+  const { data, error } = await supabase
+    .from('crm_event_participants')
+    .select('event_id')
+    .eq('user_id', userId);
+  if (error) {
+    console.warn('[events] participant ids:', error.message);
+    return [];
+  }
+  return [...new Set((data || []).map((r) => String(r.event_id)).filter(Boolean))];
+}
+
+async function isEventParticipant(userId, eventId) {
+  if (!userId || !eventId) return false;
+  const { data } = await supabase
+    .from('crm_event_participants')
+    .select('id')
+    .eq('event_id', eventId)
+    .eq('user_id', userId)
+    .maybeSingle();
+  return !!data?.id;
+}
+
+function mergeEventsById(primary, extra) {
+  const map = new Map();
+  for (const ev of primary || []) {
+    if (ev?.id != null) map.set(String(ev.id), ev);
+  }
+  for (const ev of extra || []) {
+    if (ev?.id != null && !map.has(String(ev.id))) map.set(String(ev.id), ev);
+  }
+  return [...map.values()];
+}
+
 async function assertEventCompanyAccess(req, res, eventId) {
   const sc = resolveEventsCompanyScope(req, res);
   if (!sc.ok) return false;
@@ -210,6 +245,8 @@ async function assertEventCompanyAccess(req, res, eventId) {
     res.status(404).json({ error: 'Không tìm thấy sự kiện' });
     return false;
   }
+  // Người được mời tham gia được xem/xác nhận dù khác công ty / khối module.
+  if (await isEventParticipant(req.user.userId, eventId)) return true;
   if (!(await assertEventModuleAccessOnRow(req, res, row))) return false;
   if (!sc.companyId) return true;
   if (row.company_id && String(row.company_id) === String(sc.companyId)) return true;
@@ -416,7 +453,33 @@ r.get('/', async (req, res) => {
     }
     const { data, error, count } = result;
     if (error) throw error;
-    res.json({ events: data || [], total: count, module_filter: moduleFilter });
+
+    let eventsOut = data || [];
+    let totalOut = typeof count === 'number' ? count : eventsOut.length;
+    const includeAsParticipant = ['1', 'true', 'yes'].includes(String(req.query.include_as_participant || '').toLowerCase());
+    if (includeAsParticipant) {
+      const myIds = await fetchMyParticipantEventIds(req.user.userId);
+      const have = new Set(eventsOut.map((e) => String(e.id)));
+      const missing = myIds.filter((id) => !have.has(String(id)));
+      if (missing.length) {
+        let pq = supabase.from('crm_events').select(EVENT_SELECT).in('id', missing.slice(0, 500));
+        if (type) pq = pq.eq('event_type', type);
+        if (status) pq = pq.eq('status', status);
+        if (lead_id) pq = pq.eq('lead_id', lead_id);
+        if (customer_id) pq = pq.eq('customer_id', customer_id);
+        if (fromBound) pq = pq.gte('start_time', fromBound);
+        if (toBound) pq = pq.lte('start_time', toBound);
+        // Không lọc module/company — sự kiện mình được mời (vd. Lấy hàng VC) vẫn hiện trên SX.
+        const { data: extra, error: pErr } = await pq;
+        if (!pErr && extra?.length) {
+          eventsOut = mergeEventsById(eventsOut, extra);
+          eventsOut.sort((a, b) => new Date(b.start_time) - new Date(a.start_time));
+          totalOut = eventsOut.length;
+        }
+      }
+    }
+
+    res.json({ events: eventsOut, total: totalOut, module_filter: moduleFilter });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -736,7 +799,29 @@ r.get('/calendar', async (req, res) => {
     }
     const { data, error } = cqRes;
     if (error) throw error;
-    res.json(data || []);
+
+    let calOut = data || [];
+    const includeAsParticipant = ['1', 'true', 'yes'].includes(String(req.query.include_as_participant || '').toLowerCase());
+    if (includeAsParticipant) {
+      const myIds = await fetchMyParticipantEventIds(req.user.userId);
+      const have = new Set(calOut.map((e) => String(e.id)));
+      const missing = myIds.filter((id) => !have.has(String(id)));
+      if (missing.length) {
+        let pq = supabase.from('crm_events').select(EVENT_SELECT)
+          .in('id', missing.slice(0, 500))
+          .gte('start_time', startDate)
+          .lte('start_time', endDate);
+        if (type) pq = pq.eq('event_type', type);
+        if (status) pq = pq.eq('status', status);
+        const { data: extra, error: pErr } = await pq;
+        if (!pErr && extra?.length) {
+          calOut = mergeEventsById(calOut, extra);
+          calOut.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+        }
+      }
+    }
+
+    res.json(calOut);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

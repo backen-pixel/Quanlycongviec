@@ -3,8 +3,10 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Calendar,
   Check,
   CheckCheck,
+  CheckCircle2,
   Download,
   Eye,
   EyeOff,
@@ -16,7 +18,9 @@ import {
   FileText,
   FileVideo,
   Loader2,
+  Package,
   Paperclip,
+  Truck,
 } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -688,6 +692,302 @@ function commentComposerPlaceholder(replyTo, user, { withPasteHint = false, with
   return text;
 }
 
+function formatVcDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+/** Bình luận tương tác bàn giao VC/LĐ (chọn công ty + ngày → sự kiện + xác nhận 2 phụ trách). */
+function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
+  const md = comment?.metadata || {};
+  const state = md.state || 'awaiting_company';
+  const selfUid = String(user?.userId || user?.id || '');
+  // Chỉ Sale CRM phụ trách deal (assigned_to / lead_owner) được chọn công ty + ngày.
+  const saleIds = (md.sale_user_ids || []).map(String);
+  const canSale = saleIds.includes(selfUid);
+  // Chỉ đúng phụ trách chính mới được tích xác nhận (không bypass admin).
+  const canConfirmProduction = selfUid === String(md.production_person_id || '');
+  const canConfirmLogistics = selfUid === String(md.logistics_person_id || '');
+
+  const [companies, setCompanies] = useState([]);
+  const [companyId, setCompanyId] = useState('');
+  const [selectNotes, setSelectNotes] = useState('');
+  const [pickupAt, setPickupAt] = useState('');
+  const [pickupNotes, setPickupNotes] = useState('');
+  const [busy, setBusy] = useState('');
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    if (state !== 'awaiting_company' || !canSale) return;
+    let active = true;
+    api.get('/companies', { params: { for_module: 'logistics' } })
+      .then((r) => {
+        if (!active) return;
+        const list = r.data?.companies || r.data || [];
+        const arr = Array.isArray(list) ? list : [];
+        setCompanies(arr);
+        if (arr.length === 1) setCompanyId(String(arr[0].id));
+      })
+      .catch(() => { if (active) setCompanies([]); });
+    return () => { active = false; };
+  }, [state, canSale]);
+
+  // Tự điền ghi chú: «Loại - xưởng» từ deal (phân loại CRM) + xưởng SX của dự án.
+  useEffect(() => {
+    if (state !== 'awaiting_company' || !canSale) return undefined;
+    let active = true;
+    const buildNotes = (loai, xuong) => {
+      const parts = [loai, xuong].map((s) => String(s || '').trim()).filter(Boolean);
+      return parts.length ? parts.join(' - ') : '';
+    };
+    const fill = async () => {
+      let loai = md.lead_type_name || '';
+      let xuong = md.workshop_company_name || '';
+      if ((!loai || !xuong) && comment?.lead_id) {
+        try {
+          const lr = await api.get(`/crm/leads/${comment.lead_id}/detail`);
+          const deal = lr.data || {};
+          if (!loai) loai = deal.lead_type?.name || deal.lead_type_name || '';
+          if (!xuong) {
+            xuong = deal.sx_pipeline_stage?.company?.short_name
+              || deal.sx_pipeline_stage?.company?.name
+              || '';
+          }
+        } catch { /* giữ metadata */ }
+      }
+      if (!xuong && md.project_id) {
+        try {
+          const pr = await api.get(`/production/projects/${md.project_id}`);
+          const p = pr.data || {};
+          xuong = p.company?.short_name || p.company?.name || p.company_name || '';
+        } catch { /* sale có thể không có quyền SX */ }
+      }
+      if (!active) return;
+      const next = buildNotes(loai, xuong);
+      if (next) setSelectNotes((prev) => (prev.trim() ? prev : next));
+    };
+    void fill();
+    return () => { active = false; };
+  }, [
+    state,
+    canSale,
+    comment?.lead_id,
+    md.lead_type_name,
+    md.workshop_company_name,
+    md.project_id,
+  ]);
+
+  const run = async (key, fn) => {
+    setBusy(key);
+    setErr('');
+    try {
+      await fn();
+    } catch (e) {
+      setErr(e?.response?.data?.error || e?.message || 'Có lỗi xảy ra');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const projLabel = md.project_name || md.project_code || 'dự án';
+
+  return (
+    <div className="my-2 flex justify-center">
+      <div className="w-full max-w-[560px] rounded-2xl border border-orange-200 bg-orange-50/70 px-4 py-3 shadow-sm">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-orange-500/10 text-orange-600">
+            <Truck className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-[13px] font-bold text-orange-800 leading-tight">Bàn giao Vận chuyển / Lắp đặt</p>
+            <p className="text-[11px] text-orange-700/80 leading-tight truncate">Dự án: {projLabel}</p>
+          </div>
+          <span className="ml-auto shrink-0 text-[10px] text-orange-700/70" title={formatCrmCommentFullDateTime(comment.created_at)}>
+            {formatCrmFbRelativeTime(comment.created_at)}
+          </span>
+        </div>
+
+        {state === 'awaiting_company' && (
+          <div className="space-y-2">
+            {canSale ? (
+              <>
+                <label className="block">
+                  <span className="text-[11px] font-semibold text-gray-600">Công ty VC/LĐ *</span>
+                  <select
+                    value={companyId}
+                    onChange={(e) => setCompanyId(e.target.value)}
+                    className="mt-1 w-full h-9 px-2 border border-orange-200 rounded-lg text-[13px] bg-white focus:ring-2 focus:ring-orange-400"
+                  >
+                    <option value="">— Chọn công ty —</option>
+                    {companies.map((c) => (
+                      <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-[11px] font-semibold text-gray-600">Ghi chú</span>
+                  <textarea
+                    value={selectNotes}
+                    onChange={(e) => setSelectNotes(e.target.value)}
+                    rows={2}
+                    placeholder="Loại - xưởng - …"
+                    className="mt-1 w-full px-2 py-1.5 border border-orange-200 rounded-lg text-[13px] bg-white focus:ring-2 focus:ring-orange-400 resize-y"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] font-semibold text-gray-600 flex items-center gap-1"><Calendar className="h-3.5 w-3.5" /> Ngày lấy hàng *</span>
+                  <input
+                    type="datetime-local"
+                    value={pickupAt}
+                    onChange={(e) => setPickupAt(e.target.value)}
+                    className="mt-1 w-full h-9 px-2 border border-orange-200 rounded-lg text-[13px] bg-white focus:ring-2 focus:ring-orange-400"
+                  />
+                </label>
+                {err && <p className="text-[11px] text-red-600">{err}</p>}
+                <button
+                  type="button"
+                  disabled={!companyId || !pickupAt || busy === 'select'}
+                  onClick={() => run('select', () => onSelect(comment.id, {
+                    logistics_company_id: companyId,
+                    notes: selectNotes.trim() || null,
+                    pickup_at: new Date(pickupAt).toISOString(),
+                  }))}
+                  className="w-full h-9 rounded-lg bg-orange-600 text-white text-[13px] font-semibold hover:bg-orange-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {busy === 'select' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />}
+                  Chọn & bàn giao
+                </button>
+              </>
+            ) : (
+              <p className="text-[12px] text-orange-700/90">
+                Chỉ Sale CRM phụ trách deal mới được chọn công ty VC/LĐ và ngày lấy hàng.
+              </p>
+            )}
+          </div>
+        )}
+
+        {state === 'awaiting_date' && (
+          <div className="space-y-2">
+            <p className="text-[12px] text-gray-700">
+              Đã chọn: <strong>{md.logistics_company_name}</strong>
+            </p>
+            {md.select_notes ? (
+              <p className="text-[12px] text-gray-600 bg-white/80 border border-orange-100 rounded-lg px-2 py-1.5">
+                <span className="text-gray-500">Ghi chú:</span> {md.select_notes}
+              </p>
+            ) : null}
+            {canSale ? (
+              <>
+                <label className="block">
+                  <span className="text-[11px] font-semibold text-gray-600 flex items-center gap-1"><Calendar className="h-3.5 w-3.5" /> Ngày lấy hàng *</span>
+                  <input
+                    type="datetime-local"
+                    value={pickupAt}
+                    onChange={(e) => setPickupAt(e.target.value)}
+                    className="mt-1 w-full h-9 px-2 border border-orange-200 rounded-lg text-[13px] bg-white focus:ring-2 focus:ring-orange-400"
+                  />
+                </label>
+                <input
+                  type="text"
+                  value={pickupNotes}
+                  onChange={(e) => setPickupNotes(e.target.value)}
+                  placeholder="Ghi chú (tuỳ chọn)"
+                  className="w-full h-9 px-2 border border-orange-200 rounded-lg text-[13px] bg-white focus:ring-2 focus:ring-orange-400"
+                />
+                {err && <p className="text-[11px] text-red-600">{err}</p>}
+                <button
+                  type="button"
+                  disabled={!pickupAt || busy === 'schedule'}
+                  onClick={() => run('schedule', () => onSchedule(comment.id, { pickup_at: new Date(pickupAt).toISOString(), pickup_notes: pickupNotes }))}
+                  className="w-full h-9 rounded-lg bg-sky-600 text-white text-[13px] font-semibold hover:bg-sky-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {busy === 'schedule' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Package className="h-4 w-4" />}
+                  Tạo sự kiện lấy hàng
+                </button>
+              </>
+            ) : (
+              <p className="text-[12px] text-orange-700/90">
+                Chỉ Sale CRM phụ trách deal mới được chọn ngày lấy hàng.
+              </p>
+            )}
+          </div>
+        )}
+
+        {(state === 'awaiting_confirm' || state === 'done') && (
+          <div className="space-y-2">
+            <div className="rounded-lg bg-white border border-orange-100 px-3 py-2 text-[12px] text-gray-700 space-y-0.5">
+              <p>
+                <span className="text-gray-500">Công ty:</span> <strong>{md.logistics_company_name}</strong>
+              </p>
+              {md.select_notes ? (
+                <p><span className="text-gray-500">Ghi chú:</span> {md.select_notes}</p>
+              ) : null}
+              <p><span className="text-gray-500">Ngày lấy hàng:</span> <strong>{formatVcDateTime(md.pickup_at)}</strong></p>
+              <p className="text-[11px] text-orange-700/80 pt-0.5">
+                Chỉ phụ trách chính Xưởng và VC/LĐ được xác nhận.
+              </p>
+            </div>
+            {state === 'done' ? (
+              <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-[12px] font-semibold text-emerald-800">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                Đã xác nhận giữa Xưởng và VC/LĐ — ngày {formatVcDateTime(md.pickup_at)} giao nhận hàng.
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  {
+                    side: 'production',
+                    label: 'Xưởng (SX)',
+                    personName: md.production_person_name,
+                    confirmed: md.confirmed_production,
+                    can: canConfirmProduction,
+                  },
+                  {
+                    side: 'logistics',
+                    label: 'VC/LĐ',
+                    personName: md.logistics_person_name,
+                    confirmed: md.confirmed_logistics,
+                    can: canConfirmLogistics,
+                  },
+                ].map((s) => (
+                  <div key={s.side} className="rounded-lg border border-orange-100 bg-white px-2 py-2 text-center">
+                    <p className="text-[11px] font-semibold text-gray-600">{s.label}</p>
+                    {s.personName ? (
+                      <p className="text-[10px] text-gray-500 mb-1 truncate" title={s.personName}>{s.personName}</p>
+                    ) : (
+                      <p className="text-[10px] text-gray-400 mb-1">Chưa gán phụ trách</p>
+                    )}
+                    {s.confirmed ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
+                        <CheckCircle2 className="h-3.5 w-3.5" /> Đã xác nhận
+                      </span>
+                    ) : s.can ? (
+                      <button
+                        type="button"
+                        disabled={busy === `confirm-${s.side}`}
+                        onClick={() => run(`confirm-${s.side}`, () => onConfirm(comment.id, s.side))}
+                        className="w-full h-8 rounded-lg bg-emerald-600 text-white text-[12px] font-semibold hover:bg-emerald-700 disabled:opacity-50 flex items-center justify-center gap-1"
+                      >
+                        {busy === `confirm-${s.side}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                        Xác nhận
+                      </button>
+                    ) : (
+                      <span className="text-[11px] text-gray-400">Chờ xác nhận</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {err && <p className="text-[11px] text-red-600">{err}</p>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function CommentThread({
   comments,
   loading,
@@ -731,6 +1031,9 @@ function CommentThread({
   newCommentCount = 0,
   onScrollToNewComments,
   quickReplyTemplates = [],
+  onVcSelect,
+  onVcSchedule,
+  onVcConfirm,
 }) {
   const selfUid = user?.userId || user?.id;
   const commentsByParent = useMemo(() => groupByParent(comments), [comments]);
@@ -799,6 +1102,20 @@ function CommentThread({
     const list = commentsByParent.get(parentKey) || [];
     return list.map((c) => {
       const bodyText = getBody(c) || '';
+
+      if (c.comment_type === 'vc_handover' && depth === 0 && onVcSelect) {
+        return (
+          <VcHandoverCard
+            key={c.id}
+            comment={c}
+            user={user}
+            onSelect={onVcSelect}
+            onSchedule={onVcSchedule}
+            onConfirm={onVcConfirm}
+          />
+        );
+      }
+
       const isSys = isSystemComment(bodyText);
 
       if (isSys && depth === 0) {
@@ -1354,6 +1671,26 @@ export function CrmLeadCommentsPanel({
     }
   };
 
+  const applyVcRow = useCallback((row) => {
+    if (row?.id) setComments((prev) => replaceComment(prev, row));
+    return row;
+  }, []);
+
+  const vcSelect = useCallback(async (commentId, payload) => {
+    const r = await api.patch(`/vc-handover/comments/${commentId}/select`, payload);
+    return applyVcRow(r.data?.comment);
+  }, [applyVcRow]);
+
+  const vcSchedule = useCallback(async (commentId, payload) => {
+    const r = await api.patch(`/vc-handover/comments/${commentId}/schedule`, payload);
+    return applyVcRow(r.data?.comment);
+  }, [applyVcRow]);
+
+  const vcConfirm = useCallback(async (commentId, side) => {
+    const r = await api.patch(`/vc-handover/comments/${commentId}/confirm`, { side });
+    return applyVcRow(r.data?.comment);
+  }, [applyVcRow]);
+
   if (!showOnScreen) return <CommentDisplayHiddenBanner />;
 
   return (
@@ -1400,6 +1737,9 @@ export function CrmLeadCommentsPanel({
       commentMembers={members}
       readDetailId={readDetailId}
       onOpenReadDetail={setReadDetailId}
+      onVcSelect={vcSelect}
+      onVcSchedule={vcSchedule}
+      onVcConfirm={vcConfirm}
     />
   );
 }

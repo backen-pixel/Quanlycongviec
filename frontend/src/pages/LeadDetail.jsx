@@ -2104,6 +2104,19 @@ export default function LeadDetail() {
         </div>
       )}
 
+      {/* Banner lý do trả Deal → Lead */}
+      {lead?.type === 'lead' && lead?.revert_to_lead_reason && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+          <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center text-lg shrink-0">↩️</div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <span className="text-sm font-bold text-amber-800">ĐÃ TRẢ TỪ DEAL VỀ LEAD</span>
+            </div>
+            <p className="text-sm text-amber-900 font-medium">Lý do: {lead.revert_to_lead_reason}</p>
+          </div>
+        </div>
+      )}
+
       {/* Pipeline Progress - MISA Style Stepper */}
       {lead?.type === 'deal' && lead?.project_id && (
         <p className="text-xs text-sky-800 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2 mb-2">
@@ -3286,6 +3299,7 @@ export default function LeadDetail() {
                 onChange={(uid) => { setTransferAssigneeId(uid || ''); setTransferRegionError(''); }}
                 placeholder="Chọn nhân viên thuộc khu vực..."
                 size="md"
+                displayFullName
               />
               {!transferRegionId && (
                 <p className="text-[10px] text-amber-500 mt-1">⚠️ Chọn khu vực trước để lọc nhân viên</p>
@@ -5214,6 +5228,16 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
         </div>
       )}
 
+      {lead?.type === 'lead' && lead?.revert_to_lead_reason && (
+        <div className="flex items-start gap-2 py-1.5 px-1">
+          <span className="text-sm">↩️</span>
+          <div>
+            <span className="text-xs text-gray-500">Lý do trả về Lead</span>
+            <p className="text-sm text-amber-700">{lead.revert_to_lead_reason}</p>
+          </div>
+        </div>
+      )}
+
       <div>
         <LeadInfoEditableRow {...editableRowProps} icon="📊" label="Xác suất" field="probability"
           value={lead?.probability ?? ''}
@@ -6064,11 +6088,16 @@ function RevertToLeadModal({ leadId, lead, onClose, onSuccess }) {
   const [error, setError] = useState('');
 
   const hasProject = !!lead?.project_id;
-  const canSubmit = !!newOwner && !submitting && (!hasProject || unlinkProject);
+  const canSubmit =
+    !!newOwner && !!reason.trim() && !submitting && (!hasProject || unlinkProject);
 
   const handleSubmit = async () => {
     if (!newOwner) {
       setError('Vui lòng chọn người phụ trách Lead mới.');
+      return;
+    }
+    if (!reason.trim()) {
+      setError('Vui lòng nhập lý do trả Deal về Lead.');
       return;
     }
     if (hasProject && !unlinkProject) {
@@ -6080,7 +6109,7 @@ function RevertToLeadModal({ leadId, lead, onClose, onSuccess }) {
     try {
       const { data } = await api.post(`/crm/leads/${leadId}/convert-to-lead`, {
         assigned_to: newOwner,
-        reason: reason.trim() || undefined,
+        reason: reason.trim(),
         ...(hasProject ? { unlink_project: true } : {}),
       });
       if (data?.message) {
@@ -6162,14 +6191,18 @@ function RevertToLeadModal({ leadId, lead, onClose, onSuccess }) {
           </div>
 
           <div>
-            <label className="text-xs font-bold text-gray-700 mb-1 block">📝 Lý do (không bắt buộc)</label>
+            <label className="text-xs font-bold text-gray-700 mb-1 block">
+              📝 Lý do trả về Lead <span className="text-red-500">*</span>
+            </label>
             <textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              rows={2}
+              rows={3}
+              maxLength={500}
               placeholder="VD: Khách chưa sẵn sàng, cần nuôi tiếp ở Lead…"
               className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
             />
+            <p className="text-[10px] text-gray-400 mt-1 text-right">{reason.trim().length}/500</p>
           </div>
 
           {error && (

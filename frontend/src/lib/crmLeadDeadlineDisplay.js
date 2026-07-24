@@ -72,11 +72,11 @@ export function isCrmPipelineStageLost(stage) {
 /** Nguồn hạn hiển thị trên thẻ lead/deal CRM */
 export const CRM_DEADLINE_SOURCE_META = {
   kanban: {
-    label: 'Deadline thẻ',
+    label: 'Deadline tự setup',
     className: 'bg-rose-50 text-rose-700 border-rose-200',
   },
   task: {
-    label: 'Nhiệm vụ',
+    label: 'Deadline nhiệm vụ',
     className: 'bg-indigo-50 text-indigo-700 border-indigo-200',
   },
   sla: {
@@ -105,20 +105,39 @@ export function getPipelineStageSlaDeadlineTs(stageEnteredAt, stage, leadItem) {
   return endOfVnCalendarDayAfterEntered(stageEnteredAt, slaDays).getTime();
 }
 
-/** Kanban: ưu tiên hạn NV mở mới nhất, không có thì SLA cột. Bỏ qua cột không deadline / chưa có SĐT. */
-export function resolveCrmLeadKanbanScheduleSource(item, stage) {
-  const st = stage || item?.stage;
+/**
+ * Thứ tự ưu tiên hạn hiệu lực trên lead/deal:
+ * 1) Deadline nhiệm vụ (NV CRM đang mở có Ngày hẹn)
+ * 2) Deadline tự setup (kanban_deadline_at / Deadline thẻ)
+ * 3) SLA cột
+ */
+export function resolveCrmLeadEffectiveDeadlineSource(item, stage) {
+  const st = stage || item?.stage || item?._stage;
   if (shouldHideCrmKanbanDeadlineOnCard(item, st)) {
     return { source: null, deadlineTs: null };
   }
+
   const taskIso = item?.crm_next_open_task_deadline;
   if (taskIso != null && taskIso !== '') {
     const ts = new Date(taskIso).getTime();
     if (!Number.isNaN(ts)) return { source: 'task', deadlineTs: ts };
   }
-  const slaTs = getPipelineStageSlaDeadlineTs(item?.stage_entered_at, stage, item);
+
+  const manual = item?.kanban_deadline_at;
+  if (manual != null && manual !== '') {
+    const ts = new Date(manual).getTime();
+    if (!Number.isNaN(ts)) return { source: 'kanban', deadlineTs: ts };
+  }
+
+  const slaTs = getPipelineStageSlaDeadlineTs(item?.stage_entered_at, st, item);
   if (slaTs != null) return { source: 'sla', deadlineTs: slaTs };
+
   return { source: null, deadlineTs: null };
+}
+
+/** @deprecated Dùng resolveCrmLeadEffectiveDeadlineSource — giữ alias tương thích. */
+export function resolveCrmLeadKanbanScheduleSource(item, stage) {
+  return resolveCrmLeadEffectiveDeadlineSource(item, stage);
 }
 
 function fieldToDeadlineSource(field) {
@@ -191,19 +210,17 @@ export function pickDeadlineConfigValueWithSource(item, primary, fallback) {
 }
 
 /**
- * View Deadline Dashboard: thống nhất thứ tự ưu tiên với thẻ Kanban.
- * kanban_deadline_at → cấu hình primary/fallback → SLA cột.
+ * View Deadline Dashboard + thẻ Kanban: ưu tiên cố định
+ * Deadline nhiệm vụ → Deadline tự setup → SLA cột.
+ * (config primary/fallback chỉ dùng khi không có 3 nguồn trên — giữ tương thích cũ)
  */
 export function resolveCrmLeadDeadlineViewSource(item, stage, config) {
   const st = stage || item?._stage || item?.stage;
+  const primary = resolveCrmLeadEffectiveDeadlineSource(item, st);
+  if (primary.deadlineTs != null) return primary;
+
   if (shouldHideCrmKanbanDeadlineOnCard(item, st)) {
     return { deadlineTs: null, source: null };
-  }
-
-  const manual = item?.kanban_deadline_at;
-  if (manual != null && manual !== '') {
-    const ts = new Date(manual).getTime();
-    if (!Number.isNaN(ts)) return { deadlineTs: ts, source: 'kanban' };
   }
 
   const cfg = config || {};
@@ -212,10 +229,10 @@ export function resolveCrmLeadDeadlineViewSource(item, stage, config) {
     cfg.primary_field || 'crm_next_open_task_deadline',
     cfg.fallback_field || 'expected_close_date',
   );
-  if (picked.deadlineTs != null) return picked;
-
-  const slaTs = getPipelineStageSlaDeadlineTs(item?.stage_entered_at, st, item);
-  if (slaTs != null) return { source: 'sla', deadlineTs: slaTs };
+  // Tránh trùng nguồn đã xét ở trên
+  if (picked.deadlineTs != null && picked.source !== 'task' && picked.source !== 'kanban') {
+    return picked;
+  }
 
   return { deadlineTs: null, source: null };
 }

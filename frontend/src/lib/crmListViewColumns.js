@@ -65,6 +65,7 @@ export function buildStaticListColumns(pipelineType) {
     { key: 'contract_date', label: 'Ngày ký HĐ', group: 'Mốc quy trình', defaultVisible: isDeal },
     { key: 'close_result', label: 'Kết quả chốt', group: 'Kết quả', defaultVisible: isDeal },
     { key: 'lost_reason', label: 'Lý do thất bại', group: 'Kết quả', defaultVisible: false },
+    { key: 'revert_to_lead_reason', label: 'Lý do trả về Lead', group: 'Kết quả', defaultVisible: false, leadOnly: true },
     { key: 'estimated_value', label: 'Giá trị dự kiến', group: 'Tài chính', defaultVisible: true, align: 'right' },
     { key: 'probability', label: 'Xác suất chốt %', group: 'Tài chính', defaultVisible: isDeal, align: 'right' },
     { key: 'weighted_value', label: 'Giá trị kỳ vọng', group: 'Tài chính', defaultVisible: false, align: 'right' },

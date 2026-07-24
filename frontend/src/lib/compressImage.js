@@ -2,7 +2,8 @@
 // Bỏ qua file không phải ảnh hoặc nhỏ hơn 500KB. Luôn resolve (lỗi thì trả file gốc).
 export function compressImage(file, maxWidth = 1920, quality = 0.8) {
   return new Promise((resolve) => {
-    if (!file.type.startsWith('image/') || file.size < 500 * 1024) { resolve(file); return; }
+    const mime = String(file?.type || '');
+    if (!mime.startsWith('image/') || (file?.size || 0) < 500 * 1024) { resolve(file); return; }
     const img = new Image();
     img.onload = () => {
       const scale = Math.min(1, maxWidth / img.width);

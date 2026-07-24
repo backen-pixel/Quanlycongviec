@@ -24,10 +24,72 @@ const {
   clearProjectDeliveryDeadlineForCrmLead,
   isClearsDeliveryDeadlineColumnError,
 } = require('./clearProjectDeliveryDeadline');
+const { startNextCrmTaskDeadlineAfterComplete } = require('./crmTaskSequentialDeadline');
+const { getRedisIfReady } = require('../config/redis');
+const { createCrmTaskOutbox } = require('./crmTaskOutbox');
 
 function isQuickVerdictColumnError(err) {
   const m = String(err?.message || '').toLowerCase();
   return m.includes('requires_quick_verdict') || m.includes('quick_verdict');
+}
+
+/** Idempotency: header Idempotency-Key hoặc body.idempotency_key — chống retry tạo task trùng. */
+const CRM_TASK_IDEM_TTL_MS = 24 * 60 * 60 * 1000;
+const crmTaskIdemLocal = new Map();
+
+function normalizeCrmTaskIdempotencyKey(raw) {
+  const s = String(raw || '').trim();
+  if (!s || s.length > 128) return null;
+  if (!/^[A-Za-z0-9._:-]+$/.test(s)) return null;
+  return s;
+}
+
+function resolveCrmTaskIdempotencyKey(req, body) {
+  const fromHeader = req?.headers?.['idempotency-key'] || req?.headers?.['Idempotency-Key'];
+  return normalizeCrmTaskIdempotencyKey(fromHeader)
+    || normalizeCrmTaskIdempotencyKey(body?.idempotency_key);
+}
+
+function crmTaskIdemCacheKey(userId, leadId, key) {
+  return `${userId || 'anon'}:${leadId}:${key}`;
+}
+
+async function getCrmTaskIdempotentResult(cacheKey) {
+  const now = Date.now();
+  const loc = crmTaskIdemLocal.get(cacheKey);
+  if (loc && loc.exp > now) return loc.value;
+  const redis = getRedisIfReady();
+  if (redis) {
+    try {
+      const raw = await redis.get(`crm_task_idem:${cacheKey}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        crmTaskIdemLocal.set(cacheKey, { value: parsed, exp: now + CRM_TASK_IDEM_TTL_MS });
+        return parsed;
+      }
+    } catch (_) { /* ignore */ }
+  }
+  return null;
+}
+
+async function setCrmTaskIdempotentResult(cacheKey, taskId) {
+  const value = { taskId: String(taskId) };
+  crmTaskIdemLocal.set(cacheKey, { value, exp: Date.now() + CRM_TASK_IDEM_TTL_MS });
+  if (crmTaskIdemLocal.size > 5000) {
+    const first = crmTaskIdemLocal.keys().next().value;
+    if (first) crmTaskIdemLocal.delete(first);
+  }
+  const redis = getRedisIfReady();
+  if (redis) {
+    try {
+      await redis.set(
+        `crm_task_idem:${cacheKey}`,
+        JSON.stringify(value),
+        'EX',
+        Math.floor(CRM_TASK_IDEM_TTL_MS / 1000),
+      );
+    } catch (_) { /* ignore */ }
+  }
 }
 
 /** Cập nhật một phần checklist (không gian chung) — gộp theo id, không xóa mục nội bộ. */
@@ -112,8 +174,43 @@ function normalizeTaskExecutorCompanyId(raw, leadCompanyId) {
 }
 
 async function createCrmLeadTask(req, leadId, body) {
-  const b = body;
+  const b = body || {};
   const targetLeadId = await resolveCrmTaskWriteLeadId(leadId);
+
+  const idemKey = resolveCrmTaskIdempotencyKey(req, b);
+  const idemCacheKey = idemKey
+    ? crmTaskIdemCacheKey(req.user?.userId, targetLeadId, idemKey)
+    : null;
+  if (idemCacheKey) {
+    const prior = await getCrmTaskIdempotentResult(idemCacheKey);
+    if (prior?.taskId) {
+      const { data: existing } = await supabase
+        .from('crm_tasks')
+        .select(CRM_TASK_SELECT)
+        .eq('id', prior.taskId)
+        .eq('lead_id', targetLeadId)
+        .maybeSingle();
+      if (existing) {
+        try {
+          const [enriched] = await attachAssigneesToCrmTasks([existing]);
+          return {
+            data: { ...enriched, idempotent: true },
+            status: 200,
+            leadId: targetLeadId,
+            idempotent: true,
+          };
+        } catch (_) {
+          return {
+            data: { ...existing, assignees: existing.assignees || [], idempotent: true },
+            status: 200,
+            leadId: targetLeadId,
+            idempotent: true,
+          };
+        }
+      }
+    }
+  }
+
   let pipelineStageId = b.pipeline_stage_id || null;
   if (!pipelineStageId) {
     const { data: leadRow } = await supabase.from('crm_leads').select('stage_id').eq('id', targetLeadId).maybeSingle();
@@ -156,6 +253,14 @@ async function createCrmLeadTask(req, leadId, body) {
     requires_quick_verdict: !!b.requires_quick_verdict,
     blocks_stage_advance: isAdminLike(req.user) ? !!b.blocks_stage_advance : false,
     show_excel_quotation_upload: !!b.show_excel_quotation_upload,
+    auto_upload_attachments_to_drive: !!b.auto_upload_attachments_to_drive,
+    show_fill_form: !!b.show_fill_form,
+    form_config: (b.form_config && typeof b.form_config === 'object' && !Array.isArray(b.form_config))
+      ? b.form_config
+      : {},
+    form_data: (b.form_data && typeof b.form_data === 'object' && !Array.isArray(b.form_data))
+      ? b.form_data
+      : {},
   };
   if (b.executor_company_id !== undefined) {
     insertRow.executor_company_id = normalizeTaskExecutorCompanyId(
@@ -174,23 +279,45 @@ async function createCrmLeadTask(req, leadId, body) {
   if (tenantId) invalidateTenantUsageCache(tenantId);
 
   if (rawAssigneeIds.length) {
-    await replaceCrmTaskAssignees(data.id, rawAssigneeIds);
-    [data] = await attachAssigneesToCrmTasks([data]);
+    try {
+      await replaceCrmTaskAssignees(data.id, rawAssigneeIds);
+    } catch (assigneeErr) {
+      // Compensation: chuỗi ghi không có transaction — xóa task vừa tạo, tránh orphan thiếu người được giao
+      try {
+        await supabase.from('crm_tasks').delete().eq('id', data.id);
+      } catch (rbErr) {
+        console.error('[crm_task] rollback sau lỗi ghi assignees thất bại:', rbErr.message);
+      }
+      return {
+        error: `Không ghi được người được giao: ${assigneeErr.message}`,
+        status: 500,
+        code: 'assignee_write_failed',
+      };
+    }
+    try {
+      [data] = await attachAssigneesToCrmTasks([data]);
+    } catch (attachErr) {
+      // Enrich read-only — không rollback, chỉ fallback danh sách id
+      console.warn('[crm_task] attach assignees enrich:', attachErr.message);
+      data.assignees = rawAssigneeIds.map((id) => ({ id }));
+    }
   } else {
     data.assignees = [];
   }
 
+  // ── SAU COMMIT: side-effect qua outbox (không nằm trong transaction DB-core) ──
+  // DB-core (task + assignees) đã commit tới đây; thất bại side-effect KHÔNG rollback core.
+  // notify phụ thuộc assignmentId nên chạy tuần tự sau assignment_sync.
   let assignmentId = null;
-  try {
+
+  const runAssignmentSync = async () => {
     const sync = await syncAssignmentFromCrmTask(req, data, rawAssigneeIds);
     assignmentId = sync?.assignmentId || null;
     if (assignmentId) data.crm_assignment_id = assignmentId;
-  } catch (syncErr) {
-    console.warn('[sync] crm_task→assignment create:', syncErr.message);
-  }
+  };
 
-  try {
-    const { data: leadSnap } = await supabase.from('crm_leads')
+  const runNotifyAssignees = async () => {
+    const { data: leadSnapNotify } = await supabase.from('crm_leads')
       .select('id, code, title, company_id, region_id')
       .eq('id', targetLeadId)
       .maybeSingle();
@@ -201,7 +328,7 @@ async function createCrmLeadTask(req, leadId, body) {
         assignmentId: notifyAssignmentId,
         title: data.title,
         userIds: rawAssigneeIds,
-        lead: leadSnap,
+        lead: leadSnapNotify,
         deadline: data.deadline,
         stageSlug: data.stage_slug,
         crmTaskId: data.id,
@@ -216,9 +343,21 @@ async function createCrmLeadTask(req, leadId, body) {
           { lead_id: targetLeadId, nav_tab: 'tasks', ecosystem_module_key: eco || 'crm' });
       }
     }
-  } catch (ne) { console.warn('[NOTIFY] crm_task_created:', ne.message); }
+  };
 
-  return { data, status: 201, leadId: targetLeadId };
+  const outbox = createCrmTaskOutbox({ taskId: data.id, leadId: targetLeadId, op: 'create' });
+  outbox.enqueue('assignment_sync', runAssignmentSync,
+    { dedupeKey: idemCacheKey ? `${idemCacheKey}:assignment_sync` : null });
+  outbox.enqueue('notify_assignees', runNotifyAssignees,
+    { dedupeKey: idemCacheKey ? `${idemCacheKey}:notify` : null });
+  const sideEffects = await outbox.drain();
+
+  // Chỉ ghi idempotency sau khi chuỗi tạo + assignees thành công (không emit realtime ở đây — route làm)
+  if (idemCacheKey && data?.id) {
+    await setCrmTaskIdempotentResult(idemCacheKey, data.id);
+  }
+
+  return { data, status: 201, leadId: targetLeadId, sideEffects };
 }
 
 async function updateCrmLeadTask(req, leadId, taskId, body) {
@@ -285,7 +424,7 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
   }
 
   const { data: priorRow } = await supabase.from('crm_tasks')
-    .select('assignee_id, blocks_stage_advance, status, clears_delivery_deadline_on_complete, lead_id')
+    .select('assignee_id, blocks_stage_advance, status, clears_delivery_deadline_on_complete, lead_id, order_index, pipeline_stage_id, stage_slug, deadline_days')
     .eq('id', taskId).maybeSingle();
   let priorAssigneeIds = [];
   if (Array.isArray(b.assignee_ids)) {
@@ -306,12 +445,23 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
 
   const update = { updated_at: new Date().toISOString() };
   const fields = ['title', 'description', 'status', 'priority', 'stage_slug', 'order_index',
-    'assignee_id', 'supervisor_id', 'deadline', 'shared_to_project', 'show_excel_quotation_upload', 'checklist'];
+    'assignee_id', 'supervisor_id', 'deadline', 'shared_to_project', 'show_excel_quotation_upload',
+    'auto_upload_attachments_to_drive', 'show_fill_form', 'form_config', 'form_data', 'checklist'];
   fields.forEach((f) => {
     if (b[f] === undefined) return;
     if (f === 'deadline' && b[f] != null && b[f] !== '') update[f] = normalizeTimestamp(b[f]);
     else if (f === 'checklist') {
       update[f] = resolvedChecklist != null ? resolvedChecklist : (Array.isArray(b[f]) ? b[f] : []);
+    }
+    else if ((f === 'form_config' || f === 'form_data') && (typeof b[f] !== 'object' || Array.isArray(b[f]) || b[f] == null)) {
+      update[f] = {};
+    }
+    else if (f === 'form_data' && typeof b[f] === 'object') {
+      update[f] = {
+        ...b[f],
+        submitted_by: b[f].submitted_by || req.user?.userId || null,
+        submitted_at: b[f].submitted_at || new Date().toISOString(),
+      };
     }
     else update[f] = b[f];
   });
@@ -390,6 +540,20 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
         console.warn('[crm] clear delivery deadline on task complete:', clearErr.message);
       }
     }
+    try {
+      const nextDl = await startNextCrmTaskDeadlineAfterComplete(supabase, {
+        id: data?.id || taskId,
+        lead_id: data?.lead_id || priorRow.lead_id || leadId,
+        order_index: data?.order_index ?? priorRow.order_index,
+        pipeline_stage_id: data?.pipeline_stage_id ?? priorRow.pipeline_stage_id,
+        stage_slug: data?.stage_slug ?? priorRow.stage_slug,
+      });
+      if (nextDl?.started) {
+        data.next_sequential_deadline = nextDl;
+      }
+    } catch (seqErr) {
+      console.warn('[crm] start next sequential deadline:', seqErr.message);
+    }
   }
 
   let newAssigneeIds = null;
@@ -403,38 +567,40 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
   const assigneeIdsForSync = Array.isArray(b.assignee_ids)
     ? b.assignee_ids.filter(Boolean).map(String)
     : (data.assignees || []).map((u) => String(u.id)).filter(Boolean);
+  // ── SAU COMMIT: side-effect qua outbox (giống create) — core update đã ghi xong ──
+  // notify chỉ cho assignee MỚI thêm (diff added vs priorAssigneeIds) — giữ nguyên logic cũ.
   let assignmentId = null;
-  try {
+
+  const runAssignmentSync = async () => {
     const sync = await syncAssignmentFromCrmTask(req, data, assigneeIdsForSync);
     assignmentId = sync?.assignmentId || null;
     if (assignmentId) data.crm_assignment_id = assignmentId;
-  } catch (syncErr) {
-    console.warn('[sync] crm_task→assignment update:', syncErr.message);
-  }
+  };
 
-  if (Array.isArray(b.assignee_ids) && assignmentId) {
+  const runNotifyAddedAssignees = async () => {
+    if (!Array.isArray(b.assignee_ids) || !assignmentId) return;
     const priorSet = new Set(priorAssigneeIds.map(String));
     const added = assigneeIdsForSync.filter((uid) => !priorSet.has(String(uid)));
-    if (added.length) {
-      try {
-        const { data: leadSnap } = await supabase.from('crm_leads')
-          .select('id, code, title, company_id, region_id')
-          .eq('id', data.lead_id)
-          .maybeSingle();
-        await notifyNewCrmAssignmentAssignees(req, {
-          assignmentId,
-          title: data.title,
-          userIds: added,
-          lead: leadSnap,
-          deadline: data.deadline,
-          stageSlug: data.stage_slug,
-          crmTaskId: data.id,
-        });
-      } catch (ne) {
-        console.warn('[NOTIFY] crm_assignment assignees:', ne.message);
-      }
-    }
-  }
+    if (!added.length) return;
+    const { data: leadSnap } = await supabase.from('crm_leads')
+      .select('id, code, title, company_id, region_id')
+      .eq('id', data.lead_id)
+      .maybeSingle();
+    await notifyNewCrmAssignmentAssignees(req, {
+      assignmentId,
+      title: data.title,
+      userIds: added,
+      lead: leadSnap,
+      deadline: data.deadline,
+      stageSlug: data.stage_slug,
+      crmTaskId: data.id,
+    });
+  };
+
+  const outbox = createCrmTaskOutbox({ taskId, leadId, op: 'update' });
+  outbox.enqueue('assignment_sync', runAssignmentSync);
+  outbox.enqueue('notify_assignees', runNotifyAddedAssignees);
+  const sideEffects = await outbox.drain();
 
   return {
     data,
@@ -443,6 +609,7 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
     priorAssigneeId: priorRow?.assignee_id,
     priorAssigneeIds,
     newAssigneeIds,
+    sideEffects,
   };
 }
 

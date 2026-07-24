@@ -18,6 +18,7 @@ export default function ModuleQuickActions({
   className = '',
 }) {
   const badges = useUnreadBadges();
+  const eventsTo = trashTab === 'sx' ? '/sx/events' : trashTab === 'vc' ? '/vc/events' : '/crm/events';
 
   const ITEMS = [
     {
@@ -39,7 +40,7 @@ export default function ModuleQuickActions({
       hover: 'hover:bg-emerald-50 border-emerald-200',
     },
     {
-      to: '/crm/events',
+      to: eventsTo,
       icon: Calendar,
       label: 'Sự kiện',
       title: 'Sự kiện công ty',

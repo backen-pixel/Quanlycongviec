@@ -2416,9 +2416,15 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         };
       } else {
         const sxStage = pipelineStages.find((s) => String(s.id) === String(stageId));
-        // Cột bàn giao VC: hỏi lần đầu; đã bàn giao thì chuyển cột SX bình thường
+        // Cột bàn giao VC: gửi yêu cầu để Sale CRM chọn công ty VC/LĐ trong bình luận (không mở modal).
         if (sxStage?.is_handover_to_logistics === true && !isProjectAlreadyInLogistics(project)) {
-          setHandoverModal({ projectId: id, projectName: project?.name || project?.code || '', targetSxStageId: sxStage?.id || stageId });
+          try {
+            await api.post(`/vc-handover/projects/${id}/request`, { sx_stage_id: String(sxStage?.id || stageId) });
+            alert('Đã gửi yêu cầu chọn công ty Vận chuyển/Lắp đặt cho Sale CRM (hiển thị trong bình luận của deal).');
+            refreshProjectSilently?.();
+          } catch (e) {
+            alert(e.response?.data?.error || 'Không gửi được yêu cầu bàn giao VC/LĐ');
+          }
           return;
         }
         if (sxStage?.is_switch_workshop_type === true && sxStage?.target_workshop_type_id) {

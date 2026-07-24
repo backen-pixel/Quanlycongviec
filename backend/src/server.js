@@ -375,6 +375,7 @@ app.use('/api/crm', require('./routes/crm'));
 app.use('/api/trash', require('./routes/trash'));
 app.use('/api/messenger', require('./routes/messengerGroups'));
 app.use('/api/events', require('./routes/events'));
+app.use('/api/vc-handover', require('./routes/vcHandover'));
 app.use('/api/internal-social', require('./routes/internalSocial'));
 app.use('/api/release-notes', require('./routes/releaseNotes'));
 app.use('/api/app-updates/check', externalLimiter); // app gọi check công khai → rate-limit
@@ -1158,6 +1159,13 @@ server.listen(config.port, () => {
 
   // Cron CSKH: nhắc chăm lại lead lúc 8h30 & 13h30 VN (disable bằng CSKH_CRON_DISABLED=1)
   try { require('./jobs/cskhReminder').start(io); } catch (e) { console.warn('[cskh-cron] Failed to start:', e.message); }
+
+  // Cron bổ sung nhiệm vụ CRM thiếu theo bộ mẫu — 12:30 & 18:00 VN (disable: CRM_MISSING_TASKS_CRON_DISABLED=1)
+  try {
+    require('./jobs/crmMissingTasksCron').start();
+  } catch (e) {
+    console.warn('[crm-missing-tasks] Failed to start:', e.message);
+  }
 
   // Cron AI nhắc hạn CRM (8:00 & 13:30 VN mặc định) — disable: AI_DEADLINE_CRON_DISABLED=1
   try {

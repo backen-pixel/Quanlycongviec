@@ -63,13 +63,13 @@ async function getUserOrgInfo(userId) {
   {
     const r = await supabase
       .from('users')
-      .select('id, full_name, email, company_id, department_id, drive_module')
+      .select('id, full_name, email, role, company_id, department_id, drive_module')
       .eq('id', userId)
       .maybeSingle();
     if (r.error) {
       const r2 = await supabase
         .from('users')
-        .select('id, full_name, email, company_id, department_id')
+        .select('id, full_name, email, role, company_id, department_id')
         .eq('id', userId)
         .maybeSingle();
       if (r2.error) {
@@ -112,20 +112,32 @@ async function getUserOrgInfo(userId) {
       .limit(5),
   ]);
 
+  // Nhiều NV CRM chỉ gắn phòng ban, company_id = null → lấy công ty từ phòng ban
+  let company = companyRes.data || null;
+  if (!company && deptRes.data?.company_id) {
+    company = await getCompanyInfo(deptRes.data.company_id);
+  }
+
+  const { normalizeDriveModule, inferDriveModuleFromRole } = require('./driveModuleDefaults');
+  const moduleKey = normalizeDriveModule(user.drive_module)
+    || inferDriveModuleFromRole(user.role)
+    || 'other';
+
   let region = null;
   const list = (regionRes.data || []).map((r) => r.region).filter(Boolean);
-  if (user.company_id) {
-    region = list.find((r) => r.company_id === user.company_id) || null;
+  const effectiveCompanyId = company?.id || user.company_id || null;
+  if (effectiveCompanyId) {
+    region = list.find((r) => r.company_id === effectiveCompanyId) || null;
   }
   if (!region) region = list[0] || null;
 
   return {
     user,
-    company: companyRes.data || null,
+    company,
     department: deptRes.data || null,
     region,
-    module_key: user.drive_module || 'other',
-    module_name: moduleLabel(user.drive_module),
+    module_key: moduleKey,
+    module_name: moduleLabel(moduleKey),
     category: deptRes.data?.drive_category || null,
   };
 }

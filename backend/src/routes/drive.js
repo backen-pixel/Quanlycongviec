@@ -1679,13 +1679,14 @@ r.get('/org-tree', async (req, res) => {
     let companyQ = supabase.from('companies').select('id,name').order('name');
     if (!systemAdmin && meCompanyId) companyQ = companyQ.eq('id', meCompanyId);
     let { data: companies = [] } = await companyQ;
-    if (filterModule && !systemAdmin) {
+    // Lọc công ty theo khối ecosystem (crm/sx/vc) — áp dụng cả system admin khi có ?module=
+    if (filterModule) {
       companies = await driveOrgPath.filterCompaniesForDriveModule(companies, filterModule);
     }
     if (!companies.length) return res.json({ my_module: myModuleKey, modules: [], filter_module: filterModule || null });
     const companyIds = companies.map((c) => c.id);
 
-    const [regionsRes, usersRes, deptsRes] = await Promise.all([
+    const [regionsRes, usersByCompanyRes, deptsRes] = await Promise.all([
       supabase
         .from('company_regions')
         .select('id,name,company_id,order_index,is_active')
@@ -1695,7 +1696,7 @@ r.get('/org-tree', async (req, res) => {
         .order('name'),
       supabase
         .from('users')
-        .select('id,full_name,email,avatar,company_id,department_id,drive_module,is_active')
+        .select('id,full_name,email,avatar,role,company_id,department_id,drive_module,is_active')
         .in('company_id', companyIds)
         .order('full_name', { nullsFirst: false }),
       supabase
@@ -1706,7 +1707,39 @@ r.get('/org-tree', async (req, res) => {
     ]);
     const regions = regionsRes.data || [];
     const departments = deptsRes.data || [];
-    let users = (usersRes.data || []).filter((u) => u.is_active !== false);
+    const deptIds = departments.map((d) => d.id);
+    const deptCompanyById = new Map(departments.map((d) => [d.id, d.company_id]));
+
+    // Bổ sung NV gắn phòng ban của công ty nhưng users.company_id null / lệch (thường gặp ở NVKD CRM)
+    let usersByDept = [];
+    if (deptIds.length) {
+      const { data: deptUsers } = await supabase
+        .from('users')
+        .select('id,full_name,email,avatar,role,company_id,department_id,drive_module,is_active')
+        .in('department_id', deptIds)
+        .order('full_name', { nullsFirst: false });
+      usersByDept = deptUsers || [];
+    }
+
+    const userMap = new Map();
+    for (const u of [...(usersByCompanyRes.data || []), ...usersByDept]) {
+      if (u.is_active === false) continue;
+      if (!userMap.has(u.id)) userMap.set(u.id, u);
+    }
+    let users = Array.from(userMap.values());
+
+    const { inferDriveModuleFromRole, normalizeDriveModule } = require('../helpers/driveModuleDefaults');
+    function effectiveDriveModule(u) {
+      return normalizeDriveModule(u.drive_module)
+        || inferDriveModuleFromRole(u.role)
+        || 'other';
+    }
+    function effectiveCompanyId(u) {
+      if (u.company_id && companyIds.includes(u.company_id)) return u.company_id;
+      const fromDept = u.department_id ? deptCompanyById.get(u.department_id) : null;
+      if (fromDept && companyIds.includes(fromDept)) return fromDept;
+      return u.company_id || fromDept || null;
+    }
 
     let sharedRoots = [];
     const sharedRootsRes = await supabase
@@ -1718,9 +1751,10 @@ r.get('/org-tree', async (req, res) => {
       sharedRoots = sharedRootsRes.data || [];
     }
 
-    // Lọc user theo module khi cần (admin hệ thống thấy mọi nhân viên)
-    if (filterModule && !systemAdmin) {
-      users = users.filter((u) => (u.drive_module || 'other').toLowerCase() === filterModule);
+    // Lọc nhân viên theo drive_module khi xem Drive theo module (?module=crm|sx|vc)
+    // System admin vẫn thấy đủ NV khi không truyền module (Drive lưu trữ)
+    if (filterModule) {
+      users = users.filter((u) => effectiveDriveModule(u) === filterModule);
     }
 
     const userIds = users.map((u) => u.id);
@@ -1732,7 +1766,8 @@ r.get('/org-tree', async (req, res) => {
     for (const row of ucr) {
       const u = users.find((x) => x.id === row.user_id);
       if (!u) continue;
-      if (regionCompany.get(row.region_id) !== u.company_id) continue;
+      const coId = effectiveCompanyId(u);
+      if (regionCompany.get(row.region_id) !== coId) continue;
       if (!regionByUser.has(row.user_id)) regionByUser.set(row.user_id, row.region_id);
     }
 
@@ -1822,16 +1857,16 @@ r.get('/org-tree', async (req, res) => {
     }
 
     for (const co of companies) {
-      const compUsers = users.filter((u) => u.company_id === co.id);
+      const compUsers = users.filter((u) => effectiveCompanyId(u) === co.id);
       const byModule = new Map();
       for (const u of compUsers) {
-        const mk = (u.drive_module || 'other').toLowerCase();
+        const mk = effectiveDriveModule(u);
         if (!byModule.has(mk)) byModule.set(mk, []);
         byModule.get(mk).push(u);
       }
 
       for (const [moduleKey, modUsers] of byModule.entries()) {
-        if (filterModule && !systemAdmin && moduleKey !== filterModule) continue;
+        if (filterModule && moduleKey !== filterModule) continue;
         const moduleName = driveOrgPath.moduleLabel(moduleKey);
         const mod = ensureBranch(moduleKey, moduleName);
 
@@ -1911,26 +1946,39 @@ r.get('/org-tree', async (req, res) => {
       }
     }
 
-    // Mọi công ty có node CRM (kể cả chưa có nhân viên) — hiện Drive chung & kho ảnh
-    const crmModuleKey = 'crm';
-    if (!filterModule || filterModule === crmModuleKey) {
-      const crmMod = ensureBranch(crmModuleKey, driveOrgPath.moduleLabel(crmModuleKey));
-      for (const co of companies) {
-        let compNode = crmMod.companies.find((c) => c.id === co.id);
+    // Đảm bảo mọi công ty thuộc khối hiện node module (Drive chung / kho ảnh), kể cả chưa có NV
+    // CRM: luôn inject khi xem all hoặc ?module=crm (chỉ công ty khối CRM)
+    // SX/VC/...: inject khi đang lọc đúng module đó (companies đã filter theo ecosystem)
+    const modulesToEnsureCompanyNodes = [];
+    if (!filterModule || filterModule === 'crm') {
+      modulesToEnsureCompanyNodes.push({
+        key: 'crm',
+        companies: filterModule === 'crm'
+          ? companies
+          : await driveOrgPath.filterCompaniesForDriveModule(companies, 'crm'),
+      });
+    }
+    if (filterModule && filterModule !== 'crm') {
+      modulesToEnsureCompanyNodes.push({ key: filterModule, companies });
+    }
+    for (const { key: modKey, companies: scopedCos } of modulesToEnsureCompanyNodes) {
+      const mod = ensureBranch(modKey, driveOrgPath.moduleLabel(modKey));
+      for (const co of scopedCos) {
+        let compNode = mod.companies.find((c) => c.id === co.id);
         if (!compNode) {
           compNode = {
             id: co.id,
             name: co.name,
-            shared_root_id: sharedCompanyByKey.get(`${crmModuleKey}:${co.id}`) || null,
-            company_images_root_id: companyImagesByKey.get(`${crmModuleKey}:${co.id}`) || null,
+            shared_root_id: sharedCompanyByKey.get(`${modKey}:${co.id}`) || null,
+            company_images_root_id: companyImagesByKey.get(`${modKey}:${co.id}`) || null,
             regions: [],
           };
-          crmMod.companies.push(compNode);
+          mod.companies.push(compNode);
         } else if (!compNode.company_images_root_id) {
-          compNode.company_images_root_id = companyImagesByKey.get(`${crmModuleKey}:${co.id}`) || null;
+          compNode.company_images_root_id = companyImagesByKey.get(`${modKey}:${co.id}`) || null;
         }
       }
-      crmMod.companies.sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+      mod.companies.sort((a, b) => a.name.localeCompare(b.name, 'vi'));
     }
 
     const ORDER = ['crm', 'sx', 'vc', 'mkt', 'other'];

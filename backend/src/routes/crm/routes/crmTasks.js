@@ -5,6 +5,11 @@
 const { Router } = require('express');
 const helpers = require('../shared/helpersBundle');
 const { maybeMirrorTaskAttachmentsToDrive } = require('../../../helpers/crmTaskAttachmentDriveUpload');
+const {
+  normalizeDeadlineDays,
+  applySequentialDeadlinesToInserts,
+  loadStageHasActiveDeadline,
+} = require('../../../helpers/crmTaskSequentialDeadline');
 
 const r = Router();
 
@@ -404,11 +409,15 @@ r.get('/leads/:id/tasks', async (req, res) => {
         .maybeSingle();
       ownerCompanyId = projOwner?.company_id || null;
     }
+    // Grant 'executor_company_scope' = công ty user chỉ là executor của một số task,
+    // không phải chủ dự án / owner / participant → chỉ được thấy task giao cho công ty mình.
+    const executorScopedOnly = req.crmLeadAccess?.grant === 'executor_company_scope';
     data = filterCrmTasksByCompanyScope(data, {
       scope: taskCompanyScope,
       userCompanyId: req.user?.company_id || null,
       leadCompanyId: lead?.company_id || null,
       ownerCompanyId,
+      executorScopedOnly,
     });
     if (taskCompanyScope === 'shared') {
       data = sanitizeTasksForSharedWorkspace(data, ownerCompanyId);
@@ -656,6 +665,7 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
       stage_slug: tpl?.stage_slug || null,
       pipeline_stage_id: stageForTasks,
       order_index: item.order_index,
+      deadline_days: normalizeDeadlineDays(item.deadline_days),
       deadline: null,
       created_by: req.user.userId,
       completion_requires_file_or_note: !!item.completion_requires_file_or_note
@@ -667,9 +677,16 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
       blocks_stage_advance: !!item.blocks_stage_advance,
       show_excel_quotation_upload: !!item.show_excel_quotation_upload,
       auto_upload_attachments_to_drive: !!item.auto_upload_attachments_to_drive,
+      show_fill_form: !!item.show_fill_form,
+      form_config: (item.form_config && typeof item.form_config === 'object' && !Array.isArray(item.form_config))
+        ? item.form_config
+        : {},
+      form_data: {},
       assignee_id: primaryTemplateItemAssigneeId(item),
       ...crmExecutorFieldsFromTemplateItem(item, ownerCompanyId),
     }));
+    const stageHasActiveDeadline = await loadStageHasActiveDeadline(supabase, targetLeadId, inserts);
+    applySequentialDeadlinesToInserts(inserts, { stageHasActiveDeadline });
 
     const assigneeIdsList = toInsert.map((item) => normalizeTemplateItemAssigneeIds(item));
     const sel = '*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name,avatar), supervisor:users!crm_tasks_supervisor_id_fkey(id,full_name,avatar)';
@@ -677,6 +694,10 @@ r.post('/leads/:id/tasks/from-template', async (req, res) => {
     // DB chưa apply migration 308 (cột checklist) → bỏ checklist và thử lại.
     if (error && String(error.message || '').toLowerCase().includes('checklist')) {
       const stripped = inserts.map(({ checklist: _c, ...rest }) => rest);
+      ({ data, error } = await supabase.from('crm_tasks').insert(stripped).select(sel));
+    }
+    if (error && /deadline_days/i.test(error.message || '')) {
+      const stripped = inserts.map(({ deadline_days: _d, ...rest }) => rest);
       ({ data, error } = await supabase.from('crm_tasks').insert(stripped).select(sel));
     }
     if (error && isExecutorColumnError(error)) {

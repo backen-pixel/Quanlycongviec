@@ -228,6 +228,7 @@ Khi Deal **chưa đủ điều kiện bán** (sai loại, cần nuôi lại, ho�
 **Lưu ý:**
 - Deal **đã có dự án SX** cần tích xác nhận **gỡ liên kết dự án** (chỉ admin công ty/khu vực).
 - Phải chọn **người phụ trách Lead mới**.
+- Phải nhập **lý do** trả Deal về Lead.
 
 
 ## Bước 1 — Mở chi tiết Deal
@@ -244,7 +245,7 @@ Khi Deal **chưa đủ điều kiện bán** (sai loại, cần nuôi lại, ho�
 1. Bấm **Trả về Lead**.
 2. Chọn **Người phụ trách Lead mới** (bắt buộc).
 3. Nếu Deal có dự án SX: tích **gỡ liên kết dự án**.
-4. (Tuỳ chọn) nhập lý do.
+4. Nhập **lý do** trả về Lead (bắt buộc).
 5. Bấm **↩️ Trả về Lead**.
 
 ![Popup Trả về Lead](/release-notes/hd-revert-lead-modal.png)
@@ -254,6 +255,7 @@ Khi Deal **chưa đủ điều kiện bán** (sai loại, cần nuôi lại, ho�
 
 - Badge đổi thành **LEAD**.
 - Bản ghi xuất hiện lại trên Kanban **Lead**.
+- Banner / tab Thông tin hiện **lý do trả về Lead**.
 - Lịch sử / tài liệu vẫn giữ nguyên.
 
 
