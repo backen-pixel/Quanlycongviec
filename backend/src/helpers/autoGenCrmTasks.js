@@ -13,9 +13,11 @@ const {
 const { resolveExecutorCompanyId, isExecutorColumnError } = require('./crossCompanyWorkspace');
 const { normalizeTemplateChecklistForCrmTask } = require('./templateChecklistNormalize');
 const {
-  normalizeDeadlineDays,
+  normalizeDeadlineOffset,
   applySequentialDeadlinesToInserts,
   loadStageHasActiveDeadline,
+  isDeadlineOffsetColumnError,
+  stripDeadlineOffsetColumns,
 } = require('./crmTaskSequentialDeadline');
 
 function isSxCrmTaskRow(t) {
@@ -126,6 +128,7 @@ function buildTaskInsertsFromTemplates(templates, allItems, userId, leadId) {
 
   const inserts = dedupedItems.map((item) => {
     const tpl = tplMap[item.template_id] || {};
+    const offset = normalizeDeadlineOffset(item);
     return {
       lead_id: leadId,
       title: item.title,
@@ -134,7 +137,9 @@ function buildTaskInsertsFromTemplates(templates, allItems, userId, leadId) {
       stage_slug: tpl.stage_slug || null,
       pipeline_stage_id: tpl.pipeline_stage_id || null,
       order_index: item.order_index,
-      deadline_days: normalizeDeadlineDays(item.deadline_days),
+      deadline_days: offset.deadline_days,
+      deadline_hours: offset.deadline_hours,
+      deadline_minutes: offset.deadline_minutes,
       deadline: null,
       created_by: userId,
       completion_requires_file_or_note: !!item.completion_requires_file_or_note
@@ -162,7 +167,7 @@ function buildTaskInsertsFromTemplates(templates, allItems, userId, leadId) {
         : null,
     };
   });
-  // Tuần tự theo stage: chỉ NV đầu (có deadline_days > 0) bắt đầu đếm hạn ngay.
+  // Tuần tự theo stage: chỉ NV đầu (có offset hạn > 0) bắt đầu đếm hạn ngay.
   return applySequentialDeadlinesToInserts(inserts);
 }
 
@@ -296,13 +301,13 @@ async function autoGenCrmTasksForNewLead(leadId, userId, req = null) {
     .from('crm_tasks')
     .insert(inserts)
     .select('id, title, stage_slug, lead_id, assignee_id, description, status, priority, deadline, executor_company_id');
-  if (insErr && /deadline_days/i.test(insErr.message || '')) {
-    const stripped = inserts.map(({ deadline_days: _d, ...rest }) => rest);
+  if (insErr && isDeadlineOffsetColumnError(insErr)) {
+    const stripped = inserts.map((row) => stripDeadlineOffsetColumns(row));
     ({ data: inserted, error: insErr } = await supabase.from('crm_tasks').insert(stripped)
       .select('id, title, stage_slug, lead_id, assignee_id, description, status, priority, deadline, executor_company_id'));
   }
   if (insErr && isExecutorColumnError(insErr)) {
-    const stripped = inserts.map(({ executor_company_id: _e, deadline_days: _d, ...rest }) => rest);
+    const stripped = inserts.map(({ executor_company_id: _e, ...rest }) => stripDeadlineOffsetColumns(rest));
     ({ data: inserted, error: insErr } = await supabase.from('crm_tasks').insert(stripped)
       .select('id, title, stage_slug, lead_id, assignee_id, description, status, priority, deadline, executor_company_id'));
   }
@@ -560,6 +565,7 @@ function toCrmTaskChecklist(raw, ownerCompanyId, templateItem) {
 }
 
 function buildCrmTaskInsertFromTemplateItem(item, tpl, leadId, pipelineStageId, userId, ownerCompanyId) {
+  const offset = normalizeDeadlineOffset(item);
   return {
     lead_id: leadId,
     title: item.title,
@@ -569,7 +575,9 @@ function buildCrmTaskInsertFromTemplateItem(item, tpl, leadId, pipelineStageId, 
     stage_slug: tpl?.stage_slug || null,
     pipeline_stage_id: pipelineStageId,
     order_index: item.order_index,
-    deadline_days: normalizeDeadlineDays(item.deadline_days),
+    deadline_days: offset.deadline_days,
+    deadline_hours: offset.deadline_hours,
+    deadline_minutes: offset.deadline_minutes,
     deadline: null,
     created_by: userId,
     completion_requires_file_or_note: !!item.completion_requires_file_or_note
@@ -788,8 +796,8 @@ async function ensureMissingCrmTasksForPipelineStage({ leadId, pipelineStageId, 
     const stripped = inserts.map(({ checklist: _c, ...rest }) => rest);
     ({ data: inserted, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selCols));
   }
-  if (insErr && /deadline_days/i.test(insErr.message || '')) {
-    const stripped = inserts.map(({ deadline_days: _d, ...rest }) => rest);
+  if (insErr && isDeadlineOffsetColumnError(insErr)) {
+    const stripped = inserts.map((row) => stripDeadlineOffsetColumns(row));
     ({ data: inserted, error: insErr } = await supabase.from('crm_tasks').insert(stripped).select(selCols));
   }
   if (insErr && isExecutorColumnError(insErr)) {

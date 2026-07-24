@@ -466,7 +466,10 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
     let { data, error } = await supabase.from('crm_task_template_items').insert({
       template_id: req.params.tplId,
       title: b.title, description: b.description || null,
-      priority: b.priority || 'medium', deadline_days: b.deadline_days || 0,
+      priority: b.priority || 'medium',
+      deadline_days: Number(b.deadline_days) > 0 ? Math.floor(Number(b.deadline_days)) : 0,
+      deadline_hours: Number(b.deadline_hours) > 0 ? Math.floor(Number(b.deadline_hours)) : 0,
+      deadline_minutes: Math.min(59, Number(b.deadline_minutes) > 0 ? Math.floor(Number(b.deadline_minutes)) : 0),
       order_index: nextOrder, checklist: b.checklist || [],
       executor_company_id: b.executor_company_id || null,
       completion_requires_file_or_note: !!b.completion_requires_file_or_note
@@ -510,9 +513,16 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
 r.put('/task-templates/:tplId/items/:itemId', async (req, res) => {
   try {
     const update = {};
-    ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments', 'default_shared_to_project', 'default_allowed_share_modules', 'executor_company_id', 'completion_requires_file_or_note', 'required_evidence_file_types', 'completion_requires_customer_note', 'completion_requires_customer_contact', 'requires_quick_verdict', 'blocks_stage_advance', 'show_excel_quotation_upload', 'auto_upload_attachments_to_drive', 'show_fill_form', 'form_config'].forEach(f => {
+    ['title', 'description', 'priority', 'deadline_days', 'deadline_hours', 'deadline_minutes', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments', 'default_shared_to_project', 'default_allowed_share_modules', 'executor_company_id', 'completion_requires_file_or_note', 'required_evidence_file_types', 'completion_requires_customer_note', 'completion_requires_customer_contact', 'requires_quick_verdict', 'blocks_stage_advance', 'show_excel_quotation_upload', 'auto_upload_attachments_to_drive', 'show_fill_form', 'form_config'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
+    ['deadline_days', 'deadline_hours', 'deadline_minutes'].forEach((f) => {
+      if (update[f] !== undefined) {
+        const n = Number(update[f]);
+        update[f] = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+      }
+    });
+    if (update.deadline_minutes != null) update.deadline_minutes = Math.min(59, update.deadline_minutes);
     Object.assign(update, templateItemAssigneePatch(req.body));
     if (req.body.executor_company_id === '' || req.body.executor_company_id === null) {
       update.executor_company_id = null;

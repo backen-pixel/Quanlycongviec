@@ -144,6 +144,8 @@ async function pgDashboardNotificationsList(userId, {
 
   if (unread === 'true' || unread === true) {
     conditions.push('is_read = false');
+  } else if (unread === 'false' || unread === false) {
+    conditions.push('is_read = true');
   }
   if (fromDate) {
     const fromTs = new Date(`${String(fromDate)}T00:00:00.000Z`);

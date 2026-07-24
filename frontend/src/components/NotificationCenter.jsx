@@ -395,7 +395,10 @@ export default function NotificationCenter({ socket }) {
   );
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('activity');
-  const [onlyUnread, setOnlyUnread] = useState(false);
+  /** Mặc định chỉ hiện chưa đọc; 'read' = xem thông báo đã đọc */
+  const [listMode, setListMode] = useState('unread');
+  const listModeRef = useRef(listMode);
+  useEffect(() => { listModeRef.current = listMode; }, [listMode]);
   const [activityDate, setActivityDate] = useState('');
   const [deadlinesModule, setDeadlinesModule] = useState('all');
   const [selectMode, setSelectMode] = useState(false);
@@ -578,9 +581,9 @@ export default function NotificationCenter({ socket }) {
         return;
       }
       if (tab === 'deadlines') {
-        const { data } = await api.get('/dashboard/notifications/deadlines', {
-          params: { module: deadlinesModule, limit: 80 },
-        });
+        const params = { module: deadlinesModule, limit: 80 };
+        params.unread = listMode === 'read' ? 'false' : 'true';
+        const { data } = await api.get('/dashboard/notifications/deadlines', { params });
         setNotifications(data.notifications || []);
       } else {
         const channel = tab === 'events' ? 'events'
@@ -588,7 +591,7 @@ export default function NotificationCenter({ socket }) {
             : tab === 'assignments' ? 'assignments'
               : 'activity';
         const params = { channel, limit: 80 };
-        if (onlyUnread) params.unread = 'true';
+        params.unread = listMode === 'read' ? 'false' : 'true';
         if (tab === 'activity' && activityDate) {
           params.from_date = activityDate;
           params.to_date = activityDate;
@@ -628,7 +631,12 @@ export default function NotificationCenter({ socket }) {
     const ids = [...pendingSeenRef.current];
     pendingSeenRef.current.clear();
     if (!ids.length) return;
-    setNotifications((prev) => prev.map((n) => (ids.includes(n.id) ? { ...n, is_read: true } : n)));
+    const hideAfterRead = listModeRef.current === 'unread';
+    setNotifications((prev) => (
+      hideAfterRead
+        ? prev.filter((n) => !ids.includes(n.id))
+        : prev.map((n) => (ids.includes(n.id) ? { ...n, is_read: true } : n))
+    ));
     try {
       await api.put('/dashboard/notifications/bulk-read', { ids });
       await loadCountRef.current?.({ includeCskh: false });
@@ -715,21 +723,22 @@ export default function NotificationCenter({ socket }) {
       const isChat = isChatChannelNotification(notif);
       const isEvent = EVENT_NOTIFICATION_TYPES.includes(notif?.type);
       const isAssign = isAssignmentNotification(notif);
+      const canShowLive = listModeRef.current === 'unread';
       if (isExp) {
         setUnreadDeadlines((c) => c + 1);
-        setNotifications((prev) => (tab === 'deadlines' ? [notif, ...prev] : prev));
+        if (canShowLive) setNotifications((prev) => (tab === 'deadlines' ? [notif, ...prev] : prev));
       } else if (isChat) {
         setUnreadChat((c) => c + 1);
-        setNotifications((prev) => (tab === 'messages' ? [notif, ...prev] : prev));
+        if (canShowLive) setNotifications((prev) => (tab === 'messages' ? [notif, ...prev] : prev));
       } else if (isEvent) {
         setUnreadEvents((c) => c + 1);
-        setNotifications((prev) => (tab === 'events' ? [notif, ...prev] : prev));
+        if (canShowLive) setNotifications((prev) => (tab === 'events' ? [notif, ...prev] : prev));
       } else if (isAssign) {
         setUnreadAssignments((c) => c + 1);
-        setNotifications((prev) => (tab === 'assignments' ? [notif, ...prev] : prev));
+        if (canShowLive) setNotifications((prev) => (tab === 'assignments' ? [notif, ...prev] : prev));
       } else if (isDealActivityNotification(notif)) {
         setUnreadActivity((c) => c + 1);
-        setNotifications((prev) => (tab === 'activity' ? [notif, ...prev] : prev));
+        if (canShowLive) setNotifications((prev) => (tab === 'activity' ? [notif, ...prev] : prev));
       }
 
       // Đã tắt chuông cho deal/Messenger này → vẫn cập nhật danh sách, không toast/âm thanh ngoài màn hình
@@ -764,7 +773,7 @@ export default function NotificationCenter({ socket }) {
       load();
       loadCommentMutes();
     }
-  }, [open, tab, deadlinesModule, onlyUnread, activityDate]);
+  }, [open, tab, deadlinesModule, listMode, activityDate]);
 
   // Đổi tab / đóng panel → thoát chế độ chọn nhiều + đóng menu mute
   useEffect(() => {
@@ -814,7 +823,11 @@ export default function NotificationCenter({ socket }) {
               : 'activity';
       await api.put('/dashboard/notifications/read-all', {}, { params: { channel } });
       await loadCount();
-      setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+      if (listModeRef.current === 'unread') {
+        setNotifications([]);
+      } else {
+        setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+      }
     } catch { }
   };
 
@@ -824,7 +837,11 @@ export default function NotificationCenter({ socket }) {
     pendingSeenRef.current.delete(id);
     try {
       await api.put(`/dashboard/notifications/${id}/read`);
-      setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+      setNotifications((prev) => (
+        listModeRef.current === 'unread'
+          ? prev.filter((n) => n.id !== id)
+          : prev.map((n) => (n.id === id ? { ...n, is_read: true } : n))
+      ));
       await loadCount();
     } catch {
       seenQueuedRef.current.delete(id);
@@ -833,7 +850,7 @@ export default function NotificationCenter({ socket }) {
 
   // Khi mở panel và lướt danh sách: thông báo hiện trong khung nhìn → tự đánh dấu đã xem
   useEffect(() => {
-    if (!open || tab === 'cskh' || loading || selectMode) return undefined;
+    if (!open || tab === 'cskh' || loading || selectMode || listMode !== 'unread') return undefined;
     const root = listScrollRef.current;
     if (!root) return undefined;
 
@@ -856,7 +873,7 @@ export default function NotificationCenter({ socket }) {
     });
 
     return () => observer.disconnect();
-  }, [open, tab, loading, selectMode, notifications, queueSeenRead]);
+  }, [open, tab, loading, selectMode, listMode, notifications, queueSeenRead]);
 
   // Đóng panel: đẩy hết các id đang chờ đánh dấu đã xem
   useEffect(() => {
@@ -904,7 +921,11 @@ export default function NotificationCenter({ socket }) {
     setBulkBusy(true);
     try {
       await api.put('/dashboard/notifications/bulk-read', { ids });
-      setNotifications(prev => prev.map(n => selectedIds.has(n.id) ? { ...n, is_read: true } : n));
+      setNotifications((prev) => (
+        listModeRef.current === 'unread'
+          ? prev.filter((n) => !selectedIds.has(n.id))
+          : prev.map((n) => (selectedIds.has(n.id) ? { ...n, is_read: true } : n))
+      ));
       setSelectedIds(new Set());
       await loadCount({ includeCskh: false });
     } catch { }
@@ -1192,7 +1213,7 @@ export default function NotificationCenter({ socket }) {
             })}
           </div>
 
-          {(tab === 'activity' || tab === 'events' || tab === 'messages' || tab === 'assignments') && (
+          {(tab === 'activity' || tab === 'events' || tab === 'messages' || tab === 'assignments' || tab === 'deadlines') && (
             <div className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-50 bg-gray-50/50">
               {tab === 'activity' && (
                 <>
@@ -1216,15 +1237,31 @@ export default function NotificationCenter({ socket }) {
                   )}
                 </>
               )}
-              <label className="flex items-center gap-1.5 text-[11px] text-gray-600 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={onlyUnread}
-                  onChange={(e) => setOnlyUnread(e.target.checked)}
-                  className="rounded border-gray-300"
-                />
-                Chỉ chưa đọc
-              </label>
+              <div className="inline-flex items-center rounded-lg border border-gray-200 bg-white p-0.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setListMode('unread')}
+                  className={`h-7 px-2.5 rounded-md text-[11px] font-semibold cursor-pointer transition-colors ${
+                    listMode === 'unread'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  Chưa đọc
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setListMode('read')}
+                  className={`h-7 px-2.5 rounded-md text-[11px] font-semibold cursor-pointer transition-colors ${
+                    listMode === 'read'
+                      ? 'bg-slate-700 text-white shadow-sm'
+                      : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                  title="Xem các thông báo đã đọc"
+                >
+                  Đã đọc
+                </button>
+              </div>
               <button
                 type="button"
                 onClick={() => { setSelectMode(v => !v); setSelectedIds(new Set()); }}
@@ -1253,17 +1290,6 @@ export default function NotificationCenter({ socket }) {
                   {opt.label}
                 </button>
               ))}
-              <button
-                type="button"
-                onClick={() => { setSelectMode(v => !v); setSelectedIds(new Set()); }}
-                className={`ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium cursor-pointer transition-colors ${
-                  selectMode ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-                }`}
-                title={selectMode ? 'Thoát chế độ chọn' : 'Tích chọn nhiều thông báo'}
-              >
-                <CheckSquare className="h-3 w-3" />
-                {selectMode ? 'Xong' : 'Chọn'}
-              </button>
             </div>
           )}
 
@@ -1424,19 +1450,23 @@ export default function NotificationCenter({ socket }) {
                   <Bell className="h-7 w-7 text-blue-400" />
                 </div>
                 <p className="text-sm font-semibold" style={{ color: '#000000' }}>
-                  {tab === 'messages'
-                    ? 'Không có tin nhắn'
-                    : tab === 'events'
-                      ? (onlyUnread ? 'Không có sự kiện chưa đọc' : 'Chưa có thông báo sự kiện')
-                      : tab === 'assignments'
-                        ? (onlyUnread ? 'Không có giao việc chưa đọc' : 'Chưa có thông báo giao việc')
-                        : tab === 'deadlines'
-                          ? 'Không có thông báo nhắc hạn'
-                          : onlyUnread
-                            ? 'Không có thông báo hoạt động chưa đọc'
-                            : 'Chưa có thông báo hoạt động'}
+                  {listMode === 'read'
+                    ? (tab === 'messages' ? 'Chưa có tin nhắn đã đọc'
+                      : tab === 'events' ? 'Chưa có sự kiện đã đọc'
+                        : tab === 'assignments' ? 'Chưa có giao việc đã đọc'
+                          : tab === 'deadlines' ? 'Chưa có nhắc hạn đã đọc'
+                            : 'Chưa có thông báo đã đọc')
+                    : (tab === 'messages' ? 'Không có tin nhắn chưa đọc'
+                      : tab === 'events' ? 'Không có sự kiện chưa đọc'
+                        : tab === 'assignments' ? 'Không có giao việc chưa đọc'
+                          : tab === 'deadlines' ? 'Không có nhắc hạn chưa đọc'
+                            : 'Không có thông báo chưa đọc')}
                 </p>
-                <p className="text-xs text-gray-400 mt-1">Bạn đã xem hết — quay lại sau nhé!</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  {listMode === 'read'
+                    ? 'Các thông báo bạn đã xem sẽ hiện ở đây.'
+                    : 'Bạn đã xem hết — bấm «Đã đọc» để xem lại lịch sử.'}
+                </p>
               </div>
             ) : (
               notifications.map(n => {
@@ -1539,12 +1569,12 @@ export default function NotificationCenter({ socket }) {
                       }
                       setOpen(false);
                     }}
-                    className={`group relative px-4 py-3 hover:bg-blue-50/50 cursor-pointer border-b border-gray-50 transition-colors ${
-                      selectMode && selectedIds.has(n.id) ? 'bg-blue-100/60' : !n.is_read ? 'bg-gradient-to-r from-blue-50/60 to-transparent' : ''
+                    className={`group relative px-4 py-3 hover:bg-emerald-50/40 cursor-pointer border-b border-gray-50 transition-colors ${
+                      selectMode && selectedIds.has(n.id) ? 'bg-blue-100/60' : !n.is_read ? 'bg-gradient-to-r from-emerald-50/70 to-transparent' : ''
                     }`}
                   >
                     {!n.is_read && (
-                      <span className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-blue-500 to-indigo-500" />
+                      <span className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-emerald-500 to-green-600" />
                     )}
                     <div className="flex gap-3">
                       {selectMode && (
@@ -1556,8 +1586,15 @@ export default function NotificationCenter({ socket }) {
                           className="mt-3 rounded border-gray-300 shrink-0 cursor-pointer"
                         />
                       )}
-                      <div className={`w-10 h-10 rounded-xl ${isApproval ? 'bg-orange-100 text-orange-600' : color} flex items-center justify-center shrink-0 shadow-sm ring-1 ring-white/60`}>
+                      <div className={`relative w-10 h-10 rounded-xl ${isApproval ? 'bg-orange-100 text-orange-600' : color} flex items-center justify-center shrink-0 shadow-sm ring-1 ring-white/60`}>
                         <Icon className="h-5 w-5" />
+                        {!n.is_read && (
+                          <span
+                            className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white shadow-[0_0_6px_rgba(16,185,129,0.55)]"
+                            title="Chưa đọc"
+                            aria-label="Chưa đọc"
+                          />
+                        )}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between gap-2">
@@ -1570,7 +1607,9 @@ export default function NotificationCenter({ socket }) {
                                 {moduleChipLabel(inferNotificationModuleKey(n))}
                               </span>
                             )}
-                            {!n.is_read && !isApproval && <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0 mt-1.5 animate-pulse" />}
+                            {!n.is_read && (
+                              <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 mt-1.5 animate-pulse" title="Chưa đọc" />
+                            )}
                             {!selectMode && (() => {
                               const muteTarget = resolveMuteTarget(n);
                               if (!muteTarget) return null;

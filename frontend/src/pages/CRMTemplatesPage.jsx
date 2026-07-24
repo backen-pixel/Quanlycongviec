@@ -33,7 +33,29 @@ const DEAL_STAGES = [
   { slug: 'deal_notes', label: 'Ghi chú khác', icon: '📝', color: '#6B7280' },
 ];
 
-const ALL_STAGES = [...LEAD_STAGES, ...DEAL_STAGES];
+function formatTemplateDeadlineBadge(item) {
+  const d = Math.max(0, Number(item?.deadline_days) || 0);
+  const h = Math.max(0, Number(item?.deadline_hours) || 0);
+  const m = Math.max(0, Number(item?.deadline_minutes) || 0);
+  if (d <= 0 && h <= 0 && m <= 0) return null;
+  const parts = [];
+  if (d > 0) parts.push(`${d}d`);
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0) parts.push(`${m}m`);
+  const titleParts = [];
+  if (d > 0) titleParts.push(`${d} ngày`);
+  if (h > 0) titleParts.push(`${h} giờ`);
+  if (m > 0) titleParts.push(`${m} phút`);
+  return {
+    label: parts.join(' '),
+    title: `Hạn: ${titleParts.join(' ')} (chạy khi tới lượt / sau NV trước hoàn thành)`,
+  };
+}
+
+function parseNonNegIntInput(raw) {
+  if (raw === '' || raw == null) return 0;
+  return Math.max(0, parseInt(raw, 10) || 0);
+}
 
 function companiesForDivision(companies, divisionId) {
   const did = String(divisionId);
@@ -698,7 +720,7 @@ export default function CRMTemplatesPage() {
     if (!item?.title?.trim()) return;
     try {
       const { data } = await api.post(`/crm/task-templates/${tplId}/items`, { ...item, checklist: item.checklist || [] });
-      setNewItem(p => ({ ...p, [tplId]: { title: '', priority: 'medium', deadline_days: 0 } }));
+      setNewItem(p => ({ ...p, [tplId]: { title: '', priority: 'medium', deadline_days: 0, deadline_hours: 0, deadline_minutes: 0 } }));
       if (data?.id) upsertItemLocal(tplId, data);
       else load({ silent: true });
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
@@ -1520,6 +1542,8 @@ function TemplateCard({
     description: '',
     priority: 'medium',
     deadline_days: 0,
+    deadline_hours: 0,
+    deadline_minutes: 0,
     blocks_stage_advance: false,
     completion_requires_file_or_note: false,
     required_evidence_file_types: [],
@@ -1574,6 +1598,8 @@ function TemplateCard({
       description: item.description || '',
       priority: item.priority || 'medium',
       deadline_days: item.deadline_days ?? 0,
+      deadline_hours: item.deadline_hours ?? 0,
+      deadline_minutes: item.deadline_minutes ?? 0,
       blocks_stage_advance: !!item.blocks_stage_advance,
       completion_requires_file_or_note: !!item.completion_requires_file_or_note,
       required_evidence_file_types: normalizeEvidenceFileTypes(item.required_evidence_file_types),
@@ -1598,7 +1624,9 @@ function TemplateCard({
         title: itemEditForm.title.trim(),
         description: itemEditForm.description?.trim() || null,
         priority: itemEditForm.priority,
-        deadline_days: Math.max(0, parseInt(itemEditForm.deadline_days, 10) || 0),
+        deadline_days: parseNonNegIntInput(itemEditForm.deadline_days),
+        deadline_hours: parseNonNegIntInput(itemEditForm.deadline_hours),
+        deadline_minutes: parseNonNegIntInput(itemEditForm.deadline_minutes),
         blocks_stage_advance: !!itemEditForm.blocks_stage_advance,
         completion_requires_file_or_note: !!itemEditForm.completion_requires_file_or_note
           || (itemEditForm.required_evidence_file_types?.length > 0),
@@ -1827,15 +1855,19 @@ function TemplateCard({
                           item.priority === 'urgent' ? 'bg-red-100 text-red-700' :
                           item.priority === 'medium' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
                         }`}>{item.priority === 'urgent' ? 'Gấp' : item.priority === 'high' ? 'Cao' : item.priority === 'medium' ? 'TB' : 'Thấp'}</span>
-                        {Number(item.deadline_days) > 0 && (
+                        {(() => {
+                          const badge = formatTemplateDeadlineBadge(item);
+                          if (!badge) return null;
+                          return (
                           <span
                             className="text-[9px] text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
-                            title={`Hạn: ${item.deadline_days} ngày (chạy khi tới lượt / sau NV trước hoàn thành)`}
+                            title={badge.title}
                           >
                             <Clock className="h-2.5 w-2.5" />
-                            {item.deadline_days}d
+                            {badge.label}
                           </span>
-                        )}
+                          );
+                        })()}
                         {(item.default_allowed_companies?.length > 0 || item.default_allowed_departments?.length > 0) && (
                           <span className="text-[9px] bg-red-50 text-red-600 px-1 py-0.5 rounded-full">🔒</span>
                         )}
@@ -2023,7 +2055,10 @@ function TemplateCard({
                               <option value="high">Cao</option>
                               <option value="urgent">Gấp</option>
                             </select>
-                            <label className="flex items-center gap-1.5 h-8 px-2 rounded border bg-white text-xs select-none" title="Số ngày sau khi tạo nhiệm vụ → gán Ngày hẹn">
+                            <label
+                              className="flex items-center gap-1 h-8 px-2 rounded border bg-white text-xs select-none"
+                              title="Hạn sau khi NV tới lượt: ngày + giờ + phút"
+                            >
                               <Clock className="h-3 w-3 text-orange-600 shrink-0" />
                               <span className="text-gray-600 whitespace-nowrap">Hạn</span>
                               <input
@@ -2033,11 +2068,36 @@ function TemplateCard({
                                 value={itemEditForm.deadline_days ?? 0}
                                 onChange={e => setItemEditForm(f => ({
                                   ...f,
-                                  deadline_days: e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value, 10) || 0),
+                                  deadline_days: parseNonNegIntInput(e.target.value),
                                 }))}
-                                className="w-14 h-6 px-1.5 rounded border text-xs text-center outline-none focus:ring-1 focus:ring-orange-400"
+                                className="w-11 h-6 px-1 rounded border text-xs text-center outline-none focus:ring-1 focus:ring-orange-400"
                               />
                               <span className="text-gray-500">ngày</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={itemEditForm.deadline_hours ?? 0}
+                                onChange={e => setItemEditForm(f => ({
+                                  ...f,
+                                  deadline_hours: parseNonNegIntInput(e.target.value),
+                                }))}
+                                className="w-11 h-6 px-1 rounded border text-xs text-center outline-none focus:ring-1 focus:ring-orange-400"
+                              />
+                              <span className="text-gray-500">giờ</span>
+                              <input
+                                type="number"
+                                min="0"
+                                max="59"
+                                step="1"
+                                value={itemEditForm.deadline_minutes ?? 0}
+                                onChange={e => setItemEditForm(f => ({
+                                  ...f,
+                                  deadline_minutes: Math.min(59, parseNonNegIntInput(e.target.value)),
+                                }))}
+                                className="w-11 h-6 px-1 rounded border text-xs text-center outline-none focus:ring-1 focus:ring-orange-400"
+                              />
+                              <span className="text-gray-500">phút</span>
                             </label>
                             <label className="flex items-center gap-1.5 h-8 px-2 rounded border bg-white text-xs cursor-pointer select-none">
                               <input
@@ -2118,7 +2178,7 @@ function TemplateCard({
                             </button>
                           </div>
                           <p className="text-[10px] text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-2 py-1">
-                            <Clock className="h-2.5 w-2.5 inline mr-1" /> <b>Hạn (ngày)</b>: số ngày đếm sau khi nhiệm vụ này tới lượt. NV đầu (cùng cột) bắt đầu ngay khi tạo; NV sau chỉ bắt đầu khi NV trước hoàn thành. = 0 → không tự gán hạn.
+                            <Clock className="h-2.5 w-2.5 inline mr-1" /> <b>Hạn (ngày/giờ/phút)</b>: thời gian đếm sau khi nhiệm vụ tới lượt. NV đầu bắt đầu ngay khi tạo; NV sau chỉ bắt đầu khi NV trước hoàn thành. Tất cả = 0 → không tự gán hạn.
                           </p>
                           <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
                             <Lock className="h-2.5 w-2.5 inline mr-1" /> Khi bật: lead/deal không thể chuyển sang giai đoạn khác (trừ Thắng/Thua) đến khi nhiệm vụ này hoàn thành.
@@ -2330,7 +2390,7 @@ function TemplateCard({
               className="h-8 px-2 rounded border text-xs bg-white">
               <option value="low">Thấp</option><option value="medium">TB</option><option value="high">Cao</option><option value="urgent">Gấp</option>
             </select>
-            <label className="flex items-center gap-1 h-8 px-2 rounded border bg-white text-xs text-gray-600 select-none" title="Số ngày hạn sau khi tạo">
+            <label className="flex items-center gap-1 h-8 px-2 rounded border bg-white text-xs text-gray-600 select-none" title="Hạn: ngày + giờ + phút">
               <Clock className="h-3 w-3 text-orange-500 shrink-0" />
               <input
                 type="number"
@@ -2341,12 +2401,43 @@ function TemplateCard({
                   ...p,
                   [tpl.id]: {
                     ...(p[tpl.id] || {}),
-                    deadline_days: e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value, 10) || 0),
+                    deadline_days: parseNonNegIntInput(e.target.value),
                   },
                 }))}
-                className="w-12 h-6 px-1 rounded border text-xs text-center outline-none focus:ring-1 focus:ring-orange-400"
+                className="w-10 h-6 px-1 rounded border text-xs text-center outline-none focus:ring-1 focus:ring-orange-400"
               />
               <span>ngày</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={newItem[tpl.id]?.deadline_hours ?? 0}
+                onChange={e => setNewItem(p => ({
+                  ...p,
+                  [tpl.id]: {
+                    ...(p[tpl.id] || {}),
+                    deadline_hours: parseNonNegIntInput(e.target.value),
+                  },
+                }))}
+                className="w-10 h-6 px-1 rounded border text-xs text-center outline-none focus:ring-1 focus:ring-orange-400"
+              />
+              <span>giờ</span>
+              <input
+                type="number"
+                min="0"
+                max="59"
+                step="1"
+                value={newItem[tpl.id]?.deadline_minutes ?? 0}
+                onChange={e => setNewItem(p => ({
+                  ...p,
+                  [tpl.id]: {
+                    ...(p[tpl.id] || {}),
+                    deadline_minutes: Math.min(59, parseNonNegIntInput(e.target.value)),
+                  },
+                }))}
+                className="w-10 h-6 px-1 rounded border text-xs text-center outline-none focus:ring-1 focus:ring-orange-400"
+              />
+              <span>phút</span>
             </label>
             <button onClick={() => addItem(tpl.id)} className="h-8 px-3 bg-blue-600 text-white rounded text-xs cursor-pointer hover:bg-blue-700">
               <Plus className="h-3 w-3" /></button>

@@ -178,6 +178,7 @@ r.get('/notifications', responseCache({ ttl: 20, scope: 'user', tags: ['notifica
       .limit(fetchCap);
 
     if (unread === 'true') q = q.eq('is_read', false);
+    else if (unread === 'false') q = q.eq('is_read', true);
     if (fromDate) {
       const fromTs = new Date(`${String(fromDate)}T00:00:00.000Z`);
       if (!Number.isNaN(fromTs.getTime())) q = q.gte('created_at', fromTs.toISOString());
@@ -222,9 +223,10 @@ r.get('/notifications', responseCache({ ttl: 20, scope: 'user', tags: ['notifica
 r.get('/notifications/deadlines', async (req, res) => {
   try {
     const mod = String(req.query.module || 'all').toLowerCase();
+    const unread = req.query.unread;
     const lim = Math.min(Math.max(parseInt(req.query.limit, 10) || 80, 1), 200);
     const fetchCap = Math.min(lim * 3, 400);
-    const { data, error } = await supabase
+    let q = supabase
       .from('notifications')
       .select('*')
       .eq('user_id', req.user.userId)
@@ -234,6 +236,9 @@ r.get('/notifications/deadlines', async (req, res) => {
       .or("metadata->>ecosystem_module_key.is.null,metadata->>ecosystem_module_key.neq.projects")
       .order('created_at', { ascending: false })
       .limit(fetchCap);
+    if (unread === 'true') q = q.eq('is_read', false);
+    else if (unread === 'false') q = q.eq('is_read', true);
+    const { data, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
     let rows = (data || []).filter((n) => isExpiryDeadlineNotificationType(n.type) && !isProjectModuleNotification(n));
     if (mod !== 'all') {

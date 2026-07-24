@@ -1,19 +1,54 @@
 /**
  * Deadline tuần tự CRM: NV sau chỉ bắt đầu đếm hạn khi NV trước (cùng stage) hoàn thành.
- * - deadline_days: offset cấu hình trên task (kế thừa từ mẫu)
- * - deadline: mốc tuyệt đối đang chạy (null = chưa tới lượt)
+ * Offset: deadline_days + deadline_hours + deadline_minutes → deadline tuyệt đối.
  */
 
-function normalizeDeadlineDays(raw) {
+function normalizeNonNegInt(raw, { max = null } = {}) {
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return 0;
-  return Math.floor(n);
+  const v = Math.floor(n);
+  if (max != null && v > max) return max;
+  return v;
 }
 
+function normalizeDeadlineDays(raw) {
+  return normalizeNonNegInt(raw);
+}
+
+function normalizeDeadlineHours(raw) {
+  return normalizeNonNegInt(raw);
+}
+
+function normalizeDeadlineMinutes(raw) {
+  return normalizeNonNegInt(raw, { max: 59 * 24 }); // cho phép >59 nếu nhập tổng phút
+}
+
+function normalizeDeadlineOffset(row = {}) {
+  return {
+    deadline_days: normalizeDeadlineDays(row.deadline_days),
+    deadline_hours: normalizeDeadlineHours(row.deadline_hours),
+    deadline_minutes: normalizeDeadlineMinutes(row.deadline_minutes),
+  };
+}
+
+function deadlineOffsetTotalMs(row = {}) {
+  const { deadline_days: d, deadline_hours: h, deadline_minutes: m } = normalizeDeadlineOffset(row);
+  return ((d * 24 + h) * 60 + m) * 60 * 1000;
+}
+
+function hasDeadlineOffset(row = {}) {
+  return deadlineOffsetTotalMs(row) > 0;
+}
+
+function computeDeadlineIsoFromOffset(row = {}, fromDate = new Date()) {
+  const ms = deadlineOffsetTotalMs(row);
+  if (ms <= 0) return null;
+  return new Date(fromDate.getTime() + ms).toISOString();
+}
+
+/** @deprecated Dùng computeDeadlineIsoFromOffset */
 function computeDeadlineIsoFromDays(days, fromDate = new Date()) {
-  const d = new Date(fromDate);
-  d.setDate(d.getDate() + Number(days));
-  return d.toISOString();
+  return computeDeadlineIsoFromOffset({ deadline_days: days }, fromDate);
 }
 
 function stageKeyOf(row) {
@@ -24,7 +59,7 @@ function stageKeyOf(row) {
 
 /**
  * Gán deadline tuần tự trong batch insert (cùng lead / theo stage).
- * Chỉ NV đầu tiên (order_index thấp nhất) có deadline_days > 0 được gán deadline tuyệt đối,
+ * Chỉ NV đầu tiên (order_index thấp nhất) có offset > 0 được gán deadline tuyệt đối,
  * trừ khi stage đã có NV mở đang chạy hạn (opts.stageHasActiveDeadline).
  */
 function applySequentialDeadlinesToInserts(inserts, opts = {}) {
@@ -46,10 +81,12 @@ function applySequentialDeadlinesToInserts(inserts, opts = {}) {
     });
     let started = !!stageHasActive[key];
     for (const row of rows) {
-      const days = normalizeDeadlineDays(row.deadline_days);
-      row.deadline_days = days;
-      if (days > 0 && !started) {
-        row.deadline = computeDeadlineIsoFromDays(days);
+      const offset = normalizeDeadlineOffset(row);
+      row.deadline_days = offset.deadline_days;
+      row.deadline_hours = offset.deadline_hours;
+      row.deadline_minutes = offset.deadline_minutes;
+      if (hasDeadlineOffset(offset) && !started) {
+        row.deadline = computeDeadlineIsoFromOffset(offset);
         started = true;
       } else {
         row.deadline = null;
@@ -98,7 +135,7 @@ async function startNextCrmTaskDeadlineAfterComplete(supabase, completedTask) {
 
   let q = supabase
     .from('crm_tasks')
-    .select('id, title, order_index, deadline, deadline_days, status, pipeline_stage_id, stage_slug')
+    .select('id, title, order_index, deadline, deadline_days, deadline_hours, deadline_minutes, status, pipeline_stage_id, stage_slug')
     .eq('lead_id', leadId)
     .in('status', ['pending', 'in_progress']);
 
@@ -112,6 +149,10 @@ async function startNextCrmTaskDeadlineAfterComplete(supabase, completedTask) {
     .order('order_index', { ascending: true })
     .order('id', { ascending: true });
   if (error) {
+    // DB chưa có cột hours/minutes → fallback select cũ
+    if (/deadline_hours|deadline_minutes/i.test(error.message || '')) {
+      return startNextCrmTaskDeadlineAfterCompleteLegacy(supabase, completedTask);
+    }
     console.warn('[crm-seq-deadline] load siblings:', error.message);
     return { started: false, reason: error.message };
   }
@@ -125,23 +166,24 @@ async function startNextCrmTaskDeadlineAfterComplete(supabase, completedTask) {
   });
   if (!next) return { started: false, reason: 'no_next_task' };
 
-  const days = normalizeDeadlineDays(next.deadline_days);
-  if (days <= 0) return { started: false, reason: 'next_has_no_deadline_days', taskId: next.id };
+  if (!hasDeadlineOffset(next)) {
+    return { started: false, reason: 'next_has_no_deadline_offset', taskId: next.id };
+  }
   if (next.deadline != null && next.deadline !== '') {
     return { started: false, reason: 'already_has_deadline', taskId: next.id };
   }
 
-  const deadline = computeDeadlineIsoFromDays(days);
+  const offset = normalizeDeadlineOffset(next);
+  const deadline = computeDeadlineIsoFromOffset(offset);
   const { data: updated, error: upErr } = await supabase
     .from('crm_tasks')
     .update({ deadline, updated_at: new Date().toISOString() })
     .eq('id', next.id)
-    .select('id, title, deadline, deadline_days')
+    .select('id, title, deadline, deadline_days, deadline_hours, deadline_minutes')
     .maybeSingle();
   if (upErr) {
-    // Cột deadline_days chưa migrate — bỏ qua im lặng
-    if (/deadline_days/i.test(upErr.message || '')) {
-      return { started: false, reason: 'deadline_days_column_missing' };
+    if (/deadline_days|deadline_hours|deadline_minutes/i.test(upErr.message || '')) {
+      return { started: false, reason: 'deadline_offset_column_missing' };
     }
     console.warn('[crm-seq-deadline] start next:', upErr.message);
     return { started: false, reason: upErr.message };
@@ -151,15 +193,65 @@ async function startNextCrmTaskDeadlineAfterComplete(supabase, completedTask) {
     taskId: updated?.id || next.id,
     title: updated?.title || next.title,
     deadline,
-    days,
+    ...offset,
   };
+}
+
+async function startNextCrmTaskDeadlineAfterCompleteLegacy(supabase, completedTask) {
+  const leadId = completedTask.lead_id;
+  const orderIndex = Number(completedTask.order_index) || 0;
+  const completedId = String(completedTask.id || '');
+  let q = supabase
+    .from('crm_tasks')
+    .select('id, title, order_index, deadline, deadline_days, status, pipeline_stage_id, stage_slug')
+    .eq('lead_id', leadId)
+    .in('status', ['pending', 'in_progress']);
+  if (completedTask.pipeline_stage_id) q = q.eq('pipeline_stage_id', completedTask.pipeline_stage_id);
+  else if (completedTask.stage_slug) q = q.is('pipeline_stage_id', null).eq('stage_slug', completedTask.stage_slug);
+  const { data: siblings, error } = await q.order('order_index', { ascending: true }).order('id', { ascending: true });
+  if (error) return { started: false, reason: error.message };
+  const next = (siblings || []).find((t) => {
+    if (completedId && String(t.id) === completedId) return false;
+    const oi = Number(t.order_index) || 0;
+    return oi > orderIndex || (oi === orderIndex && String(t.id) > completedId);
+  });
+  if (!next) return { started: false, reason: 'no_next_task' };
+  const days = normalizeDeadlineDays(next.deadline_days);
+  if (days <= 0) return { started: false, reason: 'next_has_no_deadline_days', taskId: next.id };
+  if (next.deadline) return { started: false, reason: 'already_has_deadline', taskId: next.id };
+  const deadline = computeDeadlineIsoFromDays(days);
+  const { error: upErr } = await supabase
+    .from('crm_tasks')
+    .update({ deadline, updated_at: new Date().toISOString() })
+    .eq('id', next.id);
+  if (upErr) return { started: false, reason: upErr.message };
+  return { started: true, taskId: next.id, title: next.title, deadline, deadline_days: days, deadline_hours: 0, deadline_minutes: 0 };
+}
+
+/** Strip offset columns khi DB chưa migrate (retry insert). */
+function stripDeadlineOffsetColumns(row) {
+  if (!row || typeof row !== 'object') return row;
+  const { deadline_days: _d, deadline_hours: _h, deadline_minutes: _m, ...rest } = row;
+  return rest;
+}
+
+function isDeadlineOffsetColumnError(err) {
+  return /deadline_days|deadline_hours|deadline_minutes/i.test(String(err?.message || ''));
 }
 
 module.exports = {
   normalizeDeadlineDays,
+  normalizeDeadlineHours,
+  normalizeDeadlineMinutes,
+  normalizeDeadlineOffset,
+  hasDeadlineOffset,
+  deadlineOffsetTotalMs,
+  computeDeadlineIsoFromOffset,
   computeDeadlineIsoFromDays,
   stageKeyOf,
   applySequentialDeadlinesToInserts,
   loadStageHasActiveDeadline,
   startNextCrmTaskDeadlineAfterComplete,
+  stripDeadlineOffsetColumns,
+  isDeadlineOffsetColumnError,
 };
