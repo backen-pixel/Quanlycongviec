@@ -687,7 +687,7 @@ function PlannerPersonal({ allItems, pipelineType, navigate }) {
 
 // ── DEADLINE VIEW (buckets) ─────────────────────────────────────────────────
 const BUCKET_ORDER = [
-  'overdue', 'today', 'this_week', 'next_week',
+  'overdue', 'today', 'tomorrow', 'this_week', 'next_week',
   'in_2_weeks', 'in_3_weeks', 'in_4_weeks', 'in_1_month',
   'next_month', 'no_deadline',
 ];
@@ -695,14 +695,29 @@ const BUCKET_ORDER = [
 const BUCKET_COLOR = {
   overdue:     '#f43f5e',
   today:       '#f97316',
+  tomorrow:    '#eab308',
   this_week:   '#f59e0b',
-  next_week:   '#eab308',
+  next_week:   '#84cc16',
   in_2_weeks:  '#0ea5e9',
   in_3_weeks:  '#3b82f6',
   in_4_weeks:  '#6366f1',
   in_1_month:  '#8b5cf6',
   next_month:  '#10b981',
   no_deadline: '#9ca3af',
+};
+
+const BUCKET_DEFAULT_LABEL = {
+  overdue: 'Quá hạn',
+  today: 'Hôm nay',
+  tomorrow: 'Ngày mai',
+  this_week: 'Tuần này',
+  next_week: 'Tuần sau',
+  in_2_weeks: 'Trong 2 tuần',
+  in_3_weeks: 'Trong 3 tuần',
+  in_4_weeks: 'Trong 4 tuần',
+  in_1_month: 'Trong 1 tháng',
+  next_month: 'Tháng sau',
+  no_deadline: 'Không hạn',
 };
 
 // Trả ISO date YYYY-MM-DD đại diện cho bucket khi kéo-thả (set expected_close_date).
@@ -720,6 +735,7 @@ function targetDateForBucket(bucketKey, buckets) {
   switch (bucketKey) {
     case 'overdue':     return fmt(addDays(-1));
     case 'today':       return fmt(startOfToday);
+    case 'tomorrow':    return fmt(addDays(1));
     case 'this_week':   return fmt(addDays(Math.max(0, 6 - dow)));
     case 'next_week':   return fmt(addDays(7 - dow + 3));
     case 'in_2_weeks':  return fmt(addDays(buckets?.in_2_weeks?.days || 14));
@@ -743,7 +759,10 @@ function resolveBucket(deadlineTs, buckets) {
   if (deadlineTs < startOfToday) return 'overdue';
   if (deadlineTs <= endOfToday) return 'today';
 
-  // Tuần bắt đầu Thứ Hai
+  const endOfTomorrow = endOfToday + 86400000;
+  if (deadlineTs <= endOfTomorrow) return 'tomorrow';
+
+  // Tuần bắt đầu Thứ Hai — «Tuần này» = sau ngày mai đến hết tuần
   const dow = (now.getDay() + 6) % 7;
   const startOfThisWeek = startOfToday - dow * 86400000;
   const endOfThisWeek = startOfThisWeek + 7 * 86400000 - 1;
@@ -872,7 +891,7 @@ export function DeadlineView({
           const meta = cfg.buckets?.[key];
           if (meta && meta.enabled === false) return null;
           const list = grouped[key] || [];
-          const label = meta?.label || key;
+          const label = meta?.label || BUCKET_DEFAULT_LABEL[key] || key;
           const totalValue = list.reduce((s, x) => s + (x.estimated_value || 0), 0);
           const columnItemIds = list.map((x) => x.id);
           const allInColumnSelected =

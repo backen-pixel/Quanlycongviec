@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Megaphone, X, Loader2, ChevronDown, BellOff } from 'lucide-react';
+import { Megaphone, X, Loader2, BellOff } from 'lucide-react';
 import api from '../lib/api';
 import { formatDateTime as formatDateVN } from '../lib/utils';
 import { useAuth } from '../lib/auth';
@@ -13,10 +13,8 @@ import {
 } from '../lib/releaseNotesRead';
 import { ReleaseNoteContent } from '../lib/renderReleaseNoteContent';
 
-/** Popup «Có gì mới» — hiện mọi bản chưa đọc; bắt buộc cuộn hết mới đóng được. */
+/** Popup «Có gì mới» — hiện mọi bản chưa đọc; nút Tắt luôn bật. */
 const SHOW_RELEASE_NOTE_LOGIN_MODAL = true;
-
-const SCROLL_END_THRESHOLD_PX = 32;
 
 const CATEGORIES = {
   feature: { label: 'Tính năng mới', icon: '✨', color: 'bg-blue-100 text-blue-700' },
@@ -64,29 +62,10 @@ function ReleaseNoteBlock({ note }) {
 export default function ReleaseNoteLoginModal() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const scrollRef = useRef(null);
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [closing, setClosing] = useState(false);
-  const [canDismiss, setCanDismiss] = useState(false);
-  const [scrollProgress, setScrollProgress] = useState(0);
   const [disableFuturePopup, setDisableFuturePopup] = useState(false);
-
-  const updateScrollGate = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const needsScroll = el.scrollHeight > el.clientHeight + 8;
-    if (!needsScroll) {
-      setScrollProgress(100);
-      setCanDismiss(true);
-      return;
-    }
-    const maxScroll = el.scrollHeight - el.clientHeight;
-    const ratio = maxScroll > 0 ? el.scrollTop / maxScroll : 1;
-    setScrollProgress(Math.min(100, Math.round(ratio * 100)));
-    const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
-    setCanDismiss(remaining <= SCROLL_END_THRESHOLD_PX);
-  }, []);
 
   useEffect(() => {
     if (!SHOW_RELEASE_NOTE_LOGIN_MODAL || isLoginPopupDisabled()) return undefined;
@@ -109,38 +88,6 @@ export default function ReleaseNoteLoginModal() {
     return () => { cancelled = true; };
   }, [user]);
 
-  useEffect(() => {
-    if (loading || !notes.length) return undefined;
-    setCanDismiss(false);
-    setScrollProgress(0);
-    const el = scrollRef.current;
-    const raf = requestAnimationFrame(updateScrollGate);
-
-    const ro = typeof ResizeObserver !== 'undefined'
-      ? new ResizeObserver(() => updateScrollGate())
-      : null;
-    if (ro && el) ro.observe(el);
-
-    const onImgLoad = () => updateScrollGate();
-    el?.querySelectorAll('img').forEach((img) => {
-      if (!img.complete) img.addEventListener('load', onImgLoad, { once: true });
-    });
-
-    return () => {
-      cancelAnimationFrame(raf);
-      ro?.disconnect();
-    };
-  }, [loading, notes, updateScrollGate]);
-
-  useEffect(() => {
-    if (!notes.length || canDismiss) return undefined;
-    const onKey = (e) => {
-      if (e.key === 'Escape') e.preventDefault();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [notes.length, canDismiss]);
-
   const markAllRead = useCallback(async () => {
     const dbIds = notes.filter((n) => !n.is_builtin).map((n) => n.id);
     markNotesReadLocally(notes.filter((n) => n.is_builtin));
@@ -150,7 +97,7 @@ export default function ReleaseNoteLoginModal() {
   }, [notes]);
 
   const dismiss = useCallback(async () => {
-    if (!notes.length || closing || !canDismiss) return;
+    if (!notes.length || closing) return;
     setClosing(true);
     try {
       await markAllRead();
@@ -159,10 +106,10 @@ export default function ReleaseNoteLoginModal() {
     setNotes([]);
     setClosing(false);
     window.dispatchEvent(new StorageEvent('storage', { key: 'release_notes_read_builtin_ids' }));
-  }, [notes, closing, canDismiss, markAllRead, disableFuturePopup]);
+  }, [notes, closing, markAllRead, disableFuturePopup]);
 
   const goToUpdates = useCallback(async () => {
-    if (!notes.length || closing || !canDismiss) return;
+    if (!notes.length || closing) return;
     setClosing(true);
     try {
       await markAllRead();
@@ -172,7 +119,7 @@ export default function ReleaseNoteLoginModal() {
     setClosing(false);
     window.dispatchEvent(new StorageEvent('storage', { key: 'release_notes_read_builtin_ids' }));
     navigate('/updates');
-  }, [notes, closing, canDismiss, markAllRead, disableFuturePopup, navigate]);
+  }, [notes, closing, markAllRead, disableFuturePopup, navigate]);
 
   if (!SHOW_RELEASE_NOTE_LOGIN_MODAL || isLoginPopupDisabled()) return null;
   if (loading || !notes.length) return null;
@@ -185,14 +132,6 @@ export default function ReleaseNoteLoginModal() {
       aria-labelledby="release-note-login-title"
     >
       <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-[min(100%,56rem)] max-h-[92vh] overflow-hidden flex flex-col border border-gray-200/80">
-        <div className="h-1 shrink-0 bg-gray-100">
-          <div
-            className="h-full bg-blue-600 transition-[width] duration-150 ease-out"
-            style={{ width: `${scrollProgress}%` }}
-            aria-hidden
-          />
-        </div>
-
         <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-blue-50/80 to-white shrink-0">
           <div className="w-11 h-11 rounded-xl flex items-center justify-center text-lg shrink-0 bg-blue-100 text-blue-700">
             <Megaphone className="h-5 w-5" />
@@ -202,55 +141,35 @@ export default function ReleaseNoteLoginModal() {
               <Megaphone className="h-3.5 w-3.5 shrink-0" /> Có gì mới?
             </p>
             <h2 id="release-note-login-title" className="text-lg font-bold text-gray-900 mt-1 leading-snug">
-              {notes.length === 1 ? notes[0].title : `${notes.length} cập nhật mới — vui lòng xem hết`}
+              {notes.length === 1 ? notes[0].title : `${notes.length} cập nhật mới`}
             </h2>
-            <p className="text-xs text-gray-500 mt-1">
-              {canDismiss
-                ? 'Đã xem hết — bạn có thể bấm «Tắt».'
-                : 'Cuộn xuống cuối danh sách để bật nút «Tắt».'}
-            </p>
+            <p className="text-xs text-gray-500 mt-1">Bấm «Tắt» để đóng — có thể đọc tiếp hoặc tắt ngay.</p>
           </div>
           <button
             type="button"
             onClick={dismiss}
-            disabled={closing || !canDismiss}
-            className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 shrink-0 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+            disabled={closing}
+            className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 shrink-0 cursor-pointer disabled:opacity-40"
             aria-label="Tắt"
-            title={canDismiss ? 'Tắt popup' : 'Cuộn hết thông báo trước khi tắt'}
+            title="Tắt popup"
           >
             {closing ? <Loader2 className="h-5 w-5 animate-spin" /> : <X className="h-5 w-5" />}
           </button>
         </div>
 
-        <div
-          ref={scrollRef}
-          onScroll={updateScrollGate}
-          className="overflow-y-auto px-5 py-4 flex-1 min-h-0 relative"
-        >
+        <div className="overflow-y-auto px-5 py-4 flex-1 min-h-0">
           {notes.map((note) => (
             <ReleaseNoteBlock key={note.id} note={note} />
           ))}
-
-          {!canDismiss && (
-            <div className="sticky bottom-0 -mx-5 px-5 py-3 bg-gradient-to-t from-white via-white/95 to-transparent pointer-events-none flex items-center justify-center gap-1.5 text-sm text-blue-700 font-medium">
-              <ChevronDown className="h-4 w-4 animate-bounce" />
-              Cuộn tiếp để xem hết {notes.length} thông báo ({scrollProgress}%)
-            </div>
-          )}
         </div>
 
         <div className="px-5 py-4 border-t border-gray-100 bg-gray-50/80 shrink-0 space-y-3">
-          <label
-            className={`flex items-start gap-2 text-xs select-none ${
-              canDismiss ? 'text-gray-600 cursor-pointer' : 'text-gray-400 cursor-not-allowed'
-            }`}
-          >
+          <label className="flex items-start gap-2 text-xs select-none text-gray-600 cursor-pointer">
             <input
               type="checkbox"
               checked={disableFuturePopup}
-              disabled={!canDismiss}
               onChange={(e) => setDisableFuturePopup(e.target.checked)}
-              className="mt-0.5 rounded border-gray-300 disabled:opacity-50"
+              className="mt-0.5 rounded border-gray-300"
             />
             <span className="flex items-center gap-1">
               <BellOff className="h-3.5 w-3.5 shrink-0" />
@@ -259,25 +178,21 @@ export default function ReleaseNoteLoginModal() {
           </label>
 
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs text-gray-500">
-              {canDismiss
-                ? 'Đã xem hết các thông báo.'
-                : 'Nút «Tắt» chỉ bật sau khi cuộn đến cuối.'}
-            </p>
+            <p className="text-xs text-gray-500">{notes.length} thông báo chưa đọc.</p>
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={goToUpdates}
-                disabled={closing || !canDismiss}
-                className="text-sm text-blue-600 hover:text-blue-800 font-medium px-3 py-2 rounded-lg hover:bg-blue-50 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                disabled={closing}
+                className="text-sm text-blue-600 hover:text-blue-800 font-medium px-3 py-2 rounded-lg hover:bg-blue-50 cursor-pointer disabled:opacity-40"
               >
                 Xem trang Có gì mới?
               </button>
               <button
                 type="button"
                 onClick={dismiss}
-                disabled={closing || !canDismiss}
-                className="text-sm font-semibold px-5 py-2.5 rounded-lg bg-[var(--color-primary-600,#2563eb)] text-white hover:opacity-95 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed min-w-[5.5rem]"
+                disabled={closing}
+                className="text-sm font-semibold px-5 py-2.5 rounded-lg bg-[var(--color-primary-600,#2563eb)] text-white hover:opacity-95 cursor-pointer disabled:opacity-40 min-w-[5.5rem]"
               >
                 {closing ? 'Đang lưu…' : 'Tắt'}
               </button>

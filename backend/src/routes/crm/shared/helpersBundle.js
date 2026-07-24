@@ -3943,7 +3943,20 @@ const crmSchemaCompat = {
   leadSelectMigrationChecked: false,
   vcPipelineStageAvailable: true, // migration 81
   leadTypeColorAvailable: true, // migration 339
+  lastProbeAt: 0,
 };
+
+/**
+ * Khi có flag degraded, re-probe sau TTL — instance tự hội tụ sau khi migration chạy,
+ * không cần restart (multi-instance không chia sẻ state, mỗi process tự probe lại).
+ */
+const CRM_SCHEMA_REPROBE_TTL_MS = 5 * 60 * 1000;
+
+function crmSchemaCompatShouldReprobe() {
+  if (!crmSchemaCompat.leadSelectMigrationChecked) return true;
+  const degraded = !crmSchemaCompat.vcPipelineStageAvailable || !crmSchemaCompat.leadTypeColorAvailable;
+  return degraded && (Date.now() - crmSchemaCompat.lastProbeAt) > CRM_SCHEMA_REPROBE_TTL_MS;
+}
 
 function stripCrmLeadTypeColorFromSelect(selectStr) {
   return String(selectStr || '').replace(
@@ -3958,7 +3971,7 @@ function isCrmLeadTypeColorMissingError(err) {
 }
 
 async function getCrmLeadListSelect() {
-  if (crmSchemaCompat.leadSelectMigrationChecked) {
+  if (!crmSchemaCompatShouldReprobe()) {
     let sel = CRM_LEAD_LIST_SELECT;
     if (!crmSchemaCompat.vcPipelineStageAvailable) {
       sel = sel.replace(', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)', '');
@@ -3991,12 +4004,15 @@ async function getCrmLeadListSelect() {
       console.log('[crm] vc_pipeline_stage join available ✓');
     }
   }
+  // Reset leadTypeColorAvailable trước khi probe — hồi phục sau khi migration 339 chạy
+  crmSchemaCompat.leadTypeColorAvailable = true;
   const { error: ltColorErr } = await supabase.from('crm_lead_types').select('color').limit(0);
   if (ltColorErr && ltColorErr.message?.includes('color')) {
     crmSchemaCompat.leadTypeColorAvailable = false;
     console.warn('[crm] Migration 339 not applied — crm_lead_types.color unavailable');
   }
   crmSchemaCompat.leadSelectMigrationChecked = true;
+  crmSchemaCompat.lastProbeAt = Date.now();
   return getCrmLeadListSelect(); // re-call with flag set
 }
 
@@ -4333,6 +4349,7 @@ async function fetchCrmLeadsByIdsOrdered(ids, opts = {}) {
     if (error && isCrmLeadTypeColorMissingError(error)) {
       crmSchemaCompat.leadTypeColorAvailable = false;
       crmSchemaCompat.leadSelectMigrationChecked = true;
+      crmSchemaCompat.lastProbeAt = Date.now();
       const stripped = stripCrmLeadTypeColorFromSelect(selectStr);
       console.warn('[crm] Auto-strip crm_lead_types.color embed (migration 339)');
       const r2 = await supabase.from('crm_leads').select(stripped).in('id', chunk);
@@ -4523,6 +4540,7 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     if (error && isCrmLeadTypeColorMissingError(error)) {
       crmSchemaCompat.leadTypeColorAvailable = false;
       crmSchemaCompat.leadSelectMigrationChecked = true;
+      crmSchemaCompat.lastProbeAt = Date.now();
       currentSelectStr = stripCrmLeadTypeColorFromSelect(currentSelectStr);
       console.warn('[crm] Auto-strip crm_lead_types.color embed (migration 339)');
       ({ data, error } = await q.select(currentSelectStr).range(from, from + need - 1));
@@ -6325,6 +6343,7 @@ async function assertCanFlagLead(req, leadId) {
 const DEFAULT_DEADLINE_BUCKETS = {
   overdue:     { enabled: true, label: 'Quá hạn' },
   today:       { enabled: true, label: 'Hôm nay' },
+  tomorrow:    { enabled: true, label: 'Ngày mai' },
   this_week:   { enabled: true, label: 'Tuần này' },
   next_week:   { enabled: true, label: 'Tuần sau' },
   in_2_weeks:  { enabled: true, label: 'Trong 2 tuần', days: 14 },

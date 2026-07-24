@@ -11,6 +11,7 @@ const FIELD_OPTIONS = [
 const BUCKETS_DEF = [
   { key: 'overdue',     label: 'Quá hạn',       hasDays: false },
   { key: 'today',       label: 'Hôm nay',       hasDays: false },
+  { key: 'tomorrow',    label: 'Ngày mai',      hasDays: false },
   { key: 'this_week',   label: 'Tuần này',      hasDays: false },
   { key: 'next_week',   label: 'Tuần sau',      hasDays: false },
   { key: 'in_2_weeks',  label: 'Trong 2 tuần',  hasDays: true,  defaultDays: 14 },

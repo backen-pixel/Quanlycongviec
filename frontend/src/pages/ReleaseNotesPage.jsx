@@ -164,7 +164,7 @@ export default function ReleaseNotesPage() {
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">
             {isAdmin
-              ? 'Quản lý thông báo cập nhật — popup khi đăng nhập hiện mọi bản chưa đọc, bắt buộc cuộn hết mới tắt được.'
+              ? 'Quản lý thông báo cập nhật — popup khi đăng nhập hiện mọi bản chưa đọc (có thể tắt ngay).'
               : 'Cập nhật và thay đổi mới nhất'}
           </p>
           {loginPopupOff && (
