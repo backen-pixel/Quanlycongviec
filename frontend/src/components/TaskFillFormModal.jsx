@@ -18,6 +18,8 @@ import {
   resolveLeadSiteAddress,
   resolveSurveyAddress,
   leadBudgetInMillions,
+  budgetFormValueToVnd,
+  formatFormFieldDisplay,
   getDimensionSchemaForCabinet,
   resolveCabinetTypeId,
   CABINET_TYPE_OPTIONS,
@@ -554,43 +556,79 @@ export default function TaskFillFormModal({
     });
   };
 
-  /** Đồng bộ địa chỉ lead + sự kiện khảo sát khi lưu phiếu. */
+  /** Đồng bộ cột bên lead/KH + sự kiện KS khi lưu phiếu. */
   const syncLeadAndSurveyEvent = async (vals) => {
     const ids = SURVEY_LINKED_FIELD_IDS;
     const address = String(vals[ids.address] || '').trim();
     const dateStr = String(vals[ids.date] || '').trim();
     const surveyor = String(vals[ids.surveyor] || '').trim();
+    const customerNeed = String(vals.customer_need || '').trim();
+    const surveyNote = String(vals.survey_note || '').trim();
     let eventId = surveyEvent?.id || existing.linked_event_id || null;
     let assigneeId = surveyEvent?.assignee_id || existing.linked_assignee_id || null;
+    let syncedSide = false;
 
-    // Giữ assignee nếu tên khớp; nếu form trống tên thì giữ assignee cũ
-    if (surveyor && surveyEvent?.assignee?.full_name
-      && surveyor.toLowerCase() !== String(surveyEvent.assignee.full_name).toLowerCase()) {
-      // Tên đổi tay — không đổi assignee_id (tránh gán nhầm); vẫn lưu text trong form
-    }
+    const customerId = leadInfo?.customer_id || leadInfo?.customer?.id || null;
+    const leadPatch = {};
 
     if (address && leadId) {
       const current = resolveLeadSiteAddress(leadInfo);
       if (address !== current) {
-        try {
-          await api.put(`/crm/leads/${leadId}`, { install_address: address });
-        } catch { /* không chặn lưu form */ }
+        leadPatch.install_address = address;
+      }
+      // Cột «Địa chỉ» panel KHÁCH HÀNG đọc customers.address
+      if (customerId) {
+        const custAddr = String(
+          leadInfo?.customer?.address || leadInfo?.customer_address || '',
+        ).trim();
+        if (address !== custAddr) {
+          try {
+            await api.put(`/customers/${customerId}`, { address });
+            syncedSide = true;
+          } catch { /* không chặn lưu form */ }
+        }
       }
     }
 
-    // Ngân sách (triệu) → estimated_value VND
-    const budgetRaw = vals.budget;
-    if (budgetRaw !== '' && budgetRaw != null && leadId) {
-      const millions = Number(budgetRaw);
-      if (Number.isFinite(millions) && millions >= 0) {
-        const estimated = Math.round(millions * 1e6);
-        const currentEst = Number(leadInfo?.estimated_value) || 0;
-        if (estimated !== currentEst) {
-          try {
-            await api.put(`/crm/leads/${leadId}`, { estimated_value: estimated });
-          } catch { /* ignore */ }
-        }
+    // Ngân sách → estimated_value (Giá trị bên panel Thông tin)
+    const estimated = budgetFormValueToVnd(vals.budget);
+    if (estimated != null && leadId) {
+      const currentEst = Number(leadInfo?.estimated_value) || 0;
+      if (estimated !== currentEst) {
+        leadPatch.estimated_value = estimated;
       }
+    }
+
+    // Nhu cầu / ghi chú KS → mô tả lead (nếu đang trống hoặc chưa có đoạn KS)
+    if (leadId && (customerNeed || surveyNote)) {
+      const bits = [];
+      if (customerNeed) bits.push(`Nhu cầu: ${customerNeed}`);
+      if (vals.project_type) {
+        const ptField = visibleFields.find((f) => f.id === 'project_type');
+        const ptText = formatFormFieldDisplay(ptField, vals.project_type);
+        if (ptText) bits.push(`Loại CT: ${ptText}`);
+      }
+      if (vals.cabinet_type) {
+        const ctField = visibleFields.find((f) => f.id === 'cabinet_type');
+        const ctText = formatFormFieldDisplay(ctField, vals.cabinet_type);
+        if (ctText) bits.push(`Loại tủ: ${ctText}`);
+      }
+      if (surveyNote) bits.push(`Ghi chú KS: ${surveyNote}`);
+      const block = bits.join('\n');
+      const curDesc = String(leadInfo?.description || '').trim();
+      if (!curDesc) {
+        leadPatch.description = block;
+      } else if (!curDesc.includes(customerNeed) && customerNeed) {
+        leadPatch.description = `${curDesc}\n\n— Phiếu KS —\n${block}`;
+      }
+    }
+
+    if (leadId && Object.keys(leadPatch).length) {
+      try {
+        await api.put(`/crm/leads/${leadId}`, leadPatch);
+        syncedSide = true;
+        setLeadInfo((prev) => (prev ? { ...prev, ...leadPatch } : prev));
+      } catch { /* ignore */ }
     }
 
     if (dateStr || address || surveyor) {
@@ -600,7 +638,6 @@ export default function TaskFillFormModal({
         if (address) patch.location = address;
         if (startIso) {
           patch.start_time = startIso;
-          // end = +1h nếu trước đó có end, hoặc +1h từ start
           const endBase = surveyEvent?.end_time
             ? dateInputToEventIso(dateStr, surveyEvent.end_time)
             : (startIso ? new Date(new Date(startIso).getTime() + 3600000).toISOString() : null);
@@ -614,6 +651,7 @@ export default function TaskFillFormModal({
               setSurveyEvent(updated);
               eventId = updated.id;
               assigneeId = updated.assignee_id || assigneeId;
+              syncedSide = true;
             }
           } catch { /* ignore */ }
         }
@@ -624,7 +662,7 @@ export default function TaskFillFormModal({
             event_type: 'site_visit',
             title: leadTitle ? `Khảo sát — ${leadTitle}` : 'Khảo sát công trình',
             lead_id: leadId,
-            customer_id: leadInfo?.customer_id || leadInfo?.customer?.id || null,
+            customer_id: customerId || null,
             location: address || null,
             start_time: startIso,
             end_time: new Date(new Date(startIso).getTime() + 3600000).toISOString(),
@@ -637,12 +675,17 @@ export default function TaskFillFormModal({
             eventId = created.id;
             assigneeId = created.assignee_id || assigneeId;
             setSurveyEvent(created);
+            syncedSide = true;
           }
         } catch { /* ignore — form vẫn lưu */ }
       }
     }
 
-    return { linked_event_id: eventId || null, linked_assignee_id: assigneeId || null };
+    return {
+      linked_event_id: eventId || null,
+      linked_assignee_id: assigneeId || null,
+      synced_side: syncedSide,
+    };
   };
 
   const handleSave = async () => {
@@ -678,11 +721,12 @@ export default function TaskFillFormModal({
     setSaving(true);
     try {
       const linkMeta = await syncLeadAndSurveyEvent(cleanValues);
+      const { synced_side: syncedSide, ...linkFields } = linkMeta || {};
       const { data } = await api.put(`/crm/leads/${leadId}/tasks/${task.id}`, {
         form_data: {
           values: cleanValues,
           submitted_at: new Date().toISOString(),
-          ...linkMeta,
+          ...linkFields,
         },
       });
       const updated = data?.task || data;
@@ -714,7 +758,7 @@ export default function TaskFillFormModal({
           await api.post(`/crm/leads/${leadId}/tasks/${task.id}/attachments/bulk`, { items });
         } catch { /* ignore */ }
       }
-      onSaved?.(updated);
+      onSaved?.(updated, { syncedSide: !!syncedSide });
       onClose?.();
     } catch (err) {
       alert(err.response?.data?.error || err.message || 'Lỗi lưu form');

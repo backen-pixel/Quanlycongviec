@@ -278,6 +278,7 @@ export default function UnifiedDealPage() {
               leadType={lead.type === 'deal' ? 'deal' : 'lead'}
               linkedProjectId={project?.id || null}
               onTaskSummaryChange={load}
+              onLeadSynced={load}
             />
           </div>
         )}

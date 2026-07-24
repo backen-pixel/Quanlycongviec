@@ -521,6 +521,8 @@ export default function CRMTasksTab({
   taskCompanyScope = 'own',
   onArtifactsSynced = null,
   onTaskSummaryChange = null,
+  /** Gọi khi lưu phiếu form đã ghi ngược lead/KH (địa chỉ, giá trị…) — để panel bên trái reload */
+  onLeadSynced = null,
   refreshKey = null,
   /** Công ty xưởng đã gắn với deal (sx_template_company_id) — gửi khi Gen bộ nhiệm vụ SX */
   sxTemplateCompanyId = null,
@@ -2794,7 +2796,7 @@ export default function CRMTasksTab({
     }
   };
 
-  /** Hiện sẵn phiếu đã điền trên dòng NV — không cần bấm mở modal mới thấy. */
+  /** Phiếu đã điền — chỉ hiện trong khu vực bung nhiệm vụ (bấm dòng NV). */
   const renderFillFormSummary = (task) => {
     const formData = normalizeFormData(task.form_data);
     if (!hasFilledFormData(task.form_data)) return null;
@@ -2821,7 +2823,7 @@ export default function CRMTasksTab({
 
     return (
       <div
-        className="mt-1.5 rounded-lg border border-orange-200 bg-orange-50/50 p-2 space-y-1.5"
+        className="rounded-lg border border-orange-200 bg-orange-50/50 p-3 space-y-2"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-2">
@@ -2926,6 +2928,34 @@ export default function CRMTasksTab({
           <p className="text-[10px] text-orange-800/70 italic">Đã lưu phiếu — bấm Sửa để xem chi tiết.</p>
         )}
       </div>
+    );
+  };
+
+  /** Icon mở form điền/sửa — hàng chip; nội dung phiếu xem khi bung NV. */
+  const renderFillFormChip = (task) => {
+    if (!task.show_fill_form) return null;
+    const filled = hasFilledFormData(task.form_data);
+    const cfg = normalizeFormConfig(task.form_config);
+    const title = cfg.title || cfg.button_label || 'Phiếu form';
+    const formData = normalizeFormData(task.form_data);
+    const tip = filled
+      ? [title, formData.submitted_at ? formatDateTime(formData.submitted_at) : '', 'Bấm để sửa · xem chi tiết khi mở nhiệm vụ'].filter(Boolean).join(' · ')
+      : (cfg.button_label || 'Điền form');
+
+    return (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setFillFormTaskId(task.id); }}
+        className={`inline-flex items-center justify-center h-5 w-5 rounded-md border cursor-pointer ${
+          filled
+            ? 'text-orange-800 bg-orange-100 hover:bg-orange-200 border-orange-300'
+            : 'text-orange-600 bg-orange-50 hover:bg-orange-100 border-orange-200'
+        }`}
+        title={tip}
+        aria-label={tip}
+      >
+        <ClipboardPen className="h-3 w-3" />
+      </button>
     );
   };
 
@@ -3339,14 +3369,13 @@ export default function CRMTasksTab({
                 💬 {task.notes.slice(0, 80)}{task.notes.length > 80 ? '...' : ''}
               </p>
             )}
-            {!!task.show_fill_form && hasFilledFormData(task.form_data) && renderFillFormSummary(task)}
             {!isExpanded && atts.length > 0 && renderChecklistCollapsedFiles(atts, task.id, null)}
             {!isExpanded && !hasNotes && hasDesc && (
               <p className="text-sm text-slate-600 mt-0.5 line-clamp-2" title={descText}>
                 📋 {descText.slice(0, 120)}{descText.length > 120 ? '…' : ''}
               </p>
             )}
-            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
               {task.deadline && editingDeadline !== task.id && (
                 <span onClick={(e) => { e.stopPropagation(); setEditingDeadline(task.id); }}
                   className={`text-xs font-semibold flex items-center gap-1 cursor-pointer hover:bg-gray-100 px-1.5 py-0.5 rounded ${isOverdue ? 'text-red-600' : 'text-gray-700'}`}
@@ -3439,18 +3468,18 @@ export default function CRMTasksTab({
               )}
               {task.blocks_stage_advance && task.status !== 'completed' && task.status !== 'cancelled' && (
                 <span
-                  className="text-[10px] text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium border border-amber-200"
-                  title="Phải hoàn thành nhiệm vụ này trước khi chuyển giai đoạn (trừ Thắng/Thua)"
+                  className="inline-flex items-center justify-center h-5 w-5 rounded-md text-amber-700 bg-amber-100 border border-amber-200"
+                  title="Chặn chuyển giai đoạn — phải hoàn thành nhiệm vụ này trước khi chuyển (trừ Thắng/Thua)"
                 >
-                  <Lock className="h-2.5 w-2.5" />Chặn chuyển giai đoạn
+                  <Lock className="h-3 w-3" />
                 </span>
               )}
               {task.blocks_stage_advance && task.status === 'completed' && (
                 <span
-                  className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium"
-                  title="Đã hoàn thành nhiệm vụ chặn giai đoạn"
+                  className="inline-flex items-center justify-center h-5 w-5 rounded-md text-emerald-700 bg-emerald-50 border border-emerald-200"
+                  title="Đã mở khóa — nhiệm vụ chặn giai đoạn đã hoàn thành"
                 >
-                  <Lock className="h-2.5 w-2.5" />Đã mở khóa
+                  <Lock className="h-3 w-3" />
                 </span>
               )}
               {task.clears_delivery_deadline_on_complete && isProductionScope && task.status !== 'completed' && (
@@ -3470,30 +3499,14 @@ export default function CRMTasksTab({
               ) && task.status !== 'completed' && (
                 <button
                   onClick={(e) => { e.stopPropagation(); setExcelImportTaskId(task.id); }}
-                  className="text-[10px] text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium cursor-pointer border border-emerald-200 transition-colors"
+                  className="inline-flex items-center justify-center h-5 w-5 rounded-md text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 cursor-pointer"
                   title="Upload file Excel để tạo báo giá tự động"
+                  aria-label="Upload Excel báo giá"
                 >
-                  <FileSpreadsheet className="h-2.5 w-2.5" />📊 Upload Excel BG
+                  <FileSpreadsheet className="h-3 w-3" />
                 </button>
               )}
-              {!!task.show_fill_form && (
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); setFillFormTaskId(task.id); }}
-                  className={`text-[10px] px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium cursor-pointer border transition-colors ${
-                    hasFilledFormData(task.form_data)
-                      ? 'text-orange-800 bg-orange-100 hover:bg-orange-200 border-orange-300'
-                      : 'text-orange-600 bg-orange-50 hover:bg-orange-100 border-orange-200'
-                  }`}
-                  title={normalizeFormConfig(task.form_config).title || 'Điền form'}
-                >
-                  <ClipboardPen className="h-2.5 w-2.5" />
-                  {hasFilledFormData(task.form_data)
-                    ? `Sửa ${normalizeFormConfig(task.form_config).button_label || 'form'}`
-                    : (normalizeFormConfig(task.form_config).button_label || 'Điền form')}
-                  {hasFilledFormData(task.form_data) ? ' ✓' : ''}
-                </button>
-              )}
+              {renderFillFormChip(task)}
             </div>
           </div>
           <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${PRIORITY_COLORS[task.priority]}`}>{PRIORITY_LABELS[task.priority]}</span>
@@ -3566,6 +3579,7 @@ export default function CRMTasksTab({
         {/* Expanded: Notes + Attachments (gộp 1 khu vực) */}
         {isExpanded && (
           <div className="px-3 pb-3 space-y-3 border-t border-gray-200 mx-3 pt-3">
+            {!!task.show_fill_form && hasFilledFormData(task.form_data) && renderFillFormSummary(task)}
             {hasDesc && (
               <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
                 <p className="text-xs font-semibold text-slate-500 uppercase mb-1.5">Mô tả / hướng dẫn (từ mẫu CRM)</p>
@@ -4636,13 +4650,21 @@ export default function CRMTasksTab({
             leadId={lid}
             task={fillTask}
             onClose={() => setFillFormTaskId(null)}
-            onSaved={(updated) => {
+            onSaved={(updated, meta) => {
               if (updated) {
                 setTasks((p) => p.map((t) => (t.id === fillTask.id ? { ...t, ...updated } : t)));
               }
               loadAttachments({ id: fillTask.id });
               notifyArtifactsSynced(fillTask.id);
-              setImportToast({ message: 'Đã lưu form — đồng bộ địa chỉ lead & sự kiện khảo sát', type: 'success' });
+              if (meta?.syncedSide) {
+                try { onLeadSynced?.({ leadId: lid }); } catch { /* ignore */ }
+              }
+              setImportToast({
+                message: meta?.syncedSide
+                  ? 'Đã lưu phiếu — đồng bộ địa chỉ KH, giá trị & sự kiện khảo sát'
+                  : 'Đã lưu phiếu khảo sát',
+                type: 'success',
+              });
               setTimeout(() => setImportToast(null), 4000);
             }}
           />

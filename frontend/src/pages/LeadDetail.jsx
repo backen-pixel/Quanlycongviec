@@ -2443,6 +2443,7 @@ export default function LeadDetail() {
                   users={allUsers}
                   focusTaskId={searchParams.get('crm_task') || null}
                   onArtifactsSynced={refreshTaskSyncedDocuments}
+                  onLeadSynced={() => load({ silent: true })}
                   refreshKey={crmTasksRefreshKey}
                   sxTemplateCompanyId={lead?.sx_template_company_id || null}
                   linkedProjectId={lead?.project_id || null}

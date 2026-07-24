@@ -379,10 +379,7 @@ export function formatFormFieldDisplay(field, value) {
     return parts.length ? `${parts.join(' · ')}${layout}` : '';
   }
   if (field.id === 'budget') {
-    const n = Number(value);
-    if (!Number.isFinite(n)) return String(value);
-    const fmt = new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 2 }).format(n);
-    return `${fmt} triệu`;
+    return formatBudgetFormDisplay(value);
   }
   return String(value);
 }
@@ -597,6 +594,30 @@ export function leadBudgetInMillions(lead) {
   if (!Number.isFinite(raw) || raw <= 0) return '';
   if (raw >= 1000) return Math.round((raw / 1e6) * 100) / 100;
   return raw;
+}
+
+/**
+ * Ô «Ngân sách (triệu)» → VND.
+ * ≥ 10.000 coi như đã nhập VND (tránh nhân 1e6 nhầm); < 10.000 = số triệu.
+ */
+export function budgetFormValueToVnd(raw) {
+  if (raw === '' || raw == null) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return null;
+  if (n >= 10000) return Math.round(n);
+  return Math.round(n * 1e6);
+}
+
+/** Hiển thị ngân sách form (triệu hoặc VND đã nhập). */
+export function formatBudgetFormDisplay(raw) {
+  if (raw === '' || raw == null) return '';
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return String(raw);
+  if (n >= 10000) {
+    return `${new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(Math.round(n))}đ`;
+  }
+  const fmt = new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 2 }).format(n);
+  return `${fmt} triệu`;
 }
 
 /** Địa chỉ ưu tiên: sự kiện KS → lead/customer. */
