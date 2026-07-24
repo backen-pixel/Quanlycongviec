@@ -428,10 +428,6 @@ export default function NotificationCenter({ socket }) {
   const rootRef = useRef(null);
   const panelRef = useRef(null);
   const listScrollRef = useRef(null);
-  /** Id đã xếp hàng / đang đánh dấu đã xem (tránh gọi API trùng khi lướt) */
-  const seenQueuedRef = useRef(new Set());
-  const pendingSeenRef = useRef(new Set());
-  const flushSeenTimerRef = useRef(null);
   const loadCountRef = useRef(null);
 
   useEffect(() => {
@@ -626,36 +622,6 @@ export default function NotificationCenter({ socket }) {
   };
   loadCountRef.current = loadCount;
 
-  /** Gom các thông báo đã lướt tới → đánh dấu đã xem (bulk) */
-  const flushSeenReads = useCallback(async () => {
-    const ids = [...pendingSeenRef.current];
-    pendingSeenRef.current.clear();
-    if (!ids.length) return;
-    const hideAfterRead = listModeRef.current === 'unread';
-    setNotifications((prev) => (
-      hideAfterRead
-        ? prev.filter((n) => !ids.includes(n.id))
-        : prev.map((n) => (ids.includes(n.id) ? { ...n, is_read: true } : n))
-    ));
-    try {
-      await api.put('/dashboard/notifications/bulk-read', { ids });
-      await loadCountRef.current?.({ includeCskh: false });
-    } catch {
-      ids.forEach((id) => seenQueuedRef.current.delete(id));
-    }
-  }, []);
-
-  const queueSeenRead = useCallback((id) => {
-    if (!id || seenQueuedRef.current.has(id)) return;
-    seenQueuedRef.current.add(id);
-    pendingSeenRef.current.add(id);
-    if (flushSeenTimerRef.current) clearTimeout(flushSeenTimerRef.current);
-    flushSeenTimerRef.current = setTimeout(() => {
-      flushSeenTimerRef.current = null;
-      flushSeenReads();
-    }, 350);
-  }, [flushSeenReads]);
-
   useEffect(() => {
     // Dashboard badge trước; CSKH (query nặng) trì hoãn để ưu tiên load trang hiện tại.
     loadCount({ includeCskh: false });
@@ -833,8 +799,6 @@ export default function NotificationCenter({ socket }) {
 
   const markRead = async (id) => {
     if (!id) return;
-    seenQueuedRef.current.add(id);
-    pendingSeenRef.current.delete(id);
     try {
       await api.put(`/dashboard/notifications/${id}/read`);
       setNotifications((prev) => (
@@ -843,50 +807,8 @@ export default function NotificationCenter({ socket }) {
           : prev.map((n) => (n.id === id ? { ...n, is_read: true } : n))
       ));
       await loadCount();
-    } catch {
-      seenQueuedRef.current.delete(id);
-    }
+    } catch { /* giữ nguyên danh sách nếu API lỗi */ }
   };
-
-  // Khi mở panel và lướt danh sách: thông báo hiện trong khung nhìn → tự đánh dấu đã xem
-  useEffect(() => {
-    if (!open || tab === 'cskh' || loading || selectMode || listMode !== 'unread') return undefined;
-    const root = listScrollRef.current;
-    if (!root) return undefined;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (!entry.isIntersecting) continue;
-          const el = entry.target;
-          if (el.getAttribute('data-notif-unread') !== '1') continue;
-          if (el.getAttribute('data-notif-approval') === '1') continue;
-          const id = el.getAttribute('data-notif-id');
-          if (id) queueSeenRead(id);
-        }
-      },
-      { root, threshold: 0.45, rootMargin: '0px' },
-    );
-
-    root.querySelectorAll('[data-notif-id][data-notif-unread="1"]').forEach((el) => {
-      observer.observe(el);
-    });
-
-    return () => observer.disconnect();
-  }, [open, tab, loading, selectMode, listMode, notifications, queueSeenRead]);
-
-  // Đóng panel: đẩy hết các id đang chờ đánh dấu đã xem
-  useEffect(() => {
-    if (open) return undefined;
-    if (flushSeenTimerRef.current) {
-      clearTimeout(flushSeenTimerRef.current);
-      flushSeenTimerRef.current = null;
-    }
-    if (pendingSeenRef.current.size) {
-      flushSeenReads();
-    }
-    return undefined;
-  }, [open, flushSeenReads]);
 
   /** Bỏ qua 1 thông báo — ẩn vĩnh viễn khỏi danh sách + badge */
   const dismissOne = async (id) => {
@@ -1667,6 +1589,17 @@ export default function NotificationCenter({ socket }) {
                               </div>
                               );
                             })()}
+                            {!selectMode && !n.is_read && (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); markRead(n.id); }}
+                                className="inline-flex items-center gap-1 h-6 px-1.5 rounded-md text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 cursor-pointer shrink-0"
+                                title="Đánh dấu đã xem"
+                              >
+                                <Check className="h-3 w-3" />
+                                Đã xem
+                              </button>
+                            )}
                             {!selectMode && (
                               <button
                                 type="button"
