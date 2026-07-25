@@ -1,7 +1,7 @@
 /**
  * Quy tắc kéo giai đoạn deal trên CRM.
- * Deal chưa có project_id không được nhảy sang cột sau Thắng (phải chọn SX ở Thắng).
  * Các ràng buộc theo liên kết Sản xuất / tiến độ xưởng-VC xem `CRM_PRODUCTION_LINK_STAGE_GATE`.
+ * Không bắt buộc qua cột Thắng trước khi sang giai đoạn sau Thắng.
  */
 
 const { isLostOrCancelledPipelineStage } = require('./crmLostPipelineStage');
@@ -207,15 +207,8 @@ function assertDealCrmManualStageChange(lead, targetStage, prevStage, opts = {})
 
   const wonAnchorOrder = opts.wonAnchorOrder != null ? opts.wonAnchorOrder : null;
 
-  // Chưa có dự án SX → bắt buộc qua cột Thắng (chọn công ty SX) trước khi sang cột sau neo Thắng.
-  if (!lead.project_id && !targetStage.is_won && isCrmPostWonRequiresSxProject(targetStage, wonAnchorOrder)) {
-    return {
-      ok: false,
-      error: 'Cần chuyển deal sang cột Thắng và chọn công ty sản xuất trước khi sang giai đoạn sau Thắng.',
-      code: 'CRM_DEAL_REQUIRES_SX_PICK',
-      requires_production_company: true,
-    };
-  }
+  // Không bắt buộc qua Thắng/chọn SX trước khi sang cột sau Thắng — sale được kéo tự do.
+  // (Trước đây: CRM_DEAL_REQUIRES_SX_PICK khi !project_id && isCrmPostWonRequiresSxProject)
 
   // Luôn cho kéo về cột Thắng hoặc cột «doanh thu đã hoàn thành» (khi đã có project).
   if (targetStage.is_won || isCrmCompletedRevenueStage(targetStage)) return { ok: true };

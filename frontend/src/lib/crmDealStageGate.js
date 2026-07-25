@@ -70,18 +70,12 @@ export function isStageAfterWonAnchor(stage, wonAnchorOrder) {
 }
 
 /**
- * Deal chưa có dự án SX không được nhảy sang cột sau Thắng — phải chọn công ty SX ở Thắng trước.
- * @returns {string|null}
+ * Trước đây chặn kéo sang cột sau Thắng khi chưa có project_id.
+ * Đã tắt theo yêu cầu nghiệp vụ — luôn cho kéo; chọn SX chỉ khi vào cột Thắng (popup).
+ * @returns {null}
  */
-export function crmDealMustPickSxBeforePostWonMessage(item, targetStage, opts = {}) {
-  if (!item || item.type !== 'deal' || dealHasSxProject(item)) return null;
-  if (!targetStage || targetStage.is_won || targetStage.is_lost) return null;
-  if (isLostOrCancelledPipelineStage(targetStage)) return null;
-  const afterByOrder = isStageAfterWonAnchor(targetStage, opts.wonAnchorOrder);
-  const afterByKind = isCrmPostWonManagedStage(targetStage) || isCrmCompletedRevenueStage(targetStage);
-  if (!afterByOrder && !afterByKind) return null;
-  const code = item.code || item.title || 'Deal';
-  return `Deal ${code}: cần kéo sang cột Thắng và chọn công ty sản xuất trước khi sang giai đoạn sau Thắng.`;
+export function crmDealMustPickSxBeforePostWonMessage(_item, _targetStage, _opts = {}) {
+  return null;
 }
 
 /** Deal CRM đã có dự án xưởng (đã tạo / đang ở Sản xuất). */
@@ -260,8 +254,8 @@ export function canDropDealOnCrmKanbanStage(item, targetStage, pipelineType, opt
 }
 
 /**
- * Chặn kéo tay sang cột sau Thắng khi chưa chọn công ty SX.
- * Phần chặn theo tiến độ xưởng/VC chỉ áp dụng khi `CRM_PRODUCTION_LINK_STAGE_GATE` bật.
+ * Chặn kéo tay trên CRM theo tiến độ xưởng/VC khi `CRM_PRODUCTION_LINK_STAGE_GATE` bật.
+ * Không còn chặn «phải qua Thắng chọn SX» trước cột sau Thắng.
  * @returns {string|null}
  */
 export function crmDealStageMoveBlockedMessage(item, targetStage, pipelineType, opts = {}) {
@@ -269,8 +263,6 @@ export function crmDealStageMoveBlockedMessage(item, targetStage, pipelineType, 
   if (!item || item.type === 'lead') return null;
   if (!targetStage) return null;
   if (String(item.stage_id || '') === String(targetStage.id || '')) return null;
-  const mustSx = crmDealMustPickSxBeforePostWonMessage(item, targetStage, opts);
-  if (mustSx) return mustSx;
   // Không chặn Thắng / Thua / cột doanh thu hoàn thành (đã có project).
   if (targetStage.is_won || targetStage.is_lost || isCrmCompletedRevenueStage(targetStage)) return null;
   if (isLostOrCancelledPipelineStage(targetStage)) return null;
