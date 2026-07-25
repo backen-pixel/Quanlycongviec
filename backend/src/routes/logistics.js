@@ -26,6 +26,7 @@ const {
   attachSplitLogisticsTaskStats,
 } = require('../helpers/logisticsTaskSplit');
 const { applyAllActiveWorkshopTemplatesForArea } = require('../helpers/workshopApplyTemplates');
+const { assertProjectAccessible } = require('../helpers/projectAccessScope');
 
 const r = Router();
 r.use(auth);
@@ -355,7 +356,9 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
   try {
     const b = req.body;
     const { data: existingRow } = await supabase
-      .from(VC_PIPELINE_TABLE).select('bucket_slug').eq('id', req.params.id).single();
+      .from(VC_PIPELINE_TABLE).select('bucket_slug, company_id').eq('id', req.params.id).single();
+    const { assertCompanyOwnedRow } = require('../helpers/projectAccessScope');
+    if (!assertCompanyOwnedRow(req, res, existingRow, { label: 'cột pipeline VC', queryCompanyId: b.company_id })) return;
     const update = {};
     ['name', 'color', 'icon', 'order_index', 'is_active', 'workflow_stage_id', 'bucket_slug',
       'crm_sync_type', 'crm_target_stage_id', 'progress_percent', 'is_handover_to_install'].forEach((f) => {
@@ -400,7 +403,9 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
 r.delete('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     const { data: row } = await supabase
-      .from(VC_PIPELINE_TABLE).select('bucket_slug').eq('id', req.params.id).single();
+      .from(VC_PIPELINE_TABLE).select('bucket_slug, company_id').eq('id', req.params.id).single();
+    const { assertCompanyOwnedRow } = require('../helpers/projectAccessScope');
+    if (!assertCompanyOwnedRow(req, res, row, { label: 'cột pipeline VC' })) return;
     if (row?.bucket_slug === INTAKE_BUCKET) {
       return res.status(400).json({ error: 'Không xóa cột chờ vận chuyển — chỉ có thể ẩn' });
     }
@@ -1054,6 +1059,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
 
 r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const { id } = req.params;
     // stage_id = workflow_stages.id (tùy chọn), vc_stage_id = logistics_pipeline_stages.id (ưu tiên)
     const { stage_id, vc_stage_id, move_to_intake } = req.body;
@@ -1075,8 +1081,11 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
 
       const intakeUpdate = { current_stage_id: null };
       if (intakeColId) intakeUpdate.vc_kanban_column_id = intakeColId;
-      await supabase.from('projects').update(intakeUpdate).eq('id', id)
-        .catch(() => supabase.from('projects').update({ current_stage_id: null }).eq('id', id));
+      let { error: intakeErr } = await supabase.from('projects').update(intakeUpdate).eq('id', id);
+      if (intakeErr && String(intakeErr.message || '').includes('vc_kanban_column_id')) {
+        ({ error: intakeErr } = await supabase.from('projects').update({ current_stage_id: null }).eq('id', id));
+      }
+      if (intakeErr) throw intakeErr;
 
       try {
         await supabase.from('stage_transitions').insert({
@@ -1089,10 +1098,19 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
         await syncVcPipelineStageToLead(id, intakeColId).catch((ve) => console.warn('[logistics/intake] sync vc stage:', ve.message));
       }
 
-      const { data: updated } = await supabase
-        .from('projects').select('id, code, name, status, current_stage_id, vc_kanban_column_id, current_stage:workflow_stages(id, slug, name, color)').eq('id', id).single()
-        .catch(() => supabase.from('projects').select('id, code, name, status, current_stage_id, current_stage:workflow_stages(id, slug, name, color)').eq('id', id).single());
-      return res.json({ project: updated?.data || updated });
+      let updatedRes = await supabase
+        .from('projects')
+        .select('id, code, name, status, current_stage_id, vc_kanban_column_id, current_stage:workflow_stages(id, slug, name, color)')
+        .eq('id', id)
+        .single();
+      if (updatedRes.error && String(updatedRes.error.message || '').includes('vc_kanban_column_id')) {
+        updatedRes = await supabase
+          .from('projects')
+          .select('id, code, name, status, current_stage_id, current_stage:workflow_stages(id, slug, name, color)')
+          .eq('id', id)
+          .single();
+      }
+      return res.json({ project: updatedRes.data });
     }
 
     // Cần ít nhất một trong: stage_id (workflow_stages) hoặc vc_stage_id (logistics_pipeline_stages)
@@ -1319,6 +1337,7 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
 
 r.get('/projects/:id/incidents', requirePermission('projects', 'view'), async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id))) return;
     const { data, error } = await supabase
       .from('project_incidents')
       .select('*')
@@ -1333,6 +1352,7 @@ r.get('/projects/:id/incidents', requirePermission('projects', 'view'), async (r
 
 r.post('/projects/:id/incidents', requirePermission('projects', 'edit'), async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const { title, description, severity = 'medium' } = req.body;
     if (!title?.trim()) return res.status(400).json({ error: 'Thiếu tiêu đề sự cố' });
     const { data, error } = await supabase
@@ -1349,6 +1369,7 @@ r.post('/projects/:id/incidents', requirePermission('projects', 'edit'), async (
 
 r.patch('/projects/:projectId/incidents/:incidentId', requirePermission('projects', 'edit'), async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.projectId, { operation: 'WRITE' }))) return;
     const update = {};
     ['title', 'description', 'severity', 'status'].forEach((f) => { if (req.body[f] !== undefined) update[f] = req.body[f]; });
     if (['resolved', 'closed'].includes(update.status)) {

@@ -19,6 +19,8 @@ const {
   resolveLogisticsHandoverResponsibleUserId,
   resolveLogisticsHandoverInstallerUserId,
 } = require('../helpers/logisticsHandoverSettings');
+const { assertProjectAccessible } = require('../helpers/projectAccessScope');
+const { invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
 
 const r = Router();
 r.use(auth);
@@ -157,6 +159,7 @@ async function createPickupEventForHandover({
 // ─── 1. SX yêu cầu bàn giao (đăng bình luận cho sale) ───────────────────────
 r.post('/projects/:id/request', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const actor = req.user.userId;
     const projectId = String(req.params.id || '').trim();
     const sxStageId = req.body?.sx_stage_id ? String(req.body.sx_stage_id) : null;
@@ -282,6 +285,7 @@ r.post('/projects/:id/request', async (req, res) => {
 
     const row = withReactions(inserted);
     emitComment(req, deal.id, 'created', row);
+    void rcInvalidateTags(['production']);
 
     try {
       const actorName = await getUserName(actor);
@@ -338,6 +342,7 @@ r.patch('/comments/:cid/select', async (req, res) => {
       sxHandoverPipelineStageId: meta.sx_stage_id || null,
       actorUserId: userId,
     });
+    void rcInvalidateTags(['production']);
 
     // Nhân sự công ty VC/LĐ (cả vận chuyển + lắp đặt).
     const responsibleId = await resolveLogisticsHandoverResponsibleUserId(logisticsCompanyId);

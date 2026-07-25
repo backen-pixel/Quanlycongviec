@@ -61,6 +61,8 @@ export type ProductionProject = {
   company_id?: string | null;
   workshop_type_name?: string | null;
   logistics_company_id?: string | null;
+  vc_kanban_column_id?: string | null;
+  vc_handover_status?: string | null;
   region_id?: string | null;
   region_name?: string | null;
   /** Deal CRM gắn dự án — dùng lọc công ty đặt hàng ngoài (ext:) + resolve cột. */

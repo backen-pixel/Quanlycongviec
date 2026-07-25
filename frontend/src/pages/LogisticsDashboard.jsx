@@ -263,9 +263,10 @@ export default function LogisticsDashboard() {
   }, []);
 
   useEffect(() => {
-    if (!isAdmin) return;
-    api.get('/companies', { params: { for_module: 'logistics' } }).then((r) => setCompanies(r.data?.companies || r.data || [])).catch(() => setCompanies([]));
-  }, [isAdmin]);
+    api.get('/companies', { params: { for_module: 'logistics' } })
+      .then((r) => setCompanies(r.data?.companies || r.data || []))
+      .catch(() => setCompanies([]));
+  }, []);
 
   useEffect(() => {
     if (!isAdmin || !filterCompany || !companies?.length) return;
@@ -380,15 +381,15 @@ export default function LogisticsDashboard() {
   const kanbanPipeline = useMemo(() => {
     const baseStages = pipeline.length ? pipeline : DEFAULT_VC_STAGES;
 
-    const stageIds = new Set(baseStages.map((s) => s.id));
-    const orphans = scopeProjects.filter((p) => !p.vc_kanban_column_id || !stageIds.has(p.vc_kanban_column_id));
+    const stageIds = new Set(baseStages.map((s) => String(s.id)));
+    const orphans = scopeProjects.filter((p) => !p.vc_kanban_column_id || !stageIds.has(String(p.vc_kanban_column_id)));
     const firstStageId = baseStages[0]?.id;
 
     return baseStages.map((stage) => ({
       ...stage,
       items: [
-        ...scopeProjects.filter((p) => p.vc_kanban_column_id === stage.id),
-        ...(stage.id === firstStageId ? orphans : []),
+        ...scopeProjects.filter((p) => String(p.vc_kanban_column_id) === String(stage.id)),
+        ...(String(stage.id) === String(firstStageId) ? orphans : []),
       ],
     }));
   }, [pipeline, scopeProjects]);
@@ -486,7 +487,7 @@ export default function LogisticsDashboard() {
   const handleMoveStage = useCallback(async (projectId, targetCol) => {
     const isIntake = targetCol?.bucket_slug === INTAKE_BUCKET || String(targetCol?.id || '').startsWith('__vc_');
     if (isIntake) {
-      setProjects((prev) => prev.map((p) => (p.id === projectId
+      setProjects((prev) => prev.map((p) => (String(p.id) === String(projectId)
         ? { ...p, current_stage: null, vc_kanban_column_id: targetCol.id, vc_intake: true } : p)));
       try {
         await api.patch(`/logistics/projects/${projectId}/stage`, { move_to_intake: true });
@@ -510,7 +511,7 @@ export default function LogisticsDashboard() {
     const optimisticStage = wid
       ? { id: wid, slug: landCol.slug || landCol.bucket_slug, name: landCol.name, color: landCol.color, icon: landCol.icon }
       : { id: landCol.id, slug: landCol.bucket_slug || landCol.slug, name: landCol.name, color: landCol.color, icon: landCol.icon };
-    setProjects((prev) => prev.map((p) => (p.id === projectId
+    setProjects((prev) => prev.map((p) => (String(p.id) === String(projectId)
       ? {
         ...p,
         current_stage: optimisticStage,
@@ -527,7 +528,7 @@ export default function LogisticsDashboard() {
       if (targetCol?.workflow_stage_id) body.stage_id = targetCol.workflow_stage_id;
       const { data } = await api.patch(`/logistics/projects/${projectId}/stage`, body);
       if (data?.jumped_to_install && data?.install_stage_id) {
-        setProjects((prev) => prev.map((p) => (p.id === projectId
+        setProjects((prev) => prev.map((p) => (String(p.id) === String(projectId)
           ? {
             ...p,
             vc_kanban_column_id: data.install_stage_id,

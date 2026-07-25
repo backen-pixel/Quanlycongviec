@@ -15,9 +15,26 @@ const {
   deleteProjectTask,
 } = require('../helpers/projectTaskMutations');
 const { assertDealResponsible, assertFileAttachmentMutation, logProjectFileActivity } = require('../helpers/projectFileActivity');
+const { assertProjectAccessible } = require('../helpers/projectAccessScope');
 
 const r = Router();
 r.use(auth);
+
+/** Load task.project_id rồi assert — null = đã trả lỗi. */
+async function assertTaskProjectAccess(req, res, taskId, opts = {}) {
+  const { data: task } = await supabase
+    .from('tasks')
+    .select('id, project_id')
+    .eq('id', taskId)
+    .maybeSingle();
+  if (!task) {
+    res.status(404).json({ error: 'Không tìm thấy nhiệm vụ' });
+    return null;
+  }
+  if (!task.project_id) return task; // task không gắn project — cho phép theo logic cũ
+  if (!(await assertProjectAccessible(req, res, task.project_id, opts))) return null;
+  return task;
+}
 
 // ─── HELPER ──────────────────────────────────────────────
 function notify(io, event, data) { if (io) io.emit(event, data); }
@@ -54,6 +71,9 @@ function parsePagination(req, defaultSize = 50, maxSize = 200) {
 r.get('/', async (req, res) => {
   try {
     const { project_id, status, assignee_id, priority, search, group_by, task_type } = req.query;
+    if (project_id) {
+      if (!(await assertProjectAccessible(req, res, project_id))) return;
+    }
     const { page, pageSize, from, to } = parsePagination(req, 50, 200);
     let q = supabase.from('tasks').select(`
       *, projects(id,code,name),
@@ -72,7 +92,8 @@ r.get('/', async (req, res) => {
 
     const userRole = req.user.role;
     if (userRole && !['admin', 'manager'].includes(userRole)) {
-      if (!req.query.project_id && !req.query.stage_id) {
+      // Có project_id đã assert scope ở trên — không bypass assignee filter khi chỉ có stage_id.
+      if (!req.query.project_id) {
         q = q.eq('assignee_id', req.user.userId);
       }
     }
@@ -137,6 +158,7 @@ r.get('/overdue', async (req, res) => {
 // ─── GET TASK DETAIL ──
 r.get('/:id', async (req, res) => {
   try {
+    if (!(await assertTaskProjectAccess(req, res, req.params.id))) return;
     const { data: task, error } = await supabase.from('tasks').select(`
       *, projects(id,code,name),
       assignee:users!tasks_assignee_id_fkey(id,full_name,avatar,email),
@@ -171,6 +193,9 @@ r.get('/:id', async (req, res) => {
 // ─── CREATE TASK ──
 r.post('/', async (req, res) => {
   try {
+    if (req.body?.project_id) {
+      if (!(await assertProjectAccessible(req, res, req.body.project_id, { operation: 'WRITE' }))) return;
+    }
     const result = await createProjectTask(req, req.body);
     if (result.error) return res.status(result.status || 500).json({ error: result.error });
     return res.status(result.status).json(result.data);
@@ -180,6 +205,7 @@ r.post('/', async (req, res) => {
 // ─── UPDATE TASK ──
 r.put('/:id', async (req, res) => {
   try {
+    if (!(await assertTaskProjectAccess(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const result = await updateProjectTask(req, req.params.id, req.body);
     if (result.error) return res.status(result.status || 500).json({ error: result.error });
     return res.status(result.status).json(result.data);
@@ -189,6 +215,7 @@ r.put('/:id', async (req, res) => {
 // ─── KANBAN: CHANGE STATUS ──
 r.patch('/:id/status', async (req, res) => {
   try {
+    if (!(await assertTaskProjectAccess(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const update = { status: req.body.status, updated_at: new Date().toISOString() };
     if (req.body.order_index !== undefined) update.order_index = req.body.order_index;
     if (update.status === 'done') update.completed_at = new Date().toISOString();
@@ -255,6 +282,7 @@ r.patch('/:id/status', async (req, res) => {
 // ─── DELETE TASK ──
 r.delete('/:id', async (req, res) => {
   try {
+    if (!(await assertTaskProjectAccess(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const result = await deleteProjectTask(req, req.params.id);
     if (result.error) return res.status(result.status || 500).json({ error: result.error });
     return res.json(result.data);

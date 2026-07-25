@@ -529,14 +529,14 @@ r.put('/leads/:id', async (req, res) => {
     ) {
       const { data: targetStage } = await supabase
         .from('crm_pipeline_stages')
-        .select('id, name, order_index, is_won, is_lost, sync_role, pipeline_type')
+        .select('id, name, order_index, is_won, is_lost, sync_role, pipeline_type, pipeline_id, counts_as_completed_revenue')
         .eq('id', safeBody.stage_id)
         .maybeSingle();
 
       const { data: prevStage } = oldLead?.stage_id
         ? await supabase
           .from('crm_pipeline_stages')
-          .select('id, name, order_index, is_won, is_lost, pipeline_type, sync_role')
+          .select('id, name, order_index, is_won, is_lost, pipeline_type, sync_role, counts_as_completed_revenue')
           .eq('id', oldLead.stage_id)
           .maybeSingle()
         : { data: null };
@@ -554,7 +554,11 @@ r.put('/leads/:id', async (req, res) => {
             .maybeSingle();
           if (badgeLead) gateLead = { ...oldLead, ...badgeLead };
         } catch (_) { /* giữ oldLead — gate sẽ chặn post-won nếu thiếu badge */ }
-        const stageGatePut = assertDealCrmManualStageChange(gateLead, targetStage, prevStage);
+        const { loadWonAnchorOrderForPipeline } = require('../../../helpers/crmDealStageGate');
+        const wonAnchorOrder = await loadWonAnchorOrderForPipeline(
+          targetStage?.pipeline_id || oldLead?.pipeline_id || null,
+        );
+        const stageGatePut = assertDealCrmManualStageChange(gateLead, targetStage, prevStage, { wonAnchorOrder });
         if (!stageGatePut.ok) {
           return res.status(400).json({
             error: stageGatePut.error,
@@ -2071,14 +2075,14 @@ r.patch('/leads/:id/stage', async (req, res) => {
     
     let { data: stage } = await supabase
       .from('crm_pipeline_stages')
-      .select('id, name, order_index, is_won, is_lost, pipeline_type, send_zalo_on_enter, default_probability, sync_role, requires_deadline, counts_as_completed_revenue, apply_default_assignee_on_enter, default_assignee_user_id')
+      .select('id, name, order_index, is_won, is_lost, pipeline_type, pipeline_id, send_zalo_on_enter, default_probability, sync_role, requires_deadline, counts_as_completed_revenue, apply_default_assignee_on_enter, default_assignee_user_id')
       .eq('id', stage_id)
       .single();
     if (!stage) {
       // Fallback nếu chưa migrate cột requires_deadline.
       ({ data: stage } = await supabase
         .from('crm_pipeline_stages')
-        .select('id, name, order_index, is_won, is_lost, pipeline_type, send_zalo_on_enter, default_probability, sync_role, apply_default_assignee_on_enter, default_assignee_user_id')
+        .select('id, name, order_index, is_won, is_lost, pipeline_type, pipeline_id, send_zalo_on_enter, default_probability, sync_role, apply_default_assignee_on_enter, default_assignee_user_id')
         .eq('id', stage_id)
         .single());
     }
@@ -2111,7 +2115,9 @@ r.patch('/leads/:id/stage', async (req, res) => {
         .maybeSingle()
       : { data: null };
 
-    const stageGate = assertDealCrmManualStageChange(lead, stage, prevStageForGate);
+    const { loadWonAnchorOrderForPipeline } = require('../../../helpers/crmDealStageGate');
+    const wonAnchorOrder = await loadWonAnchorOrderForPipeline(stage?.pipeline_id || lead?.pipeline_id || null);
+    const stageGate = assertDealCrmManualStageChange(lead, stage, prevStageForGate, { wonAnchorOrder });
     if (!stageGate.ok) {
       return res.status(400).json({
         error: stageGate.error,

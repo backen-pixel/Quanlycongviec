@@ -11,3 +11,8 @@ services:
         value: production
       - key: FB_AUTO_PIPELINE_RESUME_ON_BOOT
         value: "1"
+      # Multi-instance: gắn Redis (Render Redis / Upstash). Bỏ REDIS_DISABLED trên prod.
+      - key: REDIS_URL
+        sync: false
+      - key: REDIS_DISABLED
+        value: "0"

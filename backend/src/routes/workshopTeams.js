@@ -7,6 +7,9 @@ const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/newPermission');
 const { notifyMultiple, createNotification } = require('../helpers/notifications');
+const { assertCompanyOwnedRow, assertProjectAccessible } = require('../helpers/projectAccessScope');
+const { effectiveWorkshopCompanyId } = require('../helpers/workshopCompanyScope');
+const { isSystemAdmin } = require('../helpers/adminRole');
 
 const r = Router();
 r.use(auth);
@@ -26,7 +29,18 @@ async function getTeamMemberIds(teamId) {
 r.get('/', requirePermission('projects', 'view'), async (req, res) => {
   try {
     const { type } = req.query; // 'delivery' | 'installation' | 'production' | undefined
-    const companyId = req.query.company_id && String(req.query.company_id).trim();
+    const queryCompany = req.query.company_id && String(req.query.company_id).trim();
+    let companyId = queryCompany || null;
+    if (!isSystemAdmin(req.user)) {
+      const allowed = effectiveWorkshopCompanyId(req, companyId) || (req.user?.company_id ? String(req.user.company_id) : '');
+      if (queryCompany && allowed && String(allowed) !== queryCompany) {
+        return res.status(403).json({ error: 'Không xem đội của công ty khác', reason: 'company_owned_row_denied' });
+      }
+      companyId = allowed || null;
+      if (!companyId) {
+        return res.status(400).json({ error: 'Thiếu company_id để liệt kê đội xưởng' });
+      }
+    }
     let q = supabase
       .from('workshop_teams')
       .select(`
@@ -59,15 +73,19 @@ r.post('/', requirePermission('projects', 'edit'), async (req, res) => {
     if (!['delivery', 'installation', 'production'].includes(b.type)) {
       return res.status(400).json({ error: 'type phải là delivery, installation hoặc production' });
     }
-    if (b.type === 'production' && !(b.company_id && String(b.company_id).trim())) {
+    const scopedCompany = effectiveWorkshopCompanyId(req, b.company_id) || (b.company_id ? String(b.company_id).trim() : null);
+    if (b.type === 'production' && !scopedCompany) {
       return res.status(400).json({ error: 'Đội sản xuất cần company_id (công ty xưởng)' });
+    }
+    if (!isSystemAdmin(req.user) && !scopedCompany) {
+      return res.status(400).json({ error: 'Thiếu company_id khi tạo đội' });
     }
     const { data, error } = await supabase
       .from('workshop_teams')
       .insert({
         name: b.name.trim(),
         type: b.type,
-        company_id: b.company_id || null,
+        company_id: scopedCompany,
         description: b.description || null,
         color:
           b.color ||
@@ -87,6 +105,12 @@ r.post('/', requirePermission('projects', 'edit'), async (req, res) => {
 // ─── PUT /workshop-teams/:id ──────────────────────────────────────────────────
 r.put('/:id', requirePermission('projects', 'edit'), async (req, res) => {
   try {
+    const { data: existing } = await supabase
+      .from('workshop_teams')
+      .select('id, company_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!assertCompanyOwnedRow(req, res, existing, { label: 'đội xưởng' })) return;
     const b = req.body;
     const update = {};
     ['name', 'description', 'color', 'is_active'].forEach((f) => {
@@ -109,6 +133,12 @@ r.put('/:id', requirePermission('projects', 'edit'), async (req, res) => {
 // ─── DELETE /workshop-teams/:id ───────────────────────────────────────────────
 r.delete('/:id', requirePermission('projects', 'edit'), async (req, res) => {
   try {
+    const { data: existing } = await supabase
+      .from('workshop_teams')
+      .select('id, company_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!assertCompanyOwnedRow(req, res, existing, { label: 'đội xưởng' })) return;
     await supabase.from('workshop_teams').delete().eq('id', req.params.id);
     res.json({ message: 'Đã xóa' });
   } catch (e) {
@@ -120,6 +150,9 @@ r.delete('/:id', requirePermission('projects', 'edit'), async (req, res) => {
 // ─── POST /workshop-teams/:id/members ── thêm thành viên ─────────────────────
 r.post('/:id/members', requirePermission('projects', 'edit'), async (req, res) => {
   try {
+    const { data: team } = await supabase
+      .from('workshop_teams').select('id, company_id, name, type').eq('id', req.params.id).maybeSingle();
+    if (!assertCompanyOwnedRow(req, res, team, { label: 'đội xưởng' })) return;
     const { user_id, role = 'member' } = req.body;
     if (!user_id) return res.status(400).json({ error: 'Thiếu user_id' });
 
@@ -130,8 +163,6 @@ r.post('/:id/members', requirePermission('projects', 'edit'), async (req, res) =
     if (error) throw error;
 
     // Thông báo người vừa được thêm
-    const { data: team } = await supabase
-      .from('workshop_teams').select('name, type').eq('id', req.params.id).single();
     const typeLabel =
       team?.type === 'delivery' ? 'vận chuyển' : team?.type === 'installation' ? 'lắp đặt' : 'sản xuất';
     await createNotification(
@@ -158,6 +189,9 @@ r.post('/:id/members', requirePermission('projects', 'edit'), async (req, res) =
 // ─── DELETE /workshop-teams/:id/members/:userId ── xóa thành viên ────────────
 r.delete('/:id/members/:userId', requirePermission('projects', 'edit'), async (req, res) => {
   try {
+    const { data: team } = await supabase
+      .from('workshop_teams').select('id, company_id').eq('id', req.params.id).maybeSingle();
+    if (!assertCompanyOwnedRow(req, res, team, { label: 'đội xưởng' })) return;
     await supabase.from('workshop_team_members')
       .delete().eq('team_id', req.params.id).eq('user_id', req.params.userId);
     res.json({ message: 'Đã xóa thành viên' });
@@ -171,6 +205,7 @@ r.delete('/:id/members/:userId', requirePermission('projects', 'edit'), async (r
 r.patch('/projects/:projectId/assign', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     const { projectId } = req.params;
+    if (!(await assertProjectAccessible(req, res, projectId, { operation: 'WRITE' }))) return;
     const { delivery_team_id, installation_team_id, installer_person_id, logistics_person_id } = req.body;
     const userId = req.user.userId;
 

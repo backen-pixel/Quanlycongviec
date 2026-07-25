@@ -91,8 +91,11 @@ function projectCountsAsSxDebt(project, stages) {
 }
 
 function projectIsShipped(project) {
-  return VC_SHIPPED_STATUSES.has(String(project?.status || ''))
-    || Boolean(project?.logistics_company_id || project?.logistics_company?.id);
+  if (project?.logistics_company_id || project?.logistics_company?.id || project?.vc_kanban_column_id) {
+    return true;
+  }
+  const st = String(project?.status || '');
+  return st === 'installing' || st === 'warranty' || st === 'completed';
 }
 
 function projectIsAwaitingDelivery(project, stages) {

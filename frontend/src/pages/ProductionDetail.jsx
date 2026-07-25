@@ -41,6 +41,7 @@ import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
 import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
 import PipelineStepper from '../components/PipelineStepper';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
+import CrmDeadlineModal from '../components/CrmDeadlineModal';
 import {
   buildCrmStageSlugLabelMapFromTasks,
   resolveCrmPipelineStageLabel,
@@ -1624,6 +1625,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [handoverModal, setHandoverModal] = useState(null); // { projectId, projectName, targetSxStageId }
   // Modal cảnh báo task chặn chuyển giai đoạn (parity CRM) — bật khi PATCH /stage trả 400 code: SX_BLOCKING_TASKS_INCOMPLETE.
   const [blockingTasksModal, setBlockingTasksModal] = useState(null);
+  const [deadlineCtx, setDeadlineCtx] = useState(null);
+  const [deadlineBusy, setDeadlineBusy] = useState(false);
   const [handoverLogisticsCompanyId, setHandoverLogisticsCompanyId] = useState('');
   const [handoverCompanies, setHandoverCompanies] = useState([]);
   const [handoverErr, setHandoverErr] = useState('');
@@ -2404,7 +2407,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       if (moduleKey === 'vc') {
         // stageId là logistics_pipeline_stages.id → gửi vc_stage_id
         // Tìm thêm workflow_stage_id nếu có
-        const vcStage = pipelineStages.find((s) => s.id === stageId);
+        const vcStage = pipelineStages.find((s) => String(s.id) === String(stageId));
         body = { vc_stage_id: stageId };
         if (vcStage?.workflow_stage_id) body.stage_id = vcStage.workflow_stage_id;
         // Nếu là cột intake, dùng move_to_intake
@@ -2519,9 +2522,38 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         refreshProjectSilently();
         return;
       }
+      if (respBody.code === 'requires_deadline') {
+        const targetCol = pipelineStages.find((s) => String(s.id) === String(stageId)) || null;
+        setDeadlineCtx({ targetCol, stageId });
+        refreshProjectSilently();
+        return;
+      }
       alert('Lỗi: ' + (respBody?.error || e.message));
       // Nếu optimistic sai do lỗi server, đồng bộ lại
       refreshProjectSilently();
+    }
+  };
+
+  const submitStageDeadline = async ({ deadlineIso, reason }) => {
+    const ctx = deadlineCtx;
+    if (!ctx?.targetCol && !ctx?.stageId) return;
+    setDeadlineBusy(true);
+    try {
+      const sxStage = ctx.targetCol || pipelineStages.find((s) => String(s.id) === String(ctx.stageId));
+      const colId = sxStage?.id || ctx.stageId;
+      const body = {
+        sx_pipeline_stage_id: colId,
+        current_sx_pipeline_stage_id: project?.sx_kanban_column_id || null,
+        deadline: deadlineIso || null,
+        ...(reason ? { deadline_reason: reason } : {}),
+      };
+      await api.patch(`${MOD.apiPrefix}/projects/${id}/stage`, body);
+      setDeadlineCtx(null);
+      refreshProjectSilently();
+    } catch (err) {
+      alert(err.response?.data?.error || err.message || 'Lỗi đặt deadline');
+    } finally {
+      setDeadlineBusy(false);
     }
   };
 
@@ -3759,6 +3791,21 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         targetStageName={blockingTasksModal?.targetStageName || ''}
         remainingTasks={blockingTasksModal?.remainingTasks || []}
         onGoToTasks={() => { try { setActiveTab('tasks'); } catch (_) { /* tab có thể chưa khởi tạo */ } }}
+      />
+
+      <CrmDeadlineModal
+        open={!!deadlineCtx}
+        title="Đặt deadline khi chuyển cột"
+        subtitle="Chọn hạn hoàn thành cho thẻ trước khi chuyển sang cột mới."
+        stageName={deadlineCtx?.targetCol?.name || ''}
+        initialDeadline={project?.sx_kanban_deadline_at || null}
+        currentDeadline={project?.sx_kanban_deadline_at || null}
+        mandatory
+        requireReason={false}
+        allowClear={false}
+        submitting={deadlineBusy}
+        onClose={() => !deadlineBusy && setDeadlineCtx(null)}
+        onConfirm={submitStageDeadline}
       />
 
       {/* Chuyển phân loại (cột có cờ is_switch_workshop_type) */}

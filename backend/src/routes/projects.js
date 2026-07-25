@@ -33,6 +33,7 @@ const {
   intersectCompanyIdsWithTenant,
 } = require('../helpers/tenantScope');
 const { applyAllActiveWorkshopTemplatesForArea } = require('../helpers/workshopApplyTemplates');
+const { assertProjectAccessible } = require('../helpers/projectAccessScope');
 
 const r = Router();
 r.use(auth);
@@ -236,6 +237,7 @@ r.get('/', requirePermission('projects', 'view'), async (req, res) => {
 // Không bọc requirePermission: thao tác đơn/nhiệm vụ theo đơn chỉ cần đăng nhập (auth middleware).
 r.get('/:id/orders', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id))) return;
     const pid = String(req.params.id || '').replace(/"/g, '');
     // Đơn gắn dự án SX (project_id) hoặc đơn đã đẩy VC (logistics_project_id = dự án con)
     const { data: orders, error } = await supabase
@@ -257,6 +259,7 @@ r.post('/:id/orders', (req, res) =>
 );
 
 r.put('/:id/orders/:orderId', async (req, res) => {
+  if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
   try {
     const pid = req.params.id;
     const oid = req.params.orderId;
@@ -296,6 +299,7 @@ r.put('/:id/orders/:orderId', async (req, res) => {
 /** Xóa đơn hàng con khỏi dự án (tab Đơn hàng). */
 r.delete('/:id/orders/:orderId', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const pid = req.params.id;
     const oid = req.params.orderId;
     const userId = req.user.userId;
@@ -335,6 +339,7 @@ r.delete('/:id/orders/:orderId', async (req, res) => {
 
 r.post('/:id/orders/:orderId/push-to-logistics', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const pid = req.params.id;
     const oid = req.params.orderId;
     const userId = req.user.userId;
@@ -350,6 +355,7 @@ r.post('/:id/orders/:orderId/push-to-logistics', async (req, res) => {
 /** Đẩy nhiều đơn sang VC trong 1 lượt. */
 r.post('/:id/orders/push-to-logistics-bulk', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const pid = req.params.id;
     const userId = req.user.userId;
     const orderIds = Array.isArray(req.body?.order_ids) ? req.body.order_ids.map(String).filter(Boolean) : [];
@@ -376,6 +382,7 @@ r.post('/:id/orders/push-to-logistics-bulk', async (req, res) => {
 /** Chuyển đơn (fulfillment) sang module Sản xuất: lưu lịch SX + người dự kiến thi công + công ty SX. */
 r.post('/:id/orders/:orderId/push-to-production', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const pid = req.params.id;
     const oid = req.params.orderId;
     const b = req.body || {};
@@ -437,6 +444,7 @@ r.post('/:id/orders/:orderId/push-to-production', async (req, res) => {
 /** Chuyển nhiều đơn sang module Sản xuất. */
 r.post('/:id/orders/push-to-production-bulk', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const pid = req.params.id;
     const b = req.body || {};
     if (!b.sx_company_id) {
@@ -519,6 +527,7 @@ function num(x) {
 // ─── THU CHI DỰ ÁN: báo giá, đơn, HĐ, lịch sử thanh toán, chi phí ghi nhận ──
 r.get('/:id/cashflow', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { mode: 'sensitive' }))) return;
     const pid = String(req.params.id || '').replace(/"/g, '');
 
     const { data: leads } = await supabase.from('crm_leads').select('id').eq('project_id', pid);
@@ -765,6 +774,7 @@ r.get('/:id/cashflow', async (req, res) => {
 /** Ghi nhận chi phí trên dự án (vật tư phát sinh, v.v.) */
 r.post('/:id/expenses', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE', mode: 'sensitive' }))) return;
     const pid = req.params.id;
     const b = req.body || {};
     const amount = num(b.amount);
@@ -792,6 +802,20 @@ r.post('/:id/expenses', async (req, res) => {
     console.error(e);
     res.status(500).json({ error: e.message || 'Lỗi ghi chi phí' });
   }
+});
+
+// Bình luận mới nhất của mọi dự án (tab «Bình luận» ở trang Dự án).
+// PHẢI khai báo trước `GET /:id` — nếu không Express khớp «latest-comments» thành :id và handler này chết.
+r.get('/latest-comments', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 20;
+    const { data: comments, error } = await supabase.from('project_comments')
+      .select('id, content, created_at, project_id, user:users!project_comments_user_id_fkey(id, full_name), project:projects(id, code, name)')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    res.json({ comments: comments || [] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── GET PROJECT DETAIL ──
@@ -1871,6 +1895,7 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
 // ─── UPDATE PROJECT ──
 r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
     const fields = ['name','description','status','customer_id','kitchen_type','material','install_address','estimated_value','production_value','deposit_amount','collected_amount','final_value','priority','sales_person_id','designer_id','project_manager_id','design_deadline','production_start_date','install_date','consulting_person_id','design_person_id','quotation_person_id','contract_person_id','production_person_id','shipping_person_id','installation_person_id','care_person_id','quotation_files','deadline','notes','supervisor_id','production_deadline','production_note','workshop_type_id','order_date','delivery_date'];
@@ -2008,6 +2033,7 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
 // ─── ADVANCE PROJECT STAGE ──
 r.put('/:id/stage', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const { stage_slug, new_status, notes, attachments } = req.body;
     const { data: stage } = await supabase.from('workflow_stages').select('id,name').eq('slug', stage_slug).single();
     if (!stage) return res.status(404).json({ error: 'Stage không tồn tại' });
@@ -2187,6 +2213,7 @@ r.put('/:id/stage', async (req, res) => {
 // ─── TẠO NHIỆM VỤ MẪU CHO 1 GIAI ĐOẠN (manual trigger) ──
 r.post('/:id/generate-tasks', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const { stage_slug } = req.body;
     if (!stage_slug) return res.status(400).json({ error: 'Thiếu stage_slug' });
 
@@ -2302,6 +2329,7 @@ r.post('/:id/generate-tasks', async (req, res) => {
 // ─── REQUEST APPROVAL (Chờ duyệt) ──
 r.post('/:id/request-approval', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const { notes, attachments, next_stage_slug, next_status } = req.body;
 
     // Try with created_by_id, fallback without it
@@ -2362,6 +2390,7 @@ r.post('/:id/request-approval', async (req, res) => {
 // ─── APPROVE / REJECT ADVANCE ──
 r.post('/:id/approve-advance', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const { notification_id, action, reject_reason } = req.body; // action: 'approve' | 'reject'
     if (!reject_reason?.trim()) return res.status(400).json({ error: 'Vui lòng nhập lý do' });
 
@@ -2502,6 +2531,7 @@ r.post('/:id/approve-advance', async (req, res) => {
 // ─── DELETE PROJECT ──
 r.delete('/:id', requirePermission('projects', 'delete'), async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const { data: project } = await supabase.from('projects').select('code,name').eq('id', req.params.id).single();
 
     // Snapshot vào thùng rác trước khi xóa cứng — cho phép admin khôi phục sau.
@@ -2563,6 +2593,7 @@ r.delete('/:id', requirePermission('projects', 'delete'), async (req, res) => {
 // ─── AUTO-ADVANCE: Check if all stage tasks done → suggest/auto advance ──
 r.post('/:id/check-advance', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id))) return;
     const { data: project } = await supabase.from('projects')
       .select('id,code,name,status,current_stage_id, current_stage:workflow_stages(id,name,slug,order_index)')
       .eq('id', req.params.id).single();
@@ -2692,6 +2723,7 @@ async function fetchProjectCommentAudienceMembers(projectId) {
 
 r.get('/:id/comments', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id))) return;
     const { data, error } = await supabase
       .from('project_comments')
       .select(PROJECT_COMMENT_SELECT_WITH_USER)
@@ -2725,6 +2757,7 @@ r.get('/:id/comments', async (req, res) => {
 
 r.post('/:id/comments', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE', mode: 'sensitive' }))) return;
     const insertRow = {
       project_id: req.params.id, user_id: req.user.userId, content: req.body.content,
       attachments: req.body.attachments || [],
@@ -2762,6 +2795,7 @@ r.post('/:id/comments', async (req, res) => {
 /** Đánh dấu đã đọc bình luận dự án (cập nhật last_read_at). */
 r.patch('/:id/comments/read', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE', mode: 'sensitive' }))) return;
     const pid = req.params.id;
     const uid = req.user.userId;
     const last_read_at = new Date().toISOString();
@@ -2815,6 +2849,7 @@ r.patch('/:id/comments/read', async (req, res) => {
 /** Read receipts + danh sách thành viên audience — hiển thị Đã xem / Đã nhận. */
 r.get('/:id/comments/read-receipts', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id))) return;
     const pid = req.params.id;
     const [receiptsRes, members] = await Promise.all([
       supabase.from('project_comment_read_receipts').select('user_id, last_read_at').eq('project_id', pid),
@@ -2835,6 +2870,7 @@ r.get('/:id/comments/read-receipts', async (req, res) => {
 
 r.delete('/:id/comments/:commentId', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE', mode: 'sensitive' }))) return;
     await supabase.from('project_comments').delete().eq('id', req.params.commentId).eq('user_id', req.user.userId);
     const io = req.app.get('io');
     const pid = req.params.id;
@@ -2851,6 +2887,7 @@ r.delete('/:id/comments/:commentId', async (req, res) => {
 // PATCH /projects/:id/comments/:commentId — chỉ tác giả mới sửa được
 r.patch('/:id/comments/:commentId', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE', mode: 'sensitive' }))) return;
     const content = String(req.body?.content || '').trim();
     if (!content) return res.status(400).json({ error: 'Nội dung trống' });
     const patch = { content, updated_at: new Date().toISOString() };
@@ -2898,6 +2935,7 @@ r.patch('/:id/comments/:commentId', async (req, res) => {
 // PUT /projects/:id/comments/:commentId/reaction — toggle 1 emoji của user hiện tại
 r.put('/:id/comments/:commentId/reaction', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE', mode: 'sensitive' }))) return;
     const userId = req.user.userId;
     const commentId = req.params.commentId;
     const emoji = String(req.body?.emoji || '').trim();
@@ -2944,6 +2982,7 @@ r.put('/:id/comments/:commentId/reaction', async (req, res) => {
 // ─── PROJECT DOCUMENTS (production-native file storage) ──
 r.get('/:id/documents', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { mode: 'sensitive' }))) return;
     const { data } = await supabase.from('file_attachments')
       .select('*, uploader:users!file_attachments_uploaded_by_fkey(id,full_name)')
       .eq('entity_type', 'project').eq('entity_id', req.params.id)
@@ -2954,6 +2993,7 @@ r.get('/:id/documents', async (req, res) => {
 
 r.post('/:id/documents/bulk', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE', mode: 'sensitive' }))) return;
     if (!(await assertDealResponsible(req, res, { projectId: req.params.id }))) return;
     const baseItems = (req.body.items || []).map(f => ({
       entity_type: 'project', entity_id: req.params.id,
@@ -2983,6 +3023,7 @@ r.post('/:id/documents/bulk', async (req, res) => {
 
 r.put('/:id/documents/:docId/share-crm', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE', mode: 'sensitive' }))) return;
     const { setWorkshopFileSharedToCrm } = require('../helpers/syncWorkshopFileToLeadDocument');
     const projectId = req.params.id;
     const docId = req.params.docId;
@@ -3036,6 +3077,7 @@ r.put('/:id/documents/:docId/share-crm', async (req, res) => {
 
 r.delete('/:id/documents/:docId', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE', mode: 'sensitive' }))) return;
     const projectId = req.params.id;
     const docId = req.params.docId;
     const { data: fileRow, error: fetchErr } = await supabase
@@ -3078,6 +3120,7 @@ r.delete('/:id/documents/:docId', async (req, res) => {
 /** Xóa lead_documents từ tab SX — không qua middleware phụ trách deal CRM. */
 r.delete('/:id/lead-documents/:docId', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE', mode: 'sensitive' }))) return;
     const projectId = req.params.id;
     const docId = req.params.docId;
     const { data: doc, error: docErr } = await supabase
@@ -3162,6 +3205,7 @@ r.delete('/:id/lead-documents/:docId', async (req, res) => {
 // ─── PROJECT TASK FILES (all task attachments for a project) ──
 r.get('/:id/task-files', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id))) return;
     const forModule = String(req.query.for_module || '').toLowerCase().trim();
     const useMod = ['production', 'logistics', 'workshop'].includes(forModule) ? forModule : null;
     const { data: tasks } = await supabase.from('tasks').select('id,title,stage_id,stage:workflow_stages(id,name,color)').eq('project_id', req.params.id);
@@ -3184,6 +3228,7 @@ r.get('/:id/task-files', async (req, res) => {
 // ─── PROJECT ACTIVITIES (production-native, no CRM needed) ──
 r.get('/:id/activities', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id))) return;
     const { data } = await supabase.from('project_comments')
       .select(PROJECT_COMMENT_SELECT_WITH_USER)
       .eq('project_id', req.params.id)
@@ -3194,6 +3239,7 @@ r.get('/:id/activities', async (req, res) => {
 
 r.post('/:id/activities', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const { data, error } = await supabase.from('project_comments').insert({
       project_id: req.params.id, user_id: req.user.userId,
       content: JSON.stringify({ type: req.body.type || 'note', title: req.body.title, description: req.body.description || '', outcome: req.body.outcome || '' }),
@@ -3207,6 +3253,7 @@ r.post('/:id/activities', async (req, res) => {
 // ─── PROJECT PRODUCTS ──
 r.get('/:id/products', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id))) return;
     const { data } = await supabase.from('project_products')
       .select('*, product:products(id,code,name,base_price,material,unit)')
       .eq('project_id', req.params.id);
@@ -3216,6 +3263,7 @@ r.get('/:id/products', async (req, res) => {
 
 r.post('/:id/products', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const { data, error } = await supabase.from('project_products').insert({
       project_id: req.params.id,
       product_id: req.body.product_id,
@@ -3230,6 +3278,7 @@ r.post('/:id/products', async (req, res) => {
 
 r.delete('/:id/products/:ppId', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     await supabase.from('project_products').delete().eq('id', req.params.ppId);
     res.json({ message: 'Đã xóa' });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
@@ -3242,6 +3291,7 @@ r.delete('/:id/products/:ppId', async (req, res) => {
 // GET lines for a project
 r.get('/:id/workflow-lines', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id))) return;
     const { data, error } = await supabase.from('project_workflow_lines')
       .select('*, assignee:users!project_workflow_lines_assignee_id_fkey(id,full_name,avatar,role)')
       .eq('project_id', req.params.id).order('order_index');
@@ -3253,6 +3303,7 @@ r.get('/:id/workflow-lines', async (req, res) => {
 // ADD line
 r.post('/:id/workflow-lines', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const b = req.body;
     const { data, error } = await supabase.from('project_workflow_lines').insert({
       project_id: req.params.id,
@@ -3271,6 +3322,7 @@ r.post('/:id/workflow-lines', async (req, res) => {
 // UPDATE line
 r.put('/:id/workflow-lines/:lineId', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
     ['label','assignee_id','description','order_index','status','color','stage_slug'].forEach(f => {
@@ -3287,6 +3339,7 @@ r.put('/:id/workflow-lines/:lineId', async (req, res) => {
 // DELETE line
 r.delete('/:id/workflow-lines/:lineId', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     await supabase.from('project_workflow_lines').delete().eq('id', req.params.lineId);
     res.json({ message: 'Đã xóa' });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
@@ -3295,25 +3348,13 @@ r.delete('/:id/workflow-lines/:lineId', async (req, res) => {
 // REORDER lines
 r.put('/:id/workflow-lines-order', async (req, res) => {
   try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const { lines } = req.body; // [{id, order_index}]
     for (const l of (lines || [])) {
       await supabase.from('project_workflow_lines').update({ order_index: l.order_index }).eq('id', l.id);
     }
     res.json({ message: 'OK' });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
-});
-
-// GET latest comments across all projects
-r.get('/latest-comments', async (req, res) => {
-  try {
-    const limit = parseInt(req.query.limit) || 20;
-    const { data: comments, error } = await supabase.from('project_comments')
-      .select('id, content, created_at, project_id, user:users!project_comments_user_id_fkey(id, full_name, avatar_url), project:projects(id, code, name)')
-      .order('created_at', { ascending: false })
-      .limit(limit);
-    if (error) throw error;
-    res.json({ comments: comments || [] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 module.exports = r;

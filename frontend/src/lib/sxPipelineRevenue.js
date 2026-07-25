@@ -62,7 +62,7 @@ export function resolveSxProjectPaymentProgress(project, crmStats = null) {
   };
 }
 
-export const VC_KANBAN_STATUSES = new Set(['shipping', 'installing', 'warranty']);
+export const VC_KANBAN_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
 
 /**
  * Cột SX tự đặt `projects.status` theo workflow slug (xem PATCH /production/projects/:id/stage).
@@ -86,6 +86,43 @@ export function sxStatusComesFromColumn(project, col) {
   const slug = sxStageSlugOf(col);
   if (!slug) return false;
   return SX_STAGE_SLUG_STATUS[slug] === String(project?.status || '');
+}
+
+/**
+ * Chỉ ép về cột «Bàn giao VC» khi status phản ánh luồng VC thật.
+ * `completed` trên SX ≠ đã sang module VC. `shipping` do cột delivery SX → giữ cột.
+ * Khớp BE `shouldForceSxHandoverColumn` (workshopKanban.js).
+ */
+export function shouldForceSxHandoverColumn(project, projectColRow) {
+  const st = String(project?.status || '');
+  if (!st) return false;
+  const inLogistics = Boolean(
+    project?.vc_kanban_column_id
+    || project?.logistics_company_id
+    || project?.logistics_company?.id,
+  );
+  if (st === 'completed') return inLogistics;
+  if (st === 'installing' || st === 'warranty') return true;
+  if (st === 'shipping') {
+    if (projectColRow && sxStatusComesFromColumn(project, projectColRow)) return false;
+    return true;
+  }
+  return false;
+}
+
+/** Khoá kéo thẻ trên Kanban SX — không khoá thẻ producing đã có logistics_company_id. */
+export function projectLockedOnSxKanban(project, sxStage) {
+  const st = String(project?.status || '');
+  if (sxStatusComesFromColumn(project, sxStage) && !project?.vc_kanban_column_id && !project?.logistics_company_id) {
+    return false;
+  }
+  if (st === 'installing' || st === 'warranty') return true;
+  if (st === 'shipping' || st === 'completed') {
+    const inLogistics = Boolean(project?.vc_kanban_column_id || project?.logistics_company_id);
+    if (inLogistics) return true;
+    return st === 'shipping' && !sxStatusComesFromColumn(project, sxStage);
+  }
+  return false;
 }
 
 function stageById(stages, colId) {
@@ -140,8 +177,13 @@ export function projectCountsAsSxDebt(project, stages) {
 }
 
 export function projectIsShipped(project) {
-  return VC_SHIPPED_STATUSES.has(String(project?.status || ''))
-    || Boolean(project?.logistics_company_id || project?.logistics_company?.id);
+  // Đã bàn giao VC thật, hoặc đã sang lắp đặt / bảo hành / hoàn thành.
+  // Không đếm status=shipping thuần (cột SX slug delivery cũng set shipping).
+  if (project?.logistics_company_id || project?.logistics_company?.id || project?.vc_kanban_column_id) {
+    return true;
+  }
+  const st = String(project?.status || '');
+  return st === 'installing' || st === 'warranty' || st === 'completed';
 }
 
 export function projectIsAwaitingDelivery(project, stages) {

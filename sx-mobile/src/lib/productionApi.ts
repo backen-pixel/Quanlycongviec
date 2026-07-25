@@ -101,8 +101,38 @@ function mapStageRow(raw: Record<string, unknown>, index: number): KanbanStage {
   };
 }
 
-/** Khớp web `VC_KANBAN_STATUSES` — dùng cho cột hiển thị Kanban (không gồm completed). */
-const VC_KANBAN_STATUSES = new Set(['shipping', 'installing', 'warranty']);
+/** Status do cột SX slug sinh ra — khớp web SX_STAGE_SLUG_STATUS. */
+const SX_STAGE_SLUG_STATUS: Record<string, string> = {
+  production: 'producing',
+  delivery: 'shipping',
+  'customer-care': 'warranty',
+};
+
+function sxStatusComesFromColumn(
+  project: ProductionProject,
+  col: KanbanStage | null | undefined,
+): boolean {
+  const slug = col?.slug || null;
+  if (!slug) return false;
+  return SX_STAGE_SLUG_STATUS[slug] === String(project?.status || '');
+}
+
+/** Chỉ ép cột bàn giao VC khi status phản ánh luồng VC thật — khớp web shouldForceSxHandoverColumn. */
+function shouldForceSxHandoverColumn(
+  project: ProductionProject,
+  pinned: KanbanStage | null | undefined,
+): boolean {
+  const st = String(project?.status || '');
+  if (!st) return false;
+  const inLogistics = Boolean(project.vc_kanban_column_id || project.logistics_company_id);
+  if (st === 'completed') return inLogistics;
+  if (st === 'installing' || st === 'warranty') return true;
+  if (st === 'shipping') {
+    if (pinned && sxStatusComesFromColumn(project, pinned)) return false;
+    return true;
+  }
+  return false;
+}
 
 /** Index cột — tránh filter/find O(n) trên mỗi dự án khi board lớn. */
 type StageIndex = {
@@ -183,15 +213,17 @@ export function resolveColumnId(
   const index = stageIndex || buildStageIndex(sortedStages);
   const intake = index.intake;
 
-  // Web: chỉ shipping/installing/warranty → cột bàn giao VC
-  if (project.status && VC_KANBAN_STATUSES.has(project.status)) {
-    let preferred: string | null = null;
-    if (project.sx_kanban_column_id && index.byId.has(String(project.sx_kanban_column_id))) {
-      const pinned = index.byId.get(String(project.sx_kanban_column_id));
-      if (pinned?.is_handover_to_logistics) preferred = project.sx_kanban_column_id;
+  // Ép cột bàn giao VC chỉ khi shouldForce (không ép completed thuần SX).
+  {
+    const pinned = project.sx_kanban_column_id && index.byId.has(String(project.sx_kanban_column_id))
+      ? index.byId.get(String(project.sx_kanban_column_id))
+      : null;
+    if (shouldForceSxHandoverColumn(project, pinned)) {
+      let preferred: string | null = null;
+      if (pinned?.is_handover_to_logistics) preferred = project.sx_kanban_column_id || null;
+      const handoverId = resolveSxHandoverColumnIdIndexed(index, project, preferred);
+      if (handoverId) return handoverId;
     }
-    const handoverId = resolveSxHandoverColumnIdIndexed(index, project, preferred);
-    if (handoverId) return handoverId;
   }
 
   if (project.sx_kanban_column_id && index.byId.has(String(project.sx_kanban_column_id))) {

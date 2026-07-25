@@ -63,11 +63,11 @@ import {
   resolveSxProjectRemaining,
   getSxPipelineStageSlaTone,
   resolveSxHandoverColumnId,
+  shouldForceSxHandoverColumn,
+  projectLockedOnSxKanban,
   shouldHideSxKanbanDeadlineOnCard,
   shouldIgnoreSxOrderDeliveryOverdue,
   getSxOrderDeliveryDateUrgency,
-  sxStatusComesFromColumn,
-  VC_KANBAN_STATUSES,
 } from '../lib/sxPipelineRevenue';
 import { isProjectAlreadyInLogistics } from '../lib/projectLogistics';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
@@ -307,8 +307,13 @@ function applyPendingStageMoves(list, pendingMap) {
     if (!mv) return p;
     // BE đã trả đúng cột → bỏ ghi đè, từ đây dữ liệu server là nguồn duy nhất.
     // Cột chờ có thể là id ảo (`__fb_intake__`) nên xác nhận thêm qua cờ sx_intake.
-    const confirmed = (mv.colId && String(p.sx_kanban_column_id || '') === String(mv.colId))
-      || (mv.patch?.sx_intake === true && p.sx_intake === true);
+    // vc_handover_status: chỉ confirm khi server đã có cùng trạng thái (tránh mất badge pending
+    // khi cột đã khớp sẵn trước khi request ghi xong).
+    const colOk = mv.colId && String(p.sx_kanban_column_id || '') === String(mv.colId);
+    const intakeOk = mv.patch?.sx_intake === true && p.sx_intake === true;
+    const handoverOk = !mv.patch?.vc_handover_status
+      || String(p.vc_handover_status || '') === String(mv.patch.vc_handover_status);
+    const confirmed = (colOk && handoverOk) || intakeOk;
     if (confirmed) {
       pendingMap.delete(key);
       return p;
@@ -1350,10 +1355,10 @@ export default function ProductionDashboard() {
       const pinnedCol = project.sx_kanban_column_id
         ? sortedStages.find((s) => String(s.id) === String(project.sx_kanban_column_id)) || null
         : null;
-      if (VC_KANBAN_STATUSES.has(project.status)) {
+      if (shouldForceSxHandoverColumn(project, pinnedCol)) {
         // Kéo thẻ vào cột «Vận chuyển»/«CSKH» khiến BE tự đặt status = shipping/warranty.
         // Đó không phải bằng chứng đã bàn giao VC nên giữ nguyên cột vừa kéo.
-        if (pinnedCol && sxStatusComesFromColumn(project, pinnedCol)) return pinnedCol.id;
+        // status=completed trên SX không ép về cột bàn giao (trừ khi đã có liên kết VC).
         const preferred = pinnedCol?.is_handover_to_logistics ? project.sx_kanban_column_id : null;
         const handoverId = resolveSxHandoverColumnId(sortedStages, project, preferred);
         if (handoverId) return handoverId;
@@ -1454,7 +1459,8 @@ export default function ProductionDashboard() {
           if (!hit) return false;
         }
         if (priorityFilter && project.priority !== priorityFilter) return false;
-        if (stageFilter && project.sx_kanban_column_id !== stageFilter) return false;
+        // Lọc theo cột đang hiển thị (đã resolve), không chỉ sx_kanban_column_id thô.
+        if (stageFilter && String(stage.id) !== String(stageFilter)) return false;
         return true;
       }),
         sortBy,
@@ -1798,6 +1804,7 @@ export default function ProductionDashboard() {
       return;
     }
     const projectId = item.id;
+    const prevPinnedAt = item.pinned_at || null;
     const patch = {
       is_pinned: !!next,
       pinned_at: next ? new Date().toISOString() : null,
@@ -1810,7 +1817,7 @@ export default function ProductionDashboard() {
     } catch (e) {
       setProjects((prev) => prev.map((p) => (
         String(p.id) === String(projectId)
-          ? { ...p, is_pinned: !next, pinned_at: next ? null : p.pinned_at }
+          ? { ...p, is_pinned: !next, pinned_at: next ? prevPinnedAt : prevPinnedAt }
           : p
       )));
       alert(e.response?.data?.error || 'Không ghim được thẻ');
@@ -1906,6 +1913,13 @@ export default function ProductionDashboard() {
   const sendVcHandoverRequest = useCallback(async (projectId, targetCol) => {
     const sxColId = targetCol?.id ? String(targetCol.id) : '';
     const sxStageMeta = buildSxPipelineStageMeta(targetCol);
+    const intakePatch = {
+      sx_kanban_column_id: sxColId || undefined,
+      sx_pipeline_stage: sxStageMeta || undefined,
+      sx_intake: false,
+      vc_handover_status: 'pending',
+    };
+    if (sxColId) rememberPendingStageMove(projectId, sxColId, intakePatch);
     setProjects((prev) => prev.map((p) => (String(p.id) === String(projectId)
       ? {
           ...p,
@@ -1920,10 +1934,11 @@ export default function ProductionDashboard() {
       alert('Đã gửi yêu cầu chọn công ty Vận chuyển/Lắp đặt cho Sale CRM (hiển thị trong bình luận của deal).');
       scheduleBoardRefresh(1500, { bustCache: true });
     } catch (e) {
+      forgetPendingStageMove(projectId);
       alert(e.response?.data?.error || 'Không gửi được yêu cầu bàn giao VC/LĐ');
       load({ silent: true, bustCache: true });
     }
-  }, [load, scheduleBoardRefresh]);
+  }, [load, scheduleBoardRefresh, rememberPendingStageMove, forgetPendingStageMove]);
 
   const handleMoveStage = useCallback(async (projectId, targetCol) => {
     const current = projects.find((p) => String(p.id) === String(projectId));
@@ -1934,7 +1949,7 @@ export default function ProductionDashboard() {
     if (targetCol?.__virtual && targetCol?.id === '__orphan_no_type__') {
       try {
         await api.put(`/projects/${projectId}`, { workshop_type_id: null });
-        setProjects((prev) => prev.map((p) => (p.id === projectId
+        setProjects((prev) => prev.map((p) => (String(p.id) === String(projectId)
           ? { ...p, workshop_type_id: null, workshop_type: null }
           : p)));
       } catch (e) {
@@ -2099,6 +2114,14 @@ export default function ProductionDashboard() {
     const sxColId = sxPipelineStageId ? String(sxPipelineStageId) : '';
     const targetCol = sxColId ? pipeline.find((s) => String(s.id) === sxColId) : null;
     const sxStageMeta = buildSxPipelineStageMeta(targetCol);
+    if (sxColId) {
+      rememberPendingStageMove(projectId, sxColId, {
+        sx_kanban_column_id: sxColId,
+        sx_pipeline_stage: sxStageMeta,
+        sx_intake: false,
+        status: 'shipping',
+      });
+    }
     try {
       const { data } = await api.patch(`/production/projects/${projectId}/handover-vc`, {
         logistics_company_id: logisticsCompanyId || undefined,
@@ -2119,6 +2142,7 @@ export default function ProductionDashboard() {
             sx_pipeline_stage: buildSxPipelineStageMeta(resolvedCol) || sxStageMeta || p.sx_pipeline_stage,
             sx_intake: false,
             vc_kanban_column_id: updated?.vc_kanban_column_id ?? p.vc_kanban_column_id,
+            logistics_company_id: updated?.logistics_company_id ?? logisticsCompanyId ?? p.logistics_company_id,
             logistics_person_id: updated?.logistics_person_id ?? p.logistics_person_id,
             delivery_team_id: updated?.delivery_team_id ?? p.delivery_team_id,
             installation_team_id: updated?.installation_team_id ?? p.installation_team_id,
@@ -2128,10 +2152,11 @@ export default function ProductionDashboard() {
       scheduleBoardRefresh(1500, { bustCache: true });
     } catch (e) {
       console.error(e);
+      forgetPendingStageMove(projectId);
       alert(e.response?.data?.error || 'Lỗi bàn giao VC');
       load({ silent: true, bustCache: true });
     }
-  }, [load, pipeline, scheduleBoardRefresh]);
+  }, [load, pipeline, scheduleBoardRefresh, rememberPendingStageMove, forgetPendingStageMove]);
 
   // Nút "Bàn giao VC" trên thẻ → cũng gửi yêu cầu bình luận (không mở modal chọn công ty).
   const openHandoverModal = useCallback((projectId, projectName, sxTargetColId = '') => {
@@ -2187,6 +2212,14 @@ export default function ProductionDashboard() {
     const sxStageMeta = buildSxPipelineStageMeta(targetCol);
 
     // Optimistic: ghim thẻ ở cột bàn giao VC để không bị nhảy cột / mất thẻ
+    if (sxColId) {
+      rememberPendingStageMove(handoverModal.projectId, sxColId, {
+        sx_kanban_column_id: sxColId,
+        sx_pipeline_stage: sxStageMeta,
+        sx_intake: false,
+        status: 'shipping',
+      });
+    }
     setProjects((prev) => prev.map((p) => (String(p.id) === String(handoverModal.projectId)
       ? {
           ...p,
@@ -2212,7 +2245,7 @@ export default function ProductionDashboard() {
     setHandoverDeliveryTeamId('');
     setHandoverInstallationTeamId('');
     setHandoverErr('');
-  }, [handoverModal, handoverLogisticsCompanyId, handoverTargetSxColId, handleHandoverVC, pipeline]);
+  }, [handoverModal, handoverLogisticsCompanyId, handoverTargetSxColId, handleHandoverVC, pipeline, rememberPendingStageMove]);
 
   const calculateDays = (createdAt) => {
     if (!createdAt) return '';
@@ -3735,14 +3768,17 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   const companyName = item.company?.short_name || item.company?.name || null;
   const externalCompanyName = primaryDeal?.external_company_name?.trim() || null;
   const slaDeadlineTs = hideColumnDeadline ? null : (() => {
-    const raw = item.deadline || item.production_deadline || null;
+    // Cảnh báo «Quá hạn SLA» trên thẻ: chỉ deadline xưởng / deadline thô — không dùng delivery_date
+    // (ngày giao đơn đã có badge «Giao:» riêng; gộp vào đây sẽ ghi nhãn SLA sai).
+    const raw = item.production_deadline || item.deadline || null;
     if (!raw) return null;
     const ts = new Date(raw).getTime();
     return Number.isFinite(ts) ? ts : null;
   })();
   const nowTs = Date.now();
   const slaRemainingMs = slaDeadlineTs == null ? null : slaDeadlineTs - nowTs;
-  const slaOverdue = slaRemainingMs != null && slaRemainingMs < 0;
+  const slaOverdue = slaRemainingMs != null && slaRemainingMs < 0
+    && !shouldIgnoreSxOrderDeliveryOverdue(sxStage);
 
   const getInitials = (name) => {
     if (!name) return '?';
@@ -3751,10 +3787,9 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
 
   // Deal mới từ CRM (sx_intake) luôn ưu tiên badge "Mới"; fallback theo 24h như cũ
   const isNew = !!item.sx_intake || (item.created_at && (Date.now() - new Date(item.created_at).getTime()) < 86400000);
-  // Khoá kéo khi deal đã sang VC. Nhưng status shipping/warranty do chính cột SX này sinh ra
-  // (cột «Vận chuyển»/«CSKH») thì không tính — nếu không thẻ bị khoá ngay sau khi kéo vào cột đó.
-  const lockedInVc = ['shipping', 'installing', 'warranty', 'completed'].includes(String(item.status || ''))
-    && !sxStatusComesFromColumn(item, sxStage);
+  // Khoá kéo khi đang ở luồng VC thật. Không khoá producing+logistics (vẫn kéo trên SX).
+  // Không khoá shipping do chính cột SX delivery/CSKH sinh ra.
+  const lockedInVc = projectLockedOnSxKanban(item, sxStage);
   const crmRegionName = (() => {
     try {
       const deal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0];
@@ -3765,11 +3800,17 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   })();
 
   const ignoreOrderDeliveryOverdue = shouldIgnoreSxOrderDeliveryOverdue(sxStage);
-  const primaryDeadline = hideColumnDeadline ? null : (item.production_deadline || item.deadline || null);
+  // Badge deadline thẻ: cùng thứ tự ưu tiên với KPI (production_deadline trước deadline thô)
+  const primaryDeadline = hideColumnDeadline
+    ? null
+    : (item.production_deadline || item.deadline || null);
+  const deliveryOverdueTone = !hideColumnDeadline && item.delivery_date && !ignoreOrderDeliveryOverdue
+    ? getSxOrderDeliveryDateUrgency(item.delivery_date, sxStage)
+    : null;
   const customerInitials = getInitials(item.customer?.full_name || item.name || '');
   const progress = item.sx_pipeline_percent != null ? Math.max(0, Math.min(100, Number(item.sx_pipeline_percent) || 0)) : null;
 
-  const cardBorderTone = (manualDlLevel === 'overdue' || columnSlaTone?.level === 'overdue')
+  const cardBorderTone = (manualDlLevel === 'overdue' || columnSlaTone?.level === 'overdue' || slaOverdue || deliveryOverdueTone?.overdue)
     ? 'overdue'
     : isSelected
       ? 'selected'
@@ -4177,12 +4218,16 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
         </p>
       )}
 
-      {/* VC status (khi đã bàn giao) — gọn 1 dòng nhỏ */}
-      {(item.status === 'shipping' || item.status === 'installing' || item.status === 'warranty' || item.vc_kanban_column_id) && (
+      {/* VC status — chỉ khi đã bàn giao thật hoặc status đang ở luồng VC */}
+      {(isProjectAlreadyInLogistics(item) || item.status === 'shipping' || item.status === 'installing' || item.status === 'warranty') && (
         <div className="mt-1.5 flex items-center gap-1 text-[10px] text-orange-700 bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5">
           <Truck className="h-2.5 w-2.5" />
           <span className="font-medium">
-            {item.vc_stage?.name || (item.status === 'shipping' ? 'Đang vận chuyển' : item.status === 'installing' ? 'Đang lắp đặt' : 'Bảo hành')}
+            {item.vc_stage?.name
+              || (item.status === 'shipping' ? 'Đang vận chuyển'
+                : item.status === 'installing' ? 'Đang lắp đặt'
+                  : item.status === 'warranty' ? 'Bảo hành'
+                    : 'Đã bàn giao VC')}
           </span>
         </div>
       )}

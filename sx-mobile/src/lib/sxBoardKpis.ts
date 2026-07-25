@@ -42,7 +42,12 @@ function stageOf(
 }
 
 export function projectIsShipped(p: ProductionProject): boolean {
-  return VC_SHIPPED.has(String(p.status || '')) || Boolean(p.logistics_company_id);
+  // Khớp web sxPipelineRevenue.projectIsShipped — không đếm status=shipping thuần.
+  if (p.logistics_company_id || (p as { vc_kanban_column_id?: string }).vc_kanban_column_id) {
+    return true;
+  }
+  const st = String(p.status || '');
+  return st === 'installing' || st === 'warranty' || st === 'completed';
 }
 
 export function projectIsAwaitingDelivery(

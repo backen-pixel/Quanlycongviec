@@ -157,43 +157,58 @@ function isCrmCompletedRevenueStage(stage) {
 
 /**
  * Cột sau Thắng cần đã chọn công ty SX (có project_id).
- * Gồm SX/VC sync + NextGo (Thiết kế chi tiết, Giao hàng) + Hoàn thành DT.
+ * - SX/VC sync_role + Hoàn thành DT
+ * - Cột có order_index > neo Thắng (max is_won) — NextGo: Thiết kế chi tiết, Giao hàng…
+ * KHÔNG dùng heuristic tên «thiết kế»/«giao hàng»: cột bán hàng như «Đã cọc thiết kế» (Phúc Đạt)
+ * sẽ bị chặn nhầm dù còn trước neo Thắng.
+ *
+ * @param {object} stage
+ * @param {number|null|undefined} wonAnchorOrder order_index cột Thắng (max is_won) cùng pipeline
  */
-function isCrmPostWonRequiresSxProject(stage) {
+function isCrmPostWonRequiresSxProject(stage, wonAnchorOrder = null) {
   if (!stage || stage.is_won || stage.is_lost) return false;
   if (isLostOrCancelledPipelineStage(stage)) return false;
   if (isCrmCompletedRevenueStage(stage)) return true;
   if (isCrmPostWonManagedStage(stage)) return true;
-  const n = normalizeStageNameFold(stage.name);
-  if (n.includes('thiet ke') || n.includes('giao hang')) return true;
+  if (wonAnchorOrder != null && wonAnchorOrder !== '') {
+    const order = Number(stage.order_index);
+    const anchor = Number(wonAnchorOrder);
+    if (Number.isFinite(order) && Number.isFinite(anchor) && order > anchor) return true;
+  }
   return false;
 }
 
-function isDealOnCrmPostWonColumn(stage) {
+function isDealOnCrmPostWonColumn(stage, wonAnchorOrder = null) {
   if (!stage) return false;
   if (stage.is_won) return true;
-  return isCrmPostWonRequiresSxProject(stage);
+  return isCrmPostWonRequiresSxProject(stage, wonAnchorOrder);
 }
 
-function isCrmPreWonSalesStage(stage) {
+function isCrmPreWonSalesStage(stage, wonAnchorOrder = null) {
   if (!stage) return false;
   if (stage.is_lost || stage.is_won || isLostOrCancelledPipelineStage(stage)) return false;
-  if (isCrmPostWonRequiresSxProject(stage)) return false;
+  if (isCrmPostWonRequiresSxProject(stage, wonAnchorOrder)) return false;
   return true;
 }
 
 /**
+ * @param {object} lead
+ * @param {object} targetStage
+ * @param {object|null} prevStage
+ * @param {{ wonAnchorOrder?: number|null }} [opts]
  * @returns {{ ok: true } | { ok: false, error: string, code: string, requires_production_company?: boolean }}
  */
-function assertDealCrmManualStageChange(lead, targetStage, prevStage) {
+function assertDealCrmManualStageChange(lead, targetStage, prevStage, opts = {}) {
   if (!lead || lead.type !== 'deal' || !targetStage) {
     return { ok: true };
   }
   if (prevStage && String(prevStage.id) === String(targetStage.id)) return { ok: true };
   if (targetStage.is_lost || isLostOrCancelledPipelineStage(targetStage)) return { ok: true };
 
-  // Chưa có dự án SX → bắt buộc qua cột Thắng (chọn công ty SX) trước khi sang cột sau.
-  if (!lead.project_id && !targetStage.is_won && isCrmPostWonRequiresSxProject(targetStage)) {
+  const wonAnchorOrder = opts.wonAnchorOrder != null ? opts.wonAnchorOrder : null;
+
+  // Chưa có dự án SX → bắt buộc qua cột Thắng (chọn công ty SX) trước khi sang cột sau neo Thắng.
+  if (!lead.project_id && !targetStage.is_won && isCrmPostWonRequiresSxProject(targetStage, wonAnchorOrder)) {
     return {
       ok: false,
       error: 'Cần chuyển deal sang cột Thắng và chọn công ty sản xuất trước khi sang giai đoạn sau Thắng.',
@@ -210,8 +225,8 @@ function assertDealCrmManualStageChange(lead, targetStage, prevStage) {
   if (!CRM_PRODUCTION_LINK_STAGE_GATE) return { ok: true };
 
   if (lead.project_id) {
-    const leavingPostWon = isDealOnCrmPostWonColumn(prevStage);
-    const enteringPreWon = isCrmPreWonSalesStage(targetStage);
+    const leavingPostWon = isDealOnCrmPostWonColumn(prevStage, wonAnchorOrder);
+    const enteringPreWon = isCrmPreWonSalesStage(targetStage, wonAnchorOrder);
     if (leavingPostWon && enteringPreWon) {
       return {
         ok: false,
@@ -232,6 +247,32 @@ function assertDealCrmManualStageChange(lead, targetStage, prevStage) {
   return { ok: true };
 }
 
+/**
+ * order_index neo Thắng (max is_won) cùng pipeline — khớp FE resolveDealWonAnchorStage.
+ * @param {string|null|undefined} pipelineId
+ * @returns {Promise<number|null>}
+ */
+async function loadWonAnchorOrderForPipeline(pipelineId) {
+  if (!pipelineId) return null;
+  try {
+    const { supabase } = require('../config/supabase');
+    const { data } = await supabase
+      .from('crm_pipeline_stages')
+      .select('order_index')
+      .eq('pipeline_id', pipelineId)
+      .eq('is_won', true)
+      .eq('is_active', true)
+      .order('order_index', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const n = Number(data?.order_index);
+    return Number.isFinite(n) ? n : null;
+  } catch (e) {
+    console.warn('[crmDealStageGate] loadWonAnchorOrder:', e.message);
+    return null;
+  }
+}
+
 module.exports = {
   CRM_PRODUCTION_LINK_STAGE_GATE,
   POST_WON_SYNC_ROLES,
@@ -245,4 +286,5 @@ module.exports = {
   isDealCrmStageLocked,
   workshopReadyForCrmPostWonStage,
   assertDealCrmManualStageChange,
+  loadWonAnchorOrderForPipeline,
 };

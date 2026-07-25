@@ -17,6 +17,7 @@ const {
   getResolvedKanbanStages,
   resolveSxHandoverColumnId,
   resolveSxDisplayColumnId,
+  shouldForceSxHandoverColumn,
   SX_STAGE_SLUG_STATUS,
   enrichProjectsForSx,
   buildPipelineSummary,
@@ -749,6 +750,8 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
     if (!existingRow) {
       return res.status(404).json({ error: 'Không tìm thấy cột pipeline' });
     }
+    const { assertCompanyOwnedRow } = require('../helpers/projectAccessScope');
+    if (!assertCompanyOwnedRow(req, res, existingRow, { label: 'cột pipeline SX', queryCompanyId: b.company_id })) return;
     const update = {};
     ['name', 'color', 'icon', 'order_index', 'is_active', 'workflow_stage_id', 'bucket_slug',
       'is_handover_to_logistics', 'converts_workshop_type', 'target_workshop_type_id',
@@ -901,6 +904,8 @@ r.delete('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (r
       await invalidateProductionPipelineCache();
       return res.json({ message: 'Cột pipeline đã được xóa', already_deleted: true });
     }
+    const { assertCompanyOwnedRow } = require('../helpers/projectAccessScope');
+    if (!assertCompanyOwnedRow(req, res, row, { label: 'cột pipeline SX' })) return;
     if (row.bucket_slug === INTAKE_BUCKET) {
       return res.status(400).json({ error: 'Không xóa cột deal thắng — chỉ có thể ẩn' });
     }
@@ -1409,7 +1414,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     const projectListSelect = mobileLite
       ? `
         id, code, name, estimated_value, priority, deadline, ${MIGRATION_300_COLS} created_at, status, company_id,
-        production_deadline, sx_kanban_column_id, logistics_company_id,
+        production_deadline, sx_kanban_column_id, logistics_company_id, vc_kanban_column_id, vc_handover_status,
         current_stage_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone),
@@ -1422,7 +1427,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       : kanbanBoard
         ? `
         id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, ${MIGRATION_300_COLS} created_at, status, company_id,
-        production_deadline, sx_kanban_column_id, logistics_company_id,
+        production_deadline, sx_kanban_column_id, logistics_company_id, vc_kanban_column_id, vc_handover_status,
         current_stage_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone),
@@ -1435,7 +1440,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
       `
       : `
         id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, ${MIGRATION_300_COLS} created_at, status, notes, company_id,
-        production_deadline, production_note, vc_kanban_column_id, sx_kanban_column_id,
+        production_deadline, production_note, vc_kanban_column_id, vc_handover_status, sx_kanban_column_id,
         current_stage_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         vc_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug),
@@ -1504,6 +1509,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     const needsFallback = error && (
       error.message?.includes('production_deadline') ||
       error.message?.includes('vc_kanban_column_id') ||
+      error.message?.includes('vc_handover_status') ||
       error.message?.includes('sx_kanban_column_id') ||
       error.message?.includes('logistics_pipeline_stages') ||
       error.message?.includes('workshop_project_types') ||
@@ -2134,8 +2140,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       .find((sid) => sid && sortedKIdSet.has(String(sid))) || null;
     const intakeCol = sortedK.find((c) => c.bucket_slug === INTAKE_BUCKET);
     const handoverCol = sortedK.find((c) => c.is_handover_to_logistics === true);
-    const VC_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
-    const projectInVcFlow = VC_STATUSES.has(String(project.status || ''));
+    const projectInVcFlow = shouldForceSxHandoverColumn(project, sortedK.find((c) => String(c.id) === String(project.sx_kanban_column_id || '')) || null);
     const defaultFirstColId = intakeCol?.id || sortedK[0]?.id || null;
     const fallbackRepairColId = projectInVcFlow
       ? (handoverCol?.id || defaultFirstColId)
@@ -2797,8 +2802,6 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
     });
     const projectId = id;
     const toStageId = stage_id;
-    const updatedSnapshot = updated;
-    const reqRef = req;
 
     setImmediate(() => {
       void (async () => {
@@ -2808,131 +2811,24 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
           console.warn('[production] syncCrmLeadSxPipelineFromProject:', syncErr.message);
         }
 
-        // Kiểm tra cột SX có cờ is_handover_to_logistics → chuyển sang module VC
+        // Kiểm tra cột SX có cờ is_handover_to_logistics.
+        // KHÔNG auto gán vc_kanban / status=shipping — xung đột luồng Sale chọn công ty
+        // qua POST /vc-handover/projects/:id/request. FE Kanban/Detail đã gọi request.
         try {
-          const { data: projVcCheck } = await supabase
-            .from('projects')
-            .select('status, vc_kanban_column_id, logistics_company_id')
-            .eq('id', projectId)
-            .maybeSingle();
-          const { isProjectAlreadyInLogistics } = require('../helpers/projectLogisticsScope');
-          if (isProjectAlreadyInLogistics(projVcCheck)) {
-            return;
-          }
-
           const sxPipeStage = await findSxPipelineStageRowForWorkflow(toStageId, companyIdForPipeline);
-
           if (sxPipeStage?.is_handover_to_logistics) {
-            let autoVcStageId = null;
-            try {
-              autoVcStageId = await resolveLogisticsVcIntakeColumnId(companyIdForPipeline);
-              if (!autoVcStageId) {
-                const { data: vcFirst } = await supabase
-                  .from('logistics_pipeline_stages').select('id').eq('is_active', true).order('order_index').limit(1).maybeSingle();
-                autoVcStageId = vcFirst?.id || null;
-              }
-            } catch (_e) { /* ignore */ }
-
-            const { data: projVcMeta } = await supabase
-              .from('projects')
-              .select('logistics_company_id, company_id, logistics_person_id, installer_person_id')
-              .eq('id', projectId)
-              .maybeSingle();
-            const vcCoId = projVcMeta?.logistics_company_id || projVcMeta?.company_id || companyIdForPipeline;
-
-            let resolvedLogisticsPersonId = projVcMeta?.logistics_person_id || null;
-            let resolvedInstallerPersonId = projVcMeta?.installer_person_id || null;
-            if (!resolvedLogisticsPersonId) {
-              resolvedLogisticsPersonId = await resolveLogisticsHandoverResponsibleUserId(vcCoId);
-            }
-            if (!resolvedInstallerPersonId) {
-              resolvedInstallerPersonId = await resolveLogisticsHandoverInstallerUserId(vcCoId);
-            }
-
-            const autoUpd = { status: 'shipping' };
-            if (autoVcStageId) autoUpd.vc_kanban_column_id = autoVcStageId;
-            if (resolvedLogisticsPersonId) autoUpd.logistics_person_id = resolvedLogisticsPersonId;
-            if (resolvedInstallerPersonId) autoUpd.installer_person_id = resolvedInstallerPersonId;
-            const { error: autoUpdErr } = await supabase.from('projects').update(autoUpd).eq('id', projectId);
-            if (autoUpdErr && autoUpdErr.message?.includes('vc_kanban_column_id')) {
-              await supabase.from('projects').update({ status: 'shipping' }).eq('id', projectId);
-            }
-
-            try {
-              const { ensureLeadDocumentsIncludeShareModules } = require('../helpers/moduleLeadDocuments');
-              await ensureLeadDocumentsIncludeShareModules(projectId, ['logistics']);
-            } catch (mdErr) {
-              console.warn('[production/stage] expand doc modules for VC:', mdErr.message);
-            }
-
-            try {
-              const out = await applyAllActiveWorkshopTemplatesForArea(projectId, userId, {
-                workshopArea: 'logistics',
-                companyId: vcCoId,
-                logisticsStageId: autoVcStageId,
-              });
-              if (!out?.ok) {
-                console.warn('[production/stage] gen logistics templates:', out?.error || 'unknown');
-              }
-            } catch (tplErr) {
-              console.warn('[production/stage] gen logistics templates:', tplErr.message);
-            }
-
-            try {
-              await ensureDealLeadDocumentsForProjectId(projectId);
-            } catch (ensErr) {
-              console.warn('[production/stage] ensure deal lead_documents:', ensErr.message);
-            }
-
-            try {
-              const vcDeliveryStageId = await getCrmVcDeliveryStageId();
-              if (vcDeliveryStageId) {
-                const { data: leads } = await supabase
-                  .from('crm_leads')
-                  .select('id, stage_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, sync_role, is_won, is_lost)')
-                  .eq('project_id', projectId)
-                  .eq('type', 'deal');
-                await Promise.all(
-                  (leads || []).map((lead) => {
-                    const patch = {};
-                    if (autoVcStageId) patch.vc_pipeline_stage_id = autoVcStageId;
-                    // Race-guard: chỉ ghi stage_id khi deal đang ở cột auto-managed hoặc Thắng.
-                    if (
-                      String(lead.stage_id || '') !== String(vcDeliveryStageId)
-                      && shouldAutoOverwriteCrmStage(lead.stage)
-                    ) {
-                      patch.stage_id = vcDeliveryStageId;
-                    }
-                    if (!Object.keys(patch).length) return Promise.resolve();
-                    return supabase.from('crm_leads').update(patch).eq('id', lead.id);
-                  }),
-                );
-              }
-            } catch (crmErr) {
-              console.warn('[production/handover] sync CRM VC delivery:', crmErr.message);
-            }
-
-            try {
-              await notifyVcHandoverFromSx(reqRef, {
-                projectId,
-                projectCode: updatedSnapshot.code,
-                projectName: updatedSnapshot.name,
-                logisticsCompanyId: vcCoId,
-                actorUserId: userId,
-                manual: false,
-              });
-            } catch (vcNotifErr) {
-              console.warn('[production/stage] notify VC handover:', vcNotifErr.message);
-            }
+            console.info(
+              `[production/stage] workflow→handover col «${sxPipeStage.name || ''}» — skip auto VC (dùng vc-handover request)`,
+            );
           }
         } catch (handoverErr) {
-          console.warn('[production/stage] handover to logistics:', handoverErr.message);
+          console.warn('[production/stage] handover check:', handoverErr.message);
         }
 
         // Không gửi workshop_new_deal khi đổi cột — Kanban đã sync realtime (production:board_changed).
         // Ping tray cho mọi NV production/manager gây spam không cần thiết.
 
-        // Emit sau sync + handover CRM để thẻ Kanban CRM luôn nhận đúng SX/VC (một lần, đủ dữ liệu)
+        // Emit sau sync để thẻ Kanban CRM luôn nhận đúng SX/VC (một lần, đủ dữ liệu)
         try {
           if (io) await emitProductionKanbanChangedAsync(io, projectId, 'workflow_stage');
         } catch (emitErr) {
@@ -3914,6 +3810,9 @@ r.put('/task-templates/:id', requirePermission('projects', 'edit'), async (req, 
     }
     if (existingErr) throw existingErr;
 
+    const { assertCompanyOwnedRow } = require('../helpers/projectAccessScope');
+    if (!assertCompanyOwnedRow(req, res, existingRow, { label: 'mẫu nhiệm vụ', queryCompanyId: req.body.company_id })) return;
+
     const update = {};
     ['name', 'description', 'is_active', 'order_index', 'workshop_area', 'is_default'].forEach((f) => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
@@ -3986,6 +3885,13 @@ r.put('/task-templates/:id', requirePermission('projects', 'edit'), async (req, 
 
 r.delete('/task-templates/:id', requirePermission('projects', 'edit'), async (req, res) => {
   try {
+    const { data: tpl } = await supabase
+      .from('workshop_task_templates')
+      .select('id, company_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    const { assertCompanyOwnedRow } = require('../helpers/projectAccessScope');
+    if (!assertCompanyOwnedRow(req, res, tpl, { label: 'mẫu nhiệm vụ' })) return;
     await supabase.from('workshop_task_template_items').delete().eq('template_id', req.params.id);
     const { error } = await supabase.from('workshop_task_templates').delete().eq('id', req.params.id);
     if (error) throw error;
@@ -3998,6 +3904,13 @@ r.delete('/task-templates/:id', requirePermission('projects', 'edit'), async (re
 
 r.post('/task-templates/:tplId/items', requirePermission('projects', 'edit'), async (req, res) => {
   try {
+    const { data: tpl } = await supabase
+      .from('workshop_task_templates')
+      .select('id, company_id')
+      .eq('id', req.params.tplId)
+      .maybeSingle();
+    const { assertCompanyOwnedRow } = require('../helpers/projectAccessScope');
+    if (!assertCompanyOwnedRow(req, res, tpl, { label: 'mẫu nhiệm vụ' })) return;
     const b = req.body;
     if (!b.title?.trim()) {
       return res.status(400).json({ error: 'Thiếu tiêu đề nhiệm vụ mẫu' });
@@ -4070,6 +3983,13 @@ r.post('/task-templates/:tplId/items', requirePermission('projects', 'edit'), as
 
 r.put('/task-templates/:tplId/items/:itemId', requirePermission('projects', 'edit'), async (req, res) => {
   try {
+    const { data: tpl } = await supabase
+      .from('workshop_task_templates')
+      .select('id, company_id')
+      .eq('id', req.params.tplId)
+      .maybeSingle();
+    const { assertCompanyOwnedRow } = require('../helpers/projectAccessScope');
+    if (!assertCompanyOwnedRow(req, res, tpl, { label: 'mẫu nhiệm vụ' })) return;
     const update = {};
     ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist',
       'default_allowed_companies', 'default_allowed_departments', 'executor_company_id', 'blocks_stage_advance',
@@ -4131,6 +4051,13 @@ r.put('/task-templates/:tplId/items/:itemId', requirePermission('projects', 'edi
 
 r.delete('/task-templates/:tplId/items/:itemId', requirePermission('projects', 'edit'), async (req, res) => {
   try {
+    const { data: tpl } = await supabase
+      .from('workshop_task_templates')
+      .select('id, company_id')
+      .eq('id', req.params.tplId)
+      .maybeSingle();
+    const { assertCompanyOwnedRow } = require('../helpers/projectAccessScope');
+    if (!assertCompanyOwnedRow(req, res, tpl, { label: 'mẫu nhiệm vụ' })) return;
     const { error } = await supabase.from('workshop_task_template_items').delete().eq('id', req.params.itemId);
     if (error) throw error;
     res.json({ success: true });
@@ -4263,6 +4190,8 @@ r.post('/projects/:id/tasks/ensure-missing-sx', requirePermission('projects', 'e
 
 r.get('/projects/:id/incidents', requirePermission('projects', 'view'), async (req, res) => {
   try {
+    const { assertProjectAccessible } = require('../helpers/projectAccessScope');
+    if (!(await assertProjectAccessible(req, res, req.params.id))) return;
     const { id } = req.params;
     const { data, error } = await supabase
       .from('project_incidents')
@@ -4286,6 +4215,8 @@ r.get('/projects/:id/incidents', requirePermission('projects', 'view'), async (r
 
 r.post('/projects/:id/incidents', requirePermission('projects', 'edit'), async (req, res) => {
   try {
+    const { assertProjectAccessible } = require('../helpers/projectAccessScope');
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const { id } = req.params;
     const { title, description, severity } = req.body;
     const userId = req.user.userId;

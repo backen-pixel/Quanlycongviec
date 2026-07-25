@@ -79,9 +79,10 @@ export default function Projects() {
     setPinnedSet(new Set(ids));
   }, []);
 
-  const load = () => {
+  const load = (searchOverride) => {
     setLoading(true);
-    api.get('/projects', { params: { search: search || undefined, limit: 500 } })
+    const q = searchOverride !== undefined ? searchOverride : search;
+    api.get('/projects', { params: { search: q || undefined, limit: 500 } })
       .then(r => {
         setProjects(r.data.projects || []);
         const projectIds = (r.data.projects || []).map(p => p.id);
@@ -327,7 +328,7 @@ export default function Projects() {
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
               <input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && load()} placeholder="Tìm kiếm..." className="h-9 pl-10 pr-8 bg-slate-700/50 text-white placeholder-gray-400 border border-slate-600 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 w-48" />
-              {search && <button onClick={() => { setSearch(''); setTimeout(load, 100); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white cursor-pointer"><X className="h-4 w-4" /></button>}
+              {search && <button onClick={() => { setSearch(''); load(''); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white cursor-pointer"><X className="h-4 w-4" /></button>}
             </div>
             <button onClick={() => setShowAdvFilter(!showAdvFilter)}
               className={`h-9 px-3 rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer ${hasActiveFilters ? 'bg-blue-500/30 text-blue-300 border border-blue-400/50' : 'bg-white/10 text-gray-400 hover:text-white'}`}>

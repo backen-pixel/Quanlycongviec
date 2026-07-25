@@ -421,6 +421,24 @@ function sxStatusComesFromColumn(project, col) {
 }
 
 /**
+ * Chỉ ép về cột «Bàn giao VC» khi status phản ánh luồng VC thật.
+ * `completed` trên SX (thu tiền/hoàn thành) ≠ đã sang module VC — không được remap.
+ * `shipping` do cột SX slug delivery sinh ra → giữ cột vừa kéo.
+ */
+function shouldForceSxHandoverColumn(project, projectColRow) {
+  const st = String(project?.status || '');
+  if (!st) return false;
+  const inLogistics = Boolean(project?.vc_kanban_column_id || project?.logistics_company_id);
+  if (st === 'completed') return inLogistics;
+  if (st === 'installing' || st === 'warranty') return true;
+  if (st === 'shipping') {
+    if (projectColRow && sxStatusComesFromColumn(project, projectColRow)) return false;
+    return true;
+  }
+  return false;
+}
+
+/**
  * Resolver dùng chung để xác định cột SX hiển thị cho Dashboard/Detail.
  * Ưu tiên: vc handover (khi đã sang VC) -> sx_kanban_column_id -> lead sx_pipeline_stage_id.
  */
@@ -432,11 +450,10 @@ function resolveSxDisplayColumnId(project, sortedStages, opts = {}) {
   const leadColId = opts?.leadColId || leadMeta?.sx_pipeline_stage_id || null;
   const wonDeal = opts?.sxWonDeal ?? false;
   const hasSxHandover = opts?.hasSxHandover ?? Boolean(leadMeta?.sx_handover_at);
-  const VC_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
 
   const projectColRow = sorted.find((s) => String(s.id) === String(project?.sx_kanban_column_id || '')) || null;
 
-  if (VC_STATUSES.has(String(project?.status || ''))) {
+  if (shouldForceSxHandoverColumn(project, projectColRow)) {
     // Kéo thẻ vào cột «Vận chuyển»/«CSKH» khiến status tự thành shipping/warranty. Đó không phải
     // bằng chứng đã bàn giao VC nên phải giữ cột vừa kéo, không ép về cột «Bàn giao VC».
     if (projectColRow && sxStatusComesFromColumn(project, projectColRow)) return projectColRow.id;
@@ -1519,6 +1536,7 @@ module.exports = {
   kanbanColumnIdForProject,
   resolveSxDisplayColumnId,
   resolveSxHandoverColumnId,
+  shouldForceSxHandoverColumn,
   SX_STAGE_SLUG_STATUS,
   sxStatusComesFromColumn,
   enrichProjectsForSx,
