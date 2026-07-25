@@ -61,6 +61,11 @@ const {
 const { fetchLeadCommentAudienceMembers } = require('../../../helpers/crmLeadCommentAudience');
 const { userCanAccessCrmLeadAsParticipant, userCanAccessCrmLeadViaVisibility } = require('../../../helpers/crmLeadParticipantAccess');
 const { isVptCompanyCommercialDocViewer } = require('../../../helpers/dealParticipantProduction');
+const {
+  isAccountingUser,
+  getAccountingCompanyId,
+  crmDealBelongsToAccountingCompany,
+} = require('../../../helpers/accountingScope');
 const { DEFAULT_CHECKLISTS } = require('../../../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../../../helpers/generateFlowTasks');
 const { autoCreateProjectFromWonDeal } = require('../../../helpers/autoDealWonProject');
@@ -352,13 +357,32 @@ function resolveCommercialDocListCompanyScope(req, res, queryCompanyId) {
   return { ok: true, companyId: String(cid).trim(), restrictToCreator };
 }
 
-/** Báo giá / đơn hàng / hóa đơn — ghi: khóa company_id theo tài khoản (admin công ty / NV). */
-function enforceCommercialDocCompanyOnWrite(req, res, payloadCompanyId, entityLabel = 'Chứng từ') {
+/**
+ * Báo giá / đơn hàng / hóa đơn — ghi: khóa company_id theo tài khoản (admin công ty / NV).
+ * Kế toán: được ghi chứng từ với company_id của deal xưởng nếu deal thuộc phạm vi kế toán
+ * (company_id hoặc external_company_id = công ty kế toán).
+ * @param {{ leadId?: string }} [opts]
+ */
+async function enforceCommercialDocCompanyOnWrite(req, res, payloadCompanyId, entityLabel = 'Chứng từ', opts = {}) {
   const sac = scopedAdminCompanyId(req);
   if (!userIsAdmin(req.user?.role)) {
     const uc = requireUserCompanyId(req, res);
     if (!uc) return { ok: false, companyId: null };
     if (payloadCompanyId && String(payloadCompanyId) !== String(uc)) {
+      const leadId = opts.leadId || null;
+      if (isAccountingUser(req.user) && leadId) {
+        const ac = getAccountingCompanyId(req.user);
+        const { data: lead, error: leadErr } = await supabase
+          .from('crm_leads')
+          .select('company_id, external_company_id, external_company_name')
+          .eq('id', leadId)
+          .maybeSingle();
+        if (leadErr) {
+          console.warn('[commercial-write] accounting lead check:', leadErr.message);
+        } else if (lead && crmDealBelongsToAccountingCompany(lead, ac)) {
+          return { ok: true, companyId: payloadCompanyId };
+        }
+      }
       res.status(403).json({ error: `${entityLabel} phải cùng công ty với tài khoản` });
       return { ok: false, companyId: null };
     }
@@ -5248,7 +5272,8 @@ async function applyLeadOrCustomerSalesFilter(queryBuilder, leadIdVal) {
   return queryBuilder.eq('lead_id', lid);
 }
 
-/** Admin hệ thống xem/sửa mọi báo giá; admin công ty toàn công ty; NV chỉ báo giá do mình tạo. */
+/** Admin hệ thống xem/sửa mọi báo giá; admin công ty toàn công ty; NV chỉ báo giá do mình tạo.
+ *  Kế toán: xem/sửa chứng từ mình tạo (kể cả company_id deal xưởng) hoặc cùng công ty kế toán. */
 function userMayAccessQuotationRow(req, row) {
   if (!row) return false;
   const sac = scopedAdminCompanyId(req);
@@ -5257,6 +5282,11 @@ function userMayAccessQuotationRow(req, row) {
   const uid = req.user?.userId;
   const cid = req.user?.company_id;
   if (!uid || !cid) return false;
+  if (isAccountingUser(req.user)) {
+    if (String(row.created_by || '') === String(uid)) return true;
+    if (String(row.company_id || '') === String(cid)) return true;
+    return false;
+  }
   if (String(row.company_id || '') !== String(cid)) return false;
   if (isVptCompanyCommercialDocViewer(req.user)) return true;
   return String(row.created_by || '') === String(uid);

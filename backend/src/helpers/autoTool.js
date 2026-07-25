@@ -7,7 +7,7 @@
  * 3. Quét SĐT từ tin inbound trong DB
  * 4. Có SĐT + chưa lead → tạo lead; đã có lead → cập nhật SĐT
  *
- * Chạy liên tục: mỗi vòng xử lý tối đa `batchesPerCycle` batch (mặc định 1 = chỉ 100/batch rồi nghỉ),
+ * Chạy liên tục: mỗi vòng xử lý tối đa `batchesPerCycle` batch (mặc định 1 = chỉ 300/batch rồi nghỉ),
  * không quét offset tiếp đến hết pool. Khi hết contacts thì reset offset, nghỉ rồi lặp lại.
  */
 
@@ -38,7 +38,7 @@ const state = {
   lastUpdatedAt: null,
   logs: [],
   config: {
-    limit: 100,           // contacts mỗi batch
+    limit: 300,           // contacts mỗi batch
     graphPages: 10,       // trang Graph mỗi contact
     /** Số batch tối đa mỗi vòng (offset chỉ tăng trong vòng này). 1 = chỉ chạy 1×limit contact rồi nghỉ vòng — không quét hết pool. */
     batchesPerCycle: 1,
@@ -110,7 +110,7 @@ function getConfig() { return { ...state.config }; }
 
 function setConfig(partial) {
   if (!partial || typeof partial !== 'object') return;
-  if (partial.limit != null) state.config.limit = Math.min(1000, Math.max(1, parseInt(partial.limit, 10) || 100));
+  if (partial.limit != null) state.config.limit = Math.min(1000, Math.max(1, parseInt(partial.limit, 10) || 300));
   if (partial.graphPages != null) state.config.graphPages = Math.min(30, Math.max(1, parseInt(partial.graphPages, 10) || 10));
   if (partial.batchesPerCycle != null) state.config.batchesPerCycle = Math.min(500, Math.max(1, parseInt(partial.batchesPerCycle, 10) || 1));
   if (partial.pauseSec != null) state.config.pauseSec = Math.min(3600, Math.max(0, parseInt(partial.pauseSec, 10) || 60));
@@ -153,7 +153,7 @@ async function loadConfigFromDb() {
     if (data?.value && typeof data.value === 'object') {
       // Gán trực tiếp, KHÔNG gọi setConfig (tránh ghi ngược DB)
       const v = data.value;
-      if (v.limit != null) state.config.limit = Math.min(1000, Math.max(1, parseInt(v.limit, 10) || 100));
+      if (v.limit != null) state.config.limit = Math.min(1000, Math.max(1, parseInt(v.limit, 10) || 300));
       if (v.graphPages != null) state.config.graphPages = Math.min(30, Math.max(1, parseInt(v.graphPages, 10) || 10));
       if (v.batchesPerCycle != null) state.config.batchesPerCycle = Math.min(500, Math.max(1, parseInt(v.batchesPerCycle, 10) || 1));
       if (v.pauseSec != null) state.config.pauseSec = Math.min(3600, Math.max(0, parseInt(v.pauseSec, 10) || 60));

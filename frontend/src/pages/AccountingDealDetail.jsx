@@ -1193,6 +1193,7 @@ export default function AccountingDealDetail() {
           docType={importType}
           leadId={leadId}
           dealId={leadId}
+          returnTo={`/ketoan/deals/${leadId}`}
           initialFileUrl={importDocSource?.file_url}
           initialFileName={importDocSource?.file_name}
           initialSourceFile={importDocSource ? { file_url: importDocSource.file_url, file_name: importDocSource.file_name } : null}

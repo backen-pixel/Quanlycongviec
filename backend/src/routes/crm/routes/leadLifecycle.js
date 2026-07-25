@@ -1301,15 +1301,84 @@ r.delete('/leads/:id/documents/:docId', async (req, res) => {
   }
 });
 
+/**
+ * Route theo `:projectId` KHÔNG đi qua `enforceCrmDealAssigneeAccess` (middleware chỉ khớp
+ * `/leads|deals/<uuid>`), nên từng handler phải tự kiểm quyền — nếu không, mọi user đã đăng nhập
+ * chỉ cần biết projectId là đọc/ghi được dữ liệu CRM của dự án bất kỳ.
+ * @returns {Promise<{ project: object, lead: object|null }|null>} null = đã trả lỗi cho client
+ */
+async function resolveCrmProjectScope(req, res, projectIdRaw) {
+  const projectId = String(projectIdRaw || '').trim();
+  if (!CRM_UUID_RE.test(projectId)) {
+    res.status(400).json({ error: 'project_id không hợp lệ' });
+    return null;
+  }
+
+  const { data: project, error } = await supabase
+    .from('projects')
+    .select('*')
+    .eq('id', projectId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!project) {
+    res.status(404).json({ error: 'Không tìm thấy dự án' });
+    return null;
+  }
+
+  const { assertRowCompanyInTenant } = require('../../../helpers/tenantScope');
+  if (!assertRowCompanyInTenant(req, res, project)) return null;
+
+  const { data: lead } = await supabase
+    .from('crm_leads')
+    .select('id, type, company_id, assigned_to, lead_owner_id, parent_lead_id, project_id, region_id')
+    .eq('project_id', projectId)
+    .limit(1)
+    .maybeSingle();
+  const scope = { project, lead: lead || null };
+
+  if (isSystemAdmin(req.user) || isPlatformAdmin(req.user)) return scope;
+
+  const uid = req.user?.userId ? String(req.user.userId) : '';
+  const projectPersonFields = [
+    'sales_person_id', 'designer_id', 'project_manager_id', 'supervisor_id',
+    'production_person_id', 'logistics_person_id', 'created_by',
+  ];
+  if (uid && projectPersonFields.some((f) => project[f] && String(project[f]) === uid)) return scope;
+
+  const userCompany = req.user?.company_id ? String(req.user.company_id) : '';
+  if (userCompany) {
+    const projectCompanies = [project.company_id, project.logistics_company_id]
+      .filter(Boolean)
+      .map(String);
+    if (projectCompanies.includes(userCompany)) return scope;
+    // Sale/kế toán bên công ty CRM: dự án thuộc công ty SX khác nhưng deal là của họ.
+    if (lead?.company_id && String(lead.company_id) === userCompany) return scope;
+  }
+
+  if (lead) {
+    const { assertCrmLeadAccess } = require('../../../helpers/crmTaskLeadAccess');
+    const gate = await assertCrmLeadAccess(supabase, req, lead, { operation: 'READ' });
+    if (gate.ok) return scope;
+  }
+
+  res.status(403).json({ error: 'Không có quyền truy cập dự án này', reason: 'crm_project_scope_denied' });
+  return null;
+}
+
 r.get('/projects/:projectId/documents', async (req, res) => {
   try {
+    if (!(await resolveCrmProjectScope(req, res, req.params.projectId))) return;
+
     const { data, error } = await supabase.from('lead_documents')
       .select('*, creator:users!lead_documents_created_by_fkey(id, full_name)')
       .eq('project_id', req.params.projectId)
       .order('created_at', { ascending: false });
     if (error) throw error;
 
-    res.json(data || []);
+    // Cùng bộ lọc allowlist như GET /leads/:id/documents — không lộ tài liệu giới hạn phòng ban/công ty.
+    const visible = (data || []).filter((doc) => canUserViewDocByAllowlist(req.user, doc));
+    res.set('Cache-Control', 'private, no-store');
+    res.json(visible);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2427,7 +2496,8 @@ r.patch('/leads/:id/stage', async (req, res) => {
         null;
       if (pid) {
         try {
-          await syncCrmLeadSxPipelineFromProject(pid);
+          // keepCrmStageLeadIds: giữ đúng cột Sale vừa kéo — sync chỉ làm mới badge SX.
+          await syncCrmLeadSxPipelineFromProject(pid, { keepCrmStageLeadIds: [req.params.id] });
         } catch (se) {
           console.warn('[crm/stage] sync sx_pipeline_stage_id (final):', se.message);
         }
@@ -3287,6 +3357,8 @@ r.get('/project/:projectId/lead-documents', async (req, res) => {
 
 r.post('/project/:projectId/auto-invoice', async (req, res) => {
   try {
+    if (!(await resolveCrmProjectScope(req, res, req.params.projectId))) return;
+
     const invoices = await onProjectCompleted(req.params.projectId, req.user.userId);
 
     // 🔔 NOTIFICATION: Auto hóa đơn

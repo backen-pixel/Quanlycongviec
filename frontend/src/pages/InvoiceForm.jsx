@@ -18,6 +18,8 @@ export default function InvoiceForm() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const location = useLocation();
+  const rawReturnTo = searchParams.get('return_to') || '';
+  const returnTo = (rawReturnTo.startsWith('/') && !rawReturnTo.startsWith('//')) ? rawReturnTo : null;
 
   const [form, setForm] = useState({
     title: '', customer_id: '', customer_name: '', customer_phone: '', customer_address: '',
@@ -144,12 +146,12 @@ export default function InvoiceForm() {
         await api.put(`/crm/invoices/${id}`, payload);
         setSaveMsg('Cập nhật hóa đơn thành công!');
         setSaveStatus('success');
-        setTimeout(() => navigate(`/crm/invoices/${id}`), 1200);
+        setTimeout(() => navigate(returnTo || `/crm/invoices/${id}`), 1200);
       } else {
         const { data } = await api.post('/crm/invoices', payload);
         setSaveMsg('Tạo hóa đơn thành công!');
         setSaveStatus('success');
-        setTimeout(() => navigate(`/crm/invoices/${data.id}`), 1200);
+        setTimeout(() => navigate(returnTo || `/crm/invoices/${data.id}`), 1200);
       }
     } catch (e) {
       setSaveMsg(e.response?.data?.error || 'Có lỗi xảy ra khi lưu');
@@ -164,7 +166,7 @@ export default function InvoiceForm() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate(isEdit ? `/crm/invoices/${id}` : '/crm/invoices')} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
+          <button onClick={() => navigate(returnTo || (isEdit ? `/crm/invoices/${id}` : '/crm/invoices'))} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
           <div>
             <h1 className="text-xl font-bold flex items-center gap-2" style={{ color: '#000000' }}>
               <Receipt className="h-5 w-5 text-purple-600" />

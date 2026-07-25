@@ -3946,7 +3946,7 @@ r.get('/contacts', authMiddleware, async (req, res) => {
     if (!scope) return;
     if (scope.mode === 'filter' && !scope.pageIds.length) {
       return res.json({
-        data: [], total: 0, offset: 0, limit: Math.min(parseInt(req.query.limit, 10) || 200, 200),
+        data: [], total: 0, offset: 0, limit: Math.min(parseInt(req.query.limit, 10) || 400, 400),
         hasMore: false, nextOffset: 0,
       });
     }
@@ -3954,7 +3954,7 @@ r.get('/contacts', authMiddleware, async (req, res) => {
     if (page_id && scope.mode === 'filter' && !scope.pageIds.includes(String(page_id))) {
       return res.status(403).json({ error: 'Không có quyền xem Page này' });
     }
-    const maxLimit = Math.min(parseInt(rawLimit, 10) || 200, 200);
+    const maxLimit = Math.min(parseInt(rawLimit, 10) || 400, 400);
     const offset = Math.max(parseInt(rawOffset) || 0, 0);
     const base = () => {
       let q = supabase

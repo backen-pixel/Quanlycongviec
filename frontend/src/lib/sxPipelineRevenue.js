@@ -64,6 +64,30 @@ export function resolveSxProjectPaymentProgress(project, crmStats = null) {
 
 export const VC_KANBAN_STATUSES = new Set(['shipping', 'installing', 'warranty']);
 
+/**
+ * Cột SX tự đặt `projects.status` theo workflow slug (xem PATCH /production/projects/:id/stage).
+ * Phải khớp `SX_STAGE_SLUG_STATUS` ở backend/src/helpers/workshopKanban.js.
+ */
+export const SX_STAGE_SLUG_STATUS = {
+  production: 'producing',
+  delivery: 'shipping',
+  'customer-care': 'warranty',
+};
+
+export function sxStageSlugOf(col) {
+  return col?.workflow_stage?.slug || col?.slug || null;
+}
+
+/**
+ * `status` = shipping/warranty có thể do chính cột SX đang gắn sinh ra, không phải vì đã bàn giao VC.
+ * Khi đó không được ép thẻ về cột «Bàn giao VC»: thẻ sẽ nhảy khỏi cột vừa kéo và bị khoá kéo.
+ */
+export function sxStatusComesFromColumn(project, col) {
+  const slug = sxStageSlugOf(col);
+  if (!slug) return false;
+  return SX_STAGE_SLUG_STATUS[slug] === String(project?.status || '');
+}
+
 function stageById(stages, colId) {
   if (!colId || !Array.isArray(stages)) return null;
   return stages.find((s) => String(s.id) === String(colId)) || null;

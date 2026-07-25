@@ -1520,7 +1520,7 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
   const [refreshAvatarLogs, setRefreshAvatarLogs] = useState([]);
   const [audit, setAudit] = useState(null);
   const [auditLoading, setAuditLoading] = useState(false);
-  const limitSize = 200;
+  const limitSize = 400;
   /** Số user xử lý (mới→cũ): đồng bộ Graph → quét SĐT từng user một */
   const [chainUserLimit, setChainUserLimit] = useState(50);
   /** Vị trí trong pool server (0, 50, 100, …) — pipeline v2 không dùng offset */
@@ -1665,7 +1665,7 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
       // Lọc theo nguồn chỉ áp dụng cho contact có lead
       if (filter !== 'has_lead') p.set('has_lead', 'true');
     }
-    p.set('limit', '200');
+    p.set('limit', '400');
     p.set('offset', append ? String(meta.nextOffset || 0) : '0');
     if (fbCompanyQs) {
       new URLSearchParams(fbCompanyQs).forEach((v, k) => p.set(k, v));
@@ -1747,8 +1747,8 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
             const exists = list.some((c) => String(c.id) === String(fresh.id));
             if (exists) return sortContacts(list.map((c) => (String(c.id) === String(fresh.id) ? { ...fresh, unread_count: Math.max(c.unread_count || 0, fresh.unread_count || 0) } : c)));
             const inserted = sortContacts([{ ...fresh, last_message_at: fresh.last_message_at || now }, ...list]);
-            // Giữ danh bạ ở mức tối đa 200 contact mới nhất.
-            return inserted.slice(0, 200);
+            // Giữ danh bạ ở mức tối đa 400 contact mới nhất.
+            return inserted.slice(0, 400);
           });
         })
         .catch(() => {});
@@ -1809,7 +1809,7 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
           ? list.map((c) => (String(c.id) === String(fresh.id) ? { ...c, ...fresh } : c))
           : [{ ...fresh, last_message_at: fresh.last_message_at || fresh.created_at || new Date().toISOString() }, ...list];
         const sorted = sortContacts(merged);
-        return sorted.slice(0, 200);
+        return sorted.slice(0, 400);
       });
     };
     const onRescanProgress = (p) => {
@@ -2801,9 +2801,9 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
           </tbody>
         </table>
         {!contacts.length && <p className="text-center text-gray-400 py-8 text-sm">Chưa có liên hệ nào</p>}
-        {meta.total > 200 && (
+        {meta.total > 400 && (
           <div className="p-4 border-t bg-gray-50 text-xs text-gray-500">
-            Đang hiển thị 200 contact mới nhất.
+            Đang hiển thị 400 contact mới nhất.
           </div>
         )}
       </div>

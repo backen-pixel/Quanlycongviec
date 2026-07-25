@@ -11,6 +11,18 @@ const POST_WON_SYNC_ROLES = new Set([
   'vc_customer_care',
 ]);
 
+/**
+ * Chặn kéo thẻ CRM theo liên kết dự án Sản xuất / tiến độ xưởng-VC.
+ *
+ * Đang TẮT theo yêu cầu nghiệp vụ: sale được kéo deal tự do giữa các cột CRM, kể cả khi deal
+ * đã có dự án Sản xuất và kể cả khi xưởng/VC chưa tới giai đoạn tương ứng.
+ * Bật lại phải đổi ở CẢ hai file: file này và backend/src/helpers/crmDealStageGate.js.
+ *
+ * Vẫn giữ chặn khi deal CHƯA có dự án SX mà nhảy sang cột sau Thắng — cột đó cần project_id,
+ * thiếu thì board Sản xuất không nhận được thẻ.
+ */
+export const CRM_PRODUCTION_LINK_STAGE_GATE = false;
+
 export function normalizeStageNameFold(name) {
   return String(name || '')
     .toLowerCase()
@@ -104,6 +116,7 @@ function isCrmPreWonSalesStage(stage) {
  * @returns {string|null}
  */
 export function crmDealRevertFromPostWonBlockedMessage(item, currentStage, targetStage) {
+  if (!CRM_PRODUCTION_LINK_STAGE_GATE) return null;
   if (!item || item.type !== 'deal' || !dealHasSxProject(item)) return null;
   if (!currentStage || !targetStage) return null;
   if (String(currentStage.id) === String(targetStage.id)) return null;
@@ -247,7 +260,8 @@ export function canDropDealOnCrmKanbanStage(item, targetStage, pipelineType, opt
 }
 
 /**
- * Chặn kéo tay sang cột sau Thắng khi chưa chọn SX, hoặc cột SX/VC khi xưởng chưa đồng bộ.
+ * Chặn kéo tay sang cột sau Thắng khi chưa chọn công ty SX.
+ * Phần chặn theo tiến độ xưởng/VC chỉ áp dụng khi `CRM_PRODUCTION_LINK_STAGE_GATE` bật.
  * @returns {string|null}
  */
 export function crmDealStageMoveBlockedMessage(item, targetStage, pipelineType, opts = {}) {
@@ -260,6 +274,7 @@ export function crmDealStageMoveBlockedMessage(item, targetStage, pipelineType, 
   // Không chặn Thắng / Thua / cột doanh thu hoàn thành (đã có project).
   if (targetStage.is_won || targetStage.is_lost || isCrmCompletedRevenueStage(targetStage)) return null;
   if (isLostOrCancelledPipelineStage(targetStage)) return null;
+  if (!CRM_PRODUCTION_LINK_STAGE_GATE) return null;
   const kind = classifyCrmPostWonManagedKind(targetStage);
   if (!kind) return null;
   if (workshopReadyForCrmPostWonStage(item, targetStage)) return null;

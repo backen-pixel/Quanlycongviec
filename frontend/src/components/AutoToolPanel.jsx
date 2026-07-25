@@ -27,7 +27,7 @@ const EMPTY_STATE = {
   startedAt: null,
   lastUpdatedAt: null,
   logs: [],
-  config: { limit: 100, graphPages: 10, batchesPerCycle: 1, pauseSec: 60, cyclePauseSec: 300, delayMs: 100 },
+  config: { limit: 300, graphPages: 10, batchesPerCycle: 1, pauseSec: 60, cyclePauseSec: 300, delayMs: 100 },
 };
 
 let _state = { ...EMPTY_STATE };
@@ -111,7 +111,7 @@ export default function AutoToolPanel({ onComplete = null }) {
   const [expanded, setExpanded] = useState(false);
   const [cfgOpen, setCfgOpen] = useState(false);
   const [form, setForm] = useState({
-    limit: 100,
+    limit: 300,
     graphPages: 10,
     batchesPerCycle: 1,
     pauseSec: 60,
@@ -149,7 +149,7 @@ export default function AutoToolPanel({ onComplete = null }) {
     setSaving(true);
     try {
       await saveAutoToolConfig({
-        limit: parseInt(form.limit, 10) || 100,
+        limit: parseInt(form.limit, 10) || 300,
         graphPages: parseInt(form.graphPages, 10) || 10,
         batchesPerCycle: parseInt(form.batchesPerCycle, 10) || 1,
         pauseSec: parseInt(form.pauseSec, 10) || 60,
@@ -163,12 +163,15 @@ export default function AutoToolPanel({ onComplete = null }) {
 
   const running = auto.running;
   const pool = auto.totalPool || 0;
-  const lim = auto.config?.limit ?? form.limit ?? 100;
+  const lim = auto.config?.limit ?? form.limit ?? 300;
   const bpc = auto.config?.batchesPerCycle ?? form.batchesPerCycle ?? 1;
   const maxPerCycle = Math.min(500000, Math.max(1, lim * Math.max(1, bpc)));
   const progress = auto.totalContacts > 0
     ? Math.min(100, Math.round((auto.processed / auto.totalContacts) * 100))
     : 0;
+  const pauseSec = auto.config?.pauseSec ?? form.pauseSec ?? 60;
+  const cyclePauseSec = auto.config?.cyclePauseSec ?? form.cyclePauseSec ?? 300;
+  const delayMs = auto.config?.delayMs ?? form.delayMs ?? 100;
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
@@ -237,8 +240,18 @@ export default function AutoToolPanel({ onComplete = null }) {
           <div className="pt-3 text-[11px] text-gray-700 space-y-2">
             <p className="font-semibold text-gray-800">Luồng: Kéo contacts → Sync tin nhắn Graph → Quét SĐT inbound → Tạo Lead</p>
             <p className="text-gray-500">
-              Mỗi <strong>vòng</strong> chỉ chạy <strong>số batch</strong> bạn cấu hình (mặc định 1 batch = {auto.config?.limit || form.limit || 100} user), không quét offset tiếp đến hết pool. Sau đó nghỉ «cuối vòng» rồi lặp lại từ user mới nhất.
+              Mỗi <strong>vòng</strong> chạy tối đa <strong>{maxPerCycle} user</strong> ({bpc} batch × {lim}/batch), ưu tiên user mới nhất. Không quét hết pool trong một vòng.
             </p>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 space-y-1 text-gray-600">
+              <p className="font-semibold text-slate-800">Khi nào chạy / nghỉ</p>
+              <ul className="list-disc pl-4 space-y-0.5">
+                <li><strong>Chạy</strong>: bật Auto hoặc nhấn «Chạy» — lặp vòng khi enabled và chưa stop.</li>
+                <li><strong>Trong batch</strong>: delay {delayMs}ms giữa từng contact (tránh rate-limit Graph).</li>
+                <li><strong>Nghỉ giữa batch</strong> ({pauseSec}s): chỉ khi Batch/vòng &gt; 1 và còn batch trong cùng vòng.</li>
+                <li><strong>Nghỉ cuối vòng</strong> ({cyclePauseSec}s): sau đủ {bpc} batch hoặc hết contact ở offset — rồi lặp từ user mới nhất.</li>
+                <li><strong>Dừng</strong>: tắt Auto / stopRequested; Graph lỗi vẫn tiếp tục quét SĐT từ DB; lỗi batch → nghỉ 10s rồi thử lại.</li>
+              </ul>
+            </div>
           </div>
 
           {/* KPI Cards — always show when has data */}
@@ -312,6 +325,7 @@ export default function AutoToolPanel({ onComplete = null }) {
                     <input
                       type="number" min={1} max={1000}
                       className="border rounded-md px-2 py-1"
+                      title="Số user mỗi batch. Vòng = batch × Batch/vòng (vd. 300×1 = 300 user/vòng)"
                       value={form.limit}
                       onChange={e => setForm(f => ({ ...f, limit: e.target.value }))}
                     />

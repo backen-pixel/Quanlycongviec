@@ -1,8 +1,7 @@
 /**
  * Quy tắc kéo giai đoạn deal trên CRM.
- * Cột sau Thắng (Sản xuất / VC / Lắp đặt / CSKH) chỉ kéo tay khi badge xưởng/VC
- * đã ở giai đoạn tương ứng — còn lại do module SX/VC đồng bộ.
  * Deal chưa có project_id không được nhảy sang cột sau Thắng (phải chọn SX ở Thắng).
+ * Các ràng buộc theo liên kết Sản xuất / tiến độ xưởng-VC xem `CRM_PRODUCTION_LINK_STAGE_GATE`.
  */
 
 const { isLostOrCancelledPipelineStage } = require('./crmLostPipelineStage');
@@ -14,6 +13,15 @@ const POST_WON_SYNC_ROLES = new Set([
   'vc_installation',
   'vc_customer_care',
 ]);
+
+/**
+ * Chặn kéo thẻ CRM theo liên kết dự án Sản xuất / tiến độ xưởng-VC.
+ *
+ * Đang TẮT theo yêu cầu nghiệp vụ: sale được kéo deal tự do giữa các cột CRM, kể cả khi deal
+ * đã có dự án Sản xuất và kể cả khi xưởng/VC chưa tới giai đoạn tương ứng.
+ * Bật lại phải đổi ở CẢ hai file: file này và frontend/src/lib/crmDealStageGate.js.
+ */
+const CRM_PRODUCTION_LINK_STAGE_GATE = false;
 
 function normalizeStageNameFold(name) {
   return String(name || '')
@@ -199,6 +207,8 @@ function assertDealCrmManualStageChange(lead, targetStage, prevStage) {
 
   if (!prevStage) return { ok: true };
 
+  if (!CRM_PRODUCTION_LINK_STAGE_GATE) return { ok: true };
+
   if (lead.project_id) {
     const leavingPostWon = isDealOnCrmPostWonColumn(prevStage);
     const enteringPreWon = isCrmPreWonSalesStage(targetStage);
@@ -223,6 +233,7 @@ function assertDealCrmManualStageChange(lead, targetStage, prevStage) {
 }
 
 module.exports = {
+  CRM_PRODUCTION_LINK_STAGE_GATE,
   POST_WON_SYNC_ROLES,
   normalizeStageNameFold,
   isSanXuatProductionColumnName,

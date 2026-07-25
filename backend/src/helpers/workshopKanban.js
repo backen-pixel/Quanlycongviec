@@ -401,6 +401,26 @@ function kanbanColumnIdForProject(project, sortedStages, wonIdSet, leadMeta = nu
 }
 
 /**
+ * Cột SX tự đặt `projects.status` theo workflow slug — dùng chung với PATCH /projects/:id/stage.
+ * Phải khớp `SX_STAGE_SLUG_STATUS` ở frontend/src/lib/sxPipelineRevenue.js.
+ */
+const SX_STAGE_SLUG_STATUS = {
+  production: 'producing',
+  delivery: 'shipping',
+  'customer-care': 'warranty',
+};
+
+/**
+ * `status` = shipping/warranty có thể do chính cột SX đang gắn sinh ra, không phải vì đã bàn giao VC.
+ * Khi đó không được ép thẻ về cột «Bàn giao VC» — thẻ sẽ nhảy khỏi cột vừa kéo.
+ */
+function sxStatusComesFromColumn(project, col) {
+  const slug = col?.workflow_stage?.slug || col?.slug || null;
+  if (!slug) return false;
+  return SX_STAGE_SLUG_STATUS[slug] === String(project?.status || '');
+}
+
+/**
  * Resolver dùng chung để xác định cột SX hiển thị cho Dashboard/Detail.
  * Ưu tiên: vc handover (khi đã sang VC) -> sx_kanban_column_id -> lead sx_pipeline_stage_id.
  */
@@ -414,10 +434,16 @@ function resolveSxDisplayColumnId(project, sortedStages, opts = {}) {
   const hasSxHandover = opts?.hasSxHandover ?? Boolean(leadMeta?.sx_handover_at);
   const VC_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
 
+  const projectColRow = sorted.find((s) => String(s.id) === String(project?.sx_kanban_column_id || '')) || null;
+
   if (VC_STATUSES.has(String(project?.status || ''))) {
+    // Kéo thẻ vào cột «Vận chuyển»/«CSKH» khiến status tự thành shipping/warranty. Đó không phải
+    // bằng chứng đã bàn giao VC nên phải giữ cột vừa kéo, không ép về cột «Bàn giao VC».
+    if (projectColRow && sxStatusComesFromColumn(project, projectColRow)) return projectColRow.id;
     let preferred = null;
     const leadColRow = sorted.find((s) => String(s.id) === String(leadColId || ''));
     if (leadColRow?.is_handover_to_logistics) preferred = leadColId;
+    else if (projectColRow?.is_handover_to_logistics) preferred = project.sx_kanban_column_id;
     const handoverId = resolveSxHandoverColumnId(sorted, project, preferred);
     if (handoverId) return handoverId;
   }
@@ -912,9 +938,8 @@ async function syncSxKanbanFromCrmProductionStage(leadId) {
       .select('slug')
       .eq('id', wfId)
       .maybeSingle();
-    const statusMap = { production: 'producing', delivery: 'shipping', 'customer-care': 'warranty' };
-    if (targetStage?.slug && statusMap[targetStage.slug]) {
-      projectUpd.status = statusMap[targetStage.slug];
+    if (targetStage?.slug && SX_STAGE_SLUG_STATUS[targetStage.slug]) {
+      projectUpd.status = SX_STAGE_SLUG_STATUS[targetStage.slug];
     }
   }
 
@@ -963,7 +988,30 @@ function agentDebugLog(location, message, data, hypothesisId) {
   // #endregion
 }
 
-async function syncCrmLeadSxPipelineFromProject(projectId) {
+/**
+ * @param {string} projectId
+ * @param {{ keepCrmStageLeadIds?: string[] }} [opts]
+ *   keepCrmStageLeadIds — deal vừa được người dùng kéo tay trong request này:
+ *   chỉ cập nhật badge sx_pipeline_stage_id, KHÔNG ghi đè stage_id (nếu ghi đè,
+ *   response trả về cột cũ → thẻ Kanban nhảy ngược ngay sau khi kéo).
+ */
+async function syncCrmLeadSxPipelineFromProject(projectId, opts = {}) {
+  const keepCrmStage = new Set((opts.keepCrmStageLeadIds || []).map((x) => String(x)));
+  /**
+   * Sync này chạy lại ở mọi thao tác chạm project. Nếu cột xưởng KHÔNG đổi so với
+   * badge đã sync trước đó thì không được đẩy stage CRM nữa — nếu không, cột mà Sale
+   * tự chọn (Vận chuyển, Hoá đơn…) sẽ bị kéo về cột đích của xưởng sau vài giây.
+   * Ngoại lệ: deal đang ở cột Thắng vẫn tự tiến sang cột xưởng như thiết kế.
+   */
+  const canOverwriteStage = (lead) => {
+    if (keepCrmStage.has(String(lead.id))) return false;
+    if (!shouldAutoOverwriteCrmStage(lead.stage)) return false;
+    const st = Array.isArray(lead.stage) ? lead.stage[0] : lead.stage;
+    if (st?.is_won) return true;
+    const syncedCol = lead.sx_pipeline_stage_id ? String(lead.sx_pipeline_stage_id) : '';
+    if (preferredSxCol && syncedCol && syncedCol === String(preferredSxCol)) return false;
+    return true;
+  };
   let { data: project, error: projectLoadErr } = await supabase
     .from('projects')
     .select('id, current_stage_id, status, company_id, workshop_type_id, sx_kanban_column_id')
@@ -1092,14 +1140,14 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
   if (currentRow?.is_packaging_done === true) {
     const { data: leadsPk } = await supabase
       .from('crm_leads')
-      .select('id, code, title, stage_id, pipeline_id, lead_owner_id, assigned_to, sx_handover_at, company_id, project_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, sync_role, is_won, is_lost)')
+      .select('id, code, title, stage_id, pipeline_id, lead_owner_id, assigned_to, sx_handover_at, sx_pipeline_stage_id, company_id, project_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, sync_role, is_won, is_lost)')
       .eq('project_id', projectId)
       .eq('type', 'deal');
     await Promise.all(
       (leadsPk || []).map(async (lead) => {
         const patch = {};
         if (preferredSxCol) patch.sx_pipeline_stage_id = preferredSxCol;
-        const canOverwrite = shouldAutoOverwriteCrmStage(lead.stage);
+        const canOverwrite = canOverwriteStage(lead);
         const targetId = await getCrmStageByRole('sx_completed', lead.pipeline_id || null)
           || currentRow?.crm_target_stage_id
           || null;
@@ -1140,7 +1188,7 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
   if (currentRow?.crm_target_stage_id) {
     const { data: leads } = await supabase
       .from('crm_leads')
-      .select('id, stage_id, sx_handover_at, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, sync_role, is_won, is_lost)')
+      .select('id, stage_id, sx_handover_at, sx_pipeline_stage_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, sync_role, is_won, is_lost)')
       .eq('project_id', projectId)
       .eq('type', 'deal');
     await Promise.all(
@@ -1148,7 +1196,7 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
         const patch = {};
         if (preferredSxCol) patch.sx_pipeline_stage_id = preferredSxCol;
         const st = Array.isArray(lead.stage) ? lead.stage[0] : lead.stage;
-        const canOverwrite = shouldAutoOverwriteCrmStage(lead.stage);
+        const canOverwrite = canOverwriteStage(lead);
         const skipReasons = [];
         if (!lead.sx_handover_at) skipReasons.push('no_sx_handover_at');
         if (String(lead.stage_id || '') === String(currentRow.crm_target_stage_id)) skipReasons.push('already_at_target');
@@ -1229,7 +1277,7 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
 
   const { data: leads } = await supabase
     .from('crm_leads')
-    .select('id, stage_id, pipeline_id, sx_handover_at, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, sync_role, is_won, is_lost)')
+    .select('id, stage_id, pipeline_id, sx_handover_at, sx_pipeline_stage_id, stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, sync_role, is_won, is_lost)')
     .eq('project_id', projectId)
     .eq('type', 'deal');
 
@@ -1243,7 +1291,7 @@ async function syncCrmLeadSxPipelineFromProject(projectId) {
       // Chỉ đổi cột CRM sau khi Sale đã bàn giao SX (sx_handover_at) — trước đó chỉ cập nhật badge.
       // Race-guard: bỏ qua nếu Sale đang để deal ở cột pre-Thắng (Đàm phán/Báo giá…) hoặc Thua.
       const st = Array.isArray(lead.stage) ? lead.stage[0] : lead.stage;
-      const canOverwrite = shouldAutoOverwriteCrmStage(lead.stage);
+      const canOverwrite = canOverwriteStage(lead);
       const skipReasons = [];
       if (!lead.sx_handover_at) skipReasons.push('no_sx_handover_at');
       if (!canOverwrite) skipReasons.push('race_guard_blocked');
@@ -1471,6 +1519,8 @@ module.exports = {
   kanbanColumnIdForProject,
   resolveSxDisplayColumnId,
   resolveSxHandoverColumnId,
+  SX_STAGE_SLUG_STATUS,
+  sxStatusComesFromColumn,
   enrichProjectsForSx,
   buildPipelineSummary,
   emitCrmBadgeUpdateForProject,

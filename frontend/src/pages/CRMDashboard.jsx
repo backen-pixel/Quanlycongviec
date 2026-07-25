@@ -48,6 +48,7 @@ import {
   saveCrmDashboardCache,
   getCrmDashboardMetaCache,
   saveCrmDashboardMetaCache,
+  patchCrmDashboardCacheLeadFields,
 } from '../lib/crmDashboardCache';
 import { userSeesAllCrmDealsScoped, filterCrmRegionsForUser, resolveCrmRegionApiParam } from '../lib/crmDealAccess';
 import {
@@ -66,6 +67,7 @@ import {
 import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
 import { getSxOrderDeliveryDateUrgency } from '../lib/sxPipelineRevenue';
 import {
+  applyPendingCrmStageMoves,
   coalesceCrmDashboardChangedEvents,
   crmRealtimePayloadInCompanyScope,
   fetchCrmKanbanRowsByIds,
@@ -98,7 +100,9 @@ import {
   isDealTabWonColumnForMetrics,
   preWonStagesForDealStats,
   resolveCrmPipelineStagesForTab,
+  resolveDealWonAnchorOrderIndex,
   resolveQuickMoveStagesForTab,
+  resolveStagesForDeal,
   readStoredDealKhSplitPreference,
   storeDealKhSplitPreference,
   splitDealStagesForCrmTabs,
@@ -540,7 +544,6 @@ function formatCrmPipelineTabCount(total, fallbackLen) {
 const CRM_KANBAN_LEAD_QUERY = { kanban: '1', lite: '1', skip_deadline: '1' };
 /** Trì hoãn pipeline/tab không active — ngắn để tab Deal/Lead kia không trống quá lâu. */
 const CRM_INACTIVE_PIPELINE_DEFER_MS = 400;
-
 function crmDashboardUsesLegacyListFilters({ filterLeadType, filterReferrer, filterCustomerCompany }) {
   return !!(
     filterLeadType
@@ -1486,6 +1489,8 @@ export default function CRMDashboard() {
   const crmLiveVersionRef = useRef(null);
   /** Lần cuối patch realtime Kanban — polling live-version bỏ qua refresh list nếu gần đây */
   const lastCrmRealtimeAtRef = useRef(0);
+  /** leadId → cột vừa kéo. Chặn list cache (session/HTTP) đẩy thẻ về cột cũ. */
+  const pendingCrmStageMovesRef = useRef(new Map());
   /** Số bản ghi lead/deal tải cho Kanban (API /crm/leads có phân trang; "all" = lặp offset đến hết) */
   const [kanbanLoadLimit, setKanbanLoadLimit] = useState(() => {
     const fromP = P?.kanbanLoadLimit != null ? String(P.kanbanLoadLimit) : null;
@@ -1992,8 +1997,9 @@ export default function CRMDashboard() {
           if (c.dataLead !== undefined) setDataLead(c.dataLead);
           if (c.dataDeal !== undefined) setDataDeal(c.dataDeal);
           if (Array.isArray(c.pipelines)) setPipelines(c.pipelines);
-          if (Array.isArray(c.allLeads)) setAllLeads(c.allLeads);
-          if (Array.isArray(c.allDeals)) setAllDeals(c.allDeals);
+          const pendingMoves = pendingCrmStageMovesRef.current;
+          if (Array.isArray(c.allLeads)) setAllLeads(applyPendingCrmStageMoves(c.allLeads, pendingMoves));
+          if (Array.isArray(c.allDeals)) setAllDeals(applyPendingCrmStageMoves(c.allDeals, pendingMoves));
           if (c.loadMoreState) setLoadMoreState({ ...c.loadMoreState, loading: false });
           if (Array.isArray(c.stagesLead)) setStagesLead(c.stagesLead);
           if (Array.isArray(c.stagesDeal)) setStagesDeal(c.stagesDeal);
@@ -2633,7 +2639,10 @@ export default function CRMDashboard() {
         const userKey = getCurrentUserKeyForLeadSeen(user);
         const viewedLocal = getLocallyViewedLeadIdSet(userKey);
         const merged = dedupeCrmKanbanRows(
-          rows.map((l) => (viewedLocal.has(String(l.id)) ? { ...l, is_new_for_current_user: false } : l)),
+          applyPendingCrmStageMoves(
+            rows.map((l) => (viewedLocal.has(String(l.id)) ? { ...l, is_new_for_current_user: false } : l)),
+            pendingCrmStageMovesRef.current,
+          ),
         );
 
         if (type === 'lead') {
@@ -3334,8 +3343,11 @@ export default function CRMDashboard() {
       const userKey = getCurrentUserKeyForLeadSeen(user);
       const viewedLocal = getLocallyViewedLeadIdSet(userKey);
       const mergeLeadSeenLocal = (rows) =>
-        (rows || []).map((l) =>
-          viewedLocal.has(String(l.id)) ? { ...l, is_new_for_current_user: false } : l,
+        applyPendingCrmStageMoves(
+          (rows || []).map((l) =>
+            viewedLocal.has(String(l.id)) ? { ...l, is_new_for_current_user: false } : l,
+          ),
+          pendingCrmStageMovesRef.current,
         );
 
       const applyLedgerForPipeline = async (type, rows, dashSnapshot) => {
@@ -4835,6 +4847,19 @@ export default function CRMDashboard() {
           return;
         }
 
+        // Cột chốt từ server (sync SX/VC có thể chỉnh) — ghi đè mọi nguồn cache cũ.
+        const settledStageId = data?.stage_id || newStageId;
+        const settledEnteredAt = data?.stage_entered_at || entered;
+        pendingCrmStageMovesRef.current.set(lid, {
+          stageId: settledStageId,
+          stageEnteredAt: settledEnteredAt,
+          at: Date.now(),
+        });
+        patchCrmDashboardCacheLeadFields(lid, {
+          stage_id: settledStageId,
+          stage_entered_at: settledEnteredAt,
+        });
+
         // Merge fresh badge fields từ response để không bị silent reload xóa tag SX/VC.
         if (data && data.id) {
           let mergePatch = {};
@@ -4989,14 +5014,19 @@ export default function CRMDashboard() {
             !validStageIds.has(sid) ||
             (!!deal.project_id && !deal?.sx_pipeline_stage?.id && !deal?.vc_pipeline_stage?.id));
         if (!isOrphanSource) {
+          // wonAnchorOrder theo pipeline của chính deal — thiếu opts này thì nhánh chặn
+          // «cột sau Thắng» tắt trên Kanban trong khi LeadDetail vẫn chặn (hai màn lệch nhau).
+          const gateOpts = {
+            wonAnchorOrder: resolveDealWonAnchorOrderIndex(resolveStagesForDeal(deal, stagesDeal)),
+          };
           const blocked = deal && targetStage
-            ? crmDealStageMoveBlockedMessage(deal, targetStage, 'deal')
+            ? crmDealStageMoveBlockedMessage(deal, targetStage, 'deal', gateOpts)
             : null;
           if (blocked) {
             window.alert(blocked);
             return;
           }
-          if (!canDropDealOnCrmKanbanStage(deal || {}, targetStage || {}, 'deal')) {
+          if (!canDropDealOnCrmKanbanStage(deal || {}, targetStage || {}, 'deal', gateOpts)) {
             window.alert('Không thể chuyển deal sang giai đoạn này trên CRM.');
             return;
           }

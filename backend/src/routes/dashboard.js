@@ -29,6 +29,11 @@ const {
   resolveCommentLeadId,
   resolveMessengerGroupId,
 } = require('../helpers/notificationMutes');
+const {
+  resolveProjectIdsForNotificationFilter,
+  notificationMatchesProjectIdSet,
+  enrichNotificationProjectOptions,
+} = require('../helpers/notificationProjectScope');
 
 function postgrestInTypesList(types) {
   return `(${types.map((t) => String(t)).join(',')})`;
@@ -94,6 +99,90 @@ function isProjectModuleNotification(n) {
   return false;
 }
 
+/** Phân loại module hiển thị / lọc trong NotificationCenter (CRM / SX / VC / DA). */
+function inferNotificationModuleKey(n) {
+  if (!n) return '';
+  if (isLeadCommentMentionNotification(n)) {
+    const emk = n?.metadata?.ecosystem_module_key || n?.metadata?.module_key;
+    if (emk === 'production') return 'production';
+    if (emk === 'logistics') return 'logistics';
+    return 'crm';
+  }
+  const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  const mk = String(meta.module_key || meta.ecosystem_module_key || '').trim();
+  if (mk === 'crm' || mk === 'production' || mk === 'logistics' || mk === 'project' || mk === 'projects') {
+    return mk === 'projects' ? 'project' : mk;
+  }
+  if (isAssignmentNotification(n)) return 'crm';
+  const ty = String(n.type || '');
+  if (ty === 'lead_stage_sla_reminder' || ty === 'cskh_followup_reminder') return 'crm';
+  if (ty.startsWith('crm_deadline') || ty === 'invoice_overdue' || ty === 'deadline_reminder') return 'crm';
+  if (ty.includes('production_task_deadline') || ty === 'workshop_new_deal') return 'production';
+  if (ty.includes('logistics_task_deadline')) return 'logistics';
+  if (ty.includes('project_pipeline_deadline') || ty === 'deadline_warning' || ty === 'deadline_overdue') return 'project';
+  if (String(n.entity_type || '') === 'crm_deal' || String(n.entity_type || '') === 'crm_lead' || String(n.entity_type || '') === 'lead') {
+    return 'crm';
+  }
+  return mk || '';
+}
+
+function notificationMatchesModule(n, mod) {
+  const m = String(mod || 'all').toLowerCase();
+  if (!m || m === 'all') return true;
+  return inferNotificationModuleKey(n) === m;
+}
+
+function notificationMatchesProject(n, projectId) {
+  if (projectId == null || String(projectId).trim() === '') return true;
+  const pid = String(projectId).trim();
+  const meta = n?.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  if (meta.project_id != null && String(meta.project_id) === pid) return true;
+  if (String(n?.entity_type || '') === 'project' && n?.entity_id != null && String(n.entity_id) === pid) {
+    return true;
+  }
+  return false;
+}
+
+function extractNotificationProjectOption(n) {
+  const meta = n?.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  const id = meta.project_id || (String(n?.entity_type || '') === 'project' ? n.entity_id : null);
+  if (id == null || String(id).trim() === '') return null;
+  const code = String(meta.project_code || '').trim();
+  const name = String(meta.project_name || '').trim();
+  const label = code && name && code !== name
+    ? `${code} — ${name}`
+    : (code || name || String(id).slice(0, 8));
+  return { id: String(id), label };
+}
+
+function collectProjectOptions(rows) {
+  const map = new Map();
+  for (const n of rows || []) {
+    const opt = extractNotificationProjectOption(n);
+    if (opt && !map.has(opt.id)) map.set(opt.id, opt);
+  }
+  return [...map.values()].sort((a, b) => a.label.localeCompare(b.label, 'vi'));
+}
+
+async function applyProjectScopeAndOptions(rows, scopeParams = {}) {
+  const {
+    companyId, regionId, workshopTypeId, projectQ, projectId,
+  } = scopeParams;
+  const scopeSet = await resolveProjectIdsForNotificationFilter({
+    companyId, regionId, workshopTypeId, projectQ, projectId: '',
+  });
+  let scoped = rows;
+  if (scopeSet) {
+    scoped = rows.filter((n) => notificationMatchesProjectIdSet(n, scopeSet));
+  }
+  const projectOptions = await enrichNotificationProjectOptions(collectProjectOptions(scoped));
+  let next = scoped;
+  if (projectId) {
+    next = scoped.filter((n) => notificationMatchesProject(n, projectId));
+  }
+  return { rows: next, projectOptions };
+}
+
 r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['notifications'] }), async (req, res) => {
   try {
     const pgResult = await pgDashboardNotificationStats(req.user.userId);
@@ -151,7 +240,16 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['notifications'] }), a
 // ═══════════════════════════════════════════════════════════════════════════
 r.get('/notifications', responseCache({ ttl: 20, scope: 'user', tags: ['notifications'] }), async (req, res) => {
   try {
-    const { unread, limit = 50, channel, from_date: fromDate, to_date: toDate } = req.query;
+    const {
+      unread, limit = 50, channel, from_date: fromDate, to_date: toDate,
+      module: moduleFilter, project_id: projectId,
+      company_id: companyId, region_id: regionId,
+      workshop_type_id: workshopTypeId, project_q: projectQ,
+    } = req.query;
+
+    const scopeParams = {
+      companyId, regionId, workshopTypeId, projectQ, projectId,
+    };
 
     const pgResult = await pgDashboardNotificationsList(req.user.userId, {
       unread,
@@ -159,6 +257,8 @@ r.get('/notifications', responseCache({ ttl: 20, scope: 'user', tags: ['notifica
       channel,
       fromDate,
       toDate,
+      module: moduleFilter,
+      ...scopeParams,
     });
     if (pgResult) {
       return res.json(pgResult);
@@ -166,7 +266,10 @@ r.get('/notifications', responseCache({ ttl: 20, scope: 'user', tags: ['notifica
 
     const lim = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
     const ch = channel ? String(channel).toLowerCase() : '';
-    const fetchCap = Math.min(lim * 5, 300);
+    const mod = String(moduleFilter || 'all').toLowerCase();
+    const hasScope = !!(companyId || regionId || workshopTypeId || projectQ || projectId);
+    const needsPostFilter = (mod && mod !== 'all') || hasScope;
+    const fetchCap = Math.min(lim * (needsPostFilter ? 8 : 5), 400);
     let q = supabase
       .from('notifications')
       .select('*')
@@ -212,7 +315,12 @@ r.get('/notifications', responseCache({ ttl: 20, scope: 'user', tags: ['notifica
     if (ch === 'activity') {
       rows = rows.filter((n) => isDealActivityNotification(n));
     }
-    res.json({ notifications: rows.slice(0, lim) });
+    rows = rows.filter((n) => notificationMatchesModule(n, mod));
+    const scoped = await applyProjectScopeAndOptions(rows, scopeParams);
+    res.json({
+      notifications: scoped.rows.slice(0, lim),
+      project_options: scoped.projectOptions,
+    });
   } catch (e) {
     console.error('Dashboard notifications error:', e);
     res.status(500).json({ error: e.message });
@@ -224,8 +332,18 @@ r.get('/notifications/deadlines', async (req, res) => {
   try {
     const mod = String(req.query.module || 'all').toLowerCase();
     const unread = req.query.unread;
+    const scopeParams = {
+      companyId: req.query.company_id,
+      regionId: req.query.region_id,
+      workshopTypeId: req.query.workshop_type_id,
+      projectQ: req.query.project_q,
+      projectId: req.query.project_id,
+    };
+    const hasScope = !!(scopeParams.companyId || scopeParams.regionId || scopeParams.workshopTypeId
+      || scopeParams.projectQ || scopeParams.projectId);
     const lim = Math.min(Math.max(parseInt(req.query.limit, 10) || 80, 1), 200);
-    const fetchCap = Math.min(lim * 3, 400);
+    const needsPostFilter = (mod && mod !== 'all') || hasScope;
+    const fetchCap = Math.min(lim * (needsPostFilter ? 5 : 3), 500);
     let q = supabase
       .from('notifications')
       .select('*')
@@ -241,22 +359,12 @@ r.get('/notifications/deadlines', async (req, res) => {
     const { data, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
     let rows = (data || []).filter((n) => isExpiryDeadlineNotificationType(n.type) && !isProjectModuleNotification(n));
-    if (mod !== 'all') {
-      rows = rows.filter((n) => {
-        const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
-        const mk = String(meta.module_key || '');
-        if (mk) return mk === mod;
-        const ty = String(n.type || '');
-        if (mod === 'crm') {
-          return ty.startsWith('crm_deadline') || ty === 'invoice_overdue' || ty === 'deadline_reminder';
-        }
-        if (mod === 'production') return ty.includes('production_task_deadline');
-        if (mod === 'logistics') return ty.includes('logistics_task_deadline');
-        if (mod === 'project') return ty.includes('project_pipeline_deadline') || ty === 'deadline_warning' || ty === 'deadline_overdue';
-        return false;
-      });
-    }
-    res.json({ notifications: rows.slice(0, lim) });
+    rows = rows.filter((n) => notificationMatchesModule(n, mod));
+    const scoped = await applyProjectScopeAndOptions(rows, scopeParams);
+    res.json({
+      notifications: scoped.rows.slice(0, lim),
+      project_options: scoped.projectOptions,
+    });
   } catch (e) {
     console.error('Dashboard deadline notifications error:', e);
     res.status(500).json({ error: e.message });

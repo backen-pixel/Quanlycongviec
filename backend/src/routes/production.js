@@ -17,6 +17,7 @@ const {
   getResolvedKanbanStages,
   resolveSxHandoverColumnId,
   resolveSxDisplayColumnId,
+  SX_STAGE_SLUG_STATUS,
   enrichProjectsForSx,
   buildPipelineSummary,
   syncCrmLeadSxPipelineFromProject,
@@ -2265,15 +2266,39 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       }
       const wasOnWorkshop = !project.current_stage_id || workshopIds.includes(String(project.current_stage_id));
 
-      const { error: updateError } = await supabase
+      let intakeId = null;
+      try {
+        intakeId = await getDbIntakeStageId(project.company_id);
+      } catch (ie) {
+        console.warn('[production] getDbIntakeStageId:', ie.message);
+      }
+
+      // Phải ghi lại cột Kanban: `resolveSxDisplayColumnId` ưu tiên sx_kanban_column_id, nếu giữ
+      // cột cũ thì lần tải board kế tiếp sẽ kéo thẻ ra khỏi cột chờ về đúng cột trước đó.
+      let { error: updateError } = await supabase
         .from('projects')
-        .update({ current_stage_id: null })
+        .update({ current_stage_id: null, sx_kanban_column_id: intakeId || null })
         .eq('id', id);
+      if (updateError && String(updateError.message || '').includes('sx_kanban_column_id')) {
+        ({ error: updateError } = await supabase
+          .from('projects')
+          .update({ current_stage_id: null })
+          .eq('id', id));
+      }
 
       if (updateError) throw updateError;
 
+      // Cột trên deal cũng phải theo — enrich board sẽ đọc lead khi project không có cột.
+      const { error: leadIntakeErr } = await supabase
+        .from('crm_leads')
+        .update({ sx_pipeline_stage_id: intakeId || null, updated_at: new Date().toISOString() })
+        .eq('project_id', id)
+        .eq('type', 'deal');
+      if (leadIntakeErr && !String(leadIntakeErr.message || '').includes('sx_pipeline_stage_id')) {
+        console.warn('[production] intake crm_leads sx_pipeline_stage_id:', leadIntakeErr.message);
+      }
+
       try {
-        const intakeId = await getDbIntakeStageId(project.company_id);
         await touchProjectSxPipelineStageEnteredAt(
           id,
           intakeId,
@@ -2306,15 +2331,21 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
         .eq('id', id)
         .single();
 
-      res.json({ project: updated, moved_to_intake: true, was_on_workshop: wasOnWorkshop });
+      const updatedIntake = {
+        ...updated,
+        sx_kanban_column_id: intakeId || null,
+        sx_intake: true,
+      };
+      res.json({ project: updatedIntake, moved_to_intake: true, was_on_workshop: wasOnWorkshop });
 
       const ioIntake = req.app.get('io');
       const { emitProductionKanbanChangedImmediate, emitProductionKanbanChangedAsync } = require('../helpers/workshopIntakeNotify');
       if (ioIntake) {
         emitProductionKanbanChangedImmediate(ioIntake, {
           projectId: id,
+          columnId: intakeId || null,
           reason: 'move_to_intake',
-          project: updated,
+          project: updatedIntake,
         });
       }
       setImmediate(() => {
@@ -2441,10 +2472,11 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
         }
       }
 
-      let projectUpd = {};
+      // Luôn ghi cột đích: `colChanged` tính từ `current_sx_pipeline_stage_id` do client gửi lên,
+      // client lệch thì cột không được lưu nhưng vẫn trả 200 → thẻ nhảy về cột cũ khi tải lại.
+      let projectUpd = { sx_kanban_column_id: colId };
       if (colChanged) {
         projectUpd.sx_pipeline_stage_entered_at = nowIso;
-        projectUpd.sx_kanban_column_id = colId;
       }
       if (isColChange && isCompletedCol) {
         projectUpd.sx_kanban_deadline_at = null;
@@ -2461,9 +2493,8 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
           .select('slug')
           .eq('id', colRow.workflow_stage_id)
           .maybeSingle();
-        const statusMap = { production: 'producing', delivery: 'shipping', 'customer-care': 'warranty' };
-        if (targetStage?.slug && statusMap[targetStage.slug]) {
-          stageFields.status = statusMap[targetStage.slug];
+        if (targetStage?.slug && SX_STAGE_SLUG_STATUS[targetStage.slug]) {
+          stageFields.status = SX_STAGE_SLUG_STATUS[targetStage.slug];
         }
         projectUpd = { ...projectUpd, ...stageFields };
       }
@@ -2482,9 +2513,16 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
           }
         }
         if (projUpdErr && String(projUpdErr.message || '').includes('sx_kanban_column_id')) {
+          console.warn(
+            '[production] projects.sx_kanban_column_id chưa có trên DB — cột Kanban chỉ lưu trên deal (crm_leads.sx_pipeline_stage_id).',
+          );
           const fallbackUpd = { ...projectUpd };
           delete fallbackUpd.sx_kanban_column_id;
-          ({ error: projUpdErr } = await supabase.from('projects').update(fallbackUpd).eq('id', id));
+          if (Object.keys(fallbackUpd).length) {
+            ({ error: projUpdErr } = await supabase.from('projects').update(fallbackUpd).eq('id', id));
+          } else {
+            projUpdErr = null;
+          }
         }
         if (projUpdErr) throw projUpdErr;
       }
@@ -2652,14 +2690,10 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       console.warn('[production] gate by workflow_stage_id:', gateErr.message);
     }
 
-    const statusMap = {
-      production: 'producing',
-      delivery: 'shipping',
-      'customer-care': 'warranty',
-    };
-
     const updatePayload = { current_stage_id: stage_id };
-    if (statusMap[targetStage.slug]) updatePayload.status = statusMap[targetStage.slug];
+    if (SX_STAGE_SLUG_STATUS[targetStage.slug]) {
+      updatePayload.status = SX_STAGE_SLUG_STATUS[targetStage.slug];
+    }
 
     const { error: updateError } = await supabase
       .from('projects')
@@ -3030,9 +3064,8 @@ r.patch('/projects/:id/switch-workshop-type', requireProductionKanbanEdit(), asy
         .select('slug')
         .eq('id', firstCol.workflow_stage_id)
         .maybeSingle();
-      const statusMap = { production: 'producing', delivery: 'shipping', 'customer-care': 'warranty' };
-      if (targetStage?.slug && statusMap[targetStage.slug]) {
-        projectUpd.status = statusMap[targetStage.slug];
+      if (targetStage?.slug && SX_STAGE_SLUG_STATUS[targetStage.slug]) {
+        projectUpd.status = SX_STAGE_SLUG_STATUS[targetStage.slug];
       }
     }
 

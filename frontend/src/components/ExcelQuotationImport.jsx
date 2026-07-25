@@ -243,6 +243,8 @@ export default function ExcelQuotationImport({
   dealId, leadId, taskId, onImportDone, onClose, onSourceAttached,
   docType = 'quotation',
   initialFileUrl, initialFileName, initialSourceFile,
+  /** Sau khi lưu form CRM, quay về path này (vd. /ketoan/deals/:id). */
+  returnTo,
 }) {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -476,6 +478,9 @@ export default function ExcelQuotationImport({
       const q = new URLSearchParams();
       q.set('from_excel', '1');
       if (resolvedLead) q.set('lead_id', resolvedLead);
+      if (returnTo && typeof returnTo === 'string' && returnTo.startsWith('/') && !returnTo.startsWith('//')) {
+        q.set('return_to', returnTo);
+      }
       navigate(`${cfg.navigatePath}?${q.toString()}`, { state: { excelDraft: payload } });
       onClose?.();
       if (onImportDone) {

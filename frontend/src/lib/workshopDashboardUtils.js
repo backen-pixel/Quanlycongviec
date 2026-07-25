@@ -59,6 +59,9 @@ export async function fetchWorkshopProjectPages(api, path, { companyId, workshop
   const all = [];
   let page = 1;
   let totalFromApi = null;
+  // Response có `Cache-Control: private, max-age=20` và không Vary theo header, nên chỉ gửi
+  // `x-no-cache` là chưa đủ: browser vẫn trả bản đã cache. `_ts` đổi URL → luôn ra mạng.
+  const bustTs = bustCache ? Date.now() : null;
 
   while (all.length < cap) {
     const params = {
@@ -69,6 +72,7 @@ export async function fetchWorkshopProjectPages(api, path, { companyId, workshop
       ...(sxWorkshopCompanyId ? { sx_workshop_company_id: sxWorkshopCompanyId } : {}),
       ...(dealCompanyId ? { deal_company_id: dealCompanyId } : {}),
       ...(view ? { view } : {}),
+      ...(bustTs ? { _ts: bustTs } : {}),
     };
     const { data } = await api.get(path, {
       params,

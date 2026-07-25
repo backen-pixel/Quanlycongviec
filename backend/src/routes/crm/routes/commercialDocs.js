@@ -249,7 +249,9 @@ r.post('/quotations', async (req, res) => {
       if (lrow?.company_id) commercialCo = lrow.company_id;
       if (lrow?.region_id) leadRegionId = lrow.region_id;
     }
-    const qCoWrite = enforceCommercialDocCompanyOnWrite(req, res, commercialCo, 'Báo giá');
+    const qCoWrite = await enforceCommercialDocCompanyOnWrite(req, res, commercialCo, 'Báo giá', {
+      leadId: quoteData.lead_id || null,
+    });
     if (!qCoWrite.ok) return;
     commercialCo = qCoWrite.companyId;
     quoteData.company_id = commercialCo;
@@ -551,7 +553,9 @@ r.put('/quotations/:id', async (req, res) => {
       if (lrowPut?.company_id) commercialCoPut = lrowPut.company_id;
       if (lrowPut?.region_id) leadRegionIdPut = lrowPut.region_id;
     }
-    const qCoPut = enforceCommercialDocCompanyOnWrite(req, res, commercialCoPut, 'Báo giá');
+    const qCoPut = await enforceCommercialDocCompanyOnWrite(req, res, commercialCoPut, 'Báo giá', {
+      leadId: quoteData.lead_id || null,
+    });
     if (!qCoPut.ok) return;
     commercialCoPut = qCoPut.companyId;
     quoteData.company_id = commercialCoPut;
@@ -902,18 +906,22 @@ r.post('/orders', async (req, res) => {
     });
 
     let orderCo = orderData.company_id || null;
+    let orderLeadIdForScope = orderData.lead_id || null;
     if (orderData.lead_id) {
       const { data: lrow } = await supabase.from('crm_leads').select('company_id').eq('id', orderData.lead_id).maybeSingle();
       if (lrow?.company_id) orderCo = lrow.company_id;
     } else if (orderData.quotation_id) {
       const { data: qrow } = await supabase.from('quotations').select('company_id, lead_id').eq('id', orderData.quotation_id).maybeSingle();
+      if (qrow?.lead_id) orderLeadIdForScope = qrow.lead_id;
       if (qrow?.company_id) orderCo = qrow.company_id;
       else if (qrow?.lead_id) {
         const { data: l2 } = await supabase.from('crm_leads').select('company_id').eq('id', qrow.lead_id).maybeSingle();
         if (l2?.company_id) orderCo = l2.company_id;
       }
     }
-    const oCoWrite = enforceCommercialDocCompanyOnWrite(req, res, orderCo, 'Đơn hàng');
+    const oCoWrite = await enforceCommercialDocCompanyOnWrite(req, res, orderCo, 'Đơn hàng', {
+      leadId: orderLeadIdForScope,
+    });
     if (!oCoWrite.ok) return;
     orderCo = oCoWrite.companyId;
     orderData.company_id = orderCo;
@@ -1101,17 +1109,22 @@ r.post('/invoices', async (req, res) => {
     });
 
     let invCo = invoiceData.company_id || null;
+    let invLeadIdForScope = invoiceData.lead_id || null;
     if (invoiceData.lead_id) {
       const { data: lrow } = await supabase.from('crm_leads').select('company_id').eq('id', invoiceData.lead_id).maybeSingle();
       if (lrow?.company_id) invCo = lrow.company_id;
     } else if (invoiceData.order_id) {
-      const { data: orow } = await supabase.from('orders').select('company_id').eq('id', invoiceData.order_id).maybeSingle();
+      const { data: orow } = await supabase.from('orders').select('company_id, lead_id').eq('id', invoiceData.order_id).maybeSingle();
+      if (orow?.lead_id) invLeadIdForScope = orow.lead_id;
       if (orow?.company_id) invCo = orow.company_id;
     } else if (invoiceData.quotation_id) {
-      const { data: qr } = await supabase.from('quotations').select('company_id').eq('id', invoiceData.quotation_id).maybeSingle();
+      const { data: qr } = await supabase.from('quotations').select('company_id, lead_id').eq('id', invoiceData.quotation_id).maybeSingle();
+      if (qr?.lead_id) invLeadIdForScope = qr.lead_id;
       if (qr?.company_id) invCo = qr.company_id;
     }
-    const iCoWrite = enforceCommercialDocCompanyOnWrite(req, res, invCo, 'Hóa đơn');
+    const iCoWrite = await enforceCommercialDocCompanyOnWrite(req, res, invCo, 'Hóa đơn', {
+      leadId: invLeadIdForScope,
+    });
     if (!iCoWrite.ok) return;
     invCo = iCoWrite.companyId;
 

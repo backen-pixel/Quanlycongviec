@@ -66,6 +66,7 @@ import {
   shouldHideSxKanbanDeadlineOnCard,
   shouldIgnoreSxOrderDeliveryOverdue,
   getSxOrderDeliveryDateUrgency,
+  sxStatusComesFromColumn,
   VC_KANBAN_STATUSES,
 } from '../lib/sxPipelineRevenue';
 import { isProjectAlreadyInLogistics } from '../lib/projectLogistics';
@@ -282,6 +283,38 @@ function sortProjectsBy(items, sortBy) {
     case 'newest':
     default: return cloned.sort((a, b) => toTs(b.created_at) - toTs(a.created_at));
   }
+}
+
+/** Trần thời gian giữ cột vừa kéo khi BE chưa xác nhận (cache board 20s + ghi DB chậm). */
+const PENDING_STAGE_MOVE_TTL_MS = 30000;
+
+/**
+ * Áp lại các lần kéo cột chưa được BE xác nhận lên payload vừa tải.
+ * Không có bước này, một lần tải board đọc dữ liệu cũ sẽ kéo thẻ về cột trước đó.
+ * @param {Array} list projects từ API
+ * @param {Map<string, { colId: string|null, patch: object, at: number }>} pendingMap
+ */
+function applyPendingStageMoves(list, pendingMap) {
+  if (!pendingMap?.size || !Array.isArray(list)) return list;
+  const now = Date.now();
+  for (const [id, mv] of [...pendingMap.entries()]) {
+    if (now - mv.at > PENDING_STAGE_MOVE_TTL_MS) pendingMap.delete(id);
+  }
+  if (!pendingMap.size) return list;
+  return list.map((p) => {
+    const key = String(p?.id ?? '');
+    const mv = pendingMap.get(key);
+    if (!mv) return p;
+    // BE đã trả đúng cột → bỏ ghi đè, từ đây dữ liệu server là nguồn duy nhất.
+    // Cột chờ có thể là id ảo (`__fb_intake__`) nên xác nhận thêm qua cờ sx_intake.
+    const confirmed = (mv.colId && String(p.sx_kanban_column_id || '') === String(mv.colId))
+      || (mv.patch?.sx_intake === true && p.sx_intake === true);
+    if (confirmed) {
+      pendingMap.delete(key);
+      return p;
+    }
+    return { ...p, ...mv.patch };
+  });
 }
 
 export default function ProductionDashboard() {
@@ -620,6 +653,9 @@ export default function ProductionDashboard() {
     return '';
   }, [filterCompany, filterDealCompany, filterSxWorkshopCompany, companies, dealCompanyOptions, sxWorkshopFilterOptions]);
 
+  /** id project → cột vừa kéo, chờ BE xác nhận. Xem `applyPendingStageMoves`. */
+  const pendingStageMovesRef = useRef(new Map());
+
   const load = useCallback(async (opts = {}) => {
     const silent = !!opts.silent;
     // Quay từ chi tiết (có focus card) → bỏ responseCache 20s để lấy name mới.
@@ -683,7 +719,10 @@ export default function ProductionDashboard() {
             return applyWorkshopProjectRenamePatches(projectList);
           });
         } else {
-          let next = applyWorkshopProjectRenamePatches(projectList);
+          let next = applyPendingStageMoves(
+            applyWorkshopProjectRenamePatches(projectList),
+            pendingStageMovesRef.current,
+          );
           const pending = pendingNewDealProjectRef.current;
           const pid = pending?.id != null ? String(pending.id) : '';
           if (pid && !next.some((p) => String(p.id) === pid)) {
@@ -712,6 +751,37 @@ export default function ProductionDashboard() {
 
   const loadRef = useRef(load);
   loadRef.current = load;
+
+  const boardRefreshTimerRef = useRef(null);
+
+  /** Gộp mọi yêu cầu tải lại board (socket / sau khi kéo thẻ) vào một timer. */
+  const scheduleBoardRefresh = useCallback((delay = 2000, opts = {}) => {
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+    if (boardRefreshTimerRef.current) clearTimeout(boardRefreshTimerRef.current);
+    boardRefreshTimerRef.current = setTimeout(() => {
+      boardRefreshTimerRef.current = null;
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      loadRef.current?.({ silent: true, ...opts });
+    }, delay);
+  }, []);
+
+  const rememberPendingStageMove = useCallback((projectId, colId, patch) => {
+    if (!projectId) return;
+    pendingStageMovesRef.current.set(String(projectId), {
+      colId: colId != null ? String(colId) : null,
+      patch,
+      at: Date.now(),
+    });
+  }, []);
+
+  const forgetPendingStageMove = useCallback((projectId) => {
+    if (!projectId) return;
+    pendingStageMovesRef.current.delete(String(projectId));
+  }, []);
+
+  useEffect(() => () => {
+    if (boardRefreshTimerRef.current) clearTimeout(boardRefreshTimerRef.current);
+  }, []);
 
   /**
    * Chờ companies + phân loại đúng công ty xưởng trước khi fetch projects.
@@ -1277,19 +1347,19 @@ export default function ProductionDashboard() {
     const intake = sortedStages.find((s) => s.bucket_slug === 'won_pending');
 
     const colIdFor = (project) => {
+      const pinnedCol = project.sx_kanban_column_id
+        ? sortedStages.find((s) => String(s.id) === String(project.sx_kanban_column_id)) || null
+        : null;
       if (VC_KANBAN_STATUSES.has(project.status)) {
-        let preferred = null;
-        if (project.sx_kanban_column_id && sortedStages.some((s) => String(s.id) === String(project.sx_kanban_column_id))) {
-          const pinned = sortedStages.find((s) => String(s.id) === String(project.sx_kanban_column_id));
-          if (pinned?.is_handover_to_logistics) preferred = project.sx_kanban_column_id;
-        }
+        // Kéo thẻ vào cột «Vận chuyển»/«CSKH» khiến BE tự đặt status = shipping/warranty.
+        // Đó không phải bằng chứng đã bàn giao VC nên giữ nguyên cột vừa kéo.
+        if (pinnedCol && sxStatusComesFromColumn(project, pinnedCol)) return pinnedCol.id;
+        const preferred = pinnedCol?.is_handover_to_logistics ? project.sx_kanban_column_id : null;
         const handoverId = resolveSxHandoverColumnId(sortedStages, project, preferred);
         if (handoverId) return handoverId;
       }
       // Ưu tiên cột Kanban đã gắn (CRM deal / enrich) — khớp logic BE khi nhiều cột dùng chung workflow.
-      if (project.sx_kanban_column_id && sortedStages.some((s) => String(s.id) === String(project.sx_kanban_column_id))) {
-        return project.sx_kanban_column_id;
-      }
+      if (pinnedCol) return pinnedCol.id;
       const cid = project.current_stage_id;
       if (cid) {
         const wfMatches = sortedStages.filter((col) => {
@@ -1533,28 +1603,25 @@ export default function ProductionDashboard() {
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return undefined;
-    let timer = null;
-    /** Debounce dài hơn — gộp nhiều sự kiện; bỏ badge/task CRM (không cần reload cả board). */
-    const scheduleBoardRefresh = () => {
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-        // Không bustCache: dùng TTL 20s — tránh burst load khi nhiều người kéo thẻ.
-        // Thao tác local (kéo thẻ / đổi loại / tạo deal) vẫn bustCache riêng.
-        loadRef.current?.({ silent: true });
-      }, 2000);
+    /**
+     * Debounce 2s — gộp nhiều sự kiện. Bình thường dùng cache TTL 20s để tránh burst load
+     * khi nhiều người cùng kéo thẻ, nhưng event của chính thẻ mình vừa kéo thì phải bỏ cache:
+     * bản cache còn hạn chưa có thay đổi nên sẽ kéo thẻ về cột cũ.
+     */
+    const onChanged = (payload) => {
+      const pid = payload?.project_id ?? payload?.id;
+      const isOwnMove = pid
+        ? pendingStageMovesRef.current.has(String(pid))
+        : pendingStageMovesRef.current.size > 0;
+      scheduleBoardRefresh(2000, isOwnMove ? { bustCache: true } : {});
     };
-    const onStage = () => scheduleBoardRefresh();
-    const onBoard = () => scheduleBoardRefresh();
-    socket.on('project:stage_changed', onStage);
-    socket.on('production:board_changed', onBoard);
+    socket.on('project:stage_changed', onChanged);
+    socket.on('production:board_changed', onChanged);
     return () => {
-      if (timer) clearTimeout(timer);
-      socket.off('project:stage_changed', onStage);
-      socket.off('production:board_changed', onBoard);
+      socket.off('project:stage_changed', onChanged);
+      socket.off('production:board_changed', onChanged);
     };
-  }, []);
+  }, [scheduleBoardRefresh]);
 
   useEffect(() => {
     if (!kanbanCommentItem?.id) {
@@ -1764,24 +1831,27 @@ export default function ProductionDashboard() {
     } : null;
 
     const clearsDeadline = !!targetCol?.counts_as_completed_revenue;
+    const stageMeta = buildSxPipelineStageMeta(targetCol);
 
-    setProjects((prev) => prev.map((p) => (p.id === projectId
-      ? {
-        ...p,
-        current_stage: optimisticStage,
-        current_stage_id: wid || null,
-        sx_kanban_column_id: colId,
-        sx_intake: false,
-        sx_pipeline_stage: buildSxPipelineStageMeta(targetCol) || p.sx_pipeline_stage,
-        ...(clearsDeadline ? {
-          sx_kanban_deadline_at: null,
-          sx_kanban_deadline_reason: null,
-        } : deadlineIso ? {
-          sx_kanban_deadline_at: deadlineIso,
-          sx_kanban_deadline_reason: reason || null,
-        } : {}),
-      }
+    const optimisticPatch = {
+      current_stage: optimisticStage,
+      current_stage_id: wid || null,
+      sx_kanban_column_id: colId,
+      sx_intake: false,
+      ...(stageMeta ? { sx_pipeline_stage: stageMeta } : {}),
+      ...(clearsDeadline ? {
+        sx_kanban_deadline_at: null,
+        sx_kanban_deadline_reason: null,
+      } : deadlineIso ? {
+        sx_kanban_deadline_at: deadlineIso,
+        sx_kanban_deadline_reason: reason || null,
+      } : {}),
+    };
+
+    setProjects((prev) => prev.map((p) => (String(p.id) === String(projectId)
+      ? { ...p, ...optimisticPatch }
       : p)));
+    rememberPendingStageMove(projectId, colId, optimisticPatch);
 
     try {
       const { data } = await api.patch(`/production/projects/${projectId}/stage`, {
@@ -1812,8 +1882,11 @@ export default function ProductionDashboard() {
         showCopyToast(`👥 Đã thêm ${applied.users.length} thành viên («${stageLabel}»): ${names}`);
       }
       scheduleCrmBadgeRefresh(projectId);
+      // Bắt buộc bỏ cache: bản board 20s trước chưa có lần kéo này.
+      scheduleBoardRefresh(1500, { bustCache: true });
     } catch (e) {
       console.error(e);
+      forgetPendingStageMove(projectId);
       if (e.response?.data?.code === 'requires_deadline') {
         setDeadlineCtx({
           projectId,
@@ -1827,7 +1900,7 @@ export default function ProductionDashboard() {
       window.alert(e.response?.data?.error || e.message || 'Không chuyển được cột pipeline');
       load({ silent: true, bustCache: true });
     }
-  }, [load, projects, companyParam]);
+  }, [load, projects, companyParam, rememberPendingStageMove, forgetPendingStageMove, scheduleBoardRefresh]);
 
   // Gửi yêu cầu bàn giao VC/LĐ qua bình luận (thay modal chọn công ty).
   const sendVcHandoverRequest = useCallback(async (projectId, targetCol) => {
@@ -1845,11 +1918,12 @@ export default function ProductionDashboard() {
     try {
       await api.post(`/vc-handover/projects/${projectId}/request`, { sx_stage_id: sxColId || undefined });
       alert('Đã gửi yêu cầu chọn công ty Vận chuyển/Lắp đặt cho Sale CRM (hiển thị trong bình luận của deal).');
+      scheduleBoardRefresh(1500, { bustCache: true });
     } catch (e) {
       alert(e.response?.data?.error || 'Không gửi được yêu cầu bàn giao VC/LĐ');
       load({ silent: true, bustCache: true });
     }
-  }, [load]);
+  }, [load, scheduleBoardRefresh]);
 
   const handleMoveStage = useCallback(async (projectId, targetCol) => {
     const current = projects.find((p) => String(p.id) === String(projectId));
@@ -1875,14 +1949,23 @@ export default function ProductionDashboard() {
       && !!targetCol?.target_workshop_type_id;
 
     if (isIntake) {
-      setProjects((prev) => prev.map((p) => (p.id === projectId
-        ? { ...p, current_stage: null, sx_kanban_column_id: targetCol.id, sx_intake: true }
+      const intakePatch = {
+        current_stage: null,
+        current_stage_id: null,
+        sx_kanban_column_id: targetCol.id,
+        sx_intake: true,
+      };
+      setProjects((prev) => prev.map((p) => (String(p.id) === String(projectId)
+        ? { ...p, ...intakePatch }
         : p)));
+      rememberPendingStageMove(projectId, targetCol.id, intakePatch);
       try {
         await api.patch(`/production/projects/${projectId}/stage`, { move_to_intake: true });
         scheduleCrmBadgeRefresh(projectId);
+        scheduleBoardRefresh(1500, { bustCache: true });
       } catch (e) {
         console.error(e);
+        forgetPendingStageMove(projectId);
         load({ silent: true, bustCache: true });
       }
       return;
@@ -1933,7 +2016,10 @@ export default function ProductionDashboard() {
     }
 
     await executeStageMove(projectId, targetCol);
-  }, [executeStageMove, projects, workTypes, sendVcHandoverRequest]);
+  }, [
+    executeStageMove, projects, workTypes, sendVcHandoverRequest,
+    load, rememberPendingStageMove, forgetPendingStageMove, scheduleBoardRefresh,
+  ]);
 
   const confirmSwitchWorkshopType = useCallback(async () => {
     if (!switchWorkshopModal || switchWorkshopSaving) return;
@@ -1962,13 +2048,14 @@ export default function ProductionDashboard() {
         : p)));
       scheduleCrmBadgeRefresh(switchWorkshopModal.projectId);
       setSwitchWorkshopModal(null);
+      scheduleBoardRefresh(1500, { bustCache: true });
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Lỗi chuyển phân loại');
       load({ silent: true, bustCache: true });
     } finally {
       setSwitchWorkshopSaving(false);
     }
-  }, [switchWorkshopModal, switchWorkshopSaving, workTypes, load]);
+  }, [switchWorkshopModal, switchWorkshopSaving, workTypes, load, scheduleBoardRefresh]);
 
   const openDeadlineFromCard = useCallback((item) => {
     setDeadlineCtx({
@@ -1996,6 +2083,7 @@ export default function ProductionDashboard() {
         };
         setProjects((prev) => prev.map((p) => (String(p.id) === pid ? { ...p, ...patch } : p)));
         setDeadlineCtx(null);
+        scheduleBoardRefresh(1500, { bustCache: true });
         return;
       }
       await executeStageMove(ctx.projectId, ctx.targetCol, { deadlineIso, reason });
@@ -2037,12 +2125,13 @@ export default function ProductionDashboard() {
             }
           : p)));
       scheduleCrmBadgeRefresh(projectId);
+      scheduleBoardRefresh(1500, { bustCache: true });
     } catch (e) {
       console.error(e);
       alert(e.response?.data?.error || 'Lỗi bàn giao VC');
       load({ silent: true, bustCache: true });
     }
-  }, [load, pipeline]);
+  }, [load, pipeline, scheduleBoardRefresh]);
 
   // Nút "Bàn giao VC" trên thẻ → cũng gửi yêu cầu bình luận (không mở modal chọn công ty).
   const openHandoverModal = useCallback((projectId, projectName, sxTargetColId = '') => {
@@ -3662,7 +3751,10 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
 
   // Deal mới từ CRM (sx_intake) luôn ưu tiên badge "Mới"; fallback theo 24h như cũ
   const isNew = !!item.sx_intake || (item.created_at && (Date.now() - new Date(item.created_at).getTime()) < 86400000);
-  const lockedInVc = ['shipping', 'installing', 'warranty', 'completed'].includes(String(item.status || ''));
+  // Khoá kéo khi deal đã sang VC. Nhưng status shipping/warranty do chính cột SX này sinh ra
+  // (cột «Vận chuyển»/«CSKH») thì không tính — nếu không thẻ bị khoá ngay sau khi kéo vào cột đó.
+  const lockedInVc = ['shipping', 'installing', 'warranty', 'completed'].includes(String(item.status || ''))
+    && !sxStatusComesFromColumn(item, sxStage);
   const crmRegionName = (() => {
     try {
       const deal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0];

@@ -18,6 +18,8 @@ export default function OrderForm() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const location = useLocation();
+  const rawReturnTo = searchParams.get('return_to') || '';
+  const returnTo = (rawReturnTo.startsWith('/') && !rawReturnTo.startsWith('//')) ? rawReturnTo : null;
 
   const [form, setForm] = useState({
     title: '', customer_id: '', customer_name: '', customer_phone: '', customer_address: '',
@@ -141,12 +143,12 @@ export default function OrderForm() {
         await api.put(`/crm/orders/${id}`, payload);
         setSaveMsg('Cập nhật đơn hàng thành công!');
         setSaveStatus('success');
-        setTimeout(() => navigate(`/crm/orders/${id}`), 1200);
+        setTimeout(() => navigate(returnTo || `/crm/orders/${id}`), 1200);
       } else {
         const { data } = await api.post('/crm/orders', payload);
         setSaveMsg('Tạo đơn hàng thành công!');
         setSaveStatus('success');
-        setTimeout(() => navigate(`/crm/orders/${data.id}`), 1200);
+        setTimeout(() => navigate(returnTo || `/crm/orders/${data.id}`), 1200);
       }
     } catch (e) {
       setSaveMsg(e.response?.data?.error || 'Có lỗi xảy ra khi lưu');
@@ -161,7 +163,7 @@ export default function OrderForm() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate(id ? `/crm/orders/${id}` : '/crm/orders')} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
+          <button onClick={() => navigate(returnTo || (id ? `/crm/orders/${id}` : '/crm/orders'))} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
           <div>
             <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
               <ShoppingCart className="h-5 w-5 text-emerald-600" />

@@ -16,6 +16,11 @@ const {
   isLeadCommentMentionNotification,
   MESSAGES_CHANNEL_SQL,
 } = require('./notificationCenterChannels');
+const {
+  resolveProjectIdsForNotificationFilter,
+  notificationMatchesProjectIdSet,
+  enrichNotificationProjectOptions,
+} = require('./notificationProjectScope');
 const EVENT_NOTIFICATION_TYPES = ['event_created', 'event_completed'];
 const ASSIGNMENT_NOTIFICATION_TYPES = [
   'crm_assignment_assigned',
@@ -56,6 +61,84 @@ function isDealActivityNotification(n) {
   const type = String(n.type || '');
   if (DEAL_ACTIVITY_NOTIFICATION_TYPES.includes(type)) return true;
   return String(n.entity_type || '') === 'crm_deal';
+}
+
+function inferNotificationModuleKey(n) {
+  if (!n) return '';
+  if (isLeadCommentMentionNotification(n)) {
+    const emk = n?.metadata?.ecosystem_module_key || n?.metadata?.module_key;
+    if (emk === 'production') return 'production';
+    if (emk === 'logistics') return 'logistics';
+    return 'crm';
+  }
+  const meta = n.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  const mk = String(meta.module_key || meta.ecosystem_module_key || '').trim();
+  if (mk === 'crm' || mk === 'production' || mk === 'logistics' || mk === 'project' || mk === 'projects') {
+    return mk === 'projects' ? 'project' : mk;
+  }
+  if (isAssignmentNotification(n)) return 'crm';
+  const ty = String(n.type || '');
+  if (ty === 'lead_stage_sla_reminder' || ty === 'cskh_followup_reminder') return 'crm';
+  if (ty.startsWith('crm_deadline') || ty === 'invoice_overdue' || ty === 'deadline_reminder') return 'crm';
+  if (ty.includes('production_task_deadline') || ty === 'workshop_new_deal') return 'production';
+  if (ty.includes('logistics_task_deadline')) return 'logistics';
+  if (ty.includes('project_pipeline_deadline') || ty === 'deadline_warning' || ty === 'deadline_overdue') return 'project';
+  if (['crm_deal', 'crm_lead', 'lead'].includes(String(n.entity_type || ''))) return 'crm';
+  return mk || '';
+}
+
+function notificationMatchesModule(n, mod) {
+  const m = String(mod || 'all').toLowerCase();
+  if (!m || m === 'all') return true;
+  return inferNotificationModuleKey(n) === m;
+}
+
+function notificationMatchesProject(n, projectId) {
+  if (projectId == null || String(projectId).trim() === '') return true;
+  const pid = String(projectId).trim();
+  const meta = n?.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  if (meta.project_id != null && String(meta.project_id) === pid) return true;
+  if (String(n?.entity_type || '') === 'project' && n?.entity_id != null && String(n.entity_id) === pid) {
+    return true;
+  }
+  return false;
+}
+
+function collectProjectOptions(rows) {
+  const map = new Map();
+  for (const n of rows || []) {
+    const meta = n?.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+    const id = meta.project_id || (String(n?.entity_type || '') === 'project' ? n.entity_id : null);
+    if (id == null || String(id).trim() === '') continue;
+    const sid = String(id);
+    if (map.has(sid)) continue;
+    const code = String(meta.project_code || '').trim();
+    const name = String(meta.project_name || '').trim();
+    const label = code && name && code !== name
+      ? `${code} — ${name}`
+      : (code || name || sid.slice(0, 8));
+    map.set(sid, { id: sid, label });
+  }
+  return [...map.values()].sort((a, b) => a.label.localeCompare(b.label, 'vi'));
+}
+
+async function applyProjectScopeAndOptions(rows, {
+  companyId, regionId, workshopTypeId, projectQ, projectId,
+} = {}) {
+  const scopeSet = await resolveProjectIdsForNotificationFilter({
+    companyId, regionId, workshopTypeId, projectQ, projectId: '',
+  });
+  let scoped = rows;
+  if (scopeSet) {
+    scoped = rows.filter((n) => notificationMatchesProjectIdSet(n, scopeSet));
+  }
+  const projectOptions = await enrichNotificationProjectOptions(collectProjectOptions(scoped));
+  let next = scoped;
+  if (projectId != null && String(projectId).trim() !== '') {
+    const pid = String(projectId).trim();
+    next = scoped.filter((n) => notificationMatchesProjectIdSet(n, new Set([pid])));
+  }
+  return { rows: next, projectOptions };
 }
 
 function countNotificationStats(rows) {
@@ -126,11 +209,20 @@ async function pgDashboardNotificationsList(userId, {
   channel,
   fromDate,
   toDate,
+  module: moduleFilter,
+  projectId,
+  companyId,
+  regionId,
+  workshopTypeId,
+  projectQ,
 } = {}) {
   if (!isPgEnabled() || !userId) return null;
 
   const lim = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
-  const fetchCap = Math.min(lim * 5, 300);
+  const mod = String(moduleFilter || 'all').toLowerCase();
+  const hasScope = !!(companyId || regionId || workshopTypeId || projectQ || projectId);
+  const needsPostFilter = (mod && mod !== 'all') || hasScope;
+  const fetchCap = Math.min(lim * (needsPostFilter ? 8 : 5), 400);
   const ch = channel ? String(channel).toLowerCase() : '';
 
   const conditions = [
@@ -191,7 +283,11 @@ async function pgDashboardNotificationsList(userId, {
   if (ch === 'activity') {
     rows = rows.filter((n) => isDealActivityNotification(n));
   }
-  return { notifications: rows.slice(0, lim) };
+  rows = rows.filter((n) => notificationMatchesModule(n, mod));
+  const scoped = await applyProjectScopeAndOptions(rows, {
+    companyId, regionId, workshopTypeId, projectQ, projectId,
+  });
+  return { notifications: scoped.rows.slice(0, lim), project_options: scoped.projectOptions };
 }
 
 /**

@@ -16,6 +16,38 @@ export function upsertCrmKanbanRow(rows, row) {
   return next;
 }
 
+/**
+ * Thời gian giữ «cột vừa kéo» đè lên dữ liệu list.
+ * Board cache sessionStorage (30s–10 phút) và HTTP cache của trình duyệt
+ * (/crm/leads 15s, /crm/kanban-rows 10s) đều có thể trả lại cột trước khi kéo.
+ */
+export const PENDING_CRM_STAGE_MOVE_TTL_MS = 30_000;
+
+/**
+ * Áp cột người dùng vừa kéo lên các row lấy từ nguồn có thể còn cũ.
+ * Row đã khớp cột đích → xoá khỏi hàng đợi (server đã bắt kịp).
+ *
+ * @param {Array} rows
+ * @param {Map<string, { stageId: string, stageEnteredAt?: string, at: number }>} pending
+ */
+export function applyPendingCrmStageMoves(rows, pending) {
+  if (!pending || !pending.size || !Array.isArray(rows) || !rows.length) return rows;
+  const now = Date.now();
+  for (const [id, mv] of pending) {
+    if (now - mv.at > PENDING_CRM_STAGE_MOVE_TTL_MS) pending.delete(id);
+  }
+  if (!pending.size) return rows;
+  return rows.map((row) => {
+    const mv = pending.get(String(row?.id));
+    if (!mv) return row;
+    if (String(row.stage_id || '') === String(mv.stageId)) {
+      pending.delete(String(row.id));
+      return row;
+    }
+    return { ...row, stage_id: mv.stageId, stage_entered_at: mv.stageEnteredAt || row.stage_entered_at };
+  });
+}
+
 export function patchCrmKanbanRowById(rows, leadId, patch) {
   const sid = String(leadId || '').trim();
   if (!sid || !patch || !Object.keys(patch).length) return rows;
@@ -30,8 +62,13 @@ export async function fetchCrmKanbanRowsByIds(apiClient, leadIds, opts = {}) {
     lite: '1',
     kanban: '1',
     skip_deadline: opts.skipDeadline !== false ? '1' : undefined,
+    // /crm/kanban-rows trả Cache-Control: private, max-age=10. Cùng URL trong 10s
+    // (kéo 2 lần liên tiếp) → trình duyệt trả bản cũ và thẻ nhảy về cột trước đó.
+    _ts: Date.now(),
   };
-  const res = await apiClient.get('/crm/kanban-rows', { params }).catch(() => ({ data: null }));
+  const res = await apiClient
+    .get('/crm/kanban-rows', { params, headers: { 'x-no-cache': '1' } })
+    .catch(() => ({ data: null }));
   const rows = res.data?.data;
   return Array.isArray(rows) ? rows : [];
 }

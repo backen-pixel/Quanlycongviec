@@ -6,7 +6,7 @@ import { useAuth } from '../lib/auth';
 import { alertIncomingNotification, cancelNotificationSpeech } from '../lib/notificationAlert';
 import { setNotificationPrefsCache, getNotificationPrefsCache, isNotificationTypeEnabled } from '../lib/notificationPrefsCache';
 import { isExpiryDeadlineNotificationType } from '../lib/notificationOperationalFilter';
-import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings, Users, Factory, Calendar, CalendarClock, CheckCircle2, Sparkles, ClipboardList, BellOff } from 'lucide-react';
+import { Bell, Check, CheckCheck, Clock, MessageSquare, CheckSquare, FolderKanban, AlertTriangle, X, ThumbsUp, ThumbsDown, Paperclip, FileText, Shield, ShieldCheck, ShieldAlert, XCircle, RotateCcw, Settings, Users, Factory, Calendar, CalendarClock, CheckCircle2, Sparkles, ClipboardList, BellOff, Filter } from 'lucide-react';
 import { formatDateTime, getInitials, avatarColor } from '../lib/utils';
 import NotificationToast from './NotificationToast';
 import NotificationSettings from './NotificationSettings';
@@ -164,12 +164,56 @@ const COLOR_MAP = {
 };
 
 const MODULE_FILTER_OPTIONS = [
-  { id: 'all', label: 'Tất cả module' },
+  { id: 'all', label: 'Tất cả phân loại' },
   { id: 'crm', label: 'CRM / Lead' },
   { id: 'production', label: 'Sản xuất' },
   { id: 'logistics', label: 'Vận chuyển' },
   { id: 'project', label: 'Dự án' },
 ];
+
+const LS_NOTIF_FILTERS = 'qlcv_notification_filters_v1';
+
+function readStoredNotifFilters() {
+  try {
+    const raw = localStorage.getItem(LS_NOTIF_FILTERS);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredNotifFilters(payload) {
+  try {
+    localStorage.setItem(LS_NOTIF_FILTERS, JSON.stringify(payload));
+  } catch {
+    /* ignore quota */
+  }
+}
+
+function extractNotificationProjectOption(n) {
+  const meta = n?.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  const id = meta.project_id || (String(n?.entity_type || '') === 'project' ? n.entity_id : null);
+  if (id == null || String(id).trim() === '') return null;
+  const code = String(meta.project_code || '').trim();
+  const name = String(meta.project_name || '').trim();
+  const label = code && name && code !== name
+    ? `${code} — ${name}`
+    : (code || name || String(id).slice(0, 8));
+  return { id: String(id), label };
+}
+
+function notificationMatchesProjectFilter(n, projectId) {
+  if (!projectId) return true;
+  const pid = String(projectId);
+  const meta = n?.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  if (meta.project_id != null && String(meta.project_id) === pid) return true;
+  if (String(n?.entity_type || '') === 'project' && n?.entity_id != null && String(n.entity_id) === pid) {
+    return true;
+  }
+  return false;
+}
 
 function resolveAssignmentEntityId(n) {
   const meta = n?.metadata && typeof n.metadata === 'object' ? n.metadata : null;
@@ -400,7 +444,25 @@ export default function NotificationCenter({ socket }) {
   const listModeRef = useRef(listMode);
   useEffect(() => { listModeRef.current = listMode; }, [listMode]);
   const [activityDate, setActivityDate] = useState('');
-  const [deadlinesModule, setDeadlinesModule] = useState('all');
+  /** Phân loại module: all | crm | production | logistics | project */
+  const [moduleFilter, setModuleFilter] = useState(() => {
+    const s = readStoredNotifFilters();
+    const v = s?.moduleFilter;
+    return MODULE_FILTER_OPTIONS.some((o) => o.id === v) ? v : 'all';
+  });
+  /** Panel bộ lọc gộp (giống CRM) */
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
+  /** Lọc phạm vi dự án */
+  const [filterCompanyId, setFilterCompanyId] = useState(() => String(readStoredNotifFilters()?.filterCompanyId || ''));
+  const [filterRegionId, setFilterRegionId] = useState(() => String(readStoredNotifFilters()?.filterRegionId || ''));
+  const [filterWorkTypeId, setFilterWorkTypeId] = useState(() => String(readStoredNotifFilters()?.filterWorkTypeId || ''));
+  const [projectNameQ, setProjectNameQ] = useState(() => String(readStoredNotifFilters()?.projectNameQ || ''));
+  const [projectNameDebounced, setProjectNameDebounced] = useState(() => String(readStoredNotifFilters()?.projectNameQ || '').trim());
+  const [projectFilter, setProjectFilter] = useState(() => String(readStoredNotifFilters()?.projectFilter || ''));
+  const [projectOptions, setProjectOptions] = useState([]);
+  const [filterCompanies, setFilterCompanies] = useState([]);
+  const [filterRegions, setFilterRegions] = useState([]);
+  const [filterWorkTypes, setFilterWorkTypes] = useState([]);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -461,7 +523,7 @@ export default function NotificationCenter({ socket }) {
 
   const [panelPos, setPanelPos] = useState({ top: 0, left: 0 });
 
-  const PANEL_WIDTH = 440;
+  const PANEL_WIDTH = 480;
 
   const updatePanelPosition = useCallback(() => {
     const anchor = rootRef.current;
@@ -568,6 +630,80 @@ export default function NotificationCenter({ socket }) {
     setOpen(false);
   };
 
+  const mergeProjectOptions = useCallback((incoming) => {
+    if (!Array.isArray(incoming)) return;
+    setProjectOptions((prev) => {
+      const map = new Map(prev.map((p) => [p.id, p]));
+      for (const p of incoming) {
+        if (!p?.id) continue;
+        map.set(String(p.id), {
+          id: String(p.id),
+          label: p.label || p.code || p.name || String(p.id).slice(0, 8),
+          company_id: p.company_id || null,
+          workshop_type_id: p.workshop_type_id || null,
+          code: p.code || null,
+          name: p.name || null,
+        });
+      }
+      return [...map.values()].sort((a, b) => a.label.localeCompare(b.label, 'vi'));
+    });
+  }, []);
+
+  const buildScopeParams = useCallback(() => {
+    const params = {};
+    if (filterCompanyId) params.company_id = filterCompanyId;
+    if (filterRegionId) params.region_id = filterRegionId;
+    if (filterWorkTypeId) params.workshop_type_id = filterWorkTypeId;
+    if (projectNameDebounced) params.project_q = projectNameDebounced;
+    if (projectFilter) params.project_id = projectFilter;
+    return params;
+  }, [filterCompanyId, filterRegionId, filterWorkTypeId, projectNameDebounced, projectFilter]);
+
+  const resetProjectScopeFilters = useCallback(() => {
+    setModuleFilter('all');
+    setFilterCompanyId('');
+    setFilterRegionId('');
+    setFilterWorkTypeId('');
+    setProjectNameQ('');
+    setProjectNameDebounced('');
+    setProjectFilter('');
+    setProjectOptions([]);
+    setFilterRegions([]);
+    setFilterWorkTypes([]);
+  }, []);
+
+  const activeFilterCount = useMemo(() => {
+    let n = 0;
+    if (moduleFilter && moduleFilter !== 'all') n += 1;
+    if (filterCompanyId) n += 1;
+    if (filterRegionId) n += 1;
+    if (filterWorkTypeId) n += 1;
+    if (projectNameQ.trim()) n += 1;
+    if (projectFilter) n += 1;
+    return n;
+  }, [moduleFilter, filterCompanyId, filterRegionId, filterWorkTypeId, projectNameQ, projectFilter]);
+
+  const filteredProjectList = useMemo(() => {
+    const q = projectNameQ.trim().toLowerCase();
+    const list = Array.isArray(projectOptions) ? projectOptions : [];
+    if (!q) return list.slice(0, 40);
+    return list.filter((p) => {
+      const hay = `${p.label || ''} ${p.code || ''} ${p.name || ''}`.toLowerCase();
+      return hay.includes(q);
+    }).slice(0, 40);
+  }, [projectOptions, projectNameQ]);
+
+  useEffect(() => {
+    writeStoredNotifFilters({
+      moduleFilter,
+      filterCompanyId,
+      filterRegionId,
+      filterWorkTypeId,
+      projectNameQ,
+      projectFilter,
+    });
+  }, [moduleFilter, filterCompanyId, filterRegionId, filterWorkTypeId, projectNameQ, projectFilter]);
+
   const load = async () => {
     setLoading(true);
     try {
@@ -576,17 +712,19 @@ export default function NotificationCenter({ socket }) {
         setLoading(false);
         return;
       }
+      const scope = buildScopeParams();
       if (tab === 'deadlines') {
-        const params = { module: deadlinesModule, limit: 80 };
+        const params = { module: moduleFilter, limit: 80, ...scope };
         params.unread = listMode === 'read' ? 'false' : 'true';
         const { data } = await api.get('/dashboard/notifications/deadlines', { params });
         setNotifications(data.notifications || []);
+        mergeProjectOptions(data.project_options);
       } else {
         const channel = tab === 'events' ? 'events'
           : tab === 'messages' ? 'messages'
             : tab === 'assignments' ? 'assignments'
               : 'activity';
-        const params = { channel, limit: 80 };
+        const params = { channel, limit: 80, module: moduleFilter, ...scope };
         params.unread = listMode === 'read' ? 'false' : 'true';
         if (tab === 'activity' && activityDate) {
           params.from_date = activityDate;
@@ -594,6 +732,7 @@ export default function NotificationCenter({ socket }) {
         }
         const { data } = await api.get('/dashboard/notifications', { params });
         setNotifications(data.notifications || []);
+        mergeProjectOptions(data.project_options);
       }
     } catch { }
     setLoading(false);
@@ -690,21 +829,27 @@ export default function NotificationCenter({ socket }) {
       const isEvent = EVENT_NOTIFICATION_TYPES.includes(notif?.type);
       const isAssign = isAssignmentNotification(notif);
       const canShowLive = listModeRef.current === 'unread';
+      // Live: chỉ áp module + project_id; company/region/type/name cần resolve BE → không prepend khi đang lọc scope
+      const liveOk = (moduleFilter === 'all' || inferNotificationModuleKey(notif) === moduleFilter)
+        && notificationMatchesProjectFilter(notif, projectFilter)
+        && !filterCompanyId && !filterRegionId && !filterWorkTypeId && !projectNameDebounced;
+      const opt = extractNotificationProjectOption(notif);
+      if (opt) mergeProjectOptions([opt]);
       if (isExp) {
         setUnreadDeadlines((c) => c + 1);
-        if (canShowLive) setNotifications((prev) => (tab === 'deadlines' ? [notif, ...prev] : prev));
+        if (canShowLive && liveOk) setNotifications((prev) => (tab === 'deadlines' ? [notif, ...prev] : prev));
       } else if (isChat) {
         setUnreadChat((c) => c + 1);
-        if (canShowLive) setNotifications((prev) => (tab === 'messages' ? [notif, ...prev] : prev));
+        if (canShowLive && liveOk) setNotifications((prev) => (tab === 'messages' ? [notif, ...prev] : prev));
       } else if (isEvent) {
         setUnreadEvents((c) => c + 1);
-        if (canShowLive) setNotifications((prev) => (tab === 'events' ? [notif, ...prev] : prev));
+        if (canShowLive && liveOk) setNotifications((prev) => (tab === 'events' ? [notif, ...prev] : prev));
       } else if (isAssign) {
         setUnreadAssignments((c) => c + 1);
-        if (canShowLive) setNotifications((prev) => (tab === 'assignments' ? [notif, ...prev] : prev));
+        if (canShowLive && liveOk) setNotifications((prev) => (tab === 'assignments' ? [notif, ...prev] : prev));
       } else if (isDealActivityNotification(notif)) {
         setUnreadActivity((c) => c + 1);
-        if (canShowLive) setNotifications((prev) => (tab === 'activity' ? [notif, ...prev] : prev));
+        if (canShowLive && liveOk) setNotifications((prev) => (tab === 'activity' ? [notif, ...prev] : prev));
       }
 
       // Đã tắt chuông cho deal/Messenger này → vẫn cập nhật danh sách, không toast/âm thanh ngoài màn hình
@@ -732,14 +877,54 @@ export default function NotificationCenter({ socket }) {
     };
     socket.on('notification', handler);
     return () => socket.off('notification', handler);
-  }, [socket, tab, user, pushToast]);
+  }, [socket, tab, user, pushToast, moduleFilter, projectFilter, filterCompanyId, filterRegionId, filterWorkTypeId, projectNameDebounced, mergeProjectOptions]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setProjectNameDebounced(projectNameQ.trim()), 350);
+    return () => clearTimeout(t);
+  }, [projectNameQ]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    let cancelled = false;
+    api.get('/companies').then((r) => {
+      if (cancelled) return;
+      const list = r.data?.companies || r.data || [];
+      setFilterCompanies(Array.isArray(list) ? list : []);
+    }).catch(() => { if (!cancelled) setFilterCompanies([]); });
+    return () => { cancelled = true; };
+  }, [open]);
+
+  useEffect(() => {
+    if (!filterCompanyId) {
+      setFilterRegions([]);
+      setFilterWorkTypes([]);
+      return undefined;
+    }
+    let cancelled = false;
+    api.get('/crm/company-regions', { params: { company_id: filterCompanyId, for_module: 'crm' } })
+      .then((r) => {
+        if (cancelled) return;
+        const list = Array.isArray(r.data) ? r.data : (r.data?.regions || []);
+        setFilterRegions(list);
+      })
+      .catch(() => { if (!cancelled) setFilterRegions([]); });
+    api.get('/workshop/project-types', { params: { company_id: filterCompanyId } })
+      .then((r) => {
+        if (cancelled) return;
+        const list = Array.isArray(r.data) ? r.data : (r.data?.types || []);
+        setFilterWorkTypes(list);
+      })
+      .catch(() => { if (!cancelled) setFilterWorkTypes([]); });
+    return () => { cancelled = true; };
+  }, [filterCompanyId]);
 
   useEffect(() => {
     if (open) {
       load();
       loadCommentMutes();
     }
-  }, [open, tab, deadlinesModule, listMode, activityDate]);
+  }, [open, tab, moduleFilter, projectFilter, filterCompanyId, filterRegionId, filterWorkTypeId, projectNameDebounced, listMode, activityDate]);
 
   // Đổi tab / đóng panel → thoát chế độ chọn nhiều + đóng menu mute
   useEffect(() => {
@@ -1115,7 +1300,7 @@ export default function NotificationCenter({ socket }) {
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() => { setTab(t.id); if (t.id !== 'deadlines') setDeadlinesModule('all'); }}
+                  onClick={() => setTab(t.id)}
                   className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold cursor-pointer whitespace-nowrap transition-all ${
                     active ? activeColorMap[t.color] : 'text-gray-600 hover:bg-gray-100'
                   }`}
@@ -1186,6 +1371,26 @@ export default function NotificationCenter({ socket }) {
               </div>
               <button
                 type="button"
+                onClick={() => setShowFilterPanel((v) => !v)}
+                aria-expanded={showFilterPanel}
+                className={`relative inline-flex items-center gap-1 h-7 px-2 rounded-md text-[11px] font-semibold cursor-pointer transition-colors border ${
+                  showFilterPanel || activeFilterCount > 0
+                    ? 'bg-violet-100 text-violet-800 border-violet-300'
+                    : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                }`}
+                title={showFilterPanel ? 'Thu gọn bộ lọc' : 'Bộ lọc nâng cao'}
+                aria-label="Bộ lọc"
+              >
+                <Filter className="h-3.5 w-3.5" />
+                <span>Bộ lọc</span>
+                {activeFilterCount > 0 && (
+                  <span className="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-violet-600 text-white text-[10px] font-bold tabular-nums">
+                    {activeFilterCount}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
                 onClick={() => { setSelectMode(v => !v); setSelectedIds(new Set()); }}
                 className={`ml-auto inline-flex items-center gap-1 h-7 px-2 rounded text-[11px] font-medium cursor-pointer transition-colors ${
                   selectMode ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
@@ -1198,20 +1403,165 @@ export default function NotificationCenter({ socket }) {
             </div>
           )}
 
-          {tab === 'deadlines' && (
-            <div className="flex flex-wrap items-center gap-1 px-2 py-2 border-b border-gray-50 bg-slate-50/80">
-              {MODULE_FILTER_OPTIONS.map((opt) => (
+          {showFilterPanel && (tab === 'activity' || tab === 'events' || tab === 'messages' || tab === 'assignments' || tab === 'deadlines') && (
+            <div className="flex flex-col gap-1.5 px-2 py-2 border-b border-violet-100 bg-violet-50/40">
+              <div className="flex items-center gap-2">
+                <Filter className="h-3.5 w-3.5 text-violet-600 shrink-0" />
+                <p className="text-[11px] font-bold text-violet-950 flex-1">Bộ lọc thông báo</p>
+                {activeFilterCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={resetProjectScopeFilters}
+                    className="h-6 px-2 rounded border border-violet-200 bg-white text-[10px] font-medium text-violet-700 hover:bg-violet-50 cursor-pointer"
+                  >
+                    Xóa lọc
+                  </button>
+                )}
                 <button
-                  key={opt.id}
                   type="button"
-                  onClick={() => setDeadlinesModule(opt.id)}
-                  className={`px-2 py-0.5 rounded text-[10px] font-medium cursor-pointer ${
-                    deadlinesModule === opt.id ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 border border-gray-200'
-                  }`}
+                  onClick={() => setShowFilterPanel(false)}
+                  className="h-6 w-6 rounded text-violet-500 hover:text-violet-800 hover:bg-violet-100 cursor-pointer flex items-center justify-center"
+                  title="Thu gọn"
+                  aria-label="Thu gọn bộ lọc"
                 >
-                  {opt.label}
+                  <X className="h-3.5 w-3.5" />
                 </button>
-              ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-1">
+                <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mr-0.5">Phân loại</span>
+                {MODULE_FILTER_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setModuleFilter(opt.id)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-medium cursor-pointer ${
+                      moduleFilter === opt.id ? 'bg-violet-600 text-white' : 'bg-white text-gray-600 border border-gray-200'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <label className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-[10px] font-semibold text-gray-500">Công ty</span>
+                  <select
+                    value={filterCompanyId}
+                    onChange={(e) => {
+                      setFilterCompanyId(e.target.value);
+                      setFilterRegionId('');
+                      setFilterWorkTypeId('');
+                      setProjectFilter('');
+                    }}
+                    className="h-7 w-full px-1.5 rounded border border-gray-200 bg-white text-[11px] text-gray-700"
+                  >
+                    <option value="">Tất cả công ty</option>
+                    {filterCompanies.map((c) => (
+                      <option key={c.id} value={c.id}>{c.short_name || c.name || c.id}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-[10px] font-semibold text-gray-500">Khu vực</span>
+                  <select
+                    value={filterRegionId}
+                    onChange={(e) => {
+                      setFilterRegionId(e.target.value);
+                      setProjectFilter('');
+                    }}
+                    disabled={!filterCompanyId}
+                    className="h-7 w-full px-1.5 rounded border border-gray-200 bg-white text-[11px] text-gray-700 disabled:opacity-50"
+                  >
+                    <option value="">{filterCompanyId ? 'Tất cả khu vực' : 'Chọn công ty trước'}</option>
+                    {filterRegions.map((r) => (
+                      <option key={r.id} value={r.id}>{r.name || r.code || r.id}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-[10px] font-semibold text-gray-500">Loại dự án</span>
+                  <select
+                    value={filterWorkTypeId}
+                    onChange={(e) => {
+                      setFilterWorkTypeId(e.target.value);
+                      setProjectFilter('');
+                    }}
+                    disabled={!filterCompanyId}
+                    className="h-7 w-full px-1.5 rounded border border-gray-200 bg-white text-[11px] text-gray-700 disabled:opacity-50"
+                  >
+                    <option value="">{filterCompanyId ? 'Tất cả loại' : 'Chọn công ty trước'}</option>
+                    {filterWorkTypes.map((t) => (
+                      <option key={t.id} value={t.id}>{t.name || t.id}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="flex flex-col gap-1 min-w-0">
+                <span className="text-[10px] font-semibold text-gray-500">Tên / mã dự án</span>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="search"
+                    value={projectNameQ}
+                    onChange={(e) => {
+                      setProjectNameQ(e.target.value);
+                      setProjectFilter('');
+                    }}
+                    placeholder="Gõ để lọc danh sách — VD: TB-2026 hoặc chị Hà"
+                    className="h-7 min-w-0 flex-1 px-1.5 rounded border border-gray-200 bg-white text-[11px] text-gray-700 placeholder:text-gray-400"
+                  />
+                  {(projectNameQ || projectFilter) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProjectNameQ('');
+                        setProjectNameDebounced('');
+                        setProjectFilter('');
+                      }}
+                      className="h-7 px-2 rounded border border-gray-200 bg-white text-[10px] text-gray-600 hover:bg-gray-50 shrink-0 cursor-pointer"
+                      title="Xóa tìm dự án"
+                    >
+                      Xóa
+                    </button>
+                  )}
+                </div>
+                <div className="max-h-28 overflow-y-auto rounded-md border border-gray-200 bg-white divide-y divide-gray-50 [scrollbar-width:thin]">
+                  {filteredProjectList.length === 0 ? (
+                    <p className="px-2 py-2 text-[10px] text-gray-400">
+                      {projectOptions.length === 0
+                        ? 'Chưa có dự án trong thông báo đang tải — mở chuông / đổi tab để nạp danh sách.'
+                        : 'Không khớp tên/mã đã gõ.'}
+                    </p>
+                  ) : (
+                    filteredProjectList.map((p) => {
+                      const active = projectFilter === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => {
+                            setProjectFilter(p.id);
+                            setProjectNameQ(p.code || p.label || '');
+                            setProjectNameDebounced((p.code || p.label || '').trim());
+                          }}
+                          className={`w-full text-left px-2 py-1.5 text-[11px] cursor-pointer truncate ${
+                            active
+                              ? 'bg-violet-100 text-violet-900 font-semibold'
+                              : 'text-gray-700 hover:bg-violet-50'
+                          }`}
+                          title={p.label}
+                        >
+                          {p.label}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+                {projectFilter && (
+                  <p className="text-[10px] text-violet-700">
+                    Đang lọc đúng 1 dự án · {projectOptions.find((x) => x.id === projectFilter)?.label || projectFilter.slice(0, 8)}
+                  </p>
+                )}
+              </div>
             </div>
           )}
 

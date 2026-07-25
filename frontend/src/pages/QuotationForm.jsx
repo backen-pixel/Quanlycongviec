@@ -35,6 +35,8 @@ export default function QuotationForm() {
   const location = useLocation();
   const { user } = useAuth();
   const [descPopup, setDescPopup] = useState(null); // { idx, name, description }
+  const rawReturnTo = searchParams.get('return_to') || '';
+  const returnTo = (rawReturnTo.startsWith('/') && !rawReturnTo.startsWith('//')) ? rawReturnTo : null;
 
   const todayISO = new Date().toISOString().slice(0, 10);
 
@@ -233,7 +235,11 @@ export default function QuotationForm() {
             if (srcUrl) setQuoteSourceExcel({ file_url: srcUrl, file_name: srcName });
             skipLeadDetailPrefillRef.current = true;
             const cleanLead = dform.lead_id || urlLead || '';
-            navigate(`/crm/quotations/new${cleanLead ? `?lead_id=${encodeURIComponent(cleanLead)}` : ''}`, { replace: true });
+            const cleanQ = new URLSearchParams();
+            if (cleanLead) cleanQ.set('lead_id', cleanLead);
+            if (returnTo) cleanQ.set('return_to', returnTo);
+            const cleanQs = cleanQ.toString();
+            navigate(`/crm/quotations/new${cleanQs ? `?${cleanQs}` : ''}`, { replace: true });
             return;
           }
         } catch (e) {
@@ -457,13 +463,13 @@ export default function QuotationForm() {
           const r = await api.get(`/crm/quotations/${id}/history`);
           setQuotationHistory(r.data.history || []);
         } catch (_) {}
-        setTimeout(() => navigate('/crm/quotations'), 1200);
+        setTimeout(() => navigate(returnTo || '/crm/quotations'), 1200);
       } else {
         const { data } = await api.post('/crm/quotations', payload);
         setExcelImportMeta(null);
         setSaveMsg('Tạo báo giá thành công!');
         setSaveStatus('success');
-        setTimeout(() => navigate(`/crm/quotations/${data.id}`, { replace: true }), 1200);
+        setTimeout(() => navigate(returnTo || `/crm/quotations/${data.id}`, { replace: true }), 1200);
       }
     } catch (e) {
       setSaveMsg(e.response?.data?.error || 'Có lỗi xảy ra khi lưu');
@@ -529,7 +535,7 @@ export default function QuotationForm() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate('/crm/quotations')} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
+          <button onClick={() => navigate(returnTo || '/crm/quotations')} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
           <div>
             <h1 className="text-xl font-bold" style={{ color: '#000000' }}>{isEdit ? 'Sửa báo giá' : 'Tạo báo giá mới'}</h1>
             {isEdit && form.code && <p className="text-xs text-blue-600 font-bold">{form.code}</p>}
