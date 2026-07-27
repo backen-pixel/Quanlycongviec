@@ -442,8 +442,8 @@ const LS_CRM_KANBAN_COLUMN_SCROLL = 'crm_kanban_column_scroll_mode';
 const KANBAN_PAGE_SIZE = 500;
 /** Mặc định trần auto-load khi cuộn (chọn «Tải tất cả» để vượt trần). */
 const KANBAN_DEFAULT_LOAD_LIMIT = '500';
-/** Trần khi chọn «Tải tất cả» — tránh vòng lặp API vô hạn. */
-const KANBAN_LOAD_ALL_MAX = 3000;
+/** Số vòng API tối đa khi «Tải tất cả» — dừng khi hết dữ liệu (hasMore=false). */
+const KANBAN_LOAD_ALL_GUARD = 500;
 
 const CRM_VIEW_MODES = [
   { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
@@ -461,7 +461,7 @@ function normalizeStoredKanbanLoadLimit(raw) {
   if (s === 'all') return 'all';
   if (KANBAN_LOAD_PRESET_VALUES.includes(s)) return s;
   const n = parseInt(s, 10);
-  if (Number.isFinite(n) && n > 0) return String(Math.min(n, KANBAN_LOAD_ALL_MAX));
+  if (Number.isFinite(n) && n > 0) return String(n);
   return KANBAN_DEFAULT_LOAD_LIMIT;
 }
 
@@ -474,7 +474,7 @@ function resolveKanbanLoadLimitPreset(kanbanLoadLimit) {
 
 function formatKanbanLoadLimitLabel(kanbanLoadLimit) {
   const preset = resolveKanbanLoadLimitPreset(kanbanLoadLimit);
-  if (preset === 'all') return `Tất cả (tối đa ${KANBAN_LOAD_ALL_MAX.toLocaleString('vi-VN')})`;
+  if (preset === 'all') return 'Tất cả (không giới hạn)';
   if (preset === 'custom') {
     const n = parseInt(kanbanLoadLimit, 10);
     return Number.isFinite(n) ? `${n.toLocaleString('vi-VN')} bản ghi (tùy chỉnh)` : 'Tùy chỉnh';
@@ -483,7 +483,7 @@ function formatKanbanLoadLimitLabel(kanbanLoadLimit) {
 }
 
 function resolveKanbanAutoLoadCap(kanbanLoadLimit) {
-  if (String(kanbanLoadLimit ?? '').trim().toLowerCase() === 'all') return KANBAN_LOAD_ALL_MAX;
+  if (String(kanbanLoadLimit ?? '').trim().toLowerCase() === 'all') return Number.POSITIVE_INFINITY;
   const n = parseInt(kanbanLoadLimit, 10);
   return Number.isFinite(n) && n > 0 ? n : 500;
 }
@@ -561,14 +561,13 @@ async function fetchCrmKanbanRowsPage(apiClient, common, loadSpec = 'initial') {
     let offset = 0;
     const out = [];
     let guard = 0;
-    while (guard < 500 && out.length < KANBAN_LOAD_ALL_MAX) {
+    while (guard < KANBAN_LOAD_ALL_GUARD) {
       guard += 1;
       const res = await apiClient.get('/crm/leads', { params: { ...leadParams, limit: chunk, offset } }).catch(() => ({ data: {} }));
       const payload = res.data || {};
       const page = Array.isArray(payload) ? payload : (payload.data || []);
       out.push(...page);
       if (page.length === 0) break;
-      if (out.length >= KANBAN_LOAD_ALL_MAX) break;
       const totalKnown = typeof payload.total === 'number' ? payload.total : null;
       const nextOffset = typeof payload.nextOffset === 'number' ? payload.nextOffset : offset + page.length;
       const hasMore =
@@ -1582,7 +1581,7 @@ export default function CRMDashboard() {
   const applyKanbanLoadCustomDraft = useCallback(() => {
     const n = parseInt(String(kanbanLoadCustomDraft ?? '').replace(/\s/g, ''), 10);
     if (!Number.isFinite(n) || n < 1) return;
-    applyKanbanLoadLimit(String(Math.min(n, KANBAN_LOAD_ALL_MAX)));
+    applyKanbanLoadLimit(String(n));
   }, [kanbanLoadCustomDraft, applyKanbanLoadLimit]);
 
   const kanbanLoadLimitPreset = useMemo(
@@ -6372,7 +6371,7 @@ export default function CRMDashboard() {
                   <div className="my-3 border-t border-gray-100" />
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">Giới hạn tải Kanban</p>
                   <p className="text-[11px] text-gray-500 leading-snug mb-2">
-                    Trần số lead/deal tự tải khi cuộn. Chọn «Tất cả» sẽ tải lại toàn bộ (tối đa {KANBAN_LOAD_ALL_MAX.toLocaleString('vi-VN')}). Mỗi lần gọi API tối đa {KANBAN_PAGE_SIZE.toLocaleString('vi-VN')} bản ghi.
+                    Trần số lead/deal tự tải khi cuộn. Chọn «Tất cả» sẽ tải lại toàn bộ (không giới hạn). Tùy chỉnh nhập số bản ghi bất kỳ. Mỗi lần gọi API tối đa {KANBAN_PAGE_SIZE.toLocaleString('vi-VN')} bản ghi.
                   </p>
                   <div className="grid grid-cols-3 gap-1">
                     {KANBAN_LOAD_PRESET_VALUES.map((v) => (
@@ -6426,14 +6425,13 @@ export default function CRMDashboard() {
                       <input
                         type="number"
                         min={1}
-                        max={KANBAN_LOAD_ALL_MAX}
                         step={100}
                         value={kanbanLoadCustomDraft}
                         onChange={(e) => setKanbanLoadCustomDraft(e.target.value)}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') applyKanbanLoadCustomDraft();
                         }}
-                        placeholder={`1 – ${KANBAN_LOAD_ALL_MAX.toLocaleString('vi-VN')}`}
+                        placeholder="Số bản ghi (không giới hạn)"
                         className="min-w-0 flex-1 h-8 rounded-md border border-gray-200 bg-white px-2 text-xs tabular-nums focus:border-violet-400 focus:ring-1 focus:ring-violet-200 outline-none"
                       />
                       <button
