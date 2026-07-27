@@ -25,7 +25,8 @@ export function isWonOrClosedPipelineStage(stage: CrmPipelineStage | null | unde
   if (stage.countsAsCompletedRevenue) return true;
   const slug = stage.canonicalSlug || '';
   if (slug === 'won' || slug === 'completed') return true;
-  if (stage.dealReportBucket === 'completed') return true;
+  /** Khớp web `isCrmPipelineStageWon` + completed. */
+  if (stage.dealReportBucket === 'won' || stage.dealReportBucket === 'completed') return true;
   return false;
 }
 
@@ -130,6 +131,7 @@ function hasExplicitExpectedRevenueStage(stages: CrmPipelineStage[]): boolean {
 
 /**
  * Cột tính GT pipeline mở — chỉ deal đang mở; loại Thua, Hủy, Chê giá, Khách hủy, Thắng.
+ * Nhiều pipeline («Tất cả công ty»): tách pre-won theo từng pipeline.
  */
 export function expectedRevenueStagesForPipelineValue(
   dealStages: CrmPipelineStage[],
@@ -138,9 +140,21 @@ export function expectedRevenueStagesForPipelineValue(
   if (hasExplicitExpectedRevenueStage(all)) {
     return all.filter((s) => !!s.countsAsExpectedRevenue && isOpenPipelineValueStage(s));
   }
-  const { dealTabStages, wonStage, wonAnchorOrder } = splitDealStagesForCrmTabs(all);
-  return preWonStagesForDealStats(dealTabStages, wonStage, wonAnchorOrder)
-    .filter(isOpenPipelineValueStage);
+  const byPipe = groupStagesByPipeline(all);
+  if (byPipe.size <= 1) {
+    const { dealTabStages, wonStage, wonAnchorOrder } = splitDealStagesForCrmTabs(all);
+    return preWonStagesForDealStats(dealTabStages, wonStage, wonAnchorOrder)
+      .filter(isOpenPipelineValueStage);
+  }
+  const out: CrmPipelineStage[] = [];
+  for (const [, pipeStages] of byPipe) {
+    const { dealTabStages, wonStage, wonAnchorOrder } = splitDealStagesForCrmTabs(pipeStages);
+    out.push(
+      ...preWonStagesForDealStats(dealTabStages, wonStage, wonAnchorOrder)
+        .filter(isOpenPipelineValueStage),
+    );
+  }
+  return out;
 }
 
 function sumStageMapForStages(
@@ -235,15 +249,39 @@ export function sumCrmDealHubKpiCount(
   return total;
 }
 
-/** Tổng tab KH — deal ở cột Thắng + sau Thắng (khớp CRM Hub tab Khách hàng / Đơn hàng). */
+/**
+ * Tổng tab ĐH / Đơn hàng — Σ cột Thắng + sau Thắng.
+ * Khớp web `sumCrmDealTabCountsFromStageCounts(...).customer`:
+ * khi gộp nhiều pipeline, mỗi pipeline dùng won-anchor riêng.
+ */
 export function sumCrmCustomerTabDealCount(
   dealStages: CrmPipelineStage[],
   dealCounts: Record<string, number>,
 ): number {
-  const { customerTabStages } = splitDealStagesForCrmTabs(dealStages);
+  const stages = dealStages || [];
+  const counts = dealCounts || {};
+  const stageById = new Map(stages.map((s) => [String(s.id), s]));
+  const anchorOrderByPipeline = new Map<string, number | null>();
+  for (const [pid, pipeStages] of groupStagesByPipeline(stages)) {
+    const anchor = resolveDealWonAnchorStage(pipeStages);
+    anchorOrderByPipeline.set(pid, anchor ? stageOrderIndex(anchor) : null);
+  }
+
   let total = 0;
-  for (const stage of customerTabStages) {
-    total += Number(dealCounts[stage.id] ?? 0) || 0;
+  for (const [sid, raw] of Object.entries(counts)) {
+    if (sid === ORPHAN_STAGE_KEY || sid === '') continue;
+    const cnt = Number(raw) || 0;
+    if (cnt <= 0) continue;
+    const stage = stageById.get(sid);
+    if (!stage) continue;
+    if (isLostOrCancelledPipelineStage(stage)) continue;
+    const pid = String(stage.pipelineId || '__none__');
+    const anchorOrder = anchorOrderByPipeline.get(pid) ?? null;
+    if (anchorOrder == null) {
+      if (stage.isWon) total += cnt;
+      continue;
+    }
+    if (stageOrderIndex(stage) >= anchorOrder) total += cnt;
   }
   return total;
 }
@@ -266,9 +304,40 @@ export function sumCrmDealMergedHubCount(
   return total;
 }
 
+/**
+ * Tách Deal/ĐH theo từng pipeline rồi gộp — dùng khi «Tất cả công ty»
+ * (order_index / cột Thắng khác nhau giữa các pipeline).
+ */
+export function splitDealStagesForCrmTabsMulti(
+  stagesDeal: CrmPipelineStage[],
+): ReturnType<typeof splitDealStagesForCrmTabs> {
+  const stages = stagesDeal || [];
+  const byPipe = groupStagesByPipeline(stages);
+  if (byPipe.size <= 1) return splitDealStagesForCrmTabs(stages);
+
+  const dealTabStages: CrmPipelineStage[] = [];
+  const customerTabStages: CrmPipelineStage[] = [];
+  const postWonStages: CrmPipelineStage[] = [];
+  let wonStage: CrmPipelineStage | null = null;
+  for (const [, pipeStages] of byPipe) {
+    const split = splitDealStagesForCrmTabs(pipeStages);
+    dealTabStages.push(...split.dealTabStages);
+    customerTabStages.push(...split.customerTabStages);
+    postWonStages.push(...split.postWonStages);
+    if (!wonStage && split.wonStage) wonStage = split.wonStage;
+  }
+  return {
+    dealTabStages,
+    customerTabStages,
+    postWonStages,
+    wonStage,
+    wonAnchorOrder: wonStage ? stageOrderIndex(wonStage) : null,
+  };
+}
+
 /** Có cột sau Thắng → đủ điều kiện hiện tab Đơn hàng khi Tách. */
 export function hasCrmCustomerOrderTab(dealStages: CrmPipelineStage[]): boolean {
-  return splitDealStagesForCrmTabs(dealStages).postWonStages.length > 0;
+  return splitDealStagesForCrmTabsMulti(dealStages).postWonStages.length > 0;
 }
 
 /**
@@ -282,7 +351,7 @@ export function resolveCrmHubDisplayStages(
   dealKhSplitEnabled: boolean,
 ): CrmPipelineStage[] {
   if (tab === 'leads') return stagesLead || [];
-  const { dealTabStages, customerTabStages } = splitDealStagesForCrmTabs(stagesDeal || []);
+  const { dealTabStages, customerTabStages } = splitDealStagesForCrmTabsMulti(stagesDeal || []);
   if (tab === 'orders') return customerTabStages;
   if (!dealKhSplitEnabled) return stagesDeal || [];
   return dealTabStages;
@@ -296,6 +365,15 @@ export function crmCustomerTabConversionRate(closedCount: number, dealCount: num
 
 /** Funnel Deal — chỉ cột thống kê tab Deal (không gồm Thắng / sau Thắng). */
 export function dealStatsStagesForFunnel(dealStages: CrmPipelineStage[]): CrmPipelineStage[] {
-  const { dealTabStages, wonStage, wonAnchorOrder } = splitDealStagesForCrmTabs(dealStages);
-  return preWonStagesForDealStats(dealTabStages, wonStage, wonAnchorOrder);
+  const byPipe = groupStagesByPipeline(dealStages || []);
+  if (byPipe.size <= 1) {
+    const { dealTabStages, wonStage, wonAnchorOrder } = splitDealStagesForCrmTabs(dealStages);
+    return preWonStagesForDealStats(dealTabStages, wonStage, wonAnchorOrder);
+  }
+  const out: CrmPipelineStage[] = [];
+  for (const [, pipeStages] of byPipe) {
+    const { dealTabStages, wonStage, wonAnchorOrder } = splitDealStagesForCrmTabs(pipeStages);
+    out.push(...preWonStagesForDealStats(dealTabStages, wonStage, wonAnchorOrder));
+  }
+  return out;
 }

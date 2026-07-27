@@ -231,21 +231,19 @@ export function formatAxisShort(value: number): string {
   return String(Math.round(value));
 }
 
-/** Trục phải biểu đồ xu hướng — hiển thị tỷ / triệu (không toFixed(1) tỷ). */
+/** Trục phải biểu đồ xu hướng — cắt xuống, không làm tròn tỷ. */
 export function formatAxisTy(value: number): string {
   if (!Number.isFinite(value) || value === 0) return '0';
   const abs = Math.abs(value);
   const sign = value < 0 ? '-' : '';
   if (abs >= 1e9) {
-    let ty = Math.floor(abs / 1e9);
-    let tr = Math.round((abs % 1e9) / 1e6);
-    if (tr >= 1000) {
-      ty += 1;
-      tr = 0;
-    }
-    if (tr <= 0) return `${sign}${ty} tỷ`;
-    return `${sign}${ty} tỷ ${tr} tr`;
+    const milliTy = Math.floor(abs / 1e6);
+    const tyWhole = Math.floor(milliTy / 1000);
+    const tyFrac = milliTy % 1000;
+    if (tyFrac <= 0) return `${sign}${tyWhole} tỷ`;
+    const fracStr = String(tyFrac).padStart(3, '0').replace(/0+$/, '');
+    return `${sign}${tyWhole},${fracStr} tỷ`;
   }
-  if (abs >= 1e6) return `${sign}${Math.round(abs / 1e6)} tr`;
+  if (abs >= 1e6) return `${sign}${Math.floor(abs / 1e6)} tr`;
   return formatAxisShort(value);
 }

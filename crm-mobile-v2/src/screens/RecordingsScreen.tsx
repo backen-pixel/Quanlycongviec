@@ -379,6 +379,9 @@ export default function RecordingsScreen() {
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <View style={styles.fixedTop}>
         <View style={styles.header}>
+          <Pressable style={styles.backBtn} onPress={() => navigation.goBack()} hitSlop={8}>
+            <Ionicons name="chevron-back" size={24} color={Colors.text} />
+          </Pressable>
           <View style={{ flex: 1 }}>
             <Text style={styles.h1}>Lịch ghi âm</Text>
             <View style={styles.syncRow}>
@@ -612,6 +615,17 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   listFlex: { flex: 1 },
   listContent: { paddingHorizontal: PAGE_HPAD, paddingTop: 4 },
   header: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm, marginTop: Spacing.sm },
+  backBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
   h1: { color: Colors.text, fontSize: 22, fontWeight: '900' },
   syncRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
   syncDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: Colors.green },

@@ -1,5 +1,16 @@
 import { colorFromName, dateLabel, initialsFromName } from '../lib/media';
 import { daysSince, formatVnd } from '../lib/format';
+import {
+  resolveDeadlineBucket,
+  resolveDeadlineIso,
+  type DeadlineBucketKey,
+  type DeadlineConfig,
+  type DeadlineStageMeta,
+} from '../lib/crmDeadlineBuckets';
+import {
+  isOpenPipelineValueStage,
+  splitDealStagesForCrmTabsMulti,
+} from '../lib/crmPipelineTabs';
 import { api } from './client';
 import type {
   CrmBoard,
@@ -27,6 +38,7 @@ type ApiStage = {
   counts_as_completed_revenue?: boolean | null;
   canonical_slug?: string | null;
   deal_report_bucket?: string | null;
+  sla_days?: number | null;
 };
 type ApiLead = {
   id: string;
@@ -35,12 +47,15 @@ type ApiLead = {
   type?: string | null;
   install_address?: string | null;
   phone?: string | null;
+  display_phone?: string | null;
   estimated_value?: number | null;
   created_at?: string | null;
   assigned_to?: string | null;
   lead_owner_id?: string | null;
   stage_id?: string | null;
   region_id?: string | null;
+  stage_entered_at?: string | null;
+  is_interacted?: boolean | null;
   kanban_deadline_at?: string | null;
   crm_next_open_task_deadline?: string | null;
   next_follow_up?: string | null;
@@ -383,6 +398,7 @@ function mapApiStageFields(s: ApiStage, type: 'lead' | 'deal', i: number): CrmPi
     countsAsCompletedRevenue: !!s.counts_as_completed_revenue,
     canonicalSlug: s.canonical_slug || null,
     dealReportBucket: s.deal_report_bucket || null,
+    slaDays: s.sla_days == null ? null : Number(s.sla_days),
   };
 }
 
@@ -1004,12 +1020,16 @@ function toPlannerItem(it: ApiLead, kind: 'lead' | 'deal'): PlannerItem {
     code: it.code || (kind === 'lead' ? 'LEAD' : 'DEAL'),
     title: it.title || (kind === 'lead' ? 'Lead chưa đặt tên' : 'Deal chưa đặt tên'),
     status: it.stage?.name || (kind === 'lead' ? 'Mới' : 'Deal mới'),
+    stageId: resolveStageId(it) || undefined,
+    companyId: String(it.company_id || it.company?.id || '') || undefined,
     contactName: it.customer?.full_name || '—',
     phone: it.customer?.phone || it.phone || '',
     location: it.install_address || it.customer?.address || it.company?.short_name || '—',
     valueLabel: kind === 'deal' ? formatVnd(it.estimated_value) : undefined,
     temp: kind === 'lead' ? tempFromStage(it.stage?.name) : undefined,
     ownerId,
+    assignedToId: String(it.assigned_to || it.assignee?.id || ''),
+    leadOwnerId: String(it.lead_owner_id || it.lead_owner?.id || ''),
     ownerName: owner,
     ownerInitials: initialsFromName(owner),
     ownerColor: colorFromName(owner),
@@ -1023,10 +1043,16 @@ function resolveStageId(it: ApiLead): string {
   return String(it.stage?.id || it.stage_id || '');
 }
 
-/** Chỉ giữ bản ghi đang nằm trong cột pipeline hợp lệ (web không hiện deal lệch stage). */
-function inActivePipeline(it: ApiLead, stageIds: Set<string>, type: 'lead' | 'deal'): boolean {
+/**
+ * Chỉ giữ bản ghi đang "thực hiện": thuộc cột pipeline hợp lệ và CHƯA ở
+ * giai đoạn Thắng/Hoàn thành hoặc Thua/Hủy (Planner cá nhân chỉ hiện việc đang làm).
+ */
+function inActivePipeline(it: ApiLead, stageById: Map<string, CrmPipelineStage>, type: 'lead' | 'deal'): boolean {
   const sid = resolveStageId(it);
-  if (sid === '' || !stageIds.has(sid)) return false;
+  if (sid === '') return false;
+  const stage = stageById.get(sid);
+  if (!stage) return false;
+  if (stage.isWon || stage.isLost) return false;
   const pt = it.stage?.pipeline_type;
   if (pt && pt !== type) return false;
   return true;
@@ -1047,12 +1073,23 @@ function isMineCrmRow(it: ApiLead, userId: string, type: 'lead' | 'deal'): boole
 export type PlannerFetchOpts = {
   signal?: AbortSignal;
   companyId?: string;
+  /**
+   * Phạm vi phụ trách:
+   * - không truyền / undefined → dùng `userId` của hàm (Planner cá nhân)
+   * - string → lọc đúng NV đó
+   * - null → tất cả NV (admin)
+   */
+  assignedTo?: string | null;
 };
 
-/** Bộ lọc Planner — khớp tab CRM «Của tôi» (assigned_to + có SĐT + công ty). */
+/** Bộ lọc Planner — có SĐT + công ty; phụ trách theo opts.assignedTo. */
 export function buildPlannerFetchOpts(userId: string, opts?: PlannerFetchOpts): CrmStageFetchOpts {
+  const assignedTo =
+    opts && Object.prototype.hasOwnProperty.call(opts, 'assignedTo')
+      ? (opts.assignedTo || undefined)
+      : userId;
   return {
-    assignedTo: userId,
+    ...(assignedTo ? { assignedTo } : {}),
     companyId: opts?.companyId,
     phoneFilter: 'has_phone',
     lite: true,
@@ -1060,7 +1097,7 @@ export function buildPlannerFetchOpts(userId: string, opts?: PlannerFetchOpts): 
   };
 }
 
-/** Tổng lead/deal cá nhân — cùng nguồn với badge CRM Hub. */
+/** Tổng lead/deal — cùng nguồn badge CRM Hub / Planner. */
 export async function fetchPlannerSectionTotal(
   type: 'lead' | 'deal',
   userId: string,
@@ -1070,7 +1107,7 @@ export async function fetchPlannerSectionTotal(
   return batch.total;
 }
 
-/** Một trang leads/deals cho Planner — server lọc assigned_to. */
+/** Một trang leads/deals cho Planner — server lọc assigned_to (nếu có). */
 async function fetchPlannerPage(
   type: 'lead' | 'deal',
   userId: string,
@@ -1084,20 +1121,56 @@ async function fetchPlannerPage(
   return parsePayload(data, limit);
 }
 
-async function filterRowsForPlannerKanban(
+async function fetchPlannerStageLookup(
+  type: 'lead' | 'deal',
+  opts?: Pick<PlannerFetchOpts, 'companyId' | 'signal'>,
+): Promise<Map<string, CrmPipelineStage>> {
+  const stages = await fetchPipelineStagesCached(type, {
+    companyId: opts?.companyId,
+    signal: opts?.signal,
+  });
+  return new Map(stages.map((s) => [s.id, s]));
+}
+
+function filterRowsForPlannerKanban(
   rows: ApiLead[],
   type: 'lead' | 'deal',
   userId: string,
+  stageById: Map<string, CrmPipelineStage>,
   opts?: PlannerFetchOpts,
-): Promise<ApiLead[]> {
+): ApiLead[] {
   if (!rows.length) return [];
-  const stageIds = new Set(
-    (await fetchPipelineStagesCached(type, {
-      companyId: opts?.companyId,
-      signal: opts?.signal,
-    })).map((s) => s.id),
-  );
-  return rows.filter((it) => isMineCrmRow(it, userId, type) && inActivePipeline(it, stageIds, type));
+  const viewAll =
+    opts && Object.prototype.hasOwnProperty.call(opts, 'assignedTo') && opts.assignedTo == null;
+  const scopeId =
+    opts && typeof opts.assignedTo === 'string' && opts.assignedTo
+      ? opts.assignedTo
+      : userId;
+  return rows.filter((it) => {
+    if (!inActivePipeline(it, stageById, type)) return false;
+    if (viewAll) return true;
+    return isMineCrmRow(it, scopeId, type);
+  });
+}
+
+/** Tổng đang thực hiện (loại Thắng/Hoàn thành + Thua/Hủy) — dùng cho badge Planner. */
+async function fetchPlannerActiveTotal(
+  type: 'lead' | 'deal',
+  userId: string,
+  stageById: Map<string, CrmPipelineStage>,
+  opts?: PlannerFetchOpts,
+): Promise<number> {
+  try {
+    const batch = await fetchCrmStageCountsBatch(type, buildPlannerFetchOpts(userId, opts));
+    let sum = 0;
+    for (const [stageId, stage] of stageById) {
+      if (stage.isWon || stage.isLost) continue;
+      sum += batch.counts[stageId] || 0;
+    }
+    return sum;
+  } catch {
+    return 0;
+  }
 }
 
 export type PlannerData = { leads: PlannerItem[]; deals: PlannerItem[] };
@@ -1112,39 +1185,53 @@ const plannerByDue = (a: PlannerItem, b: PlannerItem) => {
 const PLANNER_CACHE_TTL_MS = 90 * 1000;
 /** Focus lại Planner: chỉ silent refresh khi cache đã cũ hơn ngưỡng này. */
 export const PLANNER_SILENT_REFRESH_AFTER_MS = 30 * 1000;
-const MAX_PLANNER_CACHE = 4;
+const MAX_PLANNER_CACHE = 8;
 const plannerCache = new Map<string, { data: PlannerData; at: number }>();
+
+/** Key cache theo user đăng nhập + phạm vi phụ trách. */
+export function plannerCacheKey(userId: string, opts?: PlannerFetchOpts): string {
+  if (opts && Object.prototype.hasOwnProperty.call(opts, 'assignedTo')) {
+    if (opts.assignedTo == null) return `${userId}|all`;
+    if (opts.assignedTo) return `${userId}|u:${opts.assignedTo}`;
+  }
+  return `${userId}|mine`;
+}
 
 function evictStalePlannerCache(): void {
   pruneTimedMap(plannerCache, PLANNER_CACHE_TTL_MS * 2, MAX_PLANNER_CACHE);
 }
 
 /** Đọc cache planner đồng bộ — kể cả khi stale, để hiện ngay trước khi refresh nền. */
-export function peekPlannerCache(userId: string): PlannerData | null {
-  return plannerCache.get(userId)?.data ?? null;
+export function peekPlannerCache(userId: string, opts?: PlannerFetchOpts): PlannerData | null {
+  return plannerCache.get(plannerCacheKey(userId, opts))?.data ?? null;
 }
 
 /** Cache còn hạn TTL đầy đủ (90s). */
-export function isPlannerCacheFresh(userId: string): boolean {
-  const hit = plannerCache.get(userId);
+export function isPlannerCacheFresh(userId: string, opts?: PlannerFetchOpts): boolean {
+  const hit = plannerCache.get(plannerCacheKey(userId, opts));
   return !!(hit && Date.now() - hit.at < PLANNER_CACHE_TTL_MS);
 }
 
 /** Tuổi cache (ms) — null nếu không có. */
-export function plannerCacheAgeMs(userId: string): number | null {
-  const hit = plannerCache.get(userId);
+export function plannerCacheAgeMs(userId: string, opts?: PlannerFetchOpts): number | null {
+  const hit = plannerCache.get(plannerCacheKey(userId, opts));
   if (!hit) return null;
   return Date.now() - hit.at;
 }
 
 export function invalidatePlannerCache(userId?: string) {
-  if (userId) plannerCache.delete(userId);
-  else plannerCache.clear();
+  if (!userId) {
+    plannerCache.clear();
+    return;
+  }
+  for (const key of [...plannerCache.keys()]) {
+    if (key === userId || key.startsWith(`${userId}|`)) plannerCache.delete(key);
+  }
 }
 
 /** Ghi cache sau khi tải từng section (Planner refresh nền). */
-export function setPlannerCache(userId: string, data: PlannerData) {
-  plannerCache.set(userId, { data, at: Date.now() });
+export function setPlannerCache(userId: string, data: PlannerData, opts?: PlannerFetchOpts) {
+  plannerCache.set(plannerCacheKey(userId, opts), { data, at: Date.now() });
   evictStalePlannerCache();
 }
 
@@ -1152,15 +1239,676 @@ export function setPlannerCache(userId: string, data: PlannerData) {
 export const PLANNER_FETCH_LIMIT = 40;
 /** Giới hạn buffer client — tránh RAM/lag khi NV có hàng nghìn lead/deal. */
 export const PLANNER_MAX_BUFFER = 100;
+/** Buffer lớn hơn khi admin xem tất cả NV. */
+export const PLANNER_MAX_BUFFER_ALL = 400;
+/** Deadline cần nhiều hơn Planner vì gom nhiều cột pipeline mở. */
+/** Trần buffer — Lead có thể >3k (khớp web «Tải tất cả» tối đa ~3000–5000). */
+export const DEADLINE_MAX_BUFFER = 5000;
+/** Lần tải đầu tab Deadline — đủ first-paint nhanh; phần còn lại drain nền. */
+export const DEADLINE_FIRST_PAINT_LIMIT = 500;
+/**
+ * Đồng bộ nền tối đa sau first-paint — đủ để badge cột ổn định.
+ * Không drain tới MAX_BUFFER (5000) nếu không sẽ «Đang đồng bộ…» mãi + badge nhảy liên tục.
+ */
+export const DEADLINE_BG_SYNC_LIMIT = 1200;
 
 export type PlannerSectionPage = {
   items: PlannerItem[];
   total: number;
   hasMore: boolean;
   nextOffset: number;
+  /**
+   * Tổng «đang thực hiện» chính xác (stage-counts) — resolve nền, không chặn first paint.
+   * Chỉ có ở trang offset=0.
+   */
+  totalPromise?: Promise<number>;
 };
 
-/** Leads hoặc Deals cá nhân — có phân trang server. */
+/**
+ * Deadline tab: cùng nguồn view Deadline trên web CRM
+ * (kanban_deadline_at → primary/fallback → SLA; bỏ Thắng/Thua/DT hoàn thành).
+ * Bộ lọc giống Hub/web: phone, assignee, company, region, dates, search.
+ * Deal + tách KH: chỉ cột pre-Thắng (khớp web tab Deal Deadline).
+ */
+export type DeadlineFetchOpts = CrmStageFetchOpts & {
+  /** Cấu hình cột/hạn từ GET /crm/settings/deadline-config */
+  deadlineConfig?: DeadlineConfig | null;
+  /**
+   * Tách Deal / Đơn hàng — khớp web `dealKhSplitEnabled`.
+   * true → Deadline Deal chỉ pre-Thắng (không gồm cột sau Thắng).
+   */
+  dealKhSplitEnabled?: boolean;
+  /**
+   * Khi không chọn company_id (admin «Tất cả công ty») — chỉ giữ deal/lead
+   * thuộc khối CRM. Khớp web `restrictToCrmModuleCompanies`.
+   */
+  allowedCompanyIds?: string[] | null;
+  /**
+   * Callback tiến độ — UI hiện sớm trước khi drain hết cột mở.
+   * Gọi mỗi khi đủ `progressEvery` bản ghi (và lần cuối).
+   */
+  onProgress?: (partial: PlannerSectionPage) => void;
+  /** Số bản ghi giữa các lần onProgress (mặc định 250). */
+  progressEvery?: number;
+  /**
+   * Chỉ lấy trang đầu mỗi cột mở — first-paint ~3–5s thay vì drain hết pipeline.
+   * Gọi lại với offset=items.length (không firstPaintOnly) để drain nền phần còn lại.
+   */
+  firstPaintOnly?: boolean;
+};
+
+/** Config đổi hiếm khi — cache để khỏi mất round-trip trước mỗi lần drain cột mở. */
+const DEADLINE_CONFIG_CACHE_TTL_MS = 5 * 60 * 1000;
+const deadlineConfigCache = new Map<string, { cfg: DeadlineConfig; at: number }>();
+
+export async function fetchDeadlineConfig(
+  companyId?: string | null,
+  signal?: AbortSignal,
+): Promise<DeadlineConfig> {
+  const cacheKey = companyId || '__all__';
+  const cached = deadlineConfigCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < DEADLINE_CONFIG_CACHE_TTL_MS) return cached.cfg;
+
+  const params: Record<string, string> = {};
+  if (companyId) params.company_id = companyId;
+  try {
+    const { data } = await api.get<DeadlineConfig>('/crm/settings/deadline-config', {
+      params,
+      signal,
+    });
+    const cfg = data || {
+      primary_field: 'crm_next_open_task_deadline',
+      fallback_field: 'expected_close_date',
+      buckets: {},
+    };
+    deadlineConfigCache.set(cacheKey, { cfg, at: Date.now() });
+    return cfg;
+  } catch {
+    if (cached) return cached.cfg;
+    return {
+      primary_field: 'crm_next_open_task_deadline',
+      fallback_field: 'expected_close_date',
+      buckets: {},
+    };
+  }
+}
+
+export function invalidateDeadlineConfigCache(): void {
+  deadlineConfigCache.clear();
+}
+
+/** Cột mở theo embed stage — fallback khi không lấy được pipeline stages. */
+function isOpenDeadlineRow(it: ApiLead): boolean {
+  const st = it.stage;
+  const sid = String(st?.id || it.stage_id || '');
+  if (!sid) return false;
+  return isOpenPipelineValueStage({
+    id: sid,
+    name: st?.name || '',
+    icon: '',
+    color: '',
+    orderIndex: 0,
+    isWon: !!st?.is_won,
+    isLost: !!st?.is_lost,
+    countsAsCompletedRevenue: !!st?.counts_as_completed_revenue,
+    canonicalSlug: st?.canonical_slug || null,
+    dealReportBucket: st?.deal_report_bucket || null,
+    slaDays: st?.sla_days == null ? null : Number(st.sla_days),
+  });
+}
+
+function stageMetaFromLead(
+  it: ApiLead,
+  stageLookup?: Map<string, CrmPipelineStage>,
+): DeadlineStageMeta | null {
+  const sid = resolveStageId(it);
+  const fromBoard = sid && stageLookup ? stageLookup.get(sid) : undefined;
+  const st = it.stage;
+  if (!st && !sid) return null;
+  return {
+    is_won: fromBoard?.isWon ?? st?.is_won ?? null,
+    is_lost: fromBoard?.isLost ?? st?.is_lost ?? null,
+    counts_as_completed_revenue:
+      fromBoard?.countsAsCompletedRevenue ?? st?.counts_as_completed_revenue ?? null,
+    sla_days: fromBoard?.slaDays ?? st?.sla_days ?? null,
+    canonical_slug: fromBoard?.canonicalSlug ?? st?.canonical_slug ?? null,
+    deal_report_bucket: fromBoard?.dealReportBucket ?? st?.deal_report_bucket ?? null,
+  };
+}
+
+function toDeadlineItem(
+  it: ApiLead,
+  kind: 'lead' | 'deal',
+  cfg?: DeadlineConfig | null,
+  stageLookup?: Map<string, CrmPipelineStage>,
+): PlannerItem {
+  const owner = ownerOf(it);
+  const ownerId = ownerIdOf(it);
+  const due = resolveDeadlineIso(it, cfg, stageMetaFromLead(it, stageLookup));
+  const overdue = !!due && new Date(due).getTime() < startOfToday();
+  const deadlineLabel = due ? dateLabel(due) : 'Chưa hẹn';
+  return {
+    id: it.id,
+    kind,
+    code: it.code || (kind === 'lead' ? 'LEAD' : 'DEAL'),
+    title: it.title || (kind === 'lead' ? 'Lead chưa đặt tên' : 'Deal chưa đặt tên'),
+    status: it.stage?.name || (kind === 'lead' ? 'Mới' : 'Deal mới'),
+    stageId: resolveStageId(it) || undefined,
+    companyId: String(it.company_id || it.company?.id || '') || undefined,
+    contactName: it.customer?.full_name || '—',
+    phone: it.customer?.phone || it.phone || '',
+    location: it.install_address || it.customer?.address || it.company?.short_name || '—',
+    valueLabel: kind === 'deal' ? formatVnd(it.estimated_value) : undefined,
+    temp: kind === 'lead' ? tempFromStage(it.stage?.name) : undefined,
+    ownerId,
+    assignedToId: String(it.assigned_to || it.assignee?.id || ''),
+    leadOwnerId: String(it.lead_owner_id || it.lead_owner?.id || ''),
+    ownerName: owner,
+    ownerInitials: initialsFromName(owner),
+    ownerColor: colorFromName(owner),
+    deadlineLabel,
+    dueIso: due,
+    overdue,
+  };
+}
+
+/** Page size lớn hơn → ít round-trip hơn khi drain cột mở (server max 2000). */
+const DEADLINE_DRAIN_PAGE = 500;
+/** Trang đầu mỗi cột nhỏ hơn — về nhanh hơn để first-paint sớm (giống Kanban ~20–40/cột). */
+const DEADLINE_FIRST_PAGE = 60;
+/** Số trang tối đa mỗi cột mở (Lead nhiều cột × nhiều bản ghi). */
+const DEADLINE_STAGE_MAX_PAGES = 20;
+/** Song song nhiều cột — Lead ~10–15 cột mở. */
+const DEADLINE_STAGE_FETCH_CONCURRENCY = 6;
+/** Phát UI sớm sau N bản ghi đầu. */
+const DEADLINE_PROGRESS_EVERY = 120;
+
+/**
+ * Stage được đưa vào Deadline — khớp web DeadlineView:
+ * - Lead: cột mở (không Thắng/Thua/DT hoàn thành)
+ * - Deal + tách KH: dealTabStages mở (pre-Thắng, không cột sau Thắng)
+ * - Deal gộp: mọi cột mở
+ */
+function resolveDeadlineOpenStages(
+  type: 'lead' | 'deal',
+  stages: CrmPipelineStage[],
+  dealKhSplitEnabled?: boolean,
+): CrmPipelineStage[] {
+  if (type === 'deal' && dealKhSplitEnabled) {
+    /** Khớp web: dealKanbanStages = dealTabStages, rồi bỏ won/lost/completed. */
+    const { dealTabStages } = splitDealStagesForCrmTabsMulti(stages);
+    return dealTabStages.filter(isOpenPipelineValueStage);
+  }
+  return stages.filter(isOpenPipelineValueStage);
+}
+
+/**
+ * Bộ lọc list dùng chung cho Deadline (danh sách card + đếm badge cột).
+ * Lite giống web Kanban Deadline — nhanh hơn non-lite, đủ hạn NV + display_phone.
+ * Search/due lọc trên client — không gửi search lên API (tránh reload nặng khi gõ).
+ */
+function buildDeadlineListOpts(opts?: DeadlineFetchOpts): CrmStageFetchOpts {
+  const regionRaw = opts?.regionId;
+  return {
+    search: undefined,
+    assignedTo: opts?.assignedTo,
+    phoneFilter: opts?.phoneFilter,
+    dateFrom: opts?.dateFrom,
+    dateTo: opts?.dateTo,
+    companyId: opts?.companyId,
+    regionId: regionRaw === '__none__' ? undefined : regionRaw,
+    lite: true,
+    skipCounts: true,
+    signal: opts?.signal,
+  };
+}
+
+/**
+ * Tải Lead/Deal cho tab Deadline — cùng bộ lọc Hub/web,
+ * membership khớp Deadline web (tách KH Deal), có is_interacted (non-lite).
+ * Tải theo từng cột mở (stage_id) để không bỏ sót khi Lead/Deal > buffer cũ.
+ */
+export async function fetchDeadlineSectionPage(
+  type: 'lead' | 'deal',
+  offset = 0,
+  limit = PLANNER_FETCH_LIMIT,
+  opts?: DeadlineFetchOpts,
+): Promise<PlannerSectionPage> {
+  const regionRaw = opts?.regionId;
+  const regionNone = regionRaw === '__none__';
+  const listOpts = buildDeadlineListOpts(opts);
+
+  const stages = await fetchPipelineStagesCached(type, {
+    companyId: opts?.companyId,
+    regionId: regionNone ? undefined : opts?.regionId,
+    signal: opts?.signal,
+  });
+  const openStages = resolveDeadlineOpenStages(type, stages, opts?.dealKhSplitEnabled);
+  const stageLookup = new Map(stages.map((s) => [s.id, s]));
+  /** Khớp web: admin «Tất cả» vẫn chỉ khối CRM (`/companies?for_module=crm`). */
+  const allowedCompanies =
+    !listOpts.companyId && opts?.allowedCompanyIds?.length
+      ? new Set(opts.allowedCompanyIds.map(String).filter(Boolean))
+      : null;
+
+  const target = Math.min(Math.max(limit, PLANNER_FETCH_LIMIT), DEADLINE_MAX_BUFFER);
+  const cfg = opts?.deadlineConfig;
+  const collected: ApiLead[] = [];
+  const seen = new Set<string>();
+  let truncated = false;
+  const progressEvery = Math.max(50, opts?.progressEvery ?? DEADLINE_PROGRESS_EVERY);
+  let lastProgressAt = 0;
+
+  const acceptRow = (row: ApiLead): boolean => {
+    if (seen.has(row.id)) return false;
+    if (allowedCompanies) {
+      const cid = String(row.company_id || row.company?.id || '');
+      if (!cid || !allowedCompanies.has(cid)) return false;
+    }
+    if (regionNone) {
+      const rid = String(row.region_id || '');
+      if (rid) return false;
+    }
+    return true;
+  };
+
+  const emitProgress = (done: boolean) => {
+    if (!opts?.onProgress) return;
+    if (!done && collected.length - lastProgressAt < progressEvery) return;
+    lastProgressAt = collected.length;
+    const items = collected
+      .map((it) => toDeadlineItem(it, type, cfg, stageLookup))
+      .sort(plannerByDue);
+    opts.onProgress({
+      items,
+      total: collected.length,
+      hasMore: !done || truncated,
+      nextOffset: offset + collected.length,
+    });
+  };
+
+  /**
+   * Tải theo từng cột mở — tránh lệch Lead khi API type=lead lẫn Thắng/Thua
+   * và buffer cũ cắt sớm (trước đây 2000/3910).
+   * Chạy song song vài cột để Lead ~3–4k không bị treo lâu.
+   * `offset` > 0: bỏ qua các bản ghi đầu (load more).
+   */
+  let skipLeft = Math.max(0, offset);
+  if (openStages.length) {
+    const stageQueues = openStages.map((stage) => ({ stage, cursor: 0, hasMore: true, pages: 0 }));
+
+    const pullOneStage = async (slot: (typeof stageQueues)[number]) => {
+      if (!slot.hasMore || slot.pages >= DEADLINE_STAGE_MAX_PAGES) {
+        slot.hasMore = false;
+        return [] as ApiLead[];
+      }
+      // Trang đầu (khi tải mới, offset=0) nhỏ hơn → round-trip nhanh, first-paint sớm hơn.
+      const pageSize = slot.pages === 0 && offset === 0 ? DEADLINE_FIRST_PAGE : DEADLINE_DRAIN_PAGE;
+      const page = await fetchCrmRowsForStage(
+        type,
+        slot.stage.id,
+        slot.cursor,
+        pageSize,
+        listOpts,
+      );
+      slot.pages += 1;
+      slot.cursor = page.nextOffset;
+      if (!page.rows.length) {
+        slot.hasMore = false;
+        return [] as ApiLead[];
+      }
+      slot.hasMore = page.hasMore && slot.pages < DEADLINE_STAGE_MAX_PAGES;
+      if (page.hasMore && slot.pages >= DEADLINE_STAGE_MAX_PAGES) truncated = true;
+      return page.rows || [];
+    };
+
+    const ingestRows = (rows: ApiLead[]): boolean => {
+      for (const row of rows) {
+        if (!acceptRow(row)) continue;
+        if (skipLeft > 0) {
+          skipLeft -= 1;
+          seen.add(row.id);
+          continue;
+        }
+        seen.add(row.id);
+        collected.push(row);
+        if (collected.length >= target) {
+          truncated = true;
+          return true;
+        }
+      }
+      return false;
+    };
+
+    if (opts?.firstPaintOnly) {
+      /** Một trang đầu mỗi cột mở — vài round-trip song song, không drain hết pipeline. */
+      while (stageQueues.some((s) => s.hasMore && s.pages === 0)) {
+        if (opts?.signal?.aborted) break;
+        const batch = stageQueues
+          .filter((s) => s.hasMore && s.pages === 0)
+          .slice(0, DEADLINE_STAGE_FETCH_CONCURRENCY);
+        if (!batch.length) break;
+        const batches = await Promise.all(batch.map((s) => pullOneStage(s)));
+        for (const rows of batches) {
+          if (ingestRows(rows)) break;
+        }
+        emitProgress(false);
+        if (truncated) break;
+      }
+      if (stageQueues.some((s) => s.hasMore)) truncated = true;
+    } else while (collected.length < target) {
+      if (opts?.signal?.aborted) break;
+      const active = stageQueues.filter((s) => s.hasMore).slice(0, DEADLINE_STAGE_FETCH_CONCURRENCY);
+      if (!active.length) break;
+      const batches = await Promise.all(active.map((s) => pullOneStage(s)));
+      let gotAny = false;
+      for (const rows of batches) {
+        for (const row of rows) {
+          if (!acceptRow(row)) continue;
+          gotAny = true;
+          if (skipLeft > 0) {
+            skipLeft -= 1;
+            seen.add(row.id);
+            continue;
+          }
+          seen.add(row.id);
+          collected.push(row);
+          if (collected.length >= target) {
+            truncated = true;
+            break;
+          }
+        }
+        if (truncated) break;
+      }
+      emitProgress(false);
+      if (truncated) break;
+      if (!gotAny && !stageQueues.some((s) => s.hasMore)) break;
+    }
+    if (!opts?.firstPaintOnly && stageQueues.some((s) => s.hasMore)) truncated = true;
+  } else {
+    /** Fallback: không lấy được stages — quét list + lọc cột mở. */
+    let cursor = 0;
+    let apiHasMore = true;
+    let pages = 0;
+    const maxPages = DEADLINE_STAGE_MAX_PAGES * 2;
+    while (collected.length < target && apiHasMore && pages < maxPages) {
+      if (opts?.signal?.aborted) break;
+      const params: Record<string, unknown> = {
+        type,
+        limit: DEADLINE_DRAIN_PAGE,
+        offset: cursor,
+      };
+      applyListParams(params, listOpts);
+      const { data } = await api.get('/crm/leads', { params, signal: opts?.signal });
+      const page = parsePayload(data, DEADLINE_DRAIN_PAGE);
+      pages += 1;
+      apiHasMore = page.hasMore;
+      cursor = page.nextOffset;
+      if (!page.rows.length) break;
+      for (const row of page.rows) {
+        if (!acceptRow(row)) continue;
+        if (!isOpenDeadlineRow(row)) continue;
+        if (skipLeft > 0) {
+          skipLeft -= 1;
+          seen.add(row.id);
+          continue;
+        }
+        seen.add(row.id);
+        collected.push(row);
+        if (collected.length >= target) {
+          truncated = true;
+          break;
+        }
+      }
+    }
+    if (apiHasMore) truncated = true;
+  }
+
+  const items = collected
+    .map((it) => toDeadlineItem(it, type, cfg, stageLookup))
+    .sort(plannerByDue);
+
+  const finalPage: PlannerSectionPage = {
+    items,
+    total: collected.length,
+    hasMore: truncated,
+    nextOffset: offset + collected.length,
+  };
+  if (opts?.onProgress) {
+    lastProgressAt = collected.length;
+    opts.onProgress(finalPage);
+  }
+  return finalPage;
+}
+
+/**
+ * Cache kết quả Deadline (theo kind + bộ lọc) — vào lại tab hiện ngay dữ liệu cũ
+ * (giống Kanban Hub) trong khi tải nền, thay vì luôn hiện màn "Đang tải…".
+ */
+const DEADLINE_RESULT_CACHE_TTL_MS = 90 * 1000;
+const MAX_DEADLINE_RESULT_CACHE = 12;
+const deadlineResultCache = new Map<string, { data: PlannerSectionPage; at: number }>();
+
+function deadlineResultCacheKey(kind: 'lead' | 'deal', filterKey: string): string {
+  return `${kind}|${filterKey}`;
+}
+
+/** Đọc cache đồng bộ — kể cả khi stale, để hiện ngay trước khi refresh nền. */
+export function peekDeadlineResultCache(
+  kind: 'lead' | 'deal',
+  filterKey: string,
+): PlannerSectionPage | null {
+  return deadlineResultCache.get(deadlineResultCacheKey(kind, filterKey))?.data ?? null;
+}
+
+export function deadlineResultCacheAgeMs(kind: 'lead' | 'deal', filterKey: string): number | null {
+  const hit = deadlineResultCache.get(deadlineResultCacheKey(kind, filterKey));
+  if (!hit) return null;
+  return Date.now() - hit.at;
+}
+
+export function setDeadlineResultCache(
+  kind: 'lead' | 'deal',
+  filterKey: string,
+  data: PlannerSectionPage,
+): void {
+  deadlineResultCache.set(deadlineResultCacheKey(kind, filterKey), { data, at: Date.now() });
+  pruneTimedMap(deadlineResultCache, DEADLINE_RESULT_CACHE_TTL_MS * 2, MAX_DEADLINE_RESULT_CACHE);
+}
+
+export function invalidateDeadlineResultCache(): void {
+  deadlineResultCache.clear();
+}
+
+/* ------------------------------------------------------------------ *
+ * Badge cột Deadline — cùng cách làm với badge cột Kanban:
+ * Kanban gọi `/crm/stage-counts` riêng (1 lượt, cache 90s) nên số trên cột
+ * không phụ thuộc phần list đã tải. Deadline không có API đếm theo cột (hạn
+ * được suy ra ở client: hạn NV → deadline thẻ → SLA), nên ở đây quét cột mở
+ * một lượt riêng và CHỈ giữ số đếm — không giữ row, không map card.
+ * ------------------------------------------------------------------ */
+
+export type DeadlineBucketCountMap = Partial<Record<DeadlineBucketKey, number>>;
+
+export type DeadlineBucketCounts = {
+  counts: DeadlineBucketCountMap;
+  total: number;
+  overdue: number;
+  /** false = chạm trần an toàn / bị hủy → số chỉ là cận dưới. */
+  complete: boolean;
+  at: number;
+};
+
+/** Đếm không render nên lấy trang lớn — ít round-trip hơn list (server cap 2000). */
+const DEADLINE_COUNT_PAGE = 1000;
+/** Thấp hơn list: lượt đếm chạy nền, không được tranh băng thông với first-paint. */
+const DEADLINE_COUNT_CONCURRENCY = 3;
+const DEADLINE_COUNT_MAX_PAGES = 8;
+const DEADLINE_COUNT_MAX_ROWS = 12000;
+const DEADLINE_COUNTS_TTL_MS = 90 * 1000;
+const MAX_DEADLINE_COUNTS_CACHE = 12;
+
+const deadlineBucketCountsCache = new Map<string, { data: DeadlineBucketCounts; at: number }>();
+const deadlineBucketCountsInflight = new Map<string, Promise<DeadlineBucketCounts>>();
+
+function deadlineCountsCacheKey(kind: 'lead' | 'deal', filterKey: string): string {
+  return `${kind}|${filterKey}`;
+}
+
+/** Đọc cache đồng bộ — vào lại tab hiện badge đúng ngay (giống stageCounts của Hub). */
+export function peekDeadlineBucketCounts(
+  kind: 'lead' | 'deal',
+  filterKey: string,
+): DeadlineBucketCounts | null {
+  return deadlineBucketCountsCache.get(deadlineCountsCacheKey(kind, filterKey))?.data ?? null;
+}
+
+export function isDeadlineBucketCountsFresh(
+  kind: 'lead' | 'deal',
+  filterKey: string,
+  maxAgeMs = DEADLINE_COUNTS_TTL_MS,
+): boolean {
+  const hit = deadlineBucketCountsCache.get(deadlineCountsCacheKey(kind, filterKey));
+  if (!hit?.data.complete) return false;
+  return Date.now() - hit.at < maxAgeMs;
+}
+
+export function invalidateDeadlineBucketCounts(): void {
+  deadlineBucketCountsCache.clear();
+}
+
+async function scanDeadlineBucketCounts(
+  type: 'lead' | 'deal',
+  opts?: DeadlineFetchOpts,
+): Promise<DeadlineBucketCounts> {
+  const regionNone = opts?.regionId === '__none__';
+  const listOpts = buildDeadlineListOpts(opts);
+  const stages = await fetchPipelineStagesCached(type, {
+    companyId: opts?.companyId,
+    regionId: regionNone ? undefined : opts?.regionId,
+    signal: opts?.signal,
+  });
+  const openStages = resolveDeadlineOpenStages(type, stages, opts?.dealKhSplitEnabled);
+  const stageLookup = new Map(stages.map((s) => [s.id, s]));
+  const allowedCompanies =
+    !listOpts.companyId && opts?.allowedCompanyIds?.length
+      ? new Set(opts.allowedCompanyIds.map(String).filter(Boolean))
+      : null;
+
+  const cfg = opts?.deadlineConfig;
+  const counts: DeadlineBucketCountMap = {};
+  const seen = new Set<string>();
+  const todayStart = startOfToday();
+  let total = 0;
+  let overdue = 0;
+  let complete = true;
+
+  const ingest = (rows: ApiLead[]) => {
+    for (const row of rows) {
+      if (!row?.id || seen.has(row.id)) continue;
+      if (allowedCompanies) {
+        const cid = String(row.company_id || row.company?.id || '');
+        if (!cid || !allowedCompanies.has(cid)) continue;
+      }
+      if (regionNone && String(row.region_id || '')) continue;
+      seen.add(row.id);
+      total += 1;
+      const iso = resolveDeadlineIso(row, cfg, stageMetaFromLead(row, stageLookup));
+      const ts = iso ? new Date(iso).getTime() : NaN;
+      const validTs = Number.isNaN(ts) ? null : ts;
+      const bucket = resolveDeadlineBucket(validTs, cfg?.buckets);
+      counts[bucket] = (counts[bucket] || 0) + 1;
+      if (validTs != null && validTs < todayStart) overdue += 1;
+    }
+  };
+
+  if (openStages.length) {
+    const queues = openStages.map((stage) => ({ stage, cursor: 0, hasMore: true, pages: 0 }));
+    while (queues.some((q) => q.hasMore)) {
+      if (opts?.signal?.aborted || total >= DEADLINE_COUNT_MAX_ROWS) {
+        complete = false;
+        break;
+      }
+      const active = queues.filter((q) => q.hasMore).slice(0, DEADLINE_COUNT_CONCURRENCY);
+      const pages = await Promise.all(
+        active.map(async (slot) => {
+          const page = await fetchCrmRowsForStage(
+            type,
+            slot.stage.id,
+            slot.cursor,
+            DEADLINE_COUNT_PAGE,
+            listOpts,
+          );
+          slot.pages += 1;
+          slot.cursor = page.nextOffset;
+          slot.hasMore = page.hasMore && slot.pages < DEADLINE_COUNT_MAX_PAGES;
+          if (page.hasMore && slot.pages >= DEADLINE_COUNT_MAX_PAGES) complete = false;
+          return page.rows || [];
+        }),
+      );
+      for (const rows of pages) ingest(rows);
+    }
+  } else {
+    /** Fallback: không lấy được stages — quét list rồi lọc cột mở như phần list. */
+    let cursor = 0;
+    let apiHasMore = true;
+    let pages = 0;
+    while (apiHasMore && pages < DEADLINE_COUNT_MAX_PAGES * 2) {
+      if (opts?.signal?.aborted || total >= DEADLINE_COUNT_MAX_ROWS) {
+        complete = false;
+        break;
+      }
+      const params: Record<string, unknown> = {
+        type,
+        limit: DEADLINE_COUNT_PAGE,
+        offset: cursor,
+      };
+      applyListParams(params, listOpts);
+      const { data } = await api.get('/crm/leads', { params, signal: opts?.signal });
+      const page = parsePayload(data, DEADLINE_COUNT_PAGE);
+      pages += 1;
+      apiHasMore = page.hasMore;
+      cursor = page.nextOffset;
+      if (!page.rows.length) break;
+      ingest(page.rows.filter((row) => isOpenDeadlineRow(row)));
+    }
+    if (apiHasMore) complete = false;
+  }
+
+  return { counts, total, overdue, complete, at: Date.now() };
+}
+
+/**
+ * Số đếm từng cột Deadline theo bộ lọc hiện tại — dùng cho badge cột.
+ * Cache 90s + gộp request trùng, giống `fetchCrmStageCountsBatch` của Kanban.
+ */
+export async function fetchDeadlineBucketCounts(
+  type: 'lead' | 'deal',
+  filterKey: string,
+  opts?: DeadlineFetchOpts,
+): Promise<DeadlineBucketCounts> {
+  const key = deadlineCountsCacheKey(type, filterKey);
+  const hit = deadlineBucketCountsCache.get(key);
+  if (hit?.data.complete && Date.now() - hit.at < DEADLINE_COUNTS_TTL_MS) return hit.data;
+  const inflight = deadlineBucketCountsInflight.get(key);
+  if (inflight) return inflight;
+
+  const run = scanDeadlineBucketCounts(type, opts)
+    .then((res) => {
+      if (res.complete) {
+        deadlineBucketCountsCache.set(key, { data: res, at: res.at });
+        pruneTimedMap(deadlineBucketCountsCache, DEADLINE_COUNTS_TTL_MS * 2, MAX_DEADLINE_COUNTS_CACHE);
+      }
+      return res;
+    })
+    .finally(() => {
+      if (deadlineBucketCountsInflight.get(key) === run) deadlineBucketCountsInflight.delete(key);
+    });
+  deadlineBucketCountsInflight.set(key, run);
+  return run;
+}
+
+/** Leads hoặc Deals cá nhân — có phân trang server. Chỉ hiện bản ghi đang thực hiện. */
 export async function fetchPlannerSectionPage(
   type: 'lead' | 'deal',
   userId: string,
@@ -1168,19 +1916,33 @@ export async function fetchPlannerSectionPage(
   limit = PLANNER_FETCH_LIMIT,
   opts?: PlannerFetchOpts,
 ): Promise<PlannerSectionPage> {
-  const page = await fetchPlannerPage(type, userId, offset, limit, opts);
-  if (!page.rows.length) {
-    return { items: [], total: 0, hasMore: false, nextOffset: page.nextOffset };
-  }
-  const filtered = await filterRowsForPlannerKanban(page.rows, type, userId, opts);
+  const [page, stageById] = await Promise.all([
+    fetchPlannerPage(type, userId, offset, limit, opts),
+    fetchPlannerStageLookup(type, opts),
+  ]);
+  const filtered = page.rows.length
+    ? filterRowsForPlannerKanban(page.rows, type, userId, stageById, opts)
+    : [];
   const items = filtered
     .map((it) => toPlannerItem(it, type))
     .sort(plannerByDue);
+
+  // First paint: không chờ /crm/stage-counts (hay chậm hơn list).
+  // Total tạm = số item đã lọc; nếu còn trang → dùng page.total làm sàn ước lượng.
+  const provisionalTotal = offset === 0
+    ? (page.hasMore ? Math.max(items.length, page.total || 0) : items.length)
+    : page.total;
+
+  const totalPromise = offset === 0
+    ? fetchPlannerActiveTotal(type, userId, stageById, opts)
+    : undefined;
+
   return {
     items,
-    total: page.total,
+    total: provisionalTotal,
     hasMore: page.hasMore,
     nextOffset: page.nextOffset,
+    totalPromise,
   };
 }
 

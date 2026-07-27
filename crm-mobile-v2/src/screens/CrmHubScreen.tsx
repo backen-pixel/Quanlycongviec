@@ -93,7 +93,14 @@ import { Radii, Spacing, stageColor, useColors, type ThemeColors } from '../them
 import type { RootStackParamList } from '../navigation/types';
 import type { CrmHubData, CrmKanbanItem, CrmPipelineStage, CrmStageCache, LeadTemp } from '../types';
 
-type Props = NativeStackScreenProps<RootStackParamList, 'CrmHub'>;
+type Props = {
+  navigation: NativeStackScreenProps<RootStackParamList, 'CrmHub'>['navigation'];
+  route: {
+    key: string;
+    name: string;
+    params?: RootStackParamList['CrmHub'];
+  };
+};
 /** Tab UI: Leads | Deals | Đơn hàng (ĐH). */
 type Mode = 'leads' | 'deals' | 'orders';
 /** Cache/API chỉ lead|deal — tab ĐH dùng chung dữ liệu deal. */
@@ -123,6 +130,19 @@ function fillStageCountZeros(
     next[id] = Number(n) || 0;
   }
   return next;
+}
+
+/**
+ * skip_counts / trang 1 cột chỉ có 1–vài key — chưa đủ để tính badge Lead/Deal/ĐH.
+ * Cần phần lớn stage đã có count (kể cả 0 sau fillStageCountZeros).
+ */
+function stageCountsLookComplete(
+  stages: { id: string }[],
+  counts: Record<string, number>,
+): boolean {
+  if (!stages.length) return false;
+  const known = stages.filter((s) => counts[s.id] != null).length;
+  return known >= Math.max(2, Math.ceil(stages.length * 0.5));
 }
 
 /** Ẩn cột trống: thiếu key sau khi đã có counts = coi như 0 (không hiện lại cột trống). */
@@ -425,6 +445,8 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const { user } = useAuth();
   const { toggle } = useCreateMenu();
   const myId = user?.id || user?.userId || '';
+  /** Tab Kanban — không hiện nút Back (khác stack CrmHub từ Menu). */
+  const embeddedInTabs = route.name === 'Kanban';
 
   const [mode, setMode] = useState<Mode>(() => initialModeFromRoute(route.params));
   const dataMode = asDataMode(mode);
@@ -734,20 +756,32 @@ export default function CrmHubScreen({ navigation, route }: Props) {
       const nextCounts = { ...boot.stageCounts };
       const hasBootCounts = Object.keys(nextCounts).length > 0;
       const samePipeline = prev.stages.some((s) => boot.stages.some((b) => b.id === s.id));
-      // Lite/skip_counts chỉ có 1 cột — không fill 0 toàn pipeline (sẽ ẩn nhầm cột).
-      const fullishCounts = Object.keys(nextCounts).length > 1;
-      const mergedCounts = hasBootCounts
-        ? (preserveView ? { ...prev.stageCounts, ...nextCounts } : nextCounts)
-        : (samePipeline ? prev.stageCounts : {});
+      // Lite/skip_counts chỉ 1 cột — KHÔNG được thay toàn bộ stageCounts (badge Lead/Deal/ĐH sẽ nhảy loạn).
+      const bootCountKeys = Object.keys(nextCounts).length;
+      const isPartialBootCounts = hasBootCounts && (
+        bootCountKeys <= 1
+        || bootCountKeys < Math.max(2, Math.ceil(boot.stages.length * 0.5))
+      );
+      const prevComplete = stageCountsLookComplete(prev.stages, prev.stageCounts);
+      let mergedCounts: Record<string, number>;
+      if (!hasBootCounts) {
+        mergedCounts = samePipeline ? prev.stageCounts : {};
+      } else if (isPartialBootCounts) {
+        // Giữ tổng pipeline đã có; chỉ cập nhật count cột đang bootstrap.
+        mergedCounts = { ...(prevComplete || samePipeline ? prev.stageCounts : {}), ...nextCounts };
+      } else if (preserveView) {
+        mergedCounts = fillStageCountZeros(boot.stages, { ...prev.stageCounts, ...nextCounts });
+      } else {
+        mergedCounts = fillStageCountZeros(boot.stages, nextCounts);
+      }
+      const nextListTotal = isPartialBootCounts
+        // skip_counts: listTotal server = tổng 1 cột — không dùng cho badge tab.
+        ? (prev.listTotal ?? null)
+        : (boot.listTotal ?? (samePipeline ? prev.listTotal : null));
       return {
         stages: boot.stages,
-        stageCounts: fullishCounts
-          ? fillStageCountZeros(boot.stages, mergedCounts)
-          : mergedCounts,
-        // skip_counts: stageCounts chỉ 1 cột → listTotal là tổng cột, không phải pipeline.
-        listTotal: Object.keys(boot.stageCounts || {}).length > 1
-          ? (boot.listTotal ?? (samePipeline ? prev.listTotal : null))
-          : (samePipeline ? prev.listTotal : null),
+        stageCounts: mergedCounts,
+        listTotal: nextListTotal,
         cache,
       };
     });
@@ -1028,15 +1062,25 @@ export default function CrmHubScreen({ navigation, route }: Props) {
       if (myId) {
         const prevHub = dm === 'leads' ? leadDataRef.current : dealDataRef.current;
         const fkNow = filterKeyRef.current;
+        const bootKeys = Object.keys(boot.stageCounts || {}).length;
+        const bootPartial = bootKeys > 0 && (
+          bootKeys <= 1
+          || bootKeys < Math.max(2, Math.ceil(boot.stages.length * 0.5))
+        );
+        const cachedCounts = bootPartial
+          ? { ...prevHub.stageCounts, ...boot.stageCounts }
+          : (preserveView
+            ? fillStageCountZeros(boot.stages, { ...prevHub.stageCounts, ...boot.stageCounts })
+            : fillStageCountZeros(boot.stages, boot.stageCounts || {}));
         setCrmHubCache(myId, type, fkNow, {
           data: {
             stages: boot.stages,
-            stageCounts: preserveView
-              ? { ...prevHub.stageCounts, ...boot.stageCounts }
-              : boot.stageCounts,
-            listTotal: Object.keys(boot.stageCounts || {}).length > 1
-              ? (boot.listTotal ?? prevHub.listTotal)
-              : prevHub.listTotal,
+            stageCounts: cachedCounts,
+            listTotal: bootPartial
+              ? prevHub.listTotal
+              : (Object.keys(boot.stageCounts || {}).length > 1
+                ? (boot.listTotal ?? prevHub.listTotal)
+                : prevHub.listTotal),
             cache: {
               ...(preserveView ? prevHub.cache : {}),
               [boot.initialStageId]: {
@@ -1275,9 +1319,11 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     setSearch('');
     // Không reset bộ lọc khi đổi tab — Lead/Deal/ĐH dùng chung 1 bộ lọc.
     setActiveIndex(0);
-    filterKeyRef.current = '';
     const dm = asDataMode(next);
-    if (!loaded[dm]) void loadBootstrap(next, false);
+    if (!loadedRef.current[dm]) {
+      // Lần đầu mở tab — bootstrap. Không xóa filterKeyRef khi đã loaded (tránh refresh + badge nhảy).
+      void loadBootstrap(next, false);
+    }
   };
 
   const activeStage: CrmPipelineStage | undefined = displayStages[activeIndex];
@@ -1429,23 +1475,29 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   const allowLoadMore = !clientOnlyFilterActive;
   const filterBadge = countActiveFilters(filters, search);
 
-  const leadTabTotal = leadData.listTotal ?? sumCounts(leadData.stageCounts);
-  /** Tab Deal tách = pre-Thắng; gộp = mọi cột trừ Thua/Hủy. */
+  const leadCountsComplete = stageCountsLookComplete(leadData.stages, leadData.stageCounts);
+  const dealCountsComplete = stageCountsLookComplete(dealData.stages, dealData.stageCounts);
+  /** Lead: ưu tiên listTotal pipeline; không dùng sum 1 cột lúc skip_counts. */
+  const leadTabTotal = leadData.listTotal != null
+    ? leadData.listTotal
+    : (leadCountsComplete ? sumCounts(leadData.stageCounts) : 0);
+  /** Tab Deal tách = pre-Thắng; gộp = mọi cột trừ Thua/Hủy. Chỉ tính khi counts đủ pipeline. */
   const dealTabTotal = (() => {
-    if (!dealData.stages.length) {
-      return dealData.listTotal ?? sumCounts(dealData.stageCounts);
+    if (!dealCountsComplete) {
+      // Chưa có counts đủ — không flash số lệch; giữ 0 và ẩn badge (known=false).
+      return 0;
     }
-    const countsAligned = dealData.stages.some((s) => dealData.stageCounts[s.id] != null);
-    if (!countsAligned && dealData.listTotal != null) return dealData.listTotal;
     if (!dealKhSplitEnabled) {
       return sumCrmDealMergedHubCount(dealData.stages, dealData.stageCounts);
     }
     return sumCrmDealHubKpiCount(dealData.stages, dealData.stageCounts);
   })();
-  const ordersTabTotal = sumCrmCustomerTabDealCount(dealData.stages, dealData.stageCounts);
-  const leadTabTotalKnown = leadData.listTotal != null || Object.keys(leadData.stageCounts).length > 0;
-  const dealTabTotalKnown = dealData.listTotal != null || Object.keys(dealData.stageCounts).length > 0;
-  const ordersTabTotalKnown = dealTabTotalKnown && showOrdersTab;
+  const ordersTabTotal = dealCountsComplete
+    ? sumCrmCustomerTabDealCount(dealData.stages, dealData.stageCounts)
+    : 0;
+  const leadTabTotalKnown = leadData.listTotal != null || leadCountsComplete;
+  const dealTabTotalKnown = dealCountsComplete;
+  const ordersTabTotalKnown = dealCountsComplete && showOrdersTab;
   const totalRecords = isLeads ? leadTabTotal : (isOrders ? ordersTabTotal : dealTabTotal);
 
   const isInitialLoad = loading && !loaded[dataMode];
@@ -1726,13 +1778,15 @@ export default function CrmHubScreen({ navigation, route }: Props) {
   if (error && !hubStages.length) {
     return (
       <View style={[styles.center, { paddingTop: insets.top, paddingHorizontal: Spacing.xl }]}>
-        <Pressable
-          style={[styles.backBtn, { position: 'absolute', top: insets.top + 8, left: Spacing.md }]}
-          onPress={() => navigation.goBack()}
-          hitSlop={8}
-        >
-          <Ionicons name="chevron-back" size={22} color={Colors.text} />
-        </Pressable>
+        {!embeddedInTabs ? (
+          <Pressable
+            style={[styles.backBtn, { position: 'absolute', top: insets.top + 8, left: Spacing.md }]}
+            onPress={() => navigation.goBack()}
+            hitSlop={8}
+          >
+            <Ionicons name="chevron-back" size={22} color={Colors.text} />
+          </Pressable>
+        ) : null}
         <Ionicons name="cloud-offline-outline" size={44} color={Colors.textFaint} />
         <Text style={styles.errorText}>{error}</Text>
         <TouchableOpacity style={styles.retryBtn} onPress={() => void loadBootstrap(mode, true)}>
@@ -1746,9 +1800,11 @@ export default function CrmHubScreen({ navigation, route }: Props) {
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <View style={styles.fixedTop}>
         <View style={styles.header}>
-          <Pressable style={styles.backBtn} onPress={() => navigation.goBack()} hitSlop={8}>
-            <Ionicons name="chevron-back" size={24} color={Colors.text} />
-          </Pressable>
+          {!embeddedInTabs ? (
+            <Pressable style={styles.backBtn} onPress={() => navigation.goBack()} hitSlop={8}>
+              <Ionicons name="chevron-back" size={24} color={Colors.text} />
+            </Pressable>
+          ) : null}
           <View style={{ flex: 1 }}>
             <Text style={styles.h1}>{hubTitle}</Text>
             <View style={styles.syncRow}>

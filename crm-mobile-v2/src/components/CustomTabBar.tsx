@@ -5,6 +5,7 @@ import { Keyboard, Platform, Pressable, StyleSheet, Text, View } from 'react-nat
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCreateMenu } from '../context/CreateMenuContext';
 import { useMessenger } from '../context/MessengerContext';
+import { useDeadlineOverdueCount } from '../hooks/useDeadlineOverdueCount';
 import { useColors, type ThemeColors } from '../theme';
 import FloatingCreateButton from './FloatingCreateButton';
 
@@ -15,8 +16,8 @@ type TabMeta = {
 };
 
 const META: Record<string, TabMeta> = {
-  Planner: { icon: 'calendar-outline', iconActive: 'calendar', label: 'Planner' },
-  Recordings: { icon: 'mic-outline', iconActive: 'mic', label: 'Ghi âm' },
+  Kanban: { icon: 'grid-outline', iconActive: 'grid', label: 'Kanban' },
+  Deadline: { icon: 'alarm-outline', iconActive: 'alarm', label: 'Deadline' },
   Messages: { icon: 'chatbubble-outline', iconActive: 'chatbubble', label: 'Tin nhắn' },
   Menu: { icon: 'menu-outline', iconActive: 'menu', label: 'Menu' },
 };
@@ -27,6 +28,7 @@ export default function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
   const { open, toggle } = useCreateMenu();
   const { unreadTotal } = useMessenger();
+  const deadlineOverdue = useDeadlineOverdueCount();
   const padBottom = Math.max(insets.bottom, 10);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
 
@@ -83,6 +85,13 @@ export default function CustomTabBar({ state, navigation }: BottomTabBarProps) {
                   <Text style={styles.badgeTxt}>{unreadTotal > 99 ? '99+' : unreadTotal}</Text>
                 </View>
               ) : null}
+              {route.name === 'Deadline' && deadlineOverdue > 0 ? (
+                <View style={[styles.badge, styles.badgeOverdue]}>
+                  <Text style={styles.badgeTxt}>
+                    {deadlineOverdue > 99 ? '99+' : deadlineOverdue}
+                  </Text>
+                </View>
+              ) : null}
             </View>
             <Text style={[styles.label, focused && { color: Colors.tabActive }]}>{meta.label}</Text>
           </Pressable>
@@ -116,5 +125,6 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 4,
   },
+  badgeOverdue: { backgroundColor: Colors.red },
   badgeTxt: { color: '#fff', fontSize: 9, fontWeight: '800' },
 });

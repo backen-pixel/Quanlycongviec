@@ -21,7 +21,7 @@ type Item = {
   label: string;
   color: string;
   target?: ItemTarget;
-  action?: 'logout' | 'drive' | 'settings' | 'notifications' | 'events' | 'quotations' | 'products' | 'customers' | 'tasks' | 'account' | 'devices' | 'qr-scan' | 'employee-report';
+  action?: 'logout' | 'drive' | 'settings' | 'notifications' | 'events' | 'leaves' | 'planner' | 'quotations' | 'products' | 'customers' | 'tasks' | 'account' | 'devices' | 'qr-scan' | 'employee-report' | 'recordings';
 };
 
 function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] {
@@ -40,8 +40,11 @@ function buildSections(Colors: ThemeColors): { title: string; items: Item[] }[] 
     {
       title: 'Công việc',
       items: [
+        { icon: 'grid', label: 'Planner', color: Colors.blue, action: 'planner' },
         { icon: 'checkbox', label: 'Nhiệm vụ', color: Colors.blue, action: 'tasks' },
         { icon: 'calendar', label: 'Sự kiện', color: Colors.cyan, action: 'events' },
+        { icon: 'calendar-outline', label: 'Lịch nghỉ', color: Colors.purple, action: 'leaves' },
+        { icon: 'mic', label: 'Ghi âm', color: Colors.amber, action: 'recordings' },
         { icon: 'cloud-upload', label: 'Drive lưu trữ', color: Colors.purple, action: 'drive' },
         { icon: 'notifications', label: 'Thông báo', color: Colors.red, action: 'notifications' },
         { icon: 'stats-chart', label: 'Báo cáo CRM', color: Colors.green, action: 'employee-report' },
@@ -101,6 +104,14 @@ export default function MenuScreen() {
       navigation.navigate('Events');
       return;
     }
+    if (it.action === 'leaves') {
+      navigation.navigate('Leaves');
+      return;
+    }
+    if (it.action === 'planner') {
+      navigation.navigate('Planner');
+      return;
+    }
     if (it.action === 'quotations') {
       navigation.navigate('Quotations');
       return;
@@ -115,6 +126,10 @@ export default function MenuScreen() {
     }
     if (it.action === 'tasks') {
       navigation.navigate('Tasks');
+      return;
+    }
+    if (it.action === 'recordings') {
+      navigation.navigate('Recordings');
       return;
     }
     if (it.action === 'account') {

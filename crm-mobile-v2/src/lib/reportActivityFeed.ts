@@ -12,6 +12,7 @@ export type ActivityFeedItem = {
   badgeTone: 'green' | 'yellow' | 'purple' | 'red' | 'teal' | 'muted';
   occurredAt?: string;
   leadId?: string;
+  leadType?: 'lead' | 'deal';
 };
 
 const BADGE_TONES = new Set<ActivityFeedItem['badgeTone']>([
@@ -45,6 +46,7 @@ export function mapApiActivityFeedItem(row: OrgActivityFeedApiItem): ActivityFee
     badgeTone: tone,
     occurredAt: row.occurred_at,
     leadId: row.lead_id || undefined,
+    leadType: row.lead_type === 'deal' ? 'deal' : row.lead_type === 'lead' ? 'lead' : undefined,
   };
 }
 

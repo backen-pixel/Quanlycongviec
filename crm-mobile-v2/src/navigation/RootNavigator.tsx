@@ -10,6 +10,8 @@ import CrmHubScreen from '../screens/CrmHubScreen';
 import LeadDealDetailScreen from '../screens/LeadDealDetailScreen';
 import DriveScreen from '../screens/DriveScreen';
 import EventsScreen from '../screens/EventsScreen';
+import LeavesScreen from '../screens/LeavesScreen';
+import MyDealsScreen from '../screens/MyDealsScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import OrdersScreen from '../screens/OrdersScreen';
 import CustomersScreen from '../screens/CustomersScreen';
@@ -21,6 +23,7 @@ import EmployeeReportScreen from '../screens/EmployeeReportScreen';
 import EmployeeReportDetailScreen from '../screens/EmployeeReportDetailScreen';
 import ProductsScreen from '../screens/ProductsScreen';
 import QuotationsScreen from '../screens/QuotationsScreen';
+import RecordingsScreen from '../screens/RecordingsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import VoiceLocalRecordingsScreen from '../screens/VoiceLocalRecordingsScreen';
 import RootTabs from './RootTabs';
@@ -32,6 +35,7 @@ export default function RootNavigator() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="Tabs" component={RootTabs} />
+      <Stack.Screen name="Planner" component={MyDealsScreen} />
       <Stack.Screen name="CrmHub" component={CrmHubScreen} />
       <Stack.Screen name="LeadDealDetail" component={LeadDealDetailScreen} />
       <Stack.Screen name="ChatDetail" component={ChatDetailScreen} />
@@ -56,11 +60,13 @@ export default function RootNavigator() {
         component={CreateEntityScreen}
         options={{ presentation: 'modal' }}
       />
+      <Stack.Screen name="Recordings" component={RecordingsScreen} />
       <Stack.Screen name="VoiceLocalRecordings" component={VoiceLocalRecordingsScreen} />
       <Stack.Screen name="Drive" component={DriveScreen} />
       <Stack.Screen name="Settings" component={SettingsScreen} />
       <Stack.Screen name="Notifications" component={NotificationsScreen} />
       <Stack.Screen name="Events" component={EventsScreen} />
+      <Stack.Screen name="Leaves" component={LeavesScreen} />
       <Stack.Screen name="Quotations" component={QuotationsScreen} />
       <Stack.Screen name="Orders" component={OrdersScreen} />
       <Stack.Screen name="Products" component={ProductsScreen} />

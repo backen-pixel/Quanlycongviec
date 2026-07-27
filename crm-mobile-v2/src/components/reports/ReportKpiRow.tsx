@@ -6,9 +6,9 @@ import { compareTrendUp, formatComparePct, getCompareMetric } from '../../lib/re
 import { extractSparklineSeries } from '../../lib/reportChartData';
 import {
   formatReportDealKpi,
-  formatReportPipelineKpi,
+  formatReportWeightedKpi,
   reportDealKpiSub,
-  reportPipelineKpiSub,
+  reportWeightedKpiSub,
 } from '../../lib/reportKpiDisplay';
 import { Radii, useColors, type ThemeColors } from '../../theme';
 import ReportSparkline from './charts/ReportSparkline';
@@ -62,16 +62,16 @@ export default function ReportKpiRow({ summary, compare, timeline = [] }: Props)
       sub: reportDealKpiSub(),
     },
     {
-      key: 'pipeline',
-      label: 'PIPELINE',
-      value: formatReportPipelineKpi(summary),
-      compareKey: 'pipeline_value',
+      key: 'weighted',
+      label: 'GT KỲ VỌNG',
+      value: formatReportWeightedKpi(summary),
+      compareKey: 'weighted_value',
       icon: 'trending-up-outline',
-      accent: '#FB923C',
-      bg: 'rgba(249,115,22,0.12)',
-      border: 'rgba(251,146,60,0.38)',
+      accent: '#FBBF24',
+      bg: 'rgba(251,191,36,0.12)',
+      border: 'rgba(251,191,36,0.38)',
       sparkKey: 'pipeline_value',
-      sub: reportPipelineKpiSub(),
+      sub: reportWeightedKpiSub(),
     },
   ], [summary]);
 
@@ -89,12 +89,14 @@ export default function ReportKpiRow({ summary, compare, timeline = [] }: Props)
             style={[styles.card, { backgroundColor: card.bg, borderColor: card.border }]}
           >
             <View style={styles.cardTop}>
-              <Text style={[styles.label, { color: card.accent }]}>{card.label}</Text>
+              <Text style={[styles.label, { color: card.accent }]} numberOfLines={1}>
+                {card.label}
+              </Text>
               <View style={[styles.iconWrap, { backgroundColor: `${card.accent}22` }]}>
                 <Ionicons name={card.icon} size={14} color={card.accent} />
               </View>
             </View>
-            <Text style={styles.value} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.65}>
+            <Text style={styles.value} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.55}>
               {card.value}
             </Text>
             <Text style={styles.sub} numberOfLines={1}>{card.sub}</Text>
@@ -113,7 +115,7 @@ export default function ReportKpiRow({ summary, compare, timeline = [] }: Props)
               <Text style={styles.trendMuted}>—</Text>
             )}
             <View style={styles.sparkWrap}>
-              <ReportSparkline data={spark} color={card.accent} width={88} height={26} />
+              <ReportSparkline data={spark} color={card.accent} width={72} height={22} />
             </View>
           </View>
         );
@@ -125,7 +127,7 @@ export default function ReportKpiRow({ summary, compare, timeline = [] }: Props)
 const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   row: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 6,
     marginBottom: 14,
   },
   card: {
@@ -133,7 +135,7 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     minWidth: 0,
     borderRadius: Radii.lg,
     borderWidth: 1,
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     paddingTop: 10,
     paddingBottom: 8,
     minHeight: 128,
@@ -143,47 +145,49 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 4,
+    gap: 2,
   },
   label: {
-    fontSize: 9,
+    flex: 1,
+    fontSize: 8,
     fontWeight: '900',
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
   },
   iconWrap: {
-    width: 22,
-    height: 22,
-    borderRadius: 8,
+    width: 20,
+    height: 20,
+    borderRadius: 7,
     alignItems: 'center',
     justifyContent: 'center',
   },
   value: {
     color: Colors.text,
-    fontSize: 20,
+    fontSize: 16,
     fontWeight: '900',
     marginTop: 2,
   },
   sub: {
     color: Colors.textFaint,
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: '600',
     marginTop: 1,
   },
   trendRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3,
+    gap: 2,
     marginTop: 4,
   },
   trend: {
     color: Colors.green,
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: '700',
     flexShrink: 1,
   },
   trendDown: { color: Colors.red },
   trendMuted: {
     color: Colors.textFaint,
-    fontSize: 9,
+    fontSize: 8,
     marginTop: 4,
     fontWeight: '600',
   },

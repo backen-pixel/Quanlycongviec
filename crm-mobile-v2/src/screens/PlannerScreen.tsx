@@ -4,7 +4,6 @@ import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -19,14 +18,16 @@ import {
   invalidatePlannerCache,
   peekPlannerCache,
   plannerCacheAgeMs,
+  PLANNER_FETCH_LIMIT,
   PLANNER_MAX_BUFFER,
   PLANNER_SILENT_REFRESH_AFTER_MS,
   setPlannerCache,
   type PlannerFetchOpts,
 } from '../api/crm';
-import { fetchCrmCompanies } from '../api/crmMeta';
 import Avatar from '../components/Avatar';
 import NotificationBadge from '../components/NotificationBadge';
+import PlannerCompactCard, { plannerKindMeta } from '../components/planner/PlannerCompactCard';
+import SpinningLoader from '../components/SpinningLoader';
 import { useUnreadNotificationCount } from '../hooks/useUnreadNotificationCount';
 import { currentUserId, useAuth } from '../context/AuthContext';
 import {
@@ -61,15 +62,6 @@ function formatVnWeekdayDate(now = new Date()): string {
   return `${days[now.getDay()]}, ${d}/${m}/${now.getFullYear()}`;
 }
 
-type KindMeta = { label: string; icon: keyof typeof Ionicons.glyphMap; color: string; soft: string };
-
-function kindMeta(Colors: ThemeColors): Record<PlannerKind, KindMeta> {
-  return {
-    lead: { label: 'Leads của tôi', icon: 'people', color: Colors.blue, soft: Colors.blueSoft },
-    deal: { label: 'Deals của tôi', icon: 'pricetags', color: Colors.orange, soft: Colors.orangeSoft },
-  };
-}
-
 const QUICK_FILTERS: { key: PlannerQuickFilter; label: string }[] = [
   { key: 'all', label: 'Tất cả' },
   { key: 'overdue', label: 'Quá hạn' },
@@ -87,55 +79,26 @@ type SectionState = {
 
 const EMPTY_SECTION: SectionState = { items: [], total: 0, hasMore: false, nextOffset: 0 };
 
-function CompactCard({ item }: { item: PlannerItem }) {
-  const Colors = useColors();
-  const styles = useMemo(() => makeStyles(Colors), [Colors]);
-  const meta = kindMeta(Colors)[item.kind];
-  return (
-    <View style={[styles.card, { borderLeftColor: meta.color }]}>
-      <View style={styles.cardTop}>
-        <Text style={styles.cardCode}>{item.code}</Text>
-        {item.overdue ? (
-          <View style={styles.overduePill}>
-            <Text style={styles.overdueTxt}>Quá hạn</Text>
-          </View>
-        ) : null}
-        <Text style={[styles.cardDue, item.overdue && { color: Colors.red }]} numberOfLines={1}>
-          {item.deadlineLabel}
-        </Text>
-      </View>
-      <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
-      <View style={styles.cardBottom}>
-        <Text style={styles.cardMeta} numberOfLines={1}>
-          {item.contactName}
-          {item.phone ? ` · ${item.phone}` : ''}
-        </Text>
-        <View style={[styles.statusChip, { backgroundColor: meta.soft }]}>
-          <Text style={[styles.statusTxt, { color: meta.color }]} numberOfLines={1}>
-            {item.status}
-          </Text>
-        </View>
-      </View>
-    </View>
-  );
-}
-
 function PlannerSection({
   kind,
   state,
   loading,
   loadingMore,
+  showOwner,
+  maxBuffer,
   onLoadMore,
 }: {
   kind: PlannerKind;
   state: SectionState;
   loading?: boolean;
   loadingMore?: boolean;
+  showOwner?: boolean;
+  maxBuffer: number;
   onLoadMore: () => void;
 }) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
-  const meta = kindMeta(Colors)[kind];
+  const meta = plannerKindMeta(Colors, !!showOwner)[kind];
   const [searchDraft, setSearchDraft] = useState('');
   const [search, setSearch] = useState('');
   const [quickFilter, setQuickFilter] = useState<PlannerQuickFilter>('all');
@@ -167,12 +130,12 @@ function PlannerSection({
 
   const loadMoreFromServer = useCallback(() => {
     if (!state.hasMore || loadingMore) return;
-    if (state.items.length >= PLANNER_MAX_BUFFER) return;
+    if (state.items.length >= maxBuffer) return;
     onLoadMore();
-  }, [state.hasMore, state.items.length, loadingMore, onLoadMore]);
+  }, [state.hasMore, state.items.length, loadingMore, onLoadMore, maxBuffer]);
 
-  const canLoadMoreServer = state.hasMore && state.items.length < PLANNER_MAX_BUFFER;
-  const bufferCapped = state.hasMore && state.items.length >= PLANNER_MAX_BUFFER;
+  const canLoadMoreServer = state.hasMore && state.items.length < maxBuffer;
+  const bufferCapped = state.hasMore && state.items.length >= maxBuffer;
 
   return (
     <View style={styles.section}>
@@ -242,7 +205,7 @@ function PlannerSection({
 
       {loading ? (
         <View style={styles.loadingBox}>
-          <ActivityIndicator color={meta.color} />
+          <SpinningLoader variant="large" color={meta.color} />
           <Text style={[styles.empty, { marginTop: 10 }]}>Đang tải…</Text>
         </View>
       ) : filtered.length === 0 ? (
@@ -253,7 +216,7 @@ function PlannerSection({
         </Text>
       ) : (
         <>
-          {pageItems.map((it) => <CompactCard key={it.id} item={it} />)}
+          {pageItems.map((it) => <PlannerCompactCard key={it.id} item={it} showOwner={showOwner} />)}
 
           {totalPages > 1 ? (
             <View style={styles.pageRow}>
@@ -284,7 +247,7 @@ function PlannerSection({
               disabled={loadingMore}
             >
               {loadingMore ? (
-                <ActivityIndicator size="small" color={meta.color} />
+                <SpinningLoader size={18} color={meta.color} />
               ) : (
                 <Text style={[styles.loadMoreTxt, { color: meta.color }]}>
                   Tải thêm từ server ({state.items.length}/{state.total})
@@ -294,7 +257,7 @@ function PlannerSection({
           ) : null}
           {bufferCapped ? (
             <Text style={styles.filterHint}>
-              Đã tải tối đa {PLANNER_MAX_BUFFER} bản ghi gần nhất — dùng tìm kiếm/lọc để thu hẹp.
+              Đã tải tối đa {maxBuffer} bản ghi gần nhất — dùng tìm kiếm/lọc để thu hẹp.
             </Text>
           ) : null}
         </>
@@ -328,29 +291,32 @@ export default function PlannerScreen() {
   leadStateRef.current = leadState;
   dealStateRef.current = dealState;
 
+  /** Planner cá nhân — luôn lọc đúng user đăng nhập, không có phạm vi khác. */
+  const plannerScopeOpts = useMemo(
+    (): Omit<PlannerFetchOpts, 'signal' | 'companyId'> => (userId ? { assignedTo: userId } : {}),
+    [userId],
+  );
+
+  const showOwner = false;
+  const maxBuffer = PLANNER_MAX_BUFFER;
+  const fetchLimit = PLANNER_FETCH_LIMIT;
+
   const resolvePlannerCompanyId = useCallback(async (): Promise<string | undefined> => {
-    const fromUser = user?.company_id;
-    if (fromUser) return fromUser;
-    try {
-      const companies = await fetchCrmCompanies();
-      return companies[0]?.id;
-    } catch {
-      return undefined;
-    }
+    // Planner cá nhân: ưu tiên company của user; không ép công ty đầu danh sách (tránh lệch data).
+    return user?.company_id || undefined;
   }, [user?.company_id]);
 
   const load = useCallback(async (opts?: { refresh?: boolean; silent?: boolean }) => {
     if (!userId) return;
     const isRefresh = opts?.refresh ?? false;
     const silent = opts?.silent ?? false;
-    if (loadingRef.current && !isRefresh) return;
+    // Hủy request cũ rồi tải lại — tránh kẹt khi đổi phạm vi NV.
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
     loadingRef.current = true;
 
     if (!silent) {
-      // Chỉ hiện spinner section khi chưa có dữ liệu — tránh nhấp nháy khi refresh.
       if (leadStateRef.current.items.length === 0 && leadStateRef.current.total === 0) {
         setLeadsLoading(true);
       }
@@ -375,14 +341,18 @@ export default function PlannerScreen() {
       return;
     }
     companyIdRef.current = companyId;
-    const plannerOpts: PlannerFetchOpts = { signal: ac.signal, companyId };
+    const plannerOpts: PlannerFetchOpts = {
+      signal: ac.signal,
+      companyId,
+      ...plannerScopeOpts,
+    };
 
     let leadErr = '';
     let dealErr = '';
     let leadResult = EMPTY_SECTION;
     let dealResult = EMPTY_SECTION;
 
-    const leadPromise = fetchPlannerSectionPage('lead', userId, 0, undefined, plannerOpts)
+    const leadPromise = fetchPlannerSectionPage('lead', userId, 0, fetchLimit, plannerOpts)
       .then((page) => {
         leadResult = {
           items: page.items,
@@ -390,7 +360,18 @@ export default function PlannerScreen() {
           hasMore: page.hasMore,
           nextOffset: page.nextOffset,
         };
-        if (!ac.signal.aborted) setLeadState(leadResult);
+        if (!ac.signal.aborted) {
+          setLeadState(leadResult);
+          if (!silent) setLeadsLoading(false);
+          if (page.totalPromise) {
+            void page.totalPromise.then((total) => {
+              if (ac.signal.aborted) return;
+              setLeadState((prev) => (
+                prev.nextOffset === leadResult.nextOffset ? { ...prev, total } : prev
+              ));
+            }).catch(() => { /* giữ total tạm */ });
+          }
+        }
       })
       .catch((e: unknown) => {
         if (!ac.signal.aborted) {
@@ -398,13 +379,11 @@ export default function PlannerScreen() {
             (e as { response?: { data?: { error?: string } }; message?: string })?.response?.data?.error ||
             (e as { message?: string })?.message ||
             'Không tải được leads';
+          if (!silent) setLeadsLoading(false);
         }
-      })
-      .finally(() => {
-        if (!silent && !ac.signal.aborted) setLeadsLoading(false);
       });
 
-    const dealPromise = fetchPlannerSectionPage('deal', userId, 0, undefined, plannerOpts)
+    const dealPromise = fetchPlannerSectionPage('deal', userId, 0, fetchLimit, plannerOpts)
       .then((page) => {
         dealResult = {
           items: page.items,
@@ -412,7 +391,18 @@ export default function PlannerScreen() {
           hasMore: page.hasMore,
           nextOffset: page.nextOffset,
         };
-        if (!ac.signal.aborted) setDealState(dealResult);
+        if (!ac.signal.aborted) {
+          setDealState(dealResult);
+          if (!silent) setDealsLoading(false);
+          if (page.totalPromise) {
+            void page.totalPromise.then((total) => {
+              if (ac.signal.aborted) return;
+              setDealState((prev) => (prev.nextOffset === dealResult.nextOffset
+                ? { ...prev, total }
+                : prev));
+            }).catch(() => { /* giữ total tạm */ });
+          }
+        }
       })
       .catch((e: unknown) => {
         if (!ac.signal.aborted) {
@@ -420,10 +410,8 @@ export default function PlannerScreen() {
             (e as { response?: { data?: { error?: string } }; message?: string })?.response?.data?.error ||
             (e as { message?: string })?.message ||
             'Không tải được deals';
+          if (!silent) setDealsLoading(false);
         }
-      })
-      .finally(() => {
-        if (!silent && !ac.signal.aborted) setDealsLoading(false);
       });
 
     await Promise.all([leadPromise, dealPromise]);
@@ -431,11 +419,15 @@ export default function PlannerScreen() {
     if (!ac.signal.aborted) {
       if (leadErr && dealErr) setError(leadErr);
       else setError('');
-      setPlannerCache(userId, { leads: leadResult.items, deals: dealResult.items });
+      setPlannerCache(userId, { leads: leadResult.items, deals: dealResult.items }, plannerScopeOpts);
     }
     loadingRef.current = false;
-    if (!silent) setRefreshing(false);
-  }, [userId, resolvePlannerCompanyId]);
+    if (!silent) {
+      setLeadsLoading(false);
+      setDealsLoading(false);
+      setRefreshing(false);
+    }
+  }, [userId, resolvePlannerCompanyId, plannerScopeOpts, fetchLimit]);
 
   useEffect(() => {
     if (!userId) {
@@ -445,44 +437,50 @@ export default function PlannerScreen() {
       setDealsLoading(false);
       return;
     }
-    const cached = peekPlannerCache(userId);
+    const cached = peekPlannerCache(userId, plannerScopeOpts);
     if (cached) {
       setLeadState({
         items: cached.leads,
         total: cached.leads.length,
-        hasMore: false,
+        hasMore: cached.leads.length >= fetchLimit,
         nextOffset: cached.leads.length,
       });
       setDealState({
         items: cached.deals,
         total: cached.deals.length,
-        hasMore: false,
+        hasMore: cached.deals.length >= fetchLimit,
         nextOffset: cached.deals.length,
       });
       setLeadsLoading(false);
       setDealsLoading(false);
+    } else {
+      setLeadState(EMPTY_SECTION);
+      setDealState(EMPTY_SECTION);
+      setLeadsLoading(true);
+      setDealsLoading(true);
     }
-  }, [userId]);
+  }, [userId, plannerScopeOpts, fetchLimit]);
+
+  useEffect(() => {
+    if (!userId) return;
+    void load();
+  }, [userId, load]);
 
   useFocusEffect(
     useCallback(() => {
       if (!userId) return undefined;
-      const age = plannerCacheAgeMs(userId);
+      const age = plannerCacheAgeMs(userId, plannerScopeOpts);
       const hasData =
         leadStateRef.current.items.length > 0
         || leadStateRef.current.total > 0
         || dealStateRef.current.items.length > 0
         || dealStateRef.current.total > 0;
-      if (hasData) {
-        // Đã hiện cache — chỉ silent refresh khi cache > 30s (hoặc chưa có timestamp).
-        if (age == null || age >= PLANNER_SILENT_REFRESH_AFTER_MS) {
-          void load({ refresh: true, silent: true });
-        }
-      } else {
-        void load();
+      // Chỉ silent refresh khi quay lại tab và đã có data cũ.
+      if (hasData && (age == null || age >= PLANNER_SILENT_REFRESH_AFTER_MS)) {
+        void load({ refresh: true, silent: true });
       }
       return () => abortRef.current?.abort();
-    }, [load, userId]),
+    }, [load, userId, plannerScopeOpts]),
   );
 
   useCrmRealtimeRefresh(
@@ -499,12 +497,11 @@ export default function PlannerScreen() {
   const greetName = firstName(userName);
   const todayLabel = formatVnWeekdayDate();
 
-  const statsPending =
-    (leadsLoading || dealsLoading)
-    && leadState.total === 0
-    && dealState.total === 0
-    && leadState.items.length === 0
-    && dealState.items.length === 0;
+  const leadsStatsPending =
+    leadsLoading && leadState.total === 0 && leadState.items.length === 0;
+  const dealsStatsPending =
+    dealsLoading && dealState.total === 0 && dealState.items.length === 0;
+  const overdueStatsPending = leadsStatsPending && dealsStatsPending;
 
   const summary = useMemo(() => ({
     leads: leadState.total,
@@ -514,45 +511,49 @@ export default function PlannerScreen() {
 
   const loadMoreLeads = useCallback(async () => {
     if (!userId || leadsLoadingMore || !leadState.hasMore) return;
+    if (leadState.items.length >= maxBuffer) return;
     setLeadsLoadingMore(true);
     try {
-      const page = await fetchPlannerSectionPage('lead', userId, leadState.nextOffset, undefined, {
+      const page = await fetchPlannerSectionPage('lead', userId, leadState.nextOffset, fetchLimit, {
         companyId: companyIdRef.current,
+        ...plannerScopeOpts,
       });
-      const mergedItems = [...leadState.items, ...page.items];
+      const mergedItems = [...leadState.items, ...page.items].slice(0, maxBuffer);
       const merged: SectionState = {
         items: mergedItems,
         total: leadState.total,
-        hasMore: page.hasMore,
+        hasMore: page.hasMore && mergedItems.length < maxBuffer,
         nextOffset: page.nextOffset,
       };
       setLeadState(merged);
-      setPlannerCache(userId, { leads: merged.items, deals: dealState.items });
+      setPlannerCache(userId, { leads: merged.items, deals: dealState.items }, plannerScopeOpts);
     } finally {
       setLeadsLoadingMore(false);
     }
-  }, [userId, leadsLoadingMore, leadState, dealState.items]);
+  }, [userId, leadsLoadingMore, leadState, dealState.items, maxBuffer, fetchLimit, plannerScopeOpts]);
 
   const loadMoreDeals = useCallback(async () => {
     if (!userId || dealsLoadingMore || !dealState.hasMore) return;
+    if (dealState.items.length >= maxBuffer) return;
     setDealsLoadingMore(true);
     try {
-      const page = await fetchPlannerSectionPage('deal', userId, dealState.nextOffset, undefined, {
+      const page = await fetchPlannerSectionPage('deal', userId, dealState.nextOffset, fetchLimit, {
         companyId: companyIdRef.current,
+        ...plannerScopeOpts,
       });
-      const mergedItems = [...dealState.items, ...page.items];
+      const mergedItems = [...dealState.items, ...page.items].slice(0, maxBuffer);
       const merged: SectionState = {
         items: mergedItems,
         total: dealState.total,
-        hasMore: page.hasMore,
+        hasMore: page.hasMore && mergedItems.length < maxBuffer,
         nextOffset: page.nextOffset,
       };
       setDealState(merged);
-      setPlannerCache(userId, { leads: leadState.items, deals: merged.items });
+      setPlannerCache(userId, { leads: leadState.items, deals: merged.items }, plannerScopeOpts);
     } finally {
       setDealsLoadingMore(false);
     }
-  }, [userId, dealsLoadingMore, dealState, leadState.items]);
+  }, [userId, dealsLoadingMore, dealState, leadState.items, maxBuffer, fetchLimit, plannerScopeOpts]);
 
   return (
     <View style={styles.root}>
@@ -573,9 +574,6 @@ export default function PlannerScreen() {
               <Text style={styles.greetDate} numberOfLines={1}>
                 {todayLabel}
               </Text>
-              <Text style={styles.greetSub} numberOfLines={1}>
-                Chúc bạn một ngày làm việc hiệu quả! 👋
-              </Text>
             </View>
           </View>
           <Pressable style={styles.bellBtn} onPress={() => navigation.navigate('Notifications')}>
@@ -583,20 +581,23 @@ export default function PlannerScreen() {
             <NotificationBadge count={unreadNotifCount} style={styles.bellBadge} />
           </Pressable>
         </View>
+        <Text style={styles.motivateTxt} numberOfLines={1}>
+          Chúc bạn một ngày làm việc hiệu quả! 👋
+        </Text>
 
         <View style={styles.summary}>
           <View style={styles.sumItem}>
-            <Text style={[styles.sumValue, { color: Colors.blue }]}>{statsPending ? '…' : summary.leads}</Text>
+            <Text style={[styles.sumValue, { color: Colors.blue }]}>{leadsStatsPending ? '…' : summary.leads}</Text>
             <Text style={styles.sumLabel}>Leads</Text>
           </View>
           <View style={styles.sumDivider} />
           <View style={styles.sumItem}>
-            <Text style={[styles.sumValue, { color: Colors.orange }]}>{statsPending ? '…' : summary.deals}</Text>
+            <Text style={[styles.sumValue, { color: Colors.orange }]}>{dealsStatsPending ? '…' : summary.deals}</Text>
             <Text style={styles.sumLabel}>Deals</Text>
           </View>
           <View style={styles.sumDivider} />
           <View style={styles.sumItem}>
-            <Text style={[styles.sumValue, { color: Colors.red }]}>{statsPending ? '…' : summary.overdue}</Text>
+            <Text style={[styles.sumValue, { color: Colors.red }]}>{overdueStatsPending ? '…' : summary.overdue}</Text>
             <Text style={styles.sumLabel}>Quá hạn</Text>
           </View>
         </View>
@@ -645,6 +646,8 @@ export default function PlannerScreen() {
             state={leadState}
             loading={leadsLoading}
             loadingMore={leadsLoadingMore}
+            showOwner={showOwner}
+            maxBuffer={maxBuffer}
             onLoadMore={() => void loadMoreLeads()}
           />
           <PlannerSection
@@ -652,6 +655,8 @@ export default function PlannerScreen() {
             state={dealState}
             loading={dealsLoading}
             loadingMore={dealsLoadingMore}
+            showOwner={showOwner}
+            maxBuffer={maxBuffer}
             onLoadMore={() => void loadMoreDeals()}
           />
         </View>
@@ -667,14 +672,20 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    marginBottom: 16,
-    gap: 12,
+    marginBottom: 6,
+    gap: 8,
   },
   headerLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 12, minWidth: 0 },
   headerTextWrap: { flex: 1, minWidth: 0 },
-  greetTitle: { color: Colors.text, fontSize: 17, fontWeight: '800' },
-  greetDate: { color: Colors.textMuted, fontSize: 12, marginTop: 2, fontWeight: '600' },
-  greetSub: { color: Colors.textFaint, fontSize: 12, marginTop: 2 },
+  greetTitle: { color: Colors.text, fontSize: 20, fontWeight: '900' },
+  greetDate: { color: Colors.textMuted, fontSize: 12.5, marginTop: 3, fontWeight: '600' },
+  motivateTxt: {
+    color: Colors.textFaint,
+    fontSize: 13,
+    fontWeight: '600',
+    paddingHorizontal: 16,
+    marginBottom: 16,
+  },
   bellBtn: {
     width: 40,
     height: 40,
@@ -795,6 +806,8 @@ const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   cardMeta: { flex: 1, color: Colors.textMuted, fontSize: 11, fontWeight: '600' },
   statusChip: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: Radii.pill, maxWidth: '42%' },
   statusTxt: { fontSize: 10, fontWeight: '800' },
+  ownerRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+  ownerTxt: { flex: 1, color: Colors.textFaint, fontSize: 11, fontWeight: '600' },
   pageRow: {
     flexDirection: 'row',
     alignItems: 'center',

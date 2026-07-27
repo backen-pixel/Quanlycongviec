@@ -31,6 +31,15 @@ export function reportExpectedKpiValue(summary: OrgReportRow): number {
   return Number(summary.expected_value ?? 0) || 0;
 }
 
+/** GT kỳ vọng (weighted × xác suất) — khớp BC web «Giá trị kỳ vọng». */
+export function reportWeightedKpiValue(summary: OrgReportRow): number {
+  return Number(
+    summary.weighted_value
+      ?? summary.open_pipeline_value
+      ?? 0,
+  ) || 0;
+}
+
 export function formatReportDealKpi(summary: OrgReportRow): string {
   return String(reportDealKpiCount(summary));
 }
@@ -41,4 +50,12 @@ export function formatReportPipelineKpi(summary: OrgReportRow): string {
 
 export function formatReportExpectedKpi(summary: OrgReportRow): string {
   return formatVndShort(reportExpectedKpiValue(summary));
+}
+
+export function formatReportWeightedKpi(summary: OrgReportRow): string {
+  return formatVndShort(reportWeightedKpiValue(summary));
+}
+
+export function reportWeightedKpiSub(): string {
+  return 'Deal × xác suất';
 }

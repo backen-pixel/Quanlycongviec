@@ -1,4 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as DocumentPicker from 'expo-document-picker';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -35,12 +37,16 @@ import {
   type DriveFolder,
   type DriveRoot,
 } from '../api/drive';
+import type { RootStackParamList } from '../navigation/types';
 import { Radii, useColors, type ThemeColors } from '../theme';
+
+type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 export default function DriveScreen() {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation<Nav>();
 
   const [roots, setRoots] = useState<DriveRoot[]>([]);
   const [activeRoot, setActiveRoot] = useState<DriveRoot | null>(null);
@@ -236,6 +242,9 @@ export default function DriveScreen() {
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
       {/* Header */}
       <View style={styles.header}>
+        <Pressable style={styles.backBtn} onPress={() => navigation.goBack()} hitSlop={8}>
+          <Ionicons name="chevron-back" size={24} color={Colors.text} />
+        </Pressable>
         <Pressable
           style={styles.rootPicker}
           onPress={() => setShowRootPicker(true)}
@@ -404,6 +413,10 @@ function makeStyles(c: ThemeColors) {
   return StyleSheet.create({
     root: { flex: 1, backgroundColor: c.bg },
     header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, gap: 8, marginBottom: 6 },
+    backBtn: {
+      width: 40, height: 40, borderRadius: Radii.md,
+      alignItems: 'center', justifyContent: 'center', backgroundColor: c.cardAlt,
+    },
     rootPicker: {
       flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6,
       paddingHorizontal: 10, paddingVertical: 8, backgroundColor: c.cardAlt, borderRadius: Radii.md,

@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useMemo } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { ActivityFeedItem } from '../../lib/reportActivityFeed';
 import { formatRelativeTimeVi } from '../../lib/reportFormat';
 import { Radii, useColors, type ThemeColors } from '../../theme';
@@ -29,9 +29,10 @@ const TONES: Record<ActivityFeedItem['badgeTone'], { bg: string; text: string; i
 type Props = {
   items: ActivityFeedItem[];
   loading?: boolean;
+  onItemPress?: (item: ActivityFeedItem) => void;
 };
 
-export default function ReportRecentActivityFeed({ items, loading }: Props) {
+export default function ReportRecentActivityFeed({ items, loading, onItemPress }: Props) {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
 
@@ -53,8 +54,8 @@ export default function ReportRecentActivityFeed({ items, loading }: Props) {
       {items.map((item) => {
         const tone = TONES[item.badgeTone];
         const rel = item.occurredAt ? formatRelativeTimeVi(item.occurredAt) : '';
-        return (
-          <View key={item.id} style={styles.row}>
+        const row = (
+          <>
             <View style={[styles.iconWrap, { backgroundColor: tone.bg }]}>
               <Ionicons name={ICONS[item.kind]} size={18} color={tone.icon} />
             </View>
@@ -68,6 +69,18 @@ export default function ReportRecentActivityFeed({ items, loading }: Props) {
               {item.value ? <Text style={styles.value}>{item.value}</Text> : null}
               <Text style={[styles.badge, { color: tone.text }]}>{item.badge}</Text>
             </View>
+          </>
+        );
+        if (onItemPress) {
+          return (
+            <Pressable key={item.id} style={styles.row} onPress={() => onItemPress(item)}>
+              {row}
+            </Pressable>
+          );
+        }
+        return (
+          <View key={item.id} style={styles.row}>
+            {row}
           </View>
         );
       })}

@@ -16,6 +16,7 @@ import BubbleChatOverlayLauncher from './src/components/BubbleChatOverlayLaunche
 import BubbleOutboundCallHandler from './src/components/BubbleOutboundCallHandler';
 import SystemBubbleSync from './src/components/SystemBubbleSync';
 import PermissionBootstrap from './src/components/PermissionBootstrap';
+import DeadlineOverdueRunner from './src/components/DeadlineOverdueRunner';
 import VoiceSyncRunner from './src/components/VoiceSyncRunner';
 import VoiceShareHandler, { VoiceShareLoginHint } from './src/components/VoiceShareHandler';
 import UpdateGate from './src/components/UpdateGate';
@@ -152,6 +153,7 @@ function Gate() {
               <BubbleChatOverlayLauncher />
               {CALLING_ENABLED ? <BubbleOutboundCallHandler /> : null}
               <VoiceSyncRunner />
+              <DeadlineOverdueRunner />
               <BootSplash
                 visible={showBootSplash}
                 transparent={bubbleBoot}

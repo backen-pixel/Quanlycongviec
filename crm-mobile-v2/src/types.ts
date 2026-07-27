@@ -91,6 +91,8 @@ export type CrmPipelineStage = {
   countsAsCompletedRevenue?: boolean;
   canonicalSlug?: string | null;
   dealReportBucket?: string | null;
+  /** SLA cột (ngày) — dùng view Deadline / Kanban. */
+  slaDays?: number | null;
 };
 
 export type CrmKanbanItem = {
@@ -151,12 +153,16 @@ export type PlannerItem = {
   code: string;
   title: string;
   status: string; // tên stage
+  stageId?: string;
+  companyId?: string;
   contactName: string;
   phone: string;
   location: string;
   valueLabel?: string; // chỉ deal
   temp?: LeadTemp; // chỉ lead
   ownerId: string;
+  assignedToId?: string;
+  leadOwnerId?: string;
   ownerName: string;
   ownerInitials: string;
   ownerColor: string;

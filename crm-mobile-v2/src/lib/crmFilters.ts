@@ -1,5 +1,5 @@
 import type { CrmStageFetchOpts } from '../api/crm';
-import type { CrmKanbanItem } from '../types';
+import type { CrmKanbanItem, PlannerItem } from '../types';
 import { vnTodayYmd, vnDefaultMonthRange, ymdFromLocalDate } from './vnDate';
 
 export type PhoneFilter = '' | 'has_phone' | 'no_phone';
@@ -164,10 +164,10 @@ export function activeFilterChips(
     chips.push({ key: 'phone-all', label: 'Mọi SĐT', onClear: () => onPatch({ phone: DEFAULT_CRM_FILTERS.phone }) });
   }
   // Khi bị khóa phạm vi (nhân viên), không hiển thị chip xóa nhanh cho Công ty.
-  if (!lockScope && filters.companyId && labels.companyName) {
+  if (!lockScope && filters.companyId) {
     chips.push({
       key: 'co',
-      label: labels.companyName,
+      label: labels.companyName || 'Công ty đã chọn',
       onClear: () => onPatch({ companyId: '', regionId: '', departmentId: '', assigneeUserId: '', assignee: 'all' }),
     });
   }
@@ -261,6 +261,61 @@ export function clientFilterKanbanItems(
   }
 
   return result;
+}
+
+/** Lọc client cho tab Deadline (PlannerItem) — due + searchField giống Hub. */
+export function clientFilterDeadlineItems(
+  items: PlannerItem[],
+  filters: CrmHubFilters,
+  search: string,
+): PlannerItem[] {
+  let result = items;
+  const q = search.trim().toLowerCase();
+  const qDigits = q.replace(/\D/g, '');
+
+  if (filters.due === 'overdue') result = result.filter((i) => i.overdue);
+  else if (filters.due === 'today') {
+    result = result.filter((i) => {
+      if (!i.dueIso) return false;
+      try {
+        const d = new Date(i.dueIso);
+        const now = new Date();
+        return d.getFullYear() === now.getFullYear()
+          && d.getMonth() === now.getMonth()
+          && d.getDate() === now.getDate();
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  if (!q) return result;
+
+  if (filters.searchField === 'assignee') {
+    return result.filter((i) => (i.ownerName || '').toLowerCase().includes(q));
+  }
+  if (filters.searchField === 'title') {
+    return result.filter((i) =>
+      (i.title || '').toLowerCase().includes(q)
+      || (i.contactName || '').toLowerCase().includes(q),
+    );
+  }
+  if (filters.searchField === 'code') {
+    return result.filter((i) => (i.code || '').toLowerCase().includes(q));
+  }
+  if (filters.searchField === 'phone') {
+    return result.filter((i) => (i.phone || '').replace(/\D/g, '').includes(qDigits));
+  }
+  // searchField === 'all'
+  return result.filter((i) => {
+    if ((i.title || '').toLowerCase().includes(q)) return true;
+    if ((i.contactName || '').toLowerCase().includes(q)) return true;
+    if ((i.code || '').toLowerCase().includes(q)) return true;
+    if ((i.ownerName || '').toLowerCase().includes(q)) return true;
+    if ((i.status || '').toLowerCase().includes(q)) return true;
+    if (qDigits.length >= 3 && (i.phone || '').replace(/\D/g, '').includes(qDigits)) return true;
+    return false;
+  });
 }
 
 export function isOrphanKanbanItem(item: CrmKanbanItem, validStageIds: Set<string>): boolean {

@@ -108,6 +108,15 @@ function handleNotificationData(data: Record<string, unknown> | undefined): void
   if (!data) return;
   const entity = String(data.entity_type || '').toLowerCase();
   const type = String(data.type || '').toLowerCase();
+  if (
+    type === 'deadline_overdue_local'
+    || entity === 'deadline_tab'
+    || type === 'crm_deadline_overdue'
+    || type === 'crm_kanban_deadline_overdue'
+  ) {
+    navigate('Tabs', { screen: 'Deadline' });
+    return;
+  }
   if (entity === 'crm_deal' || type.includes('deal')) {
     navigate('CrmHub', { initialMode: 'deals' });
     return;

@@ -1,8 +1,8 @@
 import type { NavigatorScreenParams } from '@react-navigation/native';
 
 export type TabParamList = {
-  Planner: undefined;
-  Recordings: undefined;
+  Kanban: undefined;
+  Deadline: undefined;
   CreatePlaceholder: undefined;
   Messages: undefined;
   Menu: undefined;
@@ -10,6 +10,8 @@ export type TabParamList = {
 
 export type RootStackParamList = {
   Tabs: NavigatorScreenParams<TabParamList> | undefined;
+  /** Trang trống — danh sách Deal đang phụ trách (Menu → Công việc → Planner). */
+  Planner: undefined;
   CrmHub: { initialMode?: 'leads' | 'deals' | 'orders'; initialAssignee?: 'mine' } | undefined;
   LeadDealDetail: {
     leadId: string;
@@ -46,11 +48,13 @@ export type RootStackParamList = {
     suggestedName?: string;
   };
   CreateEntity: { kind: 'lead' | 'deal' };
+  Recordings: undefined;
   VoiceLocalRecordings: undefined;
   Drive: undefined;
   Settings: undefined;
   Notifications: undefined;
   Events: undefined;
+  Leaves: undefined;
   Quotations: undefined;
   Orders: undefined;
   Products: undefined;

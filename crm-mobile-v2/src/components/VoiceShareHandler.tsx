@@ -44,7 +44,7 @@ export default function VoiceShareHandler({ enabled }: Props) {
         resetShareIntent();
         handledKeyRef.current = '';
         if (uploaded > 0) {
-          navigate('Tabs', { screen: 'Recordings' });
+          navigate('Recordings');
           const extra = errors.length ? `\n\n${errors.length} file lỗi: ${errors[0]}` : '';
           Alert.alert(
             'Đã tải lên CRM',

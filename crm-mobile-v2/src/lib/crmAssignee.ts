@@ -1,6 +1,6 @@
 import type { CrmEmployee } from '../api/crmMeta';
 import type { AuthUser } from '../context/AuthContext';
-import type { CrmKanbanItem } from '../types';
+import type { CrmKanbanItem, PlannerItem } from '../types';
 
 const ELEVATED_CRM_ROLES = new Set([
   'admin',
@@ -13,25 +13,31 @@ const ELEVATED_CRM_ROLES = new Set([
   'director',
 ]);
 
-export function canViewAllCrm(user: { role?: string } | null): boolean {
+export function canViewAllCrm(user: { role?: string | null } | null | undefined): boolean {
   return ELEVATED_CRM_ROLES.has(String(user?.role ?? '').trim().toLowerCase());
 }
 
-export function itemIsMine(item: CrmKanbanItem, myId: string): boolean {
+/** Trường tối thiểu để kiểm tra quyền gán (Kanban + Deadline). */
+export type CrmAssigneeTarget = Pick<CrmKanbanItem, 'kind' | 'ownerId'> & {
+  assignedToId?: string;
+  leadOwnerId?: string;
+};
+
+export function itemIsMine(item: CrmAssigneeTarget, myId: string): boolean {
   if (!myId) return false;
   const ids = [item.assignedToId, item.leadOwnerId, item.ownerId].filter(Boolean);
   return ids.some((id) => String(id) === String(myId));
 }
 
-export function itemHasAssignee(item: CrmKanbanItem): boolean {
+export function itemHasAssignee(item: CrmAssigneeTarget): boolean {
   const id = item.assignedToId || item.leadOwnerId || item.ownerId;
   return !!id && id !== 'unassigned';
 }
 
-/** Có hiện nút gán trên thẻ Kanban. */
+/** Có hiện nút gán trên thẻ Kanban / Deadline. */
 export function canAssignCrmCard(
   user: AuthUser | null,
-  item: CrmKanbanItem,
+  item: CrmAssigneeTarget,
   myId: string,
   companyId: string,
 ): boolean {
@@ -68,4 +74,14 @@ export function buildAssignPickerOptions(
 
 export function canClearCrmAssignee(user: AuthUser | null): boolean {
   return canViewAllCrm(user);
+}
+
+/** Map PlannerItem → target gán (Deadline). */
+export function plannerAsAssigneeTarget(item: PlannerItem): CrmAssigneeTarget {
+  return {
+    kind: item.kind,
+    ownerId: item.ownerId,
+    assignedToId: item.assignedToId || '',
+    leadOwnerId: item.leadOwnerId || '',
+  };
 }

@@ -16,12 +16,14 @@ export function useOrgActivityFeed(query: EmployeeReportQuery, enabled = true) {
   const abortRef = useRef<AbortController | null>(null);
   const latestAtRef = useRef<string | null>(null);
 
+  const itemsLenRef = useRef(0);
+
   const load = useCallback(async (incremental = false) => {
     if (!enabled) return;
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
-    setLoading(true);
+    if (!incremental || itemsLenRef.current === 0) setLoading(true);
     setError(null);
     try {
       const res = await fetchOrgActivityFeed(query, {
@@ -51,10 +53,15 @@ export function useOrgActivityFeed(query: EmployeeReportQuery, enabled = true) {
   }, [enabled, query]);
 
   useEffect(() => {
+    itemsLenRef.current = items.length;
+  }, [items.length]);
+
+  useEffect(() => {
+    if (!enabled) return;
     latestAtRef.current = null;
     void load(false);
     return () => abortRef.current?.abort();
-  }, [load]);
+  }, [enabled, load]);
 
   useCrmRealtimeRefresh(() => {
     void load(true);

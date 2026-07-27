@@ -7,8 +7,9 @@ export function formatVndExact(value?: number | null): string {
   return `${Math.round(num).toLocaleString('vi-VN')}đ`;
 }
 
-/** Tiền báo cáo rút gọn — khớp web tooltip chi tiết hơn toFixed(1).
- *  vd: 1.584.000.000 → «1 tỷ 584 tr» (không làm tròn thành «1,6 tỷ»).
+/**
+ * Rút gọn tiền báo cáo — luôn cắt xuống (floor), không làm tròn lên.
+ * vd: 2.978.814.654đ → «2,978 tỷ» (không thành «2,979 tỷ» / «2 tỷ 979 tr»).
  */
 export function formatVndShort(value?: number | null): string {
   const num = Number(value);
@@ -17,23 +18,22 @@ export function formatVndShort(value?: number | null): string {
   const sign = num < 0 ? '-' : '';
 
   if (abs >= 1e9) {
-    let ty = Math.floor(abs / 1e9);
-    let tr = Math.round((abs % 1e9) / 1e6);
-    if (tr >= 1000) {
-      ty += 1;
-      tr = 0;
-    }
-    if (tr <= 0) return `${sign}${ty} tỷ`;
-    return `${sign}${ty} tỷ ${tr.toLocaleString('vi-VN')} tr`;
+    // Cắt tới 3 chữ số thập phân của tỷ (theo triệu đồng).
+    const milliTy = Math.floor(abs / 1e6);
+    const tyWhole = Math.floor(milliTy / 1000);
+    const tyFrac = milliTy % 1000;
+    if (tyFrac <= 0) return `${sign}${tyWhole.toLocaleString('vi-VN')} tỷ`;
+    const fracStr = String(tyFrac).padStart(3, '0').replace(/0+$/, '');
+    return `${sign}${tyWhole.toLocaleString('vi-VN')},${fracStr} tỷ`;
   }
 
   if (abs >= 1e6) {
-    const tr = Math.round(abs / 1e6);
+    const tr = Math.floor(abs / 1e6);
     return `${sign}${tr.toLocaleString('vi-VN')} tr`;
   }
 
   if (abs >= 1e3) {
-    const k = Math.round(abs / 1e3);
+    const k = Math.floor(abs / 1e3);
     return `${sign}${k.toLocaleString('vi-VN')} k`;
   }
 

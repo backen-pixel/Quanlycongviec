@@ -13,7 +13,8 @@ export type CrmEmployee = {
 
 export async function fetchCrmCompanies(signal?: AbortSignal): Promise<CrmCompany[]> {
   try {
-    const { data } = await api.get('/companies', { signal });
+    // for_module=crm: chỉ công ty khối CRM — không lẫn xưởng SX / lắp đặt VC.
+    const { data } = await api.get('/companies', { params: { for_module: 'crm' }, signal });
     const rows = (data as { companies?: CrmCompany[] })?.companies;
     return Array.isArray(rows)
       ? rows.map((c) => ({

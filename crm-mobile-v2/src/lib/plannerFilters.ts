@@ -52,10 +52,20 @@ export function filterPlannerItems(
     || (i.title || '').toLowerCase().includes(q)
     || (i.contactName || '').toLowerCase().includes(q)
     || (i.status || '').toLowerCase().includes(q)
+    || (i.ownerName || '').toLowerCase().includes(q)
     || (qDigits.length >= 3 && (i.phone || '').replace(/\D/g, '').includes(qDigits)),
   );
 }
 
 export function plannerSearchPlaceholder(kind: 'lead' | 'deal'): string {
   return `Tìm mã, tên khách, SĐT ${kind}...`;
+}
+
+/** Sắp xếp theo mức độ khẩn cấp deadline: quá hạn (lâu nhất) → gần đến hạn nhất → chưa hẹn. */
+export function sortPlannerItemsByDeadline(items: PlannerItem[]): PlannerItem[] {
+  const time = (i: PlannerItem) => (i.dueIso ? new Date(i.dueIso).getTime() : Number.MAX_SAFE_INTEGER);
+  return [...items].sort((a, b) => {
+    if (!!a.overdue !== !!b.overdue) return a.overdue ? -1 : 1;
+    return time(a) - time(b);
+  });
 }
