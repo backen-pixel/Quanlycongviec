@@ -223,23 +223,109 @@ async function touchProjectSxPipelineStageEnteredAt(projectId, targetColId, curr
   }
 }
 
-/** Xóa deadline thẻ Kanban SX — cột «Đã công» không còn theo dõi hạn. */
-async function clearSxKanbanDeadlinesForProjects(projectIds) {
+/**
+ * Kéo vào cột «Hoàn thành» (counts_as_completed_revenue):
+ * xóa hết deadline / ngày giao xưởng + hủy lịch hẹn SX còn mở.
+ */
+async function clearSxSchedulesOnCompletedForProjects(projectIds) {
   const ids = [...new Set((projectIds || []).map(String).filter(Boolean))];
   if (!ids.length) return;
   const nowIso = new Date().toISOString();
+
+  const projectPatch = {
+    sx_kanban_deadline_at: null,
+    sx_kanban_deadline_reason: null,
+    production_deadline: null,
+    delivery_date: null,
+    deadline: null,
+    updated_at: nowIso,
+  };
+  let { error: projErr } = await supabase.from('projects').update(projectPatch).in('id', ids);
+  if (projErr) {
+    const m = String(projErr.message || '');
+    const fallback = { ...projectPatch };
+    if (/sx_kanban_deadline/.test(m)) {
+      delete fallback.sx_kanban_deadline_at;
+      delete fallback.sx_kanban_deadline_reason;
+    }
+    if (/production_deadline/.test(m)) delete fallback.production_deadline;
+    if (/delivery_date/.test(m)) delete fallback.delivery_date;
+    ({ error: projErr } = await supabase.from('projects').update(fallback).in('id', ids));
+    if (projErr && !/sx_kanban_deadline|production_deadline|delivery_date|deadline/.test(String(projErr.message || ''))) {
+      throw projErr;
+    }
+  }
+
+  const { data: deals, error: dealErr } = await supabase
+    .from('crm_leads')
+    .select('id')
+    .eq('type', 'deal')
+    .in('project_id', ids);
+  if (dealErr) throw dealErr;
+  const leadIds = [...new Set((deals || []).map((d) => String(d.id)).filter(Boolean))];
+
+  if (leadIds.length) {
+    try {
+      await supabase
+        .from('crm_leads')
+        .update({
+          kanban_deadline_at: null,
+          kanban_deadline_reason: null,
+          updated_at: nowIso,
+        })
+        .in('id', leadIds);
+    } catch (e) {
+      if (!/kanban_deadline/.test(e.message || '')) throw e;
+    }
+
+    // Deadline nhiệm vụ SX trên deal (slug sx_*)
+    try {
+      await supabase
+        .from('crm_tasks')
+        .update({ deadline: null, updated_at: nowIso })
+        .in('lead_id', leadIds)
+        .like('stage_slug', 'sx_%')
+        .not('deadline', 'is', null);
+    } catch (e) {
+      console.warn('[production] clear sx task deadlines on complete:', e.message);
+    }
+
+    // Hủy lịch hẹn SX còn mở gắn deal / dự án
+    try {
+      await supabase
+        .from('crm_events')
+        .update({
+          status: 'cancelled',
+          cancel_reason: 'Tự hủy khi kéo dự án SX sang cột hoàn thành',
+          updated_at: nowIso,
+        })
+        .in('lead_id', leadIds)
+        .eq('module', 'production')
+        .in('status', ['planned', 'in_progress']);
+    } catch (e) {
+      console.warn('[production] cancel production events on complete:', e.message);
+    }
+  }
+
   try {
     await supabase
-      .from('projects')
+      .from('crm_events')
       .update({
-        sx_kanban_deadline_at: null,
-        sx_kanban_deadline_reason: null,
+        status: 'cancelled',
+        cancel_reason: 'Tự hủy khi kéo dự án SX sang cột hoàn thành',
         updated_at: nowIso,
       })
-      .in('id', ids);
+      .in('project_id', ids)
+      .eq('module', 'production')
+      .in('status', ['planned', 'in_progress']);
   } catch (e) {
-    if (!/sx_kanban_deadline/.test(e.message || '')) throw e;
+    console.warn('[production] cancel project production events on complete:', e.message);
   }
+}
+
+/** Alias cũ — dùng khi bật cờ hoàn thành trên cột. */
+async function clearSxKanbanDeadlinesForProjects(projectIds) {
+  return clearSxSchedulesOnCompletedForProjects(projectIds);
 }
 
 async function clearSxKanbanDeadlinesForPipelineColumn(colId) {
@@ -250,7 +336,13 @@ async function clearSxKanbanDeadlinesForPipelineColumn(colId) {
     .eq('sx_pipeline_stage_id', colId)
     .eq('type', 'deal')
     .not('project_id', 'is', null);
-  await clearSxKanbanDeadlinesForProjects((leads || []).map((l) => l.project_id));
+  const fromLeads = (leads || []).map((l) => l.project_id);
+  const { data: projects } = await supabase
+    .from('projects')
+    .select('id')
+    .eq('sx_kanban_column_id', colId);
+  const fromProjects = (projects || []).map((p) => p.id);
+  await clearSxSchedulesOnCompletedForProjects([...fromLeads, ...fromProjects]);
 }
 
 /** Gán NV mặc định theo phân loại xưởng khi deal vào cột intake nếu dự án chưa có đủ NV SX. */
@@ -1703,7 +1795,7 @@ const WORKSHOP_TYPE_SCALAR = 'workshop_type_id,';
 const WORKSHOP_TYPE_EMBED = 'workshop_type:workshop_project_types(id, name, applies_to),';
 
 const PROJECT_DETAIL_SELECT = `
-        id, company_id, code, name, description, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, ${MIGRATION_300_COLS} ${MIGRATION_76_COLS} status, notes, created_at,
+        id, company_id, code, name, description, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_address, install_date, ${MIGRATION_300_COLS} ${MIGRATION_76_COLS} status, notes, created_at,
         current_stage_id, ${WORKSHOP_TYPE_SCALAR}
         ${WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -1735,7 +1827,7 @@ const PROJECT_DETAIL_SELECT = `
 // Fallback select khi DB thiếu cột/relationship mới (FK users, task_checklists, participants…)
 // Mục tiêu: vẫn mở được chi tiết dự án + hiển thị stage/tag đúng.
 const PROJECT_DETAIL_SELECT_MIN = `
-        id, company_id, code, name, description, estimated_value, production_value, priority, deadline, ${MIGRATION_300_COLS} status, notes, created_at,
+        id, company_id, code, name, description, estimated_value, production_value, priority, deadline, install_address, install_date, ${MIGRATION_300_COLS} status, notes, created_at,
         current_stage_id, ${WORKSHOP_TYPE_SCALAR}
         ${WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -2486,6 +2578,9 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       if (isColChange && isCompletedCol) {
         projectUpd.sx_kanban_deadline_at = null;
         projectUpd.sx_kanban_deadline_reason = null;
+        projectUpd.production_deadline = null;
+        projectUpd.delivery_date = null;
+        projectUpd.deadline = null;
       } else if (hasDeadlineInput) {
         projectUpd.sx_kanban_deadline_at = new Date(parsedDeadlineTs).toISOString();
         const reason = (req.body?.deadline_reason || req.body?.sx_kanban_deadline_reason || '').toString().trim();
@@ -2505,10 +2600,14 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       }
       if (Object.keys(projectUpd).length) {
         let { error: projUpdErr } = await supabase.from('projects').update(projectUpd).eq('id', id);
-        if (projUpdErr && /sx_kanban_deadline/.test(projUpdErr.message || '')) {
+        if (projUpdErr && /sx_kanban_deadline|production_deadline|delivery_date/.test(projUpdErr.message || '')) {
           const fallbackUpd = { ...projectUpd };
-          delete fallbackUpd.sx_kanban_deadline_at;
-          delete fallbackUpd.sx_kanban_deadline_reason;
+          if (/sx_kanban_deadline/.test(projUpdErr.message || '')) {
+            delete fallbackUpd.sx_kanban_deadline_at;
+            delete fallbackUpd.sx_kanban_deadline_reason;
+          }
+          if (/production_deadline/.test(projUpdErr.message || '')) delete fallbackUpd.production_deadline;
+          if (/delivery_date/.test(projUpdErr.message || '')) delete fallbackUpd.delivery_date;
           ({ error: projUpdErr } = await supabase.from('projects').update(fallbackUpd).eq('id', id));
           if (!projUpdErr && hasDeadlineInput) {
             return res.status(503).json({
@@ -2530,6 +2629,15 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
           }
         }
         if (projUpdErr) throw projUpdErr;
+      }
+
+      // Cột hoàn thành: xóa deadline deal CRM + deadline NV SX + hủy lịch hẹn SX còn mở
+      if (isColChange && isCompletedCol) {
+        try {
+          await clearSxSchedulesOnCompletedForProjects([id]);
+        } catch (clearErr) {
+          console.warn('[production] clear SX schedules on completed column:', clearErr.message);
+        }
       }
 
       const { data: updatedPipe } = await supabase

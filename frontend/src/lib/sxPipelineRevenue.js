@@ -7,6 +7,12 @@ import { effectivePipelineStageSlaDays, isPipelineStageSlaDisabled } from './crm
 const INTAKE_BUCKET = 'won_pending';
 const VC_SHIPPED_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
 
+/**
+ * TẠM: tắt cổng bàn giao VC (yêu cầu Sale chọn công ty) + khoá kéo trên Kanban SX.
+ * Đặt lại `false` khi muốn bật lại luồng bàn giao VC bình thường.
+ */
+export const TEMP_SX_FREE_DRAG = true;
+
 /** Chi phí sản xuất — KPI / tổng cột / công nợ (không fallback doanh thu CRM). */
 export function resolveSxProjectValue(project) {
   const pv = Number(project?.production_value);
@@ -94,6 +100,7 @@ export function sxStatusComesFromColumn(project, col) {
  * Khớp BE `shouldForceSxHandoverColumn` (workshopKanban.js).
  */
 export function shouldForceSxHandoverColumn(project, projectColRow) {
+  if (TEMP_SX_FREE_DRAG) return false;
   const st = String(project?.status || '');
   if (!st) return false;
   const inLogistics = Boolean(
@@ -112,6 +119,7 @@ export function shouldForceSxHandoverColumn(project, projectColRow) {
 
 /** Khoá kéo thẻ trên Kanban SX — không khoá thẻ producing đã có logistics_company_id. */
 export function projectLockedOnSxKanban(project, sxStage) {
+  if (TEMP_SX_FREE_DRAG) return false;
   const st = String(project?.status || '');
   if (sxStatusComesFromColumn(project, sxStage) && !project?.vc_kanban_column_id && !project?.logistics_company_id) {
     return false;

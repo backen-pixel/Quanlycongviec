@@ -68,6 +68,7 @@ import {
   shouldHideSxKanbanDeadlineOnCard,
   shouldIgnoreSxOrderDeliveryOverdue,
   getSxOrderDeliveryDateUrgency,
+  TEMP_SX_FREE_DRAG,
 } from '../lib/sxPipelineRevenue';
 import { isProjectAlreadyInLogistics } from '../lib/projectLogistics';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
@@ -550,9 +551,13 @@ export default function ProductionDashboard() {
 
   const canPickCompany = canPickWorkshopCompany(user, isAdmin, isCompanyScopedAdmin);
   const workshopCompanyPickerList = useMemo(() => {
+    // Admin công ty (Metalla/Hucabi…): chỉ xưởng của họ — không lẫn HCB ↔ Metalla.
+    if (isCompanyScopedAdmin && userCompanyId) {
+      const own = (companies || []).find((c) => String(c.id) === userCompanyId);
+      return own ? [own] : [{ id: userCompanyId, name: userCompanyId, short_name: userCompanyId }];
+    }
     // Admin hệ thống: hiện toàn bộ công ty backend trả về cho module SX (đã lọc tenant + division ở /api/companies?for_module=production).
-    // Không hard-code HCB/Metalla nữa — hệ sinh thái có thể có nhiều công ty SX khác.
-    if (isAdmin && !dealCompanyParam) {
+    if (isAdmin && !isCompanyScopedAdmin && !dealCompanyParam) {
       return companies || [];
     }
     if (workshopOptionsForDeal.length) {
@@ -567,7 +572,7 @@ export default function ProductionDashboard() {
       return own ? [own] : [{ id: staffWs, name: staffWs, short_name: staffWs }];
     }
     return workshopCompaniesForCrossViewer(companies, user);
-  }, [companies, user, workshopOptionsForDeal, dealCompanyParam, isAdmin]);
+  }, [companies, user, workshopOptionsForDeal, dealCompanyParam, isAdmin, isCompanyScopedAdmin, userCompanyId]);
 
   const selectedDealCompanyLabel = useMemo(() => {
     if (resolvedDealCompanyPick) {
@@ -1849,6 +1854,9 @@ export default function ProductionDashboard() {
       ...(clearsDeadline ? {
         sx_kanban_deadline_at: null,
         sx_kanban_deadline_reason: null,
+        production_deadline: null,
+        delivery_date: null,
+        deadline: null,
       } : deadlineIso ? {
         sx_kanban_deadline_at: deadlineIso,
         sx_kanban_deadline_reason: reason || null,
@@ -1931,7 +1939,7 @@ export default function ProductionDashboard() {
       : p)));
     try {
       await api.post(`/vc-handover/projects/${projectId}/request`, { sx_stage_id: sxColId || undefined });
-      alert('Đã gửi yêu cầu chọn công ty Vận chuyển/Lắp đặt cho Sale CRM (hiển thị trong bình luận của deal).');
+      alert('Đã gửi thông báo cho Sale CRM phụ trách deal — họ cần chọn công ty VC/LĐ và tạo sự kiện Lấy hàng / Lắp đặt (trong bình luận deal).');
       scheduleBoardRefresh(1500, { bustCache: true });
     } catch (e) {
       forgetPendingStageMove(projectId);
@@ -1988,7 +1996,7 @@ export default function ProductionDashboard() {
 
     // Cột được đánh dấu "bàn giao VC" → hỏi lần đầu; đã bàn giao thì chỉ cập nhật cột SX
     if (isHandover) {
-      if (alreadyInLogistics) {
+      if (TEMP_SX_FREE_DRAG || alreadyInLogistics) {
         await executeStageMove(projectId, targetCol);
         return;
       }
@@ -2161,8 +2169,13 @@ export default function ProductionDashboard() {
   // Nút "Bàn giao VC" trên thẻ → cũng gửi yêu cầu bình luận (không mở modal chọn công ty).
   const openHandoverModal = useCallback((projectId, projectName, sxTargetColId = '') => {
     const col = sxTargetColId ? pipeline.find((s) => String(s.id) === String(sxTargetColId)) : null;
+    // Tạm: không gửi yêu cầu Sale — chỉ chuyển cột như kéo thả thường.
+    if (TEMP_SX_FREE_DRAG) {
+      if (col) return handleMoveStage(projectId, col);
+      return undefined;
+    }
     return sendVcHandoverRequest(projectId, col || (sxTargetColId ? { id: sxTargetColId } : null));
-  }, [pipeline, sendVcHandoverRequest]);
+  }, [pipeline, sendVcHandoverRequest, handleMoveStage]);
 
   // Load logistics companies for VC handover modal
   useEffect(() => {

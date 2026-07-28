@@ -49,7 +49,7 @@ import {
 import { isProjectAlreadyInLogistics } from '../lib/projectLogistics';
 import { buildCrmLeadDocTaskSections, normalizeCrmChecklist } from '../lib/crmTaskDocumentTree';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
-import { buildSxPipelineStageMeta, resolveSxProjectPaymentProgress, getSxOrderDeliveryDateUrgency } from '../lib/sxPipelineRevenue';
+import { buildSxPipelineStageMeta, resolveSxProjectPaymentProgress, getSxOrderDeliveryDateUrgency, TEMP_SX_FREE_DRAG } from '../lib/sxPipelineRevenue';
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
 import SharedCRMNotes from '../components/SharedCRMNotes';
 import DriveAttachments from '../components/drive/DriveAttachments';
@@ -2420,7 +2420,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       } else {
         const sxStage = pipelineStages.find((s) => String(s.id) === String(stageId));
         // Cột bàn giao VC: gửi yêu cầu để Sale CRM chọn công ty VC/LĐ trong bình luận (không mở modal).
-        if (sxStage?.is_handover_to_logistics === true && !isProjectAlreadyInLogistics(project)) {
+        // TEMP_SX_FREE_DRAG: bỏ qua — chuyển cột bình thường.
+        if (!TEMP_SX_FREE_DRAG && sxStage?.is_handover_to_logistics === true && !isProjectAlreadyInLogistics(project)) {
           try {
             await api.post(`/vc-handover/projects/${id}/request`, { sx_stage_id: String(sxStage?.id || stageId) });
             alert('Đã gửi yêu cầu chọn công ty Vận chuyển/Lắp đặt cho Sale CRM (hiển thị trong bình luận của deal).');
@@ -2473,6 +2474,13 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               color: sxStage?.color,
               icon: sxStage?.icon,
             } : null,
+            ...(sxStage?.counts_as_completed_revenue ? {
+              sx_kanban_deadline_at: null,
+              sx_kanban_deadline_reason: null,
+              production_deadline: null,
+              delivery_date: null,
+              deadline: null,
+            } : {}),
           };
         }
       }
