@@ -7,7 +7,7 @@ const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/newPermission');
-const { notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
+const { notifyMultiple: notifyMultipleShared, getCompanyScopedRoleUserIds } = require('../helpers/notifications');
 const { syncCrmLeadFromLogisticsStage, syncVcPipelineStageToLead, emitCrmBadgeUpdateForProject } = require('../helpers/workshopKanban');
 const { effectiveWorkshopCompanyId, normalizeWorkshopCompanyId } = require('../helpers/workshopCompanyScope');
 const { applyWorkshopProjectVisibilityScope, userCanAccessCrossWorkshopProductionProject, isCrossWorkshopProductionViewer, isMetallaOrHucabiCompanyIdSync, userNeedsParticipantOnlyProductionScopeForWorkshop, userCanAccessProductionProjectAsParticipant } = require('../helpers/dealParticipantProduction');
@@ -1245,9 +1245,11 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
 
         // Thông báo đồng bộ CRM ← VC (không gửi role sale — tránh spam NVKD với tin kiểu xưởng/vận chuyển)
         try {
-          const { data: mgrUsers } = await supabase
-            .from('users').select('id').in('role', ['manager', 'admin', 'sales_admin']).eq('is_active', true);
-          const crmRecipients = (mgrUsers || []).map((u) => u.id).filter((uid) => uid !== userId);
+          const notifyCo = project.logistics_company_id || project.company_id;
+          const crmRecipients = (await getCompanyScopedRoleUserIds(
+            notifyCo,
+            ['manager', 'admin', 'sales_admin'],
+          )).filter((uid) => uid !== userId);
           const labelMap = { delivery: 'Vận chuyển', installation: 'Lắp đặt', customer_care: 'Chăm sóc KH' };
           const syncLabel = vcPipeStage.crm_sync_type ? (labelMap[vcPipeStage.crm_sync_type] || vcPipeStage.crm_sync_type) : 'CRM';
           if (crmRecipients.length) {

@@ -4,6 +4,7 @@
  */
 const { Router } = require('express');
 const helpers = require('../shared/helpersBundle');
+const { getCompanyScopedAdminIds } = require('../../../helpers/notifications');
 
 const r = Router();
 
@@ -1170,8 +1171,7 @@ r.post('/invoices', async (req, res) => {
 
     // 🔔 NOTIFICATION: Hóa đơn mới
     try {
-      const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
-      const adminIds = (admins || []).map(u => u.id);
+      const adminIds = await getCompanyScopedAdminIds(invCo || inv.company_id);
       if (adminIds.length) await notifyMultiple(req, adminIds, 'invoice_created',
         '🧾 Hóa đơn mới',
         `Hóa đơn ${code} — KH: ${inv.customer_name || 'N/A'} — ${formatMoney(inv.total)}`,
@@ -1294,7 +1294,7 @@ r.post('/invoices/:id/payments', async (req, res) => {
 r.delete('/invoices/:id', async (req, res) => {
   try {
     // Get info before delete
-    const { data: delI } = await supabase.from('invoices').select('code, customer_name').eq('id', req.params.id).single();
+    const { data: delI } = await supabase.from('invoices').select('code, customer_name, company_id').eq('id', req.params.id).single();
     await supabase.from('payment_records').delete().eq('invoice_id', req.params.id);
     await supabase.from('invoice_items').delete().eq('invoice_id', req.params.id);
     const { error } = await supabase.from('invoices').delete().eq('id', req.params.id);
@@ -1302,8 +1302,7 @@ r.delete('/invoices/:id', async (req, res) => {
 
     // 🔔 NOTIFICATION: Xóa hóa đơn
     try {
-      const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
-      const adminIds = (admins || []).map(u => u.id);
+      const adminIds = await getCompanyScopedAdminIds(delI?.company_id);
       if (adminIds.length) await notifyMultiple(req, adminIds, 'item_deleted',
         '🗑️ Hóa đơn đã xóa',
         `Hóa đơn ${delI?.code || ''} — KH: ${delI?.customer_name || 'N/A'} đã bị xóa`,

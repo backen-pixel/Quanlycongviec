@@ -3618,12 +3618,18 @@ async function handleComment(pageId, value) {
     attachment_url: value.photo || value.video || null,
   });
 
-  // Notify admins
+  // Notify admins (đúng công ty của Page FB)
   try {
-    const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
-    for (const admin of (admins || [])) {
+    const { getCompanyScopedAdminIds } = require('../helpers/notifications');
+    const { data: pageRow } = await supabase
+      .from('facebook_pages')
+      .select('default_company_id')
+      .eq('page_id', pageId)
+      .maybeSingle();
+    const adminIds = await getCompanyScopedAdminIds(pageRow?.default_company_id);
+    for (const adminId of adminIds) {
       await supabase.from('notifications').insert({
-        user_id: admin.id,
+        user_id: adminId,
         type: 'fb_comment',
         title: '💬 Bình luận mới trên Facebook',
         message: `${value.from?.name}: "${(value.message || '').substring(0, 80)}"`,

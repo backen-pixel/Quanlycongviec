@@ -312,8 +312,9 @@ async function runAutoCreateProjectFromWonDeal({ req, dealId, userId, production
   } catch (_) {}
 
   try {
-    const { data: adminUsers } = await supabase.from('users').select('id').eq('role', 'admin');
-    const adminIds = (adminUsers || []).map((u) => u.id).filter((id) => id !== userId);
+    const { getCompanyScopedAdminIds } = require('./notifications');
+    const adminIds = (await getCompanyScopedAdminIds(coCheck.company.id))
+      .filter((id) => id !== userId);
     if (adminIds.length) {
       await notifyMultiple(req, adminIds, 'project_created',
         '📋 Dự án mới từ Deal',

@@ -6,6 +6,72 @@ const { isCommentMutedForUser, isMessengerMutedForUser } = require('./notificati
 // (qua app.set('pushNotification')). Tránh gửi push trùng.
 
 /**
+ * User theo role nhận TB đúng công ty (company_id / user_companies) + tùy chọn admin hệ thống (company_id null).
+ * @param {string|null|undefined} companyId
+ * @param {string[]} roles
+ * @param {{ includeSystemAdmins?: boolean, activeOnly?: boolean }} [opts]
+ * @returns {Promise<string[]>}
+ */
+async function getCompanyScopedRoleUserIds(companyId, roles, opts = {}) {
+  const roleList = [...new Set((roles || []).map((r) => String(r || '').trim()).filter(Boolean))];
+  if (!roleList.length) return [];
+
+  const includeSystemAdmins = opts.includeSystemAdmins !== false;
+  const activeOnly = opts.activeOnly !== false;
+  const cid = companyId != null && String(companyId).trim() !== '' ? String(companyId).trim() : '';
+
+  let q = supabase.from('users').select('id, company_id, role').in('role', roleList);
+  if (activeOnly) q = q.eq('is_active', true);
+  const { data: users, error } = await q;
+  if (error) {
+    console.warn('[getCompanyScopedRoleUserIds]', error.message);
+    return [];
+  }
+
+  const ids = new Set();
+  for (const u of users || []) {
+    if (!u?.id) continue;
+    if (!u.company_id) {
+      // Chỉ admin hệ thống (role admin, không gắn company) mới nhận cross-company
+      if (includeSystemAdmins && String(u.role) === 'admin') ids.add(u.id);
+      continue;
+    }
+    if (cid && String(u.company_id) === cid) ids.add(u.id);
+  }
+
+  if (cid) {
+    try {
+      const { data: links } = await supabase
+        .from('user_companies')
+        .select('user_id')
+        .eq('company_id', cid);
+      const linkIds = [...new Set((links || []).map((r) => r.user_id).filter(Boolean))];
+      if (linkIds.length) {
+        let lq = supabase.from('users').select('id').in('role', roleList).in('id', linkIds);
+        if (activeOnly) lq = lq.eq('is_active', true);
+        const { data: linked } = await lq;
+        (linked || []).forEach((u) => { if (u?.id) ids.add(u.id); });
+      }
+    } catch (e) {
+      console.warn('[getCompanyScopedRoleUserIds] user_companies:', e.message || e);
+    }
+  }
+
+  return [...ids];
+}
+
+/**
+ * Admin nhận TB theo đúng công ty (admin công ty + tùy chọn admin hệ thống).
+ * Tránh broadcast mọi role=admin toàn hệ thống (admin Metalla nhận deal NextGo).
+ * @param {string|null|undefined} companyId
+ * @param {{ includeSystemAdmins?: boolean, activeOnly?: boolean }} [opts]
+ * @returns {Promise<string[]>}
+ */
+async function getCompanyScopedAdminIds(companyId, opts = {}) {
+  return getCompanyScopedRoleUserIds(companyId, ['admin'], opts);
+}
+
+/**
  * Create a single notification with Socket.IO push
  * @param {Object} req - Express request object (contains app context)
  * @param {string} userId - Target user ID (will skip if same as current user)
@@ -167,4 +233,6 @@ module.exports = {
   notifyMultiple,
   notificationExists,
   dispatchNotificationToUser,
+  getCompanyScopedAdminIds,
+  getCompanyScopedRoleUserIds,
 };

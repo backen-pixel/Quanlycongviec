@@ -5,6 +5,7 @@
 const { Router } = require('express');
 const helpers = require('../shared/helpersBundle');
 const { markVoiceRecordingsSkipAutoCreateForLeadIds } = require('../../../helpers/voiceRecordingCrmAuto');
+const { getCompanyScopedAdminIds } = require('../../../helpers/notifications');
 
 const r = Router();
 
@@ -113,8 +114,8 @@ r.post('/leads', async (req, res) => {
     try {
       const targetIds = new Set();
       if (body.assigned_to) targetIds.add(body.assigned_to);
-      const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
-      (admins || []).forEach(a => targetIds.add(a.id));
+      const adminIds = await getCompanyScopedAdminIds(data.company_id || body.company_id);
+      adminIds.forEach((id) => targetIds.add(id));
       if (targetIds.size) await notifyMultiple(req, [...targetIds], 'lead_created',
         '🆕 Lead mới',
         `Lead "${body.title}" — Mã: ${code}`,
@@ -256,8 +257,8 @@ r.post('/deals', async (req, res) => {
     try {
       const targetIds = new Set();
       if (body.assigned_to) targetIds.add(body.assigned_to);
-      const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
-      (admins || []).forEach(a => targetIds.add(a.id));
+      const adminIds = await getCompanyScopedAdminIds(data.company_id || body.company_id);
+      adminIds.forEach((id) => targetIds.add(id));
       if (targetIds.size) await notifyMultiple(req, [...targetIds], 'deal_created',
         '🎯 Deal mới',
         `Deal "${body.title}" — Mã: ${code} — GT: ${formatMoney(body.estimated_value)}`,
@@ -2371,8 +2372,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
         .eq('id', req.params.id).single();
 
       if (stage?.is_won) {
-        const { data: adminUsers } = await supabase.from('users').select('id').eq('role', 'admin');
-        const adminIds = (adminUsers || []).map(u => u.id);
+        const adminIds = await getCompanyScopedAdminIds(dealData?.company_id);
         if (adminIds.length > 0) {
           await notifyMultiple(req, adminIds, 'deal_won',
             '🏆 Deal Thắng',
@@ -3370,8 +3370,9 @@ r.post('/project/:projectId/auto-invoice', async (req, res) => {
     // 🔔 NOTIFICATION: Auto hóa đơn
     if (invoices.length) {
       try {
-        const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
-        const adminIds = (admins || []).map(u => u.id);
+        const { data: proj } = await supabase.from('projects')
+          .select('company_id').eq('id', req.params.projectId).maybeSingle();
+        const adminIds = await getCompanyScopedAdminIds(proj?.company_id);
         if (adminIds.length) await notifyMultiple(req, adminIds, 'invoice_created',
           '🧾 Tự động tạo hóa đơn',
           `Dự án hoàn thành → tạo ${invoices.length} hóa đơn`,

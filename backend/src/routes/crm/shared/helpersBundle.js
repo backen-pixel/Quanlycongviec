@@ -46,7 +46,11 @@ const { fetchOrgActivityFeed } = require('../../../helpers/orgActivityFeed');
 const { emitCrmTaskChanged } = require('../../../helpers/crmTaskRealtime');
 const { normalizeTemplateChecklistForCrmTask } = require('../../../helpers/templateChecklistNormalize');
 const { resolveExecutorCompanyId, isExecutorColumnError } = require('../../../helpers/crossCompanyWorkspace');
-const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } = require('../../../helpers/notifications');
+const {
+  createNotification: createNotif,
+  notifyMultiple: notifyMultipleShared,
+  getCompanyScopedAdminIds,
+} = require('../../../helpers/notifications');
 const {
   resolveLeadCommentMentionIds,
   fetchLeadMentionMembers,
@@ -5352,15 +5356,13 @@ function formatMoney(n) {
 async function getNotifyTargets(leadId) {
   const targets = { ownerIds: [], adminIds: [] };
   try {
-    if (leadId) {
-      const { data: lead } = await supabase.from('crm_leads')
-        .select('assigned_to, lead_owner_id, customer_id')
-        .eq('id', leadId).single();
-      const oid = lead?.assigned_to || lead?.lead_owner_id;
-      if (oid) targets.ownerIds.push(oid);
-    }
-    const { data: admins } = await supabase.from('users').select('id').eq('role', 'admin').eq('is_active', true);
-    targets.adminIds = (admins || []).map(u => u.id);
+    if (!leadId) return targets;
+    const { data: lead } = await supabase.from('crm_leads')
+      .select('assigned_to, lead_owner_id, company_id')
+      .eq('id', leadId).single();
+    const oid = lead?.assigned_to || lead?.lead_owner_id;
+    if (oid) targets.ownerIds.push(oid);
+    targets.adminIds = await getCompanyScopedAdminIds(lead?.company_id);
   } catch (e) { console.warn('[NOTIFY] getNotifyTargets error:', e.message); }
   return targets;
 }
