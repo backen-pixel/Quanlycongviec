@@ -1,5 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef, useDeferredValue, memo, startTransition } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
@@ -1212,6 +1213,13 @@ export default function CRMDashboard() {
   });
   /** Cấu hình deadline theo công ty (cho view "Deadline") */
   const [deadlineConfig, setDeadlineConfig] = useState(null);
+  const [deadlineBucketCounts, setDeadlineBucketCounts] = useState(null);
+  const [deadlineBucketCountsLoading, setDeadlineBucketCountsLoading] = useState(false);
+  const deadlineBucketCountsSeqRef = useRef(0);
+  const [deadlineBucketPageState, setDeadlineBucketPageState] = useState({});
+  const deadlineBucketPageStateRef = useRef({});
+  const deadlineBucketPagesLoadingRef = useRef(new Set());
+  const deadlineBucketPagesGenerationRef = useRef(0);
   /** Map { lead_id → {count,last_at,last_user_id} } cho view "Bình luận" */
   const [commentsIndex, setCommentsIndex] = useState({});
   /** Chọn thẻ Kanban để gộp thủ công (không dùng quét trùng) */
@@ -1543,6 +1551,7 @@ export default function CRMDashboard() {
   /** Tổng chính xác theo từng cột từ filter-summary; độc lập với 40 card đã tải. */
   const [pipelineStageCounts, setPipelineStageCounts] = useState({ lead: null, deal: null });
   const kanbanStagePagesLoadingRef = useRef(new Set());
+  const handleLoadStagePagesRef = useRef(null);
   const [kanbanStagePagesLoading, setKanbanStagePagesLoading] = useState(0);
   /** Tổng Deal/Đơn hàng từ GET /crm/stage-counts (server) — không dùng số thẻ đã tải. */
   const [pipelineDealTabTotals, setPipelineDealTabTotals] = useState(null);
@@ -2531,7 +2540,10 @@ export default function CRMDashboard() {
   ]);
 
   /** Phân trang độc lập theo cột; nhiều cột đang thấy được gom trong một request. */
-  const handleLoadStagePages = useCallback(async (stageIds, { ensureInitial = false } = {}) => {
+  const handleLoadStagePages = useCallback(async (
+    stageIds,
+    { ensureInitial = false, ignoreGlobalCap = false } = {},
+  ) => {
     if (syncing) return;
     const type = pipelineType === 'lead' ? 'lead' : 'deal';
     const requestGeneration = kanbanRequestGenerationRef.current;
@@ -2542,7 +2554,9 @@ export default function CRMDashboard() {
       if (sid) countByStage.set(sid, (countByStage.get(sid) || 0) + 1);
     }
     const totals = pipelineStageCounts[type] || {};
-    const capRemaining = resolveKanbanAutoLoadCap(kanbanLoadLimit) - loadedRows.length;
+    const capRemaining = ignoreGlobalCap
+      ? Number.MAX_SAFE_INTEGER
+      : resolveKanbanAutoLoadCap(kanbanLoadLimit) - loadedRows.length;
     if (capRemaining <= 0) return;
 
     const requests = [];
@@ -2658,6 +2672,7 @@ export default function CRMDashboard() {
     filterLeadType, filterReferrer, filterCustomerCompany, filterRegion, filterStage,
     filterSource, searchText, customDateFrom, customDateTo,
   ]);
+  handleLoadStagePagesRef.current = handleLoadStagePages;
 
   useEffect(() => {
     if (!user?.company_id) return;
@@ -4730,6 +4745,256 @@ export default function CRMDashboard() {
   const currentPipeline = pipelineType === 'lead'
     ? pipelineLead
     : (isCrmCustomerPipelineTab(pipelineType) ? pipelineCustomer : pipelineDeal);
+
+  /** Các stage mở được phép xuất hiện trong view Deadline. */
+  const deadlineStageIds = useMemo(
+    () => (currentPipeline || [])
+      .filter((stage) => (
+        !stage?.__virtual
+        && !stage?.is_won
+        && !stage?.is_lost
+        && !stage?.counts_as_completed_revenue
+      ))
+      .map((stage) => String(stage.id || ''))
+      .filter(Boolean),
+    [currentPipeline],
+  );
+  const deadlineStageIdsKey = deadlineStageIds.join(',');
+  const deadlineLoadScopeKey = [
+    pipelineType,
+    filterPhone,
+    filterAssignee,
+    filterAssigneeName,
+    filterCompany,
+    filterLeadType,
+    filterReferrer,
+    filterCustomerCompany,
+    filterRegion,
+    filterStage,
+    filterSource,
+    searchText,
+    customDateFrom,
+    customDateTo,
+  ].join('|');
+  const deadlineConfigKey = JSON.stringify(deadlineConfig || {});
+
+  useEffect(() => {
+    if (viewMode !== 'deadline' || !deadlineStageIds.length) return undefined;
+    const seq = ++deadlineBucketCountsSeqRef.current;
+    const type = pipelineType === 'lead' ? 'lead' : 'deal';
+    const scopeCompanyId = (isCompanyScopedAdmin && user?.company_id)
+      ? String(user.company_id)
+      : (!isAdmin && user?.company_id)
+        ? String(user.company_id)
+        : (filterCompany || '');
+    const params = buildCrmKanbanServerFilterParams({
+      type,
+      filterPhone,
+      filterAssignee,
+      filterAssigneeName,
+      filterCompany: scopeCompanyId,
+      filterLeadType,
+      filterReferrer,
+      filterCustomerCompany,
+      filterRegion,
+      filterStage,
+      filterSource,
+      searchText,
+      customDateFrom,
+      customDateTo,
+    });
+
+    deadlineBucketPagesGenerationRef.current += 1;
+    deadlineBucketPagesLoadingRef.current.clear();
+    deadlineBucketPageStateRef.current = {};
+    setDeadlineBucketPageState({});
+    setDeadlineBucketCounts(null);
+    setDeadlineBucketCountsLoading(true);
+    void api
+      .post('/crm/deadline-bucket-counts', {
+        stage_ids: deadlineStageIds,
+        config: deadlineConfig || {},
+      }, { params })
+      .then((res) => {
+        if (seq !== deadlineBucketCountsSeqRef.current) return;
+        setDeadlineBucketCounts(res.data?.counts || {});
+      })
+      .catch((error) => {
+        if (seq !== deadlineBucketCountsSeqRef.current) return;
+        console.error('[deadline bucket counts]', error);
+        setDeadlineBucketCounts(null);
+      })
+      .finally(() => {
+        if (seq === deadlineBucketCountsSeqRef.current) setDeadlineBucketCountsLoading(false);
+      });
+
+    return () => {
+      if (seq === deadlineBucketCountsSeqRef.current) deadlineBucketCountsSeqRef.current += 1;
+    };
+  }, [
+    viewMode,
+    deadlineStageIdsKey,
+    deadlineLoadScopeKey,
+    deadlineConfigKey,
+    pipelineType,
+    isCompanyScopedAdmin,
+    user?.company_id,
+    isAdmin,
+  ]);
+
+  const handleLoadDeadlineBuckets = useCallback(async (
+    bucketKeys,
+    { initialOnly = false } = {},
+  ) => {
+    if (viewMode !== 'deadline' || syncing || !deadlineStageIds.length) return;
+    const type = pipelineType === 'lead' ? 'lead' : 'deal';
+    const generation = deadlineBucketPagesGenerationRef.current;
+    const currentState = deadlineBucketPageStateRef.current;
+    const requests = [];
+    for (const rawKey of bucketKeys || []) {
+      const bucket = String(rawKey || '');
+      if (!bucket || deadlineBucketPagesLoadingRef.current.has(bucket)) continue;
+      const state = currentState[bucket] || {};
+      const total = Number(deadlineBucketCounts?.[bucket]);
+      if (state.hasMore === false) continue;
+      if (Number.isFinite(total) && total <= 0) continue;
+      const offset = Math.max(Number(state.nextOffset) || 0, 0);
+      if (initialOnly && offset > 0) continue;
+      if (Number.isFinite(total) && offset >= total) continue;
+      requests.push({ bucket, offset, limit: 10 });
+      if (requests.length >= 6) break;
+    }
+    if (!requests.length) return;
+
+    for (const request of requests) deadlineBucketPagesLoadingRef.current.add(request.bucket);
+    setDeadlineBucketPageState((prev) => {
+      const next = { ...prev };
+      for (const request of requests) {
+        next[request.bucket] = { ...(next[request.bucket] || {}), loading: true };
+      }
+      deadlineBucketPageStateRef.current = next;
+      return next;
+    });
+
+    try {
+      const scopeCompanyId = (isCompanyScopedAdmin && user?.company_id)
+        ? String(user.company_id)
+        : (!isAdmin && user?.company_id)
+          ? String(user.company_id)
+          : (filterCompany || '');
+      const params = buildCrmKanbanServerFilterParams({
+        type,
+        filterPhone,
+        filterAssignee,
+        filterAssigneeName,
+        filterCompany: scopeCompanyId,
+        filterLeadType,
+        filterReferrer,
+        filterCustomerCompany,
+        filterRegion,
+        filterStage,
+        filterSource,
+        searchText,
+        customDateFrom,
+        customDateTo,
+      });
+      const { data } = await api.post('/crm/deadline-bucket-pages', {
+        buckets: requests,
+        stage_ids: deadlineStageIds,
+        config: deadlineConfig || {},
+      }, { params });
+      if (generation !== deadlineBucketPagesGenerationRef.current) return;
+
+      const pages = data?.pages || {};
+      const rows = Object.values(pages).flatMap((page) => page?.data || []);
+      const userKey = getCurrentUserKeyForLeadSeen(user);
+      const viewedLocal = getLocallyViewedLeadIdSet(userKey);
+      const merged = rows.map((row) => (
+        viewedLocal.has(String(row.id)) ? { ...row, is_new_for_current_user: false } : row
+      ));
+      startTransition(() => {
+        if (type === 'lead') {
+          setAllLeads((prev) => dedupeCrmKanbanRows([...prev, ...merged]));
+        } else {
+          setAllDeals((prev) => preserveCrmKanbanPipelineBadges(
+            prev,
+            dedupeCrmKanbanRows([...prev, ...merged]),
+          ));
+        }
+        setDeadlineBucketPageState((prev) => {
+          const next = { ...prev };
+          for (const [bucket, page] of Object.entries(pages)) {
+            next[bucket] = {
+              ...(next[bucket] || {}),
+              loading: false,
+              nextOffset: Number(page?.nextOffset) || 0,
+              hasMore: !!page?.hasMore,
+              total: Number(page?.total) || 0,
+            };
+          }
+          deadlineBucketPageStateRef.current = next;
+          return next;
+        });
+      });
+
+      const newIds = merged.map((row) => row.id).filter(Boolean);
+      if (newIds.length) {
+        void fetchCrmLedgerNetByLeadIds(api, {
+          type,
+          leadIds: newIds,
+          assigned_to: filterAssignee || undefined,
+        }).then((ledgerPayload) => {
+          if (generation !== deadlineBucketPagesGenerationRef.current) return;
+          if (type === 'lead') setDataLead((prev) => mergeCrmDashWithLedger(prev, ledgerPayload));
+          else setDataDeal((prev) => mergeCrmDashWithLedger(prev, ledgerPayload));
+        });
+      }
+    } catch (error) {
+      if (generation === deadlineBucketPagesGenerationRef.current) {
+        console.error('[deadline bucket pages]', error);
+        setKanbanLoadError(
+          error?.response?.data?.error || error?.message || 'Không thể tải card Deadline.',
+        );
+      }
+    } finally {
+      if (generation === deadlineBucketPagesGenerationRef.current) {
+        for (const request of requests) {
+          deadlineBucketPagesLoadingRef.current.delete(request.bucket);
+        }
+        setDeadlineBucketPageState((prev) => {
+          const next = { ...prev };
+          for (const request of requests) {
+            next[request.bucket] = { ...(next[request.bucket] || {}), loading: false };
+          }
+          deadlineBucketPageStateRef.current = next;
+          return next;
+        });
+      }
+    }
+  }, [
+    viewMode,
+    syncing,
+    deadlineStageIdsKey,
+    deadlineBucketCounts,
+    pipelineType,
+    isCompanyScopedAdmin,
+    user,
+    isAdmin,
+    filterCompany,
+    filterPhone,
+    filterAssignee,
+    filterAssigneeName,
+    filterLeadType,
+    filterReferrer,
+    filterCustomerCompany,
+    filterRegion,
+    filterStage,
+    filterSource,
+    searchText,
+    customDateFrom,
+    customDateTo,
+    deadlineConfigKey,
+  ]);
 
   /**
    * Cột ảo «Chưa có giai đoạn» — gom deal không nằm trong bất kỳ cột nào của pipeline hiện tại.
@@ -7788,6 +8053,10 @@ export default function CRMDashboard() {
               pipeline={currentPipeline}
               pipelineType={pipelineType}
               deadlineConfig={deadlineConfig}
+              bucketCounts={deadlineBucketCounts}
+              bucketCountsLoading={deadlineBucketCountsLoading}
+              bucketPageState={deadlineBucketPageState}
+              onLoadBuckets={handleLoadDeadlineBuckets}
               onOpenSettings={null}
               mergeSelectedIds={manualMergeIds}
               onToggleMergeSelect={toggleManualMergeSelect}
@@ -9257,7 +9526,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
     if (!column || !root || typeof IntersectionObserver === 'undefined') return undefined;
     const observer = new IntersectionObserver(
       ([entry]) => onColumnVisibilityChange(stage.id, !!entry?.isIntersecting),
-      { root, rootMargin: '0px 180px', threshold: 0.01 },
+      { root, rootMargin: '0px 520px', threshold: 0.01 },
     );
     observer.observe(column);
     return () => {
@@ -10044,6 +10313,45 @@ function KanbanView({
     () => (quickMoveStages?.length ? quickMoveStages : (pipeline || []).map(({ items, ...stage }) => stage)),
     [quickMoveStages, pipeline],
   );
+  const virtualizeColumns = pipeline.length >= 12;
+  const columnWidth = compact ? 240 : 272;
+  const columnGap = compact ? 6 : 10;
+  const columnSlotWidth = columnWidth + columnGap;
+  const columnVirtualizer = useVirtualizer({
+    count: virtualizeColumns ? pipeline.length : 0,
+    getScrollElement: () => kanbanHScrollRef.current,
+    estimateSize: () => columnSlotWidth,
+    horizontal: true,
+    overscan: 2,
+    getItemKey: (index) => pipeline[index]?.id ?? index,
+  });
+  const virtualRailMinHeight = useMemo(() => {
+    if (perColumnScroll) return undefined;
+    const maxLoaded = Math.max(0, ...pipeline.map((stage) => stage?.items?.length || 0));
+    const cardSlot = compact ? 126 : 142;
+    return Math.max(320, (compact ? 112 : 132) + maxLoaded * cardSlot);
+  }, [compact, perColumnScroll, pipeline]);
+
+  useLayoutEffect(() => {
+    if (!virtualizeColumns) return;
+    columnVirtualizer.measure();
+  }, [
+    virtualizeColumns,
+    columnVirtualizer,
+    compact,
+    remeasureToken,
+    pipeline.length,
+  ]);
+
+  useEffect(() => {
+    if (!virtualizeColumns || !searchHighlightId) return;
+    const columnIndex = pipeline.findIndex((stage) => (
+      (stage?.items || []).some((item) => String(item?.id) === String(searchHighlightId))
+    ));
+    if (columnIndex >= 0) {
+      columnVirtualizer.scrollToIndex(columnIndex, { align: 'center', behavior: 'auto' });
+    }
+  }, [columnVirtualizer, pipeline, searchHighlightId, virtualizeColumns]);
 
   const isCrmPipelineDragTarget = useCallback((e) => {
     const t = e.target;
@@ -10070,7 +10378,7 @@ function KanbanView({
     visibleLoadTimerRef.current = window.setTimeout(() => {
       visibleLoadTimerRef.current = null;
       requestVisibleStagePages(true);
-    }, 80);
+    }, 40);
   }, [requestVisibleStagePages]);
 
   useEffect(() => () => {
@@ -10099,6 +10407,14 @@ function KanbanView({
     return () => root.removeEventListener('scroll', onScroll);
   }, [perColumnScroll, scrollLoad?.hasMore, scrollLoad?.loading, tryLoadMore]);
 
+  const renderedColumns = virtualizeColumns
+    ? columnVirtualizer.getVirtualItems().map((virtualItem) => ({
+        stage: pipeline[virtualItem.index],
+        columnIndex: virtualItem.index,
+        virtualItem,
+      }))
+    : pipeline.map((stage, columnIndex) => ({ stage, columnIndex, virtualItem: null }));
+
   return (
     <WorkshopPipelineKanbanScroll
       cardSelector="[data-crm-pipeline-card]"
@@ -10109,44 +10425,77 @@ function KanbanView({
       scrollContainerRef={kanbanHScrollRef}
     >
       <div
-        className={`flex min-w-max items-stretch ${KANBAN_BOARD_COLUMN_RAILS_CLASS} ${compact ? 'gap-1.5' : 'gap-2.5'} ${perColumnScroll ? 'h-full' : ''}`}
-        style={{ '--kanban-col-gap': compact ? '0.375rem' : '0.625rem' }}
+        className={`${
+          virtualizeColumns ? 'relative' : `flex min-w-max items-stretch ${compact ? 'gap-1.5' : 'gap-2.5'}`
+        } ${KANBAN_BOARD_COLUMN_RAILS_CLASS} ${perColumnScroll ? 'h-full' : ''}`}
+        style={{
+          '--kanban-col-gap': compact ? '0.375rem' : '0.625rem',
+          ...(virtualizeColumns ? {
+            width: columnVirtualizer.getTotalSize() + (scrollLoad?.hasMore ? 32 : 0),
+            minWidth: columnVirtualizer.getTotalSize() + (scrollLoad?.hasMore ? 32 : 0),
+            minHeight: virtualRailMinHeight,
+            ...(perColumnScroll ? { height: '100%' } : {}),
+          } : {}),
+        }}
       >
-        {pipeline.map((stage, columnIndex) => (
-          <KanbanStageCard
-            key={stage.id}
-            columnIndex={columnIndex}
-            stage={stage}
-            items={stage.items}
-            onMoveStage={onMoveStage}
-            pipelineStages={pipelineStages}
-            pipelineType={pipelineType}
-            mergeSelectedIds={mergeSelectedIds}
-            onToggleMergeSelect={onToggleMergeSelect}
-            onToggleSelectAllInColumn={onToggleSelectAllInColumn}
-            compact={compact}
-            showCompanyOnCard={showCompanyOnCard}
-            leadTypes={leadTypes}
-            kpiLedgerPeriodStart={kpiLedgerPeriodStart}
-            onOpenKanbanComment={onOpenKanbanComment}
-            onTogglePin={onTogglePin}
-            onToggleInteracted={onToggleInteracted}
-            onOpenDeadline={onOpenDeadline}
-            onSaveEstimatedValue={onSaveEstimatedValue}
-            onOpenSxTransfer={onOpenSxTransfer}
-            explicitExpectedKv={explicitExpectedKv}
-            wonStage={wonStage}
-            stageCounts={stageCounts}
-            columnScrollMode={columnScrollMode}
-            onColumnScrollNearEnd={perColumnScroll ? () => onLoadStagePages?.([stage.id], { ensureInitial: false }) : undefined}
-            onColumnVisibilityChange={handleColumnVisibilityChange}
-            searchHighlightId={searchHighlightId}
-            boardScrollRef={kanbanHScrollRef}
-          />
-        ))}
+        {renderedColumns.map(({ stage, columnIndex, virtualItem }) => {
+          if (!stage) return null;
+          const stageCard = (
+            <KanbanStageCard
+              key={stage.id}
+              columnIndex={columnIndex}
+              stage={stage}
+              items={stage.items}
+              onMoveStage={onMoveStage}
+              pipelineStages={pipelineStages}
+              pipelineType={pipelineType}
+              mergeSelectedIds={mergeSelectedIds}
+              onToggleMergeSelect={onToggleMergeSelect}
+              onToggleSelectAllInColumn={onToggleSelectAllInColumn}
+              compact={compact}
+              showCompanyOnCard={showCompanyOnCard}
+              leadTypes={leadTypes}
+              kpiLedgerPeriodStart={kpiLedgerPeriodStart}
+              onOpenKanbanComment={onOpenKanbanComment}
+              onTogglePin={onTogglePin}
+              onToggleInteracted={onToggleInteracted}
+              onOpenDeadline={onOpenDeadline}
+              onSaveEstimatedValue={onSaveEstimatedValue}
+              onOpenSxTransfer={onOpenSxTransfer}
+              explicitExpectedKv={explicitExpectedKv}
+              wonStage={wonStage}
+              stageCounts={stageCounts}
+              columnScrollMode={columnScrollMode}
+              onColumnScrollNearEnd={perColumnScroll ? () => onLoadStagePages?.([stage.id], { ensureInitial: false }) : undefined}
+              onColumnVisibilityChange={handleColumnVisibilityChange}
+              searchHighlightId={searchHighlightId}
+              boardScrollRef={kanbanHScrollRef}
+            />
+          );
+          if (!virtualItem) return stageCard;
+          return (
+            <div
+              key={stage.id}
+              data-index={virtualItem.index}
+              ref={columnVirtualizer.measureElement}
+              className={`absolute top-0 flex items-stretch ${KANBAN_COLUMN_RAIL_CLASS}`}
+              style={{
+                left: 0,
+                width: columnSlotWidth,
+                paddingRight: columnGap,
+                boxSizing: 'border-box',
+                transform: `translateX(${virtualItem.start}px)`,
+                ...(perColumnScroll ? { height: '100%' } : {}),
+              }}
+            >
+              {stageCard}
+            </div>
+          );
+        })}
         {scrollLoad?.hasMore && (
           <div
-            className="flex-shrink-0 w-8 self-stretch flex items-end justify-center pb-6"
+            className={`${virtualizeColumns ? 'absolute top-0 bottom-0' : 'flex-shrink-0 self-stretch'} w-8 flex items-end justify-center pb-6`}
+            style={virtualizeColumns ? { left: columnVirtualizer.getTotalSize() } : undefined}
             aria-hidden
           >
             {scrollLoad.loading && (

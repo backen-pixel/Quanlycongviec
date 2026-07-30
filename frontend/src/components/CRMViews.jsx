@@ -347,9 +347,24 @@ function KanbanBoardShell({ children }) {
   );
 }
 
-function KanbanColumn({ topBarColor, title, subtitle, count, headerExtras, children, isDragOver, onDragOver, onDragLeave, onDrop, width = 'w-80' }) {
+function KanbanColumn({
+  topBarColor,
+  title,
+  subtitle,
+  count,
+  headerExtras,
+  children,
+  isDragOver,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  columnRef,
+  onBodyScroll,
+  width = 'w-80',
+}) {
   return (
     <div
+      ref={columnRef}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
@@ -365,7 +380,9 @@ function KanbanColumn({ topBarColor, title, subtitle, count, headerExtras, child
         </div>
         {subtitle && <p className="text-[10px] text-gray-500">{subtitle}</p>}
       </div>
-      <div className={`border border-white/30 border-t-0 overflow-y-auto p-2 space-y-2 ${isDragOver ? 'bg-blue-50/60' : ''}`}
+      <div
+        onScroll={onBodyScroll}
+        className={`border border-white/30 border-t-0 overflow-y-auto p-2 space-y-2 ${isDragOver ? 'bg-blue-50/60' : ''}`}
         style={{ maxHeight: '70vh', minHeight: '160px' }}>
         {children}
       </div>
@@ -790,6 +807,10 @@ export function DeadlineView({
   pipeline,
   pipelineType,
   deadlineConfig,
+  bucketCounts,
+  bucketCountsLoading = false,
+  bucketPageState,
+  onLoadBuckets,
   onOpenSettings,
   mergeSelectedIds,
   onToggleMergeSelect,
@@ -813,6 +834,30 @@ export function DeadlineView({
   const [localOverride, setLocalOverride] = useState({});
   const [draggingId, setDraggingId] = useState(null);
   const [dragOverKey, setDragOverKey] = useState(null);
+  const bucketColumnRefs = useRef(new Map());
+
+  useEffect(() => {
+    if (typeof onLoadBuckets !== 'function') return undefined;
+    const entries = [...bucketColumnRefs.current.entries()];
+    if (!entries.length) return undefined;
+    const keyByNode = new Map(entries.map(([key, node]) => [node, key]));
+    const root = entries[0][1]?.closest?.('.kanban-h-scroll-main') || null;
+    const observer = new IntersectionObserver((observed) => {
+      const visible = observed
+        .filter((entry) => entry.isIntersecting)
+        .map((entry) => keyByNode.get(entry.target))
+        .filter(Boolean);
+      if (visible.length) onLoadBuckets(visible, { initialOnly: true });
+    }, {
+      root,
+      rootMargin: '0px 360px',
+      threshold: 0.01,
+    });
+    entries.forEach(([, node]) => {
+      if (node) observer.observe(node);
+    });
+    return () => observer.disconnect();
+  }, [onLoadBuckets]);
 
   const grouped = useMemo(() => {
     const out = {};
@@ -867,8 +912,6 @@ export function DeadlineView({
       ? { mergeSelectedIds, onToggleMergeSelect }
       : null;
 
-  if (!allItems.length) return <p className="text-center text-gray-400 py-12 text-sm">Không có dữ liệu</p>;
-
   return (
     <div className="space-y-3">
       {onOpenSettings && (
@@ -893,15 +936,26 @@ export function DeadlineView({
           const list = grouped[key] || [];
           const label = meta?.label || BUCKET_DEFAULT_LABEL[key] || key;
           const totalValue = list.reduce((s, x) => s + (x.estimated_value || 0), 0);
+          const exactCount = bucketCounts && Number.isFinite(Number(bucketCounts[key]))
+            ? Number(bucketCounts[key])
+            : null;
+          const displayCount = exactCount != null
+            ? exactCount
+            : (bucketCountsLoading ? '…' : '—');
+          const pageState = bucketPageState?.[key] || {};
           const columnItemIds = list.map((x) => x.id);
           const allInColumnSelected =
             columnItemIds.length > 0 &&
             columnItemIds.every((id) => (mergeSelectedIds || []).some((x) => String(x) === String(id)));
           return (
             <KanbanColumn key={key}
+              columnRef={(node) => {
+                if (node) bucketColumnRefs.current.set(key, node);
+                else bucketColumnRefs.current.delete(key);
+              }}
               topBarColor={BUCKET_COLOR[key]}
               title={label}
-              count={list.length}
+              count={displayCount}
               subtitle={`Giá trị: ${formatVND(totalValue)}`}
               headerExtras={
                 mergePick && onToggleSelectAllInColumn && list.length > 0 ? (
@@ -919,10 +973,22 @@ export function DeadlineView({
               onDragOver={canDrag ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverKey(key); } : undefined}
               onDragLeave={(e) => { if (e.target === e.currentTarget) setDragOverKey(null); }}
               onDrop={canDrag ? (e) => { e.preventDefault(); handleDrop(key); } : undefined}
+              onBodyScroll={(event) => {
+                const el = event.currentTarget;
+                if (
+                  pageState.hasMore !== false
+                  && !pageState.loading
+                  && el.scrollTop + el.clientHeight >= el.scrollHeight - 240
+                ) {
+                  onLoadBuckets?.([key]);
+                }
+              }}
             >
               {list.length === 0 ? (
                 <div className="flex items-center justify-center h-full text-gray-400">
-                  <p className="text-sm">{dragOverKey === key ? '⬇️ Thả vào đây' : '—'}</p>
+                  <p className="text-sm">
+                    {dragOverKey === key ? '⬇️ Thả vào đây' : (pageState.loading ? 'Đang tải…' : '—')}
+                  </p>
                 </div>
               ) : list.map(it => (
                 <div key={it.id}
@@ -963,6 +1029,18 @@ export function DeadlineView({
                   ), mergePick)}
                 </div>
               ))}
+              {list.length > 0 && pageState.loading && (
+                <p className="py-2 text-center text-[11px] text-gray-400">Đang tải thêm…</p>
+              )}
+              {list.length > 0 && pageState.hasMore && !pageState.loading && (
+                <button
+                  type="button"
+                  onClick={() => onLoadBuckets?.([key])}
+                  className="w-full py-2 text-[11px] font-medium text-blue-600 hover:text-blue-700"
+                >
+                  Tải thêm
+                </button>
+              )}
             </KanbanColumn>
           );
         })}

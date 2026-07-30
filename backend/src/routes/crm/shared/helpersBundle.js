@@ -5024,6 +5024,197 @@ async function fetchCrmLeadsPageViaRpc(req, mergedQuery, type, parsedOffset, par
   return hydrateCrmLeadsRpcPage(parsedRpc, req, parsedOffset, parsedLimit, { lite, skipDeadline });
 }
 
+/**
+ * Lấy id phân trang của nhiều cột Kanban trong một lần quét DB.
+ * Trả null khi migration chưa được cài để endpoint dùng luồng cũ.
+ */
+async function fetchCrmKanbanStagePageIdsViaRpc(req, mergedQuery, type, requests) {
+  const forcedDealSelf = type === 'deal' && req.user?.userId && !userSeesAllCrmDealsForScope(req.user);
+  const forcedLeadSelf = type === 'lead' && req.user?.userId && !userSeesAllCrmLeadsForScope(req.user);
+  const rpcAssigneeStrict = (
+    (type === 'deal' && (!!uuidQueryOrNull(mergedQuery.assigned_to) || forcedDealSelf))
+    || (type === 'lead' && (!!uuidQueryOrNull(mergedQuery.assigned_to) || forcedLeadSelf))
+  );
+  const regionUnassigned = parseCrmRegionUnassignedQuery(mergedQuery);
+  const rpcRegionIds = regionUnassigned
+    ? null
+    : resolveRpcRegionIdsForCrmList(req, mergedQuery.region_id);
+  const { data, error } = await supabase.rpc('crm_kanban_stage_page_ids', {
+    ...buildCrmLeadsRpcFilterParams(mergedQuery, type, rpcAssigneeStrict, rpcRegionIds),
+    p_requests: (requests || []).map((request) => ({
+      stage_id: request.stageId,
+      offset: request.offset,
+      limit: request.limit,
+    })),
+  });
+  if (error) {
+    const message = String(error.message || '');
+    if (/crm_kanban_stage_page_ids|does not exist|Could not find|schema cache|argument/i.test(message)) {
+      return null;
+    }
+    throw error;
+  }
+  const payload = Array.isArray(data) && data.length === 1 ? data[0] : data;
+  if (!payload || typeof payload !== 'object' || !payload.pages || typeof payload.pages !== 'object') {
+    return null;
+  }
+  return payload.pages;
+}
+
+async function fetchCrmFilteredLeadIdsViaRpc(req, mergedQuery, type, maxRows = 20000) {
+  const forcedDealSelf = type === 'deal' && req.user?.userId && !userSeesAllCrmDealsForScope(req.user);
+  const forcedLeadSelf = type === 'lead' && req.user?.userId && !userSeesAllCrmLeadsForScope(req.user);
+  const rpcAssigneeStrict = (
+    (type === 'deal' && (!!uuidQueryOrNull(mergedQuery.assigned_to) || forcedDealSelf))
+    || (type === 'lead' && (!!uuidQueryOrNull(mergedQuery.assigned_to) || forcedLeadSelf))
+  );
+  const regionUnassigned = parseCrmRegionUnassignedQuery(mergedQuery);
+  const rpcRegionIds = regionUnassigned
+    ? null
+    : resolveRpcRegionIdsForCrmList(req, mergedQuery.region_id);
+  const baseParams = {
+    ...buildCrmLeadsRpcFilterParams(mergedQuery, type, rpcAssigneeStrict, rpcRegionIds),
+    p_stage_id: uuidQueryOrNull(mergedQuery.stage_id),
+  };
+  const ids = [];
+  let total = 0;
+  for (let offset = 0; offset < maxRows; offset += 5000) {
+    const { rpcData, rpcError } = await invokeCrmLeadsPageIdsRpc({
+      ...baseParams,
+      p_limit: Math.min(5000, maxRows - offset),
+      p_offset: offset,
+    });
+    const parsed = !rpcError ? parseCrmLeadsPageRpc(rpcData) : null;
+    if (!parsed) return null;
+    total = parsed.total;
+    ids.push(...parsed.ids);
+    if (ids.length >= total || !parsed.ids.length) break;
+  }
+  return { ids, total, complete: ids.length >= total };
+}
+
+/**
+ * Chỉ hydrate các trường cần để đếm Deadline. Đây là fallback khi migration
+ * `crm_deadline_bucket_counts` chưa được cài.
+ */
+async function fetchCrmDeadlineCountRowsViaRpc(req, mergedQuery, type, maxRows = 20000) {
+  const filtered = await fetchCrmFilteredLeadIdsViaRpc(req, mergedQuery, type, maxRows);
+  if (!filtered) return null;
+  const { ids, total, complete } = filtered;
+  const select = 'id, phone, stage_id, stage_entered_at, kanban_deadline_at, expected_close_date, customer:customers(phone)';
+  const byId = new Map();
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += 200) chunks.push(ids.slice(i, i + 200));
+  const CONCURRENCY = 5;
+  for (let i = 0; i < chunks.length; i += CONCURRENCY) {
+    const results = await Promise.all(
+      chunks.slice(i, i + CONCURRENCY).map(async (chunk) => {
+        const { data, error } = await supabase.from('crm_leads').select(select).in('id', chunk);
+        if (error) throw error;
+        return data || [];
+      }),
+    );
+    for (const row of results.flat()) byId.set(String(row.id), row);
+  }
+  const rows = mapLeadDisplayPhone(ids.map((id) => byId.get(String(id))).filter(Boolean));
+  const [withFlags, withDeadlines] = await Promise.all([
+    attachLeadUserFlagsForList(rows, req.user?.userId),
+    attachCrmNextOpenTaskDeadline(rows),
+  ]);
+  const flagsById = new Map(withFlags.map((row) => [String(row.id), row]));
+  return {
+    rows: withDeadlines.map((row) => ({ ...row, ...(flagsById.get(String(row.id)) || {}) })),
+    total,
+    complete,
+  };
+}
+
+async function fetchCrmDeadlineBucketCountsViaRpc(
+  req,
+  mergedQuery,
+  type,
+  stageIds,
+  config,
+  maxRows = 20000,
+) {
+  const filtered = await fetchCrmFilteredLeadIdsViaRpc(req, mergedQuery, type, maxRows);
+  if (!filtered) return null;
+  const dayParam = (key, fallback) => {
+    const value = Number(config?.buckets?.[key]?.days);
+    return Number.isFinite(value) && value > 0 ? Math.min(Math.round(value), 365) : fallback;
+  };
+  const configuredFields = [
+    String(config?.primary_field || 'crm_next_open_task_deadline'),
+    String(config?.fallback_field || 'expected_close_date'),
+  ];
+  const { data, error } = await supabase.rpc('crm_deadline_bucket_counts', {
+    p_lead_ids: filtered.ids,
+    p_stage_ids: Array.isArray(stageIds) && stageIds.length ? stageIds : null,
+    p_viewer_user_id: uuidQueryOrNull(req.user?.userId),
+    p_include_expected_close: configuredFields.includes('expected_close_date'),
+    p_in_2_weeks_days: dayParam('in_2_weeks', 14),
+    p_in_3_weeks_days: dayParam('in_3_weeks', 21),
+    p_in_4_weeks_days: dayParam('in_4_weeks', 28),
+    p_in_1_month_days: dayParam('in_1_month', 30),
+  });
+  if (error) {
+    const message = String(error.message || '');
+    if (/crm_deadline_bucket_counts|does not exist|Could not find|schema cache|argument/i.test(message)) {
+      return null;
+    }
+    throw error;
+  }
+  const payload = Array.isArray(data) && data.length === 1 ? data[0] : data;
+  if (!payload || typeof payload !== 'object') return null;
+  return {
+    counts: payload.counts || {},
+    total: Number(payload.total) || 0,
+    complete: filtered.complete,
+  };
+}
+
+async function fetchCrmDeadlineBucketPageIdsViaRpc(
+  req,
+  mergedQuery,
+  type,
+  stageIds,
+  config,
+  requests,
+  maxRows = 20000,
+) {
+  const filtered = await fetchCrmFilteredLeadIdsViaRpc(req, mergedQuery, type, maxRows);
+  if (!filtered) return null;
+  const dayParam = (key, fallback) => {
+    const value = Number(config?.buckets?.[key]?.days);
+    return Number.isFinite(value) && value > 0 ? Math.min(Math.round(value), 365) : fallback;
+  };
+  const configuredFields = [
+    String(config?.primary_field || 'crm_next_open_task_deadline'),
+    String(config?.fallback_field || 'expected_close_date'),
+  ];
+  const { data, error } = await supabase.rpc('crm_deadline_bucket_page_ids', {
+    p_lead_ids: filtered.ids,
+    p_stage_ids: Array.isArray(stageIds) && stageIds.length ? stageIds : null,
+    p_viewer_user_id: uuidQueryOrNull(req.user?.userId),
+    p_requests: Array.isArray(requests) ? requests : [],
+    p_include_expected_close: configuredFields.includes('expected_close_date'),
+    p_in_2_weeks_days: dayParam('in_2_weeks', 14),
+    p_in_3_weeks_days: dayParam('in_3_weeks', 21),
+    p_in_4_weeks_days: dayParam('in_4_weeks', 28),
+    p_in_1_month_days: dayParam('in_1_month', 30),
+  });
+  if (error) {
+    const message = String(error.message || '');
+    if (/crm_deadline_bucket_page_ids|does not exist|Could not find|schema cache|argument/i.test(message)) {
+      return null;
+    }
+    throw error;
+  }
+  const payload = Array.isArray(data) && data.length === 1 ? data[0] : data;
+  if (!payload || typeof payload !== 'object') return null;
+  return { pages: payload.pages || {}, complete: filtered.complete };
+}
+
 function buildCrmDashboardMinimalKpis(type, totalItems, wonItemCount, totalValue, wonValue, ledgerPeriodStart) {
   if (type === 'lead') {
     return {
@@ -6808,6 +6999,10 @@ module.exports = {
   fetchCrmLeadsForOrgReportBatched,
   fetchCrmLeadsForUserDetailBatched,
   fetchCrmLeadsLiteForDuplicateScan,
+  fetchCrmKanbanStagePageIdsViaRpc,
+  fetchCrmDeadlineBucketCountsViaRpc,
+  fetchCrmDeadlineBucketPageIdsViaRpc,
+  fetchCrmDeadlineCountRowsViaRpc,
   fetchCrmLeadsPageViaRpc,
   fetchCrmPipelineZaloSlice,
   fetchCrmSurveyEventsChunk,
