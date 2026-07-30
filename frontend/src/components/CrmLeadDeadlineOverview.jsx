@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Ban, Clock, RotateCcw, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Ban, Clock, Pencil, RotateCcw, X } from 'lucide-react';
 import api from '../lib/api';
 import { formatDate } from '../lib/utils';
+import { useAuth } from '../lib/auth';
+import { isAdminLike } from '../lib/adminRole';
+import CrmDeadlineModal from './CrmDeadlineModal';
 import {
   CRM_DEADLINE_SOURCE_META,
   resolveCrmLeadDeadlineViewSource,
@@ -22,6 +25,15 @@ function formatDeadlineIso(iso) {
   return formatDate(new Date(ts).toISOString());
 }
 
+function calendarDayDiff(startIso, endIso) {
+  const start = new Date(startIso);
+  const end = new Date(endIso);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  const startDay = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate());
+  const endDay = Date.UTC(end.getFullYear(), end.getMonth(), end.getDate());
+  return Math.round((endDay - startDay) / 86400000);
+}
+
 function SourceBadge({ source }) {
   if (!source) return null;
   const meta = CRM_DEADLINE_SOURCE_META[source];
@@ -36,22 +48,29 @@ function SourceBadge({ source }) {
   );
 }
 
-function SourceRow({ label, children }) {
+function SourceRow({ label, action, children }) {
   return (
-    <div className="flex items-start justify-between gap-3 text-[11px] leading-snug">
-      <span className="text-slate-500 shrink-0">{label}</span>
-      <span className="text-right text-slate-700 min-w-0">{children}</span>
+    <div className="rounded-md border border-amber-100 bg-white/70 px-2 py-1.5 text-[11px] leading-snug">
+      <div className="flex items-start justify-between gap-1.5">
+        <span className="font-medium text-slate-500 min-w-0">{label}</span>
+        {action}
+      </div>
+      <div className="mt-0.5 text-slate-700 break-words">{children}</div>
     </div>
   );
 }
 
 /** Hạn hiển thị trên view Deadline Dashboard — giải thích nguồn (thẻ / NV / SLA / ngày chốt). */
 export default function CrmLeadDeadlineOverview({ lead, onChanged }) {
+  const { user } = useAuth();
   const [deadlineConfig, setDeadlineConfig] = useState(null);
   const [disableOpen, setDisableOpen] = useState(false);
   const [disableReason, setDisableReason] = useState('');
   const [deadlineBusy, setDeadlineBusy] = useState(false);
   const [deadlineError, setDeadlineError] = useState('');
+  const [taskDeadlines, setTaskDeadlines] = useState([]);
+  const [taskDeadlinesLoading, setTaskDeadlinesLoading] = useState(false);
+  const [deadlineEditor, setDeadlineEditor] = useState(null);
 
   useEffect(() => {
     const cid = lead?.company_id;
@@ -65,6 +84,35 @@ export default function CrmLeadDeadlineOverview({ lead, onChanged }) {
       .catch(() => { if (!cancelled) setDeadlineConfig(null); });
     return () => { cancelled = true; };
   }, [lead?.company_id]);
+
+  const loadTaskDeadlines = useCallback(async () => {
+    if (!lead?.id) {
+      setTaskDeadlines([]);
+      return;
+    }
+    setTaskDeadlinesLoading(true);
+    try {
+      const { data } = await api.get(`/crm/leads/${lead.id}/tasks`);
+      const rows = (Array.isArray(data) ? data : [])
+        .filter((task) => (
+          (task?.status === 'pending' || task?.status === 'in_progress')
+          && task?.deadline
+        ))
+        .sort((a, b) => {
+          const dateDiff = new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
+          return dateDiff || (Number(a.order_index) || 0) - (Number(b.order_index) || 0);
+        });
+      setTaskDeadlines(rows);
+    } catch {
+      setTaskDeadlines([]);
+    } finally {
+      setTaskDeadlinesLoading(false);
+    }
+  }, [lead?.id]);
+
+  useEffect(() => {
+    loadTaskDeadlines();
+  }, [loadTaskDeadlines]);
 
   const stage = lead?.stage;
   const cfg = deadlineConfig || {
@@ -96,6 +144,57 @@ export default function CrmLeadDeadlineOverview({ lead, onChanged }) {
 
   const showDashboardNote = !kanbanLabel && resolved.deadlineTs != null && !hidden;
   const allDisabled = !!lead?.deadline_disabled_at;
+  const canEditSla = isAdminLike(user) && !!stage?.id;
+
+  const editButton = (onClick, label = 'Sửa') => (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={deadlineBusy}
+      className="inline-flex shrink-0 items-center gap-0.5 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[9px] font-semibold text-slate-600 hover:border-amber-300 hover:text-amber-700 disabled:opacity-50"
+    >
+      <Pencil className="h-2.5 w-2.5" />
+      {label}
+    </button>
+  );
+
+  const saveDeadlineEditor = async ({ deadlineIso, reason }) => {
+    if (!deadlineEditor || !lead?.id) return;
+    setDeadlineBusy(true);
+    setDeadlineError('');
+    try {
+      if (deadlineEditor.type === 'task') {
+        await api.put(`/crm/leads/${lead.id}/tasks/${deadlineEditor.task.id}`, {
+          deadline: deadlineIso,
+        });
+      } else if (deadlineEditor.type === 'kanban') {
+        await api.patch(`/crm/leads/${lead.id}/deadline`, {
+          kanban_deadline_at: deadlineIso,
+          reason,
+        });
+      } else if (deadlineEditor.type === 'expected_close') {
+        await api.put(`/crm/leads/${lead.id}`, {
+          expected_close_date: deadlineIso ? deadlineIso.slice(0, 10) : null,
+        });
+      } else if (deadlineEditor.type === 'sla') {
+        const slaDaysValue = deadlineIso
+          ? calendarDayDiff(lead?.stage_entered_at, deadlineIso)
+          : 0;
+        if (deadlineIso && (!Number.isFinite(slaDaysValue) || slaDaysValue < 1 || slaDaysValue > 365)) {
+          throw new Error('Ngày SLA phải sau ngày vào cột và không quá 365 ngày.');
+        }
+        await api.put(`/crm/pipeline-stages/${stage.id}`, {
+          sla_days: deadlineIso ? slaDaysValue : 0,
+        });
+      }
+      setDeadlineEditor(null);
+      await Promise.all([loadTaskDeadlines(), onChanged?.()]);
+    } catch (e) {
+      setDeadlineError(e.response?.data?.error || e.message || 'Không cập nhật được deadline.');
+    } finally {
+      setDeadlineBusy(false);
+    }
+  };
 
   const disableAllDeadlines = async () => {
     const reason = disableReason.trim();
@@ -136,7 +235,8 @@ export default function CrmLeadDeadlineOverview({ lead, onChanged }) {
   };
 
   return (
-    <div className={`rounded-lg border p-2.5 my-1.5 ${
+    <>
+      <div className={`rounded-lg border p-2.5 my-1.5 ${
       allDisabled ? 'border-slate-300 bg-slate-50' : 'border-amber-200 bg-amber-50/40'
     }`}>
       <div className="flex items-start gap-2">
@@ -228,33 +328,75 @@ export default function CrmLeadDeadlineOverview({ lead, onChanged }) {
           )}
 
           {!hidden && !allDisabled && (
-            <div className="mt-2.5 pt-2 border-t border-amber-200/70 space-y-1">
-              <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Chi tiết nguồn</p>
-              <SourceRow label="Deadline nhiệm vụ (NV mở)">
-                {taskLabel ? taskLabel : (
-                  <span className="text-slate-400 italic">Không có NV đang mở hoặc chưa tới lượt đếm hạn</span>
+            <div className="mt-2.5 pt-2 border-t border-amber-200/70 space-y-1.5">
+              <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">
+                Các deadline đang setup
+              </p>
+
+              <div className="rounded-md border border-amber-100 bg-white/70 px-2 py-1.5">
+                <p className="text-[11px] font-medium text-slate-500">1. Deadline nhiệm vụ đang mở</p>
+                {taskDeadlinesLoading ? (
+                  <p className="mt-1 text-[10px] italic text-slate-400">Đang tải danh sách…</p>
+                ) : taskDeadlines.length ? (
+                  <div className="mt-1 max-h-40 space-y-1 overflow-y-auto pr-0.5">
+                    {taskDeadlines.map((task) => (
+                      <div key={task.id} className="rounded border border-slate-100 bg-white px-1.5 py-1">
+                        <div className="flex items-start justify-between gap-1">
+                          <span className="min-w-0 break-words text-[10px] font-medium text-slate-700">
+                            {task.title || 'Nhiệm vụ'}
+                          </span>
+                          {editButton(() => setDeadlineEditor({ type: 'task', task }))}
+                        </div>
+                        <p className="mt-0.5 text-[10px] text-amber-700">{formatDeadlineIso(task.deadline)}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-1 text-[10px] italic text-slate-400">
+                    {taskLabel
+                      ? `Hạn gần nhất: ${taskLabel}`
+                      : 'Không có nhiệm vụ mở đã đặt deadline'}
+                  </p>
                 )}
-              </SourceRow>
-              <SourceRow label="Deadline tự setup (thẻ)">
+              </div>
+
+              <SourceRow
+                label="2. Deadline tự setup (thẻ)"
+                action={editButton(
+                  () => setDeadlineEditor({ type: 'kanban' }),
+                  kanbanLabel ? 'Sửa' : 'Đặt',
+                )}
+              >
                 {kanbanLabel ? kanbanLabel : <span className="text-slate-400 italic">Chưa đặt</span>}
               </SourceRow>
-              {lead?.type === 'deal' && (
-                <SourceRow label="Ngày dự kiến chốt">
-                  {expectedCloseLabel ? expectedCloseLabel : <span className="text-slate-400 italic">Chưa nhập</span>}
-                </SourceRow>
-              )}
-              <SourceRow label="SLA cột">
+              <SourceRow
+                label="3. SLA cột (áp dụng mọi thẻ)"
+                action={canEditSla
+                  ? editButton(() => setDeadlineEditor({ type: 'sla' }))
+                  : null}
+              >
                 {slaLabel && slaDays != null ? (
-                  <span>
+                  <>
                     {slaLabel}
                     <span className="text-slate-400 font-normal">
-                      {' '}· {slaDays} ng · vào cột {lead?.stage_entered_at ? formatDate(lead.stage_entered_at) : '—'}
+                      {' '}· {slaDays} ngày · vào cột {lead?.stage_entered_at ? formatDate(lead.stage_entered_at) : '—'}
                     </span>
-                  </span>
+                  </>
                 ) : (
                   <span className="text-slate-400 italic">Không áp dụng</span>
                 )}
               </SourceRow>
+              {lead?.type === 'deal' && (
+                <SourceRow
+                  label="4. Ngày dự kiến chốt (fallback)"
+                  action={editButton(
+                    () => setDeadlineEditor({ type: 'expected_close' }),
+                    expectedCloseLabel ? 'Sửa' : 'Đặt',
+                  )}
+                >
+                  {expectedCloseLabel ? expectedCloseLabel : <span className="text-slate-400 italic">Chưa nhập</span>}
+                </SourceRow>
+              )}
             </div>
           )}
 
@@ -316,6 +458,57 @@ export default function CrmLeadDeadlineOverview({ lead, onChanged }) {
           )}
         </div>
       </div>
-    </div>
+      </div>
+
+      <CrmDeadlineModal
+        open={!!deadlineEditor}
+        title={
+          deadlineEditor?.type === 'task'
+            ? `Deadline nhiệm vụ: ${deadlineEditor?.task?.title || ''}`
+            : deadlineEditor?.type === 'expected_close'
+              ? 'Ngày dự kiến chốt'
+              : deadlineEditor?.type === 'sla'
+                ? 'Deadline SLA cột'
+              : 'Deadline tự setup của thẻ'
+        }
+        subtitle={
+          deadlineEditor?.type === 'task'
+            ? 'Thay đổi này cập nhật trực tiếp ngày hẹn của nhiệm vụ.'
+            : deadlineEditor?.type === 'expected_close'
+              ? 'Ngày dự kiến chốt là nguồn fallback trên view Deadline.'
+              : deadlineEditor?.type === 'sla'
+                ? 'Ngày được chọn sẽ quy đổi thành số ngày SLA và áp dụng cho mọi thẻ trong cột này.'
+              : 'Mọi thay đổi deadline thẻ được ghi vào lịch sử.'
+        }
+        initialDeadline={
+          deadlineEditor?.type === 'task'
+            ? deadlineEditor?.task?.deadline
+            : deadlineEditor?.type === 'expected_close'
+              ? lead?.expected_close_date
+              : deadlineEditor?.type === 'sla'
+                ? (slaTs != null ? new Date(slaTs).toISOString() : null)
+              : lead?.kanban_deadline_at
+        }
+        currentDeadline={
+          deadlineEditor?.type === 'task'
+            ? deadlineEditor?.task?.deadline
+            : deadlineEditor?.type === 'expected_close'
+              ? lead?.expected_close_date
+              : deadlineEditor?.type === 'sla'
+                ? (slaTs != null ? new Date(slaTs).toISOString() : null)
+              : lead?.kanban_deadline_at
+        }
+        requireReason={deadlineEditor?.type === 'kanban' && !!lead?.kanban_deadline_at}
+        allowClear={
+          deadlineEditor?.type === 'task'
+          || (deadlineEditor?.type === 'kanban' && !!lead?.kanban_deadline_at)
+          || (deadlineEditor?.type === 'expected_close' && !!lead?.expected_close_date)
+          || (deadlineEditor?.type === 'sla' && slaTs != null)
+        }
+        submitting={deadlineBusy}
+        onClose={() => !deadlineBusy && setDeadlineEditor(null)}
+        onConfirm={saveDeadlineEditor}
+      />
+    </>
   );
 }
