@@ -211,11 +211,20 @@ function resetDb() {
     users: [
       { id: 'u-a', full_name: 'User A', company_id: 'co-a', role: 'sales', is_active: true, department_id: null },
       { id: 'u-b', full_name: 'User B', company_id: 'co-b', role: 'sales', is_active: true, department_id: null },
+      { id: 'u-a-dept', full_name: 'User A Department', company_id: null, role: 'sales', is_active: true, department_id: 'dept-a' },
+      { id: 'u-a-member', full_name: 'User A Membership', company_id: null, role: 'sales', is_active: true, department_id: null },
+      { id: 'u-a-region', full_name: 'User A Region', company_id: null, role: 'sales', is_active: true, department_id: null },
       { id: 'admin', full_name: 'Admin', company_id: null, role: 'admin', is_active: true },
+    ],
+    user_companies: [
+      { user_id: 'u-a-member', company_id: 'co-a' },
     ],
     user_company_regions: [
       { user_id: 'u-a', region_id: 'reg-co-a-1' },
       { user_id: 'u-b', region_id: 'reg-co-b-1' },
+      { user_id: 'u-a-dept', region_id: 'reg-co-a-1' },
+      { user_id: 'u-a-member', region_id: 'reg-co-a-1' },
+      { user_id: 'u-a-region', region_id: 'reg-co-a-1' },
     ],
     customers: [
       {
@@ -256,7 +265,9 @@ function resetDb() {
     crm_assignments: [
       { id: 'as1', lead_id: 'lead-1', company_id: 'co-a' },
     ],
-    departments: [],
+    departments: [
+      { id: 'dept-a', name: 'Sales A', company_id: 'co-a' },
+    ],
   };
 }
 
@@ -375,6 +386,9 @@ function resetDb() {
     assert.ok(!opts.companies.some((c) => c.id === 'co-c'));
     assert.ok(opts.regions.length >= 1);
     assert.ok(opts.users.some((u) => u.id === 'u-a'));
+    assert.ok(opts.users.some((u) => u.id === 'u-a-dept'), 'phải lấy NV thuộc công ty qua phòng ban');
+    assert.ok(opts.users.some((u) => u.id === 'u-a-member'), 'phải lấy NV thuộc công ty qua user_companies');
+    assert.ok(opts.users.some((u) => u.id === 'u-a-region'), 'phải lấy NV được gán vào khu vực của công ty');
   });
 
   console.log(`\nKết quả: ${passed} pass, ${failed} fail`);

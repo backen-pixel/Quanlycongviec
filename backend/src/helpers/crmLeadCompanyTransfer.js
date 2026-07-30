@@ -231,15 +231,67 @@ async function getTransferOptions(req, { companyId } = {}) {
   let regions = await getCompanyRegionsList({ allowedIds: [targetId], moduleDivIds });
   regions = (regions || []).filter((r) => r.is_active !== false);
 
-  // NV thuộc công ty + crm_region_ids
-  const { data: users, error: uErr } = await supabase
-    .from('users')
-    .select('id, full_name, avatar, role, company_id, department_id, is_active')
-    .eq('company_id', targetId)
-    .or('is_active.eq.true,is_active.is.null')
-    .order('full_name');
-  if (uErr) throw uErr;
-  const userRows = users || [];
+  // NV có thể thuộc công ty theo users.company_id, phòng ban, user_companies
+  // hoặc được gán trực tiếp vào một khu vực của công ty.
+  // Không chỉ lọc users.company_id vì dữ liệu legacy Phúc Đạt có nhiều NV company_id=NULL.
+  const targetRegionIds = regions.map((region) => region.id).filter(Boolean);
+  const [
+    { data: companyDepts, error: deptErr },
+    { data: companyMemberships, error: membershipErr },
+    { data: regionMemberships, error: regionMembershipErr },
+  ] = await Promise.all([
+    supabase.from('departments').select('id').eq('company_id', targetId),
+    supabase.from('user_companies').select('user_id').eq('company_id', targetId),
+    targetRegionIds.length
+      ? supabase.from('user_company_regions').select('user_id').in('region_id', targetRegionIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (deptErr) throw deptErr;
+  if (membershipErr) throw membershipErr;
+  if (regionMembershipErr) throw regionMembershipErr;
+
+  const companyDeptIds = (companyDepts || []).map((d) => d.id).filter(Boolean);
+  const membershipUserIds = [...new Set([
+    ...(companyMemberships || []).map((row) => row.user_id),
+    ...(regionMemberships || []).map((row) => row.user_id),
+  ].filter(Boolean))];
+  const userSelect = 'id, full_name, avatar, role, company_id, department_id, is_active';
+  const userQueries = [
+    supabase
+      .from('users')
+      .select(userSelect)
+      .eq('company_id', targetId)
+      .or('is_active.eq.true,is_active.is.null'),
+  ];
+  if (companyDeptIds.length) {
+    userQueries.push(
+      supabase
+        .from('users')
+        .select(userSelect)
+        .in('department_id', companyDeptIds)
+        .or('is_active.eq.true,is_active.is.null'),
+    );
+  }
+  if (membershipUserIds.length) {
+    userQueries.push(
+      supabase
+        .from('users')
+        .select(userSelect)
+        .in('id', membershipUserIds)
+        .or('is_active.eq.true,is_active.is.null'),
+    );
+  }
+
+  const userResults = await Promise.all(userQueries);
+  const userById = new Map();
+  for (const result of userResults) {
+    if (result.error) throw result.error;
+    for (const user of result.data || []) {
+      if (user?.id) userById.set(String(user.id), user);
+    }
+  }
+  const userRows = [...userById.values()]
+    .sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
   const userIds = userRows.map((u) => u.id);
   const regionByUser = {};
   if (userIds.length) {
