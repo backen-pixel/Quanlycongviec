@@ -53,6 +53,7 @@ export function crmLeadMissingPhone(item) {
  * - cột Thắng/Thua/Hoàn thành doanh thu
  */
 export function shouldHideCrmKanbanDeadlineOnCard(item, stage) {
+  if (item?.deadline_disabled_at) return true;
   if (crmLeadMissingPhone(item)) return true;
   if (item?.is_interacted) return true;
   const st = stage || item?.stage;
@@ -113,6 +114,9 @@ export function getPipelineStageSlaDeadlineTs(stageEnteredAt, stage, leadItem) {
  */
 export function resolveCrmLeadEffectiveDeadlineSource(item, stage) {
   const st = stage || item?.stage || item?._stage;
+  if (item?.deadline_disabled_at) {
+    return { source: null, deadlineTs: null, disabled: true };
+  }
   if (shouldHideCrmKanbanDeadlineOnCard(item, st)) {
     return { source: null, deadlineTs: null };
   }

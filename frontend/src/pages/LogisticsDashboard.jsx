@@ -24,11 +24,20 @@ import {
 } from 'lucide-react';
 import { LogisticsListView, LogisticsPlannerView, LogisticsCalendarView } from '../components/LogisticsViews';
 import NewLogisticsProjectModal from '../components/NewLogisticsProjectModal';
-import WorkshopPipelineKanbanScroll from '../components/WorkshopPipelineKanbanScroll';
+import WorkshopPipelineKanbanScroll, { useWorkshopKanbanScrollLayout } from '../components/WorkshopPipelineKanbanScroll';
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import KanbanCardQuickMove from '../components/KanbanCardQuickMove';
-import { useKanbanColumnTheme, KANBAN_CARDS_BODY_CLASS, UI_KANBAN_FIXED_CLASS, KANBAN_BOARD_COLUMN_RAILS_CLASS, KANBAN_COLUMN_RAIL_CLASS, KANBAN_COLUMN_VALUE_METRIC_CLASS } from '../lib/kanbanColumnTheme';
-import WorkshopStaffFilterPanel from '../components/WorkshopStaffFilterPanel';
+import {
+  useKanbanColumnTheme, KANBAN_CARDS_BODY_CLASS, UI_KANBAN_FIXED_CLASS,
+  KANBAN_BOARD_COLUMN_RAILS_CLASS, KANBAN_COLUMN_RAIL_CLASS, KANBAN_COLUMN_VALUE_METRIC_CLASS,
+  KANBAN_CARDS_BODY_EMPTY_PIN_CLASS, KANBAN_COLUMN_EMPTY_CLASS, KANBAN_COLUMN_EMPTY_PIN_CLASS,
+  useKanbanEmptyPlaceholderStickyTop,
+} from '../lib/kanbanColumnTheme';
+import WorkshopDashboardFilterPanel, { SX_FILTER_TABS_META } from '../components/WorkshopDashboardFilterPanel';
+import SearchInlineFilterChips, { SearchClearButton } from '../components/SearchInlineFilterChips';
+import DateRangePickerPopover from '../components/DateRangePickerPopover';
+import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
+import AnchoredDropdownMenu from '../components/AnchoredDropdownMenu';
 import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
@@ -38,6 +47,37 @@ import {
 const INTAKE_BUCKET = 'delivery_pending';
 
 const WS_DASH_VIEW_MODES = ['kanban', 'list', 'planner', 'calendar'];
+const VC_VIEW_MODE_OPTIONS = [
+  { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
+  { id: 'list', icon: List, label: 'Danh sách' },
+  { id: 'planner', icon: Users, label: 'Planner' },
+  { id: 'calendar', icon: Calendar, label: 'Lịch' },
+];
+const VC_ALT_VIEW_MODES = VC_VIEW_MODE_OPTIONS.filter((v) => v.id !== 'kanban');
+const VC_SORT_OPTIONS = [
+  { id: 'newest', label: 'Mới nhất' },
+  { id: 'oldest', label: 'Cũ nhất' },
+  { id: 'deadline', label: 'Deadline gần nhất' },
+  { id: 'value', label: 'Giá trị cao → thấp' },
+];
+const LS_VC_FILTER_PANEL_POS = 'vc_filter_panel_pos';
+const LS_VC_KANBAN_COLUMN_SCROLL = 'vc_kanban_column_scroll_mode';
+
+function readStoredVcFilterPanelPos() {
+  try {
+    const raw = localStorage.getItem(LS_VC_FILTER_PANEL_POS);
+    if (!raw) return null;
+    const pos = JSON.parse(raw);
+    if (pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)) return pos;
+  } catch { /* ignore */ }
+  return null;
+}
+function storeVcFilterPanelPos(pos) {
+  try {
+    if (!pos) localStorage.removeItem(LS_VC_FILTER_PANEL_POS);
+    else localStorage.setItem(LS_VC_FILTER_PANEL_POS, JSON.stringify(pos));
+  } catch { /* ignore */ }
+}
 
 const DEFAULT_VC_STAGES = [
   { id: 'vc_intake', name: 'Chờ vận chuyển', slug: 'delivery_pending', icon: '📦', color: '#f97316', bucket_slug: INTAKE_BUCKET },
@@ -108,7 +148,30 @@ export default function LogisticsDashboard() {
   const [customTo, setCustomTo] = useState(() => P0?.customTo ?? '');
   const [kanbanLoadKey, setKanbanLoadKey] = useState(() => P0?.kanbanLoadKey ?? '500');
   const [filterPhone, setFilterPhone] = useState(() => P0?.filterPhone ?? '');
-  const [showAdvFilter, setShowAdvFilter] = useState(false);
+  const [showAdvFilter, setShowAdvFilter] = useState(() => !!P0?.showAdvFilter);
+  const [vcFilterTab, setVcFilterTab] = useState('employee');
+  const [filterPanelPos, setFilterPanelPos] = useState(() => readStoredVcFilterPanelPos());
+  const [showDateRangePicker, setShowDateRangePicker] = useState(false);
+  const [showCustomDate, setShowCustomDate] = useState(() => P0?.timePreset === 'custom');
+  const [showViewModeMenu, setShowViewModeMenu] = useState(false);
+  const [showKanbanSettings, setShowKanbanSettings] = useState(false);
+  const [showOverduePopover, setShowOverduePopover] = useState(false);
+  const [kanbanColumnScrollMode, setKanbanColumnScrollMode] = useState(() => {
+    try {
+      const s = localStorage.getItem(LS_VC_KANBAN_COLUMN_SCROLL);
+      if (s === 'per-column' || s === 'unified') return s;
+    } catch { /* ignore */ }
+    return P0?.kanbanColumnScrollMode === 'per-column' ? 'per-column' : 'unified';
+  });
+  const [sortBy, setSortBy] = useState(() => P0?.sortBy || 'newest');
+  const [sortOpen, setSortOpen] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState(null);
+  const filterPanelRef = useRef(null);
+  const filterPanelDragRef = useRef(null);
+  const viewModeTriggerRef = useRef(null);
+  const kanbanSettingsTriggerRef = useRef(null);
+  const overdueTriggerRef = useRef(null);
+  const sortMenuRef = useRef(null);
   const [filterWorkTypeId, setFilterWorkTypeId] = useState(() => P0?.filterWorkTypeId ?? '');
   const [workTypes, setWorkTypes] = useState([]);
   const [kpiPanelOpen, setKpiPanelOpen] = useState(() => readVcKpiPanelOpen());
@@ -172,10 +235,15 @@ export default function LogisticsDashboard() {
   const canPickCompany = canPickWorkshopCompany(user, isAdmin, isCompanyScopedAdmin);
   const workshopCompanyPickerList = useMemo(() => {
     if (isSystemAdmin(user)) return companies;
+    if (isCompanyScopedAdmin && user?.company_id) {
+      const cid = String(user.company_id);
+      const own = (companies || []).find((c) => String(c.id) === cid);
+      return own ? [own] : [{ id: cid, name: cid, short_name: cid }];
+    }
     if (user?.company_id) return workshopCompaniesForCrossViewer(companies, user);
     if (crossWorkshopViewer && !isAdmin) return workshopCompaniesForCrossViewer(companies, user);
     return companies;
-  }, [companies, crossWorkshopViewer, isAdmin, user]);
+  }, [companies, crossWorkshopViewer, isAdmin, isCompanyScopedAdmin, user]);
 
   const load = useCallback(async () => {
     const seq = ++loadSeqRef.current;
@@ -227,6 +295,7 @@ export default function LogisticsDashboard() {
       if (projectList !== null) {
         setProjects(applyWorkshopProjectRenamePatches(projectList));
       }
+      if (dashRes || projectList !== null) setLastSyncedAt(new Date());
     } catch (e) {
       console.error(e);
     }
@@ -239,10 +308,9 @@ export default function LogisticsDashboard() {
     projectsRef.current = projects;
   }, [projects]);
 
-  // Tự reload khi có project bàn giao sang VC qua socket
+  // Tự reload khi có project bàn giao sang VC qua socket / sự kiện local
   useEffect(() => {
     const socket = getSocket();
-    if (!socket) return;
     const handler = (data) => {
       // Chỉ reload khi có dự án "mới xuất hiện" trong module VC (bàn giao từ SX),
       // tránh reload toàn trang khi user đang kéo thả đổi cột ngay trong VC.
@@ -252,10 +320,32 @@ export default function LogisticsDashboard() {
       if (existed) return;
 
       const s = data?.status || data?.project?.status;
-      if (s === 'shipping' || s === 'installing' || s === 'warranty' || s === 'completed') load();
+      const handedOver = Boolean(
+        data?.reason === 'vc_handover'
+        || data?.reason === 'handover_vc'
+        || data?.reason === 'vc_handover_reassert'
+        || data?.logistics_company_id
+        || data?.vc_kanban_column_id
+        || data?.project?.logistics_company_id
+        || data?.project?.vc_kanban_column_id,
+      );
+      if (handedOver || s === 'shipping' || s === 'installing' || s === 'warranty' || s === 'completed') {
+        load();
+      }
     };
-    socket.on('project:stage_changed', handler);
-    return () => socket.off('project:stage_changed', handler);
+    const onLocal = (ev) => handler(ev?.detail || {});
+    if (socket) {
+      socket.on('project:stage_changed', handler);
+      socket.on('logistics:board_changed', handler);
+    }
+    window.addEventListener('vc-handover:board-refresh', onLocal);
+    return () => {
+      if (socket) {
+        socket.off('project:stage_changed', handler);
+        socket.off('logistics:board_changed', handler);
+      }
+      window.removeEventListener('vc-handover:board-refresh', onLocal);
+    };
   }, [load]);
 
   useEffect(() => {
@@ -268,10 +358,20 @@ export default function LogisticsDashboard() {
       .catch(() => setCompanies([]));
   }, []);
 
+  /** Pipeline VC gắn theo công ty — không dùng bộ Global khi chọn «Tất cả». */
   useEffect(() => {
-    if (!isAdmin || !filterCompany || !companies?.length) return;
-    if (!companies.some((c) => String(c.id) === String(filterCompany))) setFilterCompany('');
-  }, [isAdmin, filterCompany, companies]);
+    if (!workshopCompanyPickerList.length) return;
+    const valid = filterCompany
+      && workshopCompanyPickerList.some((c) => String(c.id) === String(filterCompany));
+    if (valid) return;
+    let saved = '';
+    try { saved = String(localStorage.getItem('vc_pipeline_settings_company_id') || ''); } catch { /* ignore */ }
+    const fromSaved = saved
+      ? workshopCompanyPickerList.find((c) => String(c.id) === saved)
+      : null;
+    const pick = fromSaved || workshopCompanyPickerList[0];
+    if (pick?.id) handleStaffFilterCompanyChange(pick.id);
+  }, [workshopCompanyPickerList, filterCompany, handleStaffFilterCompanyChange]);
 
   useEffect(() => {
     try {
@@ -279,12 +379,108 @@ export default function LogisticsDashboard() {
         filterCompany, timePreset, customFrom, customTo, kanbanLoadKey,
         filterPersonId, filterPersonName, filterRegion, filterPhone, filterWorkTypeId,
         searchQuery, priorityFilter, stageFilter, viewMode, vcPipelineTab,
+        showAdvFilter, kanbanColumnScrollMode, sortBy,
       }));
     } catch { /* ignore */ }
   }, [
     filterCompany, timePreset, customFrom, customTo, kanbanLoadKey, filterPersonId, filterPersonName,
     filterRegion, filterPhone, filterWorkTypeId, searchQuery, priorityFilter, stageFilter, viewMode, vcPipelineTab,
+    showAdvFilter, kanbanColumnScrollMode, sortBy,
   ]);
+
+  const handleTimePresetChange = useCallback((preset) => {
+    setTimePreset(preset);
+    if (preset === 'custom') {
+      setShowCustomDate(true);
+      return;
+    }
+    setShowCustomDate(false);
+    setShowDateRangePicker(false);
+    if (preset === '') {
+      setCustomFrom('');
+      setCustomTo('');
+      return;
+    }
+    const range = getWorkshopDateRange(preset);
+    setCustomFrom(range.from);
+    setCustomTo(range.to);
+  }, []);
+
+  const timeFilterLabel = useMemo(() => {
+    if (!timePreset) return '';
+    if (timePreset === 'custom') {
+      if (customFrom && customTo) return `${customFrom} → ${customTo}`;
+      return 'Tùy chỉnh';
+    }
+    return WS_TIME_PRESETS.find((p) => p.key === timePreset)?.label || '';
+  }, [timePreset, customFrom, customTo]);
+
+  const openVcFilterPanel = useCallback(() => {
+    setShowAdvFilter((open) => !open);
+    if (!showAdvFilter) setVcFilterTab('employee');
+  }, [showAdvFilter]);
+
+  const closeVcFilterPanel = useCallback(() => {
+    setShowAdvFilter(false);
+    setShowDateRangePicker(false);
+  }, []);
+
+  const beginFilterPanelDrag = useCallback((e) => {
+    if (e.button !== 0) return;
+    const panel = filterPanelRef.current;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    const originX = filterPanelPos?.x ?? rect.left;
+    const originY = filterPanelPos?.y ?? rect.top;
+    filterPanelDragRef.current = {
+      dragging: true,
+      startX: e.clientX,
+      startY: e.clientY,
+      originX,
+      originY,
+      width: rect.width,
+      height: rect.height,
+    };
+    if (!filterPanelPos) setFilterPanelPos({ x: originX, y: originY });
+    e.preventDefault();
+  }, [filterPanelPos]);
+
+  useEffect(() => {
+    const onMove = (e) => {
+      const drag = filterPanelDragRef.current;
+      if (!drag?.dragging) return;
+      const margin = 8;
+      const maxX = Math.max(margin, window.innerWidth - drag.width - margin);
+      const maxY = Math.max(margin, window.innerHeight - drag.height - margin);
+      const x = Math.min(maxX, Math.max(margin, drag.originX + (e.clientX - drag.startX)));
+      const y = Math.min(maxY, Math.max(margin, drag.originY + (e.clientY - drag.startY)));
+      setFilterPanelPos({ x, y });
+    };
+    const onUp = () => {
+      const drag = filterPanelDragRef.current;
+      if (!drag?.dragging) return;
+      drag.dragging = false;
+      setFilterPanelPos((pos) => {
+        if (pos) storeVcFilterPanelPos(pos);
+        return pos;
+      });
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!showAdvFilter) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape' && !showDateRangePicker) closeVcFilterPanel();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showAdvFilter, showDateRangePicker, closeVcFilterPanel]);
 
   useEffect(() => {
     if (!companyForTypes) {
@@ -315,26 +511,6 @@ export default function LogisticsDashboard() {
       return true;
     });
   }, [projects, dateFromTo, matchesProject, deferredPersonName, filterPhone]);
-
-  const scopeKpis = useMemo(() => {
-    const list = scopeProjects;
-    if (!list.length) {
-      return {
-        total: 0, shipping: 0, installing: 0, warranty: 0, completed: 0, overdue: 0, avg_progress: kpis?.avg_progress || 0,
-      };
-    }
-    return {
-      total: list.length,
-      shipping: list.filter((p) => p.status === 'shipping' || p.current_stage?.slug === 'delivery').length,
-      installing: list.filter((p) => p.status === 'installing' || p.current_stage?.slug === 'installation').length,
-      warranty: list.filter((p) => p.status === 'warranty' || p.current_stage?.slug === 'customer-care').length,
-      completed: list.filter((p) => p.status === 'completed').length,
-      overdue: list.filter(
-        (p) => p.deadline && new Date(p.deadline) < new Date() && p.status !== 'completed',
-      ).length,
-      avg_progress: Math.round(list.reduce((s, p) => s + (p.progress || 0), 0) / list.length),
-    };
-  }, [scopeProjects, kpis]);
 
   const toggleSelect = useCallback((id, e) => {
     e?.stopPropagation();
@@ -426,9 +602,26 @@ export default function LogisticsDashboard() {
   }, [pipeline]);
 
   const filteredKanbanPipeline = useMemo(() => {
+    const sortItems = (arr) => {
+      const list = [...arr];
+      if (sortBy === 'oldest') {
+        list.sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
+      } else if (sortBy === 'deadline') {
+        list.sort((a, b) => {
+          const ta = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+          const tb = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+          return ta - tb;
+        });
+      } else if (sortBy === 'value') {
+        list.sort((a, b) => (Number(b.estimated_value) || 0) - (Number(a.estimated_value) || 0));
+      } else {
+        list.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+      }
+      return list;
+    };
     const result = tabKanbanPipeline.map((stage) => ({
       ...stage,
-      items: stage.items.filter((p) => {
+      items: sortItems(stage.items.filter((p) => {
         if (searchQuery) {
           const q = searchQuery.toLowerCase();
           const hit = p.code?.toLowerCase().includes(q)
@@ -441,11 +634,11 @@ export default function LogisticsDashboard() {
         if (priorityFilter && p.priority !== priorityFilter) return false;
         if (stageFilter && p.vc_kanban_column_id !== stageFilter) return false;
         return true;
-      }),
+      })),
     }));
     filteredKanbanPipelineRef.current = result;
     return result;
-  }, [tabKanbanPipeline, searchQuery, priorityFilter, stageFilter]);
+  }, [tabKanbanPipeline, searchQuery, priorityFilter, stageFilter, sortBy]);
 
   const filteredProjectCount = useMemo(
     () => filteredKanbanPipeline.reduce((n, s) => n + s.items.length, 0),
@@ -590,10 +783,6 @@ export default function LogisticsDashboard() {
   const hasTimeFilter = Boolean(
     (timePreset && timePreset !== 'custom') || (timePreset === 'custom' && customFrom && customTo),
   );
-  const advFilterCount =
-    staffFilterActiveCount + (filterPhone ? 1 : 0) + (hasTimeFilter ? 1 : 0)
-    + (filterWorkTypeId ? 1 : 0) + (priorityFilter ? 1 : 0) + (stageFilter ? 1 : 0);
-
   const hasActiveFilter = !!(
     searchQuery || priorityFilter || stageFilter || hasTimeFilter
     || filterPhone || filterWorkTypeId || staffFilterActiveCount
@@ -603,13 +792,148 @@ export default function LogisticsDashboard() {
     setSearchQuery('');
     setPriorityFilter('');
     setStageFilter('');
-    setTimePreset('');
-    setCustomFrom('');
-    setCustomTo('');
+    handleTimePresetChange('');
     setFilterPhone('');
     setFilterWorkTypeId('');
     resetStaffFilters();
-  }, [resetStaffFilters]);
+  }, [resetStaffFilters, handleTimePresetChange]);
+
+  const activeVcFilterChips = useMemo(() => {
+    const chips = [];
+    const push = (key, label, onClear) => chips.push({ key, label, onClear });
+    if (searchQuery.trim()) {
+      push('search', `Tìm: “${searchQuery.trim()}”`, () => setSearchQuery(''));
+    }
+    if (filterCompany && canPickCompany && workshopCompanyPickerList.length > 1) {
+      const name = companies.find((c) => String(c.id) === String(filterCompany))?.short_name
+        || companies.find((c) => String(c.id) === String(filterCompany))?.name
+        || filterCompany;
+      // Không clear về «Tất cả» (pipeline Global lệch) — chuyển sang công ty kế tiếp.
+      push('company', `Công ty: ${name}`, () => {
+        const idx = workshopCompanyPickerList.findIndex((c) => String(c.id) === String(filterCompany));
+        const next = workshopCompanyPickerList[(idx + 1) % workshopCompanyPickerList.length];
+        if (next?.id) handleStaffFilterCompanyChange(next.id);
+      });
+    }
+    if (filterRegion) {
+      const label = filterRegion === '__none__'
+        ? 'Khu vực: Chưa gán'
+        : `Khu vực: ${companyRegions.find((r) => String(r.id) === String(filterRegion))?.name || filterRegion}`;
+      push('region', label, () => {
+        setFilterRegion('');
+        setFilterPersonId('');
+        setFilterPersonName('');
+      });
+    }
+    if (filterPersonId) {
+      const name = employeeOptionsForSelect.find((u) => String(u.id) === String(filterPersonId))?.full_name
+        || filterPersonId;
+      push('person', `NV: ${name}`, () => {
+        setFilterPersonId('');
+        setFilterPersonName('');
+      });
+    }
+    if (filterPersonName.trim()) {
+      push('personName', `Tên: ${filterPersonName.trim()}`, () => setFilterPersonName(''));
+    }
+    if (stageFilter) {
+      const name = pipeline.find((s) => String(s.id) === String(stageFilter))?.name || stageFilter;
+      push('stage', `Giai đoạn: ${name}`, () => setStageFilter(''));
+    }
+    if (filterWorkTypeId) {
+      const name = workTypes.find((wt) => String(wt.id) === String(filterWorkTypeId))?.name || filterWorkTypeId;
+      push('workType', `Phân loại: ${name}`, () => setFilterWorkTypeId(''));
+    }
+    if (priorityFilter) {
+      const label = priorityFilter === 'high' ? 'Cao' : priorityFilter === 'medium' ? 'TB' : 'Thấp';
+      push('priority', `Ưu tiên: ${label}`, () => setPriorityFilter(''));
+    }
+    if (filterPhone === 'has') push('phone', 'Có SĐT', () => setFilterPhone(''));
+    else if (filterPhone === 'no') push('phone', 'Chưa có SĐT', () => setFilterPhone(''));
+    if (timePreset) {
+      push('time', `Thời gian: ${timeFilterLabel || timePreset}`, () => handleTimePresetChange(''));
+    }
+    return chips;
+  }, [
+    searchQuery, filterCompany, canPickCompany, companies, workshopCompanyPickerList,
+    handleStaffFilterCompanyChange,
+    filterRegion, companyRegions, filterPersonId, filterPersonName, employeeOptionsForSelect,
+    stageFilter, pipeline, filterWorkTypeId, workTypes, priorityFilter, filterPhone,
+    timePreset, timeFilterLabel, handleTimePresetChange,
+    setFilterRegion, setFilterPersonId, setFilterPersonName,
+  ]);
+
+  const activeVcFilterCount = activeVcFilterChips.length;
+  const vcInlineFilterChips = useMemo(
+    () => activeVcFilterChips.filter((c) => c.key !== 'search'),
+    [activeVcFilterChips],
+  );
+
+  const vcFilterTabCounts = useMemo(() => ({
+    employee: staffFilterActiveCount,
+    pipeline: (stageFilter ? 1 : 0) + (filterWorkTypeId ? 1 : 0) + (priorityFilter ? 1 : 0) + (filterPhone ? 1 : 0),
+    display: (timePreset ? 1 : 0) + (sortBy !== 'newest' ? 1 : 0) + (kanbanLoadKey !== '500' ? 1 : 0),
+  }), [staffFilterActiveCount, stageFilter, filterWorkTypeId, priorityFilter, filterPhone, timePreset, sortBy, kanbanLoadKey]);
+
+  const vcFilterTabs = useMemo(
+    () => SX_FILTER_TABS_META.map((t) => ({ ...t, count: vcFilterTabCounts[t.id] || 0 })),
+    [vcFilterTabCounts],
+  );
+
+  const vcFilterPanelActive = showAdvFilter
+    || filterCompany || filterRegion || filterPersonId || filterPersonName
+    || stageFilter || filterWorkTypeId || priorityFilter || filterPhone
+    || timePreset || searchQuery.trim();
+
+  const selectColumn = useCallback((stageId) => {
+    const stage = filteredKanbanPipelineRef.current.find((s) => String(s.id) === String(stageId));
+    if (!stage?.items?.length) return;
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      stage.items.forEach((p) => next.add(p.id));
+      return next;
+    });
+  }, []);
+
+  const overdueItems = useMemo(() => {
+    const list = (tabKanbanPipeline || []).flatMap((s) => (s.items || []).map((p) => ({
+      ...p,
+      stageName: s.name,
+    })));
+    return list
+      .filter((p) => p.deadline && new Date(p.deadline) < new Date() && p.status !== 'completed')
+      .map((p) => ({
+        id: p.id,
+        code: p.code || `#${p.id}`,
+        title: p.name || '',
+        customerName: p.customer?.full_name || '',
+        stageName: p.stageName || '',
+        overdueMs: Date.now() - new Date(p.deadline).getTime(),
+      }))
+      .sort((a, b) => b.overdueMs - a.overdueMs);
+  }, [tabKanbanPipeline]);
+
+  const focusOverdueItem = useCallback((it) => {
+    const el = document.querySelector(`[data-vc-kanban-card="${it.id}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      el.classList.add('ring-2', 'ring-red-500', 'ring-offset-2');
+      setTimeout(() => el.classList.remove('ring-2', 'ring-red-500', 'ring-offset-2'), 2500);
+    } else {
+      markWorkshopPipelineCardFocus(it.id, 'vc');
+      navigate(`/vc/projects/${it.id}`);
+    }
+    setShowOverduePopover(false);
+  }, [navigate]);
+
+  const lastSyncLabel = useMemo(() => {
+    if (!lastSyncedAt) return '';
+    try {
+      return lastSyncedAt.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return '';
+    }
+  }, [lastSyncedAt]);
 
   const toggleKpiPanel = useCallback(() => {
     setKpiPanelOpen((prev) => {
@@ -698,23 +1022,102 @@ export default function LogisticsDashboard() {
                   );
                 })}
               </div>
-              {scopeKpis.overdue > 0 && (
-                <span
-                  className="relative inline-flex items-center justify-center h-7 w-7 rounded-md border border-red-200 bg-red-50 text-red-600"
-                  title={`${scopeKpis.overdue} dự án quá hạn`}
+              {canPickCompany && workshopCompanyPickerList.length > 0 && (
+                <label
+                  className="inline-flex items-center gap-1 h-7 px-1.5 rounded-md border border-orange-200 bg-white text-orange-700 shrink-0"
+                  title="Chọn công ty Vận chuyển / Lắp đặt"
                 >
-                  <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2.5} />
-                  <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-0.5 rounded-full bg-red-600 text-white text-[8px] font-bold flex items-center justify-center tabular-nums leading-none">
-                    {scopeKpis.overdue > 99 ? '99+' : scopeKpis.overdue}
-                  </span>
-                </span>
+                  <Truck className="h-3.5 w-3.5 shrink-0" />
+                  <select
+                    value={filterCompany}
+                    onChange={(e) => handleStaffFilterCompanyChange(e.target.value)}
+                    className="h-6 max-w-[13rem] border-0 bg-transparent p-0 pr-5 text-[11px] font-semibold text-slate-700 focus:ring-0 cursor-pointer"
+                    aria-label="Công ty Vận chuyển / Lắp đặt"
+                  >
+                    {workshopCompanyPickerList.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.short_name || c.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {overdueItems.length > 0 && (
+                <div className="relative">
+                  <button
+                    ref={overdueTriggerRef}
+                    type="button"
+                    onClick={() => setShowOverduePopover((v) => !v)}
+                    className={`relative inline-flex items-center justify-center h-7 w-7 rounded-md border cursor-pointer transition-colors ${
+                      showOverduePopover
+                        ? 'border-red-400 bg-red-100 text-red-700'
+                        : 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100'
+                    }`}
+                    aria-label={`${overdueItems.length} dự án quá hạn`}
+                    aria-expanded={showOverduePopover}
+                    title={`${overdueItems.length} dự án quá hạn — bấm để xem danh sách`}
+                  >
+                    <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2.5} />
+                    <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-0.5 rounded-full bg-red-600 text-white text-[8px] font-bold flex items-center justify-center tabular-nums leading-none">
+                      {overdueItems.length > 99 ? '99+' : overdueItems.length}
+                    </span>
+                  </button>
+                  <AnchoredDropdownMenu
+                    open={showOverduePopover}
+                    onClose={() => setShowOverduePopover(false)}
+                    anchorRef={overdueTriggerRef}
+                    align="left"
+                    className="rounded-xl border-red-200 p-0 w-[min(100vw-1.5rem,20rem)] overflow-hidden shadow-xl"
+                  >
+                    <div className="px-3 py-2 border-b border-red-100 bg-red-50 flex items-center justify-between gap-2">
+                      <p className="text-[11px] font-semibold text-red-800">
+                        {overdueItems.length} dự án quá hạn
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setShowOverduePopover(false)}
+                        className="p-0.5 rounded text-red-500 hover:bg-red-100 cursor-pointer"
+                        aria-label="Đóng"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <div className="max-h-64 overflow-y-auto [scrollbar-width:thin]">
+                      {overdueItems.slice(0, 30).map((it) => (
+                        <button
+                          key={it.id}
+                          type="button"
+                          onClick={() => focusOverdueItem(it)}
+                          className="w-full text-left px-3 py-2 border-b border-slate-50 last:border-0 hover:bg-red-50/80 cursor-pointer"
+                        >
+                          <p className="text-[11px] font-mono text-slate-500">{it.code}</p>
+                          <p className="text-xs font-semibold text-slate-900 truncate">{it.title || '—'}</p>
+                          <p className="text-[10px] text-slate-500 truncate">
+                            {it.stageName}{it.customerName ? ` · ${it.customerName}` : ''}
+                          </p>
+                        </button>
+                      ))}
+                    </div>
+                  </AnchoredDropdownMenu>
+                </div>
               )}
             </div>
             <div className="flex items-center gap-1 shrink-0 ml-auto">
-              <span className="hidden lg:inline-flex items-center gap-1 text-[10px] text-slate-500 mr-1" title="Số thẻ sau lọc / tiến độ TB">
-                <span className="inline-block rounded-full bg-emerald-500 h-1.5 w-1.5" />
-                {filteredProjectCount.toLocaleString('vi-VN')} thẻ · TB {tabKpis.avgProgress}%
-              </span>
+              {loading ? (
+                <span className="hidden lg:inline-flex items-center gap-1 text-[10px] text-amber-700 mr-1">
+                  <Loader2 className="h-3 w-3 animate-spin" /> Đang tải…
+                </span>
+              ) : lastSyncLabel ? (
+                <span className="hidden lg:inline-flex items-center gap-1 text-[10px] text-slate-500 mr-1" title="Lần cập nhật gần nhất">
+                  <span className="inline-block rounded-full bg-emerald-500 h-1.5 w-1.5" />
+                  Cập nhật {lastSyncLabel} · {filteredProjectCount.toLocaleString('vi-VN')} thẻ
+                </span>
+              ) : (
+                <span className="hidden lg:inline-flex items-center gap-1 text-[10px] text-slate-500 mr-1" title="Số thẻ sau lọc / tiến độ TB">
+                  <span className="inline-block rounded-full bg-emerald-500 h-1.5 w-1.5" />
+                  {filteredProjectCount.toLocaleString('vi-VN')} thẻ · TB {tabKpis.avgProgress}%
+                </span>
+              )}
               <button
                 type="button"
                 onClick={() => navigate('/admin/trash?tab=vc')}
@@ -749,15 +1152,26 @@ export default function LogisticsDashboard() {
               className={`group/search flex items-center shrink-0 flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem] rounded-md border transition-colors ${
                 searchQuery.trim()
                   ? 'border-orange-300 bg-orange-50/80'
-                  : 'border-slate-200 bg-white hover:border-slate-300'
+                  : vcInlineFilterChips.length && !showAdvFilter
+                    ? 'border-orange-200 bg-orange-50/40'
+                    : 'border-slate-200 bg-white hover:border-slate-300'
               }`}
             >
-              <div className="relative flex-1 min-w-0 flex items-center pl-7 pr-1">
+              <div className="relative flex-1 min-w-0 flex items-center gap-1 pl-7 pr-1">
                 <Search
                   className={`absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none ${
                     searchQuery.trim() ? 'text-orange-600' : 'text-slate-400'
                   }`}
                 />
+                {!showAdvFilter && vcInlineFilterChips.length > 0 && (
+                  <SearchInlineFilterChips
+                    chips={vcInlineFilterChips}
+                    opacityClass={searchQuery.trim() ? 'opacity-35' : 'opacity-45 group-hover/search:opacity-100'}
+                    onClearChip={(chip) => chip.onClear()}
+                    onClearAll={clearAllFilters}
+                    showClearAll={vcInlineFilterChips.length > 1}
+                  />
+                )}
                 <input
                   type="text"
                   value={searchQuery}
@@ -766,61 +1180,146 @@ export default function LogisticsDashboard() {
                   className={`flex-1 min-w-[3.5rem] ${ctrlH} bg-transparent border-0 ${ctrlTxt} font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-0 ${searchQuery ? 'pr-7' : ''}`}
                 />
                 {searchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-                    aria-label="Xóa tìm kiếm"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
+                  <SearchClearButton onClick={() => setSearchQuery('')} />
                 )}
               </div>
-              <button
-                type="button"
-                onClick={() => setShowAdvFilter((s) => !s)}
-                className={`${ctrlH} px-2 border-l border-slate-200/80 rounded-r-md text-xs font-medium inline-flex items-center gap-1 cursor-pointer transition-colors ${
-                  showAdvFilter || advFilterCount
-                    ? 'bg-orange-50 text-orange-800'
-                    : 'bg-white text-slate-600 hover:bg-slate-50'
-                }`}
-                title={showAdvFilter ? 'Thu gọn bộ lọc' : 'Bộ lọc nâng cao'}
-                aria-label="Bộ lọc"
-              >
-                <Filter className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Bộ lọc</span>
-                {advFilterCount > 0 && (
-                  <span className="text-[10px] font-bold bg-orange-600 text-white rounded-full min-w-[1.1rem] px-1 text-center">
-                    {advFilterCount}
-                  </span>
-                )}
-              </button>
+              <div className="shrink-0 pr-1 pl-0.5 border-l border-slate-200/80">
+                <button
+                  type="button"
+                  onClick={openVcFilterPanel}
+                  aria-expanded={showAdvFilter}
+                  className={`relative h-6 w-6 flex items-center justify-center rounded-md border transition-all cursor-pointer ${
+                    showAdvFilter || vcFilterPanelActive
+                      ? 'bg-orange-200 text-orange-800 border-orange-400 shadow-sm ring-1 ring-orange-200/60'
+                      : 'bg-orange-50 text-orange-600 border-orange-200 hover:bg-orange-100 hover:text-orange-800'
+                  }`}
+                  title={showAdvFilter ? 'Thu gọn bộ lọc' : 'Bộ lọc nâng cao'}
+                  aria-label="Bộ lọc"
+                >
+                  <Filter className="h-3 w-3" />
+                  {activeVcFilterCount > 0 && (
+                    <span className="absolute top-0 right-0 h-1.5 w-1.5 rounded-full bg-orange-600 ring-1 ring-white" />
+                  )}
+                </button>
+              </div>
             </div>
 
             <div className="flex items-center gap-0.5 shrink-0 ml-auto pl-1 border-l border-slate-200/80">
-              <div className="inline-flex items-center gap-px p-0.5 rounded-md bg-slate-100 border border-slate-200/80">
-                {[
-                  { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
-                  { id: 'list', icon: List, label: 'Danh sách' },
-                  { id: 'planner', icon: Users, label: 'Planner' },
-                  { id: 'calendar', icon: Calendar, label: 'Lịch' },
-                ].map((v) => (
+              <div className="inline-flex items-center gap-0.5 p-0.5 rounded-md bg-slate-100 border border-slate-200/80">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('kanban')}
+                  className={`${toolbarBtn} ${
+                    viewMode === 'kanban'
+                      ? 'bg-white text-orange-700 shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Kanban</span>
+                </button>
+                <div className="relative">
                   <button
-                    key={v.id}
+                    ref={viewModeTriggerRef}
                     type="button"
-                    onClick={() => setViewMode(v.id)}
+                    onClick={() => setShowViewModeMenu((v) => !v)}
                     className={`${toolbarBtn} ${
-                      viewMode === v.id
+                      viewMode !== 'kanban'
                         ? 'bg-white text-orange-700 shadow-sm'
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
-                    title={v.label}
+                    title="Chế độ xem khác"
+                    aria-expanded={showViewModeMenu}
                   >
-                    <v.icon className="h-3.5 w-3.5" />
-                    <span className="hidden md:inline">{v.label}</span>
+                    {(() => {
+                      const active = VC_ALT_VIEW_MODES.find((v) => v.id === viewMode);
+                      const Icon = active?.icon || List;
+                      return (
+                        <>
+                          <Icon className="h-3.5 w-3.5" />
+                          <span className="hidden sm:inline max-w-[5.5rem] truncate">
+                            {active?.label || 'Thêm'}
+                          </span>
+                          <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${showViewModeMenu ? 'rotate-180' : ''}`} />
+                        </>
+                      );
+                    })()}
                   </button>
-                ))}
+                  <ViewModeDropdownMenu
+                    open={showViewModeMenu}
+                    onClose={() => setShowViewModeMenu(false)}
+                    anchorRef={viewModeTriggerRef}
+                    modes={VC_ALT_VIEW_MODES}
+                    activeId={viewMode}
+                    theme="orange"
+                    onSelect={(id) => {
+                      setViewMode(id);
+                      setShowViewModeMenu(false);
+                    }}
+                  />
+                </div>
               </div>
+              {viewMode === 'kanban' && (
+                <div className="relative">
+                  <button
+                    ref={kanbanSettingsTriggerRef}
+                    type="button"
+                    onClick={() => setShowKanbanSettings((v) => !v)}
+                    className={`${ctrlH} px-2 rounded-md border text-xs font-semibold inline-flex items-center gap-1 cursor-pointer transition-colors shrink-0 ${
+                      showKanbanSettings || kanbanColumnScrollMode === 'per-column'
+                        ? 'border-orange-400 bg-orange-50 text-orange-700 shadow-sm'
+                        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                    }`}
+                    title="Tùy chỉnh cuộn Kanban"
+                  >
+                    <Settings className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Tùy chỉnh</span>
+                  </button>
+                  <AnchoredDropdownMenu
+                    open={showKanbanSettings}
+                    onClose={() => setShowKanbanSettings(false)}
+                    anchorRef={kanbanSettingsTriggerRef}
+                    className="rounded-xl border-gray-200 p-3 w-[min(100vw-1.5rem,18rem)]"
+                    align="right"
+                  >
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2.5">Cuộn cột Kanban</p>
+                    <div className="space-y-2">
+                      <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-gray-100 bg-white px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-orange-400 has-[:checked]:bg-white has-[:checked]:shadow-sm">
+                        <input
+                          type="radio"
+                          name="vc-kanban-column-scroll"
+                          className="mt-0.5 shrink-0"
+                          checked={kanbanColumnScrollMode === 'unified'}
+                          onChange={() => {
+                            setKanbanColumnScrollMode('unified');
+                            try { localStorage.setItem(LS_VC_KANBAN_COLUMN_SCROLL, 'unified'); } catch { /* ignore */ }
+                          }}
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-xs font-semibold text-gray-800">Cuộn chung tất cả cột</span>
+                          <span className="block text-[11px] text-gray-500 leading-snug mt-0.5">Kéo một lần, mọi cột cuộn cùng chiều dọc (mặc định).</span>
+                        </span>
+                      </label>
+                      <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-gray-100 bg-white px-2 py-1.5 hover:bg-gray-50 has-[:checked]:border-orange-400 has-[:checked]:bg-white has-[:checked]:shadow-sm">
+                        <input
+                          type="radio"
+                          name="vc-kanban-column-scroll"
+                          className="mt-0.5 shrink-0"
+                          checked={kanbanColumnScrollMode === 'per-column'}
+                          onChange={() => {
+                            setKanbanColumnScrollMode('per-column');
+                            try { localStorage.setItem(LS_VC_KANBAN_COLUMN_SCROLL, 'per-column'); } catch { /* ignore */ }
+                          }}
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-xs font-semibold text-gray-800">Cuộn riêng từng cột</span>
+                          <span className="block text-[11px] text-gray-500 leading-snug mt-0.5">Mỗi cột có thanh cuộn dọc riêng.</span>
+                        </span>
+                      </label>
+                    </div>
+                  </AnchoredDropdownMenu>
+                </div>
+              )}
               {hasActiveFilter && (
                 <button
                   type="button"
@@ -835,166 +1334,120 @@ export default function LogisticsDashboard() {
           </div>
         </div>
 
-        {/* Công ty — chip ngang (giống CRM) */}
-        {canPickCompany && workshopCompanyPickerList.length > 0 && (
-          <div className="flex items-center gap-1.5 overflow-x-auto max-w-full px-2.5 sm:px-3 py-1.5 border-b border-slate-200/50 scrollbar-thin scrollbar-thumb-gray-200">
-            {(isAdmin ? [{ id: '', name: 'Tất cả' }, ...workshopCompanyPickerList] : workshopCompanyPickerList).map((c) => {
-              const active = filterCompany === c.id;
-              return (
-                <button
-                  key={c.id || 'all'}
-                  type="button"
-                  onClick={() => {
-                    if (active) return;
-                    handleStaffFilterCompanyChange(c.id);
-                  }}
-                  className={`shrink-0 h-7 px-2.5 rounded-full text-[11px] font-semibold border transition-all cursor-pointer whitespace-nowrap ${
-                    active
-                      ? 'bg-orange-600 border-orange-600 text-white shadow-sm'
-                      : 'bg-white border-gray-200 text-gray-600 hover:border-orange-300 hover:text-orange-700 hover:bg-orange-50'
-                  }`}
-                >
-                  {active && <span className="mr-1">✓</span>}
-                  {c.id === '' ? 'Tất cả' : (c.short_name || c.name)}
-                </button>
-              );
-            })}
+        {/* Bộ lọc nổi + chip thời gian — giống CRM/SX */}
+        {!showAdvFilter && showCustomDate && (
+          <div className="flex flex-wrap items-center gap-3 px-2.5 sm:px-3 py-2 border-b border-orange-100 bg-orange-50/60">
+            <span className="text-xs font-bold text-orange-600 uppercase flex items-center gap-1.5">
+              <Calendar className="h-3.5 w-3.5" /> Khoảng thời gian:
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowDateRangePicker(true)}
+              className="h-8 px-3 bg-white border border-orange-200 rounded-lg text-xs hover:bg-orange-50 cursor-pointer"
+            >
+              {customFrom && customTo ? `${customFrom} → ${customTo}` : 'Chọn ngày bắt đầu/kết thúc'}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleTimePresetChange('')}
+              className="h-8 px-3 bg-white text-gray-500 hover:text-gray-700 rounded-lg text-xs cursor-pointer border border-gray-200"
+            >
+              Hủy
+            </button>
           </div>
         )}
-
-        {/* Bộ lọc nâng cao */}
-        {showAdvFilter && (
-          <div className="space-y-3 p-3 border-b border-slate-200/60 bg-slate-50/80">
-            <div className="flex flex-wrap items-end gap-2">
-              <div>
-                <p className="text-[10px] font-semibold text-orange-800/90 uppercase tracking-wide mb-1">Thời gian tạo</p>
-                <div className="inline-flex items-center gap-0.5 rounded-lg border border-gray-200 bg-white px-1.5 h-8">
-                  <Clock className="h-3.5 w-3.5 text-gray-400 ml-0.5 shrink-0" />
-                  <select
-                    value={timePreset}
-                    onChange={(e) => setTimePreset(e.target.value)}
-                    className="h-7 pr-1 text-xs bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[8rem]"
-                  >
-                    {WS_TIME_PRESETS.map((o) => (
-                      <option key={o.key || 'all'} value={o.key}>{o.label}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              {timePreset === 'custom' && (
-                <div className="flex items-center gap-1 flex-wrap">
-                  <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} className="h-8 px-2 border border-gray-200 rounded-lg text-xs bg-white" />
-                  <span className="text-gray-400">–</span>
-                  <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} className="h-8 px-2 border border-gray-200 rounded-lg text-xs bg-white" />
-                </div>
-              )}
-              <div>
-                <p className="text-[10px] font-semibold text-orange-800/90 uppercase tracking-wide mb-1">Tải tối đa</p>
-                <select
-                  value={kanbanLoadKey}
-                  onChange={(e) => setKanbanLoadKey(e.target.value)}
-                  className="h-8 px-2 border border-gray-200 rounded-lg text-xs bg-amber-50/80"
-                  title="Số bản ghi tối đa từ server"
-                >
-                  {WS_KANBAN_LOAD_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <WorkshopStaffFilterPanel
-              isAdmin={isAdmin}
-              isCompanyScopedAdmin={isCompanyScopedAdmin}
-              userCompanyId={userCompanyId}
-              companies={companies}
-              filterCompany={filterCompany}
-              onCompanyChange={handleStaffFilterCompanyChange}
-              dashboardScopeCompanyId={dashboardScopeCompanyId}
-              companyRegions={companyRegions}
-              filterRegion={filterRegion}
-              setFilterRegion={setFilterRegion}
-              assigneeListSearch={assigneeListSearch}
-              setAssigneeListSearch={setAssigneeListSearch}
-              filterPersonId={filterPersonId}
-              setFilterPersonId={setFilterPersonId}
-              setFilterPersonName={setFilterPersonName}
-              employeeOptionsForSelect={employeeOptionsForSelect}
-              companyDepts={companyDepts}
-              filterPersonName={filterPersonName}
-              employeeFilterListByRegion={employeeFilterListByRegion}
-              companyEmployees={companyEmployees}
-              ringFocusClass="focus:ring-orange-500"
-            />
-
-            <div className="flex flex-wrap items-end gap-2">
-              <div className="flex flex-col gap-0.5 min-w-[10rem]">
-                <label className="text-[10px] font-semibold text-orange-800/90 uppercase tracking-wide">Giai đoạn</label>
-                <select
-                  value={stageFilter}
-                  onChange={(e) => setStageFilter(e.target.value)}
-                  className="h-8 w-40 px-2 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-orange-400 cursor-pointer"
-                >
-                  <option value="">Tất cả giai đoạn</option>
-                  {tabKanbanPipeline.map((stage) => (
-                    <option key={stage.id} value={stage.id}>{stage.icon || '•'} {stage.name}</option>
-                  ))}
-                </select>
-              </div>
-              {companyForTypes && (
-                <div className="flex flex-col gap-0.5">
-                  <label className="text-[10px] font-semibold text-orange-800/90 uppercase tracking-wide">Phân loại</label>
-                  <div className="inline-flex items-center gap-1 h-8 px-2 bg-white border border-gray-200 rounded-lg">
-                    <Layers className="h-3.5 w-3.5 text-slate-500 shrink-0" />
-                    <select
-                      value={filterWorkTypeId}
-                      onChange={(e) => setFilterWorkTypeId(e.target.value)}
-                      className="h-7 text-xs bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[11rem]"
-                    >
-                      <option value="">{workTypes.length === 0 ? 'Chưa cấu hình' : 'Tất cả loại'}</option>
-                      {workTypes.map((wt) => (
-                        <option key={wt.id} value={wt.id}>{wt.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              )}
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] font-semibold text-orange-800/90 uppercase tracking-wide">Ưu tiên</label>
-                <select
-                  value={priorityFilter}
-                  onChange={(e) => setPriorityFilter(e.target.value)}
-                  className="h-8 w-28 px-2 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-orange-400 cursor-pointer"
-                >
-                  <option value="">Tất cả</option>
-                  <option value="high">Cao</option>
-                  <option value="medium">Trung bình</option>
-                  <option value="low">Thấp</option>
-                </select>
-              </div>
-              <div className="flex flex-col gap-0.5">
-                <label className="text-[10px] font-semibold text-orange-800/90 uppercase tracking-wide">SĐT</label>
-                <select
-                  value={filterPhone}
-                  onChange={(e) => setFilterPhone(e.target.value)}
-                  className="h-8 w-36 px-2 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-orange-400 cursor-pointer"
-                >
-                  <option value="">Không lọc</option>
-                  <option value="has">Có SĐT</option>
-                  <option value="no">Chưa có SĐT</option>
-                </select>
-              </div>
-              {hasActiveFilter && (
-                <button
-                  type="button"
-                  onClick={clearAllFilters}
-                  className="h-8 px-3 rounded-lg border border-orange-300 bg-white text-xs font-semibold text-orange-700 hover:bg-orange-50 cursor-pointer inline-flex items-center gap-1"
-                >
-                  <X className="h-3.5 w-3.5" /> Đặt lại
-                </button>
-              )}
-            </div>
+        <DateRangePickerPopover
+          open={showDateRangePicker}
+          title="Phạm vi tuỳ chỉnh"
+          from={customFrom}
+          to={customTo}
+          onChange={({ from, to }) => {
+            setCustomFrom(from);
+            setCustomTo(to);
+          }}
+          onClose={() => setShowDateRangePicker(false)}
+        />
+        {!showAdvFilter && timePreset && timePreset !== 'custom' && timeFilterLabel && (
+          <div className="px-2.5 sm:px-3 py-1.5 border-b border-slate-200/50">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-orange-100 text-orange-700 rounded-lg text-xs font-medium border border-orange-200">
+              <Clock className="h-3 w-3" />
+              {timeFilterLabel}
+              <button type="button" onClick={() => handleTimePresetChange('')} className="ml-1 hover:text-orange-900 cursor-pointer" title="Bỏ lọc thời gian">
+                <X className="h-3 w-3" />
+              </button>
+            </span>
           </div>
+        )}
+        {showAdvFilter && (
+          <WorkshopDashboardFilterPanel
+            panelRef={filterPanelRef}
+            position={filterPanelPos}
+            onDragStart={beginFilterPanelDrag}
+            onClose={closeVcFilterPanel}
+            tab={vcFilterTab}
+            onTabChange={setVcFilterTab}
+            tabs={vcFilterTabs}
+            onReset={clearAllFilters}
+            onResetPosition={() => {
+              setFilterPanelPos(null);
+              storeVcFilterPanelPos(null);
+            }}
+            hasCustomPosition={!!filterPanelPos}
+            isAdmin={isAdmin}
+            isCompanyScopedAdmin={isCompanyScopedAdmin}
+            userCompanyId={userCompanyId}
+            companies={companies}
+            filterCompany={filterCompany}
+            onCompanyChange={handleStaffFilterCompanyChange}
+            dashboardScopeCompanyId={dashboardScopeCompanyId}
+            companyRegions={companyRegions}
+            filterRegion={filterRegion}
+            setFilterRegion={setFilterRegion}
+            assigneeListSearch={assigneeListSearch}
+            setAssigneeListSearch={setAssigneeListSearch}
+            filterPersonId={filterPersonId}
+            setFilterPersonId={setFilterPersonId}
+            setFilterPersonName={setFilterPersonName}
+            employeeOptionsForSelect={employeeOptionsForSelect}
+            companyDepts={companyDepts}
+            filterPersonName={filterPersonName}
+            employeeFilterListByRegion={employeeFilterListByRegion}
+            companyEmployees={companyEmployees}
+            personSelectLabel="NV phụ trách VC/LĐ"
+            panelTitle="Lọc NV phụ trách vận chuyển / lắp đặt"
+            canPickCompany={canPickCompany}
+            workshopCompanyPickerList={workshopCompanyPickerList}
+            showAllWorkshopOption={false}
+            hideCompanySelect
+            pipeline={tabKanbanPipeline}
+            stageFilter={stageFilter}
+            setStageFilter={setStageFilter}
+            filterWorkTypeId={filterWorkTypeId}
+            setFilterWorkTypeId={setFilterWorkTypeId}
+            workTypes={workTypes}
+            companyForTypes={companyForTypes}
+            priorityFilter={priorityFilter}
+            setPriorityFilter={setPriorityFilter}
+            filterPhone={filterPhone}
+            setFilterPhone={setFilterPhone}
+            showOrphanColumn={false}
+            setShowOrphanColumn={() => {}}
+            hideOrphanColumnToggle
+            viewMode={viewMode}
+            timePreset={timePreset}
+            onTimePresetChange={handleTimePresetChange}
+            onOpenDateRangePicker={() => setShowDateRangePicker(true)}
+            customFrom={customFrom}
+            customTo={customTo}
+            kanbanLoadKey={kanbanLoadKey}
+            setKanbanLoadKey={setKanbanLoadKey}
+            sortBy={sortBy}
+            setSortBy={setSortBy}
+            sortOpen={sortOpen}
+            setSortOpen={setSortOpen}
+            sortMenuRef={sortMenuRef}
+            sortOptions={VC_SORT_OPTIONS}
+          />
         )}
 
         {/* KPI — có thể thu gọn như CRM */}
@@ -1140,7 +1593,9 @@ export default function LogisticsDashboard() {
 
       {viewMode === 'kanban' && (
         <KanbanView pipeline={filteredKanbanPipeline} onMoveStage={handleMoveStage} onDelete={handleDeleteCard}
-          calculateDays={calculateDays} selectedIds={selectedIds} onToggleSelect={toggleSelect} vcPipelineTab={vcPipelineTab} />
+          calculateDays={calculateDays} selectedIds={selectedIds} onToggleSelect={toggleSelect}
+          onSelectColumn={selectColumn} columnScrollMode={kanbanColumnScrollMode}
+          vcPipelineTab={vcPipelineTab} />
       )}
       {viewMode === 'list' && <LogisticsListView pipeline={filteredKanbanPipeline} calculateDays={calculateDays} />}
       {viewMode === 'planner' && <LogisticsPlannerView pipeline={filteredKanbanPipeline} />}
@@ -1307,11 +1762,18 @@ function KPICard({ icon, iconBgColor, iconColor, label, value, compact }) {
 
 // Kanban Stage Column
 const KanbanStageCard = memo(function KanbanStageCard({
-  stage, items, onMoveStage, onDelete, calculateDays, selectedIds, onToggleSelect, columnIndex = 0, pipelineStages = [], vcPipelineTab = 'shipping',
+  stage, items, onMoveStage, onDelete, calculateDays, selectedIds, onToggleSelect, onSelectColumn,
+  columnIndex = 0, pipelineStages = [], vcPipelineTab = 'shipping',
+  columnScrollMode = 'unified', boardScrollRef = null,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
-  const [columnMaxH, setColumnMaxH] = useState('70vh');
+  const headerRef = useRef(null);
+  const { columnScrollMaxH } = useWorkshopKanbanScrollLayout();
+  const columnTheme = useKanbanColumnTheme(columnIndex);
+  const perColumnScroll = columnScrollMode === 'per-column';
+  const pinEmptyPlaceholder = !perColumnScroll && items.length === 0;
+  const emptyPlaceholderTop = useKanbanEmptyPlaceholderStickyTop(headerRef, pinEmptyPlaceholder);
 
   const renderCard = useCallback((item) => (
     <KanbanCard
@@ -1327,28 +1789,21 @@ const KanbanStageCard = memo(function KanbanStageCard({
     />
   ), [stage, calculateDays, selectedIds, onToggleSelect, onDelete, onMoveStage, pipelineStages, vcPipelineTab]);
 
-  useEffect(() => {
-    const measure = () => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        setColumnMaxH(`${Math.max(300, window.innerHeight - rect.top - 40)}px`);
-      }
-    };
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, []);
-
-  const columnTheme = useKanbanColumnTheme(columnIndex);
   return (
     <div
       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setIsOverColumn(true); }}
       onDragLeave={(e) => { if (e.target === e.currentTarget) setIsOverColumn(false); }}
       onDrop={(e) => { e.preventDefault(); setIsOverColumn(false); const pid = e.dataTransfer.getData('projectId'); if (pid) onMoveStage(pid, stage); }}
-      className={`flex flex-col flex-shrink-0 w-[17rem] max-[420px]:w-[15rem] rounded-lg overflow-hidden transition-all duration-200 kanban-column-surface ${KANBAN_COLUMN_RAIL_CLASS} ${isOverColumn ? 'ring-2 ring-orange-500 ring-dashed' : ''}`}
+      className={`flex flex-col flex-shrink-0 w-[17rem] max-[420px]:w-[15rem] rounded-lg transition-all duration-200 kanban-column-surface ${KANBAN_COLUMN_RAIL_CLASS} ${
+        perColumnScroll ? 'h-full self-stretch overflow-x-visible overflow-y-hidden' : 'overflow-visible kanban-unified-scroll-column'
+      } ${isOverColumn ? 'ring-2 ring-orange-500 ring-dashed' : ''}`}
+      style={{
+        ...(perColumnScroll && columnScrollMaxH ? { height: columnScrollMaxH, maxHeight: columnScrollMaxH } : {}),
+      }}
     >
       <div
-        className="px-3 py-2.5 border-b rounded-t-md transition-all kanban-column-surface"
+        ref={headerRef}
+        className={`${perColumnScroll ? 'shrink-0' : 'sticky top-0 kanban-column-header-sticky'} z-10 px-3 py-2.5 border-b rounded-t-md transition-all kanban-column-surface`}
         style={{
           backgroundColor: isOverColumn ? columnTheme.dropBg : columnTheme.headerBg,
           borderColor: columnTheme.border,
@@ -1368,16 +1823,28 @@ const KanbanStageCard = memo(function KanbanStageCard({
               </span>
             )}
           </div>
-          <span
-            className="inline-flex items-center justify-center min-w-[24px] h-[22px] px-1.5 rounded-md text-[13px] font-bold tabular-nums leading-none shrink-0"
-            style={{
-              backgroundColor: columnTheme.badgeBg,
-              color: columnTheme.accent,
-              border: `1px solid ${columnTheme.badgeBorder}`,
-            }}
-          >
-            {items.length}
-          </span>
+          <div className="flex items-center gap-1 shrink-0">
+            <span
+              className="inline-flex items-center justify-center min-w-[24px] h-[22px] px-1.5 rounded-md text-[13px] font-bold tabular-nums leading-none"
+              style={{
+                backgroundColor: columnTheme.badgeBg,
+                color: columnTheme.accent,
+                border: `1px solid ${columnTheme.badgeBorder}`,
+              }}
+            >
+              {items.length}
+            </span>
+            {onSelectColumn && items.length > 0 && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onSelectColumn(stage.id); }}
+                className="px-1 py-0.5 text-[10px] font-medium text-orange-600 hover:bg-orange-50 rounded cursor-pointer whitespace-nowrap"
+                title="Chọn tất cả dự án trong cột này"
+              >
+                Chọn cột
+              </button>
+            )}
+          </div>
         </div>
         <p className={`text-xs ${KANBAN_COLUMN_VALUE_METRIC_CLASS}`}>
           Giá trị: {formatVND(items.reduce((sum, p) => sum + (Number(p.estimated_value) || 0), 0))}
@@ -1385,19 +1852,28 @@ const KanbanStageCard = memo(function KanbanStageCard({
       </div>
       <div
         ref={containerRef}
-        className={`border border-white/30 border-t-0 p-1.5 space-y-0 transition-all overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable] ${KANBAN_CARDS_BODY_CLASS} ${
+        className={`flex-1 border border-white/30 border-t-0 p-1.5 space-y-0 transition-all ${KANBAN_CARDS_BODY_CLASS} ${
           isOverColumn ? 'kanban-cards-body--drop' : ''
+        } ${
+          pinEmptyPlaceholder ? KANBAN_CARDS_BODY_EMPTY_PIN_CLASS : ''
+        } ${
+          perColumnScroll ? 'min-h-0 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]' : ''
         }`}
-        style={{ maxHeight: columnMaxH, minHeight: '200px' }}
+        style={perColumnScroll ? undefined : { minHeight: '200px' }}
       >
         {items.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-gray-400">
+          <div
+            className={`${KANBAN_COLUMN_EMPTY_CLASS}${isOverColumn ? ' kanban-column-empty--drop' : ''}${pinEmptyPlaceholder ? ` ${KANBAN_COLUMN_EMPTY_PIN_CLASS}` : ''}`}
+            style={pinEmptyPlaceholder ? { top: emptyPlaceholderTop } : undefined}
+          >
+            <Layers aria-hidden />
             <p className="text-sm">{isOverColumn ? '⬇️ Thả vào đây' : '📥 Kéo dự án vào đây'}</p>
           </div>
         ) : (
           <KanbanColumnVirtualList
             items={items}
             columnScrollRef={containerRef}
+            boardScrollRef={perColumnScroll ? null : boardScrollRef}
             renderCard={renderCard}
           />
         )}
@@ -1664,14 +2140,23 @@ const KanbanCard = memo(function KanbanCard({
 });
 
 // Kanban View Container
-function KanbanView({ pipeline, onMoveStage, onDelete, calculateDays, selectedIds, onToggleSelect, vcPipelineTab = 'shipping' }) {
+function KanbanView({
+  pipeline, onMoveStage, onDelete, calculateDays, selectedIds, onToggleSelect, onSelectColumn,
+  vcPipelineTab = 'shipping', columnScrollMode = 'unified',
+}) {
+  const boardScrollRef = useRef(null);
   const pipelineStages = useMemo(
     () => (pipeline || []).map(({ items, ...stage }) => stage),
     [pipeline],
   );
+  const perColumnScroll = columnScrollMode === 'per-column';
   return (
-    <WorkshopPipelineKanbanScroll cardSelector="[data-vc-kanban-card]">
-      <div className={`flex min-w-max items-stretch gap-2.5 ${KANBAN_BOARD_COLUMN_RAILS_CLASS} ${UI_KANBAN_FIXED_CLASS}`}>
+    <WorkshopPipelineKanbanScroll
+      cardSelector="[data-vc-kanban-card]"
+      columnScrollMode={columnScrollMode}
+      scrollContainerRef={boardScrollRef}
+    >
+      <div className={`flex min-w-max items-stretch gap-2.5 ${KANBAN_BOARD_COLUMN_RAILS_CLASS} ${perColumnScroll ? 'h-full' : ''} ${UI_KANBAN_FIXED_CLASS}`}>
         {pipeline.map((stage, columnIndex) => (
           <KanbanStageCard
             key={stage.id || stage.slug}
@@ -1683,8 +2168,11 @@ function KanbanView({ pipeline, onMoveStage, onDelete, calculateDays, selectedId
             calculateDays={calculateDays}
             selectedIds={selectedIds}
             onToggleSelect={onToggleSelect}
+            onSelectColumn={onSelectColumn}
             pipelineStages={pipelineStages}
             vcPipelineTab={vcPipelineTab}
+            columnScrollMode={columnScrollMode}
+            boardScrollRef={boardScrollRef}
           />
         ))}
       </div>

@@ -14,6 +14,80 @@ const { responseCache, invalidateTags } = require('../middleware/responseCache')
 const { enforceTenantContext } = require('../middleware/tenantGate');
 const { addTenantFilter, companyInTenantContext } = require('../helpers/tenantScope');
 const { checkUserLimit } = require('../helpers/tenantLimits');
+const {
+  canCreateStaff,
+  isSystemAdmin,
+  isElevatedStaffRole,
+  hasCompanyId,
+  isAdminLike,
+  normalizeRole,
+} = require('../helpers/adminRole');
+const { fillStaffFormFromPrompt } = require('../helpers/aiStaffFormFill');
+
+/** Công ty của actor: company_id hoặc lấy từ phòng ban. */
+async function resolveActorCompanyId(actorRow) {
+  if (actorRow?.company_id) return String(actorRow.company_id);
+  if (!actorRow?.department_id) return null;
+  const { data } = await supabase
+    .from('departments')
+    .select('company_id')
+    .eq('id', actorRow.department_id)
+    .maybeSingle();
+  return data?.company_id ? String(data.company_id) : null;
+}
+
+/** Admin hệ thống / manager toàn cục — không khóa công ty khi tạo NV. */
+function canCreateStaffUnscoped(user) {
+  if (isSystemAdmin(user)) return true;
+  const r = normalizeRole(user?.role);
+  if (r === 'manager' && !hasCompanyId(user)) return true;
+  if (isAdminLike(user) && !hasCompanyId(user)) return true;
+  return false;
+}
+
+/** Admin công ty / NV gắn công ty — chỉ xem danh sách NV trong công ty mình. */
+function shouldForceCompanyStaffListScope(user) {
+  if (!user) return false;
+  if (isSystemAdmin(user)) return false;
+  if (normalizeRole(user.role) === 'platform_admin') return false;
+  if (normalizeRole(user.role) === 'manager' && !hasCompanyId(user)) return false;
+  return true;
+}
+
+async function loadActorUserRow(req) {
+  const uid = req.user?.userId || req.user?.id;
+  if (!uid) return null;
+  const { data } = await supabase
+    .from('users')
+    .select('id, role, company_id, department_id')
+    .eq('id', uid)
+    .maybeSingle();
+  return data;
+}
+
+/** Công ty bắt buộc khi list NV (null = xem được mọi công ty). */
+async function getForcedStaffListCompanyId(req) {
+  const actorRow = await loadActorUserRow(req);
+  const merged = { ...req.user, ...(actorRow || {}) };
+  if (!shouldForceCompanyStaffListScope(merged)) return null;
+  return resolveActorCompanyId(actorRow || merged);
+}
+
+/** Lọc users thuộc 1 công ty: theo users.company_id hoặc phòng ban của công ty. */
+function applyCompanyStaffFilter(q, companyId, deptIds) {
+  const cid = String(companyId);
+  if (deptIds?.length) {
+    return q.or(`company_id.eq.${cid},department_id.in.(${deptIds.join(',')})`);
+  }
+  return q.eq('company_id', cid);
+}
+
+function userBelongsToCompany(u, companyId) {
+  const cid = String(companyId);
+  if (u?.company_id != null && String(u.company_id) === cid) return true;
+  if (u?.department?.company_id != null && String(u.department.company_id) === cid) return true;
+  return false;
+}
 
 const USER_OPTIONAL_NULLABLE_FIELDS = [
   'position', 'date_of_birth', 'hire_date', 'address', 'emergency_contact', 'salary', 'notes', 'skills',
@@ -170,14 +244,21 @@ r.get('/my-stages', async (req, res) => {
 // ═══ DEPARTMENTS ═══
 r.get('/departments/list', async (req, res) => {
   try {
-    const { data } = await supabase.from('departments').select('*').order('name');
+    const forcedCompanyId = await getForcedStaffListCompanyId(req);
+    let q = supabase.from('departments').select('*').order('name');
+    if (forcedCompanyId) q = q.eq('company_id', forcedCompanyId);
+    const { data } = await q;
     res.json({ departments: data || [] });
   } catch (e) { res.status(500).json({ error: 'Lỗi' }); }
 });
 
 r.get('/departments', async (req, res) => {
   try {
-    const { data } = await supabase.from('departments').select('*').order('name');
+    const forcedCompanyId = await getForcedStaffListCompanyId(req);
+    let q = supabase.from('departments').select('*').order('name');
+    if (forcedCompanyId) q = q.eq('company_id', forcedCompanyId);
+    else if (req.query.company_id) q = q.eq('company_id', req.query.company_id);
+    const { data } = await q;
     res.json({ departments: data || [] });
   } catch { res.status(500).json({ error: 'Lỗi' }); }
 });
@@ -458,7 +539,18 @@ r.put('/sidebar-menu-pins', async (req, res) => {
 // ═══ STAFF LIST (with filters) ═══
 r.get('/', async (req, res) => {
   try {
-    const { role, department_id, company_id, ecosystem_unit_id, company_unit_id, search, include_inactive } = req.query;
+    let { role, department_id, company_id, ecosystem_unit_id, company_unit_id, search, include_inactive } = req.query;
+
+    const forcedCompanyId = await getForcedStaffListCompanyId(req);
+    if (forcedCompanyId) {
+      if (company_id && String(company_id) !== String(forcedCompanyId)) {
+        return res.status(403).json({ error: 'Chỉ được xem nhân viên công ty của bạn' });
+      }
+      company_id = forcedCompanyId;
+      // Không cho mở rộng phạm vi qua khối / unit công ty khác
+      ecosystem_unit_id = undefined;
+      company_unit_id = undefined;
+    }
 
     // ── Lọc theo company_id trực tiếp (companies.id → departments → users) ──
     // Dùng cho EmployeePicker khi truyền companyId prop
@@ -470,22 +562,29 @@ r.get('/', async (req, res) => {
         const { data: depts } = await supabase.from('departments')
           .select('id').eq('company_id', company_id).eq('is_active', true);
         const deptIds = (depts || []).map(d => d.id);
-        if (!deptIds.length) return res.json({ users: [], company_id });
 
         let q = supabase.from('users')
-          .select('id, full_name, email, phone, avatar, role, department_id, position')
-          .in('department_id', deptIds);
+          .select('id, full_name, email, phone, avatar, role, department_id, position, company_id, department:departments!users_department_id_fkey(id,name,color,company_id)');
+        q = applyCompanyStaffFilter(q, company_id, deptIds);
         q = applyUserTenantFilter(q, req);
         if (!include_inactive) q = q.neq('is_active', false);
         if (role) q = q.eq('role', role);
+        if (department_id === 'none') q = q.is('department_id', null);
+        else if (department_id) q = q.eq('department_id', department_id);
         if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
         const { data: users, error } = await q.order('full_name');
         if (error) throw error;
 
-        return res.json({ users: users || [], company_id });
+        const list = (users || []).filter((u) => userBelongsToCompany(u, company_id));
+        const stats = { total: list.length, byRole: {}, byDept: {} };
+        list.forEach((u) => {
+          stats.byRole[u.role] = (stats.byRole[u.role] || 0) + 1;
+          if (u.department?.name) stats.byDept[u.department.name] = (stats.byDept[u.department.name] || 0) + 1;
+        });
+        return res.json({ users: list, stats, company_id, scoped_to_company: !!forcedCompanyId });
       } catch (e) {
         console.error('company_id filter error:', e.message);
-        return res.json({ users: [], company_id });
+        return res.json({ users: [], stats: { total: 0, byRole: {} }, company_id });
       }
     }
 
@@ -693,7 +792,7 @@ r.get('/', async (req, res) => {
 
     let all = data || [];
     if (company_id) {
-      all = all.filter(u => u.department?.company_id === company_id);
+      all = all.filter((u) => userBelongsToCompany(u, company_id));
     }
 
     const stats = { total: all.length, byRole: {}, byDept: {} };
@@ -701,7 +800,7 @@ r.get('/', async (req, res) => {
       stats.byRole[u.role] = (stats.byRole[u.role] || 0) + 1;
       if (u.department?.name) stats.byDept[u.department.name] = (stats.byDept[u.department.name] || 0) + 1;
     });
-    res.json({ users: all, stats });
+    res.json({ users: all, stats, scoped_to_company: !!forcedCompanyId, company_id: company_id || null });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
@@ -712,7 +811,7 @@ r.get('/:id', async (req, res) => {
     // Defensive: try full columns, fallback to basic
     let user = null;
     const { data: u1, error: e1 } = await supabase.from('users').select(`
-      id,email,full_name,phone,avatar,role,position,department_id,team_id,
+      id,email,full_name,phone,avatar,role,position,department_id,team_id,company_id,
       date_of_birth,hire_date,address,emergency_contact,salary,notes,skills,
       is_active,last_login_at,created_at,
       department:departments!users_department_id_fkey(id,name,color,company_id),
@@ -721,10 +820,15 @@ r.get('/:id', async (req, res) => {
     if (!e1) { user = u1; }
     else {
       const { data: u2, error: e2 } = await supabase.from('users').select(`
-        id,email,full_name,phone,avatar,role,department_id,is_active,last_login_at,created_at
+        id,email,full_name,phone,avatar,role,department_id,company_id,is_active,last_login_at,created_at
       `).eq('id', req.params.id).single();
       if (e2) throw e2;
       user = u2;
+    }
+
+    const forcedCompanyId = await getForcedStaffListCompanyId(req);
+    if (forcedCompanyId && !userBelongsToCompany(user, forcedCompanyId)) {
+      return res.status(403).json({ error: 'Không có quyền xem nhân viên công ty khác' });
     }
 
     let taskStats = { assigned: 0, done: 0, in_progress: 0, created: 0 };
@@ -759,18 +863,87 @@ r.get('/:id', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 
+/**
+ * AI điền form tạo NV — parse câu tiếng Việt → gợi ý field (không tạo user).
+ * VD: "Tạo NV công ty Metalla vai trò admin tên Nguyễn Văn A"
+ */
+r.post('/ai-fill-form', async (req, res) => {
+  try {
+    if (!canCreateStaff(req.user)) {
+      return res.status(403).json({ error: 'Không có quyền tạo nhân viên' });
+    }
+    const prompt = String(req.body?.prompt || req.body?.text || '').trim();
+    if (!prompt) return res.status(400).json({ error: 'Nhập mô tả nhân viên cần tạo' });
+
+    const actorRow = await loadActorUserRow(req);
+    const actorForPerm = { ...req.user, ...(actorRow || {}) };
+    const lockedCompanyId = canCreateStaffUnscoped(actorForPerm)
+      ? null
+      : await resolveActorCompanyId(actorRow || req.user);
+
+    const result = await fillStaffFormFromPrompt(supabase, prompt, {
+      lockedCompanyId,
+      tenantId: req.user?.tenant_id || null,
+      defaultPassword: String(req.body?.default_password || '123456'),
+    });
+
+    // Admin công ty không được AI đề xuất tạo admin hệ thống
+    if (
+      result.fields?.role
+      && isElevatedStaffRole(result.fields.role)
+      && !isSystemAdmin(actorForPerm)
+      && lockedCompanyId
+    ) {
+      result.fields.role = 'sales_admin';
+      result.warnings = [
+        ...(result.warnings || []),
+        'Đã đổi Admin hệ thống → Sales Admin (bạn không được tạo Admin hệ thống)',
+      ];
+    }
+
+    res.json(result);
+  } catch (e) {
+    console.error('POST /users/ai-fill-form:', e);
+    res.status(e.status || 500).json({ error: e.message || 'Lỗi AI điền form' });
+  }
+});
+
 // ═══ CREATE STAFF ═══
 r.post('/', async (req, res) => {
   try {
     const b = req.body;
     if (!b.email || !b.full_name) return res.status(400).json({ error: 'Email và họ tên bắt buộc' });
-    if (!['admin', 'manager'].includes(req.user.role)) {
-      return res.status(403).json({ error: 'Chỉ admin/quản lý được tạo nhân viên' });
+    if (!canCreateStaff(req.user)) {
+      return res.status(403).json({ error: 'Chỉ admin/quản lý hoặc admin Công việc/SX được tạo nhân viên' });
     }
     if (req.tenantContext?.enforced) {
       const limit = await checkUserLimit(req.tenantContext.tenantId);
       if (!limit.ok) return res.status(400).json({ error: limit.error });
     }
+
+    const actorRow = await loadActorUserRow(req);
+    const actorForPerm = { ...req.user, ...(actorRow || {}) };
+    const scopedCompanyId = canCreateStaffUnscoped(actorForPerm)
+      ? null
+      : await resolveActorCompanyId(actorRow || req.user);
+
+    if (scopedCompanyId) {
+      if (!b.department_id) {
+        return res.status(400).json({ error: 'Chọn phòng ban thuộc công ty của bạn khi tạo nhân viên' });
+      }
+      const { data: dept } = await supabase
+        .from('departments')
+        .select('id, company_id')
+        .eq('id', b.department_id)
+        .maybeSingle();
+      if (!dept?.company_id || String(dept.company_id) !== String(scopedCompanyId)) {
+        return res.status(403).json({ error: 'Chỉ được tạo nhân viên trong công ty của bạn' });
+      }
+      if (isElevatedStaffRole(b.role || 'staff') && !isSystemAdmin(actorForPerm)) {
+        return res.status(403).json({ error: 'Không được tạo tài khoản Admin hệ thống' });
+      }
+    }
+
     const password = b.password || 'tubep123';
     const hash = await bcrypt.hash(password, 12);
 
@@ -781,6 +954,8 @@ r.post('/', async (req, res) => {
       department_id: b.department_id || null,
       team_id: b.team_id || null,
     };
+    if (scopedCompanyId) insertObj.company_id = scopedCompanyId;
+    else if (b.company_id) insertObj.company_id = b.company_id;
     if (req.user?.tenant_id) insertObj.tenant_id = req.user.tenant_id;
     if (b.avatar !== undefined && b.avatar != null && String(b.avatar).trim()) {
       insertObj.avatar = String(b.avatar).trim();
@@ -789,9 +964,10 @@ r.post('/', async (req, res) => {
     applyOptionalUserFields(b, insertObj);
     insertObj.drive_module = inferDriveModuleForNewUser({ role: insertObj.role, drive_module: b.drive_module });
 
-    if (b.crm_region_ids !== undefined && ['admin', 'manager'].includes(req.user.role)) {
-      let targetCo = null;
-      if (b.department_id) {
+    const canAssignCrmRegions = canCreateStaff(actorForPerm);
+    if (b.crm_region_ids !== undefined && canAssignCrmRegions) {
+      let targetCo = scopedCompanyId || null;
+      if (!targetCo && b.department_id) {
         const { data: d } = await supabase.from('departments').select('company_id').eq('id', b.department_id).maybeSingle();
         targetCo = d?.company_id || null;
       }
@@ -819,10 +995,10 @@ r.post('/', async (req, res) => {
         const { data: d2, error: e2 } = await supabase.from('users').insert(ins2)
           .select('id,email,full_name,phone,role,department_id,is_active,created_at').single();
         if (e2) throw e2;
-        if (d2?.id && b.crm_region_ids !== undefined && ['admin', 'manager'].includes(req.user.role)) {
+        if (d2?.id && b.crm_region_ids !== undefined && canAssignCrmRegions) {
           const ids = normalizeRegionIdList(b.crm_region_ids);
-          let targetCo = null;
-          if (b.department_id) {
+          let targetCo = scopedCompanyId || null;
+          if (!targetCo && b.department_id) {
             const { data: dpt } = await supabase.from('departments').select('company_id').eq('id', b.department_id).maybeSingle();
             targetCo = dpt?.company_id || null;
           }
@@ -839,10 +1015,10 @@ r.post('/', async (req, res) => {
       throw error;
     }
 
-    if (data?.id && b.crm_region_ids !== undefined && ['admin', 'manager'].includes(req.user.role)) {
+    if (data?.id && b.crm_region_ids !== undefined && canAssignCrmRegions) {
       const ids = normalizeRegionIdList(b.crm_region_ids);
-      let targetCo = null;
-      if (b.department_id) {
+      let targetCo = scopedCompanyId || null;
+      if (!targetCo && b.department_id) {
         const { data: dpt } = await supabase.from('departments').select('company_id').eq('id', b.department_id).maybeSingle();
         targetCo = dpt?.company_id || null;
       }
@@ -924,7 +1100,7 @@ r.put('/:id', async (req, res) => {
     }
 
     if (b.crm_region_ids !== undefined) {
-      if (!['admin', 'manager'].includes(req.user.role)) {
+      if (!canCreateStaff(req.user)) {
         return res.status(403).json({ error: 'Không có quyền gán khu vực CRM' });
       }
       const { data: targetUser } = await supabase
@@ -976,7 +1152,7 @@ r.put('/:id', async (req, res) => {
 // ═══ DEACTIVATE STAFF (soft delete) ═══
 r.delete('/:id', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) {
+    if (!canCreateStaff(req.user)) {
       return res.status(403).json({ error: 'Không có quyền' });
     }
     await supabase.from('users').update({ is_active: false }).eq('id', req.params.id);

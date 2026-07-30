@@ -102,7 +102,7 @@ function resolveMentionIdsFromContent(content, members, { excludeUserId } = {}) 
 async function fetchLeadMentionMembers(supabase, leadId) {
   const { data: rows } = await supabase
     .from('lead_members')
-    .select('user_id, user:users!lead_members_user_id_fkey(id, full_name, email, avatar, role)')
+    .select('user_id, user:users!lead_members_user_id_fkey(id, full_name, email, avatar, role, company_id, drive_module)')
     .eq('lead_id', leadId);
 
   const map = new Map();
@@ -124,7 +124,7 @@ async function fetchLeadMentionMembers(supabase, leadId) {
   if (missing.length) {
     const { data: users } = await supabase
       .from('users')
-      .select('id, full_name, email, avatar, role')
+      .select('id, full_name, email, avatar, role, company_id, drive_module')
       .in('id', missing);
     for (const u of users || []) {
       map.set(String(u.id), { user_id: u.id, user: u, role: 'member' });

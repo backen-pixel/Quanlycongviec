@@ -24,6 +24,34 @@ export const CRM_CROSS_MODULE_PATHS = [
   '/crm/messenger',
 ];
 
+const BUILTIN_MODULE_SCOPES = new Set([
+  'crm', 'work', 'congviec', 'sx', 'vc', 'calc', 'knowledge', 'ketoan', 'muahang',
+]);
+
+export function isCustomModuleScope(scope) {
+  return typeof scope === 'string' && scope.startsWith('custom:');
+}
+
+export function customModuleScopeId(moduleKey) {
+  const key = String(moduleKey || '').trim();
+  return key ? `custom:${key}` : null;
+}
+
+export function moduleKeyFromCustomScope(scope) {
+  if (!isCustomModuleScope(scope)) return null;
+  return String(scope).slice('custom:'.length) || null;
+}
+
+/** `/m/:key` hoặc `/ecosystem/app-modules/:key` → module_key tùy chỉnh. */
+export function parseAppModuleKeyFromPath(pathname) {
+  const p = String(pathname || '');
+  let m = p.match(/^\/m\/([^/]+)/);
+  if (m?.[1]) return decodeURIComponent(m[1]);
+  m = p.match(/^\/ecosystem\/app-modules\/([^/]+)/);
+  if (m?.[1]) return decodeURIComponent(m[1]);
+  return null;
+}
+
 export function isCrmSharedPath(pathname) {
   return CRM_SHARED_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
@@ -36,12 +64,16 @@ export function isDrivePath(pathname) {
   return pathname === '/drive' || pathname.startsWith('/drive/');
 }
 
-/** ?module=crm|sx|vc → khóa sidebar đúng module khi mở Drive */
+/** ?module=crm|sx|vc|custom:key → khóa sidebar đúng module khi mở Drive */
 export function resolveModuleFromDriveQuery(moduleParam) {
-  const m = String(moduleParam || '').toLowerCase();
+  const raw = String(moduleParam || '').trim();
+  if (!raw) return null;
+  if (isCustomModuleScope(raw)) return raw;
+  const m = raw.toLowerCase();
   if (m === 'crm') return 'crm';
   if (m === 'sx') return 'sx';
   if (m === 'vc') return 'vc';
+  if (m.startsWith('custom:')) return raw;
   return null;
 }
 
@@ -61,6 +93,8 @@ export function isCongViecPrimaryPath(pathname) {
 
 export function isWorkPrimaryPath(pathname) {
   if (pathname.startsWith('/crm') || pathname.startsWith('/sx') || pathname.startsWith('/vc') || pathname.startsWith('/ketoan') || pathname.startsWith('/mua-hang')) return false;
+  if (pathname.startsWith('/m/')) return false;
+  if (/^\/ecosystem\/app-modules\/[^/]+/.test(pathname)) return false;
   if (isCongViecPrimaryPath(pathname)) return false;
   return (
     pathname === '/' ||
@@ -84,6 +118,8 @@ export function isWorkPrimaryPath(pathname) {
 }
 
 export function resolveModuleFromPathname(pathname) {
+  const customKey = parseAppModuleKeyFromPath(pathname);
+  if (customKey) return customModuleScopeId(customKey);
   if (pathname.startsWith('/tools/voice-recordings')) return 'crm';
   if (pathname.startsWith('/crm')) {
     // /crm/events, /crm/activity, /crm/messenger được dùng chung — nhường
@@ -105,7 +141,9 @@ export function resolveModuleFromPathname(pathname) {
 export function readStoredModule() {
   try {
     const v = sessionStorage.getItem(STORAGE_KEY);
-    if (v === 'crm' || v === 'work' || v === 'congviec' || v === 'sx' || v === 'vc' || v === 'calc' || v === 'knowledge' || v === 'ketoan' || v === 'muahang') return v;
+    if (!v) return null;
+    if (BUILTIN_MODULE_SCOPES.has(v)) return v;
+    if (isCustomModuleScope(v)) return v;
   } catch { /* ignore */ }
   return null;
 }

@@ -354,6 +354,7 @@ app.use('/api/teams', require('./routes/teams'));
 app.use('/api/stages', require('./routes/stages'));
 app.use('/api/approvals', require('./routes/approvals'));
 app.use('/api/ecosystem', require('./routes/ecosystem'));
+try { app.use('/api/app-modules', require('./routes/appModules')); } catch (e) { console.warn('⚠️ App modules route failed:', e.message); }
 app.use('/api/company-templates', require('./routes/companyTemplates'));
 app.use('/api/flows', require('./routes/flows'));
 app.use('/api/company-processes', require('./routes/companyProcesses'));

@@ -37,6 +37,7 @@ function mapWorkshopProjectTaskToCrmTask(task, leadId, projectMeta = {}) {
     production_pipeline_stage_id: null,
     pipeline_stage_id: null,
     blocks_stage_advance: !!task.blocks_stage_advance,
+    file_note_recorded: !!task.file_note_recorded,
     deadline: task.due_date || null,
     checklist: mapChecklistRows(task.checklists),
     file_count: 0,
@@ -64,7 +65,7 @@ async function loadWorkshopLogisticsTasksForCrmLead(leadId, projectId) {
   let { data: rows, error } = await supabase
     .from('tasks')
     .select(`
-      id, title, description, status, priority, due_date, order_index, assignee_id, blocks_stage_advance, metadata, created_at,
+      id, title, description, status, priority, due_date, order_index, assignee_id, blocks_stage_advance, file_note_recorded, metadata, created_at,
       assignee:users!tasks_assignee_id_fkey(id, full_name, avatar),
       stage:workflow_stages(id, name, slug),
       checklists:task_checklists(id, title, is_completed, order_index, notes)
@@ -73,11 +74,25 @@ async function loadWorkshopLogisticsTasksForCrmLead(leadId, projectId) {
     .order('order_index')
     .order('created_at');
 
-  if (error && String(error.message || '').includes('task_checklists')) {
+  if (error && /file_note_recorded/i.test(String(error.message || ''))) {
     ({ data: rows, error } = await supabase
       .from('tasks')
       .select(`
         id, title, description, status, priority, due_date, order_index, assignee_id, blocks_stage_advance, metadata, created_at,
+        assignee:users!tasks_assignee_id_fkey(id, full_name, avatar),
+        stage:workflow_stages(id, name, slug),
+        checklists:task_checklists(id, title, is_completed, order_index, notes)
+      `)
+      .eq('project_id', projectId)
+      .order('order_index')
+      .order('created_at'));
+  }
+
+  if (error && String(error.message || '').includes('task_checklists')) {
+    ({ data: rows, error } = await supabase
+      .from('tasks')
+      .select(`
+        id, title, description, status, priority, due_date, order_index, assignee_id, blocks_stage_advance, file_note_recorded, metadata, created_at,
         assignee:users!tasks_assignee_id_fkey(id, full_name, avatar),
         stage:workflow_stages(id, name, slug)
       `)

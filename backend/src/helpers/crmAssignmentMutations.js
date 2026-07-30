@@ -11,6 +11,16 @@ const ADMIN_ROLES = new Set(['admin', 'manager', 'sales_admin', 'crm_production_
 const isAdmin = (req) => ADMIN_ROLES.has(String(req.user?.role || '').toLowerCase());
 
 const ASSIGNMENT_SELECT = `
+  id, company_id, column_id, lead_id, crm_task_id, assignment_module,
+  task_source_type, employee_error_module, title, description,
+  assignee_id, created_by_id, priority, status, deadline,
+  position, created_at, updated_at, completed_at,
+  assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar),
+  created_by:users!crm_assignments_created_by_id_fkey(id, full_name, email, avatar),
+  lead:crm_leads(id, code, title, type)
+`;
+
+const ASSIGNMENT_SELECT_LEGACY = `
   id, company_id, column_id, lead_id, crm_task_id, assignment_module, title, description,
   assignee_id, created_by_id, priority, status, deadline,
   position, created_at, updated_at, completed_at,
@@ -70,9 +80,22 @@ async function createCrmAssignment(req, body) {
   const {
     title, description, assignee_id, assignee_ids, department_ids, region_ids,
     column_id, company_id, priority, status, deadline, lead_id, assignment_module,
+    task_source_type, employee_error_module, crm_task_id,
   } = body || {};
-  const resolvedModule = assignment_module === 'production' ? 'production' : 'crm';
+  const resolvedModule = ['production', 'logistics'].includes(String(assignment_module || '').toLowerCase())
+    ? String(assignment_module).toLowerCase()
+    : 'crm';
   if (!title || !title.trim()) return { error: 'Cần tiêu đề', status: 400 };
+
+  const {
+    resolveTaskSourceFields,
+    isTaskSourceColumnError,
+  } = require('./sharedWorkspaceTaskSource');
+  const source = resolveTaskSourceFields(
+    { task_source_type, employee_error_module },
+    { required: false },
+  );
+  if (!source.ok) return { error: source.error, status: source.status || 400 };
 
   let effectiveCompany = isAdmin(req)
     ? (company_id || req.user?.company_id || null)
@@ -115,16 +138,33 @@ async function createCrmAssignment(req, body) {
     position: posBase,
     assignment_module: resolvedModule,
     ...(resolvedLeadId ? { lead_id: resolvedLeadId } : {}),
+    ...(crm_task_id ? { crm_task_id } : {}),
   };
+  if (source.task_source_type !== undefined) {
+    insertRow.task_source_type = source.task_source_type;
+    insertRow.employee_error_module = source.employee_error_module;
+  }
 
-  let { data, error } = await supabase.from('crm_assignments').insert(insertRow).select(ASSIGNMENT_SELECT).single();
+  async function insertWithSelect(row, select) {
+    return supabase.from('crm_assignments').insert(row).select(select).single();
+  }
+
+  let { data, error } = await insertWithSelect(insertRow, ASSIGNMENT_SELECT);
+  if (error && isTaskSourceColumnError(error)) {
+    const { task_source_type: _t, employee_error_module: _e, ...legacy } = insertRow;
+    ({ data, error } = await insertWithSelect(legacy, ASSIGNMENT_SELECT_LEGACY));
+  }
   if (error && /assignment_module/.test(error.message || '')) {
     delete insertRow.assignment_module;
-    ({ data, error } = await supabase.from('crm_assignments').insert(insertRow).select(ASSIGNMENT_SELECT).single());
+    ({ data, error } = await insertWithSelect(insertRow, ASSIGNMENT_SELECT_LEGACY));
   }
   if (error && /lead_id/.test(error.message || '')) {
     delete insertRow.lead_id;
-    ({ data, error } = await supabase.from('crm_assignments').insert(insertRow).select(ASSIGNMENT_SELECT).single());
+    ({ data, error } = await insertWithSelect(insertRow, ASSIGNMENT_SELECT_LEGACY));
+  }
+  if (error && /crm_task_id/.test(error.message || '')) {
+    delete insertRow.crm_task_id;
+    ({ data, error } = await insertWithSelect(insertRow, ASSIGNMENT_SELECT_LEGACY));
   }
   if (error) return { error: error.message, status: 500 };
 
@@ -134,24 +174,82 @@ async function createCrmAssignment(req, body) {
 
 async function updateCrmAssignment(req, assignmentId, body) {
   const { data: before } = await supabase.from('crm_assignments')
-    .select('id, assignee_id, status, company_id, created_by_id')
+    .select('id, assignee_id, status, company_id, created_by_id, lead_id, crm_task_id')
     .eq('id', assignmentId).maybeSingle();
   if (!before) return { error: 'Không tìm thấy nhiệm vụ', status: 404 };
+
+  const {
+    resolveTaskSourceFields,
+    isTaskSourceColumnError,
+    normalizeAssignModule,
+  } = require('./sharedWorkspaceTaskSource');
 
   const update = { updated_at: new Date().toISOString() };
   ['title', 'description', 'column_id', 'priority', 'status', 'deadline', 'position', 'assignee_id'].forEach((f) => {
     if (body[f] !== undefined) update[f] = body[f];
   });
+  if (body.assignment_module !== undefined) {
+    update.assignment_module = normalizeAssignModule(body.assignment_module);
+  }
+  if (body.task_source_type !== undefined || body.employee_error_module !== undefined) {
+    const source = resolveTaskSourceFields(body, { required: false });
+    if (!source.ok) return { error: source.error, status: source.status || 400 };
+    if (source.task_source_type !== undefined) {
+      update.task_source_type = source.task_source_type;
+      update.employee_error_module = source.employee_error_module;
+    }
+  }
   if (update.status === 'completed' && before.status !== 'completed') {
     update.completed_at = new Date().toISOString();
   } else if (update.status && update.status !== 'completed' && before.status === 'completed') {
     update.completed_at = null;
   }
 
-  const { data, error } = await supabase.from('crm_assignments').update(update)
+  let finalAssignees = null;
+  if (Array.isArray(body.assignee_ids)) {
+    finalAssignees = await expandAssigneeIds({
+      assignee_ids: body.assignee_ids,
+      department_ids: body.department_ids,
+      region_ids: body.region_ids,
+      company_id: body.company_id ?? before.company_id,
+    });
+    update.assignee_id = finalAssignees[0] || null;
+  }
+
+  let { data, error } = await supabase.from('crm_assignments').update(update)
     .eq('id', assignmentId).select(ASSIGNMENT_SELECT).single();
+  if (error && isTaskSourceColumnError(error)) {
+    const { task_source_type: _t, employee_error_module: _e, ...legacy } = update;
+    ({ data, error } = await supabase.from('crm_assignments').update(legacy)
+      .eq('id', assignmentId).select(ASSIGNMENT_SELECT_LEGACY).single());
+  }
   if (error) return { error: error.message, status: 500 };
-  return { data: { assignment: data }, status: 200 };
+
+  if (finalAssignees) {
+    await replaceAssignees(assignmentId, finalAssignees);
+  }
+
+  try {
+    const { syncCrmTaskFromAssignment } = require('./crmTaskAssignmentSync');
+    await syncCrmTaskFromAssignment(data);
+  } catch (syncErr) {
+    console.warn('[crmAssignmentMutations] sync→task:', syncErr.message);
+  }
+  if (
+    data?.lead_id
+    && data.status === 'completed'
+    && before.status !== 'completed'
+    && data.crm_task_id
+  ) {
+    try {
+      const { promoteNextAssignmentAfterComplete } = require('./crmSequentialAssignment');
+      await promoteNextAssignmentAfterComplete(req, data.lead_id);
+    } catch (seqErr) {
+      console.warn('[crmAssignmentMutations] sequential promote:', seqErr.message);
+    }
+  }
+
+  return { data: { assignment: data, assignee_ids: finalAssignees }, status: 200 };
 }
 
 async function deleteCrmAssignment(req, assignmentId) {

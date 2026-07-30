@@ -1162,6 +1162,10 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
 
     const projectSelect = `*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)`;
 
+    const isLogisticsCreateStatus = ['shipping', 'installing', 'warranty', 'completed'].includes(initialStatus);
+    const logisticsCompanyIdOnCreate = b.logistics_company_id
+      || (isLogisticsCreateStatus ? (b.company_id || projectCompanyId || null) : null);
+
     const buildFull = (trialCode) => ({
       code: trialCode,
       name: nameTrim,
@@ -1190,6 +1194,7 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
       workshop_type_id: b.workshop_type_id || null,
       quotation_files: Array.isArray(b.quotation_files) ? b.quotation_files : [],
       consult_date: new Date().toISOString(),
+      ...(logisticsCompanyIdOnCreate ? { logistics_company_id: logisticsCompanyIdOnCreate } : {}),
       ...(vcIntakeColId ? { vc_kanban_column_id: vcIntakeColId } : {}),
     });
 

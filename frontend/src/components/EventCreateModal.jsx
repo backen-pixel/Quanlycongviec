@@ -457,6 +457,7 @@ export default function EventCreateModal({
   defaultTitle = '',
   defaultLocation = '',
   defaultDescription = '',
+  defaultEventType = '',
 }) {
   const isEdit = !!event;
   const participantsAutoFilled = useRef(false);
@@ -469,7 +470,7 @@ export default function EventCreateModal({
   };
   const [form, setForm] = useState({
     title: event?.title || defaultTitle || '',
-    event_type: event?.event_type || 'site_visit',
+    event_type: event?.event_type || defaultEventType || 'site_visit',
     description: event?.description || defaultDescription || '',
     location: event?.location || defaultLocation || '',
     start_time: toLocalDateTimeInput(event?.start_time) || startFromPreset(),
@@ -571,13 +572,16 @@ export default function EventCreateModal({
 
   const applyEventTypeAndTitle = (slug) => {
     const t = eventTypes.find((x) => x.slug === slug);
+    const nextModule = slug === 'installation'
+      ? (allowedModules?.includes('logistics') || !allowedModules ? 'logistics' : form.module)
+      : form.module;
     if (!t) {
-      setForm((f) => ({ ...f, event_type: slug }));
+      setForm((f) => ({ ...f, event_type: slug, module: nextModule }));
       return;
     }
     const rest = stripEventTypeTitlePrefix(form.title, eventTypes);
     const nextTitle = rest ? `${t.name} - ${rest}` : `${t.name} - `;
-    setForm((f) => ({ ...f, event_type: slug, title: nextTitle }));
+    setForm((f) => ({ ...f, event_type: slug, title: nextTitle, module: nextModule }));
   };
 
   return (

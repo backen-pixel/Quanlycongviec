@@ -22,6 +22,7 @@ export default function EcosystemModulesPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(null);
   const [message, setMessage] = useState('');
+  const [moduleRows, setModuleRows] = useState(MODULE_ROWS);
 
   const divisions = useMemo(
     () => (units || []).filter((u) => u.level?.slug === 'division').sort((a, b) => (a.order_index || 0) - (b.order_index || 0)),
@@ -32,7 +33,7 @@ export default function EcosystemModulesPage() {
   const summaryByDivision = useMemo(() => {
     return divisions.map((d) => {
       const id = String(d.id);
-      const modules = MODULE_ROWS.map((m) => {
+      const modules = moduleRows.map((m) => {
         const set = local[m.key] || new Set();
         const restricted = set.size > 0;
         const allowed = !restricted || set.has(id);
@@ -40,21 +41,32 @@ export default function EcosystemModulesPage() {
       });
       return { d, id, modules };
     });
-  }, [divisions, local]);
+  }, [divisions, local, moduleRows]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setMessage('');
     try {
-      const [uRes, sRes] = await Promise.all([
+      const [uRes, sRes, mRes] = await Promise.all([
         api.get('/ecosystem/units'),
         api.get('/ecosystem/module-scopes'),
+        api.get('/app-modules').catch(() => ({ data: { modules: [] } })),
       ]);
       const u = uRes.data?.units || [];
       setUnits(u);
+      const customRows = (mRes.data?.modules || []).map((m) => ({
+        key: m.module_key,
+        label: `${m.icon || '📦'} ${m.name}`,
+        hint: `/m/${m.module_key}`,
+      }));
+      const rows = [
+        ...MODULE_ROWS,
+        ...customRows.filter((c) => !MODULE_ROWS.some((b) => b.key === c.key)),
+      ];
+      setModuleRows(rows);
       const sc = sRes.data?.scopes || [];
       const next = {};
-      MODULE_ROWS.forEach((m) => { next[m.key] = new Set(); });
+      rows.forEach((m) => { next[m.key] = new Set(); });
       sc.forEach((row) => {
         if (!row.module_key) return;
         if (!next[row.module_key]) next[row.module_key] = new Set();
@@ -85,7 +97,7 @@ export default function EcosystemModulesPage() {
     try {
       const division_unit_ids = [...(local[moduleKey] || [])];
       await api.put(`/ecosystem/module-scopes/${moduleKey}`, { division_unit_ids });
-      setMessage(`Đã lưu «${MODULE_ROWS.find((r) => r.key === moduleKey)?.label || moduleKey}».`);
+      setMessage(`Đã lưu «${moduleRows.find((r) => r.key === moduleKey)?.label || moduleKey}».`);
       await load();
     } catch (e) {
       setMessage(e.response?.data?.error || e.message || 'Lỗi lưu');
@@ -104,11 +116,15 @@ export default function EcosystemModulesPage() {
 
   return (
     <div className="space-y-5 max-w-5xl">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 text-sm text-gray-500 mb-1">
             <Link to="/ecosystem" className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 font-medium">
               <ArrowLeft className="h-4 w-4" /> Cấu trúc công ty
+            </Link>
+            <span className="text-gray-300">·</span>
+            <Link to="/ecosystem/app-modules" className="text-violet-600 hover:text-violet-800 font-medium">
+              Module tùy chỉnh
             </Link>
           </div>
           <h1 className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center gap-2">
@@ -159,7 +175,7 @@ export default function EcosystemModulesPage() {
               <thead>
                 <tr className="border-b border-slate-200 text-left text-gray-500">
                   <th className="py-2 pr-3 font-medium">Khối</th>
-                  {MODULE_ROWS.map((m) => (
+                  {moduleRows.map((m) => (
                     <th key={m.key} className="py-2 px-1 font-medium text-center whitespace-nowrap">{m.label}</th>
                   ))}
                 </tr>
@@ -183,7 +199,7 @@ export default function EcosystemModulesPage() {
             </table>
           </div>
 
-          {MODULE_ROWS.map((mod) => {
+          {moduleRows.map((mod) => {
             const set = local[mod.key] || new Set();
             const any = set.size > 0;
             return (

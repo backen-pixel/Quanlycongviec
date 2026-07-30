@@ -2,6 +2,7 @@ const { supabase } = require('../config/supabase');
 
 const CRM_DEALS_LIST_EMBED = `
   id, code, title, type, region_id, created_at, assigned_to, lead_owner_id, external_company_name,
+  install_address,
   crm_region:company_regions!crm_leads_region_id_fkey(id, name, code),
   assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar),
   lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name, avatar),

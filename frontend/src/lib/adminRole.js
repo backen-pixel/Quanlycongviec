@@ -132,6 +132,11 @@ export function canManageDepartments(user) {
   return isWorkProductionModuleAdmin(user) || r === 'superadmin' || r === 'super_admin';
 }
 
+/** Tạo / sửa nhân viên — khớp backend adminRole.canCreateStaff. */
+export function canCreateStaff(user) {
+  return canManageDepartments(user);
+}
+
 export function isModuleAdmin(user, moduleKey) {
   if (isSystemAdmin(user) || isAdminLike(user)) return true;
   const k = String(moduleKey || '').trim().toLowerCase();

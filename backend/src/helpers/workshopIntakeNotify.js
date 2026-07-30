@@ -30,6 +30,22 @@ async function resolveProjectCompanyId(projectId) {
   }
 }
 
+async function resolveProjectCompanyIds(projectId) {
+  if (!projectId) return [];
+  try {
+    const { data } = await supabase
+      .from('projects')
+      .select('company_id, logistics_company_id')
+      .eq('id', projectId)
+      .maybeSingle();
+    return [...new Set(
+      [data?.company_id, data?.logistics_company_id].filter(Boolean).map(String),
+    )];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Deal mới chờ tiếp nhận — chỉ NV cùng công ty xưởng (không broadcast toàn hệ thống).
  */
@@ -97,6 +113,8 @@ function emitProductionKanbanChangedImmediate(io, {
   reason = 'kanban',
   project = null,
   companyId = null,
+  logisticsCompanyId = null,
+  alsoCompanyIds = null,
 } = {}) {
   if (!io || !projectId) return;
   const pid = String(projectId);
@@ -109,19 +127,91 @@ function emitProductionKanbanChangedImmediate(io, {
   const stagePayload = project && typeof project === 'object'
     ? { ...project, ...base, project_id: pid, id: pid }
     : base;
-  const knownCid = companyId || project?.company_id || null;
+  const knownCids = [...new Set(
+    [
+      companyId,
+      logisticsCompanyId,
+      project?.company_id,
+      project?.logistics_company_id,
+      ...(Array.isArray(alsoCompanyIds) ? alsoCompanyIds : []),
+    ].filter(Boolean).map(String),
+  )];
 
-  const fire = (cid) => {
-    const scope = { companyId: cid };
-    emitScoped(io, scope, 'production:board_changed', base);
-    emitScoped(io, scope, 'project:stage_changed', stagePayload);
+  const fire = (cids) => {
+    const list = (Array.isArray(cids) ? cids : [cids]).filter(Boolean);
+    if (!list.length) {
+      emitScoped(io, { companyId: null }, 'production:board_changed', base);
+      emitScoped(io, { companyId: null }, 'project:stage_changed', stagePayload);
+      return;
+    }
+    for (const cid of list) {
+      const scope = { companyId: cid };
+      emitScoped(io, scope, 'production:board_changed', base);
+      emitScoped(io, scope, 'project:stage_changed', stagePayload);
+    }
   };
 
-  if (knownCid) {
-    fire(knownCid);
+  if (knownCids.length) {
+    fire(knownCids);
     return;
   }
-  void resolveProjectCompanyId(pid).then(fire).catch(() => fire(null));
+  void resolveProjectCompanyIds(pid).then(fire).catch(() => fire([]));
+}
+
+/**
+ * Bàn giao SX → VC/LĐ: báo Kanban cả xưởng SX và công ty VC đã chọn.
+ */
+function emitLogisticsKanbanChangedImmediate(io, {
+  projectId,
+  reason = 'vc_handover',
+  project = null,
+  companyId = null,
+  logisticsCompanyId = null,
+  vcKanbanColumnId = null,
+} = {}) {
+  if (!io || !projectId) return;
+  const pid = String(projectId);
+  const payload = {
+    ...(project && typeof project === 'object' ? project : {}),
+    id: pid,
+    project_id: pid,
+    reason,
+    status: project?.status || 'shipping',
+    company_id: companyId || project?.company_id || null,
+    logistics_company_id: logisticsCompanyId || project?.logistics_company_id || null,
+    vc_kanban_column_id: vcKanbanColumnId
+      || project?.vc_kanban_column_id
+      || null,
+  };
+  const companyIds = [...new Set(
+    [payload.company_id, payload.logistics_company_id].filter(Boolean).map(String),
+  )];
+
+  const fire = (cids) => {
+    const list = (cids && cids.length) ? cids : [null];
+    for (const cid of list) {
+      const scope = { companyId: cid };
+      emitScoped(io, scope, 'logistics:board_changed', payload);
+      emitScoped(io, scope, 'project:stage_changed', payload);
+      emitScoped(io, scope, 'production:board_changed', {
+        project_id: pid,
+        id: pid,
+        reason,
+      });
+    }
+  };
+
+  if (companyIds.length) {
+    fire(companyIds);
+    try { void rcInvalidateTags(['production', 'logistics', 'crm']); } catch (_) { /* ignore */ }
+    return;
+  }
+  void resolveProjectCompanyIds(pid)
+    .then((ids) => {
+      fire(ids);
+      try { void rcInvalidateTags(['production', 'logistics', 'crm']); } catch (_) { /* ignore */ }
+    })
+    .catch(() => fire([]));
 }
 
 /**
@@ -157,4 +247,5 @@ module.exports = {
   emitProductionBoardRealtime,
   emitProductionKanbanChangedImmediate,
   emitProductionKanbanChangedAsync,
+  emitLogisticsKanbanChangedImmediate,
 };

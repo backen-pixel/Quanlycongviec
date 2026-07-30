@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Module Vận chuyển (VC)
  * API prefix: /api/logistics
  * Quản lý dự án ở giai đoạn giao hàng / lắp đặt / bảo hành
@@ -77,6 +77,9 @@ function buildLogisticsScopeFilter(stageIds) {
   const parts = [];
   if (stageIds.length) parts.push(`current_stage_id.in.(${stageIds.join(',')})`);
   parts.push(`status.in.(${LOGISTICS_STATUSES.join(',')})`);
+  // Đã bàn giao VC (Sale chọn công ty) — vẫn hiện dù status bị SX kéo về producing.
+  parts.push('logistics_company_id.not.is.null');
+  parts.push('vc_kanban_column_id.not.is.null');
   return parts.join(',');
 }
 
@@ -168,13 +171,51 @@ async function loadLogisticsPipelineRows(includeInactive = false, companyId = nu
   };
 
   let data;
-  if (legacyUnscoped || !cid) {
-    const r = await runWithFallback(legacyUnscoped ? 'all' : 'global');
+  if (legacyUnscoped) {
+    const r = await runWithFallback('all');
     if (r.error) {
       console.warn('[logistics] logistics_pipeline_stages not ready:', r.error.message);
       return null;
     }
     data = r.data;
+  } else if (!cid) {
+    // Không truyền company_id: ưu tiên pipeline công ty đã cấu hình (nhiều cột nhất),
+    // không trả bộ Global mẫu — tránh board «Tất cả» lệch so với Cài đặt Pipeline VC/LĐ.
+    let qAll = supabase
+      .from(VC_PIPELINE_TABLE)
+      .select(selectStr)
+      .order('order_index')
+      .not('company_id', 'is', null);
+    if (!includeInactive) qAll = qAll.eq('is_active', true);
+    let { data: scopedAll, error: scopedAllErr } = await qAll;
+    if (scopedAllErr && isLogisticsCompanyIdMissing(scopedAllErr)) {
+      return loadLogisticsPipelineRows(includeInactive, companyId, true);
+    }
+    if (scopedAllErr) {
+      console.warn('[logistics] logistics_pipeline_stages not ready:', scopedAllErr.message);
+      return null;
+    }
+    const rows = scopedAll || [];
+    if (rows.length) {
+      const counts = new Map();
+      for (const row of rows) {
+        const k = String(row.company_id);
+        counts.set(k, (counts.get(k) || 0) + 1);
+      }
+      let bestId = null;
+      let bestN = -1;
+      for (const [k, n] of counts) {
+        if (n > bestN) { bestId = k; bestN = n; }
+      }
+      data = rows.filter((r) => String(r.company_id) === bestId);
+    } else {
+      const g = await runWithFallback('global');
+      if (g.error) {
+        console.warn('[logistics] logistics_pipeline_stages not ready:', g.error.message);
+        return null;
+      }
+      data = g.data;
+    }
   } else {
     const scoped = await runWithFallback('scoped');
     if (scoped.error) {
@@ -239,7 +280,9 @@ function enrichOneLogisticsProject(project, sortedKanban) {
     }
   }
 
-  const inScope = LOGISTICS_STATUSES.includes(status) || LOGISTICS_STAGE_SLUGS.includes(stageSlug);
+  const inScope = LOGISTICS_STATUSES.includes(status)
+    || LOGISTICS_STAGE_SLUGS.includes(stageSlug)
+    || Boolean(project.logistics_company_id || project.vc_kanban_column_id);
   if (!matchedCol && inScope) {
     matchedCol = intakeCol || firstCol;
   }
@@ -713,6 +756,7 @@ const VC_WORKSHOP_TYPE_EMBED = 'workshop_type:workshop_project_types(id, name, a
 
 const LOGISTICS_DETAIL_SELECT_FULL = `
         id, company_id, code, name, estimated_value, status, deadline, created_at, notes, priority,
+        order_date, delivery_date, install_date, pickup_at, pickup_notes,
         production_deadline, production_note, install_address, vc_kanban_column_id,
         current_stage_id, ${VC_WORKSHOP_TYPE_SCALAR}
         ${VC_WORKSHOP_TYPE_EMBED}
@@ -732,6 +776,7 @@ const LOGISTICS_DETAIL_SELECT_FULL = `
 
 const LOGISTICS_DETAIL_SELECT_NO_TEAMS = `
         id, company_id, code, name, estimated_value, status, deadline, created_at, notes, priority,
+        order_date, delivery_date, install_date, pickup_at, pickup_notes,
         production_deadline, production_note, install_address, vc_kanban_column_id,
         current_stage_id, ${VC_WORKSHOP_TYPE_SCALAR}
         ${VC_WORKSHOP_TYPE_EMBED}
@@ -748,6 +793,7 @@ const LOGISTICS_DETAIL_SELECT_NO_TEAMS = `
 
 const LOGISTICS_DETAIL_SELECT_NO_VC_K = `
         id, company_id, code, name, estimated_value, status, deadline, created_at, notes, priority,
+        order_date, delivery_date, install_date, pickup_at, pickup_notes,
         production_deadline, production_note, install_address,
         current_stage_id, ${VC_WORKSHOP_TYPE_SCALAR}
         ${VC_WORKSHOP_TYPE_EMBED}
@@ -764,6 +810,7 @@ const LOGISTICS_DETAIL_SELECT_NO_VC_K = `
 // Fallback cực thấp: DB chưa có FK projects → users / workshop_teams
 const LOGISTICS_DETAIL_SELECT_NO_USERS = `
         id, company_id, code, name, estimated_value, status, deadline, created_at, notes, priority,
+        order_date, delivery_date, install_date, pickup_at, pickup_notes,
         production_deadline, production_note, install_address, vc_kanban_column_id,
         current_stage_id, ${VC_WORKSHOP_TYPE_SCALAR}
         ${VC_WORKSHOP_TYPE_EMBED}
@@ -879,7 +926,8 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     const stageSlug = project.current_stage?.slug;
     let inScope = LOGISTICS_STATUSES.includes(project.status)
       || (stageSlug && LOGISTICS_STAGE_SLUGS.includes(stageSlug))
-      || stageIds.includes(String(project.current_stage_id));
+      || stageIds.includes(String(project.current_stage_id))
+      || Boolean(project.logistics_company_id || project.vc_kanban_column_id);
 
     if (!inScope && project.vc_kanban_column_id) {
       inScope = true;

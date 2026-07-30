@@ -6,6 +6,10 @@ const { Router } = require('express');
 const helpers = require('../shared/helpersBundle');
 const { markVoiceRecordingsSkipAutoCreateForLeadIds } = require('../../../helpers/voiceRecordingCrmAuto');
 const { getCompanyScopedAdminIds } = require('../../../helpers/notifications');
+const {
+  executeLeadCompanyTransfer,
+  getTransferOptions,
+} = require('../../../helpers/crmLeadCompanyTransfer');
 
 const r = Router();
 
@@ -747,6 +751,24 @@ r.put('/leads/:id', async (req, res) => {
         }
       }
     } catch (_) {}
+
+    // Giao việc tuần tự: đổi người phụ trách → gán lại assignment mở nếu NV không có assignee riêng
+    try {
+      const ownerReassign = Object.prototype.hasOwnProperty.call(req.body, 'assigned_to')
+        || Object.prototype.hasOwnProperty.call(req.body, 'lead_owner_id');
+      if (ownerReassign) {
+        const newOwnerId = safeBody.assigned_to || safeBody.lead_owner_id || data?.assigned_to || data?.lead_owner_id;
+        const prevOwnerId = oldLead?.assigned_to || oldLead?.lead_owner_id;
+        if (newOwnerId && String(newOwnerId) !== String(prevOwnerId || '')) {
+          const {
+            reassignOpenSequentialAssignmentOnLeadOwnerChange,
+          } = require('../../../helpers/crmSequentialAssignment');
+          await reassignOpenSequentialAssignmentOnLeadOwnerChange(req, id, newOwnerId);
+        }
+      }
+    } catch (reErr) {
+      console.warn('[crm-seq-asn] reassign on lead owner change:', reErr.message);
+    }
 
     // Đồng bộ tên dự án SX/VC — card Kanban dùng projects.name, chi tiết deal dùng crm_leads.title
     try {
@@ -1612,16 +1634,43 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
         lead_id: req.params.id,
         type: 'note',
         title: '🚀 Chuyển sang Deal',
-        description: 'Lead chuyển thành Deal thành công',
+        description: 'Lead chuyển thành Deal thành công. Nhiệm vụ Lead còn mở sẽ được hoàn thành tự động.',
         created_by: req.user.userId,
       });
     } catch (_) {}
 
-    // Gen bộ nhiệm vụ Deal (1 lần) từ template pipeline công ty; task Lead cũ giữ DB, UI ẩn qua filter pipeline_type.
+    // Hoàn thành mọi NV CRM + Giao việc còn mở (Lead) trước khi gen bộ Deal.
+    let convertCompleteStats = { tasks: 0, assignments: 0 };
     try {
-      await autoGenCrmTasksForNewLead(req.params.id, req.user.userId, req);
-    } catch (autoErr) {
-      console.error('Auto-create tasks on convert-to-deal error:', autoErr.message);
+      const {
+        forceCompleteOpenCrmWorkOnLeadConvert,
+        ensureActiveAssignmentForLead,
+      } = require('../../../helpers/crmSequentialAssignment');
+      convertCompleteStats = await forceCompleteOpenCrmWorkOnLeadConvert(req.params.id);
+      if (convertCompleteStats.tasks > 0 || convertCompleteStats.assignments > 0) {
+        console.log(
+          `[convert-to-deal] lead=${req.params.id}: completed ${convertCompleteStats.tasks} tasks, `
+          + `${convertCompleteStats.assignments} assignments`,
+        );
+      }
+      // Gen bộ nhiệm vụ Deal (1 lần); task Lead cũ giữ DB (đã completed), UI ẩn qua filter pipeline_type.
+      try {
+        await autoGenCrmTasksForNewLead(req.params.id, req.user.userId, req);
+      } catch (autoErr) {
+        console.error('Auto-create tasks on convert-to-deal error:', autoErr.message);
+      }
+      try {
+        await ensureActiveAssignmentForLead(req, req.params.id);
+      } catch (seqErr) {
+        console.warn('[convert-to-deal] sequential assignment:', seqErr.message);
+      }
+    } catch (completeErr) {
+      console.error('[convert-to-deal] complete open work:', completeErr.message);
+      try {
+        await autoGenCrmTasksForNewLead(req.params.id, req.user.userId, req);
+      } catch (autoErr) {
+        console.error('Auto-create tasks on convert-to-deal error:', autoErr.message);
+      }
     }
 
     // Không bootstrap Đơn 1 — chuyển Lead→Deal giữ một deal duy nhất, task trên deal đó.
@@ -1651,116 +1700,68 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
 });
 
 /**
- * Chuyển khu vực CRM trong cùng công ty.
- * Nếu công ty tách pipeline theo khu vực → remap pipeline_id + stage_id tương đương.
+ * Tùy chọn chuyển phụ trách / công ty: danh sách CT CRM + khu vực + NV theo CT đích.
+ */
+r.get('/leads/:id/transfer-options', async (req, res) => {
+  try {
+    const leadId = req.params.id;
+    const { data: lead } = await supabase
+      .from('crm_leads')
+      .select('id, company_id, region_id, type')
+      .eq('id', leadId)
+      .maybeSingle();
+    if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead/deal' });
+    const ar0 = assertLeadReadableByRegionScope(req, lead);
+    if (!ar0.ok) return res.status(403).json({ error: ar0.error });
+
+    const companyId = req.query.company_id
+      ? String(req.query.company_id).trim()
+      : (lead.company_id ? String(lead.company_id) : '');
+    const opts = await getTransferOptions(req, { companyId });
+    if (opts.ok === false) return res.status(403).json({ error: opts.error, companies: opts.companies || [] });
+    res.json({
+      ...opts,
+      lead: {
+        id: lead.id,
+        company_id: lead.company_id,
+        region_id: lead.region_id,
+        type: lead.type,
+      },
+      can_cross_company: !!isAdminLike(req.user),
+    });
+  } catch (e) {
+    console.error('[transfer-options]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Chuyển khu vực CRM (cùng công ty) hoặc chuyển sang công ty CRM khác (admin-like).
+ * Remap pipeline/stage khi cần; sao chép khách hàng khi đổi công ty.
  */
 r.post('/leads/:id/transfer-region', async (req, res) => {
   try {
     const leadId = req.params.id;
     const regionIdRaw = req.body?.region_id != null ? String(req.body.region_id).trim() : '';
-    if (!regionIdRaw) {
-      return res.status(400).json({ error: 'Vui lòng chọn khu vực.' });
-    }
-
-    const { data: lead, error: leadFetchErr } = await supabase
-      .from('crm_leads')
-      .select('id, title, type, company_id, region_id, pipeline_id, stage_id, assigned_to, lead_owner_id')
-      .eq('id', leadId)
-      .single();
-    if (leadFetchErr) throw leadFetchErr;
-    if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead/deal' });
-    if (!lead.company_id) {
-      return res.status(400).json({ error: 'Lead/Deal chưa có công ty — chọn công ty trước khi chuyển khu vực.' });
-    }
-    if (String(lead.region_id || '') === regionIdRaw) {
-      return res.status(400).json({ error: 'Khu vực mới trùng với khu vực hiện tại.' });
-    }
-
-    const v = await assertRegionBelongsToCompany(supabase, lead.company_id, regionIdRaw);
-    if (!v.ok) return res.status(400).json({ error: v.error });
-    const ar = assertUserCanAssignCrmRegion(req, regionIdRaw);
-    if (!ar.ok) return res.status(403).json({ error: ar.error });
-
     const assigneeRaw = req.body?.assigned_to != null ? String(req.body.assigned_to).trim() : '';
-    if (!assigneeRaw) {
-      return res.status(400).json({ error: 'Vui lòng chọn nhân viên phụ trách.' });
+    const companyIdRaw = req.body?.company_id != null ? String(req.body.company_id).trim() : '';
+
+    const result = await executeLeadCompanyTransfer(req, {
+      leadId,
+      companyId: companyIdRaw || undefined,
+      regionId: regionIdRaw,
+      assignedTo: assigneeRaw,
+    });
+    if (!result.ok) {
+      return res.status(result.status || 400).json({
+        error: result.error,
+        code: result.code,
+        blockers: result.blockers,
+      });
     }
-    {
-      const av = await assertCrmAssigneeUserMatchesLeadCompany(supabase, assigneeRaw, lead.company_id);
-      if (!av.ok) return res.status(400).json({ error: av.error });
-      const { data: ur } = await supabase
-        .from('user_company_regions')
-        .select('region_id')
-        .eq('user_id', assigneeRaw)
-        .eq('region_id', regionIdRaw)
-        .maybeSingle();
-      if (!ur) {
-        return res.status(400).json({ error: 'Nhân viên được chọn không thuộc khu vực mới.' });
-      }
-    }
-
-    const patch = {
-      region_id: regionIdRaw,
-      assigned_to: assigneeRaw,
-      lead_owner_id: assigneeRaw,
-      updated_at: new Date().toISOString(),
-    };
-
-    let pipelineChanged = false;
-    const newPipelineId = await getPipelineIdForCompanyRegion(lead.company_id, regionIdRaw);
-    if (newPipelineId && String(newPipelineId) !== String(lead.pipeline_id || '')) {
-      patch.pipeline_id = newPipelineId;
-      pipelineChanged = true;
-      const pipelineType = lead.type === 'deal' ? 'deal' : 'lead';
-      const newStages = await getStagesByPipelineId(newPipelineId, { type: pipelineType, activeOnly: true });
-      if (newStages.length) {
-        let currentStage = null;
-        if (lead.stage_id) {
-          const { data: st } = await supabase
-            .from('crm_pipeline_stages')
-            .select('id, canonical_slug, order_index, pipeline_type, is_won, is_lost')
-            .eq('id', lead.stage_id)
-            .maybeSingle();
-          currentStage = st || null;
-        }
-
-        let mapped = null;
-        const curSlug = currentStage?.canonical_slug ? String(currentStage.canonical_slug) : '';
-        if (curSlug) {
-          mapped = newStages.find((s) => String(s.canonical_slug || '') === curSlug) || null;
-        }
-        if (!mapped && currentStage && currentStage.order_index != null) {
-          const curOrder = Number(currentStage.order_index);
-          let best = null;
-          let bestDiff = Infinity;
-          for (const s of newStages) {
-            const diff = Math.abs(Number(s.order_index) - curOrder);
-            if (diff < bestDiff) {
-              bestDiff = diff;
-              best = s;
-            }
-          }
-          mapped = best;
-        }
-        if (!mapped) mapped = newStages[0];
-
-        if (mapped && String(mapped.id) !== String(lead.stage_id || '')) {
-          patch.stage_id = mapped.id;
-          patch.stage_entered_at = new Date().toISOString();
-        }
-      }
-    }
-
-    const { data: updated, error: updErr } = await supabase
-      .from('crm_leads')
-      .update(patch)
-      .eq('id', leadId)
-      .select(await getCrmLeadListSelect())
-      .single();
-    if (updErr) throw updErr;
 
     let taskResync = null;
-    if (pipelineChanged) {
+    if (result.pipelineChanged) {
       try {
         const taskLeadId = await resolveCrmTaskWriteLeadId(leadId);
         taskResync = await syncCrmTasksAfterPipelineChange(taskLeadId, req.user.userId, req);
@@ -1776,46 +1777,83 @@ r.post('/leads/:id/transfer-region', async (req, res) => {
       }
     }
 
+    // Hydrate list select nếu có
+    let responseLead = result.lead;
+    try {
+      const { data: hydrated } = await supabase
+        .from('crm_leads')
+        .select(await getCrmLeadListSelect())
+        .eq('id', leadId)
+        .single();
+      if (hydrated) responseLead = hydrated;
+    } catch (_) { /* giữ raw */ }
+
     try {
       const { data: actor } = await supabase.from('users').select('full_name').eq('id', req.user.userId).maybeSingle();
       const actorName = actor?.full_name || 'Người dùng';
-      let fromName = '';
-      let toName = '';
-      if (lead.region_id) {
-        const { data: fr } = await supabase.from('company_regions').select('name').eq('id', lead.region_id).maybeSingle();
-        fromName = fr?.name || '';
+      let fromRegion = '';
+      let toRegion = '';
+      let fromCompany = '';
+      let toCompany = '';
+      if (result.previous?.region_id) {
+        const { data: fr } = await supabase.from('company_regions').select('name').eq('id', result.previous.region_id).maybeSingle();
+        fromRegion = fr?.name || '';
       }
       {
         const { data: tr } = await supabase.from('company_regions').select('name').eq('id', regionIdRaw).maybeSingle();
-        toName = tr?.name || '—';
+        toRegion = tr?.name || '—';
       }
-      const fromPart = fromName ? ` (trước: ${fromName})` : '';
-      let assigneePart = '';
-      if (assigneeRaw) {
-        const { data: nu } = await supabase.from('users').select('full_name').eq('id', assigneeRaw).maybeSingle();
-        assigneePart = ` · Người phụ trách: «${nu?.full_name || 'Nhân viên'}»`;
+      if (result.companyChanged) {
+        const { data: cos } = await supabase
+          .from('companies')
+          .select('id, name, short_name')
+          .in('id', [result.sourceCompanyId, result.targetCompanyId]);
+        const byId = Object.fromEntries((cos || []).map((c) => [String(c.id), c.short_name || c.name]));
+        fromCompany = byId[String(result.sourceCompanyId)] || '';
+        toCompany = byId[String(result.targetCompanyId)] || '';
       }
+      const { data: nu } = await supabase.from('users').select('full_name').eq('id', assigneeRaw).maybeSingle();
+      const assigneePart = ` · Người phụ trách: «${nu?.full_name || 'Nhân viên'}»`;
       let taskPart = '';
-      if (pipelineChanged && taskResync?.ok) {
+      if (result.pipelineChanged && taskResync?.ok) {
         taskPart = ` · Đã đồng bộ nhiệm vụ CRM theo pipeline mới (xóa ${taskResync.deleted || 0}, tạo ${taskResync.tasks_created || 0}).`;
       }
-      await logDealActivityComment(req, {
-        leadId,
-        body: `📍 ${actorName} đã chuyển khu vực CRM thành «${toName}»${fromPart}.${assigneePart}${taskPart}`,
-      });
+      let customerPart = '';
+      if (result.customerResult?.copied) customerPart = ' · Đã sao chép khách hàng sang công ty đích.';
+      else if (result.customerResult?.reused) customerPart = ' · Đã liên kết khách hàng trùng SĐT ở công ty đích.';
+
+      const body = result.companyChanged
+        ? `🏢 ${actorName} đã chuyển ${responseLead?.type === 'deal' ? 'Deal' : 'Lead'} sang công ty «${toCompany}»`
+          + (fromCompany ? ` (trước: ${fromCompany})` : '')
+          + ` · Khu vực «${toRegion}»${fromRegion ? ` (trước: ${fromRegion})` : ''}.${assigneePart}${customerPart}${taskPart}`
+        : `📍 ${actorName} đã chuyển khu vực CRM thành «${toRegion}»${fromRegion ? ` (trước: ${fromRegion})` : ''}.${assigneePart}${taskPart}`;
+
+      await logDealActivityComment(req, { leadId, body });
     } catch (_) { /* ignore activity log error */ }
 
     emitCrmDashboardChanged(req, {
-      type: updated?.type || lead.type,
-      company_id: updated?.company_id || lead.company_id,
+      type: responseLead?.type || result.lead?.type,
+      company_id: result.targetCompanyId,
       lead_id: leadId,
-      action: 'transfer_region',
+      action: result.companyChanged ? 'transfer_company' : 'transfer_region',
     });
+    if (result.companyChanged && result.sourceCompanyId !== result.targetCompanyId) {
+      emitCrmDashboardChanged(req, {
+        type: responseLead?.type || result.lead?.type,
+        company_id: result.sourceCompanyId,
+        lead_id: leadId,
+        action: 'transfer_company_left',
+      });
+    }
 
     res.json({
-      lead: updated,
-      message: 'Đã chuyển khu vực thành công.',
+      lead: responseLead,
+      message: result.companyChanged
+        ? 'Đã chuyển Lead/Deal sang công ty khác thành công.'
+        : 'Đã chuyển khu vực thành công.',
+      company_changed: !!result.companyChanged,
       task_resync: taskResync || undefined,
+      customer: result.customerResult || undefined,
     });
   } catch (e) {
     console.error('[transfer-region]', e);
@@ -2615,6 +2653,136 @@ r.patch('/leads/:id/deadline', async (req, res) => {
 
     res.json({ ok: true, kanban_deadline_at: newIso, kanban_deadline_reason: reason || null });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Tắt/bật lại toàn bộ nguồn deadline của Lead/Deal.
+ * Khi tắt: xóa deadline thẻ + deadline các nhiệm vụ CRM đang mở và dùng
+ * deadline_disabled_at để bỏ qua SLA cột / ngày dự kiến chốt trên view Deadline.
+ */
+r.patch('/leads/:id/deadline/disable-all', async (req, res) => {
+  try {
+    const leadId = String(req.params.id || '').trim();
+    const disabled = req.body?.disabled !== false;
+    const reason = String(req.body?.reason || '').trim();
+    if (disabled && reason.length < 3) {
+      return res.status(400).json({
+        error: 'Vui lòng nhập lý do tắt deadline (ít nhất 3 ký tự).',
+        code: 'reason_required',
+      });
+    }
+
+    const { data: lead, error: leadErr } = await supabase
+      .from('crm_leads')
+      .select(
+        'id, type, company_id, project_id, stage_id, title, assigned_to, lead_owner_id, '
+        + 'kanban_deadline_at, deadline_disabled_at, deadline_disabled_reason',
+      )
+      .eq('id', leadId)
+      .maybeSingle();
+    if (leadErr) throw leadErr;
+    if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead/deal' });
+    if (!(await assertDealResponsible(req, res, { leadId, projectId: lead.project_id }))) return;
+
+    if (disabled && lead.deadline_disabled_at) {
+      return res.json({
+        ok: true,
+        unchanged: true,
+        deadline_disabled_at: lead.deadline_disabled_at,
+        deadline_disabled_reason: lead.deadline_disabled_reason,
+      });
+    }
+    if (!disabled && !lead.deadline_disabled_at) {
+      return res.json({ ok: true, unchanged: true, deadline_disabled_at: null });
+    }
+
+    const now = new Date().toISOString();
+    const leadPatch = disabled
+      ? {
+        deadline_disabled_at: now,
+        deadline_disabled_reason: reason,
+        deadline_disabled_by: req.user.userId,
+        kanban_deadline_at: null,
+        kanban_deadline_reason: reason,
+        updated_at: now,
+      }
+      : {
+        deadline_disabled_at: null,
+        deadline_disabled_reason: null,
+        deadline_disabled_by: null,
+        updated_at: now,
+      };
+
+    const { data: updated, error: updateErr } = await supabase
+      .from('crm_leads')
+      .update(leadPatch)
+      .eq('id', leadId)
+      .select(
+        'id, deadline_disabled_at, deadline_disabled_reason, deadline_disabled_by, '
+        + 'kanban_deadline_at, kanban_deadline_reason',
+      )
+      .single();
+    if (updateErr) throw updateErr;
+
+    let clearedTaskDeadlines = 0;
+    if (disabled) {
+      const { data: openTasks, error: taskReadErr } = await supabase
+        .from('crm_tasks')
+        .select('id')
+        .eq('lead_id', leadId)
+        .not('deadline', 'is', null);
+      if (taskReadErr) throw taskReadErr;
+      const taskIds = (openTasks || []).map((t) => t.id);
+      if (taskIds.length) {
+        const { error: taskUpdateErr } = await supabase
+          .from('crm_tasks')
+          .update({ deadline: null, updated_at: now })
+          .in('id', taskIds);
+        if (taskUpdateErr) throw taskUpdateErr;
+        clearedTaskDeadlines = taskIds.length;
+      }
+
+      try {
+        await supabase.from('crm_lead_deadline_history').insert({
+          lead_id: leadId,
+          stage_id: lead.stage_id || null,
+          old_deadline_at: lead.kanban_deadline_at || null,
+          new_deadline_at: null,
+          reason,
+          source: 'disable_all',
+          changed_by: req.user.userId,
+        });
+      } catch (histErr) {
+        console.warn('[crm/deadline/disable-all] history:', histErr.message);
+      }
+    }
+
+    try {
+      const actionText = disabled ? 'tắt toàn bộ deadline' : 'bật lại deadline';
+      const reasonText = reason ? ` Lý do: ${reason}` : '';
+      await logDealActivityComment(req, {
+        leadId,
+        body: `⏱️ Đã ${actionText}.${reasonText}`,
+      });
+    } catch (_) { /* ignore activity log */ }
+
+    emitCrmDashboardChanged(req, {
+      type: lead.type,
+      company_id: lead.company_id,
+      lead_id: leadId,
+      action: disabled ? 'deadline_disabled' : 'deadline_enabled',
+    });
+
+    res.json({
+      ok: true,
+      disabled,
+      ...updated,
+      cleared_task_deadlines: clearedTaskDeadlines,
+    });
+  } catch (e) {
+    console.error('[crm/deadline/disable-all]', e);
     res.status(500).json({ error: e.message });
   }
 });

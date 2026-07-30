@@ -1,6 +1,7 @@
 /**
  * MCP Gateway — logic dùng chung cho /api/mcp (OpenClaw / agent bên ngoài).
  * Báo cáo tổ chức + CRM GET (bridge) dùng quyền user act-as.
+ * Mọi tools/call: Permission deny có reason_code + Audit Allow/Deny/Error.
  */
 const { supabase } = require('../config/supabase');
 const { isAdminLike, isSystemAdmin } = require('./adminRole');
@@ -10,6 +11,13 @@ const {
   getMcpCrmReadTools,
   callMcpCrmReadTool,
 } = require('./mcpCrmReadBridge');
+const {
+  MCP_REASON,
+  createMcpTraceId,
+  mcpDeny,
+  sanitizeMcpArgs,
+  writeMcpToolAudit,
+} = require('./mcpAudit');
 
 /** Role được xem BC đầy đủ trong phạm vi công ty (không ép assigned_to = self). */
 const MCP_ORG_WIDE_ROLES = new Set([
@@ -162,17 +170,13 @@ function assertMcpScopeForTool(name, apiKey) {
     : ['reports', 'crm_read'];
   if (MCP_CRM_READ_TOOL_SET.has(name)) {
     if (!scopes.includes('crm_read')) {
-      const err = new Error('API key không có quyền crm_read');
-      err.status = 403;
-      throw err;
+      throw mcpDeny(MCP_REASON.CAPABILITY_DENIED, 'API key không có quyền crm_read', 403);
     }
     return;
   }
   if (MCP_REPORT_TOOL_SET.has(name) || name === 'get_org_overview_report_full') {
     if (!scopes.includes('reports')) {
-      const err = new Error('API key không có quyền reports');
-      err.status = 403;
-      throw err;
+      throw mcpDeny(MCP_REASON.CAPABILITY_DENIED, 'API key không có quyền reports', 403);
     }
   }
 }
@@ -180,11 +184,11 @@ function assertMcpScopeForTool(name, apiKey) {
 async function resolveMcpActAsUser(req) {
   const userId = String(req.headers['x-user-id'] || req.apiKey?.default_assigned_to || '').trim();
   if (!userId) {
-    const err = new Error(
+    throw mcpDeny(
+      MCP_REASON.CONTEXT_MISSING,
       'Thiếu user context: cấu hình default_assigned_to trên API key hoặc header X-User-Id',
+      400,
     );
-    err.status = 400;
-    throw err;
   }
 
   const { data: user, error } = await supabase
@@ -194,17 +198,21 @@ async function resolveMcpActAsUser(req) {
     .maybeSingle();
   if (error) throw error;
   if (!user || user.is_active === false) {
-    const err = new Error('X-User-Id / default_assigned_to không hợp lệ hoặc user đã tắt');
-    err.status = 400;
-    throw err;
+    throw mcpDeny(
+      MCP_REASON.CONTEXT_INVALID,
+      'X-User-Id / default_assigned_to không hợp lệ hoặc user đã tắt',
+      400,
+    );
   }
 
   const keyCompanyId = req.apiKey?.company_id || null;
   if (keyCompanyId && user.company_id && String(user.company_id) !== String(keyCompanyId)) {
     if (!isSystemAdmin(user)) {
-      const err = new Error('User phải thuộc cùng công ty với API key');
-      err.status = 403;
-      throw err;
+      throw mcpDeny(
+        MCP_REASON.COMPANY_USER_MISMATCH,
+        'User phải thuộc cùng công ty với API key',
+        403,
+      );
     }
   }
 
@@ -248,9 +256,11 @@ function assertCompanyScope(args, apiKey) {
   const allowed = getKeyAllowedCompanyIds(apiKey);
   if (!allowed) return; // tất cả công ty
   if (!allowed.includes(String(cid))) {
-    const err = new Error('company_id không nằm trong danh sách công ty được phép của API key');
-    err.status = 403;
-    throw err;
+    throw mcpDeny(
+      MCP_REASON.COMPANY_SCOPE_DENIED,
+      'company_id không nằm trong danh sách công ty được phép của API key',
+      403,
+    );
   }
 }
 
@@ -258,50 +268,99 @@ function isMcpToolAllowed(name) {
   return MCP_REPORT_TOOL_SET.has(name) || MCP_CRM_READ_TOOL_SET.has(name);
 }
 
+/** Tên gợi ý write — MCP giai đoạn này chỉ read. */
+function looksLikeWriteTool(name) {
+  return /^(create|update|delete|upsert|patch|write|set_|post_|put_|remove_)/i.test(String(name || ''));
+}
+
 async function callMcpReportTool(name, args = {}, req) {
-  if (!isMcpToolAllowed(name)) {
-    const err = new Error(`Tool không được phép: ${name}`);
-    err.status = 404;
-    throw err;
-  }
+  const started = Date.now();
+  const traceId = createMcpTraceId(req);
+  req.mcpTraceId = traceId;
+  const argsSanitized = sanitizeMcpArgs(args);
+  let auditUserId = null;
+  let auditCompanyId = args?.company_id || req.apiKey?.company_id || null;
+  let auditTenantId = null;
 
-  assertMcpScopeForTool(name, req.apiKey);
-
-  const user = await resolveMcpActAsUser(req);
-  const ctx = buildMcpToolContext(req, user);
-  let merged = normalizeReportArgs(args, ctx);
-  merged = applyActAsVisibility(merged, user);
-  assertCompanyScope(merged, req.apiKey);
-
-  // Với key chọn nhiều công ty: nếu chưa truyền company_id và có đúng 1 công ty → mặc định
-  const allowed = getKeyAllowedCompanyIds(req.apiKey);
-  if (!merged.company_id && allowed?.length === 1) {
-    merged.company_id = allowed[0];
-  }
-
-  if (MCP_CRM_READ_TOOL_SET.has(name)) {
-    // Default company_id từ key cho alias list (không ghi đè path crm_api_get)
-    if (name !== 'crm_api_get' && !merged.company_id && ctx.last_company_id) {
-      merged.company_id = ctx.last_company_id;
-    }
-    if (name === 'crm_api_get' && merged.query && typeof merged.query === 'object') {
-      const q = { ...merged.query };
-      if (!q.company_id && ctx.last_company_id) q.company_id = ctx.last_company_id;
-      assertCompanyScope(q, req.apiKey);
-      merged.query = q;
-    }
-    return callMcpCrmReadTool(name, merged, user);
-  }
-
-  if (name === 'get_org_overview_report_full') {
-    const { getOrgOverviewReportFull } = require('./orgOverviewReportAi');
-    return getOrgOverviewReportFull({
-      ...merged,
-      ctx_user_id: user.id,
+  const finishAudit = (decision, reasonCode, errorMessage = null) => {
+    void writeMcpToolAudit(req, {
+      decision,
+      reasonCode,
+      toolName: name,
+      traceId,
+      userId: auditUserId,
+      companyId: auditCompanyId,
+      tenantId: auditTenantId,
+      latencyMs: Date.now() - started,
+      argsSanitized,
+      errorMessage,
     });
-  }
+  };
 
-  return executeTool(name, merged, ctx);
+  try {
+    if (!isMcpToolAllowed(name)) {
+      if (looksLikeWriteTool(name)) {
+        throw mcpDeny(MCP_REASON.WRITE_NOT_ALLOWED, `Write tool không được phép qua MCP: ${name}`, 403);
+      }
+      throw mcpDeny(MCP_REASON.TOOL_NOT_REGISTERED, `Tool không được phép: ${name}`, 404);
+    }
+
+    assertMcpScopeForTool(name, req.apiKey);
+
+    const user = await resolveMcpActAsUser(req);
+    auditUserId = user.id;
+    auditTenantId = user.tenant_id || null;
+    const ctx = buildMcpToolContext(req, user);
+    let merged = normalizeReportArgs(args, ctx);
+    merged = applyActAsVisibility(merged, user);
+    assertCompanyScope(merged, req.apiKey);
+
+    // Với key chọn nhiều công ty: nếu chưa truyền company_id và có đúng 1 công ty → mặc định
+    const allowed = getKeyAllowedCompanyIds(req.apiKey);
+    if (!merged.company_id && allowed?.length === 1) {
+      merged.company_id = allowed[0];
+    }
+    if (merged.company_id) auditCompanyId = merged.company_id;
+
+    let result;
+    if (MCP_CRM_READ_TOOL_SET.has(name)) {
+      // Default company_id từ key cho alias list (không ghi đè path crm_api_get)
+      if (name !== 'crm_api_get' && !merged.company_id && ctx.last_company_id) {
+        merged.company_id = ctx.last_company_id;
+        auditCompanyId = merged.company_id;
+      }
+      if (name === 'crm_api_get' && merged.query && typeof merged.query === 'object') {
+        const q = { ...merged.query };
+        if (!q.company_id && ctx.last_company_id) q.company_id = ctx.last_company_id;
+        assertCompanyScope(q, req.apiKey);
+        merged.query = q;
+        if (q.company_id) auditCompanyId = q.company_id;
+      }
+      result = await callMcpCrmReadTool(name, merged, user);
+    } else if (name === 'get_org_overview_report_full') {
+      const { getOrgOverviewReportFull } = require('./orgOverviewReportAi');
+      result = await getOrgOverviewReportFull({
+        ...merged,
+        ctx_user_id: user.id,
+      });
+    } else {
+      result = await executeTool(name, merged, ctx);
+    }
+
+    finishAudit('allow', MCP_REASON.ALLOWED);
+    return result;
+  } catch (e) {
+    const reason = e.reasonCode || e.mcpReasonCode
+      || (e.status === 403 ? MCP_REASON.CAPABILITY_DENIED : MCP_REASON.UPSTREAM_ERROR);
+    if (!e.reasonCode) e.reasonCode = reason;
+    if (!e.mcpReasonCode) e.mcpReasonCode = reason;
+    e.mcpTraceId = traceId;
+    const decision = (e.status === 403 || e.status === 404 || e.status === 400) && reason !== MCP_REASON.UPSTREAM_ERROR
+      ? 'deny'
+      : 'error';
+    finishAudit(decision, reason, e.message);
+    throw e;
+  }
 }
 
 function queryToReportArgs(query = {}) {
@@ -323,6 +382,7 @@ function queryToReportArgs(query = {}) {
 
 module.exports = {
   MCP_REPORT_TOOL_NAMES,
+  MCP_REASON,
   getMcpReportTools,
   resolveMcpActAsUser,
   callMcpReportTool,

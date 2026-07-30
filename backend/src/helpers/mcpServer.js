@@ -416,21 +416,42 @@ async function dispatchMethod(method, params, req, sessionId, fallbackVersion) {
       const result = await callMcpReportTool(String(name), args, req);
       return buildCallToolResult(result);
     } catch (e) {
+      const reasonCode = e.reasonCode || e.mcpReasonCode || null;
+      const traceId = e.mcpTraceId || req.mcpTraceId || null;
       if (e.status === 404) {
         const err = new Error(e.message);
         err.mcpCode = -32602;
+        err.mcpData = { reason_code: reasonCode, trace_id: traceId };
         throw err;
       }
       if (e.status === 403) {
         const err = new Error(e.message);
         err.mcpCode = -32003;
+        err.mcpData = { reason_code: reasonCode, trace_id: traceId };
         throw err;
       }
       if (e.status === 400) {
-        return { content: [{ type: 'text', text: e.message }], isError: true };
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              error: e.message,
+              reason_code: reasonCode,
+              trace_id: traceId,
+            }),
+          }],
+          isError: true,
+        };
       }
       return {
-        content: [{ type: 'text', text: e.message || 'Lỗi thực thi tool' }],
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            error: e.message || 'Lỗi thực thi tool',
+            reason_code: reasonCode || 'UPSTREAM_ERROR',
+            trace_id: traceId,
+          }),
+        }],
         isError: true,
       };
     }

@@ -77,10 +77,17 @@ async function replaceAssignmentAssignees(assignmentId, userIds) {
  * Tạo/cập nhật crm_assignments khi gán NV cho crm_tasks.
  */
 function resolveAssignmentModuleForCrmTask(task, explicitModule) {
-  if (explicitModule === 'production' || explicitModule === 'crm') return explicitModule;
+  const explicit = String(explicitModule || '').toLowerCase();
+  if (explicit === 'production' || explicit === 'crm' || explicit === 'logistics') return explicit;
   const slug = String(task?.stage_slug || '');
   if (slug.startsWith('sx_')) return 'production';
+  if (slug.startsWith('vc_')) return 'logistics';
   return 'crm';
+}
+
+function isTaskSourceSyncColumnError(err) {
+  const m = String(err?.message || '').toLowerCase();
+  return m.includes('task_source_type') || m.includes('employee_error_module');
 }
 
 async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
@@ -115,7 +122,10 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
   await ensureSharedAssignmentColumns(req.user?.userId);
   const cols = await loadSharedColumns();
   const status = task.status || 'pending';
-  const columnId = columnIdForTaskStatus(cols, status);
+  const columnId = opts.columnId || columnIdForTaskStatus(cols, status);
+  const companyId = opts.companyId !== undefined
+    ? (opts.companyId || null)
+    : (lead?.company_id || null);
 
   const row = {
     title: task.title,
@@ -125,7 +135,7 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
     status,
     deadline: task.deadline || null,
     column_id: columnId,
-    company_id: lead?.company_id || null,
+    company_id: companyId,
     executor_company_id: task.executor_company_id || null,
     lead_id: task.lead_id,
     crm_task_id: task.id,
@@ -138,6 +148,14 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
     quick_verdict_reason: task.quick_verdict_reason || null,
     updated_at: new Date().toISOString(),
   };
+  if (opts.taskSourceType !== undefined || task.task_source_type !== undefined) {
+    row.task_source_type = opts.taskSourceType !== undefined
+      ? opts.taskSourceType
+      : (task.task_source_type || null);
+    row.employee_error_module = opts.employeeErrorModule !== undefined
+      ? opts.employeeErrorModule
+      : (task.employee_error_module || null);
+  }
   if (status === 'completed') {
     row.completed_at = task.completed_at || new Date().toISOString();
   } else {
@@ -157,6 +175,10 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
     }
     if (error && /executor_company_id/.test(error.message || '')) {
       const { executor_company_id: _e, ...legacy } = row;
+      ({ error } = await supabase.from('crm_assignments').update(legacy).eq('id', assignmentId));
+    }
+    if (error && isTaskSourceSyncColumnError(error)) {
+      const { task_source_type: _ts, employee_error_module: _em, ...legacy } = row;
       ({ error } = await supabase.from('crm_assignments').update(legacy).eq('id', assignmentId));
     }
     if (error) throw error;
@@ -181,6 +203,10 @@ async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
     }
     if (error && /executor_company_id/.test(error.message || '')) {
       const { executor_company_id: _e, ...legacy } = insertRow;
+      ({ data: created, error } = await supabase.from('crm_assignments').insert(legacy).select(ASSIGNMENT_SELECT).single());
+    }
+    if (error && isTaskSourceSyncColumnError(error)) {
+      const { task_source_type: _ts, employee_error_module: _em, ...legacy } = insertRow;
       ({ data: created, error } = await supabase.from('crm_assignments').insert(legacy).select(ASSIGNMENT_SELECT).single());
     }
     if (error) throw error;
@@ -213,14 +239,8 @@ async function syncCrmTaskFromAssignment(assignment) {
   if (assignment.title != null) update.title = assignment.title;
   if (assignment.description !== undefined) {
     update.description = assignment.description;
-    const { data: priorNotes } = await supabase
-      .from('crm_tasks')
-      .select('notes')
-      .eq('id', taskId)
-      .maybeSingle();
-    if (!String(priorNotes?.notes || '').trim() && String(assignment.description || '').trim()) {
-      update.notes = assignment.description;
-    }
+    // Đồng bộ description → notes nhiệm vụ (nguồn Giao việc)
+    update.notes = assignment.description;
   }
   if (assignment.priority != null) update.priority = assignment.priority;
   if (assignment.status != null) update.status = assignment.status;
@@ -231,8 +251,20 @@ async function syncCrmTaskFromAssignment(assignment) {
     update.completed_at = null;
   }
   if (assignment.assignee_id !== undefined) update.assignee_id = assignment.assignee_id;
+  if (assignment.task_source_type !== undefined) {
+    update.task_source_type = assignment.task_source_type || null;
+    update.employee_error_module = assignment.task_source_type === 'employee_error'
+      ? (assignment.employee_error_module || null)
+      : null;
+  } else if (assignment.employee_error_module !== undefined) {
+    update.employee_error_module = assignment.employee_error_module || null;
+  }
 
-  const { error } = await supabase.from('crm_tasks').update(update).eq('id', taskId);
+  let { error } = await supabase.from('crm_tasks').update(update).eq('id', taskId);
+  if (error && isTaskSourceSyncColumnError(error)) {
+    const { task_source_type: _ts, employee_error_module: _em, ...legacy } = update;
+    ({ error } = await supabase.from('crm_tasks').update(legacy).eq('id', taskId));
+  }
   if (error) throw error;
 
   const { data: asnRows } = await supabase
@@ -254,10 +286,25 @@ async function attachCrmTaskMetaToAssignments(list) {
   if (!taskIds.length) return list;
   const { data, error } = await supabase
     .from('crm_tasks')
-    .select('id, notes, status, lead_id, title, stage_slug, production_pipeline_stage_id')
+    .select('id, notes, status, lead_id, title, stage_slug, production_pipeline_stage_id, show_fill_form, form_config, form_data')
     .in('id', taskIds);
-  if (error) return list;
-  const byId = new Map((data || []).map((t) => [String(t.id), t]));
+  if (error) {
+    // DB chưa có cột form — fallback select cũ
+    if (/show_fill_form|form_config|form_data/i.test(error.message || '')) {
+      const { data: legacy, error: legErr } = await supabase
+        .from('crm_tasks')
+        .select('id, notes, status, lead_id, title, stage_slug, production_pipeline_stage_id')
+        .in('id', taskIds);
+      if (legErr) return list;
+      return attachCrmTaskMetaToAssignmentsWithRows(list, legacy || [], taskIds);
+    }
+    return list;
+  }
+  return attachCrmTaskMetaToAssignmentsWithRows(list, data || [], taskIds);
+}
+
+async function attachCrmTaskMetaToAssignmentsWithRows(list, taskRows, taskIds) {
+  const byId = new Map((taskRows || []).map((t) => [String(t.id), t]));
   let countMap = {};
   try {
     const { loadCrmTaskAttachmentCountMap } = require('./crmTaskAttachmentCounts');
@@ -330,6 +377,7 @@ async function attachAssignmentIdsToCrmTasks(list) {
 module.exports = {
   syncAssignmentFromCrmTask,
   syncCrmTaskFromAssignment,
+  resolveAssignmentModuleForCrmTask,
   attachAssignmentIdsToCrmTasks,
   attachCrmTaskMetaToAssignments,
   applyAssignmentStatusColumn,

@@ -82,6 +82,11 @@ const WorkflowSettings = lazyWithRetry(() => import('./pages/WorkflowSettings'))
 const ApprovalRulesPage = lazyWithRetry(() => import('./pages/ApprovalRulesPage'));
 const EcosystemPage = lazyWithRetry(() => import('./pages/EcosystemPage'));
 const EcosystemModulesPage = lazyWithRetry(() => import('./pages/EcosystemModulesPage'));
+const AppModulesAdminPage = lazyWithRetry(() => import('./pages/AppModulesAdminPage'));
+const AppModuleSettingsPage = lazyWithRetry(() => import('./pages/AppModuleSettingsPage'));
+const AppModuleLayout = lazyWithRetry(() => import('./layouts/AppModuleLayout'));
+const AppModuleDashboard = lazyWithRetry(() => import('./pages/AppModuleDashboard'));
+const AppModuleRecordDetail = lazyWithRetry(() => import('./pages/AppModuleRecordDetail'));
 const EcosystemLevelsPage = lazyWithRetry(() => import('./pages/EcosystemLevelsPage'));
 const CRMDashboard = lazyWithRetry(() => import('./pages/CRMDashboard'));
 const LeadJourneyPage = lazyWithRetry(() => import('./pages/LeadJourneyPage'));
@@ -301,7 +306,7 @@ function ProtectedLayout() {
 
   const fullscreenPages = ['/projects/create', '/crm/messenger'];
   const isFullscreen = fullscreenPages.some((p) => location.pathname.startsWith(p));
-  const compactKanbanChrome = /^\/(crm\/(dashboard|pipeline)|sx\/(dashboard|pipeline)|work\/unified|personal-tasks)/.test(location.pathname);
+  const compactKanbanChrome = /^\/(crm\/(dashboard|pipeline)|sx\/(dashboard|pipeline)|work\/unified|personal-tasks|m\/)/.test(location.pathname);
 
   return (
     <CrmNotesFabProvider>
@@ -426,6 +431,12 @@ export default function App() {
             </Route>
             <Route path="/ecosystem" element={<EcosystemPage />} />
             <Route path="/ecosystem/modules" element={<EcosystemModulesPage />} />
+            <Route path="/ecosystem/app-modules" element={<AppModulesAdminPage />} />
+            <Route path="/ecosystem/app-modules/:moduleKey" element={<AppModuleSettingsPage />} />
+            <Route path="/m/:moduleKey" element={<AppModuleLayout />}>
+              <Route index element={<AppModuleDashboard />} />
+              <Route path="records/:recordId" element={<AppModuleRecordDetail />} />
+            </Route>
             <Route path="/ecosystem-levels" element={<EcosystemLevelsPage />} />
             <Route path="/stage-groups" element={<StageGroupsPage />} />
             <Route path="/workflow-hub" element={<WorkflowHubPage />} />

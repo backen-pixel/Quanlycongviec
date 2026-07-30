@@ -135,7 +135,9 @@ export default function NewDealModal({
       setModalWorkTypes([]);
       return undefined;
     }
-    if (requiresClientCompany && !clientCompanyIdForWorkshopTypes) {
+    // Metalla/Hucabi: bắt chọn công ty đặt hàng trước. «Công ty khác» / danh mục ngoài
+    // không có client_company_id CRM — vẫn tải phân loại xưởng (không lọc theo CRM).
+    if (requiresClientCompany && !clientCompanyPick) {
       setModalWorkTypes([]);
       return undefined;
     }
@@ -149,7 +151,7 @@ export default function NewDealModal({
       })
       .catch(() => { if (!cancelled) setModalWorkTypes([]); });
     return () => { cancelled = true; };
-  }, [isProduction, formData.company_id, clientCompanyIdForWorkshopTypes, requiresClientCompany]);
+  }, [isProduction, formData.company_id, clientCompanyPick, clientCompanyIdForWorkshopTypes, requiresClientCompany]);
 
   useEffect(() => {
     if (!isProduction) return undefined;
@@ -690,7 +692,7 @@ export default function NewDealModal({
                   )}
                   <p className="mt-1 text-[10px] text-gray-400">
                     Danh sách gồm công ty CRM trong hệ thống và công ty đã lưu trước đó.
-                    Phân loại xưởng bên dưới chỉ hiện loại được gán cho công ty đặt hàng đã chọn.
+                    Chọn công ty CRM thì phân loại lọc theo công ty đó; chọn «Công ty khác» thì hiện toàn bộ phân loại xưởng.
                   </p>
                 </div>
               )}
@@ -714,7 +716,7 @@ export default function NewDealModal({
                     </select>
                   ) : (
                     <p className="px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 text-xs text-amber-800">
-                      {requiresClientCompany && !clientCompanyIdForWorkshopTypes
+                      {requiresClientCompany && !clientCompanyPick
                         ? 'Chọn công ty đặt hàng trước — phân loại hiện theo công ty CRM đó.'
                         : 'Chưa có phân loại cho công ty đặt hàng này — kiểm tra cài đặt pipeline SX hoặc đơn đã tạo trước đó.'}
                     </p>

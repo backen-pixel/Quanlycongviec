@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Building2, ChevronRight, EyeOff, GripVertical, Info, ListChecks, Loader2,
@@ -121,13 +121,13 @@ export default function LogisticsPipelineSettingsPage() {
     return c?.short_name || c?.name || '';
   }, [companies, settingsCompanyId]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ silent = false } = {}) => {
     if (!settingsCompanyId) {
       setStages([]);
       setLoading(false);
       return;
     }
-    setLoading(true);
+    if (!silent) setLoading(true);
     try {
       const [pipeRes, crmRes] = await Promise.all([
         api.get('/logistics/pipeline-stages', {
@@ -139,9 +139,10 @@ export default function LogisticsPipelineSettingsPage() {
       setCrmStages((crmRes.data || []).filter((s) => s.pipeline_type === 'deal' || !s.pipeline_type));
       setBulkSelected((prev) => new Set([...prev].filter((id) => (pipeRes.data || []).some((s) => s.id === id))));
     } catch {
-      setStages([]);
+      if (!silent) setStages([]);
+    } finally {
+      if (!silent) setLoading(false);
     }
-    setLoading(false);
   }, [settingsCompanyId]);
 
   useEffect(() => {
@@ -293,7 +294,7 @@ export default function LogisticsPipelineSettingsPage() {
       });
       setAdding(false);
       setEditId(null);
-      await load();
+      await load({ silent: true });
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi tạo cột');
     } finally {
@@ -317,7 +318,7 @@ export default function LogisticsPipelineSettingsPage() {
       });
       setEditId(null);
       setAdding(false);
-      await load();
+      await load({ silent: true });
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi lưu');
     } finally {
@@ -332,17 +333,17 @@ export default function LogisticsPipelineSettingsPage() {
     setStages((prev) => prev.filter((s) => s.id !== id));
     try {
       await api.delete(`/logistics/pipeline-stages/${id}`);
-      await load();
+      await load({ silent: true });
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi xóa');
-      await load();
+      await load({ silent: true });
     }
   };
 
   const toggleActive = async (stage) => {
     try {
       await api.put(`/logistics/pipeline-stages/${stage.id}`, { is_active: !stage.is_active });
-      load();
+      await load({ silent: true });
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật');
     }
@@ -361,7 +362,7 @@ export default function LogisticsPipelineSettingsPage() {
         patch.bucket_slug = null;
       }
       await api.put(`/logistics/pipeline-stages/${stage.id}`, patch);
-      load();
+      await load({ silent: true });
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật trigger');
     }
@@ -377,7 +378,7 @@ export default function LogisticsPipelineSettingsPage() {
         is_handover_to_install: false,
         ...(isOn ? {} : { crm_target_stage_id: null }),
       });
-      load();
+      await load({ silent: true });
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật tab Lắp đặt');
     }
@@ -392,7 +393,7 @@ export default function LogisticsPipelineSettingsPage() {
       await api.put(`/logistics/pipeline-stages/${stage.id}`, {
         is_handover_to_install: !stage.is_handover_to_install,
       });
-      load();
+      await load({ silent: true });
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật chuyển LĐ');
     }
@@ -421,7 +422,7 @@ export default function LogisticsPipelineSettingsPage() {
         if (syncType === 'installation') patch.bucket_slug = 'installation';
         return api.put(`/logistics/pipeline-stages/${id}`, patch);
       }));
-      await load();
+      await load({ silent: true });
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi gán trigger hàng loạt');
     } finally {
@@ -992,7 +993,7 @@ export default function LogisticsPipelineSettingsPage() {
           </label>
           <button
             type="button"
-            onClick={() => load()}
+            onClick={() => load({ silent: true })}
             className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 cursor-pointer"
             title="Tải lại"
           >

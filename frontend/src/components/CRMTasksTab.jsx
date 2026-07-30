@@ -16,6 +16,7 @@ import {
   Calendar, List, Users, Target, AlertTriangle, X, Save, ListChecks, ClipboardList,
   Paperclip, FileUp, MessageSquare, FileText, Share2, Lock,
   FileSpreadsheet, Edit3, UserPlus, GripVertical, Globe, HardDrive, ClipboardPen,
+  CheckSquare, Square,
 } from 'lucide-react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
@@ -3461,6 +3462,14 @@ export default function CRMTasksTab({
                   <FileText className="h-2.5 w-2.5" />Mô tả mẫu
                 </span>
               )}
+              {!!task.file_note_recorded && (
+                <span
+                  className="text-[10px] text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium border border-teal-200"
+                  title="Đã ghi nhận: nhiệm vụ này có file/ghi chú (không chặn chuyển giai đoạn)"
+                >
+                  <CheckSquare className="h-2.5 w-2.5" />Đã có file/ghi chú
+                </span>
+              )}
               {task.shared_to_project && (
                 <span className="text-[10px] text-green-600 flex items-center gap-0.5" title={shareModuleLabels(task.allowed_share_modules)}>
                   <Share2 className="h-2.5 w-2.5" />Đang chia sẻ
@@ -3555,6 +3564,34 @@ export default function CRMTasksTab({
               title={task.requires_quick_verdict ? 'Đang bật Đủ/Chưa — bấm để tắt' : 'Bật ghi chú nhanh: Đã đủ / Chưa (+ lý do)'}
             >
               <MessageSquare className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={async (e) => {
+                e.stopPropagation();
+                try {
+                  const lid = apiLeadIdForTaskId(task.id);
+                  const next = !task.file_note_recorded;
+                  const { data } = await api.put(`/crm/leads/${lid}/tasks/${task.id}`, {
+                    file_note_recorded: next,
+                  });
+                  const updated = data?.task || data;
+                  if (updated) setTasks((p) => p.map((t) => (t.id === task.id ? { ...t, ...updated } : t)));
+                  else setTasks((p) => p.map((t) => (t.id === task.id ? { ...t, file_note_recorded: next } : t)));
+                } catch (err) {
+                  alert(err.response?.data?.error || 'Không cập nhật được ghi nhận file/ghi chú');
+                }
+              }}
+              className={`p-1.5 rounded-md cursor-pointer ${
+                task.file_note_recorded
+                  ? 'text-teal-700 bg-teal-50 hover:bg-teal-100'
+                  : 'text-gray-500 hover:text-teal-600 hover:bg-teal-50'
+              }`}
+              title={task.file_note_recorded
+                ? 'Đã ghi nhận có file/ghi chú — bấm để bỏ (không chặn chuyển giai đoạn)'
+                : 'Tích: đã có file/ghi chú cho nhiệm vụ này (theo dõi đủ thông tin deal, không chặn chuyển giai đoạn)'}
+            >
+              {task.file_note_recorded ? <CheckSquare className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
             </button>
             <button type="button" onClick={(e) => { e.stopPropagation(); openEditModal(task, e.currentTarget); }} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md cursor-pointer" title="Chỉnh sửa nhiệm vụ">
               <Edit3 className="h-3.5 w-3.5" />
@@ -4248,6 +4285,12 @@ export default function CRMTasksTab({
       )}
 
       {/* Template panel — always available via button */}
+      {showCrmTemplatesUi && !isSharedWorkspace && (
+        <p className="text-[11px] text-violet-700 bg-violet-50 border border-violet-200 rounded-lg px-3 py-1.5">
+          Giao việc chỉ mở 1 nhiệm vụ tại một thời điểm — hoàn thành mới tạo tiếp.
+          Người nhận: ưu tiên người trên nhiệm vụ, thiếu thì người phụ trách lead/deal.
+        </p>
+      )}
       {showTemplatePanel && pipelineTemplates.length > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
           <div className="flex items-center justify-between">
@@ -4257,6 +4300,7 @@ export default function CRMTasksTab({
           <p className="text-[11px] text-amber-700">
             Chọn bộ mẫu theo giai đoạn pipeline cho {leadType === 'deal' ? 'Deal' : 'Lead'} này.
             {leadPipelineId ? ' Chỉ hiển thị bộ thuộc pipeline của lead/deal.' : ''}
+            {' '}Chỉ nhiệm vụ đang tới lượt được tạo thành Giao việc.
           </p>
           {templatePanelStages.map((stage) => {
             const stageTpls = stageTemplatesMap[stage.slug] || [];

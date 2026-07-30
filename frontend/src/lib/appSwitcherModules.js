@@ -8,7 +8,13 @@ import {
   Sigma,
   GraduationCap,
   Layers,
+  Puzzle,
 } from 'lucide-react';
+import {
+  categoryAccentFor,
+  categoryClassFor,
+  CUSTOM_APP_MODULE_SWITCHER_CATEGORY,
+} from './appModulePresets';
 
 export const WORK_MODULE_LABEL = 'Quản lý';
 export const CONGVIEC_MODULE_LABEL = 'Công việc';
@@ -198,9 +204,45 @@ export const APP_MODULE_DEFINITIONS = [
   },
 ];
 
+/** Map bản ghi app_modules API → AppModuleDef cho App Switcher. */
+export function mapCustomAppModuleToDef(row) {
+  if (!row?.module_key) return null;
+  const color = row.color || categoryAccentFor(row.category) || '#4f46e5';
+  // Switcher luôn gom module tùy chỉnh vào mục riêng — không trộn badge với CRM/SX/…
+  const category = CUSTOM_APP_MODULE_SWITCHER_CATEGORY;
+  const imageUrl = row.icon_image || null;
+  return {
+    id: `custom:${row.module_key}`,
+    path: `/m/${row.module_key}`,
+    name: row.name || row.module_key,
+    desc: row.description || 'Module tùy chỉnh',
+    Icon: Puzzle,
+    imageUrl: imageUrl || undefined,
+    emoji: imageUrl ? undefined : (row.icon || '📦'),
+    iconClass: 'bg-transparent shadow-none',
+    category,
+    categoryClass: categoryClassFor(category),
+    sidebarAccent: {
+      ring: 'ring-violet-400/35 hover:ring-violet-300/55',
+      card: 'bg-gradient-to-br from-violet-500/22 via-violet-500/8 to-transparent hover:from-violet-500/30',
+      iconWrap: 'bg-violet-500/18 ring-1 ring-violet-300/30 shadow-inner shadow-violet-900/20',
+      dot: 'bg-violet-400',
+    },
+    mod: row.module_key,
+    accentColor: color,
+    isCustom: true,
+    adminCategory: row.category || 'Tùy chỉnh',
+  };
+}
+
 /** Module hiển thị trên sidebar (lọc theo quyền). */
-export function getAccessibleAppModules({ canAccessModule, crmOnly }) {
-  return APP_MODULE_DEFINITIONS.filter((mod) => canUseAppModule(mod, { canAccessModule, crmOnly }));
+export function getAccessibleAppModules({ canAccessModule, crmOnly, extraModules = [] }) {
+  const base = APP_MODULE_DEFINITIONS.filter((mod) => canUseAppModule(mod, { canAccessModule, crmOnly }));
+  const extras = (extraModules || [])
+    .map(mapCustomAppModuleToDef)
+    .filter(Boolean)
+    .filter((mod) => canUseAppModule(mod, { canAccessModule, crmOnly }));
+  return [...base, ...extras];
 }
 
 export function readAppSwitcherFavorites() {
@@ -246,7 +288,9 @@ export function resolveActiveAppModuleId({
   isSX,
   isCRM,
   isCongViec,
+  customModuleId = null,
 }) {
+  if (customModuleId) return customModuleId;
   if (isKnowledge) return 'knowledge';
   if (isCalc) return 'calc';
   if (isKetoan) return 'ketoan';

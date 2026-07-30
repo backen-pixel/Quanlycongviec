@@ -152,6 +152,20 @@ function canManageDepartments(user) {
   return isWorkProductionModuleAdmin(user) || r === 'superadmin' || r === 'super_admin';
 }
 
+/**
+ * Tạo / sửa / vô hiệu hóa nhân viên.
+ * Gồm admin/manager/sales_admin và admin module Công việc+SX (production_staff, production_admin, …).
+ */
+function canCreateStaff(user) {
+  return canManageDepartments(user);
+}
+
+/** Role không được tự tạo admin hệ thống / nền tảng khi không phải admin hệ thống. */
+function isElevatedStaffRole(role) {
+  const r = normalizeRole(role);
+  return r === 'admin' || r === 'platform_admin';
+}
+
 module.exports = {
   normalizeRole,
   hasCompanyId,
@@ -176,6 +190,8 @@ module.exports = {
   isWorkProductionModuleAdmin,
   isModuleAdmin,
   canManageDepartments,
+  canCreateStaff,
+  isElevatedStaffRole,
   canViewTrashTab,
   canAccessTrash,
 };

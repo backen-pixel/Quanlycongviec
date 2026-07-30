@@ -3,9 +3,16 @@ const { requirePermission } = require('../middleware/newPermission');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { enforceTenantContext } = require('../middleware/tenantGate');
-const { addEcosystemUnitTenantFilter } = require('../helpers/tenantScope');
-const { KNOWN_MODULE_KEYS, buildMyModuleAccessMap, invalidateEcosystemModuleScopeCache } = require('../helpers/ecosystemModuleScope');
-const { isAdminLike } = require('../helpers/adminRole');
+const { addEcosystemUnitTenantFilter, companyInTenantContext } = require('../helpers/tenantScope');
+const {
+  KNOWN_MODULE_KEYS,
+  buildMyModuleAccessMap,
+  getModulesForCompany,
+  invalidateEcosystemModuleScopeCache,
+  isKnownModuleKeyAsync,
+  resolveKnownModuleKeys,
+} = require('../helpers/ecosystemModuleScope');
+const { isAdminLike, canCreateStaff } = require('../helpers/adminRole');
 const { responseCache, invalidateTags } = require('../middleware/responseCache');
 
 const r = Router();
@@ -872,6 +879,26 @@ r.get('/my-module-access', async (req, res) => {
   }
 });
 
+/** Module công ty được phép — dùng form tạo/sửa NV (chip phân quyền). */
+r.get('/company-modules', async (req, res) => {
+  try {
+    if (!isAdminLike(req.user) && !canCreateStaff(req.user)) {
+      return res.status(403).json({ error: 'Không có quyền xem module công ty' });
+    }
+    const companyId = String(req.query.company_id || '').trim();
+    if (!companyId) return res.status(400).json({ error: 'Thiếu company_id' });
+    if (req.tenantContext?.enforced && !companyInTenantContext(req, companyId)) {
+      return res.status(403).json({ error: 'Công ty ngoài phạm vi tenant' });
+    }
+    const modules = await getModulesForCompany(companyId, { chipOnly: true });
+    res.set('Cache-Control', 'private, no-store');
+    res.json({ modules });
+  } catch (e) {
+    console.error('GET /ecosystem/company-modules', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.get('/module-scopes', async (req, res) => {
   try {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Chỉ admin' });
@@ -888,8 +915,9 @@ r.put('/module-scopes/:moduleKey', async (req, res) => {
   try {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Chỉ admin' });
     const moduleKey = String(req.params.moduleKey || '').trim();
-    if (!KNOWN_MODULE_KEYS.includes(moduleKey)) {
-      return res.status(400).json({ error: `module_key phải là một trong: ${KNOWN_MODULE_KEYS.join(', ')}` });
+    if (!(await isKnownModuleKeyAsync(moduleKey))) {
+      const keys = await resolveKnownModuleKeys();
+      return res.status(400).json({ error: `module_key phải là một trong: ${keys.join(', ')}` });
     }
     const { division_unit_ids: rawIds } = req.body;
     const ids = Array.isArray(rawIds) ? rawIds.map((x) => String(x).trim()).filter(Boolean) : [];

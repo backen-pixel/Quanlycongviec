@@ -9,6 +9,7 @@ import {
   Building2, X, CheckCircle2, Circle, Clock, Calendar, User as UserIcon, Trash2,
   Pencil, GripVertical, Flag, MoreVertical, MessageSquare, Send, Paperclip,
   FileText as FileIcon, Download, Upload, Repeat2, CalendarClock, ChevronDown,
+  ClipboardList,
 } from 'lucide-react';
 import {
   RequirementFilesGallery,
@@ -32,6 +33,7 @@ import {
   isProductionAssignmentsPage,
 } from '../lib/assignmentSourceLink';
 import CommentDisplayHiddenBanner, { useCommentShowOnScreenEnabled } from '../components/CommentDisplayHiddenBanner';
+import TaskFillFormModal from '../components/TaskFillFormModal';
 
 /** Modal phải portal ra body — tránh bị sidebar (z-30) đè vì main nằm trong stacking context z-10. */
 const ASSIGNMENTS_MODAL_Z = 'z-[100]';
@@ -2257,12 +2259,25 @@ function DetailModal({ item, columns, onClose, onEdit, onUpdate, onDelete }) {
   const canMove = isCreator || isAssignee;
 
   const [localItem, setLocalItem] = useState(item);
+  const [fillFormOpen, setFillFormOpen] = useState(false);
   useEffect(() => { setLocalItem(item); }, [item]);
 
   const pri = PRIORITY_MAP[localItem.priority] || PRIORITY_MAP.medium;
   const status = STATUS_MAP[localItem.status] || STATUS_MAP.pending;
   const col = columns.find((c) => c.id === localItem.column_id);
   const overdue = localItem.deadline && new Date(localItem.deadline) < new Date() && localItem.status !== 'completed';
+  const linkedLeadId = localItem.lead?.id || localItem.crm_task?.lead_id || null;
+  const showFillForm = !!(localItem.crm_task_id && localItem.crm_task?.show_fill_form && linkedLeadId);
+  const fillTask = showFillForm
+    ? {
+      id: localItem.crm_task_id,
+      title: localItem.title,
+      show_fill_form: true,
+      form_config: localItem.crm_task?.form_config || {},
+      form_data: localItem.crm_task?.form_data || {},
+      lead_id: linkedLeadId,
+    }
+    : null;
 
   const fmtDt = (iso) => {
     if (!iso) return '—';
@@ -2284,109 +2299,150 @@ function DetailModal({ item, columns, onClose, onEdit, onUpdate, onDelete }) {
 
   const StatusIcon = status.icon;
 
-  return portalAssignmentsModal(
-    <div className={`fixed inset-0 bg-black/50 ${ASSIGNMENTS_MODAL_Z} flex items-center justify-center p-4`} onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl shadow-xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden">
-        {/* HEADER */}
-        <div className="px-5 py-3 border-b flex items-start justify-between gap-3 shrink-0">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1 flex-wrap">
-              {col && <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: (col.color || '#999') + '20', color: col.color }}>{col.name}</span>}
-              <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${pri.color}`}>⚑ {pri.label}</span>
-              <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium flex items-center gap-1 bg-gray-100 ${status.color}`}>
-                <StatusIcon className="h-3 w-3" />{status.label}
-              </span>
-              {overdue && <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-700">🚨 Quá hạn</span>}
+  return (
+    <>
+      {portalAssignmentsModal(
+        <div className={`fixed inset-0 bg-black/50 ${ASSIGNMENTS_MODAL_Z} flex items-center justify-center p-4`} onClick={onClose}>
+          <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl shadow-xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden">
+            {/* HEADER */}
+            <div className="px-5 py-3 border-b flex items-start justify-between gap-3 shrink-0">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                  {col && <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: (col.color || '#999') + '20', color: col.color }}>{col.name}</span>}
+                  <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${pri.color}`}>⚑ {pri.label}</span>
+                  <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium flex items-center gap-1 bg-gray-100 ${status.color}`}>
+                    <StatusIcon className="h-3 w-3" />{status.label}
+                  </span>
+                  {overdue && <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-700">🚨 Quá hạn</span>}
+                  {localItem.crm_task_id && (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-violet-50 text-violet-700 border border-violet-200">
+                      Tuần tự từ nhiệm vụ lead/deal
+                    </span>
+                  )}
+                </div>
+                <h2 className={`text-xl font-bold break-words ${localItem.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>{localItem.title}</h2>
+                {canMove && (
+                  <AssignmentStatusStages status={localItem.status} canEdit onChange={setStatus} />
+                )}
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                {showFillForm && canMove && (
+                  <button
+                    type="button"
+                    onClick={() => setFillFormOpen(true)}
+                    title="Điền form nhiệm vụ CRM"
+                    className="h-8 px-2.5 rounded-lg border border-violet-300 bg-violet-50 hover:bg-violet-100 text-violet-800 text-xs font-medium flex items-center gap-1 cursor-pointer"
+                  >
+                    <ClipboardList className="h-3.5 w-3.5" />
+                    Điền form
+                  </button>
+                )}
+                {isCreator && (
+                  <>
+                    <button onClick={() => onEdit(localItem)} title="Sửa" className="h-8 w-8 rounded-lg border hover:bg-gray-50 flex items-center justify-center cursor-pointer">
+                      <Pencil className="h-4 w-4 text-gray-600" />
+                    </button>
+                    <button onClick={() => onDelete(localItem.id)} title="Xoá" className="h-8 w-8 rounded-lg border hover:bg-red-50 flex items-center justify-center cursor-pointer">
+                      <Trash2 className="h-4 w-4 text-red-500" />
+                    </button>
+                  </>
+                )}
+                <button onClick={onClose} className="h-8 w-8 rounded-lg hover:bg-gray-100 flex items-center justify-center cursor-pointer">
+                  <X className="h-5 w-5 text-gray-500" />
+                </button>
+              </div>
             </div>
-            <h2 className={`text-xl font-bold break-words ${localItem.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>{localItem.title}</h2>
-            {canMove && (
-              <AssignmentStatusStages status={localItem.status} canEdit onChange={setStatus} />
-            )}
-          </div>
-          <div className="flex items-center gap-1 shrink-0">
-            {isCreator && (
-              <>
-                <button onClick={() => onEdit(localItem)} title="Sửa" className="h-8 w-8 rounded-lg border hover:bg-gray-50 flex items-center justify-center cursor-pointer">
-                  <Pencil className="h-4 w-4 text-gray-600" />
-                </button>
-                <button onClick={() => onDelete(localItem.id)} title="Xoá" className="h-8 w-8 rounded-lg border hover:bg-red-50 flex items-center justify-center cursor-pointer">
-                  <Trash2 className="h-4 w-4 text-red-500" />
-                </button>
-              </>
-            )}
-            <button onClick={onClose} className="h-8 w-8 rounded-lg hover:bg-gray-100 flex items-center justify-center cursor-pointer">
-              <X className="h-5 w-5 text-gray-500" />
-            </button>
-          </div>
-        </div>
 
-        {/* BODY */}
-        <div className="px-5 py-4 overflow-y-auto space-y-4 min-h-0 flex-1">
-          {/* Info grid */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-            <div>
-              <p className="text-[11px] text-gray-500">Người giao</p>
-              <p className="font-medium">{localItem.created_by?.full_name || '—'}</p>
-            </div>
-            <div>
-              <p className="text-[11px] text-gray-500">Công ty</p>
-              <p className="font-medium">{localItem.company?.short_name || localItem.company?.name || '—'}</p>
-            </div>
-            {localItem.lead && (
-              <div className="md:col-span-2">
-                <p className="text-[11px] text-gray-500">{assignmentSourceFieldLabel(assignmentModule)}</p>
-                <div className="flex flex-wrap items-center gap-2 mt-0.5">
-                  <LeadAssignmentLink assignment={localItem} />
+            {/* BODY */}
+            <div className="px-5 py-4 overflow-y-auto space-y-4 min-h-0 flex-1">
+              {/* Info grid */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                <div>
+                  <p className="text-[11px] text-gray-500">Người giao</p>
+                  <p className="font-medium">{localItem.created_by?.full_name || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-gray-500">Công ty</p>
+                  <p className="font-medium">{localItem.company?.short_name || localItem.company?.name || '—'}</p>
+                </div>
+                {localItem.lead && (
+                  <div className="md:col-span-2">
+                    <p className="text-[11px] text-gray-500">{assignmentSourceFieldLabel(assignmentModule)}</p>
+                    <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                      <LeadAssignmentLink assignment={localItem} />
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <p className="text-[11px] text-gray-500">Tạo lúc</p>
+                  <p className="font-medium">{fmtDt(localItem.created_at)}</p>
+                </div>
+                <div>
+                  <p className={`text-[11px] ${overdue ? 'text-red-500' : 'text-gray-500'}`}>Deadline</p>
+                  <p className={`font-medium ${overdue ? 'text-red-600' : ''}`}>{fmtDt(localItem.deadline)}</p>
                 </div>
               </div>
-            )}
-            <div>
-              <p className="text-[11px] text-gray-500">Tạo lúc</p>
-              <p className="font-medium">{fmtDt(localItem.created_at)}</p>
+
+              {localItem.description && (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                  <p className="text-[11px] text-slate-600 font-semibold mb-1">📋 Mô tả công việc</p>
+                  <p className="text-sm text-gray-800 whitespace-pre-wrap">{localItem.description}</p>
+                </div>
+              )}
+
+              <PipelineTaskNotesSection item={localItem} canEdit={canMove} onNotesSaved={onNotesSaved} />
+
+              {/* Assignees */}
+              <div>
+                <p className="text-[11px] text-gray-500 mb-1">Giao cho ({assigneeList.length} nhân viên)</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {assigneeList.length === 0 ? (
+                    <span className="text-xs text-gray-400">Chưa giao</span>
+                  ) : assigneeList.map((u) => (
+                    <span key={u.id} className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs border ${String(u.id) === uid ? 'bg-blue-100 border-blue-300 text-blue-800 font-semibold' : 'bg-white border-gray-300 text-gray-700'}`}>
+                      <span className="h-4 w-4 rounded-full bg-blue-500 text-white text-[9px] flex items-center justify-center font-bold">{(u.full_name || '?').charAt(0)}</span>
+                      {u.full_name}
+                      {String(u.id) === uid && <span className="text-[9px]">(Bạn)</span>}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <RequirementFilesGallery assignmentId={localItem.id} canUpload={isCreator} />
+
+              <CommentSection assignmentId={localItem.id} />
+
+              <SubmitFilesCompact assignmentId={localItem.id} canUpload={isAssignee || isCreator} />
             </div>
-            <div>
-              <p className={`text-[11px] ${overdue ? 'text-red-500' : 'text-gray-500'}`}>Deadline</p>
-              <p className={`font-medium ${overdue ? 'text-red-600' : ''}`}>{fmtDt(localItem.deadline)}</p>
+
+            <div className="px-5 py-3 border-t bg-gray-50 rounded-b-2xl flex justify-end gap-2 shrink-0">
+              <button onClick={onClose} className="h-9 px-4 rounded-lg border text-sm cursor-pointer">Đóng</button>
             </div>
           </div>
-
-          {localItem.description && (
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
-              <p className="text-[11px] text-slate-600 font-semibold mb-1">📋 Mô tả công việc</p>
-              <p className="text-sm text-gray-800 whitespace-pre-wrap">{localItem.description}</p>
-            </div>
-          )}
-
-          <PipelineTaskNotesSection item={localItem} canEdit={canMove} onNotesSaved={onNotesSaved} />
-
-          {/* Assignees */}
-          <div>
-            <p className="text-[11px] text-gray-500 mb-1">Giao cho ({assigneeList.length} nhân viên)</p>
-            <div className="flex flex-wrap gap-1.5">
-              {assigneeList.length === 0 ? (
-                <span className="text-xs text-gray-400">Chưa giao</span>
-              ) : assigneeList.map((u) => (
-                <span key={u.id} className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs border ${String(u.id) === uid ? 'bg-blue-100 border-blue-300 text-blue-800 font-semibold' : 'bg-white border-gray-300 text-gray-700'}`}>
-                  <span className="h-4 w-4 rounded-full bg-blue-500 text-white text-[9px] flex items-center justify-center font-bold">{(u.full_name || '?').charAt(0)}</span>
-                  {u.full_name}
-                  {String(u.id) === uid && <span className="text-[9px]">(Bạn)</span>}
-                </span>
-              ))}
-            </div>
-          </div>
-
-          <RequirementFilesGallery assignmentId={localItem.id} canUpload={isCreator} />
-
-          <CommentSection assignmentId={localItem.id} />
-
-          <SubmitFilesCompact assignmentId={localItem.id} canUpload={isAssignee || isCreator} />
-        </div>
-
-        <div className="px-5 py-3 border-t bg-gray-50 rounded-b-2xl flex justify-end gap-2 shrink-0">
-          <button onClick={onClose} className="h-9 px-4 rounded-lg border text-sm cursor-pointer">Đóng</button>
-        </div>
-      </div>
-    </div>
+        </div>,
+      )}
+      {fillFormOpen && fillTask && linkedLeadId ? (
+        <TaskFillFormModal
+          leadId={linkedLeadId}
+          task={fillTask}
+          onClose={() => setFillFormOpen(false)}
+          onSaved={(updated) => {
+            if (updated) {
+              setLocalItem((prev) => ({
+                ...prev,
+                crm_task: {
+                  ...(prev.crm_task || {}),
+                  form_data: updated.form_data ?? prev.crm_task?.form_data,
+                  form_config: updated.form_config ?? prev.crm_task?.form_config,
+                  show_fill_form: updated.show_fill_form ?? prev.crm_task?.show_fill_form,
+                },
+              }));
+            }
+            setFillFormOpen(false);
+          }}
+        />
+      ) : null}
+    </>
   );
 }
 

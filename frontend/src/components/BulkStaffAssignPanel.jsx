@@ -14,6 +14,7 @@ const ROLES = [
   ['driver', 'Tài xế'],
   ['installer', 'Lắp đặt'],
   ['customer_care', 'CSKH'],
+  ['accounting', 'Kế toán'],
   ['staff', 'Nhân viên'],
 ];
 

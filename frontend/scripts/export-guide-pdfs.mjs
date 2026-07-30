@@ -369,6 +369,104 @@ const guides = [
       </ul>
     `),
   },
+  {
+    file: '05-metalla-tao-nhan-vien-phan-quyen.pdf',
+    title: 'Tạo nhân viên & phân quyền — Công Ty Metalla',
+    html: wrap('Tạo nhân viên & phân quyền — Công Ty Metalla', `
+      <h2>Khi nào dùng?</h2>
+      <p>Khi cần <strong>thêm nhân viên mới</strong> cho <strong>Công Ty Metalla</strong> (xưởng / kinh doanh), gán đúng <strong>phòng ban · khu vực CRM · vai trò</strong>, rồi <strong>phân quyền chi tiết</strong> theo cây tổ chức (Khối → Công ty → Phòng ban).</p>
+      <div class="note">
+        <strong>Ai được làm:</strong> Admin hệ thống hoặc quản lý có quyền quản lý nhân viên.<br/>
+        <strong>Đường dẫn:</strong> menu <strong>Nhân viên</strong> (<code>/users</code>).
+      </div>
+
+      <h2>Bước 1 — Vào danh sách & lọc Metalla</h2>
+      <ol>
+        <li>Mở <strong>Nhân viên</strong> trên sidebar (nhóm Quản lý / Hệ thống).</li>
+        <li>Ở bộ lọc công ty, chọn <strong>Công Ty Metalla</strong>.</li>
+        <li>Danh sách chỉ còn NV thuộc Metalla — kiểm tra trước khi thêm để tránh trùng email.</li>
+      </ol>
+      ${imgTag('metalla-tao-nv/01-trang-quan-ly-nv-metalla.png', 'Quản lý nhân viên — lọc Công Ty Metalla')}
+
+      <h2>Bước 2 — Bấm Thêm NV và điền thông tin</h2>
+      <ol>
+        <li>Bấm nút tím <strong>Thêm NV</strong> (góc phải trên).</li>
+        <li>Điền bắt buộc: <strong>Họ tên</strong>, <strong>Email</strong>, <strong>Mật khẩu</strong> (mặc định gợi ý 123456 — nên đổi sau).</li>
+        <li>Chọn <strong>Vai trò</strong> phù hợp Metalla, ví dụ:
+          <ul>
+            <li><strong>Kinh doanh (SAE)</strong> — làm CRM / lead / deal</li>
+            <li><strong>NV Sản xuất (Admin CV+SX)</strong> — làm xưởng / công việc SX</li>
+            <li><strong>Nhân viên</strong> — quyền cơ bản</li>
+          </ul>
+        </li>
+        <li>(Tuỳ chọn) Chức vụ, SĐT, ảnh đại diện.</li>
+      </ol>
+      ${imgTag('metalla-tao-nv/02-form-them-nv-metalla.png', 'Form Thêm nhân viên mới — thông tin cơ bản')}
+
+      <h2>Bước 3 — Phân công tổ chức Metalla</h2>
+      <p>Trong khối xanh <strong>PHÂN CÔNG TỔ CHỨC</strong>:</p>
+      <ol>
+        <li>Chọn <strong>Công ty</strong> = <strong>Công Ty Metalla</strong> (có thể chọn Khối Sản Xuất trước nếu danh sách dài).</li>
+        <li>Chọn <strong>Phòng ban</strong>: <em>Phòng kinh doanh</em> hoặc <em>Phòng sản xuất</em>.</li>
+        <li>Tích <strong>Khu vực CRM</strong> (vd. <em>Xưởng sản xuất TP.HCM</em>) nếu NV làm lead/deal theo vùng.</li>
+        <li>Bấm <strong>Tạo NV</strong>.</li>
+      </ol>
+      ${imgTag('metalla-tao-nv/03-phan-cong-to-chuc.png', 'Phân công tổ chức — Metalla + phòng ban + khu vực CRM')}
+      <div class="note">
+        <strong>Lưu ý:</strong> Vai trò trên form là <em>role hệ thống</em> của tài khoản. Phân quyền chi tiết (RBAC theo đơn vị) làm ở bước sau.
+      </div>
+
+      <h2>Bước 4 — Mở menu Phân quyền</h2>
+      <ol>
+        <li>Trên thẻ nhân viên vừa tạo (hoặc NV Metalla cần chỉnh), bấm nút <strong>⋯</strong> (ba chấm).</li>
+        <li>Chọn <strong>Phân quyền</strong> (màu tím).</li>
+      </ol>
+      ${imgTag('metalla-tao-nv/04-menu-phan-quyen.png', 'Menu thẻ NV — Phân quyền / Chỉnh sửa')}
+
+      <h2>Bước 5 — Gán vai trò theo phạm vi Công ty Metalla</h2>
+      <ol>
+        <li>Trong popup <strong>Phân quyền: …</strong>, xem <strong>Vai trò hiện tại</strong>.</li>
+        <li>Ở <strong>Thêm vai trò mới</strong>, mở rộng vai trò cần gán (vd. <code>production_staff</code>, <code>sales_admin</code>, <code>employee</code>…).</li>
+        <li>Chọn cấp độ: <strong>Công ty</strong> (khuyến nghị cho Metalla — không gán «Toàn hệ thống» trừ khi thật sự cần).</li>
+        <li>Chọn nối tiếp: <strong>Khối Sản Xuất</strong> → <strong>Công Ty Metalla</strong>.</li>
+        <li>Bấm <strong>Gán vai trò</strong>.</li>
+        <li>Bấm <strong>Đóng</strong> khi xong.</li>
+      </ol>
+      ${imgTag('metalla-tao-nv/05-modal-phan-quyen.png', 'Popup Phân quyền — danh sách vai trò')}
+      ${imgTag('metalla-tao-nv/06-gan-vai-tro-cong-ty-metalla.png', 'Gán vai trò phạm vi Công ty — chọn Khối Sản Xuất → Công Ty Metalla')}
+
+      <h2>Gợi ý vai trò thường dùng Metalla</h2>
+      <table>
+        <thead><tr><th>Nhu cầu</th><th>Role form (tạo NV)</th><th>Vai trò phân quyền (RBAC)</th></tr></thead>
+        <tbody>
+          <tr><td>NV xưởng / công việc SX</td><td>NV Sản xuất (Admin CV+SX)</td><td><code>production_staff</code> @ Công Ty Metalla</td></tr>
+          <tr><td>Quản trị SX Metalla</td><td>Admin Sản xuất</td><td><code>production_admin</code> @ Công Ty Metalla</td></tr>
+          <tr><td>Kinh doanh / CRM</td><td>Kinh doanh (SAE) / Sales Admin</td><td><code>employee</code> hoặc <code>sales_admin</code> @ Metalla</td></tr>
+          <tr><td>Làm cả CRM + SX</td><td>NV CRM + Admin SX / Admin CRM + SX</td><td><code>crm_production_staff</code> hoặc <code>crm_production_admin</code> @ Metalla</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Checklist sau khi tạo</h2>
+      <ul class="check">
+        <li>Lọc công ty Metalla → thấy NV mới trong danh sách</li>
+        <li>Đúng phòng ban + khu vực CRM (nếu cần)</li>
+        <li>Đã gán ít nhất 1 vai trò RBAC phạm vi <strong>Công Ty Metalla</strong></li>
+        <li>NV đăng nhập được bằng email + mật khẩu đã cấp</li>
+        <li>NV chỉ thấy dữ liệu Metalla (không lộ công ty khác)</li>
+      </ul>
+
+      <h2>Lỗi hay gặp</h2>
+      <table>
+        <thead><tr><th>Hiện tượng</th><th>Cách xử lý</th></tr></thead>
+        <tbody>
+          <tr><td>Email đã tồn tại</td><td>Dùng email khác hoặc tìm NV cũ → Chỉnh sửa / kích hoạt lại</td></tr>
+          <tr><td>Không chọn được Phòng ban</td><td>Chọn <strong>Công Ty Metalla</strong> trước</td></tr>
+          <tr><td>Nút Gán vai trò xám</td><td>Chọn đủ Khối → Công ty (Metalla)</td></tr>
+          <tr><td>NV không thấy module SX/CRM</td><td>Thiếu role RBAC hoặc sai phạm vi — mở lại Phân quyền</td></tr>
+        </tbody>
+      </table>
+    `),
+  },
 ];
 
 fs.mkdirSync(tmpDir, { recursive: true });

@@ -53,6 +53,18 @@ export default function ModuleBrandIcon({ mod, size = 'md', wrapClass = '', clas
     );
   }
 
+  if (mod.emoji) {
+    const accent = mod.accentColor || '#7c3aed';
+    return (
+      <div
+        className={`flex ${s.box} items-center justify-center rounded-xl shrink-0 text-lg leading-none shadow-sm ring-1 ring-black/5 ${wrapClass} ${className}`}
+        style={{ background: `${accent}18` }}
+      >
+        {mod.emoji}
+      </div>
+    );
+  }
+
   return (
     <div className={`flex ${s.box} items-center justify-center rounded-xl shrink-0 ${mod.iconClass || ''} ${wrapClass} ${className}`}>
       {Icon ? <Icon className={s.icon} strokeWidth={1.75} /> : null}

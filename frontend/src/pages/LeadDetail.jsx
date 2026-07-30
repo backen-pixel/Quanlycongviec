@@ -25,6 +25,7 @@ import { consumeCrmLeadDetailPrefetch } from '../lib/crmLeadDetailPrefetch';
 import { getSocket } from '../lib/socket';
 import { formatVND, formatDate, getFileEmoji } from '../lib/utils';
 import CRMTasksTab from '../components/CRMTasksTab';
+import DealSharedWorkspaceTab from '../components/DealSharedWorkspaceTab';
 import CrmTaskDocumentsPanel from '../components/CrmTaskDocumentsPanel';
 import UnifiedTaskHistoryWidget from '../components/UnifiedTaskHistoryWidget';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
@@ -34,6 +35,7 @@ import { PO_STATUS, PO_COLORS } from './PurchasingInboxPage';
 import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
 import EmployeePicker from '../components/EmployeePicker';
 import { LeadMembersTab, LeadChatTab } from '../components/LeadChatTabs';
+import { countMembersByModule } from '../lib/memberModuleCounts';
 import CallLogsTab from '../components/CallLogsTab';
 import LeadVoiceRecordingsTab from '../components/LeadVoiceRecordingsTab';
 import FacebookChatTab from '../components/FacebookChatTab';
@@ -181,17 +183,23 @@ export default function LeadDetail() {
   const [showConvertModal, setShowConvertModal] = useState(false);
   const [showRevertModal, setShowRevertModal] = useState(false);
   const [showTransferRegionModal, setShowTransferRegionModal] = useState(false);
+  const [transferCompanyId, setTransferCompanyId] = useState('');
+  const [transferCompanies, setTransferCompanies] = useState([]);
+  const [transferCanCrossCompany, setTransferCanCrossCompany] = useState(false);
   const [transferRegionId, setTransferRegionId] = useState('');
   const [transferRegions, setTransferRegions] = useState([]);
   const [transferRegionsLoading, setTransferRegionsLoading] = useState(false);
   const [transferRegionSaving, setTransferRegionSaving] = useState(false);
   const [transferRegionError, setTransferRegionError] = useState('');
   const [transferAssigneeId, setTransferAssigneeId] = useState('');
+  const [transferUsers, setTransferUsers] = useState([]);
+  const [transferDepartments, setTransferDepartments] = useState([]);
   const [showAddDoc, setShowAddDoc] = useState(false);
   const [editingField, setEditingField] = useState(null);
   const [editValue, setEditValue] = useState('');
   const [activeTab, setActiveTab] = useState('tasks');
   const [commentCount, setCommentCount] = useState(0);
+  const [memberModuleCounts, setMemberModuleCounts] = useState({ crm: 0, production: 0, logistics: 0, total: 0 });
 
   useEffect(() => {
     if (!id) return;
@@ -201,6 +209,23 @@ export default function LeadDetail() {
         setCommentCount(meta?.count || 0);
       })
       .catch(() => setCommentCount(0));
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) {
+      setMemberModuleCounts({ crm: 0, production: 0, logistics: 0, total: 0 });
+      return;
+    }
+    let cancelled = false;
+    api.get(`/crm/leads/${id}/members`)
+      .then((r) => {
+        if (cancelled) return;
+        setMemberModuleCounts(countMembersByModule(r.data || []));
+      })
+      .catch(() => {
+        if (!cancelled) setMemberModuleCounts({ crm: 0, production: 0, logistics: 0, total: 0 });
+      });
+    return () => { cancelled = true; };
   }, [id]);
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [downloadingDocsZip, setDownloadingDocsZip] = useState(false);
@@ -547,6 +572,7 @@ export default function LeadDetail() {
     }
     const allowed = new Set([
       'tasks',
+      'shared-workspace',
       'documents',
       'notes',
       'facebook',
@@ -1662,6 +1688,8 @@ export default function LeadDetail() {
 
   const openTransferRegionModal = () => {
     setTransferRegionError('');
+    const initialCompany = lead?.company_id ? String(lead.company_id) : '';
+    setTransferCompanyId(initialCompany);
     setTransferRegionId(lead?.region_id ? String(lead.region_id) : '');
     setTransferAssigneeId(
       lead?.assigned_to || lead?.lead_owner_id
@@ -1671,38 +1699,83 @@ export default function LeadDetail() {
     setShowTransferRegionModal(true);
     setTransferRegionsLoading(true);
     setTransferRegions([]);
-    const cid = lead?.company_id;
-    if (!cid) {
+    setTransferCompanies([]);
+    setTransferUsers([]);
+    setTransferDepartments([]);
+    setTransferCanCrossCompany(false);
+    if (!initialCompany) {
       setTransferRegionsLoading(false);
       setTransferRegionError('Lead/Deal chưa có công ty.');
       return;
     }
-    api.get('/crm/company-regions', { params: { company_id: String(cid), for_module: 'crm' } })
+    api.get(`/crm/leads/${id}/transfer-options`, { params: { company_id: initialCompany } })
       .then((r) => {
-        const list = Array.isArray(r.data) ? r.data : (r.data?.regions || []);
-        const active = list.filter((x) => x.is_active !== false);
+        const companies = Array.isArray(r.data?.companies) ? r.data.companies : [];
+        const regions = (Array.isArray(r.data?.regions) ? r.data.regions : []).filter((x) => x.is_active !== false);
+        const users = Array.isArray(r.data?.users) ? r.data.users : [];
+        const departments = Array.isArray(r.data?.departments) ? r.data.departments : [];
+        setTransferCompanies(companies);
+        setTransferCanCrossCompany(!!r.data?.can_cross_company && companies.length > 1);
+        setTransferUsers(users);
+        setTransferDepartments(departments);
+
         const isPrivileged = isAdminLike(user) || user?.role === 'sales_admin';
         const uidRegions = Array.isArray(user?.crm_region_ids) ? user.crm_region_ids.map(String) : [];
-        let selectable = active;
+        let selectable = regions;
         if (!isPrivileged && uidRegions.length) {
-          selectable = active.filter((reg) => uidRegions.includes(String(reg.id)));
-          if (lead?.region_id) {
-            const cur = active.find((reg) => String(reg.id) === String(lead.region_id));
-            if (cur && !selectable.some((reg) => String(reg.id) === String(cur.id))) {
-              selectable = [cur, ...selectable];
-            }
-          }
+          selectable = regions.filter((reg) => uidRegions.includes(String(reg.id)));
         }
         setTransferRegions(selectable);
+        // Nếu khu vực hiện tại không thuộc CRM (vd. khu vực SX) → bỏ chọn mặc định
+        const curRid = lead?.region_id ? String(lead.region_id) : '';
+        if (curRid && !selectable.some((reg) => String(reg.id) === curRid)) {
+          setTransferRegionId('');
+          setTransferAssigneeId('');
+        }
       })
       .catch(() => {
         setTransferRegions([]);
+        setTransferRegionError('Không tải được danh sách khu vực/công ty.');
+      })
+      .finally(() => setTransferRegionsLoading(false));
+  };
+
+  const loadTransferOptionsForCompany = (companyId) => {
+    if (!companyId) {
+      setTransferRegions([]);
+      setTransferUsers([]);
+      setTransferDepartments([]);
+      return;
+    }
+    setTransferRegionsLoading(true);
+    setTransferRegionError('');
+    api.get(`/crm/leads/${id}/transfer-options`, { params: { company_id: companyId } })
+      .then((r) => {
+        const regions = (Array.isArray(r.data?.regions) ? r.data.regions : []).filter((x) => x.is_active !== false);
+        const users = Array.isArray(r.data?.users) ? r.data.users : [];
+        const departments = Array.isArray(r.data?.departments) ? r.data.departments : [];
+        if (Array.isArray(r.data?.companies) && r.data.companies.length) {
+          setTransferCompanies(r.data.companies);
+          setTransferCanCrossCompany(!!r.data?.can_cross_company && r.data.companies.length > 1);
+        }
+        setTransferRegions(regions);
+        setTransferUsers(users);
+        setTransferDepartments(departments);
+      })
+      .catch(() => {
+        setTransferRegions([]);
+        setTransferUsers([]);
+        setTransferDepartments([]);
         setTransferRegionError('Không tải được danh sách khu vực.');
       })
       .finally(() => setTransferRegionsLoading(false));
   };
 
   const submitTransferRegion = async () => {
+    if (!transferCompanyId) {
+      setTransferRegionError('Vui lòng chọn công ty.');
+      return;
+    }
     if (!transferRegionId) {
       setTransferRegionError('Vui lòng chọn khu vực.');
       return;
@@ -1711,17 +1784,19 @@ export default function LeadDetail() {
       setTransferRegionError('Vui lòng chọn nhân viên phụ trách.');
       return;
     }
+    const companyChanged = String(transferCompanyId) !== String(lead?.company_id || '');
     const regionChanged = String(transferRegionId) !== String(lead?.region_id || '');
     const assigneeChanged = String(transferAssigneeId) !== String(lead?.assigned_to || lead?.lead_owner_id || '');
-    if (!regionChanged && !assigneeChanged) {
-      setTransferRegionError('Chưa có thay đổi khu vực hoặc người phụ trách.');
+    if (!companyChanged && !regionChanged && !assigneeChanged) {
+      setTransferRegionError('Chưa có thay đổi công ty, khu vực hoặc người phụ trách.');
       return;
     }
     setTransferRegionSaving(true);
     setTransferRegionError('');
     try {
-      if (regionChanged) {
+      if (companyChanged || regionChanged) {
         await api.post(`/crm/leads/${id}/transfer-region`, {
+          company_id: transferCompanyId,
           region_id: transferRegionId,
           assigned_to: transferAssigneeId,
         });
@@ -2045,7 +2120,7 @@ export default function LeadDetail() {
             <button
               type="button"
               onClick={openTransferRegionModal}
-              title="Chuyển khu vực và người phụ trách"
+              title="Chuyển công ty/khu vực và người phụ trách"
               className="h-9 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer"
             >
               <User className="h-4 w-4" /> Chuyển người phụ trách
@@ -2286,6 +2361,17 @@ export default function LeadDetail() {
                 ✅ Công việc
               </button>
               <button
+                onClick={() => setActiveTab('shared-workspace')}
+                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                  activeTab === 'shared-workspace'
+                    ? 'text-indigo-600 border-b-2 border-indigo-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+                title="Phân công thành viên deal và nhiệm vụ giao chéo công ty"
+              >
+                🤝 Không gian chung
+              </button>
+              <button
                 onClick={() => setActiveTab('purchase_orders')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'purchase_orders'
@@ -2388,7 +2474,22 @@ export default function LeadDetail() {
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
-                👥 Thành viên
+                <span className="inline-flex flex-col items-center gap-0.5">
+                  {(memberModuleCounts.crm > 0 || memberModuleCounts.production > 0 || memberModuleCounts.logistics > 0) && (
+                    <span className="inline-flex items-center gap-0.5" title="Số thành viên theo khối CRM / SX / VC">
+                      <span className="min-w-[1.15rem] h-[1.15rem] px-1 rounded text-[10px] font-bold leading-[1.15rem] text-center bg-blue-100 text-blue-700" title={`CRM: ${memberModuleCounts.crm}`}>
+                        {memberModuleCounts.crm}
+                      </span>
+                      <span className="min-w-[1.15rem] h-[1.15rem] px-1 rounded text-[10px] font-bold leading-[1.15rem] text-center bg-teal-100 text-teal-700" title={`SX: ${memberModuleCounts.production}`}>
+                        {memberModuleCounts.production}
+                      </span>
+                      <span className="min-w-[1.15rem] h-[1.15rem] px-1 rounded text-[10px] font-bold leading-[1.15rem] text-center bg-orange-100 text-orange-700" title={`VC: ${memberModuleCounts.logistics}`}>
+                        {memberModuleCounts.logistics}
+                      </span>
+                    </span>
+                  )}
+                  <span>👥 Thành viên</span>
+                </span>
               </button>
               <button
                 onClick={() => setActiveTab('comments')}
@@ -2457,6 +2558,21 @@ export default function LeadDetail() {
                   />
                 </div>
                 </>
+              ) : activeTab === 'shared-workspace' ? (
+                <DealSharedWorkspaceTab
+                  leadId={id}
+                  leadType={lead?.type || 'lead'}
+                  users={allUsers}
+                  taskScope="production"
+                  defaultAssignModule="crm"
+                  companyId={lead?.company_id || null}
+                  sxCompanyId={lead?.sx_template_company_id || null}
+                  onArtifactsSynced={refreshTaskSyncedDocuments}
+                  refreshKey={crmTasksRefreshKey}
+                  sxTemplateCompanyId={lead?.sx_template_company_id || null}
+                  linkedProjectId={lead?.project_id || null}
+                  dealResponsible={lead}
+                />
               ) : activeTab === 'purchase_orders' ? (
                 <div className="space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -3156,7 +3272,11 @@ export default function LeadDetail() {
               ) : activeTab === 'zalo' ? (
                 <ZaloChatTab leadId={id} />
               ) : activeTab === 'team' ? (
-                <LeadMembersTab leadId={id} />
+                <LeadMembersTab
+                  leadId={id}
+                  onMembersChange={(list) => setMemberModuleCounts(countMembersByModule(list))}
+                  onOpenSharedWorkspace={() => setActiveTab('shared-workspace')}
+                />
               ) : activeTab === 'comments' ? (
                 <CrmLeadCommentsPanel
                   leadId={id}
@@ -3237,11 +3357,22 @@ export default function LeadDetail() {
               <h3 className="text-base font-bold text-gray-900">Chuyển người phụ trách</h3>
             </div>
             <p className="text-xs text-gray-500 mt-1 mb-4">
-              Chọn khu vực (cùng công ty) rồi chọn nhân viên thuộc khu vực đó.
+              {transferCanCrossCompany
+                ? 'Chọn công ty CRM, khu vực rồi chọn nhân viên thuộc khu vực đó.'
+                : 'Chọn khu vực (cùng công ty) rồi chọn nhân viên thuộc khu vực đó.'}
             </p>
 
-            {(lead?.assignee?.full_name || lead?.lead_owner?.full_name || lead?.crm_region?.name) && (
+            {(lead?.assignee?.full_name || lead?.lead_owner?.full_name || lead?.crm_region?.name || lead?.company?.name) && (
               <div className="bg-gray-50 rounded-xl px-3 py-2 mb-3 space-y-1">
+                {(lead?.company?.name || lead?.company?.short_name || lead?.company_id) && (
+                  <p className="text-xs text-gray-600">
+                    <span className="text-[10px] font-semibold text-gray-400 uppercase">Công ty hiện tại: </span>
+                    {lead?.company?.short_name || lead?.company?.name
+                      || transferCompanies.find((c) => String(c.id) === String(lead.company_id))?.short_name
+                      || transferCompanies.find((c) => String(c.id) === String(lead.company_id))?.name
+                      || '—'}
+                  </p>
+                )}
                 {(lead?.crm_region?.name || lead?.region_id) && (
                   <p className="text-xs text-gray-600">
                     <span className="text-[10px] font-semibold text-gray-400 uppercase">Khu vực hiện tại: </span>
@@ -3257,6 +3388,35 @@ export default function LeadDetail() {
               </div>
             )}
 
+            {(transferCanCrossCompany || transferCompanies.length > 1) && (
+              <div className="mb-3">
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  🏢 Công ty <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={transferCompanyId}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setTransferCompanyId(next);
+                    setTransferRegionId('');
+                    setTransferAssigneeId('');
+                    setTransferRegionError('');
+                    loadTransferOptionsForCompany(next);
+                  }}
+                  disabled={transferRegionsLoading || transferRegionSaving}
+                  className="w-full h-10 px-3 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 disabled:opacity-50"
+                >
+                  <option value="">— Chọn công ty —</option>
+                  {transferCompanies.map((co) => (
+                    <option key={co.id} value={String(co.id)}>
+                      {co.short_name || co.name}
+                      {String(co.id) === String(lead?.company_id || '') ? ' — hiện tại' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <label className="block text-xs font-semibold text-gray-700 mb-1">
               📍 Khu vực <span className="text-red-500">*</span>
             </label>
@@ -3267,7 +3427,7 @@ export default function LeadDetail() {
                 setTransferAssigneeId('');
                 setTransferRegionError('');
               }}
-              disabled={transferRegionsLoading || transferRegionSaving}
+              disabled={!transferCompanyId || transferRegionsLoading || transferRegionSaving}
               className="w-full h-10 px-3 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 disabled:opacity-50"
             >
               <option value="">
@@ -3280,12 +3440,15 @@ export default function LeadDetail() {
               {transferRegions.map((reg) => (
                 <option key={reg.id} value={String(reg.id)}>
                   {reg.name}{reg.code ? ` (${reg.code})` : ''}
-                  {String(reg.id) === String(lead?.region_id || '') ? ' — hiện tại' : ''}
+                  {String(reg.id) === String(lead?.region_id || '')
+                    && String(transferCompanyId) === String(lead?.company_id || '')
+                    ? ' — hiện tại'
+                    : ''}
                 </option>
               ))}
             </select>
-            {!transferRegionsLoading && transferRegions.length === 0 && (
-              <p className="text-[10px] text-amber-500 mt-1">⚠️ Công ty chưa có khu vực — vào CRM/Khu vực để thêm trước</p>
+            {!transferRegionsLoading && transferCompanyId && transferRegions.length === 0 && (
+              <p className="text-[10px] text-amber-500 mt-1">⚠️ Công ty chưa có khu vực CRM — vào CRM/Khu vực để thêm trước</p>
             )}
 
             <div className="mt-3">
@@ -3293,9 +3456,11 @@ export default function LeadDetail() {
                 👤 Chuyển cho nhân viên <span className="text-red-500">*</span>
               </label>
               <EmployeePicker
-                companyId={lead?.company_id}
+                companyId={transferCompanyId || lead?.company_id}
                 regionId={transferRegionId}
                 requireRegion
+                preloadUsers={transferUsers}
+                preloadDepartments={transferDepartments}
                 value={transferAssigneeId}
                 onChange={(uid) => { setTransferAssigneeId(uid || ''); setTransferRegionError(''); }}
                 placeholder="Chọn nhân viên thuộc khu vực..."
@@ -3324,6 +3489,7 @@ export default function LeadDetail() {
                 disabled={
                   transferRegionSaving
                   || transferRegionsLoading
+                  || !transferCompanyId
                   || !transferRegionId
                   || !transferAssigneeId
                 }
@@ -5124,7 +5290,10 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
       )}
 
       {/* Deadline thẻ (kanban_deadline_at) — ẩn khi deal đã Thắng / chưa có SĐT */}
-      {!lead?.stage?.is_won && !lead?.stage?.counts_as_completed_revenue && !crmLeadMissingPhone(lead) && (
+      {!lead?.stage?.is_won
+        && !lead?.stage?.counts_as_completed_revenue
+        && !crmLeadMissingPhone(lead)
+        && !lead?.deadline_disabled_at && (
       <div className="rounded-lg border border-rose-200 bg-rose-50/50 p-2.5 my-1.5">
         <div className="flex items-start gap-2">
           <span className="text-sm mt-0.5">⏰</span>
@@ -5188,7 +5357,11 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
                   )}
                   <p className="text-slate-600">
                     {h.changer?.full_name || 'Hệ thống'}
-                    {h.source === 'stage_move' ? ' · khi chuyển cột' : ' · sửa thủ công'}
+                    {h.source === 'stage_move'
+                      ? ' · khi chuyển cột'
+                      : h.source === 'disable_all'
+                        ? ' · tắt tất cả deadline'
+                        : ' · sửa thủ công'}
                     {h.stage?.name ? ` · ${h.stage.name}` : ''}
                   </p>
                   {h.reason && <p className="text-slate-500 italic">Lý do: {h.reason}</p>}
@@ -5201,7 +5374,7 @@ function LeadInfoPanel({ lead, allUsers, onUpdate, currentUser, productionCompan
       )}
 
       {!lead?.stage?.is_won && !lead?.stage?.counts_as_completed_revenue && (
-        <CrmLeadDeadlineOverview lead={lead} />
+        <CrmLeadDeadlineOverview lead={lead} onChanged={onUpdate} />
       )}
 
       {!lead?.stage?.is_won && !lead?.stage?.counts_as_completed_revenue && (
@@ -5938,9 +6111,14 @@ function ConvertToDeadModal({ leadId, customer, lead, documents, flows, onClose,
 
   // Bỏ chọn region nếu không thuộc danh mục theo công ty hiện tại
   useEffect(() => {
-    if (!selectedRegion || regions.length === 0) return;
+    if (!selectedRegion) return;
+    if (regions.length === 0) {
+      // Đang tải hoặc công ty chưa có khu vực CRM — không giữ region SX cũ
+      if (!regionsLoading) setSelectedRegion('');
+      return;
+    }
     if (!regions.some((r) => String(r.id) === String(selectedRegion))) setSelectedRegion('');
-  }, [regions, selectedRegion]);
+  }, [regions, regionsLoading, selectedRegion]);
 
   const handleConvert = async () => {
     if (!selectedRegion) {

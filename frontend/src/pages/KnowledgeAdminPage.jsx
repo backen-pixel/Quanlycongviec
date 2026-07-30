@@ -19,7 +19,7 @@ const EX_TYPES = [
   { value: 'essay', label: 'Tự luận' },
 ];
 
-const ROLES = ['admin', 'sales_admin', 'manager', 'sales', 'designer', 'production', 'logistics', 'staff'];
+const ROLES = ['admin', 'sales_admin', 'manager', 'sales', 'designer', 'production', 'logistics', 'accounting', 'staff'];
 
 function emptyQuizQuestion() {
   return { id: `q${Date.now()}`, question: '', type: 'single', options: ['', '', ''], correct: [0] };

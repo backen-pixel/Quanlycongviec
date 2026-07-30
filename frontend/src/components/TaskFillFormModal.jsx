@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Save, Loader2, Upload, FileText, CheckCircle2, HelpCircle, Link2, Calendar, Trash2, Film, FileImage } from 'lucide-react';
+import { X, Save, Loader2, Upload, FileText, CheckCircle2, HelpCircle, Link2, Calendar, Trash2, Film, FileImage, Plus } from 'lucide-react';
 import api from '../lib/api';
 import { compressImage } from '../lib/compressImage';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
@@ -24,6 +24,9 @@ import {
   resolveCabinetTypeId,
   CABINET_TYPE_OPTIONS,
   DEFAULT_DIMENSION_KEYS,
+  mergeSurveyExtraFields,
+  newFormFieldId,
+  KITCHEN_APPLIANCE_TYPE_OPTIONS,
 } from '../lib/taskFillForm';
 import { formatDateTime, formatVND } from '../lib/utils';
 
@@ -317,6 +320,11 @@ export default function TaskFillFormModal({
       },
       ...visibleFields.slice(insertAt),
     ];
+  }
+  // Phiếu KS Phúc Đạt: số người / nấu / phong cách / chiều cao / thiết bị
+  const looksLikeSurvey = visibleFields.some((f) => f.id === 'survey_address' || f.id === 'cabinet_type' || f.id === 'site_photos');
+  if (looksLikeSurvey) {
+    visibleFields = mergeSurveyExtraFields(visibleFields);
   }
   visibleFields = visibleFields.map((f) => {
     if (f.type !== 'dimensions') return f;
@@ -628,6 +636,15 @@ export default function TaskFillFormModal({
         await api.put(`/crm/leads/${leadId}`, leadPatch);
         syncedSide = true;
         setLeadInfo((prev) => (prev ? { ...prev, ...leadPatch } : prev));
+      } catch { /* ignore */ }
+    }
+
+    // Đồng bộ địa chỉ lên dự án SX/VC (panel Thông tin VC/SX đọc projects.install_address).
+    const projectId = leadInfo?.project_id || leadInfo?.linked_project?.id || null;
+    if (projectId && address) {
+      try {
+        await api.put(`/projects/${projectId}`, { install_address: address });
+        syncedSide = true;
       } catch { /* ignore */ }
     }
 
@@ -1083,6 +1100,89 @@ export default function TaskFillFormModal({
                   className="w-full h-9 px-3 rounded-lg border border-violet-200 bg-violet-50/40 text-sm outline-none focus:ring-2 focus:ring-violet-400"
                 />
               )}
+            </div>
+          );
+        })()}
+        {field.type === 'appliance_list' && (() => {
+          const rows = Array.isArray(val) ? val : [];
+          const typeOpts = (field.options?.length ? field.options : KITCHEN_APPLIANCE_TYPE_OPTIONS);
+          const otherOpt = typeOpts.find((o) => o.is_other);
+          const patchRow = (rowId, partial) => {
+            const next = rows.map((r) => (r.id === rowId ? { ...r, ...partial } : r));
+            setFieldValue(field.id, next);
+          };
+          const addRow = () => {
+            setFieldValue(field.id, [
+              ...rows,
+              { id: newFormFieldId(), type_id: '', type_other: '', brand: '' },
+            ]);
+          };
+          const removeRow = (rowId) => {
+            setFieldValue(field.id, rows.filter((r) => r.id !== rowId));
+          };
+          return (
+            <div className="space-y-2">
+              {rows.length === 0 && (
+                <p className="text-[11px] text-gray-500">Chưa có thiết bị — bấm «Thêm thiết bị».</p>
+              )}
+              {rows.map((row) => {
+                const showOther = otherOpt && String(row.type_id) === String(otherOpt.id);
+                return (
+                  <div key={row.id} className="rounded-lg border border-gray-200 bg-white p-2 space-y-1.5">
+                    <div className="flex gap-1.5 items-start">
+                      <select
+                        value={row.type_id || ''}
+                        onChange={(e) => {
+                          const typeId = e.target.value;
+                          const opt = typeOpts.find((o) => String(o.id) === String(typeId));
+                          patchRow(row.id, {
+                            type_id: typeId,
+                            type_label: opt?.label || '',
+                            type_other: opt?.is_other ? (row.type_other || '') : '',
+                          });
+                        }}
+                        className="flex-1 min-w-0 h-9 px-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-orange-400 bg-white"
+                      >
+                        <option value="">— Loại thiết bị —</option>
+                        {typeOpts.map((o) => (
+                          <option key={o.id} value={o.id}>{o.label}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        title="Xóa dòng"
+                        onClick={() => removeRow(row.id)}
+                        className="h-9 w-9 shrink-0 inline-flex items-center justify-center rounded-lg border border-gray-200 text-gray-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    {showOther && (
+                      <input
+                        type="text"
+                        value={row.type_other || ''}
+                        onChange={(e) => patchRow(row.id, { type_other: e.target.value })}
+                        placeholder="Ghi rõ loại thiết bị khác…"
+                        className="w-full h-9 px-3 rounded-lg border border-violet-200 bg-violet-50/40 text-sm outline-none focus:ring-2 focus:ring-violet-400"
+                      />
+                    )}
+                    <input
+                      type="text"
+                      value={row.brand || ''}
+                      onChange={(e) => patchRow(row.id, { brand: e.target.value })}
+                      placeholder="Thương hiệu (VD: Bosch, Electrolux…)"
+                      className="w-full h-9 px-3 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-orange-400"
+                    />
+                  </div>
+                );
+              })}
+              <button
+                type="button"
+                onClick={addRow}
+                className="w-full h-9 rounded-lg border border-dashed border-orange-300 bg-orange-50/40 text-sm text-orange-800 hover:bg-orange-50 inline-flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5" /> Thêm thiết bị
+              </button>
             </div>
           );
         })()}

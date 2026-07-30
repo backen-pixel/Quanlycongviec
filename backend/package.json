@@ -32,8 +32,11 @@
     "test:crm-access": "node tests/crm-task-access-rollback.js",
     "test:crm-http": "node tests/crm-task-http-integration.js",
     "test:crm-outbox": "node tests/crm-task-outbox-faults.js",
+    "test:shared-workspace": "node tests/shared-workspace-assignment-create.js",
     "test:crm-audit": "node tests/crm-access-audit.js",
     "test:crm-upload": "node tests/crm-upload-integration.js",
+    "test:crm-transfer": "node tests/crm-lead-company-transfer.js",
+    "test:mcp-audit": "node tests/mcp-audit-reason-codes.js",
     "crm:route-inventory": "node scripts/crm-route-inventory.js --write",
     "cron:crm-missing-tasks": "node scripts/run-crm-missing-tasks-cron.js"
   },

@@ -34,6 +34,7 @@ import { handleCommentFilePaste } from '../lib/chatClipboard';
 import { CommentNewNotice, useCommentThreadLive } from './commentThreadLiveUx';
 import { isQuoteContractActivityComment } from '../lib/hideQuoteContractFromProduction';
 import CommentDisplayHiddenBanner, { useCommentShowOnScreenEnabled } from './CommentDisplayHiddenBanner';
+import VcHandoverEventsPopup from './VcHandoverEventsPopup';
 
 const REACTION_PICKER = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
@@ -699,6 +700,17 @@ function formatVcDateTime(iso) {
   return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+/** ISO / date string → giá trị input datetime-local (local time). */
+function toDatetimeLocalValue(raw) {
+  if (!raw) return '';
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) return s;
+  const d = new Date(s.length === 10 ? `${s}T00:00:00` : s);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /** Bình luận tương tác bàn giao VC/LĐ (chọn công ty + ngày → sự kiện + xác nhận 2 phụ trách). */
 function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
   const md = comment?.metadata || {};
@@ -716,8 +728,56 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
   const [selectNotes, setSelectNotes] = useState('');
   const [pickupAt, setPickupAt] = useState('');
   const [pickupNotes, setPickupNotes] = useState('');
+  const [installDate, setInstallDate] = useState('');
+  const [installAddress, setInstallAddress] = useState('');
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
+  const [eventsPopupOpen, setEventsPopupOpen] = useState(false);
+  const [eventsPopupFocus, setEventsPopupFocus] = useState(null);
+  /** null | 'pickup' | 'install' — mở lịch để chọn ngày cho thẻ */
+  const [datePickTarget, setDatePickTarget] = useState(null);
+
+  const openEventsCalendar = useCallback((dateIso) => {
+    setDatePickTarget(null);
+    setEventsPopupFocus(dateIso || pickupAt || md.pickup_at || installDate || md.install_date || null);
+    setEventsPopupOpen(true);
+  }, [pickupAt, installDate, md.pickup_at, md.install_date]);
+
+  const openDatePickCalendar = useCallback((target) => {
+    setDatePickTarget(target);
+    const focus = target === 'install'
+      ? (installDate || pickupAt || md.install_date || md.pickup_at || null)
+      : (pickupAt || md.pickup_at || installDate || md.install_date || null);
+    setEventsPopupFocus(focus);
+    setEventsPopupOpen(true);
+  }, [pickupAt, installDate, md.pickup_at, md.install_date]);
+
+  const formatDatetimeLocalLabel = (v) => {
+    if (!v) return '';
+    const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+    if (!m) return String(v);
+    return `${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}`;
+  };
+
+  const timePart = (v) => {
+    const m = String(v || '').match(/T(\d{2}:\d{2})/);
+    return m ? m[1] : '';
+  };
+  const setTimeOnLocal = (v, hhmm) => {
+    const day = String(v || '').slice(0, 10);
+    if (!day || !hhmm) return v;
+    return `${day}T${hhmm}`;
+  };
+
+  const eventIdsForPopup = useMemo(() => {
+    const ids = [];
+    if (Array.isArray(md.event_ids)) ids.push(...md.event_ids);
+    if (md.event_id) ids.push(md.event_id);
+    if (md.sx_event_id) ids.push(md.sx_event_id);
+    if (md.transport_event_id) ids.push(md.transport_event_id);
+    if (md.install_event_id) ids.push(md.install_event_id);
+    return [...new Set(ids.filter(Boolean).map(String))];
+  }, [md.event_ids, md.event_id, md.sx_event_id, md.transport_event_id, md.install_event_id]);
 
   useEffect(() => {
     if (state !== 'awaiting_company' || !canSale) return;
@@ -733,6 +793,77 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
       .catch(() => { if (active) setCompanies([]); });
     return () => { active = false; };
   }, [state, canSale]);
+
+  // Prefill địa chỉ / ngày lắp từ deal + dự án (cùng nguồn panel Thông tin VC).
+  useEffect(() => {
+    if (state !== 'awaiting_company' || !canSale) return undefined;
+    let active = true;
+    const pickAddr = (...cands) => {
+      for (const c of cands) {
+        const s = String(c || '').trim();
+        if (s) return s;
+      }
+      return '';
+    };
+    const fill = async () => {
+      let nextAddr = pickAddr(md.install_address);
+      let nextInstall = md.install_date ? toDatetimeLocalValue(md.install_date) : '';
+
+      const tasks = [];
+      if (comment?.lead_id) {
+        tasks.push(
+          api.get(`/crm/leads/${comment.lead_id}/detail`)
+            .then((lr) => {
+              const deal = lr.data || {};
+              nextAddr = pickAddr(
+                nextAddr,
+                deal.install_address,
+                deal.customer?.address,
+                deal.customer_address,
+                deal.linked_project?.install_address,
+                deal.linked_project?.customer?.address,
+              );
+              if (!nextInstall && deal.linked_project?.install_date) {
+                nextInstall = toDatetimeLocalValue(deal.linked_project.install_date);
+              }
+            })
+            .catch(() => {}),
+        );
+      }
+      if (md.project_id) {
+        tasks.push(
+          api.get(`/projects/${md.project_id}`)
+            .catch(() => api.get(`/production/projects/${md.project_id}`))
+            .catch(() => api.get(`/logistics/projects/${md.project_id}`))
+            .then((pr) => {
+              const p = pr.data?.project || pr.data || {};
+              nextAddr = pickAddr(
+                nextAddr,
+                p.install_address,
+                p.customer?.address,
+                (p.crmDeals || p.crm_deals || [])[0]?.install_address,
+                (p.crmDeals || p.crm_deals || [])[0]?.customer?.address,
+              );
+              if (!nextInstall && p.install_date) nextInstall = toDatetimeLocalValue(p.install_date);
+            })
+            .catch(() => {}),
+        );
+      }
+      await Promise.all(tasks);
+      if (!active) return;
+      if (nextAddr) setInstallAddress((prev) => (prev.trim() ? prev : nextAddr));
+      if (nextInstall) setInstallDate((prev) => (prev.trim() ? prev : nextInstall));
+    };
+    void fill();
+    return () => { active = false; };
+  }, [
+    state,
+    canSale,
+    comment?.lead_id,
+    md.project_id,
+    md.install_address,
+    md.install_date,
+  ]);
 
   // Tự điền ghi chú: «Loại - xưởng» từ deal (phân loại CRM) + xưởng SX của dự án.
   useEffect(() => {
@@ -836,24 +967,153 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
                     className="mt-1 w-full px-2 py-1.5 border border-orange-200 rounded-lg text-[13px] bg-white focus:ring-2 focus:ring-orange-400 resize-y"
                   />
                 </label>
-                <label className="block">
-                  <span className="text-[11px] font-semibold text-gray-600 flex items-center gap-1"><Calendar className="h-3.5 w-3.5" /> Ngày lấy hàng *</span>
-                  <input
-                    type="datetime-local"
-                    value={pickupAt}
-                    onChange={(e) => setPickupAt(e.target.value)}
-                    className="mt-1 w-full h-9 px-2 border border-orange-200 rounded-lg text-[13px] bg-white focus:ring-2 focus:ring-orange-400"
-                  />
-                </label>
+                  <div className="rounded-lg border border-orange-100 bg-white/70 p-2 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-orange-800 flex-1 min-w-0">
+                      Thông tin giao / lắp (đồng bộ panel VC + lịch sự kiện)
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => openEventsCalendar(pickupAt || installDate || null)}
+                      className="shrink-0 inline-flex items-center gap-1 h-7 px-2 rounded-lg border border-orange-200 bg-white text-[11px] font-semibold text-orange-700 hover:bg-orange-50"
+                      title="Mở lịch sự kiện VC/LĐ"
+                    >
+                      <Calendar className="h-3.5 w-3.5" />
+                      Lịch sự kiện
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
+                    <div className="block min-w-0">
+                      <span className="block h-4 text-[11px] font-semibold text-gray-600 leading-4">
+                        Ngày nhận hàng *
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          openDatePickCalendar('pickup');
+                        }}
+                        className="mt-1 box-border w-full h-9 px-2 border border-orange-200 rounded-lg text-[13px] leading-9 bg-white text-left hover:border-orange-400 hover:bg-orange-50/50 focus:ring-2 focus:ring-orange-400 inline-flex items-center gap-1.5 cursor-pointer"
+                        title="Mở lịch chọn ngày nhận hàng (tự gắn ngày lắp cùng ngày)"
+                      >
+                        <Calendar className="h-3.5 w-3.5 text-orange-600 shrink-0" />
+                        <span className={`truncate ${pickupAt ? 'text-gray-900 font-medium' : 'text-gray-400'}`}>
+                          {pickupAt ? formatDatetimeLocalLabel(pickupAt) : 'Bấm để mở lịch chọn ngày…'}
+                        </span>
+                      </button>
+                      {pickupAt ? (
+                        <label className="mt-1 flex items-center gap-1.5 text-[11px] text-gray-600">
+                          <span className="shrink-0">Giờ VC</span>
+                          <input
+                            type="time"
+                            value={timePart(pickupAt) || '09:00'}
+                            onChange={(e) => setPickupAt(setTimeOnLocal(pickupAt, e.target.value))}
+                            className="h-7 px-1.5 border border-orange-200 rounded-md bg-white"
+                          />
+                        </label>
+                      ) : null}
+                    </div>
+                    <div className="block min-w-0">
+                      <span className="block h-4 text-[11px] font-semibold text-gray-600 leading-4">
+                        Ngày lắp đặt
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (!pickupAt) {
+                            setErr('Chọn ngày nhận hàng VC trước, rồi mới chọn / đổi ngày lắp đặt.');
+                            return;
+                          }
+                          openDatePickCalendar('install');
+                        }}
+                        className="mt-1 box-border w-full h-9 px-2 border border-orange-200 rounded-lg text-[13px] leading-9 bg-white text-left hover:border-orange-400 hover:bg-orange-50/50 focus:ring-2 focus:ring-orange-400 inline-flex items-center gap-1.5 cursor-pointer"
+                        title="Chọn lại ngày lắp đặt (≥ ngày VC)"
+                      >
+                        <Calendar className="h-3.5 w-3.5 text-orange-600 shrink-0" />
+                        <span className={`truncate ${installDate ? 'text-gray-900 font-medium' : 'text-gray-400'}`}>
+                          {installDate ? formatDatetimeLocalLabel(installDate) : 'Tự điền khi chọn ngày VC'}
+                        </span>
+                      </button>
+                      {installDate ? (
+                        <label className="mt-1 flex items-center gap-1.5 text-[11px] text-gray-600">
+                          <span className="shrink-0">Giờ lắp</span>
+                          <input
+                            type="time"
+                            value={timePart(installDate) || '14:00'}
+                            onChange={(e) => setInstallDate(setTimeOnLocal(installDate, e.target.value))}
+                            className="h-7 px-1.5 border border-orange-200 rounded-md bg-white"
+                          />
+                        </label>
+                      ) : null}
+                    </div>
+                  </div>
+                  {(pickupAt || installDate) ? (
+                    <div className="rounded-md border border-orange-100 bg-orange-50/50 px-2 py-1.5 space-y-1">
+                      <p className="text-[10px] font-semibold text-orange-800">3 sự kiện sẽ tạo</p>
+                      <div className="space-y-1">
+                        <div className="flex items-start gap-1.5 text-[11px] text-gray-800">
+                          <span className="shrink-0 mt-0.5 h-4 w-4 rounded bg-violet-100 text-violet-700 text-[9px] font-bold inline-flex items-center justify-center">SX</span>
+                          <div className="min-w-0">
+                            <p className="font-semibold leading-tight">Giao hàng xưởng</p>
+                            <p className="text-[10px] text-gray-500">{pickupAt ? formatDatetimeLocalLabel(pickupAt) : '—'}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-start gap-1.5 text-[11px] text-gray-800">
+                          <span className="shrink-0 mt-0.5 h-4 w-4 rounded bg-orange-100 text-orange-700 text-[9px] font-bold inline-flex items-center justify-center">VC</span>
+                          <div className="min-w-0">
+                            <p className="font-semibold leading-tight">Vận chuyển / nhận hàng</p>
+                            <p className="text-[10px] text-gray-500">{pickupAt ? formatDatetimeLocalLabel(pickupAt) : '—'}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-start gap-1.5 text-[11px] text-gray-800">
+                          <span className="shrink-0 mt-0.5 h-4 w-4 rounded bg-amber-100 text-amber-800 text-[9px] font-bold inline-flex items-center justify-center">LĐ</span>
+                          <div className="min-w-0">
+                            <p className="font-semibold leading-tight">Lắp đặt</p>
+                            <p className="text-[10px] text-gray-500">
+                              {installDate
+                                ? formatDatetimeLocalLabel(installDate)
+                                : (pickupAt ? formatDatetimeLocalLabel(pickupAt) : '—')}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                  <label className="block">
+                    <span className="text-[11px] font-semibold text-gray-600">Địa chỉ lắp đặt</span>
+                    <textarea
+                      value={installAddress}
+                      onChange={(e) => setInstallAddress(e.target.value)}
+                      rows={2}
+                      placeholder="Số nhà, đường, phường…"
+                      className="mt-1 w-full px-2 py-1.5 border border-orange-200 rounded-lg text-[13px] bg-white focus:ring-2 focus:ring-orange-400 resize-y"
+                    />
+                  </label>
+                </div>
                 {err && <p className="text-[11px] text-red-600">{err}</p>}
                 <button
                   type="button"
                   disabled={!companyId || !pickupAt || busy === 'select'}
-                  onClick={() => run('select', () => onSelect(comment.id, {
+                  onClick={() => {
+                    if (installDate && pickupAt) {
+                      const vcDay = String(pickupAt).slice(0, 10);
+                      const installDay = String(installDate).slice(0, 10);
+                      if (installDay < vcDay) {
+                        setErr('Ngày lắp đặt phải bằng hoặc sau ngày nhận hàng VC.');
+                        return;
+                      }
+                    }
+                    run('select', () => onSelect(comment.id, {
                     logistics_company_id: companyId,
                     notes: selectNotes.trim() || null,
                     pickup_at: new Date(pickupAt).toISOString(),
-                  }))}
+                    install_date: installDate ? new Date(installDate).toISOString() : null,
+                    install_address: installAddress.trim() || null,
+                  }));
+                  }}
                   className="w-full h-9 rounded-lg bg-orange-600 text-white text-[13px] font-semibold hover:bg-orange-700 disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {busy === 'select' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />}
@@ -880,15 +1140,24 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
             ) : null}
             {canSale ? (
               <>
-                <label className="block">
+                <div className="block">
                   <span className="text-[11px] font-semibold text-gray-600 flex items-center gap-1"><Calendar className="h-3.5 w-3.5" /> Ngày lấy hàng *</span>
-                  <input
-                    type="datetime-local"
-                    value={pickupAt}
-                    onChange={(e) => setPickupAt(e.target.value)}
-                    className="mt-1 w-full h-9 px-2 border border-orange-200 rounded-lg text-[13px] bg-white focus:ring-2 focus:ring-orange-400"
-                  />
-                </label>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      openDatePickCalendar('pickup');
+                    }}
+                    className="mt-1 w-full h-9 px-2 border border-orange-200 rounded-lg text-[13px] bg-white text-left hover:border-orange-400 hover:bg-orange-50/50 focus:ring-2 focus:ring-orange-400 inline-flex items-center gap-1.5 cursor-pointer"
+                    title="Mở lịch sự kiện để chọn ngày lấy hàng"
+                  >
+                    <Calendar className="h-3.5 w-3.5 text-orange-600 shrink-0" />
+                    <span className={`truncate ${pickupAt ? 'text-gray-900 font-medium' : 'text-gray-400'}`}>
+                      {pickupAt ? formatDatetimeLocalLabel(pickupAt) : 'Bấm để mở lịch chọn ngày…'}
+                    </span>
+                  </button>
+                </div>
                 <input
                   type="text"
                   value={pickupNotes}
@@ -924,10 +1193,25 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
               {md.select_notes ? (
                 <p><span className="text-gray-500">Ghi chú:</span> {md.select_notes}</p>
               ) : null}
-              <p><span className="text-gray-500">Ngày lấy hàng:</span> <strong>{formatVcDateTime(md.pickup_at)}</strong></p>
+              <p><span className="text-gray-500">Ngày nhận hàng:</span> <strong>{formatVcDateTime(md.pickup_at)}</strong></p>
+              {md.install_date ? (
+                <p><span className="text-gray-500">Ngày lắp đặt:</span> <strong>{formatVcDateTime(md.install_date)}</strong></p>
+              ) : null}
               <p className="text-[11px] text-orange-700/80 pt-0.5">
                 Chỉ phụ trách chính Xưởng và VC/LĐ được xác nhận.
               </p>
+              <button
+                type="button"
+                onClick={() => openEventsCalendar(md.pickup_at || md.install_date || null)}
+                className="mt-1.5 w-full h-8 inline-flex items-center justify-center gap-1.5 rounded-lg border border-orange-200 bg-orange-50 text-[12px] font-semibold text-orange-800 hover:bg-orange-100"
+              >
+                <Calendar className="h-3.5 w-3.5" />
+                {md.events_mode === 'triple' || (Array.isArray(md.event_ids) && md.event_ids.length >= 3)
+                  ? 'Mở lịch sự kiện (3 sự kiện: SX + VC + Lắp)'
+                  : md.events_mode === 'split'
+                    ? 'Mở lịch sự kiện VC/LĐ (2 sự kiện)'
+                    : 'Mở lịch sự kiện VC/LĐ'}
+              </button>
             </div>
             {state === 'done' ? (
               <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-[12px] font-semibold text-emerald-800">
@@ -984,6 +1268,71 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm }) {
           </div>
         )}
       </div>
+
+      {eventsPopupOpen && (
+        <VcHandoverEventsPopup
+          leadId={comment?.lead_id || null}
+          projectId={md.project_id || null}
+          companyId={companyId || md.logistics_company_id || md.company_id || null}
+          eventIds={eventIdsForPopup}
+          focusDate={eventsPopupFocus || md.pickup_at || md.install_date || null}
+          pickMode={!!datePickTarget}
+          pickTarget={datePickTarget || 'both'}
+          anchorPickupAt={pickupAt || null}
+          anchorInstallAt={installDate || null}
+          onPickDate={(local) => {
+            if (datePickTarget === 'install') {
+              const vcDay = pickupAt ? String(pickupAt).slice(0, 10) : null;
+              const installDay = local ? String(local).slice(0, 10) : null;
+              if (!vcDay) {
+                alert('Chọn ngày nhận hàng VC trước, rồi mới chọn ngày lắp đặt.');
+                return;
+              }
+              if (installDay && installDay < vcDay) {
+                alert('Ngày lắp đặt phải bằng hoặc sau ngày nhận hàng VC.');
+                return;
+              }
+              setInstallDate(local);
+            } else {
+              // Fallback: chỉ VC → tự gắn lắp cùng ngày 14:00
+              setPickupAt(local);
+              const day = String(local).slice(0, 10);
+              setInstallDate(`${day}T14:00`);
+            }
+            setEventsPopupOpen(false);
+            setEventsPopupFocus(null);
+            setDatePickTarget(null);
+          }}
+          onPickDates={({ pickupAt: p, installAt: i }) => {
+            if (p && i) {
+              const vcDay = String(p).slice(0, 10);
+              const installDay = String(i).slice(0, 10);
+              if (installDay && vcDay && installDay < vcDay) {
+                alert('Ngày lắp đặt phải bằng hoặc sau ngày nhận hàng VC.');
+                return;
+              }
+            }
+            if (p) {
+              setPickupAt(p);
+              if (i) setInstallDate(i);
+              else {
+                const day = String(p).slice(0, 10);
+                setInstallDate(`${day}T14:00`);
+              }
+            } else if (i) {
+              setInstallDate(i);
+            }
+            setEventsPopupOpen(false);
+            setEventsPopupFocus(null);
+            setDatePickTarget(null);
+          }}
+          onClose={() => {
+            setEventsPopupOpen(false);
+            setEventsPopupFocus(null);
+            setDatePickTarget(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1678,7 +2027,28 @@ export function CrmLeadCommentsPanel({
 
   const vcSelect = useCallback(async (commentId, payload) => {
     const r = await api.patch(`/vc-handover/comments/${commentId}/select`, payload);
-    return applyVcRow(r.data?.comment);
+    applyVcRow(r.data?.comment);
+    const hist = r.data?.history_comment;
+    if (hist?.id) {
+      setComments((prev) => {
+        if (prev.some((c) => String(c.id) === String(hist.id))) return prev;
+        return [...prev, { ...hist, reactions: hist.reactions || { summary: [], mine: null } }];
+      });
+    }
+    // Báo board VC/LĐ reload — dự án reuse mã SX, gắn logistics_company_id đã chọn.
+    try {
+      window.dispatchEvent(new CustomEvent('vc-handover:board-refresh', {
+        detail: {
+          id: r.data?.project_id || null,
+          project_id: r.data?.project_id || null,
+          status: 'shipping',
+          reason: 'vc_handover',
+          logistics_company_id: r.data?.logistics_company_id || payload?.logistics_company_id || null,
+          vc_kanban_column_id: r.data?.vc_kanban_column_id || null,
+        },
+      }));
+    } catch (_) { /* ignore */ }
+    return r.data?.comment;
   }, [applyVcRow]);
 
   const vcSchedule = useCallback(async (commentId, payload) => {

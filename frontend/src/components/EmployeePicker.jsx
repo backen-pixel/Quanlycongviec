@@ -32,6 +32,9 @@ export default function EmployeePicker({
   disabled = false,
   /** true: hiển thị full_name gốc thay vì dạng rút gọn (VD «Thời D.T.») */
   displayFullName = false,
+  /** Dữ liệu nạp sẵn — bỏ qua fetch khi đủ users */
+  preloadUsers = null,
+  preloadDepartments = null,
 }) {
   const labelForUser = (name) => {
     const full = String(name || '').trim();
@@ -55,9 +58,17 @@ export default function EmployeePicker({
   const regionKey = regionId ? String(regionId) : '';
   const missingRegion = requireRegion && !regionKey;
   const isDisabled = disabled || !effectiveKey || missingRegion;
+  const preloadKey = Array.isArray(preloadUsers)
+    ? `preload:${effectiveKey || ''}:${preloadUsers.length}:${preloadUsers[0]?.id || ''}`
+    : '';
 
   // Load users + departments when companyId or companyUnitId changes
   useEffect(() => {
+    if (Array.isArray(preloadUsers)) {
+      setAllUsers(preloadUsers);
+      setDepartments(Array.isArray(preloadDepartments) ? preloadDepartments : []);
+      return;
+    }
     if (effectiveKey) {
       loadData(effectiveKey, !!companyId, forModule);
     } else {
@@ -66,7 +77,7 @@ export default function EmployeePicker({
       setSelectedUser(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveKey, companyId, forModule]);
+  }, [effectiveKey, companyId, forModule, preloadKey]);
 
   const regionScopedUsers = useMemo(() => {
     if (!regionKey) return allUsers;

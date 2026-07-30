@@ -40,7 +40,7 @@ r.post('/leads/:id/members', async (req, res) => {
     for (const item of toAdd) {
       const { data, error } = await supabase.from('lead_members')
         .upsert({ lead_id: req.params.id, user_id: item.user_id, role: item.role, added_by: req.user.userId }, { onConflict: 'lead_id,user_id' })
-        .select('*, user:users!lead_members_user_id_fkey(id, full_name, email, avatar, role)')
+        .select('*, user:users!lead_members_user_id_fkey(id, full_name, email, avatar, role, company_id, drive_module)')
         .single();
       if (error) { console.error('Add member error:', error); continue; }
       results.push(data);
@@ -84,19 +84,36 @@ r.post('/leads/:id/members', async (req, res) => {
 
 r.get('/leads/:id/assignments', async (req, res) => {
   try {
-    let q = supabase
-      .from('crm_assignments')
-      .select(`
-        id, company_id, column_id, lead_id, title, description,
+    const ASSIGN_LIST_SELECT = `
+        id, company_id, column_id, lead_id, crm_task_id, assignment_module,
+        task_source_type, employee_error_module, title, description,
         assignee_id, created_by_id, priority, status, deadline,
         position, created_at, updated_at, completed_at,
-        assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar),
+        assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar, role, drive_module),
         created_by:users!crm_assignments_created_by_id_fkey(id, full_name, email, avatar),
         lead:crm_leads(id, code, title, type)
-      `)
+      `;
+    const ASSIGN_LIST_SELECT_LEGACY = `
+        id, company_id, column_id, lead_id, assignment_module, title, description,
+        assignee_id, created_by_id, priority, status, deadline,
+        position, created_at, updated_at, completed_at,
+        assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar, role, drive_module),
+        created_by:users!crm_assignments_created_by_id_fkey(id, full_name, email, avatar),
+        lead:crm_leads(id, code, title, type)
+      `;
+    let q = supabase
+      .from('crm_assignments')
+      .select(ASSIGN_LIST_SELECT)
       .eq('lead_id', req.params.id)
       .order('created_at', { ascending: false });
     let { data, error } = await q;
+    if (error && /task_source_type|employee_error_module|crm_task_id/.test(error.message || '')) {
+      ({ data, error } = await supabase
+        .from('crm_assignments')
+        .select(ASSIGN_LIST_SELECT_LEGACY)
+        .eq('lead_id', req.params.id)
+        .order('created_at', { ascending: false }));
+    }
     if (error && /lead_id/.test(error.message || '')) {
       return res.json({ assignments: [] });
     }
@@ -106,7 +123,7 @@ r.get('/leads/:id/assignments', async (req, res) => {
       const ids = list.map((x) => x.id);
       const { data: rows } = await supabase
         .from('crm_assignment_assignees')
-        .select('assignment_id, user_id, user:users(id, full_name, email, avatar)')
+        .select('assignment_id, user_id, user:users(id, full_name, email, avatar, role, drive_module)')
         .in('assignment_id', ids);
       const byId = new Map();
       (rows || []).forEach((r) => {
@@ -127,70 +144,58 @@ r.post('/leads/:id/assignments', async (req, res) => {
   try {
     const leadId = req.params.id;
     const b = req.body || {};
-    const rawIds = Array.isArray(b.assignee_ids) ? b.assignee_ids.filter(Boolean) : [];
-    if (!rawIds.length) {
-      return res.status(400).json({ error: 'Chọn ít nhất một thành viên để giao việc' });
-    }
+    const {
+      createSharedWorkspaceLinkedAssignment,
+    } = require('../../../helpers/sharedWorkspaceAssignmentCreate');
+    const { emitNotifyBadge: emitAssignBadge } = require('../../../helpers/notifyBadge');
 
-    const { data: memRows } = await supabase
-      .from('lead_members')
-      .select('user_id')
-      .eq('lead_id', leadId);
-    const memberSet = new Set((memRows || []).map((m) => String(m.user_id)));
-    const invalid = rawIds.filter((id) => !memberSet.has(String(id)));
-    if (invalid.length) {
-      return res.status(400).json({
-        error: 'Chỉ gán nhiệm vụ cho nhân viên đang tham gia lead/deal này',
-        invalid_user_ids: invalid,
+    const result = await createSharedWorkspaceLinkedAssignment(req, leadId, b);
+    if (result.error) {
+      return res.status(result.status || 500).json({
+        error: result.error,
+        ...(result.invalid_user_ids ? { invalid_user_ids: result.invalid_user_ids } : {}),
+        ...(result.code ? { code: result.code } : {}),
       });
     }
 
-    const { data: leadInfo } = await supabase
-      .from('crm_leads')
-      .select('code, title, type')
-      .eq('id', leadId)
-      .maybeSingle();
+    const data = result.data?.assignment;
+    const assigneeIds = result.data?.assignee_ids || [];
+    const leadInfo = result.data?.lead;
     const leadLabel = leadInfo
       ? `${leadInfo.code || ''} ${leadInfo.title || ''}`.trim()
       : 'lead/deal';
-
-    const result = await createCrmAssignment(req, {
-      title: b.title,
-      description: b.description,
-      assignee_ids: rawIds,
-      column_id: b.column_id,
-      company_id: b.company_id,
-      priority: b.priority,
-      status: b.status,
-      deadline: b.deadline,
-      lead_id: leadId,
-    });
-    if (result.error) return res.status(result.status || 500).json({ error: result.error });
-
-    const data = result.data?.assignment;
-    const assigneeIds = result.data?.assignee_ids || [];
     const leadSuffix = leadLabel ? ` (${leadLabel})` : '';
     const pushFn = req.app?.get?.('pushNotification');
+    const mod = String(data?.assignment_module || b.assignment_module || 'crm').toLowerCase();
+    const notifTitle = mod === 'production'
+      ? '📋 Bạn vừa được giao nhiệm vụ SX'
+      : mod === 'logistics'
+        ? '📋 Bạn vừa được giao nhiệm vụ VC/LĐ'
+        : '📋 Bạn vừa được giao nhiệm vụ CRM';
+    const navPath = mod === 'production' ? '/sx/assignments' : '/crm/assignments';
     for (const uid of assigneeIds) {
       if (String(uid) === String(req.user.userId)) continue;
       const message = `"${data.title}"${leadSuffix}${data.deadline ? ' — hạn ' + new Date(data.deadline).toLocaleString('vi-VN') : ''}`;
       const meta = {
         lead_id: leadId,
-        nav_path: '/crm/assignments',
+        crm_task_id: data.crm_task_id || result.data?.task?.id || null,
+        nav_path: navPath,
         open: data.id,
-        module_key: 'crm',
-        ecosystem_module_key: 'crm',
+        module_key: mod === 'logistics' ? 'vc' : (mod === 'production' ? 'sx' : 'crm'),
+        ecosystem_module_key: mod === 'logistics' ? 'logistics' : mod,
+        task_source_type: data.task_source_type || b.task_source_type || null,
+        employee_error_module: data.employee_error_module || b.employee_error_module || null,
       };
       const notif = await persistAssignmentNotification(supabase, uid, {
         type: 'crm_assignment_assigned',
-        title: '📋 Bạn vừa được giao nhiệm vụ CRM',
+        title: notifTitle,
         message,
         assignmentId: data.id,
         metadata: meta,
       });
       const payload = notif || buildAssignmentNotificationInsert(uid, {
         type: 'crm_assignment_assigned',
-        title: '📋 Bạn vừa được giao nhiệm vụ CRM',
+        title: notifTitle,
         message,
         assignmentId: data.id,
         metadata: meta,
@@ -204,18 +209,26 @@ r.post('/leads/:id/assignments', async (req, res) => {
         } catch { /* ignore */ }
       }
     }
-    if (assigneeIds.length) emitNotifyBadge(req.app, 'assignments', { company_id: req.user?.company_id || null });
-
     if (assigneeIds.length) {
-      const { data: asnRows } = await supabase
-        .from('crm_assignment_assignees')
-        .select('user:users(id, full_name, email, avatar)')
-        .eq('assignment_id', data.id);
-      data.assignees = (asnRows || []).map((r) => r.user).filter(Boolean);
+      try {
+        emitAssignBadge(req.app, 'assignments', { company_id: req.user?.company_id || null });
+      } catch (_) { /* ignore */ }
     }
 
+    try {
+      await emitCrmTaskChanged(req, {
+        leadId,
+        taskId: data.crm_task_id || result.data?.task?.id || null,
+        action: 'created',
+        task: result.data?.task || data,
+      });
+    } catch (_) { /* ignore */ }
+
     void rcInvalidateTags(['crm:assignments']);
-    res.status(result.status).json({ assignment: data });
+    res.status(result.status).json({
+      assignment: data,
+      task: result.data?.task || null,
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

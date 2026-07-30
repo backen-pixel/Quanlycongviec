@@ -10,6 +10,7 @@ export const FILL_FORM_FIELD_TYPES = [
   { value: 'single_select', label: 'Chọn 1' },
   { value: 'multi_select', label: 'Chọn nhiều' },
   { value: 'checklist', label: 'Checklist (+ Khác)' },
+  { value: 'appliance_list', label: 'Thiết bị (loại + thương hiệu)' },
   { value: 'button', label: 'Nút khác' },
 ];
 
@@ -36,6 +37,37 @@ export function defaultFormConfig() {
 function opt(id, label, isOther = false) {
   return { id, label, is_other: !!isOther };
 }
+
+/** Gợi ý loại thiết bị bếp cho field appliance_list. */
+export const KITCHEN_APPLIANCE_TYPE_OPTIONS = [
+  opt('gas_hob', 'Bếp gas'),
+  opt('induction_hob', 'Bếp từ / hồng ngoại'),
+  opt('range_hood', 'Máy hút mùi'),
+  opt('oven', 'Lò nướng'),
+  opt('microwave', 'Lò vi sóng'),
+  opt('dishwasher', 'Máy rửa chén'),
+  opt('fridge', 'Tủ lạnh'),
+  opt('water_filter', 'Máy lọc nước'),
+  opt('other', 'Khác', true),
+];
+
+export const STYLE_OPTIONS = [
+  opt('modern', 'Hiện đại'),
+  opt('minimal', 'Tối giản'),
+  opt('indochine', 'Indochine'),
+  opt('classic', 'Cổ điển'),
+  opt('neoclassic', 'Tân cổ điển'),
+  opt('scandinavian', 'Scandinavian'),
+  opt('industrial', 'Industrial'),
+  opt('other', 'Khác', true),
+];
+
+export const COOKS_OFTEN_OPTIONS = [
+  opt('daily', 'Có — hàng ngày'),
+  opt('weekly', 'Có — vài lần/tuần'),
+  opt('occasional', 'Thỉnh thoảng'),
+  opt('rarely', 'Ít / hầu như không'),
+];
 
 /** Loại tủ bếp — quyết định form kích thước. */
 export const CABINET_TYPE_OPTIONS = [
@@ -196,6 +228,51 @@ export function surveyFormPreset() {
         help_text: 'Viết ngắn, cụ thể (nhiều tủ trên, tránh cột…).',
         placeholder: 'VD: Nhiều tủ trên, tránh cột giữa',
       },
+      {
+        id: 'household_size',
+        type: 'number',
+        label: 'Số người trong nhà',
+        required: false,
+        group: 'A',
+        help_text: 'Số thành viên sống tại nhà.',
+        placeholder: 'VD: 4',
+      },
+      {
+        id: 'cooks_often',
+        type: 'single_select',
+        label: 'Có thường xuyên nấu',
+        required: false,
+        group: 'A',
+        help_text: 'Tần suất nấu nướng của gia đình.',
+        options: COOKS_OFTEN_OPTIONS,
+      },
+      {
+        id: 'style',
+        type: 'single_select',
+        label: 'Phong cách',
+        required: false,
+        group: 'A',
+        help_text: 'Phong cách tủ / không gian bếp khách thích.',
+        options: STYLE_OPTIONS,
+      },
+      {
+        id: 'cook_height_cm',
+        type: 'number',
+        label: 'Chiều cao người thường xuyên nấu (cm)',
+        required: false,
+        group: 'A',
+        help_text: 'Dùng để tư vấn chiều cao mặt bàn / tủ trên.',
+        placeholder: 'VD: 160',
+      },
+      {
+        id: 'kitchen_appliances',
+        type: 'appliance_list',
+        label: 'Các thiết bị của bếp',
+        required: false,
+        group: 'A',
+        help_text: 'Thêm từng thiết bị: chọn loại + nhập thương hiệu.',
+        options: KITCHEN_APPLIANCE_TYPE_OPTIONS,
+      },
 
       // B — nhập sau
       {
@@ -277,9 +354,11 @@ function normalizeFormField(f, idx) {
     help_text: String(f.help_text || '').trim(),
     group: ['A', 'B', 'C'].includes(f.group) ? f.group : null,
   };
-  if (type === 'single_select' || type === 'multi_select' || type === 'checklist') {
+  if (type === 'single_select' || type === 'multi_select' || type === 'checklist' || type === 'appliance_list') {
     const opts = Array.isArray(f.options) ? f.options : [];
-    field.options = opts.map((o, i) => {
+    const fallbackOpts = type === 'appliance_list' ? KITCHEN_APPLIANCE_TYPE_OPTIONS : [];
+    const source = opts.length ? opts : fallbackOpts;
+    field.options = source.map((o, i) => {
       if (typeof o === 'string') return { id: `opt_${i}`, label: o, is_other: false };
       return {
         id: String(o?.id || `opt_${i}`),
@@ -378,8 +457,26 @@ export function formatFormFieldDisplay(field, value) {
     const layout = value.layout ? ` [${value.layout}]` : '';
     return parts.length ? `${parts.join(' · ')}${layout}` : '';
   }
+  if (field.type === 'appliance_list') {
+    const rows = Array.isArray(value) ? value : [];
+    return rows
+      .map((row) => {
+        const typeLabel = String(row?.type_other || '').trim()
+          || row?.type_label
+          || optionLabel(field, row?.type_id)
+          || String(row?.type || '').trim();
+        const brand = String(row?.brand || '').trim();
+        if (!typeLabel && !brand) return '';
+        return brand ? `${typeLabel}: ${brand}` : typeLabel;
+      })
+      .filter(Boolean)
+      .join('; ');
+  }
   if (field.id === 'budget') {
     return formatBudgetFormDisplay(value);
+  }
+  if (field.id === 'cook_height_cm' && value !== '' && value != null) {
+    return `${value} cm`;
   }
   return String(value);
 }
@@ -441,6 +538,9 @@ export function createEmptyFormField(type = 'text') {
       field.options.push({ id: newFormFieldId(), label: 'Khác', is_other: true });
     }
   }
+  if (type === 'appliance_list') {
+    field.options = KITCHEN_APPLIANCE_TYPE_OPTIONS.map((o) => ({ ...o }));
+  }
   if (type === 'file') {
     field.multiple = false;
     field.accept = '';
@@ -481,6 +581,14 @@ function isEmptyValue(field, v) {
     if (typeof v !== 'object') return true;
     return !(Array.isArray(v.ids) && v.ids.length);
   }
+  if (field.type === 'appliance_list') {
+    if (!Array.isArray(v)) return true;
+    return !v.some((row) => {
+      const typeOk = String(row?.type_id || row?.type || row?.type_other || '').trim();
+      const brandOk = String(row?.brand || '').trim();
+      return typeOk || brandOk;
+    });
+  }
   if (field.type === 'single_select' && v && typeof v === 'object') {
     return !v.id;
   }
@@ -515,8 +623,88 @@ export function validateFormValues(config, values) {
         }
       }
     }
+    if (field.type === 'appliance_list' && Array.isArray(v)) {
+      const otherOpt = (field.options || []).find((o) => o.is_other);
+      for (const row of v) {
+        const hasAny = String(row?.type_id || row?.type || row?.type_other || '').trim()
+          || String(row?.brand || '').trim();
+        if (!hasAny) continue;
+        if (!String(row?.type_id || row?.type || '').trim() && !String(row?.type_other || '').trim()) {
+          return { ok: false, error: `«${field.label}»: chọn loại thiết bị`, values: next };
+        }
+        if (otherOpt && String(row?.type_id) === String(otherOpt.id) && !String(row?.type_other || '').trim()) {
+          return { ok: false, error: `«${field.label}»: đã chọn Khác — ghi rõ loại`, values: next };
+        }
+      }
+      next[field.id] = v.filter((row) => {
+        const typeOk = String(row?.type_id || row?.type || row?.type_other || '').trim();
+        const brandOk = String(row?.brand || '').trim();
+        return typeOk || brandOk;
+      });
+    }
   }
   return { ok: true, values: next };
+}
+
+/** Field ids mới (Phúc Đạt) — inject vào form khảo sát cũ khi mở phiếu. */
+export const SURVEY_EXTRA_FIELD_DEFS = [
+  {
+    id: 'household_size',
+    type: 'number',
+    label: 'Số người trong nhà',
+    required: false,
+    group: 'A',
+    help_text: 'Số thành viên sống tại nhà.',
+    placeholder: 'VD: 4',
+  },
+  {
+    id: 'cooks_often',
+    type: 'single_select',
+    label: 'Có thường xuyên nấu',
+    required: false,
+    group: 'A',
+    help_text: 'Tần suất nấu nướng của gia đình.',
+    options: COOKS_OFTEN_OPTIONS,
+  },
+  {
+    id: 'style',
+    type: 'single_select',
+    label: 'Phong cách',
+    required: false,
+    group: 'A',
+    help_text: 'Phong cách tủ / không gian bếp khách thích.',
+    options: STYLE_OPTIONS,
+  },
+  {
+    id: 'cook_height_cm',
+    type: 'number',
+    label: 'Chiều cao người thường xuyên nấu (cm)',
+    required: false,
+    group: 'A',
+    help_text: 'Dùng để tư vấn chiều cao mặt bàn / tủ trên.',
+    placeholder: 'VD: 160',
+  },
+  {
+    id: 'kitchen_appliances',
+    type: 'appliance_list',
+    label: 'Các thiết bị của bếp',
+    required: false,
+    group: 'A',
+    help_text: 'Thêm từng thiết bị: chọn loại + nhập thương hiệu.',
+    options: KITCHEN_APPLIANCE_TYPE_OPTIONS,
+  },
+];
+
+/** Ghép field khảo sát mới vào form cũ (không ghi đè field đã có). */
+export function mergeSurveyExtraFields(fields) {
+  const list = Array.isArray(fields) ? [...fields] : [];
+  const existing = new Set(list.map((f) => f.id));
+  const missing = SURVEY_EXTRA_FIELD_DEFS.filter((f) => !existing.has(f.id));
+  if (!missing.length) return list;
+  const insertAfter = list.findIndex((f) => f.id === 'customer_need');
+  const at = insertAfter >= 0 ? insertAfter + 1 : list.findIndex((f) => f.id === 'budget');
+  if (at < 0) return [...list, ...missing];
+  return [...list.slice(0, at), ...missing, ...list.slice(at)];
 }
 
 /** Nhóm fields theo A/B/C để render section. */

@@ -197,15 +197,12 @@ async function syncTaskNotesToAssignment(taskId, assignmentId) {
     .maybeSingle();
   if (!task) return;
   const notes = String(task.notes || '').trim();
-  if (!notes) return;
-  const { data: asn } = await supabase
-    .from('crm_assignments')
-    .select('description')
-    .eq('id', assignmentId)
-    .maybeSingle();
-  if (String(asn?.description || '').trim()) return;
+  // Luôn đẩy notes → description (kể cả khi xoá ghi chú) để hai bên khớp.
   await supabase.from('crm_assignments')
-    .update({ description: notes, updated_at: new Date().toISOString() })
+    .update({
+      description: notes || null,
+      updated_at: new Date().toISOString(),
+    })
     .eq('id', assignmentId);
 }
 

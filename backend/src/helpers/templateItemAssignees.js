@@ -2,7 +2,7 @@
  * Gán nhiều NV mặc định trên crm_task_template_items / workshop_task_template_items.
  */
 const { replaceCrmTaskAssignees } = require('./crmTaskAssignees');
-const { syncAssignmentFromCrmTask } = require('./crmTaskAssignmentSync');
+const { ensureActiveAssignmentForLead } = require('./crmSequentialAssignment');
 const { notifyAfterCrmTaskAssignmentSync } = require('./crmAssignmentNotifications');
 
 function normalizeTemplateItemAssigneeIds(source) {
@@ -52,21 +52,32 @@ async function applyAssigneesToInsertedCrmTasks(createdTasks, assigneeIdsList, r
     if (!ids.length) continue;
     await replaceCrmTaskAssignees(task.id, ids);
     applied += 1;
-    if (opts.syncAssignments === false || !req) continue;
-    try {
-      const assignmentModule = opts.assignmentModule
-        || (String(task.stage_slug || '').startsWith('sx_') ? 'production' : 'crm');
-      const sync = await syncAssignmentFromCrmTask(req, { ...task, assignee_id: ids[0] }, ids, { assignmentModule });
-      await notifyAfterCrmTaskAssignmentSync(req, {
-        task,
-        assigneeIds: ids,
-        assignmentId: sync?.assignmentId,
-        leadCache,
-        assignmentModule,
-        notify: shouldNotify,
-      });
-    } catch (e) {
-      console.warn('[templateItemAssignees] sync assignment:', e.message);
+  }
+
+  // Tuần tự: chỉ 1 Giao việc mở / lead — không sync từng NV.
+  if (opts.syncAssignments !== false && req) {
+    const leadId = rows.find((t) => t?.lead_id)?.lead_id || null;
+    if (leadId) {
+      try {
+        const seq = await ensureActiveAssignmentForLead(req, leadId);
+        if (shouldNotify && seq?.assignmentId && seq?.taskId) {
+          const task = rows.find((t) => String(t.id) === String(seq.taskId)) || rows[0];
+          const assignmentModule = opts.assignmentModule
+            || (String(task?.stage_slug || '').startsWith('sx_') ? 'production' : 'crm');
+          const assigneeIds = idsList[rows.findIndex((t) => String(t.id) === String(seq.taskId))]
+            || (task?.assignee_id ? [String(task.assignee_id)] : []);
+          await notifyAfterCrmTaskAssignmentSync(req, {
+            task,
+            assigneeIds,
+            assignmentId: seq.assignmentId,
+            leadCache,
+            assignmentModule,
+            notify: shouldNotify,
+          });
+        }
+      } catch (e) {
+        console.warn('[templateItemAssignees] sequential assignment:', e.message);
+      }
     }
   }
   return { applied };

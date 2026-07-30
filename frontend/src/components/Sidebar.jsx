@@ -21,18 +21,22 @@ import {
   resolveActiveModule,
   storeModule,
   isCongViecPrimaryPath,
+  isCustomModuleScope,
+  moduleKeyFromCustomScope,
 } from '../lib/sidebarModuleContext';
 import { useModuleAccess } from '../shared/context/ModuleAccessContext';
 import { useSidebarUnreadBadges } from '../shared/context/UnreadBadgesContext';
 import AppSwitcherPanel, { AppSwitcherButton } from './AppSwitcherPanel';
 import SidebarModuleCycleButton from './SidebarModuleCycleButton';
-import { APP_MODULE_DEFINITIONS } from '../lib/appSwitcherModules';
+import { APP_MODULE_DEFINITIONS, mapCustomAppModuleToDef } from '../lib/appSwitcherModules';
+import { buildCustomAppModuleMenuGroups } from '../lib/customAppModuleSidebar';
 import { preloadModuleIconsFromModules } from '../lib/moduleIconPreload';
 import {
   readModuleLocalMenuPins,
   saveModuleMenuPins,
   syncMenuPinsFromServer,
 } from '../lib/sidebarMenuPins';
+import api from '../lib/api';
 
 // Reorganized menu structure - 4 groups + platform admin group
 const MENU_GROUPS = [
@@ -470,6 +474,7 @@ const VC_MENU_GROUPS = [
 ];
 
 function resolveGroupModuleContext(group) {
+  if (group?.moduleScope && String(group.moduleScope).startsWith('custom:')) return group.moduleScope;
   if (group.moduleKey === 'crm' || String(group.id || '').startsWith('crm')) return 'crm';
   if (group.moduleKey === 'production' || String(group.id || '').startsWith('sx')) return 'sx';
   if (group.moduleKey === 'logistics' || String(group.id || '').startsWith('vc')) return 'vc';
@@ -800,6 +805,8 @@ export default function Sidebar() {
   const isExecutive = ['admin', 'manager', 'director', 'supervisor', 'sales_admin', 'crm_production_admin'].includes(user?.role);
   const [searchParams] = useSearchParams();
   const [activeModule, setActiveModule] = useState(() => readStoredModule() || 'crm');
+  const [customAppModules, setCustomAppModules] = useState([]);
+  const [customModMetaByKey, setCustomModMetaByKey] = useState({});
 
   useEffect(() => {
     const next = resolveActiveModule(location.pathname, location.state?.moduleContext, searchParams);
@@ -807,42 +814,76 @@ export default function Sidebar() {
     storeModule(next);
   }, [location.pathname, location.state?.moduleContext, searchParams]);
 
+  useEffect(() => {
+    let cancelled = false;
+    api.get('/app-modules', { params: { for_switcher: 1 } })
+      .then((r) => {
+        if (cancelled) return;
+        const rows = r.data?.modules || [];
+        const defs = rows.map(mapCustomAppModuleToDef).filter(Boolean);
+        const meta = {};
+        rows.forEach((row) => {
+          if (row?.module_key) meta[row.module_key] = row;
+        });
+        setCustomAppModules(defs);
+        setCustomModMetaByKey(meta);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCustomAppModules([]);
+          setCustomModMetaByKey({});
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   /** Ghi âm dùng route /tools/… nhưng vẫn dùng menu CRM khi đang xem trang đó. crmOnly: luôn sidebar CRM. */
-  const isKnowledge = location.pathname.startsWith('/knowledge') || activeModule === 'knowledge';
-  const isCalc = !isKnowledge && (location.pathname.startsWith('/calc') || activeModule === 'calc');
-  const isCRM = !isKnowledge && !isCalc && isCrmSidebarActive(location.pathname, activeModule, crmOnly);
-  const isKetoan = !isKnowledge && !isCalc && (location.pathname.startsWith('/ketoan') || activeModule === 'ketoan');
-  const isMuahang = !isKnowledge && !isCalc && !isKetoan && (location.pathname.startsWith('/mua-hang') || activeModule === 'muahang');
-  const isSX = !isKnowledge && !isCalc && !isKetoan && !isMuahang && (location.pathname.startsWith('/sx') || activeModule === 'sx');
-  const isVC = !isKnowledge && !isCalc && !isKetoan && !isMuahang && (location.pathname.startsWith('/vc') || activeModule === 'vc');
-  const isCongViec = !isKnowledge && !isCalc && !isKetoan && !isMuahang && !isSX && !isVC && !isCRM
+  const customAppModuleKey = isCustomModuleScope(activeModule) ? moduleKeyFromCustomScope(activeModule) : null;
+  const isCustomApp = !!customAppModuleKey;
+  const isKnowledge = !isCustomApp && (location.pathname.startsWith('/knowledge') || activeModule === 'knowledge');
+  const isCalc = !isCustomApp && !isKnowledge && (location.pathname.startsWith('/calc') || activeModule === 'calc');
+  const isCRM = !isCustomApp && !isKnowledge && !isCalc && isCrmSidebarActive(location.pathname, activeModule, crmOnly);
+  const isKetoan = !isCustomApp && !isKnowledge && !isCalc && (location.pathname.startsWith('/ketoan') || activeModule === 'ketoan');
+  const isMuahang = !isCustomApp && !isKnowledge && !isCalc && !isKetoan && (location.pathname.startsWith('/mua-hang') || activeModule === 'muahang');
+  const isSX = !isCustomApp && !isKnowledge && !isCalc && !isKetoan && !isMuahang && (location.pathname.startsWith('/sx') || activeModule === 'sx');
+  const isVC = !isCustomApp && !isKnowledge && !isCalc && !isKetoan && !isMuahang && (location.pathname.startsWith('/vc') || activeModule === 'vc');
+  const isCongViec = !isCustomApp && !isKnowledge && !isCalc && !isKetoan && !isMuahang && !isSX && !isVC && !isCRM
     && (isCongViecPrimaryPath(location.pathname) || activeModule === 'congviec');
-  const sidebarModuleKey = isKnowledge ? 'knowledge'
-    : isCalc ? 'calc'
-      : isKetoan ? 'ketoan'
-        : isMuahang ? 'muahang'
-          : isVC ? 'vc'
-            : isSX ? 'sx'
-              : isCongViec ? 'congviec'
-                : isCRM ? 'crm'
-                  : 'platform';
-  const activeMenuGroups = isKnowledge
-    ? KNOWLEDGE_MENU_GROUPS
-    : isCalc
-      ? CALC_MENU_GROUPS
-      : isKetoan
-        ? KETOAN_MENU_GROUPS
-        : isMuahang
-          ? MUAHANG_MENU_GROUPS
-          : isVC
-            ? VC_MENU_GROUPS
-            : isSX
-              ? SX_MENU_GROUPS
-              : isCongViec
-                ? CONGVIEC_MENU_GROUPS
-                : isCRM
-                  ? null
-                  : MENU_GROUPS;
+  const customModuleId = isCustomApp ? `custom:${customAppModuleKey}` : null;
+  const customModMeta = customAppModuleKey ? (customModMetaByKey[customAppModuleKey] || null) : null;
+  const sidebarModuleKey = isCustomApp ? customModuleId
+    : isKnowledge ? 'knowledge'
+      : isCalc ? 'calc'
+        : isKetoan ? 'ketoan'
+          : isMuahang ? 'muahang'
+            : isVC ? 'vc'
+              : isSX ? 'sx'
+                : isCongViec ? 'congviec'
+                  : isCRM ? 'crm'
+                    : 'platform';
+  const customMenuGroups = useMemo(
+    () => (isCustomApp ? buildCustomAppModuleMenuGroups(customAppModuleKey, customModMeta) : []),
+    [isCustomApp, customAppModuleKey, customModMeta],
+  );
+  const activeMenuGroups = isCustomApp
+    ? customMenuGroups
+    : isKnowledge
+      ? KNOWLEDGE_MENU_GROUPS
+      : isCalc
+        ? CALC_MENU_GROUPS
+        : isKetoan
+          ? KETOAN_MENU_GROUPS
+          : isMuahang
+            ? MUAHANG_MENU_GROUPS
+            : isVC
+              ? VC_MENU_GROUPS
+              : isSX
+                ? SX_MENU_GROUPS
+                : isCongViec
+                  ? CONGVIEC_MENU_GROUPS
+                  : isCRM
+                    ? null
+                    : MENU_GROUPS;
 
   const sidebarUserId = user?.id || user?.userId || null;
 
@@ -992,6 +1033,8 @@ export default function Sidebar() {
         isSX={isSX}
         isCRM={isCRM}
         isCongViec={isCongViec}
+        customModuleId={customModuleId}
+        customModules={customAppModules}
         panelRef={appSwitcherRef}
       />
 
@@ -1028,6 +1071,9 @@ export default function Sidebar() {
             isSX={isSX}
           isCRM={isCRM}
           isCongViec={isCongViec}
+          customModuleId={customModuleId}
+          customModuleName={customModMeta?.name || customAppModuleKey || null}
+          extraModules={customAppModules}
           taskBadge={unifiedTasksOpen}
         />
       </div>
@@ -1105,7 +1151,7 @@ export default function Sidebar() {
             </div>
           </>
         ) : (
-          activeMenuGroups.map((group) => (
+          (activeMenuGroups || []).map((group) => (
               <MenuGroup
                 key={`${sidebarModuleKey}-${group.id}`}
                 group={group}

@@ -17,6 +17,14 @@ const THEMES = {
     idleIcon: 'bg-violet-100 text-violet-600 group-hover:bg-violet-200/80 group-hover:text-violet-700',
     hover: 'hover:bg-violet-50 hover:text-violet-900',
   },
+  orange: {
+    shell: 'border-orange-200/80 shadow-lg shadow-orange-500/12',
+    header: 'bg-gradient-to-r from-orange-50 to-amber-50 border-orange-100/90 text-orange-600',
+    active: 'bg-orange-600 text-white shadow-sm',
+    activeIcon: 'bg-white/20 text-white',
+    idleIcon: 'bg-orange-100 text-orange-600 group-hover:bg-orange-200/80 group-hover:text-orange-700',
+    hover: 'hover:bg-orange-50 hover:text-orange-900',
+  },
 };
 
 /** Menu chế độ xem gọn — dùng chung SX + CRM. */

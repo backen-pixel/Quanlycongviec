@@ -15,7 +15,7 @@ import { mergeUploadProgressState, uploadSingleFileWithProgress, formatUploadPro
 import {
   ClipboardList, X, ChevronDown, ChevronRight, UserPlus, Trash2, Save,
   Circle, CheckCircle2, Clock, Calendar, ListChecks, Plus, User, List,
-  Edit3, Paperclip, FileUp, FileText, Lock,
+  Edit3, Paperclip, FileUp, FileText, Lock, CheckSquare, Square,
 } from 'lucide-react';
 
 const STATUS_ICONS = {
@@ -556,6 +556,15 @@ export default function WorkshopProjectTasksPanel({
     }
   };
 
+  const toggleFileNoteRecorded = async (task) => {
+    try {
+      await api.put(`/tasks/${task.id}`, { file_note_recorded: !task.file_note_recorded });
+      onReload();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Không cập nhật được ghi nhận file/ghi chú');
+    }
+  };
+
   const updateEditPopoverPosition = useCallback(() => {
     const rect = editAnchorElRef.current?.getBoundingClientRect?.();
     if (!rect) return;
@@ -828,6 +837,7 @@ export default function WorkshopProjectTasksPanel({
     const atts = taskAttachments[task.id] || [];
     const hasNotes = !!(task.description || '').trim();
     const blocks = !!task.blocks_stage_advance;
+    const fileNoteOk = !!task.file_note_recorded;
 
   return (
       <div
@@ -894,6 +904,14 @@ export default function WorkshopProjectTasksPanel({
                   <FileText className="h-2.5 w-2.5" />Có ghi chú
                 </span>
               )}
+              {fileNoteOk && (
+                <span
+                  className="text-[10px] text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium border border-teal-200"
+                  title="Đã ghi nhận: nhiệm vụ có file/ghi chú (không chặn chuyển cột)"
+                >
+                  <CheckSquare className="h-2.5 w-2.5" />Đã có file/ghi chú
+                </span>
+              )}
               {checks.length > 0 && (
                 <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium">
                   <ListChecks className="h-2.5 w-2.5" />{checkDone}/{checks.length}
@@ -922,6 +940,16 @@ export default function WorkshopProjectTasksPanel({
               title={blocks ? 'Đang chặn chuyển giai đoạn — bấm để tắt' : 'Bật chặn chuyển giai đoạn'}
             >
               <Lock className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => toggleFileNoteRecorded(task)}
+              className={`p-1.5 rounded-md cursor-pointer ${fileNoteOk ? 'text-teal-700 bg-teal-50 hover:bg-teal-100' : 'text-gray-500 hover:text-teal-600 hover:bg-teal-50'}`}
+              title={fileNoteOk
+                ? 'Đã ghi nhận có file/ghi chú — bấm để bỏ (không chặn chuyển cột)'
+                : 'Tích: đã có file/ghi chú (theo dõi đủ thông tin, không chặn chuyển cột)'}
+            >
+              {fileNoteOk ? <CheckSquare className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
             </button>
             <button
               type="button"

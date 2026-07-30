@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
@@ -16,7 +16,7 @@ import {
 import DocumentShareModulePicker from '../components/DocumentShareModulePicker';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { formatVND, formatDate, getInitials, avatarColor, getFileEmoji } from '../lib/utils';
+import { formatDate, getInitials, avatarColor, getFileEmoji } from '../lib/utils';
 import { publicFileUrl as pubUrl, downloadUploadFile, printUploadImage } from '../lib/publicFileUrl';
 import { FilePreviewOpenLink } from '../context/FilePreviewContext';
 import UploadFileLightbox, {
@@ -27,6 +27,7 @@ import UploadFileLightbox, {
 } from '../components/UploadFileLightbox';
 import { downloadWorkshopDocumentsZip } from '../lib/workshopDocumentsZipDownload';
 import { resolveSxProjectLeadId } from '../lib/sxProjectComments';
+import { countMembersByModule } from '../lib/memberModuleCounts';
 import {
   ArrowLeft, FolderKanban, MessageSquare, Plus, X,
   FileUp, Edit2, Save, ChevronDown, Trash2, Send, Paperclip,
@@ -34,6 +35,7 @@ import {
   Share2, Lock,
 } from 'lucide-react';
 import CRMTasksTab from '../components/CRMTasksTab';
+import DealSharedWorkspaceTab from '../components/DealSharedWorkspaceTab';
 import WorkshopProjectTasksPanel from '../components/WorkshopProjectTasksPanel';
 import UnifiedTaskHistoryWidget from '../components/UnifiedTaskHistoryWidget';
 import ProjectApprovalsTab from '../components/ProjectApprovalsTab';
@@ -49,7 +51,7 @@ import {
 import { isProjectAlreadyInLogistics } from '../lib/projectLogistics';
 import { buildCrmLeadDocTaskSections, normalizeCrmChecklist } from '../lib/crmTaskDocumentTree';
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
-import { buildSxPipelineStageMeta, resolveSxProjectPaymentProgress, getSxOrderDeliveryDateUrgency, TEMP_SX_FREE_DRAG } from '../lib/sxPipelineRevenue';
+import { buildSxPipelineStageMeta, getSxOrderDeliveryDateUrgency, resolveSxDisplayColumnId, TEMP_SX_FREE_DRAG } from '../lib/sxPipelineRevenue';
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
 import SharedCRMNotes from '../components/SharedCRMNotes';
 import DriveAttachments from '../components/drive/DriveAttachments';
@@ -92,47 +94,11 @@ function resolvePersonFromList(person, personId, users) {
   return users.find((u) => String(u.id) === String(personId)) || null;
 }
 
-/** Khớp cột Kanban SX — không fallback thẳng workflow_stages.id (namespace khác production_pipeline_stages). */
+/** Khớp cột Kanban SX với dashboard — dùng chung resolveSxDisplayColumnId. */
 function resolveSxKanbanCurrentStageId(project, stages) {
-  const list = Array.isArray(stages) ? stages : [];
-  const ids = new Set(list.map((s) => String(s.id)));
-  const inList = (id) => (id != null && ids.has(String(id)) ? id : null);
-  const sorted = [...list].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
-  const VC_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
-  const inVcFlow = VC_STATUSES.has(String(project?.status || ''));
-  const firstCol = () => {
-    const intake = sorted.find(
-      (s) => s.bucket_slug === 'won_pending' || String(s.id).startsWith('__fb_'),
-    );
-    return intake?.id ?? sorted[0]?.id ?? null;
-  };
-  const handoverCol = sorted.find((s) => s.is_handover_to_logistics === true);
-
-  const primaryDeal = project?.crmDeals?.[0];
-  const fromSx = inList(project?.sx_kanban_column_id);
-  if (fromSx) return fromSx;
-
-  const crmCol = primaryDeal?.sx_pipeline_stage?.id;
-  const fromCrm = inList(crmCol);
-  if (fromCrm) return fromCrm;
-
-  if (inVcFlow && handoverCol?.id) return handoverCol.id;
-
-  if (project?.sx_won_deal && !primaryDeal?.sx_handover_at) {
-    return firstCol();
-  }
-
-  if (project?.sx_intake) return firstCol();
-
-  const wfId = project?.current_stage_id || project?.current_stage?.id;
-  if (wfId) {
-    const wfMatches = sorted.filter(
-      (s) => String(s.workflow_stage_id || s.workflow_stage?.id) === String(wfId),
-    );
-    if (wfMatches.length === 1) return wfMatches[0].id;
-  }
-
-  return null;
+  return resolveSxDisplayColumnId(project, stages, {
+    sxWonDeal: Boolean(project?.sx_won_deal),
+  });
 }
 
 const ACTIVITY_TYPES = [
@@ -148,203 +114,96 @@ const ACTIVITY_FORM_TYPES = ACTIVITY_TYPES.filter((t) =>
   ['call', 'meeting', 'email', 'zalo', 'note'].includes(t.value),
 );
 
-/** Cột trái — inline-editable như LeadDetail */
-function pickPaymentInvoice(invoices) {
-  const list = Array.isArray(invoices) ? invoices : [];
-  const unpaid = list.find((i) => (Number(i.total) || 0) - (Number(i.paid_amount) || 0) > 0.01);
-  return unpaid || list[0] || null;
-}
-
+/** Cột trái — ngày giao/lắp, địa chỉ, tên khác (đồng bộ deal CRM / bàn giao VC). */
 function WorkshopInfoPanel({
   project,
   onUpdate,
-  onFinancePatch,
-  moduleKey = 'sx',
   crmDeal = null,
-  companyRegions = [],
   onDealUpdate,
-  financeRefreshKey = 0,
 }) {
-  const isVC = moduleKey === 'vc';
-  const [editing, setEditing] = useState(null); // field name
+  const [editing, setEditing] = useState(null);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
-  const [crmFinance, setCrmFinance] = useState(null);
-  const [paymentMethod, setPaymentMethod] = useState('transfer');
-  const [paymentRef, setPaymentRef] = useState('');
-  const prob = typeof project.productionTaskProgress === 'number' ? project.productionTaskProgress : 0;
 
   const startEdit = (field, value) => { setEditing(field); setDraft(value ?? ''); };
   const cancelEdit = () => { setEditing(null); setDraft(''); };
 
+  const otherName = String(
+    crmDeal?.external_company_name
+    || project.customer?.full_name
+    || project.customer?.name
+    || crmDeal?.customer?.full_name
+    || crmDeal?.title
+    || project.name
+    || '',
+  ).trim() || null;
+
+  const installAddress = String(
+    project.install_address
+    || crmDeal?.install_address
+    || project.customer?.address
+    || crmDeal?.customer?.address
+    || '',
+  ).trim() || null;
+
+  const deliveryDate = project.delivery_date || null;
+  const installDate = project.install_date || null;
+
+  const sxStage = project.sx_pipeline_stage || crmDeal?.sx_pipeline_stage || null;
+  const deliveryUrgency = getSxOrderDeliveryDateUrgency(deliveryDate, sxStage);
+  const deliveryOverdue = deliveryUrgency?.overdue;
+  const deliverySoon = deliveryUrgency?.soon;
+
+  const installDateObj = installDate ? new Date(installDate) : null;
+  const installOverdue = installDateObj && installDateObj < new Date();
+  const installSoon = installDateObj && !installOverdue && installDateObj < new Date(Date.now() + 3 * 86400000);
+
   const save = async (field, value) => {
     setSaving(true);
     try {
-      let payloadValue = value || null;
-      if (field === 'deposit_amount' || field === 'estimated_value' || field === 'production_value') {
-        const raw = value;
-        if (raw === '' || raw == null) payloadValue = null;
-        else {
-          const n = Number(raw);
-          payloadValue = Number.isFinite(n) && n > 0 ? n : null;
-        }
-      }
+      const payloadValue = value || null;
       await api.put(`/projects/${project.id}`, { [field]: payloadValue });
-      // Giá trị đơn hàng (VC): đồng bộ sang deal CRM. Cọc / giá SX chỉ lưu trên projects — không đụng «Còn lại» CRM.
-      if (field === 'estimated_value' && crmDeal?.id) {
-        try {
-          const { data } = await api.put(`/crm/leads/${crmDeal.id}`, {
-            estimated_value: payloadValue ?? 0,
-          });
-          onDealUpdate?.(data ? { ...crmDeal, ...data, estimated_value: payloadValue ?? 0 } : {
-            ...crmDeal,
-            estimated_value: payloadValue ?? 0,
-          });
-        } catch {
-          /* dự án đã lưu; deal sync lỗi không chặn */
+
+      // Đồng bộ sang deal CRM (cùng nguồn với phiếu/bàn giao VC của sale).
+      if (crmDeal?.id) {
+        const leadPatch = {};
+        if (field === 'install_address') leadPatch.install_address = payloadValue;
+        if (field === 'name' || field === 'external_company_name') {
+          leadPatch.external_company_name = payloadValue;
+        }
+        if (Object.keys(leadPatch).length) {
+          try {
+            const { data } = await api.put(`/crm/leads/${crmDeal.id}`, leadPatch);
+            onDealUpdate?.(data ? { ...crmDeal, ...data, ...leadPatch } : { ...crmDeal, ...leadPatch });
+          } catch { /* dự án đã lưu */ }
         }
       }
-      if (field === 'deposit_amount' || field === 'production_value' || field === 'estimated_value') {
-        onFinancePatch?.({ [field]: payloadValue });
-      }
+
       onUpdate?.();
       setEditing(null);
-    } catch (e) { alert(e.response?.data?.error || 'Lỗi lưu'); }
-    setSaving(false);
-  };
-
-  const saveDealRegion = async (regionId) => {
-    if (!crmDeal?.id) return;
-    setSaving(true);
-    try {
-      const { data } = await api.put(`/crm/leads/${crmDeal.id}`, {
-        region_id: regionId || null,
-      });
-      const reg = regionId
-        ? companyRegions.find((r) => String(r.id) === String(regionId))
-        : null;
-      onDealUpdate?.({
-        ...data,
-        region_id: regionId || null,
-        crm_region: reg ? { id: reg.id, name: reg.name, code: reg.code } : null,
-      });
-      setEditing(null);
-    } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi lưu khu vực');
-    }
-    setSaving(false);
-  };
-
-  const regionName = crmDeal?.crm_region?.name
-    || companyRegions.find((r) => String(r.id) === String(crmDeal?.region_id))?.name
-    || null;
-
-  /** Giá trị đơn hàng CRM (tiến độ thu / VC) — xưởng không hiện doanh thu. */
-  const orderTotalValue = Number(crmDeal?.estimated_value) > 0
-    ? Number(crmDeal.estimated_value)
-    : (Number(project.estimated_value) || 0);
-  const productionTotalValue = Number(project.production_value) || 0;
-  /** Tiền cọc SX: chỉ projects.deposit_amount — trừ vào chi phí sản xuất. */
-  const parseMoneyDraft = (raw) => {
-    if (raw === '' || raw == null) return 0;
-    const n = Number(raw);
-    return Number.isFinite(n) && n > 0 ? n : 0;
-  };
-  const depositValue = editing === 'deposit_amount'
-    ? parseMoneyDraft(draft)
-    : (Number(project.deposit_amount) > 0 ? Number(project.deposit_amount) : 0);
-  /** Chi phí SX — không fallback doanh thu CRM. */
-  const sxCostForRemaining = editing === 'production_value'
-    ? parseMoneyDraft(draft)
-    : productionTotalValue;
-  /** Công nợ SX = Chi phí xưởng − Tiền cọc. */
-  const remainingValue = Math.max(0, sxCostForRemaining - depositValue);
-  const financeProject = {
-    ...project,
-    // Tiến độ thu CRM vẫn có thể tham chiếu cọc deal; khối SX không dùng field này.
-    deal_deposit_amount: crmDeal?.deposit_amount ?? project.deal_deposit_amount ?? null,
-  };
-
-  const reloadCrmFinance = useCallback(async () => {
-    if (!project?.id) {
-      setCrmFinance(null);
-      return null;
-    }
-    try {
-      const { data } = await api.get(`/crm/project/${project.id}/summary`);
-      setCrmFinance(data || null);
-      return data || null;
-    } catch {
-      setCrmFinance(null);
-      return null;
-    }
-  }, [project?.id]);
-
-  useEffect(() => {
-    void reloadCrmFinance();
-  }, [
-    reloadCrmFinance,
-    project?.production_value,
-    project?.estimated_value,
-    project?.deposit_amount,
-    project?.collected_amount,
-    crmDeal?.estimated_value,
-    crmDeal?.deposit_amount,
-    financeRefreshKey,
-  ]);
-
-  const crmPaymentStats = crmFinance?.stats || null;
-  // Tiến độ thu tiền theo giá trị đơn hàng (không lấy production_value)
-  const paymentProgress = resolveSxProjectPaymentProgress({
-    ...financeProject,
-    estimated_value: orderTotalValue,
-    production_value: null,
-  }, crmPaymentStats);
-  const paymentInvoice = pickPaymentInvoice(crmFinance?.invoices);
-
-  const startPaymentEdit = () => {
-    setPaymentMethod('transfer');
-    setPaymentRef('');
-    if (paymentInvoice) {
-      setDraft(paymentProgress.paymentDebt > 0 ? String(paymentProgress.paymentDebt) : '');
-    } else {
-      setDraft(paymentProgress.paid > 0 ? String(paymentProgress.paid) : '');
-    }
-    setEditing('payment_progress');
-  };
-
-  const savePaymentProgress = async () => {
-    const amount = Number(draft);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      alert('Nhập số tiền hợp lệ');
-      return;
-    }
-    setSaving(true);
-    try {
-      let invoice = paymentInvoice;
-      if (!invoice && crmFinance?.stats?.needsInvoice) {
-        const { data: auto } = await api.post(`/crm/project/${project.id}/auto-invoice`);
-        invoice = auto?.invoices?.[0] || pickPaymentInvoice((await reloadCrmFinance())?.invoices);
-      }
-      if (invoice) {
-        const invRemaining = Math.max(0, (Number(invoice.total) || 0) - (Number(invoice.paid_amount) || 0));
-        const payAmt = invRemaining > 0 ? Math.min(amount, invRemaining) : amount;
-        await api.post(`/crm/invoices/${invoice.id}/payments`, {
-          amount: payAmt,
-          payment_method: paymentMethod,
-          reference_number: paymentRef || null,
-        });
-      } else {
-        const cap = Number(orderTotalValue) || amount;
-        const capped = Math.min(amount, cap);
-        await api.put(`/projects/${project.id}`, { collected_amount: capped });
-      }
-      await reloadCrmFinance();
-      setEditing(null);
-      setDraft('');
-      onUpdate?.();
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi lưu');
+    }
+    setSaving(false);
+  };
+
+  const saveOtherName = async (value) => {
+    setSaving(true);
+    try {
+      const trimmed = String(value || '').trim() || null;
+      if (crmDeal?.id) {
+        const { data } = await api.put(`/crm/leads/${crmDeal.id}`, {
+          external_company_name: trimmed,
+        });
+        onDealUpdate?.(data ? { ...crmDeal, ...data, external_company_name: trimmed } : {
+          ...crmDeal,
+          external_company_name: trimmed,
+        });
+      }
+      onUpdate?.();
+      setEditing(null);
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi lưu tên khác');
     }
     setSaving(false);
   };
@@ -353,443 +212,129 @@ function WorkshopInfoPanel({
     <div className="bg-white rounded-xl border p-5 space-y-1">
       <h3 className="text-sm font-bold text-gray-900 uppercase mb-2">Thông tin</h3>
 
-      {/* Khu vực (deal CRM) — chỉ module SX */}
-      {!isVC && crmDeal && (
-        <div
-          className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer"
-          onClick={() => editing !== 'region_id' && startEdit('region_id', crmDeal.region_id || '')}
-        >
-          <span className="text-sm mt-0.5 shrink-0">📍</span>
-          <div className="flex-1 min-w-0">
-            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Khu vực</p>
-            {editing === 'region_id' ? (
-              <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                <select
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  autoFocus
-                  className="flex-1 px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400 bg-white"
-                >
-                  <option value="">— Chưa chọn —</option>
-                  {companyRegions.map((r) => (
-                    <option key={r.id} value={r.id}>{r.name}{r.code ? ` (${r.code})` : ''}</option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  onClick={() => saveDealRegion(draft || null)}
-                  disabled={saving}
-                  className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50"
-                >
-                  ✓
-                </button>
-                <button type="button" onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
-              </div>
-            ) : (
-              <p className="text-sm font-medium text-gray-900 flex items-center gap-1">
-                {regionName || '—'}
-                <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" />
-              </p>
-            )}
-            {companyRegions.length === 0 && (
-              <p className="text-[10px] text-amber-600 mt-0.5">
-                Chưa có khu vực — thêm tại <Link to="/sx/regions" className="underline font-medium">Khu vực SX</Link>
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* VC: giá trị dự án. SX: chỉ chi phí xưởng / cọc / công nợ — không hiện doanh thu. */}
-      {isVC && (
-        <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'estimated_value' && startEdit('estimated_value', project.estimated_value || crmDeal?.estimated_value || '')}>
-          <span className="text-sm mt-0.5 shrink-0">💰</span>
-          <div className="flex-1 min-w-0">
-            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Giá trị dự án</p>
-            {editing === 'estimated_value' ? (
-              <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                <input type="number" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
-                  className="w-full px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" placeholder="0" />
-                <button onClick={() => save('estimated_value', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
-                <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
-              </div>
-            ) : (
-              <p className="text-sm font-medium text-gray-900 flex items-center gap-1">{orderTotalValue > 0 ? formatVND(orderTotalValue) : '—'} <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" /></p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {!isVC && (
-        <>
-          {/* Xưởng chỉ hiện chi phí (production_value) — không hiện doanh thu / giá deal CRM. */}
-          <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'production_value' && startEdit('production_value', project.production_value || '')}>
-            <span className="text-sm mt-0.5 shrink-0">🏭</span>
-            <div className="flex-1 min-w-0">
-              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Giá trị sản xuất</p>
-              {editing === 'production_value' ? (
-                <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                  <input type="number" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
-                    className="w-full px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" placeholder="0" />
-                  <button onClick={() => save('production_value', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
-                  <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
-                </div>
-              ) : (
-                <p className="text-sm font-medium text-gray-900 flex items-center gap-1">
-                  {productionTotalValue > 0 ? formatVND(productionTotalValue) : '—'}
-                  <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" />
-                </p>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'deposit_amount' && startEdit('deposit_amount', project.deposit_amount ?? '')}>
-            <span className="text-sm mt-0.5 shrink-0">💵</span>
-            <div className="flex-1 min-w-0">
-              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Tiền cọc</p>
-              {editing === 'deposit_amount' ? (
-                <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                  <input type="number" min="0" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
-                    className="w-full px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" placeholder="0" />
-                  <button onClick={() => save('deposit_amount', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
-                  <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
-                </div>
-              ) : (
-                <p className="text-sm font-medium text-gray-900 flex items-center gap-1">
-                  {depositValue > 0 ? formatVND(depositValue) : '—'}
-                  <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" />
-                </p>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-start gap-2 py-2 px-1 rounded-lg -mx-1">
-            <span className="text-sm mt-0.5 shrink-0">📊</span>
-            <div className="flex-1 min-w-0">
-              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Công nợ (SX)</p>
-              <p className="text-sm font-semibold text-amber-700">
-                {sxCostForRemaining > 0 || depositValue > 0
-                  ? formatVND(remainingValue)
-                  : '—'}
-              </p>
-              <p className="text-[10px] text-gray-400 mt-0.5">= Giá trị sản xuất − Tiền cọc</p>
-            </div>
-          </div>
-
-          {(paymentProgress.hasData || Number(orderTotalValue) > 0) && (
-            <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors">
-              <span className="text-sm mt-0.5 shrink-0">💳</span>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-2 mb-0.5">
-                  <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium">Tiến độ thu tiền</p>
-                  <div className="flex items-center gap-2">
-                    {editing !== 'payment_progress' && (
-                      <button
-                        type="button"
-                        onClick={startPaymentEdit}
-                        className="text-[10px] text-blue-500 hover:text-blue-700 cursor-pointer"
-                      >
-                        Sửa
-                      </button>
-                    )}
-                    {editing !== 'payment_progress' && (
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
-                        paymentProgress.paidFull
-                          ? 'bg-emerald-100 text-emerald-700'
-                          : paymentProgress.pct > 0
-                            ? 'bg-amber-100 text-amber-700'
-                            : 'bg-red-100 text-red-700'
-                      }`}>
-                        {paymentProgress.paidFull ? '✅ Đủ' : paymentProgress.pct > 0 ? `${paymentProgress.pct}%` : 'Chưa thu'}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                {editing === 'payment_progress' ? (
-                  <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
-                    <div>
-                      <label className="text-[10px] text-gray-500">
-                        {paymentInvoice ? 'Số tiền thu thêm' : 'Tổng đã thu'}
-                        {paymentProgress.paymentDebt > 0 && paymentInvoice && (
-                          <span className="text-gray-400"> (còn nợ {formatVND(paymentProgress.paymentDebt)})</span>
-                        )}
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        value={draft}
-                        onChange={(e) => setDraft(e.target.value)}
-                        autoFocus
-                        className="w-full mt-0.5 px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400"
-                        placeholder="0"
-                      />
-                    </div>
-                    {paymentInvoice && (
-                      <>
-                        <div>
-                          <label className="text-[10px] text-gray-500">Hình thức</label>
-                          <select
-                            value={paymentMethod}
-                            onChange={(e) => setPaymentMethod(e.target.value)}
-                            className="w-full mt-0.5 px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400 bg-white"
-                          >
-                            <option value="transfer">🏦 Chuyển khoản</option>
-                            <option value="cash">💵 Tiền mặt</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="text-[10px] text-gray-500">Số GD / Ghi chú</label>
-                          <input
-                            value={paymentRef}
-                            onChange={(e) => setPaymentRef(e.target.value)}
-                            className="w-full mt-0.5 px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400"
-                            placeholder="Tùy chọn"
-                          />
-                        </div>
-                        <p className="text-[10px] text-gray-500">
-                          Ghi qua HĐ {paymentInvoice.code || ''} — đồng bộ CRM.
-                        </p>
-                      </>
-                    )}
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => void savePaymentProgress()}
-                        disabled={saving}
-                        className="px-2 py-1 bg-emerald-600 text-white rounded text-xs cursor-pointer disabled:opacity-50"
-                      >
-                        {saving ? 'Đang lưu...' : '✓ Lưu'}
-                      </button>
-                      <button type="button" onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <p className="text-sm font-medium text-gray-900 tabular-nums">
-                      {formatVND(paymentProgress.paid)}
-                      <span className="text-gray-400 font-normal"> / {formatVND(paymentProgress.base)}</span>
-                    </p>
-                    <div className="mt-1 w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all duration-300 ${
-                          paymentProgress.paidFull ? 'bg-emerald-500' : 'bg-amber-500'
-                        }`}
-                        style={{ width: `${paymentProgress.pct}%` }}
-                      />
-                    </div>
-                    {paymentProgress.paymentDebt > 0 && (
-                      <p className="text-[10px] text-red-600 font-medium mt-1">Còn nợ: {formatVND(paymentProgress.paymentDebt)}</p>
-                    )}
-                    {paymentProgress.needsInvoice && paymentProgress.invoiceGap > 0 && (
-                      <p className="text-[10px] text-amber-700 mt-0.5">
-                        Chưa xuất hết HĐ ({formatVND(paymentProgress.invoiceGap)})
-                      </p>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Ngày đặt hàng */}
-      <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'order_date' && startEdit('order_date', project.order_date ? project.order_date.substring(0, 10) : '')}>
-        <span className="text-sm mt-0.5 shrink-0">🛒</span>
+      {/* Tên khác — external_company_name (gia công / đối tác) */}
+      <div
+        className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer"
+        onClick={() => editing !== 'external_company_name' && startEdit('external_company_name', otherName || '')}
+      >
+        <span className="text-sm mt-0.5 shrink-0">👤</span>
         <div className="flex-1 min-w-0">
-          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Ngày đặt hàng</p>
-          {editing === 'order_date' ? (
-            <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-              <input type="date" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
-                className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" />
-              <button onClick={() => save('order_date', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
-              <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Tên khác</p>
+          {editing === 'external_company_name' ? (
+            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              <input
+                type="text"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                autoFocus
+                className="flex-1 px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400"
+                placeholder="Tên đối tác / tên khác…"
+              />
+              <button type="button" onClick={() => saveOtherName(draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+              <button type="button" onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
             </div>
           ) : (
-            <p className="text-sm font-medium text-gray-900 flex items-center gap-1">{project.order_date ? formatDate(project.order_date) : '—'} <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" /></p>
+            <p className="text-sm font-medium text-gray-900 flex items-center gap-1">
+              <span className="flex-1 min-w-0 break-words">{otherName || '—'}</span>
+              <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100 shrink-0" />
+            </p>
           )}
         </div>
       </div>
 
       {/* Ngày giao hàng */}
-      {(() => {
-        const dd = project.delivery_date;
-        const sxStage = project.sx_pipeline_stage || crmDeal?.sx_pipeline_stage || null;
-        const urgency = getSxOrderDeliveryDateUrgency(dd, sxStage);
-        const isOverdue = urgency?.overdue;
-        const isSoon = urgency?.soon;
-        return (
-          <div className={`flex items-start gap-2 py-2 px-1 rounded-lg -mx-1 transition-colors group cursor-pointer ${isOverdue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}
-            onClick={() => editing !== 'delivery_date' && startEdit('delivery_date', dd ? dd.substring(0, 10) : '')}>
-            <span className="text-sm mt-0.5 shrink-0">🚚</span>
-            <div className="flex-1 min-w-0">
-              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Ngày giao hàng</p>
-              {editing === 'delivery_date' ? (
-                <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                  <input type="date" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
-                    className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" />
-                  <button onClick={() => save('delivery_date', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
-                  <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
-                </div>
-              ) : (
-                <p className={`text-sm font-medium flex items-center gap-1 ${isOverdue ? 'text-red-600' : isSoon ? 'text-amber-600' : 'text-gray-900'}`}>
-                  {dd ? formatDate(dd) : '—'}
-                  {isOverdue && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold">Trễ!</span>}
-                  {isSoon && <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded font-bold">Sắp tới</span>}
-                  <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" />
-                </p>
-              )}
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Deadline */}
-      <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'deadline' && startEdit('deadline', project.deadline ? project.deadline.substring(0, 10) : '')}>
-        <span className="text-sm mt-0.5 shrink-0">📅</span>
+      <div
+        className={`flex items-start gap-2 py-2 px-1 rounded-lg -mx-1 transition-colors group cursor-pointer ${deliveryOverdue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}
+        onClick={() => editing !== 'delivery_date' && startEdit('delivery_date', deliveryDate ? String(deliveryDate).substring(0, 10) : '')}
+      >
+        <span className="text-sm mt-0.5 shrink-0">🚚</span>
         <div className="flex-1 min-w-0">
-          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Deadline tổng</p>
-          {editing === 'deadline' ? (
-            <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-              <input type="date" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
-                className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" />
-              <button onClick={() => save('deadline', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
-              <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Ngày giao hàng</p>
+          {editing === 'delivery_date' ? (
+            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              <input
+                type="date"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                autoFocus
+                className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400"
+              />
+              <button type="button" onClick={() => save('delivery_date', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+              <button type="button" onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
             </div>
           ) : (
-            <p className="text-sm font-medium text-gray-900 flex items-center gap-1">{project.deadline ? formatDate(project.deadline) : '—'} <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" /></p>
-          )}
-        </div>
-      </div>
-
-      {/* Deadline giao hàng (VC) */}
-      {isVC && (() => {
-        const fieldKey = 'deadline';
-        const pd = project.deadline;
-        const pdDate = pd ? new Date(pd) : null;
-        const isOverdue = pdDate && pdDate < new Date();
-        const isSoon = pdDate && !isOverdue && pdDate < new Date(Date.now() + 3 * 86400000);
-        return (
-          <div className={`flex items-start gap-2 py-2 px-1 rounded-lg -mx-1 transition-colors group cursor-pointer ${isOverdue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}
-            onClick={() => editing !== fieldKey && startEdit(fieldKey, pd ? pd.substring(0, 10) : '')}>
-            <span className="text-sm mt-0.5 shrink-0">{isVC ? '🚚' : '🏭'}</span>
-            <div className="flex-1 min-w-0">
-              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Deadline giao hàng</p>
-              {editing === fieldKey ? (
-                <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                  <input type="date" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
-                    className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400" />
-                  <button onClick={() => save(fieldKey, draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
-                  <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
-                </div>
-              ) : (
-                <p className={`text-sm font-medium flex items-center gap-1 ${isOverdue ? 'text-red-600' : isSoon ? 'text-amber-600' : 'text-gray-900'}`}>
-                  {pd ? formatDate(pd) : '—'}
-                  {isOverdue && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold">Trễ!</span>}
-                  {isSoon && <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded font-bold">Sắp tới</span>}
-                  <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" />
-                </p>
-              )}
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Địa chỉ lắp đặt (VC only) */}
-      {isVC && (
-        <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer"
-          onClick={() => editing !== 'install_address' && startEdit('install_address', project.install_address || project.customer?.address || '')}>
-          <span className="text-sm mt-0.5 shrink-0">📍</span>
-          <div className="flex-1 min-w-0">
-            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Địa chỉ lắp đặt</p>
-            {editing === 'install_address' ? (
-              <div className="flex items-start gap-1" onClick={e => e.stopPropagation()}>
-                <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={2} autoFocus
-                  className="flex-1 px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400 resize-none" placeholder="Nhập địa chỉ lắp đặt..." />
-                <div className="flex flex-col gap-1">
-                  <button onClick={() => save('install_address', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
-                  <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
-                </div>
-              </div>
-            ) : (
-              <p className="text-sm font-medium text-gray-900 flex items-start gap-1">
-                <span className="flex-1">{project.install_address || project.customer?.address || '—'}</span>
-                <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100 mt-0.5 shrink-0" />
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Tiến độ SX / Lắp đặt */}
-      <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors">
-        <span className="text-sm mt-0.5 shrink-0">📊</span>
-        <div className="flex-1 min-w-0">
-          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">
-            {isVC ? 'Tiến độ lắp đặt' : 'Tiến độ sản xuất'}
-          </p>
-          <p className="text-sm font-medium text-gray-900">{prob}%</p>
-          <div className="mt-1 w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
-            <div className={`${isVC ? 'bg-orange-500' : 'bg-blue-600'} h-full rounded-full transition-all duration-300`} style={{ width: `${prob}%` }} />
-          </div>
-        </div>
-      </div>
-
-      {/* Ưu tiên */}
-      <div className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer" onClick={() => editing !== 'priority' && startEdit('priority', project.priority || 'medium')}>
-        <span className="text-sm mt-0.5 shrink-0">🎯</span>
-        <div className="flex-1 min-w-0">
-          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Ưu tiên</p>
-          {editing === 'priority' ? (
-            <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-              <select value={draft} onChange={e => setDraft(e.target.value)} autoFocus
-                className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400">
-                <option value="low">🟢 Thấp</option>
-                <option value="medium">🟡 Trung bình</option>
-                <option value="high">🔴 Cao</option>
-              </select>
-              <button onClick={() => save('priority', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
-              <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
-            </div>
-          ) : (
-            <p className="text-sm font-medium text-gray-900 flex items-center gap-1">
-              {project.priority === 'high' ? '🔴 Cao' : project.priority === 'medium' ? '🟡 Trung bình' : '🟢 Thấp'}
+            <p className={`text-sm font-medium flex items-center gap-1 ${deliveryOverdue ? 'text-red-600' : deliverySoon ? 'text-amber-600' : 'text-gray-900'}`}>
+              {deliveryDate ? formatDate(deliveryDate) : '—'}
+              {deliveryOverdue && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold">Trễ!</span>}
+              {deliverySoon && <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded font-bold">Sắp tới</span>}
               <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" />
             </p>
           )}
         </div>
       </div>
 
-      {/* Ghi chú xưởng / giao hàng */}
-      <div className="pt-2 border-t border-gray-100">
-        <div className="flex items-center justify-between mb-1">
-          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium">
-            {isVC ? 'Ghi chú vận chuyển' : 'Ghi chú nội bộ xưởng'}
-          </p>
-          {editing !== 'notes' && <button onClick={() => startEdit('notes', project.notes || '')} className="text-[10px] text-blue-500 hover:text-blue-700 cursor-pointer">Sửa</button>}
-        </div>
-        {editing === 'notes' ? (
-          <div className="space-y-1">
-            <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={3} autoFocus
-              className="w-full px-2 py-1.5 border border-blue-300 rounded text-xs outline-none focus:ring-1 focus:ring-blue-400 resize-none"
-              placeholder={isVC ? 'Ghi chú vận chuyển, lắp đặt...' : 'Ghi chú nội bộ...'} />
-            <div className="flex gap-1">
-              <button onClick={() => save('notes', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓ Lưu</button>
-              <button onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">Hủy</button>
+      {/* Ngày lắp đặt */}
+      <div
+        className={`flex items-start gap-2 py-2 px-1 rounded-lg -mx-1 transition-colors group cursor-pointer ${installOverdue ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}
+        onClick={() => editing !== 'install_date' && startEdit('install_date', installDate ? String(installDate).substring(0, 10) : '')}
+      >
+        <span className="text-sm mt-0.5 shrink-0">🔧</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Ngày lắp đặt</p>
+          {editing === 'install_date' ? (
+            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              <input
+                type="date"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                autoFocus
+                className="px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400"
+              />
+              <button type="button" onClick={() => save('install_date', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+              <button type="button" onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
             </div>
-          </div>
-        ) : (
-          <p className="text-xs text-gray-700 whitespace-pre-wrap">{project.notes || <span className="text-gray-400 italic">Chưa có ghi chú</span>}</p>
-        )}
+          ) : (
+            <p className={`text-sm font-medium flex items-center gap-1 ${installOverdue ? 'text-red-600' : installSoon ? 'text-amber-600' : 'text-gray-900'}`}>
+              {installDate ? formatDate(installDate) : '—'}
+              {installOverdue && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold">Trễ!</span>}
+              {installSoon && <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded font-bold">Sắp tới</span>}
+              <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100" />
+            </p>
+          )}
+        </div>
       </div>
 
-      {/* Ghi chú xưởng SX (production_note) — chỉ hiện cho SX */}
-      {!isVC && project.production_note && (
-        <div className="pt-2 border-t border-gray-100">
-          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-1">Ghi chú kỹ thuật SX</p>
-          <p className="text-xs text-gray-700 whitespace-pre-wrap">{project.production_note}</p>
+      {/* Địa chỉ lắp đặt */}
+      <div
+        className="flex items-start gap-2 py-2 px-1 rounded-lg hover:bg-gray-50 -mx-1 transition-colors group cursor-pointer"
+        onClick={() => editing !== 'install_address' && startEdit('install_address', installAddress || '')}
+      >
+        <span className="text-sm mt-0.5 shrink-0">📍</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-0.5">Địa chỉ lắp đặt</p>
+          {editing === 'install_address' ? (
+            <div className="flex items-start gap-1" onClick={(e) => e.stopPropagation()}>
+              <textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                rows={2}
+                autoFocus
+                className="flex-1 px-2 py-1 border border-blue-300 rounded text-sm outline-none focus:ring-1 focus:ring-blue-400 resize-none"
+                placeholder="Nhập địa chỉ lắp đặt..."
+              />
+              <div className="flex flex-col gap-1">
+                <button type="button" onClick={() => save('install_address', draft)} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
+                <button type="button" onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm font-medium text-gray-900 flex items-start gap-1">
+              <span className="flex-1">{installAddress || '—'}</span>
+              <Edit2 className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100 mt-0.5 shrink-0" />
+            </p>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -1556,8 +1101,6 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const { setCrmNotesAnchor } = useCrmNotesFab();
   const [searchParams, setSearchParams] = useSearchParams();
   const [project, setProject] = useState(null);
-  const [financeRefreshKey, setFinanceRefreshKey] = useState(0);
-  const [companyRegions, setCompanyRegions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [fallbackDealIdForTasks, setFallbackDealIdForTasks] = useState(null);
   /** Map crm_tasks.id → { title, stage_slug, order_index } — sắp xếp tài liệu theo nhiệm vụ */
@@ -1644,6 +1187,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [incidentForm, setIncidentForm] = useState({ title: '', description: '', severity: 'medium' });
   const [savingIncident, setSavingIncident] = useState(false);
   const [commentCount, setCommentCount] = useState(0);
+  const [memberModuleCounts, setMemberModuleCounts] = useState({ crm: 0, production: 0, logistics: 0, total: 0 });
   const [docLightboxIndex, setDocLightboxIndex] = useState(null);
   const [docLightboxOverride, setDocLightboxOverride] = useState(null);
 
@@ -1672,6 +1216,23 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       })
       .catch(() => setCommentCount(0));
   }, [project?.id, dealIdForCommentCount]);
+
+  useEffect(() => {
+    if (!dealIdForCommentCount) {
+      setMemberModuleCounts({ crm: 0, production: 0, logistics: 0, total: 0 });
+      return;
+    }
+    let cancelled = false;
+    api.get(`/crm/leads/${dealIdForCommentCount}/members`)
+      .then((r) => {
+        if (cancelled) return;
+        setMemberModuleCounts(countMembersByModule(r.data || []));
+      })
+      .catch(() => {
+        if (!cancelled) setMemberModuleCounts({ crm: 0, production: 0, logistics: 0, total: 0 });
+      });
+    return () => { cancelled = true; };
+  }, [dealIdForCommentCount]);
 
   const noteActivities = useMemo(
     () => (crmActivities || []).filter((a) => a.type === 'note'),
@@ -1795,22 +1356,6 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       /* giữ danh sách cũ */
     }
   }, [project?.crmDeals?.[0]?.id]);
-
-  useEffect(() => {
-    const cid = project?.company_id || project?.company?.id;
-    if (!cid || moduleKey === 'vc') {
-      setCompanyRegions([]);
-      return;
-    }
-    const forModule = moduleKey === 'vc' ? 'logistics' : 'production';
-    api
-      .get('/crm/company-regions', { params: { company_id: cid, for_module: forModule } })
-      .then((r) => {
-        const list = Array.isArray(r.data) ? r.data : [];
-        setCompanyRegions(list.filter((reg) => reg.is_active !== false));
-      })
-      .catch(() => setCompanyRegions([]));
-  }, [project?.company_id, project?.company?.id, moduleKey]);
 
   const crmFabDealId = project?.crmDeals?.[0]?.id;
 
@@ -2086,7 +1631,6 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       loadProjectDocs(id);
       loadTaskFiles(id);
       loadProjectActivities(id);
-      setFinanceRefreshKey((k) => k + 1);
     } catch (e) {
       console.error(e);
       const st = e.response?.status;
@@ -2168,7 +1712,6 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       await fetchCrmDealTaskSummary(dealId);
       loadProjectDocs(id);
       loadTaskFiles(id);
-      setFinanceRefreshKey((k) => k + 1);
     } catch (_) {
       /* giữ state cũ */
     }
@@ -2424,7 +1967,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         if (!TEMP_SX_FREE_DRAG && sxStage?.is_handover_to_logistics === true && !isProjectAlreadyInLogistics(project)) {
           try {
             await api.post(`/vc-handover/projects/${id}/request`, { sx_stage_id: String(sxStage?.id || stageId) });
-            alert('Đã gửi yêu cầu chọn công ty Vận chuyển/Lắp đặt cho Sale CRM (hiển thị trong bình luận của deal).');
+            alert('Đã gửi thông báo cho Sale CRM phụ trách deal — họ cần chọn công ty VC/LĐ và tạo sự kiện Lấy hàng / Lắp đặt (trong bình luận deal).');
             refreshProjectSilently?.();
           } catch (e) {
             alert(e.response?.data?.error || 'Không gửi được yêu cầu bàn giao VC/LĐ');
@@ -2917,6 +2460,25 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     </button>
   );
 
+  const teamTabLabel = (
+    <span className="inline-flex flex-col items-center gap-0.5">
+      {(memberModuleCounts.crm > 0 || memberModuleCounts.production > 0 || memberModuleCounts.logistics > 0) && (
+        <span className="inline-flex items-center gap-0.5" title="Số thành viên theo khối CRM / SX / VC">
+          <span className="min-w-[1.15rem] h-[1.15rem] px-1 rounded text-[10px] font-bold leading-[1.15rem] text-center bg-blue-100 text-blue-700" title={`CRM: ${memberModuleCounts.crm}`}>
+            {memberModuleCounts.crm}
+          </span>
+          <span className="min-w-[1.15rem] h-[1.15rem] px-1 rounded text-[10px] font-bold leading-[1.15rem] text-center bg-teal-100 text-teal-700" title={`SX: ${memberModuleCounts.production}`}>
+            {memberModuleCounts.production}
+          </span>
+          <span className="min-w-[1.15rem] h-[1.15rem] px-1 rounded text-[10px] font-bold leading-[1.15rem] text-center bg-orange-100 text-orange-700" title={`VC: ${memberModuleCounts.logistics}`}>
+            {memberModuleCounts.logistics}
+          </span>
+        </span>
+      )}
+      <span>👥 Thành viên</span>
+    </span>
+  );
+
   return (
     <div className="space-y-4 mx-auto">
       {/* Header — same style as LeadDetail */}
@@ -3032,14 +2594,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           <WorkshopInfoPanel
             project={project}
             onUpdate={refreshProjectSilently}
-            onFinancePatch={(patch) => {
-              if (!patch || typeof patch !== 'object') return;
-              setProject((prev) => (prev ? { ...prev, ...patch } : prev));
-            }}
-            moduleKey={moduleKey}
             crmDeal={primaryCrmDeal}
-            companyRegions={companyRegions}
-            financeRefreshKey={financeRefreshKey}
             onDealUpdate={(data) => {
               if (!data?.id) return;
               setProject((prev) => (prev ? {
@@ -3220,7 +2775,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             {/* Tab bar — giống LeadDetail, bỏ Facebook và Tổng đài */}
             <div className="flex border-b flex-wrap">
               {tabBtn('tasks', `✅ Công việc${taskCount ? ` (${taskCount})` : ''}`)}
-              {crmLeadId && moduleKey !== 'vc' && tabBtn('shared-workspace', '🤝 Không gian chung')}
+              {crmLeadId && tabBtn('shared-workspace', '🤝 Không gian chung')}
               {tabBtn('documents', `📋 Tài liệu (${documentsForZipTotal})`)}
               {tabBtn('drive', `☁️ Drive (${driveFileCount})`)}
               {tabBtn('notes', `📝 Ghi chú (${sharedNotes.length})`)}
@@ -3229,7 +2784,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                 ? `⚠️ Sự cố (${incidents.filter(i => i.status === 'open' || i.status === 'in_progress').length})`
                 : '⚠️ Sự cố')}
               {moduleKey !== 'vc' && tabBtn('procurement', '📦 Vật tư / Mua hàng')}
-              {tabBtn('team', '👥 Thành viên')}
+              {tabBtn('team', teamTabLabel)}
               {tabBtn('approvals', '✅ Gửi duyệt')}
             </div>
 
@@ -3329,18 +2884,23 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               )}
 
       {activeTab === 'shared-workspace' && crmLeadId && (
-                <CRMTasksTab
-                  key="crm-tasks-shared"
+                <DealSharedWorkspaceTab
                   leadId={crmLeadId}
                   leadType="deal"
                   users={taskUsers}
-                  taskScope="production"
-                  taskCompanyScope="shared"
+                  taskScope={moduleKey === 'vc' ? 'logistics' : 'production'}
+                  companyId={primaryCrmDeal?.company_id || null}
+                  sxCompanyId={project?.company_id || project?.company?.id || null}
+                  vcCompanyId={project?.logistics_company_id || project?.logistics_company?.id || null}
                   onArtifactsSynced={refreshProjectSilently}
                   linkedProjectId={project?.id || null}
                   embeddedSxKanbanStages={project?.sxKanbanStages || null}
+                  embeddedVcKanbanStages={project?.vcKanbanStages || null}
                   embeddedWorkshopTypeId={project?.workshop_type_id || project?.workshop_type?.id || null}
                   sxTemplateCompanyId={project?.company_id || project?.company?.id || null}
+                  vcTemplateCompanyId={project?.logistics_company_id || project?.logistics_company?.id || null}
+                  dealResponsible={primaryCrmDeal}
+                  workshopProject={project}
                 />
               )}
 
@@ -3702,7 +3262,15 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
               {/* Thành viên */}
               {activeTab === 'team' && (
-                crmLeadId ? <LeadMembersTab leadId={crmLeadId} /> : <p className="text-sm text-gray-500 text-center py-8">Liên kết deal CRM để xem thành viên.</p>
+                crmLeadId
+                  ? (
+                    <LeadMembersTab
+                      leadId={crmLeadId}
+                      onMembersChange={(list) => setMemberModuleCounts(countMembersByModule(list))}
+                      onOpenSharedWorkspace={() => setTab('shared-workspace')}
+                    />
+                  )
+                  : <p className="text-sm text-gray-500 text-center py-8">Liên kết deal CRM để xem thành viên.</p>
               )}
 
               {/* Trao đổi */}

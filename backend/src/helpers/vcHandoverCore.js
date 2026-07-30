@@ -13,6 +13,7 @@ const {
   getResolvedKanbanStages,
   resolveSxHandoverColumnId,
   getCrmVcDeliveryStageId,
+  getCrmStageByRole,
 } = require('./workshopKanban');
 const {
   resolveLogisticsHandoverResponsibleUserId,
@@ -119,29 +120,56 @@ async function performVcHandoverCore(req, {
 }) {
   const { data: project } = await supabase
     .from('projects')
-    .select('id, code, name, status, current_stage_id, vc_kanban_column_id, logistics_company_id')
+    .select('id, code, name, status, current_stage_id, company_id, vc_kanban_column_id, logistics_company_id')
     .eq('id', projectId)
     .maybeSingle();
   if (!project) throw new Error('Project not found');
 
   const sxHandoverPipelineStageId = await resolveSxHandoverStageId(project, preferredSxStageId);
 
-  // Đã trong luồng VC → chỉ cập nhật cột SX (không bàn giao lại).
+  // Đã trong luồng VC đúng công ty đã chọn → chỉ cập nhật cột SX (không bàn giao lại).
+  // Nếu thiếu logistics_company / cột VC, hoặc Sale chọn công ty khác → chạy lại bàn giao.
   if (isProjectAlreadyInLogistics(project)) {
-    if (sxHandoverPipelineStageId) {
-      await supabase.from('projects').update({ sx_kanban_column_id: sxHandoverPipelineStageId }).eq('id', projectId);
-      await supabase.from('crm_leads')
-        .update({ sx_pipeline_stage_id: sxHandoverPipelineStageId, updated_at: new Date().toISOString() })
-        .eq('project_id', projectId).eq('type', 'deal');
+    const sameCompany = project.logistics_company_id
+      && String(project.logistics_company_id) === String(logisticsCompanyId);
+    const hasVcCol = Boolean(project.vc_kanban_column_id);
+    if (sameCompany && hasVcCol) {
+      if (sxHandoverPipelineStageId) {
+        await supabase.from('projects').update({ sx_kanban_column_id: sxHandoverPipelineStageId }).eq('id', projectId);
+        await supabase.from('crm_leads')
+          .update({ sx_pipeline_stage_id: sxHandoverPipelineStageId, updated_at: new Date().toISOString() })
+          .eq('project_id', projectId).eq('type', 'deal');
+      }
+      // Vẫn đẩy realtime để board VC refresh (tránh user nghĩ chưa tạo).
+      try {
+        const io = req?.app?.get?.('io');
+        if (io) {
+          const { emitLogisticsKanbanChangedImmediate } = require('./workshopIntakeNotify');
+          emitLogisticsKanbanChangedImmediate(io, {
+            projectId,
+            reason: 'vc_handover_reassert',
+            companyId: project.company_id || null,
+            logisticsCompanyId,
+            vcKanbanColumnId: project.vc_kanban_column_id || null,
+            project: {
+              id: projectId,
+              status: project.status || 'shipping',
+              company_id: project.company_id || null,
+              logistics_company_id: logisticsCompanyId,
+              vc_kanban_column_id: project.vc_kanban_column_id || null,
+            },
+          });
+        }
+      } catch (_) { /* ignore */ }
+      return {
+        handed_over: false,
+        already_in_logistics: true,
+        vc_kanban_column_id: project.vc_kanban_column_id || null,
+        sx_pipeline_stage_id: sxHandoverPipelineStageId,
+        logistics_person_id: null,
+        installer_person_id: null,
+      };
     }
-    return {
-      handed_over: false,
-      already_in_logistics: true,
-      vc_kanban_column_id: project.vc_kanban_column_id || null,
-      sx_pipeline_stage_id: sxHandoverPipelineStageId,
-      logistics_person_id: null,
-      installer_person_id: null,
-    };
   }
 
   const vcStageId = await resolveVcIntakeStageId(logisticsCompanyId);
@@ -161,7 +189,12 @@ async function performVcHandoverCore(req, {
     resolvedInstallerPersonId = await resolveLogisticsHandoverInstallerUserId(logisticsCompanyId);
   }
 
-  const projectUpdate = { status: 'shipping', current_stage_id: null, logistics_company_id: logisticsCompanyId };
+  const projectUpdate = {
+    status: 'shipping',
+    current_stage_id: null,
+    logistics_company_id: logisticsCompanyId,
+    updated_at: new Date().toISOString(),
+  };
   if (resolvedLogisticsPersonId) projectUpdate.logistics_person_id = resolvedLogisticsPersonId;
   if (resolvedInstallerPersonId) projectUpdate.installer_person_id = resolvedInstallerPersonId;
   if (deliveryTeamId) projectUpdate.delivery_team_id = deliveryTeamId;
@@ -180,6 +213,7 @@ async function performVcHandoverCore(req, {
     await applyAllActiveWorkshopTemplatesForArea(projectId, actorUserId, {
       workshopArea: 'logistics',
       companyId: logisticsCompanyId,
+      logisticsStageId: vcStageId || null,
     });
   } catch (tplErr) { console.warn('[vcHandoverCore] gen logistics templates:', tplErr.message); }
 
@@ -197,24 +231,40 @@ async function performVcHandoverCore(req, {
     });
   } catch (te) { console.warn('[vcHandoverCore] stage_transitions:', te.message); }
 
-  // Đồng bộ CRM deal.
+  // Đồng bộ CRM deal → cột đã gắn sync_role=vc_delivery (VD «Vận chuyển/lắp đặt»).
   try {
-    const vcDeliveryStageId = await getCrmVcDeliveryStageId();
+    const nowIso = new Date().toISOString();
     const { data: leads } = await supabase
-      .from('crm_leads').select('id').eq('project_id', projectId).eq('type', 'deal');
+      .from('crm_leads')
+      .select('id, pipeline_id')
+      .eq('project_id', projectId)
+      .eq('type', 'deal');
     for (const lead of leads || []) {
-      const fullUpd = {};
+      const vcDeliveryStageId = await getCrmStageByRole('vc_delivery', lead.pipeline_id || null)
+        || await getCrmVcDeliveryStageId();
+      const fullUpd = { updated_at: nowIso };
       if (vcStageId) fullUpd.vc_pipeline_stage_id = vcStageId;
       if (sxHandoverPipelineStageId) fullUpd.sx_pipeline_stage_id = sxHandoverPipelineStageId;
-      if (vcDeliveryStageId) fullUpd.stage_id = vcDeliveryStageId;
+      if (vcDeliveryStageId) {
+        fullUpd.stage_id = vcDeliveryStageId;
+        fullUpd.stage_entered_at = nowIso;
+      }
       const { error: leadErr } = await supabase.from('crm_leads').update(fullUpd).eq('id', lead.id);
       if (leadErr) {
         const isColErr = leadErr.message?.includes('vc_pipeline_stage_id') || leadErr.message?.includes('sx_pipeline_stage_id');
         if (isColErr && vcDeliveryStageId) {
-          await supabase.from('crm_leads').update({ stage_id: vcDeliveryStageId }).eq('id', lead.id);
+          await supabase.from('crm_leads').update({
+            stage_id: vcDeliveryStageId,
+            stage_entered_at: nowIso,
+            updated_at: nowIso,
+          }).eq('id', lead.id);
         } else {
           console.warn('[vcHandoverCore] CRM update lead', lead.id, ':', leadErr.message);
         }
+      } else if (vcDeliveryStageId) {
+        console.log(`[vcHandoverCore] CRM deal ${lead.id} → sync_role=vc_delivery (${vcDeliveryStageId})`);
+      } else {
+        console.warn(`[vcHandoverCore] CRM deal ${lead.id}: chưa cấu hình cột sync_role=vc_delivery trên pipeline`);
       }
     }
   } catch (crmErr) { console.warn('[vcHandoverCore] sync CRM:', crmErr.message); }
@@ -237,6 +287,32 @@ async function performVcHandoverCore(req, {
       body: `🚚 ${actor?.full_name || 'Người dùng'} đã bàn giao dự án sang module Vận chuyển.`,
     });
   } catch (_) { /* ignore */ }
+
+  try {
+    const io = req?.app?.get?.('io');
+    if (io) {
+      const { emitLogisticsKanbanChangedImmediate } = require('./workshopIntakeNotify');
+      emitLogisticsKanbanChangedImmediate(io, {
+        projectId,
+        reason: 'vc_handover',
+        companyId: project.company_id || null,
+        logisticsCompanyId,
+        vcKanbanColumnId: vcStageId || null,
+        project: {
+          id: projectId,
+          code: project.code,
+          name: project.name,
+          status: 'shipping',
+          company_id: project.company_id || null,
+          logistics_company_id: logisticsCompanyId,
+          vc_kanban_column_id: vcStageId || null,
+          sx_kanban_column_id: sxHandoverPipelineStageId || null,
+        },
+      });
+    }
+  } catch (emitErr) {
+    console.warn('[vcHandoverCore] emit logistics board:', emitErr.message);
+  }
 
   return {
     handed_over: true,

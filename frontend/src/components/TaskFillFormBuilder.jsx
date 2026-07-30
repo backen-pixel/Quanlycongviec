@@ -298,7 +298,8 @@ export default function TaskFillFormBuilder({ value, onChange, compact = false }
                   )}
 
                   {field.type !== 'button' && field.type !== 'file' && field.type !== 'single_select'
-                    && field.type !== 'multi_select' && field.type !== 'checklist' && field.type !== 'dimensions' && field.type !== 'date' && (
+                    && field.type !== 'multi_select' && field.type !== 'checklist' && field.type !== 'appliance_list'
+                    && field.type !== 'dimensions' && field.type !== 'date' && (
                     <label className="block">
                       <span className="text-[10px] text-gray-500">Placeholder</span>
                       <input
@@ -324,9 +325,11 @@ export default function TaskFillFormBuilder({ value, onChange, compact = false }
                     </label>
                   )}
 
-                  {(field.type === 'single_select' || field.type === 'multi_select' || field.type === 'checklist') && (
+                  {(field.type === 'single_select' || field.type === 'multi_select' || field.type === 'checklist' || field.type === 'appliance_list') && (
                     <div className="space-y-1">
-                      <span className="text-[10px] font-semibold text-gray-500">Các lựa chọn</span>
+                      <span className="text-[10px] font-semibold text-gray-500">
+                        {field.type === 'appliance_list' ? 'Loại thiết bị gợi ý' : 'Các lựa chọn'}
+                      </span>
                       {(field.options || []).map((opt) => (
                         <div key={opt.id} className="flex items-center gap-1">
                           <input
@@ -335,7 +338,7 @@ export default function TaskFillFormBuilder({ value, onChange, compact = false }
                             onPointerDown={(e) => e.stopPropagation()}
                             className="flex-1 h-7 px-2 rounded border text-xs outline-none focus:ring-1 focus:ring-orange-400 bg-white"
                           />
-                          {(field.type === 'checklist' || field.type === 'single_select') && (
+                          {(field.type === 'checklist' || field.type === 'single_select' || field.type === 'appliance_list') && (
                             <label className="text-[9px] text-gray-500 flex items-center gap-0.5 shrink-0 cursor-pointer" title="Chọn Khác → hiện ô nhập text">
                               <input
                                 type="checkbox"
@@ -357,7 +360,7 @@ export default function TaskFillFormBuilder({ value, onChange, compact = false }
                           className="text-[10px] text-orange-700 hover:underline cursor-pointer flex items-center gap-0.5">
                           <Plus className="h-3 w-3" /> Thêm lựa chọn
                         </button>
-                        {(field.type === 'checklist' || field.type === 'single_select') && !(field.options || []).some((o) => o.is_other) && (
+                        {(field.type === 'checklist' || field.type === 'single_select' || field.type === 'appliance_list') && !(field.options || []).some((o) => o.is_other) && (
                           <button type="button" onClick={() => addOption(field.id, true)}
                             className="text-[10px] text-violet-700 hover:underline cursor-pointer flex items-center gap-0.5">
                             <Plus className="h-3 w-3" /> Thêm «Khác»

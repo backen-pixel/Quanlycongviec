@@ -1,5 +1,6 @@
 import { useMemo, useState, useCallback, useEffect } from 'react';
 import { Search, X, Pin, Pencil, LayoutGrid } from 'lucide-react';
+import api from '../lib/api';
 import {
   APP_MODULE_DEFINITIONS,
   defaultAppSwitcherFavorites,
@@ -7,6 +8,7 @@ import {
   writeAppSwitcherFavorites,
   resolveActiveAppModuleId,
   canUseAppModule,
+  mapCustomAppModuleToDef,
 } from '../lib/appSwitcherModules';
 import ModuleAccessDeniedModal from './ModuleAccessDeniedModal';
 import ModuleBrandIcon from './ModuleBrandIcon';
@@ -21,6 +23,7 @@ function moduleMatchesSearch(mod, q) {
     mod.name.toLowerCase().includes(q)
     || mod.desc.toLowerCase().includes(q)
     || mod.category.toLowerCase().includes(q)
+    || String(mod.adminCategory || '').toLowerCase().includes(q)
   );
 }
 
@@ -68,12 +71,41 @@ export default function AppSwitcherPanel({
   isSX,
   isCRM,
   isCongViec,
+  customModuleId = null,
+  customModules: customModulesProp = null,
   panelRef,
 }) {
   const [search, setSearch] = useState('');
   const [editFavorites, setEditFavorites] = useState(false);
   const [favoritePaths, setFavoritePaths] = useState(() => readAppSwitcherFavorites() || []);
   const [deniedModule, setDeniedModule] = useState(null);
+  const [customModulesLocal, setCustomModulesLocal] = useState([]);
+
+  useEffect(() => {
+    if (Array.isArray(customModulesProp)) {
+      setCustomModulesLocal(customModulesProp);
+      return undefined;
+    }
+    if (!open) return undefined;
+    let cancelled = false;
+    api.get('/app-modules', { params: { for_switcher: 1 } })
+      .then((r) => {
+        if (cancelled) return;
+        const defs = (r.data?.modules || []).map(mapCustomAppModuleToDef).filter(Boolean);
+        setCustomModulesLocal(defs);
+      })
+      .catch(() => {
+        if (!cancelled) setCustomModulesLocal([]);
+      });
+    return () => { cancelled = true; };
+  }, [open, customModulesProp]);
+
+  const customModules = Array.isArray(customModulesProp) ? customModulesProp : customModulesLocal;
+
+  const catalog = useMemo(
+    () => [...APP_MODULE_DEFINITIONS, ...customModules],
+    [customModules],
+  );
 
   const activeModuleId = resolveActiveAppModuleId({
     isKnowledge,
@@ -84,11 +116,12 @@ export default function AppSwitcherPanel({
     isSX,
     isCRM,
     isCongViec,
+    customModuleId,
   });
 
   const allModulePaths = useMemo(
-    () => APP_MODULE_DEFINITIONS.map((m) => m.path),
-    [],
+    () => catalog.map((m) => m.path),
+    [catalog],
   );
 
   const moduleAccessCtx = useMemo(
@@ -111,14 +144,24 @@ export default function AppSwitcherPanel({
 
   const favoriteModules = useMemo(() => {
     const list = resolvedFavorites
-      .map((path) => APP_MODULE_DEFINITIONS.find((m) => m.path === path))
+      .map((path) => catalog.find((m) => m.path === path))
       .filter(Boolean);
     return q ? list.filter((m) => moduleMatchesSearch(m, q)) : list;
-  }, [resolvedFavorites, q]);
+  }, [resolvedFavorites, q, catalog]);
 
   const allModules = useMemo(() => {
-    return APP_MODULE_DEFINITIONS.filter((m) => moduleMatchesSearch(m, q));
-  }, [q]);
+    return catalog.filter((m) => moduleMatchesSearch(m, q));
+  }, [q, catalog]);
+
+  const builtInModules = useMemo(
+    () => allModules.filter((m) => !m.isCustom),
+    [allModules],
+  );
+
+  const customAppModules = useMemo(
+    () => allModules.filter((m) => m.isCustom),
+    [allModules],
+  );
 
   const toggleFavorite = useCallback((path, e) => {
     e?.stopPropagation?.();
@@ -153,6 +196,70 @@ export default function AppSwitcherPanel({
   useEffect(() => {
     if (!open) setDeniedModule(null);
   }, [open]);
+
+  const renderModuleCard = (mod) => {
+    const isActive = mod.id === activeModuleId;
+    const isPinnedLogin = pinnedModule === mod.path;
+    const isFavorite = resolvedFavorites.includes(mod.path);
+    const canUse = canUseModule(mod);
+    return (
+      <div
+        key={mod.id}
+        role="button"
+        tabIndex={0}
+        onClick={() => openModule(mod)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openModule(mod); }}
+        className={`group relative flex items-center gap-2 rounded-xl border px-2 py-2 text-left shadow-sm transition-all ${
+          !canUse
+            ? lockedModuleCardClass
+            : isActive
+              ? `${activeModuleCardClass} cursor-pointer`
+              : `${idleModuleCardClass} cursor-pointer`
+        }`}
+      >
+        <ModuleBrandIcon mod={mod} size="md" />
+        <div className="min-w-0 flex-1 pr-11">
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="text-[13px] font-bold text-slate-900 truncate">{mod.name}</span>
+            {isActive && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500 text-white shrink-0">
+                Đang dùng
+              </span>
+            )}
+          </div>
+          {!mod.isCustom && (
+            <span className={`inline-block mt-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${mod.categoryClass}`}>
+              {mod.category}
+            </span>
+          )}
+        </div>
+        <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); toggleFavorite(mod.path, e); }}
+            title={isFavorite ? 'Bỏ khỏi ưa thích' : 'Thêm vào ưa thích'}
+            className={`p-1 rounded-md cursor-pointer transition-colors ${
+              isFavorite ? 'text-emerald-600 bg-emerald-50' : 'text-slate-300 opacity-0 group-hover:opacity-100 hover:text-slate-600 hover:bg-slate-50'
+            } ${isFavorite ? 'opacity-100' : ''}`}
+          >
+            <Pin className={`h-3 w-3 ${isFavorite ? 'fill-current rotate-45' : ''}`} />
+          </button>
+          {canUse && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onPinModule(mod.path); }}
+              title={isPinnedLogin ? 'Mặc định khi đăng nhập' : 'Ghim — đăng nhập vào module này'}
+              className={`p-1 rounded-md cursor-pointer transition-colors ${
+                isPinnedLogin ? 'text-amber-600 bg-amber-50' : 'text-slate-300 opacity-0 group-hover:opacity-100 hover:text-slate-600 hover:bg-slate-50'
+              } ${isPinnedLogin ? 'opacity-100' : ''}`}
+            >
+              <Pin className={`h-3 w-3 ${isPinnedLogin ? 'fill-current' : ''}`} />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   if (!open) return null;
 
@@ -253,74 +360,26 @@ export default function AppSwitcherPanel({
           )}
 
           <section>
-            <h3 className="text-[13px] font-bold text-slate-900 mb-2">Tất cả ứng dụng</h3>
+            <h3 className="text-[13px] font-bold text-slate-900 mb-2">Module có sẵn</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-              {allModules.map((mod) => {
-                const isActive = mod.id === activeModuleId;
-                const isPinnedLogin = pinnedModule === mod.path;
-                const isFavorite = resolvedFavorites.includes(mod.path);
-                const canUse = canUseModule(mod);
-                return (
-                  <div
-                    key={mod.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => openModule(mod)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openModule(mod); }}
-                    className={`group relative flex items-center gap-2 rounded-xl border px-2 py-2 text-left shadow-sm transition-all ${
-                      !canUse
-                        ? lockedModuleCardClass
-                        : isActive
-                          ? `${activeModuleCardClass} cursor-pointer`
-                          : `${idleModuleCardClass} cursor-pointer`
-                    }`}
-                  >
-                    <ModuleBrandIcon mod={mod} size="md" />
-                    <div className="min-w-0 flex-1 pr-11">
-                      <div className="flex flex-wrap items-center gap-1">
-                        <span className="text-[13px] font-bold text-slate-900 truncate">{mod.name}</span>
-                        {isActive && (
-                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500 text-white shrink-0">
-                            Đang dùng
-                          </span>
-                        )}
-                      </div>
-                      <span className={`inline-block mt-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${mod.categoryClass}`}>
-                        {mod.category}
-                      </span>
-                    </div>
-                    <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5">
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); toggleFavorite(mod.path, e); }}
-                        title={isFavorite ? 'Bỏ khỏi ưa thích' : 'Thêm vào ưa thích'}
-                        className={`p-1 rounded-md cursor-pointer transition-colors ${
-                          isFavorite ? 'text-emerald-600 bg-emerald-50' : 'text-slate-300 opacity-0 group-hover:opacity-100 hover:text-slate-600 hover:bg-slate-50'
-                        } ${isFavorite ? 'opacity-100' : ''}`}
-                      >
-                        <Pin className={`h-3 w-3 ${isFavorite ? 'fill-current rotate-45' : ''}`} />
-                      </button>
-                      {canUse && (
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); onPinModule(mod.path); }}
-                          title={isPinnedLogin ? 'Mặc định khi đăng nhập' : 'Ghim — đăng nhập vào module này'}
-                          className={`p-1 rounded-md cursor-pointer transition-colors ${
-                            isPinnedLogin ? 'text-amber-600 bg-amber-50' : 'text-slate-300 opacity-0 group-hover:opacity-100 hover:text-slate-600 hover:bg-slate-50'
-                          } ${isPinnedLogin ? 'opacity-100' : ''}`}
-                        >
-                          <Pin className={`h-3 w-3 ${isPinnedLogin ? 'fill-current' : ''}`} />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+              {builtInModules.map((mod) => renderModuleCard(mod))}
             </div>
-            {allModules.length === 0 && (
+            {builtInModules.length === 0 && customAppModules.length === 0 && (
               <p className="text-xs text-slate-500 text-center py-6">Không tìm thấy ứng dụng phù hợp.</p>
             )}
+            {builtInModules.length === 0 && customAppModules.length > 0 && q && (
+              <p className="text-xs text-slate-500 text-center py-3">Không có module có sẵn khớp tìm kiếm.</p>
+            )}
           </section>
+
+          {customAppModules.length > 0 && (
+            <section>
+              <h3 className="text-[13px] font-bold text-slate-900 mb-2">Module tùy chỉnh</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                {customAppModules.map((mod) => renderModuleCard(mod))}
+              </div>
+            </section>
+          )}
         </div>
 
         <div className="shrink-0 px-3.5 py-2 border-t border-slate-100 bg-white/90">

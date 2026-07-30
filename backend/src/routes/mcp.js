@@ -38,10 +38,12 @@ function onlyUuidConnectId(req, res, next) {
   return next();
 }
 
-function applyMcpResponseHeaders(res, { sessionId, clientId, setSessionOnInit, setClientOnInit }) {
+function applyMcpResponseHeaders(res, { sessionId, clientId, setSessionOnInit, setClientOnInit }, req = null) {
   res.set('Cache-Control', 'no-store');
   if (sessionId) res.set('Mcp-Session-Id', sessionId);
   if (clientId && (setClientOnInit || setSessionOnInit)) res.set('Mcp-Client-Id', clientId);
+  const traceId = req?.mcpTraceId;
+  if (traceId) res.set('Mcp-Trace-Id', String(traceId));
 }
 
 async function handleToolError(res, e) {
@@ -57,7 +59,7 @@ async function handleToolError(res, e) {
 async function mcpPostHandler(req, res) {
   try {
     const out = await handleMcpPost(req, req.body || {});
-    applyMcpResponseHeaders(res, out);
+    applyMcpResponseHeaders(res, out, req);
 
     if (out.isNotification) {
       return res.status(202).end();

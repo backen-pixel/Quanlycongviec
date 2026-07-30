@@ -8,10 +8,10 @@ const INTAKE_BUCKET = 'won_pending';
 const VC_SHIPPED_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
 
 /**
- * TẠM: tắt cổng bàn giao VC (yêu cầu Sale chọn công ty) + khoá kéo trên Kanban SX.
- * Đặt lại `false` khi muốn bật lại luồng bàn giao VC bình thường.
+ * Tắt cổng bàn giao VC (yêu cầu Sale chọn công ty) + khoá kéo trên Kanban SX.
+ * `false` = luồng bình thường: kéo cột trigger / nút Bàn giao VC → gửi request cho Sale.
  */
-export const TEMP_SX_FREE_DRAG = true;
+export const TEMP_SX_FREE_DRAG = false;
 
 /** Chi phí sản xuất — KPI / tổng cột / công nợ (không fallback doanh thu CRM). */
 export function resolveSxProjectValue(project) {
@@ -429,6 +429,113 @@ export function resolveSxHandoverColumnId(stages, project, preferredColId = null
   const globalHo = handoverCols.find((s) => !s.workshop_type_id);
   if (globalHo) return globalHo.id;
   return handoverCols[0].id;
+}
+
+function firstSxPipelineColumnId(stages) {
+  const sorted = [...(stages || [])].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+  const intake = sorted.find(
+    (s) => s.bucket_slug === INTAKE_BUCKET || String(s.id || '').startsWith('__fb_'),
+  );
+  return intake?.id ?? sorted[0]?.id ?? null;
+}
+
+/** Cột cuối pipeline (không phải intake) — fallback khi board thiếu cột bàn giao. */
+function lastSxPipelineColumnId(stages) {
+  const sorted = [...(stages || [])].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+  const nonIntake = sorted.filter(
+    (s) => s.bucket_slug !== INTAKE_BUCKET && !String(s.id || '').startsWith('__fb_'),
+  );
+  if (nonIntake.length) return nonIntake[nonIntake.length - 1].id;
+  return sorted[sorted.length - 1]?.id ?? null;
+}
+
+function projectHasLogisticsLink(project) {
+  return Boolean(
+    project?.vc_kanban_column_id
+    || project?.logistics_company_id
+    || project?.logistics_company?.id,
+  );
+}
+
+/**
+ * Resolver cột SX hiển thị — khớp BE `resolveSxDisplayColumnId`.
+ * Dùng chung Kanban dashboard + PipelineStepper detail để không lệch cột.
+ */
+export function resolveSxDisplayColumnId(project, stages, opts = {}) {
+  const sorted = [...(Array.isArray(stages) ? stages : [])]
+    .sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+  const stageIds = new Set(sorted.map((s) => String(s.id)));
+  const inList = (id) => (id != null && stageIds.has(String(id)) ? id : null);
+
+  const primaryDeal = opts.leadMeta
+    || (Array.isArray(project?.crmDeals) ? (project.crmDeals.find((d) => d?.type === 'deal') || project.crmDeals[0]) : null)
+    || project?.crm_deals?.[0]
+    || null;
+  const leadColId = opts.leadColId
+    || primaryDeal?.sx_pipeline_stage_id
+    || primaryDeal?.sx_pipeline_stage?.id
+    || null;
+  const wonDeal = opts.sxWonDeal ?? Boolean(project?.sx_won_deal);
+  const hasSxHandover = opts.hasSxHandover ?? Boolean(primaryDeal?.sx_handover_at);
+  const inLogistics = projectHasLogisticsLink(project);
+
+  const projectColRow = sorted.find((s) => String(s.id) === String(project?.sx_kanban_column_id || '')) || null;
+
+  if (shouldForceSxHandoverColumn(project, projectColRow)) {
+    if (projectColRow && sxStatusComesFromColumn(project, projectColRow)) return projectColRow.id;
+    let preferred = null;
+    const leadColRow = sorted.find((s) => String(s.id) === String(leadColId || ''));
+    if (leadColRow?.is_handover_to_logistics) preferred = leadColId;
+    else if (projectColRow?.is_handover_to_logistics) preferred = project.sx_kanban_column_id;
+    const handoverId = resolveSxHandoverColumnId(sorted, project, preferred);
+    if (handoverId) return handoverId;
+    // Board đang xem bộ Global / thiếu cột →VC: không đổ thẻ shipping về cột đầu.
+    const lastCol = lastSxPipelineColumnId(sorted);
+    if (lastCol) return lastCol;
+  }
+
+  const fromProject = inList(project?.sx_kanban_column_id);
+  if (fromProject) return fromProject;
+
+  const fromLead = inList(leadColId);
+  if (fromLead) return fromLead;
+
+  // sx_kanban_column_id thuộc pipeline khác (vd. Hucabi Tủ bếp) nhưng board đang Global
+  // → map handover hiện có, hoặc cột cuối — tránh rơi «Tiếp nhận».
+  if (project?.sx_kanban_column_id && (inLogistics || String(project?.status || '') === 'shipping')) {
+    const handoverId = resolveSxHandoverColumnId(sorted, project, null);
+    if (handoverId) return handoverId;
+    const lastCol = lastSxPipelineColumnId(sorted);
+    if (lastCol) return lastCol;
+  }
+
+  if (wonDeal) {
+    const inWorkshop = Boolean(project?.current_stage_id);
+    if (!inWorkshop && !hasSxHandover && !inLogistics) return firstSxPipelineColumnId(sorted);
+  }
+
+  const cid = project?.current_stage_id || project?.current_stage?.id || null;
+  if (cid) {
+    const wfMatches = sorted.filter((col) => {
+      const wid = col.workflow_stage_id || col.workflow_stage?.id;
+      return wid && String(wid) === String(cid);
+    });
+    if (wfMatches.length === 1) return wfMatches[0].id;
+    if (wfMatches.length > 1) {
+      const ids = new Set(wfMatches.map((m) => String(m.id)));
+      if (project?.sx_kanban_column_id && ids.has(String(project.sx_kanban_column_id))) {
+        return project.sx_kanban_column_id;
+      }
+      if (leadColId && ids.has(String(leadColId))) return leadColId;
+      return [...wfMatches].sort((a, b) => (a.order_index || 0) - (b.order_index || 0))[0]?.id || null;
+    }
+  }
+
+  if (inLogistics || String(project?.status || '') === 'shipping') {
+    return lastSxPipelineColumnId(sorted) || firstSxPipelineColumnId(sorted);
+  }
+  if (project?.sx_intake || wonDeal) return firstSxPipelineColumnId(sorted);
+  return null;
 }
 
 export function buildSxPipelineStageMeta(col) {

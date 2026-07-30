@@ -1,10 +1,10 @@
 {
-  "generated_at": "2026-07-24T04:54:40.178Z",
-  "total_routes": 230,
+  "generated_at": "2026-07-27T04:39:54.470Z",
+  "total_routes": 231,
   "by_file": {
     "routes/dashboard.js": 9,
     "routes/reports.js": 12,
-    "routes/leadLifecycle.js": 45,
+    "routes/leadLifecycle.js": 47,
     "routes/visibleProduction.js": 3,
     "routes/customers.js": 9,
     "routes/followupPlanner.js": 21,
@@ -557,6 +557,12 @@
       "middleware": []
     },
     {
+      "method": "PATCH",
+      "path": "/leads/:id/deadline/disable-all",
+      "file": "routes/leadLifecycle.js",
+      "middleware": []
+    },
+    {
       "method": "GET",
       "path": "/leads/:id/deadline-history",
       "file": "routes/leadLifecycle.js",
@@ -754,6 +760,12 @@
     {
       "method": "POST",
       "path": "/leads/:id/transfer-region",
+      "file": "routes/leadLifecycle.js",
+      "middleware": []
+    },
+    {
+      "method": "GET",
+      "path": "/leads/:id/transfer-options",
       "file": "routes/leadLifecycle.js",
       "middleware": []
     },

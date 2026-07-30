@@ -1071,6 +1071,8 @@ export default function CRMDashboard() {
   // leads & deals are computed via useMemo (client-side filter) - see below
   const [stagesLead, setStagesLead] = useState([]);
   const [stagesDeal, setStagesDeal] = useState([]);
+  /** CRM stage_id → transfer targets [{ module_key, name, icon, id }] */
+  const [customStageTransfers, setCustomStageTransfers] = useState({});
   const [sources, setSources] = useState([]);
   const [leadTypes, setLeadTypes] = useState([]);
   const [companies, setCompanies] = useState([]);
@@ -1347,6 +1349,39 @@ export default function CRMDashboard() {
     clearDealWonConfirmTimer();
     setDealWonProductionError('Đã hủy — chưa chuyển.');
   }, [clearDealWonConfirmTimer]);
+
+  /** Load liên kết chuyển sang module tùy chỉnh cho các cột deal. */
+  useEffect(() => {
+    const ids = (stagesDeal || []).map((s) => s.id).filter(Boolean);
+    if (!ids.length) {
+      setCustomStageTransfers({});
+      return undefined;
+    }
+    let cancelled = false;
+    api.get('/app-modules/links/by-stages', {
+      params: { source_kind: 'crm', stage_ids: ids.join(',') },
+    })
+      .then((r) => {
+        if (cancelled) return;
+        const map = {};
+        (r.data?.links || []).forEach((link) => {
+          if (link.link_type !== 'transfer' || !link.target_module?.module_key) return;
+          const sid = String(link.source_stage_id);
+          if (!map[sid]) map[sid] = [];
+          map[sid].push({
+            id: link.target_module.id,
+            module_key: link.target_module.module_key,
+            name: link.target_module.name,
+            icon: link.target_module.icon,
+          });
+        });
+        setCustomStageTransfers(map);
+      })
+      .catch(() => {
+        if (!cancelled) setCustomStageTransfers({});
+      });
+    return () => { cancelled = true; };
+  }, [stagesDeal]);
 
   /** Tải phân loại SX khi mở hộp «Chuyển Deal sang Sản xuất» (kéo Kanban → Thắng). */
   useEffect(() => {
@@ -3525,6 +3560,7 @@ export default function CRMDashboard() {
     const cid = lead?.company_id ? String(lead.company_id) : '';
     if (!cid) {
       setWonAssignRegions([]);
+      setWonAssignRegion('');
       return undefined;
     }
     let cancel = false;
@@ -3534,10 +3570,20 @@ export default function CRMDashboard() {
       .then((r) => {
         if (cancel) return;
         const list = Array.isArray(r.data) ? r.data : [];
-        setWonAssignRegions(list.filter((x) => x.is_active !== false));
+        const active = list.filter((x) => x.is_active !== false);
+        setWonAssignRegions(active);
+        // Bỏ chọn nếu region hiện tại của lead không thuộc CRM (vd. khu vực SX)
+        setWonAssignRegion((prev) => {
+          const cur = prev || (lead?.region_id ? String(lead.region_id) : '');
+          if (cur && active.some((reg) => String(reg.id) === String(cur))) return cur;
+          return '';
+        });
       })
       .catch(() => {
-        if (!cancel) setWonAssignRegions([]);
+        if (!cancel) {
+          setWonAssignRegions([]);
+          setWonAssignRegion('');
+        }
       })
       .finally(() => {
         if (!cancel) setWonAssignRegionsLoading(false);
@@ -5532,6 +5578,12 @@ export default function CRMDashboard() {
       }
 
       await applyKanbanStageChange(leadId, newStageId, extraData);
+      if (pipelineType === 'deal' && newStageId) {
+        api.post('/app-modules/notify-from-crm-stage', {
+          stage_id: newStageId,
+          lead_id: leadId,
+        }).catch(() => {});
+      }
     },
     [pipelineType, allLeads, allDeals, applyKanbanStageChange],
   );
@@ -7986,6 +8038,26 @@ export default function CRMDashboard() {
                 setDealAutoCreateWorkshopTypes([]);
                 setDealAutoCreatePickError('');
               }}
+              onOpenCustomModuleTransfer={async (deal, mod) => {
+                if (!mod?.module_key || !deal?.id) return;
+                try {
+                  const { data } = await api.post(`/app-modules/${mod.module_key}/transfer-from-crm`, {
+                    lead_id: deal.id,
+                    company_id: deal.company_id || filterCompany || undefined,
+                  });
+                  window.alert(
+                    data?.created
+                      ? `Đã chuyển sang «${mod.name}».`
+                      : `Deal đã có trong «${mod.name}».`,
+                  );
+                  if (data?.record?.id) {
+                    window.open(`/m/${mod.module_key}/records/${data.record.id}`, '_blank');
+                  }
+                } catch (e) {
+                  window.alert(e?.response?.data?.error || e?.message || 'Không chuyển được');
+                }
+              }}
+              customStageTransfers={customStageTransfers}
               remeasureToken={`${showAdvSearch ? 1 : 0}:${timePreset}:${customDateFrom}:${customDateTo}`}
               explicitExpectedKv={explicitExpectedKvStages}
               wonStage={dealKhSplitEnabled && pipelineType === 'deal' ? wonStage : null}
@@ -9428,6 +9500,8 @@ const KanbanStageCard = memo(function KanbanStageCard({
   onOpenDeadline,
   onSaveEstimatedValue,
   onOpenSxTransfer,
+  onOpenCustomModuleTransfer,
+  customStageTransfers = {},
   explicitExpectedKv,
   wonStage,
   stageCounts,
@@ -9578,13 +9652,15 @@ const KanbanStageCard = memo(function KanbanStageCard({
       onOpenDeadline={onOpenDeadline}
       onSaveEstimatedValue={onSaveEstimatedValue}
       onOpenSxTransfer={onOpenSxTransfer}
+      onOpenCustomModuleTransfer={onOpenCustomModuleTransfer}
+      customTransfers={customStageTransfers?.[String(stage.id)] || []}
       searchHighlighted={String(searchHighlightId) === String(item.id)}
     />
   ), [
     stage, columnTheme.accent, onMoveStage, pipelineStages, pipelineType, mergeSelectedIds,
     onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart,
     onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline, onSaveEstimatedValue,
-    onOpenSxTransfer, searchHighlightId,
+    onOpenSxTransfer, onOpenCustomModuleTransfer, customStageTransfers, searchHighlightId,
   ]);
 
   return (
@@ -9707,7 +9783,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
 });
 
 // Kanban Item Card — meta · tiêu đề · ngữ cảnh · giá trị · khách · footer
-const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveStage, pipelineStages, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline, onSaveEstimatedValue, onOpenSxTransfer, searchHighlighted = false }) {
+const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveStage, pipelineStages, pipelineType, mergeSelectedIds, onToggleMergeSelect, compact, showCompanyOnCard, leadTypes, kpiLedgerPeriodStart, onOpenKanbanComment, onTogglePin, onToggleInteracted, onOpenDeadline, onSaveEstimatedValue, onOpenSxTransfer, onOpenCustomModuleTransfer, customTransfers = [], searchHighlighted = false }) {
   const navigate = useNavigate();
   const cardRef = useRef(null);
   const [editingValue, setEditingValue] = useState(false);
@@ -10220,6 +10296,18 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
                 <Factory className="h-3.5 w-3.5" strokeWidth={2.2} />
               </button>
             )}
+            {typeof onOpenCustomModuleTransfer === 'function' && pipelineType === 'deal' && (customTransfers || []).map((mod) => (
+              <button
+                key={mod.module_key || mod.id}
+                type="button"
+                data-kanban-sx-btn
+                title={`Chuyển sang ${mod.name}`}
+                onClick={(ev) => { ev.stopPropagation(); onOpenCustomModuleTransfer(item, mod); }}
+                className="flex h-6 w-6 items-center justify-center rounded-full text-violet-500 hover:text-violet-700 hover:bg-violet-100 transition-colors cursor-pointer text-[11px] leading-none"
+              >
+                {mod.icon || '📦'}
+              </button>
+            ))}
             {typeof onMoveStage === 'function' && Array.isArray(pipelineStages) && pipelineStages.length > 1 && (
               <KanbanCardQuickMove
                 stages={pipelineStages}
@@ -10295,6 +10383,8 @@ function KanbanView({
   onOpenDeadline,
   onSaveEstimatedValue,
   onOpenSxTransfer,
+  onOpenCustomModuleTransfer,
+  customStageTransfers,
   remeasureToken,
   explicitExpectedKv,
   wonStage,
@@ -10462,6 +10552,8 @@ function KanbanView({
               onOpenDeadline={onOpenDeadline}
               onSaveEstimatedValue={onSaveEstimatedValue}
               onOpenSxTransfer={onOpenSxTransfer}
+              onOpenCustomModuleTransfer={onOpenCustomModuleTransfer}
+              customStageTransfers={customStageTransfers}
               explicitExpectedKv={explicitExpectedKv}
               wonStage={wonStage}
               stageCounts={stageCounts}

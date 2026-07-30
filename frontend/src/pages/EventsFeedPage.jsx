@@ -21,12 +21,44 @@ import * as XLSX from 'xlsx';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import EventCreateModal, { EVENT_MODULE_OPTIONS } from '../components/EventCreateModal';
 import SearchInlineFilterChips, { SearchClearButton } from '../components/SearchInlineFilterChips';
+import { buildEventDealLinks } from '../lib/eventDealLinks';
 
 import ScopeFilterBar from '../shared/components/ScopeFilterBar';
 import { useScopeFilter } from '../shared/hooks/useScopeFilter';
 import { useModuleAccess } from '../shared/context/ModuleAccessContext';
 
 export { EVENT_MODULE_OPTIONS };
+
+/** Nút mở deal/dự án đúng module (CRM / SX / VC). */
+function EventDealLinkButtons({ event: ev, pageModule = 'crm', className = '' }) {
+  const { label, links } = buildEventDealLinks(ev, pageModule);
+  if (!links.length) return null;
+  const tone = {
+    crm: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100',
+    sx: 'bg-violet-50 text-violet-700 border-violet-200 hover:bg-violet-100',
+    vc: 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100',
+  };
+  return (
+    <div className={`flex flex-wrap items-center gap-1.5 ${className}`}>
+      {label ? (
+        <span className="text-[11px] text-gray-500 truncate max-w-[220px]" title={label}>
+          Deal: <span className="text-gray-800 font-medium">{label}</span>
+        </span>
+      ) : null}
+      {links.map((l) => (
+        <Link
+          key={l.key}
+          to={l.href}
+          onClick={(e) => e.stopPropagation()}
+          title={l.title}
+          className={`inline-flex items-center h-6 px-2 rounded-md border text-[10px] font-bold uppercase tracking-wide ${tone[l.key] || tone.crm}`}
+        >
+          {l.short}
+        </Link>
+      ))}
+    </div>
+  );
+}
 
 const STATUS_MAP = {
   planned: { label: 'Đã lên kế hoạch', color: 'bg-blue-100 text-blue-700', icon: Clock },
@@ -983,6 +1015,7 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
                 month={calMonth} year={calYear} events={calEvents} eventTypes={eventTypes}
                 loading={calLoading} selectedDay={selectedDay}
                 mode={calendarMode}
+                pageModule={forcedModule || 'crm'}
                 onModeChange={setCalendarMode}
                 onPrevMonth={() => { if (calMonth === 1) { setCalMonth(12); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); }}
                 onNextMonth={() => { if (calMonth === 12) { setCalMonth(1); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); }}
@@ -1019,6 +1052,7 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
             )}
             {view === 'list' ? (
               <EventListView
+                pageModule={forcedModule || 'crm'}
                 events={events}
                 eventTypes={eventTypes}
                 loading={loading}
@@ -1075,6 +1109,7 @@ export default function EventsFeedPage({ lockedModule = '' } = {}) {
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                       {events.map(ev => (
                         <EventCard key={ev.id} event={ev} eventTypes={eventTypes} currentUser={currentUser}
+                          pageModule={forcedModule || 'crm'}
                           onRespond={handleRespond} onDelete={handleDelete} onCancel={handleCancel}
                           onStatusChange={handleStatusChange}
                           onEdit={() => { setEditEvent(ev); setShowCreate(true); }} />
@@ -1171,7 +1206,7 @@ function EventsEmptyState({ loadError, hints, onClearFilters, onViewAllTime, sho
 // ═══════════════════════════════════════════════════════════════
 // EVENT CARD — Bitrix24-style Feed Card
 // ═══════════════════════════════════════════════════════════════
-function EventCard({ event: ev, eventTypes, currentUser, onRespond, onDelete, onCancel, onStatusChange, onEdit }) {
+function EventCard({ event: ev, eventTypes, currentUser, pageModule = 'crm', onRespond, onDelete, onCancel, onStatusChange, onEdit }) {
   const [comment, setComment] = useState('');
   const [comments, setComments] = useState([]);
   const [showComments, setShowComments] = useState(false);
@@ -1341,14 +1376,7 @@ function EventCard({ event: ev, eventTypes, currentUser, onRespond, onDelete, on
               <span className="truncate">{ev.location}</span>
             </p>
           )}
-          {ev.lead && (
-            <p className="text-[11px] truncate">
-              <span className="text-gray-500">Deal: </span>
-              <Link to={`/crm/leads/${ev.lead.id}`} className="text-blue-600 hover:underline font-medium">
-                {ev.lead.code} — {ev.lead.title}
-              </Link>
-            </p>
-          )}
+          <EventDealLinkButtons event={ev} pageModule={pageModule} />
           {ev.customer && (
             <p className="text-[11px] text-gray-600 truncate">
               <span className="text-gray-500">KH: </span>
@@ -1480,7 +1508,7 @@ function EventCard({ event: ev, eventTypes, currentUser, onRespond, onDelete, on
 // ═══════════════════════════════════════════════════════════════
 // Chi tiết một sự kiện trong khung « ngày đã chọn » (lịch) — đủ trường như feed
 // ═══════════════════════════════════════════════════════════════
-function SelectedDayEventDetail({ ev, eventTypes, onEdit }) {
+function SelectedDayEventDetail({ ev, eventTypes, pageModule = 'crm', onEdit }) {
   const typeInfo = eventTypes.find((t) => t.slug === ev.event_type) || ev.event_type_ref || { icon: '📋', name: ev.event_type, color: '#6B7280' };
   const statusInfo = STATUS_MAP[ev.status] || STATUS_MAP.planned;
   const confirmed = (ev.participants || []).filter((p) => p.status === 'confirmed');
@@ -1557,18 +1585,7 @@ function SelectedDayEventDetail({ ev, eventTypes, onEdit }) {
               </span>
             </div>
           )}
-          {ev.lead && (
-            <div className="flex flex-wrap gap-x-2 gap-y-1 items-start">
-              <span className="text-xs text-gray-500 shrink-0">Deal / Lead:</span>
-              <Link
-                to={`/crm/leads/${ev.lead.id}`}
-                onClick={(e) => e.stopPropagation()}
-                className="text-blue-600 hover:underline font-medium"
-              >
-                {ev.lead.code} — {ev.lead.title}
-              </Link>
-            </div>
-          )}
+          <EventDealLinkButtons event={ev} pageModule={pageModule} />
           {ev.customer && (
             <div className="flex flex-wrap gap-x-2 gap-y-1">
               <span className="text-xs text-gray-500 shrink-0">Khách hàng:</span>
@@ -1609,7 +1626,7 @@ function SelectedDayEventDetail({ ev, eventTypes, onEdit }) {
 // ═══════════════════════════════════════════════════════════════
 // CALENDAR VIEW — Monthly grid
 // ═══════════════════════════════════════════════════════════════
-function CalendarView({ month, year, events, eventTypes, loading, selectedDay, onPrevMonth, onNextMonth, onSelectDay, onOpenCreateForDay, onEdit, mode = 'full', onModeChange }) {
+function CalendarView({ month, year, events, eventTypes, loading, selectedDay, onPrevMonth, onNextMonth, onSelectDay, onOpenCreateForDay, onEdit, mode = 'full', onModeChange, pageModule = 'crm' }) {
   // mode: 'compact' (mini grid, không hiện tên event — gợi ý dot màu) | 'full' (default)
   const isCompact = mode === 'compact';
   const selectedDayDetailRef = useRef(null);
@@ -1849,7 +1866,7 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
               ) : (
                 <div className="space-y-4">
                   {selectedDayEvents.map((ev) => (
-                    <SelectedDayEventDetail key={ev.id} ev={ev} eventTypes={eventTypes} onEdit={onEdit} />
+                    <SelectedDayEventDetail key={ev.id} ev={ev} eventTypes={eventTypes} pageModule={pageModule} onEdit={onEdit} />
                   ))}
                 </div>
               )}
@@ -1867,6 +1884,7 @@ function CalendarView({ month, year, events, eventTypes, loading, selectedDay, o
 function EventListView({
   events, eventTypes, loading, rangeFrom, rangeTo, loadError, emptyHints,
   onClearFilters, onViewAllTime, onEdit, onDelete, onCancel, onStatusChange, currentUser,
+  pageModule = 'crm',
 }) {
   const [sortKey, setSortKey] = useState('start_time');
   const [sortDir, setSortDir] = useState('desc');
@@ -2012,11 +2030,7 @@ function EventListView({
                         {ev.description && (
                           <div className="text-[11px] text-gray-500 truncate" title={ev.description}>{ev.description}</div>
                         )}
-                        {ev.lead && (
-                          <div className="text-[11px] text-blue-600 truncate" title={`${ev.lead.code} — ${ev.lead.title}`}>
-                            🔗 {ev.lead.code} — {ev.lead.title}
-                          </div>
-                        )}
+                        <EventDealLinkButtons event={ev} pageModule={pageModule} className="mt-0.5" />
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap text-xs">
                         <span

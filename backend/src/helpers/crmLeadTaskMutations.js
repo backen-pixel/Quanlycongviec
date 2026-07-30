@@ -7,11 +7,14 @@ const { normalizeQuickVerdictPayload } = require('./taskQuickVerdict');
 const { validateChecklistTransition, validateChecklistDoneEvidence } = require('./checklistItemEvidence');
 const { createNotification } = require('./notifications');
 const { attachAssigneesToCrmTasks, replaceCrmTaskAssignees } = require('./crmTaskAssignees');
-const { syncAssignmentFromCrmTask } = require('./crmTaskAssignmentSync');
 const {
   notifyNewCrmAssignmentAssignees,
   resolveAssignmentIdForTask,
 } = require('./crmAssignmentNotifications');
+const {
+  ensureActiveAssignmentForLead,
+  promoteNextAssignmentAfterComplete,
+} = require('./crmSequentialAssignment');
 const { isAdminLike } = require('./adminRole');
 const { assertTenantQuota, resolveTenantIdForQuota, invalidateTenantUsageCache } = require('./tenantQuotas');
 const {
@@ -27,6 +30,10 @@ const {
 const { startNextCrmTaskDeadlineAfterComplete } = require('./crmTaskSequentialDeadline');
 const { getRedisIfReady } = require('../config/redis');
 const { createCrmTaskOutbox } = require('./crmTaskOutbox');
+const {
+  resolveTaskSourceFields,
+  isTaskSourceColumnError,
+} = require('./sharedWorkspaceTaskSource');
 
 function isQuickVerdictColumnError(err) {
   const m = String(err?.message || '').toLowerCase();
@@ -232,6 +239,11 @@ async function createCrmLeadTask(req, leadId, body) {
     return { error: quotaCheck.error, status: 403, code: 'quota_exceeded' };
   }
 
+  const sourceFields = resolveTaskSourceFields(b, { required: false });
+  if (!sourceFields.ok) {
+    return { error: sourceFields.error, status: sourceFields.status || 400 };
+  }
+
   const insertRow = {
     lead_id: targetLeadId,
     title: b.title,
@@ -268,10 +280,18 @@ async function createCrmLeadTask(req, leadId, body) {
       leadSnap?.company_id,
     );
   }
+  if (sourceFields.task_source_type !== undefined) {
+    insertRow.task_source_type = sourceFields.task_source_type;
+    insertRow.employee_error_module = sourceFields.employee_error_module;
+  }
 
   let { data, error } = await supabase.from('crm_tasks').insert(insertRow).select(CRM_TASK_SELECT).single();
   if (error && isExecutorColumnError(error)) {
     const { executor_company_id: _e, ...legacy } = insertRow;
+    ({ data, error } = await supabase.from('crm_tasks').insert(legacy).select(CRM_TASK_SELECT).single());
+  }
+  if (error && isTaskSourceColumnError(error)) {
+    const { task_source_type: _t, employee_error_module: _m, ...legacy } = insertRow;
     ({ data, error } = await supabase.from('crm_tasks').insert(legacy).select(CRM_TASK_SELECT).single());
   }
   if (error) return { error: error.message, status: 500 };
@@ -307,50 +327,68 @@ async function createCrmLeadTask(req, leadId, body) {
 
   // ── SAU COMMIT: side-effect qua outbox (không nằm trong transaction DB-core) ──
   // DB-core (task + assignees) đã commit tới đây; thất bại side-effect KHÔNG rollback core.
+  // sync_assignment='direct' (Không gian chung): caller tự sync + notify → bỏ qua outbox.
   // notify phụ thuộc assignmentId nên chạy tuần tự sau assignment_sync.
+  const syncMode = String(b.sync_assignment || '').toLowerCase();
+  const skipNotify = !!b.skip_assignment_notify;
   let assignmentId = null;
+  let sideEffects;
 
-  const runAssignmentSync = async () => {
-    const sync = await syncAssignmentFromCrmTask(req, data, rawAssigneeIds);
-    assignmentId = sync?.assignmentId || null;
-    if (assignmentId) data.crm_assignment_id = assignmentId;
-  };
-
-  const runNotifyAssignees = async () => {
-    const { data: leadSnapNotify } = await supabase.from('crm_leads')
-      .select('id, code, title, company_id, region_id')
-      .eq('id', targetLeadId)
-      .maybeSingle();
-    const notifyAssignmentId = assignmentId
-      || await resolveAssignmentIdForTask(data.id, targetLeadId, data.title);
-    if (notifyAssignmentId && rawAssigneeIds.length) {
-      await notifyNewCrmAssignmentAssignees(req, {
-        assignmentId: notifyAssignmentId,
-        title: data.title,
-        userIds: rawAssigneeIds,
-        lead: leadSnapNotify,
-        deadline: data.deadline,
-        stageSlug: data.stage_slug,
-        crmTaskId: data.id,
-      });
-    } else if (rawAssigneeIds.length) {
-      // Người được giao tường minh — không lọc company/region lead.
-      const notifyIds = rawAssigneeIds.filter((uid) => String(uid) !== String(req.user.userId));
-      const eco = ecosystemModuleKeyForCrmDeadline(crmTaskDeadlineModuleKey(data.stage_slug));
-      for (const uid of notifyIds) {
-        await createNotification(req, uid, 'crm_task_assigned',
-          '📌 Nhiệm vụ CRM mới', `Bạn được giao: "${data.title}"`, 'crm_task', data.id,
-          { lead_id: targetLeadId, nav_tab: 'tasks', ecosystem_module_key: eco || 'crm' });
+  if (syncMode === 'direct') {
+    sideEffects = { done: [], failed: [], skipped: ['assignment_sync', 'notify_assignees'] };
+  } else {
+    const runAssignmentSync = async () => {
+      const sync = await ensureActiveAssignmentForLead(req, targetLeadId);
+      assignmentId = sync?.assignmentId || null;
+      if (assignmentId && String(sync?.taskId || '') === String(data.id)) {
+        data.crm_assignment_id = assignmentId;
       }
-    }
-  };
+    };
 
-  const outbox = createCrmTaskOutbox({ taskId: data.id, leadId: targetLeadId, op: 'create' });
-  outbox.enqueue('assignment_sync', runAssignmentSync,
-    { dedupeKey: idemCacheKey ? `${idemCacheKey}:assignment_sync` : null });
-  outbox.enqueue('notify_assignees', runNotifyAssignees,
-    { dedupeKey: idemCacheKey ? `${idemCacheKey}:notify` : null });
-  const sideEffects = await outbox.drain();
+    const runNotifyAssignees = async () => {
+      if (skipNotify) return;
+      const { data: leadSnapNotify } = await supabase.from('crm_leads')
+        .select('id, code, title, company_id, region_id')
+        .eq('id', targetLeadId)
+        .maybeSingle();
+      const notifyAssignmentId = assignmentId
+        || await resolveAssignmentIdForTask(data.id, targetLeadId, data.title);
+      const isActiveForNotify = assignmentId && String(data.crm_assignment_id || '') === String(assignmentId);
+      if (notifyAssignmentId && rawAssigneeIds.length && isActiveForNotify) {
+        await notifyNewCrmAssignmentAssignees(req, {
+          assignmentId: notifyAssignmentId,
+          title: data.title,
+          userIds: rawAssigneeIds,
+          lead: leadSnapNotify,
+          deadline: data.deadline,
+          stageSlug: data.stage_slug,
+          crmTaskId: data.id,
+        });
+      } else if (rawAssigneeIds.length) {
+        // Người được giao tường minh — không lọc company/region lead.
+        const notifyIds = rawAssigneeIds.filter((uid) => String(uid) !== String(req.user.userId));
+        const eco = ecosystemModuleKeyForCrmDeadline(crmTaskDeadlineModuleKey(data.stage_slug));
+        for (const uid of notifyIds) {
+          await createNotification(req, uid, 'crm_task_assigned',
+            '📌 Nhiệm vụ CRM mới', `Bạn được giao: "${data.title}"`, 'crm_task', data.id,
+            { lead_id: targetLeadId, nav_tab: 'tasks', ecosystem_module_key: eco || 'crm' });
+        }
+      }
+    };
+
+    const outbox = createCrmTaskOutbox({ taskId: data.id, leadId: targetLeadId, op: 'create' });
+    outbox.enqueue('assignment_sync', runAssignmentSync,
+      { dedupeKey: idemCacheKey ? `${idemCacheKey}:assignment_sync` : null });
+    outbox.enqueue('notify_assignees', runNotifyAssignees,
+      { dedupeKey: idemCacheKey ? `${idemCacheKey}:notify` : null });
+    sideEffects = await outbox.drain();
+  }
+
+  // Mirror source fields lên data trả về (kể cả khi DB chưa migrate)
+  if (sourceFields.task_source_type !== undefined) {
+    data.task_source_type = sourceFields.task_source_type;
+    data.employee_error_module = sourceFields.employee_error_module;
+  }
 
   // Chỉ ghi idempotency sau khi chuỗi tạo + assignees thành công (không emit realtime ở đây — route làm)
   if (idemCacheKey && data?.id) {
@@ -474,6 +512,9 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
   if (b.requires_quick_verdict !== undefined) {
     update.requires_quick_verdict = !!b.requires_quick_verdict;
   }
+  if (b.file_note_recorded !== undefined) {
+    update.file_note_recorded = !!b.file_note_recorded;
+  }
   if (Array.isArray(b.assignee_ids)) {
     const ids = b.assignee_ids.filter(Boolean).map(String);
     update.assignee_id = ids[0] || null;
@@ -492,6 +533,14 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
       leadRowForExec?.company_id,
     );
   }
+  if (b.task_source_type !== undefined || b.employee_error_module !== undefined) {
+    const src = resolveTaskSourceFields(b, { required: false });
+    if (!src.ok) return { error: src.error, status: src.status || 400 };
+    if (src.task_source_type !== undefined) {
+      update.task_source_type = src.task_source_type;
+      update.employee_error_module = src.employee_error_module;
+    }
+  }
 
   let { data, error } = await supabase.from('crm_tasks').update(update)
     .eq('id', taskId).select(CRM_TASK_SELECT).single();
@@ -503,6 +552,11 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
   }
   if (error && isExecutorColumnError(error)) {
     const { executor_company_id: _e, ...legacy } = update;
+    ({ data, error } = await supabase.from('crm_tasks').update(legacy)
+      .eq('id', taskId).select(CRM_TASK_SELECT).single());
+  }
+  if (error && isTaskSourceColumnError(error)) {
+    const { task_source_type: _t, employee_error_module: _m, ...legacy } = update;
     ({ data, error } = await supabase.from('crm_tasks').update(legacy)
       .eq('id', taskId).select(CRM_TASK_SELECT).single());
   }
@@ -527,6 +581,17 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
   if (error && isClearsDeliveryDeadlineColumnError(error)) {
     const { clears_delivery_deadline_on_complete: _cd, ...legacy } = update;
     ({ data, error } = await supabase.from('crm_tasks').update(legacy)
+      .eq('id', taskId).select(CRM_TASK_SELECT).single());
+  }
+  if (error && /file_note_recorded/i.test(String(error.message || ''))) {
+    if (b.file_note_recorded !== undefined) {
+      return {
+        error: 'Database chưa có cột file_note_recorded (migration 472). Chạy database/472_task_file_note_recorded.sql rồi thử lại.',
+        status: 503,
+      };
+    }
+    const { file_note_recorded: _fn, ...legacyFn } = update;
+    ({ data, error } = await supabase.from('crm_tasks').update(legacyFn)
       .eq('id', taskId).select(CRM_TASK_SELECT).single());
   }
   if (error) return { error: error.message, status: 500 };
@@ -572,13 +637,22 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
   let assignmentId = null;
 
   const runAssignmentSync = async () => {
-    const sync = await syncAssignmentFromCrmTask(req, data, assigneeIdsForSync);
+    const lid = data.lead_id || leadId;
+    const justCompleted = b.status === 'completed' && priorRow && priorRow.status !== 'completed';
+    const sync = justCompleted
+      ? await promoteNextAssignmentAfterComplete(req, lid)
+      : await ensureActiveAssignmentForLead(req, lid);
     assignmentId = sync?.assignmentId || null;
-    if (assignmentId) data.crm_assignment_id = assignmentId;
+    if (assignmentId && String(sync?.taskId || '') === String(data.id)) {
+      data.crm_assignment_id = assignmentId;
+    } else if (assignmentId) {
+      data.next_sequential_assignment = { assignmentId, taskId: sync?.taskId || null };
+    }
   };
 
   const runNotifyAddedAssignees = async () => {
     if (!Array.isArray(b.assignee_ids) || !assignmentId) return;
+    if (String(data.crm_assignment_id || '') !== String(assignmentId)) return;
     const priorSet = new Set(priorAssigneeIds.map(String));
     const added = assigneeIdsForSync.filter((uid) => !priorSet.has(String(uid)));
     if (!added.length) return;
@@ -618,6 +692,13 @@ async function deleteCrmLeadTask(req, taskId) {
   if (!task) return { error: 'Không tìm thấy nhiệm vụ CRM', status: 404 };
   const { error } = await supabase.from('crm_tasks').delete().eq('id', taskId);
   if (error) return { error: error.message, status: 500 };
+  if (task.lead_id) {
+    try {
+      await ensureActiveAssignmentForLead(req, task.lead_id);
+    } catch (e) {
+      console.warn('[crm] sequential assignment after task delete:', e.message);
+    }
+  }
   return { data: { message: 'Đã xóa', lead_id: task.lead_id }, status: 200 };
 }
 

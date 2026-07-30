@@ -56,6 +56,7 @@ export default function NewLogisticsProjectModal({ onClose }) {
         name: formData.name.trim(),
         customer_id: selectedCustomer?.id || null,
         company_id: user?.company_id || null,
+        logistics_company_id: user?.company_id || null,
         estimated_value: formData.estimated_value ? Number(formData.estimated_value) : null,
         priority: formData.priority,
         deadline: formData.deadline || null,

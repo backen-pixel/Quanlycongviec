@@ -5,6 +5,7 @@ const { auth } = require('../middleware/auth');
 const { syncCompanyToEcosystem } = require('../helpers/ecosystemSync');
 const { getRestrictedDivisionIdsForModule, KNOWN_MODULE_KEYS } = require('../helpers/ecosystemModuleScope');
 const { isCrmCompanyAdminUser } = require('../helpers/crmAccessRoles');
+const { isMetallaOrHucabiCompanyIdSync } = require('../helpers/dealParticipantProduction');
 const { responseCache, invalidateTags } = require('../middleware/responseCache');
 const { enforceTenantContext } = require('../middleware/tenantGate');
 const { addTenantFilter, companyInTenantContext, invalidateTenantCache } = require('../helpers/tenantScope');
@@ -138,10 +139,15 @@ r.get('/', responseCache({ ttl: 120, scope: 'user', tags: ['orgtree'] }), async 
         }
       }
     }
-    // Admin CRM theo công ty: CRM khóa 1 công ty; SX/VC vẫn hiện đủ xưởng trong khối
+    // Admin CRM theo công ty: CRM khóa 1 công ty.
+    // Admin xưởng Metalla/Hucabi: SX/VC cũng chỉ thấy xưởng mình (không lẫn HCB ↔ Metalla).
+    // Admin CRM (vd. VPT): SX/VC vẫn hiện đủ xưởng trong khối để chọn.
     if (isCrmCompanyAdminUser(req.user)) {
       const only = String(req.user.company_id).trim();
+      const ownIsWorkshop = isMetallaOrHucabiCompanyIdSync(only);
       if (mod !== 'production' && mod !== 'logistics') {
+        list = list.filter((c) => c && String(c.id) === only);
+      } else if (ownIsWorkshop) {
         list = list.filter((c) => c && String(c.id) === only);
       }
     }

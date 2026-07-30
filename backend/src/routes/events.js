@@ -353,11 +353,24 @@ r.delete('/event-types/:id', async (req, res) => {
 const EVENT_SELECT = `*, 
   creator:users!crm_events_created_by_fkey(id, full_name, avatar),
   assignee:users!crm_events_assignee_id_fkey(id, full_name, avatar),
-  lead:crm_leads(id, title, code, type, customer:customers(id, full_name)),
+  lead:crm_leads(id, title, code, type, project_id, customer:customers(id, full_name)),
   customer:customers(id, full_name, phone),
   project:projects(id, name, code),
   event_type_ref:event_types(id, name, slug, icon, color, stage_slug),
   participants:crm_event_participants(id, user_id, status, user:users(id, full_name, avatar))`;
+
+/** SX/VC calendar: gồm event khối SX/VC + loại lắp đặt (hay lưu module=crm khi tạo từ CRM). */
+function applyEventsModuleScopeFilter(queryBuilder, moduleFilter, modulesFilter) {
+  if (moduleFilter) return queryBuilder.eq('module', moduleFilter);
+  if (!modulesFilter?.length) return queryBuilder;
+  const hasWorkshop = modulesFilter.some((m) => m === 'production' || m === 'logistics');
+  if (hasWorkshop) {
+    const mods = modulesFilter.map((m) => String(m).replace(/[(),]/g, '')).filter(Boolean);
+    if (!mods.length) return queryBuilder;
+    return queryBuilder.or(`module.in.(${mods.join(',')}),event_type.eq.installation`);
+  }
+  return queryBuilder.in('module', modulesFilter);
+}
 
 function normalizeModuleParam(v) {
   return normalizeEventModule(v);
@@ -419,8 +432,7 @@ r.get('/', async (req, res) => {
 
     if (type) q = q.eq('event_type', type);
     if (status) q = q.eq('status', status);
-    if (moduleFilter) q = q.eq('module', moduleFilter);
-    else if (modulesFilter && modulesFilter.length) q = q.in('module', modulesFilter);
+    q = applyEventsModuleScopeFilter(q, moduleFilter, modulesFilter);
     if (lead_id) q = q.eq('lead_id', lead_id);
     if (customer_id) q = q.eq('customer_id', customer_id);
     const fromBound = eventsDateFromBound(date_from);
@@ -779,8 +791,7 @@ r.get('/calendar', async (req, res) => {
 
     if (type) cq = cq.eq('event_type', type);
     if (status) cq = cq.eq('status', status);
-    if (moduleFilter) cq = cq.eq('module', moduleFilter);
-    else if (modulesFilter && modulesFilter.length) cq = cq.in('module', modulesFilter);
+    cq = applyEventsModuleScopeFilter(cq, moduleFilter, modulesFilter);
     cq = cq.order('start_time');
     let cqRes = await cq;
     if (cqRes.error && /column.*module.*does not exist|42703/i.test(String(cqRes.error.message || ''))) {
@@ -878,11 +889,18 @@ r.post('/', async (req, res) => {
     };
     uuidFields.forEach(f => { if (insert[f] === '') insert[f] = null; });
 
-    // Auto-fill customer from lead if not provided
-    if (insert.lead_id && !insert.customer_id) {
+    // Lắp đặt thuộc khối VC/LĐ — tránh lưu module=crm khiến lịch SX/VC lọc mất
+    if (String(insert.event_type || '') === 'installation') {
+      const explicit = normalizeModuleParam(b.module);
+      insert.module = (explicit === 'production' || explicit === 'logistics') ? explicit : 'logistics';
+    }
+
+    // Auto-fill customer + project from lead if not provided
+    if (insert.lead_id && (!insert.customer_id || !insert.project_id)) {
       const { data: lead } = await supabase.from('crm_leads')
-        .select('customer_id').eq('id', insert.lead_id).single();
-      if (lead?.customer_id) insert.customer_id = lead.customer_id;
+        .select('customer_id, project_id').eq('id', insert.lead_id).single();
+      if (lead?.customer_id && !insert.customer_id) insert.customer_id = lead.customer_id;
+      if (lead?.project_id && !insert.project_id) insert.project_id = lead.project_id;
     }
 
     let evCompanyId = null;
@@ -1010,11 +1028,15 @@ r.put('/:id', async (req, res) => {
         if (!modCheck.ok) {
           return res.status(403).json({ error: modCheck.message });
         }
-        if (!isAdminLike(req.user)) {
-          return res.status(403).json({ error: 'Chỉ admin được đổi khối/module của sự kiện' });
-        }
+        // Cho phép đổi khối SX ↔ VC/LĐ khi user có quyền ghi khối đích
+        // (trước đây chỉ admin — chặn luồng bàn giao Sale/xưởng).
         update.module = m;
       }
+    }
+    // Đổi loại → lắp đặt: gắn khối VC/LĐ nếu chưa chỉ định production/logistics
+    if (String(update.event_type || b.event_type || '') === 'installation' && update.module === undefined) {
+      const modCheck = await assertEventModuleWrite(req.user, 'logistics');
+      if (modCheck.ok) update.module = 'logistics';
     }
     if (canPickEventsCompanyScope(req.user) && b.company_id !== undefined) {
       update.company_id = b.company_id === '' || b.company_id === null ? null : String(b.company_id);

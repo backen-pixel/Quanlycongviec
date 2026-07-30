@@ -27,6 +27,7 @@ const {
   syncAssignmentFileToTask,
   deleteMirroredTaskAttachmentForAssignmentFile,
 } = require('../helpers/crmTaskAssignmentArtifactSync');
+const { promoteNextAssignmentAfterComplete } = require('../helpers/crmSequentialAssignment');
 const { emitCrmTaskChanged } = require('../helpers/crmTaskRealtime');
 const { responseCache, invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
 
@@ -209,6 +210,7 @@ async function isAssignmentAssignee(req, assignmentId) {
 const ASSIGNMENT_STRUCTURAL_FIELDS = [
   'title', 'description', 'assignee_id', 'assignee_ids',
   'department_ids', 'region_ids', 'company_id', 'priority', 'deadline',
+  'task_source_type', 'employee_error_module', 'assignment_module',
 ];
 
 function bodyHasStructuralAssignmentChange(body) {
@@ -292,7 +294,8 @@ function intersectAssignmentIds(currentIds, nextIds) {
 }
 
 const ASSIGNMENT_SELECT = `
-  id, company_id, executor_company_id, column_id, lead_id, crm_task_id, assignment_module, title, description,
+  id, company_id, executor_company_id, column_id, lead_id, crm_task_id, assignment_module,
+  task_source_type, employee_error_module, title, description,
   assignee_id, created_by_id, priority, status, deadline,
   position, created_at, updated_at, completed_at,
   assignee:users!crm_assignments_assignee_id_fkey(id, full_name, email, avatar),
@@ -456,18 +459,25 @@ function pushNotif(req, userId, payload) {
 }
 
 function assignmentNotifCopy(assignment) {
-  const isProd = String(assignment?.assignment_module || '').toLowerCase() === 'production';
+  const mod = String(assignment?.assignment_module || '').toLowerCase();
+  const isProd = mod === 'production';
+  const isLogistics = mod === 'logistics';
   return {
     isProd,
+    isLogistics,
     title: isProd
       ? '📋 Bạn vừa được giao nhiệm vụ Sản xuất'
-      : '📋 Bạn vừa được giao nhiệm vụ CRM',
+      : isLogistics
+        ? '📋 Bạn vừa được giao nhiệm vụ VC/LĐ'
+        : '📋 Bạn vừa được giao nhiệm vụ CRM',
     metadata: {
-      module_key: isProd ? 'production' : 'crm',
-      ecosystem_module_key: isProd ? 'production' : 'crm',
+      module_key: isProd ? 'production' : (isLogistics ? 'vc' : 'crm'),
+      ecosystem_module_key: isLogistics ? 'logistics' : (isProd ? 'production' : 'crm'),
       nav_path: isProd ? '/sx/assignments' : '/crm/assignments',
       open: assignment?.id,
       lead_id: assignment?.lead_id || null,
+      task_source_type: assignment?.task_source_type || null,
+      employee_error_module: assignment?.employee_error_module || null,
     },
   };
 }
@@ -647,7 +657,7 @@ r.get('/', async (req, res) => {
     if (req.query.column_id) q = q.eq('column_id', req.query.column_id);
     if (req.query.lead_id) q = q.eq('lead_id', String(req.query.lead_id).trim());
     const moduleFilter = String(req.query.assignment_module || '').trim().toLowerCase();
-    if (moduleFilter === 'production' || moduleFilter === 'crm') {
+    if (moduleFilter === 'production' || moduleFilter === 'crm' || moduleFilter === 'logistics') {
       q = q.eq('assignment_module', moduleFilter);
     }
     if (req.query.q) {
@@ -656,12 +666,36 @@ r.get('/', async (req, res) => {
 
     q = q.order('position', { ascending: true }).order('created_at', { ascending: false });
     let { data, error } = await q;
+    if (error && /task_source_type|employee_error_module/.test(error.message || '')) {
+      const legacySelect = ASSIGNMENT_SELECT
+        .replace(/task_source_type,\s*/g, '')
+        .replace(/employee_error_module,\s*/g, '');
+      let qLegacy = supabase.from('crm_assignments').select(legacySelect);
+      // Re-apply only identity filters that are safe to rebuild from query params
+      if (isAdmin(req)) {
+        const companyId = req.query.company_id || null;
+        if (companyId) qLegacy = qLegacy.or(`company_id.eq.${companyId},executor_company_id.eq.${companyId}`);
+      } else if (scopeIds?.length) {
+        qLegacy = qLegacy.in('id', scopeIds);
+      }
+      if (req.query.status) qLegacy = qLegacy.eq('status', req.query.status);
+      if (req.query.priority) qLegacy = qLegacy.eq('priority', req.query.priority);
+      if (req.query.column_id) qLegacy = qLegacy.eq('column_id', req.query.column_id);
+      if (req.query.lead_id) qLegacy = qLegacy.eq('lead_id', String(req.query.lead_id).trim());
+      if (moduleFilter === 'production' || moduleFilter === 'crm' || moduleFilter === 'logistics') {
+        qLegacy = qLegacy.eq('assignment_module', moduleFilter);
+      }
+      qLegacy = qLegacy.order('position', { ascending: true }).order('created_at', { ascending: false });
+      ({ data, error } = await qLegacy);
+    }
     if (error && /executor_company_id/.test(error.message || '') && isAdmin(req) && req.query.company_id) {
       let qExec = supabase.from('crm_assignments').select(ASSIGNMENT_SELECT);
       qExec = qExec.eq('company_id', req.query.company_id);
       if (req.query.status) qExec = qExec.eq('status', req.query.status);
       if (req.query.priority) qExec = qExec.eq('priority', req.query.priority);
-      if (moduleFilter === 'production' || moduleFilter === 'crm') qExec = qExec.eq('assignment_module', moduleFilter);
+      if (moduleFilter === 'production' || moduleFilter === 'crm' || moduleFilter === 'logistics') {
+        qExec = qExec.eq('assignment_module', moduleFilter);
+      }
       if (req.query.q) {
         ({ q: qExec } = await applyAssignmentSearchQuery(qExec, req.query.q));
       }
@@ -768,6 +802,21 @@ r.put('/:id', async (req, res) => {
         'title', 'description', 'column_id',
         'priority', 'status', 'deadline', 'position', 'company_id',
       ].forEach((f) => { if (req.body[f] !== undefined) update[f] = req.body[f]; });
+      if (req.body.assignment_module !== undefined) {
+        const mod = String(req.body.assignment_module || '').toLowerCase();
+        update.assignment_module = ['production', 'logistics'].includes(mod) ? mod : 'crm';
+      }
+      if (req.body.task_source_type !== undefined || req.body.employee_error_module !== undefined) {
+        const {
+          resolveTaskSourceFields,
+        } = require('../helpers/sharedWorkspaceTaskSource');
+        const source = resolveTaskSourceFields(req.body, { required: false });
+        if (!source.ok) return res.status(source.status || 400).json({ error: source.error });
+        if (source.task_source_type !== undefined) {
+          update.task_source_type = source.task_source_type;
+          update.employee_error_module = source.employee_error_module;
+        }
+      }
     } else {
       ['status', 'column_id', 'position'].forEach((f) => {
         if (req.body[f] !== undefined) update[f] = req.body[f];
@@ -793,12 +842,21 @@ r.put('/:id', async (req, res) => {
       await applyAssignmentStatusColumn(update, update.status);
     }
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('crm_assignments')
       .update(update)
       .eq('id', req.params.id)
       .select(ASSIGNMENT_SELECT)
       .single();
+    if (error && /task_source_type|employee_error_module/.test(error.message || '')) {
+      const { task_source_type: _t, employee_error_module: _e, ...legacy } = update;
+      ({ data, error } = await supabase
+        .from('crm_assignments')
+        .update(legacy)
+        .eq('id', req.params.id)
+        .select(ASSIGNMENT_SELECT)
+        .single());
+    }
     if (error) throw error;
 
     // Thông báo cho người mới được giao
@@ -837,6 +895,18 @@ r.put('/:id', async (req, res) => {
       await syncCrmTaskFromAssignment(data);
     } catch (syncErr) {
       console.warn('[sync] assignment→crm_task PUT:', syncErr.message);
+    }
+    if (
+      data?.lead_id
+      && data.status === 'completed'
+      && before.status !== 'completed'
+      && data.crm_task_id
+    ) {
+      try {
+        await promoteNextAssignmentAfterComplete(req, data.lead_id);
+      } catch (seqErr) {
+        console.warn('[crm-seq-asn] promote after assignment PUT:', seqErr.message);
+      }
     }
     await emitAssignmentTaskChanged(req, data, 'updated');
     res.json({ assignment: data });
@@ -904,6 +974,13 @@ r.post('/:id/move', async (req, res) => {
       await syncCrmTaskFromAssignment(data);
     } catch (syncErr) {
       console.warn('[sync] assignment→crm_task move:', syncErr.message);
+    }
+    if (data?.lead_id && data.status === 'completed' && data.crm_task_id) {
+      try {
+        await promoteNextAssignmentAfterComplete(req, data.lead_id);
+      } catch (seqErr) {
+        console.warn('[crm-seq-asn] promote after assignment move:', seqErr.message);
+      }
     }
     await emitAssignmentTaskChanged(req, data, 'updated');
     res.json({ assignment: data });

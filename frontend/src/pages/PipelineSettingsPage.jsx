@@ -275,6 +275,9 @@ export default function PipelineSettingsPage() {
   const [stages, setStages] = useState([]);
   const [sxStages, setSxStages] = useState([]);
   const [vcStages, setVcStages] = useState([]);
+  const [customModules, setCustomModules] = useState([]);
+  const [customModuleLinks, setCustomModuleLinks] = useState([]);
+  const [customModuleStages, setCustomModuleStages] = useState([]); // flat stages of all custom modules for reverse sync
   const [loading, setLoading] = useState(true);
   const [draggingId, setDraggingId] = useState(null);
   const [dragOverId, setDragOverId] = useState(null);
@@ -380,8 +383,13 @@ export default function PipelineSettingsPage() {
     const silent = !!opts.silent;
     if (!silent) setLoading(true);
     try {
+      // Taxonomy GETs gửi Cache-Control: private, max-age=120. Sau mutate, cùng URL
+      // → trình duyệt trả bản cũ và ghi đè optimistic update (toast OK nhưng UI không đổi).
+      // `_ts` đổi query; `x-no-cache` bỏ qua L1/L2 server — cùng pattern kanban-rows.
+      const noCache = { headers: { 'x-no-cache': '1' } };
+      const bust = () => Date.now();
       const [pipelinesRes, companiesRes] = await Promise.all([
-        api.get('/crm/pipelines').catch(() => ({ data: [] })),
+        api.get('/crm/pipelines', { params: { _ts: bust() }, ...noCache }).catch(() => ({ data: [] })),
         api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: { companies: [] } })),
       ]);
       const pls = Array.isArray(pipelinesRes.data) ? pipelinesRes.data : [];
@@ -393,10 +401,11 @@ export default function PipelineSettingsPage() {
       const lockedCompanyId = !isAdmin ? (user?.company_id ? String(user.company_id) : '') : '';
       const companyIdToUse = lockedCompanyId || selectedCompanyId || (isAdmin ? '' : '');
       const cidWx = companyIdToUse || (isAdmin && cos[0]?.id ? String(cos[0].id) : '');
-      const wxParams = { all: 'true', ...(cidWx ? { company_id: cidWx } : {}) };
-      const [sxRes, vcRes] = await Promise.all([
-        api.get('/production/pipeline-stages', { params: wxParams }).catch(() => ({ data: [] })),
-        api.get('/logistics/pipeline-stages', { params: wxParams }).catch(() => ({ data: [] })),
+      const wxParams = { all: 'true', _ts: bust(), ...(cidWx ? { company_id: cidWx } : {}) };
+      const [sxRes, vcRes, appModRes] = await Promise.all([
+        api.get('/production/pipeline-stages', { params: wxParams, ...noCache }).catch(() => ({ data: [] })),
+        api.get('/logistics/pipeline-stages', { params: wxParams, ...noCache }).catch(() => ({ data: [] })),
+        api.get('/app-modules').catch(() => ({ data: { modules: [] } })),
       ]);
       if (!lockedCompanyId && selectedCompanyId === '' && isAdmin && cos?.length) {
         const def = resolveDefaultCrmAdminCompanyId(Array.isArray(cos) ? cos : []);
@@ -413,18 +422,47 @@ export default function PipelineSettingsPage() {
         : (defaultPipeline?.id || '');
 
       // Admin chọn công ty nhưng công ty chưa có pipeline → không load stages (tránh fallback load tất cả stage)
+      let crmStagesLoaded = [];
       if (isAdmin && companyIdToUse && !pipelineIdToUse) {
         setSelectedPipelineId('');
         setStages([]);
       } else {
         if (pipelineIdToUse && pipelineIdToUse !== selectedPipelineId) setSelectedPipelineId(pipelineIdToUse);
         const crmRes = await api.get('/crm/pipeline-stages', {
-          params: { all: 'true', ...(pipelineIdToUse ? { pipeline_id: pipelineIdToUse } : {}) },
+          params: { all: 'true', _ts: bust(), ...(pipelineIdToUse ? { pipeline_id: pipelineIdToUse } : {}) },
+          ...noCache,
         }).catch(() => ({ data: [] }));
-        setStages(crmRes.data || []);
+        crmStagesLoaded = crmRes.data || [];
+        setStages(crmStagesLoaded);
       }
       setSxStages((sxRes.data || []).filter((s) => s.bucket_slug !== 'won_pending'));
       setVcStages((vcRes.data || []).filter((s) => s.bucket_slug !== 'delivery_pending'));
+
+      const mods = appModRes.data?.modules || [];
+      setCustomModules(mods);
+      const stageIds = crmStagesLoaded.map((s) => s.id).filter(Boolean);
+      if (stageIds.length) {
+        const linksRes = await api.get('/app-modules/links/by-stages', {
+          params: { source_kind: 'crm', stage_ids: stageIds.join(',') },
+          ...noCache,
+        }).catch(() => ({ data: { links: [] } }));
+        setCustomModuleLinks(linksRes.data?.links || []);
+      } else {
+        setCustomModuleLinks([]);
+      }
+      const stageLists = await Promise.all(
+        mods.map((m) =>
+          api.get(`/app-modules/${m.module_key}/stages`).then((r) =>
+            (r.data?.stages || []).map((st) => ({
+              ...st,
+              _module_key: m.module_key,
+              _module_name: m.name,
+              _module_icon: m.icon,
+            })),
+          ).catch(() => []),
+        ),
+      );
+      setCustomModuleStages(stageLists.flat());
     } catch (e) {
       if (!silent) showToast(e?.response?.data?.error || e?.message || 'Không tải được pipeline', 'err');
     }
@@ -629,7 +667,10 @@ export default function PipelineSettingsPage() {
     let cancel = false;
     (async () => {
       try {
-        const { data } = await api.get('/crm/pipelines');
+        const { data } = await api.get('/crm/pipelines', {
+          params: { _ts: Date.now() },
+          headers: { 'x-no-cache': '1' },
+        });
         if (cancel) return;
         const list = Array.isArray(data) ? data : [];
         setPipelinesLoadError(null);
@@ -956,6 +997,48 @@ export default function PipelineSettingsPage() {
         next ? `Đã bật chuyển SX trên "${stage.name}"` : `Đã tắt chuyển SX trên "${stage.name}"`,
       );
     } catch { /* toast đã hiện */ }
+  };
+
+  const toggleCustomModuleLink = async (stage, moduleRow, linkType) => {
+    if (stage.pipeline_type !== 'deal') return;
+    const existing = customModuleLinks.find(
+      (l) =>
+        String(l.source_stage_id) === String(stage.id)
+        && String(l.target_module_id) === String(moduleRow.id)
+        && l.link_type === linkType
+        && l.enabled !== false,
+    );
+    const enable = !existing;
+    try {
+      await api.put('/app-modules/links', {
+        source_kind: 'crm',
+        source_stage_id: stage.id,
+        target_module_id: moduleRow.id,
+        link_type: linkType,
+        enabled: enable,
+      });
+      await load({ silent: true });
+      showToast(
+        enable
+          ? `Đã bật ${linkType === 'transfer' ? 'chuyển' : 'thông báo'} «${moduleRow.name}» trên "${stage.name}"`
+          : `Đã tắt ${linkType === 'transfer' ? 'chuyển' : 'thông báo'} «${moduleRow.name}» trên "${stage.name}"`,
+        'ok',
+      );
+    } catch (e) {
+      showToast(e?.response?.data?.error || e?.message || 'Lỗi', 'err');
+    }
+  };
+
+  const setCustomModuleCrmTarget = async (customStage, crmStageId) => {
+    try {
+      await api.put(`/app-modules/${customStage._module_key}/stages/${customStage.id}`, {
+        crm_target_stage_id: crmStageId || null,
+      });
+      await load({ silent: true });
+      showToast('Đã cập nhật đồng bộ CRM cho cột module tùy chỉnh', 'ok');
+    } catch (e) {
+      showToast(e?.response?.data?.error || e?.message || 'Lỗi', 'err');
+    }
   };
 
   const visiblePipelines = useMemo(() => {
@@ -1439,6 +1522,53 @@ export default function PipelineSettingsPage() {
                     <Factory className="h-3 w-3" />
                     {s.show_sx_transfer ? 'Chuyển SX' : 'SX'}
                   </button>
+                  {customModules.map((cm) => {
+                    const hasTransfer = customModuleLinks.some(
+                      (l) =>
+                        String(l.source_stage_id) === String(s.id)
+                        && String(l.target_module_id) === String(cm.id)
+                        && l.link_type === 'transfer',
+                    );
+                    const hasNotify = customModuleLinks.some(
+                      (l) =>
+                        String(l.source_stage_id) === String(s.id)
+                        && String(l.target_module_id) === String(cm.id)
+                        && l.link_type === 'notify',
+                    );
+                    return (
+                      <span key={cm.id} className="inline-flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={() => toggleCustomModuleLink(s, cm, 'transfer')}
+                          className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                            hasTransfer
+                              ? 'bg-violet-600 text-white border-violet-700'
+                              : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-violet-300 hover:text-violet-700'
+                          }`}
+                          title={hasTransfer
+                            ? `Đang hiện nút chuyển sang «${cm.name}». Nhấn để tắt.`
+                            : `Bật nút chuyển sang module «${cm.name}» trên thẻ deal`}
+                        >
+                          <span className="text-[11px] leading-none">{cm.icon || '📦'}</span>
+                          {hasTransfer ? `→ ${cm.name}` : cm.name}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleCustomModuleLink(s, cm, 'notify')}
+                          className={`h-7 px-1.5 rounded-lg text-[10px] font-semibold cursor-pointer border ${
+                            hasNotify
+                              ? 'bg-amber-500 text-white border-amber-600'
+                              : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-amber-300'
+                          }`}
+                          title={hasNotify
+                            ? `Đang thông báo module «${cm.name}». Nhấn để tắt.`
+                            : `Bật thông báo sang «${cm.name}» khi deal vào cột này`}
+                        >
+                          🔔
+                        </button>
+                      </span>
+                    );
+                  })}
                   <button
                     type="button"
                     onClick={() => toggleCreateEventColumn(s)}
@@ -2525,7 +2655,10 @@ export default function PipelineSettingsPage() {
                     set_default: copySetDefault,
                   });
                   alert('Đã copy pipeline');
-                  const { data } = await api.get('/crm/pipelines');
+                  const { data } = await api.get('/crm/pipelines', {
+                    params: { _ts: Date.now() },
+                    headers: { 'x-no-cache': '1' },
+                  });
                   setPipelines(Array.isArray(data) ? data : []);
                 } catch (e) {
                   alert(e.response?.data?.error || 'Lỗi copy pipeline');
@@ -2623,7 +2756,9 @@ export default function PipelineSettingsPage() {
             editingStageId={editId}
             sxStages={sxStages}
             vcStages={vcStages}
+            customModuleStages={customModuleStages}
             onSetModuleTarget={setModuleStageTarget}
+            onSetCustomModuleCrmTarget={setCustomModuleCrmTarget}
             onSetVcSyncType={setVcSyncType}
             onBulkSetVcSyncType={bulkSetVcSyncType}
             assigneeCompanyId={assigneeCompanyId}
@@ -2637,7 +2772,8 @@ export default function PipelineSettingsPage() {
 
 function StageForm({
   form, setForm, onSave, onCancel, pipelineType = 'lead', editingStageId,
-  sxStages = [], vcStages = [], onSetModuleTarget, onSetVcSyncType, onBulkSetVcSyncType,
+  sxStages = [], vcStages = [], customModuleStages = [],
+  onSetModuleTarget, onSetCustomModuleCrmTarget, onSetVcSyncType, onBulkSetVcSyncType,
   assigneeCompanyId = '',
 }) {
   const [bulkVcSelected, setBulkVcSelected] = useState(() => new Set());
@@ -3093,6 +3229,51 @@ function StageForm({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {pipelineType === 'deal' && editingStageId && !form.is_won && !form.is_lost && customModuleStages.length > 0 && (
+        <div className="border border-violet-100 rounded-lg p-3 bg-violet-50/40 space-y-2">
+          <p className="text-[10px] font-bold text-violet-700 uppercase tracking-wide">
+            Module tùy chỉnh → CRM cột này
+          </p>
+          <p className="text-[10px] text-gray-500">
+            Tick cột module tùy chỉnh để khi bản ghi tới cột đó, CRM deal tự chuyển sang cột đang sửa.
+          </p>
+          {Object.entries(
+            customModuleStages.reduce((acc, st) => {
+              const k = st._module_key || 'other';
+              if (!acc[k]) acc[k] = { name: st._module_name || k, icon: st._module_icon, stages: [] };
+              acc[k].stages.push(st);
+              return acc;
+            }, {}),
+          ).map(([key, group]) => (
+            <div key={key}>
+              <p className="text-[10px] font-semibold text-violet-800 mb-1">
+                {group.icon || '📦'} {group.name}
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {group.stages.map((st) => {
+                  const linked = st.crm_target_stage_id === editingStageId;
+                  return (
+                    <button
+                      key={st.id}
+                      type="button"
+                      onClick={() => onSetCustomModuleCrmTarget?.(st, linked ? null : editingStageId)}
+                      className={`px-2 py-1 rounded-lg text-[10px] font-medium border cursor-pointer transition-all ${
+                        linked
+                          ? 'bg-violet-100 text-violet-900 border-violet-400 ring-1 ring-violet-400'
+                          : 'bg-white text-gray-600 border-gray-200 hover:border-violet-300 hover:text-violet-700'
+                      }`}
+                    >
+                      {st.icon || '📋'} {st.name}
+                      {linked && ' ✓'}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 

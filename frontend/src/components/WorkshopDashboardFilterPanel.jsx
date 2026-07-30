@@ -74,6 +74,7 @@ export default function WorkshopDashboardFilterPanel({
   setFilterPhone,
   showOrphanColumn,
   setShowOrphanColumn,
+  hideOrphanColumnToggle = false,
   viewMode,
   showVptSxWorkshopFilter,
   sxWorkshopFilterOptions,
@@ -336,7 +337,7 @@ export default function WorkshopDashboardFilterPanel({
               </select>
             </div>
 
-            {viewMode === 'kanban' && (
+            {viewMode === 'kanban' && !hideOrphanColumnToggle && (
               <div className="min-w-0 sm:col-span-2">
                 <label
                   className={`${SX_FILTER_LABEL_CLS} flex items-center gap-2 h-8 px-2 border rounded-md text-xs cursor-pointer transition-colors ${

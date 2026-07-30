@@ -387,13 +387,22 @@ function EcosystemToolbar({
       </div>
       <div className="flex items-center gap-2 flex-wrap ml-auto">
         {isAdmin && (
-          <Link
-            to="/ecosystem/modules"
-            className="h-8 px-2.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-800 text-xs font-medium flex items-center gap-1.5 hover:bg-indigo-100"
-          >
-            <Puzzle className="h-3.5 w-3.5" />
-            Module &amp; Khối
-          </Link>
+          <>
+            <Link
+              to="/ecosystem/modules"
+              className="h-8 px-2.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-800 text-xs font-medium flex items-center gap-1.5 hover:bg-indigo-100"
+            >
+              <Puzzle className="h-3.5 w-3.5" />
+              Module &amp; Khối
+            </Link>
+            <Link
+              to="/ecosystem/app-modules"
+              className="h-8 px-2.5 rounded-lg border border-violet-200 bg-violet-50 text-violet-800 text-xs font-medium flex items-center gap-1.5 hover:bg-violet-100"
+            >
+              <Puzzle className="h-3.5 w-3.5" />
+              Module tùy chỉnh
+            </Link>
+          </>
         )}
         <div className="flex bg-slate-100 rounded-lg p-0.5">
           <button

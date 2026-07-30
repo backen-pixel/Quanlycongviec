@@ -1,4 +1,4 @@
-import { isProductionAdmin, isProductionStaff, isSystemAdmin } from './adminRole';
+import { isProductionAdmin, isProductionStaff, isSystemAdmin, isCompanyScopedAdmin } from './adminRole';
 
 /** Legacy email list — ưu tiên role `accounting` (isAccountingUser). */
 export const CROSS_WORKSHOP_PRODUCTION_VIEWER_EMAILS = new Set([]);
@@ -52,9 +52,22 @@ export function isCrmCompanyProductionViewer(user) {
   return !isMetallaOrHucabiCompany(user && { id: cid, short_name: '', name: '' });
 }
 
-/** Chip xưởng SX: NV CRM → HCB/Metalla; admin → tất cả công ty module SX. */
+/** Chip xưởng SX: admin hệ thống → tất cả; admin/NV xưởng → chỉ công ty mình; NV CRM → HCB/Metalla. */
 export function workshopCompaniesForCrossViewer(companies, user) {
   if (isSystemAdmin(user)) return companies || [];
+  const ownWorkshop = resolveStaffWorkshopCompanyId(user, companies);
+  if (ownWorkshop) {
+    const own = (companies || []).find((c) => String(c.id) === ownWorkshop);
+    return own ? [own] : [{ id: ownWorkshop, name: ownWorkshop, short_name: ownWorkshop }];
+  }
+  // Admin công ty Metalla/Hucabi: không hiện xưởng đối tác
+  if (isCompanyScopedAdmin(user) && user?.company_id) {
+    const cid = String(user.company_id);
+    if (isMetallaOrHucabiCompanyId(cid, companies, user)) {
+      const own = (companies || []).find((c) => String(c.id) === cid);
+      return own ? [own] : [{ id: cid, name: cid, short_name: cid }];
+    }
+  }
   return productionWorkshopFilterCompanies(companies);
 }
 

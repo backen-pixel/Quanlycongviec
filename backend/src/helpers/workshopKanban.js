@@ -342,6 +342,16 @@ function firstSxPipelineColumnId(sortedStages) {
   return sorted[0].id;
 }
 
+/** Cột cuối pipeline (không phải intake) — fallback khi board thiếu cột bàn giao. */
+function lastSxPipelineColumnId(sortedStages) {
+  const sorted = [...(sortedStages || [])].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+  const nonIntake = sorted.filter(
+    (s) => s.bucket_slug !== INTAKE_BUCKET && !String(s.id || '').startsWith('__fb_'),
+  );
+  if (nonIntake.length) return nonIntake[nonIntake.length - 1].id;
+  return sorted[sorted.length - 1]?.id ?? null;
+}
+
 /** sx_pipeline_stage_id + sx_handover_at theo project_id (deal CRM). */
 async function loadDealSxPipelineMetaByProjectIds(projectIds) {
   const ids = [...new Set((projectIds || []).map((id) => String(id)).filter(Boolean))];
@@ -453,6 +463,12 @@ function resolveSxDisplayColumnId(project, sortedStages, opts = {}) {
 
   const projectColRow = sorted.find((s) => String(s.id) === String(project?.sx_kanban_column_id || '')) || null;
 
+  const inLogistics = Boolean(
+    project?.vc_kanban_column_id
+    || project?.logistics_company_id
+    || project?.logistics_company?.id,
+  );
+
   if (shouldForceSxHandoverColumn(project, projectColRow)) {
     // Kéo thẻ vào cột «Vận chuyển»/«CSKH» khiến status tự thành shipping/warranty. Đó không phải
     // bằng chứng đã bàn giao VC nên phải giữ cột vừa kéo, không ép về cột «Bàn giao VC».
@@ -463,6 +479,9 @@ function resolveSxDisplayColumnId(project, sortedStages, opts = {}) {
     else if (projectColRow?.is_handover_to_logistics) preferred = project.sx_kanban_column_id;
     const handoverId = resolveSxHandoverColumnId(sorted, project, preferred);
     if (handoverId) return handoverId;
+    // Board thiếu cột →VC (vd. đang xem bộ Global): không đổ shipping về cột đầu.
+    const lastCol = lastSxPipelineColumnId(sorted);
+    if (lastCol) return lastCol;
   }
 
   const fromProject = inList(project?.sx_kanban_column_id);
@@ -471,9 +490,16 @@ function resolveSxDisplayColumnId(project, sortedStages, opts = {}) {
   const fromLead = inList(leadColId);
   if (fromLead) return fromLead;
 
+  if (project?.sx_kanban_column_id && (inLogistics || String(project?.status || '') === 'shipping')) {
+    const handoverId = resolveSxHandoverColumnId(sorted, project, null);
+    if (handoverId) return handoverId;
+    const lastCol = lastSxPipelineColumnId(sorted);
+    if (lastCol) return lastCol;
+  }
+
   if (wonDeal) {
     const inWorkshop = Boolean(project?.current_stage_id);
-    if (!inWorkshop && !hasSxHandover) return firstSxPipelineColumnId(sorted);
+    if (!inWorkshop && !hasSxHandover && !inLogistics) return firstSxPipelineColumnId(sorted);
   }
 
   const cid = project?.current_stage_id || null;
@@ -489,6 +515,9 @@ function resolveSxDisplayColumnId(project, sortedStages, opts = {}) {
     if (fromWf) return fromWf;
   }
 
+  if (inLogistics || String(project?.status || '') === 'shipping') {
+    return lastSxPipelineColumnId(sorted) || firstSxPipelineColumnId(sorted);
+  }
   if (project?.sx_intake || wonDeal) return firstSxPipelineColumnId(sorted);
   return null;
 }
@@ -1022,19 +1051,30 @@ async function syncCrmLeadSxPipelineFromProject(projectId, opts = {}) {
    */
   const canOverwriteStage = (lead) => {
     if (keepCrmStage.has(String(lead.id))) return false;
+    // Đã bàn giao VC → không kéo stage CRM về cột SX (giữ «Vận chuyển/lắp đặt»).
+    if (projectInLogistics) return false;
     if (!shouldAutoOverwriteCrmStage(lead.stage)) return false;
     const st = Array.isArray(lead.stage) ? lead.stage[0] : lead.stage;
     if (st?.is_won) return true;
+    // Deal đã ở cột VC/CSKH do Sale/handover — không kéo về SX.
+    const role = String(st?.sync_role || '');
+    if (role === 'vc_delivery' || role === 'vc_installation' || role === 'vc_customer_care') return false;
     const syncedCol = lead.sx_pipeline_stage_id ? String(lead.sx_pipeline_stage_id) : '';
     if (preferredSxCol && syncedCol && syncedCol === String(preferredSxCol)) return false;
     return true;
   };
+  let projectInLogistics = false;
+  let preferredSxCol = null;
   let { data: project, error: projectLoadErr } = await supabase
     .from('projects')
-    .select('id, current_stage_id, status, company_id, workshop_type_id, sx_kanban_column_id')
+    .select('id, current_stage_id, status, company_id, workshop_type_id, sx_kanban_column_id, logistics_company_id, vc_kanban_column_id')
     .eq('id', projectId)
     .single();
-  if (projectLoadErr && String(projectLoadErr.message || '').includes('sx_kanban_column_id')) {
+  if (projectLoadErr && (
+    String(projectLoadErr.message || '').includes('sx_kanban_column_id')
+    || String(projectLoadErr.message || '').includes('logistics_company_id')
+    || String(projectLoadErr.message || '').includes('vc_kanban_column_id')
+  )) {
     ({ data: project } = await supabase
       .from('projects')
       .select('id, current_stage_id, status, company_id, workshop_type_id')
@@ -1046,10 +1086,13 @@ async function syncCrmLeadSxPipelineFromProject(projectId, opts = {}) {
     return;
   }
 
+  // Đã bàn giao VC: chỉ cập nhật badge SX, không kéo stage CRM về «Sản xuất».
+  projectInLogistics = Boolean(project.logistics_company_id || project.vc_kanban_column_id);
+
   const stageUuid = await resolveSxPipelineStageUuidForProject(project);
   // Ưu tiên cột Kanban vừa ghi trên project (HCB: nhiều cột chung 1 workflow_stage_id).
   // Tránh sync nền ghi đè lead về cột đầu pipeline.
-  const preferredSxCol =
+  preferredSxCol =
     (project.sx_kanban_column_id && String(project.sx_kanban_column_id))
     || (stageUuid && String(stageUuid))
     || null;

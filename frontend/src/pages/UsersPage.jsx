@@ -4,11 +4,228 @@ import api from '../lib/api';
 import Modal from '../components/Modal';
 import UserRolesModal from '../components/UserRolesModal';
 import { useAuth } from '../lib/auth';
-import { Plus, Search, Mail, Phone, Trash2, Edit, Users as UsersIcon, MoreVertical, Building2, Layers, UsersRound, Shield, MapPin, Camera, AlertTriangle, ChevronLeft, ChevronRight, UserRound } from 'lucide-react';
+import { canCreateStaff, isSystemAdmin, hasCompanyId } from '../lib/adminRole';
+import { Plus, Search, Mail, Phone, Trash2, Edit, Users as UsersIcon, MoreVertical, Building2, Layers, UsersRound, Shield, MapPin, Camera, AlertTriangle, ChevronLeft, ChevronRight, UserRound, Sparkles, Loader2 } from 'lucide-react';
 import { formatDate, getInitials, avatarColor } from '../lib/utils';
+import PermissionCatalogPanel, { cascadeTierDraft } from '../components/permissions/PermissionCatalogPanel';
 
-const ROLES = { admin: 'Admin', manager: 'Quản lý', region_admin: 'Admin khu vực', sales_admin: 'Sales Admin', sales: 'Kinh doanh (SAE)', designer: 'Thiết kế', production: 'Sản xuất', production_staff: 'NV Sản xuất (Admin CV+SX)', production_admin: 'Admin Sản xuất', crm_production_staff: 'NV CRM + Admin SX', crm_production_admin: 'Admin CRM + Sản xuất', logistics_admin: 'Admin Vận chuyển', driver: 'Tài xế', installer: 'Lắp đặt', customer_care: 'CSKH', staff: 'Nhân viên' };
-const ROLE_COLORS = { admin: 'bg-red-100 text-red-700', manager: 'bg-purple-100 text-purple-700', region_admin: 'bg-rose-100 text-rose-800', sales_admin: 'bg-indigo-100 text-indigo-700', sales: 'bg-blue-100 text-blue-700', designer: 'bg-pink-100 text-pink-700', production: 'bg-orange-100 text-orange-700', production_staff: 'bg-teal-100 text-teal-800', production_admin: 'bg-orange-200 text-orange-900', crm_production_staff: 'bg-sky-100 text-sky-800', crm_production_admin: 'bg-violet-100 text-violet-800', logistics_admin: 'bg-amber-100 text-amber-800', installer: 'bg-cyan-100 text-cyan-700', customer_care: 'bg-green-100 text-green-700', driver: 'bg-amber-100 text-amber-700', staff: 'bg-gray-100 text-gray-600' };
+const ROLES = { admin: 'Admin', manager: 'Quản lý', region_admin: 'Admin khu vực', sales_admin: 'Sales Admin', sales: 'Kinh doanh (SAE)', designer: 'Thiết kế', production: 'Sản xuất', production_staff: 'NV Sản xuất (Admin CV+SX)', production_admin: 'Admin Sản xuất', crm_production_staff: 'NV CRM + Admin SX', crm_production_admin: 'Admin CRM + Sản xuất', logistics_admin: 'Admin Vận chuyển', driver: 'Tài xế', installer: 'Lắp đặt', customer_care: 'CSKH', accounting: 'Kế toán', staff: 'Nhân viên' };
+const ROLE_COLORS = { admin: 'bg-red-100 text-red-700', manager: 'bg-purple-100 text-purple-700', region_admin: 'bg-rose-100 text-rose-800', sales_admin: 'bg-indigo-100 text-indigo-700', sales: 'bg-blue-100 text-blue-700', designer: 'bg-pink-100 text-pink-700', production: 'bg-orange-100 text-orange-700', production_staff: 'bg-teal-100 text-teal-800', production_admin: 'bg-orange-200 text-orange-900', crm_production_staff: 'bg-sky-100 text-sky-800', crm_production_admin: 'bg-violet-100 text-violet-800', logistics_admin: 'bg-amber-100 text-amber-800', installer: 'bg-cyan-100 text-cyan-700', customer_care: 'bg-green-100 text-green-700', driver: 'bg-amber-100 text-amber-700', accounting: 'bg-emerald-100 text-emerald-800', staff: 'bg-gray-100 text-gray-600' };
+
+/** Vai trò CRM thấy dữ liệu cả công ty (không bị khóa theo khu vực JWT). */
+const COMPANY_WIDE_CRM_ROLES = new Set(['admin', 'sales_admin', 'crm_production_admin']);
+
+function inferCrmScopeMode(role, regionIds) {
+  if (role === 'region_admin') return 'regions';
+  if (COMPANY_WIDE_CRM_ROLES.has(role)) return 'company';
+  return (regionIds || []).length > 0 ? 'regions' : 'company';
+}
+
+function collectCatalogPermissionMeta(catalog) {
+  const byId = new Map();
+  for (const mod of catalog?.modules || []) {
+    if (mod.displayMode === 'tiered') {
+      for (const grp of mod.groups || []) {
+        for (const feat of grp.features || []) {
+          for (const level of feat.levels || []) {
+            if (level.permission?.id) {
+              byId.set(level.permission.id, {
+                id: level.permission.id,
+                resource: feat.resource || level.permission.resource,
+                action: level.action,
+              });
+            }
+          }
+        }
+      }
+    } else {
+      for (const feat of mod.features || []) {
+        for (const p of feat.permissions || []) {
+          byId.set(p.id, { id: p.id, resource: p.resource, action: p.action });
+        }
+      }
+    }
+  }
+  return byId;
+}
+
+function draftFromPermissionIds(ids) {
+  const out = {};
+  for (const id of ids || []) out[id] = true;
+  return out;
+}
+
+function buildPermissionOverrideChanges(baselineIds, draft) {
+  const baseline = new Set((baselineIds || []).map(String));
+  const allIds = new Set([...baseline, ...Object.keys(draft || {}).map(String)]);
+  const changes = [];
+  for (const id of allIds) {
+    const desired = draft?.[id] === true || draft?.[String(id)] === true;
+    const fromRole = baseline.has(String(id));
+    if (desired === fromRole) {
+      // Xóa ghi đè cũ để quay về đúng mẫu vai trò
+      changes.push({ permission_id: id, clear: true });
+    } else {
+      changes.push({ permission_id: id, granted: desired });
+    }
+  }
+  return changes;
+}
+
+function resourceMatchesPreset(resource, family) {
+  const res = String(resource || '');
+  if (family === 'drive') return res === 'drive';
+  if (family === 'production') return res.startsWith('sx_') || res === 'projects';
+  if (family === 'crm') return res.startsWith('crm_');
+  if (family === 'vc') return res.startsWith('vc_');
+  if (family === 'accounting') return res.startsWith('ketoan_');
+  return false;
+}
+
+const VIEW_ONLY_ACTIONS = new Set(['view']);
+
+/** Áp preset/tweak phân quyền lên draft (giữ nguyên quyền module khác trừ preset toàn cục). */
+function applyPermissionIntentsToDraft(draft, metaById, presets = [], tweaks = []) {
+  const next = { ...(draft || {}) };
+  const list = Array.isArray(presets) ? presets : [];
+
+  const applyFamilyView = (family, { forceOffWrite = false, adminAll = false } = {}) => {
+    for (const [id, meta] of metaById.entries()) {
+      if (!resourceMatchesPreset(meta.resource, family)) continue;
+      if (adminAll) {
+        next[id] = true;
+        continue;
+      }
+      if (meta.action === 'view') next[id] = true;
+      else if (forceOffWrite) next[id] = false;
+    }
+  };
+
+  for (const preset of list) {
+    if (preset === 'all_modules_view_only') {
+      // Xem hết — tắt mọi quyền tương tác (sửa/tạo/xóa/admin/upload…)
+      for (const [id, meta] of metaById.entries()) {
+        next[id] = VIEW_ONLY_ACTIONS.has(meta.action);
+      }
+    } else if (preset === 'drive_view_only') {
+      for (const [id, meta] of metaById.entries()) {
+        if (!resourceMatchesPreset(meta.resource, 'drive')) continue;
+        next[id] = meta.action === 'view';
+      }
+    } else if (preset === 'drive_view_all') {
+      for (const [id, meta] of metaById.entries()) {
+        if (!resourceMatchesPreset(meta.resource, 'drive')) continue;
+        if (meta.action === 'view') next[id] = true;
+      }
+    } else if (preset === 'production_view_all') {
+      applyFamilyView('production');
+    } else if (preset === 'production_admin_all') {
+      applyFamilyView('production', { adminAll: true });
+    } else if (preset === 'crm_view_all') {
+      applyFamilyView('crm');
+    } else if (preset === 'crm_admin_all') {
+      applyFamilyView('crm', { adminAll: true });
+    } else if (preset === 'vc_view_all') {
+      applyFamilyView('vc');
+    } else if (preset === 'vc_admin_all') {
+      applyFamilyView('vc', { adminAll: true });
+    } else if (preset === 'accounting_view_all') {
+      // Module kế toán: xem + sửa BG/ĐH/HĐ (sau all_modules_view_only vẫn khôi phục edit)
+      for (const [id, meta] of metaById.entries()) {
+        if (!resourceMatchesPreset(meta.resource, 'accounting')) continue;
+        if (meta.action === 'view' || meta.action === 'edit') next[id] = true;
+      }
+    } else if (preset === 'accounting_admin_all') {
+      applyFamilyView('accounting', { adminAll: true });
+    }
+  }
+
+  for (const tw of tweaks || []) {
+    for (const [id, meta] of metaById.entries()) {
+      if (meta.resource === tw.resource && meta.action === tw.action) {
+        next[id] = tw.granted === true;
+      }
+    }
+  }
+  return next;
+}
+
+function preferModuleKeyFromPresets(presets) {
+  const list = presets || [];
+  if (list.some((p) => p === 'all_modules_view_only')) return 'accounting';
+  if (list.some((p) => String(p).startsWith('accounting'))) return 'accounting';
+  if (list.some((p) => String(p).startsWith('drive'))) return 'drive';
+  if (list.some((p) => String(p).startsWith('production'))) return 'production';
+  if (list.some((p) => String(p).startsWith('crm'))) return 'crm';
+  if (list.some((p) => String(p).startsWith('vc'))) return 'logistics';
+  return null;
+}
+
+/** Chip form → family trong resourceMatchesPreset */
+const MODULE_KEY_TO_PERM_FAMILY = {
+  crm: 'crm',
+  production: 'production',
+  logistics: 'vc',
+  accounting: 'accounting',
+};
+
+/** Chip form → users.drive_module */
+const MODULE_KEY_TO_DRIVE = {
+  crm: 'crm',
+  production: 'sx',
+  logistics: 'vc',
+  accounting: 'crm',
+};
+
+const CATALOG_ALWAYS_MODULE_KEYS = new Set(['drive', 'work', 'hr', 'reports', 'system']);
+
+/** Áp chọn module công ty lên draft: chọn = view+edit; bỏ chọn = tắt hết family đó. */
+function applySelectedModulesToDraft(draft, metaById, companyModuleKeys = [], selectedKeys = []) {
+  const selected = new Set((selectedKeys || []).map(String));
+  const company = (companyModuleKeys || []).map(String);
+  if (!company.length || !metaById?.size) return { ...(draft || {}) };
+  const next = { ...(draft || {}) };
+  for (const key of company) {
+    const family = MODULE_KEY_TO_PERM_FAMILY[key];
+    if (!family) continue;
+    const on = selected.has(key);
+    for (const [id, meta] of metaById.entries()) {
+      if (!resourceMatchesPreset(meta.resource, family)) continue;
+      if (!on) {
+        next[id] = false;
+      } else if (meta.action === 'view' || meta.action === 'edit') {
+        next[id] = true;
+      } else if (meta.action === 'admin') {
+        next[id] = false;
+      }
+    }
+  }
+  return next;
+}
+
+function filterCatalogBySelectedModules(catalog, selectedKeys = []) {
+  const mods = catalog?.modules || [];
+  if (!mods.length) return catalog || { modules: [] };
+  if (!(selectedKeys || []).length) {
+    return {
+      ...catalog,
+      modules: mods.filter((m) => CATALOG_ALWAYS_MODULE_KEYS.has(m.key)),
+    };
+  }
+  const allow = new Set([...selectedKeys.map(String), ...CATALOG_ALWAYS_MODULE_KEYS]);
+  return {
+    ...catalog,
+    modules: mods.filter((m) => allow.has(m.key)),
+  };
+}
+
+function driveModuleFromSelection(selectedKeys = []) {
+  for (const key of selectedKeys) {
+    const d = MODULE_KEY_TO_DRIVE[key];
+    if (d) return d;
+  }
+  return null;
+}
 
 const employeeCardClass =
   'group relative flex items-center gap-3.5 overflow-hidden rounded-2xl border border-slate-200/75 bg-gradient-to-b from-white via-white to-slate-50/90 p-4 transition-all duration-300 ease-out cursor-pointer shadow-[inset_0_1px_0_rgba(255,255,255,0.95),0_2px_4px_rgba(15,23,42,0.05),0_10px_24px_-8px_rgba(15,23,42,0.12)] hover:-translate-y-1 hover:border-violet-300/70 hover:from-violet-50/50 hover:via-white hover:to-violet-50/30 hover:shadow-[inset_0_1px_0_rgba(255,255,255,1),0_6px_14px_-4px_rgba(124,58,237,0.2),0_22px_38px_-14px_rgba(124,58,237,0.28)]';
@@ -16,6 +233,11 @@ const employeeCardClass =
 export default function UsersPage() {
   const { user: currentUser } = useAuth();
   const isAdmin = currentUser?.role === 'admin';
+  const canAddStaff = canCreateStaff(currentUser);
+  /** Admin/NV gắn công ty — khóa danh sách theo đúng công ty đó (admin hệ thống không khóa). */
+  const lockedCompanyId = (!isSystemAdmin(currentUser) && hasCompanyId(currentUser))
+    ? String(currentUser.company_id)
+    : '';
   const [users, setUsers] = useState([]);
   const [stats, setStats] = useState({});
   const [departments, setDepartments] = useState([]);
@@ -24,7 +246,7 @@ export default function UsersPage() {
   const [search, setSearch] = useState('');
   const [filterRole, setFilterRole] = useState('');
   const [filterDept, setFilterDept] = useState('');
-  const [filterCompany, setFilterCompany] = useState('');
+  const [filterCompany, setFilterCompany] = useState(lockedCompanyId);
   const [filterDivision, setFilterDivision] = useState('');
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -38,25 +260,33 @@ export default function UsersPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
+  useEffect(() => {
+    if (lockedCompanyId) {
+      setFilterCompany(lockedCompanyId);
+      setFilterDivision('');
+    }
+  }, [lockedCompanyId]);
+
   const load = useCallback(() => {
     setLoading(true);
     const params = {};
     if (search) params.search = search;
     if (filterRole) params.role = filterRole;
     if (filterDept) params.department_id = filterDept;
-    
-    // Division filter: use ecosystem_unit_id (backend will get all children)
-    if (filterDivision) {
+
+    const effectiveCompany = lockedCompanyId || filterCompany;
+    if (lockedCompanyId) {
+      params.company_id = lockedCompanyId;
+    } else if (filterDivision) {
       params.ecosystem_unit_id = filterDivision;
-    } else if (filterCompany) {
-      // No division selected, but company selected
-      params.company_id = filterCompany;
+    } else if (effectiveCompany) {
+      params.company_id = effectiveCompany;
     }
-    
+
     api.get('/users', { params })
       .then(r => { setUsers(r.data.users || []); setStats(r.data.stats || {}); })
       .catch(() => {}).finally(() => setLoading(false));
-  }, [search, filterRole, filterDept, filterCompany, filterDivision]);
+  }, [search, filterRole, filterDept, filterCompany, filterDivision, lockedCompanyId]);
 
   useEffect(() => {
     load();
@@ -66,20 +296,25 @@ export default function UsersPage() {
       api.get('/ecosystem/units?level=2'), // Level 2 = companies
       api.get('/ecosystem/units?level=1'), // Level 1 = divisions (khối)
     ]).then(([deptRes, compRes, divRes]) => {
-      setDepartments(deptRes.data.departments || []);
-      
-      // Companies from ecosystem (have parent_id = division)
-      const companyUnits = compRes.data.units || [];
-      setCompanies(companyUnits.map(u => ({
-        id: u.company_id, // actual companies table id
+      const allDepts = deptRes.data.departments || [];
+      setDepartments(lockedCompanyId
+        ? allDepts.filter((d) => String(d.company_id) === lockedCompanyId)
+        : allDepts);
+
+      const companyUnits = (compRes.data.units || []).map(u => ({
+        id: u.company_id,
         name: u.name,
-        division_unit_id: u.parent_id, // parent = division
-        unit_id: u.id, // ecosystem_units.id
-      })).filter(c => c.id)); // Only units that have company_id
-      
-      setDivisions(divRes.data.units || []);
+        division_unit_id: u.parent_id,
+        unit_id: u.id,
+      })).filter(c => c.id);
+
+      setCompanies(lockedCompanyId
+        ? companyUnits.filter((c) => String(c.id) === lockedCompanyId)
+        : companyUnits);
+
+      setDivisions(lockedCompanyId ? [] : (divRes.data.units || []));
     }).catch(() => {});
-  }, []);
+  }, [lockedCompanyId]);
   
   useEffect(() => { load(); }, [filterRole, filterDept, filterCompany, filterDivision]);
   useEffect(() => { setPage(1); }, [search, filterRole, filterDept, filterCompany, filterDivision, pageSize]);
@@ -158,6 +393,7 @@ export default function UsersPage() {
             <p className="text-sm text-slate-500 mt-0.5">{stats.total || totalUsers} nhân viên</p>
           </div>
         </div>
+        {canAddStaff && (
         <button
           data-tour="add-user"
           onClick={() => { setEditUser(null); setShowCreate(true); }}
@@ -165,6 +401,7 @@ export default function UsersPage() {
         >
           <Plus className="h-4 w-4" /> Thêm NV
         </button>
+        )}
       </div>
 
       {/* Role tabs */}
@@ -211,6 +448,7 @@ export default function UsersPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2.5">
+          {!lockedCompanyId && (
           <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 h-10 min-w-[148px]">
             <Layers className="h-4 w-4 text-slate-400 shrink-0" />
             <select
@@ -227,9 +465,15 @@ export default function UsersPage() {
               ))}
             </select>
           </div>
+          )}
 
           <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 h-10 min-w-[156px]">
             <Building2 className="h-4 w-4 text-slate-400 shrink-0" />
+            {lockedCompanyId ? (
+              <span className="flex-1 text-sm text-slate-700 truncate">
+                {companies.find((c) => String(c.id) === lockedCompanyId)?.name || 'Công ty của bạn'}
+              </span>
+            ) : (
             <select
               value={filterCompany}
               onChange={(e) => setFilterCompany(e.target.value)}
@@ -242,6 +486,7 @@ export default function UsersPage() {
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
             </select>
+            )}
           </div>
 
           <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 h-10 min-w-[168px]">
@@ -254,7 +499,7 @@ export default function UsersPage() {
               <option value="">Tất cả phòng ban</option>
               <option value="none">Chưa có phòng ban</option>
               {departments
-                .filter((d) => !filterCompany || d.company_id === filterCompany)
+                .filter((d) => !(lockedCompanyId || filterCompany) || d.company_id === (lockedCompanyId || filterCompany))
                 .map((d) => (
                   <option key={d.id} value={d.id}>{d.name}</option>
                 ))}
@@ -610,12 +855,23 @@ export function StaffFormModal({
   /** Khi tạo mới: điền sẵn mật khẩu (vd: thiết lập tổ chức nhanh dùng 123456) */
   defaultNewUserPassword,
 }) {
+  const { user: currentUser } = useAuth();
+  const lockedCompanyId = (!isSystemAdmin(currentUser) && hasCompanyId(currentUser))
+    ? String(currentUser.company_id)
+    : '';
   const editUserId = editUser?.id ?? null;
   const [form, setForm] = useState(STAFF_EMPTY_FORM);
   const [loading, setLoading] = useState(false);
   const [userLoading, setUserLoading] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const avatarInputRef = useRef(null);
+  /** Giữ department/region/permission AI vừa điền — tránh bị effect cascade xóa khi đổi Cty */
+  const aiPendingRef = useRef({
+    department_id: null,
+    crm_region_ids: null,
+    permission_presets: null,
+    permission_tweaks: null,
+  });
 
   // Cascade data — Khối lấy level=1 (khớp bộ lọc trang); không phụ thuộc level.depth có trong payload hay không
   const [divisions, setDivisions] = useState([]);
@@ -624,29 +880,116 @@ export function StaffFormModal({
   const [teams, setTeams] = useState([]);
   /** Khu vực CRM theo công ty (company_regions) */
   const [companyRegions, setCompanyRegions] = useState([]);
+  /** Preview quyền theo vai trò đã chọn */
+  const [rolePermPreview, setRolePermPreview] = useState(null);
+  const [rolePermLoading, setRolePermLoading] = useState(false);
+  /** Phạm vi dữ liệu CRM: company | regions — kết hợp với vai trò */
+  const [crmScopeMode, setCrmScopeMode] = useState('company');
+  /** AI điền form */
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiSummary, setAiSummary] = useState([]);
+  const [aiWarnings, setAiWarnings] = useState([]);
+  /** Bật/tắt phân quyền theo catalog */
+  const [permCatalog, setPermCatalog] = useState({ modules: [] });
+  const [permCatalogLoading, setPermCatalogLoading] = useState(false);
+  const [permCatalogError, setPermCatalogError] = useState('');
+  const [permModuleKey, setPermModuleKey] = useState('drive');
+  const [permBaselineIds, setPermBaselineIds] = useState([]);
+  const [permDraft, setPermDraft] = useState({});
+  const [permPanelOpen, setPermPanelOpen] = useState(true);
+  const [permTouched, setPermTouched] = useState(false);
+  /** Module công ty (CRM/SX/VC/Kế toán) — chip chọn nhiều */
+  const [companyModules, setCompanyModules] = useState([]);
+  const [selectedModuleKeys, setSelectedModuleKeys] = useState([]);
+  const [companyModulesLoading, setCompanyModulesLoading] = useState(false);
 
   // Selection
   const [selDivision, setSelDivision] = useState('');
   const [selCompany, setSelCompany] = useState('');
 
+  const permMetaById = useMemo(() => collectCatalogPermissionMeta(permCatalog), [permCatalog]);
+
+  const filteredPermCatalog = useMemo(
+    () => filterCatalogBySelectedModules(permCatalog, selectedModuleKeys),
+    [permCatalog, selectedModuleKeys],
+  );
+  const permDirtyCount = useMemo(() => {
+    const baseline = new Set(permBaselineIds.map(String));
+    let n = 0;
+    const ids = new Set([...baseline, ...Object.keys(permDraft)]);
+    for (const id of ids) {
+      const desired = permDraft[id] === true;
+      if (desired !== baseline.has(String(id))) n += 1;
+    }
+    return n;
+  }, [permBaselineIds, permDraft]);
+
   const resetCascade = () => {
     setSelDivision('');
-    setSelCompany('');
+    setSelCompany(lockedCompanyId || '');
     setDepartments([]);
     setTeams([]);
     setCompanyRegions([]);
+    setCompanyModules([]);
+    setSelectedModuleKeys([]);
+    aiPendingRef.current = {
+      department_id: null,
+      crm_region_ids: null,
+      permission_presets: null,
+      permission_tweaks: null,
+    };
   };
 
   useEffect(() => {
     if (!open) return;
+    let cancelled = false;
+
+    // Catalog tách riêng — không chờ /ecosystem/units (có thể >20s) kẻo panel hiện «không tải được».
+    setPermCatalogLoading(true);
+    setPermCatalogError('');
+    api.get('/permissions/catalog', {
+      params: { _ts: Date.now() },
+      headers: { 'x-no-cache': '1' },
+    })
+      .then((catRes) => {
+        if (cancelled) return;
+        const catalog = catRes?.data && Array.isArray(catRes.data.modules)
+          ? catRes.data
+          : { modules: [] };
+        setPermCatalog(catalog);
+        if (!catalog.modules.length) {
+          setPermCatalogError('Catalog quyền trống hoặc không đọc được. Thử lại.');
+        } else {
+          const prefer = catalog.modules.find((m) => m.key === 'drive')
+            || catalog.modules.find((m) => m.key === 'production')
+            || catalog.modules[0];
+          if (prefer?.key) setPermModuleKey(prefer.key);
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setPermCatalog({ modules: [] });
+        setPermCatalogError(err?.response?.data?.error || err?.message || 'Không tải được catalog quyền');
+      })
+      .finally(() => {
+        if (!cancelled) setPermCatalogLoading(false);
+      });
+
     Promise.all([
       api.get('/ecosystem/units?level=1').catch(() => ({ data: { units: [] } })),
       api.get('/companies').catch(() => ({ data: { companies: [] } })),
     ]).then(([divRes, cRes]) => {
-      setDivisions(divRes.data.units || []);
-      setCompanies(cRes.data.companies || []);
+      if (cancelled) return;
+      const allCompanies = cRes.data.companies || [];
+      setDivisions(lockedCompanyId ? [] : (divRes.data.units || []));
+      setCompanies(lockedCompanyId
+        ? allCompanies.filter((c) => String(c.id) === lockedCompanyId)
+        : allCompanies);
     });
-  }, [open]);
+
+    return () => { cancelled = true; };
+  }, [open, lockedCompanyId]);
 
   /** Mỗi lần mở modal / đổi nhân viên: reset form và tải đủ dữ liệu từ API (tránh dính thông tin NV trước) */
   useEffect(() => {
@@ -660,11 +1003,24 @@ export function StaffFormModal({
         ...STAFF_EMPTY_FORM,
         password: defaultNewUserPassword || '',
       });
+      setCrmScopeMode('company');
+      setRolePermPreview(null);
+      setAiPrompt('');
+      setAiSummary([]);
+      setAiWarnings([]);
+      setPermBaselineIds([]);
+      setPermDraft({});
+      setPermTouched(false);
+      if (lockedCompanyId) setSelCompany(lockedCompanyId);
       return;
     }
 
     setUserLoading(true);
     setForm({ ...STAFF_EMPTY_FORM, email: editUser?.email || '' });
+    setPermTouched(false);
+    setAiPrompt('');
+    setAiSummary([]);
+    setAiWarnings([]);
 
     let cancelled = false;
     api
@@ -674,12 +1030,14 @@ export function StaffFormModal({
         const user = r.data?.user;
         if (!user || String(user.id) !== String(editUserId)) return;
         setForm(mapUserToForm(user));
+        setCrmScopeMode(inferCrmScopeMode(user.role || 'staff', user.crm_region_ids));
         const companyId = user.department?.company_id;
         if (companyId) setSelCompany(companyId);
       })
       .catch(() => {
         if (cancelled || !editUser) return;
         setForm(mapUserToForm(editUser));
+        setCrmScopeMode(inferCrmScopeMode(editUser.role || 'staff', editUser.crm_region_ids));
         const companyId = editUser.department?.company_id;
         if (companyId) setSelCompany(companyId);
       })
@@ -720,12 +1078,20 @@ export function StaffFormModal({
     if (selCompany) {
       api
         .get('/departments', { params: { company_id: selCompany, division_unit_id: selDivision || undefined } })
-        .then((r) => setDepartments(r.data.departments || []))
+        .then((r) => {
+          const list = r.data.departments || [];
+          setDepartments(list);
+          const pendingDept = aiPendingRef.current.department_id;
+          if (pendingDept && list.some((d) => String(d.id) === String(pendingDept))) {
+            setForm((f) => ({ ...f, department_id: pendingDept }));
+            aiPendingRef.current.department_id = null;
+          }
+        })
         .catch(() => setDepartments([]));
     } else {
       setDepartments([]);
     }
-    if (!editUserId) {
+    if (!editUserId && !aiPendingRef.current.department_id) {
       setForm((f) => ({ ...f, department_id: '', team_id: '' }));
       setTeams([]);
     }
@@ -743,6 +1109,11 @@ export function StaffFormModal({
         if (cancelled) return;
         const list = Array.isArray(r.data) ? r.data : [];
         setCompanyRegions(list.filter((x) => x.is_active !== false));
+        const pendingRegions = aiPendingRef.current.crm_region_ids;
+        if (Array.isArray(pendingRegions) && pendingRegions.length) {
+          setForm((f) => ({ ...f, crm_region_ids: pendingRegions }));
+          aiPendingRef.current.crm_region_ids = null;
+        }
       })
       .catch(() => {
         if (!cancelled) setCompanyRegions([]);
@@ -751,6 +1122,46 @@ export function StaffFormModal({
       cancelled = true;
     };
   }, [selCompany, selDivision]);
+
+  // Module công ty → chip multi-select
+  useEffect(() => {
+    if (!open) return;
+    if (!selCompany) {
+      setCompanyModules([]);
+      setSelectedModuleKeys([]);
+      return;
+    }
+    let cancelled = false;
+    setCompanyModulesLoading(true);
+    api
+      .get('/ecosystem/company-modules', {
+        params: { company_id: selCompany, _ts: Date.now() },
+        headers: { 'x-no-cache': '1' },
+      })
+      .then((r) => {
+        if (cancelled) return;
+        const list = Array.isArray(r.data?.modules) ? r.data.modules : [];
+        // Chỉ giữ module API trả về (đã lọc theo khối công ty)
+        setCompanyModules(list);
+        const keys = list.map((m) => String(m.key));
+        setSelectedModuleKeys((prev) => {
+          const keep = (prev || []).filter((k) => keys.includes(k));
+          return keep.length ? keep : keys;
+        });
+        if (keys[0]) setPermModuleKey(keys[0]);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setCompanyModules([]);
+        setSelectedModuleKeys([]);
+      })
+      .finally(() => {
+        if (!cancelled) setCompanyModulesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, selCompany]);
 
   useEffect(() => {
     if (!companyRegions.length) return;
@@ -773,10 +1184,313 @@ export function StaffFormModal({
     if (!editUserId) setForm((f) => ({ ...f, team_id: '' }));
   }, [form.department_id, editUserId]);
 
+  const applyPendingAiPermissions = useCallback((catalogOverride, baseDraft) => {
+    const presets = aiPendingRef.current.permission_presets;
+    const tweaks = aiPendingRef.current.permission_tweaks;
+    if (!(presets?.length || tweaks?.length)) return false;
+    const catalog = catalogOverride || permCatalog;
+    const meta = collectCatalogPermissionMeta(catalog);
+    if (!meta.size) return false;
+    setPermDraft((prev) => {
+      const base = baseDraft
+        || (Object.keys(prev || {}).length ? prev : {});
+      let next = applyPermissionIntentsToDraft(base, meta, presets || [], tweaks || []);
+      const companyKeys = companyModules.map((m) => m.key);
+      if (companyKeys.length && selectedModuleKeys.length) {
+        next = applySelectedModulesToDraft(next, meta, companyKeys, selectedModuleKeys);
+      }
+      return next;
+    });
+    setPermTouched(true);
+    setPermPanelOpen(true);
+    const mod = preferModuleKeyFromPresets(presets || []) || selectedModuleKeys[0];
+    if (mod) setPermModuleKey(mod);
+    aiPendingRef.current.permission_presets = null;
+    aiPendingRef.current.permission_tweaks = null;
+    return true;
+  }, [permCatalog, companyModules, selectedModuleKeys]);
+
+  const applyModuleChipsToDraft = useCallback((keys) => {
+    const companyKeys = companyModules.map((m) => m.key);
+    if (!companyKeys.length || !permMetaById.size) return;
+    setPermDraft((prev) => applySelectedModulesToDraft(prev, permMetaById, companyKeys, keys));
+    setPermTouched(true);
+    if (keys[0]) setPermModuleKey(keys[0]);
+    else {
+      const fallback = filteredPermCatalog?.modules?.[0]?.key;
+      if (fallback) setPermModuleKey(fallback);
+    }
+  }, [companyModules, permMetaById, filteredPermCatalog]);
+
+  const toggleCompanyModule = (key) => {
+    setSelectedModuleKeys((prev) => {
+      const has = prev.includes(key);
+      const next = has ? prev.filter((k) => k !== key) : [...prev, key];
+      queueMicrotask(() => applyModuleChipsToDraft(next));
+      return next;
+    });
+  };
+
+  const moduleSelRef = useRef({ company: [], selected: [] });
+  moduleSelRef.current = {
+    company: companyModules.map((m) => m.key),
+    selected: selectedModuleKeys,
+  };
+
+  // Tạo mới: sau khi có chip module → đồng bộ draft (role có thể đã seed trước)
+  useEffect(() => {
+    if (!open || editUserId) return;
+    if (!companyModules.length || !permMetaById.size) return;
+    applyModuleChipsToDraft(selectedModuleKeys);
+  }, [open, editUserId, companyModules, selectedModuleKeys, permMetaById, applyModuleChipsToDraft]);
+
+  // Tab panel phải luôn khớp catalog đã lọc
+  useEffect(() => {
+    const mods = filteredPermCatalog?.modules || [];
+    if (!mods.length) return;
+    if (!mods.some((m) => m.key === permModuleKey)) {
+      setPermModuleKey(mods[0].key);
+    }
+  }, [filteredPermCatalog, permModuleKey]);
+
+  // Khi catalog quyền tải xong — áp pending từ AI (nếu còn)
+  useEffect(() => {
+    if (!open) return;
+    if (!(permCatalog?.modules || []).length) return;
+    applyPendingAiPermissions(permCatalog);
+  }, [open, permCatalog, applyPendingAiPermissions]);
+
+  // Preview quyền khi đổi vai trò → seed bật/tắt theo mẫu vai trò
+  useEffect(() => {
+    if (!open) return;
+    const role = form.role || 'staff';
+    let cancelled = false;
+    setRolePermLoading(true);
+    api
+      .get(`/permissions/roles/by-name/${encodeURIComponent(role)}`)
+      .then((r) => {
+        if (cancelled) return;
+        const data = r.data || null;
+        setRolePermPreview(data);
+        const ids = (data?.permissions || []).map((p) => p.id).filter(Boolean);
+        setPermBaselineIds(ids);
+        const pendingPresets = aiPendingRef.current.permission_presets;
+        const pendingTweaks = aiPendingRef.current.permission_tweaks;
+        const hasPendingPerms = (pendingPresets && pendingPresets.length)
+          || (pendingTweaks && pendingTweaks.length);
+        const base = draftFromPermissionIds(ids);
+        const meta = collectCatalogPermissionMeta(permCatalog);
+        const { company: companyKeys, selected: selKeys } = moduleSelRef.current;
+        const withModules = (d) => (
+          companyKeys.length
+            ? applySelectedModulesToDraft(d, meta, companyKeys, selKeys)
+            : d
+        );
+
+        if (hasPendingPerms) {
+          const applied = applyPendingAiPermissions(undefined, base);
+          if (!applied) setPermDraft(withModules(base));
+        } else if (!permTouched) {
+          setPermDraft(withModules(base));
+        } else {
+          setPermDraft((prev) => {
+            const next = { ...prev };
+            for (const id of ids) {
+              if (next[id] === undefined) next[id] = true;
+            }
+            return withModules(next);
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRolePermPreview(null);
+          if (!permTouched) {
+            setPermBaselineIds([]);
+            setPermDraft({});
+          }
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setRolePermLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // permTouched đọc lúc response — cố ý không đưa vào deps để tránh loop khi AI set touched
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, form.role, applyPendingAiPermissions]);
+
+  // Edit: nạp quyền hiệu lực hiện tại
+  useEffect(() => {
+    if (!open || !editUserId) return;
+    let cancelled = false;
+    api
+      .get(`/permissions/users/${editUserId}/effective`)
+      .then((r) => {
+        if (cancelled) return;
+        const rows = r.data?.permissions || [];
+        const draft = {};
+        for (const p of rows) {
+          if (p.permission_id) draft[p.permission_id] = p.effective === true;
+        }
+        setPermDraft(draft);
+        setPermTouched(true);
+        if (Array.isArray(r.data?.role_permission_ids)) {
+          setPermBaselineIds(r.data.role_permission_ids);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [open, editUserId]);
+
   // companies state is already filtered by selDivision via API above
   const divCompanies = companies;
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const applyRoleChange = (role) => {
+    setForm((f) => ({ ...f, role }));
+    setPermTouched(false);
+    if (role === 'region_admin') setCrmScopeMode('regions');
+    else if (COMPANY_WIDE_CRM_ROLES.has(role)) setCrmScopeMode('company');
+  };
+
+  const applyCrmScopeMode = (mode) => {
+    setCrmScopeMode(mode);
+    if (mode === 'regions') {
+      if (COMPANY_WIDE_CRM_ROLES.has(form.role)) {
+        setForm((f) => ({ ...f, role: 'region_admin' }));
+      }
+    } else if (mode === 'company' && form.role === 'region_admin') {
+      setForm((f) => ({ ...f, role: 'sales_admin' }));
+    }
+  };
+
+  const onTogglePerm = (permissionId, value) => {
+    setPermTouched(true);
+    setPermDraft((d) => ({ ...d, [permissionId]: value }));
+  };
+
+  const onTogglePermTier = (feat, action, value) => {
+    setPermTouched(true);
+    const updates = cascadeTierDraft(feat.levels || [], action, value);
+    setPermDraft((d) => ({ ...d, ...updates }));
+  };
+
+  const resetPermsToRole = () => {
+    setPermTouched(true);
+    setPermDraft(draftFromPermissionIds(permBaselineIds));
+  };
+
+  /** Preset: Drive chỉ xem — tắt upload/sửa/xóa */
+  const presetDriveViewOnly = () => {
+    setPermTouched(true);
+    setPermDraft((d) => {
+      const next = { ...d };
+      for (const [id, meta] of permMetaById.entries()) {
+        if (meta.resource !== 'drive') continue;
+        next[id] = meta.action === 'view';
+      }
+      return next;
+    });
+    setPermModuleKey('drive');
+  };
+
+  /** Preset: bật Xem mọi chức năng Sản xuất */
+  const presetProductionViewAll = () => {
+    setPermTouched(true);
+    setPermDraft((d) => {
+      const next = { ...d };
+      for (const [id, meta] of permMetaById.entries()) {
+        const res = String(meta.resource || '');
+        if (res.startsWith('sx_') || res === 'projects') {
+          if (meta.action === 'view') next[id] = true;
+        }
+      }
+      return next;
+    });
+    setPermModuleKey('production');
+  };
+
+  const savePermissionOverrides = async (userId) => {
+    if (!userId || !permTouched) return;
+    const changes = buildPermissionOverrideChanges(permBaselineIds, permDraft);
+    if (!changes.length) return;
+    await api.put(`/permissions/users/${userId}/overrides`, { changes });
+  };
+
+  const runAiFill = async () => {
+    const prompt = aiPrompt.trim();
+    if (!prompt || aiBusy) return;
+    setAiBusy(true);
+    setAiSummary([]);
+    setAiWarnings([]);
+    try {
+      const { data } = await api.post('/users/ai-fill-form', {
+        prompt,
+        default_password: defaultNewUserPassword || '123456',
+      });
+      const fields = data?.fields || {};
+      const role = fields.role && ROLES[fields.role] ? fields.role : (form.role || 'staff');
+      const scope = fields.crm_scope_mode === 'regions' ? 'regions' : 'company';
+
+      aiPendingRef.current = {
+        department_id: fields.department_id || null,
+        crm_region_ids: Array.isArray(fields.crm_region_ids) ? fields.crm_region_ids : null,
+        permission_presets: Array.isArray(fields.permission_presets) ? fields.permission_presets : null,
+        permission_tweaks: Array.isArray(fields.permission_tweaks) ? fields.permission_tweaks : null,
+      };
+
+      const roleChanged = role !== (form.role || 'staff');
+      setForm((f) => ({
+        ...f,
+        full_name: fields.full_name != null && fields.full_name !== '' ? fields.full_name : f.full_name,
+        email: (!editUserId && fields.email) ? fields.email : f.email,
+        phone: fields.phone != null ? fields.phone : f.phone,
+        password: (!editUserId && fields.password) ? fields.password : f.password,
+        role,
+        position: fields.position != null ? fields.position : f.position,
+        department_id: fields.department_id || f.department_id || '',
+        team_id: fields.team_id || '',
+        crm_region_ids: Array.isArray(fields.crm_region_ids) ? fields.crm_region_ids : f.crm_region_ids,
+      }));
+      setCrmScopeMode(scope);
+      if (fields.company_id && !lockedCompanyId) {
+        setSelCompany(String(fields.company_id));
+      } else if (fields.company_id && lockedCompanyId && String(fields.company_id) === lockedCompanyId) {
+        setSelCompany(lockedCompanyId);
+      } else if (!fields.company_id && fields.department_id) {
+        setForm((f) => ({ ...f, department_id: fields.department_id }));
+      }
+
+      const presets = Array.isArray(fields.permission_presets) ? fields.permission_presets : [];
+      const tweaks = Array.isArray(fields.permission_tweaks) ? fields.permission_tweaks : [];
+      if (presets.length || tweaks.length) {
+        setPermPanelOpen(true);
+        const mod = preferModuleKeyFromPresets(presets);
+        if (mod) setPermModuleKey(mod);
+        if (!roleChanged) {
+          const applied = applyPendingAiPermissions();
+          if (!applied) {
+            // catalog chưa sẵn — giữ pending trong ref
+            setPermTouched(true);
+          }
+        } else {
+          setPermTouched(false);
+        }
+      }
+
+      setAiSummary(Array.isArray(data?.summary) ? data.summary : []);
+      setAiWarnings(Array.isArray(data?.warnings) ? data.warnings : []);
+    } catch (err) {
+      alert(err.response?.data?.error || err.message || 'AI điền form thất bại');
+    } finally {
+      setAiBusy(false);
+    }
+  };
 
   const toggleCrmRegion = (regionId) => {
     const id = String(regionId);
@@ -792,6 +1506,11 @@ export function StaffFormModal({
   const submit = async (e) => {
     e.preventDefault(); setLoading(true);
     try {
+      if (crmScopeMode === 'regions' && !(form.crm_region_ids || []).length) {
+        alert('Chọn ít nhất một khu vực CRM khi phạm vi là «Chỉ khu vực chỉ định».');
+        setLoading(false);
+        return;
+      }
       const payload = { ...form };
       if (!payload.password) delete payload.password;
       if (editUserId) delete payload.email;
@@ -802,28 +1521,95 @@ export function StaffFormModal({
       });
       if (payload.salary === '' || payload.salary == null) payload.salary = null;
       payload.crm_region_ids = Array.isArray(form.crm_region_ids) ? form.crm_region_ids : [];
+      if (crmScopeMode === 'company' && form.role === 'region_admin') {
+        payload.role = 'sales_admin';
+      }
       if (payload.avatar === undefined) delete payload.avatar;
       else if (payload.avatar === null || payload.avatar === '') payload.avatar = null;
       else if (typeof payload.avatar === 'string') payload.avatar = payload.avatar.trim() || null;
       if (!editUserId && payload.avatar == null) delete payload.avatar;
-      if (editUserId) await api.put(`/users/${editUserId}`, payload);
-      else await api.post('/users', payload);
+      const driveMod = driveModuleFromSelection(selectedModuleKeys);
+      if (driveMod) payload.drive_module = driveMod;
+      let savedUserId = editUserId;
+      if (editUserId) {
+        await api.put(`/users/${editUserId}`, payload);
+      } else {
+        const { data } = await api.post('/users', payload);
+        savedUserId = data?.user?.id || data?.id || null;
+      }
+      try {
+        await savePermissionOverrides(savedUserId);
+      } catch (permErr) {
+        console.warn('Lưu phân quyền NV:', permErr);
+        alert(permErr.response?.data?.error || 'Đã lưu NV nhưng chưa ghi được phân quyền tùy chỉnh — mở menu Phân quyền để chỉnh lại.');
+      }
       onSaved?.(); onClose();
     } catch (err) { alert(err.response?.data?.error || 'Lỗi'); }
     setLoading(false);
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={editUserId ? 'Sửa nhân viên' : 'Thêm nhân viên mới'} size="lg">
+    <Modal open={open} onClose={onClose} title={editUserId ? 'Sửa nhân viên' : 'Thêm nhân viên mới'} size="xl" bodyClassName="overflow-hidden flex flex-col">
       {userLoading ? (
         <div className="flex items-center justify-center py-16">
           <div className="animate-spin h-6 w-6 border-2 border-gray-200 border-t-gray-600 rounded-full" />
         </div>
       ) : (
-      <form key={editUserId ?? 'new'} onSubmit={submit} autoComplete="off" className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+      <form key={editUserId ?? 'new'} onSubmit={submit} autoComplete="off" className="flex flex-col md:flex-row gap-4 flex-1 min-h-0 max-h-[75vh]">
         {/* Hidden fields to trick browser autofill */}
         <input type="text" name="prevent_autofill" id="prevent_autofill" style={{ display: 'none' }} tabIndex={-1} autoComplete="off" />
         <input type="password" name="prevent_autofill_pass" id="prevent_autofill_pass" style={{ display: 'none' }} tabIndex={-1} autoComplete="off" />
+
+        {/* Cột trái: thông tin NV */}
+        <div className="flex-1 min-w-0 space-y-4 overflow-y-auto pr-1 order-1">
+        {/* AI điền form */}
+        <div className="rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-teal-50 p-3.5 space-y-2">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-emerald-600 shrink-0" />
+            <h4 className="text-xs font-bold text-emerald-800 uppercase tracking-wide">AI điền form</h4>
+            <span className="text-[10px] text-emerald-700/70">Mô tả → tự điền từng ô (bạn kiểm tra rồi lưu)</span>
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={aiPrompt}
+              onChange={(e) => setAiPrompt(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  runAiFill();
+                }
+              }}
+              disabled={aiBusy}
+              className="input flex-1 text-sm"
+              placeholder='VD: NV kế toán Metalla — quyền xem, không tương tác'
+              autoComplete="off"
+            />
+            <button
+              type="button"
+              onClick={runAiFill}
+              disabled={aiBusy || !aiPrompt.trim()}
+              className="h-10 px-3.5 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1.5 shrink-0"
+            >
+              {aiBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              {aiBusy ? 'Đang chạy…' : 'Điền'}
+            </button>
+          </div>
+          <p className="text-[10px] text-gray-500 leading-relaxed">
+            Quy định nghề: <span className="font-medium text-gray-600">Kế toán / kiểm soát / quan sát</span> → xem hết module, tắt sửa·tạo·xóa.
+            Module: Drive chỉ xem · SX/CRM/VC xem tất cả · «không tương tác / không tham gia».
+          </p>
+          {(aiSummary.length > 0 || aiWarnings.length > 0) && (
+            <div className="space-y-1 pt-1 border-t border-emerald-100">
+              {aiSummary.map((s, i) => (
+                <p key={`s-${i}`} className="text-[11px] text-emerald-900">✓ {s}</p>
+              ))}
+              {aiWarnings.map((w, i) => (
+                <p key={`w-${i}`} className="text-[11px] text-amber-800">⚠ {w}</p>
+              ))}
+            </div>
+          )}
+        </div>
 
         <div className="flex items-start gap-4 pb-4 border-b border-gray-100">
           <div className="relative shrink-0">
@@ -900,7 +1686,7 @@ export function StaffFormModal({
           <div><label className="block text-sm font-medium mb-1">SĐT</label><input value={form.phone || ''} onChange={e => set('phone', e.target.value)} className="input" autoComplete="off" /></div>
           <div><label className="block text-sm font-medium mb-1">Mật khẩu {editUserId ? '(trống = giữ)' : '*'}</label><input type="password" value={form.password || ''} onChange={e => set('password', e.target.value)} className="input" required={!editUserId} placeholder={editUserId ? '••••••' : (defaultNewUserPassword || '123456')} autoComplete="new-password" /></div>
           <div><label className="block text-sm font-medium mb-1">Vai trò</label>
-            <select value={form.role || 'staff'} onChange={e => set('role', e.target.value)} className="input">
+            <select value={form.role || 'staff'} onChange={e => applyRoleChange(e.target.value)} className="input">
               {Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select></div>
           <div><label className="block text-sm font-medium mb-1">Chức vụ</label><input value={form.position || ''} onChange={e => set('position', e.target.value)} className="input" placeholder="VD: Trưởng phòng" /></div>
@@ -918,11 +1704,12 @@ export function StaffFormModal({
                 onChange={(e) => {
                   const v = e.target.value;
                   setSelDivision(v);
-                  setSelCompany('');
+                  setSelCompany(lockedCompanyId || '');
                   setForm((f) => ({ ...f, department_id: '', team_id: '', crm_region_ids: [] }));
                   setTeams([]);
                 }}
-                className="w-full h-9 px-3 border rounded-lg text-sm"
+                disabled={!!lockedCompanyId}
+                className="w-full h-9 px-3 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-500"
               >
                 <option value="">— Tất cả Khối —</option>
                 {divisions.map((d) => (
@@ -943,7 +1730,8 @@ export function StaffFormModal({
                   setForm((f) => ({ ...f, department_id: '', team_id: '', crm_region_ids: [] }));
                   setTeams([]);
                 }}
-                className="w-full h-9 px-3 border rounded-lg text-sm"
+                disabled={!!lockedCompanyId}
+                className="w-full h-9 px-3 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-500"
               >
                 <option value="">— Chọn Cty —</option>
                 {divCompanies.map((c) => (
@@ -974,45 +1762,161 @@ export function StaffFormModal({
             </div>
           </div>
 
-          {/* Khu vực CRM — theo công ty đã chọn */}
-          <div className="pt-1 border-t border-blue-100">
-            <label className="text-[11px] font-semibold text-gray-700 flex items-center gap-1.5 mb-2">
-              <MapPin className="h-3.5 w-3.5 text-blue-600" />
-              Khu vực CRM (pipeline / lead theo vùng)
+          {/* Module theo công ty (multi) */}
+          <div className="pt-1 border-t border-blue-100 space-y-1.5">
+            <label className="text-[11px] font-semibold text-gray-700 block">
+              Module {selCompany ? '' : '(chọn công ty trước)'}
             </label>
             {!selCompany ? (
-              <p className="text-[11px] text-gray-500">Chọn <strong>Công ty</strong> phía trên để gán khu vực.</p>
-            ) : companyRegions.length === 0 ? (
-              <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5">
-                Công ty chưa có khu vực CRM. Tạo khu vực qua API hoặc cấu hình DB (migration 131).
+              <p className="text-[10px] text-gray-400">Chọn công ty để hiện module CRM / SX / VC…</p>
+            ) : companyModulesLoading ? (
+              <p className="text-[10px] text-gray-500">Đang tải module…</p>
+            ) : !companyModules.length ? (
+              <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5">
+                Công ty chưa gắn khối / không có module. Kiểm tra cấu hình Module ↔ Khối.
               </p>
             ) : (
-              <div className="flex flex-wrap gap-2 max-h-28 overflow-y-auto">
-                {companyRegions.map((reg) => {
-                  const checked = (form.crm_region_ids || []).some((id) => String(id) === String(reg.id));
+              <div className="flex flex-wrap gap-2">
+                {companyModules.map((m) => {
+                  const checked = selectedModuleKeys.includes(m.key);
                   return (
                     <label
-                      key={reg.id}
-                      className={`inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-lg border cursor-pointer select-none ${
-                        checked ? 'bg-blue-100 border-blue-300 text-blue-900' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
+                      key={m.key}
+                      className={`inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg border cursor-pointer select-none ${
+                        checked
+                          ? 'bg-blue-100 border-blue-300 text-blue-900'
+                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
                       }`}
                     >
                       <input
                         type="checkbox"
                         checked={checked}
-                        onChange={() => toggleCrmRegion(reg.id)}
+                        onChange={() => toggleCompanyModule(m.key)}
                         className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                       />
-                      <span>{reg.name}</span>
-                      {reg.code ? <span className="text-[10px] text-gray-400">({reg.code})</span> : null}
+                      <span className="font-medium">{m.label}</span>
                     </label>
                   );
                 })}
               </div>
             )}
-            <p className="text-[10px] text-gray-500 mt-1.5">
-              Gán một hoặc nhiều khu vực để lọc lead/deal CRM. Vai trò «Admin khu vực» chỉ thấy dữ liệu các khu vực được chọn.
+            <p className="text-[10px] text-gray-500">
+              Chỉ hiện module công ty đang thuộc (CRM/SX/VC theo khối). Kế toán luôn có. Tick = làm việc (xem+sửa).
             </p>
+          </div>
+
+          {/* Phạm vi CRM: cả công ty vs khu vực chỉ định */}
+          <div className="pt-1 border-t border-blue-100 space-y-2">
+            <label className="text-[11px] font-semibold text-gray-700 flex items-center gap-1.5">
+              <MapPin className="h-3.5 w-3.5 text-blue-600" />
+              Phạm vi dữ liệu CRM
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <label
+                className={`flex items-start gap-2 rounded-lg border px-3 py-2 cursor-pointer text-[11px] ${
+                  crmScopeMode === 'company' ? 'bg-blue-100 border-blue-300 text-blue-950' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="crm_scope_mode"
+                  className="mt-0.5"
+                  checked={crmScopeMode === 'company'}
+                  onChange={() => applyCrmScopeMode('company')}
+                />
+                <span>
+                  <span className="font-semibold block">Cả công ty</span>
+                  <span className="text-gray-600">Xem lead/deal trong phạm vi công ty (Admin / Sales Admin / Admin CRM+SX).</span>
+                </span>
+              </label>
+              <label
+                className={`flex items-start gap-2 rounded-lg border px-3 py-2 cursor-pointer text-[11px] ${
+                  crmScopeMode === 'regions' ? 'bg-rose-50 border-rose-300 text-rose-950' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="crm_scope_mode"
+                  className="mt-0.5"
+                  checked={crmScopeMode === 'regions'}
+                  onChange={() => applyCrmScopeMode('regions')}
+                />
+                <span>
+                  <span className="font-semibold block">Chỉ khu vực chỉ định</span>
+                  <span className="text-gray-600">Khóa theo khu vực CRM đã chọn (thường dùng với «Admin khu vực»).</span>
+                </span>
+              </label>
+            </div>
+
+            {crmScopeMode === 'regions' && (
+              <>
+                <label className="text-[11px] font-semibold text-gray-700 block mt-1">
+                  Khu vực CRM được phép quản lý *
+                </label>
+                {!selCompany ? (
+                  <p className="text-[11px] text-gray-500">Chọn <strong>Công ty</strong> phía trên để gán khu vực.</p>
+                ) : companyRegions.length === 0 ? (
+                  <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5">
+                    Công ty chưa có khu vực CRM. Tạo khu vực qua API hoặc cấu hình DB (migration 131).
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-2 max-h-28 overflow-y-auto">
+                    {companyRegions.map((reg) => {
+                      const checked = (form.crm_region_ids || []).some((id) => String(id) === String(reg.id));
+                      return (
+                        <label
+                          key={reg.id}
+                          className={`inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-lg border cursor-pointer select-none ${
+                            checked ? 'bg-blue-100 border-blue-300 text-blue-900' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleCrmRegion(reg.id)}
+                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <span>{reg.name}</span>
+                          {reg.code ? <span className="text-[10px] text-gray-400">({reg.code})</span> : null}
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+                <p className="text-[10px] text-gray-500">
+                  Bắt buộc chọn ≥1 khu vực. Vai trò «Admin khu vực» chỉ thấy dữ liệu các khu vực này.
+                </p>
+              </>
+            )}
+
+            {crmScopeMode === 'company' && selCompany && companyRegions.length > 0 && (
+              <div className="pt-1">
+                <label className="text-[11px] font-medium text-gray-600 block mb-1.5">
+                  Khu vực CRM (tuỳ chọn — gắn nhãn, không khóa phạm vi admin công ty)
+                </label>
+                <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto">
+                  {companyRegions.map((reg) => {
+                    const checked = (form.crm_region_ids || []).some((id) => String(id) === String(reg.id));
+                    return (
+                      <label
+                        key={reg.id}
+                        className={`inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-lg border cursor-pointer select-none ${
+                          checked ? 'bg-slate-100 border-slate-300 text-slate-800' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleCrmRegion(reg.id)}
+                          className="rounded border-gray-300 text-slate-600 focus:ring-slate-400"
+                        />
+                        <span>{reg.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1021,10 +1925,108 @@ export function StaffFormModal({
           <div><label className="block text-sm font-medium mb-1">Ngày vào làm</label><input type="date" value={form.hire_date || ''} onChange={e => set('hire_date', e.target.value)} className="input" /></div>
         </div>
         <div><label className="block text-sm font-medium mb-1">Địa chỉ</label><input value={form.address || ''} onChange={e => set('address', e.target.value)} className="input" /></div>
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex justify-end gap-2 pt-2 sticky bottom-0 bg-white/95 backdrop-blur-sm pb-1">
           <button type="button" onClick={onClose} className="h-10 px-4 bg-gray-100 rounded-lg text-sm cursor-pointer">Hủy</button>
           <button type="submit" disabled={loading} className="h-10 px-6 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer">{loading ? 'Lưu...' : editUserId ? 'Cập nhật' : 'Tạo NV'}</button>
         </div>
+        </div>
+
+        {/* Cột phải: phân quyền module */}
+        <aside className="order-2 w-full md:w-[380px] lg:w-[420px] shrink-0 flex flex-col min-h-0 rounded-xl border border-violet-200 bg-violet-50/40 overflow-hidden">
+          <div className="shrink-0 p-3.5 space-y-2.5 border-b border-violet-100 bg-violet-50/80">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <h4 className="text-xs font-bold text-violet-800 uppercase flex items-center gap-1.5">
+                  <Shield className="h-3.5 w-3.5 shrink-0" />
+                  Phân quyền «{ROLES[form.role] || form.role}»
+                </h4>
+                <p className="text-[10px] text-violet-700/80 mt-0.5 leading-snug">
+                  Bật/tắt từng quyền. Drive chỉ xem · SX xem tất cả · Reset theo vai trò.
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {permDirtyCount > 0 && (
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                    {permDirtyCount} chỉnh tay
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setPermPanelOpen((v) => !v)}
+                  className="md:hidden text-[11px] font-medium text-violet-700 hover:underline"
+                >
+                  {permPanelOpen ? 'Thu gọn' : 'Mở'}
+                </button>
+              </div>
+            </div>
+
+            {rolePermPreview?.scope_note && (
+              <p className="text-[10px] text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-2 py-1.5">
+                {rolePermPreview.scope_note}
+              </p>
+            )}
+
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={presetDriveViewOnly}
+                className="h-7 px-2 rounded-lg border border-slate-200 bg-white text-[10px] font-medium text-slate-700 hover:bg-slate-50"
+                title="Chỉ bật xem Drive — tắt upload/sửa/xóa"
+              >
+                Drive: chỉ xem
+              </button>
+              <button
+                type="button"
+                onClick={presetProductionViewAll}
+                className="h-7 px-2 rounded-lg border border-slate-200 bg-white text-[10px] font-medium text-slate-700 hover:bg-slate-50"
+                title="Bật quyền Xem mọi chức năng Sản xuất"
+              >
+                SX: xem tất cả
+              </button>
+              <button
+                type="button"
+                onClick={resetPermsToRole}
+                className="h-7 px-2 rounded-lg border border-violet-200 bg-violet-100/80 text-[10px] font-medium text-violet-800 hover:bg-violet-100"
+              >
+                Reset theo vai trò
+              </button>
+            </div>
+          </div>
+
+          {permPanelOpen && (
+          <div className="flex-1 min-h-0 overflow-y-auto p-2.5 bg-white/90 max-h-[52vh] md:max-h-none md:!block">
+              {(rolePermLoading || permCatalogLoading) ? (
+                <p className="text-[11px] text-gray-500 p-2">Đang tải quyền…</p>
+              ) : !(permCatalog?.modules || []).length ? (
+                <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
+                  {permCatalogError || 'Không tải được catalog quyền. Kiểm tra quyền admin hoặc thử lại.'}
+                </p>
+              ) : (
+                <PermissionCatalogPanel
+                  catalog={filteredPermCatalog}
+                  activeModuleKey={permModuleKey}
+                  onModuleChange={setPermModuleKey}
+                  getChecked={(id) => permDraft[id] === true}
+                  isDirty={(id) => {
+                    const desired = permDraft[id] === true;
+                    const fromRole = permBaselineIds.some((x) => String(x) === String(id));
+                    return desired !== fromRole;
+                  }}
+                  getSource={(id) => {
+                    if (permDraft[id] === true && permBaselineIds.some((x) => String(x) === String(id))) return 'system_role';
+                    if (permDraft[id] === true) return 'override_grant';
+                    if (permBaselineIds.some((x) => String(x) === String(id))) return 'override_deny';
+                    return 'none';
+                  }}
+                  onToggle={onTogglePerm}
+                  onToggleTier={onTogglePermTier}
+                  disabled={loading}
+                  emptyHint="Không có quyền trong module này"
+                />
+              )}
+            </div>
+          )}
+        </aside>
       </form>
       )}
     </Modal>

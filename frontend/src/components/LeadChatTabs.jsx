@@ -2,11 +2,10 @@ import { Fragment, useState, useEffect, useRef, useCallback, useMemo } from 'rea
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { resolveMediaUrl, BROKEN_MEDIA_PLACEHOLDER } from '../lib/mediaUrl';
-import { formatDate } from '../lib/utils';
 import {
   Trash2, Send, Users, Crown, Shield, Building2, Eye, Paperclip, X, Mic, Reply,
   CornerDownRight, Smile, Zap, Undo2, Check, CheckCheck, Phone, Loader2, ClipboardList,
-  Calendar, CheckCircle2, Circle, Clock, Plus, HardDrive, Image as ImageIcon,
+  HardDrive, Image as ImageIcon,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
@@ -28,6 +27,7 @@ import DriveChatAttachmentCard from './drive/DriveChatAttachmentCard';
 import { driveShareToLeadChat, driveShareToMessengerChat } from '../lib/drive';
 import UploadFileLightbox, { collectUploadLightboxItems, findUploadLightboxIndex } from './UploadFileLightbox';
 import { buildMessengerMessagePreview } from '../lib/messengerPreview';
+import { countMembersByModule, memberModulesFromUser } from '../lib/memberModuleCounts';
 import GroupSenderName from './GroupSenderName';
 import { messengerDisplayName } from '../lib/messengerDisplayName';
 import AiBotReportContent, { isAiBotReportContent } from './AiBotReportContent';
@@ -691,7 +691,7 @@ function ReplyComposerBar({ replyTo, onCancel, isGroupChat = false }) {
 // ═══════════════════════════════════════════════════════════════
 // Tab Thành viên — bộ lọc NV giống CRM Dashboard + chọn nhiều người
 // ═══════════════════════════════════════════════════════════════
-export function LeadMembersTab({ leadId }) {
+export function LeadMembersTab({ leadId, onMembersChange, onOpenSharedWorkspace }) {
   const [members, setMembers] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [filterCompany, setFilterCompany] = useState('');
@@ -699,31 +699,11 @@ export function LeadMembersTab({ leadId }) {
   const [checkedUserIds, setCheckedUserIds] = useState(() => new Set());
   const [pickRole, setPickRole] = useState('member');
   const [loading, setLoading] = useState(false);
-  const [leadAssignments, setLeadAssignments] = useState([]);
-  const [assignColumns, setAssignColumns] = useState([]);
-  const [assignLoading, setAssignLoading] = useState(false);
-  const [showAssignForm, setShowAssignForm] = useState(false);
-  const [assignTitle, setAssignTitle] = useState('');
-  const [assignDesc, setAssignDesc] = useState('');
-  const [assignDeadline, setAssignDeadline] = useState('');
-  const [assignPriority, setAssignPriority] = useState('medium');
-  const [assignColumnId, setAssignColumnId] = useState('');
-  const [assignMemberIds, setAssignMemberIds] = useState(() => new Set());
+  const [leadAssignmentsCount, setLeadAssignmentsCount] = useState(0);
   const { user } = useAuth();
   const isAdmin = isAdminLike(user);
-
-  const ASSIGN_PRIORITIES = [
-    { value: 'low', label: 'Thấp' },
-    { value: 'medium', label: 'TB' },
-    { value: 'high', label: 'Cao' },
-    { value: 'urgent', label: 'Gấp' },
-  ];
-  const ASSIGN_STATUS_ICON = {
-    pending: Circle,
-    in_progress: Clock,
-    completed: CheckCircle2,
-    cancelled: X,
-  };
+  const onMembersChangeRef = useRef(onMembersChange);
+  onMembersChangeRef.current = onMembersChange;
 
   const staffFilter = useWorkshopStaffFilter({
     user,
@@ -765,18 +745,21 @@ export function LeadMembersTab({ leadId }) {
   const load = useCallback(async () => {
     try {
       const r = await api.get(`/crm/leads/${leadId}/members`);
-      setMembers(r.data || []);
+      const list = r.data || [];
+      setMembers(list);
+      onMembersChangeRef.current?.(list);
     } catch (e) {
       console.error(e);
+      onMembersChangeRef.current?.([]);
     }
   }, [leadId]);
 
   const loadAssignments = useCallback(async () => {
     try {
       const { data } = await api.get(`/crm/leads/${leadId}/assignments`);
-      setLeadAssignments(data?.assignments || []);
+      setLeadAssignmentsCount((data?.assignments || []).length);
     } catch {
-      setLeadAssignments([]);
+      setLeadAssignmentsCount(0);
     }
   }, [leadId]);
 
@@ -787,55 +770,7 @@ export function LeadMembersTab({ leadId }) {
       const cos = r.data?.companies || r.data || [];
       setCompanies(Array.isArray(cos) ? cos : []);
     }).catch(() => {});
-    api.get('/crm/assignments/columns').then((r) => {
-      const cols = r.data?.columns || [];
-      setAssignColumns(cols);
-      if (cols.length && !assignColumnId) {
-        setAssignColumnId(String(cols[0].id));
-      }
-    }).catch(() => setAssignColumns([]));
   }, [leadId, load, loadAssignments]);
-
-  const toggleAssignMember = (userId) => {
-    const sid = String(userId);
-    setAssignMemberIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(sid)) next.delete(sid);
-      else next.add(sid);
-      return next;
-    });
-  };
-
-  const selectAllMembersForAssign = () => {
-    setAssignMemberIds(new Set(members.map((m) => String(m.user_id)).filter(Boolean)));
-  };
-
-  const submitMemberAssignment = async () => {
-    if (!assignTitle.trim()) return alert('Nhập tiêu đề nhiệm vụ');
-    if (!assignMemberIds.size) return alert('Chọn ít nhất một thành viên');
-    setAssignLoading(true);
-    try {
-      await api.post(`/crm/leads/${leadId}/assignments`, {
-        title: assignTitle.trim(),
-        description: assignDesc.trim() || null,
-        priority: assignPriority,
-        column_id: assignColumnId || null,
-        deadline: assignDeadline ? new Date(assignDeadline).toISOString() : null,
-        assignee_ids: [...assignMemberIds],
-      });
-      setAssignTitle('');
-      setAssignDesc('');
-      setAssignDeadline('');
-      setAssignPriority('medium');
-      setAssignMemberIds(new Set());
-      setShowAssignForm(false);
-      await loadAssignments();
-    } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi giao việc');
-    } finally {
-      setAssignLoading(false);
-    }
-  };
 
   const blockedUserIds = useMemo(() => {
     const ids = new Set();
@@ -918,6 +853,12 @@ export function LeadMembersTab({ leadId }) {
   };
 
   const getRoleMeta = (r) => MEMBER_ROLES.find(x => x.value === r) || MEMBER_ROLES[1];
+  const moduleCounts = useMemo(() => countMembersByModule(members), [members]);
+  const moduleBadgeMeta = {
+    crm: { label: 'CRM', cls: 'bg-blue-100 text-blue-700' },
+    production: { label: 'SX', cls: 'bg-teal-100 text-teal-700' },
+    logistics: { label: 'VC', cls: 'bg-orange-100 text-orange-700' },
+  };
 
   return (
     <div className="space-y-4">
@@ -1070,20 +1011,44 @@ export function LeadMembersTab({ leadId }) {
       </div>
 
       {/* Danh sách thành viên */}
-      <p className="text-xs text-gray-400">{members.length} thành viên</p>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <p className="text-xs text-gray-400">{members.length} thành viên</p>
+        {(moduleCounts.crm > 0 || moduleCounts.production > 0 || moduleCounts.logistics > 0) && (
+          <span className="inline-flex items-center gap-1 text-[10px]" title="Theo khối CRM / SX / VC">
+            <span className={`min-w-[1.15rem] h-[1.15rem] px-1 rounded font-bold leading-[1.15rem] text-center ${moduleBadgeMeta.crm.cls}`} title="CRM">
+              {moduleCounts.crm}
+            </span>
+            <span className="text-gray-400">CRM</span>
+            <span className={`min-w-[1.15rem] h-[1.15rem] px-1 rounded font-bold leading-[1.15rem] text-center ${moduleBadgeMeta.production.cls}`} title="SX">
+              {moduleCounts.production}
+            </span>
+            <span className="text-gray-400">SX</span>
+            <span className={`min-w-[1.15rem] h-[1.15rem] px-1 rounded font-bold leading-[1.15rem] text-center ${moduleBadgeMeta.logistics.cls}`} title="VC">
+              {moduleCounts.logistics}
+            </span>
+            <span className="text-gray-400">VC</span>
+          </span>
+        )}
+      </div>
 
       <div className="space-y-2">
         {members.map(m => {
           const rl = getRoleMeta(m.role);
+          const mods = memberModulesFromUser(m.user || m);
           return (
             <div key={m.user_id} className="flex items-center justify-between p-3 bg-gray-50 border rounded-xl hover:bg-gray-100 transition">
               <div className="flex items-center gap-3">
                 <Avatar name={m.user?.full_name} url={m.user?.avatar} />
                 <div>
                   <p className="text-sm font-medium text-gray-800">{m.user?.full_name}</p>
-                  <div className="flex items-center gap-1 mt-0.5">
+                  <div className="flex items-center gap-1 mt-0.5 flex-wrap">
                     {rl.icon}
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${rl.color}`}>{rl.label}</span>
+                    {mods.map((mod) => (
+                      <span key={mod} className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${moduleBadgeMeta[mod].cls}`}>
+                        {moduleBadgeMeta[mod].label}
+                      </span>
+                    ))}
                     {m.user?.email && <span className="text-[10px] text-gray-400 ml-1">• {m.user.email}</span>}
                   </div>
                 </div>
@@ -1110,11 +1075,11 @@ export function LeadMembersTab({ leadId }) {
         )}
       </div>
 
-      {/* Giao việc CRM cho thành viên */}
-      <div className="bg-violet-50 border border-violet-100 rounded-xl p-3 space-y-3">
-        <div className="flex items-center justify-between gap-2">
+      {/* Phân công — chuyển sang tab Không gian chung */}
+      <div className="bg-violet-50 border border-violet-100 rounded-xl p-3 space-y-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
           <p className="text-xs font-semibold text-violet-800 flex items-center gap-1">
-            <ClipboardList size={14} /> Giao việc CRM ({leadAssignments.length})
+            <ClipboardList size={14} /> Phân công thành viên ({leadAssignmentsCount})
           </p>
           <div className="flex items-center gap-2">
             <Link
@@ -1123,153 +1088,20 @@ export function LeadMembersTab({ leadId }) {
             >
               Mở trang Giao việc
             </Link>
-            <button
-              type="button"
-              disabled={!members.length}
-              onClick={() => {
-                setShowAssignForm((v) => !v);
-                if (!showAssignForm && members.length) selectAllMembersForAssign();
-              }}
-              className="h-7 px-2.5 rounded-lg bg-violet-600 text-white text-[10px] font-semibold hover:bg-violet-700 disabled:opacity-40 cursor-pointer flex items-center gap-1"
-            >
-              <Plus size={12} /> Giao việc
-            </button>
+            {typeof onOpenSharedWorkspace === 'function' && (
+              <button
+                type="button"
+                onClick={onOpenSharedWorkspace}
+                className="h-7 px-2.5 rounded-lg bg-violet-600 text-white text-[10px] font-semibold hover:bg-violet-700 cursor-pointer flex items-center gap-1"
+              >
+                Mở Không gian chung
+              </button>
+            )}
           </div>
         </div>
-
-        {showAssignForm && (
-          <div className="bg-white border border-violet-100 rounded-lg p-3 space-y-2">
-            <input
-              value={assignTitle}
-              onChange={(e) => setAssignTitle(e.target.value)}
-              placeholder="Tiêu đề nhiệm vụ *"
-              className="w-full h-8 px-2 border border-gray-200 rounded-lg text-sm"
-            />
-            <textarea
-              value={assignDesc}
-              onChange={(e) => setAssignDesc(e.target.value)}
-              placeholder="Mô tả (tùy chọn)"
-              rows={2}
-              className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm resize-y"
-            />
-            <div className="grid grid-cols-2 gap-2">
-              <select
-                value={assignPriority}
-                onChange={(e) => setAssignPriority(e.target.value)}
-                className="h-8 px-2 border border-gray-200 rounded-lg text-xs bg-white"
-              >
-                {ASSIGN_PRIORITIES.map((p) => (
-                  <option key={p.value} value={p.value}>{p.label}</option>
-                ))}
-              </select>
-              <select
-                value={assignColumnId}
-                onChange={(e) => setAssignColumnId(e.target.value)}
-                className="h-8 px-2 border border-gray-200 rounded-lg text-xs bg-white"
-              >
-                {assignColumns.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-            </div>
-            <input
-              type="datetime-local"
-              value={assignDeadline}
-              onChange={(e) => setAssignDeadline(e.target.value)}
-              className="w-full h-8 px-2 border border-gray-200 rounded-lg text-xs"
-            />
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[10px] font-semibold text-slate-600">Giao cho thành viên</span>
-              <button
-                type="button"
-                onClick={selectAllMembersForAssign}
-                className="text-[10px] text-violet-700 hover:underline cursor-pointer"
-              >
-                Chọn tất cả ({members.length})
-              </button>
-            </div>
-            <div className="max-h-36 overflow-y-auto rounded border border-gray-100 divide-y">
-              {members.map((m) => {
-                const checked = assignMemberIds.has(String(m.user_id));
-                return (
-                  <label
-                    key={m.user_id}
-                    className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer text-xs ${checked ? 'bg-violet-50' : ''}`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleAssignMember(m.user_id)}
-                      className="rounded border-violet-300 text-violet-600"
-                    />
-                    <span className="truncate">{m.user?.full_name || m.user_id}</span>
-                  </label>
-                );
-              })}
-            </div>
-            <div className="flex justify-end gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => setShowAssignForm(false)}
-                className="h-8 px-3 text-xs text-gray-600 hover:bg-gray-100 rounded-lg cursor-pointer"
-              >
-                Hủy
-              </button>
-              <button
-                type="button"
-                disabled={assignLoading}
-                onClick={submitMemberAssignment}
-                className="h-8 px-4 bg-violet-600 text-white text-xs font-semibold rounded-lg hover:bg-violet-700 disabled:opacity-50 cursor-pointer"
-              >
-                {assignLoading ? 'Đang giao…' : `Giao cho ${assignMemberIds.size || 0} NV`}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {leadAssignments.length === 0 ? (
-          <p className="text-[11px] text-violet-700/70 text-center py-2">
-            Chưa có nhiệm vụ giao việc CRM cho lead/deal này
-          </p>
-        ) : (
-          <div className="space-y-1.5">
-            {leadAssignments.map((a) => {
-              const StIcon = ASSIGN_STATUS_ICON[a.status] || Circle;
-              const col = assignColumns.find((c) => String(c.id) === String(a.column_id));
-              const assigneeNames = (a.assignees?.length
-                ? a.assignees
-                : (a.assignee ? [a.assignee] : [])
-              ).map((u) => u.full_name).filter(Boolean).join(', ');
-              return (
-                <Link
-                  key={a.id}
-                  to={`/crm/assignments?open=${a.id}`}
-                  className="flex items-start gap-2 p-2.5 bg-white border border-violet-100 rounded-lg hover:border-violet-300 hover:shadow-sm transition"
-                >
-                  <StIcon className={`h-4 w-4 shrink-0 mt-0.5 ${
-                    a.status === 'completed' ? 'text-emerald-500'
-                      : a.status === 'in_progress' ? 'text-blue-500'
-                      : 'text-gray-300'
-                  }`} />
-                  <div className="min-w-0 flex-1">
-                    <p className={`text-sm font-medium truncate ${a.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-900'}`}>
-                      {a.title}
-                    </p>
-                    <div className="flex flex-wrap items-center gap-2 mt-0.5 text-[10px] text-gray-500">
-                      {col && <span style={{ color: col.color }}>{col.name}</span>}
-                      {assigneeNames && <span>👤 {assigneeNames}</span>}
-                      {a.deadline && (
-                        <span className="inline-flex items-center gap-0.5">
-                          <Calendar size={10} />{formatDate(a.deadline)}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
-        )}
+        <p className="text-[11px] text-violet-700/80">
+          Tạo / sửa / xóa phân công cho thành viên deal ở tab <strong>Không gian chung</strong>.
+        </p>
       </div>
     </div>
   );

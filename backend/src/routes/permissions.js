@@ -1,7 +1,7 @@
 const express = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
-const { isAdminLike } = require('../helpers/adminRole');
+const { isAdminLike, canCreateStaff } = require('../helpers/adminRole');
 const { enforceTenantContext } = require('../middleware/tenantGate');
 const { companyInTenantContext } = require('../helpers/tenantScope');
 const { responseCache, invalidateTags } = require('../middleware/responseCache');
@@ -45,6 +45,12 @@ function requirePermissionsAdmin(req, res, next) {
   next();
 }
 
+/** Catalog / ghi đè quyền khi tạo-sửa NV — admin hoặc người được tạo nhân viên. */
+function requirePermissionsAdminOrStaffCreator(req, res, next) {
+  if (isAdminLike(req.user) || canCreateStaff(req.user)) return next();
+  return res.status(403).json({ error: 'Không có quyền xem/ghi phân quyền nhân viên' });
+}
+
 r.use((req, res, next) => {
   if (req.method === 'GET') return next();
   const origJson = res.json.bind(res);
@@ -58,7 +64,7 @@ r.use((req, res, next) => {
 // ═══════════════════════════════════════════════
 // CATALOG — module tabs + permission labels (UI phân quyền NV)
 // ═══════════════════════════════════════════════
-r.get('/catalog', requirePermissionsAdmin, responseCache({ ttl: 300, scope: 'global', tags: ['permissions'] }), async (req, res) => {
+r.get('/catalog', requirePermissionsAdminOrStaffCreator, responseCache({ ttl: 300, scope: 'global', tags: ['permissions'] }), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('permissions')
@@ -119,6 +125,94 @@ r.get('/roles', requirePermissionsAdmin, responseCache({ ttl: 300, scope: 'globa
     
     if (error) throw error;
     res.json({ roles: roles || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Preview quyền theo tên vai trò hệ thống (users.role ↔ roles.name).
+ * Dùng khi tạo/sửa NV — cho phép canCreateStaff (không cần full permissions admin).
+ * Alias: staff → employee; region_admin không có template riêng → fallback sales_admin + ghi chú phạm vi khu vực.
+ */
+r.get('/roles/by-name/:name', async (req, res) => {
+  try {
+    if (!isAdminLike(req.user) && !canCreateStaff(req.user)) {
+      return res.status(403).json({ error: 'Không có quyền xem mẫu quyền vai trò' });
+    }
+    const raw = String(req.params.name || '').trim().toLowerCase();
+    if (!raw) return res.status(400).json({ error: 'Thiếu tên vai trò' });
+
+    const ALIAS = { staff: 'employee', production: 'production_staff' };
+    const lookupNames = [...new Set([raw, ALIAS[raw]].filter(Boolean))];
+
+    let role = null;
+    for (const n of lookupNames) {
+      const { data, error } = await supabase
+        .from('roles')
+        .select('id, name, description, is_system')
+        .eq('name', n)
+        .maybeSingle();
+      if (error) throw error;
+      if (data?.id) {
+        role = data;
+        break;
+      }
+    }
+
+    /** Admin khu vực: quyền module giống sales_admin, nhưng dữ liệu CRM bị khóa theo khu vực. */
+    let scopeNote = null;
+    if (!role && raw === 'region_admin') {
+      const { data, error } = await supabase
+        .from('roles')
+        .select('id, name, description, is_system')
+        .eq('name', 'sales_admin')
+        .maybeSingle();
+      if (error) throw error;
+      role = data || null;
+      scopeNote = 'Admin khu vực dùng quyền module tương tự Sales Admin, nhưng chỉ thấy lead/deal thuộc khu vực CRM được gán — không toàn công ty.';
+    }
+
+    if (!role?.id) {
+      return res.json({
+        role: null,
+        matched_name: raw,
+        permissions: [],
+        scope_note: scopeNote,
+        missing_template: true,
+      });
+    }
+
+    const { data: rolePerms, error: rpErr } = await supabase
+      .from('role_permissions')
+      .select('permission_id, permissions(id, resource, action, description)')
+      .eq('role_id', role.id);
+    if (rpErr) throw rpErr;
+
+    const permissions = (rolePerms || [])
+      .map((rp) => rp.permissions)
+      .filter(Boolean)
+      .sort((a, b) => String(a.resource).localeCompare(String(b.resource))
+        || String(a.action).localeCompare(String(b.action)));
+
+    if (raw === 'region_admin') {
+      scopeNote = scopeNote
+        || 'Admin khu vực: quyền module như Sales Admin, phạm vi dữ liệu CRM chỉ các khu vực được gán.';
+    }
+
+    res.json({
+      role: {
+        id: role.id,
+        name: role.name,
+        description: role.description,
+        is_system: role.is_system,
+        requested_name: raw,
+      },
+      matched_name: role.name,
+      permissions,
+      scope_note: scopeNote,
+      missing_template: false,
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -274,7 +368,7 @@ r.put('/roles/:roleId/permissions', requirePermissionsAdmin, async (req, res) =>
 // ═══════════════════════════════════════════════
 
 // Effective permissions for a user (role + overrides)
-r.get('/users/:userId/effective', requirePermissionsAdmin, async (req, res) => {
+r.get('/users/:userId/effective', requirePermissionsAdminOrStaffCreator, async (req, res) => {
   try {
     if (!(await assertUserInRequestTenant(req, res, req.params.userId))) return;
     const ecosystemUnitId = req.query.ecosystem_unit_id || null;
@@ -367,7 +461,7 @@ r.put('/users/bulk-overrides', requirePermissionsAdmin, async (req, res) => {
 });
 
 // Bulk save user permission overrides (single user)
-r.put('/users/:userId/overrides', requirePermissionsAdmin, async (req, res) => {
+r.put('/users/:userId/overrides', requirePermissionsAdminOrStaffCreator, async (req, res) => {
   try {
     if (!(await assertUserInRequestTenant(req, res, req.params.userId))) return;
     const { ecosystem_unit_id: ecosystemUnitId, changes } = req.body;

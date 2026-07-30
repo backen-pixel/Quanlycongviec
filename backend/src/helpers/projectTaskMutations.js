@@ -115,8 +115,12 @@ async function updateProjectTask(req, taskId, body) {
   // tasks không có cột notes — ghi chú NV lưu ở task_comments
   const fields = ['title', 'description', 'status', 'priority', 'assignee_id', 'supervisor_id',
     'due_date', 'start_date', 'estimated_hours', 'actual_hours', 'stage_id', 'order_index',
-    'blocks_stage_advance', 'production_stage_id'];
-  fields.forEach((f) => { if (b[f] !== undefined) update[f] = b[f]; });
+    'blocks_stage_advance', 'production_stage_id', 'file_note_recorded'];
+  fields.forEach((f) => {
+    if (b[f] === undefined) return;
+    if (f === 'file_note_recorded' || f === 'blocks_stage_advance') update[f] = !!b[f];
+    else update[f] = b[f];
+  });
 
   if (update.status === 'done') update.completed_at = new Date().toISOString();
   if (update.status === 'in_progress' && !b.start_date) update.start_date = new Date().toISOString();
@@ -126,8 +130,8 @@ async function updateProjectTask(req, taskId, body) {
   if (!old) return { error: 'Không tìm thấy nhiệm vụ', status: 404 };
 
   let { data, error } = await supabase.from('tasks').update(update).eq('id', taskId).select().maybeSingle();
-  if (error && /(blocks_stage_advance|production_stage_id|notes)/i.test(String(error.message || ''))) {
-    const { blocks_stage_advance: _b, production_stage_id: _p, notes: _n, ...legacy } = update;
+  if (error && /(blocks_stage_advance|production_stage_id|notes|file_note_recorded)/i.test(String(error.message || ''))) {
+    const { blocks_stage_advance: _b, production_stage_id: _p, notes: _n, file_note_recorded: _f, ...legacy } = update;
     ({ data, error } = await supabase.from('tasks').update(legacy).eq('id', taskId).select().maybeSingle());
   }
   if (error) return { error: error.message, status: 500 };

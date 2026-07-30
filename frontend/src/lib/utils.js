@@ -209,7 +209,7 @@ export const ROLE_LABELS = {
   designer: 'Thiết kế', production: 'Sản xuất', production_staff: 'NV Sản xuất (Admin CV+SX)',
   production_admin: 'Admin Sản xuất', crm_production_staff: 'NV CRM + Admin SX',
   crm_production_admin: 'Admin CRM + Sản xuất', logistics_admin: 'Admin Vận chuyển',
-  driver: 'Tài xế', customer_care: 'CSKH', staff: 'Nhân viên',
+  driver: 'Tài xế', customer_care: 'CSKH', accounting: 'Kế toán', staff: 'Nhân viên',
 };
 
 export const ROLE_STAGE_MAP = {
@@ -224,5 +224,6 @@ export const ROLE_STAGE_MAP = {
   crm_production_admin: ['consulting', 'design', 'quotation', 'contract', 'production'],
   driver: ['delivery'],
   customer_care: ['customer-care'],
+  accounting: ['quotation', 'contract', 'production', 'delivery'],
   staff: ['consulting'],
 };

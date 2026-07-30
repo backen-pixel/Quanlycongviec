@@ -62,8 +62,7 @@ import {
   resolveSxProjectValue,
   resolveSxProjectRemaining,
   getSxPipelineStageSlaTone,
-  resolveSxHandoverColumnId,
-  shouldForceSxHandoverColumn,
+  resolveSxDisplayColumnId,
   projectLockedOnSxKanban,
   shouldHideSxKanbanDeadlineOnCard,
   shouldIgnoreSxOrderDeliveryOverdue,
@@ -1021,13 +1020,29 @@ export default function ProductionDashboard() {
   }, [dealCompanyOptions, filterDealCompany, user]);
 
   useEffect(() => {
-    if (!workshopCompanyPickerList.length || isAdmin) return;
+    if (!workshopCompanyPickerList.length) return;
+    if (filterCompany && workshopCompanyPickerList.some((c) => String(c.id) === String(filterCompany))) return;
+
+    // Admin để trống xưởng → API trả pipeline Global (không có cột →VC Hucabi),
+    // thẻ shipping bị map nhầm cột «Tiếp nhận». Auto-pick khi đang trống.
+    if (isAdmin) {
+      if (filterCompany) return;
+      let saved = '';
+      try { saved = String(localStorage.getItem('sx_pipeline_settings_company_id') || ''); } catch { /* ignore */ }
+      const fromSaved = saved
+        ? workshopCompanyPickerList.find((c) => String(c.id) === saved)
+        : null;
+      const preferred = workshopCompanyPickerList.find((c) => isMetallaOrHucabiCompanyId(c.id, companies, user));
+      const pick = fromSaved || preferred || workshopCompanyPickerList[0];
+      if (pick?.id) handleStaffFilterCompanyChange(pick.id);
+      return;
+    }
+
     const staffWs = resolveStaffWorkshopCompanyId(user, companies);
     if (staffWs && String(filterCompany || '') !== staffWs) {
       handleStaffFilterCompanyChange(staffWs);
       return;
     }
-    if (filterCompany && workshopCompanyPickerList.some((c) => String(c.id) === String(filterCompany))) return;
     const own = user?.company_id
       ? workshopCompanyPickerList.find((c) => String(c.id) === String(user.company_id))
       : null;
@@ -1349,53 +1364,15 @@ export default function ProductionDashboard() {
     };
 
     /**
-     * Resolve cột Kanban cho 1 project trên pipeline hiện hành (client-side).
-     * Replicate logic BE `kanbanColumnIdForProject` để khi đổi phân loại không
-     * cần đợi BE gắn lại sx_kanban_column_id.
+     * Resolve cột Kanban — khớp BE `resolveSxDisplayColumnId` + stepper detail
+     * để thẻ không lệch cột đầu khi thực tế đang ở «Bàn giao VC».
      */
     const sortedStages = [...baseStages].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
     const intake = sortedStages.find((s) => s.bucket_slug === 'won_pending');
 
-    const colIdFor = (project) => {
-      const pinnedCol = project.sx_kanban_column_id
-        ? sortedStages.find((s) => String(s.id) === String(project.sx_kanban_column_id)) || null
-        : null;
-      if (shouldForceSxHandoverColumn(project, pinnedCol)) {
-        // Kéo thẻ vào cột «Vận chuyển»/«CSKH» khiến BE tự đặt status = shipping/warranty.
-        // Đó không phải bằng chứng đã bàn giao VC nên giữ nguyên cột vừa kéo.
-        // status=completed trên SX không ép về cột bàn giao (trừ khi đã có liên kết VC).
-        const preferred = pinnedCol?.is_handover_to_logistics ? project.sx_kanban_column_id : null;
-        const handoverId = resolveSxHandoverColumnId(sortedStages, project, preferred);
-        if (handoverId) return handoverId;
-      }
-      // Ưu tiên cột Kanban đã gắn (CRM deal / enrich) — khớp logic BE khi nhiều cột dùng chung workflow.
-      if (pinnedCol) return pinnedCol.id;
-      const cid = project.current_stage_id;
-      if (cid) {
-        const wfMatches = sortedStages.filter((col) => {
-          const wid = col.workflow_stage_id || col.workflow_stage?.id;
-          return wid && String(wid) === String(cid);
-        });
-        if (wfMatches.length === 1) return wfMatches[0].id;
-        if (wfMatches.length > 1) {
-          const deals = Array.isArray(project.crm_deals) ? project.crm_deals : [];
-          const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
-          const leadColId = primaryDeal?.sx_pipeline_stage_id || null;
-          const ids = new Set(wfMatches.map((m) => String(m.id)));
-          if (project.sx_kanban_column_id && ids.has(String(project.sx_kanban_column_id))) {
-            return project.sx_kanban_column_id;
-          }
-          if (leadColId && ids.has(String(leadColId))) return leadColId;
-          return wfMatches.sort((a, b) => (a.order_index || 0) - (b.order_index || 0))[0]?.id || null;
-        }
-      }
-      // Won deal nhưng chưa map được workflow → cột intake hoặc cột đầu tiên
-      if (project.sx_won_deal || project.sx_intake) {
-        if (intake) return intake.id;
-        return sortedStages[0]?.id || null;
-      }
-      return null;
-    };
+    const colIdFor = (project) => resolveSxDisplayColumnId(project, sortedStages, {
+      sxWonDeal: Boolean(project?.sx_won_deal),
+    });
 
     const resolveColumnId = (project) => {
       const mapped = colIdFor(project);

@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
 
-export default function Modal({ open, onClose, title, size = 'md', children }) {
+export default function Modal({ open, onClose, title, size = 'md', children, bodyClassName = '' }) {
   useEffect(() => {
     if (open) document.body.style.overflow = 'hidden';
     else document.body.style.overflow = '';
@@ -27,7 +27,7 @@ export default function Modal({ open, onClose, title, size = 'md', children }) {
           </button>
         </div>
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className={`flex-1 min-h-0 overflow-y-auto p-6 ${bodyClassName}`.trim()}>
           {children}
         </div>
       </div>

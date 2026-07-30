@@ -64,6 +64,9 @@ export default function SidebarModuleCycleButton({
   isSX,
   isCRM,
   isCongViec,
+  customModuleId = null,
+  customModuleName = null,
+  extraModules = [],
   taskBadge = 0,
 }) {
   const [swapping, setSwapping] = useState(false);
@@ -74,8 +77,38 @@ export default function SidebarModuleCycleButton({
   const swapTimerRef = useRef(null);
 
   const modules = useMemo(
-    () => getAccessibleAppModules({ canAccessModule, crmOnly }),
-    [canAccessModule, crmOnly],
+    () => {
+      const list = getAccessibleAppModules({ canAccessModule, crmOnly, extraModules });
+      if (customModuleId && !list.some((m) => m.id === customModuleId)) {
+        const key = String(customModuleId).replace(/^custom:/, '');
+        list.push({
+          id: customModuleId,
+          path: `/m/${key}`,
+          name: customModuleName || key,
+          desc: 'Module tùy chỉnh',
+          Icon: null,
+          emoji: '📦',
+          iconClass: 'bg-transparent shadow-none',
+          category: 'Tùy chỉnh',
+          categoryClass: '',
+          sidebarAccent: {
+            ring: 'ring-violet-400/35 hover:ring-violet-300/55',
+            card: 'bg-gradient-to-br from-violet-500/22 via-violet-500/8 to-transparent hover:from-violet-500/30',
+            iconWrap: 'bg-violet-500/18 ring-1 ring-violet-300/30 shadow-inner shadow-violet-900/20',
+            dot: 'bg-violet-400',
+          },
+          mod: key,
+          isCustom: true,
+        });
+      } else if (customModuleId && customModuleName) {
+        const idx = list.findIndex((m) => m.id === customModuleId);
+        if (idx >= 0 && list[idx].name !== customModuleName) {
+          list[idx] = { ...list[idx], name: customModuleName };
+        }
+      }
+      return list;
+    },
+    [canAccessModule, crmOnly, extraModules, customModuleId, customModuleName],
   );
 
   const activeId = resolveActiveAppModuleId({
@@ -87,6 +120,7 @@ export default function SidebarModuleCycleButton({
     isSX,
     isCRM,
     isCongViec,
+    customModuleId,
   });
 
   const curIdx = Math.max(0, modules.findIndex((m) => m.id === activeId));

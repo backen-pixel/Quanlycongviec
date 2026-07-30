@@ -21,6 +21,20 @@ const {
 } = require('../helpers/logisticsHandoverSettings');
 const { assertProjectAccessible } = require('../helpers/projectAccessScope');
 const { invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
+const { collectVcHandoverRecipientIds } = require('../helpers/vcHandoverNotify');
+const { afterVcCompanySelected } = require('../helpers/vcHandoverDealMembers');
+const {
+  notifyDealCommentMentions,
+  notifyDealCommentParticipants,
+  fetchCrmLeadCommentNotifyUserIds,
+} = require('../helpers/dealCommentNotifications');
+const { ensureLeadMembersFromProjectStaff } = require('../helpers/productionWorkshopTypeStaff');
+const {
+  fetchLeadMentionMembers,
+  resolveLeadCommentMentionIds,
+  logLeadCommentMentionActivity,
+  memberDisplayName,
+} = require('../helpers/crmLeadCommentMentions');
 
 const r = Router();
 r.use(auth);
@@ -52,6 +66,145 @@ async function getUserName(userId) {
   if (!userId) return '';
   const { data } = await supabase.from('users').select('full_name').eq('id', userId).maybeSingle();
   return data?.full_name || '';
+}
+
+function formatVnDateTime(isoOrDate) {
+  const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('vi-VN', {
+    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+/** Người CRM chịu trách nhiệm nhận TB bàn giao VC (sale deal + sale dự án). */
+function collectCrmSaleNotifyIds(deal, project) {
+  return [...new Set([
+    deal?.assigned_to,
+    deal?.lead_owner_id,
+    project?.sales_person_id,
+  ].filter(Boolean).map(String))];
+}
+
+async function notifyCrmVcHandoverRequest(req, {
+  saleUserIds, actorName, projLabel, dealId, projectId, remind = false,
+}) {
+  const ids = [...new Set((saleUserIds || []).filter(Boolean).map(String))];
+  if (!ids.length) {
+    console.warn('[vc-handover] không có Sale CRM để thông báo (assigned_to / lead_owner / sales_person trống)');
+    return [];
+  }
+  const title = remind
+    ? '🚚 Nhắc: tạo sự kiện VC/LĐ'
+    : '🚚 SX chờ bàn giao — tạo sự kiện VC/LĐ';
+  const message = remind
+    ? `${actorName || 'Xưởng'} nhắc: dự án «${projLabel}» đã vào cột bàn giao VC — vui lòng chọn công ty VC/LĐ, ngày lấy hàng và tạo sự kiện Lấy hàng / Lắp đặt.`
+    : `${actorName || 'Xưởng'} kéo «${projLabel}» vào cột bàn giao Vận chuyển — vui lòng mở deal, chọn công ty VC/LĐ + ngày lấy hàng để tạo sự kiện VC/LĐ.`;
+  return notifyMultiple(
+    req,
+    ids,
+    'vc_handover_request',
+    title,
+    message,
+    'lead',
+    dealId,
+    {
+      nav_tab: 'comments',
+      nav_url: `/crm/leads/${dealId}?tab=comments`,
+      project_id: projectId || null,
+      ecosystem_module_key: 'crm',
+      remind: !!remind,
+    },
+  );
+}
+
+/** @mention Sale trong body bình luận. */
+async function ensureSaleUsersAsLeadMembers(dealId, saleUserIds, addedBy) {
+  const ids = [...new Set((saleUserIds || []).filter(Boolean).map(String))];
+  if (!dealId || !ids.length) return;
+  const { data: existing } = await supabase
+    .from('lead_members')
+    .select('user_id')
+    .eq('lead_id', dealId)
+    .in('user_id', ids);
+  const have = new Set((existing || []).map((m) => String(m.user_id)));
+  const toAdd = ids.filter((id) => !have.has(id));
+  if (!toAdd.length) return;
+  const { error } = await supabase.from('lead_members').insert(
+    toAdd.map((uid) => ({
+      lead_id: dealId,
+      user_id: uid,
+      role: 'member',
+      added_by: addedBy || null,
+    })),
+  );
+  if (error) console.warn('[vc-handover] ensure sale members:', error.message);
+}
+
+async function formatSaleMentionText(dealId, saleUserIds) {
+  const ids = [...new Set((saleUserIds || []).filter(Boolean).map(String))];
+  if (!ids.length) return '';
+  try {
+    await ensureLeadMembersFromProjectStaff(dealId);
+  } catch { /* ignore */ }
+  const leadMembers = await fetchLeadMentionMembers(supabase, dealId);
+  const memberById = new Map((leadMembers || []).map((m) => [String(m.user_id), m]));
+  const labels = [];
+  for (const id of ids) {
+    const name = memberDisplayName(memberById.get(id));
+    if (name) labels.push(`@${name}`);
+  }
+  if (labels.length < ids.length) {
+    const missing = ids.filter((id) => !memberById.has(id) || !memberDisplayName(memberById.get(id)));
+    if (missing.length) {
+      const { data: users } = await supabase.from('users').select('id, full_name').in('id', missing);
+      for (const u of users || []) {
+        const name = String(u.full_name || '').trim();
+        if (name) labels.push(`@${name}`);
+      }
+    }
+  }
+  return labels.join(' ');
+}
+
+/** Gửi thông báo kiểu «bình luận / @mention» cho Sale CRM. */
+async function notifySalesViaDealComment(req, {
+  dealId, senderId, commentRow, saleUserIds,
+}) {
+  const mentionCandidates = [...new Set((saleUserIds || []).filter(Boolean).map(String))];
+  if (!dealId || !commentRow) return;
+  try {
+    await ensureLeadMembersFromProjectStaff(dealId);
+  } catch { /* ignore */ }
+  await ensureSaleUsersAsLeadMembers(dealId, mentionCandidates, senderId);
+
+  const leadMembers = await fetchLeadMentionMembers(supabase, dealId);
+  const mentionIds = resolveLeadCommentMentionIds(
+    { mention_user_ids: mentionCandidates },
+    commentRow.body || '',
+    leadMembers,
+    senderId,
+  );
+  const notifyIds = await fetchCrmLeadCommentNotifyUserIds(supabase, dealId);
+  const audience = [...new Set([...(notifyIds || []), ...mentionCandidates])];
+
+  await notifyDealCommentParticipants(
+    req, notifyMultiple, dealId, senderId, commentRow, audience, mentionIds,
+  );
+
+  if (mentionIds.length) {
+    await notifyDealCommentMentions(req, notifyMultiple, dealId, senderId, commentRow, mentionIds);
+    const activityRow = await logLeadCommentMentionActivity(supabase, {
+      leadId: dealId,
+      senderId,
+      commentRow,
+      mentionIds,
+      members: leadMembers,
+    });
+    const io = req.app?.get?.('io');
+    if (io && activityRow) {
+      io.to(`lead:${dealId}`).emit('lead:activity', { lead_id: dealId, activity: activityRow });
+    }
+  }
 }
 
 /** Thêm nhân sự công ty VC/LĐ vào lead_members, ẩn lịch sử trước khi vào. */
@@ -88,50 +241,33 @@ async function addVcMembersWithCutoff(leadId, userIds, addedBy) {
   return toAdd;
 }
 
-/** Tạo sự kiện «Lấy hàng» + participants; trả { eventId } hoặc throw. */
-async function createPickupEventForHandover({
-  userId, leadId, projectId, pickupAt, pickupNotes, meta, logisticsPersonId,
-}) {
-  await supabase.from('projects').update({ pickup_at: pickupAt, pickup_notes: pickupNotes || null }).eq('id', projectId)
-    .then(({ error: e }) => { if (e && !String(e.message || '').includes('pickup')) console.warn('[vc-handover] pickup_at:', e.message); });
+/** Ngày lịch VN (UTC+7) dạng YYYY-MM-DD — so sánh «cùng ngày» lấy hàng / lắp đặt. */
+function vnCalendarDayKey(isoOrDate) {
+  if (!isoOrDate) return null;
+  const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
+  if (Number.isNaN(d.getTime())) return null;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(d);
+  const y = parts.find((p) => p.type === 'year')?.value;
+  const m = parts.find((p) => p.type === 'month')?.value;
+  const day = parts.find((p) => p.type === 'day')?.value;
+  if (!y || !m || !day) return null;
+  return `${y}-${m}-${day}`;
+}
 
-  const { data: lead } = await supabase
-    .from('crm_leads').select('id, code, title, company_id, customer_id').eq('id', leadId).maybeSingle();
-
-  let eventTypeId = null;
-  let eventTypeSlug = 'pickup';
-  const { data: pickupType } = await supabase.from('event_types').select('id').eq('slug', 'pickup').maybeSingle();
-  if (pickupType?.id) eventTypeId = pickupType.id;
-  else {
-    const { data: delType } = await supabase.from('event_types').select('id').eq('slug', 'delivery').maybeSingle();
-    if (delType?.id) { eventTypeId = delType.id; eventTypeSlug = 'delivery'; }
+async function resolveEventTypeBySlugs(slugs) {
+  for (const slug of slugs) {
+    const { data } = await supabase.from('event_types').select('id, slug').eq('slug', slug).maybeSingle();
+    if (data?.id) return { id: data.id, slug: data.slug };
   }
+  return { id: null, slug: slugs[0] || null };
+}
 
-  const { data: memberRows } = await supabase.from('lead_members').select('user_id').eq('lead_id', leadId);
-  const participantIds = [...new Set([
-    ...(memberRows || []).map((m) => String(m.user_id)).filter(Boolean),
-    meta.production_person_id ? String(meta.production_person_id) : null,
-    logisticsPersonId ? String(logisticsPersonId) : null,
-    meta.logistics_person_id ? String(meta.logistics_person_id) : null,
-  ].filter(Boolean))];
-
-  const projLabel = meta.project_name || meta.project_code || lead?.title || 'dự án';
-  const eventInsert = {
-    event_type_id: eventTypeId,
-    event_type: eventTypeSlug,
-    title: `Lấy hàng — ${projLabel}`,
-    description: pickupNotes || meta.select_notes || `Sự kiện lấy hàng cho dự án ${projLabel} (bàn giao VC/LĐ).`,
-    start_time: pickupAt,
-    status: 'planned',
-    module: 'logistics',
-    lead_id: leadId,
-    project_id: projectId,
-    customer_id: lead?.customer_id || null,
-    company_id: lead?.company_id || null,
-    assignee_id: logisticsPersonId || meta.logistics_person_id || null,
-    created_by: userId,
-  };
-
+async function insertCrmEventWithParticipants(eventInsert, participantIds, actorUserId) {
   let insRes = await supabase.from('crm_events').insert(eventInsert).select('id').single();
   if (insRes.error && /column.*module.*does not exist|42703/i.test(String(insRes.error.message || ''))) {
     const { module: _m, ...legacy } = eventInsert;
@@ -140,20 +276,147 @@ async function createPickupEventForHandover({
   }
   if (insRes.error) throw insRes.error;
   const eventId = insRes.data?.id || null;
-
   if (eventId) {
-    if (participantIds.length) {
+    const uids = [...new Set((participantIds || []).filter(Boolean).map(String))];
+    if (uids.length) {
       await supabase.from('crm_event_participants').insert(
-        participantIds.map((uid) => ({ event_id: eventId, user_id: uid, status: 'pending' })),
+        uids.map((uid) => ({ event_id: eventId, user_id: uid, status: 'pending' })),
       );
     }
-    await supabase.from('crm_event_participants').upsert(
-      { event_id: eventId, user_id: userId, status: 'confirmed' },
-      { onConflict: 'event_id,user_id' },
-    );
+    if (actorUserId) {
+      await supabase.from('crm_event_participants').upsert(
+        { event_id: eventId, user_id: actorUserId, status: 'confirmed' },
+        { onConflict: 'event_id,user_id' },
+      );
+    }
   }
+  return eventId;
+}
 
-  return { eventId, participantIds, projLabel };
+/**
+ * Tạo 3 sự kiện khi bàn giao VC/LĐ:
+ *  1. Giao hàng xưởng (module production) — ngày VC
+ *  2. Vận chuyển / nhận hàng (module logistics) — ngày VC
+ *  3. Lắp đặt (module logistics) — ngày lắp (≥ VC, mặc định = VC)
+ */
+async function createVcHandoverEvents({
+  userId, leadId, projectId, pickupAt, installAt = null, pickupNotes, meta, logisticsPersonId,
+}) {
+  await supabase.from('projects').update({
+    pickup_at: pickupAt,
+    pickup_notes: pickupNotes || null,
+    ...(installAt ? { install_date: installAt } : {}),
+  }).eq('id', projectId)
+    .then(({ error: e }) => {
+      if (e && !/pickup|install_date/i.test(String(e.message || ''))) {
+        console.warn('[vc-handover] project dates:', e.message);
+      }
+    });
+
+  const { data: lead } = await supabase
+    .from('crm_leads').select('id, code, title, company_id, customer_id').eq('id', leadId).maybeSingle();
+
+  const { data: memberRows } = await supabase.from('lead_members').select('user_id').eq('lead_id', leadId);
+  const participantIds = [...new Set([
+    ...(memberRows || []).map((m) => String(m.user_id)).filter(Boolean),
+    meta.production_person_id ? String(meta.production_person_id) : null,
+    logisticsPersonId ? String(logisticsPersonId) : null,
+    meta.logistics_person_id ? String(meta.logistics_person_id) : null,
+    meta.installer_person_id ? String(meta.installer_person_id) : null,
+  ].filter(Boolean))];
+
+  const projLabel = meta.project_name || meta.project_code || lead?.title || 'dự án';
+  const companyId = meta.logistics_company_id || lead?.company_id || null;
+  const notes = pickupNotes || meta.select_notes || null;
+  const addr = meta.install_address ? `Địa chỉ: ${meta.install_address}` : null;
+  const installStart = installAt || pickupAt;
+
+  const pickupDay = vnCalendarDayKey(pickupAt);
+  const installDay = vnCalendarDayKey(installStart);
+  const sameDay = !!(pickupDay && installDay && pickupDay === installDay);
+
+  const baseShared = {
+    status: 'planned',
+    lead_id: leadId,
+    project_id: projectId,
+    customer_id: lead?.customer_id || null,
+    company_id: companyId,
+    created_by: userId,
+  };
+
+  const deliveryType = await resolveEventTypeBySlugs(['delivery', 'pickup']);
+  const pickupType = await resolveEventTypeBySlugs(['pickup', 'delivery']);
+  const installType = await resolveEventTypeBySlugs(['installation', 'pickup']);
+
+  const eventIds = [];
+  let sxEventId = null;
+  let transportEventId = null;
+  let installEventId = null;
+
+  // 1) Giao hàng xưởng (SX)
+  sxEventId = await insertCrmEventWithParticipants({
+    ...baseShared,
+    module: 'production',
+    event_type_id: deliveryType.id,
+    event_type: deliveryType.slug || 'delivery',
+    title: `Giao hàng xưởng — ${projLabel}`,
+    description: [
+      notes || `Xưởng giao hàng cho dự án ${projLabel} (đồng bộ ngày nhận hàng VC).`,
+      addr,
+    ].filter(Boolean).join('\n'),
+    start_time: pickupAt,
+    assignee_id: meta.production_person_id || null,
+  }, participantIds, userId);
+  if (sxEventId) eventIds.push(sxEventId);
+
+  // 2) Vận chuyển / nhận hàng (VC)
+  transportEventId = await insertCrmEventWithParticipants({
+    ...baseShared,
+    module: 'logistics',
+    event_type_id: pickupType.id,
+    event_type: pickupType.slug || 'pickup',
+    title: `Vận chuyển / nhận hàng — ${projLabel}`,
+    description: [
+      notes || `Sự kiện vận chuyển / nhận hàng cho dự án ${projLabel}.`,
+      addr,
+    ].filter(Boolean).join('\n'),
+    start_time: pickupAt,
+    assignee_id: logisticsPersonId || meta.logistics_person_id || null,
+  }, participantIds, userId);
+  if (transportEventId) eventIds.push(transportEventId);
+
+  // 3) Lắp đặt (VC/LĐ)
+  installEventId = await insertCrmEventWithParticipants({
+    ...baseShared,
+    module: 'logistics',
+    event_type_id: installType.id,
+    event_type: installType.slug || 'installation',
+    title: `Lắp đặt — ${projLabel}`,
+    description: [
+      notes || `Sự kiện lắp đặt cho dự án ${projLabel}.`,
+      addr,
+      sameDay ? 'Cùng ngày với nhận hàng VC.' : null,
+    ].filter(Boolean).join('\n'),
+    start_time: installStart,
+    assignee_id: meta.installer_person_id || logisticsPersonId || meta.logistics_person_id || null,
+  }, participantIds, userId);
+  if (installEventId) eventIds.push(installEventId);
+
+  return {
+    eventId: transportEventId || sxEventId || eventIds[0] || null,
+    eventIds,
+    sxEventId,
+    transportEventId,
+    installEventId,
+    mode: 'triple',
+    participantIds,
+    projLabel,
+  };
+}
+
+/** @deprecated alias — giữ tương thích schedule legacy */
+async function createPickupEventForHandover(opts) {
+  return createVcHandoverEvents({ ...opts, installAt: opts.installAt || null });
 }
 
 // ─── 1. SX yêu cầu bàn giao (đăng bình luận cho sale) ───────────────────────
@@ -166,21 +429,37 @@ r.post('/projects/:id/request', async (req, res) => {
 
     const { data: project } = await supabase
       .from('projects')
-      .select('id, code, name, production_person_id, company_id')
+      .select('id, code, name, production_person_id, sales_person_id, company_id, install_address, customer_id')
       .eq('id', projectId)
       .maybeSingle();
     if (!project) return res.status(404).json({ error: 'Không tìm thấy dự án' });
 
     const { data: deals } = await supabase
       .from('crm_leads')
-      .select('id, code, title, assigned_to, lead_owner_id, company_id, lead_type_id')
+      .select('id, code, title, assigned_to, lead_owner_id, company_id, lead_type_id, install_address, customer_id')
       .eq('project_id', projectId)
       .eq('type', 'deal')
       .order('created_at', { ascending: true });
     const deal = (deals || [])[0];
     if (!deal) return res.status(400).json({ error: 'Dự án chưa liên kết deal CRM để bàn giao VC/LĐ.' });
 
-    // Idempotent: đã có bình luận bàn giao đang mở → trả lại.
+    let installAddressPrefill = String(project.install_address || deal.install_address || '').trim() || null;
+    if (!installAddressPrefill) {
+      const custId = project.customer_id || deal.customer_id || null;
+      if (custId) {
+        const { data: cust } = await supabase
+          .from('customers')
+          .select('address')
+          .eq('id', custId)
+          .maybeSingle();
+        installAddressPrefill = String(cust?.address || '').trim() || null;
+      }
+    }
+    const saleUserIds = collectCrmSaleNotifyIds(deal, project);
+    const actorName = await getUserName(actor);
+    const projLabel = project.name || project.code || 'dự án';
+
+    // Idempotent: đã có bình luận bàn giao đang mở → trả lại + nhắc lại Sale CRM.
     const { data: openRows } = await supabase
       .from('crm_lead_comments')
       .select(COMMENT_SELECT)
@@ -192,7 +471,8 @@ r.post('/projects/:id/request', async (req, res) => {
     if (openComment) {
       // Backfill loại / xưởng cho bình luận cũ (trước khi có field metadata).
       const meta = openComment.metadata || {};
-      if (!meta.workshop_company_name || !meta.lead_type_name) {
+      let enrichedRow = openComment;
+      if (!meta.workshop_company_name || !meta.lead_type_name || !meta.sale_user_ids?.length || !meta.install_address) {
         try {
           const patch = { ...meta };
           if (!patch.lead_type_name && deal.lead_type_id) {
@@ -206,22 +486,76 @@ r.post('/projects/:id/request', async (req, res) => {
             patch.workshop_company_id = project.company_id;
             patch.workshop_company_name = wsCo?.short_name || wsCo?.name || null;
           }
-          if (patch.lead_type_name !== meta.lead_type_name || patch.workshop_company_name !== meta.workshop_company_name) {
+          if (!Array.isArray(patch.sale_user_ids) || !patch.sale_user_ids.length) {
+            patch.sale_user_ids = saleUserIds;
+          }
+          if (!patch.install_address && installAddressPrefill) {
+            patch.install_address = installAddressPrefill;
+          }
+          if (
+            patch.lead_type_name !== meta.lead_type_name
+            || patch.workshop_company_name !== meta.workshop_company_name
+            || patch.install_address !== meta.install_address
+            || JSON.stringify(patch.sale_user_ids) !== JSON.stringify(meta.sale_user_ids || [])
+          ) {
             const { data: enriched } = await supabase
               .from('crm_lead_comments')
               .update({ metadata: patch, updated_at: new Date().toISOString() })
               .eq('id', openComment.id)
               .select(COMMENT_SELECT)
               .single();
-            if (enriched) {
-              return res.json({ comment: withReactions(enriched), lead_id: deal.id, already: true });
-            }
+            if (enriched) enrichedRow = enriched;
           }
         } catch (bfErr) {
           console.warn('[vc-handover] backfill metadata:', bfErr.message);
         }
       }
-      return res.json({ comment: withReactions(openComment), lead_id: deal.id, already: true });
+      try {
+        await notifyCrmVcHandoverRequest(req, {
+          saleUserIds: saleUserIds.length ? saleUserIds : (openComment.metadata?.sale_user_ids || []),
+          actorName,
+          projLabel,
+          dealId: deal.id,
+          projectId,
+          remind: true,
+        });
+      } catch (nerr) { console.warn('[vc-handover] remind notify:', nerr.message); }
+
+      // Thêm bình luận nhắc (@Sale) trong thread bàn giao.
+      try {
+        const remindSales = saleUserIds.length ? saleUserIds : (openComment.metadata?.sale_user_ids || []);
+        await ensureSaleUsersAsLeadMembers(deal.id, remindSales, actor);
+        const mentionText = await formatSaleMentionText(deal.id, remindSales);
+        const replyBody = mentionText
+          ? `🔔 ${actorName || 'Xưởng'} nhắc ${mentionText}: dự án «${projLabel}» đang chờ chọn công ty VC/LĐ và tạo sự kiện Lấy hàng / Lắp đặt.`
+          : `🔔 ${actorName || 'Xưởng'} nhắc: dự án «${projLabel}» đang chờ chọn công ty VC/LĐ và tạo sự kiện Lấy hàng / Lắp đặt.`;
+        const { data: reply, error: replyErr } = await supabase
+          .from('crm_lead_comments')
+          .insert({
+            lead_id: deal.id,
+            user_id: actor,
+            parent_id: openComment.id,
+            body: replyBody,
+          })
+          .select(COMMENT_SELECT)
+          .single();
+        if (!replyErr && reply) {
+          const replyRow = withReactions(reply);
+          emitComment(req, deal.id, 'created', replyRow);
+          await notifySalesViaDealComment(req, {
+            dealId: deal.id,
+            senderId: actor,
+            commentRow: replyRow,
+            saleUserIds: remindSales,
+          });
+        } else if (replyErr) {
+          console.warn('[vc-handover] remind comment:', replyErr.message);
+        }
+      } catch (cerr) {
+        console.warn('[vc-handover] remind comment notify:', cerr.message);
+      }
+
+      return res.json({ comment: withReactions(enrichedRow), lead_id: deal.id, already: true });
     }
 
     let leadTypeName = null;
@@ -240,7 +574,6 @@ r.post('/projects/:id/request', async (req, res) => {
       workshopCompanyName = wsCo?.short_name || wsCo?.name || null;
     }
 
-    const saleUserIds = [...new Set([deal.assigned_to, deal.lead_owner_id].filter(Boolean).map(String))];
     const metadata = {
       state: 'awaiting_company',
       project_id: projectId,
@@ -255,9 +588,13 @@ r.post('/projects/:id/request', async (req, res) => {
       lead_type_name: leadTypeName,
       workshop_company_id: project.company_id || null,
       workshop_company_name: workshopCompanyName,
+      install_address: installAddressPrefill,
     };
-    const projLabel = project.name || project.code || 'dự án';
-    const body = `🚚 Xưởng đề nghị bàn giao «${projLabel}» sang Vận chuyển/Lắp đặt. Sale CRM vui lòng chọn công ty VC/LĐ và ngày lấy hàng.`;
+    const mentionText = await formatSaleMentionText(deal.id, saleUserIds);
+    await ensureSaleUsersAsLeadMembers(deal.id, saleUserIds, actor);
+    const body = mentionText
+      ? `🚚 Xưởng đề nghị bàn giao «${projLabel}» sang Vận chuyển/Lắp đặt. ${mentionText} vui lòng chọn công ty VC/LĐ, ngày lấy hàng và tạo sự kiện Lấy hàng / Lắp đặt.`
+      : `🚚 Xưởng đề nghị bàn giao «${projLabel}» sang Vận chuyển/Lắp đặt. Sale CRM vui lòng chọn công ty VC/LĐ, ngày lấy hàng và tạo sự kiện Lấy hàng / Lắp đặt.`;
 
     const { data: inserted, error } = await supabase
       .from('crm_lead_comments')
@@ -288,16 +625,26 @@ r.post('/projects/:id/request', async (req, res) => {
     void rcInvalidateTags(['production']);
 
     try {
-      const actorName = await getUserName(actor);
-      if (saleUserIds.length) {
-        await notifyMultiple(
-          req, saleUserIds, 'vc_handover_request',
-          '🚚 Chọn công ty Vận chuyển/Lắp đặt',
-          `${actorName || 'Xưởng'} đề nghị bàn giao «${projLabel}» — vui lòng chọn công ty VC/LĐ và ngày lấy hàng.`,
-          'lead', deal.id, { nav_tab: 'comments' },
-        );
-      }
+      await notifyCrmVcHandoverRequest(req, {
+        saleUserIds,
+        actorName,
+        projLabel,
+        dealId: deal.id,
+        projectId,
+        remind: false,
+      });
     } catch (nerr) { console.warn('[vc-handover] notify request:', nerr.message); }
+
+    try {
+      await notifySalesViaDealComment(req, {
+        dealId: deal.id,
+        senderId: actor,
+        commentRow: row,
+        saleUserIds,
+      });
+    } catch (cerr) {
+      console.warn('[vc-handover] comment notify:', cerr.message);
+    }
 
     res.json({ comment: row, lead_id: deal.id });
   } catch (e) {
@@ -315,6 +662,10 @@ r.patch('/comments/:cid/select', async (req, res) => {
     const selectNotes = req.body?.notes != null ? String(req.body.notes).trim() : '';
     const pickupAtRaw = req.body?.pickup_at;
     const pickupNotes = req.body?.pickup_notes != null ? String(req.body.pickup_notes).trim() : null;
+    const deliveryDateRaw = req.body?.delivery_date ? String(req.body.delivery_date).trim().slice(0, 10) : null;
+    const installDateRaw = req.body?.install_date != null ? String(req.body.install_date).trim() : null;
+    const installAddress = req.body?.install_address != null ? String(req.body.install_address).trim() : null;
+    const otherName = req.body?.external_company_name != null ? String(req.body.external_company_name).trim() : null;
     // VC/LĐ là một khối — luôn thêm cả phụ trách vận chuyển và lắp đặt.
     const serviceType = 'both';
     if (!logisticsCompanyId) return res.status(400).json({ error: 'Vui lòng chọn công ty Vận chuyển/Lắp đặt.' });
@@ -322,6 +673,26 @@ r.patch('/comments/:cid/select', async (req, res) => {
     const pickupDate = new Date(pickupAtRaw);
     if (Number.isNaN(pickupDate.getTime())) return res.status(400).json({ error: 'Ngày lấy hàng không hợp lệ.' });
     const pickupAt = pickupDate.toISOString();
+    const deliveryDate = deliveryDateRaw && /^\d{4}-\d{2}-\d{2}$/.test(deliveryDateRaw) ? deliveryDateRaw : null;
+    let installDate = null;
+    if (installDateRaw) {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(installDateRaw)) {
+        installDate = `${installDateRaw}T00:00:00.000Z`;
+      } else {
+        const id = new Date(installDateRaw);
+        if (Number.isNaN(id.getTime())) return res.status(400).json({ error: 'Ngày lắp đặt không hợp lệ.' });
+        installDate = id.toISOString();
+      }
+    }
+    if (installDate) {
+      const pickupDay = vnCalendarDayKey(pickupAt);
+      const installDay = vnCalendarDayKey(installDate);
+      if (pickupDay && installDay && installDay < pickupDay) {
+        return res.status(400).json({
+          error: 'Ngày lắp đặt phải bằng hoặc sau ngày nhận hàng / lấy hàng VC.',
+        });
+      }
+    }
 
     const comment = await loadVcComment(cid);
     if (!comment || comment.comment_type !== 'vc_handover') return res.status(404).json({ error: 'Không tìm thấy bình luận bàn giao.' });
@@ -342,13 +713,45 @@ r.patch('/comments/:cid/select', async (req, res) => {
       sxHandoverPipelineStageId: meta.sx_stage_id || null,
       actorUserId: userId,
     });
-    void rcInvalidateTags(['production']);
+    void rcInvalidateTags(['production', 'logistics', 'crm']);
 
-    // Nhân sự công ty VC/LĐ (cả vận chuyển + lắp đặt).
+    // Nhân sự công ty VC/LĐ → lead_members + deal CRM cho công ty VC (nếu khác CRM gốc).
     const responsibleId = await resolveLogisticsHandoverResponsibleUserId(logisticsCompanyId);
     const installerId = await resolveLogisticsHandoverInstallerUserId(logisticsCompanyId);
-    const addIds = [responsibleId, installerId];
-    const vcMemberIds = await addVcMembersWithCutoff(comment.lead_id, addIds, userId);
+    const relatedVcIds = await collectVcHandoverRecipientIds({
+      logisticsCompanyId,
+      projectId,
+      excludeUserId: null,
+    });
+    const addIds = [...new Set([responsibleId, installerId, ...relatedVcIds].filter(Boolean).map(String))];
+
+    let vcMemberIds = [];
+    let vcCompanyDeal = null;
+    try {
+      const visibility = await afterVcCompanySelected({
+        sourceLeadId: comment.lead_id,
+        logisticsCompanyId,
+        projectId,
+        vcKanbanColumnId: result.vc_kanban_column_id || null,
+        logisticsPersonId: result.logistics_person_id || responsibleId || null,
+        installerPersonId: result.installer_person_id || installerId || null,
+        actorUserId: userId,
+        extraUserIds: addIds,
+        addMembersFn: addVcMembersWithCutoff,
+      });
+      vcMemberIds = [...new Set([
+        ...(visibility.addedToSource || []),
+        ...(visibility.addedToVcDeal || []),
+        ...(visibility.memberIds || []),
+      ])];
+      vcCompanyDeal = visibility.vcDeal || null;
+      if (vcCompanyDeal?.created) {
+        console.log(`[vc-handover] tạo deal CRM cho công ty VC: ${vcCompanyDeal.code || vcCompanyDeal.dealId}`);
+      }
+    } catch (memErr) {
+      console.warn('[vc-handover] afterVcCompanySelected:', memErr.message);
+      vcMemberIds = await addVcMembersWithCutoff(comment.lead_id, addIds, userId);
+    }
 
     const logisticsPersonId = result.logistics_person_id || responsibleId || installerId || null;
 
@@ -365,40 +768,57 @@ r.patch('/comments/:cid/select', async (req, res) => {
       .from('companies').select('name, short_name').eq('id', logisticsCompanyId).maybeSingle();
     const companyName = company?.short_name || company?.name || 'Công ty VC/LĐ';
 
-    const [productionPersonName, logisticsPersonName] = await Promise.all([
+    const [productionPersonName, logisticsPersonName, actorName] = await Promise.all([
       getUserName(productionPersonId),
       getUserName(logisticsPersonId),
+      getUserName(userId),
     ]);
 
     let eventId = null;
+    let eventIds = [];
+    let installEventId = null;
+    let sxEventId = null;
+    let transportEventId = null;
+    let eventsMode = 'triple';
     let participantIds = [];
     let projLabel = meta.project_name || meta.project_code || 'dự án';
+    let eventsSummary = '— Đã tạo 3 sự kiện trên lịch: Giao hàng xưởng + Vận chuyển + Lắp đặt.';
     try {
-      const created = await createPickupEventForHandover({
+      const created = await createVcHandoverEvents({
         userId,
         leadId: comment.lead_id,
         projectId,
         pickupAt,
+        installAt: installDate || null,
         pickupNotes: pickupNotes || selectNotes || null,
         meta: {
           ...meta,
           select_notes: selectNotes || null,
           logistics_person_id: logisticsPersonId,
           production_person_id: productionPersonId,
+          logistics_company_id: logisticsCompanyId,
+          installer_person_id: result.installer_person_id || installerId || null,
+          install_address: installAddress || null,
         },
         logisticsPersonId,
       });
       eventId = created.eventId;
+      eventIds = created.eventIds || (eventId ? [eventId] : []);
+      installEventId = created.installEventId || null;
+      sxEventId = created.sxEventId || null;
+      transportEventId = created.transportEventId || null;
+      eventsMode = created.mode || 'triple';
       participantIds = created.participantIds || [];
       projLabel = created.projLabel || projLabel;
     } catch (evErr) {
-      console.error('[vc-handover] create pickup event on select:', evErr.message);
-      return res.status(500).json({ error: 'Không tạo được sự kiện lấy hàng: ' + evErr.message });
+      // Dự án đã bàn giao vào module VC — không fail cả request chỉ vì lịch sự kiện lỗi.
+      console.error('[vc-handover] create VC events on select:', evErr.message);
+      eventsSummary = `— Chưa tạo được lịch sự kiện VC/LĐ: ${evErr.message}`;
+      eventsMode = 'failed';
     }
 
-    const pickupLabel = pickupDate.toLocaleString('vi-VN', {
-      day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
-    });
+    const pickupLabel = formatVnDateTime(pickupDate);
+    const installLabel = installDate ? formatVnDateTime(installDate) : pickupLabel;
     const notesSuffix = selectNotes ? ` · ${selectNotes}` : '';
     const nextMeta = {
       ...meta,
@@ -411,14 +831,33 @@ r.patch('/comments/:cid/select', async (req, res) => {
       production_person_name: productionPersonName || null,
       logistics_person_id: logisticsPersonId,
       logistics_person_name: logisticsPersonName || null,
-      vc_member_ids: [...new Set([...(meta.vc_member_ids || []), ...vcMemberIds])],
+      vc_member_ids: [...new Set([...(meta.vc_member_ids || []), ...vcMemberIds, ...addIds])],
+      vc_company_deal_id: vcCompanyDeal?.dealId || null,
+      vc_company_deal_created: !!vcCompanyDeal?.created,
       pickup_at: pickupAt,
       pickup_notes: pickupNotes || null,
       event_id: eventId,
+      event_ids: eventIds,
+      sx_event_id: sxEventId,
+      transport_event_id: transportEventId,
+      install_event_id: installEventId,
+      events_mode: eventsMode,
+      delivery_date: deliveryDate || null,
+      install_date: installDate || pickupAt,
+      install_address: installAddress || null,
+      external_company_name: otherName || null,
       confirmed_production: null,
       confirmed_logistics: null,
     };
-    const body = `${comment.body.split('\n')[0]}\n— Đã chọn: ${companyName}${notesSuffix}\n— Ngày lấy hàng: ${pickupLabel}. Đã tạo sự kiện Lấy hàng — chờ xác nhận Xưởng & VC/LĐ.`;
+    const body = [
+      comment.body.split('\n')[0],
+      `— Đã chọn: ${companyName}${notesSuffix}`,
+      `— Ngày nhận hàng: ${pickupLabel}`,
+      installLabel ? `— Ngày lắp đặt: ${installLabel}` : null,
+      installAddress ? `— Địa chỉ lắp: ${installAddress}` : null,
+      eventsSummary,
+      '— Chờ xác nhận Xưởng & VC/LĐ.',
+    ].filter(Boolean).join('\n');
 
     const { data: updated, error } = await supabase
       .from('crm_lead_comments')
@@ -431,27 +870,152 @@ r.patch('/comments/:cid/select', async (req, res) => {
     await supabase.from('projects').update({ vc_handover_status: 'scheduled' }).eq('id', projectId)
       .then(({ error: e }) => { if (e && !String(e.message || '').includes('vc_handover_status')) console.warn('[vc-handover] status:', e.message); });
 
+    // Đồng bộ panel Thông tin VC: tên khác / ngày giao / ngày lắp / địa chỉ.
+    try {
+      const projectPatch = {};
+      if (deliveryDate) projectPatch.delivery_date = deliveryDate;
+      if (installDate) projectPatch.install_date = installDate;
+      if (installAddress) projectPatch.install_address = installAddress;
+      if (Object.keys(projectPatch).length) {
+        const { error: pe } = await supabase.from('projects').update(projectPatch).eq('id', projectId);
+        if (pe) console.warn('[vc-handover] sync project info:', pe.message);
+      }
+      const leadPatch = {};
+      if (installAddress) leadPatch.install_address = installAddress;
+      if (otherName) leadPatch.external_company_name = otherName;
+      if (Object.keys(leadPatch).length && comment.lead_id) {
+        leadPatch.updated_at = new Date().toISOString();
+        const { error: le } = await supabase.from('crm_leads').update(leadPatch).eq('id', comment.lead_id);
+        if (le) console.warn('[vc-handover] sync lead info:', le.message);
+      }
+    } catch (syncErr) {
+      console.warn('[vc-handover] sync panel fields:', syncErr.message);
+    }
+
     const row = withReactions(updated);
     emitComment(req, comment.lead_id, 'updated', row);
 
+    // Ghi nhận lịch sử bàn giao dạng bình luận riêng (timeline chat).
+    let historyRow = null;
+    try {
+      const historyBody = [
+        `📋 ${actorName || 'Sale CRM'} đã bàn giao «${projLabel}» sang ${companyName}.`,
+        `• Nhận hàng: ${pickupLabel}`,
+        installLabel ? `• Lắp đặt: ${installLabel}` : null,
+        installAddress ? `• Địa chỉ: ${installAddress}` : null,
+        logisticsPersonName ? `• Phụ trách VC/LĐ: ${logisticsPersonName}` : null,
+        productionPersonName ? `• Phụ trách xưởng: ${productionPersonName}` : null,
+        selectNotes ? `• Ghi chú: ${selectNotes}` : null,
+        vcMemberIds.length ? `• Đã thêm ${vcMemberIds.length} thành viên công ty VC/LĐ vào deal.` : null,
+        vcCompanyDeal?.created
+          ? `• Đã tạo deal CRM cho công ty VC/LĐ: ${vcCompanyDeal.code || vcCompanyDeal.dealId}.`
+          : null,
+        eventIds.length
+          ? '• Lịch: 3 sự kiện — Giao hàng xưởng + Vận chuyển + Lắp đặt.'
+          : '• Lịch sự kiện VC/LĐ chưa tạo được (dự án vẫn đã vào module VC/LĐ).',
+        '• Module VC/LĐ: mở board công ty đã chọn — dự án giữ mã SX, gắn công ty VC.',
+        'Chờ Xưởng và VC/LĐ xác nhận trên thẻ bàn giao.',
+      ].filter(Boolean).join('\n');
+      const { data: histIns, error: histErr } = await supabase
+        .from('crm_lead_comments')
+        .insert({
+          lead_id: comment.lead_id,
+          user_id: userId,
+          body: historyBody,
+          metadata: {
+            kind: 'vc_handover_history',
+            project_id: projectId,
+            logistics_company_id: logisticsCompanyId,
+            pickup_at: pickupAt,
+            install_date: installDate || pickupAt,
+            event_id: eventId,
+            event_ids: eventIds,
+            sx_event_id: sxEventId,
+            transport_event_id: transportEventId,
+            install_event_id: installEventId,
+            source_comment_id: cid,
+          },
+        })
+        .select(COMMENT_SELECT)
+        .single();
+      if (histErr) throw histErr;
+      if (histIns) {
+        historyRow = withReactions(histIns);
+        emitComment(req, comment.lead_id, 'created', historyRow);
+      }
+    } catch (histErr) {
+      console.warn('[vc-handover] history comment:', histErr.message);
+    }
+
+    // Thông báo cho VC/LĐ + xưởng + sale + mọi NV liên quan (kèm giờ lấy & nhận).
     try {
       const notifyIds = [...new Set([
         logisticsPersonId,
+        installerId,
         productionPersonId,
         ...vcMemberIds,
+        ...addIds,
         ...participantIds,
+        ...(meta.sale_user_ids || []),
+        ...saleIds,
       ].filter(Boolean).map(String))];
+      const msgParts = [
+        `Công ty: ${companyName}.`,
+        `Lấy hàng: ${pickupLabel}.`,
+        installLabel ? `Nhận/lắp: ${installLabel}.` : null,
+        installAddress ? `Địa chỉ: ${installAddress}.` : null,
+        vcCompanyDeal?.created ? `Deal VC: ${vcCompanyDeal.code}.` : null,
+        'Mở module VC/LĐ hoặc deal để xác nhận trên thẻ bàn giao.',
+      ].filter(Boolean);
       if (notifyIds.length) {
         await notifyMultiple(
-          req, notifyIds, 'vc_handover_assigned',
-          `📦 Sự kiện lấy hàng: ${projLabel}`,
-          `Lịch lấy hàng ${pickupLabel}. Chỉ phụ trách Xưởng và VC/LĐ được xác nhận trên bình luận.`,
-          'lead', comment.lead_id, { nav_tab: 'comments', event_id: eventId },
+          req,
+          notifyIds,
+          'vc_handover_assigned',
+          `📦 Bàn giao VC/LĐ: ${projLabel}`,
+          msgParts.join(' '),
+          'lead',
+          vcCompanyDeal?.dealId || comment.lead_id,
+          {
+            nav_tab: 'comments',
+            event_id: eventId,
+            ecosystem_module_key: 'logistics',
+            project_id: String(projectId),
+            pickup_at: pickupAt,
+            install_date: installDate || null,
+            logistics_company_id: logisticsCompanyId,
+            vc_handover: true,
+            vc_company_deal_id: vcCompanyDeal?.dealId || null,
+          },
         );
+      }
+      if (historyRow) {
+        await notifySalesViaDealComment(req, {
+          dealId: comment.lead_id,
+          senderId: userId,
+          commentRow: historyRow,
+          saleUserIds: notifyIds,
+        });
       }
     } catch (nerr) { console.warn('[vc-handover] notify select:', nerr.message); }
 
-    res.json({ comment: row, event_id: eventId });
+    res.json({
+      comment: row,
+      event_id: eventId,
+      event_ids: eventIds,
+      install_event_id: installEventId,
+      events_mode: eventsMode,
+      history_comment: historyRow,
+      vc_company_deal_id: vcCompanyDeal?.dealId || null,
+      vc_company_deal_created: !!vcCompanyDeal?.created,
+      vc_members_added: vcMemberIds.length,
+      project_id: projectId,
+      logistics_company_id: logisticsCompanyId,
+      logistics_company_name: companyName,
+      vc_kanban_column_id: result.vc_kanban_column_id || null,
+      handed_over: result.handed_over !== false,
+      already_in_logistics: !!result.already_in_logistics,
+    });
   } catch (e) {
     console.error('PATCH /vc-handover/comments/:cid/select:', e);
     res.status(500).json({ error: e.message || 'Lỗi server' });
