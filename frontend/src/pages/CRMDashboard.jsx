@@ -3159,9 +3159,6 @@ export default function CRMDashboard() {
    */
   const refreshPipelinePhoneTotalsForType = useCallback(
     async (type) => {
-      // Trong lúc giữ board cũ khi đổi bộ lọc, không cập nhật badge Leads/Deals
-      // bằng count của scope mới — tránh nháy "Leads 0 / Deals 7".
-      if (preserveKanbanDuringFilterRef.current) return;
       const requestGeneration = kanbanRequestGenerationRef.current;
       const dateParams = {};
       if (customDateFrom) dateParams.date_from = customDateFrom;
@@ -3226,7 +3223,6 @@ export default function CRMDashboard() {
         ]);
         if (
           requestGeneration !== kanbanRequestGenerationRef.current
-          || preserveKanbanDuringFilterRef.current
         ) return;
         setPipelinePhoneTotals((prev) => ({
           ...prev,
@@ -3235,7 +3231,6 @@ export default function CRMDashboard() {
       } catch (e) {
         if (
           requestGeneration !== kanbanRequestGenerationRef.current
-          || preserveKanbanDuringFilterRef.current
         ) return;
         console.error('[refreshPipelinePhoneTotalsForType]', e);
       }
@@ -3262,7 +3257,6 @@ export default function CRMDashboard() {
 
   /** Tổng tab Deal/Đơn hàng theo stage-counts + won-anchor (cùng filter SĐT/công ty/NV/ngày). */
   const refreshPipelineDealTabTotals = useCallback(async () => {
-    if (preserveKanbanDuringFilterRef.current) return;
     const requestGeneration = kanbanRequestGenerationRef.current;
     const stages = stagesDealRef.current;
     if (!Array.isArray(stages) || !stages.length) return;
@@ -3291,14 +3285,12 @@ export default function CRMDashboard() {
       const { data } = await api.get('/crm/stage-counts', { params });
       if (
         requestGeneration !== kanbanRequestGenerationRef.current
-        || preserveKanbanDuringFilterRef.current
       ) return;
       const counts = data?.counts && typeof data.counts === 'object' ? data.counts : {};
       setPipelineDealTabTotals(sumCrmDealTabCountsFromStageCounts(stages, counts));
     } catch (e) {
       if (
         requestGeneration !== kanbanRequestGenerationRef.current
-        || preserveKanbanDuringFilterRef.current
       ) return;
       console.warn('[refreshPipelineDealTabTotals]', e?.response?.data?.error || e?.message || e);
       setPipelineDealTabTotals(null);
@@ -3325,7 +3317,6 @@ export default function CRMDashboard() {
 
   /** Một request/RPC cho 2 pipeline: bucket SĐT + stage counts Deal theo filter hiện tại. */
   const refreshCrmFilterSummary = useCallback(async () => {
-    if (preserveKanbanDuringFilterRef.current) return;
     if (filterSource && String(filterSource).startsWith('fbp:')) return;
     const requestGeneration = kanbanRequestGenerationRef.current;
     const co = dashboardScopeCompanyId || filterCompany;
@@ -3397,7 +3388,6 @@ export default function CRMDashboard() {
       }
       if (
         requestGeneration !== kanbanRequestGenerationRef.current
-        || preserveKanbanDuringFilterRef.current
       ) return;
       const lead = data?.lead || {};
       const deal = data?.deal || {};
@@ -3418,13 +3408,23 @@ export default function CRMDashboard() {
         },
       });
       const dealCounts = deal.counts && typeof deal.counts === 'object' ? deal.counts : {};
+      const dealStages = stagesDealRef.current || [];
+      const knownDealStageIds = new Set(dealStages.map((stage) => String(stage?.id || '')).filter(Boolean));
+      const countedDealStageIds = Object.entries(dealCounts)
+        .filter(([stageId, count]) => stageId !== '__none__' && Number(count) > 0)
+        .map(([stageId]) => String(stageId));
+      const hasCompleteDealStageMetadata = (
+        dealStages.length > 0
+        && countedDealStageIds.every((stageId) => knownDealStageIds.has(stageId))
+      );
       setPipelineDealTabTotals(
-        sumCrmDealTabCountsFromStageCounts(stagesDealRef.current || [], dealCounts),
+        hasCompleteDealStageMetadata
+          ? sumCrmDealTabCountsFromStageCounts(dealStages, dealCounts)
+          : null,
       );
     } catch (e) {
       if (
         requestGeneration !== kanbanRequestGenerationRef.current
-        || preserveKanbanDuringFilterRef.current
       ) return;
       // Chưa chạy migration 471: giữ tương thích bằng các endpoint cũ.
       if (
@@ -3458,9 +3458,13 @@ export default function CRMDashboard() {
   ]);
 
   useEffect(() => {
-    if (preserveKanbanDuringFilterRef.current) return;
+    if (!user?.id) return;
     void refreshCrmFilterSummary();
-  }, [refreshCrmFilterSummary, stagesDeal]);
+  }, [
+    refreshCrmFilterSummary,
+    stagesDeal,
+    user?.id,
+  ]);
 
   crmRealtimeCtxRef.current.refreshCrmFilterSummary = refreshCrmFilterSummary;
   crmRealtimeCtxRef.current.refreshPipelineDealTabTotals = refreshPipelineDealTabTotals;
