@@ -473,6 +473,78 @@ r.get('/kanban-bootstrap', responseCache({ ttl: 15, scope: 'user', tags: ['crm:l
   }
 });
 
+r.post('/kanban-stage-pages', async (req, res) => {
+  try {
+    const ctx = await resolveCrmLeadsMergedQuery(req, res);
+    if (!ctx) return;
+    const { type, mergedQuery, rpcAssigneeStrict } = ctx;
+    const rawRequests = Array.isArray(req.body?.stages) ? req.body.stages : [];
+    const seenStageIds = new Set();
+    const stageRequests = [];
+
+    for (const raw of rawRequests) {
+      const stageId = uuidQueryOrNull(raw?.stage_id);
+      if (!stageId || seenStageIds.has(stageId)) continue;
+      seenStageIds.add(stageId);
+      stageRequests.push({
+        stageId,
+        offset: Math.max(parseInt(raw?.offset) || 0, 0),
+        limit: Math.min(Math.max(parseInt(raw?.limit) || 10, 1), 40),
+      });
+      if (stageRequests.length >= 12) break;
+    }
+
+    if (!stageRequests.length) {
+      return res.json({ type, pages: {} });
+    }
+
+    const useLegacy = crmListUsesLegacyFilters(mergedQuery);
+    const pages = {};
+    const CONCURRENCY = 4;
+    for (let i = 0; i < stageRequests.length; i += CONCURRENCY) {
+      const chunk = stageRequests.slice(i, i + CONCURRENCY);
+      const results = await Promise.all(
+        chunk.map(async ({ stageId, offset, limit }) => {
+          const stageQuery = {
+            ...mergedQuery,
+            stage_id: stageId,
+            offset,
+            limit,
+            lite: '1',
+            skip_deadline: '1',
+          };
+          const page = useLegacy
+            ? await getCrmLeadsListLegacy(stageQuery, {
+                assigneeStrict: rpcAssigneeStrict,
+                viewerUserId: req.user?.userId,
+                req,
+                lite: true,
+                skipDeadline: true,
+              })
+            : await fetchCrmLeadsPageViaRpc(req, stageQuery, type, offset, limit, {
+                lite: true,
+                skipDeadline: true,
+              });
+          if (!page) throw new Error(`Không tải được cột kanban ${stageId}`);
+          return [stageId, page];
+        }),
+      );
+      for (const [stageId, page] of results) {
+        pages[stageId] = {
+          data: page.data || [],
+          total: page.total ?? 0,
+          hasMore: !!page.hasMore,
+          nextOffset: page.nextOffset ?? 0,
+        };
+      }
+    }
+
+    res.json({ type, pages });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.get('/leads', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
   try {
     const ctx = await resolveCrmLeadsMergedQuery(req, res);

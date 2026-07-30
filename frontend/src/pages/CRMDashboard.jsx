@@ -1542,6 +1542,8 @@ export default function CRMDashboard() {
   const [pipelinePhoneTotals, setPipelinePhoneTotals] = useState({ lead: null, deal: null });
   /** Tổng chính xác theo từng cột từ filter-summary; độc lập với 40 card đã tải. */
   const [pipelineStageCounts, setPipelineStageCounts] = useState({ lead: null, deal: null });
+  const kanbanStagePagesLoadingRef = useRef(new Set());
+  const [kanbanStagePagesLoading, setKanbanStagePagesLoading] = useState(0);
   /** Tổng Deal/Đơn hàng từ GET /crm/stage-counts (server) — không dùng số thẻ đã tải. */
   const [pipelineDealTabTotals, setPipelineDealTabTotals] = useState(null);
 
@@ -2526,6 +2528,135 @@ export default function CRMDashboard() {
     user,
     isAdmin,
     isCompanyScopedAdmin,
+  ]);
+
+  /** Phân trang độc lập theo cột; nhiều cột đang thấy được gom trong một request. */
+  const handleLoadStagePages = useCallback(async (stageIds, { ensureInitial = false } = {}) => {
+    if (syncing) return;
+    const type = pipelineType === 'lead' ? 'lead' : 'deal';
+    const requestGeneration = kanbanRequestGenerationRef.current;
+    const loadedRows = type === 'lead' ? allLeadsRef.current : allDealsRef.current;
+    const countByStage = new Map();
+    for (const row of loadedRows) {
+      const sid = String(row?.stage_id || '');
+      if (sid) countByStage.set(sid, (countByStage.get(sid) || 0) + 1);
+    }
+    const totals = pipelineStageCounts[type] || {};
+    const capRemaining = resolveKanbanAutoLoadCap(kanbanLoadLimit) - loadedRows.length;
+    if (capRemaining <= 0) return;
+
+    const requests = [];
+    let requestBudget = capRemaining;
+    for (const rawId of stageIds || []) {
+      const stageId = String(rawId || '');
+      if (!stageId || stageId.startsWith('__') || kanbanStagePagesLoadingRef.current.has(stageId)) continue;
+      const offset = countByStage.get(stageId) || 0;
+      const totalRaw = totals[String(stageId)];
+      const total = Number(totalRaw);
+      if (Number.isFinite(total) && offset >= total) continue;
+      if (ensureInitial && offset >= Math.min(10, Number.isFinite(total) ? total : 10)) continue;
+      requests.push({
+        stage_id: stageId,
+        offset,
+        limit: Math.min(20, requestBudget),
+      });
+      requestBudget -= Math.min(20, requestBudget);
+      if (requestBudget <= 0) break;
+      if (requests.length >= 12) break;
+    }
+    if (!requests.length) return;
+
+    for (const request of requests) kanbanStagePagesLoadingRef.current.add(request.stage_id);
+    setKanbanStagePagesLoading(kanbanStagePagesLoadingRef.current.size);
+    try {
+      const scopeCompanyId = (isCompanyScopedAdmin && user?.company_id)
+        ? String(user.company_id)
+        : (!isAdmin && user?.company_id)
+          ? String(user.company_id)
+          : (filterCompany || '');
+      const params = {
+        ...buildCrmKanbanServerFilterParams({
+          type,
+          filterPhone,
+          filterAssignee,
+          filterAssigneeName,
+          filterCompany: scopeCompanyId,
+          filterLeadType,
+          filterReferrer,
+          filterCustomerCompany,
+          filterRegion,
+          filterStage,
+          filterSource,
+          searchText,
+          customDateFrom,
+          customDateTo,
+        }),
+        ...CRM_KANBAN_LEAD_QUERY,
+      };
+      delete params.stage_id;
+      const { data } = await api.post('/crm/kanban-stage-pages', { stages: requests }, { params });
+      if (requestGeneration !== kanbanRequestGenerationRef.current) return;
+
+      const pages = data?.pages || {};
+      const rows = Object.values(pages).flatMap((page) => page?.data || []);
+      const userKey = getCurrentUserKeyForLeadSeen(user);
+      const viewedLocal = getLocallyViewedLeadIdSet(userKey);
+      const merged = rows.map((row) => (
+        viewedLocal.has(String(row.id)) ? { ...row, is_new_for_current_user: false } : row
+      ));
+      startTransition(() => {
+        if (type === 'lead') {
+          setAllLeads((prev) => dedupeCrmKanbanRows([...prev, ...merged]));
+        } else {
+          setAllDeals((prev) => preserveCrmKanbanPipelineBadges(
+            prev,
+            dedupeCrmKanbanRows([...prev, ...merged]),
+          ));
+        }
+        setPipelineStageCounts((prev) => {
+          const nextType = { ...(prev[type] || {}) };
+          for (const [stageId, page] of Object.entries(pages)) {
+            if (Number.isFinite(Number(page?.total))) nextType[stageId] = Number(page.total);
+          }
+          return { ...prev, [type]: nextType };
+        });
+      });
+
+      const newIds = merged.map((row) => row.id).filter(Boolean);
+      if (newIds.length) {
+        void fetchCrmLedgerNetByLeadIds(api, {
+          type,
+          leadIds: newIds,
+          assigned_to: filterAssignee || undefined,
+        }).then((ledgerPayload) => {
+          if (requestGeneration !== kanbanRequestGenerationRef.current) return;
+          if (type === 'lead') setDataLead((prev) => mergeCrmDashWithLedger(prev, ledgerPayload));
+          else setDataDeal((prev) => mergeCrmDashWithLedger(prev, ledgerPayload));
+        });
+        void enrichCrmKanbanRowsWithDeadlines(api, merged).then((withDeadlines) => {
+          if (requestGeneration !== kanbanRequestGenerationRef.current) return;
+          const patchMap = new Map(withDeadlines.map((row) => [String(row.id), row]));
+          if (type === 'lead') {
+            setAllLeads((prev) => dedupeCrmKanbanRows(prev.map((row) => patchMap.get(String(row.id)) || row)));
+          } else {
+            setAllDeals((prev) => dedupeCrmKanbanRows(prev.map((row) => patchMap.get(String(row.id)) || row)));
+          }
+        });
+      }
+    } catch (e) {
+      if (requestGeneration === kanbanRequestGenerationRef.current) {
+        console.error('[kanban stage pages]', e);
+        setKanbanLoadError(e?.response?.data?.error || e?.message || 'Không thể tải thêm dữ liệu theo cột.');
+      }
+    } finally {
+      for (const request of requests) kanbanStagePagesLoadingRef.current.delete(request.stage_id);
+      setKanbanStagePagesLoading(kanbanStagePagesLoadingRef.current.size);
+    }
+  }, [
+    syncing, pipelineType, pipelineStageCounts, kanbanLoadLimit, isCompanyScopedAdmin,
+    user, isAdmin, filterCompany, filterPhone, filterAssignee, filterAssigneeName,
+    filterLeadType, filterReferrer, filterCustomerCompany, filterRegion, filterStage,
+    filterSource, searchText, customDateFrom, customDateTo,
   ]);
 
   useEffect(() => {
@@ -4662,7 +4793,7 @@ export default function CRMDashboard() {
       hasMore: hasMoreServer && hasMoreCap,
       loaded,
       total,
-      loading: loadMoreState.loading,
+      loading: loadMoreState.loading || kanbanStagePagesLoading > 0,
       cap,
     };
   }, [
@@ -4671,6 +4802,7 @@ export default function CRMDashboard() {
     allLeads.length,
     allDeals.length,
     kanbanLoadLimit,
+    kanbanStagePagesLoading,
   ]);
 
   /**
@@ -7592,7 +7724,7 @@ export default function CRMDashboard() {
               remeasureToken={`${showAdvSearch ? 1 : 0}:${timePreset}:${customDateFrom}:${customDateTo}`}
               explicitExpectedKv={explicitExpectedKvStages}
               wonStage={dealKhSplitEnabled && pipelineType === 'deal' ? wonStage : null}
-              onLoadMore={handleLoadMore}
+              onLoadStagePages={handleLoadStagePages}
               scrollLoad={kanbanScrollLoad}
               stageCounts={pipelineType === 'lead' ? pipelineStageCounts.lead : pipelineStageCounts.deal}
               columnScrollMode={kanbanColumnScrollMode}
@@ -7613,7 +7745,7 @@ export default function CRMDashboard() {
                         : ' · cuộn xuống để tải thêm'}
                     </span>
                   </span>
-                  {kanbanScrollLoad.loading && (
+                  {(kanbanScrollLoad.loading || kanbanStagePagesLoading > 0) && (
                     <span className="inline-flex items-center gap-1.5 text-xs text-indigo-600">
                       <span className="animate-spin inline-block w-3 h-3 border-2 border-indigo-600 border-t-transparent rounded-full" />
                       Đang tải…
@@ -9037,8 +9169,10 @@ const KanbanStageCard = memo(function KanbanStageCard({
   columnIndex = 0,
   searchHighlightId = null,
   boardScrollRef = null,
+  onColumnVisibilityChange,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
+  const columnRef = useRef(null);
   const containerRef = useRef(null);
   const headerRef = useRef(null);
   const { columnScrollMaxH: layoutScrollMaxH } = useWorkshopKanbanScrollLayout();
@@ -9116,6 +9250,22 @@ const KanbanStageCard = memo(function KanbanStageCard({
     }
   };
 
+  useEffect(() => {
+    if (!onColumnVisibilityChange || isVirtualColumn) return undefined;
+    const column = columnRef.current;
+    const root = boardScrollRef?.current;
+    if (!column || !root || typeof IntersectionObserver === 'undefined') return undefined;
+    const observer = new IntersectionObserver(
+      ([entry]) => onColumnVisibilityChange(stage.id, !!entry?.isIntersecting),
+      { root, rootMargin: '0px 180px', threshold: 0.01 },
+    );
+    observer.observe(column);
+    return () => {
+      observer.disconnect();
+      onColumnVisibilityChange(stage.id, false);
+    };
+  }, [boardScrollRef, isVirtualColumn, onColumnVisibilityChange, stage.id]);
+
   const handleColumnDragOver = (e) => {
     if (isVirtualColumn) return;
     e.preventDefault();
@@ -9170,6 +9320,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
 
   return (
     <div
+      ref={columnRef}
       onDragOver={handleColumnDragOver}
       onDragLeave={handleColumnDragLeave}
       onDrop={handleColumnDrop}
@@ -9878,7 +10029,7 @@ function KanbanView({
   remeasureToken,
   explicitExpectedKv,
   wonStage,
-  onLoadMore,
+  onLoadStagePages,
   scrollLoad,
   stageCounts,
   columnScrollMode = 'unified',
@@ -9886,6 +10037,8 @@ function KanbanView({
 }) {
   const kanbanHScrollRef = useRef(null);
   const loadMoreCooldownRef = useRef(false);
+  const visibleStageIdsRef = useRef(new Set());
+  const visibleLoadTimerRef = useRef(null);
   const perColumnScroll = columnScrollMode === 'per-column';
   const pipelineStages = useMemo(
     () => (quickMoveStages?.length ? quickMoveStages : (pipeline || []).map(({ items, ...stage }) => stage)),
@@ -9900,14 +10053,38 @@ function KanbanView({
     return !!t?.closest?.('[data-crm-pipeline-card]');
   }, []);
 
+  const requestVisibleStagePages = useCallback((ensureInitial = false) => {
+    if (!onLoadStagePages) return;
+    const stageIds = [...visibleStageIdsRef.current];
+    if (!stageIds.length) return;
+    onLoadStagePages(stageIds, { ensureInitial });
+  }, [onLoadStagePages]);
+
+  const handleColumnVisibilityChange = useCallback((stageId, visible) => {
+    const id = String(stageId || '');
+    if (!id) return;
+    if (visible) visibleStageIdsRef.current.add(id);
+    else visibleStageIdsRef.current.delete(id);
+    if (!visible) return;
+    if (visibleLoadTimerRef.current) window.clearTimeout(visibleLoadTimerRef.current);
+    visibleLoadTimerRef.current = window.setTimeout(() => {
+      visibleLoadTimerRef.current = null;
+      requestVisibleStagePages(true);
+    }, 80);
+  }, [requestVisibleStagePages]);
+
+  useEffect(() => () => {
+    if (visibleLoadTimerRef.current) window.clearTimeout(visibleLoadTimerRef.current);
+  }, []);
+
   const tryLoadMore = useCallback(() => {
-    if (loadMoreCooldownRef.current || !scrollLoad?.hasMore || scrollLoad?.loading || !onLoadMore) return;
+    if (loadMoreCooldownRef.current || !scrollLoad?.hasMore || scrollLoad?.loading || !onLoadStagePages) return;
     loadMoreCooldownRef.current = true;
-    onLoadMore();
+    requestVisibleStagePages(false);
     window.setTimeout(() => {
       loadMoreCooldownRef.current = false;
     }, 700);
-  }, [scrollLoad?.hasMore, scrollLoad?.loading, onLoadMore]);
+  }, [scrollLoad?.hasMore, scrollLoad?.loading, onLoadStagePages, requestVisibleStagePages]);
 
   useEffect(() => {
     if (perColumnScroll) return undefined;
@@ -9961,9 +10138,10 @@ function KanbanView({
             wonStage={wonStage}
             stageCounts={stageCounts}
             columnScrollMode={columnScrollMode}
-            onColumnScrollNearEnd={perColumnScroll ? tryLoadMore : undefined}
+            onColumnScrollNearEnd={perColumnScroll ? () => onLoadStagePages?.([stage.id], { ensureInitial: false }) : undefined}
+            onColumnVisibilityChange={handleColumnVisibilityChange}
             searchHighlightId={searchHighlightId}
-            boardScrollRef={perColumnScroll ? null : kanbanHScrollRef}
+            boardScrollRef={kanbanHScrollRef}
           />
         ))}
         {scrollLoad?.hasMore && (
