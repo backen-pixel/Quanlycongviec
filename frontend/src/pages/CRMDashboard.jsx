@@ -438,12 +438,11 @@ const KANBAN_LOAD_PRESET_VALUES = ['500', '1000', '2000'];
 const KANBAN_COLUMN_SCROLL_MODES = ['unified', 'per-column'];
 const KANBAN_DEFAULT_COLUMN_SCROLL_MODE = 'unified';
 const LS_CRM_KANBAN_COLUMN_SCROLL = 'crm_kanban_column_scroll_mode';
-/** Mỗi lần tải Kanban (trang đầu + cuộn) — 500 thẻ/lần. */
-const KANBAN_PAGE_SIZE = 500;
-/** Mặc định trần auto-load khi cuộn (chọn «Tải tất cả» để vượt trần). */
+/** Trang đầu và mỗi lần cuộn chỉ lấy 40 thẻ để phản hồi nhanh, không nạp dồn dữ liệu. */
+const KANBAN_INITIAL_PAGE_SIZE = 40;
+const KANBAN_PAGE_SIZE = 40;
+/** Mặc định trần auto-load khi cuộn; có thể tăng trần nhưng vẫn tải từng batch 40. */
 const KANBAN_DEFAULT_LOAD_LIMIT = '500';
-/** Số vòng API tối đa khi «Tải tất cả» — dừng khi hết dữ liệu (hasMore=false). */
-const KANBAN_LOAD_ALL_GUARD = 500;
 
 const CRM_VIEW_MODES = [
   { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
@@ -458,7 +457,8 @@ const CRM_ALT_VIEW_MODES = CRM_VIEW_MODES.filter((v) => v.id !== 'kanban');
 function normalizeStoredKanbanLoadLimit(raw) {
   const s = String(raw ?? '').trim().toLowerCase();
   if (!s) return KANBAN_DEFAULT_LOAD_LIMIT;
-  if (s === 'all') return 'all';
+  // Giá trị cũ "all" được hạ về trần an toàn; không còn tải toàn bộ một lần.
+  if (s === 'all') return KANBAN_DEFAULT_LOAD_LIMIT;
   if (KANBAN_LOAD_PRESET_VALUES.includes(s)) return s;
   const n = parseInt(s, 10);
   if (Number.isFinite(n) && n > 0) return String(n);
@@ -467,14 +467,12 @@ function normalizeStoredKanbanLoadLimit(raw) {
 
 function resolveKanbanLoadLimitPreset(kanbanLoadLimit) {
   const s = String(kanbanLoadLimit ?? '').trim().toLowerCase();
-  if (s === 'all') return 'all';
   if (KANBAN_LOAD_PRESET_VALUES.includes(s)) return s;
   return 'custom';
 }
 
 function formatKanbanLoadLimitLabel(kanbanLoadLimit) {
   const preset = resolveKanbanLoadLimitPreset(kanbanLoadLimit);
-  if (preset === 'all') return 'Tất cả (không giới hạn)';
   if (preset === 'custom') {
     const n = parseInt(kanbanLoadLimit, 10);
     return Number.isFinite(n) ? `${n.toLocaleString('vi-VN')} bản ghi (tùy chỉnh)` : 'Tùy chỉnh';
@@ -483,31 +481,32 @@ function formatKanbanLoadLimitLabel(kanbanLoadLimit) {
 }
 
 function resolveKanbanAutoLoadCap(kanbanLoadLimit) {
-  if (String(kanbanLoadLimit ?? '').trim().toLowerCase() === 'all') return Number.POSITIVE_INFINITY;
   const n = parseInt(kanbanLoadLimit, 10);
   return Number.isFinite(n) && n > 0 ? n : 500;
 }
 
 function normalizeCrmKanbanLoadSpec(loadSpec) {
   if (loadSpec == null || loadSpec === 'initial') {
-    return { offset: 0, limit: KANBAN_PAGE_SIZE, loadAll: false };
+    return { offset: 0, limit: KANBAN_INITIAL_PAGE_SIZE };
   }
   if (typeof loadSpec === 'string') {
-    if (loadSpec.toLowerCase() === 'all') return { loadAll: true };
     const n = parseInt(loadSpec, 10);
-    if (Number.isFinite(n) && n > 0) return { offset: 0, limit: n, loadAll: false };
-    return { offset: 0, limit: KANBAN_PAGE_SIZE, loadAll: false };
+    if (Number.isFinite(n) && n > 0) return { offset: 0, limit: n };
+    return { offset: 0, limit: KANBAN_PAGE_SIZE };
   }
   const offset = Math.max(parseInt(loadSpec.offset, 10) || 0, 0);
   const limit = loadSpec.limit ?? KANBAN_PAGE_SIZE;
-  return { offset, limit, loadAll: !!loadSpec.loadAll };
+  return { offset, limit };
 }
 
-/** Giới hạn 1 batch tải Kanban — luôn 500 (hoặc phần còn lại tới trần cap). */
+/** Trang đầu và các lần cuộn đều tải tối đa 40 thẻ (hoặc phần còn lại tới trần cap). */
 function resolveKanbanBatchLimit(kanbanLoadLimit, offset, loadedCount) {
   const cap = resolveKanbanAutoLoadCap(kanbanLoadLimit);
   const remaining = cap - (typeof loadedCount === 'number' ? loadedCount : offset);
   if (remaining <= 0) return 0;
+  if (offset === 0 && (!loadedCount || loadedCount <= 0)) {
+    return Math.min(KANBAN_INITIAL_PAGE_SIZE, remaining);
+  }
   return Math.min(KANBAN_PAGE_SIZE, remaining);
 }
 
@@ -542,8 +541,6 @@ function formatCrmPipelineTabCount(total, fallbackLen) {
 
 /** Query flags — backend trả select nhẹ + bỏ enrich nặng cho Kanban. */
 const CRM_KANBAN_LEAD_QUERY = { kanban: '1', lite: '1', skip_deadline: '1' };
-/** Trì hoãn pipeline/tab không active — ngắn để tab Deal/Lead kia không trống quá lâu. */
-const CRM_INACTIVE_PIPELINE_DEFER_MS = 400;
 function crmDashboardUsesLegacyListFilters({ filterLeadType, filterReferrer, filterCustomerCompany }) {
   return !!(
     filterLeadType
@@ -556,31 +553,6 @@ function crmDashboardUsesLegacyListFilters({ filterLeadType, filterReferrer, fil
 async function fetchCrmKanbanRowsPage(apiClient, common, loadSpec = 'initial') {
   const leadParams = { ...CRM_KANBAN_LEAD_QUERY, ...common };
   const spec = normalizeCrmKanbanLoadSpec(loadSpec);
-  if (spec.loadAll) {
-    const chunk = 1000;
-    let offset = 0;
-    const out = [];
-    let guard = 0;
-    while (guard < KANBAN_LOAD_ALL_GUARD) {
-      guard += 1;
-      const res = await apiClient.get('/crm/leads', { params: { ...leadParams, limit: chunk, offset } });
-      const payload = res.data || {};
-      const page = Array.isArray(payload) ? payload : (payload.data || []);
-      out.push(...page);
-      if (page.length === 0) break;
-      const totalKnown = typeof payload.total === 'number' ? payload.total : null;
-      const nextOffset = typeof payload.nextOffset === 'number' ? payload.nextOffset : offset + page.length;
-      const hasMore =
-        typeof payload.hasMore === 'boolean'
-          ? payload.hasMore
-          : totalKnown != null
-            ? nextOffset < totalKnown
-            : page.length >= chunk;
-      if (!hasMore) break;
-      offset = nextOffset;
-    }
-    return { rows: out, nextOffset: null, total: out.length };
-  }
   const { limit, offset } = spec;
   const res = await apiClient.get('/crm/leads', { params: { ...leadParams, limit, offset } });
   const d = res.data;
@@ -1619,8 +1591,7 @@ export default function CRMDashboard() {
     } else {
       setKanbanLoadCustomOpen(false);
     }
-    // «Tất cả» / đổi trần lớn: tải lại ngay (tránh chỉ đổi cap mà vẫn giữ 500 thẻ cũ).
-    if (reload || normalized === 'all') {
+    if (reload) {
       void loadRef.current?.({ silent: true, kanbanLoadLimitOverride: normalized });
     }
   }, []);
@@ -2981,7 +2952,7 @@ export default function CRMDashboard() {
           })
         : Promise.resolve(),
       ...[...typesToRefreshKpi].map((t) => ctx.refreshCrmDashboardSlice?.(t)),
-      ...(typesToRefreshKpi.has('deal') ? [Promise.resolve(ctx.refreshPipelineDealTabTotals?.())] : []),
+      ...(typesToRefreshKpi.size ? [Promise.resolve(ctx.refreshCrmFilterSummary?.())] : []),
     ]);
 
     setLastSyncAt(new Date());
@@ -3095,12 +3066,6 @@ export default function CRMDashboard() {
     ],
   );
 
-  useEffect(() => {
-    if (preserveKanbanDuringFilterRef.current) return;
-    void refreshPipelinePhoneTotalsForType('lead');
-    void refreshPipelinePhoneTotalsForType('deal');
-  }, [refreshPipelinePhoneTotalsForType]);
-
   const stagesDealRef = useRef(stagesDeal);
   stagesDealRef.current = stagesDeal;
 
@@ -3163,11 +3128,127 @@ export default function CRMDashboard() {
     dashboardScopeCompanyId,
   ]);
 
+  const filterSummaryInflightRef = useRef(null);
+  const filterSummaryFallbackInflightRef = useRef(null);
+
+  /** Một request/RPC cho 2 pipeline: bucket SĐT + stage counts Deal theo filter hiện tại. */
+  const refreshCrmFilterSummary = useCallback(async () => {
+    if (preserveKanbanDuringFilterRef.current) return;
+    if (filterSource && String(filterSource).startsWith('fbp:')) return;
+    const requestGeneration = kanbanRequestGenerationRef.current;
+    const co = dashboardScopeCompanyId || filterCompany;
+    const params = buildCrmKanbanServerFilterParams({
+      type: 'lead',
+      filterPhone,
+      filterAssignee,
+      filterAssigneeName,
+      filterCompany: co || '',
+      filterLeadType,
+      filterReferrer,
+      filterCustomerCompany,
+      filterRegion,
+      filterStage: '',
+      filterSource,
+      searchText,
+      customDateFrom,
+      customDateTo,
+    });
+    delete params.type;
+    // buildCrmKanbanServerFilterParams cố ý để __none__ ở client cho danh sách;
+    // RPC summary hỗ trợ trực tiếp để KPI vẫn chính xác.
+    if (filterReferrer) params.referrer_name = filterReferrer;
+    const requestKey = JSON.stringify(params);
+    let summaryPromise;
+    let ownsSummaryRequest = false;
+    if (filterSummaryInflightRef.current?.key === requestKey) {
+      summaryPromise = filterSummaryInflightRef.current.promise;
+    } else {
+      ownsSummaryRequest = true;
+      summaryPromise = api.get('/crm/filter-summary', { params });
+      filterSummaryInflightRef.current = { key: requestKey, promise: summaryPromise };
+    }
+    try {
+      const { data } = await summaryPromise;
+      if (
+        requestGeneration !== kanbanRequestGenerationRef.current
+        || preserveKanbanDuringFilterRef.current
+      ) return;
+      const lead = data?.lead || {};
+      const deal = data?.deal || {};
+      setPipelinePhoneTotals({
+        lead: {
+          hasPhone: Number(lead.hasPhone) || 0,
+          noPhone: Number(lead.noPhone) || 0,
+          all: Number(lead.all) || 0,
+        },
+        deal: {
+          hasPhone: Number(deal.hasPhone) || 0,
+          noPhone: Number(deal.noPhone) || 0,
+          all: Number(deal.all) || 0,
+        },
+      });
+      const dealCounts = deal.counts && typeof deal.counts === 'object' ? deal.counts : {};
+      setPipelineDealTabTotals(
+        sumCrmDealTabCountsFromStageCounts(stagesDealRef.current || [], dealCounts),
+      );
+    } catch (e) {
+      if (
+        requestGeneration !== kanbanRequestGenerationRef.current
+        || preserveKanbanDuringFilterRef.current
+      ) return;
+      // Chưa chạy migration 471: giữ tương thích bằng các endpoint cũ.
+      let fallbackPromise;
+      let ownsFallback = false;
+      if (filterSummaryFallbackInflightRef.current?.key === requestKey) {
+        fallbackPromise = filterSummaryFallbackInflightRef.current.promise;
+      } else {
+        ownsFallback = true;
+        fallbackPromise = Promise.all([
+          refreshPipelinePhoneTotalsForType('lead'),
+          refreshPipelinePhoneTotalsForType('deal'),
+          refreshPipelineDealTabTotals(),
+        ]);
+        filterSummaryFallbackInflightRef.current = { key: requestKey, promise: fallbackPromise };
+      }
+      try {
+        await fallbackPromise;
+      } finally {
+        if (
+          ownsFallback
+          && filterSummaryFallbackInflightRef.current?.promise === fallbackPromise
+        ) {
+          filterSummaryFallbackInflightRef.current = null;
+        }
+      }
+    } finally {
+      if (ownsSummaryRequest && filterSummaryInflightRef.current?.promise === summaryPromise) {
+        filterSummaryInflightRef.current = null;
+      }
+    }
+  }, [
+    customDateFrom,
+    customDateTo,
+    filterPhone,
+    filterAssignee,
+    filterAssigneeName,
+    filterCompany,
+    filterRegion,
+    filterLeadType,
+    filterReferrer,
+    filterCustomerCompany,
+    filterSource,
+    searchText,
+    dashboardScopeCompanyId,
+    refreshPipelinePhoneTotalsForType,
+    refreshPipelineDealTabTotals,
+  ]);
+
   useEffect(() => {
     if (preserveKanbanDuringFilterRef.current) return;
-    void refreshPipelineDealTabTotals();
-  }, [refreshPipelineDealTabTotals, stagesDeal]);
+    void refreshCrmFilterSummary();
+  }, [refreshCrmFilterSummary, stagesDeal]);
 
+  crmRealtimeCtxRef.current.refreshCrmFilterSummary = refreshCrmFilterSummary;
   crmRealtimeCtxRef.current.refreshPipelineDealTabTotals = refreshPipelineDealTabTotals;
   crmRealtimeCtxRef.current.refreshPipelinePhoneTotalsForType = refreshPipelinePhoneTotalsForType;
 
@@ -3176,11 +3257,10 @@ export default function CRMDashboard() {
       void Promise.all([
         refreshKanbanListAfterCreate(type),
         refreshCrmDashboardSlice(type),
-        refreshPipelinePhoneTotalsForType(type),
-        type === 'deal' ? refreshPipelineDealTabTotals() : Promise.resolve(),
+        refreshCrmFilterSummary(),
       ]);
     },
-    [refreshKanbanListAfterCreate, refreshCrmDashboardSlice, refreshPipelinePhoneTotalsForType, refreshPipelineDealTabTotals],
+    [refreshKanbanListAfterCreate, refreshCrmDashboardSlice, refreshCrmFilterSummary],
   );
 
   const scopedCompanyName = useMemo(() => {
@@ -3428,9 +3508,7 @@ export default function CRMDashboard() {
         finishCrmLoadProgress(() => {});
       }
       // Effect badge bị bỏ qua lúc preserve=true — refresh lại cả Lead/Deal sau khi scope mới sẵn sàng.
-      void refreshPipelinePhoneTotalsForType('lead');
-      void refreshPipelinePhoneTotalsForType('deal');
-      void refreshPipelineDealTabTotals();
+      void refreshCrmFilterSummary();
     };
     try {
       let resolvedCompanyId = filterCompany;
@@ -3486,10 +3564,6 @@ export default function CRMDashboard() {
         ? normalizeStoredKanbanLoadLimit(opts.kanbanLoadLimitOverride)
         : kanbanLoadLimit;
       const fetchKanbanRows = (type, offset = 0) => {
-        // «Tất cả»: tải hết theo vòng lặp API (không chỉ 500 bản ghi đầu).
-        if (String(effectiveKanbanLoadLimit ?? '').trim().toLowerCase() === 'all' && offset === 0) {
-          return fetchCrmKanbanRowsPage(api, buildKanbanCommon(type), { loadAll: true });
-        }
         const loaded = type === 'lead' ? allLeads.length : allDeals.length;
         const limit = resolveKanbanBatchLimit(effectiveKanbanLoadLimit, offset, offset > 0 ? loaded : 0);
         return fetchCrmKanbanRowsPage(api, buildKanbanCommon(type), { offset, limit });
@@ -3504,10 +3578,8 @@ export default function CRMDashboard() {
       };
       // dashListParams dùng chung filter; type được ghi đè ở từng request.
       delete dashListParams.type;
-      const loadAllKanban = String(effectiveKanbanLoadLimit ?? '').trim().toLowerCase() === 'all';
       const canUseBootstrap =
-        !crmDashboardUsesLegacyListFilters({ filterLeadType, filterReferrer, filterCustomerCompany })
-        && !loadAllKanban;
+        !crmDashboardUsesLegacyListFilters({ filterLeadType, filterReferrer, filterCustomerCompany });
 
       const userKey = getCurrentUserKeyForLeadSeen(user);
       const viewedLocal = getLocallyViewedLeadIdSet(userKey);
@@ -3571,7 +3643,6 @@ export default function CRMDashboard() {
             }
           });
         })();
-        void refreshPipelinePhoneTotalsForType(type);
         if (type === 'lead') {
           void (async () => {
             const { minimal: _dropMinimal, ...dashKpiParams } = dashListParams;
@@ -3582,14 +3653,6 @@ export default function CRMDashboard() {
             setDataLead((prev) => (prev ? { ...prev, kpis: { ...prev.kpis, ...data.kpis } } : data));
           })();
         }
-      };
-
-      const prefetchInactivePipeline = () => {
-        const scheduledGeneration = requestGeneration;
-        window.setTimeout(() => {
-          if (scheduledGeneration !== kanbanRequestGenerationRef.current) return;
-          void loadRef.current?.({ silent: true, onlyType: inactiveType, background: true });
-        }, CRM_INACTIVE_PIPELINE_DEFER_MS);
       };
 
       let usedBootstrap = false;
@@ -3628,7 +3691,6 @@ export default function CRMDashboard() {
             markLoadComplete();
           }
           runDeferredCrmEnrichment(activeType, activeMerged, boot.dashboard);
-          if (!onlyType && !background) prefetchInactivePipeline();
           void (async () => {
             try {
               const [
@@ -3755,7 +3817,6 @@ export default function CRMDashboard() {
         markLoadComplete();
       }
       runDeferredCrmEnrichment(activeType, activeMerged, dashActiveRes.data);
-      if (!onlyType && !background) prefetchInactivePipeline();
       void (async () => {
         try {
           const inactiveParams = inactiveType === 'lead' ? stagesLeadParams : stagesDealParams;
@@ -5549,12 +5610,12 @@ export default function CRMDashboard() {
 
   loadRef.current = load;
 
-  /** Tab Lead/Deal chưa có cột — prefetch nền (không loader, không chặn UI). */
+  /** Chỉ tải dữ liệu tab Lead/Deal khi người dùng mở tab đó; không prefetch 40 card tab ẩn. */
   useEffect(() => {
     if (!crmDashboardDataReady || firstLoading || syncing || companyHasNoPipeline) return;
     const type = pipelineType === 'deal' ? 'deal' : 'lead';
-    const stagesLen = type === 'lead' ? stagesLead.length : stagesDeal.length;
-    if (stagesLen > 0) {
+    const total = type === 'lead' ? loadMoreState.leadTotal : loadMoreState.dealTotal;
+    if (total !== null) {
       missingPipelineLoadRef.current[type] = false;
       return;
     }
@@ -5567,8 +5628,8 @@ export default function CRMDashboard() {
     syncing,
     companyHasNoPipeline,
     pipelineType,
-    stagesLead.length,
-    stagesDeal.length,
+    loadMoreState.leadTotal,
+    loadMoreState.dealTotal,
   ]);
 
   /**
@@ -6477,7 +6538,7 @@ export default function CRMDashboard() {
                   <div className="my-3 border-t border-gray-100" />
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">Giới hạn tải Kanban</p>
                   <p className="text-[11px] text-gray-500 leading-snug mb-2">
-                    Trần số lead/deal tự tải khi cuộn. Chọn «Tất cả» sẽ tải lại toàn bộ (không giới hạn). Tùy chỉnh nhập số bản ghi bất kỳ. Mỗi lần gọi API tối đa {KANBAN_PAGE_SIZE.toLocaleString('vi-VN')} bản ghi.
+                    Trần số lead/deal tự tải khi cuộn. Dữ liệu luôn tải dần từng {KANBAN_PAGE_SIZE.toLocaleString('vi-VN')} thẻ, không nạp toàn bộ một lần.
                   </p>
                   <div className="grid grid-cols-3 gap-1">
                     {KANBAN_LOAD_PRESET_VALUES.map((v) => (
@@ -6495,18 +6556,7 @@ export default function CRMDashboard() {
                       </button>
                     ))}
                   </div>
-                  <div className="grid grid-cols-2 gap-1 mt-1">
-                    <button
-                      type="button"
-                      onClick={() => applyKanbanLoadLimit('all')}
-                      className={`rounded-md px-1.5 py-1.5 text-[11px] font-semibold transition-all cursor-pointer border ${
-                        kanbanLoadLimitPreset === 'all'
-                          ? 'bg-violet-600 text-white border-violet-600 shadow-sm'
-                          : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
-                      }`}
-                    >
-                      Tất cả
-                    </button>
+                  <div className="mt-1">
                     <button
                       type="button"
                       onClick={() => {
@@ -6517,7 +6567,7 @@ export default function CRMDashboard() {
                             : '1000',
                         );
                       }}
-                      className={`rounded-md px-1.5 py-1.5 text-[11px] font-semibold transition-all cursor-pointer border ${
+                      className={`w-full rounded-md px-1.5 py-1.5 text-[11px] font-semibold transition-all cursor-pointer border ${
                         kanbanLoadLimitPreset === 'custom' || kanbanLoadCustomOpen
                           ? 'bg-violet-600 text-white border-violet-600 shadow-sm'
                           : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
@@ -6537,7 +6587,7 @@ export default function CRMDashboard() {
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') applyKanbanLoadCustomDraft();
                         }}
-                        placeholder="Số bản ghi (không giới hạn)"
+                        placeholder="Trần số bản ghi"
                         className="min-w-0 flex-1 h-8 rounded-md border border-gray-200 bg-white px-2 text-xs tabular-nums focus:border-violet-400 focus:ring-1 focus:ring-violet-200 outline-none"
                       />
                       <button
@@ -7514,8 +7564,8 @@ export default function CRMDashboard() {
               columnScrollMode={kanbanColumnScrollMode}
               searchHighlightId={kanbanSearchHighlightId}
             />
-            {/* Tải thêm khi cuộn — trạng thái + nút tải hết */}
-            {kanbanLoadLimit !== 'all' && kanbanScrollLoad.hasMore && (
+            {/* Tải thêm tự động khi cuộn — không giữ đường tải toàn bộ trong bộ nhớ. */}
+            {kanbanScrollLoad.hasMore && (
                 <div className="flex items-center justify-center gap-3 py-3 border-t border-gray-100 bg-gray-50/50 rounded-b-xl">
                   <span className="text-xs text-gray-500">
                     Đã tải <span className="font-semibold text-gray-700">{kanbanScrollLoad.loaded.toLocaleString()}</span>
@@ -7535,23 +7585,11 @@ export default function CRMDashboard() {
                       Đang tải…
                     </span>
                   )}
-                  <button
-                    onClick={() => { applyKanbanLoadLimit('all', { reload: true }); }}
-                    className="h-8 px-3 border border-gray-200 bg-white text-xs text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
-                  >
-                    Tải tất cả
-                  </button>
                 </div>
             )}
-            {kanbanLoadLimit !== 'all' && !kanbanScrollLoad.hasMore && kanbanScrollLoad.loaded > 0 && kanbanScrollLoad.total != null && kanbanScrollLoad.loaded < kanbanScrollLoad.total && (
+            {!kanbanScrollLoad.hasMore && kanbanScrollLoad.loaded > 0 && kanbanScrollLoad.total != null && kanbanScrollLoad.loaded < kanbanScrollLoad.total && (
                 <div className="flex items-center justify-center gap-3 py-2 border-t border-gray-100 bg-amber-50/40 rounded-b-xl text-xs text-amber-800">
                   <span>Đã tải {kanbanScrollLoad.loaded.toLocaleString()} / {kanbanScrollLoad.total.toLocaleString()} (giới hạn {kanbanScrollLoad.cap.toLocaleString()})</span>
-                  <button
-                    onClick={() => { applyKanbanLoadLimit('all', { reload: true }); }}
-                    className="h-7 px-2.5 border border-amber-200 bg-white rounded-lg hover:bg-amber-50"
-                  >
-                    Tải tất cả
-                  </button>
                 </div>
             )}
           </div>
@@ -9806,7 +9844,6 @@ function KanbanView({
   searchHighlightId = null,
 }) {
   const kanbanHScrollRef = useRef(null);
-  const kanbanLoadSentinelRef = useRef(null);
   const loadMoreCooldownRef = useRef(false);
   const perColumnScroll = columnScrollMode === 'per-column';
   const pipelineStages = useMemo(
@@ -9834,23 +9871,15 @@ function KanbanView({
   useEffect(() => {
     if (perColumnScroll) return undefined;
     const root = kanbanHScrollRef.current;
-    const sentinel = kanbanLoadSentinelRef.current;
-    if (!root || !sentinel || !scrollLoad?.hasMore) return undefined;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) tryLoadMore();
-      },
-      { root, rootMargin: '160px', threshold: 0 },
-    );
-    obs.observe(sentinel);
-    return () => obs.disconnect();
+    if (!root || !scrollLoad?.hasMore) return undefined;
+    const onScroll = () => {
+      if (root.scrollTop + root.clientHeight >= root.scrollHeight - 180) {
+        tryLoadMore();
+      }
+    };
+    root.addEventListener('scroll', onScroll, { passive: true });
+    return () => root.removeEventListener('scroll', onScroll);
   }, [perColumnScroll, scrollLoad?.hasMore, scrollLoad?.loading, tryLoadMore]);
-
-  useEffect(() => {
-    const root = kanbanHScrollRef.current;
-    if (!root) return;
-    root.scrollTop = 0;
-  }, [remeasureToken]);
 
   return (
     <WorkshopPipelineKanbanScroll
@@ -9897,7 +9926,6 @@ function KanbanView({
         ))}
         {scrollLoad?.hasMore && (
           <div
-            ref={kanbanLoadSentinelRef}
             className="flex-shrink-0 w-8 self-stretch flex items-end justify-center pb-6"
             aria-hidden
           >

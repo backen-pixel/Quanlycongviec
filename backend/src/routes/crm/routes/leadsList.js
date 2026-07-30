@@ -205,6 +205,100 @@ r.get('/stage-counts', responseCache({ ttl: 90, scope: 'user', tags: ['crm:list'
   }
 });
 
+r.get('/filter-summary', responseCache({ ttl: 90, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
+  try {
+    // Lead và Deal có thể khác scope assigned_to theo role, nên resolve độc lập.
+    const leadReq = { query: { ...req.query, type: 'lead' }, user: req.user };
+    const dealReq = { query: { ...req.query, type: 'deal' }, user: req.user };
+    const leadCtx = await resolveCrmLeadsMergedQuery(leadReq, res);
+    if (!leadCtx || res.headersSent) return;
+    const dealCtx = await resolveCrmLeadsMergedQuery(dealReq, res);
+    if (!dealCtx || res.headersSent) return;
+
+    const companyId =
+      uuidQueryOrNull(leadCtx.mergedQuery.company_id)
+      || uuidQueryOrNull(dealCtx.mergedQuery.company_id);
+    const regionId =
+      uuidQueryOrNull(leadCtx.mergedQuery.region_id)
+      || uuidQueryOrNull(dealCtx.mergedQuery.region_id);
+    const [leadStages, dealStages] = await Promise.all([
+      resolveKanbanStagesForCompany('lead', companyId, regionId, leadReq),
+      resolveKanbanStagesForCompany('deal', companyId, regionId, dealReq),
+    ]);
+    const leadFilters = buildCrmLeadsRpcFilterParams(
+      leadCtx.mergedQuery,
+      'lead',
+      leadCtx.rpcAssigneeStrict,
+      leadCtx.rpcRegionIds,
+    );
+    const dealFilters = buildCrmLeadsRpcFilterParams(
+      dealCtx.mergedQuery,
+      'deal',
+      dealCtx.rpcAssigneeStrict,
+      dealCtx.rpcRegionIds,
+    );
+    const regionIds = [
+      ...(Array.isArray(leadFilters.p_region_ids) ? leadFilters.p_region_ids : []),
+      ...(Array.isArray(dealFilters.p_region_ids) ? dealFilters.p_region_ids : []),
+    ];
+    const rpcParams = {
+      p_company_id: companyId,
+      p_lead_assigned_to: leadFilters.p_assigned_to,
+      p_deal_assigned_to: dealFilters.p_assigned_to,
+      p_lead_assigned_strict: leadFilters.p_assigned_strict,
+      p_deal_assigned_strict: dealFilters.p_assigned_strict,
+      p_source_id: leadFilters.p_source_id || dealFilters.p_source_id,
+      p_date_from: leadFilters.p_date_from || dealFilters.p_date_from,
+      p_date_to: leadFilters.p_date_to || dealFilters.p_date_to,
+      p_search: leadFilters.p_search || dealFilters.p_search,
+      p_assignee_name: leadFilters.p_assignee_name || dealFilters.p_assignee_name,
+      p_region_ids: regionIds.length ? [...new Set(regionIds)] : null,
+      p_region_unassigned:
+        !!leadFilters.p_region_unassigned || !!dealFilters.p_region_unassigned,
+      p_lead_stage_ids: (leadStages || []).map((s) => s.id).filter(Boolean),
+      p_deal_stage_ids: (dealStages || []).map((s) => s.id).filter(Boolean),
+      p_phone_filter: req.query.phone_filter || null,
+      p_lead_type_id: uuidQueryOrNull(req.query.lead_type_id),
+      p_referrer_name: String(req.query.referrer_name || '').trim() || null,
+      p_customer_company: String(req.query.customer_company || '').trim() || null,
+    };
+    const { data, error } = await supabase.rpc('crm_filter_summary', rpcParams);
+    if (error) {
+      const unavailable = /crm_filter_summary|does not exist|Could not find|argument/i.test(
+        String(error.message || ''),
+      );
+      if (unavailable) {
+        return res.status(503).json({
+          error: 'CRM filter summary RPC chưa được cài đặt',
+          code: 'CRM_FILTER_SUMMARY_RPC_UNAVAILABLE',
+        });
+      }
+      throw error;
+    }
+    const normalize = (value) => {
+      const src = value && typeof value === 'object' ? value : {};
+      const num = (v) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : 0;
+      };
+      return {
+        all: num(src.all),
+        hasPhone: num(src.has_phone),
+        noPhone: num(src.no_phone),
+        selectedTotal: num(src.selected_total),
+        counts: src.counts && typeof src.counts === 'object' ? src.counts : {},
+      };
+    };
+    return res.json({
+      lead: normalize(data?.lead),
+      deal: normalize(data?.deal),
+    });
+  } catch (e) {
+    console.error('[crm/filter-summary]', e);
+    return res.status(500).json({ error: e.message || 'Không tải được tổng bộ lọc CRM' });
+  }
+});
+
 r.get('/leads-deadlines', responseCache({ ttl: 30, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
   try {
     // Giới hạn thấp — URL dài dễ vượt proxy (~2–8KB); client nên dùng POST.

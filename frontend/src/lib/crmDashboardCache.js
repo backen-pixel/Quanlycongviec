@@ -9,7 +9,8 @@
  * - Key gồm user.id + bộ lọc → chuyển công ty/NV không lẫn dữ liệu cũ.
  */
 
-const STORAGE_KEY = 'crm-dashboard-cache:v2';
+// v3: Kanban phân trang 40 thẻ; không hydrate lại cache v2 từng chứa 500+ thẻ.
+const STORAGE_KEY = 'crm-dashboard-cache:v3';
 const META_STORAGE_KEY = 'crm-dashboard-meta-cache:v1'; // localStorage — metadata tĩnh
 const HARD_EXPIRY_MS = 30 * 60 * 1000; // 30 phút mới xóa hẳn
 const FRESH_TTL_MS = 10 * 60 * 1000; // < 10 phút coi là tươi
