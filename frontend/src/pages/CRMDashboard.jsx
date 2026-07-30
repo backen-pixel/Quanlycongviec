@@ -1540,6 +1540,8 @@ export default function CRMDashboard() {
 
   /** Tổng số lead/deal theo SĐT từ stage-counts (khớp badge Hub app); fallback /crm/leads. */
   const [pipelinePhoneTotals, setPipelinePhoneTotals] = useState({ lead: null, deal: null });
+  /** Tổng chính xác theo từng cột từ filter-summary; độc lập với 40 card đã tải. */
+  const [pipelineStageCounts, setPipelineStageCounts] = useState({ lead: null, deal: null });
   /** Tổng Deal/Đơn hàng từ GET /crm/stage-counts (server) — không dùng số thẻ đã tải. */
   const [pipelineDealTabTotals, setPipelineDealTabTotals] = useState(null);
 
@@ -2853,6 +2855,12 @@ export default function CRMDashboard() {
 
     const idsToDelete = new Set();
     const idsToFetch = new Set();
+    const loadedIds = new Set([
+      ...allLeadsRef.current.map((r) => String(r.id)),
+      ...allDealsRef.current.map((r) => String(r.id)),
+    ]);
+    const shouldHydrateId = (id, ev) =>
+      loadedIds.has(String(id)) || ev?.action === 'created';
     let needsListRefresh = false;
     const typesToRefreshKpi = new Set();
 
@@ -2863,11 +2871,13 @@ export default function CRMDashboard() {
         typesToRefreshKpi.add(ctx.pipelineType === 'lead' ? 'lead' : 'deal');
       } else if (ev.action === 'merged' || ev.action === 'merged_selected') {
         for (const did of ev.delete_ids || []) idsToDelete.add(String(did));
-        if (ev.keep_id) idsToFetch.add(String(ev.keep_id));
+        if (ev.keep_id && loadedIds.has(String(ev.keep_id))) idsToFetch.add(String(ev.keep_id));
         typesToRefreshKpi.add('lead');
         typesToRefreshKpi.add('deal');
       } else if (ev.action === 'bulk_assigned' && ev.lead_ids?.length) {
-        for (const lid of ev.lead_ids) idsToFetch.add(String(lid));
+        for (const lid of ev.lead_ids) {
+          if (loadedIds.has(String(lid))) idsToFetch.add(String(lid));
+        }
         if (ev.type) typesToRefreshKpi.add(ev.type);
       }
     }
@@ -2893,7 +2903,7 @@ export default function CRMDashboard() {
       if (typeof ev.title === 'string' && ev.title.trim()) {
         patchId(id, { title: ev.title.trim() });
       }
-      idsToFetch.add(id);
+      if (shouldHydrateId(id, ev)) idsToFetch.add(id);
       if (ev.type) typesToRefreshKpi.add(ev.type);
       else if (ev.action === 'converted_to_deal') {
         typesToRefreshKpi.add('lead');
@@ -3130,6 +3140,7 @@ export default function CRMDashboard() {
 
   const filterSummaryInflightRef = useRef(null);
   const filterSummaryFallbackInflightRef = useRef(null);
+  const filterSummaryUnavailableRef = useRef(false);
 
   /** Một request/RPC cho 2 pipeline: bucket SĐT + stage counts Deal theo filter hiện tại. */
   const refreshCrmFilterSummary = useCallback(async () => {
@@ -3158,45 +3169,7 @@ export default function CRMDashboard() {
     // RPC summary hỗ trợ trực tiếp để KPI vẫn chính xác.
     if (filterReferrer) params.referrer_name = filterReferrer;
     const requestKey = JSON.stringify(params);
-    let summaryPromise;
-    let ownsSummaryRequest = false;
-    if (filterSummaryInflightRef.current?.key === requestKey) {
-      summaryPromise = filterSummaryInflightRef.current.promise;
-    } else {
-      ownsSummaryRequest = true;
-      summaryPromise = api.get('/crm/filter-summary', { params });
-      filterSummaryInflightRef.current = { key: requestKey, promise: summaryPromise };
-    }
-    try {
-      const { data } = await summaryPromise;
-      if (
-        requestGeneration !== kanbanRequestGenerationRef.current
-        || preserveKanbanDuringFilterRef.current
-      ) return;
-      const lead = data?.lead || {};
-      const deal = data?.deal || {};
-      setPipelinePhoneTotals({
-        lead: {
-          hasPhone: Number(lead.hasPhone) || 0,
-          noPhone: Number(lead.noPhone) || 0,
-          all: Number(lead.all) || 0,
-        },
-        deal: {
-          hasPhone: Number(deal.hasPhone) || 0,
-          noPhone: Number(deal.noPhone) || 0,
-          all: Number(deal.all) || 0,
-        },
-      });
-      const dealCounts = deal.counts && typeof deal.counts === 'object' ? deal.counts : {};
-      setPipelineDealTabTotals(
-        sumCrmDealTabCountsFromStageCounts(stagesDealRef.current || [], dealCounts),
-      );
-    } catch (e) {
-      if (
-        requestGeneration !== kanbanRequestGenerationRef.current
-        || preserveKanbanDuringFilterRef.current
-      ) return;
-      // Chưa chạy migration 471: giữ tương thích bằng các endpoint cũ.
+    const runFallback = async () => {
       let fallbackPromise;
       let ownsFallback = false;
       if (filterSummaryFallbackInflightRef.current?.key === requestKey) {
@@ -3220,6 +3193,66 @@ export default function CRMDashboard() {
           filterSummaryFallbackInflightRef.current = null;
         }
       }
+    };
+    if (filterSummaryUnavailableRef.current) {
+      await runFallback();
+      return;
+    }
+    let summaryPromise;
+    let ownsSummaryRequest = false;
+    if (filterSummaryInflightRef.current?.key === requestKey) {
+      summaryPromise = filterSummaryInflightRef.current.promise;
+    } else {
+      ownsSummaryRequest = true;
+      summaryPromise = api.get('/crm/filter-summary', { params });
+      filterSummaryInflightRef.current = { key: requestKey, promise: summaryPromise };
+    }
+    try {
+      const { data } = await summaryPromise;
+      if (data?.fallbackRequired || data?.code === 'CRM_FILTER_SUMMARY_RPC_UNAVAILABLE') {
+        filterSummaryUnavailableRef.current = true;
+        await runFallback();
+        return;
+      }
+      if (
+        requestGeneration !== kanbanRequestGenerationRef.current
+        || preserveKanbanDuringFilterRef.current
+      ) return;
+      const lead = data?.lead || {};
+      const deal = data?.deal || {};
+      setPipelineStageCounts({
+        lead: lead.counts && typeof lead.counts === 'object' ? lead.counts : {},
+        deal: deal.counts && typeof deal.counts === 'object' ? deal.counts : {},
+      });
+      setPipelinePhoneTotals({
+        lead: {
+          hasPhone: Number(lead.hasPhone) || 0,
+          noPhone: Number(lead.noPhone) || 0,
+          all: Number(lead.all) || 0,
+        },
+        deal: {
+          hasPhone: Number(deal.hasPhone) || 0,
+          noPhone: Number(deal.noPhone) || 0,
+          all: Number(deal.all) || 0,
+        },
+      });
+      const dealCounts = deal.counts && typeof deal.counts === 'object' ? deal.counts : {};
+      setPipelineDealTabTotals(
+        sumCrmDealTabCountsFromStageCounts(stagesDealRef.current || [], dealCounts),
+      );
+    } catch (e) {
+      if (
+        requestGeneration !== kanbanRequestGenerationRef.current
+        || preserveKanbanDuringFilterRef.current
+      ) return;
+      // Chưa chạy migration 471: giữ tương thích bằng các endpoint cũ.
+      if (
+        e?.response?.status === 503
+        || e?.response?.data?.code === 'CRM_FILTER_SUMMARY_RPC_UNAVAILABLE'
+      ) {
+        filterSummaryUnavailableRef.current = true;
+      }
+      await runFallback();
     } finally {
       if (ownsSummaryRequest && filterSummaryInflightRef.current?.promise === summaryPromise) {
         filterSummaryInflightRef.current = null;
@@ -7561,6 +7594,7 @@ export default function CRMDashboard() {
               wonStage={dealKhSplitEnabled && pipelineType === 'deal' ? wonStage : null}
               onLoadMore={handleLoadMore}
               scrollLoad={kanbanScrollLoad}
+              stageCounts={pipelineType === 'lead' ? pipelineStageCounts.lead : pipelineStageCounts.deal}
               columnScrollMode={kanbanColumnScrollMode}
               searchHighlightId={kanbanSearchHighlightId}
             />
@@ -8995,6 +9029,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
   onOpenSxTransfer,
   explicitExpectedKv,
   wonStage,
+  stageCounts,
   columnScrollMode = 'unified',
   columnScrollMaxH: columnScrollMaxHProp,
   onColumnScrollNearEnd,
@@ -9032,9 +9067,14 @@ const KanbanStageCard = memo(function KanbanStageCard({
     columnItemIds.every((id) => (mergeSelectedIds || []).some((x) => String(x) === String(id)));
 
   const isVirtualColumn = !!stage?.__virtual;
-  const totalInColumn = items?.length || 0;
+  const loadedInColumn = items?.length || 0;
+  const serverTotalRaw = !isVirtualColumn ? stageCounts?.[String(stage?.id || '')] : null;
+  const serverTotal = Number(serverTotalRaw);
+  const totalInColumn = serverTotalRaw != null && Number.isFinite(serverTotal)
+    ? serverTotal
+    : loadedInColumn;
   const perColumnScroll = columnScrollMode === 'per-column';
-  const pinEmptyPlaceholder = !perColumnScroll && totalInColumn === 0;
+  const pinEmptyPlaceholder = !perColumnScroll && loadedInColumn === 0;
   const emptyPlaceholderTop = useKanbanEmptyPlaceholderStickyTop(headerRef, pinEmptyPlaceholder);
 
   const columnMetricLine = (() => {
@@ -9218,7 +9258,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
         } ${perColumnScroll ? 'flex-1 min-h-0 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]' : 'flex-1'}`}
         style={perColumnScroll ? undefined : { minHeight: compact ? '160px' : '180px' }}
       >
-        {totalInColumn === 0 ? (
+        {loadedInColumn === 0 ? (
           <div
             className={`${KANBAN_COLUMN_EMPTY_CLASS}${isOverColumn ? ' kanban-column-empty--drop' : ''}${compact ? ' kanban-column-empty--compact' : ''}${pinEmptyPlaceholder ? ` ${KANBAN_COLUMN_EMPTY_PIN_CLASS}` : ''}`}
             style={pinEmptyPlaceholder ? { top: emptyPlaceholderTop } : undefined}
@@ -9840,6 +9880,7 @@ function KanbanView({
   wonStage,
   onLoadMore,
   scrollLoad,
+  stageCounts,
   columnScrollMode = 'unified',
   searchHighlightId = null,
 }) {
@@ -9918,6 +9959,7 @@ function KanbanView({
             onOpenSxTransfer={onOpenSxTransfer}
             explicitExpectedKv={explicitExpectedKv}
             wonStage={wonStage}
+            stageCounts={stageCounts}
             columnScrollMode={columnScrollMode}
             onColumnScrollNearEnd={perColumnScroll ? tryLoadMore : undefined}
             searchHighlightId={searchHighlightId}

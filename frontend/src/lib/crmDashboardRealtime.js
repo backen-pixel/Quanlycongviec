@@ -62,10 +62,9 @@ export async function fetchCrmKanbanRowsByIds(apiClient, leadIds, opts = {}) {
     lite: '1',
     kanban: '1',
     skip_deadline: opts.skipDeadline !== false ? '1' : undefined,
-    // /crm/kanban-rows trả Cache-Control: private, max-age=10. Cùng URL trong 10s
-    // (kéo 2 lần liên tiếp) → trình duyệt trả bản cũ và thẻ nhảy về cột trước đó.
-    _ts: Date.now(),
   };
+  // Header này bỏ qua responseCache phía backend; không cần thêm _ts làm mỗi URL
+  // trở thành duy nhất và khiến trình duyệt/DevTools tích lũy request.
   const res = await apiClient
     .get('/crm/kanban-rows', { params, headers: { 'x-no-cache': '1' } })
     .catch(() => ({ data: null }));

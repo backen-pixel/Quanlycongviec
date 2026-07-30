@@ -268,8 +268,10 @@ r.get('/filter-summary', responseCache({ ttl: 90, scope: 'user', tags: ['crm:lis
         String(error.message || ''),
       );
       if (unavailable) {
-        return res.status(503).json({
-          error: 'CRM filter summary RPC chưa được cài đặt',
+        // Giữ HTTP 200 để client chuyển sang các endpoint count cũ mà không tạo
+        // request đỏ/retry liên tục trong DevTools trước khi migration 471 được chạy.
+        return res.json({
+          fallbackRequired: true,
           code: 'CRM_FILTER_SUMMARY_RPC_UNAVAILABLE',
         });
       }
