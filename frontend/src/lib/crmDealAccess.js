@@ -61,7 +61,7 @@ export function filterCrmRegionsForUser(regions, user) {
   return regions.filter((r) => allowed.has(String(r.id)));
 }
 
-/** region_id gửi API khi áp dụng bộ lọc khu vực (`__none__` chỉ lọc client-side). */
+/** region_id gửi API khi áp dụng bộ lọc khu vực UUID. */
 export function resolveCrmRegionApiParam(filterRegion) {
   const v = String(filterRegion || '').trim();
   if (!v || v === '__none__') return undefined;
@@ -69,4 +69,13 @@ export function resolveCrmRegionApiParam(filterRegion) {
     return v;
   }
   return undefined;
+}
+
+/** Query params khu vực cho API CRM (UUID hoặc «Chưa gán»). */
+export function resolveCrmRegionFilterQuery(filterRegion) {
+  const v = String(filterRegion || '').trim();
+  if (!v) return {};
+  if (v === '__none__') return { region_unassigned: '1' };
+  const regionId = resolveCrmRegionApiParam(v);
+  return regionId ? { region_id: regionId } : {};
 }

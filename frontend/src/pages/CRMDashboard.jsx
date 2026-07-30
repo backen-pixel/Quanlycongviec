@@ -50,7 +50,7 @@ import {
   saveCrmDashboardMetaCache,
   patchCrmDashboardCacheLeadFields,
 } from '../lib/crmDashboardCache';
-import { userSeesAllCrmDealsScoped, filterCrmRegionsForUser, resolveCrmRegionApiParam } from '../lib/crmDealAccess';
+import { userSeesAllCrmDealsScoped, filterCrmRegionsForUser, resolveCrmRegionApiParam, resolveCrmRegionFilterQuery } from '../lib/crmDealAccess';
 import {
   companyHasRegionPipelines,
   crmCompanyDisplayName,
@@ -563,7 +563,7 @@ async function fetchCrmKanbanRowsPage(apiClient, common, loadSpec = 'initial') {
     let guard = 0;
     while (guard < KANBAN_LOAD_ALL_GUARD) {
       guard += 1;
-      const res = await apiClient.get('/crm/leads', { params: { ...leadParams, limit: chunk, offset } }).catch(() => ({ data: {} }));
+      const res = await apiClient.get('/crm/leads', { params: { ...leadParams, limit: chunk, offset } });
       const payload = res.data || {};
       const page = Array.isArray(payload) ? payload : (payload.data || []);
       out.push(...page);
@@ -582,7 +582,7 @@ async function fetchCrmKanbanRowsPage(apiClient, common, loadSpec = 'initial') {
     return { rows: out, nextOffset: null, total: out.length };
   }
   const { limit, offset } = spec;
-  const res = await apiClient.get('/crm/leads', { params: { ...leadParams, limit, offset } }).catch(() => ({ data: {} }));
+  const res = await apiClient.get('/crm/leads', { params: { ...leadParams, limit, offset } });
   const d = res.data;
   const rows = Array.isArray(d) ? d : (d?.data || []);
   const total = typeof d?.total === 'number' ? d.total : null;
@@ -723,8 +723,48 @@ function resolveCrmFilterScopeCompanyId({ filterCompany, isCompanyScopedAdmin, i
 }
 
 function resolveCrmRegionFilterParams(filterRegion) {
-  const regionId = resolveCrmRegionApiParam(filterRegion);
-  return regionId ? { region_id: regionId } : {};
+  return resolveCrmRegionFilterQuery(filterRegion);
+}
+
+/** Bộ lọc gửi lên GET /crm/leads (server-side) — đồng bộ load / load-more / KPI. */
+function buildCrmKanbanServerFilterParams({
+  type,
+  filterPhone,
+  filterAssignee,
+  filterAssigneeName,
+  filterCompany,
+  filterLeadType,
+  filterReferrer,
+  filterCustomerCompany,
+  filterRegion,
+  filterStage,
+  filterSource,
+  searchText,
+  customDateFrom,
+  customDateTo,
+}) {
+  const dateParams = {};
+  if (customDateFrom) dateParams.date_from = customDateFrom;
+  if (customDateTo) dateParams.date_to = customDateTo;
+  const common = {
+    type,
+    phone_filter: resolveCrmPhoneFilterForApi(filterPhone),
+    ...dateParams,
+    ...resolveCrmRegionFilterParams(filterRegion),
+  };
+  if (filterAssignee) common.assigned_to = filterAssignee;
+  const assigneeName = String(filterAssigneeName || '').trim();
+  if (assigneeName) common.assignee_name = assigneeName;
+  if (filterCompany) common.company_id = filterCompany;
+  if (filterLeadType) common.lead_type_id = filterLeadType;
+  if (filterReferrer && filterReferrer !== '__none__') common.referrer_name = filterReferrer;
+  if (filterCustomerCompany) common.customer_company = filterCustomerCompany;
+  if (filterStage) common.stage_id = filterStage;
+  const source = String(filterSource || '').trim();
+  if (source && !source.startsWith('fbp:')) common.source_id = source;
+  const search = String(searchText || '').trim();
+  if (search) common.search = search;
+  return common;
 }
 
 function filterEmployeesByRegion(list, filterRegion, fromCompanyApi) {
@@ -1186,7 +1226,9 @@ export default function CRMDashboard() {
 
   /** Trạng thái đồng bộ ngầm (silent refetch): hiển thị "Cập nhật lúc HH:mm" thay vì spinner */
   const [syncing, setSyncing] = useState(false);
+  const [companyFilterLoading, setCompanyFilterLoading] = useState(false);
   const [lastSyncAt, setLastSyncAt] = useState(null);
+  const [kanbanLoadError, setKanbanLoadError] = useState('');
   // True khi đang load lần đầu (chưa có dữ liệu trên dashboard).
   // Hiển thị banner "Đang tải dữ liệu…" thay vì màn trắng.
   const [firstLoading, setFirstLoading] = useState(true);
@@ -1473,6 +1515,11 @@ export default function CRMDashboard() {
   const loadRef = useRef(null);
   /** Tăng mỗi lần gọi load — bỏ qua kết quả cũ nếu đã có load mới hơn */
   const loadSeqRef = useRef(0);
+  /** Mọi request ghi vào Kanban phải thuộc đúng thế hệ bộ lọc hiện tại. */
+  const kanbanRequestGenerationRef = useRef(0);
+  const loadMoreSeqRef = useRef(0);
+  /** Đổi bộ lọc: không cho cache của scope mới ghi đè board cũ trước khi API thành công. */
+  const preserveKanbanDuringFilterRef = useRef(false);
   /** Island loader — RAF % không re-render cả CRMDashboard */
   const crmLoaderGateRef = useRef(null);
   /** load() vừa setFilterCompany — tránh useEffect filterCompany gọi load() lần 2 */
@@ -1977,19 +2024,36 @@ export default function CRMDashboard() {
     }
     // ── Stale-while-revalidate: hydrate cache để dashboard hiện ngay ──
     try {
+      const cacheCompanyId = resolveCrmFilterScopeCompanyId({
+        filterCompany,
+        isCompanyScopedAdmin,
+        isAdmin,
+        userCompanyId: user?.company_id,
+      }) || filterCompany || '';
       const cacheKey = buildCrmDashboardCacheKey({
         userId: user?.id,
-        filterCompany,
+        filterCompany: cacheCompanyId,
         filterAssignee,
+        filterAssigneeName,
         filterPhone,
         filterLeadType,
         filterReferrer,
         filterCustomerCompany,
+        filterRegion,
+        filterStage,
+        filterSource,
+        searchText,
+        // pipeline suy ra từ company+region — đủ để tách cache theo cột.
+        resolvedPipelineId: `${cacheCompanyId || ''}:${filterRegion || ''}`,
         customDateFrom,
         customDateTo,
         kanbanLoadLimit,
       });
-      if (cacheKey && cacheKey !== lastHydratedCacheKeyRef.current) {
+      if (
+        !preserveKanbanDuringFilterRef.current
+        && cacheKey
+        && cacheKey !== lastHydratedCacheKeyRef.current
+      ) {
         const cached = getCrmDashboardCache(cacheKey);
         if (cached?.data) {
           const c = cached.data;
@@ -2027,6 +2091,10 @@ export default function CRMDashboard() {
     }
     if (veryFreshCacheHit) {
       setFirstLoading(false);
+      setSyncing(false);
+      setCompanyFilterLoading(false);
+      setKanbanLoadError('');
+      preserveKanbanDuringFilterRef.current = false;
       setLastSyncAt(new Date());
       // Board cache rất tươi → bỏ silent load Kanban, nhưng vẫn refresh dropdown công ty.
       void api
@@ -2038,11 +2106,15 @@ export default function CRMDashboard() {
         .catch(() => {});
       return undefined;
     }
+    // Giữ board cũ khi đổi bộ lọc server (search/NV/ghi debounce) — tránh hydrate cache lệch.
+    preserveKanbanDuringFilterRef.current = true;
+    // Search/tên NV: debounce dài hơn để tránh spam RPC khi gõ.
+    const debounceMs = (searchText.trim() || filterAssigneeName.trim()) ? 320 : 80;
     if (loadDebounceTimerRef.current) clearTimeout(loadDebounceTimerRef.current);
     loadDebounceTimerRef.current = setTimeout(() => {
       loadDebounceTimerRef.current = null;
       void load({ silent: true });
-    }, 80);
+    }, debounceMs);
     return () => {
       if (loadDebounceTimerRef.current) {
         clearTimeout(loadDebounceTimerRef.current);
@@ -2056,11 +2128,15 @@ export default function CRMDashboard() {
     customDateTo,
     kanbanLoadLimit,
     filterAssignee,
+    filterAssigneeName,
     filterCompany,
     filterLeadType,
     filterReferrer,
     filterCustomerCompany,
     filterRegion,
+    filterStage,
+    filterSource,
+    searchText,
     pipelineType,
   ]);
 
@@ -2356,7 +2432,12 @@ export default function CRMDashboard() {
 
   /** Tải thêm khi cuộn Kanban (append, không reload lại) */
   const handleLoadMore = useCallback(async () => {
-    if (loadMoreState.loading) return;
+    if (loadMoreState.loading || syncing) return;
+    const requestGeneration = kanbanRequestGenerationRef.current;
+    const myLoadMoreSeq = ++loadMoreSeqRef.current;
+    const isLoadMoreStale = () =>
+      requestGeneration !== kanbanRequestGenerationRef.current
+      || myLoadMoreSeq !== loadMoreSeqRef.current;
     const type = pipelineType;
     const offset = type === 'lead' ? loadMoreState.leadOffset : loadMoreState.dealOffset;
     const total = type === 'lead' ? loadMoreState.leadTotal : loadMoreState.dealTotal;
@@ -2367,29 +2448,34 @@ export default function CRMDashboard() {
       if (pageLimit <= 0) return;
       setLoadMoreState((s) => ({ ...s, loading: true }));
       try {
-        const dateParams = {};
-        if (customDateFrom) dateParams.date_from = customDateFrom;
-        if (customDateTo) dateParams.date_to = customDateTo;
-        const common = {
-          type,
-          phone_filter: resolveCrmPhoneFilterForApi(filterPhone),
-          ...dateParams,
-          ...CRM_KANBAN_LEAD_QUERY,
-          limit: pageLimit,
-          offset,
-          ...resolveCrmRegionFilterParams(filterRegion),
-        };
-      if (filterAssignee) common.assigned_to = filterAssignee;
       const loadMoreCompanyId = (isCompanyScopedAdmin && user?.company_id)
         ? String(user.company_id)
         : (!isAdmin && user?.company_id)
           ? String(user.company_id)
           : (filterCompany || '');
-      if (loadMoreCompanyId) common.company_id = loadMoreCompanyId;
-      if (filterLeadType) common.lead_type_id = filterLeadType;
-      if (filterReferrer && filterReferrer !== '__none__') common.referrer_name = filterReferrer;
-      if (filterCustomerCompany) common.customer_company = filterCustomerCompany;
+      const common = {
+        ...buildCrmKanbanServerFilterParams({
+          type,
+          filterPhone,
+          filterAssignee,
+          filterAssigneeName,
+          filterCompany: loadMoreCompanyId,
+          filterLeadType,
+          filterReferrer,
+          filterCustomerCompany,
+          filterRegion,
+          filterStage,
+          filterSource,
+          searchText,
+          customDateFrom,
+          customDateTo,
+        }),
+        ...CRM_KANBAN_LEAD_QUERY,
+        limit: pageLimit,
+        offset,
+      };
       const res = await api.get('/crm/leads', { params: common });
+      if (isLoadMoreStale()) return;
       const d = res.data;
       const rows = Array.isArray(d) ? d : (d?.data || []);
       const newTotal = typeof d?.total === 'number' ? d.total : total;
@@ -2417,12 +2503,14 @@ export default function CRMDashboard() {
           leadIds: newIds,
           assigned_to: filterAssignee || undefined,
         });
+        if (isLoadMoreStale()) return;
         if (type === 'lead') {
           setDataLead((prev) => mergeCrmDashWithLedger(prev, ledgerPayload));
         } else {
           setDataDeal((prev) => mergeCrmDashWithLedger(prev, ledgerPayload));
         }
         void enrichCrmKanbanRowsWithDeadlines(api, merged).then((withDl) => {
+          if (isLoadMoreStale()) return;
           if (type === 'lead') {
             setAllLeads((prev) => {
               const map = new Map(withDl.map((r) => [String(r.id), r]));
@@ -2437,22 +2525,29 @@ export default function CRMDashboard() {
         });
       }
     } catch (e) {
+      if (isLoadMoreStale()) return;
       console.error('[loadMore]', e);
+      setKanbanLoadError(e?.response?.data?.error || e?.message || 'Không thể tải thêm dữ liệu CRM.');
       setLoadMoreState((s) => ({ ...s, loading: false }));
     }
   }, [
     loadMoreState,
+    syncing,
     pipelineType,
     allLeads.length,
     allDeals.length,
     kanbanLoadLimit,
     filterPhone,
     filterAssignee,
+    filterAssigneeName,
     filterCompany,
     filterLeadType,
     filterReferrer,
     filterCustomerCompany,
     filterRegion,
+    filterStage,
+    filterSource,
+    searchText,
     customDateFrom,
     customDateTo,
     user,
@@ -2485,24 +2580,19 @@ export default function CRMDashboard() {
     return (def || byCompany[0] || null)?.id || null;
   }, [pipelines, filterRegion]);
 
-  /** Xóa Kanban cũ ngay khi đổi công ty (tránh hiển thị nhầm dữ liệu công ty trước). */
-  const resetKanbanForFilterChange = useCallback(() => {
+  /** Giữ Kanban hiện tại trong lúc tải bộ lọc mới; vô hiệu hóa mọi request của bộ lọc cũ. */
+  const resetKanbanForFilterChange = useCallback((opts = {}) => {
+    kanbanRequestGenerationRef.current += 1;
+    loadSeqRef.current += 1;
+    inactiveKanbanLoadSeqRef.current += 1;
+    loadMoreSeqRef.current += 1;
+    preserveKanbanDuringFilterRef.current = true;
     lastHydratedCacheKeyRef.current = null;
     missingPipelineLoadRef.current = { lead: false, deal: false };
+    setKanbanLoadError('');
+    if (opts.companyFilter) setCompanyFilterLoading(true);
     setSyncing(true);
-    startTransition(() => {
-      setAllLeads([]);
-      setAllDeals([]);
-      setStagesLead([]);
-      setStagesDeal([]);
-      setLoadMoreState({
-        leadOffset: 0,
-        dealOffset: 0,
-        leadTotal: null,
-        dealTotal: null,
-        loading: false,
-      });
-    });
+    setLoadMoreState((prev) => ({ ...prev, loading: false }));
   }, []);
 
   /** Công ty đang áp dụng cho dashboard (admin: theo bộ lọc; user: theo company_id). */
@@ -2614,15 +2704,24 @@ export default function CRMDashboard() {
   /** Sau khi tạo Lead/Deal: cập nhật Kanban + KPI header + số SĐT — không gọi load() full trang. */
   const refreshKanbanListAfterCreate = useCallback(
     async (type) => {
-      const dateParams = {};
-      if (customDateFrom) dateParams.date_from = customDateFrom;
-      if (customDateTo) dateParams.date_to = customDateTo;
-      const common = { type, phone_filter: resolveCrmPhoneFilterForApi(filterPhone), ...dateParams, ...resolveCrmRegionFilterParams(filterRegion) };
-      if (filterAssignee) common.assigned_to = filterAssignee;
-      if (filterCompany) common.company_id = filterCompany;
-      if (filterLeadType) common.lead_type_id = filterLeadType;
-      if (filterReferrer && filterReferrer !== '__none__') common.referrer_name = filterReferrer;
-      if (filterCustomerCompany) common.customer_company = filterCustomerCompany;
+      const requestGeneration = kanbanRequestGenerationRef.current;
+      const isRefreshStale = () => requestGeneration !== kanbanRequestGenerationRef.current;
+      const common = buildCrmKanbanServerFilterParams({
+        type,
+        filterPhone,
+        filterAssignee,
+        filterAssigneeName,
+        filterCompany: dashboardScopeCompanyId || filterCompany,
+        filterLeadType,
+        filterReferrer,
+        filterCustomerCompany,
+        filterRegion,
+        filterStage,
+        filterSource,
+        searchText,
+        customDateFrom,
+        customDateTo,
+      });
 
       try {
         const prevLen = type === 'lead' ? allLeads.length : allDeals.length;
@@ -2631,6 +2730,7 @@ export default function CRMDashboard() {
           resolveKanbanAutoLoadCap(kanbanLoadLimit),
         );
         const result = await fetchCrmKanbanRowsPage(api, common, { offset: 0, limit: refreshLimit });
+        if (isRefreshStale()) return;
         const rows = result.rows;
         const nextOffset = result.nextOffset;
         const total = result.total;
@@ -2666,12 +2766,14 @@ export default function CRMDashboard() {
           leadIds: merged.map((l) => l.id).filter(Boolean),
           assigned_to: filterAssignee || undefined,
         });
+        if (isRefreshStale()) return;
         if (type === 'lead') {
           setDataLead((prev) => mergeCrmDashWithLedger(prev, ledgerPayload));
         } else {
           setDataDeal((prev) => mergeCrmDashWithLedger(prev, ledgerPayload));
         }
       } catch (e) {
+        if (isRefreshStale()) return;
         console.error('[refreshKanbanListAfterCreate]', e);
       }
     },
@@ -2680,11 +2782,16 @@ export default function CRMDashboard() {
       customDateTo,
       filterPhone,
       filterAssignee,
+      filterAssigneeName,
       filterCompany,
+      dashboardScopeCompanyId,
       filterLeadType,
       filterReferrer,
       filterCustomerCompany,
       filterRegion,
+      filterStage,
+      filterSource,
+      searchText,
       kanbanLoadLimit,
       allLeads.length,
       allDeals.length,
@@ -2694,6 +2801,7 @@ export default function CRMDashboard() {
 
   const refreshCrmDashboardSlice = useCallback(
     async (type) => {
+      const requestGeneration = kanbanRequestGenerationRef.current;
       const dateParams = {};
       if (customDateFrom) dateParams.date_from = customDateFrom;
       if (customDateTo) dateParams.date_to = customDateTo;
@@ -2708,6 +2816,7 @@ export default function CRMDashboard() {
             ...resolveCrmRegionFilterParams(filterRegion),
           },
         });
+        if (requestGeneration !== kanbanRequestGenerationRef.current) return;
         if (type === 'lead') setDataLead(data);
         else setDataDeal(data);
       } catch (e) {
@@ -2888,6 +2997,10 @@ export default function CRMDashboard() {
    */
   const refreshPipelinePhoneTotalsForType = useCallback(
     async (type) => {
+      // Trong lúc giữ board cũ khi đổi bộ lọc, không cập nhật badge Leads/Deals
+      // bằng count của scope mới — tránh nháy "Leads 0 / Deals 7".
+      if (preserveKanbanDuringFilterRef.current) return;
+      const requestGeneration = kanbanRequestGenerationRef.current;
       const dateParams = {};
       if (customDateFrom) dateParams.date_from = customDateFrom;
       if (customDateTo) dateParams.date_to = customDateTo;
@@ -2898,22 +3011,31 @@ export default function CRMDashboard() {
         filterCustomerCompany,
       });
       const buildStageCountParams = (phone_filter) => {
-        const p = { type, ...dateParams, ...resolveCrmRegionFilterParams(filterRegion) };
-        if (filterAssignee) p.assigned_to = filterAssignee;
-        if (co) p.company_id = co;
+        const p = buildCrmKanbanServerFilterParams({
+          type,
+          filterPhone: phone_filter || filterPhone,
+          filterAssignee,
+          filterAssigneeName,
+          filterCompany: co || '',
+          filterLeadType,
+          filterReferrer,
+          filterCustomerCompany,
+          filterRegion,
+          filterStage: '', // stage-counts đếm mọi cột
+          filterSource,
+          searchText,
+          customDateFrom,
+          customDateTo,
+        });
         if (phone_filter) p.phone_filter = phone_filter;
+        else delete p.phone_filter;
         return p;
       };
-      const buildListCountParams = (phone_filter) => {
-        const p = { type, ...dateParams, limit: 1, offset: 0, ...resolveCrmRegionFilterParams(filterRegion) };
-        if (filterAssignee) p.assigned_to = filterAssignee;
-        if (co) p.company_id = co;
-        if (filterLeadType) p.lead_type_id = filterLeadType;
-        if (filterReferrer && filterReferrer !== '__none__') p.referrer_name = filterReferrer;
-        if (filterCustomerCompany) p.customer_company = filterCustomerCompany;
-        if (phone_filter) p.phone_filter = phone_filter;
-        return p;
-      };
+      const buildListCountParams = (phone_filter) => ({
+        ...buildStageCountParams(phone_filter),
+        limit: 1,
+        offset: 0,
+      });
       const countListTotal = (payload) => {
         const t = payload?.total;
         return typeof t === 'number' ? t : null;
@@ -2940,28 +3062,41 @@ export default function CRMDashboard() {
           fetchPhoneBucketTotal('no_phone'),
           fetchPhoneBucketTotal(undefined),
         ]);
+        if (
+          requestGeneration !== kanbanRequestGenerationRef.current
+          || preserveKanbanDuringFilterRef.current
+        ) return;
         setPipelinePhoneTotals((prev) => ({
           ...prev,
           [type]: { hasPhone, noPhone, all },
         }));
       } catch (e) {
+        if (
+          requestGeneration !== kanbanRequestGenerationRef.current
+          || preserveKanbanDuringFilterRef.current
+        ) return;
         console.error('[refreshPipelinePhoneTotalsForType]', e);
       }
     },
     [
       customDateFrom,
       customDateTo,
+      filterPhone,
       filterAssignee,
+      filterAssigneeName,
       filterCompany,
       filterRegion,
       filterLeadType,
       filterReferrer,
       filterCustomerCompany,
+      filterSource,
+      searchText,
       dashboardScopeCompanyId,
     ],
   );
 
   useEffect(() => {
+    if (preserveKanbanDuringFilterRef.current) return;
     void refreshPipelinePhoneTotalsForType('lead');
     void refreshPipelinePhoneTotalsForType('deal');
   }, [refreshPipelinePhoneTotalsForType]);
@@ -2971,30 +3106,44 @@ export default function CRMDashboard() {
 
   /** Tổng tab Deal/Đơn hàng theo stage-counts + won-anchor (cùng filter SĐT/công ty/NV/ngày). */
   const refreshPipelineDealTabTotals = useCallback(async () => {
+    if (preserveKanbanDuringFilterRef.current) return;
+    const requestGeneration = kanbanRequestGenerationRef.current;
     const stages = stagesDealRef.current;
     if (!Array.isArray(stages) || !stages.length) return;
     if (crmDashboardUsesLegacyListFilters({ filterLeadType, filterReferrer, filterCustomerCompany })) {
       setPipelineDealTabTotals(null);
       return;
     }
-    const dateParams = {};
-    if (customDateFrom) dateParams.date_from = customDateFrom;
-    if (customDateTo) dateParams.date_to = customDateTo;
     const co = dashboardScopeCompanyId || filterCompany;
-    const params = {
+    const params = buildCrmKanbanServerFilterParams({
       type: 'deal',
-      ...dateParams,
-      ...resolveCrmRegionFilterParams(filterRegion),
-    };
-    if (filterAssignee) params.assigned_to = filterAssignee;
-    if (co) params.company_id = co;
-    const phoneApi = resolveCrmPhoneFilterForApi(filterPhone);
-    if (phoneApi) params.phone_filter = phoneApi;
+      filterPhone,
+      filterAssignee,
+      filterAssigneeName,
+      filterCompany: co || '',
+      filterLeadType,
+      filterReferrer,
+      filterCustomerCompany,
+      filterRegion,
+      filterStage: '',
+      filterSource,
+      searchText,
+      customDateFrom,
+      customDateTo,
+    });
     try {
       const { data } = await api.get('/crm/stage-counts', { params });
+      if (
+        requestGeneration !== kanbanRequestGenerationRef.current
+        || preserveKanbanDuringFilterRef.current
+      ) return;
       const counts = data?.counts && typeof data.counts === 'object' ? data.counts : {};
       setPipelineDealTabTotals(sumCrmDealTabCountsFromStageCounts(stages, counts));
     } catch (e) {
+      if (
+        requestGeneration !== kanbanRequestGenerationRef.current
+        || preserveKanbanDuringFilterRef.current
+      ) return;
       console.warn('[refreshPipelineDealTabTotals]', e?.response?.data?.error || e?.message || e);
       setPipelineDealTabTotals(null);
     }
@@ -3002,16 +3151,20 @@ export default function CRMDashboard() {
     customDateFrom,
     customDateTo,
     filterAssignee,
+    filterAssigneeName,
     filterCompany,
     filterRegion,
     filterLeadType,
     filterReferrer,
     filterCustomerCompany,
+    filterSource,
+    searchText,
     filterPhone,
     dashboardScopeCompanyId,
   ]);
 
   useEffect(() => {
+    if (preserveKanbanDuringFilterRef.current) return;
     void refreshPipelineDealTabTotals();
   }, [refreshPipelineDealTabTotals, stagesDeal]);
 
@@ -3226,14 +3379,24 @@ export default function CRMDashboard() {
     const onlyType = opts?.onlyType === 'deal' || opts?.onlyType === 'lead' ? opts.onlyType : null;
 
     let mySeq;
+    let requestGeneration;
     let isStale;
     if (background) {
+      requestGeneration = kanbanRequestGenerationRef.current;
       mySeq = ++inactiveKanbanLoadSeqRef.current;
-      isStale = () => mySeq !== inactiveKanbanLoadSeqRef.current;
+      isStale = () =>
+        requestGeneration !== kanbanRequestGenerationRef.current
+        || mySeq !== inactiveKanbanLoadSeqRef.current;
     } else {
-      if (onlyType) inactiveKanbanLoadSeqRef.current += 1;
+      requestGeneration = ++kanbanRequestGenerationRef.current;
+      inactiveKanbanLoadSeqRef.current += 1;
+      loadMoreSeqRef.current += 1;
       mySeq = ++loadSeqRef.current;
-      isStale = () => mySeq !== loadSeqRef.current;
+      isStale = () =>
+        requestGeneration !== kanbanRequestGenerationRef.current
+        || mySeq !== loadSeqRef.current;
+      setKanbanLoadError('');
+      setLoadMoreState((prev) => (prev.loading ? { ...prev, loading: false } : prev));
     }
 
     // Giống SX: % chỉ lần tải đầu (firstLoading); silent sau đó chỉ chip «Đang cập nhật…».
@@ -3242,10 +3405,12 @@ export default function CRMDashboard() {
     if (shouldTrackProgress) startCrmLoadProgress();
     const loadTimeoutId = shouldTrackProgress
       ? window.setTimeout(() => {
-          if (loadSeqRef.current !== mySeq) return;
+          if (isStale()) return;
           console.warn('[CRM] load timeout — tắt loader an toàn');
+          setKanbanLoadError('Tải dữ liệu CRM quá thời gian. Dữ liệu cũ vẫn được giữ lại.');
           setFirstLoading(false);
           setSyncing(false);
+          setCompanyFilterLoading(false);
           resetCrmLoadProgress();
         }, 90000)
       : null;
@@ -3253,12 +3418,19 @@ export default function CRMDashboard() {
       if (background || isStale()) return;
       if (loadTimeoutId) window.clearTimeout(loadTimeoutId);
       setSyncing(false);
+      setCompanyFilterLoading(false);
+      setKanbanLoadError('');
+      preserveKanbanDuringFilterRef.current = false;
       setLastSyncAt(new Date());
       // Luôn tắt firstLoading — không phụ thuộc animation gate (remount/finish-without-start → kẹt 0%).
       setFirstLoading(false);
       if (shouldTrackProgress) {
         finishCrmLoadProgress(() => {});
       }
+      // Effect badge bị bỏ qua lúc preserve=true — refresh lại cả Lead/Deal sau khi scope mới sẵn sàng.
+      void refreshPipelinePhoneTotalsForType('lead');
+      void refreshPipelinePhoneTotalsForType('deal');
+      void refreshPipelineDealTabTotals();
     };
     try {
       let resolvedCompanyId = filterCompany;
@@ -3293,19 +3465,22 @@ export default function CRMDashboard() {
         }
       }
 
-      const dateParams = {};
-      if (customDateFrom) dateParams.date_from = customDateFrom;
-      if (customDateTo) dateParams.date_to = customDateTo;
-
-      const buildKanbanCommon = (type) => {
-        const common = { type, phone_filter: resolveCrmPhoneFilterForApi(filterPhone), ...dateParams, ...resolveCrmRegionFilterParams(filterRegion) };
-        if (filterAssignee) common.assigned_to = filterAssignee;
-        if (resolvedCompanyId) common.company_id = resolvedCompanyId;
-        if (filterLeadType) common.lead_type_id = filterLeadType;
-        if (filterReferrer && filterReferrer !== '__none__') common.referrer_name = filterReferrer;
-        if (filterCustomerCompany) common.customer_company = filterCustomerCompany;
-        return common;
-      };
+      const buildKanbanCommon = (type) => buildCrmKanbanServerFilterParams({
+        type,
+        filterPhone,
+        filterAssignee,
+        filterAssigneeName,
+        filterCompany: resolvedCompanyId || '',
+        filterLeadType,
+        filterReferrer,
+        filterCustomerCompany,
+        filterRegion,
+        filterStage,
+        filterSource,
+        searchText,
+        customDateFrom,
+        customDateTo,
+      });
 
       const effectiveKanbanLoadLimit = opts?.kanbanLoadLimitOverride != null
         ? normalizeStoredKanbanLoadLimit(opts.kanbanLoadLimitOverride)
@@ -3320,20 +3495,15 @@ export default function CRMDashboard() {
         return fetchCrmKanbanRowsPage(api, buildKanbanCommon(type), { offset, limit });
       };
 
-      const phoneFilterApi = resolveCrmPhoneFilterForApi(filterPhone);
+      const activeType = onlyType || (pipelineType === 'deal' ? 'deal' : 'lead');
+      const inactiveType = activeType === 'lead' ? 'deal' : 'lead';
       const dashListParams = {
         light: '1',
         minimal: '1',
-        ...dateParams,
-        ...(phoneFilterApi ? { phone_filter: phoneFilterApi } : {}),
-        ...(resolvedCompanyId ? { company_id: resolvedCompanyId } : {}),
-        ...(filterAssignee ? { assigned_to: filterAssignee } : {}),
-        ...resolveCrmRegionFilterParams(filterRegion),
+        ...buildKanbanCommon(activeType),
       };
-
-      const activeType = onlyType || (pipelineType === 'deal' ? 'deal' : 'lead');
-      const inactiveType = activeType === 'lead' ? 'deal' : 'lead';
-      const emptyDash = { pipeline: [], kpis: {}, ledger_net_by_lead: {}, recent_quotations: [], recent_orders: [] };
+      // dashListParams dùng chung filter; type được ghi đè ở từng request.
+      delete dashListParams.type;
       const loadAllKanban = String(effectiveKanbanLoadLimit ?? '').trim().toLowerCase() === 'all';
       const canUseBootstrap =
         !crmDashboardUsesLegacyListFilters({ filterLeadType, filterReferrer, filterCustomerCompany })
@@ -3415,7 +3585,9 @@ export default function CRMDashboard() {
       };
 
       const prefetchInactivePipeline = () => {
+        const scheduledGeneration = requestGeneration;
         window.setTimeout(() => {
+          if (scheduledGeneration !== kanbanRequestGenerationRef.current) return;
           void loadRef.current?.({ silent: true, onlyType: inactiveType, background: true });
         }, CRM_INACTIVE_PIPELINE_DEFER_MS);
       };
@@ -3506,7 +3678,7 @@ export default function CRMDashboard() {
       if (!usedBootstrap) {
       const pipelinesPromise = pipelinesPreloaded
         ? Promise.resolve({ data: pipelinesPreloaded })
-        : api.get('/crm/pipelines').catch(() => ({ data: [] }));
+        : api.get('/crm/pipelines');
 
       const activeStagesParams = activeType === 'lead' ? stagesLeadParams : stagesDealParams;
       const [
@@ -3515,10 +3687,10 @@ export default function CRMDashboard() {
         pipelinesRes,
         activeStagesRes,
       ] = await Promise.all([
-        api.get('/crm/dashboard', { params: { type: activeType, ...dashListParams } }).catch(() => ({ data: emptyDash })),
+        api.get('/crm/dashboard', { params: { type: activeType, ...dashListParams } }),
         fetchKanbanRows(activeType),
         pipelinesPromise,
-        api.get('/crm/pipeline-stages', { params: activeStagesParams }).catch(() => ({ data: [] })),
+        api.get('/crm/pipeline-stages', { params: activeStagesParams }),
       ]);
       if (isStale()) {
         if (loadTimeoutId) window.clearTimeout(loadTimeoutId);
@@ -3585,14 +3757,16 @@ export default function CRMDashboard() {
       runDeferredCrmEnrichment(activeType, activeMerged, dashActiveRes.data);
       if (!onlyType && !background) prefetchInactivePipeline();
       void (async () => {
-        const inactiveParams = inactiveType === 'lead' ? stagesLeadParams : stagesDealParams;
-        const { data: inactiveStages } = await api
-          .get('/crm/pipeline-stages', { params: inactiveParams })
-          .catch(() => ({ data: [] }));
-        if (isStale()) return;
-        const sorted = sortAndDedupePipelineStages(inactiveStages || []);
-        if (inactiveType === 'lead') setStagesLead(sorted);
-        else setStagesDeal(sorted);
+        try {
+          const inactiveParams = inactiveType === 'lead' ? stagesLeadParams : stagesDealParams;
+          const { data: inactiveStages } = await api.get('/crm/pipeline-stages', { params: inactiveParams });
+          if (isStale()) return;
+          const sorted = sortAndDedupePipelineStages(inactiveStages || []);
+          if (inactiveType === 'lead') setStagesLead(sorted);
+          else setStagesDeal(sorted);
+        } catch (inactiveStagesError) {
+          if (!isStale()) console.error('[load inactive CRM stages]', inactiveStagesError);
+        }
       })();
       void (async () => {
         try {
@@ -3626,14 +3800,21 @@ export default function CRMDashboard() {
           }
           if (usersValue.length) setUsers(usersValue);
           try {
+            const cacheCompanyId = resolvedCompanyId || filterCompany;
             const cacheKey = buildCrmDashboardCacheKey({
               userId: user?.id,
-              filterCompany: resolvedCompanyId || filterCompany,
+              filterCompany: cacheCompanyId,
               filterAssignee,
+              filterAssigneeName,
               filterPhone,
               filterLeadType,
               filterReferrer,
               filterCustomerCompany,
+              filterRegion,
+              filterStage,
+              filterSource,
+              searchText,
+              resolvedPipelineId: `${cacheCompanyId || ''}:${filterRegion || ''}`,
               customDateFrom,
               customDateTo,
               kanbanLoadLimit,
@@ -3682,9 +3863,11 @@ export default function CRMDashboard() {
       console.error(e);
       if (loadTimeoutId) window.clearTimeout(loadTimeoutId);
       if (!background && !isStale()) {
+        setKanbanLoadError(e?.response?.data?.error || e?.message || 'Không thể tải dữ liệu CRM. Dữ liệu cũ vẫn được giữ lại.');
         if (shouldTrackProgress) resetCrmLoadProgress();
         setFirstLoading(false);
         setSyncing(false);
+        setCompanyFilterLoading(false);
       }
     }
     if (isStale()) {
@@ -3891,180 +4074,72 @@ export default function CRMDashboard() {
 
   // ── Map grouped FB source → lead_ids ──
   const [fbPageLeadIds, setFbPageLeadIds] = useState(new Set());
+  const [fbPageLeadIdsKey, setFbPageLeadIdsKey] = useState('');
   const lastFbFilter = useRef('');
+  const activeFbFilterKey = useMemo(() => {
+    if (!filterSource.startsWith('fbp:')) return '';
+    const pageId = filterSource.replace('fbp:', '');
+    const co = filterCompany || (user?.company_id ? String(user.company_id) : '');
+    const type = pipelineType === 'lead' ? 'lead' : 'deal';
+    return `${pageId}|${co}|${type}`;
+  }, [filterSource, filterCompany, user?.company_id, pipelineType]);
   useEffect(() => {
-    if (!filterSource.startsWith('fbp:')) {
+    if (!activeFbFilterKey) {
       setFbPageLeadIds(new Set());
+      setFbPageLeadIdsKey('');
       lastFbFilter.current = '';
       return;
     }
     const pageId = filterSource.replace('fbp:', '');
     const co = filterCompany || (user?.company_id ? String(user.company_id) : '');
-    const key = `${pageId}|${co}`;
+    const key = activeFbFilterKey;
     if (lastFbFilter.current === key) return;
     lastFbFilter.current = key;
+    let cancelled = false;
     (async () => {
       try {
         const { data } = await api.get('/crm/leads-by-fb-page', {
           params: { page_id: pageId, type: pipelineType === 'lead' ? 'lead' : 'deal', ...(co ? { company_id: co } : {}) },
         });
+        if (cancelled || key !== activeFbFilterKey) return;
         setFbPageLeadIds(new Set((data || []).map(l => l.id)));
-      } catch { setFbPageLeadIds(new Set()); }
+        setFbPageLeadIdsKey(key);
+      } catch (e) {
+        if (cancelled) return;
+        lastFbFilter.current = '';
+        setKanbanLoadError(e?.response?.data?.error || e?.message || 'Không thể tải bộ lọc nguồn Facebook.');
+      }
     })();
-  }, [filterSource, pipelineType, filterCompany, user?.company_id]);
+    return () => { cancelled = true; };
+  }, [activeFbFilterKey, filterSource, pipelineType, filterCompany, user?.company_id]);
 
-  // ── Lọc theo nguồn thường (không phải trang FB): allLeads/allDeals chỉ chứa 1 phần
-  // (tải theo trang) — nếu lead/deal khớp nguồn đang lọc rơi ngoài phần đã tải (ví dụ
-  // đã "Mất" từ lâu, không còn ở đầu danh sách), lọc client sẽ không thấy kết quả nào.
-  // Tải bổ sung toàn bộ bản ghi khớp nguồn từ server, giữ ở state riêng (KHÔNG gộp
-  // trực tiếp vào allLeads/allDeals) — bộ nạp chính vẫn có thể setAllLeads/setAllDeals
-  // (ghi đè toàn bộ, không merge) song song do đổi tab/filter khác, dễ xoá mất phần vừa
-  // gộp. State riêng này được hợp nhất vào kết quả ngay trong filterItemsForPipeline.
-  const [extraSourceMatchedRows, setExtraSourceMatchedRows] = useState([]);
-  const lastPlainSourceFetch = useRef('');
-  useEffect(() => {
-    if (!filterSource || filterSource.startsWith('fbp:')) {
-      lastPlainSourceFetch.current = '';
-      setExtraSourceMatchedRows([]);
-      return;
-    }
-    const co = filterCompany || (user?.company_id ? String(user.company_id) : '');
-    const key = `${filterSource}|${pipelineType}|${co}`;
-    if (lastPlainSourceFetch.current === key) return;
-    lastPlainSourceFetch.current = key;
-    setExtraSourceMatchedRows([]);
-    (async () => {
-      try {
-        const common = {
-          type: pipelineType === 'deal' ? 'deal' : 'lead',
-          source_id: filterSource,
-          ...(co ? { company_id: co } : {}),
-        };
-        const { rows } = await fetchCrmKanbanRowsPage(api, common, { loadAll: true });
-        if (!rows?.length) return;
-        if (lastPlainSourceFetch.current !== key) return; // filter đã đổi trong lúc chờ — bỏ kết quả cũ
-        setExtraSourceMatchedRows(rows);
-      } catch { /* giữ nguyên state hiện có nếu lỗi */ }
-    })();
-  }, [filterSource, pipelineType, filterCompany, user?.company_id]);
+  // Nguồn CRM thường đã lọc server-side (source_id trên /crm/leads) — không còn tải-all workaround.
 
   // ── Client-side search + filter (instant, no API) ──
   const hasPhoneNumber = useCallback((item) => {
     return !!((item.customer?.phone && item.customer.phone.trim()) || (item.phone && item.phone.trim()));
   }, []);
 
-  /**
-   * Hoãn các ô gõ tự do (search, tên NV) bằng `useDeferredValue` để input
-   * không bị giật khi danh sách 1000+ bản ghi được lọc lại trên mỗi ký tự.
-   * React sẽ giữ giá trị input mượt và lọc lại ở priority thấp.
-   */
-  const deferredSearchText = useDeferredValue(searchText);
-  const deferredAssigneeName = useDeferredValue(filterAssigneeName);
-
-  /** pipelineKind: 'lead' | 'deal' — một người phụ trách (assigned_to đồng bộ lead_owner) */
+  /** pipelineKind: 'lead' | 'deal' — hầu hết bộ lọc đã ở server; client chỉ FB page + ghim/gợi ý tìm. */
   const filterItemsForPipeline = useCallback((items, _pipelineKind, textQueryOverride) => {
     let result = items;
 
-    // Hợp nhất thêm bản ghi khớp nguồn tải bổ sung (xem effect ở trên) — tránh gộp
-    // trực tiếp vào allLeads/allDeals vì dễ bị bộ nạp chính ghi đè mất khi đổi tab/filter.
-    if (extraSourceMatchedRows.length) {
-      const wantDeal = _pipelineKind === 'deal';
-      const extra = extraSourceMatchedRows.filter((r) => (String(r.type || '') === 'deal') === wantDeal);
-      if (extra.length) result = dedupeCrmKanbanRows([...result, ...extra]);
+    // Nguồn Facebook page: không có source_id CRM — vẫn lọc theo lead_ids đã fetch.
+    if (filterSource.startsWith('fbp:') && fbPageLeadIdsKey === activeFbFilterKey) {
+      result = result.filter((l) => fbPageLeadIds.has(l.id));
     }
 
-    // Company filter
-    if (filterCompany) {
-      const cid = String(filterCompany);
-      result = result.filter((l) => String(l.company_id || '') === cid);
+    // Người giới thiệu «Chưa có» — RPC/legacy chưa hỗ trợ empty referrer.
+    if (filterReferrer === '__none__') {
+      result = result.filter((l) => !String(l.referrer_name || '').trim());
     }
 
-    // Assignee filter (UUID — so khớp cả chuỗi normalize + embed id)
-    if (filterAssignee) {
-      const fid = String(filterAssignee).trim().toLowerCase();
-      result = result.filter((l) => {
-        const a = l.assigned_to ? String(l.assigned_to).trim().toLowerCase() : '';
-        if (a && a === fid) return true;
-        const b = l.lead_owner_id ? String(l.lead_owner_id).trim().toLowerCase() : '';
-        if (b && b === fid) return true;
-        const c = l.assignee?.id ? String(l.assignee.id).trim().toLowerCase() : '';
-        if (c && c === fid) return true;
-        const d = l.lead_owner?.id ? String(l.lead_owner.id).trim().toLowerCase() : '';
-        return d && d === fid;
-      });
-    }
-
-    // Lọc theo tên NV (chỉ assignee / lead_owner, tránh trùng với tên KH ở ô tìm nhanh)
-    const qAssigneeName = deferredAssigneeName.trim().toLowerCase();
-    if (qAssigneeName) {
-      result = result.filter((l) => {
-        const name = (l.assignee?.full_name || l.lead_owner?.full_name || '').toLowerCase();
-        return name.includes(qAssigneeName);
-      });
-    }
-
-    // Source filter - FB page dùng lead IDs, non-FB dùng source_id
-    if (filterSource) {
-      if (filterSource.startsWith('fbp:')) {
-        result = result.filter((l) => fbPageLeadIds.has(l.id));
-      } else {
-        result = result.filter((l) => l.source_id === filterSource);
-      }
-    }
-
-    // Stage filter
-    if (filterStage) {
-      const sid = String(filterStage);
-      result = result.filter((l) => String(l.stage_id || '') === sid);
-    }
-
-    // Khu vực CRM (company_regions)
-    // Khớp RPC 446: lead đã giao cho mình (hoặc NV đang lọc) vẫn hiện dù region_id lệch chip khu vực.
-    if (filterRegion) {
-      if (filterRegion === '__none__') {
-        result = result.filter((l) => l.region_id == null || String(l.region_id).trim() === '');
-      } else {
-        const rid = String(filterRegion);
-        const selfId = user?.id ? String(user.id) : '';
-        const assigneeId = filterAssignee ? String(filterAssignee) : '';
-        result = result.filter((l) => {
-          if (String(l.region_id || '') === rid) return true;
-          const a = l.assigned_to != null ? String(l.assigned_to) : '';
-          const o = l.lead_owner_id != null ? String(l.lead_owner_id) : '';
-          if (selfId && (a === selfId || o === selfId)) return true;
-          if (assigneeId && (a === assigneeId || o === assigneeId)) return true;
-          return false;
-        });
-      }
-    }
-
-    // Người giới thiệu
-    if (filterReferrer) {
-      if (filterReferrer === '__none__') {
-        result = result.filter((l) => !String(l.referrer_name || '').trim());
-      } else {
-        result = result.filter((l) => String(l.referrer_name || '').trim() === String(filterReferrer));
-      }
-    }
-
-    // Tên công ty khách hàng (customers.company)
-    if (filterCustomerCompany) {
-      if (filterCustomerCompany === '__none__') {
-        result = result.filter((l) => !String(l.customer?.company || '').trim());
-      } else {
-        result = result.filter((l) => String(l.customer?.company || '').trim() === String(filterCustomerCompany));
-      }
-    }
-
-    // Phone filter
-    // Phone filter đã được ưu tiên xử lý ở backend để không bị phụ thuộc vào 500 bản ghi đầu.
-
-    // Text search - tìm trong tên, mã, SĐT, mô tả, tên KH, email
-    const q = (textQueryOverride !== undefined ? String(textQueryOverride) : deferredSearchText).trim().toLowerCase();
+    // Gợi ý tìm nhanh (dropdown) — lọc trên bản ghi đã tải khi có textQueryOverride.
+    const q = textQueryOverride !== undefined
+      ? String(textQueryOverride).trim().toLowerCase()
+      : '';
     if (q) {
       result = result.filter((l) => {
-        // So khớp bằng nhiều `indexOf` rời nhau, dừng sớm khi tìm thấy → nhanh hơn
-        // việc tạo mảng + `.map(toLowerCase)` + `.some(includes)` trên mỗi bản ghi.
         const c = l.customer;
         const s = l.source;
         const a = l.assignee;
@@ -4103,19 +4178,11 @@ export default function CRMDashboard() {
     }
     return result;
   }, [
-    deferredSearchText,
-    filterCompany,
-    filterAssignee,
-    deferredAssigneeName,
     filterSource,
-    filterStage,
-    filterRegion,
     filterReferrer,
-    filterCustomerCompany,
-    filterPhone,
-    user?.id,
     fbPageLeadIds,
-    extraSourceMatchedRows,
+    fbPageLeadIdsKey,
+    activeFbFilterKey,
     hasPhoneNumber,
   ]);
 
@@ -4216,19 +4283,16 @@ export default function CRMDashboard() {
   const leadActiveCount = useMemo(() => leads.filter(isActiveCrmPipelineItem).length, [leads]);
 
   /**
-   * KPI "Tổng" dùng `total` từ API khi đủ bản ghi (tránh hiển thị 1000 trong khi DB có 5000).
-   * Khi bật lọc chỉ trên client (tìm nhanh, cột, khu vực, nguồn, tên NV) → hiển thị số sau lọc trên dữ liệu đã tải.
+   * KPI "Tổng" dùng `total` từ API (bộ lọc chính đã server-side).
+   * Chỉ còn đếm trên client khi lọc Facebook page hoặc referrer «Chưa có».
    */
   const kpiUsesClientOnlyFilters = useMemo(
     () =>
       !!(
-        searchText.trim() ||
-        filterStage ||
-        filterRegion ||
-        filterSource ||
-        filterAssigneeName.trim()
+        (filterSource && String(filterSource).startsWith('fbp:'))
+        || filterReferrer === '__none__'
       ),
-    [searchText, filterStage, filterRegion, filterSource, filterAssigneeName],
+    [filterSource, filterReferrer],
   );
 
   const leadKpiTotalCount = useMemo(() => {
@@ -5602,16 +5666,35 @@ export default function CRMDashboard() {
         } catch {
           /* ignore */
         }
-        resetKanbanForFilterChange();
+        resetKanbanForFilterChange({ companyFilter: true });
       }
     }
-    if ('filterAssignee' in patch) setFilterAssignee(patch.filterAssignee);
+    const bumpServerFilter = (next, prev) => {
+      if (String(next ?? '') !== String(prev ?? '')) resetKanbanForFilterChange();
+    };
+    if ('filterAssignee' in patch) {
+      bumpServerFilter(patch.filterAssignee, filterAssignee);
+      setFilterAssignee(patch.filterAssignee);
+    }
     if ('assigneeListSearch' in patch) setAssigneeListSearch(patch.assigneeListSearch);
-    if ('filterAssigneeName' in patch) setFilterAssigneeName(patch.filterAssigneeName);
-    if ('filterRegion' in patch) setFilterRegion(patch.filterRegion);
-    if ('filterSource' in patch) setFilterSource(patch.filterSource);
-    if ('filterStage' in patch) setFilterStage(patch.filterStage);
+    if ('filterAssigneeName' in patch) {
+      bumpServerFilter(patch.filterAssigneeName, filterAssigneeName);
+      setFilterAssigneeName(patch.filterAssigneeName);
+    }
+    if ('filterRegion' in patch) {
+      bumpServerFilter(patch.filterRegion, filterRegion);
+      setFilterRegion(patch.filterRegion);
+    }
+    if ('filterSource' in patch) {
+      bumpServerFilter(patch.filterSource, filterSource);
+      setFilterSource(patch.filterSource);
+    }
+    if ('filterStage' in patch) {
+      bumpServerFilter(patch.filterStage, filterStage);
+      setFilterStage(patch.filterStage);
+    }
     if ('filterLeadType' in patch) {
+      bumpServerFilter(patch.filterLeadType, filterLeadType);
       setFilterLeadType(patch.filterLeadType);
       try {
         if (patch.filterLeadType) localStorage.setItem(LS_CRM_DASH_LEAD_TYPE, String(patch.filterLeadType));
@@ -5620,14 +5703,37 @@ export default function CRMDashboard() {
         /* ignore */
       }
     }
-    if ('filterReferrer' in patch) setFilterReferrer(patch.filterReferrer);
-    if ('filterCustomerCompany' in patch) setFilterCustomerCompany(patch.filterCustomerCompany);
-    if ('filterPhone' in patch) setFilterPhone(patch.filterPhone);
+    if ('filterReferrer' in patch) {
+      bumpServerFilter(patch.filterReferrer, filterReferrer);
+      setFilterReferrer(patch.filterReferrer);
+    }
+    if ('filterCustomerCompany' in patch) {
+      bumpServerFilter(patch.filterCustomerCompany, filterCustomerCompany);
+      setFilterCustomerCompany(patch.filterCustomerCompany);
+    }
+    if ('filterPhone' in patch) {
+      bumpServerFilter(patch.filterPhone, filterPhone);
+      setFilterPhone(patch.filterPhone);
+    }
     if ('showOrphanDealColumn' in patch) setShowOrphanDealColumn(patch.showOrphanDealColumn);
     if ('kanbanLoadLimit' in patch) {
       applyKanbanLoadLimit(patch.kanbanLoadLimit);
     }
-  }, [filterCompany, isAdmin, resetKanbanForFilterChange, applyKanbanLoadLimit]);
+  }, [
+    filterCompany,
+    filterAssignee,
+    filterAssigneeName,
+    filterRegion,
+    filterSource,
+    filterStage,
+    filterLeadType,
+    filterReferrer,
+    filterCustomerCompany,
+    filterPhone,
+    isAdmin,
+    resetKanbanForFilterChange,
+    applyKanbanLoadLimit,
+  ]);
 
   const openCrmFilterModal = useCallback(() => {
     setShowAdvSearch((open) => !open);
@@ -5724,7 +5830,7 @@ export default function CRMDashboard() {
     } catch {
       // ignore
     }
-    resetKanbanForFilterChange();
+    resetKanbanForFilterChange({ companyFilter: true });
     void load({ silent: true });
   }, [handleTimePresetChange, resetKanbanForFilterChange, load]);
 
@@ -5743,7 +5849,7 @@ export default function CRMDashboard() {
         setFilterAssignee('');
         setFilterAssigneeName('');
         try { setStoredCrmFilterCompanyId(''); } catch { /* ignore */ }
-        resetKanbanForFilterChange();
+        resetKanbanForFilterChange({ companyFilter: true });
       });
     }
     if (filterRegion) {
@@ -7160,6 +7266,47 @@ export default function CRMDashboard() {
         )}
       </section>
       </div>
+
+      {companyFilterLoading && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="pointer-events-none fixed left-1/2 top-16 z-[100] w-[min(92vw,420px)] -translate-x-1/2 overflow-hidden rounded-xl border border-violet-200 bg-white/95 shadow-xl shadow-violet-950/15 backdrop-blur"
+        >
+          <div className="flex items-center gap-3 px-4 py-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-100">
+              <Loader2 className="h-5 w-5 animate-spin text-violet-700" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-semibold text-slate-900">
+                Đang lọc dữ liệu công ty
+              </span>
+              <span className="block truncate text-xs text-slate-600">
+                {scopedCompanyName || 'Tất cả công ty'} · Dữ liệu hiện tại được giữ cho đến khi tải xong
+              </span>
+            </span>
+          </div>
+          <div className="h-1 overflow-hidden bg-violet-100">
+            <div className="h-full w-1/2 animate-pulse rounded-full bg-violet-600" />
+          </div>
+        </div>
+      )}
+
+      {kanbanLoadError && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900 shadow-sm">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-rose-600" />
+          <span className="min-w-0 flex-1">{kanbanLoadError}</span>
+          <button
+            type="button"
+            onClick={() => void loadRef.current?.({ silent: true })}
+            disabled={syncing}
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-rose-300 bg-white px-3 text-xs font-semibold text-rose-800 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <RotateCcw className={`h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} />
+            Thử lại
+          </button>
+        </div>
+      )}
 
       {crmMainContentLoading ? (
         <div className="relative min-h-[min(700px,calc(100vh-128px))]">

@@ -255,11 +255,15 @@ r.get('/web-dashboard-bootstrap', responseCache({ ttl: 15, scope: 'user', tags: 
     const lightStats = await computeCrmDashboardLightStats(req, type, {
       effectiveCompanyId: companyId,
       region_id: uuidQueryOrNull(mergedQuery.region_id),
+      region_unassigned: mergedQuery.region_unassigned,
       stages: stages || [],
       assigned_to_only: uuidQueryOrNull(mergedQuery.assigned_to),
       date_from: mergedQuery.date_from,
       date_to: mergedQuery.date_to,
       phone_filter: mergedQuery.phone_filter,
+      search: mergedQuery.search,
+      source_id: uuidQueryOrNull(mergedQuery.source_id),
+      assignee_name: mergedQuery.assignee_name,
     });
     const totalItems = lightStats.totalItems ?? kanbanPage.total ?? 0;
     const wonItemCount = lightStats.wonCount || 0;
@@ -313,24 +317,14 @@ r.get('/kanban-bootstrap', responseCache({ ttl: 15, scope: 'user', tags: ['crm:l
       if (!initialStageId) {
         return { data: [], total: 0, offset: 0, limit: parsedLimit, hasMore: false, nextOffset: 0 };
       }
-      const pageRpc = {
-        ...filterParams,
-        p_stage_id: initialStageId,
-        p_limit: parsedLimit,
-        p_offset: 0,
-      };
-      let { data: rpcData, error: rpcError } = await supabase.rpc('crm_leads_page_ids', pageRpc);
-      if (rpcError && /crm_leads_page_ids|does not exist|Could not find|argument/i.test(String(rpcError.message || ''))) {
-        const { p_region_ids: _r, ...noRegion } = pageRpc;
-        const r2 = await supabase.rpc('crm_leads_page_ids', noRegion);
-        if (!r2.error) {
-          rpcData = r2.data;
-          rpcError = null;
-        }
-      }
-      const parsedRpc = !rpcError ? parseCrmLeadsPageRpc(rpcData) : null;
-      if (!parsedRpc) return null;
-      return hydrateCrmLeadsRpcPage(parsedRpc, req, 0, parsedLimit, { lite });
+      return fetchCrmLeadsPageViaRpc(
+        req,
+        { ...mergedQuery, stage_id: initialStageId },
+        type,
+        0,
+        parsedLimit,
+        { lite },
+      );
     };
 
     const initialPage = await loadInitialPage();
@@ -385,33 +379,15 @@ r.get('/kanban-bootstrap', responseCache({ ttl: 15, scope: 'user', tags: ['crm:l
 
 r.get('/leads', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'] }), async (req, res) => {
   try {
-    const type = req.query.type || 'lead';
-    const forcedDealSelf = type === 'deal' && req.user?.userId && !userSeesAllCrmDealsForScope(req.user);
-    const forcedLeadSelf = type === 'lead' && req.user?.userId && !userSeesAllCrmLeadsForScope(req.user);
-    let mergedQuery =
-      forcedDealSelf || forcedLeadSelf ? { ...req.query, assigned_to: req.user.userId } : { ...req.query };
-    const sacLeads = scopedAdminCompanyId(req);
-    if (sacLeads) {
-      mergedQuery = { ...mergedQuery, company_id: sacLeads };
-    } else if (!userIsAdmin(req.user?.role)) {
-      const cid = await requireUserCompanyIdResolved(req, res);
-      if (!cid) return;
-      mergedQuery = { ...mergedQuery, company_id: cid };
-    }
-    const { stage_id, assigned_to, source_id, search, limit = 100, offset = 0, company_id, date_from, date_to, phone_filter, lead_type_id } = mergedQuery;
+    const ctx = await resolveCrmLeadsMergedQuery(req, res);
+    if (!ctx) return;
+    const { type: resolvedType, mergedQuery, rpcAssigneeStrict } = ctx;
+    const { limit = 100, offset = 0 } = mergedQuery;
     const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 2000);
     const parsedOffset = Math.max(parseInt(offset) || 0, 0);
 
-    const dealAssigneeStrict = type === 'deal' && (!!uuidQueryOrNull(assigned_to) || forcedDealSelf);
-    const leadAssigneeStrict = type === 'lead' && (!!uuidQueryOrNull(assigned_to) || forcedLeadSelf);
-    const rpcAssigneeStrict = dealAssigneeStrict || leadAssigneeStrict;
-
-    const referrerNameQuery = String(mergedQuery.referrer_name || '').trim();
-    const customerCompanyQuery = String(mergedQuery.customer_company || '').trim();
-
-    // RPC `crm_leads_page_ids` (database/58_...) không có tham số p_lead_type_id — gửi thêm sẽ khiến PostgREST
-    // không resolve được function → 500. Lọc theo lead_type_id / referrer_name / customer_company chỉ dùng legacy.
-    if (uuidQueryOrNull(lead_type_id) || referrerNameQuery || customerCompanyQuery) {
+    // RPC không có lead_type / referrer / customer_company / follow-up / pipeline — dùng legacy.
+    if (crmListUsesLegacyFilters(mergedQuery)) {
       const legacy = await getCrmLeadsListLegacy(mergedQuery, {
         assigneeStrict: rpcAssigneeStrict,
         viewerUserId: req.user?.userId,
@@ -421,78 +397,18 @@ r.get('/leads', responseCache({ ttl: 15, scope: 'user', tags: ['crm:list'] }), a
       return res.json(legacy);
     }
 
-    const legacyFollowUpFrom = sanitizeIsoDateQueryParam(mergedQuery.next_follow_up_from);
-    const legacyFollowUpTo = sanitizeIsoDateQueryParam(mergedQuery.next_follow_up_to);
-    const legacyFollowUpEmpty =
-      mergedQuery.next_follow_up_empty === 'true' || mergedQuery.next_follow_up_empty === '1';
-    const legacyPipelineId = uuidQueryOrNull(mergedQuery.pipeline_id);
-    const forceLegacyExtended = !!(
-      legacyFollowUpFrom ||
-      legacyFollowUpTo ||
-      legacyFollowUpEmpty ||
-      legacyPipelineId
-    );
-    if (forceLegacyExtended) {
-      const legacy = await getCrmLeadsListLegacy(mergedQuery, {
-        assigneeStrict: rpcAssigneeStrict,
-        viewerUserId: req.user?.userId,
-        req,
-        lite: resolveCrmLeadsKanbanLite(mergedQuery),
-      });
-      return res.json(legacy);
-    }
+    const pageViaRpc = await fetchCrmLeadsPageViaRpc(req, mergedQuery, resolvedType, parsedOffset, parsedLimit, {
+      lite: resolveCrmLeadsKanbanLite(mergedQuery),
+      skipDeadline: resolveCrmLeadsSkipDeadline(mergedQuery),
+    });
+    if (pageViaRpc) return res.json(pageViaRpc);
 
-    const rpcRegionIds = resolveRpcRegionIdsForCrmList(req, mergedQuery.region_id);
-
-    const rpcParams = {
-      p_type: type,
-      p_stage_id: uuidQueryOrNull(stage_id),
-      p_assigned_to: uuidQueryOrNull(assigned_to),
-      p_source_id: uuidQueryOrNull(source_id),
-      p_company_id: uuidQueryOrNull(company_id),
-      p_date_from: sanitizeIsoDateQueryParam(date_from),
-      p_date_to: sanitizeIsoDateQueryParam(date_to),
-      p_search: search || null,
-      p_phone_filter: phone_filter || null,
-      p_limit: parsedLimit,
-      p_offset: parsedOffset,
-      p_assigned_strict: rpcAssigneeStrict,
-      p_region_ids: rpcRegionIds,
-    };
-
-    let { data: rpcData, error: rpcError } = await supabase.rpc('crm_leads_page_ids', rpcParams);
-    // DB cũ: không có p_region_ids — thử bỏ tham số cuối
-    if (rpcError && /crm_leads_page_ids|does not exist|Could not find|argument/i.test(String(rpcError.message || ''))) {
-      const { p_region_ids: _reg, ...rpcNoRegion } = rpcParams;
-      let r2 = await supabase.rpc('crm_leads_page_ids', rpcNoRegion);
-      if (r2.error && /crm_leads_page_ids|does not exist|Could not find/i.test(String(r2.error.message || ''))) {
-        const { p_assigned_strict: _s, ...rpcLegacy } = rpcNoRegion;
-        r2 = await supabase.rpc('crm_leads_page_ids', rpcLegacy);
-      }
-      if (!r2.error) {
-        rpcData = r2.data;
-        rpcError = null;
-      }
-    }
-
-    const parsedRpc = !rpcError ? parseCrmLeadsPageRpc(rpcData) : null;
-    const rpcOk = !!parsedRpc;
-    const lite = resolveCrmLeadsKanbanLite(mergedQuery);
-    const skipDeadline = resolveCrmLeadsSkipDeadline(mergedQuery);
-
-    if (rpcOk) {
-      const pageResult = await hydrateCrmLeadsRpcPage(parsedRpc, req, parsedOffset, parsedLimit, { lite, skipDeadline });
-      return res.json(pageResult);
-    }
-
-    if (rpcError) {
-      console.warn('[crm/leads] crm_leads_page_ids RPC unavailable, using legacy (max 5000 rows):', rpcError.message);
-    }
+    console.warn('[crm/leads] crm_leads_page_ids RPC unavailable, using legacy');
     const legacy = await getCrmLeadsListLegacy(mergedQuery, {
       assigneeStrict: rpcAssigneeStrict,
       viewerUserId: req.user?.userId,
       req,
-      lite,
+      lite: resolveCrmLeadsKanbanLite(mergedQuery),
     });
     return res.json(legacy);
   } catch (e) {

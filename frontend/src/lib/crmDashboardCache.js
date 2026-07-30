@@ -9,7 +9,7 @@
  * - Key gồm user.id + bộ lọc → chuyển công ty/NV không lẫn dữ liệu cũ.
  */
 
-const STORAGE_KEY = 'crm-dashboard-cache:v1';
+const STORAGE_KEY = 'crm-dashboard-cache:v2';
 const META_STORAGE_KEY = 'crm-dashboard-meta-cache:v1'; // localStorage — metadata tĩnh
 const HARD_EXPIRY_MS = 30 * 60 * 1000; // 30 phút mới xóa hẳn
 const FRESH_TTL_MS = 10 * 60 * 1000; // < 10 phút coi là tươi
@@ -58,10 +58,16 @@ export function buildCrmDashboardCacheKey(opts = {}) {
     userId = '',
     filterCompany = '',
     filterAssignee = '',
+    filterAssigneeName = '',
     filterPhone = '',
     filterLeadType = '',
     filterReferrer = '',
     filterCustomerCompany = '',
+    filterRegion = '',
+    filterStage = '',
+    filterSource = '',
+    searchText = '',
+    resolvedPipelineId = '',
     customDateFrom = '',
     customDateTo = '',
     kanbanLoadLimit = '',
@@ -70,10 +76,16 @@ export function buildCrmDashboardCacheKey(opts = {}) {
     String(userId || ''),
     String(filterCompany || ''),
     String(filterAssignee || ''),
+    String(filterAssigneeName || ''),
     String(filterPhone || ''),
     String(filterLeadType || ''),
     String(filterReferrer || ''),
     String(filterCustomerCompany || ''),
+    String(filterRegion || ''),
+    String(filterStage || ''),
+    String(filterSource || ''),
+    String(searchText || '').trim().toLowerCase(),
+    String(resolvedPipelineId || ''),
     String(customDateFrom || ''),
     String(customDateTo || ''),
     String(kanbanLoadLimit || ''),

@@ -4399,6 +4399,17 @@ async function hydrateCrmLeadsByIdsWithStaff(raw) {
   return fetchCrmLeadsByIdsOrdered(raw);
 }
 
+function parseCrmAssigneeNameQuery(reqQuery) {
+  return String(reqQuery?.assignee_name || '').trim() || '';
+}
+
+function parseCrmRegionUnassignedQuery(reqQuery) {
+  const v = reqQuery?.region_unassigned;
+  if (v === true || v === 1 || v === '1' || v === 'true') return true;
+  const region = String(reqQuery?.region_id || '').trim();
+  return region === '__none__';
+}
+
 /** Fallback: dùng .range() — giới hạn parsedLimit dòng để tránh egress lớn. */
 async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   const { assigneeStrict = false, viewerUserId = null, req: scopeReq = null } = opts;
@@ -4425,6 +4436,9 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
   const referrerNameTrim = String(referrer_name || '').trim();
   const customerCompanyTrim = String(customer_company || '').trim();
   const searchTrim = String(search || '').trim();
+  const assigneeNameTrim = parseCrmAssigneeNameQuery(reqQuery);
+  const regionUnassigned = parseCrmRegionUnassignedQuery(reqQuery);
+  const explicitRegionId = regionUnassigned ? null : uuidQueryOrNull(reqQuery.region_id);
   const parsedLimit = Math.min(Math.max(parseInt(limit) || 100, 1), 2000);
   const parsedOffset = Math.max(parseInt(offset) || 0, 0);
   const useLite = resolveCrmLeadsKanbanLite(reqQuery, opts);
@@ -4436,13 +4450,39 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     const { data: custSearchRows, error: custSearchErr } = await supabase
       .from('customers')
       .select('id')
-      .or(`phone.ilike.%${searchTrim}%,full_name.ilike.%${searchTrim}%`)
+      .or(`phone.ilike.%${searchTrim}%,full_name.ilike.%${searchTrim}%,email.ilike.%${searchTrim}%,address.ilike.%${searchTrim}%,company.ilike.%${searchTrim}%`)
       .limit(1000);
     if (!custSearchErr) customerIdsForSearch = (custSearchRows || []).map((r) => r.id);
   }
+  let assigneeIdsForName = null;
+  if (assigneeNameTrim) {
+    const { data: userRows, error: userErr } = await supabase
+      .from('users')
+      .select('id')
+      .ilike('full_name', `%${assigneeNameTrim}%`)
+      .limit(300);
+    if (userErr) throw userErr;
+    assigneeIdsForName = (userRows || []).map((r) => r.id).filter(Boolean);
+    if (!assigneeIdsForName.length) {
+      return {
+        data: [],
+        total: 0,
+        offset: parsedOffset,
+        limit: parsedLimit,
+        hasMore: false,
+        nextOffset: parsedOffset,
+      };
+    }
+  }
   const buildSearchOr = () => {
     if (!searchTrim) return null;
-    const parts = [`title.ilike.%${searchTrim}%`, `code.ilike.%${searchTrim}%`, `phone.ilike.%${searchTrim}%`];
+    const parts = [
+      `title.ilike.%${searchTrim}%`,
+      `code.ilike.%${searchTrim}%`,
+      `phone.ilike.%${searchTrim}%`,
+      `description.ilike.%${searchTrim}%`,
+      `install_address.ilike.%${searchTrim}%`,
+    ];
     if (customerIdsForSearch && customerIdsForSearch.length) {
       parts.push(`customer_id.in.(${customerIdsForSearch.join(',')})`);
     }
@@ -4474,6 +4514,10 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     next_follow_up_empty === 'true' || next_follow_up_empty === '1' || next_follow_up_empty === true;
   const pipeId = uuidQueryOrNull(pipeline_id);
   const orderByFollowUp = !!(nfFrom || nfTo || nfEmpty);
+  const needsPostFilter =
+    customerCompanyTrim === '__none__'
+    || phone_filter === 'has_phone'
+    || phone_filter === 'no_phone';
 
   const selectStr = useLite ? CRM_LEAD_KANBAN_LITE_SELECT : await getCrmLeadListSelect();
   const applyPipelineFollowUpFilters = (q) => {
@@ -4487,129 +4531,147 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     return x;
   };
 
-  const buildBaseQuery = () => {
-    let q = supabase
-      .from('crm_leads')
-      .select(selectStr)
-      .eq('type', type)
-      .is('parent_lead_id', null)
-      .order(orderByFollowUp ? 'next_follow_up' : 'created_at', { ascending: orderByFollowUp });
-    q = applyStageIdFilterToQuery(q, stageIds);
+  const applyLegacyFilters = (q) => {
+    let x = q;
+    x = applyStageIdFilterToQuery(x, stageIds);
     if (assigned_to) {
-      if (assigneeStrict) q = q.eq('assigned_to', assigned_to);
-      else q = q.or(`assigned_to.eq.${assigned_to},lead_owner_id.eq.${assigned_to}`);
+      if (assigneeStrict) x = x.eq('assigned_to', assigned_to);
+      else x = x.or(`assigned_to.eq.${assigned_to},lead_owner_id.eq.${assigned_to}`);
     }
-    if (source_id) q = q.eq('source_id', source_id);
-    if (company_id) q = q.eq('company_id', company_id);
-    if (lead_type_id) q = q.eq('lead_type_id', lead_type_id);
-    if (referrerNameTrim) q = q.eq('referrer_name', referrerNameTrim);
-    if (customerIdsForCompanyFilter) q = q.in('customer_id', customerIdsForCompanyFilter);
-    q = applyPipelineFollowUpFilters(q);
+    if (assigneeIdsForName?.length) {
+      const ors = assigneeIdsForName
+        .flatMap((id) => [`assigned_to.eq.${id}`, `lead_owner_id.eq.${id}`])
+        .join(',');
+      x = x.or(ors);
+    }
+    if (source_id) x = x.eq('source_id', source_id);
+    if (company_id) x = x.eq('company_id', company_id);
+    if (lead_type_id) x = x.eq('lead_type_id', lead_type_id);
+    if (referrerNameTrim) x = x.eq('referrer_name', referrerNameTrim);
+    if (customerIdsForCompanyFilter) x = x.in('customer_id', customerIdsForCompanyFilter);
+    x = applyPipelineFollowUpFilters(x);
     const df = sanitizeIsoDateQueryParam(date_from);
     const dt = sanitizeIsoDateQueryParam(date_to);
-    if (df) q = q.gte('created_at', crmReportCreatedAtFromIso(df) || df);
-    if (dt) q = q.lte('created_at', crmReportCreatedAtToIso(dt) || `${dt}T23:59:59.999+07:00`);
+    if (df) x = x.gte('created_at', crmReportCreatedAtFromIso(df) || df);
+    if (dt) x = x.lte('created_at', crmReportCreatedAtToIso(dt) || `${dt}T23:59:59.999+07:00`);
     const searchOr = buildSearchOr();
-    if (searchOr) q = q.or(searchOr);
-    if (scopeReq) q = applyCrmLeadRegionFilterToQuery(q, scopeReq);
-    return q;
+    if (searchOr) x = x.or(searchOr);
+    if (regionUnassigned) {
+      x = x.is('region_id', null);
+    } else if (explicitRegionId) {
+      // Admin lọc 1 khu vực: eq. NV: khu vực HOẶC đã giao cho mình (gần RPC).
+      if (viewerUserId && !assigneeStrict) {
+        x = x.or(`region_id.eq.${explicitRegionId},assigned_to.eq.${viewerUserId},lead_owner_id.eq.${viewerUserId}`);
+      } else {
+        x = x.eq('region_id', explicitRegionId);
+      }
+    } else if (scopeReq) {
+      x = applyCrmLeadRegionFilterToQuery(x, scopeReq);
+    }
+    return x;
   };
 
-  // Chỉ lấy đúng parsedLimit dòng từ parsedOffset, không vòng lặp không giới hạn
-  const rows = [];
-  const PAGE = Math.min(1000, parsedLimit);
-  let currentSelectStr = selectStr;
-  for (let fetched = 0, guard = 0; fetched < parsedLimit && guard < 20; guard += 1) {
-    const need = Math.min(PAGE, parsedLimit - fetched);
-    const from = parsedOffset + fetched;
+  const fetchLegacyRange = async (from, to, currentSelectStr) => {
     let q = supabase
       .from('crm_leads')
       .select(currentSelectStr)
       .eq('type', type)
       .is('parent_lead_id', null)
       .order(orderByFollowUp ? 'next_follow_up' : 'created_at', { ascending: orderByFollowUp });
-    q = applyStageIdFilterToQuery(q, stageIds);
-    if (assigned_to) {
-      if (assigneeStrict) q = q.eq('assigned_to', assigned_to);
-      else q = q.or(`assigned_to.eq.${assigned_to},lead_owner_id.eq.${assigned_to}`);
-    }
-    if (source_id) q = q.eq('source_id', source_id);
-    if (company_id) q = q.eq('company_id', company_id);
-    if (lead_type_id) q = q.eq('lead_type_id', lead_type_id);
-    if (referrerNameTrim) q = q.eq('referrer_name', referrerNameTrim);
-    if (customerIdsForCompanyFilter) q = q.in('customer_id', customerIdsForCompanyFilter);
-    q = applyPipelineFollowUpFilters(q);
-    const df = sanitizeIsoDateQueryParam(date_from);
-    const dt = sanitizeIsoDateQueryParam(date_to);
-    if (df) q = q.gte('created_at', crmReportCreatedAtFromIso(df) || df);
-    if (dt) q = q.lte('created_at', crmReportCreatedAtToIso(dt) || `${dt}T23:59:59.999+07:00`);
-    const searchOrPage = buildSearchOr();
-    if (searchOrPage) q = q.or(searchOrPage);
-    if (scopeReq) q = applyCrmLeadRegionFilterToQuery(q, scopeReq);
-    let { data, error } = await q.range(from, from + need - 1);
+    q = applyLegacyFilters(q);
+    let { data, error } = await q.range(from, to);
+    let nextSelect = currentSelectStr;
     if (error && isVcRelationshipError(error)) {
-      // FK chưa có — strip join và retry
       crmSchemaCompat.vcPipelineStageAvailable = false;
       crmSchemaCompat.leadSelectMigrationChecked = false;
-      currentSelectStr = currentSelectStr.replace(', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)', '');
+      nextSelect = nextSelect.replace(', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)', '');
       console.warn('[crm] Auto-strip vc_pipeline_stage join do FK chưa tồn tại trong schema cache');
-      ({ data, error } = await q.select(currentSelectStr).range(from, from + need - 1));
+      ({ data, error } = await q.select(nextSelect).range(from, to));
     }
     if (error && /region|company_regions|crm_leads_region_id/i.test(String(error.message || ''))) {
-      currentSelectStr = currentSelectStr.replace(CRM_LEAD_REGION_EMBED, '');
+      nextSelect = nextSelect.replace(CRM_LEAD_REGION_EMBED, '');
       console.warn('[crm] Auto-strip crm_region embed (migration 131 / FK)');
-      ({ data, error } = await q.select(currentSelectStr).range(from, from + need - 1));
+      ({ data, error } = await q.select(nextSelect).range(from, to));
     }
     if (error && isCrmLeadTypeColorMissingError(error)) {
       crmSchemaCompat.leadTypeColorAvailable = false;
       crmSchemaCompat.leadSelectMigrationChecked = true;
       crmSchemaCompat.lastProbeAt = Date.now();
-      currentSelectStr = stripCrmLeadTypeColorFromSelect(currentSelectStr);
+      nextSelect = stripCrmLeadTypeColorFromSelect(nextSelect);
       console.warn('[crm] Auto-strip crm_lead_types.color embed (migration 339)');
-      ({ data, error } = await q.select(currentSelectStr).range(from, from + need - 1));
+      ({ data, error } = await q.select(nextSelect).range(from, to));
     }
     if (error) throw error;
-    const chunk = data || [];
-    rows.push(...chunk);
-    fetched += chunk.length;
-    if (chunk.length < need) break;
-  }
+    return { rows: data || [], selectStr: nextSelect };
+  };
 
-  let result = mapLeadDisplayPhone(rows);
-  if (customerCompanyTrim === '__none__') {
-    result = result.filter((l) => !String(l.customer?.company || '').trim());
-  }
-  if (phone_filter === 'has_phone') {
-    const zaloIds = await loadZaloLinkedLeadIdSet(result.map((l) => l.id));
-    result = result.filter((l) => !!l.display_phone || zaloIds.has(String(l.id)));
-  } else if (phone_filter === 'no_phone') {
-    result = result.filter((l) => !l.display_phone);
-  }
-  if (orderByFollowUp) {
-    result.sort((a, b) => {
-      const na = a.next_follow_up ? new Date(a.next_follow_up).getTime() : Infinity;
-      const nb = b.next_follow_up ? new Date(b.next_follow_up).getTime() : Infinity;
-      if (na !== nb) return na - nb;
-      const ap = a.display_phone ? 1 : 0;
-      const bp = b.display_phone ? 1 : 0;
-      if (bp !== ap) return bp - ap;
-      const da = a.created_at ? new Date(a.created_at).getTime() : 0;
-      const db = b.created_at ? new Date(b.created_at).getTime() : 0;
-      return db - da;
-    });
+  const applyPostFilters = async (rows) => {
+    let result = mapLeadDisplayPhone(rows);
+    if (customerCompanyTrim === '__none__') {
+      result = result.filter((l) => !String(l.customer?.company || '').trim());
+    }
+    if (phone_filter === 'has_phone') {
+      const zaloIds = await loadZaloLinkedLeadIdSet(result.map((l) => l.id));
+      result = result.filter((l) => !!l.display_phone || zaloIds.has(String(l.id)));
+    } else if (phone_filter === 'no_phone') {
+      result = result.filter((l) => !l.display_phone);
+    }
+    return result;
+  };
+
+  let page = [];
+  let total = 0;
+  let hasMore = false;
+  let currentSelectStr = selectStr;
+
+  if (!needsPostFilter) {
+    let countQ = supabase
+      .from('crm_leads')
+      .select('id', { count: 'exact', head: true })
+      .eq('type', type)
+      .is('parent_lead_id', null);
+    countQ = applyLegacyFilters(countQ);
+    const { count, error: countErr } = await countQ;
+    if (countErr) throw countErr;
+    total = typeof count === 'number' ? count : 0;
+    const fetched = await fetchLegacyRange(parsedOffset, parsedOffset + parsedLimit - 1, currentSelectStr);
+    currentSelectStr = fetched.selectStr;
+    page = mapLeadDisplayPhone(fetched.rows);
+    hasMore = parsedOffset + page.length < total;
   } else {
-    result.sort((a, b) => {
-      const ap = a.display_phone ? 1 : 0;
-      const bp = b.display_phone ? 1 : 0;
-      if (bp !== ap) return bp - ap;
-      const da = a.created_at ? new Date(a.created_at).getTime() : 0;
-      const db = b.created_at ? new Date(b.created_at).getTime() : 0;
-      return db - da;
-    });
+    // phone / customer_company=__none__ lọc sau hydrate → quét cửa sổ đến đủ trang.
+    const matches = [];
+    const SCAN = 500;
+    let dbOffset = 0;
+    let exhausted = false;
+    for (let guard = 0; guard < 40; guard += 1) {
+      const fetched = await fetchLegacyRange(dbOffset, dbOffset + SCAN - 1, currentSelectStr);
+      currentSelectStr = fetched.selectStr;
+      const chunk = fetched.rows;
+      if (!chunk.length) {
+        exhausted = true;
+        break;
+      }
+      const filtered = await applyPostFilters(chunk);
+      matches.push(...filtered);
+      dbOffset += chunk.length;
+      if (chunk.length < SCAN) {
+        exhausted = true;
+        break;
+      }
+      if (matches.length >= parsedOffset + parsedLimit) break;
+    }
+    page = matches.slice(parsedOffset, parsedOffset + parsedLimit);
+    if (exhausted) {
+      total = matches.length;
+      hasMore = parsedOffset + page.length < total;
+    } else {
+      // Chưa hết dữ liệu SQL — total tối thiểu là cửa sổ đã lọc + còn tiếp.
+      total = Math.max(matches.length, parsedOffset + page.length + (page.length >= parsedLimit ? 1 : 0));
+      hasMore = page.length >= parsedLimit || matches.length > parsedOffset + page.length;
+    }
   }
 
-  const total = result.length;
-  const page = result.slice(parsedOffset, parsedOffset + parsedLimit);
   if (useLite) {
     let withDeadline = page;
     if (!skipDeadline) withDeadline = await attachCrmNextOpenTaskDeadline(page);
@@ -4619,7 +4681,7 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
       total,
       offset: parsedOffset,
       limit: parsedLimit,
-      hasMore: parsedOffset + page.length < total,
+      hasMore,
       nextOffset: parsedOffset + page.length,
     };
   }
@@ -4638,7 +4700,7 @@ async function getCrmLeadsListLegacy(reqQuery, opts = {}) {
     total,
     offset: parsedOffset,
     limit: parsedLimit,
-    hasMore: parsedOffset + page.length < total,
+    hasMore,
     nextOffset: parsedOffset + page.length,
   };
 }
@@ -4684,11 +4746,22 @@ function parseCrmStageCountsRpc(raw) {
 async function invokeCrmLeadsStageCountsRpc(rpcParams) {
   let { data, error } = await supabase.rpc('crm_leads_stage_counts', rpcParams);
   if (error && /crm_leads_stage_counts|does not exist|Could not find|argument/i.test(String(error.message || ''))) {
-    const { p_region_ids: _r, p_pipeline_stage_ids: _p, ...noExtras } = rpcParams;
-    const r2 = await supabase.rpc('crm_leads_stage_counts', noExtras);
+    // DB chưa chạy 460 — bỏ p_assignee_name / p_region_unassigned
+    const {
+      p_assignee_name: _an,
+      p_region_unassigned: _ru,
+      ...noParity
+    } = rpcParams;
+    let r2 = await supabase.rpc('crm_leads_stage_counts', noParity);
+    if (r2.error && /crm_leads_stage_counts|does not exist|Could not find|argument/i.test(String(r2.error.message || ''))) {
+      const { p_region_ids: _r, p_pipeline_stage_ids: _p, ...noExtras } = noParity;
+      r2 = await supabase.rpc('crm_leads_stage_counts', noExtras);
+    }
     if (!r2.error) {
       data = r2.data;
       error = null;
+    } else {
+      error = r2.error;
     }
   }
   if (error) {
@@ -4700,6 +4773,8 @@ async function invokeCrmLeadsStageCountsRpc(rpcParams) {
 
 function buildCrmLeadsRpcFilterParams(mergedQuery, type, rpcAssigneeStrict, rpcRegionIds) {
   const { assigned_to, source_id, company_id, date_from, date_to, search, phone_filter } = mergedQuery;
+  const assigneeName = parseCrmAssigneeNameQuery(mergedQuery);
+  const regionUnassigned = parseCrmRegionUnassignedQuery(mergedQuery);
   return {
     p_type: type,
     p_assigned_to: uuidQueryOrNull(assigned_to),
@@ -4710,28 +4785,67 @@ function buildCrmLeadsRpcFilterParams(mergedQuery, type, rpcAssigneeStrict, rpcR
     p_search: search || null,
     p_phone_filter: phone_filter || null,
     p_assigned_strict: rpcAssigneeStrict,
-    p_region_ids: rpcRegionIds,
+    // Khi «Chưa gán» — không truyền region_ids (RPC dùng p_region_unassigned).
+    p_region_ids: regionUnassigned ? null : rpcRegionIds,
+    p_assignee_name: assigneeName || null,
+    p_region_unassigned: regionUnassigned,
   };
+}
+
+/** Gọi crm_leads_page_ids với fallback bỏ tham số mới (migration 460 chưa chạy). */
+async function invokeCrmLeadsPageIdsRpc(rpcParams) {
+  let { data: rpcData, error: rpcError } = await supabase.rpc('crm_leads_page_ids', rpcParams);
+  if (rpcError && /crm_leads_page_ids|does not exist|Could not find|argument/i.test(String(rpcError.message || ''))) {
+    const {
+      p_assignee_name: _an,
+      p_region_unassigned: _ru,
+      ...noParity
+    } = rpcParams;
+    let r2 = await supabase.rpc('crm_leads_page_ids', noParity);
+    if (r2.error && /crm_leads_page_ids|does not exist|Could not find|argument/i.test(String(r2.error.message || ''))) {
+      const { p_region_ids: _reg, ...rpcNoRegion } = noParity;
+      r2 = await supabase.rpc('crm_leads_page_ids', rpcNoRegion);
+      if (r2.error && /crm_leads_page_ids|does not exist|Could not find/i.test(String(r2.error.message || ''))) {
+        const { p_assigned_strict: _s, ...rpcLegacy } = rpcNoRegion;
+        r2 = await supabase.rpc('crm_leads_page_ids', rpcLegacy);
+      }
+    }
+    if (!r2.error) {
+      rpcData = r2.data;
+      rpcError = null;
+    } else {
+      rpcError = r2.error;
+    }
+  }
+  return { rpcData, rpcError };
 }
 
 /** Dashboard `light=1`: stage counts qua RPC — không quét toàn bộ crm_leads. */
 async function computeCrmDashboardLightStats(req, type, {
   effectiveCompanyId,
   region_id,
+  region_unassigned,
   stages,
   assigned_to_only,
   date_from,
   date_to,
   phone_filter,
+  search,
+  source_id,
+  assignee_name,
 }) {
   const mergedQuery = {
     type,
     company_id: effectiveCompanyId || undefined,
     region_id: region_id || undefined,
+    region_unassigned: region_unassigned || undefined,
     assigned_to: assigned_to_only || undefined,
     date_from,
     date_to,
     phone_filter: phone_filter || undefined,
+    search: search || undefined,
+    source_id: source_id || undefined,
+    assignee_name: assignee_name || undefined,
   };
   const dealAssigneeStrict = type === 'deal' && !!uuidQueryOrNull(assigned_to_only);
   const leadAssigneeStrict = type === 'lead' && !!uuidQueryOrNull(assigned_to_only);
@@ -4765,6 +4879,9 @@ async function resolveCrmLeadsMergedQuery(req, res) {
   const forcedLeadSelf = type === 'lead' && req.user?.userId && !userSeesAllCrmLeadsForScope(req.user);
   let mergedQuery =
     forcedDealSelf || forcedLeadSelf ? { ...req.query, assigned_to: req.user.userId } : { ...req.query };
+  if (parseCrmRegionUnassignedQuery(mergedQuery)) {
+    mergedQuery = { ...mergedQuery, region_unassigned: '1', region_id: undefined };
+  }
   const sacLeads = scopedAdminCompanyId(req);
   if (sacLeads) {
     mergedQuery = { ...mergedQuery, company_id: sacLeads };
@@ -4777,7 +4894,9 @@ async function resolveCrmLeadsMergedQuery(req, res) {
   const dealAssigneeStrict = type === 'deal' && (!!uuidQueryOrNull(assigned_to) || forcedDealSelf);
   const leadAssigneeStrict = type === 'lead' && (!!uuidQueryOrNull(assigned_to) || forcedLeadSelf);
   const rpcAssigneeStrict = dealAssigneeStrict || leadAssigneeStrict;
-  const rpcRegionIds = resolveRpcRegionIdsForCrmList(req, mergedQuery.region_id);
+  const rpcRegionIds = parseCrmRegionUnassignedQuery(mergedQuery)
+    ? null
+    : resolveRpcRegionIdsForCrmList(req, mergedQuery.region_id);
   return { type, mergedQuery, rpcAssigneeStrict, rpcRegionIds };
 }
 
@@ -4869,8 +4988,12 @@ async function fetchCrmLeadsPageViaRpc(req, mergedQuery, type, parsedOffset, par
   const dealAssigneeStrict = type === 'deal' && (!!uuidQueryOrNull(mergedQuery.assigned_to) || forcedDealSelf);
   const leadAssigneeStrict = type === 'lead' && (!!uuidQueryOrNull(mergedQuery.assigned_to) || forcedLeadSelf);
   const rpcAssigneeStrict = dealAssigneeStrict || leadAssigneeStrict;
-  const rpcRegionIds = resolveRpcRegionIdsForCrmList(req, mergedQuery.region_id);
+  const regionUnassigned = parseCrmRegionUnassignedQuery(mergedQuery);
+  const rpcRegionIds = regionUnassigned
+    ? null
+    : resolveRpcRegionIdsForCrmList(req, mergedQuery.region_id);
   const { assigned_to, source_id, search, company_id, date_from, date_to, phone_filter, stage_id } = mergedQuery;
+  const assigneeName = parseCrmAssigneeNameQuery(mergedQuery);
   const rpcParams = {
     p_type: type,
     p_stage_id: uuidQueryOrNull(stage_id),
@@ -4885,20 +5008,10 @@ async function fetchCrmLeadsPageViaRpc(req, mergedQuery, type, parsedOffset, par
     p_offset: parsedOffset,
     p_assigned_strict: rpcAssigneeStrict,
     p_region_ids: rpcRegionIds,
+    p_assignee_name: assigneeName || null,
+    p_region_unassigned: regionUnassigned,
   };
-  let { data: rpcData, error: rpcError } = await supabase.rpc('crm_leads_page_ids', rpcParams);
-  if (rpcError && /crm_leads_page_ids|does not exist|Could not find|argument/i.test(String(rpcError.message || ''))) {
-    const { p_region_ids: _reg, ...rpcNoRegion } = rpcParams;
-    let r2 = await supabase.rpc('crm_leads_page_ids', rpcNoRegion);
-    if (r2.error && /crm_leads_page_ids|does not exist|Could not find/i.test(String(r2.error.message || ''))) {
-      const { p_assigned_strict: _s, ...rpcLegacy } = rpcNoRegion;
-      r2 = await supabase.rpc('crm_leads_page_ids', rpcLegacy);
-    }
-    if (!r2.error) {
-      rpcData = r2.data;
-      rpcError = null;
-    }
-  }
+  const { rpcData, rpcError } = await invokeCrmLeadsPageIdsRpc(rpcParams);
   const parsedRpc = !rpcError ? parseCrmLeadsPageRpc(rpcData) : null;
   if (!parsedRpc) return null;
   const lite = resolveCrmLeadsKanbanLite(mergedQuery, opts);
