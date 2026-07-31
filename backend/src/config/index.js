@@ -41,15 +41,19 @@ function resolveCorsOrigins() {
     'http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:3000,http://127.0.0.1:3000,http://localhost:4173';
   const raw = process.env.CORS_ORIGINS || fallback;
   const seen = new Set();
-  return raw
+  const list = raw
     .split(',')
     .map((s) => normalizeOriginUrl(s.trim(), ''))
-    .filter(Boolean)
-    .filter((origin) => {
-      if (seen.has(origin)) return false;
-      seen.add(origin);
-      return true;
-    });
+    .filter(Boolean);
+  // Luôn kèm SPA production mặc định + FRONTEND_URL (nếu có) — tránh quên env trên Render.
+  list.push(DEFAULT_PRODUCTION_FRONTEND_URL);
+  const frontend = resolveFrontendUrl();
+  if (frontend) list.push(frontend);
+  return list.filter((origin) => {
+    if (seen.has(origin)) return false;
+    seen.add(origin);
+    return true;
+  });
 }
 
 module.exports = {
