@@ -1085,9 +1085,13 @@ export default function PipelineSettingsPage() {
     if (!ok) setZaloPlId(visiblePipelines[0]?.id || '');
   }, [zaloPlId, visiblePipelines, activeTab]);
 
-  const filtered = stages.filter(s => s.pipeline_type === activeType).sort((a, b) => a.order_index - b.order_index);
+  const filtered = stages
+    .filter((s) => s.pipeline_type === activeType)
+    .sort((a, b) => (Number(a.order_index) || 0) - (Number(b.order_index) || 0));
   const otherType = activeType === 'lead' ? 'deal' : 'lead';
-  const otherFiltered = stages.filter(s => s.pipeline_type === otherType).sort((a, b) => a.order_index - b.order_index);
+  const otherFiltered = stages
+    .filter((s) => s.pipeline_type === otherType)
+    .sort((a, b) => (Number(a.order_index) || 0) - (Number(b.order_index) || 0));
 
   const startAdd = (type) => {
     setAdding(type);
@@ -1204,26 +1208,44 @@ export default function PipelineSettingsPage() {
     } catch { /* toast đã hiện */ }
   };
 
+  const applyStageReorderLocally = useCallback((reorder) => {
+    const byId = new Map((reorder || []).map((r) => [String(r.id), Number(r.order_index)]));
+    setStages((prev) => prev.map((s) => (
+      byId.has(String(s.id)) ? { ...s, order_index: byId.get(String(s.id)) } : s
+    )));
+  }, []);
+
+  const mergeReorderedStagesFromApi = useCallback((rows, reorderFallback) => {
+    if (Array.isArray(rows) && rows.length) {
+      const byId = new Map(rows.map((r) => [String(r.id), r]));
+      setStages((prev) => prev.map((s) => {
+        const next = byId.get(String(s.id));
+        return next ? { ...s, ...next } : s;
+      }));
+      return;
+    }
+    applyStageReorderLocally(reorderFallback);
+  }, [applyStageReorderLocally]);
+
   const moveStage = async (stage, dir) => {
     // Dùng đúng type của stage (không phụ thuộc activeType) để tránh nhầm list
     const list = stages
       .filter((s) => s.pipeline_type === stage.pipeline_type)
-      .sort((a, b) => a.order_index - b.order_index);
+      .sort((a, b) => (Number(a.order_index) || 0) - (Number(b.order_index) || 0));
     const idx = list.findIndex((s) => s.id === stage.id);
     if (idx < 0 || (dir === -1 && idx === 0) || (dir === 1 && idx === list.length - 1)) return;
     const newList = [...list];
     [newList[idx], newList[idx + dir]] = [newList[idx + dir], newList[idx]];
     const reorder = newList.map((s, i) => ({ id: s.id, order_index: i + 1 }));
+    applyStageReorderLocally(reorder);
     try {
-      await api.put('/crm/pipeline-stages-reorder', { stages: reorder });
-      setStages((prev) => {
-        const byId = new Map(reorder.map((r) => [String(r.id), r.order_index]));
-        return prev.map((s) => (byId.has(String(s.id)) ? { ...s, order_index: byId.get(String(s.id)) } : s));
-      });
-      await load({ silent: true });
+      const { data } = await api.put('/crm/pipeline-stages-reorder', { stages: reorder });
+      mergeReorderedStagesFromApi(data?.stages, reorder);
+      // Không load() ngay — GET taxonomy dễ trả bản cũ và ghi đè thứ tự vừa lưu.
       showToast('Đã sắp xếp lại giai đoạn', 'ok');
     } catch (e) {
       showToast('Lỗi sắp xếp: ' + (e.response?.data?.error || e.message), 'err');
+      await load({ silent: true });
     }
   };
 
@@ -1253,9 +1275,9 @@ export default function PipelineSettingsPage() {
 
     const list = stages
       .filter((s) => s.pipeline_type === target.pipeline_type)
-      .sort((a, b) => a.order_index - b.order_index);
-    const fromIdx = list.findIndex((s) => s.id === source.id);
-    const toIdx   = list.findIndex((s) => s.id === target.id);
+      .sort((a, b) => (Number(a.order_index) || 0) - (Number(b.order_index) || 0));
+    const fromIdx = list.findIndex((s) => String(s.id) === String(source.id));
+    const toIdx   = list.findIndex((s) => String(s.id) === String(target.id));
     if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return;
 
     const newList = [...list];
@@ -1263,14 +1285,11 @@ export default function PipelineSettingsPage() {
     newList.splice(toIdx, 0, moved);
     const reorder = newList.map((s, i) => ({ id: s.id, order_index: i + 1 }));
 
-    // Optimistic update
-    setStages((prev) => prev.map((s) => {
-      const idx = newList.findIndex((x) => x.id === s.id);
-      return idx >= 0 ? { ...s, order_index: idx + 1 } : s;
-    }));
+    // Optimistic — cập nhật UI ngay; không gọi load() sau khi OK (tránh ghi đè cache cũ).
+    applyStageReorderLocally(reorder);
     try {
-      await api.put('/crm/pipeline-stages-reorder', { stages: reorder });
-      await load({ silent: true });
+      const { data } = await api.put('/crm/pipeline-stages-reorder', { stages: reorder });
+      mergeReorderedStagesFromApi(data?.stages, reorder);
       showToast('Đã sắp xếp lại giai đoạn', 'ok');
     } catch (err) {
       showToast('Lỗi sắp xếp: ' + (err.response?.data?.error || err.message), 'err');
