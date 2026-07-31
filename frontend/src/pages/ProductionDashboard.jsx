@@ -35,6 +35,7 @@ import {
   Factory, Users, LayoutGrid, List,
   CheckSquare, UserCheck, Loader2, Truck, Filter, Clock, Layers, Trash2, MessageSquare, Pin, Building2, ArrowRightLeft, Settings, ChevronDown, Eye, ChevronRight,
 } from 'lucide-react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { ProductionListView, ProductionPlannerView, ProductionCalendarView, ProductionCommentsView, ProductionDeadlineView } from '../components/ProductionViews';
 import WorkshopPipelineKanbanScroll, { useWorkshopKanbanScrollLayout } from '../components/WorkshopPipelineKanbanScroll';
 import { useKanbanColumnTheme, UI_KANBAN_FIXED_CLASS, KANBAN_BOARD_COLUMN_RAILS_CLASS, KANBAN_COLUMN_RAIL_CLASS, KANBAN_COLUMN_VALUE_METRIC_CLASS, KANBAN_CARDS_BODY_CLASS, KANBAN_CARDS_BODY_EMPTY_PIN_CLASS, KANBAN_COLUMN_EMPTY_CLASS, KANBAN_COLUMN_EMPTY_PIN_CLASS, KANBAN_PIPELINE_CARD_CLASS, getKanbanPipelineCardBorderStyle, useKanbanEmptyPlaceholderStickyTop } from '../lib/kanbanColumnTheme';
@@ -100,6 +101,7 @@ const LS_SX_FILTER_PANEL_POS = 'sx_filter_panel_pos';
 const LS_SX_KANBAN_COLUMN_SCROLL = 'sx_kanban_column_scroll_mode';
 const KANBAN_COLUMN_SCROLL_MODES = ['unified', 'per-column'];
 const KANBAN_DEFAULT_COLUMN_SCROLL_MODE = 'unified';
+const SX_KANBAN_PAGE_SIZE = 40;
 
 function readStoredSxFilterPanelPos() {
   if (typeof window === 'undefined') return null;
@@ -330,6 +332,15 @@ export default function ProductionDashboard() {
   const crossWorkshopViewer = isCrossWorkshopProductionViewer(user);
 
   const [projects, setProjects] = useState(() => boardSnap0?.projects || []);
+  const [projectPageState, setProjectPageState] = useState({
+    total: null,
+    nextPage: 1,
+    hasMore: false,
+    loading: false,
+  });
+  const [pipelineStageCounts, setPipelineStageCounts] = useState({});
+  const [stagePageState, setStagePageState] = useState({});
+  const stagePageLoadingRef = useRef(new Set());
   const [pipeline, setPipeline] = useState(() => boardSnap0?.pipeline || []);
   const [loading, setLoading] = useState(() => !(boardSnap0?.projects?.length));
   const [syncing, setSyncing] = useState(false);
@@ -338,6 +349,7 @@ export default function ProductionDashboard() {
   const [filterAppliedHint, setFilterAppliedHint] = useState(false);
   const wasFilterBusyRef = useRef(false);
   const loadSeqRef = useRef(0);
+  const projectPageLoadingRef = useRef(false);
   const sxLoaderGateRef = useRef(null);
   /** Remount từ chi tiết đã hydrate snapshot → lần load đầu silent (không che board). */
   const hydrateSilentOnceRef = useRef(!!(boardSnap0?.projects?.length));
@@ -671,6 +683,11 @@ export default function ProductionDashboard() {
     const returningFromDetail = !!peekWorkshopPipelineCardFocus('sx');
     const bustCache = !!opts.bustCache || returningFromDetail;
     const seq = ++loadSeqRef.current;
+    projectPageLoadingRef.current = false;
+    stagePageLoadingRef.current.clear();
+    setProjectPageState((prev) => ({ ...prev, hasMore: false, loading: false }));
+    setPipelineStageCounts({});
+    setStagePageState({});
     const isStale = () => seq !== loadSeqRef.current;
     const fetchCompanyId = opts.companyId || companyParam;
     const fetchDealCompanyId = opts.dealCompanyId !== undefined ? opts.dealCompanyId : dealCompanyParam;
@@ -705,22 +722,97 @@ export default function ProductionDashboard() {
         const s = rawWorkshopType == null ? '' : String(rawWorkshopType).trim();
         return s || undefined;
       })();
+      const serverDateRange = timePreset === 'custom'
+        ? (customFrom && customTo ? { from: customFrom, to: customTo } : { from: '', to: '' })
+        : (timePreset ? getWorkshopDateRange(timePreset) : { from: '', to: '' });
+      const serverFilterParams = {
+        ...(serverDateRange.from ? { created_from: serverDateRange.from } : {}),
+        ...(serverDateRange.to ? { created_to: serverDateRange.to } : {}),
+        ...(filterPersonId ? { production_person_id: filterPersonId } : {}),
+      };
 
-      // KPI tính từ scopeProjects (scopeKpis) — không gọi /dashboard (trùng /projects).
-      // Cột Kanban do effect `/production/pipeline-stages`.
-      const projectList = await fetchWorkshopProjectPages(api, '/production/projects', {
+      const summaryParams = {
+        summary: 1,
+        view: 'kanban',
+        ...(fetchCompanyId ? { company_id: fetchCompanyId } : {}),
+        ...(fetchDealCompanyId ? { deal_company_id: fetchDealCompanyId } : {}),
+        ...(fetchSxWorkshopId ? { sx_workshop_company_id: fetchSxWorkshopId } : {}),
+        ...(workshopTypeFilter ? { workshop_type_id: workshopTypeFilter } : {}),
+        ...serverFilterParams,
+      };
+      void api.get('/production/projects', {
+        params: summaryParams,
+        ...(bustCache ? { headers: { 'x-no-cache': '1' } } : {}),
+      }).then(({ data }) => {
+        if (isStale()) return;
+        const counts = data?.counts && typeof data.counts === 'object' ? data.counts : {};
+        setPipelineStageCounts(counts);
+        setProjectPageState((prev) => ({ ...prev, total: Number(data?.total) || 0 }));
+        setStagePageState((prev) => {
+          const next = { ...prev };
+          Object.entries(counts).forEach(([stageId, totalRaw]) => {
+            const total = Number(totalRaw) || 0;
+            const loaded = Number(next[stageId]?.loaded) || 0;
+            next[stageId] = {
+              ...(next[stageId] || {}),
+              total,
+              loaded,
+              nextPage: next[stageId]?.nextPage || 1,
+              hasMore: total > loaded,
+              loading: false,
+            };
+          });
+          return next;
+        });
+      }).catch(() => {});
+
+      // Chỉ lấy 40 card đầu; tổng được tải độc lập bằng truy vấn đếm nhẹ phía trên.
+      const projectPage = await fetchWorkshopProjectPages(api, '/production/projects', {
         companyId: fetchCompanyId,
         dealCompanyId: fetchDealCompanyId,
         sxWorkshopCompanyId: fetchSxWorkshopId,
         workshopTypeId: workshopTypeFilter,
-        maxRecords,
-        pageSize: 500,
+        maxRecords: Math.min(maxRecords, SX_KANBAN_PAGE_SIZE),
+        pageSize: SX_KANBAN_PAGE_SIZE,
         bustCache,
         view: 'kanban',
+        includeMeta: true,
+        extraParams: serverFilterParams,
       }).catch(() => null);
       // Bỏ qua response cũ khi đã có load mới hơn — tránh ghi đè board bằng data stale.
       if (isStale()) return;
-      if (projectList !== null) {
+      if (projectPage !== null) {
+        const projectList = projectPage.projects || [];
+        setProjectPageState((prev) => ({
+          total: projectPage.total ?? prev.total,
+          nextPage: projectPage.nextPage,
+          hasMore: projectPage.hasMore && projectList.length < maxRecords,
+          loading: false,
+        }));
+        setStagePageState((prev) => {
+          const loadedByCol = {};
+          for (const row of projectList) {
+            const key = row?.sx_kanban_column_id ? String(row.sx_kanban_column_id) : '__none__';
+            loadedByCol[key] = (loadedByCol[key] || 0) + 1;
+          }
+          const next = { ...prev };
+          const ids = new Set([...Object.keys(next), ...Object.keys(loadedByCol)]);
+          ids.forEach((stageId) => {
+            const loaded = loadedByCol[stageId] || 0;
+            const total = Number(next[stageId]?.total ?? pipelineStageCounts[stageId]) || 0;
+            next[stageId] = {
+              ...(next[stageId] || {}),
+              loaded,
+              // Bootstrap là trang global (lẫn cột) — load-more theo cột vẫn phải lấy page 1
+              // của cột đó, rồi đếm `loaded` theo id unique (không cộng trùng).
+              nextPage: 1,
+              hasMore: total > 0 ? loaded < total : !!projectPage.hasMore,
+              loading: false,
+              total: total || next[stageId]?.total || 0,
+            };
+          });
+          return next;
+        });
         // Quay từ chi tiết: không ghi đè list đang có bằng [] (API lỗi tạm / race).
         if (projectList.length === 0 && returningFromDetail) {
           setProjects((prev) => {
@@ -756,10 +848,206 @@ export default function ProductionDashboard() {
         }
       }
     }
-  }, [companyParam, dealCompanyParam, kanbanLoadKey, showVptSxWorkshopFilter, filterSxWorkshopCompany]);
+  }, [
+    companyParam, dealCompanyParam, kanbanLoadKey, showVptSxWorkshopFilter,
+    filterSxWorkshopCompany, timePreset, customFrom, customTo, filterPersonId,
+  ]);
 
   const loadRef = useRef(load);
   loadRef.current = load;
+
+  const loadMoreProjects = useCallback(async (stageIds = null) => {
+    const maxRecords = kanbanLoadKey === 'all' ? WS_KANBAN_LOAD_ALL_MAX
+      : Math.min(parseInt(kanbanLoadKey, 10) || 500, WS_KANBAN_LOAD_ALL_MAX);
+    if (projects.length >= maxRecords) return;
+
+    const requested = Array.isArray(stageIds) && stageIds.length
+      ? stageIds.map(String)
+      : Object.keys(stagePageState).filter((id) => stagePageState[id]?.hasMore !== false);
+    const targets = [];
+    for (const stageId of requested) {
+      if (stagePageLoadingRef.current.has(stageId)) continue;
+      const state = stagePageState[stageId] || {};
+      if (state.hasMore === false) continue;
+      const total = Number(pipelineStageCounts?.[stageId] ?? state.total);
+      if (Number.isFinite(total) && total <= 0) continue;
+      targets.push(stageId);
+      if (targets.length >= 4) break;
+    }
+    if (!targets.length) {
+      if (projectPageLoadingRef.current || !projectPageState.hasMore) return;
+      // Fallback: phân trang toàn board khi chưa có counts theo cột.
+      projectPageLoadingRef.current = true;
+      const seq = loadSeqRef.current;
+      setProjectPageState((prev) => ({ ...prev, loading: true }));
+      try {
+        const rawWorkshopType = filterWorkTypeIdRef.current;
+        const workshopTypeId = rawWorkshopType == null ? '' : String(rawWorkshopType).trim();
+        const serverDateRange = timePreset === 'custom'
+          ? (customFrom && customTo ? { from: customFrom, to: customTo } : { from: '', to: '' })
+          : (timePreset ? getWorkshopDateRange(timePreset) : { from: '', to: '' });
+        const payload = await fetchWorkshopProjectPages(api, '/production/projects', {
+          companyId: companyParam,
+          dealCompanyId: dealCompanyParam,
+          sxWorkshopCompanyId: showVptSxWorkshopFilter && filterSxWorkshopCompany
+            ? filterSxWorkshopCompany
+            : undefined,
+          workshopTypeId: workshopTypeId || undefined,
+          maxRecords: Math.min(SX_KANBAN_PAGE_SIZE, maxRecords - projects.length),
+          pageSize: SX_KANBAN_PAGE_SIZE,
+          startPage: projectPageState.nextPage,
+          view: 'kanban',
+          includeMeta: true,
+          extraParams: {
+            ...(serverDateRange.from ? { created_from: serverDateRange.from } : {}),
+            ...(serverDateRange.to ? { created_to: serverDateRange.to } : {}),
+            ...(filterPersonId ? { production_person_id: filterPersonId } : {}),
+          },
+        });
+        if (seq !== loadSeqRef.current) return;
+        const incoming = applyPendingStageMoves(
+          applyWorkshopProjectRenamePatches(payload.projects || []),
+          pendingStageMovesRef.current,
+        );
+        setProjects((prev) => {
+          const byId = new Map(prev.map((row) => [String(row.id), row]));
+          incoming.forEach((row) => byId.set(String(row.id), row));
+          const next = [...byId.values()].slice(0, maxRecords);
+          if (next.length) saveWorkshopBoardSnapshot('sx', { projects: next });
+          return next;
+        });
+        setProjectPageState((prev) => ({
+          total: payload.total ?? prev.total,
+          nextPage: payload.nextPage,
+          hasMore: payload.hasMore && projects.length + incoming.length < maxRecords,
+          loading: false,
+        }));
+      } catch (error) {
+        console.error('[production pagination]', error);
+        if (seq === loadSeqRef.current) {
+          setProjectPageState((prev) => ({ ...prev, loading: false }));
+        }
+      } finally {
+        projectPageLoadingRef.current = false;
+      }
+      return;
+    }
+
+    targets.forEach((id) => stagePageLoadingRef.current.add(id));
+    setStagePageState((prev) => {
+      const next = { ...prev };
+      targets.forEach((id) => {
+        next[id] = { ...(next[id] || {}), loading: true };
+      });
+      return next;
+    });
+    const seq = loadSeqRef.current;
+    try {
+      const rawWorkshopType = filterWorkTypeIdRef.current;
+      const workshopTypeId = rawWorkshopType == null ? '' : String(rawWorkshopType).trim();
+      const serverDateRange = timePreset === 'custom'
+        ? (customFrom && customTo ? { from: customFrom, to: customTo } : { from: '', to: '' })
+        : (timePreset ? getWorkshopDateRange(timePreset) : { from: '', to: '' });
+      const commonExtra = {
+        ...(serverDateRange.from ? { created_from: serverDateRange.from } : {}),
+        ...(serverDateRange.to ? { created_to: serverDateRange.to } : {}),
+        ...(filterPersonId ? { production_person_id: filterPersonId } : {}),
+      };
+      const pages = await Promise.all(targets.map(async (stageId) => {
+        const state = stagePageState[stageId] || {};
+        const startPage = Math.max(Number(state.nextPage) || 1, 1);
+        const payload = await fetchWorkshopProjectPages(api, '/production/projects', {
+          companyId: companyParam,
+          dealCompanyId: dealCompanyParam,
+          sxWorkshopCompanyId: showVptSxWorkshopFilter && filterSxWorkshopCompany
+            ? filterSxWorkshopCompany
+            : undefined,
+          workshopTypeId: workshopTypeId || undefined,
+          maxRecords: SX_KANBAN_PAGE_SIZE,
+          pageSize: SX_KANBAN_PAGE_SIZE,
+          startPage,
+          view: 'kanban',
+          includeMeta: true,
+          extraParams: {
+            ...commonExtra,
+            sx_kanban_column_id: stageId === '__none__' ? '__none__' : stageId,
+          },
+        });
+        return [stageId, payload];
+      }));
+      if (seq !== loadSeqRef.current) return;
+      const incoming = [];
+      const nextStageState = { ...stagePageState };
+      const pageMetaByStage = new Map();
+      for (const [stageId, payload] of pages) {
+        const rows = payload.projects || [];
+        incoming.push(...rows);
+        pageMetaByStage.set(stageId, payload);
+      }
+      let loadedByCol = {};
+      setProjects((prev) => {
+        const byId = new Map(prev.map((row) => [String(row.id), row]));
+        applyPendingStageMoves(
+          applyWorkshopProjectRenamePatches(incoming),
+          pendingStageMovesRef.current,
+        ).forEach((row) => byId.set(String(row.id), row));
+        const next = [...byId.values()].slice(0, maxRecords);
+        loadedByCol = {};
+        for (const row of next) {
+          const key = row?.sx_kanban_column_id ? String(row.sx_kanban_column_id) : '__none__';
+          loadedByCol[key] = (loadedByCol[key] || 0) + 1;
+        }
+        if (next.length) saveWorkshopBoardSnapshot('sx', { projects: next });
+        return next;
+      });
+      for (const stageId of targets) {
+        const payload = pageMetaByStage.get(stageId) || {};
+        const loaded = Number(loadedByCol[stageId]) || 0;
+        const total = Number(pipelineStageCounts?.[stageId] ?? payload.total ?? nextStageState[stageId]?.total) || 0;
+        nextStageState[stageId] = {
+          nextPage: payload.nextPage,
+          hasMore: !!payload.hasMore && (total <= 0 || loaded < total),
+          loading: false,
+          total,
+          loaded,
+        };
+      }
+      setStagePageState(nextStageState);
+      setProjectPageState((prev) => ({
+        ...prev,
+        hasMore: Object.values(nextStageState).some((s) => s?.hasMore),
+        loading: false,
+      }));
+    } catch (error) {
+      console.error('[production column pagination]', error);
+      if (seq === loadSeqRef.current) {
+        setStagePageState((prev) => {
+          const next = { ...prev };
+          targets.forEach((id) => {
+            next[id] = { ...(next[id] || {}), loading: false };
+          });
+          return next;
+        });
+      }
+    } finally {
+      targets.forEach((id) => stagePageLoadingRef.current.delete(id));
+    }
+  }, [
+    projectPageState.hasMore,
+    projectPageState.nextPage,
+    stagePageState,
+    pipelineStageCounts,
+    projects.length,
+    kanbanLoadKey,
+    companyParam,
+    dealCompanyParam,
+    showVptSxWorkshopFilter,
+    filterSxWorkshopCompany,
+    timePreset,
+    customFrom,
+    customTo,
+    filterPersonId,
+  ]);
 
   const boardRefreshTimerRef = useRef(null);
 
@@ -822,9 +1110,14 @@ export default function ProductionDashboard() {
     kanbanLoadKey || '500',
     showVptSxWorkshopFilter ? (filterSxWorkshopCompany || '') : '',
     filterWorkTypeId || '',
+    timePreset || '',
+    timePreset === 'custom' ? (customFrom || '') : '',
+    timePreset === 'custom' ? (customTo || '') : '',
+    filterPersonId || '',
   ].join('|'), [
     companyParam, dealCompanyParam, kanbanLoadKey,
     showVptSxWorkshopFilter, filterSxWorkshopCompany, filterWorkTypeId,
+    timePreset, customFrom, customTo, filterPersonId,
   ]);
 
   const firstLoadedRef = useRef(false);
@@ -1740,11 +2033,21 @@ export default function ProductionDashboard() {
   const scopeKpis = useMemo(() => {
     const list = scopeProjects;
     const revenue = computeSxRevenueKpis(list, pipeline);
+    const canUseServerTotal = (
+      !filterPersonId
+      && !deferredPersonName
+      && !filterRegion
+      && !filterPhone
+      && !dealCompanyExternalFilter
+    );
+    const accurateTotal = canUseServerTotal && Number.isFinite(Number(projectPageState.total))
+      ? Number(projectPageState.total)
+      : list.length;
     // Khớp đúng số thẻ cột «Quá hạn» trên view Deadline
     const deadlineOverdueCount = countSxDeadlineViewOverdue(filteredKanbanPipeline);
     if (!list.length) {
       return {
-        total: 0, producing: 0, awaiting_delivery: 0, shipped: 0, completed: 0, overdue: 0,
+        total: accurateTotal, producing: 0, awaiting_delivery: 0, shipped: 0, completed: 0, overdue: 0,
         avg_progress: 0,
         intake_pending: 0, delivering: 0, customer_care: 0,
         won_revenue_value: 0,
@@ -1758,7 +2061,7 @@ export default function ProductionDashboard() {
       };
     }
     return {
-      total: list.length,
+      total: accurateTotal,
       producing: revenue.producing,
       awaiting_delivery: revenue.awaitingDelivery,
       shipped: revenue.shipped,
@@ -1777,7 +2080,10 @@ export default function ProductionDashboard() {
       weighted_pipeline_value: revenue.weightedPipeline,
       column_sla_overdue: deadlineOverdueCount,
     };
-  }, [scopeProjects, pipeline, filteredKanbanPipeline]);
+  }, [
+    scopeProjects, pipeline, filteredKanbanPipeline, projectPageState.total,
+    filterPersonId, deferredPersonName, filterRegion, filterPhone, dealCompanyExternalFilter,
+  ]);
 
   const togglePinFlag = useCallback(async (item, next) => {
     const leadId = resolveSxProjectLeadId(item);
@@ -2660,24 +2966,6 @@ export default function ProductionDashboard() {
           </button>
                 </div>
               </div>
-              <span
-                className="hidden md:inline text-[10px] text-slate-500 shrink-0 tabular-nums whitespace-nowrap"
-                title={workTypeFilterLabel ? `Đang xem: ${workTypeFilterLabel}` : undefined}
-              >
-                {filterBusy && firstLoaded ? (
-                  <span className="text-amber-700 font-medium">Đang lọc…</span>
-                ) : (
-                  <>
-                    {workTypeFilterLabel && (
-                      <span className="text-violet-600 font-medium mr-1">{workTypeFilterLabel} ·</span>
-                    )}
-                    <strong className="text-slate-700">{projects.length}</strong>
-                    {' / '}
-                    <strong className="text-indigo-700">{filteredCardCount}</strong>
-                    <span className="text-slate-400 font-normal"> thẻ</span>
-                  </>
-                )}
-              </span>
             </div>
 
             <div className="flex flex-wrap items-center gap-1.5 sm:justify-end shrink-0 order-3 lg:order-none">
@@ -2880,21 +3168,8 @@ export default function ProductionDashboard() {
                   );
                 })}
                 </div>
-              <span className="text-[10px] text-slate-500 ml-auto shrink-0 tabular-nums md:hidden">
-                {filterBusy && firstLoaded
-                  ? 'Đang lọc…'
-                  : `${workTypeFilterLabel ? `${workTypeFilterLabel} · ` : ''}${projects.length} / ${filteredCardCount} thẻ`}
-              </span>
               </div>
-          ) : (
-            <div className="flex md:hidden justify-end px-3 pb-2 sm:px-4">
-              <span className="text-[10px] text-slate-500 tabular-nums">
-                {filterBusy && firstLoaded
-                  ? 'Đang lọc…'
-                  : `${workTypeFilterLabel ? `${workTypeFilterLabel} · ` : ''}${projects.length} / ${filteredCardCount} thẻ`}
-              </span>
-                </div>
-              )}
+          ) : null}
         </div>
 
         {/* KPI */}
@@ -3130,7 +3405,12 @@ export default function ProductionDashboard() {
             onOpenDeadline={openDeadlineFromCard}
             onTogglePin={togglePinFlag}
             remeasureToken={showAdvFilter ? 'adv-on' : 'adv-off'}
-            searchHighlightId={kanbanSearchHighlightId} />
+            pauseRemeasure={syncing || projectPageState.loading || Object.values(stagePageState).some((s) => s?.loading)}
+            searchHighlightId={kanbanSearchHighlightId}
+            onLoadMore={loadMoreProjects}
+            hasMore={projectPageState.hasMore || Object.values(stagePageState).some((s) => s?.hasMore)}
+            loadingMore={projectPageState.loading || Object.values(stagePageState).some((s) => s?.loading)}
+            stageCounts={pipelineStageCounts} />
       )}
 
       {viewMode === 'list' && <ProductionListView pipeline={filteredKanbanPipeline} calculateDays={calculateDays} />}
@@ -3496,6 +3776,8 @@ const KanbanStageCard = memo(function KanbanStageCard({
   columnIndex = 0,
   searchHighlightId = null,
   boardScrollRef = null,
+  onScrollNearEnd = null,
+  stageCounts = null,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
@@ -3511,6 +3793,10 @@ const KanbanStageCard = memo(function KanbanStageCard({
   const perColumnScroll = columnScrollMode === 'per-column';
   const pinEmptyPlaceholder = !perColumnScroll && items.length === 0;
   const emptyPlaceholderTop = useKanbanEmptyPlaceholderStickyTop(headerRef, pinEmptyPlaceholder);
+  const serverTotalRaw = stageCounts?.[String(stage?.id)]
+    ?? (stage?.bucket_slug === INTAKE_BUCKET ? stageCounts?.__none__ : undefined);
+  const serverTotal = Number(serverTotalRaw);
+  const displayCount = Number.isFinite(serverTotal) ? serverTotal : items.length;
 
   const renderCard = useCallback((item) => (
     <KanbanCard
@@ -3589,9 +3875,9 @@ const KanbanStageCard = memo(function KanbanStageCard({
               color: columnTheme.accent,
               border: `1px solid ${columnTheme.badgeBorder}`,
             }}
-            title={`${items.length} đơn`}
+            title={`${displayCount} đơn${Number.isFinite(serverTotal) && items.length < serverTotal ? ` · đã tải ${items.length}` : ''}`}
           >
-            {items.length}
+            {displayCount}
           </span>
             {stage.is_handover_to_logistics && (
             <span className="px-1 py-0.5 bg-orange-100 text-orange-600 text-[9px] font-bold rounded shrink-0">→VC</span>
@@ -3674,6 +3960,10 @@ const KanbanStageCard = memo(function KanbanStageCard({
       {/* Cards container */}
       <div
         ref={containerRef}
+        onScroll={perColumnScroll && onScrollNearEnd ? (event) => {
+          const node = event.currentTarget;
+          if (node.scrollHeight - node.scrollTop - node.clientHeight < 320) onScrollNearEnd();
+        } : undefined}
         className={`flex-1 px-1 pt-1.5 pb-2.5 transition-colors ${KANBAN_CARDS_BODY_CLASS} ${
           isOverColumn ? 'kanban-cards-body--drop' : ''
         } ${
@@ -4258,8 +4548,13 @@ function KanbanView({
   onOpenDeadline,
   onTogglePin,
   remeasureToken,
+  pauseRemeasure = false,
   columnScrollMode = 'unified',
   searchHighlightId = null,
+  onLoadMore = null,
+  hasMore = false,
+  loadingMore = false,
+  stageCounts = null,
 }) {
   const pipelineStages = useMemo(
     () => (pipeline || []).map(({ items, ...stage }) => stage),
@@ -4267,42 +4562,214 @@ function KanbanView({
   );
   const perColumnScroll = columnScrollMode === 'per-column';
   const boardScrollRef = useRef(null);
+  const pauseRemeasureRef = useRef(pauseRemeasure);
+  pauseRemeasureRef.current = pauseRemeasure;
+  const virtualizeColumns = pipeline.length >= 12;
+  const columnWidth = 240;
+  const columnGap = 4;
+  const columnSlotWidth = columnWidth + columnGap;
+  const columnVirtualizer = useVirtualizer({
+    count: virtualizeColumns ? pipeline.length : 0,
+    getScrollElement: () => boardScrollRef.current,
+    estimateSize: () => columnSlotWidth,
+    horizontal: true,
+    overscan: 2,
+    getItemKey: (index) => pipeline[index]?.id ?? index,
+  });
+  const virtualRailMinHeight = useMemo(() => {
+    if (perColumnScroll) return undefined;
+    const maxLoaded = Math.max(0, ...pipeline.map((stage) => stage?.items?.length || 0));
+    return Math.max(320, 118 + maxLoaded * 142);
+  }, [perColumnScroll, pipeline]);
+  const [virtualRailHeight, setVirtualRailHeight] = useState(virtualRailMinHeight);
+  const renderedColumns = virtualizeColumns
+    ? columnVirtualizer.getVirtualItems().map((virtualItem) => ({
+        stage: pipeline[virtualItem.index],
+        columnIndex: virtualItem.index,
+        virtualItem,
+      }))
+    : pipeline.map((stage, columnIndex) => ({ stage, columnIndex, virtualItem: null }));
+
+  useEffect(() => {
+    if (!virtualizeColumns) return;
+    columnVirtualizer.measure();
+  }, [columnVirtualizer, remeasureToken, pipeline.length, virtualizeColumns]);
+
+  useEffect(() => {
+    if (!virtualizeColumns || perColumnScroll) {
+      setVirtualRailHeight(undefined);
+      return undefined;
+    }
+    const board = boardScrollRef.current;
+    if (!board) return undefined;
+    let frame = 0;
+    let secondFrame = 0;
+    const measure = () => {
+      frame = 0;
+      if (pauseRemeasureRef.current) return;
+      const paddingBottom = Number.parseFloat(getComputedStyle(board).paddingBottom) || 0;
+      const measured = Math.max(
+        virtualRailMinHeight || 0,
+        Math.ceil(board.scrollHeight - paddingBottom),
+      );
+      setVirtualRailHeight((prev) => (
+        Math.abs((Number(prev) || 0) - measured) > 1 ? measured : prev
+      ));
+    };
+    const scheduleMeasure = () => {
+      if (pauseRemeasureRef.current) return;
+      if (!frame) frame = requestAnimationFrame(measure);
+    };
+
+    setVirtualRailHeight(virtualRailMinHeight);
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      secondFrame = requestAnimationFrame(measure);
+    });
+    const resizeObserver = new ResizeObserver(scheduleMeasure);
+    resizeObserver.observe(board);
+    const mutationObserver = new MutationObserver(scheduleMeasure);
+    mutationObserver.observe(board, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['style'],
+    });
+    board.addEventListener('scroll', scheduleMeasure, { passive: true });
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      if (secondFrame) cancelAnimationFrame(secondFrame);
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+      board.removeEventListener('scroll', scheduleMeasure);
+    };
+  }, [
+    perColumnScroll,
+    pipeline.length,
+    remeasureToken,
+    virtualizeColumns,
+    virtualRailMinHeight,
+  ]);
+
+  // Khi hết sync / load-more: đo lại một lần (bỏ qua storm MutationObserver lúc đang tải).
+  useEffect(() => {
+    if (pauseRemeasure || !virtualizeColumns || perColumnScroll) return undefined;
+    const board = boardScrollRef.current;
+    if (!board) return undefined;
+    const id = requestAnimationFrame(() => {
+      const paddingBottom = Number.parseFloat(getComputedStyle(board).paddingBottom) || 0;
+      const measured = Math.max(
+        virtualRailMinHeight || 0,
+        Math.ceil(board.scrollHeight - paddingBottom),
+      );
+      setVirtualRailHeight((prev) => (
+        Math.abs((Number(prev) || 0) - measured) > 1 ? measured : prev
+      ));
+    });
+    return () => cancelAnimationFrame(id);
+  }, [pauseRemeasure, perColumnScroll, virtualRailMinHeight, virtualizeColumns]);
+
+  useEffect(() => {
+    if (perColumnScroll || !hasMore || !onLoadMore) return undefined;
+    const node = boardScrollRef.current;
+    if (!node) return undefined;
+    let frame = null;
+    const check = () => {
+      frame = null;
+      if (node.scrollHeight - node.scrollTop - node.clientHeight < 420) onLoadMore();
+    };
+    const onScroll = () => {
+      if (frame == null) frame = requestAnimationFrame(check);
+    };
+    node.addEventListener('scroll', onScroll, { passive: true });
+    frame = requestAnimationFrame(check);
+    return () => {
+      node.removeEventListener('scroll', onScroll);
+      if (frame != null) cancelAnimationFrame(frame);
+    };
+  }, [hasMore, onLoadMore, perColumnScroll, pipeline]);
 
   return (
     <WorkshopPipelineKanbanScroll
       cardSelector="[data-sx-kanban-card]"
       columnScrollMode={columnScrollMode}
       remeasureToken={remeasureToken}
+      pauseRemeasure={pauseRemeasure}
       scrollContainerRef={boardScrollRef}
       showLegend={false}
     >
       <div
-        className={`flex min-w-max items-stretch gap-1 ${KANBAN_BOARD_COLUMN_RAILS_CLASS} ${perColumnScroll ? 'h-full' : ''} ${UI_KANBAN_FIXED_CLASS}`}
-        style={{ '--kanban-col-gap': '0.25rem' }}
+        className={`${virtualizeColumns ? 'relative' : 'flex min-w-max items-stretch gap-1'} ${KANBAN_BOARD_COLUMN_RAILS_CLASS} ${perColumnScroll ? 'h-full' : ''} ${UI_KANBAN_FIXED_CLASS}`}
+        style={{
+          '--kanban-col-gap': '0.25rem',
+          ...(virtualizeColumns ? {
+            width: columnVirtualizer.getTotalSize() + (hasMore ? 32 : 0),
+            minWidth: columnVirtualizer.getTotalSize() + (hasMore ? 32 : 0),
+            minHeight: virtualRailHeight || virtualRailMinHeight,
+            ...(perColumnScroll ? { height: '100%' } : {}),
+          } : {}),
+        }}
       >
-        {pipeline.map((stage, columnIndex) => (
-          <KanbanStageCard
-            key={stage.id || stage.slug}
-            columnIndex={columnIndex}
-            stage={stage}
-            items={stage.items}
-            onMoveStage={onMoveStage}
-            pipelineStages={pipelineStages}
-            calculateDays={calculateDays}
-            selectedIds={selectedIds}
-            onToggleSelect={onToggleSelect}
-            onSelectColumn={onSelectColumn}
-            onHandoverVC={onHandoverVC}
-            onOpenKanbanComment={onOpenKanbanComment}
-            workTypes={workTypes}
-            onSetWorkType={onSetWorkType}
-            onOpenDeadline={onOpenDeadline}
-            onTogglePin={onTogglePin}
-            columnScrollMode={columnScrollMode}
-            searchHighlightId={searchHighlightId}
-            boardScrollRef={perColumnScroll ? null : boardScrollRef}
-          />
-        ))}
+        {renderedColumns.map(({ stage, columnIndex, virtualItem }) => {
+          if (!stage) return null;
+          const column = (
+            <KanbanStageCard
+              key={stage.id || stage.slug}
+              columnIndex={columnIndex}
+              stage={stage}
+              items={stage.items}
+              onMoveStage={onMoveStage}
+              pipelineStages={pipelineStages}
+              calculateDays={calculateDays}
+              selectedIds={selectedIds}
+              onToggleSelect={onToggleSelect}
+              onSelectColumn={onSelectColumn}
+              onHandoverVC={onHandoverVC}
+              onOpenKanbanComment={onOpenKanbanComment}
+              workTypes={workTypes}
+              onSetWorkType={onSetWorkType}
+              onOpenDeadline={onOpenDeadline}
+              onTogglePin={onTogglePin}
+              columnScrollMode={columnScrollMode}
+              searchHighlightId={searchHighlightId}
+              boardScrollRef={perColumnScroll ? null : boardScrollRef}
+              onScrollNearEnd={hasMore ? () => onLoadMore?.([
+                stage.bucket_slug === INTAKE_BUCKET && !stageCounts?.[String(stage.id)]
+                  ? '__none__'
+                  : String(stage.id),
+              ]) : null}
+              stageCounts={stageCounts}
+            />
+          );
+          if (!virtualItem) return column;
+          return (
+            <div
+              key={stage.id || stage.slug}
+              data-index={virtualItem.index}
+              ref={columnVirtualizer.measureElement}
+              className={`absolute top-0 flex items-stretch ${KANBAN_COLUMN_RAIL_CLASS}`}
+              style={{
+                left: 0,
+                width: columnSlotWidth,
+                paddingRight: columnGap,
+                boxSizing: 'border-box',
+                transform: `translateX(${virtualItem.start}px)`,
+                height: perColumnScroll ? '100%' : (virtualRailHeight || virtualRailMinHeight),
+              }}
+            >
+              {column}
+            </div>
+          );
+        })}
+        {hasMore && (
+          <div
+            className={`${virtualizeColumns ? 'absolute top-0 bottom-0' : 'w-8 shrink-0 self-stretch'} flex items-end justify-center pb-6`}
+            style={virtualizeColumns ? { left: columnVirtualizer.getTotalSize(), width: 32 } : undefined}
+            aria-hidden
+          >
+            {loadingMore && <Loader2 className="h-5 w-5 animate-spin text-teal-600" />}
+          </div>
+        )}
       </div>
     </WorkshopPipelineKanbanScroll>
   );
