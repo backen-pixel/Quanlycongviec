@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { Settings, Plus, Trash2, Save, ChevronRight, ChevronDown, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer, ArrowRightLeft, Search, Wrench } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, ChevronRight, ChevronDown, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer, ArrowRightLeft, Search, Wrench, Eye, EyeOff } from 'lucide-react';
 import WorkshopTypeSettingsSection from '../components/WorkshopTypeSettingsSection';
 import { isPipelineStageSlaDisabled } from '../lib/crmPipelineSla';
 
@@ -915,15 +915,18 @@ export default function ProductionPipelineSettingsPage() {
   };
 
   const toggleActive = async (stage) => {
+    const next = stage.is_active === false;
+    setStages((prev) => prev.map((s) => (s.id === stage.id ? { ...s, is_active: next } : s)));
     try {
-      await api.put(`/production/pipeline-stages/${stage.id}`, { is_active: !stage.is_active });
-      load();
+      await api.put(`/production/pipeline-stages/${stage.id}`, { is_active: next });
+      await load();
     } catch (e) {
+      setStages((prev) => prev.map((s) => (s.id === stage.id ? { ...s, is_active: stage.is_active } : s)));
       if (isMissingProductionStage(e)) {
         await recoverMissingStage();
         return;
       }
-      alert(e.response?.data?.error || 'Lỗi');
+      alert(e?.response?.data?.error || e?.message || 'Không cập nhật được trạng thái cột');
     }
   };
 
@@ -1685,7 +1688,7 @@ export default function ProductionPipelineSettingsPage() {
                     ${isDragging ? 'opacity-40 bg-teal-50' : 'hover:bg-gray-50'}
                     ${isDragOver ? 'border-t-2 border-t-teal-500 bg-teal-50/50' : ''}
                     ${bulkSelected.has(s.id) ? 'bg-blue-50/60' : ''}
-                    ${!s.is_active ? 'opacity-50' : ''}`}
+                    ${s.is_active === false ? 'bg-orange-50/50 border-l-4 border-l-orange-400' : ''}`}
                 >
                   <div className="flex items-center gap-1 shrink-0">
                     <span
@@ -1763,6 +1766,12 @@ export default function ProductionPipelineSettingsPage() {
                     </p>
                     <p className="text-[10px] text-gray-400 flex flex-wrap items-center gap-1.5 mt-0.5">
                       {isIntake ? 'Deal thắng · chờ vào xưởng' : 'Cột pipeline xưởng'}
+                      {s.is_active === false && (
+                        <span className="inline-flex items-center gap-1 bg-orange-100 text-orange-800 border border-orange-300 px-1.5 py-0.5 rounded font-semibold">
+                          <EyeOff className="h-2.5 w-2.5" />
+                          Đang ẩn trên Kanban
+                        </span>
+                      )}
                       {!isIntake && s.default_probability != null && s.default_probability !== '' && (
                         <span className="text-violet-600 font-medium">◎ {s.default_probability}% mặc định</span>
                       )}
@@ -1874,8 +1883,20 @@ export default function ProductionPipelineSettingsPage() {
                       </button>
                       </>
                     )}
-                    <button type="button" onClick={() => toggleActive(s)} className="p-1.5 rounded hover:bg-gray-100 cursor-pointer text-[10px] text-gray-500" title={s.is_active ? 'Ẩn' : 'Hiện'}>
-                      {s.is_active ? 'Ẩn' : 'Hiện'}
+                    <button
+                      type="button"
+                      onClick={() => toggleActive(s)}
+                      className={`h-7 px-2.5 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border shadow-sm transition-colors ${
+                        s.is_active === false
+                          ? 'bg-orange-100 text-orange-800 border-orange-300 ring-1 ring-orange-200 hover:bg-orange-200'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-orange-50 hover:text-orange-800 hover:border-orange-300'
+                      }`}
+                      title={s.is_active === false ? 'Hiện lại cột trên Kanban' : 'Ẩn cột trên Kanban'}
+                    >
+                      {s.is_active === false
+                        ? <Eye className="h-3.5 w-3.5" />
+                        : <EyeOff className="h-3.5 w-3.5" />}
+                      {s.is_active === false ? 'Hiện' : 'Ẩn'}
                     </button>
                     <button type="button" onClick={() => requestEdit(s)} className="p-1.5 rounded hover:bg-teal-50 text-teal-600 cursor-pointer">
                       <Save className="h-3.5 w-3.5" />

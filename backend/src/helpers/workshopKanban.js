@@ -254,9 +254,10 @@ async function loadProductionPipelineStagesRows(includeInactive = false, company
  * Lọc cột pipeline SX theo phân loại.
  * Khi đã chọn phân loại cụ thể (uuid): CHỈ cột gắn đúng workshop_type_id (+ intake cùng loại hoặc intake chung).
  * Không gộp cột global (workshop_type_id null) — tránh lẫn pipeline Đầu vào với Data đầu ra.
+ * Không lọc is_active — caller quyết định (Kanban load active-only; cấu hình dùng all=true).
  */
 function filterProductionPipelineStagesForWorkshopType(stages, workshopTypeId) {
-  const list = (stages || []).filter((s) => s.is_active !== false);
+  const list = stages || [];
   const wktRaw = workshopTypeId;
   if (!wktRaw) return list;
   const wktLower = String(wktRaw).toLowerCase();

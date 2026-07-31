@@ -3417,11 +3417,11 @@ export default function CRMDashboard() {
         dealStages.length > 0
         && countedDealStageIds.every((stageId) => knownDealStageIds.has(stageId))
       );
-      setPipelineDealTabTotals(
-        hasCompleteDealStageMetadata
-          ? sumCrmDealTabCountsFromStageCounts(dealStages, dealCounts)
-          : null,
-      );
+      // Chỉ cập nhật khi đủ metadata cột Deal. Không ghi null khi đang ở tab Lead
+      // (stagesDeal chưa tải) — tránh badge Deals trống đến khi user chuyển tab.
+      if (hasCompleteDealStageMetadata) {
+        setPipelineDealTabTotals(sumCrmDealTabCountsFromStageCounts(dealStages, dealCounts));
+      }
     } catch (e) {
       if (
         requestGeneration !== kanbanRequestGenerationRef.current
@@ -3920,6 +3920,19 @@ export default function CRMDashboard() {
             markLoadComplete();
           }
           runDeferredCrmEnrichment(activeType, activeMerged, boot.dashboard);
+          // Tab đối diện cần stages để tính badge tổng (Deal khi đang Lead và ngược lại).
+          void (async () => {
+            try {
+              const inactiveParams = inactiveType === 'lead' ? stagesLeadParams : stagesDealParams;
+              const { data: inactiveStages } = await api.get('/crm/pipeline-stages', { params: inactiveParams });
+              if (isStale()) return;
+              const sorted = sortAndDedupePipelineStages(inactiveStages || []);
+              if (inactiveType === 'lead') setStagesLead(sorted);
+              else setStagesDeal(sorted);
+            } catch (inactiveStagesError) {
+              if (!isStale()) console.error('[load inactive CRM stages bootstrap]', inactiveStagesError);
+            }
+          })();
           void (async () => {
             try {
               const [
@@ -4621,33 +4634,30 @@ export default function CRMDashboard() {
     if (kpiUsesClientOnlyFilters) {
       return countDealsExcludingLostStages(pool, stagesDeal, (d) => resolveDealStageForKpi(d, stagesDeal));
     }
+    // Chỉ dùng tổng tab từ filter-summary (đã trừ Hủy/Thua). Không fallback
+    // sang list/SĐT — số đó gồm cả Đơn hàng + Hủy nên sẽ flash cao rồi tụt.
     if (typeof pipelineDealTabTotals?.merged === 'number') {
       return pipelineDealTabTotals.merged;
     }
-    const pt = pipelinePhoneTotals.deal;
-    if (filterPhone === 'no_phone' && typeof pt?.noPhone === 'number') return pt.noPhone;
-    if (filterPhone === 'has_phone' && typeof pt?.hasPhone === 'number') return pt.hasPhone;
-    if (typeof pt?.all === 'number') return pt.all;
-    const raw = typeof loadMoreState.dealTotal === 'number' ? loadMoreState.dealTotal : pool.length;
-    return Math.max(0, raw);
-  }, [kpiUsesClientOnlyFilters, deals, stagesDeal, loadMoreState.dealTotal, pipelineDealTabTotals, pipelinePhoneTotals.deal, filterPhone]);
+    return null;
+  }, [kpiUsesClientOnlyFilters, deals, stagesDeal, pipelineDealTabTotals]);
 
   const dealKpiTotalCount = useMemo(() => {
     const pool = dealKhSplitEnabled ? dealStatsDeals : deals;
     if (kpiUsesClientOnlyFilters) {
       return countDealsExcludingLostStages(pool, stagesDeal, (d) => resolveDealStageForKpi(d, stagesDeal));
     }
-    if (dealKhSplitEnabled && hasCustomerTab) {
-      if (typeof pipelineDealTabTotals?.deal === 'number') return pipelineDealTabTotals.deal;
-      return countDealsExcludingLostStages(pool, stagesDeal, (d) => resolveDealStageForKpi(d, stagesDeal));
+    // Tab Deal tách KH: chỉ hiện khi đã có tổng server theo tab (trước Thắng).
+    // Fallback list/SĐT hoặc đếm thẻ đã tải gây flash (vd. 964 → 581).
+    if (dealKhSplitEnabled) {
+      if (!Array.isArray(stagesDeal) || !stagesDeal.length) return null;
+      if (hasCustomerTab) {
+        if (typeof pipelineDealTabTotals?.deal === 'number') return pipelineDealTabTotals.deal;
+        return null;
+      }
     }
     if (typeof pipelineDealTabTotals?.merged === 'number') return pipelineDealTabTotals.merged;
-    const pt = pipelinePhoneTotals.deal;
-    if (filterPhone === 'no_phone' && typeof pt?.noPhone === 'number') return pt.noPhone;
-    if (filterPhone === 'has_phone' && typeof pt?.hasPhone === 'number') return pt.hasPhone;
-    if (typeof pt?.all === 'number') return pt.all;
-    const raw = typeof loadMoreState.dealTotal === 'number' ? loadMoreState.dealTotal : pool.length;
-    return Math.max(0, raw);
+    return null;
   }, [
     kpiUsesClientOnlyFilters,
     dealKhSplitEnabled,
@@ -4655,25 +4665,29 @@ export default function CRMDashboard() {
     dealStatsDeals,
     deals,
     stagesDeal,
-    loadMoreState.dealTotal,
     pipelineDealTabTotals,
-    pipelinePhoneTotals.deal,
-    filterPhone,
   ]);
 
   const customerKpiTotalCount = useMemo(() => {
     if (kpiUsesClientOnlyFilters) return customerTabDeals.length;
     if (typeof pipelineDealTabTotals?.customer === 'number') return pipelineDealTabTotals.customer;
-    return customerTabDeals.length;
+    // Chờ tổng server — tránh flash số thẻ đã tải rồi nhảy lên.
+    return null;
   }, [kpiUsesClientOnlyFilters, customerTabDeals.length, pipelineDealTabTotals]);
 
   /** Tab Lead/Deal/Khách hàng — cùng logic «Tổng» KPI (API total hoặc sau lọc client trên bản ghi đã tải). */
   const leadTabCountLabel = formatCrmPipelineTabCount(leadKpiTotalCount, leads.length);
+  // Deal/KH: khi chờ server totals thì không fallback sang số thẻ đã tải (flash).
   const dealTabCountLabel = formatCrmPipelineTabCount(
     dealKhSplitEnabled ? dealKpiTotalCount : dealMergedKpiTotalCount,
-    dealKhSplitEnabled ? dealStatsDeals.length : deals.length,
+    kpiUsesClientOnlyFilters
+      ? (dealKhSplitEnabled ? dealStatsDeals.length : deals.length)
+      : 0,
   );
-  const customerTabCountLabel = formatCrmPipelineTabCount(customerKpiTotalCount, customerTabDeals.length);
+  const customerTabCountLabel = formatCrmPipelineTabCount(
+    customerKpiTotalCount,
+    kpiUsesClientOnlyFilters ? customerTabDeals.length : 0,
+  );
 
   const explicitExpectedKvStages = useMemo(
     () => hasExplicitExpectedRevenueStage(
@@ -8071,34 +8085,6 @@ export default function CRMDashboard() {
               columnScrollMode={kanbanColumnScrollMode}
               searchHighlightId={kanbanSearchHighlightId}
             />
-            {/* Tải thêm tự động khi cuộn — không giữ đường tải toàn bộ trong bộ nhớ. */}
-            {kanbanScrollLoad.hasMore && (
-                <div className="flex items-center justify-center gap-3 py-3 border-t border-gray-100 bg-gray-50/50 rounded-b-xl">
-                  <span className="text-xs text-gray-500">
-                    Đã tải <span className="font-semibold text-gray-700">{kanbanScrollLoad.loaded.toLocaleString()}</span>
-                    {kanbanScrollLoad.total != null && (
-                      <> / <span className="font-semibold text-indigo-600">{kanbanScrollLoad.total.toLocaleString()}</span></>
-                    )}
-                    {' '}{pipelineType === 'lead' ? 'lead' : 'deal'}
-                    <span className="text-gray-400">
-                      {kanbanColumnScrollMode === 'per-column'
-                        ? ' · cuộn trong cột để tải thêm'
-                        : ' · cuộn xuống để tải thêm'}
-                    </span>
-                  </span>
-                  {(kanbanScrollLoad.loading || kanbanStagePagesLoading > 0) && (
-                    <span className="inline-flex items-center gap-1.5 text-xs text-indigo-600">
-                      <span className="animate-spin inline-block w-3 h-3 border-2 border-indigo-600 border-t-transparent rounded-full" />
-                      Đang tải…
-                    </span>
-                  )}
-                </div>
-            )}
-            {!kanbanScrollLoad.hasMore && kanbanScrollLoad.loaded > 0 && kanbanScrollLoad.total != null && kanbanScrollLoad.loaded < kanbanScrollLoad.total && (
-                <div className="flex items-center justify-center gap-3 py-2 border-t border-gray-100 bg-amber-50/40 rounded-b-xl text-xs text-amber-800">
-                  <span>Đã tải {kanbanScrollLoad.loaded.toLocaleString()} / {kanbanScrollLoad.total.toLocaleString()} (giới hạn {kanbanScrollLoad.cap.toLocaleString()})</span>
-                </div>
-            )}
           </div>
           )}
 
@@ -10425,6 +10411,7 @@ function KanbanView({
     const cardSlot = compact ? 126 : 142;
     return Math.max(320, (compact ? 112 : 132) + maxLoaded * cardSlot);
   }, [compact, perColumnScroll, pipeline]);
+  const [virtualRailHeight, setVirtualRailHeight] = useState(virtualRailMinHeight);
 
   useLayoutEffect(() => {
     if (!virtualizeColumns) return;
@@ -10435,6 +10422,60 @@ function KanbanView({
     compact,
     remeasureToken,
     pipeline.length,
+  ]);
+
+  useEffect(() => {
+    if (!virtualizeColumns || perColumnScroll) {
+      setVirtualRailHeight(undefined);
+      return undefined;
+    }
+    const board = kanbanHScrollRef.current;
+    if (!board) return undefined;
+    let frame = 0;
+    let secondFrame = 0;
+    const measure = () => {
+      frame = 0;
+      const paddingBottom = Number.parseFloat(getComputedStyle(board).paddingBottom) || 0;
+      const measured = Math.max(
+        virtualRailMinHeight || 0,
+        Math.ceil(board.scrollHeight - paddingBottom),
+      );
+      setVirtualRailHeight((prev) => (
+        Math.abs((Number(prev) || 0) - measured) > 1 ? measured : prev
+      ));
+    };
+    const scheduleMeasure = () => {
+      if (!frame) frame = requestAnimationFrame(measure);
+    };
+
+    setVirtualRailHeight(virtualRailMinHeight);
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      secondFrame = requestAnimationFrame(measure);
+    });
+    const resizeObserver = new ResizeObserver(scheduleMeasure);
+    resizeObserver.observe(board);
+    const mutationObserver = new MutationObserver(scheduleMeasure);
+    mutationObserver.observe(board, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['style'],
+    });
+    board.addEventListener('scroll', scheduleMeasure, { passive: true });
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      if (secondFrame) cancelAnimationFrame(secondFrame);
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+      board.removeEventListener('scroll', scheduleMeasure);
+    };
+  }, [
+    perColumnScroll,
+    pipeline.length,
+    remeasureToken,
+    virtualizeColumns,
+    virtualRailMinHeight,
   ]);
 
   useEffect(() => {
@@ -10527,7 +10568,7 @@ function KanbanView({
           ...(virtualizeColumns ? {
             width: columnVirtualizer.getTotalSize() + (scrollLoad?.hasMore ? 32 : 0),
             minWidth: columnVirtualizer.getTotalSize() + (scrollLoad?.hasMore ? 32 : 0),
-            minHeight: virtualRailMinHeight,
+            minHeight: virtualRailHeight || virtualRailMinHeight,
             ...(perColumnScroll ? { height: '100%' } : {}),
           } : {}),
         }}
@@ -10581,7 +10622,7 @@ function KanbanView({
                 paddingRight: columnGap,
                 boxSizing: 'border-box',
                 transform: `translateX(${virtualItem.start}px)`,
-                ...(perColumnScroll ? { height: '100%' } : {}),
+                height: perColumnScroll ? '100%' : (virtualRailHeight || virtualRailMinHeight),
               }}
             >
               {stageCard}
