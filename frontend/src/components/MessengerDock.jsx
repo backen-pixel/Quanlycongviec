@@ -378,9 +378,9 @@ export default function MessengerDock() {
     const t = setTimeout(async () => {
       setStaffLoading(true);
       try {
-        const { data } = await api.get('/users', { params: { search: q } });
+        const { data } = await api.get('/messenger/users/search', { params: { q, limit: 30 } });
         const users = data?.users || [];
-        if (!cancelled) setStaffRows(Array.isArray(users) ? users.slice(0, 20) : []);
+        if (!cancelled) setStaffRows(Array.isArray(users) ? users.slice(0, 30) : []);
       } catch {
         if (!cancelled) setStaffRows([]);
       } finally {

@@ -6,6 +6,7 @@ const { pgQuery, pgQuerySafe, pgSessionQuery, pgSessionQuerySafe } = require('..
 const { MESSENGER_MAX_UPLOAD_MB, MESSENGER_MAX_FILE_BYTES } = require('../config/messengerUpload');
 const { notifyMultiple } = require('../helpers/notifications');
 const { isAdminLike } = require('../helpers/adminRole');
+const { addTenantFilter } = require('../helpers/tenantScope');
 const { handleIncomingMessage } = require('../helpers/aiConversation');
 const {
   extractCallLogPayloadFromRow,
@@ -1142,6 +1143,46 @@ r.post('/leads/:leadId/ensure-internal-chat', async (req, res) => {
     res.status(201).json({ group_id: group.id, name: group.name, created: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * GET /messenger/users/search?q=...
+ * Tìm nhân viên để mở chat / chuyển tiếp — theo tên/email/SĐT, không khóa theo công ty.
+ * Vẫn giới hạn theo tenant (SaaS) nếu user có tenant_id.
+ */
+r.get('/users/search', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 1) return res.json({ users: [] });
+    const escaped = q.replace(/[%_,]/g, (m) => `\\${m}`);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 30, 1), 50);
+
+    const colsWithDept =
+      'id, full_name, email, phone, avatar, role, position, department_id, company_id, department:departments!users_department_id_fkey(id,name,color,company_id)';
+    const colsBasic = 'id, full_name, email, phone, avatar, role, position, department_id, company_id';
+
+    const run = async (cols) => {
+      let query = supabase
+        .from('users')
+        .select(cols)
+        .neq('is_active', false)
+        .or(`full_name.ilike.%${escaped}%,email.ilike.%${escaped}%,phone.ilike.%${escaped}%`)
+        .order('full_name', { ascending: true })
+        .limit(limit);
+      query = addTenantFilter(query, req.user);
+      return query;
+    };
+
+    let { data, error } = await run(colsWithDept);
+    if (error) {
+      ({ data, error } = await run(colsBasic));
+    }
+    if (error) throw error;
+    res.json({ users: data || [] });
+  } catch (e) {
+    console.error('GET /messenger/users/search:', e.message);
+    res.status(500).json({ error: e.message || 'Lỗi' });
   }
 });
 

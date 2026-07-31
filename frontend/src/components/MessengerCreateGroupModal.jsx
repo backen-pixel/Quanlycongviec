@@ -71,11 +71,14 @@ export default function MessengerCreateGroupModal({
 }) {
   const [onlineOnly, setOnlineOnly] = useState(false);
   const [companyUsers, setCompanyUsers] = useState([]);
+  const [searchHits, setSearchHits] = useState([]);
+  const [searchingUsers, setSearchingUsers] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [aiBot, setAiBot] = useState(null);
   const [nameFocused, setNameFocused] = useState(false);
   const onPresenceUpdateRef = useRef(onPresenceUpdate);
   onPresenceUpdateRef.current = onPresenceUpdate;
+  const searchTimerRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
@@ -117,25 +120,62 @@ export default function MessengerCreateGroupModal({
     };
   }, [open, createCompanyId, uid]);
 
+  /** Tìm theo tên toàn hệ thống (không khóa công ty) khi gõ ô tìm. */
+  useEffect(() => {
+    if (!open) {
+      setSearchHits([]);
+      return undefined;
+    }
+    const term = (userPickQ || '').trim();
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    if (term.length < 1) {
+      setSearchHits([]);
+      setSearchingUsers(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setSearchingUsers(true);
+    searchTimerRef.current = setTimeout(async () => {
+      try {
+        const { data } = await api.get('/messenger/users/search', { params: { q: term, limit: 40 } });
+        if (cancelled) return;
+        const users = (data?.users || []).filter((u) => String(u.id || u.user_id) !== String(uid));
+        setSearchHits(users);
+        const ids = users.map((u) => u.id || u.user_id).filter(Boolean);
+        if (ids.length) {
+          api
+            .post('/users/presence', { user_ids: ids })
+            .then((pr) => onPresenceUpdateRef.current?.(pr.data?.presence || {}))
+            .catch(() => {});
+        }
+      } catch {
+        if (!cancelled) setSearchHits([]);
+      } finally {
+        if (!cancelled) setSearchingUsers(false);
+      }
+    }, 280);
+    return () => {
+      cancelled = true;
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    };
+  }, [open, userPickQ, uid]);
+
   const pickIdSet = useMemo(() => new Set(picks.map((p) => String(p.user_id))), [picks]);
 
   const candidateUsers = useMemo(() => {
-    const base = createCompanyId ? companyUsers : (allUsers || []).filter((u) => String(u.id || u.user_id) !== String(uid));
-    const q = userPickQ.trim().toLowerCase();
+    const q = userPickQ.trim();
+    // Khi đang gõ tên → ưu tiên kết quả search không khóa công ty.
+    const base = q
+      ? searchHits
+      : (createCompanyId ? companyUsers : (allUsers || []).filter((u) => String(u.id || u.user_id) !== String(uid)));
     return base
-      .filter((u) => {
-        if (!q) return true;
-        const name = (u.full_name || '').toLowerCase();
-        const mail = (u.email || '').toLowerCase();
-        return name.includes(q) || mail.includes(q);
-      })
       .filter((u) => {
         if (!onlineOnly) return true;
         const pres = getUserPresence(presenceByUser, u.id || u.user_id);
         return !!pres?.online;
       })
       .slice(0, 80);
-  }, [createCompanyId, companyUsers, allUsers, userPickQ, onlineOnly, presenceByUser, uid]);
+  }, [createCompanyId, companyUsers, allUsers, searchHits, userPickQ, onlineOnly, presenceByUser, uid]);
 
   const togglePick = useCallback(
     (u) => {
@@ -350,15 +390,15 @@ export default function MessengerCreateGroupModal({
                 {candidateUsers.length > 0 ? ` · ${candidateUsers.length}` : ''}
               </p>
               <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-slate-200 bg-white [scrollbar-width:thin]">
-              {loadingUsers ? (
+              {loadingUsers || searchingUsers ? (
                 <div className="flex items-center justify-center gap-2 py-10 text-sm text-slate-500">
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Đang tải nhân viên…
                 </div>
               ) : candidateUsers.length === 0 ? (
                 <p className="px-4 py-8 text-center text-[12px] text-slate-500 leading-relaxed">
-                  {!createCompanyId && !userPickQ.trim()
-                    ? 'Chọn công ty để lọc nhân viên, hoặc gõ tên/email để tìm trong toàn hệ thống.'
+                  {!userPickQ.trim() && !createCompanyId
+                    ? 'Gõ tên/email để tìm mọi nhân viên, hoặc chọn công ty để duyệt danh sách.'
                     : onlineOnly
                       ? 'Không có nhân viên online phù hợp.'
                       : 'Không tìm thấy nhân viên.'}

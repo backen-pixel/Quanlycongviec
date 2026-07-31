@@ -68,7 +68,7 @@ export default function MessengerForwardMessageModal({
     searchTimer.current = setTimeout(async () => {
       setSearching(true);
       try {
-        const { data } = await api.get('/users', { params: { search: term } });
+        const { data } = await api.get('/messenger/users/search', { params: { q: term, limit: 20 } });
         setStaffHits(Array.isArray(data?.users) ? data.users.slice(0, 14) : []);
       } catch {
         setStaffHits([]);

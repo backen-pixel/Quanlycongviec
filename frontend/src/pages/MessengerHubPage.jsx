@@ -440,15 +440,31 @@ export default function MessengerHubPage() {
   }, [departmentsList, staffCompanyId]);
 
   const loadStaffList = useCallback(async () => {
+    const q = staffListQRef.current.trim();
     setStaffLoading(true);
     try {
-      const params = {};
-      if (staffDepartmentId) params.department_id = staffDepartmentId;
-      else if (staffCompanyId) params.company_id = staffCompanyId;
-      const q = staffListQRef.current.trim();
-      if (q) params.search = q;
-      const { data } = await api.get('/users', { params });
-      const users = data?.users || [];
+      let users = [];
+      if (q) {
+        // Tìm theo tên/email/SĐT — không khóa công ty (admin hệ thống cũng hiện).
+        const { data } = await api.get('/messenger/users/search', { params: { q, limit: 40 } });
+        users = Array.isArray(data?.users) ? data.users : [];
+        if (staffDepartmentId) {
+          users = users.filter((u) => String(u.department_id || '') === String(staffDepartmentId));
+        } else if (staffCompanyId) {
+          users = users.filter((u) => {
+            const cid = String(staffCompanyId);
+            if (u.company_id != null && String(u.company_id) === cid) return true;
+            if (u.department?.company_id != null && String(u.department.company_id) === cid) return true;
+            return false;
+          });
+        }
+      } else if (staffDepartmentId || staffCompanyId) {
+        const params = {};
+        if (staffDepartmentId) params.department_id = staffDepartmentId;
+        else if (staffCompanyId) params.company_id = staffCompanyId;
+        const { data } = await api.get('/users', { params });
+        users = data?.users || [];
+      }
       setStaffRows(Array.isArray(users) ? users : []);
       setStaffListLoaded(true);
       const ids = users.map((u) => u.id || u.user_id).filter(Boolean);
@@ -458,20 +474,24 @@ export default function MessengerHubPage() {
       }
     } catch {
       setStaffRows([]);
+      setStaffListLoaded(true);
     }
     setStaffLoading(false);
   }, [staffCompanyId, staffDepartmentId]);
 
-  /** Tự tải danh sách khi đã chọn công ty hoặc phòng ban (không cần bấm thêm). */
+  /** Tự tải khi gõ tên, hoặc khi chọn công ty/phòng ban. */
   useEffect(() => {
     if (!staffPanelOpen) return;
-    if (!staffCompanyId && !staffDepartmentId) {
+    const q = staffListQ.trim();
+    if (!q && !staffCompanyId && !staffDepartmentId) {
       setStaffRows([]);
       setStaffListLoaded(false);
       return;
     }
-    void loadStaffList();
-  }, [staffPanelOpen, staffCompanyId, staffDepartmentId, loadStaffList]);
+    const delay = q ? 280 : 0;
+    const t = setTimeout(() => { void loadStaffList(); }, delay);
+    return () => clearTimeout(t);
+  }, [staffPanelOpen, staffCompanyId, staffDepartmentId, staffListQ, loadStaffList]);
 
   // Fetch + poll presence cho tất cả peer của chat 1-1 trong sidebar — hiển thị chấm Online/Offline.
   useEffect(() => {
@@ -1323,12 +1343,13 @@ export default function MessengerHubPage() {
                 <input
                   value={staffListQ}
                   onChange={(e) => setStaffListQ(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && (staffCompanyId || staffDepartmentId) && void loadStaffList()}
-                  placeholder="Lọc thêm: tên / email / SĐT (Enter)"
+                  onKeyDown={(e) => e.key === 'Enter' && void loadStaffList()}
+                  placeholder="Nhập tên / email / SĐT để tìm…"
                   className="w-full h-7 px-2 rounded-md border border-slate-200 text-[11px] bg-white"
+                  autoFocus
                 />
-                {!staffCompanyId && !staffDepartmentId ? (
-                  <p className="text-[10px] text-slate-500 text-center py-1">Chọn công ty hoặc phòng ban để hiện danh sách.</p>
+                {!staffListQ.trim() && !staffCompanyId && !staffDepartmentId ? (
+                  <p className="text-[10px] text-slate-500 text-center py-1">Gõ tên để tìm mọi nhân viên (không cần chọn công ty).</p>
                 ) : staffLoading ? (
                   <div className="flex justify-center py-2">
                     <Loader2 className="h-5 w-5 animate-spin text-violet-600" />
@@ -1336,7 +1357,7 @@ export default function MessengerHubPage() {
                 ) : null}
                 <button
                   type="button"
-                  disabled={staffLoading || (!staffCompanyId && !staffDepartmentId)}
+                  disabled={staffLoading || (!staffListQ.trim() && !staffCompanyId && !staffDepartmentId)}
                   onClick={() => void loadStaffList()}
                   className="w-full h-7 rounded-md border border-slate-200 bg-white text-slate-600 text-[10px] font-medium hover:bg-slate-50 disabled:opacity-50"
                 >
