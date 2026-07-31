@@ -4,6 +4,7 @@
  */
 const { Router } = require('express');
 const helpers = require('../shared/helpersBundle');
+const { sumCrmDealTabCountsFromStageCounts } = require('../../../helpers/crmDealTabTotals');
 
 const r = Router();
 
@@ -291,9 +292,16 @@ r.get('/filter-summary', responseCache({ ttl: 90, scope: 'user', tags: ['crm:lis
         counts: src.counts && typeof src.counts === 'object' ? src.counts : {},
       };
     };
+    const dealNorm = normalize(data?.deal);
+    // Tính tổng tab Deal trên server (cùng dealStages dùng cho RPC) để FE hiện badge
+    // cùng lượt với Lead — không phụ thuộc stagesDeal client đã tải đủ.
+    const tabTotals = sumCrmDealTabCountsFromStageCounts(dealStages, dealNorm.counts);
     return res.json({
       lead: normalize(data?.lead),
-      deal: normalize(data?.deal),
+      deal: {
+        ...dealNorm,
+        tabTotals,
+      },
     });
   } catch (e) {
     console.error('[crm/filter-summary]', e);

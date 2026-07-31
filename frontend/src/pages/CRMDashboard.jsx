@@ -3472,19 +3472,37 @@ export default function CRMDashboard() {
         },
       });
       const dealCounts = deal.counts && typeof deal.counts === 'object' ? deal.counts : {};
-      const dealStages = stagesDealRef.current || [];
-      const knownDealStageIds = new Set(dealStages.map((stage) => String(stage?.id || '')).filter(Boolean));
-      const countedDealStageIds = Object.entries(dealCounts)
-        .filter(([stageId, count]) => stageId !== '__none__' && Number(count) > 0)
-        .map(([stageId]) => String(stageId));
-      const hasCompleteDealStageMetadata = (
-        dealStages.length > 0
-        && countedDealStageIds.every((stageId) => knownDealStageIds.has(stageId))
-      );
-      // Chỉ cập nhật khi đủ metadata cột Deal. Không ghi null khi đang ở tab Lead
-      // (stagesDeal chưa tải) — tránh badge Deals trống đến khi user chuyển tab.
-      if (hasCompleteDealStageMetadata) {
-        setPipelineDealTabTotals(sumCrmDealTabCountsFromStageCounts(dealStages, dealCounts));
+      const serverTabTotals = deal.tabTotals && typeof deal.tabTotals === 'object'
+        ? deal.tabTotals
+        : null;
+      if (serverTabTotals && Number.isFinite(Number(serverTabTotals.merged))) {
+        // Cùng round-trip filter-summary với Lead — không cần chờ stagesDeal FE.
+        setPipelineDealTabTotals({
+          deal: Number(serverTabTotals.deal) || 0,
+          customer: Number(serverTabTotals.customer) || 0,
+          merged: Number(serverTabTotals.merged) || 0,
+          lost: Number(serverTabTotals.lost) || 0,
+          total: Number(serverTabTotals.total) || (
+            (Number(serverTabTotals.merged) || 0) + (Number(serverTabTotals.lost) || 0)
+          ),
+        });
+      } else {
+        const dealStages = stagesDealRef.current || [];
+        const knownDealStageIds = new Set(dealStages.map((stage) => String(stage?.id || '')).filter(Boolean));
+        const countedDealStageIds = Object.entries(dealCounts)
+          .filter(([stageId, count]) => stageId !== '__none__' && Number(count) > 0)
+          .map(([stageId]) => String(stageId));
+        const hasCompleteDealStageMetadata = (
+          dealStages.length > 0
+          && countedDealStageIds.every((stageId) => knownDealStageIds.has(stageId))
+        );
+        // Fallback cũ / khi API chưa có tabTotals. Không ghi null khi đang ở tab Lead.
+        if (hasCompleteDealStageMetadata) {
+          setPipelineDealTabTotals(sumCrmDealTabCountsFromStageCounts(dealStages, dealCounts));
+        } else if (dealStages.length > 0 && countedDealStageIds.length > 0) {
+          // Metadata chưa đủ (Tất cả công ty) — vẫn hiện tổng theo cột đã biết thay vì để trống.
+          setPipelineDealTabTotals(sumCrmDealTabCountsFromStageCounts(dealStages, dealCounts));
+        }
       }
     } catch (e) {
       if (
