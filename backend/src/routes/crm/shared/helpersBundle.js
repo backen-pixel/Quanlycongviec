@@ -5049,10 +5049,13 @@ async function fetchCrmKanbanStagePageIdsViaRpc(req, mergedQuery, type, requests
   });
   if (error) {
     const message = String(error.message || '');
-    if (/crm_kanban_stage_page_ids|does not exist|Could not find|schema cache|argument/i.test(message)) {
+    // Migration chưa có, timeout, hoặc DB quá tải → fallback luồng cũ (tránh 500 trên Kanban).
+    if (/crm_kanban_stage_page_ids|does not exist|Could not find|schema cache|argument|timeout|canceling statement|57014|overloaded|too many|53300|connectivity|fetch failed/i.test(message)) {
+      console.warn('[crm_kanban_stage_page_ids] soft-fail → legacy path:', message.slice(0, 180));
       return null;
     }
-    throw error;
+    console.warn('[crm_kanban_stage_page_ids] unexpected → legacy path:', message.slice(0, 180));
+    return null;
   }
   const payload = Array.isArray(data) && data.length === 1 ? data[0] : data;
   if (!payload || typeof payload !== 'object' || !payload.pages || typeof payload.pages !== 'object') {

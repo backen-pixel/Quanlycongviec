@@ -866,33 +866,40 @@ r.post('/kanban-stage-pages', async (req, res) => {
     }
 
     const pages = {};
-    const CONCURRENCY = 4;
+    const CONCURRENCY = 3;
     for (let i = 0; i < stageRequests.length; i += CONCURRENCY) {
       const chunk = stageRequests.slice(i, i + CONCURRENCY);
       const results = await Promise.all(
         chunk.map(async ({ stageId, offset, limit }) => {
-          const stageQuery = {
-            ...mergedQuery,
-            stage_id: stageId,
-            offset,
-            limit,
-            lite: '1',
-            skip_deadline: '1',
-          };
-          const page = useLegacy
-            ? await getCrmLeadsListLegacy(stageQuery, {
-                assigneeStrict: rpcAssigneeStrict,
-                viewerUserId: req.user?.userId,
-                req,
-                lite: true,
-                skipDeadline: true,
-              })
-            : await fetchCrmLeadsPageViaRpc(req, stageQuery, type, offset, limit, {
-                lite: true,
-                skipDeadline: true,
-              });
-          if (!page) throw new Error(`Không tải được cột kanban ${stageId}`);
-          return [stageId, page];
+          try {
+            const stageQuery = {
+              ...mergedQuery,
+              stage_id: stageId,
+              offset,
+              limit,
+              lite: '1',
+              skip_deadline: '1',
+            };
+            const page = useLegacy
+              ? await getCrmLeadsListLegacy(stageQuery, {
+                  assigneeStrict: rpcAssigneeStrict,
+                  viewerUserId: req.user?.userId,
+                  req,
+                  lite: true,
+                  skipDeadline: true,
+                })
+              : await fetchCrmLeadsPageViaRpc(req, stageQuery, type, offset, limit, {
+                  lite: true,
+                  skipDeadline: true,
+                });
+            if (!page) {
+              return [stageId, { data: [], total: 0, hasMore: false, nextOffset: offset }];
+            }
+            return [stageId, page];
+          } catch (stageErr) {
+            console.warn('[kanban-stage-pages] stage soft-fail', stageId, stageErr?.message || stageErr);
+            return [stageId, { data: [], total: 0, hasMore: false, nextOffset: offset }];
+          }
         }),
       );
       for (const [stageId, page] of results) {
@@ -907,7 +914,8 @@ r.post('/kanban-stage-pages', async (req, res) => {
 
     res.json({ type, pages });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('[kanban-stage-pages]', e.message || e);
+    res.status(500).json({ error: e.message || 'Không tải được trang Kanban theo cột' });
   }
 });
 

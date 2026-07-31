@@ -540,6 +540,50 @@ function formatCrmPipelineTabCount(total, fallbackLen) {
   return n != null ? n.toLocaleString('vi-VN') : null;
 }
 
+/** Thông báo lỗi API CRM — tránh chỉ hiện "Request failed with status code 500". */
+function formatCrmApiError(err, fallback = 'Không tải được dữ liệu CRM') {
+  const status = err?.response?.status;
+  const data = err?.response?.data;
+  const serverMsg = (
+    (typeof data?.error === 'string' && data.error)
+    || (typeof data?.message === 'string' && data.message)
+    || (typeof data === 'string' && data.trim().slice(0, 180))
+    || ''
+  );
+  if (!status && (err?.code === 'ERR_NETWORK' || /network error/i.test(String(err?.message || '')))) {
+    return 'Mất kết nối máy chủ — thử lại sau giây lát.';
+  }
+  if (status === 401) return 'Phiên đăng nhập hết hạn — hãy đăng nhập lại.';
+  if (status === 403) return serverMsg || 'Không có quyền truy cập.';
+  if (status === 429) return 'Quá nhiều yêu cầu — chờ giây lát rồi thử lại.';
+  if (status >= 500) {
+    return serverMsg
+      ? `Lỗi máy chủ (${status}): ${serverMsg}`
+      : `Lỗi máy chủ tạm thời (${status}) — thử lại.`;
+  }
+  return serverMsg || err?.message || fallback;
+}
+
+function isCrmTransientApiError(err) {
+  const status = err?.response?.status;
+  if (!status) return true;
+  return status === 429 || status >= 500;
+}
+
+async function crmApiWithRetry(requestFn, { retries = 1, delayMs = 450 } = {}) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await requestFn();
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= retries || !isCrmTransientApiError(err)) throw err;
+      await new Promise((r) => setTimeout(r, delayMs * (attempt + 1)));
+    }
+  }
+  throw lastErr;
+}
+
 /** Query flags — backend trả select nhẹ + bỏ enrich nặng cho Kanban. */
 const CRM_KANBAN_LEAD_QUERY = { kanban: '1', lite: '1', skip_deadline: '1' };
 function crmDashboardUsesLegacyListFilters({ filterLeadType, filterReferrer, filterCustomerCompany }) {
@@ -1358,9 +1402,8 @@ export default function CRMDashboard() {
       return undefined;
     }
     let cancelled = false;
-    api.get('/app-modules/links/by-stages', {
-      params: { source_kind: 'crm', stage_ids: ids.join(',') },
-    })
+    // POST body — tránh GET URL quá dài khi «Tất cả công ty» (~100+ cột).
+    api.post('/app-modules/links/by-stages', { source_kind: 'crm', stage_ids: ids })
       .then((r) => {
         if (cancelled) return;
         const map = {};
@@ -2546,7 +2589,11 @@ export default function CRMDashboard() {
     } catch (e) {
       if (isLoadMoreStale()) return;
       console.error('[loadMore]', e);
-      setKanbanLoadError(e?.response?.data?.error || e?.message || 'Không thể tải thêm dữ liệu CRM.');
+      if (isCrmTransientApiError(e)) {
+        console.warn('[loadMore] soft-fail', formatCrmApiError(e));
+      } else {
+        setKanbanLoadError(formatCrmApiError(e, 'Không thể tải thêm dữ liệu CRM.'));
+      }
       setLoadMoreState((s) => ({ ...s, loading: false }));
     }
   }, [
@@ -2620,7 +2667,7 @@ export default function CRMDashboard() {
       });
       requestBudget -= limit;
       if (requestBudget <= 0) break;
-      if (requests.length >= 12) break;
+      if (requests.length >= 6) break;
     }
     if (!requests.length) return;
 
@@ -2652,7 +2699,10 @@ export default function CRMDashboard() {
         ...CRM_KANBAN_LEAD_QUERY,
       };
       delete params.stage_id;
-      const { data } = await api.post('/crm/kanban-stage-pages', { stages: requests }, { params });
+      const { data } = await crmApiWithRetry(
+        () => api.post('/crm/kanban-stage-pages', { stages: requests }, { params }),
+        { retries: 1, delayMs: 400 },
+      );
       if (requestGeneration !== kanbanRequestGenerationRef.current) return;
 
       const pages = data?.pages || {};
@@ -2703,8 +2753,13 @@ export default function CRMDashboard() {
       }
     } catch (e) {
       if (requestGeneration === kanbanRequestGenerationRef.current) {
-        console.error('[kanban stage pages]', e);
-        setKanbanLoadError(e?.response?.data?.error || e?.message || 'Không thể tải thêm dữ liệu theo cột.');
+        // Lỗi tạm (500/network) khi cuộn cột: không spam banner đỏ — cột sẽ tải lại khi cuộn tới.
+        if (isCrmTransientApiError(e) || ensureInitial) {
+          console.warn('[kanban stage pages] soft-fail', formatCrmApiError(e));
+        } else {
+          console.error('[kanban stage pages]', e);
+          setKanbanLoadError(formatCrmApiError(e, 'Không thể tải thêm dữ liệu theo cột.'));
+        }
       }
     } finally {
       for (const request of requests) kanbanStagePagesLoadingRef.current.delete(request.stage_id);
@@ -4175,7 +4230,14 @@ export default function CRMDashboard() {
       console.error(e);
       if (loadTimeoutId) window.clearTimeout(loadTimeoutId);
       if (!background && !isStale()) {
-        setKanbanLoadError(e?.response?.data?.error || e?.message || 'Không thể tải dữ liệu CRM. Dữ liệu cũ vẫn được giữ lại.');
+        // Retry một lần khi 500/network (backend restart / Supabase tạm nghẽn).
+        if (isCrmTransientApiError(e) && !opts?.__retried) {
+          await new Promise((r) => setTimeout(r, 500));
+          if (!isStale()) {
+            return load({ ...opts, silent: true, __retried: true });
+          }
+        }
+        setKanbanLoadError(formatCrmApiError(e, 'Không thể tải dữ liệu CRM. Dữ liệu cũ vẫn được giữ lại.'));
         if (shouldTrackProgress) resetCrmLoadProgress();
         setFirstLoading(false);
         setSyncing(false);
@@ -4419,7 +4481,7 @@ export default function CRMDashboard() {
       } catch (e) {
         if (cancelled) return;
         lastFbFilter.current = '';
-        setKanbanLoadError(e?.response?.data?.error || e?.message || 'Không thể tải bộ lọc nguồn Facebook.');
+        setKanbanLoadError(formatCrmApiError(e, 'Không thể tải bộ lọc nguồn Facebook.'));
       }
     })();
     return () => { cancelled = true; };
@@ -5025,9 +5087,11 @@ export default function CRMDashboard() {
     } catch (error) {
       if (generation === deadlineBucketPagesGenerationRef.current) {
         console.error('[deadline bucket pages]', error);
-        setKanbanLoadError(
-          error?.response?.data?.error || error?.message || 'Không thể tải card Deadline.',
-        );
+        if (isCrmTransientApiError(error)) {
+          console.warn('[deadline bucket pages] soft-fail', formatCrmApiError(error));
+        } else {
+          setKanbanLoadError(formatCrmApiError(error, 'Không thể tải card Deadline.'));
+        }
       }
     } finally {
       if (generation === deadlineBucketPagesGenerationRef.current) {
@@ -10565,7 +10629,7 @@ function KanbanView({
       }))
     : pipeline.map((stage, columnIndex) => ({ stage, columnIndex, virtualItem: null }));
 
-  // Ép tải stage-pages theo cột đang mount (virtualizer) — không chỉ dựa IntersectionObserver.
+  // Ép tải stage-pages theo cột đang mount — debounce để tránh bão request → 500.
   const mountedStageKey = renderedColumns
     .map(({ stage }) => String(stage?.id || ''))
     .filter(Boolean)
@@ -10578,9 +10642,9 @@ function KanbanView({
     visibleLoadTimerRef.current = window.setTimeout(() => {
       visibleLoadTimerRef.current = null;
       onLoadStagePages(ids, { ensureInitial: true });
-    }, 50);
+    }, 180);
     return undefined;
-  }, [mountedStageKey, onLoadStagePages, stageCounts]);
+  }, [mountedStageKey, onLoadStagePages]);
 
   return (
     <WorkshopPipelineKanbanScroll

@@ -136,24 +136,56 @@ r.get('/links', async (req, res) => {
   }
 });
 
-r.get('/links/by-stages', async (req, res) => {
-  try {
-    const sourceKind = String(req.query.source_kind || 'crm');
-    const raw = String(req.query.stage_ids || '');
-    const stageIds = raw.split(',').map((s) => s.trim()).filter(Boolean);
-    if (!stageIds.length) return res.json({ links: [] });
+const MODULE_LINK_STAGE_CHUNK = 80;
+
+/** Chunk `.in()` — tránh URL/query quá dài khi Kanban có hàng trăm cột. */
+async function fetchPipelineStageModuleLinks(sourceKind, stageIds) {
+  const ids = [...new Set((stageIds || []).map((s) => String(s || '').trim()).filter(Boolean))];
+  if (!ids.length) return [];
+  const out = [];
+  for (let i = 0; i < ids.length; i += MODULE_LINK_STAGE_CHUNK) {
+    const chunk = ids.slice(i, i + MODULE_LINK_STAGE_CHUNK);
     const { data, error } = await supabase
       .from('pipeline_stage_module_links')
       .select('*, target_module:app_modules(id, module_key, name, icon, color, is_active)')
       .eq('source_kind', sourceKind)
-      .in('source_stage_id', stageIds)
+      .in('source_stage_id', chunk)
       .eq('enabled', true);
-    if (error) throw error;
-    res.json({ links: data || [] });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
+    if (error) {
+      const msg = String(error.message || '');
+      if (/pipeline_stage_module_links|does not exist|schema cache|Could not find/i.test(msg)) {
+        console.warn('[app-modules/links/by-stages] table/relation missing — return []');
+        return out;
+      }
+      throw error;
+    }
+    out.push(...(data || []));
   }
-});
+  return out;
+}
+
+function parseStageIdsFromReq(req) {
+  const fromBody = req.body?.stage_ids;
+  if (Array.isArray(fromBody)) return fromBody;
+  if (typeof fromBody === 'string') return fromBody.split(',');
+  return String(req.query.stage_ids || '').split(',');
+}
+
+async function handleLinksByStages(req, res) {
+  try {
+    const sourceKind = String(req.body?.source_kind || req.query.source_kind || 'crm');
+    const stageIds = parseStageIdsFromReq(req).map((s) => String(s || '').trim()).filter(Boolean);
+    if (!stageIds.length) return res.json({ links: [] });
+    const links = await fetchPipelineStageModuleLinks(sourceKind, stageIds);
+    res.json({ links });
+  } catch (e) {
+    console.error('[app-modules/links/by-stages]', e.message || e);
+    res.status(500).json({ error: e.message || 'Không tải được liên kết module' });
+  }
+}
+
+r.get('/links/by-stages', handleLinksByStages);
+r.post('/links/by-stages', handleLinksByStages);
 
 r.put('/links', async (req, res) => {
   try {

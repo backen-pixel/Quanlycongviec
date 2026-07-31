@@ -113,8 +113,9 @@ export default function AppModulePipelinePanel({ moduleKey, mod, tabs = [] }) {
       setOtherModules(mods);
       const ids = stages.map((s) => s.id).filter(Boolean);
       if (ids.length) {
-        const linksRes = await api.get('/app-modules/links/by-stages', {
-          params: { source_kind: 'custom', stage_ids: ids.join(',') },
+        const linksRes = await api.post('/app-modules/links/by-stages', {
+          source_kind: 'custom',
+          stage_ids: ids,
         });
         setStageLinks(linksRes.data?.links || []);
       } else {

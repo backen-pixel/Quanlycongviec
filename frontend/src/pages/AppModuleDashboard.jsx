@@ -266,8 +266,9 @@ export default function AppModuleDashboard() {
       return;
     }
     try {
-      const linksRes = await api.get('/app-modules/links/by-stages', {
-        params: { source_kind: 'custom', stage_ids: ids.join(',') },
+      const linksRes = await api.post('/app-modules/links/by-stages', {
+        source_kind: 'custom',
+        stage_ids: ids,
       });
       const map = {};
       (linksRes.data?.links || []).forEach((link) => {

@@ -442,10 +442,10 @@ export default function PipelineSettingsPage() {
       setCustomModules(mods);
       const stageIds = crmStagesLoaded.map((s) => s.id).filter(Boolean);
       if (stageIds.length) {
-        const linksRes = await api.get('/app-modules/links/by-stages', {
-          params: { source_kind: 'crm', stage_ids: stageIds.join(',') },
-          ...noCache,
-        }).catch(() => ({ data: { links: [] } }));
+        const linksRes = await api.post('/app-modules/links/by-stages', {
+          source_kind: 'crm',
+          stage_ids: stageIds,
+        }, noCache).catch(() => ({ data: { links: [] } }));
         setCustomModuleLinks(linksRes.data?.links || []);
       } else {
         setCustomModuleLinks([]);
