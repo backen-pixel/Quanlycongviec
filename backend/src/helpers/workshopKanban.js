@@ -50,7 +50,14 @@ const WORKSHOP_STAGE_SLUGS = ['production', 'delivery', 'shipping', 'installatio
 const WORKSHOP_STATUSES = ['producing', 'shipping', 'installing', 'warranty', 'completed'];
 const INTAKE_BUCKET = 'won_pending';
 
+let _workshopStageMapCache = { at: 0, value: null };
+const WORKSHOP_STAGE_MAP_TTL_MS = 60_000;
+
 async function getWorkshopStageMap() {
+  const now = Date.now();
+  if (_workshopStageMapCache.value && now - _workshopStageMapCache.at < WORKSHOP_STAGE_MAP_TTL_MS) {
+    return _workshopStageMapCache.value;
+  }
   const { data: stages = [] } = await supabase
     .from('workflow_stages')
     .select('id, slug, name, color, icon')
@@ -59,72 +66,113 @@ async function getWorkshopStageMap() {
 
   const bySlug = {};
   stages.forEach((stage) => { bySlug[stage.slug] = stage; });
-  return { stages, bySlug, ids: stages.map((stage) => stage.id).filter(Boolean) };
+  const value = { stages, bySlug, ids: stages.map((stage) => stage.id).filter(Boolean) };
+  _workshopStageMapCache = { at: now, value };
+  return value;
 }
 
 /** Cache ngắn — mỗi trang Kanban gọi lại hàm này; 1000+ deal quét crm_leads rất đắt. */
 let _wonDealProjectIdsCache = { at: 0, ids: null };
+let _wonDealProjectIdsInflight = null;
 const WON_DEAL_IDS_TTL_MS = 90_000;
+const WON_DEAL_IDS_REDIS_KEY = 'sx:won_deal_project_ids';
 
 async function getWonDealProjectIds() {
   const now = Date.now();
   if (_wonDealProjectIdsCache.ids && now - _wonDealProjectIdsCache.at < WON_DEAL_IDS_TTL_MS) {
     return _wonDealProjectIdsCache.ids;
   }
+  if (_wonDealProjectIdsInflight) return _wonDealProjectIdsInflight;
 
-  // Lấy deals đang ở stage "Thắng" (is_won=true)
-  const { data: wonStages } = await supabase
-    .from('crm_pipeline_stages')
-    .select('id')
-    .eq('is_won', true)
-    .eq('is_active', true)
-    .or('pipeline_type.eq.deal,pipeline_type.is.null');
-  const wonStageIds = (wonStages || []).map((s) => s.id).filter(Boolean);
+  _wonDealProjectIdsInflight = (async () => {
+    try {
+      try {
+        const { getRedisIfReady } = require('../config/redis');
+        const redis = getRedisIfReady();
+        if (redis) {
+          const raw = await redis.get(WON_DEAL_IDS_REDIS_KEY);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              _wonDealProjectIdsCache = { at: Date.now(), ids: parsed };
+              return parsed;
+            }
+          }
+        }
+      } catch {
+        /* ignore redis */
+      }
 
-  // Lấy deals có project:
-  // - đang ở stage is_won=true
-  // - hoặc đã từng thắng (actual_close_date IS NOT NULL)
-  // - hoặc (fallback) chỉ cần có project_id (tránh mất deal khi stage đã đổi nhưng chưa set actual_close_date)
-  const queries = [];
-  if (wonStageIds.length) {
-    queries.push(
-      supabase
-        .from('crm_leads')
-        .select('project_id')
-        .eq('type', 'deal')
-        .not('project_id', 'is', null)
-        .in('stage_id', wonStageIds),
-    );
-  }
-  // Deals đã từng thắng (có actual_close_date) và được gắn project
-  queries.push(
-    supabase
-      .from('crm_leads')
-      .select('project_id')
-      .eq('type', 'deal')
-      .not('project_id', 'is', null)
-      .not('actual_close_date', 'is', null),
-  );
+      // Lấy deals đang ở stage "Thắng" (is_won=true)
+      const { data: wonStages } = await supabase
+        .from('crm_pipeline_stages')
+        .select('id')
+        .eq('is_won', true)
+        .eq('is_active', true)
+        .or('pipeline_type.eq.deal,pipeline_type.is.null');
+      const wonStageIds = (wonStages || []).map((s) => s.id).filter(Boolean);
 
-  // Fallback: chỉ cần có project_id (để intake không bị mất card ngay sau khi chuyển stage CRM)
-  queries.push(
-    supabase
-      .from('crm_leads')
-      .select('project_id')
-      .eq('type', 'deal')
-      .not('project_id', 'is', null),
-  );
+      // Lấy deals có project:
+      // - đang ở stage is_won=true
+      // - hoặc đã từng thắng (actual_close_date IS NOT NULL)
+      // - hoặc (fallback) chỉ cần có project_id (tránh mất deal khi stage đã đổi nhưng chưa set actual_close_date)
+      const queries = [];
+      if (wonStageIds.length) {
+        queries.push(
+          supabase
+            .from('crm_leads')
+            .select('project_id')
+            .eq('type', 'deal')
+            .not('project_id', 'is', null)
+            .in('stage_id', wonStageIds),
+        );
+      }
+      // Deals đã từng thắng (có actual_close_date) và được gắn project
+      queries.push(
+        supabase
+          .from('crm_leads')
+          .select('project_id')
+          .eq('type', 'deal')
+          .not('project_id', 'is', null)
+          .not('actual_close_date', 'is', null),
+      );
 
-  const results = await Promise.all(queries);
-  const out = new Set();
-  for (const { data } of results) {
-    for (const l of data || []) {
-      if (l.project_id) out.add(l.project_id);
+      // Fallback: chỉ cần có project_id (để intake không bị mất card ngay sau khi chuyển stage CRM)
+      queries.push(
+        supabase
+          .from('crm_leads')
+          .select('project_id')
+          .eq('type', 'deal')
+          .not('project_id', 'is', null),
+      );
+
+      const results = await Promise.all(queries);
+      const out = new Set();
+      for (const { data } of results) {
+        for (const l of data || []) {
+          if (l.project_id) out.add(l.project_id);
+        }
+      }
+      const ids = [...out];
+      _wonDealProjectIdsCache = { at: Date.now(), ids };
+
+      try {
+        const { getRedisIfReady } = require('../config/redis');
+        const redis = getRedisIfReady();
+        if (redis) {
+          await redis.set(WON_DEAL_IDS_REDIS_KEY, JSON.stringify(ids), 'EX', Math.ceil(WON_DEAL_IDS_TTL_MS / 1000));
+        }
+      } catch {
+        /* ignore redis */
+      }
+
+      return ids;
+    } finally {
+      _wonDealProjectIdsInflight = null;
     }
-  }
-  const ids = [...out];
-  _wonDealProjectIdsCache = { at: now, ids };
-  return ids;
+  })();
+
+  return _wonDealProjectIdsInflight;
 }
 
 function buildScopeOrFilter(stageIds, wonIds) {

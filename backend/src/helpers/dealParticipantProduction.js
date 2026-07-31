@@ -496,29 +496,57 @@ function isVptCompanyCommercialDocViewer(user) {
   return isAccountingUser(user) || isDealParticipantProductionViewer(user);
 }
 
+/** Cache ngắn theo user — summary/list gọi scope nhiều lần trong cùng request / refresh. */
+const _leadMemberProjectIdsCache = new Map();
+const _leadMemberProjectIdsInflight = new Map();
+const LEAD_MEMBER_PROJECT_IDS_TTL_MS = 30_000;
+
 async function getLeadMemberProjectIdsForUser(userId) {
   if (!userId) return [];
-  const { data: mems, error: memErr } = await supabase
-    .from('lead_members')
-    .select('lead_id')
-    .eq('user_id', userId);
-  if (memErr) {
-    console.warn('[dealParticipantProduction] lead_members:', memErr.message);
-    return [];
+  const key = String(userId);
+  const now = Date.now();
+  const cached = _leadMemberProjectIdsCache.get(key);
+  if (cached && now - cached.at < LEAD_MEMBER_PROJECT_IDS_TTL_MS) {
+    return cached.ids;
   }
-  const leadIds = [...new Set((mems || []).map((m) => m.lead_id).filter(Boolean))];
-  if (!leadIds.length) return [];
+  const inflight = _leadMemberProjectIdsInflight.get(key);
+  if (inflight) return inflight;
 
-  const { data: leads, error: leadErr } = await supabase
-    .from('crm_leads')
-    .select('project_id')
-    .in('id', leadIds)
-    .not('project_id', 'is', null);
-  if (leadErr) {
-    console.warn('[dealParticipantProduction] crm_leads:', leadErr.message);
-    return [];
-  }
-  return [...new Set((leads || []).map((l) => l.project_id).filter(Boolean))];
+  const promise = (async () => {
+    try {
+      const { data: mems, error: memErr } = await supabase
+        .from('lead_members')
+        .select('lead_id')
+        .eq('user_id', userId);
+      if (memErr) {
+        console.warn('[dealParticipantProduction] lead_members:', memErr.message);
+        return [];
+      }
+      const leadIds = [...new Set((mems || []).map((m) => m.lead_id).filter(Boolean))];
+      if (!leadIds.length) {
+        _leadMemberProjectIdsCache.set(key, { at: Date.now(), ids: [] });
+        return [];
+      }
+
+      const { data: leads, error: leadErr } = await supabase
+        .from('crm_leads')
+        .select('project_id')
+        .in('id', leadIds)
+        .not('project_id', 'is', null);
+      if (leadErr) {
+        console.warn('[dealParticipantProduction] crm_leads:', leadErr.message);
+        return [];
+      }
+      const ids = [...new Set((leads || []).map((l) => l.project_id).filter(Boolean))];
+      _leadMemberProjectIdsCache.set(key, { at: Date.now(), ids });
+      return ids;
+    } finally {
+      _leadMemberProjectIdsInflight.delete(key);
+    }
+  })();
+
+  _leadMemberProjectIdsInflight.set(key, promise);
+  return promise;
 }
 
 async function userCanAccessProductionProjectAsParticipant(userId, projectId, user = null) {

@@ -1502,16 +1502,45 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     const offset = (parsedPage - 1) * parsedLimit;
     const { ids: stageIds } = await getWorkshopStageMap();
     const wonIds = await getWonDealProjectIds();
+    const sxKanbanColumnId = String(sxKanbanColumnIdQuery || '').trim();
+    const wantsNullKanbanColumn = sxKanbanColumnId === '__none__' || sxKanbanColumnId === 'null';
+    const wantsKanbanColumn = !!sxKanbanColumnId && !wantsNullKanbanColumn;
+    const wantsUnclassified = String(workshop_type_id || '').toLowerCase() === 'none';
+
+    if (summaryOnly) {
+      const { loadSxKanbanColumnSummary } = require('../helpers/sxKanbanSummary');
+      const summary = await loadSxKanbanColumnSummary({
+        req,
+        sx_intake,
+        wonIds,
+        stageIds,
+        division_id,
+        company_id,
+        scopePartnerIds,
+        workshop_type_id,
+        wantsUnclassified,
+        sx_workshop_company_id,
+        deal_company_id,
+        search,
+        priority,
+        createdFrom,
+        createdTo,
+        productionPersonId,
+        wantsNullKanbanColumn,
+        wantsKanbanColumn,
+        sxKanbanColumnId,
+      });
+      return res.json(summary);
+    }
+
     // Web cần resolve stages cho enrich; mobile tự resolve cột phía client.
-    if (!mobileLite && !summaryOnly) {
+    if (!mobileLite) {
       await getResolvedKanbanStages(company_id, {
         workshopTypeId: workshop_type_id || null,
       });
     }
 
-    const projectListSelect = summaryOnly
-      ? 'id, sx_kanban_column_id, production_value, estimated_value, deposit_amount, collected_amount'
-      : mobileLite
+    const projectListSelect = mobileLite
       ? `
         id, code, name, estimated_value, priority, deadline, ${MIGRATION_300_COLS} created_at, status, company_id,
         production_deadline, sx_kanban_column_id, logistics_company_id, vc_kanban_column_id, vc_handover_status,
@@ -1555,14 +1584,9 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
         tasks(id, status)
       `;
 
-    const selectOpts = summaryOnly
-      ? {}
-      : mobileLite
+    const selectOpts = mobileLite
       ? (parsedPage > 1 ? {} : { count: 'estimated' })
       : { count: 'exact' };
-    const sxKanbanColumnId = String(sxKanbanColumnIdQuery || '').trim();
-    const wantsNullKanbanColumn = sxKanbanColumnId === '__none__' || sxKanbanColumnId === 'null';
-    const wantsKanbanColumn = !!sxKanbanColumnId && !wantsNullKanbanColumn;
     let query = supabase
       .from('projects')
       .select(projectListSelect, selectOpts);
@@ -1584,7 +1608,6 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     if (division_id) query = query.eq('division_id', division_id);
     if (company_id) query = applyProductionCompanyScopeFilter(query, company_id, scopePartnerIds);
     // workshop_type_id='none' → lọc deal CHƯA phân loại (workshop_type_id IS NULL)
-    const wantsUnclassified = String(workshop_type_id || '').toLowerCase() === 'none';
     if (wantsUnclassified) query = query.is('workshop_type_id', null);
     else if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
     ({ query } = await applyParticipantOnlyProductionScope(query, req.user, company_id, sx_workshop_company_id, deal_company_id));
@@ -1613,160 +1636,6 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
         }
       } else {
         query = query.eq('current_stage.slug', stage_slug);
-      }
-    }
-
-    if (summaryOnly) {
-      // Aggregate bằng head-count (index-friendly) — tránh quét tới ~20k row JS.
-      const applySummaryFilters = async (baseQuery, columnMode = undefined) => {
-        let q = applyProjectTenantScope(baseQuery, req);
-        if (String(sx_intake) === '1') {
-          if (!wonIds.length) return { empty: true, query: q };
-          q = q.in('id', wonIds);
-          if (stageIds.length) {
-            q = q.or(`current_stage_id.is.null,current_stage_id.not.in.(${stageIds.join(',')})`);
-          }
-        } else {
-          q = q.or(buildScopeOrFilter(stageIds, wonIds));
-        }
-        if (division_id) q = q.eq('division_id', division_id);
-        if (company_id) q = applyProductionCompanyScopeFilter(q, company_id, scopePartnerIds);
-        if (wantsUnclassified) q = q.is('workshop_type_id', null);
-        else if (workshop_type_id) q = q.eq('workshop_type_id', workshop_type_id);
-        ({ query: q } = await applyParticipantOnlyProductionScope(
-          q, req.user, company_id, sx_workshop_company_id, deal_company_id,
-        ));
-        if (search) {
-          const searchPattern = `%${search}%`;
-          q = q.or(`code.ilike.${searchPattern},name.ilike.${searchPattern},notes.ilike.${searchPattern}`);
-        }
-        if (priority) q = q.eq('priority', priority);
-        if (createdFrom) q = q.gte('created_at', createdFrom);
-        if (createdTo) {
-          const upper = /^\d{4}-\d{2}-\d{2}$/.test(String(createdTo))
-            ? `${createdTo}T23:59:59.999Z`
-            : createdTo;
-          q = q.lte('created_at', upper);
-        }
-        if (productionPersonId) q = q.eq('production_person_id', productionPersonId);
-        if (columnMode === '__none__') q = q.is('sx_kanban_column_id', null);
-        else if (columnMode) q = q.eq('sx_kanban_column_id', columnMode);
-        else if (wantsNullKanbanColumn) q = q.is('sx_kanban_column_id', null);
-        else if (wantsKanbanColumn) q = q.eq('sx_kanban_column_id', sxKanbanColumnId);
-        return { empty: false, query: q };
-      };
-
-      const headCount = async (columnMode) => {
-        const applied = await applySummaryFilters(
-          supabase.from('projects').select('id', { count: 'exact', head: true }),
-          columnMode,
-        );
-        if (applied.empty) return 0;
-        const { count: c, error: err } = await applied.query;
-        if (err) throw err;
-        return Number(c) || 0;
-      };
-
-      const totalOnlyFallback = async () => {
-        try {
-          return await headCount(undefined);
-        } catch (fbErr) {
-          if (String(fbErr.message || '').includes('sx_kanban_column_id')) {
-            // Migration 423 chưa có — bỏ filter cột, chỉ đếm total.
-            const applied = await applySummaryFilters(
-              supabase.from('projects').select('id', { count: 'exact', head: true }),
-              undefined,
-            );
-            if (applied.empty) return 0;
-            // applySummaryFilters vẫn có thể gắn eq cột nếu wantsKanbanColumn — dùng query đã lọc scope không cột:
-            let fallback = supabase.from('projects').select('id', { count: 'exact', head: true });
-            fallback = applyProjectTenantScope(fallback, req);
-            if (String(sx_intake) === '1') {
-              if (!wonIds.length) return 0;
-              fallback = fallback.in('id', wonIds);
-              if (stageIds.length) {
-                fallback = fallback.or(`current_stage_id.is.null,current_stage_id.not.in.(${stageIds.join(',')})`);
-              }
-            } else {
-              fallback = fallback.or(buildScopeOrFilter(stageIds, wonIds));
-            }
-            if (division_id) fallback = fallback.eq('division_id', division_id);
-            if (company_id) fallback = applyProductionCompanyScopeFilter(fallback, company_id, scopePartnerIds);
-            if (wantsUnclassified) fallback = fallback.is('workshop_type_id', null);
-            else if (workshop_type_id) fallback = fallback.eq('workshop_type_id', workshop_type_id);
-            ({ query: fallback } = await applyParticipantOnlyProductionScope(
-              fallback, req.user, company_id, sx_workshop_company_id, deal_company_id,
-            ));
-            if (search) {
-              const searchPattern = `%${search}%`;
-              fallback = fallback.or(`code.ilike.${searchPattern},name.ilike.${searchPattern},notes.ilike.${searchPattern}`);
-            }
-            if (priority) fallback = fallback.eq('priority', priority);
-            if (createdFrom) fallback = fallback.gte('created_at', createdFrom);
-            if (createdTo) {
-              const upper = /^\d{4}-\d{2}-\d{2}$/.test(String(createdTo))
-                ? `${createdTo}T23:59:59.999Z`
-                : createdTo;
-              fallback = fallback.lte('created_at', upper);
-            }
-            if (productionPersonId) fallback = fallback.eq('production_person_id', productionPersonId);
-            const fb = await fallback;
-            if (fb.error) throw fb.error;
-            return Number(fb.count) || 0;
-          }
-          throw fbErr;
-        }
-      };
-
-      try {
-        if (wantsNullKanbanColumn || wantsKanbanColumn) {
-          const key = wantsNullKanbanColumn ? '__none__' : String(sxKanbanColumnId);
-          const total = await headCount(wantsNullKanbanColumn ? '__none__' : sxKanbanColumnId);
-          return res.json({ total, counts: total > 0 ? { [key]: total } : {}, values: {} });
-        }
-
-        const { stages: kanbanStages } = await getResolvedKanbanStages(company_id, {
-          workshopTypeId: workshop_type_id || null,
-        });
-        const columnIds = [...new Set(
-          (kanbanStages || [])
-            .map((s) => s?.id)
-            .filter((id) => id && !String(id).startsWith('__'))
-            .map(String),
-        )];
-
-        const total = await headCount(undefined);
-        const counts = {};
-        const jobs = [
-          ['__none__', '__none__'],
-          ...columnIds.map((id) => [id, id]),
-        ];
-        const BATCH = 12;
-        for (let i = 0; i < jobs.length; i += BATCH) {
-          const chunk = jobs.slice(i, i + BATCH);
-          const results = await Promise.all(chunk.map(async ([key, mode]) => {
-            try {
-              return [key, await headCount(mode)];
-            } catch (colErr) {
-              if (String(colErr.message || '').includes('sx_kanban_column_id')) {
-                return [key, null];
-              }
-              throw colErr;
-            }
-          }));
-          for (const [key, n] of results) {
-            if (n == null) {
-              return res.json({ total: await totalOnlyFallback(), counts: {}, values: {} });
-            }
-            if (n > 0) counts[key] = n;
-          }
-        }
-        return res.json({ total, counts, values: {} });
-      } catch (summaryErr) {
-        if (String(summaryErr.message || '').includes('sx_kanban_column_id')) {
-          return res.json({ total: await totalOnlyFallback(), counts: {}, values: {} });
-        }
-        throw summaryErr;
       }
     }
 
