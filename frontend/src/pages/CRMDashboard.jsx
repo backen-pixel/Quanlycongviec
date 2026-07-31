@@ -1086,7 +1086,13 @@ function dedupeCrmKanbanRows(rows) {
     }
     const ta = new Date(prev.updated_at || prev.created_at || 0).getTime();
     const tb = new Date(r.updated_at || r.created_at || 0).getTime();
-    map.set(k, tb >= ta ? r : prev);
+    const newer = tb >= ta ? r : prev;
+    const older = tb >= ta ? prev : r;
+    // Giữ deadline_bucket server nếu bản mới hơn (vd. hydrate Kanban) không có stamp.
+    map.set(k, {
+      ...newer,
+      deadline_bucket: newer.deadline_bucket || older.deadline_bucket || undefined,
+    });
   }
   return [...map.values()];
 }

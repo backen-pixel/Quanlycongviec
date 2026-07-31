@@ -800,7 +800,10 @@ r.post('/deadline-bucket-pages', async (req, res) => {
     for (const [bucket, page] of Object.entries(rawPages)) {
       const ids = Array.isArray(page?.ids) ? page.ids.map(String) : [];
       pages[bucket] = {
-        data: ids.map((id) => rowsById.get(id)).filter(Boolean),
+        data: ids.map((id) => {
+          const row = rowsById.get(id);
+          return row ? { ...row, deadline_bucket: bucket } : null;
+        }).filter(Boolean),
         total: Number(page?.total) || 0,
         nextOffset: Number(page?.nextOffset) || 0,
         hasMore: !!page?.hasMore,
