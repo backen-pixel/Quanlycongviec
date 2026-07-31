@@ -2579,7 +2579,8 @@ export default function CRMDashboard() {
     stageIds,
     { ensureInitial = false, ignoreGlobalCap = false } = {},
   ) => {
-    if (syncing) return;
+    // ensureInitial (cột đang thấy còn thiếu thẻ): không chờ syncing — tránh cột trống lâu.
+    if (syncing && !ensureInitial) return;
     const type = pipelineType === 'lead' ? 'lead' : 'deal';
     const requestGeneration = kanbanRequestGenerationRef.current;
     const loadedRows = type === 'lead' ? allLeadsRef.current : allDealsRef.current;
@@ -2589,27 +2590,35 @@ export default function CRMDashboard() {
       if (sid) countByStage.set(sid, (countByStage.get(sid) || 0) + 1);
     }
     const totals = pipelineStageCounts[type] || {};
-    const capRemaining = ignoreGlobalCap
+    // Cột đang hiện mà chưa đủ thẻ: luôn cho phép tải tối thiểu (không bị trần global chặn).
+    const capRemaining = (ignoreGlobalCap || ensureInitial)
       ? Number.MAX_SAFE_INTEGER
       : resolveKanbanAutoLoadCap(kanbanLoadLimit) - loadedRows.length;
     if (capRemaining <= 0) return;
 
     const requests = [];
     let requestBudget = capRemaining;
+    const initialPerColumn = 10;
     for (const rawId of stageIds || []) {
       const stageId = String(rawId || '');
       if (!stageId || stageId.startsWith('__') || kanbanStagePagesLoadingRef.current.has(stageId)) continue;
       const offset = countByStage.get(stageId) || 0;
-      const totalRaw = totals[String(stageId)];
+      const totalRaw = totals[String(stageId)] ?? totals[stageId];
       const total = Number(totalRaw);
-      if (Number.isFinite(total) && offset >= total) continue;
-      if (ensureInitial && offset >= Math.min(10, Number.isFinite(total) ? total : 10)) continue;
+      const hasTotal = Number.isFinite(total);
+      if (hasTotal && total <= 0) continue;
+      if (hasTotal && offset >= total) continue;
+      if (ensureInitial && offset >= Math.min(initialPerColumn, hasTotal ? total : initialPerColumn)) continue;
+      const limit = ensureInitial
+        ? Math.min(initialPerColumn, hasTotal ? Math.max(0, total - offset) : initialPerColumn, requestBudget)
+        : Math.min(20, requestBudget);
+      if (limit <= 0) continue;
       requests.push({
         stage_id: stageId,
         offset,
-        limit: Math.min(20, requestBudget),
+        limit,
       });
-      requestBudget -= Math.min(20, requestBudget);
+      requestBudget -= limit;
       if (requestBudget <= 0) break;
       if (requests.length >= 12) break;
     }
@@ -8084,6 +8093,7 @@ export default function CRMDashboard() {
               stageCounts={pipelineType === 'lead' ? pipelineStageCounts.lead : pipelineStageCounts.deal}
               columnScrollMode={kanbanColumnScrollMode}
               searchHighlightId={kanbanSearchHighlightId}
+              scopedCompanyFilter={!!filterCompany}
             />
           </div>
           )}
@@ -9590,7 +9600,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
     if (!column || !root || typeof IntersectionObserver === 'undefined') return undefined;
     const observer = new IntersectionObserver(
       ([entry]) => onColumnVisibilityChange(stage.id, !!entry?.isIntersecting),
-      { root, rootMargin: '0px 520px', threshold: 0.01 },
+      { root, rootMargin: '0px 960px', threshold: 0 },
     );
     observer.observe(column);
     return () => {
@@ -10383,6 +10393,8 @@ function KanbanView({
   stageCounts,
   columnScrollMode = 'unified',
   searchHighlightId = null,
+  /** true = đang lọc 1 công ty; false = «Tất cả công ty» (nhiều pipeline → cần overscan lớn hơn). */
+  scopedCompanyFilter = true,
 }) {
   const kanbanHScrollRef = useRef(null);
   const loadMoreCooldownRef = useRef(false);
@@ -10393,7 +10405,10 @@ function KanbanView({
     () => (quickMoveStages?.length ? quickMoveStages : (pipeline || []).map(({ items, ...stage }) => stage)),
     [quickMoveStages, pipeline],
   );
-  const virtualizeColumns = pipeline.length >= 12;
+  // Virtual cột: chỉ khi thật sự nhiều (≥24). «Tất cả công ty» vẫn virtual nhưng overscan rộng hơn.
+  const CRM_KANBAN_COLUMN_VIRT_THRESHOLD = 24;
+  const virtualizeColumns = pipeline.length >= CRM_KANBAN_COLUMN_VIRT_THRESHOLD;
+  const columnOverscan = !scopedCompanyFilter || pipeline.length >= 40 ? 8 : 6;
   const columnWidth = compact ? 240 : 272;
   const columnGap = compact ? 6 : 10;
   const columnSlotWidth = columnWidth + columnGap;
@@ -10402,13 +10417,13 @@ function KanbanView({
     getScrollElement: () => kanbanHScrollRef.current,
     estimateSize: () => columnSlotWidth,
     horizontal: true,
-    overscan: 2,
+    overscan: columnOverscan,
     getItemKey: (index) => pipeline[index]?.id ?? index,
   });
   const virtualRailMinHeight = useMemo(() => {
     if (perColumnScroll) return undefined;
     const maxLoaded = Math.max(0, ...pipeline.map((stage) => stage?.items?.length || 0));
-    const cardSlot = compact ? 126 : 142;
+    const cardSlot = compact ? 208 : 230;
     return Math.max(320, (compact ? 112 : 132) + maxLoaded * cardSlot);
   }, [compact, perColumnScroll, pipeline]);
   const [virtualRailHeight, setVirtualRailHeight] = useState(virtualRailMinHeight);
@@ -10549,6 +10564,23 @@ function KanbanView({
         virtualItem,
       }))
     : pipeline.map((stage, columnIndex) => ({ stage, columnIndex, virtualItem: null }));
+
+  // Ép tải stage-pages theo cột đang mount (virtualizer) — không chỉ dựa IntersectionObserver.
+  const mountedStageKey = renderedColumns
+    .map(({ stage }) => String(stage?.id || ''))
+    .filter(Boolean)
+    .join('|');
+  useEffect(() => {
+    if (!onLoadStagePages || !mountedStageKey) return undefined;
+    const ids = mountedStageKey.split('|').filter(Boolean);
+    for (const id of ids) visibleStageIdsRef.current.add(id);
+    if (visibleLoadTimerRef.current) window.clearTimeout(visibleLoadTimerRef.current);
+    visibleLoadTimerRef.current = window.setTimeout(() => {
+      visibleLoadTimerRef.current = null;
+      onLoadStagePages(ids, { ensureInitial: true });
+    }, 50);
+    return undefined;
+  }, [mountedStageKey, onLoadStagePages, stageCounts]);
 
   return (
     <WorkshopPipelineKanbanScroll

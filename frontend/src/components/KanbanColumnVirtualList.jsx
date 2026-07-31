@@ -11,8 +11,9 @@ export const CRM_KANBAN_CARD_SLOT_CLASS = 'crm-kanban-card-slot';
 
 const GAP_COMPACT = 8;
 const GAP_DEFAULT = 10;
-const ESTIMATE_COMPACT = 118;
-const ESTIMATE_DEFAULT = 132;
+/** Ước lượng gần chiều cao thẻ thật (~210–240px) — estimate thấp gây nhảy layout khi measureElement. */
+const ESTIMATE_COMPACT = 200;
+const ESTIMATE_DEFAULT = 220;
 
 /**
  * Danh sách thẻ Kanban có virtualize (@tanstack/react-virtual).
@@ -45,10 +46,12 @@ export default function KanbanColumnVirtualList({
     const scrollEl = boardScrollRef.current;
     const listEl = listRootRef.current;
     if (!scrollEl || !listEl) return;
+    // Offset list trong nội dung cuộn — ổn định khi cuộn dọc (sticky header).
+    // Không đo lại theo scrollTop mỗi frame (tránh setState / lệch tạm thời).
     const next = Math.max(0, Math.round(
       listEl.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top + scrollEl.scrollTop,
     ));
-    if (next !== scrollMarginRef.current) {
+    if (Math.abs(next - scrollMarginRef.current) > 2) {
       scrollMarginRef.current = next;
       setScrollMargin(next);
     }
@@ -63,23 +66,22 @@ export default function KanbanColumnVirtualList({
     measureScrollMargin();
     const scrollEl = boardScrollRef.current;
     if (!scrollEl) return undefined;
-    const lastScrollTopRef = { current: scrollEl.scrollTop };
-    const onBoardScroll = () => {
-      const st = scrollEl.scrollTop;
-      if (st !== lastScrollTopRef.current) {
-        lastScrollTopRef.current = st;
+    let raf = 0;
+    const schedule = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
         measureScrollMargin();
-      }
+      });
     };
-    const ro = new ResizeObserver(() => measureScrollMargin());
+    const ro = new ResizeObserver(schedule);
     ro.observe(scrollEl);
     if (listRootRef.current) ro.observe(listRootRef.current);
-    scrollEl.addEventListener('scroll', onBoardScroll, { passive: true });
-    window.addEventListener('resize', measureScrollMargin);
+    window.addEventListener('resize', schedule);
     return () => {
+      if (raf) cancelAnimationFrame(raf);
       ro.disconnect();
-      scrollEl.removeEventListener('scroll', onBoardScroll);
-      window.removeEventListener('resize', measureScrollMargin);
+      window.removeEventListener('resize', schedule);
     };
   }, [useBoardScroll, boardScrollRef, itemCount, measureScrollMargin]);
 
@@ -93,7 +95,7 @@ export default function KanbanColumnVirtualList({
     count: shouldVirtualize ? itemCount : 0,
     getScrollElement,
     estimateSize: () => estimateSize + gap,
-    overscan: compact ? 3 : 4,
+    overscan: compact ? 5 : 6,
     scrollMargin: useBoardScroll ? scrollMargin : 0,
     getItemKey: (index) => items[index]?.id ?? index,
   });
