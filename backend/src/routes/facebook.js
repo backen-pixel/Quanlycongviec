@@ -1971,6 +1971,123 @@ function resolveFacebookCreateType(page) {
   if (mk === 'production' || mk === 'logistics') return 'deal';
   return normalizeFacebookTargetType(page?.default_target_type);
 }
+
+/**
+ * Resolve CRM pipeline + stage cho lead FB.
+ * Ưu tiên: stage page (đúng loại + đúng công ty) → first stage pipeline công ty.
+ * Không fallback stage toàn hệ thống khi đã biết company (tránh Pipeline Chung / TIẾP NHẬN VPT).
+ */
+async function resolveFacebookCrmPipelineAndStage({ page, companyId, createType, moduleKey }) {
+  if (moduleKey === 'production') {
+    return { pipelineId: null, stageId: null };
+  }
+
+  let pipelineId = null;
+
+  // 1) Page default_pipeline_id nếu thuộc đúng công ty
+  const pagePipelineId = page?.default_pipeline_id || null;
+  if (pagePipelineId && companyId) {
+    try {
+      const { data: pagePipe } = await supabase
+        .from('crm_pipelines')
+        .select('id, company_id, is_active')
+        .eq('id', pagePipelineId)
+        .maybeSingle();
+      if (
+        pagePipe?.id
+        && pagePipe.is_active !== false
+        && String(pagePipe.company_id || '') === String(companyId)
+      ) {
+        pipelineId = pagePipe.id;
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  // 2) Default pipeline của công ty
+  if (!pipelineId && companyId) {
+    try {
+      const { data: defPipe } = await supabase
+        .from('crm_pipelines')
+        .select('id')
+        .eq('company_id', companyId)
+        .eq('is_active', true)
+        .order('is_default', { ascending: false })
+        .order('created_at')
+        .limit(1)
+        .maybeSingle();
+      pipelineId = defPipe?.id || null;
+    } catch (_) { /* ignore */ }
+  }
+
+  // 3) Validate page.default_stage_id: đúng loại + pipeline thuộc công ty
+  let stageId = page?.default_stage_id || null;
+  if (stageId) {
+    try {
+      const { data: selectedStage } = await supabase
+        .from('crm_pipeline_stages')
+        .select('id, pipeline_type, pipeline_id, is_active')
+        .eq('id', stageId)
+        .maybeSingle();
+      if (
+        !selectedStage
+        || selectedStage.is_active === false
+        || String(selectedStage.pipeline_type || '') !== createType
+      ) {
+        stageId = null;
+      } else if (companyId) {
+        const { data: stagePipe } = await supabase
+          .from('crm_pipelines')
+          .select('id, company_id')
+          .eq('id', selectedStage.pipeline_id)
+          .maybeSingle();
+        if (!stagePipe?.company_id || String(stagePipe.company_id) !== String(companyId)) {
+          stageId = null;
+        } else {
+          // Đồng bộ pipeline_id theo stage page (kể cả pipeline khu vực)
+          pipelineId = stagePipe.id;
+        }
+      } else if (selectedStage.pipeline_id) {
+        pipelineId = selectedStage.pipeline_id;
+      }
+    } catch (_) {
+      stageId = null;
+    }
+  }
+
+  // 4) First stage của pipeline công ty
+  if (!stageId && pipelineId) {
+    try {
+      const { data: firstStage } = await supabase
+        .from('crm_pipeline_stages')
+        .select('id')
+        .eq('pipeline_id', pipelineId)
+        .eq('pipeline_type', createType)
+        .eq('is_active', true)
+        .order('order_index')
+        .limit(1)
+        .maybeSingle();
+      if (firstStage?.id) stageId = firstStage.id;
+    } catch (_) { /* ignore */ }
+  }
+
+  // 5) Không fallback global khi đã có company — tránh gán nhầm Pipeline Chung / công ty khác
+  if (!stageId && !companyId) {
+    const { data: defaultStage } = await supabase.from('crm_pipeline_stages')
+      .select('id, pipeline_id')
+      .eq('pipeline_type', createType)
+      .eq('is_active', true)
+      .order('order_index')
+      .limit(1)
+      .maybeSingle();
+    stageId = defaultStage?.id || null;
+    if (!pipelineId && defaultStage?.pipeline_id) pipelineId = defaultStage.pipeline_id;
+  } else if (!stageId && companyId) {
+    console.warn(`[FB] Không resolve được stage CRM cho company=${companyId} pipeline=${pipelineId || 'null'} — bỏ qua fallback toàn hệ thống`);
+  }
+
+  return { pipelineId, stageId };
+}
+
 async function getPageConfig(pageId) {
   const cached = _pageConfigCache[pageId];
   if (cached && Date.now() - cached.ts < 60000) return cached.data; // cache 60s
@@ -2726,28 +2843,6 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
     } catch (_) { /* ignore */ }
   }
 
-  // Default CRM stage: từ page config (nếu cùng loại) hoặc stage đầu tiên theo loại tạo mới
-  let stageId = moduleKey === 'production' ? null : (page.default_stage_id || null);
-  if (stageId) {
-    try {
-      const { data: selectedStage } = await supabase
-        .from('crm_pipeline_stages')
-        .select('id, pipeline_type')
-        .eq('id', stageId)
-        .maybeSingle();
-      if (!selectedStage || String(selectedStage.pipeline_type || '') !== createType) {
-        stageId = null;
-      }
-    } catch (_) {
-      stageId = null;
-    }
-  }
-  if (!stageId) {
-    const { data: defaultStage } = await supabase.from('crm_pipeline_stages')
-      .select('id').eq('pipeline_type', createType).order('order_index').limit(1).single();
-    stageId = defaultStage?.id || null;
-  }
-
   let resolvedRegionId = null;
   if (companyId && page?.default_region_id) {
     const rr = await assertRegionBelongsToCompany(supabase, companyId, page.default_region_id);
@@ -2773,35 +2868,12 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
     }
   }
 
-  // ── Resolve pipeline_id theo company (giống POST /api/crm/leads|deals) ──
-  let pipelineId = null;
-  if (companyId) {
-    try {
-      const { data: defPipe } = await supabase
-        .from('crm_pipelines')
-        .select('id')
-        .eq('company_id', companyId)
-        .eq('is_active', true)
-        .order('is_default', { ascending: false })
-        .order('created_at')
-        .limit(1)
-        .maybeSingle();
-      pipelineId = defPipe?.id || null;
-      // Resolve first stage from company pipeline nếu chưa có stageId
-      if (pipelineId && !stageId) {
-        const { data: firstStage } = await supabase
-          .from('crm_pipeline_stages')
-          .select('id')
-          .eq('pipeline_id', pipelineId)
-          .eq('pipeline_type', createType)
-          .eq('is_active', true)
-          .order('order_index')
-          .limit(1)
-          .maybeSingle();
-        if (firstStage?.id) stageId = firstStage.id;
-      }
-    } catch (_) { /* ignore */ }
-  }
+  const { pipelineId, stageId } = await resolveFacebookCrmPipelineAndStage({
+    page,
+    companyId,
+    createType,
+    moduleKey,
+  });
 
   const leadData = {
     code,
@@ -4211,52 +4283,12 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
       } catch (_) { /* ignore */ }
     }
 
-    // Stage CRM: page default (nếu đúng loại) → first stage of default pipeline (company) → global first stage theo loại
-    let stageId = moduleKey === 'production' ? null : (page?.default_stage_id || null);
-    if (stageId) {
-      try {
-        const { data: selectedStage } = await supabase
-          .from('crm_pipeline_stages')
-          .select('id, pipeline_type')
-          .eq('id', stageId)
-          .maybeSingle();
-        if (!selectedStage || String(selectedStage.pipeline_type || '') !== createType) {
-          stageId = null;
-        }
-      } catch (_) {
-        stageId = null;
-      }
-    }
-    if (!stageId && companyId) {
-      try {
-        const { data: defPipe } = await supabase
-          .from('crm_pipelines')
-          .select('id')
-          .eq('company_id', companyId)
-          .eq('is_active', true)
-          .order('is_default', { ascending: false })
-          .order('created_at')
-          .limit(1)
-          .maybeSingle();
-        if (defPipe?.id) {
-          const { data: firstStage } = await supabase
-            .from('crm_pipeline_stages')
-            .select('id')
-            .eq('pipeline_id', defPipe.id)
-            .eq('pipeline_type', createType)
-            .eq('is_active', true)
-            .order('order_index')
-            .limit(1)
-            .maybeSingle();
-          stageId = firstStage?.id || null;
-        }
-      } catch (_) { /* ignore */ }
-    }
-    if (!stageId) {
-      const { data: defaultStage } = await supabase.from('crm_pipeline_stages')
-        .select('id').eq('pipeline_type', createType).order('order_index').limit(1).single();
-      stageId = defaultStage?.id || null;
-    }
+    const { stageId } = await resolveFacebookCrmPipelineAndStage({
+      page,
+      companyId,
+      createType,
+      moduleKey,
+    });
 
     // Extract phone/address từ TẤT CẢ tin nhắn cũ
     let extractedPhone = contact.phone || null;
