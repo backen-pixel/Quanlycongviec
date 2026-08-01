@@ -9,7 +9,7 @@
  *   linearProgress  – true: pipeline xưởng/VC (tích ✓ theo order_index); false: CRM deal (bỏ qua cột SX/VC)
  */
 import { sortAndDedupePipelineStages, pipelineStageSortKey } from '../lib/crmPipelineStages';
-import { isCrmPostWonManagedStage } from '../lib/crmDealStageGate';
+import { classifyCrmPostWonManagedKind } from '../lib/crmDealStageGate';
 
 export default function PipelineStepper({
   stages = [],
@@ -35,7 +35,9 @@ export default function PipelineStepper({
     const sortKey = pipelineStageSortKey(s, i);
     // Không tích các cột đứng sau cột hiện tại trên pipeline (tránh sync cũ làm ✓ Đàm phán/SX sau Thắng).
     if (curSortKey != null && sortKey > curSortKey) return false;
-    if (!linearProgress && isCrmPostWonManagedStage(s)) return false;
+    // Chỉ bỏ ✓ trên cột SX/VC thật (sync_role) — không dùng heuristic tên «thiết kế»
+    // kẻo «Đã cọc thiết kế» / «Đang trao đổi thiết kế» mất dấu đã qua.
+    if (!linearProgress && classifyCrmPostWonManagedKind(s)) return false;
     if (visited?.has(String(s.id))) return true;
     return curSortKey != null && sortKey < curSortKey;
   };

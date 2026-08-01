@@ -17,9 +17,12 @@ const POST_WON_SYNC_ROLES = new Set([
 /**
  * Chặn kéo thẻ CRM theo liên kết dự án Sản xuất / tiến độ xưởng-VC.
  *
- * Đang TẮT theo yêu cầu nghiệp vụ: sale được kéo deal tự do giữa các cột CRM, kể cả khi deal
- * đã có dự án Sản xuất và kể cả khi xưởng/VC chưa tới giai đoạn tương ứng.
+ * Đang TẮT: sale được kéo deal tự do giữa các cột CRM khi ĐÃ có dự án, kể cả khi xưởng/VC
+ * chưa tới giai đoạn tương ứng.
  * Bật lại phải đổi ở CẢ hai file: file này và frontend/src/lib/crmDealStageGate.js.
+ *
+ * Lưu ý: chặn «chưa có project_id → không nhảy cột sau Thắng» LUÔN bật (CRM_DEAL_REQUIRES_SX_PICK),
+ * độc lập với cờ này.
  */
 const CRM_PRODUCTION_LINK_STAGE_GATE = false;
 
@@ -207,11 +210,18 @@ function assertDealCrmManualStageChange(lead, targetStage, prevStage, opts = {})
 
   const wonAnchorOrder = opts.wonAnchorOrder != null ? opts.wonAnchorOrder : null;
 
-  // Không bắt buộc qua Thắng/chọn SX trước khi sang cột sau Thắng — sale được kéo tự do.
-  // (Trước đây: CRM_DEAL_REQUIRES_SX_PICK khi !project_id && isCrmPostWonRequiresSxProject)
-
-  // Luôn cho kéo về cột Thắng hoặc cột «doanh thu đã hoàn thành» (khi đã có project).
+  // Luôn cho kéo về cột Thắng hoặc cột «doanh thu đã hoàn thành».
   if (targetStage.is_won || isCrmCompletedRevenueStage(targetStage)) return { ok: true };
+
+  // Bắt buộc qua ký HĐ (tạo dự án SX) trước khi sang cột sau Thắng (Sản xuất / VC…).
+  if (!lead.project_id && isCrmPostWonRequiresSxProject(targetStage, wonAnchorOrder)) {
+    return {
+      ok: false,
+      error: 'Deal chưa tạo dự án Sản xuất. Vui lòng kéo sang cột «Đã ký hợp đồng» trước để chọn công ty SX, rồi mới kéo tiếp sang Sản xuất / VC.',
+      code: 'CRM_DEAL_REQUIRES_SX_PICK',
+      requires_production_company: true,
+    };
+  }
 
   if (!prevStage) return { ok: true };
 

@@ -5066,12 +5066,25 @@ export default function CRMDashboard() {
         viewedLocal.has(String(row.id)) ? { ...row, is_new_for_current_user: false } : row
       ));
       startTransition(() => {
+        // Ưu tiên bản từ deadline-pages (có _deadline_bucket + deadline NV) thay vì thẻ Kanban cũ.
+        const patchPreferDeadlinePage = (prev) => {
+          const map = new Map((merged || []).map((row) => [String(row.id), row]));
+          if (!map.size) return prev;
+          return dedupeCrmKanbanRows(
+            prev.map((row) => {
+              const hit = map.get(String(row.id));
+              if (!hit) return row;
+              map.delete(String(row.id));
+              return { ...row, ...hit };
+            }).concat([...map.values()]),
+          );
+        };
         if (type === 'lead') {
-          setAllLeads((prev) => dedupeCrmKanbanRows([...prev, ...merged]));
+          setAllLeads((prev) => patchPreferDeadlinePage(prev));
         } else {
           setAllDeals((prev) => preserveCrmKanbanPipelineBadges(
             prev,
-            dedupeCrmKanbanRows([...prev, ...merged]),
+            patchPreferDeadlinePage(prev),
           ));
         }
         setDeadlineBucketPageState((prev) => {
@@ -5633,6 +5646,13 @@ export default function CRMDashboard() {
           });
         } else if (e?.response?.data?.code === 'CRM_DEAL_SX_PROJECT_EXISTS') {
           window.alert(e.response?.data?.error || 'Deal đã tạo dự án Sản xuất — không thể kéo ngược.');
+        } else if (e?.response?.data?.code === 'CRM_DEAL_REQUIRES_SX_PICK') {
+          window.alert(
+            e.response?.data?.error
+            || 'Deal chưa tạo dự án Sản xuất. Vui lòng kéo sang cột «Đã ký hợp đồng» trước.',
+          );
+        } else if (e?.response?.data?.error) {
+          window.alert(e.response.data.error);
         }
         if (throwOnError) throw e;
       }
