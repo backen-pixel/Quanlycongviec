@@ -120,11 +120,15 @@ async function findApp({ appKey, appId }) {
 }
 
 function downloadUrlFor(release, publicBase) {
-  const apiUrl = buildPublicDownloadUrl(publicBase, release.id);
-  if (apiUrl) return apiUrl;
-  if (release.external_url) return release.external_url;
-  if (release.file_url && /^https?:\/\//i.test(release.file_url)) return release.file_url;
-  return null;
+  // Ưu tiên URL Storage/CDN trực tiếp — proxy qua Render dễ timeout/mất file
+  // khi app mobile tải APK ~20MB (ENOENT khi đọc cache sau tải).
+  const fileUrl = String(release.file_url || '').trim();
+  if (fileUrl && /^https?:\/\//i.test(fileUrl) && !/\/uploads\/app-releases\//i.test(fileUrl)) {
+    return fileUrl;
+  }
+  const external = String(release.external_url || '').trim();
+  if (external && /^https?:\/\//i.test(external)) return external;
+  return buildPublicDownloadUrl(publicBase, release.id);
 }
 
 /** So sánh semver đơn giản: âm nếu a < b, 0 nếu bằng, dương nếu a > b. */
@@ -440,8 +444,8 @@ r.get('/download/:releaseId', async (req, res) => {
           error: 'File APK không còn trên server — admin hãy upload lại bản phát hành (Phát hành → chọn .apk)',
         });
       }
-      await streamRemoteApk(res, remote, filename, rel.file_size);
-      return;
+      // Redirect thẳng CDN — tránh stream qua Render (dễ đứt với APK lớn trên mạng mobile).
+      return res.redirect(302, remote);
     }
 
     return res.status(404).json({
