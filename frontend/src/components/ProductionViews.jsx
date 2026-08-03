@@ -1191,7 +1191,7 @@ function DeadlineCard({ item, goProject }) {
   );
 }
 
-export function ProductionDeadlineView({ pipeline }) {
+export function ProductionDeadlineView({ pipeline, bucketTotals }) {
   const navigate = useNavigate();
   const goProject = (projectId) => {
     markWorkshopPipelineCardFocus(projectId, 'sx');
@@ -1290,12 +1290,14 @@ export function ProductionDeadlineView({ pipeline }) {
           const items = grouped[b.key] || [];
           const totalValue = items.reduce((s, it) => s + (Number(it.estimated_value) || 0), 0);
           const isDragOver = dragOverKey === b.key;
+          const serverBucketTotal = Number(bucketTotals?.[b.key]);
+          const columnCount = Number.isFinite(serverBucketTotal) ? serverBucketTotal : items.length;
           return (
             <PlannerColumn
               key={b.key}
               topBarColor={b.color}
               title={b.label}
-              count={items.length}
+              count={columnCount}
               subtitle={!HIDE_PRODUCTION_DEAL_VALUES && totalValue > 0 ? `Giá trị: ${formatVND(totalValue)}` : undefined}
               isDragOver={isDragOver}
               onDragOver={(e) => {

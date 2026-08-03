@@ -93,45 +93,55 @@ export function enabledDeadlineBuckets(
   return DEADLINE_BUCKET_ORDER.filter((k) => buckets?.[k]?.enabled !== false);
 }
 
+const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
+
+/** 00:00 ngày hiện tại theo Asia/Ho_Chi_Minh — khớp backend `crmDeadlineStartOfTodayVn`. */
+export function crmDeadlineStartOfTodayVnMs(nowMs: number = Date.now()): number {
+  const shifted = new Date(nowMs + VN_OFFSET_MS);
+  return Date.UTC(
+    shifted.getUTCFullYear(),
+    shifted.getUTCMonth(),
+    shifted.getUTCDate(),
+  ) - VN_OFFSET_MS;
+}
+
 /**
- * Phân cột theo timestamp hạn — copy logic web `resolveBucket`.
+ * Phân cột theo timestamp hạn — khớp backend/web `crmDeadlineBucketFromTs` (VN).
  */
 export function resolveDeadlineBucket(
   deadlineTs: number | null | undefined,
   buckets?: Partial<Record<DeadlineBucketKey, DeadlineBucketMeta>> | null,
+  nowMs: number = Date.now(),
 ): DeadlineBucketKey {
-  if (deadlineTs == null || Number.isNaN(deadlineTs)) return 'no_deadline';
+  if (deadlineTs == null || !Number.isFinite(deadlineTs)) return 'no_deadline';
 
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const endOfToday = startOfToday + 86400000 - 1;
-  if (deadlineTs < startOfToday) return 'overdue';
-  if (deadlineTs <= endOfToday) return 'today';
+  const dayMs = 24 * 60 * 60 * 1000;
+  const startToday = crmDeadlineStartOfTodayVnMs(nowMs);
+  const endToday = startToday + dayMs - 1;
+  if (deadlineTs < startToday) return 'overdue';
+  if (deadlineTs <= endToday) return 'today';
+  if (deadlineTs <= endToday + dayMs) return 'tomorrow';
 
-  const endOfTomorrow = endOfToday + 86400000;
-  if (deadlineTs <= endOfTomorrow) return 'tomorrow';
+  const vnToday = new Date(startToday + VN_OFFSET_MS);
+  const dow = (vnToday.getUTCDay() + 6) % 7; // Mon=0
+  const endThisWeek = startToday - dow * dayMs + 7 * dayMs - 1;
+  if (deadlineTs <= endThisWeek) return 'this_week';
+  if (deadlineTs <= endThisWeek + 7 * dayMs) return 'next_week';
 
-  // Tuần bắt đầu Thứ Hai — «Tuần này» = sau ngày mai đến hết tuần
-  const dow = (now.getDay() + 6) % 7;
-  const startOfThisWeek = startOfToday - dow * 86400000;
-  const endOfThisWeek = startOfThisWeek + 7 * 86400000 - 1;
-  if (deadlineTs <= endOfThisWeek) return 'this_week';
-  const endOfNextWeek = endOfThisWeek + 7 * 86400000;
-  if (deadlineTs <= endOfNextWeek) return 'next_week';
+  const days = (key: DeadlineBucketKey, fallback: number) => {
+    const value = Number(buckets?.[key]?.days);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  };
+  if (deadlineTs <= startToday + days('in_2_weeks', 14) * dayMs) return 'in_2_weeks';
+  if (deadlineTs <= startToday + days('in_3_weeks', 21) * dayMs) return 'in_3_weeks';
+  if (deadlineTs <= startToday + days('in_4_weeks', 28) * dayMs) return 'in_4_weeks';
+  if (deadlineTs <= startToday + days('in_1_month', 30) * dayMs) return 'in_1_month';
 
-  const inDays = (n: number) => startOfToday + n * 86400000;
-  const d2 = buckets?.in_2_weeks?.days ?? 14;
-  const d3 = buckets?.in_3_weeks?.days ?? 21;
-  const d4 = buckets?.in_4_weeks?.days ?? 28;
-  const d1m = buckets?.in_1_month?.days ?? 30;
-  if (deadlineTs <= inDays(d2)) return 'in_2_weeks';
-  if (deadlineTs <= inDays(d3)) return 'in_3_weeks';
-  if (deadlineTs <= inDays(d4)) return 'in_4_weeks';
-  if (deadlineTs <= inDays(d1m)) return 'in_1_month';
-
-  const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime();
-  const endOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 2, 1).getTime() - 1;
-  if (deadlineTs >= startOfNextMonth && deadlineTs <= endOfNextMonth) return 'next_month';
+  const y = vnToday.getUTCFullYear();
+  const m = vnToday.getUTCMonth();
+  const nextMonthStart = Date.UTC(y, m + 1, 1) - VN_OFFSET_MS;
+  const nextMonthEnd = Date.UTC(y, m + 2, 1) - VN_OFFSET_MS - 1;
+  if (deadlineTs >= nextMonthStart && deadlineTs <= nextMonthEnd) return 'next_month';
   return 'in_1_month';
 }
 
@@ -152,6 +162,7 @@ type DeadlineFieldSource = {
   next_follow_up_at?: string | null;
   stage_entered_at?: string | null;
   is_interacted?: boolean | null;
+  deadline_disabled_at?: string | null;
   display_phone?: string | null;
   phone?: string | null;
   customer?: { phone?: string | null } | null;
@@ -169,10 +180,8 @@ function crmLeadHasPhone(item: DeadlineFieldSource): boolean {
   );
 }
 
+/** Khớp BE `crmDeadlineTsForRow`: display_phone || phone || customer.phone. */
 function crmLeadMissingPhone(item: DeadlineFieldSource): boolean {
-  if (item && Object.prototype.hasOwnProperty.call(item, 'display_phone')) {
-    return !item.display_phone || !String(item.display_phone).trim();
-  }
   return !crmLeadHasPhone(item);
 }
 
@@ -186,6 +195,7 @@ function isNoDeadlineStage(stage?: DeadlineStageMeta | null): boolean {
 
 /** Khớp web `shouldHideCrmKanbanDeadlineOnCard`. */
 function shouldHideDeadline(item: DeadlineFieldSource, stage?: DeadlineStageMeta | null): boolean {
+  if (item?.deadline_disabled_at) return true;
   if (crmLeadMissingPhone(item)) return true;
   if (item?.is_interacted) return true;
   if (isNoDeadlineStage(stage || item?.stage)) return true;
@@ -213,79 +223,78 @@ function fieldToSource(field?: string | null): 'kanban' | 'task' | 'expected_clo
 }
 
 /**
- * Khớp web `resolveCrmLeadEffectiveDeadlineSource`:
- * Deadline nhiệm vụ → Deadline tự setup → SLA cột.
+ * Gom cột + badge Deadline — khớp BE `crmDeadlineTsForRow` / web
+ * `resolveCrmLeadDeadlineBucketSource` (không dùng shouldHide / deadline_disabled_at).
  */
-function resolveEffectiveDeadlineTs(
+export function resolveDeadlineBucketTs(
   item: DeadlineFieldSource,
-  stage: DeadlineStageMeta | null,
-): { deadlineTs: number | null; source: string | null } {
-  if (shouldHideDeadline(item, stage)) {
-    return { deadlineTs: null, source: null };
+  config?: DeadlineConfig | null,
+  stageOverride?: DeadlineStageMeta | null,
+): { deadlineTs: number | null; source: string | null; forcedNoDeadline: boolean } {
+  const stage = stageOverride || item.stage || null;
+  if (!crmLeadHasPhone(item) || item?.is_interacted || isNoDeadlineStage(stage)) {
+    return { deadlineTs: null, source: null, forcedNoDeadline: true };
   }
 
-  const taskIso = item.crm_next_open_task_deadline;
-  if (taskIso != null && String(taskIso).trim() !== '') {
-    const ts = new Date(taskIso).getTime();
-    if (!Number.isNaN(ts)) return { deadlineTs: ts, source: 'task' };
-  }
-
-  const manual = item.kanban_deadline_at;
-  if (manual != null && String(manual).trim() !== '') {
-    const ts = new Date(manual).getTime();
-    if (!Number.isNaN(ts)) return { deadlineTs: ts, source: 'kanban' };
+  for (const field of ['crm_next_open_task_deadline', 'kanban_deadline_at'] as const) {
+    const raw = item[field];
+    if (!raw || String(raw).trim() === '') continue;
+    const ts = new Date(raw).getTime();
+    if (!Number.isNaN(ts)) {
+      return {
+        deadlineTs: ts,
+        source: field === 'crm_next_open_task_deadline' ? 'task' : 'kanban',
+        forcedNoDeadline: false,
+      };
+    }
   }
 
   const slaTs = slaDeadlineTs(item.stage_entered_at, stage, item);
-  if (slaTs != null) return { deadlineTs: slaTs, source: 'sla' };
+  if (slaTs != null) return { deadlineTs: slaTs, source: 'sla', forcedNoDeadline: false };
 
-  return { deadlineTs: null, source: null };
+  const cfg = config || {};
+  const primary = String(cfg.primary_field || 'crm_next_open_task_deadline');
+  const fallback = String(cfg.fallback_field || 'expected_close_date');
+  for (const field of [primary, fallback]) {
+    if (field === 'crm_next_open_task_deadline' || field === 'kanban_deadline_at') continue;
+    let raw: string | null | undefined;
+    if (field === 'expected_close_date') raw = item.expected_close_date;
+    else if (field === 'next_follow_up') raw = item.next_follow_up;
+    else if (field === 'next_follow_up_at') raw = item.next_follow_up_at;
+    else continue;
+    if (!raw) continue;
+    const ts = new Date(raw).getTime();
+    if (!Number.isNaN(ts)) {
+      return { deadlineTs: ts, source: fieldToSource(field), forcedNoDeadline: false };
+    }
+  }
+
+  return { deadlineTs: null, source: null, forcedNoDeadline: false };
 }
 
 /**
- * Nguồn hạn view Deadline — khớp web `resolveCrmLeadDeadlineViewSource`
- * (task → kanban → SLA; rồi config primary/fallback chỉ cho expected_close).
+ * ISO hạn để gom cột / badge — khớp web bucket + BE counts.
+ * (Hiển thị thẻ vẫn dùng dueIso này; ẩn UI riêng nếu cần shouldHide.)
  */
 export function resolveDeadlineIso(
   item: DeadlineFieldSource,
   config?: DeadlineConfig | null,
   stageOverride?: DeadlineStageMeta | null,
 ): string | null {
+  const picked = resolveDeadlineBucketTs(item, config, stageOverride);
+  if (picked.deadlineTs == null) return null;
+  return new Date(picked.deadlineTs).toISOString();
+}
+
+/** @deprecated Giữ export nếu chỗ khác còn gọi — alias bucket resolver. */
+export function resolveDeadlineViewIso(
+  item: DeadlineFieldSource,
+  config?: DeadlineConfig | null,
+  stageOverride?: DeadlineStageMeta | null,
+): string | null {
   const stage = stageOverride || item.stage || null;
-  const primary = resolveEffectiveDeadlineTs(item, stage);
-  if (primary.deadlineTs != null) {
-    return new Date(primary.deadlineTs).toISOString();
-  }
-
   if (shouldHideDeadline(item, stage)) return null;
-
-  const cfg = config || {};
-  const readTs = (field?: string | null): number | null => {
-    if (!field) return null;
-    let v: string | null | undefined;
-    if (field === 'kanban_deadline_at') v = item.kanban_deadline_at;
-    else if (field === 'crm_next_open_task_deadline') v = item.crm_next_open_task_deadline;
-    else if (field === 'expected_close_date') v = item.expected_close_date;
-    else return null;
-    if (!v) return null;
-    const ts = new Date(v).getTime();
-    return Number.isNaN(ts) ? null : ts;
-  };
-
-  const primaryField = cfg.primary_field || 'crm_next_open_task_deadline';
-  const fallbackField = cfg.fallback_field || 'expected_close_date';
-  const pTs = readTs(primaryField);
-  const pSrc = fieldToSource(primaryField);
-  if (pTs != null && pSrc !== 'task' && pSrc !== 'kanban') {
-    return new Date(pTs).toISOString();
-  }
-  const fTs = readTs(fallbackField);
-  const fSrc = fieldToSource(fallbackField);
-  if (fTs != null && fSrc !== 'task' && fSrc !== 'kanban') {
-    return new Date(fTs).toISOString();
-  }
-
-  return null;
+  return resolveDeadlineIso(item, config, stageOverride);
 }
 
 export function deadlineIsoToTs(iso?: string | null): number | null {

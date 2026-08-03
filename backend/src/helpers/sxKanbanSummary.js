@@ -1,12 +1,29 @@
 /**
  * SX Kanban summary counts — ưu tiên 1 RPC GROUP BY; fallback quét mỏng 1 cột.
+ * Đồng thời đếm deadline bucket (KPI «Quá hạn») trên toàn bộ dự án khớp filter — không chỉ card đã load.
  * Mục tiêu Render: ít roundtrip Supabase hơn N× head-count.
  */
 const { supabase } = require('../config/supabase');
 const { applyProjectTenantScope, isTenantScopeEnforced } = require('./tenantScope');
 const { applyProductionCompanyScopeFilter } = require('./crossCompanyWorkspace');
 const { applyWorkshopProjectVisibilityScope } = require('./dealParticipantProduction');
-const { buildScopeOrFilter, WORKSHOP_STATUSES } = require('./workshopKanban');
+const { buildScopeOrFilter, WORKSHOP_STATUSES, getResolvedKanbanStages } = require('./workshopKanban');
+
+const VN_TZ = 'Asia/Ho_Chi_Minh';
+
+const EMPTY_DEADLINE_COUNTS = Object.freeze({
+  overdue: 0,
+  today: 0,
+  this_week: 0,
+  next_week: 0,
+  this_month: 0,
+  later: 0,
+  none: 0,
+});
+
+function emptyDeadlineCounts() {
+  return { ...EMPTY_DEADLINE_COUNTS };
+}
 
 function isMissingSxKanbanColumnError(err) {
   return String(err?.message || '').includes('sx_kanban_column_id');
@@ -19,6 +36,89 @@ function isMissingRpcError(err) {
     || m.includes('PGRST202')
     || err?.code === 'PGRST202'
     || err?.code === '42883';
+}
+
+function isSlaDisabled(slaDaysRaw) {
+  return slaDaysRaw === 0 || slaDaysRaw === '0';
+}
+
+/** YYYY-MM-DD theo lịch VN. */
+function formatVnYmd(date = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: VN_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
+/** Chuẩn hóa raw deadline → YYYY-MM-DD (date-only giữ nguyên; ISO → ngày VN). */
+function toVnDeadlineYmd(raw) {
+  if (raw == null || raw === '') return null;
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})[T\s]/);
+  if (m && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(s.slice(10))) {
+    // Naive datetime — lấy phần ngày (thường là ngày giao/deadline lưu local).
+    return m[1];
+  }
+  const t = new Date(s);
+  if (!Number.isFinite(t.getTime())) return null;
+  return formatVnYmd(t);
+}
+
+function diffCalendarDays(ymdA, ymdB) {
+  const [ya, ma, da] = ymdA.split('-').map(Number);
+  const [yb, mb, db] = ymdB.split('-').map(Number);
+  return Math.round((Date.UTC(ya, ma - 1, da) - Date.UTC(yb, mb - 1, db)) / 86400000);
+}
+
+/**
+ * Bucket Deadline SX — khớp frontend resolveSxDeadlineBucket + shouldHide (bỏ card Đã công).
+ * @returns {string|null} null = ẩn khỏi Deadline view
+ */
+function resolveSxDeadlineBucketKey(row, stage, todayYmd) {
+  if (stage?.counts_as_completed_revenue) return null;
+  const raw = row?.delivery_date || row?.production_deadline || row?.deadline;
+  const ymd = toVnDeadlineYmd(raw);
+  if (!ymd) return 'none';
+  const diffDays = diffCalendarDays(ymd, todayYmd);
+  const ignoreOverdue = isSlaDisabled(stage?.sla_days);
+  if (diffDays < 0) {
+    if (ignoreOverdue) return 'later';
+    return 'overdue';
+  }
+  if (diffDays === 0) return 'today';
+  const [y, m, d] = todayYmd.split('-').map(Number);
+  const dowUtc = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  const dow = dowUtc === 0 ? 7 : dowUtc;
+  const daysToEndOfWeek = 7 - dow;
+  if (diffDays <= daysToEndOfWeek) return 'this_week';
+  if (diffDays <= daysToEndOfWeek + 7) return 'next_week';
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const endYmd = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+  if (ymd <= endYmd) return 'this_month';
+  return 'later';
+}
+
+async function loadStageFlagsById(companyId, workshopTypeId) {
+  try {
+    const { stages } = await getResolvedKanbanStages(companyId || null, {
+      workshopTypeId: workshopTypeId || null,
+    });
+    const map = new Map();
+    for (const s of stages || []) {
+      if (!s?.id) continue;
+      map.set(String(s.id), {
+        counts_as_completed_revenue: !!s.counts_as_completed_revenue,
+        sla_days: s.sla_days,
+      });
+    }
+    return map;
+  } catch (err) {
+    console.warn('[sxKanbanSummary] stage flags:', err.message || err);
+    return new Map();
+  }
 }
 
 /**
@@ -136,31 +236,49 @@ async function tryRpcColumnCounts(ctx) {
   return { total, counts, values: {} };
 }
 
-/** Quét mỏng chỉ cột — 1–vài roundtrip thay vì N COUNT. */
-async function thinScanColumnCounts(ctx) {
+/**
+ * Quét mỏng: đếm cột + deadline bucket (cùng filter list SX).
+ * @param {{ needColumnCounts?: boolean }} opts
+ */
+async function thinScanSummary(ctx, opts = {}) {
+  const needColumnCounts = opts.needColumnCounts !== false;
   const PAGE = 1000;
   const MAX = 20000;
   const counts = {};
+  const deadline_counts = emptyDeadlineCounts();
   let total = 0;
   let cursor = 0;
+  const todayYmd = formatVnYmd(new Date());
+  const stageById = opts.stageById || await loadStageFlagsById(ctx.company_id, ctx.workshop_type_id);
+  const selectCols = 'id, sx_kanban_column_id, delivery_date, production_deadline, deadline';
 
   while (cursor < MAX) {
-    let q = supabase.from('projects').select('sx_kanban_column_id');
+    let q = supabase.from('projects').select(selectCols);
     const applied = applySxSummaryFiltersSync(q, { ...ctx, columnMode: undefined });
-    if (applied.empty) return { total: 0, counts: {}, values: {} };
+    if (applied.empty) {
+      return { total: 0, counts: {}, values: {}, deadline_counts: emptyDeadlineCounts() };
+    }
     q = applied.query.order('id', { ascending: true }).range(cursor, cursor + PAGE - 1);
     const { data, error } = await q;
     if (error) throw error;
     const batch = data || [];
     for (const row of batch) {
-      const key = row?.sx_kanban_column_id ? String(row.sx_kanban_column_id) : '__none__';
-      counts[key] = (counts[key] || 0) + 1;
+      if (needColumnCounts) {
+        const key = row?.sx_kanban_column_id ? String(row.sx_kanban_column_id) : '__none__';
+        counts[key] = (counts[key] || 0) + 1;
+      }
       total += 1;
+      const colId = row?.sx_kanban_column_id ? String(row.sx_kanban_column_id) : null;
+      const stage = colId ? stageById.get(colId) : null;
+      const bucket = resolveSxDeadlineBucketKey(row, stage, todayYmd);
+      if (bucket && Object.prototype.hasOwnProperty.call(deadline_counts, bucket)) {
+        deadline_counts[bucket] += 1;
+      }
     }
     if (batch.length < PAGE) break;
     cursor += batch.length;
   }
-  return { total, counts, values: {} };
+  return { total, counts, values: {}, deadline_counts };
 }
 
 async function headCountTotalOnly(ctx) {
@@ -179,7 +297,7 @@ async function headCountTotalOnly(ctx) {
 }
 
 /**
- * @returns {Promise<{ total: number, counts: Record<string, number>, values: Record<string, number> }>}
+ * @returns {Promise<{ total: number, counts: Record<string, number>, values: Record<string, number>, deadline_counts: Record<string, number> }>}
  */
 async function loadSxKanbanColumnSummary(ctx) {
   const restrictIds = await resolveSxVisibilityRestrictIds(
@@ -189,16 +307,20 @@ async function loadSxKanbanColumnSummary(ctx) {
     ctx.deal_company_id,
   );
   const fullCtx = { ...ctx, restrictIds };
+  const empty = { total: 0, counts: {}, values: {}, deadline_counts: emptyDeadlineCounts() };
 
   if (restrictIds !== null && restrictIds !== undefined && !restrictIds.length) {
-    return { total: 0, counts: {}, values: {} };
+    return empty;
   }
   if (String(fullCtx.sx_intake) === '1' && !fullCtx.wonIds?.length) {
-    return { total: 0, counts: {}, values: {} };
+    return empty;
   }
 
+  const stageById = await loadStageFlagsById(fullCtx.company_id, fullCtx.workshop_type_id);
+
+  let columnResult = null;
   try {
-    return await tryRpcColumnCounts(fullCtx);
+    columnResult = await tryRpcColumnCounts(fullCtx);
   } catch (rpcErr) {
     if (!isMissingRpcError(rpcErr) && !isMissingSxKanbanColumnError(rpcErr)) {
       // RPC lỗi khác — vẫn thử thin scan trước khi fail cứng.
@@ -207,11 +329,19 @@ async function loadSxKanbanColumnSummary(ctx) {
   }
 
   try {
-    return await thinScanColumnCounts(fullCtx);
+    if (columnResult) {
+      // RPC đã có counts/total — vẫn thin-scan để lấy deadline_counts (toàn filter).
+      const scanned = await thinScanSummary(fullCtx, { needColumnCounts: false, stageById });
+      return {
+        ...columnResult,
+        deadline_counts: scanned.deadline_counts || emptyDeadlineCounts(),
+      };
+    }
+    return await thinScanSummary(fullCtx, { needColumnCounts: true, stageById });
   } catch (scanErr) {
     if (isMissingSxKanbanColumnError(scanErr)) {
       const total = await headCountTotalOnly(fullCtx);
-      return { total, counts: {}, values: {} };
+      return { total, counts: {}, values: {}, deadline_counts: emptyDeadlineCounts() };
     }
     throw scanErr;
   }
@@ -220,4 +350,7 @@ async function loadSxKanbanColumnSummary(ctx) {
 module.exports = {
   loadSxKanbanColumnSummary,
   resolveSxVisibilityRestrictIds,
+  // export nhỏ để unit/smoke nếu cần
+  resolveSxDeadlineBucketKey,
+  toVnDeadlineYmd,
 };

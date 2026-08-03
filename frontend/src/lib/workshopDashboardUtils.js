@@ -54,11 +54,24 @@ export function workshopCreatedInRange(iso, from, to) {
  * @param {string} path
  * @param {{ companyId?: string, workshopTypeId?: string, sxWorkshopCompanyId?: string, maxRecords: number, pageSize?: number, bustCache?: boolean, view?: string }} opt
  */
-export async function fetchWorkshopProjectPages(api, path, { companyId, workshopTypeId, sxWorkshopCompanyId, dealCompanyId, maxRecords, pageSize = 500, bustCache = false, view } = {}) {
+export async function fetchWorkshopProjectPages(api, path, {
+  companyId,
+  workshopTypeId,
+  sxWorkshopCompanyId,
+  dealCompanyId,
+  maxRecords,
+  pageSize = 500,
+  startPage = 1,
+  bustCache = false,
+  view,
+  includeMeta = false,
+  extraParams,
+} = {}) {
   const cap = Math.min(Math.max(maxRecords, 1), WS_KANBAN_LOAD_ALL_MAX);
   const all = [];
-  let page = 1;
+  let page = Math.max(Number(startPage) || 1, 1);
   let totalFromApi = null;
+  let totalPagesFromApi = null;
   // Response có `Cache-Control: private, max-age=20` và không Vary theo header, nên chỉ gửi
   // `x-no-cache` là chưa đủ: browser vẫn trả bản đã cache. `_ts` đổi URL → luôn ra mạng.
   const bustTs = bustCache ? Date.now() : null;
@@ -72,6 +85,7 @@ export async function fetchWorkshopProjectPages(api, path, { companyId, workshop
       ...(sxWorkshopCompanyId ? { sx_workshop_company_id: sxWorkshopCompanyId } : {}),
       ...(dealCompanyId ? { deal_company_id: dealCompanyId } : {}),
       ...(view ? { view } : {}),
+      ...(extraParams && typeof extraParams === 'object' ? extraParams : {}),
       ...(bustTs ? { _ts: bustTs } : {}),
     };
     const { data } = await api.get(path, {
@@ -80,6 +94,7 @@ export async function fetchWorkshopProjectPages(api, path, { companyId, workshop
     });
     const batch = data?.projects || [];
     if (typeof data?.total === 'number') totalFromApi = data.total;
+    if (typeof data?.totalPages === 'number') totalPagesFromApi = data.totalPages;
     if (!batch.length) break;
     for (const row of batch) {
       if (all.length >= cap) break;
@@ -91,5 +106,16 @@ export async function fetchWorkshopProjectPages(api, path, { companyId, workshop
     page += 1;
     if (page > 50) break;
   }
-  return all;
+  if (!includeMeta) return all;
+  const nextPage = Math.max(Number(startPage) || 1, 1) + Math.ceil(all.length / pageSize);
+  const hasMore = totalFromApi != null
+    ? ((Math.max(Number(startPage) || 1, 1) - 1) * pageSize + all.length) < totalFromApi
+    : (totalPagesFromApi != null ? nextPage <= totalPagesFromApi : all.length >= pageSize);
+  return {
+    projects: all,
+    total: totalFromApi,
+    totalPages: totalPagesFromApi,
+    nextPage,
+    hasMore,
+  };
 }

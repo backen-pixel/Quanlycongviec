@@ -1,6 +1,7 @@
 import { colorFromName, dateLabel, initialsFromName } from '../lib/media';
 import { daysSince, formatVnd } from '../lib/format';
 import {
+  crmDeadlineStartOfTodayVnMs,
   resolveDeadlineBucket,
   resolveDeadlineIso,
   type DeadlineBucketKey,
@@ -8,9 +9,10 @@ import {
   type DeadlineStageMeta,
 } from '../lib/crmDeadlineBuckets';
 import {
-  isOpenPipelineValueStage,
+  isDeadlineMembershipStage,
   splitDealStagesForCrmTabsMulti,
 } from '../lib/crmPipelineTabs';
+import { getDeadlinePerfLimits } from '../lib/devicePerf';
 import { api } from './client';
 import type {
   CrmBoard,
@@ -56,6 +58,7 @@ type ApiLead = {
   region_id?: string | null;
   stage_entered_at?: string | null;
   is_interacted?: boolean | null;
+  deadline_disabled_at?: string | null;
   kanban_deadline_at?: string | null;
   crm_next_open_task_deadline?: string | null;
   next_follow_up?: string | null;
@@ -1266,7 +1269,7 @@ export type PlannerSectionPage = {
 
 /**
  * Deadline tab: cùng nguồn view Deadline trên web CRM
- * (kanban_deadline_at → primary/fallback → SLA; bỏ Thắng/Thua/DT hoàn thành).
+ * (task → kanban → SLA → expected_close; bỏ Thắng/Thua/DT hoàn thành / deadline tắt).
  * Bộ lọc giống Hub/web: phone, assignee, company, region, dates, search.
  * Deal + tách KH: chỉ cột pre-Thắng (khớp web tab Deal Deadline).
  */
@@ -1342,7 +1345,7 @@ function isOpenDeadlineRow(it: ApiLead): boolean {
   const st = it.stage;
   const sid = String(st?.id || it.stage_id || '');
   if (!sid) return false;
-  return isOpenPipelineValueStage({
+  return isDeadlineMembershipStage({
     id: sid,
     name: st?.name || '',
     icon: '',
@@ -1385,7 +1388,7 @@ function toDeadlineItem(
   const owner = ownerOf(it);
   const ownerId = ownerIdOf(it);
   const due = resolveDeadlineIso(it, cfg, stageMetaFromLead(it, stageLookup));
-  const overdue = !!due && new Date(due).getTime() < startOfToday();
+  const overdue = !!due && new Date(due).getTime() < crmDeadlineStartOfTodayVnMs();
   const deadlineLabel = due ? dateLabel(due) : 'Chưa hẹn';
   return {
     id: it.id,
@@ -1416,18 +1419,20 @@ function toDeadlineItem(
 const DEADLINE_DRAIN_PAGE = 500;
 /** Trang đầu mỗi cột nhỏ hơn — về nhanh hơn để first-paint sớm (giống Kanban ~20–40/cột). */
 const DEADLINE_FIRST_PAGE = 60;
+/** Máy yếu: trang đầu nhỏ hơn nữa. */
+const DEADLINE_FIRST_PAGE_LOW = 30;
 /** Số trang tối đa mỗi cột mở (Lead nhiều cột × nhiều bản ghi). */
 const DEADLINE_STAGE_MAX_PAGES = 20;
-/** Song song nhiều cột — Lead ~10–15 cột mở. */
+/** Song song nhiều cột — Lead ~10–15 cột mở (máy yếu lấy từ devicePerf). */
 const DEADLINE_STAGE_FETCH_CONCURRENCY = 6;
 /** Phát UI sớm sau N bản ghi đầu. */
 const DEADLINE_PROGRESS_EVERY = 120;
 
 /**
- * Stage được đưa vào Deadline — khớp web DeadlineView:
- * - Lead: cột mở (không Thắng/Thua/DT hoàn thành)
- * - Deal + tách KH: dealTabStages mở (pre-Thắng, không cột sau Thắng)
- * - Deal gộp: mọi cột mở
+ * Stage được đưa vào Deadline — khớp web DeadlineView + backend `crmDeadlineStageExcluded`:
+ * - Lead: không Thắng/Thua/DT hoàn thành (flag/slug/bucket; không name-regex KPI)
+ * - Deal + tách KH: dealTabStages đủ điều kiện Deadline (pre-Thắng + lost-by-name vẫn vào nếu web có)
+ * - Deal gộp: mọi cột đủ điều kiện Deadline
  */
 function resolveDeadlineOpenStages(
   type: 'lead' | 'deal',
@@ -1437,14 +1442,15 @@ function resolveDeadlineOpenStages(
   if (type === 'deal' && dealKhSplitEnabled) {
     /** Khớp web: dealKanbanStages = dealTabStages, rồi bỏ won/lost/completed. */
     const { dealTabStages } = splitDealStagesForCrmTabsMulti(stages);
-    return dealTabStages.filter(isOpenPipelineValueStage);
+    return dealTabStages.filter(isDeadlineMembershipStage);
   }
-  return stages.filter(isOpenPipelineValueStage);
+  return stages.filter(isDeadlineMembershipStage);
 }
 
 /**
  * Bộ lọc list dùng chung cho Deadline (danh sách card + đếm badge cột).
- * Lite giống web Kanban Deadline — nhanh hơn non-lite, đủ hạn NV + display_phone.
+ * Lite giống Kanban — đủ task/kanban/SLA fields + display_phone + deadline_disabled_at;
+ * server vẫn attach `is_interacted` qua user flags.
  * Search/due lọc trên client — không gửi search lên API (tránh reload nặng khi gõ).
  */
 function buildDeadlineListOpts(opts?: DeadlineFetchOpts): CrmStageFetchOpts {
@@ -1465,7 +1471,8 @@ function buildDeadlineListOpts(opts?: DeadlineFetchOpts): CrmStageFetchOpts {
 
 /**
  * Tải Lead/Deal cho tab Deadline — cùng bộ lọc Hub/web,
- * membership khớp Deadline web (tách KH Deal), có is_interacted (non-lite).
+ * membership khớp Deadline web (tách KH Deal). Phân cột theo giờ VN
+ * (`resolveDeadlineBucket` / `crmDeadlineStartOfTodayVnMs`).
  * Tải theo từng cột mở (stage_id) để không bỏ sót khi Lead/Deal > buffer cũ.
  */
 export async function fetchDeadlineSectionPage(
@@ -1474,6 +1481,9 @@ export async function fetchDeadlineSectionPage(
   limit = PLANNER_FETCH_LIMIT,
   opts?: DeadlineFetchOpts,
 ): Promise<PlannerSectionPage> {
+  const perf = getDeadlinePerfLimits();
+  const stageConcurrency = perf.stageConcurrency || DEADLINE_STAGE_FETCH_CONCURRENCY;
+  const firstPageSize = perf.tier === 'low' ? DEADLINE_FIRST_PAGE_LOW : DEADLINE_FIRST_PAGE;
   const regionRaw = opts?.regionId;
   const regionNone = regionRaw === '__none__';
   const listOpts = buildDeadlineListOpts(opts);
@@ -1496,7 +1506,7 @@ export async function fetchDeadlineSectionPage(
   const collected: ApiLead[] = [];
   const seen = new Set<string>();
   let truncated = false;
-  const progressEvery = Math.max(50, opts?.progressEvery ?? DEADLINE_PROGRESS_EVERY);
+  const progressEvery = Math.max(50, opts?.progressEvery ?? perf.progressEvery ?? DEADLINE_PROGRESS_EVERY);
   let lastProgressAt = 0;
 
   const acceptRow = (row: ApiLead): boolean => {
@@ -1514,6 +1524,8 @@ export async function fetchDeadlineSectionPage(
 
   const emitProgress = (done: boolean) => {
     if (!opts?.onProgress) return;
+    // Máy yếu: bỏ map+sort giữa chừng (O(n log n) trên JS thread) — chỉ đẩy lần cuối.
+    if (!done && perf.tier === 'low') return;
     if (!done && collected.length - lastProgressAt < progressEvery) return;
     lastProgressAt = collected.length;
     const items = collected
@@ -1543,7 +1555,7 @@ export async function fetchDeadlineSectionPage(
         return [] as ApiLead[];
       }
       // Trang đầu (khi tải mới, offset=0) nhỏ hơn → round-trip nhanh, first-paint sớm hơn.
-      const pageSize = slot.pages === 0 && offset === 0 ? DEADLINE_FIRST_PAGE : DEADLINE_DRAIN_PAGE;
+      const pageSize = slot.pages === 0 && offset === 0 ? firstPageSize : DEADLINE_DRAIN_PAGE;
       const page = await fetchCrmRowsForStage(
         type,
         slot.stage.id,
@@ -1586,7 +1598,7 @@ export async function fetchDeadlineSectionPage(
         if (opts?.signal?.aborted) break;
         const batch = stageQueues
           .filter((s) => s.hasMore && s.pages === 0)
-          .slice(0, DEADLINE_STAGE_FETCH_CONCURRENCY);
+          .slice(0, stageConcurrency);
         if (!batch.length) break;
         const batches = await Promise.all(batch.map((s) => pullOneStage(s)));
         for (const rows of batches) {
@@ -1598,7 +1610,7 @@ export async function fetchDeadlineSectionPage(
       if (stageQueues.some((s) => s.hasMore)) truncated = true;
     } else while (collected.length < target) {
       if (opts?.signal?.aborted) break;
-      const active = stageQueues.filter((s) => s.hasMore).slice(0, DEADLINE_STAGE_FETCH_CONCURRENCY);
+      const active = stageQueues.filter((s) => s.hasMore).slice(0, stageConcurrency);
       if (!active.length) break;
       const batches = await Promise.all(active.map((s) => pullOneStage(s)));
       let gotAny = false;
@@ -1781,6 +1793,10 @@ async function scanDeadlineBucketCounts(
   type: 'lead' | 'deal',
   opts?: DeadlineFetchOpts,
 ): Promise<DeadlineBucketCounts> {
+  const perf = getDeadlinePerfLimits();
+  const countPage = perf.countPage || DEADLINE_COUNT_PAGE;
+  const countConcurrency = perf.countConcurrency || DEADLINE_COUNT_CONCURRENCY;
+  const countMaxRows = perf.countMaxRows || DEADLINE_COUNT_MAX_ROWS;
   const regionNone = opts?.regionId === '__none__';
   const listOpts = buildDeadlineListOpts(opts);
   const stages = await fetchPipelineStagesCached(type, {
@@ -1796,9 +1812,43 @@ async function scanDeadlineBucketCounts(
       : null;
 
   const cfg = opts?.deadlineConfig;
+  const openStageIds = openStages.map((s) => s.id).filter(Boolean);
+
+  // Ưu tiên cùng API web — badge khớp CRM Dashboard (RPC / fallback server).
+  if (openStageIds.length && !regionNone && !allowedCompanies) {
+    try {
+      const params = crmListQueryParams(type, listOpts);
+      const { data } = await api.post<{
+        counts?: DeadlineBucketCountMap;
+        total?: number;
+        complete?: boolean;
+      }>(
+        '/crm/deadline-bucket-counts',
+        { stage_ids: openStageIds, config: cfg || {} },
+        { params, signal: opts?.signal },
+      );
+      if (data?.counts && typeof data.counts === 'object') {
+        const counts = { ...data.counts };
+        const overdue = Number(counts.overdue) || 0;
+        const total = Number.isFinite(Number(data.total))
+          ? Number(data.total)
+          : Object.values(counts).reduce((s, n) => s + (Number(n) || 0), 0);
+        return {
+          counts,
+          total,
+          overdue,
+          complete: data.complete !== false,
+          at: Date.now(),
+        };
+      }
+    } catch {
+      /* fallback client scan */
+    }
+  }
+
   const counts: DeadlineBucketCountMap = {};
   const seen = new Set<string>();
-  const todayStart = startOfToday();
+  const todayStart = crmDeadlineStartOfTodayVnMs();
   let total = 0;
   let overdue = 0;
   let complete = true;
@@ -1825,18 +1875,18 @@ async function scanDeadlineBucketCounts(
   if (openStages.length) {
     const queues = openStages.map((stage) => ({ stage, cursor: 0, hasMore: true, pages: 0 }));
     while (queues.some((q) => q.hasMore)) {
-      if (opts?.signal?.aborted || total >= DEADLINE_COUNT_MAX_ROWS) {
+      if (opts?.signal?.aborted || total >= countMaxRows) {
         complete = false;
         break;
       }
-      const active = queues.filter((q) => q.hasMore).slice(0, DEADLINE_COUNT_CONCURRENCY);
+      const active = queues.filter((q) => q.hasMore).slice(0, countConcurrency);
       const pages = await Promise.all(
         active.map(async (slot) => {
           const page = await fetchCrmRowsForStage(
             type,
             slot.stage.id,
             slot.cursor,
-            DEADLINE_COUNT_PAGE,
+            countPage,
             listOpts,
           );
           slot.pages += 1;
@@ -1854,18 +1904,18 @@ async function scanDeadlineBucketCounts(
     let apiHasMore = true;
     let pages = 0;
     while (apiHasMore && pages < DEADLINE_COUNT_MAX_PAGES * 2) {
-      if (opts?.signal?.aborted || total >= DEADLINE_COUNT_MAX_ROWS) {
+      if (opts?.signal?.aborted || total >= countMaxRows) {
         complete = false;
         break;
       }
       const params: Record<string, unknown> = {
         type,
-        limit: DEADLINE_COUNT_PAGE,
+        limit: countPage,
         offset: cursor,
       };
       applyListParams(params, listOpts);
       const { data } = await api.get('/crm/leads', { params, signal: opts?.signal });
-      const page = parsePayload(data, DEADLINE_COUNT_PAGE);
+      const page = parsePayload(data, countPage);
       pages += 1;
       apiHasMore = page.hasMore;
       cursor = page.nextOffset;

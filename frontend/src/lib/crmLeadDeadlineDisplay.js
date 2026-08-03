@@ -36,13 +36,9 @@ export function crmLeadHasPhone(item) {
 
 /**
  * Lead «chưa có số» để bỏ deadline/quá hạn trên thẻ.
- * Ưu tiên display_phone (cùng logic lọc Kanban); nếu không có thì xem lead.phone + customer.phone.
- * Lưu ý: chỉ cần lead.phone trống mà customer có số → vẫn coi là CÓ số (hiện SĐT trên thẻ).
+ * Khớp backend `crmDeadlineTsForRow`: display_phone || phone || customer.phone.
  */
 export function crmLeadMissingPhone(item) {
-  if (item && Object.prototype.hasOwnProperty.call(item, 'display_phone')) {
-    return !item.display_phone || !String(item.display_phone).trim();
-  }
   return !crmLeadHasPhone(item);
 }
 
@@ -255,6 +251,49 @@ export function resolveCrmLeadDeadlineViewSource(item, stage, config) {
   }
 
   return { deadlineTs: null, source: null };
+}
+
+/**
+ * Gom cột Deadline view — khớp BE `crmDeadlineTsForRow` / RPC counts.
+ * Không dùng `shouldHide` / `deadline_disabled_at` (BE counts cũng không).
+ */
+export function resolveCrmLeadDeadlineBucketSource(item, stage, config) {
+  const st = stage || item?._stage || item?.stage;
+  const hasPhone = crmLeadHasPhone(item);
+  if (!hasPhone || item?.is_interacted || isCrmPipelineStageNoDeadline(st)) {
+    return { deadlineTs: null, source: null, forcedNoDeadline: true };
+  }
+
+  for (const field of ['crm_next_open_task_deadline', 'kanban_deadline_at']) {
+    const raw = item?.[field];
+    if (!raw) continue;
+    const ts = new Date(raw).getTime();
+    if (!Number.isNaN(ts)) {
+      return {
+        deadlineTs: ts,
+        source: field === 'crm_next_open_task_deadline' ? 'task' : 'kanban',
+        forcedNoDeadline: false,
+      };
+    }
+  }
+
+  const slaTs = getPipelineStageSlaDeadlineTs(item?.stage_entered_at, st, item);
+  if (slaTs != null) return { deadlineTs: slaTs, source: 'sla', forcedNoDeadline: false };
+
+  const cfg = config || {};
+  const primary = String(cfg.primary_field || 'crm_next_open_task_deadline');
+  const fallback = String(cfg.fallback_field || 'expected_close_date');
+  for (const field of [primary, fallback]) {
+    if (field === 'crm_next_open_task_deadline' || field === 'kanban_deadline_at') continue;
+    const raw = item?.[field];
+    if (!raw) continue;
+    const ts = new Date(raw).getTime();
+    if (!Number.isNaN(ts)) {
+      return { deadlineTs: ts, source: fieldToDeadlineSource(field), forcedNoDeadline: false };
+    }
+  }
+
+  return { deadlineTs: null, source: null, forcedNoDeadline: false };
 }
 
 /**

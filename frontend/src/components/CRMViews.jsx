@@ -15,6 +15,7 @@ import {
   isCrmPipelineStageCompletedRevenue,
   isCrmPipelineStageLost,
   isCrmPipelineStageWon,
+  resolveCrmLeadDeadlineBucketSource,
   resolveCrmLeadDeadlineViewSource,
 } from '../lib/crmLeadDeadlineDisplay';
 import { FbCrmAvatar, formatCrmFbRelativeTime } from './crmFbCommentUi';
@@ -355,6 +356,7 @@ function KanbanColumn({
   title,
   subtitle,
   count,
+  countTitle,
   headerExtras,
   children,
   isDragOver,
@@ -378,7 +380,12 @@ function KanbanColumn({
           <h3 className="font-semibold truncate text-sm flex-1" style={{ color: '#000000' }}>{title}</h3>
           <div className="flex items-center gap-1.5 shrink-0">
             {headerExtras}
-            <span className="px-2 py-0.5 bg-gray-100 text-gray-700 font-bold rounded text-[10px]">{count}</span>
+            <span
+              className="px-2 py-0.5 bg-gray-100 text-gray-700 font-bold rounded text-[10px]"
+              title={countTitle || (count != null ? String(count) : undefined)}
+            >
+              {count}
+            </span>
           </div>
         </div>
         {subtitle && <p className="text-[10px] text-gray-500">{subtitle}</p>}
@@ -836,17 +843,23 @@ export function DeadlineView({
     BUCKET_ORDER.forEach(k => { out[k] = []; });
     allItems.forEach(it => {
       let bucket = localOverride[String(it.id)];
-      let ts = null;
-      let source = null;
-      const picked = resolveCrmLeadDeadlineViewSource(it, it._stage, cfg);
-      ts = picked.deadlineTs;
-      source = picked.source;
+      const viewPicked = resolveCrmLeadDeadlineViewSource(it, it._stage, cfg);
+      const bucketPicked = resolveCrmLeadDeadlineBucketSource(it, it._stage, cfg);
+      // Hiển thị hạn trên thẻ: ưu tiên view (ẩn khi không SĐT / đã tương tác…).
+      // Gom cột: khớp BE counts/RPC — không tin stamp cũ khi đã tính được bucket.
+      const ts = viewPicked.deadlineTs ?? bucketPicked.deadlineTs;
+      const source = viewPicked.source ?? bucketPicked.source;
       if (!bucket) {
         const stamped = String(it.deadline_bucket || '').trim();
-        const computed = resolveBucket(ts, cfg.buckets);
-        // Stamp server khi row chưa hydrate đủ deadline (tránh lệch tạm); còn lại luôn tính VN như BE.
-        if (ts == null && stamped && BUCKET_ORDER.includes(stamped)) bucket = stamped;
-        else bucket = computed;
+        if (bucketPicked.forcedNoDeadline) {
+          bucket = 'no_deadline';
+        } else if (bucketPicked.deadlineTs != null) {
+          bucket = resolveBucket(bucketPicked.deadlineTs, cfg.buckets);
+        } else if (stamped && BUCKET_ORDER.includes(stamped)) {
+          bucket = stamped;
+        } else {
+          bucket = 'no_deadline';
+        }
       }
       const enriched = { ...it, _deadlineTs: ts, _deadlineSource: source, _bucket: bucket };
       (out[bucket] || (out[bucket] = [])).push(enriched);
@@ -915,9 +928,10 @@ export function DeadlineView({
           const exactCount = bucketCounts && Number.isFinite(Number(bucketCounts[key]))
             ? Number(bucketCounts[key])
             : null;
+          const loadedCount = list.length;
           const displayCount = exactCount != null
-            ? exactCount
-            : (bucketCountsLoading ? '…' : '—');
+            ? (loadedCount < exactCount ? `${loadedCount}/${exactCount}` : exactCount)
+            : (bucketCountsLoading ? '…' : (loadedCount || '—'));
           const pageState = bucketPageState?.[key] || {};
           const columnItemIds = list.map((x) => x.id);
           const allInColumnSelected =
@@ -932,6 +946,11 @@ export function DeadlineView({
               topBarColor={BUCKET_COLOR[key]}
               title={label}
               count={displayCount}
+              countTitle={exactCount != null
+                ? (loadedCount < exactCount
+                  ? `Đã tải ${loadedCount}/${exactCount} — cuộn xuống hoặc bấm Tải thêm`
+                  : `${exactCount} deal`)
+                : undefined}
               subtitle={`Giá trị: ${formatVND(totalValue)}`}
               headerExtras={
                 mergePick && onToggleSelectAllInColumn && list.length > 0 ? (

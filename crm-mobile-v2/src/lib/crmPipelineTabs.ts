@@ -5,9 +5,9 @@ function stageOrderIndex(stage: CrmPipelineStage): number {
   return Number.isFinite(ord) ? ord : 999;
 }
 
-/** Cột thua / hủy — khớp web CRM (is_lost, slug, tên cột). */
+/** Cột thua / hủy — khớp web `crmLostPipelineStage.js`. */
 const LOST_PIPELINE_STAGE_NAME_RE =
-  /(hủy\s*deal|^\s*thua\s*\.?\s*$|chê\s*gi[aá]|khách\s*hủy|từ\s*chối|rớt|\blost\b|mất\s*deal)/i;
+  /(hủy\s*deal|thua\s*\/\s*hủy|^\s*hủy\s*$|^\s*thua\s*\.?\s*$|chê\s*gi[aá]|khách\s*hủy|từ\s*chối|rớt|\blost\b|mất\s*deal)/i;
 
 export function isLostOrCancelledPipelineStage(stage: CrmPipelineStage | null | undefined): boolean {
   if (!stage) return false;
@@ -35,6 +35,20 @@ export function isOpenPipelineValueStage(stage: CrmPipelineStage | null | undefi
   if (!stage?.id) return false;
   if (isLostOrCancelledPipelineStage(stage)) return false;
   if (isWonOrClosedPipelineStage(stage)) return false;
+  return true;
+}
+
+/**
+ * Stage thuộc view Deadline — khớp web DeadlineView + backend `crmDeadlineStageExcluded`.
+ * Không dùng name-regex «Chê giá/Khách hủy» (KPI Hub dùng regex; Deadline web/server thì không).
+ */
+export function isDeadlineMembershipStage(stage: CrmPipelineStage | null | undefined): boolean {
+  if (!stage?.id) return false;
+  if (stage.isWon || stage.isLost || stage.countsAsCompletedRevenue) return false;
+  const slug = stage.canonicalSlug || '';
+  if (slug === 'won' || slug === 'lost') return false;
+  const bucket = stage.dealReportBucket || '';
+  if (bucket === 'won' || bucket === 'lost') return false;
   return true;
 }
 

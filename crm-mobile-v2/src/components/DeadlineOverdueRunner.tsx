@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { AppState, Platform } from 'react-native';
+import { AppState, InteractionManager, Platform } from 'react-native';
 import { currentUserId, useAuth } from '../context/AuthContext';
 import { useCrmRealtimeRefresh } from '../hooks/useCrmRealtimeRefresh';
 import { runDeadlineOverdueCheckOnce } from '../lib/deadlineOverdueBackgroundSync';
@@ -14,6 +14,7 @@ import {
   clearDeadlineOverdueBreakdown,
   subscribeDeadlineOverdue,
 } from '../lib/deadlineOverdueStore';
+import { getPerfTier } from '../lib/devicePerf';
 
 /** Quét định kỳ khi app mở (bổ sung background task ~15 phút). */
 const FOREGROUND_INTERVAL_MS = 15 * 60 * 1000;
@@ -48,7 +49,14 @@ export default function DeadlineOverdueRunner() {
       return undefined;
     }
 
-    tick(true);
+    // Máy yếu: trì hoãn quét quá hạn lúc mở app — tránh tranh băng thông với màn hình đầu.
+    const bootDelayMs = getPerfTier() === 'low' ? 4500 : getPerfTier() === 'mid' ? 2000 : 400;
+    let cancelled = false;
+    const bootTimer = setTimeout(() => {
+      InteractionManager.runAfterInteractions(() => {
+        if (!cancelled) tick(true);
+      });
+    }, bootDelayMs);
     if (Platform.OS === 'android') {
       void registerDeadlineOverdueBackgroundTask();
     }
@@ -64,6 +72,8 @@ export default function DeadlineOverdueRunner() {
     });
 
     return () => {
+      cancelled = true;
+      clearTimeout(bootTimer);
       clearInterval(timer);
       sub.remove();
       unsubStore();

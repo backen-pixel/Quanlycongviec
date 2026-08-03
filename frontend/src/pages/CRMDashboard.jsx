@@ -193,7 +193,7 @@ function formatRemainingMs(ms) {
 function preserveCrmKanbanPipelineBadges(prevRows, nextRows) {
   const pmap = new Map((prevRows || []).map((r) => [String(r.id), r]));
   return (nextRows || []).map((row) => {
-    if (!row?.project_id) return row;
+    if (!row) return row;
     const prev = pmap.get(String(row.id));
     if (!prev) return row;
     let out = row;
@@ -202,6 +202,10 @@ function preserveCrmKanbanPipelineBadges(prevRows, nextRows) {
     }
     if (!row.vc_pipeline_stage && prev.vc_pipeline_stage) {
       out = { ...out, vc_pipeline_stage: prev.vc_pipeline_stage };
+    }
+    // Giữ stamp Deadline khi hydrate Kanban (500→2000) không mang deadline_bucket.
+    if (!row.deadline_bucket && prev.deadline_bucket) {
+      out = { ...out, deadline_bucket: prev.deadline_bucket };
     }
     return out;
   });
@@ -3991,7 +3995,7 @@ export default function CRMDashboard() {
           if (activeType === 'lead') {
             setDataLead(boot.dashboard);
             setStagesLead(stagesActive);
-            setAllLeads(activeMerged);
+            setAllLeads(preserveCrmKanbanPipelineBadges(allLeads, activeMerged));
           } else {
             setDataDeal(boot.dashboard);
             setStagesDeal(stagesActive);
@@ -4109,7 +4113,10 @@ export default function CRMDashboard() {
 
       if (activeType === 'lead') {
         dashLeadSnapshot = dashActiveRes.data;
-        allLeadsValue = activeMerged;
+        allLeadsValue = preserveCrmKanbanPipelineBadges(
+          allLeads,
+          dedupeCrmKanbanRows(mergeLeadSeenLocal(activeData)),
+        );
       } else {
         dashDealSnapshot = dashActiveRes.data;
         allDealsValue = preserveCrmKanbanPipelineBadges(
@@ -4969,6 +4976,12 @@ export default function CRMDashboard() {
     setDeadlineBucketPageState({});
     setDeadlineBucketCounts(null);
     setDeadlineBucketCountsLoading(true);
+    // Xóa stamp Deadline cũ khi đổi lọc/công ty — tránh thẻ lệch cột (vd. Quá hạn/Ngày mai).
+    const stripDeadlineBucket = (rows) => (rows || []).map((row) => (
+      row?.deadline_bucket ? { ...row, deadline_bucket: undefined } : row
+    ));
+    setAllLeads((prev) => stripDeadlineBucket(prev));
+    setAllDeals((prev) => stripDeadlineBucket(prev));
     void api
       .post('/crm/deadline-bucket-counts', {
         stage_ids: deadlineStageIds,
@@ -5020,7 +5033,7 @@ export default function CRMDashboard() {
       const offset = Math.max(Number(state.nextOffset) || 0, 0);
       if (initialOnly && offset > 0) continue;
       if (Number.isFinite(total) && offset >= total) continue;
-      requests.push({ bucket, offset, limit: 10 });
+      requests.push({ bucket, offset, limit: initialOnly ? 20 : 15 });
       if (requests.length >= 6) break;
     }
     if (!requests.length) return;
