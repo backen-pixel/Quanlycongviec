@@ -1276,6 +1276,12 @@ export default function CRMDashboard() {
   const deadlineBucketPageStateRef = useRef({});
   const deadlineBucketPagesLoadingRef = useRef(new Set());
   const deadlineBucketPagesGenerationRef = useRef(0);
+  const handleLoadDeadlineBucketsRef = useRef(null);
+  /** Bump để refetch counts + pages Deadline khi socket / live-version. */
+  const [deadlineRealtimeNonce, setDeadlineRealtimeNonce] = useState(0);
+  const deadlineRealtimeTimerRef = useRef(null);
+  const viewModeRef = useRef(viewMode);
+  viewModeRef.current = viewMode;
   /** Map { lead_id → {count,last_at,last_user_id} } cho view "Bình luận" */
   const [commentsIndex, setCommentsIndex] = useState({});
   /** Chọn thẻ Kanban để gộp thủ công (không dùng quét trùng) */
@@ -3063,6 +3069,14 @@ export default function CRMDashboard() {
     pipelineType,
     refreshKanbanListAfterCreate,
     refreshCrmDashboardSlice,
+    scheduleDeadlineRealtimeRefresh: () => {
+      if (viewModeRef.current !== 'deadline') return;
+      if (deadlineRealtimeTimerRef.current) clearTimeout(deadlineRealtimeTimerRef.current);
+      deadlineRealtimeTimerRef.current = setTimeout(() => {
+        deadlineRealtimeTimerRef.current = null;
+        setDeadlineRealtimeNonce((n) => n + 1);
+      }, 600);
+    },
   };
 
   /** Cập nhật từng thẻ Kanban theo socket — không gọi load() full trang. */
@@ -3178,6 +3192,8 @@ export default function CRMDashboard() {
         ctx.refreshCrmDashboardSlice?.(t),
       ]);
       setLastSyncAt(new Date());
+      lastCrmRealtimeAtRef.current = Date.now();
+      ctx.scheduleDeadlineRealtimeRefresh?.();
       return;
     }
 
@@ -3222,6 +3238,7 @@ export default function CRMDashboard() {
 
     setLastSyncAt(new Date());
     lastCrmRealtimeAtRef.current = Date.now();
+    ctx.scheduleDeadlineRealtimeRefresh?.();
   }, []);
 
   applyCrmRealtimeChangesRef.current = applyCrmRealtimeChanges;
@@ -4989,7 +5006,19 @@ export default function CRMDashboard() {
       }, { params })
       .then((res) => {
         if (seq !== deadlineBucketCountsSeqRef.current) return;
-        setDeadlineBucketCounts(res.data?.counts || {});
+        const counts = res.data?.counts || {};
+        setDeadlineBucketCounts(counts);
+        // Realtime / lần đếm mới: nạp lại trang đầu các cột đang có số (observer không luôn fire lại).
+        const keys = [
+          'overdue', 'today', 'tomorrow', 'this_week', 'next_week',
+          'in_2_weeks', 'in_3_weeks', 'in_4_weeks', 'in_1_month', 'next_month', 'no_deadline',
+        ].filter((k) => Number(counts[k]) > 0).slice(0, 6);
+        if (keys.length) {
+          queueMicrotask(() => {
+            if (seq !== deadlineBucketCountsSeqRef.current) return;
+            handleLoadDeadlineBucketsRef.current?.(keys, { initialOnly: true });
+          });
+        }
       })
       .catch((error) => {
         if (seq !== deadlineBucketCountsSeqRef.current) return;
@@ -5012,6 +5041,7 @@ export default function CRMDashboard() {
     isCompanyScopedAdmin,
     user?.company_id,
     isAdmin,
+    deadlineRealtimeNonce,
   ]);
 
   const handleLoadDeadlineBuckets = useCallback(async (
@@ -5169,6 +5199,7 @@ export default function CRMDashboard() {
     customDateTo,
     deadlineConfigKey,
   ]);
+  handleLoadDeadlineBucketsRef.current = handleLoadDeadlineBuckets;
 
   /**
    * Cột ảo «Chưa có giai đoạn» — gom deal không nằm trong bất kỳ cột nào của pipeline hiện tại.
@@ -6281,6 +6312,9 @@ export default function CRMDashboard() {
             refreshKanbanListAfterCreateRef.current?.(type),
             refreshCrmDashboardSliceRef.current?.(type),
           ]);
+        }
+        if (viewModeRef.current === 'deadline') {
+          setDeadlineRealtimeNonce((n) => n + 1);
         }
         setLastSyncAt(new Date());
       } catch {

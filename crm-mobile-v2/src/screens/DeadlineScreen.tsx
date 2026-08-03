@@ -22,9 +22,11 @@ import { formatApiError } from '../api/client';
 import {
   DEADLINE_MAX_BUFFER,
   fetchDeadlineBucketCounts,
+  fetchDeadlineBucketPages,
   fetchDeadlineConfig,
   fetchDeadlineSectionPage,
   fetchPipelineStages,
+  invalidateDeadlineBucketCounts,
   isDeadlineBucketCountsFresh,
   moveCrmItemStage,
   peekDeadlineBucketCounts,
@@ -265,6 +267,17 @@ export default function DeadlineScreen() {
     lead: null,
     deal: null,
   });
+  /** Phân trang theo cột bucket — khớp web deadline-bucket-pages. */
+  const [bucketPageState, setBucketPageState] = useState<Record<string, {
+    nextOffset: number;
+    hasMore: boolean;
+    loading: boolean;
+    total: number;
+  }>>({});
+  const bucketPageStateRef = useRef(bucketPageState);
+  bucketPageStateRef.current = bucketPageState;
+  const bucketPagesLoadingRef = useRef(new Set<string>());
+  const bucketPagesGenRef = useRef(0);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [deadlineConfig, setDeadlineConfig] = useState<DeadlineConfig | null>(null);
@@ -504,7 +517,7 @@ export default function DeadlineScreen() {
   ) => {
     if (serverFilterKeyRef.current !== fk) return;
     const cached = peekDeadlineBucketCounts(section, fk);
-    if (cached) setCountsByKind((prev) => ({ ...prev, [section]: cached }));
+    if (cached && !force) setCountsByKind((prev) => ({ ...prev, [section]: cached }));
     if (!force && isDeadlineBucketCountsFresh(section, fk)) return;
 
     countsAbortRef.current[section]?.abort();
@@ -515,13 +528,14 @@ export default function DeadlineScreen() {
         const res = await fetchDeadlineBucketCounts(section, fk, {
           ...optsBase,
           signal: ac.signal,
+          force,
         });
         if (ac.signal.aborted) return;
         if (serverFilterKeyRef.current !== fk) return;
         setCountsByKind((prev) => {
           const cur = prev[section];
-          // Số chưa quét hết (cận dưới) không được đè số đã đủ.
-          if (cur?.complete && !res.complete) return prev;
+          // Số chưa quét hết (cận dưới) không được đè số đã đủ — trừ khi force realtime.
+          if (!force && cur?.complete && !res.complete) return prev;
           return { ...prev, [section]: res };
         });
       } catch {
@@ -538,6 +552,8 @@ export default function DeadlineScreen() {
     /** Chỉ tải các tab này; mặc định là tab đang xem. */
     kinds?: PlannerKind[];
     force?: boolean;
+    /** Realtime: luôn đếm lại badge cột + reset trang bucket. */
+    forceCounts?: boolean;
   }) => {
     if (!filtersReady) return;
     if (!userId && !viewAll) return;
@@ -841,11 +857,32 @@ export default function DeadlineScreen() {
     }
 
     // Đếm badge cột sau first-paint — máy yếu trễ hơn để nhường UI.
+    // Realtime / refresh: luôn force đếm lại (bỏ cache 90s).
     if (!ac.signal.aborted) {
-      const forceCounts = isRefresh && !silent;
+      const forceCounts = !!opts?.forceCounts || isRefresh;
+      if (forceCounts) {
+        invalidateDeadlineBucketCounts();
+        bucketPagesGenRef.current += 1;
+        bucketPagesLoadingRef.current.clear();
+        bucketPageStateRef.current = {};
+        setBucketPageState({});
+        const stripStamp = (rows: PlannerItem[]) => rows.map((row) => (
+          row.deadlineBucket ? { ...row, deadlineBucket: undefined } : row
+        ));
+        setLeadState((prev) => {
+          const next = { ...prev, items: stripStamp(prev.items) };
+          leadStateRef.current = next;
+          return next;
+        });
+        setDealState((prev) => {
+          const next = { ...prev, items: stripStamp(prev.items) };
+          dealStateRef.current = next;
+          return next;
+        });
+      }
       setTimeout(() => {
         for (const k of kinds) refreshBucketCounts(k, deadlineOptsBase, fkAtStart, forceCounts);
-      }, perf.countsDelayMs);
+      }, forceCounts ? 0 : perf.countsDelayMs);
     }
 
     if (!ac.signal.aborted) {
@@ -912,8 +949,13 @@ export default function DeadlineScreen() {
   useCrmRealtimeRefresh(
     useCallback(() => {
       if (!filtersReady) return;
-      // Đồng bộ cả Lead + Deal khi CRM đổi (socket / live-version / push).
-      void load({ refresh: true, silent: true, kinds: ['lead', 'deal'] });
+      // Đồng bộ list + badge counts + trang cột (socket / live-version / push).
+      void load({
+        refresh: true,
+        silent: true,
+        kinds: ['lead', 'deal'],
+        forceCounts: true,
+      });
     }, [load, filtersReady]),
     Boolean(filtersReady && (userId || viewAll)),
   );
@@ -974,12 +1016,14 @@ export default function DeadlineScreen() {
       no_deadline: [],
     };
     for (const it of filteredItems) {
-      const ts = deadlineIsoToTs(it.dueIso);
-      const key = resolveDeadlineBucket(ts, deadlineConfig?.buckets);
+      const stamped = it.deadlineBucket;
+      const key = (stamped && buckets.includes(stamped))
+        ? stamped
+        : resolveDeadlineBucket(deadlineIsoToTs(it.dueIso), deadlineConfig?.buckets);
       out[key].push(it);
     }
     return out;
-  }, [filteredItems, deadlineConfig]);
+  }, [filteredItems, deadlineConfig, buckets]);
 
   const loadedBucketCounts = useMemo(() => {
     const counts: DeadlineBucketCountMap = {};
@@ -1012,6 +1056,10 @@ export default function DeadlineScreen() {
 
   useEffect(() => {
     bucketInitRef.current = false;
+    bucketPagesGenRef.current += 1;
+    bucketPagesLoadingRef.current.clear();
+    bucketPageStateRef.current = {};
+    setBucketPageState({});
   }, [kind, filters.phone, filters.assignee, filters.companyId, filters.regionId, search]);
 
   const safeBucket = buckets.includes(bucketKey) ? bucketKey : (buckets[0] || 'overdue');
@@ -1026,6 +1074,12 @@ export default function DeadlineScreen() {
   const columnBadgePending = useScannedCounts
     ? !kindCounts?.complete
     : (loading || draining) && rawState.hasMore;
+  const columnPageKey = `${kind}:${safeBucket}`;
+  const columnPageState = bucketPageState[columnPageKey];
+  const columnHasMore = columnPageState
+    ? columnPageState.hasMore !== false
+      && (columnItems.length < (Number(bucketCounts[safeBucket]) || 0) || !!columnPageState.hasMore)
+    : rawState.hasMore && rawState.items.length < DEADLINE_MAX_BUFFER;
 
   const goPrevBucket = useCallback(() => {
     setBucketKey((cur) => {
@@ -1041,6 +1095,123 @@ export default function DeadlineScreen() {
       return buckets[idx + 1];
     });
   }, [buckets]);
+
+  /**
+   * Tải thẻ đúng cột qua `/crm/deadline-bucket-pages` (khớp web) —
+   * stamp deadlineBucket để badge và list không lệch.
+   */
+  const loadBucketColumn = useCallback(async (
+    bucket: DeadlineBucketKey,
+    { initialOnly = false }: { initialOnly?: boolean } = {},
+  ) => {
+    if (!filtersReady) return;
+    if (!userId && !viewAll) return;
+    const pageKey = `${kind}:${bucket}`;
+    if (bucketPagesLoadingRef.current.has(pageKey)) return;
+    const state = bucketPageStateRef.current[pageKey] || { nextOffset: 0, hasMore: true, loading: false, total: 0 };
+    const total = Number(kindCounts?.counts?.[bucket]);
+    if (Number.isFinite(total) && total <= 0) return;
+    if (state.hasMore === false) return;
+    const offset = Math.max(Number(state.nextOffset) || 0, 0);
+    if (initialOnly && offset > 0) return;
+    if (Number.isFinite(total) && offset >= total) return;
+
+    const generation = bucketPagesGenRef.current;
+    bucketPagesLoadingRef.current.add(pageKey);
+    setBucketPageState((prev) => {
+      const next = {
+        ...prev,
+        [pageKey]: { ...(prev[pageKey] || { nextOffset: 0, hasMore: true, total: 0 }), loading: true },
+      };
+      bucketPageStateRef.current = next;
+      return next;
+    });
+    setLoadingMore(true);
+    try {
+      const listOpts = buildStageFetchOpts(filtersRef.current, '', userId || '');
+      const companiesList = companiesRef.current;
+      const pages = await fetchDeadlineBucketPages(
+        kind,
+        [{ bucket, offset, limit: initialOnly ? 20 : 15 }],
+        {
+          ...listOpts,
+          deadlineConfig: configRef.current,
+          dealKhSplitEnabled: dealKhSplitRef.current,
+          allowedCompanyIds:
+            listOpts.companyId || !companiesList.length
+              ? null
+              : companiesList.map((c) => c.id).filter(Boolean),
+        },
+      );
+      if (generation !== bucketPagesGenRef.current) return;
+      const page = pages[bucket];
+      if (!page) return;
+
+      const mergeItems = (prevItems: PlannerItem[]) => {
+        const map = new Map(prevItems.map((i) => [String(i.id), i]));
+        for (const row of page.items) {
+          const id = String(row.id);
+          const prev = map.get(id);
+          map.set(id, prev
+            ? { ...prev, ...row, deadlineBucket: row.deadlineBucket || prev.deadlineBucket }
+            : row);
+        }
+        return [...map.values()].sort(byDeadlineAsc).slice(0, DEADLINE_MAX_BUFFER);
+      };
+
+      if (kind === 'lead') {
+        const prev = leadStateRef.current;
+        const next = {
+          items: mergeItems(prev.items),
+          total: Math.max(prev.total, page.total, prev.items.length),
+          hasMore: page.hasMore,
+          nextOffset: page.nextOffset,
+        };
+        leadStateRef.current = next;
+        setLeadState(next);
+      } else {
+        const prev = dealStateRef.current;
+        const next = {
+          items: mergeItems(prev.items),
+          total: Math.max(prev.total, page.total, prev.items.length),
+          hasMore: page.hasMore,
+          nextOffset: page.nextOffset,
+        };
+        dealStateRef.current = next;
+        setDealState(next);
+      }
+
+      setBucketPageState((prev) => {
+        const next = {
+          ...prev,
+          [pageKey]: {
+            loading: false,
+            nextOffset: page.nextOffset,
+            hasMore: page.hasMore,
+            total: page.total,
+          },
+        };
+        bucketPageStateRef.current = next;
+        return next;
+      });
+    } catch {
+      /* giữ list cũ */
+    } finally {
+      bucketPagesLoadingRef.current.delete(pageKey);
+      if (generation === bucketPagesGenRef.current) setLoadingMore(false);
+      setBucketPageState((prev) => {
+        if (!prev[pageKey]?.loading) return prev;
+        const next = { ...prev, [pageKey]: { ...prev[pageKey], loading: false } };
+        bucketPageStateRef.current = next;
+        return next;
+      });
+    }
+  }, [filtersReady, userId, viewAll, kind, kindCounts]);
+
+  useEffect(() => {
+    if (!filtersReady || !kindCounts) return;
+    void loadBucketColumn(safeBucket, { initialOnly: true });
+  }, [filtersReady, kindCounts, safeBucket, kind, serverFilterKey, loadBucketColumn]);
 
   const canPrevRef = useRef(canPrev);
   const canNextRef = useRef(canNext);
@@ -1115,8 +1286,20 @@ export default function DeadlineScreen() {
   );
 
   const loadMore = useCallback(async () => {
-    if (loadingMore || !rawState.hasMore) return;
+    if (loadingMore) return;
     if (!userId && !viewAll) return;
+    const pageKey = `${kind}:${safeBucket}`;
+    const pageState = bucketPageStateRef.current[pageKey];
+    // Ưu tiên phân trang theo cột bucket (khớp web).
+    if (pageState?.hasMore !== false) {
+      const total = Number(kindCounts?.counts?.[safeBucket]);
+      const loadedInCol = (grouped[safeBucket] || []).length;
+      if (!Number.isFinite(total) || loadedInCol < total || pageState?.hasMore) {
+        await loadBucketColumn(safeBucket, { initialOnly: false });
+        return;
+      }
+    }
+    if (!rawState.hasMore) return;
     if (rawState.items.length >= DEADLINE_MAX_BUFFER) return;
     setLoadingMore(true);
     try {
@@ -1149,7 +1332,7 @@ export default function DeadlineScreen() {
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, rawState, kind, userId]);
+  }, [loadingMore, rawState, kind, userId, viewAll, safeBucket, kindCounts, grouped, loadBucketColumn]);
 
   const goDetail = useCallback((item: PlannerItem) => {
     navigation.navigate('LeadDealDetail', {
@@ -1638,14 +1821,14 @@ export default function DeadlineScreen() {
           onScrollEndDrag={onListScrollEnd}
           onMomentumScrollEnd={onListScrollEnd}
           ListFooterComponent={
-            rawState.hasMore && rawState.items.length < DEADLINE_MAX_BUFFER ? (
+            columnHasMore ? (
               <View style={{ paddingHorizontal: 16 }}>
                 <Pressable
                   style={[styles.loadMoreBtn, { borderColor: accent }]}
                   onPress={() => void loadMore()}
-                  disabled={loadingMore}
+                  disabled={loadingMore || !!columnPageState?.loading}
                 >
-                  {loadingMore ? (
+                  {loadingMore || columnPageState?.loading ? (
                     <SpinningLoader size={18} color={accent} />
                   ) : (
                     <Text style={[styles.loadMoreTxt, { color: accent }]}>Tải thêm</Text>

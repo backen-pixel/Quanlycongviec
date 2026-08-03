@@ -145,6 +145,8 @@ export type CrmHubData = {
   cache: Record<string, CrmStageCache>;
 };
 
+import type { DeadlineBucketKey } from './lib/crmDeadlineBuckets';
+
 export type PlannerKind = 'lead' | 'deal';
 
 export type PlannerItem = {
@@ -168,6 +170,8 @@ export type PlannerItem = {
   ownerColor: string;
   deadlineLabel: string;
   dueIso?: string | null;
+  /** Stamp từ `/crm/deadline-bucket-pages` — ưu tiên khi gom cột (khớp web). */
+  deadlineBucket?: DeadlineBucketKey | null;
   overdue: boolean;
 };
 

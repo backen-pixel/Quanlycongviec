@@ -1814,8 +1814,9 @@ async function scanDeadlineBucketCounts(
   const cfg = opts?.deadlineConfig;
   const openStageIds = openStages.map((s) => s.id).filter(Boolean);
 
-  // Ưu tiên cùng API web — badge khớp CRM Dashboard (RPC / fallback server).
-  if (openStageIds.length && !regionNone && !allowedCompanies) {
+  // Luôn ưu tiên cùng API web — kể cả «Tất cả công ty» (BE đã lọc khối CRM).
+  // Trước đây bỏ qua khi có allowedCompanyIds → quét client cắt trang → lệch badge.
+  if (openStageIds.length && !regionNone) {
     try {
       const params = crmListQueryParams(type, listOpts);
       const { data } = await api.post<{
@@ -1935,13 +1936,18 @@ async function scanDeadlineBucketCounts(
 export async function fetchDeadlineBucketCounts(
   type: 'lead' | 'deal',
   filterKey: string,
-  opts?: DeadlineFetchOpts,
+  opts?: DeadlineFetchOpts & { force?: boolean },
 ): Promise<DeadlineBucketCounts> {
   const key = deadlineCountsCacheKey(type, filterKey);
-  const hit = deadlineBucketCountsCache.get(key);
-  if (hit?.data.complete && Date.now() - hit.at < DEADLINE_COUNTS_TTL_MS) return hit.data;
-  const inflight = deadlineBucketCountsInflight.get(key);
-  if (inflight) return inflight;
+  if (!opts?.force) {
+    const hit = deadlineBucketCountsCache.get(key);
+    if (hit?.data.complete && Date.now() - hit.at < DEADLINE_COUNTS_TTL_MS) return hit.data;
+    const inflight = deadlineBucketCountsInflight.get(key);
+    if (inflight) return inflight;
+  } else {
+    deadlineBucketCountsCache.delete(key);
+    deadlineBucketCountsInflight.delete(key);
+  }
 
   const run = scanDeadlineBucketCounts(type, opts)
     .then((res) => {
@@ -1956,6 +1962,79 @@ export async function fetchDeadlineBucketCounts(
     });
   deadlineBucketCountsInflight.set(key, run);
   return run;
+}
+
+export type DeadlineBucketPageResult = {
+  items: PlannerItem[];
+  total: number;
+  nextOffset: number;
+  hasMore: boolean;
+};
+
+/**
+ * Tải card theo cột Deadline — khớp web POST `/crm/deadline-bucket-pages`
+ * (stamp `deadline_bucket` để gom cột đúng badge).
+ */
+export async function fetchDeadlineBucketPages(
+  type: 'lead' | 'deal',
+  requests: Array<{ bucket: DeadlineBucketKey; offset?: number; limit?: number }>,
+  opts?: DeadlineFetchOpts,
+): Promise<Record<string, DeadlineBucketPageResult>> {
+  const listOpts = buildDeadlineListOpts(opts);
+  const regionNone = opts?.regionId === '__none__';
+  const stages = await fetchPipelineStagesCached(type, {
+    companyId: opts?.companyId,
+    regionId: regionNone ? undefined : opts?.regionId,
+    signal: opts?.signal,
+  });
+  const openStages = resolveDeadlineOpenStages(type, stages, opts?.dealKhSplitEnabled);
+  const stageLookup = new Map(stages.map((s) => [s.id, s]));
+  const stageIds = openStages.map((s) => s.id).filter(Boolean);
+  if (!stageIds.length || !requests.length) return {};
+
+  const payloadRequests = requests
+    .map((r) => ({
+      bucket: r.bucket,
+      offset: Math.max(0, Number(r.offset) || 0),
+      limit: Math.min(Math.max(Number(r.limit) || 15, 1), 20),
+    }))
+    .slice(0, 6);
+
+  const params = crmListQueryParams(type, listOpts);
+  const { data } = await api.post<{
+    pages?: Record<string, {
+      data?: ApiLead[];
+      total?: number;
+      nextOffset?: number;
+      hasMore?: boolean;
+    }>;
+  }>(
+    '/crm/deadline-bucket-pages',
+    {
+      buckets: payloadRequests,
+      stage_ids: stageIds,
+      config: opts?.deadlineConfig || {},
+    },
+    { params, signal: opts?.signal },
+  );
+
+  const cfg = opts?.deadlineConfig;
+  const pages = data?.pages || {};
+  const out: Record<string, DeadlineBucketPageResult> = {};
+  for (const [bucket, page] of Object.entries(pages)) {
+    const rows = Array.isArray(page?.data) ? page.data : [];
+    const stamped = bucket as DeadlineBucketKey;
+    out[bucket] = {
+      items: rows.map((row) => ({
+        ...toDeadlineItem(row, type, cfg, stageLookup),
+        deadlineBucket: stamped,
+      })),
+      total: Number(page?.total) || 0,
+      nextOffset: Number(page?.nextOffset) || 0,
+      hasMore: !!page?.hasMore,
+    };
+  }
+  return out;
 }
 
 /** Leads hoặc Deals cá nhân — có phân trang server. Chỉ hiện bản ghi đang thực hiện. */
